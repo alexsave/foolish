@@ -148,29 +148,37 @@ const allowAttacks = () => {
         }
     }
 };
+
+const cardScore = (card: Card) => {
+    // This can be tweaked a bit becuase the lowest value trump would be a few more than 13
+    return card.value + (card.suit === POWER_SUIT ? ACE_VALUE : 0);
+};
+
 // now defend
 const recursiveCoverCheck = (
     toCover: Card[],
     toCoverIndex: number,
     defenseMap: Map<Card, Card[]>,
     handCopy: Card[],
-): Map<Card, Card> | false => {
+): Map<Map<Card, Card>, number> => {
+    const indent = '  '.repeat(toCoverIndex);
     console.log(
-        '\t'.repeat(toCoverIndex) +
-        'looking for defenses for ' +
-        cardDisplay(toCover[toCoverIndex]),
+        indent + 
+        `Looking for defenses for ${cardDisplay(toCover[toCoverIndex])}`,
     );
     const key = toCover[toCoverIndex];
     const defCards = defenseMap.get(key)!;
+    const allSolutions = new Map<Map<Card, Card>, number>();
+    
     for (let i = 0; i < defCards.length; i++) {
         const defCard = defCards[i];
+        const defCardScore = cardScore(defCard);
         console.log(
-            '\t'.repeat(toCoverIndex + 1) +
-            'seeing what happens if we choose ' +
-            cardDisplay(defCard),
+            indent + '  ' +
+            `Trying ${cardDisplay(defCard)} (score: ${defCardScore})`,
         );
         if (!handCopy.includes(defCard)) {
-            console.log('\t'.repeat(toCoverIndex+1) + 'already played');
+            console.log(indent + '    Already played');
             // already played previous
             continue;
         }
@@ -179,29 +187,38 @@ const recursiveCoverCheck = (
             // done base case
             const map = new Map<Card, Card>();
             map.set(key, defCard);
-            return map;
+            const score = cardScore(defCard);
+            console.log(indent + '    ' + `Found solution with score: ${score}`);
+            allSolutions.set(map, score);
         } else {
             // not done, recurse
             // first check continuing possibilities
-            const result = recursiveCoverCheck(
+            const subSolutions = recursiveCoverCheck(
                 toCover,
                 toCoverIndex + 1, // increment index
                 defenseMap,
                 handCopy.filter((c) => c !== defCard), // remove the card
             );
-            if (result === false) {
-                continue;
+            // Add all sub-solutions to our solutions
+            for (const [subMap, subScore] of subSolutions) {
+                const map = new Map<Card, Card>(subMap);
+                map.set(key, defCard);
+                const totalScore = subScore * cardScore(defCard);
+                console.log(indent + '    ' + `Found solution with total score: ${totalScore}`);
+                allSolutions.set(map, totalScore);
             }
-            // not false, we have a path
-            const map = new Map<Card, Card>(result);
-            map.set(key, defCard);
-            return map;
         }
     }
-    // went through entire list of possibilities and all were played
-    console.log('\t'.repeat(toCoverIndex) + 'can"t cover with remaining cards');
-    return false;
+    
+    if (allSolutions.size === 0) {
+        console.log(indent + 'Can\'t cover with remaining cards');
+    } else {
+        console.log(indent + `Found ${allSolutions.size} possible solution(s)`);
+    }
+    
+    return allSolutions;
 };
+
 const aiDefend = (): Move => {
     const defense = players[currentlyAttacked].hand;
     if (table.length === 0) throw new Error('idk');
@@ -281,29 +298,38 @@ const aiDefend = (): Move => {
     // Now try all combinations. Not optimal, but this will be done by users ideally so whatev
     // Slowest case scenario: 6 power cards in defense, all 6 cover all the attacks
     // 6*
-    // we need recursive method. let's go greedy for now
+    // we need recursive method. find all solutions and pick the best one
     const cardsToCover = Array.from(possibleDefenses.keys());
     const handCopy = [...defense];
-    const chosenDefenses: Map<Card, Card> | false = recursiveCoverCheck(
+    const allSolutions: Map<Map<Card, Card>, number> = recursiveCoverCheck(
         cardsToCover,
         0,
         possibleDefenses,
         handCopy,
     );
-    if (chosenDefenses === false) {
+    if (allSolutions.size === 0) {
         console.log('no cover combintation ');
         return {
             player: players[currentlyAttacked].name,
             type: 'pickup',
         };
     }
+    // find the solution with the lowest score
+    let bestCoverMap: Map<Card, Card> | null = null;
+    let bestScore = Infinity;
+    for (const [coverMap, score] of allSolutions) {
+        if (score < bestScore) {
+            bestScore = score;
+            bestCoverMap = coverMap;
+        }
+    }
     // there is a way forward
-    console.log('chosen defense');
-    console.log(chosenDefenses);
+    console.log('chosen defense with score', bestScore);
+    console.log(bestCoverMap);
     return {
         player: players[currentlyAttacked].name,
         type: 'cover',
-        coverMap: chosenDefenses,
+        coverMap: bestCoverMap!,
     };
 };
 const draw = (): Card | null => {
