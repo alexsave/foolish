@@ -2,22 +2,8 @@
 let startTime = performance.now();
 // The engine of fools
 // I had a whole paper on this but let's just get started
-const DISPLAY_MAP = [
-    null, //0
-    '2', //1
-    '3', //2
-    '4', //3
-    '5', //4
-    '6', //5
-    '7', //6
-    '8', //7
-    '9', //8
-    '10', //9
-    'J', //10
-    'Q', //11
-    'K', //12
-    'A', //13
-];
+
+// Interfaces
 interface Card {
     suit: number;
     value: number;
@@ -39,21 +25,44 @@ interface Move {
     type: 'pass' | 'throw' | 'pickup' | 'cover' | 'success';
     player: string;
     card?: Card;
-    coverMap?: CardMap;
+    coverMap?: Map<Card, Card>;
 }
 interface Battle {
     attack: Card;
     defense: Card | null;
 }
+
+// Constants
 const CARDS_PER_PLAYER = 6;
 const [SPADES, HEARTS, CLUBS, DIAMONDS] = [0, 1, 2, 3];
 const SUITS = [SPADES, HEARTS, CLUBS, DIAMONDS];
+const SUIT_MAP = ['Spades', 'Hearts', 'Clubs', 'Diamonds'];
+const VALUE_MAP = [
+    null, //0
+    '2', //1
+    '3', //2
+    '4', //3
+    '5', //4
+    '6', //5
+    '7', //6
+    '8', //7
+    '9', //8
+    '10', //9
+    'J', //10
+    'Q', //11
+    'K', //12
+    'A', //13
+];
 const CARDS_PER_SUIT = 9;
 const START_VALUE = 5;
 const ACE_VALUE = 13;
 const PLAYER_COUNT = 5;
+
+// State
 let deck: Card[] = [];
 let players: Player[] = [];
+
+// Functions
 let currentSeed = 4 + 20;
 // Constants for the LCG algorithm (often chosen to be prime numbers)
 const a = 1664525;
@@ -97,7 +106,7 @@ const chooseAttack = () => {
     table.push({ attack: cardChoice, defense: null });
     tableValues.add(cardChoice.value);
     console.log(
-        `Player ${players[firstAttacker].name} attacks ${players[currentlyAttacked].name} with a ${JSON.stringify(cardChoice)}`,
+        `Player ${players[firstAttacker].name} attacks ${players[currentlyAttacked].name} with a ${cardDisplay(cardChoice)}`,
     );
     if (hand.length === 0 && deck.length === 0) {
         console.log(`Player ${players[firstAttacker].name} leaves the game`);
@@ -111,7 +120,7 @@ const allowAttacks = () => {
             continue;
         }
         const pHand = players[p].hand;
-        const requestedAttacks = [];
+        const requestedAttacks: Card[] = [];
         for (let j = 0; j < pHand.length; j++) {
             if (tableValues.has(pHand[j].value)) {
                 requestedAttacks.push(pHand[j]);
@@ -129,7 +138,7 @@ const allowAttacks = () => {
             pHand.splice(pHand.indexOf(card), 1);
             table.push({ attack: card, defense: null });
             console.log(
-                `Player ${players[p].name} attacks ${players[currentlyAttacked].name} with a ${JSON.stringify(card)}`,
+                `Player ${players[p].name} attacks ${players[currentlyAttacked].name} with a ${cardDisplay(card)}`,
             );
             // Players can win here
             if (pHand.length === 0 && deck.length === 0) {
@@ -141,33 +150,36 @@ const allowAttacks = () => {
 };
 // now defend
 const recursiveCoverCheck = (
-    toCover: string[],
+    toCover: Card[],
     toCoverIndex: number,
-    defenseMap: CardListMapping,
+    defenseMap: Map<Card, Card[]>,
     handCopy: Card[],
-): CardMap | false => {
+): Map<Card, Card> | false => {
     console.log(
         '\t'.repeat(toCoverIndex) +
         'looking for defenses for ' +
-        toCover[toCoverIndex],
+        cardDisplay(toCover[toCoverIndex]),
     );
     const key = toCover[toCoverIndex];
-    for (let i = 0; i < defenseMap[key].length; i++) {
-        const defCard = defenseMap[key][i];
+    const defCards = defenseMap.get(key)!;
+    for (let i = 0; i < defCards.length; i++) {
+        const defCard = defCards[i];
         console.log(
             '\t'.repeat(toCoverIndex + 1) +
-            'seeing what happens if we choose' +
-            JSON.stringify(defCard),
+            'seeing what happens if we choose ' +
+            cardDisplay(defCard),
         );
         if (!handCopy.includes(defCard)) {
-            console.log('\t'.repeat(toCoverIndex) + 'already played');
+            console.log('\t'.repeat(toCoverIndex+1) + 'already played');
             // already played previous
             continue;
         }
         // not chosen yet, we can play this one
         if (toCoverIndex === toCover.length - 1) {
             // done base case
-            return { [key]: defCard };
+            const map = new Map<Card, Card>();
+            map.set(key, defCard);
+            return map;
         } else {
             // not done, recurse
             // first check continuing possibilities
@@ -181,7 +193,9 @@ const recursiveCoverCheck = (
                 continue;
             }
             // not false, we have a path
-            return { ...result, [key]: defCard };
+            const map = new Map<Card, Card>(result);
+            map.set(key, defCard);
+            return map;
         }
     }
     // went through entire list of possibilities and all were played
@@ -206,10 +220,19 @@ const aiDefend = (): Move => {
     const passable = table.every(
         (battle) => battle.defense === null && battle.attack.value === passValue,
     );
-    if (passable) {
+
+    // also we need the next player to have enough cards to cover
+    // find next target
+    let nextTarget = (currentlyAttacked + 1) % PLAYER_COUNT;
+    while (players[nextTarget].status === 'out') {
+        nextTarget = (nextTarget + 1) % PLAYER_COUNT;
+    }
+    const nextHasCapacity = players[nextTarget].hand.length >= table.length + 1;
+
+    if (passable && nextHasCapacity) {
         for (let i = 0; i < defense.length; i++) {
             if (defense[i].value === passValue) {
-                console.log('pass chosen with ' + JSON.stringify(defense[i]));
+                console.log('pass chosen with ' + cardDisplay(defense[i]));
                 return {
                     player: players[currentlyAttacked].name,
                     type: 'pass',
@@ -223,25 +246,26 @@ const aiDefend = (): Move => {
     //uhhh
     // get all cards in the hand that CAN defend, and try all combinations of thoes
     // ohhh better yet make a mapping of attack card -> possible defensees
-    const possibleDefenses: CardListMapping = {};
+
+    const possibleDefenses = new Map<Card, Card[]>();
     for (let i = 0; i < table.length; i++) {
         if (table[i].defense != null) {
             continue;
         }
         const attack = table[i].attack;
         // dumb but oh well
-        possibleDefenses[JSON.stringify(attack)] = [];
+        possibleDefenses.set(attack, []);
         for (let j = 0; j < defense.length; j++) {
             const defCard = defense[j];
             if (canCover(attack, defCard)) {
-                possibleDefenses[JSON.stringify(attack)].push(defCard);
+                possibleDefenses.get(attack)!.push(defCard);
             }
         }
         // A card can't be covered, just pick up
-        if (possibleDefenses[JSON.stringify(attack)].length === 0) {
+        if (possibleDefenses.get(attack)!.length === 0) {
             console.log(
                 'card can"t be covered, choosing pickup bc of ' +
-                JSON.stringify(attack),
+                cardDisplay(attack),
             );
             return {
                 player: players[currentlyAttacked].name,
@@ -250,7 +274,7 @@ const aiDefend = (): Move => {
         }
     }
     console.log('after thinking, here are possible defenses');
-    console.log(JSON.stringify(possibleDefenses));
+    console.log(possibleDefenses);
     // At this point we know that every card can be covered. Not necessarily all at once though
     // Basic strategy: always cover at any cost.
     // We now have something like {'A of Spades': [card, card], 'K of spades': [card]}
@@ -258,9 +282,9 @@ const aiDefend = (): Move => {
     // Slowest case scenario: 6 power cards in defense, all 6 cover all the attacks
     // 6*
     // we need recursive method. let's go greedy for now
-    const cardsToCover = Object.keys(possibleDefenses);
+    const cardsToCover = Array.from(possibleDefenses.keys());
     const handCopy = [...defense];
-    const chosenDefenses: CardMap | false = recursiveCoverCheck(
+    const chosenDefenses: Map<Card, Card> | false = recursiveCoverCheck(
         cardsToCover,
         0,
         possibleDefenses,
@@ -275,7 +299,7 @@ const aiDefend = (): Move => {
     }
     // there is a way forward
     console.log('chosen defense');
-    console.log(JSON.stringify(chosenDefenses));
+    console.log(chosenDefenses);
     return {
         player: players[currentlyAttacked].name,
         type: 'cover',
@@ -298,7 +322,7 @@ const draw = (): Card | null => {
 };
 const refill = () => {
     // most importantly, check if currently Attacked cleared their hand
-    let defenseHand = players[currentlyAttacked].hand;
+    let defenseHand = players[previousCurrentlyAttacked].hand;
     if (defenseHand.length === 0) {
         // they draw first
         while (defenseHand.length < CARDS_PER_PLAYER) {
@@ -308,13 +332,13 @@ const refill = () => {
                 return;
             }
             console.log(
-                `Player ${players[currentlyAttacked].name} draws ${JSON.stringify(c)}`,
+                `Player ${players[previousCurrentlyAttacked].name} draws ${cardDisplay(c)}`,
             );
             defenseHand.push(c);
         }
     }
     // Then go around starting from firstAttacker
-    let pIndex = firstAttacker;
+    let pIndex = previousFirstAttacker;
     do {
         const hand = players[pIndex].hand;
         while (hand.length < CARDS_PER_PLAYER) {
@@ -323,11 +347,11 @@ const refill = () => {
                 console.log('Deck ran out');
                 return;
             }
-            console.log(`Player ${players[pIndex].name} draws ${JSON.stringify(c)}`);
+            console.log(`Player ${players[pIndex].name} draws ${cardDisplay(c)}`);
             hand.push(c);
         }
         pIndex = (pIndex + 1) % PLAYER_COUNT;
-    } while (pIndex !== firstAttacker);
+    } while (pIndex !== previousFirstAttacker);
 };
 // true= continue same battle (cover), false = new battle
 const handleChoice = (choice: Move): boolean => {
@@ -335,11 +359,16 @@ const handleChoice = (choice: Move): boolean => {
         console.log(
             `Player ${players[currentlyAttacked].name} successfully covered`,
         );
+
+        previousFirstAttacker = firstAttacker;
+        previousCurrentlyAttacked = currentlyAttacked;
         // Send table to garbage (delete for good)
         firstAttacker = currentlyAttacked % PLAYER_COUNT;
+        console.log(`firstAttacker changed to: ${players[firstAttacker].name}`);
         // quick check
         while (players[firstAttacker].status === 'out') {
             firstAttacker = (firstAttacker + 1) % PLAYER_COUNT;
+        console.log(`firstAttacker changed to: ${players[firstAttacker].name}`);
         }
         currentlyAttacked = (firstAttacker + 1) % PLAYER_COUNT;
         while (players[currentlyAttacked].status === 'out') {
@@ -357,30 +386,28 @@ const handleChoice = (choice: Move): boolean => {
             nextAttacked = (nextAttacked + 1) % PLAYER_COUNT;
         }
         console.log(
-            `Player ${players[currentlyAttacked].name} passes to ${players[nextAttacked].name} with ${JSON.stringify(attackCard)}`,
+            `Player ${players[currentlyAttacked].name} passes to ${players[nextAttacked].name} with ${cardDisplay(attackCard)}`,
         );
         // move attacker
+
         currentlyAttacked = nextAttacked;
         // but continue attack
         return true;
-    } else if (choice.type === 'cover') {
+    } else if (choice.type === 'cover' && choice.coverMap) {
         let defenseHand = players[currentlyAttacked].hand;
-        for (const att in choice.coverMap) {
-            if (!choice.coverMap.hasOwnProperty(att)) continue;
-            const def = choice.coverMap[att];
+        for (const [att, def] of choice.coverMap) {
             console.log(
-                `Player ${players[currentlyAttacked].name} puts ${JSON.stringify(def)} on ${att}`,
+                `Player ${players[currentlyAttacked].name} puts a ${cardDisplay(def)} on ${cardDisplay(att)}`,
             );
             defenseHand.splice(defenseHand.indexOf(def), 1);
             const tIndex = table.findIndex(
-                (battle) => JSON.stringify(battle.attack) === att,
+                (battle) => battle.attack === att,
             );
             if (tIndex !== -1) {
                 table[tIndex].defense = def;
             }
             //table.push({attack: cardChoice, defense: null});
             tableValues.add(def.value);
-            //console.log('defense' + JSON.stringify(defenseHand));
         }
         // this could win for defender
         if (defenseHand.length === 0 && deck.length === 0) {
@@ -395,20 +422,24 @@ const handleChoice = (choice: Move): boolean => {
             const battle = table[i];
             defenseHand.push(battle.attack);
             console.log(
-                `Player ${players[currentlyAttacked].name} picks up ${JSON.stringify(battle.attack)}`,
+                `Player ${players[currentlyAttacked].name} picks up ${cardDisplay(battle.attack)}`,
             );
             if (battle.defense) {
                 console.log(
-                    `Player ${players[currentlyAttacked].name} picks up ${JSON.stringify(battle.defense)}`,
+                    `Player ${players[currentlyAttacked].name} picks up ${cardDisplay(battle.defense)}`,
                 );
                 defenseHand.push(battle.defense);
             }
         }
+        previousFirstAttacker = firstAttacker;
+        previousCurrentlyAttacked = currentlyAttacked;
         // increment
         firstAttacker = (currentlyAttacked + 1) % PLAYER_COUNT;
+        console.log(`firstAttacker changed to: ${players[firstAttacker].name}`);
         // quick check
         while (players[firstAttacker].status === 'out') {
             firstAttacker = (firstAttacker + 1) % PLAYER_COUNT;
+        console.log(`firstAttacker changed to: ${players[firstAttacker].name}`);
         }
         currentlyAttacked = (firstAttacker + 1) % PLAYER_COUNT;
         while (players[currentlyAttacked].status === 'out') {
@@ -423,7 +454,7 @@ for (let j = 0; j < SUITS.length; j++) {
         deck.push({ suit: SUITS[j], value: i });
     }
 }
-// Deal. Probalby more effecient to generate all cards than randomly take from it
+// Deal. Probalby more effecient to generate all cards than randomly take from it, but this is more secure
 for (let i = 0; i < PLAYER_COUNT; i++) {
     players.push({
         name: Math.floor(seededRand() * 0xffff).toString(16),
@@ -431,16 +462,24 @@ for (let i = 0; i < PLAYER_COUNT; i++) {
         status: 'in',
     });
 }
+
+const cardDisplay = (card: Card) => `${VALUE_MAP[card.value]} of ${SUIT_MAP[card.suit]}`;
+
 for (let i = 0; i < CARDS_PER_PLAYER; i++) {
     for (let j = 0; j < PLAYER_COUNT; j++) {
-        const c = draw();
-        if (c !== null) players[j].hand.push(c);
+        const name = players[j].name;
+        const c = draw()!;
+        console.log(`Player ${name} draws ${cardDisplay(c)}`);
+        players[j].hand.push(c);
     }
 }
-console.log(JSON.stringify(players));
 // The flipped card
 let flipped = draw();
 const POWER_SUIT = flipped?.suit;
+
+console.log(`The flipped card is ${cardDisplay(flipped!)}`);
+console.log(`The power suit is set to ${SUIT_MAP[flipped!.suit]}`);
+
 // Whoever has lowest power
 // With 2 players it's possible no one has it. Also with 4.
 // With 5 it's guaranteed
@@ -471,14 +510,12 @@ for (let i = 0; i < PLAYER_COUNT; i++) {
 if (lowestPowerPlayer === -1) {
     lowestPowerPlayer = Math.floor(Math.random() * PLAYER_COUNT);
 }
-console.log('power suit is ' + POWER_SUIT);
-console.log(JSON.stringify(players[lowestPowerPlayer]));
 // Checkpoint
-const state = { players, deck, flipped };
-console.log(JSON.stringify(state).length);
 // Start with lowestPowerPlayer, go down the index
 let firstAttacker = lowestPowerPlayer;
 let currentlyAttacked = (lowestPowerPlayer + 1) % PLAYER_COUNT;
+let previousFirstAttacker = firstAttacker;
+let previousCurrentlyAttacked = currentlyAttacked;
 // true if a > b
 let table: Battle[] = [];
 let tableValues = new Set();
@@ -517,13 +554,13 @@ while (playersInGame > 1) {
 }
 
 
-    for (let i = 0; i < players.length; i++) {
-        if (players[i].status === 'in'){
+for (let i = 0; i < players.length; i++) {
+    if (players[i].status === 'in') {
 
-            console.log(`Player ${players[i].name} ends up the fool`);
-            break;
-        }
+        console.log(`Player ${players[i].name} ends up the fool`);
+        break;
     }
+}
 
 
 // Place card against currentlyAttacked
