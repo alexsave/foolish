@@ -53,10 +53,10 @@ const VALUE_MAP = [
     'K', //12
     'A', //13
 ];
-const CARDS_PER_SUIT = 9;
-const START_VALUE = 5;
 const ACE_VALUE = 13;
-const PLAYER_COUNT = 5;
+const CARDS_PER_SUIT = 13;
+const START_VALUE = ACE_VALUE - CARDS_PER_SUIT + 1;
+const PLAYER_COUNT = 7;
 
 // State
 let deck: Card[] = [];
@@ -73,6 +73,7 @@ const seededRand = () => {
     currentSeed = (a * currentSeed + c) % m;
     return currentSeed / m; // Normalize to a value between 0 (inclusive) and 1 (exclusive)
 };
+const cardDisplay = (card: Card) => `${VALUE_MAP[card.value]} of ${SUIT_MAP[card.suit]}`;
 const cardSorter = (a: Card, b: Card) => {
     if (a.suit === POWER_SUIT && b.suit !== POWER_SUIT) {
         return true;
@@ -475,6 +476,7 @@ const handleChoice = (choice: Move): boolean => {
         return false;
     }
 };
+
 for (let j = 0; j < SUITS.length; j++) {
     for (let i = START_VALUE; i <= ACE_VALUE; i++) {
         deck.push({ suit: SUITS[j], value: i });
@@ -488,8 +490,6 @@ for (let i = 0; i < PLAYER_COUNT; i++) {
         status: 'in',
     });
 }
-
-const cardDisplay = (card: Card) => `${VALUE_MAP[card.value]} of ${SUIT_MAP[card.suit]}`;
 
 for (let i = 0; i < CARDS_PER_PLAYER; i++) {
     for (let j = 0; j < PLAYER_COUNT; j++) {
@@ -587,6 +587,7 @@ for (let i = 0; i < players.length; i++) {
         break;
     }
 }
+
 
 
 // Place card against currentlyAttacked
