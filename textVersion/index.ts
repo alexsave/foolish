@@ -52,7 +52,6 @@ const CARDS_PER_SUIT = 9;
 const START_VALUE = 5;
 const ACE_VALUE = 13;
 const PLAYER_COUNT = 5;
-let playersInGame = PLAYER_COUNT; // will decrement
 let deck: Card[] = [];
 let players: Player[] = [];
 let currentSeed = 4 + 20;
@@ -485,7 +484,10 @@ let table: Battle[] = [];
 let tableValues = new Set();
 let choice;
 let continueBattle;
-for (let i = 0; i < 11; i++) {
+
+let playersInGame = PLAYER_COUNT;
+
+while (playersInGame > 1) {
     console.log('');
     console.log('//////////////////');
     chooseAttack();
@@ -502,8 +504,28 @@ for (let i = 0; i < 11; i++) {
     refill();
     table = [];
     tableValues = new Set();
+
+
+
+    playersInGame = 0;
+    for (let i = 0; i < players.length; i++) {
+        if (players[i].status === 'in')
+            playersInGame++;
+    }
+
     console.log('//////////////////');
 }
+
+
+    for (let i = 0; i < players.length; i++) {
+        if (players[i].status === 'in'){
+
+            console.log(`Player ${players[i].name} ends up the fool`);
+            break;
+        }
+    }
+
+
 // Place card against currentlyAttacked
 // Also this will be async ofc
 // carnage time
