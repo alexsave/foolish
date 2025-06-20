@@ -1,0 +1,26 @@
+{
+  "name": "foolish-network",
+  "version": "1.0.0",
+  "description": "Network layer for Foolish card game",
+  "main": "server.ts",
+  "scripts": {
+    "start:server": "ts-node server.ts",
+    "start:client": "ts-node client.ts",
+    "build": "tsc",
+    "dev:server": "ts-node-dev --respawn server.ts",
+    "dev:client": "ts-node-dev --respawn client.ts"
+  },
+  "dependencies": {
+    "ws": "^8.14.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.8.0",
+    "@types/ws": "^8.5.8",
+    "ts-node": "^10.9.1",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.2.2"
+  },
+  "keywords": ["websocket", "typescript", "card-game"],
+  "author": "",
+  "license": "ISC"
+} 
