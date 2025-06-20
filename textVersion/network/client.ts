@@ -66,7 +66,7 @@ ws.on('error', (error: Error) => {
 });
 
 function promptUser(): void {
-    rl.question(`${current_game_id ? `<${current_game_id}` : ''}> `, (input: string) => {
+    rl.question(`${current_game_id ? `G${current_game_id}` : ''}> `, (input: string) => {
         const args = input.split(' ');
 
         const command = args[0].toLowerCase();

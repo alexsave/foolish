@@ -4,14 +4,15 @@ let startTime = performance.now();
 // I had a whole paper on this but let's just get started
 
 // Interfaces
-interface Card {
+export interface Card {
     suit: number;
     value: number;
 }
 interface Player {
+    id: string;
     name: string;
     hand: Card[];
-    status: 'in' | 'out';
+    status: 'idle' | 'ready' | 'in' | 'out';
 }
 interface CardListMapping {
     [key: string]: Card[];
@@ -74,7 +75,7 @@ const seededRand = () => {
     currentSeed = (a * currentSeed + c) % m;
     return currentSeed / m; // Normalize to a value between 0 (inclusive) and 1 (exclusive)
 };
-const cardDisplay = (card: Card) => `${VALUE_MAP[card.value]} of ${SUIT_MAP[card.suit]}`;
+export const cardDisplay = (card: Card) => `${VALUE_MAP[card.value]} of ${SUIT_MAP[card.suit]}`;
 
 
 
@@ -359,18 +360,32 @@ const aiDefend = (): Move => {
         coverMap: bestCoverMap!,
     };
 };
-const draw = (): Card | null => {
-    if (deck.length === 0) {
-        if (flipped === null) {
+
+export interface Game {
+    deck: Card[];
+    flipped: Card | null;
+    players: Player[];
+    status: 'waiting' | 'playing' | 'first_attacker';
+    powerSuit: number;
+    firstAttacker: number;
+    currentlyAttacked: number;
+    previousFirstAttacker: number;
+    previousCurrentlyAttacked: number;
+    table: Battle[];
+}
+
+export const draw = (game: Game): Card | null => {
+    if (game.deck.length === 0) {
+        if (game.flipped === null) {
             return null;
         }
-        const copy: Card = flipped;
-        flipped = null;
+        const copy: Card = game.flipped;
+        game.flipped = null;
         return copy;
     }
     // Make this more secure
-    const index = Math.floor(seededRand() * deck.length);
-    const card = deck.splice(index, 1)[0];
+    const index = Math.floor(seededRand() * game.deck.length);
+    const card = game.deck.splice(index, 1)[0];
     return card;
 };
 const refill = () => {
@@ -379,7 +394,7 @@ const refill = () => {
     if (defenseHand.length === 0) {
         // they draw first
         while (defenseHand.length < CARDS_PER_PLAYER) {
-            const c = draw();
+            const c = draw(getGameState());
             if (c === null) {
                 console.log('Deck ran out');
                 return;
@@ -395,7 +410,7 @@ const refill = () => {
     do {
         const hand = players[pIndex].hand;
         while (hand.length < CARDS_PER_PLAYER) {
-            const c = draw();
+            const c = draw(getGameState());
             if (c === null) {
                 console.log('Deck ran out');
                 return;
@@ -514,38 +529,51 @@ let tableValues: Set<number> = new Set();
 let gameDone: boolean = false;
 let attackCount: number = 0;
 
-
-const game = () => {
-
-    for (let j = 0; j < SUITS.length; j++) {
-        for (let i = START_VALUE; i <= ACE_VALUE; i++) {
-            deck.push({ suit: SUITS[j], value: i });
+// Server-used methods
+export const refill_deck = (): Card[] => {
+    const deck: Card[] = [];
+    for (let i = 0; i < SUITS.length; i++) {
+        for (let j = START_VALUE; j <= ACE_VALUE; j++) {
+            deck.push({ suit: SUITS[i], value: j });
         }
     }
-    // Deal. Probalby more effecient to generate all cards than randomly take from it, but this is more secure
-    for (let i = 0; i < PLAYER_COUNT; i++) {
-        players.push({
-            name: NAMES[i],
-            hand: [],
-            status: 'in',
-        });
-    }
+    return deck;
+}
 
+export const initialize_hands = (game: Game): Card[][] => {
+    
+    const result: Card[][] = [];
+    for (let j = 0; j < game.players.length; j++) {
+        result.push([]);
+    }
     for (let i = 0; i < CARDS_PER_PLAYER; i++) {
-        for (let j = 0; j < PLAYER_COUNT; j++) {
-            const name = players[j].name;
-            const c = draw()!;
-            console.log(`Player ${name} draws ${cardDisplay(c)}`);
-            players[j].hand.push(c);
+        result.push([]);
+        for (let j = 0; j < game.players.length; j++) {
+            //const name = result[j].name;
+            const c = draw(game)!;
+            //console.log(`Player ${name} draws ${cardDisplay(c)}`);
+            result[j].push(c);
         }
     }
-    // The flipped card
-    flipped = draw();
-    powerSuit = flipped!.suit;
+    return result;
+}
 
-    console.log(`The flipped card is ${cardDisplay(flipped!)}`);
-    console.log(`The power suit is set to ${SUIT_MAP[flipped!.suit]}`);
+const getGameState = (): Game => {
+    return {
+        deck: deck,
+        flipped: flipped,
+        players: players,
+        status: 'playing',
+        powerSuit: powerSuit,
+        firstAttacker: firstAttacker,
+        currentlyAttacked: currentlyAttacked,
+        previousFirstAttacker: previousFirstAttacker,
+        previousCurrentlyAttacked: previousCurrentlyAttacked,
+        table: table
+    }
+}
 
+export const determine_lowest_power_index = (game: Game): number => {
     // Whoever has lowest power
     // With 2 players it's possible no one has it. Also with 4.
     // With 5 it's guaranteed
@@ -561,11 +589,11 @@ const game = () => {
     // Because
     let lowestPowerValue = ACE_VALUE + 1;
     let lowestPowerPlayer = -1;
-    for (let i = 0; i < PLAYER_COUNT; i++) {
-        let hand = players[i].hand;
+    for (let i = 0; i < game.players.length; i++) {
+        let hand = game.players[i].hand;
         for (let j = 0; j < hand.length; j++) {
             let card = hand[j];
-            if (card.suit === powerSuit) {
+            if (card.suit === game.powerSuit) {
                 if (card.value < lowestPowerValue) {
                     lowestPowerValue = card.value;
                     lowestPowerPlayer = i;
@@ -574,14 +602,53 @@ const game = () => {
         }
     }
     if (lowestPowerPlayer === -1) {
-        lowestPowerPlayer = Math.floor(Math.random() * PLAYER_COUNT);
+        lowestPowerPlayer = Math.floor(Math.random() * game.players.length);
     }
+    return lowestPowerPlayer;
+}
+
+export const set_positions = (game: Game) => {
+    game.firstAttacker = game.firstAttacker;
+    game.currentlyAttacked = (game.firstAttacker + 1) % game.players.length;
+    game.previousFirstAttacker = game.firstAttacker;
+    game.previousCurrentlyAttacked = game.currentlyAttacked;
+}
+
+const game = () => {
+    deck = refill_deck();
+
+    // Deal. Probalby more effecient to generate all cards than randomly take from it, but this is more secure
+    for (let i = 0; i < PLAYER_COUNT; i++) {
+        players.push({
+            id: 'idk',
+            name: NAMES[i],
+            hand: [],
+            status: 'in',
+        });
+    }
+
+    const hands = initialize_hands(
+        getGameState()
+    );
+    for (let i = 0; i < PLAYER_COUNT; i++) {
+        players[i].hand = hands[i];
+    }
+
+    // The flipped card
+    flipped = draw(getGameState());
+    powerSuit = flipped!.suit;
+
+    console.log(`The flipped card is ${cardDisplay(flipped!)}`);
+    console.log(`The power suit is set to ${SUIT_MAP[flipped!.suit]}`);
+
     // Checkpoint
     // Start with lowestPowerPlayer, go down the index
+    let lowestPowerPlayer = determine_lowest_power_index(getGameState());
     firstAttacker = lowestPowerPlayer;
-    currentlyAttacked = (lowestPowerPlayer + 1) % PLAYER_COUNT;
-    previousFirstAttacker = firstAttacker;
-    previousCurrentlyAttacked = currentlyAttacked;
+    set_positions(getGameState());
+    //currentlyAttacked = (lowestPowerPlayer + 1) % PLAYER_COUNT;
+    //previousFirstAttacker = firstAttacker;
+    //previousCurrentlyAttacked = currentlyAttacked;
     // true if a > b
     table = [];
     tableValues = new Set();
@@ -622,7 +689,7 @@ const game = () => {
             if (players[i].status === 'in')
                 playersInGame++;
         }
-        
+
 
         console.log('//////////////////');
         attackCount++;
@@ -632,7 +699,7 @@ const game = () => {
 }
 
 const fools = new Map<string, number>();
-for (let i = 0; i < 1000; i++) {
+for (let i = 0; i < 0; i++) {
     game();
     for (let i = 0; i < players.length; i++) {
         if (players[i].status === 'in') {
