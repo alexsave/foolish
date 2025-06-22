@@ -1,5 +1,6 @@
 import WebSocket from 'ws';
 import * as readline from 'readline';
+import { Card } from './index';
 
 interface Message {
     type: string;
@@ -65,8 +66,41 @@ ws.on('error', (error: Error) => {
     rl.close();
 });
 
+function parse_card(card: string): Card {
+    const value: string = card.slice(0, 1);
+    const suit : string= card.slice(1);
+    // 'SHCD'
+    const suit_map = {
+        'S': 0,
+        'H': 1,
+        'C': 2,
+        'D': 3
+    }
+
+    const value_map = {
+        '2': 1,
+        '3': 2,
+        '4': 3,
+        '5': 4,
+        '6': 5,
+        '7': 6,
+        '8': 7,
+        '9': 8,
+        'T': 9,
+        'J': 10,
+        'Q': 11,
+        'K': 12,
+        'A': 13,
+    }
+
+    return { 
+        value: value_map[value as keyof typeof value_map], 
+        suit: suit_map[suit as keyof typeof suit_map] 
+    };
+}
+
 function promptUser(): void {
-    rl.question(`${current_game_id ? `G${current_game_id}` : ''}> `, (input: string) => {
+    rl.question(`${current_game_id ? `Table-${current_game_id}` : ''}> `, (input: string) => {
         const args = input.split(' ');
 
         const command = args[0].toLowerCase();
@@ -79,8 +113,25 @@ function promptUser(): void {
         }
 
         if (ws.readyState === WebSocket.OPEN) {
+
+            if (command === 'attack') {
+                // not ideal, best to just let them type the card name
+                if (args.length < 2) {
+                    console.log('Please provide a card(s) value. Ex. King of Hearts -> KH, 7 of Clubs -> 7C');
+                } else {
+
+                    // take all but the first argument
+                    const cards = args.slice(1).map(parse_card);
+
+                    // maybe do some client side validation here to save on server use
+                    ws.send(JSON.stringify({
+                        type: 'attack',
+                        cards: cards,
+                        game_id: current_game_id
+                    }))
+                }
             // Login first. we'll keep it simple as it's local
-            if (command === 'login') {
+            } else if (command === 'login') {
                 if (args.length < 2) {
                     console.log('Please provide a player name');
                     //return;
@@ -115,8 +166,19 @@ function promptUser(): void {
                         game_id: current_game_id,
                     }))
                 }
-                // The rest are purely local client side, for viewing games and entering them
+            } else if (command === 'status') {
+                if (current_game_id === null) {
+                    console.log('Please enter a game first');
+                } else {
+                    // request status from server
+                    ws.send(JSON.stringify({
+                        type: 'status',
+                        game_id: current_game_id,
+                    }))
+                }
+
             } else if (command === 'list') {
+                // The rest are purely local client side, for viewing games and entering them
                 console.log('Games:');
                 games.forEach(game_id => {
                     console.log(`- ${game_id}`);

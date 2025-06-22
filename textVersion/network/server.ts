@@ -98,13 +98,51 @@ wss.on('connection', (ws: WebSocket) => {
             // const message: Message = JSON.parse(data.toString());
             console.log('Received from client:', message);
 
-            if (message.type === 'play_attack') {
+            if (message.type === 'status') {
                 const game_id = message.game_id!;
                 if (!games[game_id]) {
                     ws.send(JSON.stringify({
                         type: 'game_not_found',
                         message: `Game ${game_id} not found`
                     }));
+                    return;
+                }
+                const game = games[game_id];
+                // check if player is in game
+                if (!game.players.find(player => player.id === player_id)) {
+                    ws.send(JSON.stringify({
+                        type: 'player_not_in_game',
+                        message: `Player ${player_id} is not in game ${game_id}`
+                    }));
+                    return;
+                }
+                // send status to player, but only what they can see. So everything except other peoples hands
+                // this will eventually need to be a JSON object so we can render it
+                let status: string = `Game ${game_id} status\n`;
+                status += `Game status: ${game.status}\n`;
+                status += `Players: ${game.players.map(player => `${player.name} (${player.id}): ${player.status} with ${player.hand.length} cards`).join(', ')}\n`;
+                status += `First attacker: ${game.players[game.firstAttacker].name}\n`;
+                status += `Currently attacked: ${game.players[game.currentlyAttacked].name}\n`;
+                status += `Table: ${game.table.map(battle => `${cardDisplay(battle.attack)} ${battle.defense ? 'covered by' + cardDisplay(battle.defense): 'not covered'}`).join(', ')}\n`;
+                status += `Deck: ${game.deck.length} cards remaining\n`;
+                status += `Flipped: ${game.flipped ? cardDisplay(game.flipped) : 'null'}\n`;
+                status += `My hand: ${game.players.find(player => player.id === player_id)?.hand.map(card => cardDisplay(card)).join(', ')}\n`;
+
+                ws.send(JSON.stringify({
+                    type: 'game_status',
+                    message: status,
+                    //game: game
+                }));
+                return;
+
+            } else if (message.type === 'attack') {
+                const game_id = message.game_id!;
+                if (!games[game_id]) {
+                    ws.send(JSON.stringify({
+                        type: 'game_not_found',
+                        message: `Game ${game_id} not found`
+                    }));
+                    return;
                 }
 
                 // oh there's so much to verify here
@@ -136,15 +174,34 @@ wss.on('connection', (ws: WebSocket) => {
                     }
                     const mCards = message.cards!;
                     // check if every card is in hand
-                    if (!mCards.every(card => game.players[game.firstAttacker].hand.includes(card))) {
+                    console.log('before ' + JSON.stringify(game.players[game.firstAttacker].hand));
+                    console.log('mCards ' + JSON.stringify(mCards));
+                    if (!mCards.every(card => game.players[game.firstAttacker].hand.some(handCard => 
+                        handCard.suit === card.suit && handCard.value === card.value))) {
                         ws.send(JSON.stringify({
                             type: 'card_not_in_hand',
                             message: `Card ${mCards.map(card => cardDisplay(card)).join(', ')} is not in player ${player_id}'s hand`
                         }));
+                        return;
                     }
+
+                    // check if cards all have same value
+                    if (!mCards.every(card => card.value === mCards[0].value)) {
+                        ws.send(JSON.stringify({
+                            type: 'cards_not_same_value',
+                            message: `Cards ${mCards.map(card => cardDisplay(card)).join(', ')} are not all the same value`
+                        }));
+                        return;
+                    }
+
                     // Ok passed checks, we can put the cards on the table
                     // remove from hand, put on table
-                    game.players[game.firstAttacker].hand = game.players[game.firstAttacker].hand.filter(card => !mCards.includes(card));
+                    // this isn't working, need debug
+                    game.players[game.firstAttacker].hand = game.players[game.firstAttacker].hand.filter(card => 
+                        !mCards.some(mCard => mCard.suit === card.suit && mCard.value === card.value));
+                    console.log('after ' + JSON.stringify(game.players[game.firstAttacker].hand));
+                    console.log('mCards ' + JSON.stringify(mCards));
+
                     for (const card of mCards) {
                         game.table.push({
                             attack: card,
