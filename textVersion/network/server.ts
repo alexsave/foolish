@@ -373,7 +373,8 @@ wss.on('connection', (ws: WebSocket) => {
                 player.status = 'done_attacking';
 
                 // ok now we need to check if all players are done attacking
-                if (!game.players.some(player => player.status === 'in')) {
+                // dont count the defender
+                if (!game.players.some(player => player.status === 'in' && player.id !== game.players[game.currentlyAttacked].id)) {
                     // we are done attacking.
                     // this has to be after a successful cover. Otherwise we'd still be waiting on the defender
                     // shift

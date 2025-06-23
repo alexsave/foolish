@@ -130,6 +130,47 @@ function promptUser(): void {
                         game_id: current_game_id
                     }))
                 }
+            } else if (command === 'good') {
+                // simply means we are done attacking
+                ws.send(JSON.stringify({
+                    type: 'good',
+                    game_id: current_game_id
+                }))
+            } else if (command === 'cover') {
+                // simply means we are done covering
+                if (args.length < 2) {
+                    console.log('Please provide a card(s) value and the card it will cover in pairs. Ex. Ten of Clubs covers 7 of clubs -> TC 7C');
+                } else {
+                    const cards = args.slice(1).map(parse_card);
+                    // so evens will become cover array, odds will become attack array
+                    const cover_cards = cards.filter((_, index) => index % 2 === 0);
+                    const attack_cards = cards.filter((_, index) => index % 2 === 1);
+
+                    ws.send(JSON.stringify({
+                        type: 'cover',
+                        cards: cover_cards,
+                        attack_cards: attack_cards,
+                        game_id: current_game_id
+                    }))
+                }
+            } else if (command === 'pass') {
+                if (args.length < 2) {
+                    console.log('Please provide a card(s) value. Ex. King of Hearts -> KH, 7 of Clubs -> 7C');
+                } else {
+                    const cards = args.slice(1).map(parse_card);
+                    ws.send(JSON.stringify({
+                        type: 'pass',
+                        cards: cards,
+                        game_id: current_game_id
+                    }))
+                }
+            } else if (command === 'pickup') {
+                // simply means we are done picking up
+                ws.send(JSON.stringify({
+                    type: 'pickup',
+                    game_id: current_game_id
+                }))
+
             // Login first. we'll keep it simple as it's local
             } else if (command === 'login') {
                 if (args.length < 2) {
