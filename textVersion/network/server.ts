@@ -131,11 +131,13 @@ const refill = (game_id: string) => {
             hand.push(c);
             cards_drawn++;
         }
-        broadcast_to_game(game_id, {
-            type: 'player_refilled',
-            message: `Player ${game.players[pIndex].name} drew ${cards_drawn} cards`,
-            cards: hand
-        });
+        if (cards_drawn > 0) {
+            broadcast_to_game(game_id, {
+                type: 'player_refilled',
+                message: `Player ${game.players[pIndex].name} drew ${cards_drawn} cards`,
+                cards: hand
+            });
+        }
         pIndex = (pIndex + 1) % game.players.length;
     } while (pIndex !== game.firstAttacker && game.deck.length > 0);
 };
@@ -184,7 +186,7 @@ wss.on('connection', (ws: WebSocket) => {
                     return;
                 }
                 const game = games[game_id];
-                
+
                 if (game.status !== 'free_play' && game.status !== 'only_defend') {
                     ws.send(JSON.stringify({
                         type: 'game_not_in_free_play',
@@ -199,6 +201,7 @@ wss.on('connection', (ws: WebSocket) => {
                         type: 'player_not_defender',
                         message: `Player ${player_id} is not the defender, cannot cover`
                     }));
+                    return;
                 }
 
                 // ok now for the fun part
@@ -206,7 +209,7 @@ wss.on('connection', (ws: WebSocket) => {
                 // ok there's going to be 2 arrays of cards
                 // the first one is the cards that are being covered
                 // the second one is the cards that are being used to cover
-                
+
 
                 const cover_cards = message.cards!;
 
@@ -239,7 +242,7 @@ wss.on('connection', (ws: WebSocket) => {
                 for (let i = 0; i < cover_cards.length; i++) {
                     const cover_card = cover_cards[i];
                     const attack_card = attack_cards[i];
-                    if (!canCover(attack_card, cover_card)) {
+                    if (!canCover(attack_card, cover_card, game.powerSuit)) {
                         ws.send(JSON.stringify({
                             type: 'card_not_covered',
                             message: `Card ${cardDisplay(cover_card)} cannot cover ${cardDisplay(attack_card)}`
@@ -267,7 +270,7 @@ wss.on('connection', (ws: WebSocket) => {
                     });
                     // remove the cards from the hand
                     //game.players[game.currentlyAttacked].hand = game.players[game.currentlyAttacked].hand.filter(card => !card_comp(card, cover_card));
-                    
+
                 }
 
                 // remove the cards from the hand
@@ -295,49 +298,57 @@ wss.on('connection', (ws: WebSocket) => {
                     return;
                 }
 
-                // so in the real game, we would give it like 15seconds to let other people throw down cards.
-                // because this will be offline, we give them infinite time. 
-                // to proceed the next round, do we need all players to agree? but it should be done in secret to avoid revealing values
-                // Yeah I don't know how to make it not obvious that we're waiting for attackers because they have cards
-                // Oh well
-                game.status = 'wait_for_attackers';
+                // only do this if all table cards are covered but the defender has cards left
+                // we know they have cards left
+                const all_attacks_covered = game.table.every(battle => battle.defense !== null);
+                if (all_attacks_covered) {
 
-                // ok let's secretly see who can even play cards.
-                // pretty simple. Because they just covered, the only cards that can be played are values on teh table
-                const playable_values = new Set<number>();
-                for (const battle of game.table) {
-                    playable_values.add(battle.attack.value)
-                    if (battle.defense !== null) {
-                        playable_values.add(battle.defense.value);
+                    // so in the real game, we would give it like 15seconds to let other people throw down cards.
+                    // because this will be offline, we give them infinite time. 
+                    // to proceed the next round, do we need all players to agree? but it should be done in secret to avoid revealing values
+                    // Yeah I don't know how to make it not obvious that we're waiting for attackers because they have cards
+                    // Oh well
+                    game.status = 'wait_for_attackers';
+
+                    // ok let's secretly see who can even play cards.
+                    // pretty simple. Because they just covered, the only cards that can be played are values on teh table
+                    const playable_values = new Set<number>();
+                    for (const battle of game.table) {
+                        playable_values.add(battle.attack.value)
+                        if (battle.defense !== null) {
+                            playable_values.add(battle.defense.value);
+                        }
                     }
-                }
 
-                // now we need to see who can play cards
-                const playable_players = game.players.filter(player => player.hand.some(card => playable_values.has(card.value)));
-                if (playable_players.length === 0) {
-                    // no one can play cards
-                    // but don't make it that obvious. give it 30 seconds
-                    setTimeout(() => {
-                        //shift 
-                        game.firstAttacker = game.currentlyAttacked;
-                        game.currentlyAttacked = get_next_player_index(game, game.firstAttacker);
-                        game.status = 'first_attacker';
-                        broadcast_to_game(game_id, {
-                            type: 'player_successfully_covered',
-                            message: `Player ${player_id} successfully defended the attack`
+                    // now we need to see who can play cards. not the defender lol
+                    const playable_players = game.players.filter(player => player.id !== game.players[game.currentlyAttacked].id && player.hand.some(card => playable_values.has(card.value)));
+                    if (playable_players.length === 0) {
+                        // no one can play cards
+                        // but don't make it that obvious. give it 30 seconds
+                        setTimeout(() => {
+                            //shift 
+                            broadcast_to_game(game_id, {
+                                type: 'player_successfully_covered',
+                                message: `Player ${player_id} successfully defended the attack`
+                            });
+                            game.table = [];
+                            refill(game_id);
+                            game.firstAttacker = game.currentlyAttacked;
+                            game.currentlyAttacked = get_next_player_index(game, game.firstAttacker);
+                            game.status = 'first_attacker';
+                        }, 5000 + Math.random() * 20000);
+                    } else {
+                        // someone can play cards
+                        // so we need to see who can play cards
+                        playable_players.forEach(player => {
+                            // send them a message
+                            user_ports[player.id].send(JSON.stringify({
+                                type: 'playable_cards',
+                                message: `You can still play cards. Either play or confirm you are done attacking with "good"`
+                            }));
                         });
-                    }, 5000 + Math.random() * 20000);
-                } else {
-                    // someone can play cards
-                    // so we need to see who can play cards
-                    playable_players.forEach(player => {
-                        // send them a message
-                        user_ports[player.id].send(JSON.stringify({
-                            type: 'playable_cards',
-                            message: `You can play cards with values ${Array.from(playable_values).join(', ')}. Either play or confirm you are done attacking`
-                        }));
-                    });
-                    
+
+                    }
                 }
 
 
@@ -385,17 +396,21 @@ wss.on('connection', (ws: WebSocket) => {
                         }
                     });
 
-                    //shift 
-                    game.firstAttacker = game.currentlyAttacked;
-                    game.currentlyAttacked = get_next_player_index(game, game.firstAttacker);
-                    game.status = 'first_attacker';
                     broadcast_to_game(game_id, {
                         type: 'player_successfully_defended',
                         message: `Player ${player_id} successfully defended the attack`
                     });
+
+                    game.table = [];
+                    refill(game_id);
+
+                    //shift 
+                    game.firstAttacker = game.currentlyAttacked;
+                    game.currentlyAttacked = get_next_player_index(game, game.firstAttacker);
+                    game.status = 'first_attacker';
                     return;
                 }
-            } else if (message.type === 'pick_up') {
+            } else if (message.type === 'pickup') {
                 // pick up a card
                 const game_id = message.game_id!;
                 if (!games[game_id]) {
@@ -460,9 +475,7 @@ wss.on('connection', (ws: WebSocket) => {
                 // shift
                 game.firstAttacker = get_next_player_index(game, game.currentlyAttacked);
                 game.currentlyAttacked = get_next_player_index(game, game.firstAttacker);
-
-
-
+                game.status = 'first_attacker';
 
             } else if (message.type === 'pass') {
                 // pass
@@ -618,14 +631,16 @@ wss.on('connection', (ws: WebSocket) => {
                     }));
                     return;
                 }
+
+
                 // send status to player, but only what they can see. So everything except other peoples hands
                 // this will eventually need to be a JSON object so we can render it
                 let status: string = `Game ${game_id} status\n`;
                 status += `Game status: ${game.status}\n`;
-                status += `Players: ${game.players.map(player => `${player.name} (${player.id}): ${player.status} with ${player.hand.length} cards`).join(', ')}\n`;
+                status += `Players: ${game.players.map(player => `${player.name} (${player.id}): ${player.status === 'done_attacking' ? 'in' : player.status} with ${player.hand.length} cards`).join(', ')}\n`;
                 status += `First attacker: ${game.players[game.firstAttacker].name}\n`;
                 status += `Currently attacked: ${game.players[game.currentlyAttacked].name}\n`;
-                status += `Table: ${game.table.map(battle => `${cardDisplay(battle.attack)} ${battle.defense ? 'covered by' + cardDisplay(battle.defense) : 'not covered'}`).join(', ')}\n`;
+                status += `Table: ${game.table.map(battle => `${cardDisplay(battle.attack)} ${battle.defense ? 'covered by ' + cardDisplay(battle.defense) : 'not covered'}`).join(', ')}\n`;
                 status += `Deck: ${game.deck.length} cards remaining\n`;
                 status += `Flipped: ${game.flipped ? cardDisplay(game.flipped) : 'null'}\n`;
                 status += `My hand: ${game.players.find(player => player.id === player_id)?.hand.map(card => cardDisplay(card)).join(', ')}\n`;
@@ -749,7 +764,7 @@ wss.on('connection', (ws: WebSocket) => {
 
 
                     // check win later, becuase a "first attack" could win, putting the game into idle
-                } else if (game.status === 'free_play') {
+                } else if (game.status === 'free_play' || game.status === 'wait_for_attackers') {
                     // This is very similar to the above, we just don't check if they are the first attacker
                     // attack + free_play means you can do whatever
 
@@ -761,6 +776,13 @@ wss.on('connection', (ws: WebSocket) => {
                         }));
                         return;
                     }
+                    // a valid attack will move us out of wait_for_attackers
+                    game.players.forEach(player => {
+                        if (player.status === 'done_attacking') {
+                            player.status = 'in';
+                        }
+                    });
+                    game.status = 'free_play';
 
                     player.hand = player.hand.filter(card =>
                         !mCards.some(mCard => mCard.suit === card.suit && mCard.value === card.value));
@@ -878,6 +900,7 @@ wss.on('connection', (ws: WebSocket) => {
                     previousCurrentlyAttacked: 0,
                     table: []
                 }
+                player_games[player_id].push(game_id);
 
                 ws.send(JSON.stringify({
                     type: 'game_created',

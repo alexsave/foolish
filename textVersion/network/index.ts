@@ -90,7 +90,7 @@ const cardSorter = (a: Card, b: Card) => {
     }
 };
 
-export const canCover = (attack: Card, defense: Card) => {
+export const canCover = (attack: Card, defense: Card, powerSuit: number) => {
     if (defense.suit !== attack.suit) {
         // only different suit scenario that works
         return defense.suit === powerSuit && attack.suit !== powerSuit;
@@ -294,7 +294,7 @@ const aiDefend = (): Move => {
         possibleDefenses.set(attack, []);
         for (let j = 0; j < defense.length; j++) {
             const defCard = defense[j];
-            if (canCover(attack, defCard)) {
+            if (canCover(attack, defCard, powerSuit)) {
                 possibleDefenses.get(attack)!.push(defCard);
             }
         }
