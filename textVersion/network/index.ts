@@ -12,7 +12,8 @@ interface Player {
     id: string;
     name: string;
     hand: Card[];
-    status: 'idle' | 'ready' | 'in' | 'out';
+    // TODO IMPORTANT: when we get status, we need to map done_attacking to in to avoid revealing values
+    status: 'idle' | 'ready' | 'in' | 'done_attacking' |'out';
 }
 interface CardListMapping {
     [key: string]: Card[];
@@ -34,7 +35,7 @@ interface Battle {
 }
 
 // Constants
-const CARDS_PER_PLAYER = 6;
+export const CARDS_PER_PLAYER = 6;
 const [SPADES, HEARTS, CLUBS, DIAMONDS] = [0, 1, 2, 3];
 const SUITS = [SPADES, HEARTS, CLUBS, DIAMONDS];
 const SUIT_MAP = ['Spades', 'Hearts', 'Clubs', 'Diamonds'];
@@ -88,13 +89,15 @@ const cardSorter = (a: Card, b: Card) => {
         return a.value > b.value;
     }
 };
-const canCover = (attack: Card, defense: Card) => {
+
+export const canCover = (attack: Card, defense: Card) => {
     if (defense.suit !== attack.suit) {
         // only different suit scenario that works
         return defense.suit === powerSuit && attack.suit !== powerSuit;
     }
     return defense.value > attack.value;
 };
+
 const chooseAttack = () => {
     // "AI"
     let hand = players[firstAttacker].hand;
@@ -361,11 +364,17 @@ const aiDefend = (): Move => {
     };
 };
 
+
+// at the start of a "battle", only the first attacker can attack
+// then anything can happen
+// then once a certain amount of cards are on the table, the defender can only defend, no one else can do anything
+// first attackers is when every card on the table is covered, but we need confirmation from attackers to continue
+
 export interface Game {
     deck: Card[];
     flipped: Card | null;
     players: Player[];
-    status: 'waiting' | 'playing' | 'first_attacker';
+    status: 'waiting' | 'playing' | 'first_attacker' | 'free_play' | 'only_defend' | 'wait_for_attackers';
     powerSuit: number;
     firstAttacker: number;
     currentlyAttacked: number;
@@ -388,6 +397,7 @@ export const draw = (game: Game): Card | null => {
     const card = game.deck.splice(index, 1)[0];
     return card;
 };
+
 const refill = () => {
     // most importantly, check if currently Attacked cleared their hand
     let defenseHand = players[previousCurrentlyAttacked].hand;
@@ -421,6 +431,7 @@ const refill = () => {
         pIndex = (pIndex + 1) % PLAYER_COUNT;
     } while (pIndex !== previousFirstAttacker);
 };
+
 // true= continue same battle (cover), false = new battle
 const handleChoice = (choice: Move): boolean => {
     if (choice.type === 'success') {
