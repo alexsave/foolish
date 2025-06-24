@@ -113,7 +113,10 @@ const check_win = (game_id: string) => {
         // set all players to idle
         game.players.forEach(player => {
             player.status = 'idle';
+            player.hand = [];
         });
+        game.table = [];
+        game.deck = refill_deck();
     }
 }
 
@@ -175,7 +178,7 @@ const refill = (game_id: string) => {
                 message: `Player ${game.players[pIndex].name} drew ${cards_drawn} cards`,
                 cards: hand
             });
-        } else if (cards_drawn === 0){
+        } else if (cards_drawn === 0 && game.players[pIndex].hand.length === 0) {
             // no cards were drawn, but if they were still "in", this is where they win
             if (game.players[pIndex].status === 'in') {
                 broadcast_to_game(game_id, {
@@ -435,7 +438,8 @@ wss.on('connection', (ws: WebSocket) => {
 
                 // ok now we need to check if all players are done attacking
                 // dont count the defender
-                const playable_players = game.players.filter(player => player.id !== game.players[game.currentlyAttacked].id && player.hand.some(card => card.value === game.flipped!.value));
+                // the status check is critical
+                const playable_players = game.players.filter(player => player.id !== game.players[game.currentlyAttacked].id && player.hand.some(card => card.value === game.flipped!.value) && player.status === 'in');
                 if (playable_players.length === 0) {
                     // we are done attacking.
                     // this has to be after a successful cover. Otherwise we'd still be waiting on the defender

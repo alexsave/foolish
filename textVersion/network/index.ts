@@ -57,7 +57,7 @@ const VALUE_MAP = [
 ];
 const NAMES = ['Rando', 'Smarty', 'John', 'Blake', 'William', 'Zach', 'Alex', 'Ben', 'Caleb', 'Dylan', 'Ethan', 'Finn', 'Gavin', 'Hunter', 'Isaiah', 'Jack', 'Kyle', 'Landon', 'Mason', 'Nathan', 'Oliver', 'Parker', 'Quinn', 'Ryan', 'Samuel', 'Thomas', 'Ulysses', 'Vance', 'Wesley', 'Xavier', 'Yusuf', 'Zane']
 export const ACE_VALUE = 13;
-const CARDS_PER_SUIT = 9;
+const CARDS_PER_SUIT = 5;
 const START_VALUE = ACE_VALUE - CARDS_PER_SUIT + 1;
 const PLAYER_COUNT = 7;
 
