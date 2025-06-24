@@ -1,6 +1,7 @@
 import * as http from 'http';
-import { refill_deck, Card, Game, initialize_hands, draw, cardDisplay, determine_lowest_power_index, set_positions, CARDS_PER_PLAYER, canCover } from './index';
+import { refill_deck, Card, Game, initialize_hands, draw, cardDisplay, determine_lowest_power_index, set_positions, CARDS_PER_PLAYER, canCover, ACE_VALUE } from './index';
 import WebSocket from 'ws';
+import { isNullOrUndefined } from 'util';
 
 interface Message {
     type: string;
@@ -86,10 +87,46 @@ const card_comp = (card1: Card, card2: Card): boolean => {
     return card1.suit === card2.suit && card1.value === card2.value;
 }
 
+const no_cards_left = (game: Game) => {
+    return game.deck.length === 0 && game.flipped === null;
+}
+
+const game_done = (game: Game): string | null => {
+    // only one 1 left, every0one else is out
+    const in_players = game.players.filter(player => player.status === 'in');
+    const out_players = game.players.filter(player => player.status === 'out');
+    if (in_players.length === 1 && out_players.length === game.players.length - 1) {    
+        return in_players[0].id;
+    }
+    return null;
+}
+
+const check_win = (game_id: string) => {
+    const game = games[game_id];
+    const the_fool = game_done(game);
+    if (the_fool !== null) {
+        broadcast_to_game(game_id, {
+            type: 'game_done',
+            message: `Game done. Player ${the_fool} ends up the fool`
+        });
+        game.status = 'waiting';
+        // set all players to idle
+        game.players.forEach(player => {
+            player.status = 'idle';
+        });
+    }
+}
+
 // different from the one in index.ts because we do this BEFORE shifting positions
 // hope it works
 const refill = (game_id: string) => {
     const game = games[game_id];
+
+    if (no_cards_left(game)) {
+        return;
+    }
+
+    // If the deck was already empty, defending should've gotten them a win
     // most importantly, check if currently Attacked cleared their hand
     let defenseHand = game.players[game.currentlyAttacked].hand;
     if (defenseHand.length === 0) {
@@ -113,6 +150,7 @@ const refill = (game_id: string) => {
             cards: defenseHand
         });
     }
+
     // Then go around starting from firstAttacker
     let pIndex = game.firstAttacker;
     do {
@@ -137,9 +175,20 @@ const refill = (game_id: string) => {
                 message: `Player ${game.players[pIndex].name} drew ${cards_drawn} cards`,
                 cards: hand
             });
+        } else if (cards_drawn === 0){
+            // no cards were drawn, but if they were still "in", this is where they win
+            if (game.players[pIndex].status === 'in') {
+                broadcast_to_game(game_id, {
+                    type: 'player_wins',
+                    message: `Player ${game.players[pIndex].name} got rid of all their cards`
+                });
+                game.players[pIndex].status = 'out';
+                check_win(game_id);
+            }
         }
-        pIndex = (pIndex + 1) % game.players.length;
-    } while (pIndex !== game.firstAttacker && game.deck.length > 0);
+        pIndex = get_next_player_index(game, pIndex);
+        //pIndex = (pIndex + 1) % game.players.length;
+    } while (pIndex !== game.firstAttacker/* && !no_cards_left(game)*/);
 };
 
 wss.on('connection', (ws: WebSocket) => {
@@ -292,6 +341,7 @@ wss.on('connection', (ws: WebSocket) => {
                         });
                         // win if still empty after refill
                         game.players[game.firstAttacker].status = 'out';
+                        check_win(game_id);
                         game.firstAttacker = get_next_player_index(game, game.firstAttacker);
                     }
                     game.currentlyAttacked = get_next_player_index(game, game.firstAttacker);
@@ -385,7 +435,8 @@ wss.on('connection', (ws: WebSocket) => {
 
                 // ok now we need to check if all players are done attacking
                 // dont count the defender
-                if (!game.players.some(player => player.status === 'in' && player.id !== game.players[game.currentlyAttacked].id)) {
+                const playable_players = game.players.filter(player => player.id !== game.players[game.currentlyAttacked].id && player.hand.some(card => card.value === game.flipped!.value));
+                if (playable_players.length === 0) {
                     // we are done attacking.
                     // this has to be after a successful cover. Otherwise we'd still be waiting on the defender
                     // shift
@@ -582,6 +633,19 @@ wss.on('connection', (ws: WebSocket) => {
                     });
                 }
                 player.hand = player.hand.filter(card => !mCards.some(mCard => card_comp(card, mCard)));
+
+
+                // If the deck is empty, they can get out here
+                if (no_cards_left(game) && player.hand.length === 0) {
+                    // they win
+                    player.status = 'out';
+                    broadcast_to_game(game_id, {
+                        type: 'player_wins',
+                        message: `Player ${player_id} got rid of all their cards`
+                    });
+                    check_win(game_id);
+                }
+
                 game.currentlyAttacked = next_player_index;
 
                 broadcast_to_game(game_id, {
@@ -756,6 +820,18 @@ wss.on('connection', (ws: WebSocket) => {
                         cards: mCards
                     });
 
+
+                    // It's possible they win here
+                    if (no_cards_left(game) && player.hand.length === 0) {
+                        // they win
+                        player.status = 'out';
+                        broadcast_to_game(game_id, {
+                            type: 'player_wins',
+                            message: `Player ${player_id} got rid of all their cards`
+                        });
+                        check_win(game_id);
+                    }
+
                     // Ok now that it's on the table, we set the status to "free for all"
                     // Defender can pick up, cover, pass
                     // All attackers can attack
@@ -798,6 +874,17 @@ wss.on('connection', (ws: WebSocket) => {
                         message: `Player ${player_id} played ${mCards.map(card => cardDisplay(card)).join(', ')}`,
                         cards: mCards
                     });
+
+                    // It's possible they win here
+                    if (no_cards_left(game) && player.hand.length === 0) {
+                        // they win
+                        player.status = 'out';
+                        broadcast_to_game(game_id, {
+                            type: 'player_wins',
+                            message: `Player ${player_id} got rid of all their cards`
+                        });
+                        check_win(game_id);
+                    }
 
                     uncovered_cards = game.table.filter(battle => battle.defense === null).length;
                     defender_cards = game.players[game.currentlyAttacked].hand.length;
@@ -1014,8 +1101,15 @@ const start_game = (game_id: string) => {
         }));
     }
 
-    game.flipped = draw(game);
+    let flipped_card = draw(game);
+    while (flipped_card!.value === ACE_VALUE) {
+        // move back to deck
+        game.deck.push(flipped_card!);
+        flipped_card = draw(game);
+    }
+    game.flipped = flipped_card;
     game.powerSuit = game.flipped!.suit;
+
     // Everyone needs to know
     broadcast_to_game(game_id, {
         type: 'flipped_card',
