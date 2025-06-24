@@ -42,4 +42,4 @@ export const GAME_MOVE_TYPE = {
     ATTACK: 'attack'
 } as const;
 
-export type MoveType = typeof MOVE_TYPE[keyof typeof MOVE_TYPE];
+export type GameMoveType = typeof GAME_MOVE_TYPE[keyof typeof GAME_MOVE_TYPE];
