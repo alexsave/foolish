@@ -126,7 +126,7 @@ function promptUser(): void {
 
                     // maybe do some client side validation here to save on server use
                     ws.send(JSON.stringify({
-                        type: 'attack',
+                        type: GAME_MOVE_TYPE.ATTACK,
                         cards: cards,
                         game_id: current_game_id
                     }))
@@ -134,7 +134,7 @@ function promptUser(): void {
             } else if (command === GAME_MOVE_TYPE.GOOD) {
                 // simply means we are done attacking
                 ws.send(JSON.stringify({
-                    type: 'good',
+                    type: GAME_MOVE_TYPE.GOOD,
                     game_id: current_game_id
                 }))
             } else if (command === GAME_MOVE_TYPE.COVER) {
@@ -148,7 +148,7 @@ function promptUser(): void {
                     const attack_cards = cards.filter((_, index) => index % 2 === 1);
 
                     ws.send(JSON.stringify({
-                        type: 'cover',
+                        type: GAME_MOVE_TYPE.COVER,
                         cards: cover_cards,
                         attack_cards: attack_cards,
                         game_id: current_game_id
@@ -160,7 +160,7 @@ function promptUser(): void {
                 } else {
                     const cards = args.slice(1).map(parse_card);
                     ws.send(JSON.stringify({
-                        type: 'pass',
+                        type: GAME_MOVE_TYPE.PASS,
                         cards: cards,
                         game_id: current_game_id
                     }))
@@ -168,7 +168,7 @@ function promptUser(): void {
             } else if (command === GAME_MOVE_TYPE.PICKUP) {
                 // simply means we are done picking up
                 ws.send(JSON.stringify({
-                    type: 'pickup',
+                    type: GAME_MOVE_TYPE.PICKUP,
                     game_id: current_game_id
                 }))
 
@@ -183,7 +183,7 @@ function promptUser(): void {
                     const player_name = args[1];
 
                     ws.send(JSON.stringify({
-                        type: 'login',
+                        type: LOBBY_MOVE_TYPE.LOGIN,
                         player_name
                     }))
                 }
@@ -207,7 +207,7 @@ function promptUser(): void {
                     console.log('Please enter a game first');
                 } else {
                     ws.send(JSON.stringify({
-                        type: 'start',
+                        type: LOBBY_MOVE_TYPE.START,
                         game_id: current_game_id,
                     }))
                 }
@@ -217,7 +217,7 @@ function promptUser(): void {
                 } else {
                     // request status from server
                     ws.send(JSON.stringify({
-                        type: 'status',
+                        type: GAME_MOVE_TYPE.STATUS,
                         game_id: current_game_id,
                     }))
                 }
