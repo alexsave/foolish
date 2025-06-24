@@ -1,6 +1,7 @@
 import WebSocket from 'ws';
 import * as readline from 'readline';
 import { Card } from './index';
+import { LOBBY_MOVE_TYPE, GAME_MOVE_TYPE } from './common';
 
 interface Message {
     type: string;
@@ -68,7 +69,7 @@ ws.on('error', (error: Error) => {
 
 function parse_card(card: string): Card {
     const value: string = card.slice(0, 1);
-    const suit : string= card.slice(1);
+    const suit: string = card.slice(1);
     // 'SHCD'
     const suit_map = {
         'S': 0,
@@ -93,9 +94,9 @@ function parse_card(card: string): Card {
         'A': 13,
     }
 
-    return { 
-        value: value_map[value as keyof typeof value_map], 
-        suit: suit_map[suit as keyof typeof suit_map] 
+    return {
+        value: value_map[value as keyof typeof value_map],
+        suit: suit_map[suit as keyof typeof suit_map]
     };
 }
 
@@ -114,7 +115,7 @@ function promptUser(): void {
 
         if (ws.readyState === WebSocket.OPEN) {
 
-            if (command === 'attack') {
+            if (command === GAME_MOVE_TYPE.ATTACK) {
                 // not ideal, best to just let them type the card name
                 if (args.length < 2) {
                     console.log('Please provide a card(s) value. Ex. King of Hearts -> KH, 7 of Clubs -> 7C');
@@ -130,13 +131,13 @@ function promptUser(): void {
                         game_id: current_game_id
                     }))
                 }
-            } else if (command === 'good') {
+            } else if (command === GAME_MOVE_TYPE.GOOD) {
                 // simply means we are done attacking
                 ws.send(JSON.stringify({
                     type: 'good',
                     game_id: current_game_id
                 }))
-            } else if (command === 'cover') {
+            } else if (command === GAME_MOVE_TYPE.COVER) {
                 // simply means we are done covering
                 if (args.length < 2) {
                     console.log('Please provide a card(s) value and the card it will cover in pairs. Ex. Ten of Clubs covers 7 of clubs -> TC 7C');
@@ -153,7 +154,7 @@ function promptUser(): void {
                         game_id: current_game_id
                     }))
                 }
-            } else if (command === 'pass') {
+            } else if (command === GAME_MOVE_TYPE.PASS) {
                 if (args.length < 2) {
                     console.log('Please provide a card(s) value. Ex. King of Hearts -> KH, 7 of Clubs -> 7C');
                 } else {
@@ -164,15 +165,15 @@ function promptUser(): void {
                         game_id: current_game_id
                     }))
                 }
-            } else if (command === 'pickup') {
+            } else if (command === GAME_MOVE_TYPE.PICKUP) {
                 // simply means we are done picking up
                 ws.send(JSON.stringify({
                     type: 'pickup',
                     game_id: current_game_id
                 }))
 
-            // Login first. we'll keep it simple as it's local
-            } else if (command === 'login') {
+                // Login first. we'll keep it simple as it's local
+            } else if (command === LOBBY_MOVE_TYPE.LOGIN) {
                 if (args.length < 2) {
                     console.log('Please provide a player name');
                     //return;
@@ -186,19 +187,22 @@ function promptUser(): void {
                         player_name
                     }))
                 }
-            }
 
-            // What's the first thing we want to do? Start a game
-            // > game Alex [hash]
-            else if (command === 'game') {
-                const type = args.length > 1 ? 'join' : 'create';
+                // What's the first thing we want to do? Start a game
+                // > game Alex [hash]
+            } else if (command === LOBBY_MOVE_TYPE.CREATE) {
+
+                ws.send(JSON.stringify({
+                    type: LOBBY_MOVE_TYPE.CREATE,
+                }))
+            } else if (command === LOBBY_MOVE_TYPE.JOIN) {
                 const game_id = args.length > 1 ? args[1] : null;
 
                 ws.send(JSON.stringify({
-                    type: type,
+                    type: LOBBY_MOVE_TYPE.JOIN,
                     game_id: game_id,
                 }))
-            } else if (command === 'start') {
+            } else if (command === LOBBY_MOVE_TYPE.START) {
                 if (current_game_id === null) {
                     console.log('Please enter a game first');
                 } else {
@@ -207,7 +211,7 @@ function promptUser(): void {
                         game_id: current_game_id,
                     }))
                 }
-            } else if (command === 'status') {
+            } else if (command === GAME_MOVE_TYPE.STATUS) {
                 if (current_game_id === null) {
                     console.log('Please enter a game first');
                 } else {
@@ -218,13 +222,13 @@ function promptUser(): void {
                     }))
                 }
 
-            } else if (command === 'list') {
+            } else if (command === LOBBY_MOVE_TYPE.LIST) {
                 // The rest are purely local client side, for viewing games and entering them
                 console.log('Games:');
                 games.forEach(game_id => {
                     console.log(`- ${game_id}`);
                 });
-            } else if (command === 'enter') {
+            } else if (command === LOBBY_MOVE_TYPE.ENTER) {
                 // if there is only one game, enter it
                 if (games.size === 1) {
                     current_game_id = Array.from(games)[0];
@@ -234,7 +238,7 @@ function promptUser(): void {
                     const game_id = args[1];
                     current_game_id = game_id;
                 }
-            } else if (command === 'leave') {
+            } else if (command === LOBBY_MOVE_TYPE.BACK) {
                 // this is purely client side
                 current_game_id = null;
             }

@@ -8,7 +8,8 @@ export interface Card {
     suit: number;
     value: number;
 }
-interface Player {
+
+export interface Player {
     id: string;
     name: string;
     hand: Card[];

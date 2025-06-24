@@ -1,7 +1,7 @@
 import * as http from 'http';
-import { refill_deck, Card, Game, initialize_hands, draw, cardDisplay, determine_lowest_power_index, set_positions, CARDS_PER_PLAYER, canCover, ACE_VALUE } from './index';
+import { refill_deck, Card, Game, Player, initialize_hands, draw, cardDisplay, determine_lowest_power_index, set_positions, CARDS_PER_PLAYER, canCover, ACE_VALUE } from './index';
 import WebSocket from 'ws';
-import { isNullOrUndefined } from 'util';
+import { PLAYER_STATUS, PlayerStatus, GAME_STATUS, GameStatus, GAME_MOVE_TYPE, LOBBY_MOVE_TYPE } from './common';
 
 interface Message {
     type: string;
@@ -12,11 +12,11 @@ interface Message {
     attack_cards?: Card[];// cards that will be covered
     player_name?: string;
 }
-interface Player {
+/*interface Player {
     name: string;
     id: string;
-    status: 'idle' | 'ready' | 'in' | 'out'
-}
+    status: PlayerStatus;
+}*/
 // idle just joined or waiting for other players, also after game end
 // ready is ready to play
 // in is in the game
@@ -77,7 +77,7 @@ console.log(`WebSocket Server running on ws://localhost:${WS_PORT}`);
 
 const get_next_player_index = (game: Game, current_player: number): number => {
     let next_player = (current_player + 1) % game.players.length;
-    while (game.players[next_player].status === 'out') {
+    while (game.players[next_player].status === PLAYER_STATUS.OUT) {
         next_player = (next_player + 1) % game.players.length;
     }
     return next_player;
@@ -93,8 +93,8 @@ const no_cards_left = (game: Game) => {
 
 const game_done = (game: Game): string | null => {
     // only one 1 left, every0one else is out
-    const in_players = game.players.filter(player => player.status === 'in');
-    const out_players = game.players.filter(player => player.status === 'out');
+    const in_players = game.players.filter(player => player.status === PLAYER_STATUS.IN);
+    const out_players = game.players.filter(player => player.status === PLAYER_STATUS.OUT);
     if (in_players.length === 1 && out_players.length === game.players.length - 1) {    
         return in_players[0].id;
     }
@@ -109,10 +109,10 @@ const check_win = (game_id: string) => {
             type: 'game_done',
             message: `Game done. Player ${the_fool} ends up the fool`
         });
-        game.status = 'waiting';
+        game.status = GAME_STATUS.WAITING;
         // set all players to idle
-        game.players.forEach(player => {
-            player.status = 'idle';
+        game.players.forEach((player: Player) => {
+            player.status = PLAYER_STATUS.IDLE;
             player.hand = [];
         });
         game.table = [];
@@ -180,12 +180,12 @@ const refill = (game_id: string) => {
             });
         } else if (cards_drawn === 0 && game.players[pIndex].hand.length === 0) {
             // no cards were drawn, but if they were still "in", this is where they win
-            if (game.players[pIndex].status === 'in') {
+            if (game.players[pIndex].status === PLAYER_STATUS.IN) {
                 broadcast_to_game(game_id, {
                     type: 'player_wins',
                     message: `Player ${game.players[pIndex].name} got rid of all their cards`
                 });
-                game.players[pIndex].status = 'out';
+                game.players[pIndex].status = PLAYER_STATUS.OUT;
                 check_win(game_id);
             }
         }
@@ -219,7 +219,7 @@ wss.on('connection', (ws: WebSocket) => {
             // const message: Message = JSON.parse(data.toString());
             console.log('Received from client:', message);
 
-            if (message.type === 'cover') {
+            if (message.type === GAME_MOVE_TYPE.COVER) {
                 // cover a card
                 const game_id = message.game_id!;
                 if (!games[game_id]) {
@@ -239,7 +239,7 @@ wss.on('connection', (ws: WebSocket) => {
                 }
                 const game = games[game_id];
 
-                if (game.status !== 'free_play' && game.status !== 'only_defend') {
+                if (game.status !== GAME_STATUS.FREE_PLAY && game.status !== GAME_STATUS.ONLY_DEFEND) {
                     ws.send(JSON.stringify({
                         type: 'game_not_in_free_play',
                         message: `Game ${game_id} is not in free_play or only_defend mode`
@@ -343,7 +343,7 @@ wss.on('connection', (ws: WebSocket) => {
                             message: `Player ${game.players[game.firstAttacker].name} got rid of their hand`
                         });
                         // win if still empty after refill
-                        game.players[game.firstAttacker].status = 'out';
+                        game.players[game.firstAttacker].status = PLAYER_STATUS.OUT;
                         check_win(game_id);
                         game.firstAttacker = get_next_player_index(game, game.firstAttacker);
                     }
@@ -361,7 +361,7 @@ wss.on('connection', (ws: WebSocket) => {
                     // to proceed the next round, do we need all players to agree? but it should be done in secret to avoid revealing values
                     // Yeah I don't know how to make it not obvious that we're waiting for attackers because they have cards
                     // Oh well
-                    game.status = 'wait_for_attackers';
+                    game.status = GAME_STATUS.WAIT_FOR_ATTACKERS;
 
                     // ok let's secretly see who can even play cards.
                     // pretty simple. Because they just covered, the only cards that can be played are values on teh table
@@ -388,7 +388,7 @@ wss.on('connection', (ws: WebSocket) => {
                             refill(game_id);
                             game.firstAttacker = game.currentlyAttacked;
                             game.currentlyAttacked = get_next_player_index(game, game.firstAttacker);
-                            game.status = 'first_attacker';
+                            game.status = GAME_STATUS.FIRST_ATTACKER;
                         }, 5000 + Math.random() * 20000);
                     } else {
                         // someone can play cards
@@ -405,7 +405,7 @@ wss.on('connection', (ws: WebSocket) => {
                 }
 
 
-            } else if (message.type === 'good') {
+            } else if (message.type === GAME_MOVE_TYPE.GOOD) {
                 // player is done attacking
                 // we need to check if they have any cards left in their hand
                 const game_id = message.game_id!;
@@ -417,7 +417,7 @@ wss.on('connection', (ws: WebSocket) => {
                     return;
                 }
                 const game = games[game_id];
-                if (game.status !== 'wait_for_attackers') {
+                if (game.status !== GAME_STATUS.WAIT_FOR_ATTACKERS) {
                     ws.send(JSON.stringify({
                         type: 'game_not_in_wait_for_attackers',
                         message: `Game ${game_id} is not in wait_for_attackers mode`
@@ -434,20 +434,20 @@ wss.on('connection', (ws: WebSocket) => {
                 }
 
                 // set them to done attacking
-                player.status = 'done_attacking';
+                player.status = PLAYER_STATUS.DONE_ATTACKING;
 
                 // ok now we need to check if all players are done attacking
                 // dont count the defender
                 // the status check is critical
-                const playable_players = game.players.filter(player => player.id !== game.players[game.currentlyAttacked].id && player.hand.some(card => card.value === game.flipped!.value) && player.status === 'in');
+                const playable_players = game.players.filter(player => player.id !== game.players[game.currentlyAttacked].id && player.hand.some(card => card.value === game.flipped!.value) && player.status === PLAYER_STATUS.IN);
                 if (playable_players.length === 0) {
                     // we are done attacking.
                     // this has to be after a successful cover. Otherwise we'd still be waiting on the defender
                     // shift
                     // change all done_attacking to in
                     game.players.forEach(player => {
-                        if (player.status === 'done_attacking') {
-                            player.status = 'in';
+                        if (player.status === PLAYER_STATUS.DONE_ATTACKING) {
+                            player.status = PLAYER_STATUS.IN;
                         }
                     });
 
@@ -462,10 +462,10 @@ wss.on('connection', (ws: WebSocket) => {
                     //shift 
                     game.firstAttacker = game.currentlyAttacked;
                     game.currentlyAttacked = get_next_player_index(game, game.firstAttacker);
-                    game.status = 'first_attacker';
+                    game.status = GAME_STATUS.FIRST_ATTACKER;
                     return;
                 }
-            } else if (message.type === 'pickup') {
+            } else if (message.type === GAME_MOVE_TYPE.PICKUP) {
                 // pick up a card
                 const game_id = message.game_id!;
                 if (!games[game_id]) {
@@ -485,7 +485,7 @@ wss.on('connection', (ws: WebSocket) => {
                 }
                 const game = games[game_id];
 
-                if (game.status !== 'free_play' && game.status !== 'only_defend') {
+                if (game.status !== GAME_STATUS.FREE_PLAY && game.status !== GAME_STATUS.ONLY_DEFEND) {
                     ws.send(JSON.stringify({
                         type: 'game_not_in_free_play',
                         message: `Game ${game_id} is not in free_play or only_defend mode`
@@ -530,9 +530,9 @@ wss.on('connection', (ws: WebSocket) => {
                 // shift
                 game.firstAttacker = get_next_player_index(game, game.currentlyAttacked);
                 game.currentlyAttacked = get_next_player_index(game, game.firstAttacker);
-                game.status = 'first_attacker';
+                game.status = GAME_STATUS.FIRST_ATTACKER;
 
-            } else if (message.type === 'pass') {
+            } else if (message.type === GAME_MOVE_TYPE.PASS) {
                 // pass
 
                 // this is closer to an attack
@@ -642,7 +642,7 @@ wss.on('connection', (ws: WebSocket) => {
                 // If the deck is empty, they can get out here
                 if (no_cards_left(game) && player.hand.length === 0) {
                     // they win
-                    player.status = 'out';
+                    player.status = PLAYER_STATUS.OUT;
                     broadcast_to_game(game_id, {
                         type: 'player_wins',
                         message: `Player ${player_id} got rid of all their cards`
@@ -796,7 +796,7 @@ wss.on('connection', (ws: WebSocket) => {
                     return;
                 }
 
-                if (game.status === 'first_attacker') {
+                if (game.status === GAME_STATUS.FIRST_ATTACKER) {
                     // check if player is first attacker
                     if (game.players[game.firstAttacker].id !== player.id) {
                         ws.send(JSON.stringify({
@@ -828,7 +828,7 @@ wss.on('connection', (ws: WebSocket) => {
                     // It's possible they win here
                     if (no_cards_left(game) && player.hand.length === 0) {
                         // they win
-                        player.status = 'out';
+                        player.status = PLAYER_STATUS.OUT;
                         broadcast_to_game(game_id, {
                             type: 'player_wins',
                             message: `Player ${player_id} got rid of all their cards`
@@ -840,11 +840,11 @@ wss.on('connection', (ws: WebSocket) => {
                     // Defender can pick up, cover, pass
                     // All attackers can attack
                     // Whatever comes in first comes first, otherwise gg
-                    game.status = 'free_play';
+                    game.status = GAME_STATUS.FREE_PLAY;
 
 
                     // check win later, becuase a "first attack" could win, putting the game into idle
-                } else if (game.status === 'free_play' || game.status === 'wait_for_attackers') {
+                } else if (game.status === GAME_STATUS.FREE_PLAY || game.status === GAME_STATUS.WAIT_FOR_ATTACKERS) {
                     // This is very similar to the above, we just don't check if they are the first attacker
                     // attack + free_play means you can do whatever
 
@@ -858,11 +858,11 @@ wss.on('connection', (ws: WebSocket) => {
                     }
                     // a valid attack will move us out of wait_for_attackers
                     game.players.forEach(player => {
-                        if (player.status === 'done_attacking') {
-                            player.status = 'in';
+                        if (player.status === PLAYER_STATUS.DONE_ATTACKING) {
+                            player.status = PLAYER_STATUS.IN;
                         }
                     });
-                    game.status = 'free_play';
+                    game.status = GAME_STATUS.FREE_PLAY;
 
                     player.hand = player.hand.filter(card =>
                         !mCards.some(mCard => mCard.suit === card.suit && mCard.value === card.value));
@@ -882,7 +882,7 @@ wss.on('connection', (ws: WebSocket) => {
                     // It's possible they win here
                     if (no_cards_left(game) && player.hand.length === 0) {
                         // they win
-                        player.status = 'out';
+                        player.status = PLAYER_STATUS.OUT;
                         broadcast_to_game(game_id, {
                             type: 'player_wins',
                             message: `Player ${player_id} got rid of all their cards`
@@ -896,7 +896,7 @@ wss.on('connection', (ws: WebSocket) => {
                     // it's important to check if we need to shift to only_defend
                     if (uncovered_cards === defender_cards) {
                         // just reached the limit
-                        game.status = 'only_defend';
+                        game.status = GAME_STATUS.ONLY_DEFEND;
                         broadcast_to_game(game_id, {
                             type: 'no_more_attacks',
                             message: `Maximum number of attacks reached, only defender can defend`
@@ -907,7 +907,7 @@ wss.on('connection', (ws: WebSocket) => {
                     }
 
 
-                } else if (game.status === 'only_defend') {
+                } else if (game.status === GAME_STATUS.ONLY_DEFEND) {
                     // just reject
                     ws.send(JSON.stringify({
                         type: 'attack_rejected',
@@ -918,7 +918,7 @@ wss.on('connection', (ws: WebSocket) => {
                     // handle others later
                 }
 
-            } else if (message.type === 'login') {
+            } else if (message.type === LOBBY_MOVE_TYPE.LOGIN) {
                 const name: string = message.player_name!;
                 users[player_id].name = name;
                 player_games[player_id] = [];
@@ -926,7 +926,7 @@ wss.on('connection', (ws: WebSocket) => {
                     type: 'login_success',
                     message: `Player ${message.player_name} logged in`
                 }));
-            } else if (message.type === 'join') {
+            } else if (message.type === LOBBY_MOVE_TYPE.JOIN) {
                 const game_id: string = message.game_id!;
                 if (!games[game_id]) {
                     ws.send(JSON.stringify({
@@ -959,7 +959,7 @@ wss.on('connection', (ws: WebSocket) => {
                 games[game_id].players.push({
                     name: users[player_id].name,
                     id: player_id,
-                    status: 'idle',
+                    status: PLAYER_STATUS.IDLE,
                     hand: []
                 });
 
@@ -972,14 +972,14 @@ wss.on('connection', (ws: WebSocket) => {
                     game_id: game_id
                 });
 
-            } else if (message.type === 'create') {
+            } else if (message.type === LOBBY_MOVE_TYPE.CREATE) {
                 const game_id = createId();
                 games[game_id] = {
                     status: 'waiting',
                     players: [{
                         name: users[player_id].name,
                         id: player_id,
-                        status: 'idle',
+                        status: PLAYER_STATUS.IDLE,
                         hand: []
                     }],
                     deck: [],
@@ -998,7 +998,7 @@ wss.on('connection', (ws: WebSocket) => {
                     message: `Game created with id ${game_id}`,
                     game_id: game_id
                 }));
-            } else if (message.type === 'start') {
+            } else if (message.type === LOBBY_MOVE_TYPE.START) {
                 // user wants to start a game. switch them to ready and see if all other players are ready. and if tehre are 2+ players
                 const game_id: string = message.game_id!;
 
@@ -1023,7 +1023,7 @@ wss.on('connection', (ws: WebSocket) => {
                 }
 
                 // check if game is waiting
-                if (game.status !== 'waiting') {
+                if (game.status !== GAME_STATUS.WAITING) {
                     ws.send(JSON.stringify({
                         type: 'game_not_waiting',
                         message: `Game ${message.game_id} is not waiting`
@@ -1032,7 +1032,7 @@ wss.on('connection', (ws: WebSocket) => {
                 }
 
                 // set player to ready
-                game.players.find(player => player.id === player_id)!.status = 'ready';
+                game.players.find(player => player.id === player_id)!.status = PLAYER_STATUS.READY;
 
                 broadcast_to_game(game_id, {
                     type: 'player_ready',
@@ -1041,7 +1041,7 @@ wss.on('connection', (ws: WebSocket) => {
 
                 // check if all players are ready
                 if (game.players.length >= 2 &&
-                    game.players.every(player => player.status === 'ready')) {
+                    game.players.every(player => player.status === PLAYER_STATUS.READY)) {
                     // send to all players in game
                     broadcast_to_game(game_id, {
                         type: 'game_started',
@@ -1089,7 +1089,7 @@ const start_game = (game_id: string) => {
     // This is the game entry
     game.status = 'playing';
     game.players.forEach(player => {
-        player.status = 'in';
+        player.status = PLAYER_STATUS.IN;
     });
 
     game.deck = refill_deck();
@@ -1157,7 +1157,7 @@ const start_game = (game_id: string) => {
     */
     // request attack from first attacker
 
-    game.status = 'first_attacker';
+    game.status = GAME_STATUS.FIRST_ATTACKER;
     broadcast_to_game(game_id, {
         type: 'game_status',
         message: `Wait for first attacker to attack`
