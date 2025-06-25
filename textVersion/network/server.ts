@@ -80,10 +80,10 @@ app.get('/', (req, res) => {
   res.send('Hello World')
 })
 
-app.post('/login', (req, res) => {
+app.post('/' + LOBBY_MOVE_TYPE.LOGIN, (req, res) => {
     console.log('Login request' + JSON.stringify(req.body));
     const name = req.body.name;
-    const id = name_to_id[name];
+    let id = name_to_id[name];
     if (!id) {
         const player_id = createId();
         name_to_id[name] = player_id;
@@ -91,12 +91,100 @@ app.post('/login', (req, res) => {
             name: name,
             id: player_id
         }
+        id = player_id;
     }
     res.end(JSON.stringify({
         name: name,
         player_id: id
     }));
 })
+
+app.post('/' + LOBBY_MOVE_TYPE.CREATE, (req, res) => {
+    // Every request should probably have a player_id now
+    const player_id = req.body.player_id;
+
+    const game_id = createId();
+    games[game_id] = {
+        status: GAME_STATUS.WAITING,
+        players: [{
+            name: users[player_id].name,
+            id: player_id,
+            status: PLAYER_STATUS.IDLE,
+            hand: []
+        }],
+        deck: [],
+        flipped: null,
+        powerSuit: 0,
+        firstAttacker: 0,
+        currentlyAttacked: 0,
+        previousFirstAttacker: 0,
+        previousCurrentlyAttacked: 0,
+        table: []
+    }
+    if (!player_games[player_id]) {
+        player_games[player_id] = [];
+    }
+    player_games[player_id].push(game_id);
+
+    public_game_channel.push({
+        game_id: game_id,
+        message: {
+            type: 'game_created',
+            message: `Game created with id ${game_id}`,
+            game_id: game_id
+        }
+    });
+
+    res.end(JSON.stringify({
+        game_id: game_id
+    }));
+});
+
+app.post('/' + LOBBY_MOVE_TYPE.JOIN, (req, res) => {
+    try {
+        const player_id = req.body.player_id;
+        const game_id = verify_game_id(req.body.game_id);
+
+        // check if player is already in game
+        if (player_games[player_id] && player_games[player_id].includes(game_id)) {
+            throw new Error(`Player ${player_id} is already in game ${game_id}`);
+        }
+
+        // check if game is ongoing
+        if (games[game_id].status !== GAME_STATUS.WAITING) {
+            throw new Error(`Game ${game_id} is not waiting`);
+        }
+
+        games[game_id].players.push({
+            name: users[player_id].name,
+            id: player_id,
+            status: PLAYER_STATUS.IDLE,
+            hand: []
+        });
+
+        if (!player_games[player_id]) {
+            player_games[player_id] = [];
+        }
+        player_games[player_id].push(game_id);
+
+        // send to all players in game
+        public_game_channel.push({
+            game_id: game_id,
+            message: {
+                type: 'player_joined_game',
+                message: `Player ${users[player_id].name} joined game ${game_id}`,
+                game_id: game_id
+            }
+        });
+
+        res.end(JSON.stringify({
+            game_id: game_id
+        }));
+    } catch (e: any) {
+        console.error('Join game error', e);
+        res.status(500).end(JSON.stringify({ error: e.message }));
+    }
+});
 
 app.listen(3009)
 
@@ -228,11 +316,11 @@ const refill = (game_id: string) => {
 };
 
 // throw error if not found
-const verify_game_id = (message: Message): string => {
-    if (!games[message.game_id!]) {
-        throw new Error(`Game ${message.game_id} not found`);
+const verify_game_id = (game_id: string) => {
+    if (!games[game_id]) {
+        throw new Error(`Game ${game_id} not found`);
     }
-    return message.game_id!;
+    return game_id;
 }
 
 const verify_player_in_game = (game_id: string, player_id: string) => {
@@ -774,8 +862,8 @@ wss.on('connection', (ws: WebSocket) => {
     // Give the client a unique id
     //const player_id = createId();
     //users[player_id] = {
-        //name: '',
-        //id: player_id
+    //name: '',
+    //id: player_id
     ////}
     //user_ports[player_id] = ws;
 
@@ -797,7 +885,7 @@ wss.on('connection', (ws: WebSocket) => {
             let game_id: string;
             // if message type is in GAME_MOVE_TYPE, verify game id
             if (Object.values(GAME_MOVE_TYPE).includes(message.type as GameMoveType)) {
-                game_id = verify_game_id(message);
+                game_id = verify_game_id(message.game_id!);
                 const game = games[game_id];
                 // Might have to loosen this if we want to allow spectators
                 verify_player_in_game(game_id, player_id);
@@ -820,92 +908,10 @@ wss.on('connection', (ws: WebSocket) => {
                     const player_id = message.player_id!;
                     // Really the critical part here
                     user_ports[player_id] = ws;
-                } else if (message.type === LOBBY_MOVE_TYPE.LOGIN) {
-                    const name: string = message.player_name!;
-                    // Find which user this is
-                    let user = Object.values(users).find(user => user.name === name);
-                    if (!user) {
-                        // create user
-                        const player_id = createId();
-                        users[player_id] = {
-                            name: name,
-                            id: player_id
-                        }
-                        name_to_id[name] = player_id;
-                        player_games[player_id] = [];
 
-                        user = users[player_id];
-                    }
-
-                    //// add to user_ports
-                    //user_ports[user.id] = ws;
-
-
-
-                    ws.send(JSON.stringify({
-                        type: 'login_success',
-                        message: `Player ${message.player_name} logged in`
-                    }));
-                } else if (message.type === LOBBY_MOVE_TYPE.JOIN) {
-                    const game_id: string = verify_game_id(message);
-
-                    // check if player is already in game
-                    if (player_games[player_id].includes(game_id)) {
-                        throw new Error(`Player ${player_id} is already in game ${game_id}`);
-                    }
-
-                    // check if game is ongoing
-                    if (games[game_id].status !== 'waiting') {
-                        throw new Error(`Game ${game_id} is not waiting`);
-                    }
-
-
-                    // add player to game
-                    games[game_id].players.push({
-                        name: users[player_id].name,
-                        id: player_id,
-                        status: PLAYER_STATUS.IDLE,
-                        hand: []
-                    });
-
-                    player_games[player_id].push(game_id);
-
-                    // send to all players in game
-                    broadcast_to_game(game_id, {
-                        type: 'player_joined_game',
-                        message: `Player ${users[player_id].name} joined game ${game_id}`,
-                        game_id: game_id
-                    });
-
-                } else if (message.type === LOBBY_MOVE_TYPE.CREATE) {
-                    const game_id = createId();
-                    games[game_id] = {
-                        status: GAME_STATUS.WAITING,
-                        players: [{
-                            name: users[player_id].name,
-                            id: player_id,
-                            status: PLAYER_STATUS.IDLE,
-                            hand: []
-                        }],
-                        deck: [],
-                        flipped: null,
-                        powerSuit: 0,
-                        firstAttacker: 0,
-                        currentlyAttacked: 0,
-                        previousFirstAttacker: 0,
-                        previousCurrentlyAttacked: 0,
-                        table: []
-                    }
-                    player_games[player_id].push(game_id);
-
-                    ws.send(JSON.stringify({
-                        type: 'game_created',
-                        message: `Game created with id ${game_id}`,
-                        game_id: game_id
-                    }));
                 } else if (message.type === LOBBY_MOVE_TYPE.START) {
                     // user wants to start a game. switch them to ready and see if all other players are ready. and if tehre are 2+ players
-                    const game_id: string = verify_game_id(message);
+                    const game_id: string = verify_game_id(message.game_id!);
                     const game = games[game_id];
 
                     verify_player_in_game(game_id, player_id);
@@ -951,6 +957,12 @@ wss.on('connection', (ws: WebSocket) => {
     // Handle client disconnect
     ws.on('close', () => {
         console.log('Client disconnected');
+        // remove from user_ports
+        // find where in user_ports this ws is
+        const player_id = Object.keys(user_ports).find(id => user_ports[id] === ws);
+        if (player_id) {
+            delete user_ports[player_id];
+        }
     });
 
     // Handle errors
@@ -1068,21 +1080,28 @@ const broadcast_to_game = (game_id: string, message: Message) => {
 setInterval(() => {
     // Batch to every 10s?
 
-    public_game_channel.forEach(message => {
-        const game_id = message.game_id;
-        games[game_id].players.forEach(player => {
-            const port = user_ports[player.id];
-            if (port) {
+    // assuming they are kinda threadsafe lol
+    while (public_game_channel.length > 0) {
+        const message = public_game_channel.shift();
+        if (message) {
+            const game_id = message.game_id;
+            games[game_id].players.forEach(player => {
+                const port = user_ports[player.id];
+                if (port && port.readyState === WebSocket.OPEN) {
+                    port.send(JSON.stringify(message));
+                }
+            });
+        }
+    }
+
+    while (private_user_channel.length > 0) {
+        const message = private_user_channel.shift();
+        if (message) {
+            const port = user_ports[message.user_id];
+            if (port && port.readyState === WebSocket.OPEN) {
                 port.send(JSON.stringify(message));
             }
-        });
-    });
-
-    private_user_channel.forEach(message => {
-        const port = user_ports[message.user_id];
-        if (port) {
-            port.send(JSON.stringify(message));
         }
-    });
+    }
 
 }, 10000);

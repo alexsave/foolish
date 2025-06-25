@@ -26,7 +26,7 @@ function App() {
             <Route path="/dashboard" element={
               <Dashboard />
             } />
-            <Route path="/lobby" element={
+            <Route path="/lobby/:game_id" element={
               <Lobby />
             } />
             <Route path="/game" element={

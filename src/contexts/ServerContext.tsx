@@ -1,4 +1,3 @@
-
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { LOBBY_MOVE_TYPE } from '../common/common';
 //import supabase from '../db/supabaseClient';
@@ -7,8 +6,8 @@ const ServerContext = createContext<ServerContextType|null>(null);
 
 interface ServerContextType {
     serverLogin: (name: string) => Promise<{name: string, player_id: string}>;
-    createGame: () => void;
-    joinGame: (gameId: string) => void;
+    createGame: () => Promise<{ game_id: string }>;
+    joinGame: (gameId: string) => Promise<{ game_id: string }>;
     game_id: string | null;
 }
 
@@ -35,7 +34,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         };
     }, []);
 
-    const createWebSocket = () => {
+    // pass as param just to be safe with useState
+    const createWebSocket = (pId: string) => {
         const ws = new WebSocket('ws://localhost:3001');
         ws.onmessage = (event) => {
             const data = JSON.parse(event.data);
@@ -47,7 +47,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             // Send a login to associate the player id with the websocket
             ws.send(JSON.stringify({
                 type: LOBBY_MOVE_TYPE.WEBSOCKET_CONNECT,
-                player_id: player_id
+                player_id: pId
             }));
 
         };
@@ -73,38 +73,61 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                     name: name
                 })
             }).then(response => response.json()).then(data => {
+                console.log('Login response', data);
                 setPlayerId(data.player_id);
                 resolve(data);
 
                 // Now that we have a player id, we can start the websocket connection
-                createWebSocket();
+                createWebSocket(data.player_id);
+            }).catch(error => {
+                console.error('Login error', error);
+                reject(error);
             });
         });
     };
 
-    const createGame = () => {
-        if (!webSocketRef.current) {
-            console.error('No WebSocket connection');
-            return;
-        }
-        // hmm I guess this will be a http request not a websocket request
-        webSocketRef.current.send(JSON.stringify({
-            type: LOBBY_MOVE_TYPE.CREATE,
-        }))
+    const createGame = (): Promise<{ game_id: string }> => {
+        return new Promise((resolve, reject) => {
+            fetch('http://localhost:3009/' + LOBBY_MOVE_TYPE.CREATE, {
+                method: 'POST',
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    player_id: player_id
+                })
+            }).then(response => response.json()).then(data => {
+                setGameId(data.game_id);
+                resolve(data);
+            }).catch(error => {
+                console.error('Create game error', error);
+                reject(error);
+            });
+        });
     }
 
-    const joinGame = (gameId: string) => {
-        if (!webSocketRef.current) {
-            console.error('No WebSocket connection');
-            return;
-        }
-        webSocketRef.current.send(JSON.stringify({
-            type: LOBBY_MOVE_TYPE.JOIN,
-            game_id: gameId
-        }))
-        setGameId(gameId);
+    const joinGame = (gameId: string): Promise<{ game_id: string }> => {
+        return new Promise((resolve, reject) => {
+            fetch('http://localhost:3009/' + LOBBY_MOVE_TYPE.JOIN, {
+                method: 'POST',
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    game_id: gameId,
+                    player_id: player_id
+                })
+            }).then(response => response.json()).then(data => {
+                setGameId(data.game_id);
+                resolve(data);
+            }).catch(error => {
+                console.error('Join game error', error);
+                reject(error);
+            });
+        });
     }
-
 
     return (
         <ServerContext.Provider value={{
