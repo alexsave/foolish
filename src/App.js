@@ -1,24 +1,39 @@
-import logo from './logo.svg';
 import './App.css';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
+import logo from './logo.svg';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { GameDisplay } from './components/GameDisplay';
 
 function App() {
+  const { user } = useAuth();
+
   return (
-    <div className="App">
-      <header className="App-header">
-        <img src={logo} className="App-logo" alt="logo" />
-        <p>
-          Edit <code>src/App.js</code> and save to reload.
-        </p>
-        <a
-          className="App-link"
-          href="https://reactjs.org"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Learn React
-        </a>
-      </header>
-    </div>
+    <BrowserRouter>
+      <AuthProvider>
+        <Routes>
+          <Route path="/" element={
+            <div>
+              <p>Home</p>
+            </div>
+          } />
+          <Route path="/login" element={
+            user ? (
+              <div>
+                <p>Welcome, {user.email}</p>
+              </div>
+            ) : (
+              <div>
+                <p>Please sign in</p>
+
+              </div>
+            )
+          } />
+          <Route path="/game" element={
+            <GameDisplay />
+          } />
+        </Routes>
+      </AuthProvider>
+    </BrowserRouter>
   );
 }
 
