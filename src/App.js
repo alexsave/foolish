@@ -6,6 +6,8 @@ import { GameDisplay } from './components/GameDisplay';
 import { Welcome } from './components/Welcome';
 import { ServerProvider } from './contexts/ServerContext';
 import { Login } from './components/Login';
+import { Dashboard } from './components/Dashboard';
+import { Lobby } from './components/Lobby';
 
 function App() {
 
@@ -20,6 +22,12 @@ function App() {
             } />
             <Route path="/login" element={
               <Login />
+            } />
+            <Route path="/dashboard" element={
+              <Dashboard />
+            } />
+            <Route path="/lobby" element={
+              <Lobby />
             } />
             <Route path="/game" element={
               <GameDisplay />

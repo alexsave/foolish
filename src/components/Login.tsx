@@ -4,10 +4,12 @@
 
 import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { useNavigate } from 'react-router-dom';
 
 export const Login = () => {
   const [name, setName] = useState('');
   const [password, setPassword] = useState('');
+  const navigate = useNavigate();
 
   const {login} = useAuth();
   return (
@@ -17,6 +19,7 @@ export const Login = () => {
 
       <button onClick={() => {
         login(name);
+        navigate('/dashboard');
       }}>
         Login
       </button>
