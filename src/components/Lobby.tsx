@@ -5,11 +5,13 @@ import { useParams } from "react-router-dom";
 
 export const Lobby = () => {
     const { game_id } = useParams();
+    const { startGame } = useServer();
     console.log(game_id);
     return (
         <div>
             <h1>Lobby</h1>
             <h2>Game ID: {game_id}</h2>
+            <button onClick={() => startGame(game_id!)}>Start Game</button>
         </div>
     );
 };

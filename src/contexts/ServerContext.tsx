@@ -1,15 +1,10 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { LOBBY_MOVE_TYPE } from '../common/common';
 //import supabase from '../db/supabaseClient';
+import { useParams } from 'react-router-dom';
 
 const ServerContext = createContext<ServerContextType|null>(null);
 
-interface ServerContextType {
-    serverLogin: (name: string) => Promise<{name: string, player_id: string}>;
-    createGame: () => Promise<{ game_id: string }>;
-    joinGame: (gameId: string) => Promise<{ game_id: string }>;
-    game_id: string | null;
-}
 
 // for now we'll just use a fake auth impl
 // this will be kinda similar to client.js
@@ -17,7 +12,10 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     const [user, setUser] = useState(null);
     const [loading, setLoading] = useState(true);
 
+
     const [game_id, setGameId] = useState<string | null>(null);
+    // get game id from url
+    //const [game_id, setGameId] = useState<string | null>(null);
 
     // very important for making requests
     const [player_id, setPlayerId] = useState<string | null>(null);
@@ -25,7 +23,25 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     //useref websocket for sure
     const webSocketRef = useRef<WebSocket | null>(null);
 
+    const url_game_id = useParams().game_id;
     useEffect(() => {
+        // keep it in sync with url
+        console.log('url game id changed ' + url_game_id + ' game id is ' + game_id);
+        if (url_game_id && url_game_id !== game_id) {
+            setGameId(url_game_id);
+        }
+    }, [url_game_id]);
+
+    useEffect(() => {
+        if (game_id) {
+            console.log('game id changed, need to fetch game data');
+            // fetch game data. for now it will just be lobby info
+
+        }
+    }, [game_id]);
+
+    useEffect(() => {
+
         // this is cleanup, right?
         return () => {
             if (webSocketRef.current) {
@@ -129,17 +145,47 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         });
     }
 
+    const startGame = (gameId: string): Promise<{ game_id: string }> => {
+        return new Promise((resolve, reject) => {
+            fetch('http://localhost:3009/' + LOBBY_MOVE_TYPE.START, {
+                method: 'POST',
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    game_id: gameId,
+                    player_id: player_id
+                })
+            }).then(response => response.json()).then(data => {
+                resolve(data);
+            }).catch(error => {
+                console.error('Start game error', error);
+                reject(error);
+            });
+        });
+    }
+
     return (
         <ServerContext.Provider value={{
             serverLogin,
             createGame,
             joinGame,
+            startGame,
             game_id
         }}>
             {children}
         </ServerContext.Provider>
     );
 };
+
+interface ServerContextType {
+    serverLogin: (name: string) => Promise<{name: string, player_id: string}>;
+    createGame: () => Promise<{ game_id: string }>;
+    joinGame: (gameId: string) => Promise<{ game_id: string }>;
+    startGame: (gameId: string) => Promise<{ game_id: string }>;
+    game_id: string | null;
+}
 
 export const useServer = () => {
     const context = useContext(ServerContext);
