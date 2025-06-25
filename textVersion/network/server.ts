@@ -2,6 +2,7 @@ import * as http from 'http';
 import { refill_deck, Card, Game, Player, initialize_hands, draw, cardDisplay, determine_lowest_power_index, set_positions, CARDS_PER_PLAYER, canCover, ACE_VALUE } from './index';
 import WebSocket from 'ws';
 import { PLAYER_STATUS, PlayerStatus, GAME_STATUS, GameStatus, GAME_MOVE_TYPE, LOBBY_MOVE_TYPE, GameMoveType } from './common';
+import express from 'express'
 
 interface Message {
     type: string;
@@ -11,6 +12,7 @@ interface Message {
     cards?: Card[];
     attack_cards?: Card[];// cards that will be covered
     player_name?: string;
+    player_id?: string;
 }
 
 interface GameMap {
@@ -31,7 +33,7 @@ const player_games: PlayerGameMap = {};
 // user table of id to name
 interface User {
     name: string;
-    id: string | undefined;
+    id: string;
 }
 
 interface UserMap {
@@ -58,6 +60,47 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end('Foolish Card Game Server Running\n');
 });
+
+
+// index really
+const name_to_id: { [key: string]: string } = {};
+
+const app = express()
+app.use(express.json()); 
+
+app.use((req, res, next) => {
+	res.setHeader('Access-Control-Allow-Origin', '*');
+	res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, PATCH, DELETE');
+	res.setHeader('Access-Control-Allow-Headers', 'X-Requested-With, Content-Type, Accept');
+    res.setHeader('Content-Type', 'application/json');
+	next();
+});
+
+app.get('/', (req, res) => {
+  res.send('Hello World')
+})
+
+app.post('/login', (req, res) => {
+    console.log('Login request' + JSON.stringify(req.body));
+    const name = req.body.name;
+    const id = name_to_id[name];
+    if (!id) {
+        const player_id = createId();
+        name_to_id[name] = player_id;
+        users[player_id] = {
+            name: name,
+            id: player_id
+        }
+    }
+    res.end(JSON.stringify({
+        name: name,
+        player_id: id
+    }));
+})
+
+app.listen(3009)
+
+
 
 // Create WebSocket server
 const wss = new WebSocket.Server({ port: WS_PORT });
@@ -708,16 +751,33 @@ const handle_status = (game: Game, game_id: string, player_id: string, message: 
     }));
 }
 
+
+interface GameMessage {
+    game_id: string;
+    message: Message;
+}
+
+interface PrivateMessage {
+    user_id: string;
+    message: Message;
+}
+
+// This will emulate one of the realtime channels of supabase. Most server events will go here
+const public_game_channel: GameMessage[] = [];
+
+// I think just "request good" and "draws _ card" will be here
+const private_user_channel: PrivateMessage[] = [];
+
 wss.on('connection', (ws: WebSocket) => {
     console.log('New client connected');
 
     // Give the client a unique id
-    const player_id = createId();
-    users[player_id] = {
-        name: '',
-        id: player_id
-    }
-    user_ports[player_id] = ws;
+    //const player_id = createId();
+    //users[player_id] = {
+        //name: '',
+        //id: player_id
+    ////}
+    //user_ports[player_id] = ws;
 
     // Send welcome message to client
     const welcomeMessage: Message = {
@@ -732,6 +792,7 @@ wss.on('connection', (ws: WebSocket) => {
             const message: Message = JSON.parse(data.toString());
             // const message: Message = JSON.parse(data.toString());
             console.log('Received from client:', message);
+            const player_id = name_to_id[message.player_name!];
 
             let game_id: string;
             // if message type is in GAME_MOVE_TYPE, verify game id
@@ -755,10 +816,32 @@ wss.on('connection', (ws: WebSocket) => {
                     handle_attack(game, game_id, player_id, message);
                 }
             } else {
-                if (message.type === LOBBY_MOVE_TYPE.LOGIN) {
+                if (message.type === LOBBY_MOVE_TYPE.WEBSOCKET_CONNECT) {
+                    const player_id = message.player_id!;
+                    // Really the critical part here
+                    user_ports[player_id] = ws;
+                } else if (message.type === LOBBY_MOVE_TYPE.LOGIN) {
                     const name: string = message.player_name!;
-                    users[player_id].name = name;
-                    player_games[player_id] = [];
+                    // Find which user this is
+                    let user = Object.values(users).find(user => user.name === name);
+                    if (!user) {
+                        // create user
+                        const player_id = createId();
+                        users[player_id] = {
+                            name: name,
+                            id: player_id
+                        }
+                        name_to_id[name] = player_id;
+                        player_games[player_id] = [];
+
+                        user = users[player_id];
+                    }
+
+                    //// add to user_ports
+                    //user_ports[user.id] = ws;
+
+
+
                     ws.send(JSON.stringify({
                         type: 'login_success',
                         message: `Player ${message.player_name} logged in`
@@ -981,3 +1064,25 @@ const broadcast_to_game = (game_id: string, message: Message) => {
         user_ports[player.id].send(JSON.stringify(message));
     });
 }
+
+setInterval(() => {
+    // Batch to every 10s?
+
+    public_game_channel.forEach(message => {
+        const game_id = message.game_id;
+        games[game_id].players.forEach(player => {
+            const port = user_ports[player.id];
+            if (port) {
+                port.send(JSON.stringify(message));
+            }
+        });
+    });
+
+    private_user_channel.forEach(message => {
+        const port = user_ports[message.user_id];
+        if (port) {
+            port.send(JSON.stringify(message));
+        }
+    });
+
+}, 10000);

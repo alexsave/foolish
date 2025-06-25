@@ -12,6 +12,7 @@ const AuthContext = createContext<AuthContextType|null>(null);
 // for now we'll just use a fake auth impl
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [user, setUser] = useState<{name: string} | null>(null);
+  const [name, setName] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -22,9 +23,10 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
   const login = (name: string) => {
     setUser({name});
-    serverLogin(name);
+    serverLogin(name).then(data => {
+      setName(data.name);
+    });
   };
-
 
   return (
     <AuthContext.Provider value={{

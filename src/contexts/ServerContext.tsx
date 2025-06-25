@@ -6,7 +6,7 @@ import { LOBBY_MOVE_TYPE } from '../common/common';
 const ServerContext = createContext<ServerContextType|null>(null);
 
 interface ServerContextType {
-    serverLogin: (name: string) => void;
+    serverLogin: (name: string) => Promise<{name: string, player_id: string}>;
     createGame: () => void;
     joinGame: (gameId: string) => void;
     game_id: string | null;
@@ -20,20 +20,36 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
     const [game_id, setGameId] = useState<string | null>(null);
 
+    // very important for making requests
+    const [player_id, setPlayerId] = useState<string | null>(null);
+
     //useref websocket for sure
     const webSocketRef = useRef<WebSocket | null>(null);
 
     useEffect(() => {
+        // this is cleanup, right?
+        return () => {
+            if (webSocketRef.current) {
+                webSocketRef.current.close();
+            };
+        };
+    }, []);
+
+    const createWebSocket = () => {
         const ws = new WebSocket('ws://localhost:3001');
         ws.onmessage = (event) => {
             const data = JSON.parse(event.data);
-            if (data.type === 'game_created') {
-                setGameId(data.game_id);
-            }
-            console.log(event.data);
+            console.log(data);
         };
         ws.onopen = () => {
             console.log('Connected to server');
+
+            // Send a login to associate the player id with the websocket
+            ws.send(JSON.stringify({
+                type: LOBBY_MOVE_TYPE.WEBSOCKET_CONNECT,
+                player_id: player_id
+            }));
+
         };
         ws.onclose = () => {
             console.log('Disconnected from server');
@@ -42,20 +58,28 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             console.log('Error', event);
         };
         webSocketRef.current = ws;
-        return () => {
-            ws.close();
-        };
-    }, []);
+    }
 
-    const serverLogin = (name: string) => {
-        if (!webSocketRef.current) {
-            console.error('No WebSocket connection');
-            return;
-        }
-        webSocketRef.current.send(JSON.stringify({
-            type: LOBBY_MOVE_TYPE.LOGIN,
-            player_name: name
-        }))
+    const serverLogin = (name: string): Promise<{ name: string, player_id: string }> => {
+        return new Promise((resolve, reject) => {
+
+            fetch('http://localhost:3009/login', {
+                method: 'POST',
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    name: name
+                })
+            }).then(response => response.json()).then(data => {
+                setPlayerId(data.player_id);
+                resolve(data);
+
+                // Now that we have a player id, we can start the websocket connection
+                createWebSocket();
+            });
+        });
     };
 
     const createGame = () => {

@@ -27,7 +27,8 @@ export const LOBBY_MOVE_TYPE = {
     START: 'start',
     ENTER: 'enter',
     LIST: 'list',
-    LOGIN: 'login'
+    LOGIN: 'login',
+    WEBSOCKET_CONNECT: 'websocket_connect'
 } as const;
 export type LobbyMoveType = typeof LOBBY_MOVE_TYPE[keyof typeof LOBBY_MOVE_TYPE];
 

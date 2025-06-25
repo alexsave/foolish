@@ -11,6 +11,7 @@
     "dev:client": "ts-node-dev --respawn client.ts"
   },
   "dependencies": {
+    "express": "^5.1.0",
     "ws": "^8.14.2"
   },
   "devDependencies": {
@@ -20,7 +21,11 @@
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.2.2"
   },
-  "keywords": ["websocket", "typescript", "card-game"],
+  "keywords": [
+    "websocket",
+    "typescript",
+    "card-game"
+  ],
   "author": "",
   "license": "ISC"
-} 
+}
