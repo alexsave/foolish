@@ -107,6 +107,30 @@ const wrap400 = (execute: (req: express.Request, res: express.Response) => void)
     }
 }
 
+const desensitize_game = (game: Game) => {
+    return {
+        ...game,
+        players: game.players.map(player => ({...player, hand: []}))
+    }
+}
+
+// clear everything but player name and status
+const lobbify_game = (game: Game) => {
+    return {
+        ...game,
+        game_id: undefined,
+        deck: undefined,
+        players: game.players.map(player => ({ ...player, hand: undefined, id: undefined })),
+        table: undefined,
+        flipped: undefined,
+        powerSuit: undefined,
+        firstAttacker: undefined,
+        currentlyAttacked: undefined,
+        previousFirstAttacker: undefined,
+        previousCurrentlyAttacked: undefined
+    }
+}
+
 app.post('/' + LOBBY_MOVE_TYPE.CREATE, wrap400((req, res) => {
     // Every request should probably have a player_id now
     const player_id = req.body.player_id;
@@ -144,7 +168,8 @@ app.post('/' + LOBBY_MOVE_TYPE.CREATE, wrap400((req, res) => {
     });
 
     res.end(JSON.stringify({
-        game_id: game_id
+        game_id: game_id,
+        game: lobbify_game(games[game_id])
     }));
 }));
 
@@ -185,7 +210,8 @@ app.post('/' + LOBBY_MOVE_TYPE.JOIN, wrap400((req, res) => {
     });
 
     res.end(JSON.stringify({
-        game_id: game_id
+        game_id: game_id,
+        game: lobbify_game(games[game_id])
     }));
 }));
 
@@ -230,7 +256,8 @@ app.post('/' + LOBBY_MOVE_TYPE.START, wrap400((req, res) => {
         start_game(game_id);
     }
     res.end(JSON.stringify({
-        game_id: game_id
+        game_id: game_id,
+        game: lobbify_game(games[game_id])
     }));
 }));
 

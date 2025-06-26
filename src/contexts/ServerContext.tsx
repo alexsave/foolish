@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
-import { LOBBY_MOVE_TYPE } from '../common/common';
+import { Game, LOBBY_MOVE_TYPE } from '../common/common';
 //import supabase from '../db/supabaseClient';
 import { useParams } from 'react-router-dom';
 
@@ -9,6 +9,11 @@ const ServerContext = createContext<ServerContextType|null>(null);
 // for now we'll just use a fake auth impl
 // this will be kinda similar to client.js
 export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
+
+    // keep a state of games
+    // maybe ref idk
+    const [games, setGames] = useState<{[key: string]: Game}>({});
+
     const [user, setUser] = useState(null);
     const [loading, setLoading] = useState(true);
 
@@ -110,18 +115,24 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     const createGame = (): Promise<{ game_id: string }> => {
         return promiseMaker(LOBBY_MOVE_TYPE.CREATE, { player_id: player_id }, (data) => {
             setGameId(data.game_id);
+            // The server should also return game data for this game
+            // so we can set the games state
+            setGames({...games, [data.game_id]: data.game});
         });
     };
 
     const joinGame = (gameId: string): Promise<{ game_id: string }> => {
         return promiseMaker(LOBBY_MOVE_TYPE.JOIN, { game_id: gameId, player_id: player_id }, (data) => {
             setGameId(data.game_id);
+            setGames({...games, [data.game_id]: data.game});
         });
     };
 
     const startGame = (gameId: string): Promise<{ game_id: string }> => {
         return promiseMaker(LOBBY_MOVE_TYPE.START, { game_id: gameId, player_id: player_id }, (data) => {
             setGameId(data.game_id);
+            // WS will also do this, but it might have a delay
+            setGames({...games, [data.game_id]: data.game});
         });
     };
 
@@ -131,7 +142,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             createGame,
             joinGame,
             startGame,
-            game_id
+            game_id,
+            game: games[game_id!]
         }}>
             {children}
         </ServerContext.Provider>
@@ -144,6 +156,7 @@ interface ServerContextType {
     joinGame: (gameId: string) => Promise<{ game_id: string }>;
     startGame: (gameId: string) => Promise<{ game_id: string }>;
     game_id: string | null;
+    game: Game | null;
 }
 
 export const useServer = () => {
