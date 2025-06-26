@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 // or at least the UI is different enough we can have a different route
 import { useServer } from "../contexts/ServerContext";
 import { useParams } from "react-router-dom";
+import { QRCodeSVG } from "qrcode.react";
 
 export const Lobby = () => {
     const { game_id } = useParams();
@@ -16,6 +17,10 @@ export const Lobby = () => {
         <div>
             <h1>Lobby</h1>
             <h2>Game ID: {game_id}</h2>
+            <div style={{ marginBottom: '20px' }}>
+                <h3>Join via QR Code:</h3>
+                <QRCodeSVG value={`www.foolish.cards/${game_id}`} size={200} />
+            </div>
             {
                 game.players.map(player => (
                     <div key={player.id} style={{ display: 'flex', flexDirection: 'row', gap: '10px', color: 'white', backgroundColor: 'black' }}>
