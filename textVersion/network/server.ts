@@ -1,19 +1,8 @@
 import * as http from 'http';
 import { refill_deck, Card, Game, Player, initialize_hands, draw, cardDisplay, determine_lowest_power_index, set_positions, CARDS_PER_PLAYER, canCover, ACE_VALUE } from './index';
 import WebSocket from 'ws';
-import { PLAYER_STATUS, PlayerStatus, GAME_STATUS, GameStatus, GAME_MOVE_TYPE, LOBBY_MOVE_TYPE, GameMoveType } from './common';
+import { PLAYER_STATUS, PlayerStatus, GAME_STATUS, GameStatus, GAME_MOVE_TYPE, LOBBY_MOVE_TYPE, GameMoveType, Message, LobbyGame, SERVER_EVENT_TYPE } from './common';
 import express from 'express'
-
-interface Message {
-    type: string;
-    message: string;
-    timestamp?: string;
-    game_id?: string;
-    cards?: Card[];
-    attack_cards?: Card[];// cards that will be covered
-    player_name?: string;
-    player_id?: string;
-}
 
 interface GameMap {
     [key: string]: Game;
@@ -114,21 +103,12 @@ const desensitize_game = (game: Game) => {
     }
 }
 
-// clear everything but player name and status
-const lobbify_game = (game: Game) => {
+// clear everything but player name and status. save some bytes
+const lobbify_game = (game: Game): LobbyGame => {
     return {
-        ...game,
-        game_id: undefined,
-        deck: undefined,
-        players: game.players.map(player => ({ ...player, hand: undefined, id: undefined })),
-        table: undefined,
-        flipped: undefined,
-        powerSuit: undefined,
-        firstAttacker: undefined,
-        currentlyAttacked: undefined,
-        previousFirstAttacker: undefined,
-        previousCurrentlyAttacked: undefined
-    }
+        players: game.players.map(player => ({ name: player.name, status: player.status })),
+        status: game.status
+    };
 }
 
 app.post('/' + LOBBY_MOVE_TYPE.CREATE, wrap400((req, res) => {
@@ -158,6 +138,8 @@ app.post('/' + LOBBY_MOVE_TYPE.CREATE, wrap400((req, res) => {
     }
     player_games[player_id].push(game_id);
 
+    // Doesn't REALLY make sense to send this, because the only thing that happens is the player joins the game.
+    // If they're the ones creating it, they're the only ones in it. But they already know the game
     public_game_channel.push({
         game_id: game_id,
         message: {
@@ -179,7 +161,18 @@ app.post('/' + LOBBY_MOVE_TYPE.JOIN, wrap400((req, res) => {
 
     // check if player is already in game
     if (player_games[player_id] && player_games[player_id].includes(game_id)) {
-        throw new Error(`Player ${player_id} is already in game ${game_id}`);
+        //throw new Error(`Player ${player_id} is already in game ${game_id}`);
+    } else {
+        games[game_id].players.push({
+            name: users[player_id].name,
+            id: player_id,
+            status: PLAYER_STATUS.IDLE,
+            hand: []
+        });
+        if (!player_games[player_id]) {
+            player_games[player_id] = [];
+        }
+        player_games[player_id].push(game_id);
     }
 
     // check if game is ongoing
@@ -187,25 +180,14 @@ app.post('/' + LOBBY_MOVE_TYPE.JOIN, wrap400((req, res) => {
         throw new Error(`Game ${game_id} is not waiting`);
     }
 
-    games[game_id].players.push({
-        name: users[player_id].name,
-        id: player_id,
-        status: PLAYER_STATUS.IDLE,
-        hand: []
-    });
-
-    if (!player_games[player_id]) {
-        player_games[player_id] = [];
-    }
-    player_games[player_id].push(game_id);
-
     // send to all players in game
     public_game_channel.push({
         game_id: game_id,
         message: {
-            type: 'player_joined_game',
+            type: SERVER_EVENT_TYPE.PLAYER_JOINED_GAME,
             message: `Player ${users[player_id].name} joined game ${game_id}`,
-            game_id: game_id
+            game_id: game_id,
+            game: lobbify_game(games[game_id])
         }
     });
 
@@ -233,27 +215,33 @@ app.post('/' + LOBBY_MOVE_TYPE.START, wrap400((req, res) => {
     // set player to ready
     game.players.find(player => player.id === player_id)!.status = PLAYER_STATUS.READY;
 
+    // two events I know
     public_game_channel.push({
         game_id: game_id,
         message: {
-            type: 'player_ready',
-            message: `Player ${users[player_id].name} is ready`
+            type: SERVER_EVENT_TYPE.PLAYER_READY,
+            message: `Player ${users[player_id].name} is ready`,
+            game_id: game_id,
+            game: lobbify_game(games[game_id])
         }
     });
 
     // check if all players are ready
     if (game.players.length >= 2 &&
         game.players.every(player => player.status === PLAYER_STATUS.READY)) {
+        start_game(game_id);
+
         // send to all players in game
         public_game_channel.push({
             game_id: game_id,
             message: {
-                type: 'game_started',
-                message: `Game ${game_id} started`
+                type: SERVER_EVENT_TYPE.GAME_STARTED,
+                message: `Game ${game_id} started`,
+                game_id: game_id,
+                game: lobbify_game(games[game_id])
             }
         });
 
-        start_game(game_id);
     }
     res.end(JSON.stringify({
         game_id: game_id,

@@ -20,6 +20,29 @@ export const GAME_STATUS = {
 
 export type GameStatus = typeof GAME_STATUS[keyof typeof GAME_STATUS];
 
+// Stripped down versions
+export interface LobbyPlayer {
+    name: string;
+    status: PlayerStatus;
+}
+
+export interface LobbyGame {
+    players: LobbyPlayer[];
+    status: 'waiting' | 'playing' | 'first_attacker' | 'free_play' | 'only_defend' | 'wait_for_attackers';
+}
+
+export interface Message {
+    type: string;
+    message: string;
+    timestamp?: string;
+    game_id?: string;
+    cards?: Card[];
+    attack_cards?: Card[];// cards that will be covered
+    player_name?: string;
+    player_id?: string;
+    game?: Game | LobbyGame;
+}
+
 export const LOBBY_MOVE_TYPE = {
     CREATE: 'create',
     JOIN: 'join',
@@ -117,3 +140,11 @@ export interface Game {
     previousCurrentlyAttacked: number;
     table: Battle[];
 }
+
+export const SERVER_EVENT_TYPE = {
+    PLAYER_JOINED_GAME: 'player_joined_game',
+    PLAYER_READY: 'player_ready',
+    GAME_STARTED: 'game_started'
+} as const;
+
+export type ServerEventType = typeof SERVER_EVENT_TYPE[keyof typeof SERVER_EVENT_TYPE];

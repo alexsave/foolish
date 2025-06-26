@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
-import { Game, LOBBY_MOVE_TYPE } from '../common/common';
+import { Game, LOBBY_MOVE_TYPE, SERVER_EVENT_TYPE } from '../common/common';
 //import supabase from '../db/supabaseClient';
 import { useParams } from 'react-router-dom';
 
@@ -27,6 +27,9 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
     //useref websocket for sure
     const webSocketRef = useRef<WebSocket | null>(null);
+    
+    // Use ref to avoid closure issues in WebSocket handler
+    const gameIdRef = useRef<string | null>(null);
 
     const url_game_id = useParams().game_id;
     useEffect(() => {
@@ -37,6 +40,11 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         }
     }, [url_game_id]);
 
+    // Keep ref in sync with state
+    useEffect(() => {
+        gameIdRef.current = game_id;
+    }, [game_id]);
+
     useEffect(() => {
         if (game_id) {
             console.log('game id changed, need to fetch game data');
@@ -46,6 +54,19 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     }, [game_id]);
 
     useEffect(() => {
+        // write to player id to local storage
+        if (player_id) {
+            localStorage.setItem('player_id', player_id);
+        }
+    }, [player_id]);
+
+    useEffect(() => {
+        // read from local storage for player id
+        const playerId = localStorage.getItem('player_id');
+        if (playerId) {
+            setPlayerId(playerId);
+            createWebSocket(playerId);
+        }
 
         // this is cleanup, right?
         return () => {
@@ -61,6 +82,27 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         ws.onmessage = (event) => {
             const data = JSON.parse(event.data);
             console.log(data);
+
+            // Ok so this has SOME important stuff
+            // Let's start with server lobby events
+            // first assert that gameid = current game id, otherwise dont worry parsing it
+            if (gameIdRef.current && data.game_id !== gameIdRef.current) {
+                return;
+            }
+
+            const message = data.message;
+            if (message.type === SERVER_EVENT_TYPE.PLAYER_JOINED_GAME) {
+                // Because a list of names + statuses of max length 8 isn't THAT long, we'll just send over the entire game
+                setGames({...games, [data.game_id]: message.game});
+            } else if (message.type === SERVER_EVENT_TYPE.PLAYER_READY) {
+                // update the game with the new player ready status
+                setGames({...games, [data.game_id]: message.game});
+            } else if (message.type === SERVER_EVENT_TYPE.GAME_STARTED) {
+                // update the game with the new game started status
+                setGames({...games, [data.game_id]: message.game});
+            }
+
+
         };
         ws.onopen = () => {
             console.log('Connected to server');
