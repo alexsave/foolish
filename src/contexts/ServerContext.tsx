@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
-import { Game, GAME_MOVE_TYPE, LOBBY_MOVE_TYPE, LobbyGame, PersonalGame, SERVER_EVENT_TYPE } from '../common/common';
+import { Card, Game, GAME_MOVE_TYPE, LOBBY_MOVE_TYPE, LobbyGame, PersonalGame, SERVER_EVENT_TYPE } from '../common/common';
 //import supabase from '../db/supabaseClient';
 import { useParams } from 'react-router-dom';
 
@@ -101,6 +101,9 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             } else if (message.type === SERVER_EVENT_TYPE.GAME_STARTED) {
                 // update the game with the new game started status
                 setGames({...games, [data.game_id]: message.game});
+            } else if (message.type === SERVER_EVENT_TYPE.ATTACK_PLAYED) {
+                // update the game with the new game started status
+                setGames({...games, [data.game_id]: message.game});
             }
 
 
@@ -185,6 +188,13 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         });
     };
 
+    const attack = (cards: Card[]): Promise<{ game_id: string }> => {
+        return promiseMaker(GAME_MOVE_TYPE.ATTACK, { game_id: game_id!, player_id: player_id!, cards: cards }, (data) => {
+            // clear selected cards
+            setGames({...games, [data.game_id]: data.game});
+        });
+    };
+
     return (
         <ServerContext.Provider value={{
             serverLogin,
@@ -194,7 +204,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             game_id,
             game: games[game_id!],
             player_id,
-            loadGame
+            loadGame,   
+            attack
         }}>
             {children}
         </ServerContext.Provider>
@@ -210,6 +221,7 @@ interface ServerContextType {
     game: Game | LobbyGame | PersonalGame | null;
     player_id: string | null;
     loadGame: (gameId: string) => Promise<{ game_id: string }>;
+    attack: (cards: Card[]) => Promise<{ game_id: string }>;
 }
 
 export const useServer = () => {

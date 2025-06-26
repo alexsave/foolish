@@ -200,7 +200,7 @@ app.post('/' + LOBBY_MOVE_TYPE.JOIN, wrap400((req, res) => {
             type: SERVER_EVENT_TYPE.PLAYER_JOINED_GAME,
             message: `Player ${users[player_id].name} joined game ${game_id}`,
             game_id: game_id,
-            game: lobbify_game(games[game_id])
+            game: games[game_id]
         }
     });
 
@@ -235,7 +235,7 @@ app.post('/' + LOBBY_MOVE_TYPE.START, wrap400((req, res) => {
             type: SERVER_EVENT_TYPE.PLAYER_READY,
             message: `Player ${users[player_id].name} is ready`,
             game_id: game_id,
-            game: lobbify_game(games[game_id])
+            game: games[game_id]
         }
     });
 
@@ -251,7 +251,7 @@ app.post('/' + LOBBY_MOVE_TYPE.START, wrap400((req, res) => {
                 type: SERVER_EVENT_TYPE.GAME_STARTED,
                 message: `Game ${game_id} started`,
                 game_id: game_id,
-                game: lobbify_game(games[game_id])
+                game: games[game_id]
             }
         });
 
@@ -267,7 +267,18 @@ app.post('/' + GAME_MOVE_TYPE.STATUS, wrap400((req, res) => {
     const game_id = verify_game_id(req.body.game_id);
     verify_player_in_game(game_id, player_id);
 
-    //handle_status(games[game_id], game_id, player_id);
+    res.end(JSON.stringify({
+        game_id: game_id,
+        game: personalize_game(games[game_id], player_id)
+    }));
+}))
+
+app.post('/' + GAME_MOVE_TYPE.ATTACK, wrap400((req, res) => {
+    const player_id = req.body.player_id;
+    const game_id = verify_game_id(req.body.game_id);
+    verify_player_in_game(game_id, player_id);
+    
+    handle_attack(games[game_id], game_id, player_id, req.body.cards);
 
     res.end(JSON.stringify({
         game_id: game_id,
@@ -315,9 +326,12 @@ const check_win = (game_id: string) => {
     const game = games[game_id];
     const the_fool = game_done(game);
     if (the_fool !== null) {
-        broadcast_to_game(game_id, {
-            type: 'game_done',
-            message: `Game done. Player ${the_fool} ends up the fool`
+        public_game_channel.push({
+            game_id: game_id,
+            message: {
+                type: 'game_done',
+                message: `Game done. Player ${the_fool} ends up the fool`
+            }
         });
         game.status = GAME_STATUS.WAITING;
         // set all players to idle
@@ -764,21 +778,17 @@ const handle_pass = (game: Game, game_id: string, player_id: string, message: Me
     }
 }
 
-const handle_attack = (game: Game, game_id: string, player_id: string, message: Message) => {
-
-
-    if (!message.cards) {
+const handle_attack = (game: Game, game_id: string, player_id: string, cards: Card[]) => {
+    if (!cards) {
         throw new Error(`No cards provided`);
     }
-    const mCards = message.cards!;
 
     // check if cards all have same value. this is kinda iffy because you could put down multiple cards
     // at the same time as long as the values are on the board
     // But this also slows down attackign to make it more fair for all attackers
-    if (!mCards.every(card => card.value === mCards[0].value)) {
-        throw new Error(`Cards ${mCards.map(card => cardDisplay(card)).join(', ')} are not all the same value`);
+    if (!cards.every(card => card.value === cards[0].value)) {
+        throw new Error(`Cards ${cards.map(card => cardDisplay(card)).join(', ')} are not all the same value`);
     }
-
 
     // Find which player this is
     const player = game.players.find(player => player.id === player_id)!;
@@ -787,14 +797,14 @@ const handle_attack = (game: Game, game_id: string, player_id: string, message: 
     validate_defender_status(game, player_id, false);
 
     // check if every card is in hand
-    verify_hands_in_players_hand(player, mCards);
+    verify_hands_in_players_hand(player, cards);
 
     // make sure there are enough cards in the defenders hand
     let uncovered_cards = game.table.filter(battle => battle.defense === null).length;
     let defender_cards = game.players[game.currentlyAttacked].hand.length;
 
-    if (uncovered_cards + mCards.length > defender_cards) {
-        throw new Error(`Player ${player_id} does not have enough cards in their hand to cover ${mCards.map(card => cardDisplay(card)).join(', ')}`);
+    if (uncovered_cards + cards.length > defender_cards) {
+        throw new Error(`Player ${player_id} does not have enough cards in their hand to cover ${cards.map(card => cardDisplay(card)).join(', ')}`);
     }
 
     if (game.status === GAME_STATUS.FIRST_ATTACKER) {
@@ -806,29 +816,35 @@ const handle_attack = (game: Game, game_id: string, player_id: string, message: 
         // Ok passed checks, we can put the cards on the table
         // remove from hand, put on table
         player.hand = player.hand.filter(card =>
-            !mCards.some(mCard => mCard.suit === card.suit && mCard.value === card.value));
+            !cards.some(mCard => mCard.suit === card.suit && mCard.value === card.value));
 
-        for (const card of mCards) {
+        for (const card of cards) {
             game.table.push({
                 attack: card,
                 defense: null
             });
         }
 
-        broadcast_to_game(game_id, {
-            type: 'attack_played', // i really gotta get the types under control
-            message: `Player ${player_id} played ${mCards.map(card => cardDisplay(card)).join(', ')}`,
-            cards: mCards
+        public_game_channel.push({
+            game_id: game_id,
+            message: {
+                type: SERVER_EVENT_TYPE.ATTACK_PLAYED,
+                message: `Player ${player_id} played ${cards.map(card => cardDisplay(card)).join(', ')}`,
+                cards: cards,
+                game: game
+            }
         });
-
 
         // It's possible they win here
         if (no_cards_left(game) && player.hand.length === 0) {
             // they win
             player.status = PLAYER_STATUS.OUT;
-            broadcast_to_game(game_id, {
-                type: 'player_wins',
-                message: `Player ${player_id} got rid of all their cards`
+            public_game_channel.push({
+                game_id: game_id,
+                message: {
+                    type: 'player_wins',
+                    message: `Player ${player_id} got rid of all their cards`
+                }
             });
             check_win(game_id);
         }
@@ -846,8 +862,8 @@ const handle_attack = (game: Game, game_id: string, player_id: string, message: 
         // attack + free_play means you can do whatever
 
         // every value has to be on the table
-        if (!mCards.every(card => game.table.some(battle => battle.attack.value === card.value || battle.defense?.value === card.value))) {
-            throw new Error(`Some card values of ${mCards.map(cardDisplay).join(', ')} are not on the table`);
+        if (!cards.every(card => game.table.some(battle => battle.attack.value === card.value || battle.defense?.value === card.value))) {
+            throw new Error(`Some card values of ${cards.map(card => cardDisplay(card)).join(', ')} are not on the table`);
         }
         // a valid attack will move us out of wait_for_attackers
         game.players.forEach(player => {
@@ -858,27 +874,34 @@ const handle_attack = (game: Game, game_id: string, player_id: string, message: 
         game.status = GAME_STATUS.FREE_PLAY;
 
         player.hand = player.hand.filter(card =>
-            !mCards.some(mCard => mCard.suit === card.suit && mCard.value === card.value));
-        for (const card of mCards) {
+            !cards.some(mCard => mCard.suit === card.suit && mCard.value === card.value));
+        for (const card of cards) {
             game.table.push({
                 attack: card,
                 defense: null
             });
         }
 
-        broadcast_to_game(game_id, {
-            type: 'attack_played', // i really gotta get the types under control
-            message: `Player ${player_id} played ${mCards.map(card => cardDisplay(card)).join(', ')}`,
-            cards: mCards
+        public_game_channel.push({
+            game_id: game_id,
+            message: {
+                type: SERVER_EVENT_TYPE.ATTACK_PLAYED,
+                message: `Player ${player_id} played ${cards.map(card => cardDisplay(card)).join(', ')}`,
+                cards: cards,
+                game: game
+            }
         });
 
         // It's possible they win here
         if (no_cards_left(game) && player.hand.length === 0) {
             // they win
             player.status = PLAYER_STATUS.OUT;
-            broadcast_to_game(game_id, {
-                type: 'player_wins',
-                message: `Player ${player_id} got rid of all their cards`
+            public_game_channel.push({
+                game_id: game_id,
+                message: {
+                    type: 'player_wins',
+                    message: `Player ${player_id} got rid of all their cards`
+                }
             });
             check_win(game_id);
         }
@@ -890,9 +913,12 @@ const handle_attack = (game: Game, game_id: string, player_id: string, message: 
         if (uncovered_cards === defender_cards) {
             // just reached the limit
             game.status = GAME_STATUS.ONLY_DEFEND;
-            broadcast_to_game(game_id, {
-                type: 'no_more_attacks',
+            public_game_channel.push({
+                game_id: game_id,
+                message: {
+                    type: 'no_more_attacks',
                 message: `Maximum number of attacks reached, only defender can defend`
+                }
             });
         } else if (uncovered_cards > defender_cards) {
             // how the fuck did this happen
@@ -906,37 +932,6 @@ const handle_attack = (game: Game, game_id: string, player_id: string, message: 
     } else {
         // handle others later
     }
-}
-
-const handle_status = (game: Game, game_id: string, player_id: string) => {
-    // send status to player, but only what they can see. So everything except other peoples hands
-    // this will eventually need to be a JSON object so we can render it
-    let status: string = `Game ${game_id} status\n`;
-    status += `Game status: ${game.status}\n`;
-    status += `Players: ${game.players.map(player => `${player.name} (${player.id}): ${player.status === 'done_attacking' ? 'in' : player.status} with ${player.hand.length} cards`).join(', ')}\n`;
-    status += `First attacker: ${game.players[game.firstAttacker].name}\n`;
-    status += `Currently attacked: ${game.players[game.currentlyAttacked].name}\n`;
-    status += `Table: ${game.table.map(battle => `${cardDisplay(battle.attack)} ${battle.defense ? 'covered by ' + cardDisplay(battle.defense) : 'not covered'}`).join(', ')}\n`;
-    status += `Deck: ${game.deck.length} cards remaining\n`;
-    status += `Flipped: ${game.flipped ? cardDisplay(game.flipped) : 'null'}\n`;
-    status += `My hand: ${game.players.find(player => player.id === player_id)?.hand.map(card => cardDisplay(card)).join(', ')}\n`;
-
-    const personal_game = personalize_game(game, player_id);
-
-    private_user_channel.push({
-        user_id: player_id,
-        message: {
-            type: 'game_status',
-            message: status,
-            game: personal_game
-        }
-    });
-
-    // user_ports[player_id].send(JSON.stringify({
-    //     type: 'game_status',
-    //     message: status,
-    //     //game: game
-    // }));
 }
 
 
@@ -998,8 +993,6 @@ wss.on('connection', (ws: WebSocket) => {
                     handle_pickup(game, game_id, player_id, message);
                 } else if (message.type === GAME_MOVE_TYPE.PASS) {
                     handle_pass(game, game_id, player_id, message);
-                } else if (message.type === GAME_MOVE_TYPE.ATTACK) {
-                    handle_attack(game, game_id, player_id, message);
                 }
             } else if (message.type === LOBBY_MOVE_TYPE.WEBSOCKET_CONNECT) {
                 const player_id = message.player_id!;
@@ -1153,12 +1146,25 @@ setInterval(() => {
         const message = public_game_channel.shift();
         if (message) {
             const game_id = message.game_id;
-            games[game_id].players.forEach(player => {
-                const port = user_ports[player.id];
-                if (port && port.readyState === WebSocket.OPEN) {
-                    port.send(JSON.stringify(message));
-                }
-            });
+            if (games[game_id].status === GAME_STATUS.WAITING) {
+                // we need to send the game to the client
+                message.message.game = lobbify_game(games[game_id]);
+                games[game_id].players.forEach(player => {
+                    const port = user_ports[player.id];
+                    if (port && port.readyState === WebSocket.OPEN) {
+                        port.send(JSON.stringify(message));
+                    }
+                });
+            } else {
+                // we need to send the game to the client
+                games[game_id].players.forEach(player => {
+                    message.message.game = personalize_game(games[game_id], player.id);
+                    const port = user_ports[player.id];
+                    if (port && port.readyState === WebSocket.OPEN) {
+                        port.send(JSON.stringify(message));
+                    }
+                });
+            }
         }
     }
 
@@ -1166,6 +1172,7 @@ setInterval(() => {
         const message = private_user_channel.shift();
         if (message) {
             const port = user_ports[message.user_id];
+            message.message.game = personalize_game(message.message.game as Game, message.user_id);
             if (port && port.readyState === WebSocket.OPEN) {
                 port.send(JSON.stringify(message));
             }
