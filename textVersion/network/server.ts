@@ -99,7 +99,15 @@ app.post('/' + LOBBY_MOVE_TYPE.LOGIN, (req, res) => {
     }));
 })
 
-app.post('/' + LOBBY_MOVE_TYPE.CREATE, (req, res) => {
+const wrap400 = (execute: (req: express.Request, res: express.Response) => void) => (req: express.Request, res: express.Response) => {
+    try {
+        execute(req, res);
+    } catch (e: any) {
+        res.status(400).end(JSON.stringify({ error: e.message }));
+    }
+}
+
+app.post('/' + LOBBY_MOVE_TYPE.CREATE, wrap400((req, res) => {
     // Every request should probably have a player_id now
     const player_id = req.body.player_id;
 
@@ -138,104 +146,93 @@ app.post('/' + LOBBY_MOVE_TYPE.CREATE, (req, res) => {
     res.end(JSON.stringify({
         game_id: game_id
     }));
-});
+}));
 
-app.post('/' + LOBBY_MOVE_TYPE.JOIN, (req, res) => {
-    try {
-        const player_id = req.body.player_id;
-        const game_id = verify_game_id(req.body.game_id);
+app.post('/' + LOBBY_MOVE_TYPE.JOIN, wrap400((req, res) => {
+    const player_id = req.body.player_id;
+    const game_id = verify_game_id(req.body.game_id);
 
-        // check if player is already in game
-        if (player_games[player_id] && player_games[player_id].includes(game_id)) {
-            throw new Error(`Player ${player_id} is already in game ${game_id}`);
+    // check if player is already in game
+    if (player_games[player_id] && player_games[player_id].includes(game_id)) {
+        throw new Error(`Player ${player_id} is already in game ${game_id}`);
+    }
+
+    // check if game is ongoing
+    if (games[game_id].status !== GAME_STATUS.WAITING) {
+        throw new Error(`Game ${game_id} is not waiting`);
+    }
+
+    games[game_id].players.push({
+        name: users[player_id].name,
+        id: player_id,
+        status: PLAYER_STATUS.IDLE,
+        hand: []
+    });
+
+    if (!player_games[player_id]) {
+        player_games[player_id] = [];
+    }
+    player_games[player_id].push(game_id);
+
+    // send to all players in game
+    public_game_channel.push({
+        game_id: game_id,
+        message: {
+            type: 'player_joined_game',
+            message: `Player ${users[player_id].name} joined game ${game_id}`,
+            game_id: game_id
         }
+    });
 
-        // check if game is ongoing
-        if (games[game_id].status !== GAME_STATUS.WAITING) {
-            throw new Error(`Game ${game_id} is not waiting`);
+    res.end(JSON.stringify({
+        game_id: game_id
+    }));
+}));
+
+app.post('/' + LOBBY_MOVE_TYPE.START, wrap400((req, res) => {
+    const player_id = req.body.player_id;
+    const game_id = verify_game_id(req.body.game_id);
+
+    // user wants to start a game. switch them to ready and see if all other players are ready. and if tehre are 2+ players
+
+    verify_player_in_game(game_id, player_id);
+
+    const game = games[game_id];
+
+    // check if game is waiting
+    if (game.status !== GAME_STATUS.WAITING) {
+        throw new Error(`Game ${game_id} is not waiting`);
+    }
+
+    // set player to ready
+    game.players.find(player => player.id === player_id)!.status = PLAYER_STATUS.READY;
+
+    public_game_channel.push({
+        game_id: game_id,
+        message: {
+            type: 'player_ready',
+            message: `Player ${users[player_id].name} is ready`
         }
+    });
 
-        games[game_id].players.push({
-            name: users[player_id].name,
-            id: player_id,
-            status: PLAYER_STATUS.IDLE,
-            hand: []
-        });
-
-        if (!player_games[player_id]) {
-            player_games[player_id] = [];
-        }
-        player_games[player_id].push(game_id);
-
+    // check if all players are ready
+    if (game.players.length >= 2 &&
+        game.players.every(player => player.status === PLAYER_STATUS.READY)) {
         // send to all players in game
         public_game_channel.push({
             game_id: game_id,
             message: {
-                type: 'player_joined_game',
-                message: `Player ${users[player_id].name} joined game ${game_id}`,
-                game_id: game_id
+                type: 'game_started',
+                message: `Game ${game_id} started`
             }
         });
 
-        res.end(JSON.stringify({
-            game_id: game_id
-        }));
-    } catch (e: any) {
-        console.error('Join game error', e);
-        // users fault
-        res.status(400).end(JSON.stringify({ error: e.message }));
+        start_game(game_id);
     }
-});
-
-app.post('/' + LOBBY_MOVE_TYPE.START, (req, res) => {
-    try {
-        const player_id = req.body.player_id;
-        const game_id = verify_game_id(req.body.game_id);
-
-        // user wants to start a game. switch them to ready and see if all other players are ready. and if tehre are 2+ players
-
-        verify_player_in_game(game_id, player_id);
-
-        const game = games[game_id];
-
-        // check if game is waiting
-        if (game.status !== GAME_STATUS.WAITING) {
-            throw new Error(`Game ${game_id} is not waiting`);
-        }
-
-        // set player to ready
-        game.players.find(player => player.id === player_id)!.status = PLAYER_STATUS.READY;
-
-        public_game_channel.push({
-            game_id: game_id,
-            message: {
-                type: 'player_ready',
-                message: `Player ${users[player_id].name} is ready`
-            }
-        });
-
-        // check if all players are ready
-        if (game.players.length >= 2 &&
-            game.players.every(player => player.status === PLAYER_STATUS.READY)) {
-            // send to all players in game
-            public_game_channel.push({
-                game_id: game_id,
-                message: {
-                    type: 'game_started',
-                    message: `Game ${game_id} started`
-                }
-            });
-
-            start_game(game_id);
-        }
-        res.end(JSON.stringify({
-            game_id: game_id
-        }));
-    } catch (e: any) {
-        console.error('Start game error', e);
-        res.status(400).end(JSON.stringify({ error: e.message }));
-    }
-});
+    res.end(JSON.stringify({
+        game_id: game_id
+    }));
+}));
 
 app.listen(3009)
 
@@ -954,14 +951,12 @@ wss.on('connection', (ws: WebSocket) => {
                 } else if (message.type === GAME_MOVE_TYPE.ATTACK) {
                     handle_attack(game, game_id, player_id, message);
                 }
+            } else if (message.type === LOBBY_MOVE_TYPE.WEBSOCKET_CONNECT) {
+                const player_id = message.player_id!;
+                // Really the critical part here
+                user_ports[player_id] = ws;
             } else {
-                if (message.type === LOBBY_MOVE_TYPE.WEBSOCKET_CONNECT) {
-                    const player_id = message.player_id!;
-                    // Really the critical part here
-                    user_ports[player_id] = ws;
-
-                } else if (message.type === LOBBY_MOVE_TYPE.START) {
-                }
+                throw new Error(`Unknown message type: ${message.type}`);
             }
 
         } catch (error) {

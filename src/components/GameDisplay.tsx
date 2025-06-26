@@ -1,5 +1,5 @@
 import React from 'react';
-import { Card, Game } from '../common';
+import { Card, Game } from '../common/common';
 
 const SUIT_MAP: Record<number, string> = {
   // emojis

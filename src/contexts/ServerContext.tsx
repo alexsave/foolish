@@ -76,95 +76,54 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         webSocketRef.current = ws;
     }
 
-    const serverLogin = (name: string): Promise<{ name: string, player_id: string }> => {
+    const promiseMaker = (endpoint: string, body: any, dataHandler: (data: any) => void): Promise<any> => {
         return new Promise((resolve, reject) => {
-
-            fetch('http://localhost:3009/login', {
+            fetch('http://localhost:3009/' + endpoint, {
                 method: 'POST',
                 headers: {
                     'Accept': 'application/json',
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({
-                    name: name
-                })
-            }).then(response => response.json()).then(data => {
-                console.log('Login response', data);
-                setPlayerId(data.player_id);
+                body: JSON.stringify(body)
+            }).then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                return response.json();
+            }).then(data => {
+                dataHandler(data);
                 resolve(data);
-
-                // Now that we have a player id, we can start the websocket connection
-                createWebSocket(data.player_id);
             }).catch(error => {
-                console.error('Login error', error);
+                console.error('Promise maker error', error);
                 reject(error);
             });
+        });
+    }
+
+    const serverLogin = (name: string): Promise<{ name: string, player_id: string }> => {
+        return promiseMaker(LOBBY_MOVE_TYPE.LOGIN, { name: name }, (data) => {
+            setPlayerId(data.player_id);
+            createWebSocket(data.player_id);
         });
     };
 
     const createGame = (): Promise<{ game_id: string }> => {
-        return new Promise((resolve, reject) => {
-            fetch('http://localhost:3009/' + LOBBY_MOVE_TYPE.CREATE, {
-                method: 'POST',
-                headers: {
-                    'Accept': 'application/json',
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    player_id: player_id
-                })
-            }).then(response => response.json()).then(data => {
-                setGameId(data.game_id);
-                resolve(data);
-            }).catch(error => {
-                console.error('Create game error', error);
-                reject(error);
-            });
+        return promiseMaker(LOBBY_MOVE_TYPE.CREATE, { player_id: player_id }, (data) => {
+            setGameId(data.game_id);
         });
-    }
+    };
 
     const joinGame = (gameId: string): Promise<{ game_id: string }> => {
-        return new Promise((resolve, reject) => {
-            fetch('http://localhost:3009/' + LOBBY_MOVE_TYPE.JOIN, {
-                method: 'POST',
-                headers: {
-                    'Accept': 'application/json',
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    game_id: gameId,
-                    player_id: player_id
-                })
-            }).then(response => response.json()).then(data => {
-                setGameId(data.game_id);
-                resolve(data);
-            }).catch(error => {
-                console.error('Join game error', error);
-                reject(error);
-            });
+        return promiseMaker(LOBBY_MOVE_TYPE.JOIN, { game_id: gameId, player_id: player_id }, (data) => {
+            setGameId(data.game_id);
         });
-    }
+    };
 
     const startGame = (gameId: string): Promise<{ game_id: string }> => {
-        return new Promise((resolve, reject) => {
-            fetch('http://localhost:3009/' + LOBBY_MOVE_TYPE.START, {
-                method: 'POST',
-                headers: {
-                    'Accept': 'application/json',
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    game_id: gameId,
-                    player_id: player_id
-                })
-            }).then(response => response.json()).then(data => {
-                resolve(data);
-            }).catch(error => {
-                console.error('Start game error', error);
-                reject(error);
-            });
+        return promiseMaker(LOBBY_MOVE_TYPE.START, { game_id: gameId, player_id: player_id }, (data) => {
+            setGameId(data.game_id);
         });
-    }
+    };
 
     return (
         <ServerContext.Provider value={{

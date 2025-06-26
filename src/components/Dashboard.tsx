@@ -14,6 +14,8 @@ export const Dashboard = () => {
                 joinGame(gameId).then(data => {
                     console.log(data);
                     navigate(`/lobby/${data.game_id}`);
+                }).catch(error => {
+                    alert(error);
                 });
             }}>
                 Join Game
@@ -22,6 +24,8 @@ export const Dashboard = () => {
                 createGame().then(data => {
                     console.log(data);
                     navigate(`/lobby/${data.game_id}`);
+                }).catch(error => {
+                    alert(error);
                 });
             }}>
                 Create Game
