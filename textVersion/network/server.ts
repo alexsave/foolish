@@ -1,7 +1,7 @@
 import * as http from 'http';
 import { refill_deck, Card, Game, Player, initialize_hands, draw, cardDisplay, determine_lowest_power_index, set_positions, CARDS_PER_PLAYER, canCover, ACE_VALUE } from './index';
 import WebSocket from 'ws';
-import { PLAYER_STATUS, PlayerStatus, GAME_STATUS, GameStatus, GAME_MOVE_TYPE, LOBBY_MOVE_TYPE, GameMoveType, Message, LobbyGame, SERVER_EVENT_TYPE } from './common';
+import { PLAYER_STATUS, PlayerStatus, GAME_STATUS, GameStatus, GAME_MOVE_TYPE, LOBBY_MOVE_TYPE, GameMoveType, Message, LobbyGame, SERVER_EVENT_TYPE, PersonalGame, OtherPlayer } from './common';
 import express from 'express'
 
 interface GameMap {
@@ -96,10 +96,23 @@ const wrap400 = (execute: (req: express.Request, res: express.Response) => void)
     }
 }
 
-const desensitize_game = (game: Game) => {
+const other_player = (player: Player): OtherPlayer => {
+    return { name: player.name, id: player.id, hand_length: player.hand.length, status: player.status === PLAYER_STATUS.DONE_ATTACKING ? PLAYER_STATUS.IN : player.status };
+}
+
+const personalize_game = (game: Game, player_id: string): PersonalGame => {
     return {
-        ...game,
-        players: game.players.map(player => ({...player, hand: []}))
+        deck_length: game.deck.length,
+        flipped: game.flipped,
+        self: game.players.find(player => player.id === player_id)!,
+        players: game.players.map(other_player),
+        status: game.status === GAME_STATUS.WAIT_FOR_ATTACKERS ? GAME_STATUS.FREE_PLAY : game.status,
+        firstAttacker: game.firstAttacker,
+        currentlyAttacked: game.currentlyAttacked,
+        previousFirstAttacker: game.previousFirstAttacker,
+        previousCurrentlyAttacked: game.previousCurrentlyAttacked,
+        table: game.table,
+        powerSuit: game.powerSuit
     }
 }
 
@@ -248,6 +261,19 @@ app.post('/' + LOBBY_MOVE_TYPE.START, wrap400((req, res) => {
         game: lobbify_game(games[game_id])
     }));
 }));
+
+app.post('/' + GAME_MOVE_TYPE.STATUS, wrap400((req, res) => {
+    const player_id = req.body.player_id;
+    const game_id = verify_game_id(req.body.game_id);
+    verify_player_in_game(game_id, player_id);
+
+    //handle_status(games[game_id], game_id, player_id);
+
+    res.end(JSON.stringify({
+        game_id: game_id,
+        game: personalize_game(games[game_id], player_id)
+    }));
+}))
 
 app.listen(3009)
 
@@ -882,7 +908,7 @@ const handle_attack = (game: Game, game_id: string, player_id: string, message: 
     }
 }
 
-const handle_status = (game: Game, game_id: string, player_id: string, message: Message) => {
+const handle_status = (game: Game, game_id: string, player_id: string) => {
     // send status to player, but only what they can see. So everything except other peoples hands
     // this will eventually need to be a JSON object so we can render it
     let status: string = `Game ${game_id} status\n`;
@@ -895,11 +921,22 @@ const handle_status = (game: Game, game_id: string, player_id: string, message: 
     status += `Flipped: ${game.flipped ? cardDisplay(game.flipped) : 'null'}\n`;
     status += `My hand: ${game.players.find(player => player.id === player_id)?.hand.map(card => cardDisplay(card)).join(', ')}\n`;
 
-    user_ports[player_id].send(JSON.stringify({
-        type: 'game_status',
-        message: status,
-        //game: game
-    }));
+    const personal_game = personalize_game(game, player_id);
+
+    private_user_channel.push({
+        user_id: player_id,
+        message: {
+            type: 'game_status',
+            message: status,
+            game: personal_game
+        }
+    });
+
+    // user_ports[player_id].send(JSON.stringify({
+    //     type: 'game_status',
+    //     message: status,
+    //     //game: game
+    // }));
 }
 
 
@@ -961,8 +998,6 @@ wss.on('connection', (ws: WebSocket) => {
                     handle_pickup(game, game_id, player_id, message);
                 } else if (message.type === GAME_MOVE_TYPE.PASS) {
                     handle_pass(game, game_id, player_id, message);
-                } else if (message.type === GAME_MOVE_TYPE.STATUS) {
-                    handle_status(game, game_id, player_id, message);
                 } else if (message.type === GAME_MOVE_TYPE.ATTACK) {
                     handle_attack(game, game_id, player_id, message);
                 }

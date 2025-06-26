@@ -1,5 +1,6 @@
 import React from 'react';
-import { Card, Game } from '../common/common';
+import { Card, Game, PersonalGame, Player, OtherPlayer } from '../common/common';
+import { useServer } from '../contexts/ServerContext';
 
 const SUIT_MAP: Record<number, string> = {
   // emojis
@@ -26,39 +27,9 @@ const VALUE_MAP: Record<number, string> = {
 }
 
 export const GameDisplay = () => {
+  const { game, player_id } = useServer();
+  const state = game as PersonalGame;
 
-  const state: Game = {
-    deck: [{suit: 1, value: 1}, {suit: 1, value: 2}, {suit: 1, value: 3}, {suit: 1, value: 4}, {suit: 1, value: 5}, {suit: 1, value: 6}, {suit: 1, value: 7}, {suit: 1, value: 8}, {suit: 1, value: 9}, {suit: 1, value: 10}, {suit: 1, value: 11}, {suit: 1, value: 12}, {suit: 1, value: 13}],
-    flipped: {suit: 1, value: 1},
-    players: [{
-      id: '1',
-      name: 'Player 1',
-      hand: [{suit: 1, value: 1}, {suit: 1, value: 2}, {suit: 1, value: 3}, {suit: 1, value: 4}, {suit: 1, value: 5}, {suit: 1, value: 6}, {suit: 1, value: 7}, {suit: 1, value: 8}, {suit: 1, value: 9}, {suit: 1, value: 10}, {suit: 1, value: 11}, {suit: 1, value: 12}, {suit: 1, value: 13}],
-      status: 'idle',
-    }, {
-      id: '2',
-      name: 'Player 2',
-      hand: [{suit: 1, value: 1}, {suit: 1, value: 2}, {suit: 1, value: 3}, {suit: 1, value: 4}, {suit: 1, value: 5}, {suit: 1, value: 6}, {suit: 1, value: 7}, {suit: 1, value: 8}, {suit: 1, value: 9}, {suit: 1, value: 10}, {suit: 1, value: 11}, {suit: 1, value: 12}, {suit: 1, value: 13}],
-      status: 'idle',
-    }, {
-      id: '3',
-      name: 'Player 3',
-      hand: [{suit: 1, value: 1}, {suit: 1, value: 2}, {suit: 1, value: 3}, {suit: 1, value: 4}, {suit: 1, value: 5}, {suit: 1, value: 6}, {suit: 1, value: 7}, {suit: 1, value: 8}, {suit: 1, value: 9}, {suit: 1, value: 10}, {suit: 1, value: 11}, {suit: 1, value: 12}, {suit: 1, value: 13}],
-      status: 'idle',
-    }, {
-      id: '4',
-      name: 'Player 4',
-      hand: [{suit: 1, value: 1}, {suit: 1, value: 2}, {suit: 1, value: 3}, {suit: 1, value: 4}, {suit: 1, value: 5}, {suit: 1, value: 6}, {suit: 1, value: 7}, {suit: 1, value: 8}, {suit: 1, value: 9}, {suit: 1, value: 10}, {suit: 1, value: 11}, {suit: 1, value: 12}, {suit: 1, value: 13}],
-      status: 'idle',
-    }],
-    status: 'playing',
-    powerSuit: 0,
-    firstAttacker: 0,
-    currentlyAttacked: 1,
-    previousFirstAttacker: 0,
-    previousCurrentlyAttacked: 0,
-    table: [],
-  }
 
   const CardDisplay = ({card}: {card: Card}) => {
     return (
@@ -83,15 +54,15 @@ export const GameDisplay = () => {
         <div style={{ display: 'flex', position: 'absolute', top: '0px', left: '0px', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', height: '100px' }}>
           {state.flipped && <CardDisplay card={state.flipped} />}
           <CardBack />
-          <p>{JSON.stringify(state.deck.length)}</p>
+          <p>{JSON.stringify(state.deck_length)}</p>
         </div>
         <div style={{ display: 'flex', position: 'absolute', bottom: '0px', left: '0px', right: '0px', justifyContent: 'center', alignItems: 'center', height: '100px' }}>
+          {
+            state.self.hand.map((card) => {
+              return <CardDisplay card={card} />
+            })
+          }
 
-        {
-          [{suit: 1, value: 1}, {suit: 1, value: 2}, {suit: 1, value: 3}, {suit: 1, value: 4}, {suit: 1, value: 5}, {suit: 1, value: 6}, {suit: 1, value: 7}, {suit: 1, value: 8}, {suit: 1, value: 9}, {suit: 1, value: 10}, {suit: 1, value: 11}, {suit: 1, value: 12}, {suit: 1, value: 13}].map((card) => {
-            return <CardDisplay card={card} />
-          })
-        }
         </div>
 
         <div style={{position: 'absolute', display: 'flex', flexDirection: 'column', top: 0, width: '100%', bottom: 0, alignItems: 'center', justifyContent: 'center'}}>
@@ -111,10 +82,9 @@ export const GameDisplay = () => {
                 color = 'orange';
               }
 
-
               return <div style={{backgroundColor: color, height: '10px', width: '10px', position: 'absolute', top: y, left: x}}>
                 <p>{player.name}</p>
-                <p>{player.hand.length}</p>
+                { player.hand_length && <p>{player.hand_length}</p> }
               </div>
             })
           }

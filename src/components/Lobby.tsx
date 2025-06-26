@@ -7,7 +7,7 @@ import { QRCodeSVG } from "qrcode.react";
 
 export const Lobby = () => {
     const { game_id } = useParams();
-    const { startGame, game, player_id } = useServer();
+    const { startGame, game, player_id, loadGame } = useServer();
     const navigate = useNavigate();
     console.log(game_id);
     if (!game) {
@@ -33,7 +33,7 @@ export const Lobby = () => {
                 ))
             }
             <button disabled={game.status === 'waiting'} onClick={() => {
-                navigate(`/game/${game_id}`);
+                loadGame(game_id!).then(() => navigate(`/game/${game_id}`));
             }}>Enter Game</button>
         </div>
     );

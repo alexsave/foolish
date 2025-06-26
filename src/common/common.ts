@@ -32,6 +32,31 @@ export interface LobbyGame {
     status: 'waiting' | 'playing' | 'first_attacker' | 'free_play' | 'only_defend' | 'wait_for_attackers';
 }
 
+export interface OtherPlayer {
+    id: string;
+    name: string;
+    hand_length: number;
+    // TODO IMPORTANT: when we get status, we need to map done_attacking to in to avoid revealing values
+    status: 'idle' | 'ready' | 'in' | 'out';
+}
+
+// personal game is what gets sent to clients. they do not see other players hands, only length
+export interface PersonalGame {
+    deck_length: number;
+    flipped: Card | null;
+    self: Player;
+    players: OtherPlayer[];
+
+    // wait for attackers reveals that people do have hands, so we don't allow this
+    status: 'waiting' | 'playing' | 'first_attacker' | 'free_play' | 'only_defend';
+    powerSuit: number;
+    firstAttacker: number;
+    currentlyAttacked: number;
+    previousFirstAttacker: number;
+    previousCurrentlyAttacked: number;
+    table: Battle[];
+}
+
 export interface Message {
     type: string;
     message: string;
@@ -41,7 +66,7 @@ export interface Message {
     attack_cards?: Card[];// cards that will be covered
     player_name?: string;
     player_id?: string;
-    game?: Game | LobbyGame;
+    game?: Game | LobbyGame | PersonalGame;
 }
 
 export const LOBBY_MOVE_TYPE = {
