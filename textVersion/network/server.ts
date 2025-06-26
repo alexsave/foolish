@@ -106,8 +106,8 @@ const desensitize_game = (game: Game) => {
 // clear everything but player name and status. save some bytes
 const lobbify_game = (game: Game): LobbyGame => {
     return {
-        players: game.players.map(player => ({ name: player.name, status: player.status })),
-        status: game.status
+        players: game.players.map(player => ({ name: player.name, status: player.status, id: player.id })),
+        status: game.status === GAME_STATUS.WAITING ? GAME_STATUS.WAITING : GAME_STATUS.PLAYING
     };
 }
 
@@ -1107,6 +1107,9 @@ const broadcast_to_game = (game_id: string, message: Message) => {
     });
 }
 
+// Speed up or down for the hell of it
+const SERVER_LOOP_INTERVAL = 1000;
+
 setInterval(() => {
     // Batch to every 10s?
 
@@ -1134,4 +1137,4 @@ setInterval(() => {
         }
     }
 
-}, 10000);
+}, SERVER_LOOP_INTERVAL);

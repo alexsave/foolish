@@ -24,6 +24,7 @@ export type GameStatus = typeof GAME_STATUS[keyof typeof GAME_STATUS];
 export interface LobbyPlayer {
     name: string;
     status: PlayerStatus;
+    id: string;
 }
 
 export interface LobbyGame {

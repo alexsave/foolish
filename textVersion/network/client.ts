@@ -1,14 +1,7 @@
 import WebSocket from 'ws';
 import * as readline from 'readline';
 import { Card } from './index';
-import { LOBBY_MOVE_TYPE, GAME_MOVE_TYPE } from './common';
-
-interface Message {
-    type: string;
-    message: string;
-    timestamp?: string;
-    game_id?: string;
-}
+import { LOBBY_MOVE_TYPE, GAME_MOVE_TYPE, Message } from './common';
 
 const WS_URL = 'ws://localhost:3001';
 

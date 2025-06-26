@@ -13,7 +13,7 @@ export const Dashboard = () => {
             <button onClick={() => {
                 joinGame(gameId).then(data => {
                     console.log(data);
-                    navigate(`/lobby/${data.game_id}`);
+                    navigate(`/${data.game_id}`);
                 }).catch(error => {
                     alert(error);
                 });
@@ -23,7 +23,7 @@ export const Dashboard = () => {
             <button onClick={() => {
                 createGame().then(data => {
                     console.log(data);
-                    navigate(`/lobby/${data.game_id}`);
+                    navigate(`/${data.game_id}`);
                 }).catch(error => {
                     alert(error);
                 });

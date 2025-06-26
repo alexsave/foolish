@@ -26,10 +26,10 @@ function App() {
             <Route path="/dashboard" element={
               <Dashboard />
             } />
-            <Route path="/lobby/:game_id" element={
+            <Route path="/:game_id" element={
               <Lobby />
             } />
-            <Route path="/game" element={
+            <Route path="/game/:game_id" element={
               <GameDisplay />
             } />
           </Routes>

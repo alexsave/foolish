@@ -185,7 +185,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             joinGame,
             startGame,
             game_id,
-            game: games[game_id!]
+            game: games[game_id!],
+            player_id
         }}>
             {children}
         </ServerContext.Provider>
@@ -199,6 +200,7 @@ interface ServerContextType {
     startGame: (gameId: string) => Promise<{ game_id: string }>;
     game_id: string | null;
     game: Game | null;
+    player_id: string | null;
 }
 
 export const useServer = () => {

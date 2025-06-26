@@ -6,18 +6,30 @@ import { useParams } from "react-router-dom";
 
 export const Lobby = () => {
     const { game_id } = useParams();
-    const { startGame, game } = useServer();
+    const { startGame, game, player_id } = useServer();
     const navigate = useNavigate();
     console.log(game_id);
+    if (!game) {
+        return <div>Loading...</div>;
+    }
     return (
         <div>
             <h1>Lobby</h1>
             <h2>Game ID: {game_id}</h2>
-            <button onClick={() => startGame(game_id!)}>Ready</button>
-            <button onClick={() => {
+            {
+                game.players.map(player => (
+                    <div key={player.id} style={{ display: 'flex', flexDirection: 'row', gap: '10px', color: 'white', backgroundColor: 'black' }}>
+                        <p>{player.name}</p>
+                        <p>{player.status !== 'idle' ? '🟢' : 
+                        player.id === player_id ? <button onClick={() => {
+                            startGame(game_id!);
+                        }}>Ready</button> : '🔴'}</p>
+                    </div>
+                ))
+            }
+            <button disabled={game.status === 'waiting'} onClick={() => {
                 navigate(`/game/${game_id}`);
-            }}>Start Game</button>
-            {game && <pre>{JSON.stringify(game, null, 2)}</pre>}
+            }}>Enter Game</button>
         </div>
     );
 };
