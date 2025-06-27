@@ -42,7 +42,7 @@ export const GameDisplay = () => {
   useEffect(() => {
     if (urlGameId && urlGameId !== game_id) {
       setGameIdFromUrl(urlGameId);
-      loadGame(urlGameId);
+      //loadGame(urlGameId);
     }
   }, [urlGameId, game_id, setGameIdFromUrl, loadGame]);
 

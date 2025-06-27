@@ -36,7 +36,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     // Keep ref in sync with state
     useEffect(() => {
         gameIdRef.current = game_id;
-        if (game_id) {
+        if (game_id && player_id) {
             console.log('game id changed, need to fetch game data');
             // fetch game data. for now it will just be lobby info
             loadGame(game_id);
@@ -218,6 +218,9 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     const setGameIdFromUrl = (gameId: string) => {
         if (gameId !== game_id) {
             setGameId(gameId);
+        }
+        if (player_id && game_id) {
+            loadGame(game_id);
         }
     };
 

@@ -4,12 +4,21 @@ import { useNavigate } from "react-router-dom";
 import { useServer } from "../contexts/ServerContext";
 import { useParams } from "react-router-dom";
 import { QRCodeSVG } from "qrcode.react";
+import { useEffect } from "react";
 
 export const Lobby = () => {
     const { game_id } = useParams();
     const { startGame, game, player_id, loadGame } = useServer();
     const navigate = useNavigate();
     console.log(game_id);
+    
+    // Automatically navigate when game status is no longer waiting
+    useEffect(() => {
+        if (game && game.status !== 'waiting') {
+            loadGame(game_id!).then(() => navigate(`/game/${game_id}`));
+        }
+    }, [game?.status, game_id, loadGame, navigate]);
+    
     if (!game) {
         return <div>Loading...</div>;
     }
