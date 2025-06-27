@@ -1,7 +1,7 @@
 import * as http from 'http';
-import { refill_deck, Card, Game, Player, initialize_hands, draw, cardDisplay, determine_lowest_power_index, set_positions, CARDS_PER_PLAYER, canCover, ACE_VALUE } from './index';
+import { refill_deck, Card, initialize_hands, draw, cardDisplay, determine_lowest_power_index, set_positions, CARDS_PER_PLAYER, canCover, ACE_VALUE } from './index';
 import WebSocket from 'ws';
-import { PLAYER_STATUS, PlayerStatus, GAME_STATUS, GameStatus, GAME_MOVE_TYPE, LOBBY_MOVE_TYPE, GameMoveType, Message, LobbyGame, SERVER_EVENT_TYPE, PersonalGame, OtherPlayer } from './common';
+import { PLAYER_STATUS, Game, Player, PlayerStatus, GAME_STATUS, GameStatus, GAME_MOVE_TYPE, LOBBY_MOVE_TYPE, GameMoveType, Message, LobbyGame, SERVER_EVENT_TYPE, PersonalGame, OtherPlayer } from './common';
 import express from 'express'
 
 interface GameMap {
@@ -97,7 +97,7 @@ const wrap400 = (execute: (req: express.Request, res: express.Response) => void)
 }
 
 const other_player = (player: Player): OtherPlayer => {
-    return { name: player.name, id: player.id, hand_length: player.hand.length, status: player.status === PLAYER_STATUS.DONE_ATTACKING ? PLAYER_STATUS.IN : player.status };
+    return { name: player.name, id: player.id, hand_length: player.hand.length, status: player.status === PLAYER_STATUS.AWAITING_ATTACK ? PLAYER_STATUS.IN : player.status };
 }
 
 const personalize_game = (game: Game, player_id: string): PersonalGame => {
@@ -106,7 +106,7 @@ const personalize_game = (game: Game, player_id: string): PersonalGame => {
         flipped: game.flipped,
         self: game.players.find(player => player.id === player_id)!,
         players: game.players.map(other_player),
-        status: game.status === GAME_STATUS.WAIT_FOR_ATTACKERS ? GAME_STATUS.FREE_PLAY : game.status,
+        status: game.status,
         firstAttacker: game.firstAttacker,
         currentlyAttacked: game.currentlyAttacked,
         previousFirstAttacker: game.previousFirstAttacker,
@@ -325,6 +325,18 @@ app.post('/' + GAME_MOVE_TYPE.COVER, wrap400((req, res) => {
     }));
 }))
 
+app.post('/' + GAME_MOVE_TYPE.GOOD, wrap400((req, res) => { 
+    const player_id = req.body.player_id;
+    const game_id = verify_game_id(req.body.game_id);
+    verify_player_in_game(game_id, player_id);
+
+    handle_good(games[game_id], game_id, player_id);
+
+    res.end(JSON.stringify({
+        game_id: game_id,
+        game: personalize_game(games[game_id], player_id)
+    }));
+}))
 app.listen(3009)
 
 
@@ -466,7 +478,7 @@ const verify_game_id = (game_id: string) => {
 }
 
 const verify_player_in_game = (game_id: string, player_id: string) => {
-    if (!player_games[player_id].includes(game_id)) {
+    if (!player_games[player_id] || !player_games[player_id].includes(game_id)) {
         throw new Error(`Player ${player_id} is not in game ${game_id}`);
     }
 }
@@ -603,11 +615,13 @@ const handle_cover = (game: Game, game_id: string, player_id: string, cover_card
             throw new Error('SEVERE: Card not found on table');
         }
         game.table[attack_card_index].defense = cover_card;
-        broadcast_to_game(game_id, {
-            type: 'cover_played',
-            message: `Player ${player_id} covered ${cardDisplay(attack_card)} with ${cardDisplay(cover_card)}`,
-            attack_cards: [attack_card],
-            //cover_cards: [cover_card]
+        public_game_channel.push({
+            game_id: game_id,
+            message: {
+                type: SERVER_EVENT_TYPE.COVER_PLAYED,
+                message: `Player ${player_id} covered ${cardDisplay(attack_card)} with ${cardDisplay(cover_card)}`,
+                game: game
+            }
         });
         // remove the cards from the hand
         //game.players[game.currentlyAttacked].hand = game.players[game.currentlyAttacked].hand.filter(card => !card_comp(card, cover_card));
@@ -627,9 +641,13 @@ const handle_cover = (game: Game, game_id: string, player_id: string, cover_card
         game.firstAttacker = game.currentlyAttacked;
         if (game.players[game.firstAttacker].hand.length === 0) {
             // can't think right now, but we need better win checking 
-            broadcast_to_game(game_id, {
-                type: 'player_won',
-                message: `Player ${game.players[game.firstAttacker].name} got rid of their hand`
+            public_game_channel.push({
+                game_id: game_id,
+                message: {
+                    type: SERVER_EVENT_TYPE.PLAYER_WON,
+                    message: `Player ${game.players[game.firstAttacker].name} got rid of their hand`,
+                    game: game
+                }
             });
             // win if still empty after refill
             game.players[game.firstAttacker].status = PLAYER_STATUS.OUT;
@@ -669,9 +687,13 @@ const handle_cover = (game: Game, game_id: string, player_id: string, cover_card
             // but don't make it that obvious. give it 30 seconds
             setTimeout(() => {
                 //shift 
-                broadcast_to_game(game_id, {
-                    type: 'player_successfully_covered',
-                    message: `Player ${player_id} successfully defended the attack`
+                public_game_channel.push({
+                    game_id: game_id,
+                    message: {
+                        type: SERVER_EVENT_TYPE.SUCCESSFULLY_COVERED,
+                        message: `Player ${player_id} successfully defended the attack`,
+                        game: game
+                    }
                 });
                 game.table = [];
                 refill(game_id);
@@ -683,11 +705,23 @@ const handle_cover = (game: Game, game_id: string, player_id: string, cover_card
             // someone can play cards
             // so we need to see who can play cards
             playable_players.forEach(player => {
+                player.status = PLAYER_STATUS.AWAITING_ATTACK;
+            });
+
+            playable_players.forEach(player => {
+                private_user_channel.push({
+                    user_id: player.id,
+                    message: {
+                        type: SERVER_EVENT_TYPE.PLAYABLE_CARDS,
+                        message: `You can still play cards. Either play or confirm you are done attacking with "good"`,
+                        game: game
+                    }
+                });
                 // send them a message
-                user_ports[player.id].send(JSON.stringify({
+                /*user_ports[player.id].send(JSON.stringify({
                     type: 'playable_cards',
                     message: `You can still play cards. Either play or confirm you are done attacking with "good"`
-                }));
+                }));*/
             });
 
         }
@@ -695,7 +729,7 @@ const handle_cover = (game: Game, game_id: string, player_id: string, cover_card
 
 }
 
-const handle_good = (game: Game, game_id: string, player_id: string, message: Message) => {
+const handle_good = (game: Game, game_id: string, player_id: string) => {
 
     // player is done attacking
     // we need to check if they have any cards left in their hand
@@ -704,17 +738,18 @@ const handle_good = (game: Game, game_id: string, player_id: string, message: Me
         throw new Error(`Game ${game_id} is not in wait_for_attackers mode`);
     }
     const player = game.players.find(player => player.id === player_id)!;
-    if (player.status !== 'in') {
+    // If they're in but can't play cards, just let them proceed
+    if (player.status !== PLAYER_STATUS.IN && player.status !== PLAYER_STATUS.AWAITING_ATTACK) {
         throw new Error(`Player ${player_id} is not ready to attack`);
     }
 
     // set them to done attacking
-    player.status = PLAYER_STATUS.DONE_ATTACKING;
+    player.status = PLAYER_STATUS.IN;
 
     // ok now we need to check if all players are done attacking
     // dont count the defender
     // the status check is critical
-    const playable_players = game.players.filter(player => player.id !== game.players[game.currentlyAttacked].id && player.hand.some(card => card.value === game.flipped!.value) && player.status === PLAYER_STATUS.IN);
+    const playable_players = game.players.filter(player => player.id !== game.players[game.currentlyAttacked].id && player.hand.some(card => card.value === game.flipped!.value) && player.status === PLAYER_STATUS.AWAITING_ATTACK);
     if (playable_players.length !== 0) {
         return;
     }
@@ -724,14 +759,18 @@ const handle_good = (game: Game, game_id: string, player_id: string, message: Me
     // shift
     // change all done_attacking to in
     game.players.forEach(player => {
-        if (player.status === PLAYER_STATUS.DONE_ATTACKING) {
+        if (player.status === PLAYER_STATUS.AWAITING_ATTACK) {
             player.status = PLAYER_STATUS.IN;
         }
     });
 
-    broadcast_to_game(game_id, {
-        type: 'player_successfully_defended',
-        message: `Player ${player_id} successfully defended the attack`
+    public_game_channel.push({
+        game_id: game_id,
+        message: {
+            type: SERVER_EVENT_TYPE.SUCCESSFULLY_COVERED,
+            message: `Player ${player_id} successfully defended the attack`,
+            game: game
+        }
     });
 
     game.table = [];
@@ -963,7 +1002,7 @@ const handle_attack = (game: Game, game_id: string, player_id: string, cards: Ca
         }
         // a valid attack will move us out of wait_for_attackers
         game.players.forEach(player => {
-            if (player.status === PLAYER_STATUS.DONE_ATTACKING) {
+            if (player.status === PLAYER_STATUS.AWAITING_ATTACK) {
                 player.status = PLAYER_STATUS.IN;
             }
         });
@@ -1069,22 +1108,8 @@ wss.on('connection', (ws: WebSocket) => {
     ws.on('message', (data: WebSocket.Data) => {
         try {
             const message: Message = JSON.parse(data.toString());
-            // const message: Message = JSON.parse(data.toString());
             console.log('Received from client:', message);
-            const player_id = name_to_id[message.player_name!];
-
-            let game_id: string;
-            // if message type is in GAME_MOVE_TYPE, verify game id
-            if (Object.values(GAME_MOVE_TYPE).includes(message.type as GameMoveType)) {
-                game_id = verify_game_id(message.game_id!);
-                const game = games[game_id];
-                // Might have to loosen this if we want to allow spectators
-                verify_player_in_game(game_id, player_id);
-
-                if (message.type === GAME_MOVE_TYPE.GOOD) {
-                    handle_good(game, game_id, player_id, message);
-                }
-            } else if (message.type === LOBBY_MOVE_TYPE.WEBSOCKET_CONNECT) {
+            if (message.type === LOBBY_MOVE_TYPE.WEBSOCKET_CONNECT) {
                 const player_id = message.player_id!;
                 // Really the critical part here
                 user_ports[player_id] = ws;

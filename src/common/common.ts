@@ -4,7 +4,8 @@ export const PLAYER_STATUS = {
     READY: 'ready',
     IN: 'in',
     OUT: 'out',
-    DONE_ATTACKING: 'done_attacking'
+    // players that need to confirm "good" will be put in this state
+    AWAITING_ATTACK: 'awaiting_attack' 
 } as const;
 
 export type PlayerStatus = typeof PLAYER_STATUS[keyof typeof PLAYER_STATUS];
@@ -29,7 +30,7 @@ export interface LobbyPlayer {
 
 export interface LobbyGame {
     players: LobbyPlayer[];
-    status: 'waiting' | 'playing' | 'first_attacker' | 'free_play' | 'only_defend' | 'wait_for_attackers';
+    status: GameStatus;
 }
 
 export interface OtherPlayer {
@@ -48,7 +49,8 @@ export interface PersonalGame {
     players: OtherPlayer[];
 
     // wait for attackers reveals that people do have hands, so we don't allow this
-    status: 'waiting' | 'playing' | 'first_attacker' | 'free_play' | 'only_defend';
+    // eh it does but there's no way around this. if no one has hands, best we can do is keep status as waitforattackers for a bit
+    status: GameStatus;
     powerSuit: number;
     firstAttacker: number;
     currentlyAttacked: number;
@@ -106,7 +108,19 @@ export interface Player {
     name: string;
     hand: Card[];
     // TODO IMPORTANT: when we get status, we need to map done_attacking to in to avoid revealing values
-    status: 'idle' | 'ready' | 'in' | 'done_attacking' |'out';
+    status: PlayerStatus;
+}
+export interface Game {
+    deck: Card[];
+    flipped: Card | null;
+    players: Player[];
+    status: 'waiting' | 'playing' | 'first_attacker' | 'free_play' | 'only_defend' | 'wait_for_attackers';
+    powerSuit: number;
+    firstAttacker: number;
+    currentlyAttacked: number;
+    previousFirstAttacker: number;
+    previousCurrentlyAttacked: number;
+    table: Battle[];
 }
 interface CardListMapping {
     [key: string]: Card[];
@@ -173,7 +187,11 @@ export const SERVER_EVENT_TYPE = {
     GAME_STARTED: 'game_started',
     ATTACK_PLAYED: 'attack_played',
     PASS_PLAYED: 'pass_played',
-    PICKUP_PLAYED: 'pickup_played'
+    PICKUP_PLAYED: 'pickup_played',
+    COVER_PLAYED: 'cover_played',
+    PLAYER_WON: 'player_won',
+    SUCCESSFULLY_COVERED: 'successfully_covered',
+    PLAYABLE_CARDS: 'playable_cards'
 } as const;
 
 export type ServerEventType = typeof SERVER_EVENT_TYPE[keyof typeof SERVER_EVENT_TYPE];

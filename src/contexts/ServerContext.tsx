@@ -209,6 +209,12 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         });
     };
 
+    const good = (): Promise<{ game_id: string }> => {
+        return promiseMaker(GAME_MOVE_TYPE.GOOD, { game_id: game_id!, player_id: player_id! }, (data) => {
+            setGames({...games, [data.game_id]: data.game});
+        });
+    };
+
     const setGameIdFromUrl = (gameId: string) => {
         if (gameId !== game_id) {
             setGameId(gameId);
@@ -229,6 +235,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             pass,
             pickup,
             cover,
+            good,
             setGameIdFromUrl
         }}>
             {children}
@@ -250,6 +257,7 @@ interface ServerContextType {
     pickup: () => Promise<{ game_id: string }>;
     cover: (coverCards: Card[], attackCards: Card[]) => Promise<{ game_id: string }>;
     setGameIdFromUrl: (gameId: string) => void;
+    good: () => Promise<{ game_id: string }>;
 }
 
 export const useServer = () => {

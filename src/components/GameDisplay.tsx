@@ -30,7 +30,7 @@ const VALUE_MAP: Record<number, string> = {
 // Ok let's actually look at the game state to see if we are defending and modify options
 
 export const GameDisplay = () => {
-  const { game, player_id, attack, game_id, pass, pickup, setGameIdFromUrl, loadGame, cover } = useServer();
+  const { game, player_id, attack, game_id, pass, pickup, setGameIdFromUrl, loadGame, cover, good } = useServer();
   const { game_id: urlGameId } = useParams();
   const state = game as PersonalGame;
   const [selectedCards, setSelectedCards] = useState<Card[]>([]);
@@ -79,6 +79,8 @@ export const GameDisplay = () => {
 
   return (
     <div style={{ backgroundColor: '#982621', width: '100%', height: '100vh' }}>
+      <p>{'status: ' + JSON.stringify(state.self.status)}</p>
+    
       {/* SVG overlay for arrows */}
       <svg style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 500 }}>
         {Array.from(coverMap.entries()).map(([coveringCard, coveredCard], index) => {
@@ -164,6 +166,7 @@ export const GameDisplay = () => {
                     <button onClick={() => {
                       pickup().then(() => {
                         // add cards to hand???
+                        setSelectedCards([]);
                       }).catch((e) => {
                         console.error(e.message);
                       })
@@ -178,6 +181,7 @@ export const GameDisplay = () => {
                       const attackCards = Array.from(coverMap.values());
                       cover(coverCards, attackCards).then(() => {
                         setSelectedCards([]);
+                        setCoverMap(new Map());
                       }).catch((e) => {
                         console.error(e.message);
                       })
@@ -185,11 +189,18 @@ export const GameDisplay = () => {
                     }}>Actually Cover</button>
                   </>
                 ) : (
+                  <>
                   <button onClick={() => attack(selectedCards).then(() => {
                     setSelectedCards([]);
                   }).catch((e) => {
                     console.error(e.message);
                   })}>Attack</button>
+                  <button onClick={() => good().then(() => {
+                    setSelectedCards([]);
+                  }).catch((e) => {
+                    console.error(e.message);
+                  })}>Good</button>
+                  </>
                 )
               }
 

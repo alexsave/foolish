@@ -1,3 +1,4 @@
+import { Player, Game } from './common';
 // Start with
 let startTime = performance.now();
 // The engine of fools
@@ -9,13 +10,13 @@ export interface Card {
     value: number;
 }
 
-export interface Player {
+/*export interface Player {
     id: string;
     name: string;
     hand: Card[];
     // TODO IMPORTANT: when we get status, we need to map done_attacking to in to avoid revealing values
-    status: 'idle' | 'ready' | 'in' | 'done_attacking' |'out';
-}
+    status: 'idle' | 'ready' | 'in' | 'awaiting_attack' |'out';
+}*/
 interface CardListMapping {
     [key: string]: Card[];
 }
@@ -371,18 +372,6 @@ const aiDefend = (): Move => {
 // then once a certain amount of cards are on the table, the defender can only defend, no one else can do anything
 // first attackers is when every card on the table is covered, but we need confirmation from attackers to continue
 
-export interface Game {
-    deck: Card[];
-    flipped: Card | null;
-    players: Player[];
-    status: 'waiting' | 'playing' | 'first_attacker' | 'free_play' | 'only_defend' | 'wait_for_attackers';
-    powerSuit: number;
-    firstAttacker: number;
-    currentlyAttacked: number;
-    previousFirstAttacker: number;
-    previousCurrentlyAttacked: number;
-    table: Battle[];
-}
 
 export const draw = (game: Game): Card | null => {
     if (game.deck.length === 0) {
