@@ -1,6 +1,7 @@
 import { Card, PersonalGame } from '../common/common';
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useServer } from '../contexts/ServerContext';
+import { useParams } from 'react-router-dom';
 
 const SUIT_MAP: Record<number, string> = {
   // emojis
@@ -29,17 +30,29 @@ const VALUE_MAP: Record<number, string> = {
 // Ok let's actually look at the game state to see if we are defending and modify options
 
 export const GameDisplay = () => {
-  const { game, player_id, attack, game_id, pass, pickup } = useServer();
+  const { game, player_id, attack, game_id, pass, pickup, setGameIdFromUrl, loadGame } = useServer();
+  const { game_id: urlGameId } = useParams();
   const state = game as PersonalGame;
+  const [selectedCards, setSelectedCards] = useState<Card[]>([]);
+
+  const [coverMap, setCoverMap] = useState<Map<Card, Card>>(new Map());
+
+  useEffect(() => {
+    if (urlGameId && urlGameId !== game_id) {
+      setGameIdFromUrl(urlGameId);
+      loadGame(urlGameId);
+    }
+  }, [urlGameId, game_id, setGameIdFromUrl, loadGame]);
+
+  if (!state || !state.players || !state.players.length) {
+    return <div>Loading...</div>;
+  }
 
   const self_index = state.players.findIndex((player) => player.id === player_id);
 
   const isDefending = state.currentlyAttacked === self_index;
 
   // a set
-  const [selectedCards, setSelectedCards] = useState<Card[]>([]);
-
-  const [coverMap, setCoverMap] = useState<Map<Card, Card>>(new Map());
 
 
   const CardDisplay = ({card}: {card: Card}) => {

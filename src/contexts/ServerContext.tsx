@@ -1,7 +1,6 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { Card, Game, GAME_MOVE_TYPE, LOBBY_MOVE_TYPE, LobbyGame, PersonalGame, SERVER_EVENT_TYPE } from '../common/common';
 //import supabase from '../db/supabaseClient';
-import { useParams } from 'react-router-dom';
 
 const ServerContext = createContext<ServerContextType|null>(null);
 
@@ -32,27 +31,19 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     // Use ref to avoid closure issues in WebSocket handler
     const gameIdRef = useRef<string | null>(null);
 
-    const url_game_id = useParams().game_id;
-    useEffect(() => {
-        // keep it in sync with url
-        console.log('url game id changed ' + url_game_id + ' game id is ' + game_id);
-        if (url_game_id && url_game_id !== game_id) {
-            setGameId(url_game_id);
-        }
-    }, [url_game_id]);
+
 
     // Keep ref in sync with state
     useEffect(() => {
         gameIdRef.current = game_id;
-    }, [game_id]);
-
-    useEffect(() => {
         if (game_id) {
             console.log('game id changed, need to fetch game data');
             // fetch game data. for now it will just be lobby info
+            loadGame(game_id);
 
         }
     }, [game_id]);
+
 
     useEffect(() => {
         // write to player id to local storage
@@ -64,6 +55,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     useEffect(() => {
         // read from local storage for player id
         const playerId = localStorage.getItem('player_id');
+        console.log('player id is ' + playerId);
         if (playerId) {
             setPlayerId(playerId);
             createWebSocket(playerId);
@@ -211,6 +203,12 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         });
     };
 
+    const setGameIdFromUrl = (gameId: string) => {
+        if (gameId !== game_id) {
+            setGameId(gameId);
+        }
+    };
+
     return (
         <ServerContext.Provider value={{
             serverLogin,
@@ -223,7 +221,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             loadGame,   
             attack,
             pass,
-            pickup
+            pickup,
+            setGameIdFromUrl
         }}>
             {children}
         </ServerContext.Provider>
@@ -242,6 +241,7 @@ interface ServerContextType {
     attack: (cards: Card[]) => Promise<{ game_id: string }>;
     pass: (cards: Card[]) => Promise<{ game_id: string }>;
     pickup: () => Promise<{ game_id: string }>;
+    setGameIdFromUrl: (gameId: string) => void;
 }
 
 export const useServer = () => {
