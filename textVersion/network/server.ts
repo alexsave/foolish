@@ -1,8 +1,12 @@
 import * as http from 'http';
 import { refill_deck, Card, initialize_hands, draw, cardDisplay, determine_lowest_power_index, set_positions, CARDS_PER_PLAYER, canCover, ACE_VALUE } from './index';
 import WebSocket from 'ws';
-import { PLAYER_STATUS, Game, Player, PlayerStatus, GAME_STATUS, GameStatus, GAME_MOVE_TYPE, LOBBY_MOVE_TYPE, GameMoveType, Message, LobbyGame, SERVER_EVENT_TYPE, PersonalGame, OtherPlayer } from './common';
+import { wrap400, createId, verify_game_id, verify_player_in_game, start_game, lobbify_game, User, PLAYER_STATUS, Game, Player, PlayerStatus, GAME_STATUS, GameStatus, GAME_MOVE_TYPE, LOBBY_MOVE_TYPE, GameMoveType, Message, LobbyGame, SERVER_EVENT_TYPE, PersonalGame, OtherPlayer, PrivateMessage, GameMessage } from './common';
 import express from 'express'
+import { create } from './create';
+import { login } from './login';
+import { join } from './join';
+import { start } from './start';
 
 interface GameMap {
     [key: string]: Game;
@@ -19,18 +23,9 @@ const games: GameMap = {};
 // also players can have multiple game so
 const player_games: PlayerGameMap = {};
 
-// user table of id to name
-interface User {
-    name: string;
-    id: string;
-}
 
 interface UserMap {
     [key: string]: User;
-}
-
-const createId = () => {
-    return crypto.randomUUID().slice(0, 6);
 }
 
 // strictly local. I think
@@ -69,32 +64,6 @@ app.get('/', (req, res) => {
     res.send('Hello World')
 })
 
-app.post('/' + LOBBY_MOVE_TYPE.LOGIN, (req, res) => {
-    console.log('Login request' + JSON.stringify(req.body));
-    const name = req.body.name;
-    let id = name_to_id[name];
-    if (!id) {
-        const player_id = createId();
-        name_to_id[name] = player_id;
-        users[player_id] = {
-            name: name,
-            id: player_id
-        }
-        id = player_id;
-    }
-    res.end(JSON.stringify({
-        name: name,
-        player_id: id
-    }));
-})
-
-const wrap400 = (execute: (req: express.Request, res: express.Response) => void) => (req: express.Request, res: express.Response) => {
-    try {
-        execute(req, res);
-    } catch (e: any) {
-        res.status(400).end(JSON.stringify({ error: e.message }));
-    }
-}
 
 const other_player = (player: Player): OtherPlayer => {
     return { name: player.name, id: player.id, hand_length: player.hand.length, status: player.status === PLAYER_STATUS.AWAITING_ATTACK ? PLAYER_STATUS.IN : player.status };
@@ -116,151 +85,13 @@ const personalize_game = (game: Game, player_id: string): PersonalGame => {
     }
 }
 
-// clear everything but player name and status. save some bytes
-const lobbify_game = (game: Game): LobbyGame => {
-    return {
-        players: game.players.map(player => ({ name: player.name, status: player.status, id: player.id })),
-        status: game.status === GAME_STATUS.WAITING ? GAME_STATUS.WAITING : GAME_STATUS.PLAYING
-    };
-}
+app.post('/' + LOBBY_MOVE_TYPE.LOGIN, login);
 
-app.post('/' + LOBBY_MOVE_TYPE.CREATE, wrap400((req, res) => {
-    // Every request should probably have a player_id now
-    const player_id = req.body.player_id;
+app.post('/' + LOBBY_MOVE_TYPE.CREATE, create);
 
-    const game_id = createId();
-    games[game_id] = {
-        status: GAME_STATUS.WAITING,
-        players: [{
-            name: users[player_id].name,
-            id: player_id,
-            status: PLAYER_STATUS.IDLE,
-            hand: []
-        }],
-        deck: [],
-        flipped: null,
-        powerSuit: 0,
-        firstAttacker: 0,
-        currentlyAttacked: 0,
-        previousFirstAttacker: 0,
-        previousCurrentlyAttacked: 0,
-        table: []
-    }
-    if (!player_games[player_id]) {
-        player_games[player_id] = [];
-    }
-    player_games[player_id].push(game_id);
+app.post('/' + LOBBY_MOVE_TYPE.JOIN, join);
 
-    // Doesn't REALLY make sense to send this, because the only thing that happens is the player joins the game.
-    // If they're the ones creating it, they're the only ones in it. But they already know the game
-    public_game_channel.push({
-        game_id: game_id,
-        message: {
-            type: 'game_created',
-            message: `Game created with id ${game_id}`,
-            game_id: game_id
-        }
-    });
-
-    res.end(JSON.stringify({
-        game_id: game_id,
-        game: lobbify_game(games[game_id])
-    }));
-}));
-
-app.post('/' + LOBBY_MOVE_TYPE.JOIN, wrap400((req, res) => {
-    const player_id = req.body.player_id;
-    const game_id = verify_game_id(req.body.game_id);
-
-    // check if player is already in game
-    if (player_games[player_id] && player_games[player_id].includes(game_id)) {
-        //throw new Error(`Player ${player_id} is already in game ${game_id}`);
-    } else {
-        games[game_id].players.push({
-            name: users[player_id].name,
-            id: player_id,
-            status: PLAYER_STATUS.IDLE,
-            hand: []
-        });
-        if (!player_games[player_id]) {
-            player_games[player_id] = [];
-        }
-        player_games[player_id].push(game_id);
-    }
-
-    // check if game is ongoing
-    if (games[game_id].status !== GAME_STATUS.WAITING) {
-        throw new Error(`Game ${game_id} is not waiting`);
-    }
-
-    // send to all players in game
-    public_game_channel.push({
-        game_id: game_id,
-        message: {
-            type: SERVER_EVENT_TYPE.PLAYER_JOINED_GAME,
-            message: `Player ${users[player_id].name} joined game ${game_id}`,
-            game_id: game_id,
-            game: games[game_id]
-        }
-    });
-
-    res.end(JSON.stringify({
-        game_id: game_id,
-        game: lobbify_game(games[game_id])
-    }));
-}));
-
-app.post('/' + LOBBY_MOVE_TYPE.START, wrap400((req, res) => {
-    const player_id = req.body.player_id;
-    const game_id = verify_game_id(req.body.game_id);
-
-    // user wants to start a game. switch them to ready and see if all other players are ready. and if tehre are 2+ players
-
-    verify_player_in_game(game_id, player_id);
-
-    const game = games[game_id];
-
-    // check if game is waiting
-    if (game.status !== GAME_STATUS.WAITING) {
-        throw new Error(`Game ${game_id} is not waiting`);
-    }
-
-    // set player to ready
-    game.players.find(player => player.id === player_id)!.status = PLAYER_STATUS.READY;
-
-    // two events I know
-    public_game_channel.push({
-        game_id: game_id,
-        message: {
-            type: SERVER_EVENT_TYPE.PLAYER_READY,
-            message: `Player ${users[player_id].name} is ready`,
-            game_id: game_id,
-            game: games[game_id]
-        }
-    });
-
-    // check if all players are ready
-    if (game.players.length >= 2 &&
-        game.players.every(player => player.status === PLAYER_STATUS.READY)) {
-        start_game(game_id);
-
-        // send to all players in game
-        public_game_channel.push({
-            game_id: game_id,
-            message: {
-                type: SERVER_EVENT_TYPE.GAME_STARTED,
-                message: `Game ${game_id} started`,
-                game_id: game_id,
-                game: games[game_id]
-            }
-        });
-
-    }
-    res.end(JSON.stringify({
-        game_id: game_id,
-        game: lobbify_game(games[game_id])
-    }));
-}));
+app.post('/' + LOBBY_MOVE_TYPE.START, start);
 
 app.post('/' + GAME_MOVE_TYPE.STATUS, wrap400((req, res) => {
     const player_id = req.body.player_id;
@@ -469,19 +300,6 @@ const refill = (game_id: string) => {
     } while (pIndex !== game.firstAttacker/* && !no_cards_left(game)*/);
 };
 
-// throw error if not found
-const verify_game_id = (game_id: string) => {
-    if (!games[game_id]) {
-        throw new Error(`Game ${game_id} not found`);
-    }
-    return game_id;
-}
-
-const verify_player_in_game = (game_id: string, player_id: string) => {
-    if (!player_games[player_id] || !player_games[player_id].includes(game_id)) {
-        throw new Error(`Player ${player_id} is not in game ${game_id}`);
-    }
-}
 
 const verify_hands_in_players_hand = (player: Player, cards: Card[]) => {
     for (const card of cards) {
@@ -1070,15 +888,6 @@ const handle_attack = (game: Game, game_id: string, player_id: string, cards: Ca
 }
 
 
-interface GameMessage {
-    game_id: string;
-    message: Message;
-}
-
-interface PrivateMessage {
-    user_id: string;
-    message: Message;
-}
 
 // This will emulate one of the realtime channels of supabase. Most server events will go here
 const public_game_channel: GameMessage[] = [];
@@ -1157,92 +966,6 @@ process.on('SIGINT', () => {
     process.exit(0);
 });
 
-const start_game = (game_id: string) => {
-    // Assume that this is safe to call because we only call from server
-    const game = games[game_id];
-
-    // This is the game entry
-    game.status = 'playing';
-    game.players.forEach(player => {
-        player.status = PLAYER_STATUS.IN;
-    });
-
-    game.deck = refill_deck();
-
-    const hands = initialize_hands(game);
-    for (let i = 0; i < game.players.length; i++) {
-        game.players[i].hand = hands[i];
-
-        user_ports[game.players[i].id].send(JSON.stringify({
-            type: 'player_hand',
-            message: `Player ${game.players[i].name} hand ${game.players[i].hand.map(card => cardDisplay(card)).join(', ')}`,
-            hand: game.players[i].hand
-        }));
-    }
-
-    let flipped_card = draw(game);
-    while (flipped_card!.value === ACE_VALUE) {
-        // move back to deck
-        game.deck.push(flipped_card!);
-        flipped_card = draw(game);
-    }
-    game.flipped = flipped_card;
-    game.powerSuit = game.flipped!.suit;
-
-    // Everyone needs to know
-    broadcast_to_game(game_id, {
-        type: 'flipped_card',
-        message: `Flipped card is ${cardDisplay(game.flipped!)}`,
-        //flipped: game.flipped
-    });
-
-    const lowest_power_index = determine_lowest_power_index(game);
-
-    broadcast_to_game(game_id, {
-        type: 'first_attacker',
-        message: `Player ${game.players[lowest_power_index].name} is the first attacker`
-    });
-
-    game.firstAttacker = lowest_power_index;
-    set_positions(game);
-
-
-    // Ok NOW it is different from the single script
-    /*
-    the loop is
-    chooseAttack from firstAttacker
-    allowAdditionalAttacks from all attackers
-    aiDefend from defender
-    handleChoice based on defender choice
-        while (continueBattle === true) {
-            // Allow attacking again
-            allowAttacks();
-            choice = aiDefend();
-            continueBattle = handleChoice(choice);
-        }
-
-    draw from deck
-    check if game is over
-
-    for server-client, this looks like
-    requestAttack from first attacker, reject all other requests
-    then pretty much anything can happen, the defender can cover, defender can pick up, defender can pass, additional attacks can be made
-    only limit is that defender can't pick up for about 30s, to keep peopel from just swallowing 1 card and continuing
-
-    */
-    // request attack from first attacker
-
-    game.status = GAME_STATUS.FIRST_ATTACKER;
-    broadcast_to_game(game_id, {
-        type: 'game_status',
-        message: `Wait for first attacker to attack`
-    });
-    user_ports[game.players[game.firstAttacker].id].send(JSON.stringify({
-        type: 'request_first_attack',
-        message: `Please choose an attack. Options are ${game.players[game.firstAttacker].hand.map(card => cardDisplay(card)).join(', ')}`,
-    }));
-
-}
 
 const broadcast_to_game = (game_id: string, message: Message) => {
     games[game_id].players.forEach(player => {

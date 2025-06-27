@@ -1,4 +1,24 @@
 // In the actual game, we will have to have a script to copy this from supabase/ to src/
+import express from 'express';
+import WebSocket from 'ws';
+import { refill_deck, initialize_hands, draw, cardDisplay, determine_lowest_power_index, set_positions } from './index';
+
+// user table of id to name
+export interface User {
+    name: string;
+    id: string;
+}
+
+export interface GameMessage {
+    game_id: string;
+    message: Message;
+}
+
+export interface PrivateMessage {
+    user_id: string;
+    message: Message;
+}
+
 export const PLAYER_STATUS = {
     IDLE: 'idle',
     READY: 'ready',
@@ -195,3 +215,132 @@ export const SERVER_EVENT_TYPE = {
 } as const;
 
 export type ServerEventType = typeof SERVER_EVENT_TYPE[keyof typeof SERVER_EVENT_TYPE];
+
+export const wrap400 = (execute: (req: express.Request, res: express.Response) => void) => (req: express.Request, res: express.Response) => {
+    try {
+        execute(req, res);
+    } catch (e: any) {
+        res.status(400).end(JSON.stringify({ error: e.message }));
+    }
+}
+
+export const createId = () => {
+    return crypto.randomUUID().slice(0, 6);
+}
+
+// clear everything but player name and status. save some bytes
+export const lobbify_game = (game: Game): LobbyGame => {
+    return {
+        players: game.players.map(player => ({ name: player.name, status: player.status, id: player.id })),
+        status: game.status === GAME_STATUS.WAITING ? GAME_STATUS.WAITING : GAME_STATUS.PLAYING
+    };
+}
+
+// Basically the supabase schemas
+
+export const database = {
+    games: {} as Record<string, Game>,
+    users: {} as Record<string, User>,
+    player_games: {} as Record<string, string[]>,
+    public_game_channel: [] as GameMessage[],
+    private_user_channel: [] as PrivateMessage[],
+    name_to_id: {} as Record<string, string>,
+    user_ports: {} as Record<string, WebSocket>
+}
+
+// throw error if not found
+export const verify_game_id = (game_id: string) => {
+    const { games } = database;
+    if (!games[game_id]) {
+        throw new Error(`Game ${game_id} not found`);
+    }
+    return game_id;
+}
+
+export const verify_player_in_game = (game_id: string, player_id: string) => {
+    const { player_games } = database;
+    if (!player_games[player_id] || !player_games[player_id].includes(game_id)) {
+        throw new Error(`Player ${player_id} is not in game ${game_id}`);
+    }
+}
+
+export const start_game = (game_id: string) => {
+    const { games, public_game_channel, private_user_channel } = database;
+
+    // Assume that this is safe to call because we only call from server
+    const game = games[game_id];
+
+    // This is the game entry
+    game.status = 'playing';
+    game.players.forEach(player => {
+        player.status = PLAYER_STATUS.IN;
+    });
+
+    game.deck = refill_deck();
+
+    const hands = initialize_hands(game);
+    for (let i = 0; i < game.players.length; i++) {
+        game.players[i].hand = hands[i];
+
+        private_user_channel.push({
+            user_id: game.players[i].id,
+            message: {
+                type: 'player_hand',
+                message: `Player ${game.players[i].name} hand ${game.players[i].hand.map(card => cardDisplay(card)).join(', ')}`,
+                //hand: game.players[i].hand
+            }
+        });
+    }
+
+    let flipped_card = draw(game);
+    while (flipped_card!.value === ACE_VALUE) {
+        // move back to deck
+        game.deck.push(flipped_card!);
+        flipped_card = draw(game);
+    }
+    game.flipped = flipped_card;
+    game.powerSuit = game.flipped!.suit;
+
+    // Everyone needs to know
+    public_game_channel.push({
+        game_id: game_id,
+        message: {
+            type: 'flipped_card',
+            message: `Flipped card is ${cardDisplay(game.flipped!)}`,
+
+        }
+    });
+
+    const lowest_power_index = determine_lowest_power_index(game);
+
+    public_game_channel.push({
+        game_id: game_id,
+        message: {
+            type: 'first_attacker',
+            message: `Player ${game.players[lowest_power_index].name} is the first attacker`
+        }
+    });
+
+    game.firstAttacker = lowest_power_index;
+    set_positions(game);
+
+
+    // request attack from first attacker
+
+    game.status = GAME_STATUS.FIRST_ATTACKER;
+    public_game_channel.push({
+        game_id: game_id,
+        message: {
+            type: 'game_status',
+            message: `Wait for first attacker to attack`
+        }
+    });
+    private_user_channel.push({
+        user_id: game.players[game.firstAttacker].id,
+        message: {
+            type: 'request_first_attack',
+            message: `Please choose an attack. Options are ${game.players[game.firstAttacker].hand.map(card => cardDisplay(card)).join(', ')}`,
+        }
+    });
+
+}

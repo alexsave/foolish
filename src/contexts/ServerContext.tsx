@@ -155,6 +155,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     };
 
     const createGame = (): Promise<{ game_id: string }> => {
+        // this should not load the game data yet
         return promiseMaker(LOBBY_MOVE_TYPE.CREATE, { player_id: player_id }, (data) => {
             setGameId(data.game_id);
             // The server should also return game data for this game
