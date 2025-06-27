@@ -312,6 +312,19 @@ app.post('/' + GAME_MOVE_TYPE.PICKUP, wrap400((req, res) => {
     }));
 }))
 
+app.post('/' + GAME_MOVE_TYPE.COVER, wrap400((req, res) => {
+    const player_id = req.body.player_id;
+    const game_id = verify_game_id(req.body.game_id);
+    verify_player_in_game(game_id, player_id);
+
+    handle_cover(games[game_id], game_id, player_id, req.body.cover_cards, req.body.attack_cards);
+
+    res.end(JSON.stringify({
+        game_id: game_id,
+        game: personalize_game(games[game_id], player_id)
+    }));
+}))
+
 app.listen(3009)
 
 
@@ -524,7 +537,7 @@ const handle_pickup = (game: Game, game_id: string, player_id: string) => {
     game.status = GAME_STATUS.FIRST_ATTACKER;
 }
 
-const handle_cover = (game: Game, game_id: string, player_id: string, message: Message) => {
+const handle_cover = (game: Game, game_id: string, player_id: string, cover_cards: Card[], attack_cards: Card[]) => {
     // cover a card
 
 
@@ -542,18 +555,26 @@ const handle_cover = (game: Game, game_id: string, player_id: string, message: M
     // the second one is the cards that are being used to cover
 
 
-    const cover_cards = message.cards!;
 
     // ok first just make sure all the cards are in the hand
     verify_hands_in_players_hand(game.players[game.currentlyAttacked], cover_cards);
 
+    // check no duplicates
+    if (new Set(cover_cards).size !== cover_cards.length) {
+        throw new Error(`Cards ${cover_cards.map(card => cardDisplay(card)).join(', ')} have duplicates`);
+    }
 
-    const attack_cards = message.attack_cards!;
+
     // ensure that each of the attack cards are on the table AND uncovered
     for (const card of attack_cards) {
         if (!game.table.some(battle => battle.attack.value === card.value && battle.defense === null)) {
             throw new Error(`Card ${cardDisplay(card)} is not on the table`);
         }
+    }
+
+    // check no duplicates
+    if (new Set(attack_cards).size !== attack_cards.length) {
+        throw new Error(`Cards ${attack_cards.map(card => cardDisplay(card)).join(', ')} have duplicates`);
     }
 
     // ok now we know that the cards are in the hand and on the table
@@ -564,6 +585,11 @@ const handle_cover = (game: Game, game_id: string, player_id: string, message: M
         if (!canCover(attack_card, cover_card, game.powerSuit)) {
             throw new Error(`Card ${cardDisplay(cover_card)} cannot cover ${cardDisplay(attack_card)}`);
         }
+    }
+
+    // assert same size of arrays
+    if (cover_cards.length !== attack_cards.length) {
+        throw new Error(`Cover cards ${cover_cards.map(card => cardDisplay(card)).join(', ')} and attack cards ${attack_cards.map(card => cardDisplay(card)).join(', ')} have different sizes`);
     }
 
     // now cover the cards
@@ -729,6 +755,11 @@ const handle_pass = (game: Game, game_id: string, player_id: string, cards: Card
         throw new Error(`Cards ${mCards.map(card => cardDisplay(card)).join(', ')} are not all the same value`);
     }
 
+    // check no duplicates
+    if (new Set(mCards).size !== mCards.length) {
+        throw new Error(`Cards ${mCards.map(card => cardDisplay(card)).join(', ')} have duplicates`);
+    }
+
     // Find which player this is
     const player = game.players.find(player => player.id === player_id)!;
 
@@ -848,6 +879,11 @@ const handle_attack = (game: Game, game_id: string, player_id: string, cards: Ca
     // But this also slows down attackign to make it more fair for all attackers
     if (!cards.every(card => card.value === cards[0].value)) {
         throw new Error(`Cards ${cards.map(card => cardDisplay(card)).join(', ')} are not all the same value`);
+    }
+
+    // check no duplicates
+    if (new Set(cards).size !== cards.length) {
+        throw new Error(`Cards ${cards.map(card => cardDisplay(card)).join(', ')} have duplicates`);
     }
 
     // Find which player this is
@@ -1045,9 +1081,7 @@ wss.on('connection', (ws: WebSocket) => {
                 // Might have to loosen this if we want to allow spectators
                 verify_player_in_game(game_id, player_id);
 
-                if (message.type === GAME_MOVE_TYPE.COVER) {
-                    handle_cover(game, game_id, player_id, message);
-                } else if (message.type === GAME_MOVE_TYPE.GOOD) {
+                if (message.type === GAME_MOVE_TYPE.GOOD) {
                     handle_good(game, game_id, player_id, message);
                 }
             } else if (message.type === LOBBY_MOVE_TYPE.WEBSOCKET_CONNECT) {

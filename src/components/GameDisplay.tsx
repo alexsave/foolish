@@ -30,7 +30,7 @@ const VALUE_MAP: Record<number, string> = {
 // Ok let's actually look at the game state to see if we are defending and modify options
 
 export const GameDisplay = () => {
-  const { game, player_id, attack, game_id, pass, pickup, setGameIdFromUrl, loadGame } = useServer();
+  const { game, player_id, attack, game_id, pass, pickup, setGameIdFromUrl, loadGame, cover } = useServer();
   const { game_id: urlGameId } = useParams();
   const state = game as PersonalGame;
   const [selectedCards, setSelectedCards] = useState<Card[]>([]);
@@ -61,7 +61,7 @@ export const GameDisplay = () => {
   // a set
 
 
-  const CardDisplay = ({card, onClick}: {card: Card, onClick?: () => void}) => {
+  const CardDisplay = ({ card, onClick }: { card: Card, onClick?: () => void }) => {
     return (
       <div onClick={onClick} style={{ backgroundColor: 'white', width: '40px', height: '70px', borderRadius: '5px', border: '1px solid black', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
         <p>{VALUE_MAP[card.value] + SUIT_MAP[card.suit]}</p>
@@ -78,15 +78,15 @@ export const GameDisplay = () => {
   }
 
   return (
-    <div style={{ backgroundColor: '#982621', width: '100%', height: '100vh'}}>
+    <div style={{ backgroundColor: '#982621', width: '100%', height: '100vh' }}>
       {/* SVG overlay for arrows */}
       <svg style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 500 }}>
         {Array.from(coverMap.entries()).map(([coveringCard, coveredCard], index) => {
           // Find the position of the covering card (in hand)
-          const handCardIndex = state.self.hand.findIndex(card => 
+          const handCardIndex = state.self.hand.findIndex(card =>
             card.value === coveringCard.value && card.suit === coveringCard.suit
           );
-          
+
           // Find the position of the covered card (on table)
           const tableCardIndex = state.table.findIndex(battle =>
             battle.attack.value === coveredCard.value && battle.attack.suit === coveredCard.suit
@@ -119,7 +119,7 @@ export const GameDisplay = () => {
             </g>
           );
         })}
-        
+
         {/* Arrow marker definition */}
         <defs>
           <marker
@@ -138,7 +138,7 @@ export const GameDisplay = () => {
         </defs>
       </svg>
 
-      <div style={{  display: 'flex',  flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+      <div style={{ display: 'flex', flex: 1, justifyContent: 'center', alignItems: 'center' }}>
         <p>FOOLISH</p>
         <div style={{ display: 'flex', position: 'absolute', top: '0px', left: '0px', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', height: '100px' }}>
           {state.flipped && <CardDisplay card={state.flipped} />}
@@ -153,7 +153,7 @@ export const GameDisplay = () => {
               {
                 isDefending ? (
                   <>
-                    <button onClick={() => { 
+                    <button onClick={() => {
                       console.log(selectedCards);
                       pass(selectedCards).then(() => {
                         setSelectedCards([]);
@@ -161,7 +161,7 @@ export const GameDisplay = () => {
                         console.error(e.message);
                       })
                     }}>Pass</button>
-                    <button onClick={() => { 
+                    <button onClick={() => {
                       pickup().then(() => {
                         // add cards to hand???
                       }).catch((e) => {
@@ -169,9 +169,20 @@ export const GameDisplay = () => {
                       })
                     }}>Pickup</button>
 
-                    <button onClick={() => { 
-                      setIsSelectingCover(true); 
-                      }}>Cover</button>
+                    <button onClick={() => {
+                      setIsSelectingCover(true);
+                    }}>Cover</button>
+
+                    <button onClick={() => {
+                      const coverCards = Array.from(coverMap.keys());
+                      const attackCards = Array.from(coverMap.values());
+                      cover(coverCards, attackCards).then(() => {
+                        setSelectedCards([]);
+                      }).catch((e) => {
+                        console.error(e.message);
+                      })
+                      setIsSelectingCover(false);
+                    }}>Actually Cover</button>
                   </>
                 ) : (
                   <button onClick={() => attack(selectedCards).then(() => {

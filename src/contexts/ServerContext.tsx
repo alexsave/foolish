@@ -203,6 +203,12 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         });
     };
 
+    const cover = (coverCards: Card[], attackCards: Card[]): Promise<{ game_id: string }> => {
+        return promiseMaker(GAME_MOVE_TYPE.COVER, { game_id: game_id!, player_id: player_id!, cover_cards: coverCards, attack_cards: attackCards }, (data) => {
+            setGames({...games, [data.game_id]: data.game});
+        });
+    };
+
     const setGameIdFromUrl = (gameId: string) => {
         if (gameId !== game_id) {
             setGameId(gameId);
@@ -222,6 +228,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             attack,
             pass,
             pickup,
+            cover,
             setGameIdFromUrl
         }}>
             {children}
@@ -241,6 +248,7 @@ interface ServerContextType {
     attack: (cards: Card[]) => Promise<{ game_id: string }>;
     pass: (cards: Card[]) => Promise<{ game_id: string }>;
     pickup: () => Promise<{ game_id: string }>;
+    cover: (coverCards: Card[], attackCards: Card[]) => Promise<{ game_id: string }>;
     setGameIdFromUrl: (gameId: string) => void;
 }
 
