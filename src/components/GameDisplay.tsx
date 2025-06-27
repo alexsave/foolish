@@ -37,12 +37,18 @@ export const GameDisplay = () => {
 
   const [coverMap, setCoverMap] = useState<Map<Card, Card>>(new Map());
 
+
+
   useEffect(() => {
     if (urlGameId && urlGameId !== game_id) {
       setGameIdFromUrl(urlGameId);
       loadGame(urlGameId);
     }
   }, [urlGameId, game_id, setGameIdFromUrl, loadGame]);
+
+
+  // we chose a card to cover WITH, now we choose WHICH card to cover
+  const [isSelectingCover, setIsSelectingCover] = useState(false);
 
   if (!state || !state.players || !state.players.length) {
     return <div>Loading...</div>;
@@ -55,9 +61,9 @@ export const GameDisplay = () => {
   // a set
 
 
-  const CardDisplay = ({card}: {card: Card}) => {
+  const CardDisplay = ({card, onClick}: {card: Card, onClick?: () => void}) => {
     return (
-      <div style={{ backgroundColor: 'white', width: '40px', height: '70px', borderRadius: '5px', border: '1px solid black', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+      <div onClick={onClick} style={{ backgroundColor: 'white', width: '40px', height: '70px', borderRadius: '5px', border: '1px solid black', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
         <p>{VALUE_MAP[card.value] + SUIT_MAP[card.suit]}</p>
       </div>
     )
@@ -73,6 +79,65 @@ export const GameDisplay = () => {
 
   return (
     <div style={{ backgroundColor: '#982621', width: '100%', height: '100vh'}}>
+      {/* SVG overlay for arrows */}
+      <svg style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 500 }}>
+        {Array.from(coverMap.entries()).map(([coveringCard, coveredCard], index) => {
+          // Find the position of the covering card (in hand)
+          const handCardIndex = state.self.hand.findIndex(card => 
+            card.value === coveringCard.value && card.suit === coveringCard.suit
+          );
+          
+          // Find the position of the covered card (on table)
+          const tableCardIndex = state.table.findIndex(battle =>
+            battle.attack.value === coveredCard.value && battle.attack.suit === coveredCard.suit
+          );
+
+          if (handCardIndex === -1 || tableCardIndex === -1) return null;
+
+          // Calculate approximate positions
+          // Hand cards are at the bottom center
+          const handCardsStartX = window.innerWidth / 2 - (state.self.hand.length * 40) / 2;
+          const handX = handCardsStartX + (handCardIndex * 40) + 20; // 20 is half card width
+          const handY = window.innerHeight - 100; // approximate bottom position
+
+          // Table cards are in the center
+          const tableX = window.innerWidth / 2;
+          const tableY = window.innerHeight / 2 + (tableCardIndex * 80) - (state.table.length * 40); // spread them vertically
+
+          return (
+            <g key={`arrow-${index}`}>
+              {/* Arrow line */}
+              <line
+                x1={handX}
+                y1={handY}
+                x2={tableX}
+                y2={tableY}
+                stroke="yellow"
+                strokeWidth="3"
+                markerEnd="url(#arrowhead)"
+              />
+            </g>
+          );
+        })}
+        
+        {/* Arrow marker definition */}
+        <defs>
+          <marker
+            id="arrowhead"
+            markerWidth="10"
+            markerHeight="7"
+            refX="9"
+            refY="3.5"
+            orient="auto"
+          >
+            <polygon
+              points="0 0, 10 3.5, 0 7"
+              fill="yellow"
+            />
+          </marker>
+        </defs>
+      </svg>
+
       <div style={{  display: 'flex',  flex: 1, justifyContent: 'center', alignItems: 'center' }}>
         <p>FOOLISH</p>
         <div style={{ display: 'flex', position: 'absolute', top: '0px', left: '0px', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', height: '100px' }}>
@@ -104,7 +169,9 @@ export const GameDisplay = () => {
                       })
                     }}>Pickup</button>
 
-                    <button onClick={() => { }}>Cover</button>
+                    <button onClick={() => { 
+                      setIsSelectingCover(true); 
+                      }}>Cover</button>
                   </>
                 ) : (
                   <button onClick={() => attack(selectedCards).then(() => {
@@ -152,8 +219,21 @@ export const GameDisplay = () => {
           </div>
           {
             state.table.map((battle, index) => {
-              return <div key={battle.attack.value + ' ' +battle.attack.suit}style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
-                <CardDisplay card={battle.attack} />
+              let border = { border: '1px solid black' };
+              if (coverMap.values().some(c => c.value === battle.attack.value && c.suit === battle.attack.suit)) {
+                border = { border: '3px solid red' };
+              }
+              return <div key={battle.attack.value + ' ' + battle.attack.suit} style={{ ...border, display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
+                <CardDisplay
+                  card={battle.attack}
+                  onClick={() => {
+                    if (isSelectingCover) {
+                      setCoverMap(new Map(coverMap.set(selectedCards[0], battle.attack)));
+                      console.log(coverMap);
+                      setIsSelectingCover(false);
+                    }
+                  }}
+                />
                 {battle.defense && <CardDisplay card={battle.defense} />}
               </div>
             })
@@ -165,7 +245,7 @@ export const GameDisplay = () => {
               // array of 100 black squares
               //Array.from({length: state.players.length-1}).map((_, index) => {
               const radians = (2) * Math.PI * visual_index / (state.players.length)// + Math.PI / 4;
-              const x = ((-1* Math.sin(radians) * 30) + 50) + '%';
+              const x = ((-1 * Math.sin(radians) * 30) + 50) + '%';
               const y = ((Math.cos(radians) * 30) + 50) + '%';
 
               let color = 'black';
