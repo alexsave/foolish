@@ -171,7 +171,9 @@ export const SERVER_EVENT_TYPE = {
     PLAYER_JOINED_GAME: 'player_joined_game',
     PLAYER_READY: 'player_ready',
     GAME_STARTED: 'game_started',
-    ATTACK_PLAYED: 'attack_played'
+    ATTACK_PLAYED: 'attack_played',
+    PASS_PLAYED: 'pass_played',
+    PICKUP_PLAYED: 'pickup_played'
 } as const;
 
 export type ServerEventType = typeof SERVER_EVENT_TYPE[keyof typeof SERVER_EVENT_TYPE];

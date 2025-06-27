@@ -26,9 +26,15 @@ const VALUE_MAP: Record<number, string> = {
   13: 'A',
 }
 
+// Ok let's actually look at the game state to see if we are defending and modify options
+
 export const GameDisplay = () => {
-  const { game, player_id, attack, game_id } = useServer();
+  const { game, player_id, attack, game_id, pass, pickup } = useServer();
   const state = game as PersonalGame;
+
+  const self_index = state.players.findIndex((player) => player.id === player_id);
+
+  const isDefending = state.currentlyAttacked === self_index;
 
   // a set
   const [selectedCards, setSelectedCards] = useState<Card[]>([]);
@@ -38,7 +44,7 @@ export const GameDisplay = () => {
 
   const CardDisplay = ({card}: {card: Card}) => {
     return (
-      <div style={{ backgroundColor: 'white', width: '30px', height: '60px', borderRadius: '5px', border: '1px solid black', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+      <div style={{ backgroundColor: 'white', width: '40px', height: '70px', borderRadius: '5px', border: '1px solid black', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
         <p>{VALUE_MAP[card.value] + SUIT_MAP[card.suit]}</p>
       </div>
     )
@@ -46,7 +52,7 @@ export const GameDisplay = () => {
 
   const CardBack = () => {
     return (
-      <div style={{ backgroundColor: 'black', width: '30px', height: '60px', borderRadius: '5px', border: '1px solid black', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+      <div style={{ backgroundColor: 'black', width: '40px', height: '70px', borderRadius: '5px', border: '1px solid black', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
         <p>?</p>
       </div>
     )
@@ -65,37 +71,63 @@ export const GameDisplay = () => {
           {
             selectedCards.length > 0 && <div style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)', zIndex: 999 }}>
               <p>{JSON.stringify(selectedCards)}</p>
-              <button onClick={() => attack(selectedCards).then(() => {
-                setSelectedCards([]);
-              }).catch((e) => {
-                console.error(e.message);
-              })}>Attack</button>
+
+              {
+                isDefending ? (
+                  <>
+                    <button onClick={() => { 
+                      console.log(selectedCards);
+                      pass(selectedCards).then(() => {
+                        setSelectedCards([]);
+                      }).catch((e) => {
+                        console.error(e.message);
+                      })
+                    }}>Pass</button>
+                    <button onClick={() => { 
+                      pickup().then(() => {
+                        // add cards to hand???
+                      }).catch((e) => {
+                        console.error(e.message);
+                      })
+                    }}>Pickup</button>
+
+                    <button onClick={() => { }}>Cover</button>
+                  </>
+                ) : (
+                  <button onClick={() => attack(selectedCards).then(() => {
+                    setSelectedCards([]);
+                  }).catch((e) => {
+                    console.error(e.message);
+                  })}>Attack</button>
+                )
+              }
+
             </div>
           }
           <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
 
-          {
-            state.self.hand.map((card) => {
-              const style = selectedCards.includes(card) ? { border: '3px solid red' } : { border: '1px solid black' };
-              return (
-                <div
-                  key={'' + card.value + card.suit}
-                  // oh boy we're going to have fun with zindex
-                  style={{ ...style, zIndex: 1000, backgroundColor: 'white', width: '30px', height: '60px', borderRadius: '5px', display: 'flex', justifyContent: 'center', alignItems: 'center' }}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (selectedCards.includes(card)) {
-                      setSelectedCards([...selectedCards].filter(c => c !== card));
-                    } else {
-                      setSelectedCards([...selectedCards, card]);
-                    }
-                  }}
-                >
-                  <p>{VALUE_MAP[card.value] + SUIT_MAP[card.suit]}</p>
-                </div>
-              )
-            })
-          }
+            {
+              state.self.hand.map((card) => {
+                const style = selectedCards.includes(card) ? { border: '3px solid red' } : { border: '1px solid black' };
+                return (
+                  <div
+                    key={'' + card.value + card.suit}
+                    // oh boy we're going to have fun with zindex
+                    style={{ ...style, zIndex: 1000, backgroundColor: 'white', width: '40px', height: '70px', borderRadius: '5px', display: 'flex', justifyContent: 'center', alignItems: 'center' }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (selectedCards.includes(card)) {
+                        setSelectedCards([...selectedCards].filter(c => c !== card));
+                      } else {
+                        setSelectedCards([...selectedCards, card]);
+                      }
+                    }}
+                  >
+                    <p>{VALUE_MAP[card.value] + SUIT_MAP[card.suit]}</p>
+                  </div>
+                )
+              })
+            }
           </div>
 
         </div>
@@ -107,7 +139,7 @@ export const GameDisplay = () => {
           </div>
           {
             state.table.map((battle, index) => {
-              return <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
+              return <div key={battle.attack.value + ' ' +battle.attack.suit}style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
                 <CardDisplay card={battle.attack} />
                 {battle.defense && <CardDisplay card={battle.defense} />}
               </div>
@@ -115,11 +147,13 @@ export const GameDisplay = () => {
           }
           {
             state.players.map((player, index) => {
+
+              const visual_index = (index - self_index + state.players.length) % state.players.length;
               // array of 100 black squares
               //Array.from({length: state.players.length-1}).map((_, index) => {
-              const radians = (1.5) * Math.PI * index / (state.players.length - 1) + Math.PI / 4;
-              const x = ((Math.sin(radians) * 40) + 50) + '%';
-              const y = ((Math.cos(radians) * 40) + 50) + '%';
+              const radians = (2) * Math.PI * visual_index / (state.players.length)// + Math.PI / 4;
+              const x = ((-1* Math.sin(radians) * 30) + 50) + '%';
+              const y = ((Math.cos(radians) * 30) + 50) + '%';
 
               let color = 'black';
               if (index === state.currentlyAttacked) {
@@ -128,7 +162,7 @@ export const GameDisplay = () => {
                 color = 'orange';
               }
 
-              return <div style={{ backgroundColor: color, height: '10px', width: '10px', position: 'absolute', top: y, left: x }}>
+              return <div key={player.id} style={{ backgroundColor: color, height: '10px', width: '10px', position: 'absolute', top: y, left: x }}>
                 <p>{player.name}</p>
                 {player.hand_length && <p>{player.hand_length}</p>}
               </div>

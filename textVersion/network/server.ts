@@ -55,18 +55,18 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
 const name_to_id: { [key: string]: string } = {};
 
 const app = express()
-app.use(express.json()); 
+app.use(express.json());
 
 app.use((req, res, next) => {
-	res.setHeader('Access-Control-Allow-Origin', '*');
-	res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, PATCH, DELETE');
-	res.setHeader('Access-Control-Allow-Headers', 'X-Requested-With, Content-Type, Accept');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, PATCH, DELETE');
+    res.setHeader('Access-Control-Allow-Headers', 'X-Requested-With, Content-Type, Accept');
     res.setHeader('Content-Type', 'application/json');
-	next();
+    next();
 });
 
 app.get('/', (req, res) => {
-  res.send('Hello World')
+    res.send('Hello World')
 })
 
 app.post('/' + LOBBY_MOVE_TYPE.LOGIN, (req, res) => {
@@ -277,8 +277,34 @@ app.post('/' + GAME_MOVE_TYPE.ATTACK, wrap400((req, res) => {
     const player_id = req.body.player_id;
     const game_id = verify_game_id(req.body.game_id);
     verify_player_in_game(game_id, player_id);
-    
+
     handle_attack(games[game_id], game_id, player_id, req.body.cards);
+
+    res.end(JSON.stringify({
+        game_id: game_id,
+        game: personalize_game(games[game_id], player_id)
+    }));
+}))
+
+app.post('/' + GAME_MOVE_TYPE.PASS, wrap400((req, res) => {
+    const player_id = req.body.player_id;
+    const game_id = verify_game_id(req.body.game_id);
+    verify_player_in_game(game_id, player_id);
+
+    handle_pass(games[game_id], game_id, player_id, req.body.cards);
+
+    res.end(JSON.stringify({
+        game_id: game_id,
+        game: personalize_game(games[game_id], player_id)
+    }));
+}))
+
+app.post('/' + GAME_MOVE_TYPE.PICKUP, wrap400((req, res) => {
+    const player_id = req.body.player_id;
+    const game_id = verify_game_id(req.body.game_id);
+    verify_player_in_game(game_id, player_id);
+
+    handle_pickup(games[game_id], game_id, player_id);
 
     res.end(JSON.stringify({
         game_id: game_id,
@@ -448,7 +474,7 @@ const validate_defender_status = (game: Game, player_id: string, should_be_defen
     }
 }
 
-const handle_pickup = (game: Game, game_id: string, player_id: string, message: Message) => {
+const handle_pickup = (game: Game, game_id: string, player_id: string) => {
 
     // pick up a card
 
@@ -459,6 +485,11 @@ const handle_pickup = (game: Game, game_id: string, player_id: string, message: 
     // check if player is the defender
     validate_defender_status(game, player_id, true);
     // TODO add a timer + check to make sure they don't pick up too quickly
+
+    // check if there are cards on the table
+    if (game.table.length === 0) {
+        throw new Error(`No cards on the table`);
+    }
 
     // ok let's just pick it up
 
@@ -474,10 +505,13 @@ const handle_pickup = (game: Game, game_id: string, player_id: string, message: 
     // clear table
     game.table = [];
 
-    broadcast_to_game(game_id, {
-        type: 'pick_up_played',
-        message: `Player ${player_id} picked up cards`,
-        //cards: game.players[game.currentlyAttacked].hand
+    public_game_channel.push({
+        game_id: game_id,
+        message: {
+            type: SERVER_EVENT_TYPE.PICKUP_PLAYED,
+            message: `Player ${player_id} picked up cards`,
+            game: game
+        }
     });
 
     // Draw cards starting from first attacker
@@ -683,12 +717,12 @@ const handle_good = (game: Game, game_id: string, player_id: string, message: Me
     game.status = GAME_STATUS.FIRST_ATTACKER;
 }
 
-const handle_pass = (game: Game, game_id: string, player_id: string, message: Message) => {
+const handle_pass = (game: Game, game_id: string, player_id: string, cards: Card[]) => {
 
-    if (!message.cards) {
+    if (!cards) {
         throw new Error(`No cards provided`);
     }
-    const mCards = message.cards!;
+    const mCards = cards;
 
     // check if cards all have same value. 
     if (!mCards.every(card => card.value === mCards[0].value)) {
@@ -702,6 +736,11 @@ const handle_pass = (game: Game, game_id: string, player_id: string, message: Me
     validate_defender_status(game, player_id, true);
 
     verify_hands_in_players_hand(player, mCards);
+
+    // also important: THERE SHOULD BE CARDS ON THE TABLE
+    if (game.table.length === 0) {
+        throw new Error(`No cards on the table`);
+    }
 
     // check passability. 1. no cover, 2. all same value, 3. next player has enough cards
     // 1. no cover
@@ -739,19 +778,32 @@ const handle_pass = (game: Game, game_id: string, player_id: string, message: Me
     if (no_cards_left(game) && player.hand.length === 0) {
         // they win
         player.status = PLAYER_STATUS.OUT;
-        broadcast_to_game(game_id, {
+        public_game_channel.push({
+            game_id: game_id,
+            message: {
+                type: 'player_wins',
+                message: `Player ${player_id} got rid of all their cards`,
+                game: game
+            }
+        });
+        /*broadcast_to_game(game_id, {
             type: 'player_wins',
             message: `Player ${player_id} got rid of all their cards`
-        });
+        });*/
         check_win(game_id);
     }
 
     game.currentlyAttacked = next_player_index;
 
-    broadcast_to_game(game_id, {
-        type: 'pass_played',
-        message: `Player ${player_id} used ${mCards.map(card => cardDisplay(card)).join(', ')} to pass to ${next_player.name}`,
-        cards: mCards
+
+    public_game_channel.push({
+        game_id: game_id,
+        message: {
+            type: SERVER_EVENT_TYPE.PASS_PLAYED,
+            message: `Player ${player_id} used ${mCards.map(card => cardDisplay(card)).join(', ')} to pass to ${next_player.name}`,
+            cards: mCards,
+            game: game
+        }
     });
 
     const uncovered_cards = game.table.filter(battle => battle.defense === null).length;
@@ -761,9 +813,13 @@ const handle_pass = (game: Game, game_id: string, player_id: string, message: Me
     if (uncovered_cards === defender_cards) {
         // just reached the limit
         game.status = 'only_defend';
-        broadcast_to_game(game_id, {
-            type: 'no_more_attacks',
-            message: `Maximum number of attacks reached, only defender can defend`
+        public_game_channel.push({
+            game_id: game_id,
+            message: {
+                type: 'no_more_attacks',
+                message: `Maximum number of attacks reached, only defender can defend`,
+                game: game
+            }
         });
     } else if (uncovered_cards > defender_cards) {
         // how the fuck did this happen
@@ -771,9 +827,13 @@ const handle_pass = (game: Game, game_id: string, player_id: string, message: Me
     } else if (uncovered_cards < defender_cards) {
         // a pass could shift from only_defend to free_play
         game.status = 'free_play';
-        broadcast_to_game(game_id, {
-            type: 'free_play_mode',
-            message: `Passed cards, now free play mode`
+        public_game_channel.push({
+            game_id: game_id,
+            message: {
+                type: 'free_play_mode',
+                message: `Passed cards, now free play mode`,
+                game: game
+            }
         });
     }
 }
@@ -917,7 +977,7 @@ const handle_attack = (game: Game, game_id: string, player_id: string, cards: Ca
                 game_id: game_id,
                 message: {
                     type: 'no_more_attacks',
-                message: `Maximum number of attacks reached, only defender can defend`
+                    message: `Maximum number of attacks reached, only defender can defend`
                 }
             });
         } else if (uncovered_cards > defender_cards) {
@@ -989,10 +1049,6 @@ wss.on('connection', (ws: WebSocket) => {
                     handle_cover(game, game_id, player_id, message);
                 } else if (message.type === GAME_MOVE_TYPE.GOOD) {
                     handle_good(game, game_id, player_id, message);
-                } else if (message.type === GAME_MOVE_TYPE.PICKUP) {
-                    handle_pickup(game, game_id, player_id, message);
-                } else if (message.type === GAME_MOVE_TYPE.PASS) {
-                    handle_pass(game, game_id, player_id, message);
                 }
             } else if (message.type === LOBBY_MOVE_TYPE.WEBSOCKET_CONNECT) {
                 const player_id = message.player_id!;

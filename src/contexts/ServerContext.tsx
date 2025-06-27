@@ -96,13 +96,17 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 // Because a list of names + statuses of max length 8 isn't THAT long, we'll just send over the entire game
                 setGames({...games, [data.game_id]: message.game});
             } else if (message.type === SERVER_EVENT_TYPE.PLAYER_READY) {
-                // update the game with the new player ready status
                 setGames({...games, [data.game_id]: message.game});
             } else if (message.type === SERVER_EVENT_TYPE.GAME_STARTED) {
-                // update the game with the new game started status
                 setGames({...games, [data.game_id]: message.game});
             } else if (message.type === SERVER_EVENT_TYPE.ATTACK_PLAYED) {
-                // update the game with the new game started status
+                setGames({...games, [data.game_id]: message.game});
+            } else if (message.type === SERVER_EVENT_TYPE.PASS_PLAYED) {
+                setGames({...games, [data.game_id]: message.game});
+            } else if (message.type === SERVER_EVENT_TYPE.PICKUP_PLAYED) {
+                setGames({...games, [data.game_id]: message.game});
+            } else {
+                // honestly just do this
                 setGames({...games, [data.game_id]: message.game});
             }
 
@@ -195,6 +199,18 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         });
     };
 
+    const pass = (cards: Card[]): Promise<{ game_id: string }> => {
+        return promiseMaker(GAME_MOVE_TYPE.PASS, { game_id: game_id!, player_id: player_id!, cards: cards }, (data) => {
+            setGames({...games, [data.game_id]: data.game});
+        });
+    };
+
+    const pickup = (): Promise<{ game_id: string }> => {
+        return promiseMaker(GAME_MOVE_TYPE.PICKUP, { game_id: game_id!, player_id: player_id! }, (data) => {
+            setGames({...games, [data.game_id]: data.game});
+        });
+    };
+
     return (
         <ServerContext.Provider value={{
             serverLogin,
@@ -205,7 +221,9 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             game: games[game_id!],
             player_id,
             loadGame,   
-            attack
+            attack,
+            pass,
+            pickup
         }}>
             {children}
         </ServerContext.Provider>
@@ -222,6 +240,8 @@ interface ServerContextType {
     player_id: string | null;
     loadGame: (gameId: string) => Promise<{ game_id: string }>;
     attack: (cards: Card[]) => Promise<{ game_id: string }>;
+    pass: (cards: Card[]) => Promise<{ game_id: string }>;
+    pickup: () => Promise<{ game_id: string }>;
 }
 
 export const useServer = () => {
