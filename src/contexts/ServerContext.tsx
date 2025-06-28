@@ -55,7 +55,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     useEffect(() => {
         // read from local storage for player id
         const playerId = localStorage.getItem('player_id');
-        console.log('player id is ' + playerId);
+        //console.log('player id is ' + playerId);
         if (playerId) {
             setPlayerId(playerId);
             createWebSocket(playerId);

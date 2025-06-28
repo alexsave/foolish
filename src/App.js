@@ -8,20 +8,24 @@ import { ServerProvider } from './contexts/ServerContext';
 import { Login } from './components/Login';
 import { Dashboard } from './components/Dashboard';
 import { Lobby } from './components/Lobby';
+import { Tutorial } from './components/Tutorial';
 
 function App() {
 
   return (
     <BrowserRouter>
-      <ServerProvider>
+      <AuthProvider>
+        <ServerProvider>
 
-        <AuthProvider>
           <Routes>
             <Route path="/" element={
               <Welcome />
             } />
             <Route path="/login" element={
               <Login />
+            } />
+            <Route path="/tutorial" element={
+              <Tutorial />
             } />
             <Route path="/dashboard" element={
               <Dashboard />
@@ -33,8 +37,8 @@ function App() {
               <GameDisplay />
             } />
           </Routes>
-        </AuthProvider>
-      </ServerProvider>
+        </ServerProvider>
+      </AuthProvider>
     </BrowserRouter>
   );
 }

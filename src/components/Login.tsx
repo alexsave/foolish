@@ -1,7 +1,3 @@
-
-// obviously we will actually have security and whatever
-// but for now you just enter a name and hit enter
-
 import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
@@ -11,18 +7,62 @@ export const Login = () => {
   const [password, setPassword] = useState('');
   const navigate = useNavigate();
 
-  const {login} = useAuth();
+  const { signIn, signUp } = useAuth();
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const { weakPassword } = await signIn(name, password);
+      if (weakPassword) {
+        alert('Weak password');
+      } else {
+        navigate('/dashboard');
+      }
+    } catch (error: any) {
+      alert(error.message);
+    }
+  };
+
+  const handleSignUp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await signUp(name, password);
+      navigate('/tutorial');
+    } catch (error: any) {
+      alert(error.message);
+    }
+  };
+
   return (
     <div>
-      <input type="text" value={name} onChange={(e) => setName(e.target.value)} />  
-      <input type="text" value={password} onChange={(e) => setPassword(e.target.value)} />
-
-      <button onClick={() => {
-        login(name);
-        navigate('/dashboard');
-      }}>
-        Login
-      </button>
+      <form onSubmit={handleLogin}>
+        <div>
+          <label htmlFor="username">Username:</label>
+          <input 
+            id="username"
+            type="text" 
+            value={name} 
+            onChange={(e) => setName(e.target.value)} 
+            required
+          />
+        </div>
+        <div>
+          <label htmlFor="password">Password:</label>
+          <input 
+            id="password"
+            type="password" 
+            value={password} 
+            onChange={(e) => setPassword(e.target.value)} 
+            required
+          />
+        </div>
+        <button type="submit">
+          Login
+        </button>
+        <button type="button" onClick={handleSignUp}>
+          Sign Up
+        </button>
+      </form>
     </div>
   );
 };
