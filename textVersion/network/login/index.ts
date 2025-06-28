@@ -1,4 +1,4 @@
-import { createId, database } from '../shared/common';
+import { createId, database } from '../shared';
 import express from 'express';
 
 export const login = (req: express.Request, res: express.Response) => {

@@ -1,5 +1,5 @@
 import express from 'express';
-import { wrap400, verify_game_id, verify_player_in_game, database, personalize_game, Game, GAME_STATUS, SERVER_EVENT_TYPE, validate_defender_status, refill, get_next_player_index } from '../shared/common';
+import { wrap400, verify_game_id, verify_player_in_game, database, personalize_game, Game, GAME_STATUS, SERVER_EVENT_TYPE, validate_defender_status, refill, get_next_player_index } from '../shared';
 
 export const pickup = wrap400((req: express.Request, res: express.Response) => {
     const { games } = database;

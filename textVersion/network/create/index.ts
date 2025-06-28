@@ -1,5 +1,5 @@
 import express from 'express';
-import { GAME_STATUS, PLAYER_STATUS, wrap400, createId, lobbify_game, database } from '../shared/common';
+import { GAME_STATUS, PLAYER_STATUS, wrap400, createId, lobbify_game, database } from '../shared';
 
 export const create = wrap400((req: express.Request, res: express.Response) => {
 

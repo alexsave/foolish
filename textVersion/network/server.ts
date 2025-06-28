@@ -1,6 +1,6 @@
 import * as http from 'http';
 import WebSocket from 'ws';
-import { database, personalize_game, lobbify_game, Game, GAME_STATUS, GAME_MOVE_TYPE, LOBBY_MOVE_TYPE, Message } from './shared/common';
+import { database, personalize_game, lobbify_game, Game, GAME_STATUS, GAME_MOVE_TYPE, LOBBY_MOVE_TYPE, Message } from './shared';
 import express from 'express'
 import { create } from './create';
 import { login } from './login';
