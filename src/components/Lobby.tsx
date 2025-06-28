@@ -5,6 +5,7 @@ import { useServer } from "../contexts/ServerContext";
 import { useParams } from "react-router-dom";
 import { QRCodeSVG } from "qrcode.react";
 import { useEffect } from "react";
+import { WEBSITE_DOMAIN } from "../constants/constants";
 
 export const Lobby = () => {
     const { game_id } = useParams();
@@ -28,7 +29,7 @@ export const Lobby = () => {
             <h2>Game ID: {game_id}</h2>
             <div style={{ marginBottom: '20px' }}>
                 <h3>Join via QR Code:</h3>
-                <QRCodeSVG value={`www.foolish.cards/${game_id}`} size={200} />
+                <QRCodeSVG value={`www.${WEBSITE_DOMAIN}/${game_id}`} size={200} />
             </div>
             {
                 game.players.map(player => (
