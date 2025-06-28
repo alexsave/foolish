@@ -93,6 +93,7 @@ export interface LobbyPlayer {
 }
 
 export interface LobbyGame {
+    id: string;
     players: LobbyPlayer[];
     status: GameStatus;
 }
@@ -150,6 +151,7 @@ export interface Player {
 }
 
 export interface Game {
+    id: string;
     deck: Card[];
     flipped: Card | null;
     players: Player[];

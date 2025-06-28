@@ -389,3 +389,7 @@ export const start_game = (game_id: string) => {
     });
 
 } 
+
+export const emailToName = (email: string): string => {
+  return email.split('@')[0];
+}

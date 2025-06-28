@@ -1,4 +1,5 @@
 import { useState } from "react";
+import supabase from '../backend/Connector';
 import { useServer } from "../contexts/ServerContext";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
@@ -23,12 +24,14 @@ export const Dashboard = () => {
                 Join Game
             </button>
             <button onClick={() => {
-                createGame().then(data => {
-                    console.log(data);
-                    navigate(`/${data.game_id}`);
-                }).catch(error => {
-                    alert(error);
-                });
+                // Just call it directly for now, i dont care
+                supabase.functions.invoke('create')
+                    .then(data => {
+                        console.log(data);
+                        navigate(`/${data.data.game.id}`);
+                    }).catch(error => {
+                        alert(error);
+                    });
             }}>
                 Create Game
             </button>

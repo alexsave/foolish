@@ -1,4 +1,4 @@
-import { createId, lobbify_game, wrap400 } from "../_shared/utils.ts";
+import { createId, lobbify_game, wrap400, emailToName } from "../_shared/utils.ts";
 import { GAME_STATUS, PLAYER_STATUS } from "../_shared/types.ts";
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
@@ -23,8 +23,8 @@ serve(wrap400(async (req) => {
     if (corsResponse) return corsResponse;
 
     console.log('Authenticating user');
-    const user: User = getAuthenticatedUser(req);
-    console.log('Successfully authenticated user');
+    const user: User = await getAuthenticatedUser(req);
+    console.log('Successfully authenticated user' + JSON.stringify(user));
     const user_id = user.id;
 
     // if we want to use types we need to copy them to _shared
@@ -36,7 +36,7 @@ serve(wrap400(async (req) => {
         deck: [],
         flipped: null,
         players: [{
-            name: user.user_metadata.name,
+            name: emailToName(user.email),
             id: user.id,
             status: PLAYER_STATUS.IDLE,
             hand: []
@@ -49,6 +49,12 @@ serve(wrap400(async (req) => {
         previous_currently_attacked: 0,
         table_battles: []
     }).select().single();
+
+    if (error) {
+        console.error('Error creating game:', error);
+        throw error;
+    }
+
     console.log('Successfully created game' + JSON.stringify(data));
 
     const game_id = data.id;

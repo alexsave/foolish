@@ -3,7 +3,7 @@ import supabase from '../backend/Connector';
 import { WEBSITE_DOMAIN } from '../constants/constants';
 import { Session, User } from '@supabase/supabase-js';
 import { WeakPassword } from '@supabase/supabase-js';
-
+import { emailToName } from '../common/utils';
 
 interface AuthContextType {
   user: string | null;
@@ -16,9 +16,6 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType|null>(null);
 
-const emailToName = (email: string): string => {
-  return email.split('@')[0];
-}
 
 const nameToEmail = (name: string): string => {
   return name + '@' + WEBSITE_DOMAIN;
@@ -79,6 +76,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     const email = nameToEmail(username);
     
     // Proceed with signup - Supabase handles duplicate email prevention
+    // add name as a metadata field
     const { data, error } = await supabase.auth.signUp({ email, password });
     
     if (error) {

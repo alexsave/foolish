@@ -6,6 +6,7 @@ export const createId = (): string => crypto.randomUUID().slice(0, 6);
 // clear everything but player name and status. save some bytes
 export const lobbify_game = (game: Game): LobbyGame => {
     return {
+        id: game.id,
         players: game.players.map(player => ({ name: player.name, status: player.status, id: player.id })),
         status: game.status === GAME_STATUS.WAITING ? GAME_STATUS.WAITING : GAME_STATUS.PLAYING
     };
@@ -27,4 +28,8 @@ export const wrap400 = (execute: (req: Request) => Promise<Response>) => async (
             { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
     }
+}
+
+export const emailToName = (email: string): string => {
+  return email.split('@')[0];
 }
