@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { Card, Game, GAME_MOVE_TYPE, LOBBY_MOVE_TYPE, LobbyGame, PersonalGame, SERVER_EVENT_TYPE } from '../common/types';
-//import supabase from '../db/supabaseClient';
+import supabase from '../backend/Connector';
+import { useParams } from 'react-router-dom';
 
 const ServerContext = createContext<ServerContextType|null>(null);
 
@@ -10,6 +11,7 @@ const HOST = '10.0.0.243';
 // this will be kinda similar to client.js
 export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
+    const url_game_id = useParams().game_id;
     // keep a state of games
     // maybe ref idk
     const [games, setGames] = useState<{[key: string]: (Game | LobbyGame | PersonalGame)}>({});
@@ -31,6 +33,19 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     // Use ref to avoid closure issues in WebSocket handler
     const gameIdRef = useRef<string | null>(null);
 
+    useEffect(() => {
+        //const game_id = use
+        console.log('url game id', url_game_id);
+        if (url_game_id) {
+            setGameId(url_game_id);
+            if (!games[url_game_id]) {
+                console.log('info not in games, loading game');
+                loadGame(url_game_id);
+            } else {
+                console.log('info in games, not loading game');
+            }
+        }
+    }, [url_game_id]);
 
 
     // Keep ref in sync with state
@@ -180,9 +195,21 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     };
 
     const loadGame = (gameId: string): Promise<{ game_id: string }> => {
-        return promiseMaker(GAME_MOVE_TYPE.STATUS, { game_id: gameId, player_id: player_id }, (data) => {
-            setGames({...games, [data.game_id]: data.game});
+
+        const promise = new Promise<{game_id: string}>((resolve, reject) => {
+            supabase.functions.invoke('status', {
+                body: {
+                    game_id: gameId,
+                }
+            }).then(data => {
+                resolve({game_id: data.data.game.game_id});  
+                setGameId(data.data.game.game_id);
+                setGames({...games, [data.data.game.game_id]: data.data.game});
+            }).catch(error => {
+                reject(error);
+            });
         });
+        return promise;
     };
 
     const attack = (cards: Card[]): Promise<{ game_id: string }> => {

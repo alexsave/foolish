@@ -2,33 +2,46 @@ import './App.css';
 import { AuthProvider } from './contexts/AuthContext';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { Welcome } from './components/Welcome';
-import { ServerProvider } from './contexts/ServerContext';
 import { Login } from './components/Login';
 import { Tutorial } from './components/Tutorial';
-import { ProtectedContent } from './components/ProtectedContent';
+import { ProtectedRoute } from './components/ProtectedRoute';
+import { Dashboard } from './components/Dashboard';
+import { Lobby } from './components/Lobby';
+import { GameDisplay } from './components/GameDisplay';
+
 
 function App() {
-
   return (
     <BrowserRouter>
       <AuthProvider>
-        <ServerProvider>
-          <Routes>
-            <Route path="/" element={
-              <Welcome />
-            } />
-            <Route path="/login" element={
-              <Login />
-            } />
-            <Route path="/tutorial" element={
-              <Tutorial />
-            } />
-            <Route path="/*" element={
-              <ProtectedContent/>
-            } />
+        <Routes>
+          <Route path="/" element={
+            <Welcome />
+          } />
+          <Route path="/login" element={
+            <Login />
+          } />
+          <Route path="/tutorial" element={
+            <Tutorial />
+          } />
 
-          </Routes>
-        </ServerProvider>
+          <Route path="/dashboard" element={
+            <ProtectedRoute>
+              <Dashboard />
+            </ProtectedRoute>
+          } />
+          <Route path="/:game_id" element={
+            <ProtectedRoute>
+              <Lobby />
+            </ProtectedRoute>
+          } />
+          <Route path="/game/:game_id" element={
+            <ProtectedRoute>
+              <GameDisplay />
+            </ProtectedRoute>
+          } />
+
+        </Routes>
       </AuthProvider>
     </BrowserRouter>
   );

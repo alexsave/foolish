@@ -121,7 +121,7 @@ export interface PersonalGame {
     currently_attacked: number;
     previous_first_attacker: number;
     previous_currently_attacked: number;
-    table: Battle[];
+    table_battles: Battle[];
 }
 
 export interface Message {
@@ -161,7 +161,7 @@ export interface Game {
     currently_attacked: number;
     previous_first_attacker: number;
     previous_currently_attacked: number;
-    table: Battle[];
+    table_battles: Battle[];
 }
 
 export interface Battle {

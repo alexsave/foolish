@@ -38,7 +38,7 @@ serve(wrap400(async (req) => {
         currently_attacked: 0,
         previous_first_attacker: 0,
         previous_currently_attacked: 0,
-        table: []
+        table_battles: []
     };
 
     // Return immediately to the user - maximum speed!

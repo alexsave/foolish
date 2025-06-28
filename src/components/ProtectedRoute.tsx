@@ -1,13 +1,11 @@
-import { Route, Routes } from "react-router-dom";
 import { Navigate } from 'react-router-dom';
-import { Dashboard } from './Dashboard';
-import { Lobby } from './Lobby';
-import { GameDisplay } from './GameDisplay';
 import { useAuth } from '../contexts/AuthContext';
+import { ServerProvider } from '../contexts/ServerContext';
 
-// Need to be logged in from these. This combines ProtectedRoute + AppContent from amgi
-export const ProtectedContent = () => {
+// Wrapper component that protects routes and provides ServerContext
+export const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
     const { user, loading } = useAuth();
+    
     if (loading) {
         return (
             <div className="auth-container">
@@ -25,9 +23,9 @@ export const ProtectedContent = () => {
         return <Navigate to="/" />;
     }
 
-    return <Routes>
-        <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/:game_id" element={<Lobby />} />
-        <Route path="/game/:game_id" element={<GameDisplay />} />
-    </Routes>
+    return (
+        <ServerProvider>
+            {children}
+        </ServerProvider>
+    );
 };
