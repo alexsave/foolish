@@ -11,6 +11,7 @@ interface AuthContextType {
   signUp: (username: string, password: string) => Promise<{ user: User | null; session: Session | null; }>;
   signOut: () => Promise<void>;
   updatePassword: (newPassword: string) => Promise<void>;
+  loading: boolean;
 }
 
 const AuthContext = createContext<AuthContextType|null>(null);
@@ -27,11 +28,11 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     // Check active sessions and sets the user
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user) {
-        const name = session.user.id.split('@')[0];
+        const name = session.user.email!.split('@')[0];
         setUser({name});
         // useful for something I think
         setUserId(session.user.id);
-        console.log('user id is ' + session.user.id);
+        console.log('user id is ' + name);
       } else {
         console.log('no session');
       }
@@ -117,6 +118,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   return (
     <AuthContext.Provider value={{
       user,
+      loading,
       signIn,
       signUp,
       signOut,

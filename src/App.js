@@ -1,14 +1,11 @@
 import './App.css';
-import { AuthProvider, useAuth } from './contexts/AuthContext';
-import logo from './logo.svg';
-import { BrowserRouter, Routes, Route, useNavigate } from 'react-router-dom';
-import { GameDisplay } from './components/GameDisplay';
+import { AuthProvider } from './contexts/AuthContext';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { Welcome } from './components/Welcome';
 import { ServerProvider } from './contexts/ServerContext';
 import { Login } from './components/Login';
-import { Dashboard } from './components/Dashboard';
-import { Lobby } from './components/Lobby';
 import { Tutorial } from './components/Tutorial';
+import { ProtectedContent } from './components/ProtectedContent';
 
 function App() {
 
@@ -27,15 +24,10 @@ function App() {
             <Route path="/tutorial" element={
               <Tutorial />
             } />
-            <Route path="/dashboard" element={
-              <Dashboard />
+            <Route path="/*" element={
+              <ProtectedContent/>
             } />
-            <Route path="/:game_id" element={
-              <Lobby />
-            } />
-            <Route path="/game/:game_id" element={
-              <GameDisplay />
-            } />
+
           </Routes>
         </ServerProvider>
       </AuthProvider>
