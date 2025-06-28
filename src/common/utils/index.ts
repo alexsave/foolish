@@ -8,7 +8,7 @@ import {
     CARDS_PER_PLAYER, SUITS, START_VALUE, ACE_VALUE, VALUE_MAP, SUIT_MAP,
     LCG_A, LCG_C, LCG_M
 } from '../constants';
-import { database } from '../database';
+import { getGames, getPublicGameChannel, getPrivateUserChannel } from '../database';
 
 export const wrap400 = (execute: (req: express.Request, res: express.Response) => void) => (req: express.Request, res: express.Response) => {
     try {
@@ -192,7 +192,8 @@ export const set_positions = (game: Game) => {
 }
 
 export const check_win = (game_id: string) => {
-    const { games, public_game_channel } = database;
+    const games = getGames();
+    const public_game_channel = getPublicGameChannel();
     const game = games[game_id];
     const the_fool = game_done(game);
     if (the_fool !== null) {
@@ -216,7 +217,8 @@ export const check_win = (game_id: string) => {
 }
 
 export const refill = (game_id: string) => {
-    const { games, public_game_channel } = database;
+    const games = getGames();
+    const public_game_channel = getPublicGameChannel();
     const game = games[game_id];
 
     if (no_cards_left(game)) {
@@ -309,7 +311,9 @@ export const refill = (game_id: string) => {
 };
 
 export const start_game = (game_id: string) => {
-    const { games, public_game_channel, private_user_channel } = database;
+    const games = getGames();
+    const public_game_channel = getPublicGameChannel();
+    const private_user_channel = getPrivateUserChannel();
 
     // Assume that this is safe to call because we only call from server
     const game = games[game_id];

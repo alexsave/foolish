@@ -1,9 +1,9 @@
 import express from 'express';
-import { PLAYER_STATUS,Card, wrap400, canCover, card_comp,verify_game_id, verify_player_in_game, database, personalize_game, Game, GAME_STATUS, SERVER_EVENT_TYPE, validate_defender_status, refill, get_next_player_index, cardDisplay, verify_hands_in_players_hand, check_win } from '../shared';
+import { PLAYER_STATUS,Card, wrap400, canCover, card_comp,verify_game_id, verify_player_in_game, getGames, getPublicGameChannel, getPrivateUserChannel, personalize_game, Game, GAME_STATUS, SERVER_EVENT_TYPE, validate_defender_status, refill, get_next_player_index, cardDisplay, verify_hands_in_players_hand, check_win } from '../shared';
 
 export const cover = wrap400((req: express.Request, res: express.Response) => {
 
-    const { games } = database;
+    const games = getGames();
     const player_id = req.body.player_id
     const game_id = verify_game_id(req.body.game_id);
     verify_player_in_game(game_id, player_id);
@@ -17,7 +17,8 @@ export const cover = wrap400((req: express.Request, res: express.Response) => {
 });
 
 const handle_cover = (game: Game, game_id: string, player_id: string, cover_cards: Card[], attack_cards: Card[]) => {
-    const { public_game_channel, private_user_channel } = database;
+    const public_game_channel = getPublicGameChannel();
+    const private_user_channel = getPrivateUserChannel();
     // cover a card
 
 

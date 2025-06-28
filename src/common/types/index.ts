@@ -15,6 +15,13 @@ export interface PrivateMessage {
     message: Message;
 }
 
+export interface ChatMessage {
+    is_system: boolean;
+    game_id: string;
+    user_id: string;
+    message: string;
+}
+
 export const PLAYER_STATUS = {
     IDLE: 'idle',
     READY: 'ready',

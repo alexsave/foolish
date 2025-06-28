@@ -1,9 +1,12 @@
 import express from 'express';
-import { GAME_STATUS, PLAYER_STATUS, wrap400, createId, lobbify_game, database } from '../shared';
+import { GAME_STATUS, PLAYER_STATUS, wrap400, createId, lobbify_game, getGames, getUsers, getPlayerGames, getPublicGameChannel } from '../shared';
 
 export const create = wrap400((req: express.Request, res: express.Response) => {
 
-    const { games, users, player_games, public_game_channel } = database;
+    const games = getGames();
+    const users = getUsers();
+    const player_games = getPlayerGames();
+    const public_game_channel = getPublicGameChannel();
 
     // Every request should probably have a player_id now
     const player_id = req.body.player_id;

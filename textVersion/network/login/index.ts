@@ -1,8 +1,9 @@
-import { createId, database } from '../shared';
+import { createId, getUsers, getNameToId } from '../shared';
 import express from 'express';
 
 export const login = (req: express.Request, res: express.Response) => {
-    const { users, name_to_id } = database;
+    const users = getUsers();
+    const name_to_id = getNameToId();
 
     console.log('Login request' + JSON.stringify(req.body));
     const name = req.body.name;

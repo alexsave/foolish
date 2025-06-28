@@ -1,8 +1,8 @@
 import express from 'express';
-import { Game, wrap400, Card, verify_game_id, verify_player_in_game, database, personalize_game, GAME_STATUS, SERVER_EVENT_TYPE, PLAYER_STATUS, validate_defender_status, verify_hands_in_players_hand, cardDisplay, no_cards_left, check_win } from '../shared';
+import { Game, wrap400, Card, verify_game_id, verify_player_in_game, getGames, getPublicGameChannel, personalize_game, GAME_STATUS, SERVER_EVENT_TYPE, PLAYER_STATUS, validate_defender_status, verify_hands_in_players_hand, cardDisplay, no_cards_left, check_win } from '../shared';
 
 export const attack = wrap400((req: express.Request, res: express.Response) => {
-    const { games } = database;
+    const games = getGames();
 
     const player_id = req.body.player_id;
     const game_id = verify_game_id(req.body.game_id);
@@ -17,7 +17,7 @@ export const attack = wrap400((req: express.Request, res: express.Response) => {
 });
 
 const handle_attack = (game: Game, game_id: string, player_id: string, cards: Card[]) => {
-    const { public_game_channel } = database;
+    const public_game_channel = getPublicGameChannel();
     if (!cards) {
         throw new Error(`No cards provided`);
     }

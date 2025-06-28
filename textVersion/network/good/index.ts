@@ -1,9 +1,9 @@
 import express from 'express';
-import { wrap400, verify_game_id, verify_player_in_game, database, personalize_game, Game, GAME_STATUS, SERVER_EVENT_TYPE, PLAYER_STATUS, refill, get_next_player_index } from '../shared';
+import { wrap400, verify_game_id, verify_player_in_game, getGames, getPublicGameChannel, personalize_game, Game, GAME_STATUS, SERVER_EVENT_TYPE, PLAYER_STATUS, refill, get_next_player_index } from '../shared';
 
 export const good = wrap400((req: express.Request, res: express.Response) => {
 
-    const { games } = database;
+    const games = getGames();
     const player_id = req.body.player_id;
     const game_id = verify_game_id(req.body.game_id);
     verify_player_in_game(game_id, player_id);
@@ -17,7 +17,7 @@ export const good = wrap400((req: express.Request, res: express.Response) => {
 });
 
 const handle_good = (game: Game, game_id: string, player_id: string) => {
-    const { public_game_channel } = database;
+    const public_game_channel = getPublicGameChannel();
 
     // player is done attacking
     // we need to check if they have any cards left in their hand
