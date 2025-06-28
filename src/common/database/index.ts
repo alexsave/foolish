@@ -40,11 +40,3 @@ export const verify_player_in_game = (game_id: string, player_id: string) => {
         throw new Error(`Player ${player_id} is not in game ${game_id}`);
     }
 }
-
-// clear everything but player name and status. save some bytes
-export const lobbify_game = (game: Game): LobbyGame => {
-    return {
-        players: game.players.map(player => ({ name: player.name, status: player.status, id: player.id })),
-        status: game.status === GAME_STATUS.WAITING ? GAME_STATUS.WAITING : GAME_STATUS.PLAYING
-    };
-} 

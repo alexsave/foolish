@@ -18,9 +18,6 @@ export const wrap400 = (execute: (req: express.Request, res: express.Response) =
     }
 }
 
-export const createId = () => {
-    return crypto.randomUUID().slice(0, 6);
-}
 
 export const cardDisplay = (card: Card) => `${VALUE_MAP[card.value]} of ${SUIT_MAP[card.suit]}`;
 

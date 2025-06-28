@@ -1,4 +1,6 @@
-import { createClient } from '@supabase/supabase-js';
+//import { createClient } from '@supabase/supabase-js';
+import { createClient, User } from "npm:@supabase/supabase-js@2.39.0"
+import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 
 const supabaseClient = createClient(
     Deno.env.get('SUPABASE_URL') || '',
@@ -12,7 +14,7 @@ const supabaseClient = createClient(
  * @returns The authenticated user object
  * @throws Error if the authorization header is missing or the token is invalid
  */
-export async function getAuthenticatedUser(req: Request) {
+export async function getAuthenticatedUser(req: Request): Promise<User> {
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) {
         throw new Error('No authorization header');

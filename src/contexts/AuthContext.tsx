@@ -76,7 +76,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
   const signUp = async (username: string, password: string) => {
     // this is a hack to get around the fact that supabase doesn't support username/password auth
-    const email = username + '@' + WEBSITE_DOMAIN;
+    const email = nameToEmail(username);
     
     // Proceed with signup - Supabase handles duplicate email prevention
     const { data, error } = await supabase.auth.signUp({ email, password });
