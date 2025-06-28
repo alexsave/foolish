@@ -13,7 +13,6 @@ function App() {
     <BrowserRouter>
       <AuthProvider>
         <ServerProvider>
-
           <Routes>
             <Route path="/" element={
               <Welcome />

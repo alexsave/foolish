@@ -6,7 +6,7 @@ import { WeakPassword } from '@supabase/supabase-js';
 
 
 interface AuthContextType {
-  user: {name: string} | null;
+  user: string | null;
   signIn: (username: string, password: string) => Promise<{ user: User; session: Session; weakPassword?: WeakPassword; }>;
   signUp: (username: string, password: string) => Promise<{ user: User | null; session: Session | null; }>;
   signOut: () => Promise<void>;
@@ -16,9 +16,17 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType|null>(null);
 
+const emailToName = (email: string): string => {
+  return email.split('@')[0];
+}
+
+const nameToEmail = (name: string): string => {
+  return name + '@' + WEBSITE_DOMAIN;
+}
+
 // for now we'll just use a fake auth impl
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
-  const [user, setUser] = useState<{name: string} | null>(null);
+  const [user, setUser] = useState<string | null>(null);
   const [user_id, setUserId] = useState<string | null>(null);
   const [name, setName] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -28,8 +36,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     // Check active sessions and sets the user
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user) {
-        const name = session.user.email!.split('@')[0];
-        setUser({name});
+        const name = emailToName(session.user.email!);
+        setUser(name);
         // useful for something I think
         setUserId(session.user.id);
         console.log('user id is ' + name);
@@ -42,7 +50,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     // Listen for changes on auth state (sign in, sign out, etc.)
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (session?.user) {
-        setUser({name: session.user.id});
+        setUser(emailToName(session.user.email!));
       }
     });
 
@@ -50,7 +58,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   }, []);
 
   const signIn = async (username: string, password: string) => {
-    const email = username + '@' + WEBSITE_DOMAIN;
+    const email = nameToEmail(username);
     
     const { data, error } = await supabase.auth.signInWithPassword({
       email,
