@@ -1,6 +1,5 @@
-import { wrap400, verify_game_id, lobbify_game, PLAYER_STATUS, GAME_STATUS, SERVER_EVENT_TYPE } from '../common';
 import express from 'express';
-import { database } from '../common';
+import { wrap400, verify_game_id, lobbify_game, PLAYER_STATUS, GAME_STATUS, SERVER_EVENT_TYPE, database } from '../shared/common';
 
 
 export const join = wrap400((req: express.Request, res: express.Response) => {

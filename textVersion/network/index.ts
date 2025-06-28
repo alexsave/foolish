@@ -1,28 +1,10 @@
-import { Player, Game } from './common';
+import { Card, Player, Game, canCover } from './shared/common';
+
 // Start with
 let startTime = performance.now();
 // The engine of fools
 // I had a whole paper on this but let's just get started
 
-// Interfaces
-export interface Card {
-    suit: number;
-    value: number;
-}
-
-/*export interface Player {
-    id: string;
-    name: string;
-    hand: Card[];
-    // TODO IMPORTANT: when we get status, we need to map done_attacking to in to avoid revealing values
-    status: 'idle' | 'ready' | 'in' | 'awaiting_attack' |'out';
-}*/
-interface CardListMapping {
-    [key: string]: Card[];
-}
-interface CardMap {
-    [key: string]: Card;
-}
 // First check if all can be covered
 // This is actually a bit tricky becuase there can be mulitple options, some better than others
 interface Move {
@@ -90,14 +72,6 @@ const cardSorter = (a: Card, b: Card) => {
     } else {
         return a.value > b.value;
     }
-};
-
-export const canCover = (attack: Card, defense: Card, powerSuit: number) => {
-    if (defense.suit !== attack.suit) {
-        // only different suit scenario that works
-        return defense.suit === powerSuit && attack.suit !== powerSuit;
-    }
-    return defense.value > attack.value;
 };
 
 const chooseAttack = () => {

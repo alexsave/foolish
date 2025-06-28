@@ -1,10 +1,10 @@
 import express from 'express';
-import { PLAYER_STATUS,Card, wrap400, canCover, card_comp,verify_game_id, verify_player_in_game, database, personalize_game, Game, GAME_STATUS, SERVER_EVENT_TYPE, validate_defender_status, refill, get_next_player_index, cardDisplay, verify_hands_in_players_hand, no_cards_left, check_win } from '../common';
+import { PLAYER_STATUS,Card, wrap400, canCover, card_comp,verify_game_id, verify_player_in_game, database, personalize_game, Game, GAME_STATUS, SERVER_EVENT_TYPE, validate_defender_status, refill, get_next_player_index, cardDisplay, verify_hands_in_players_hand, check_win } from '../shared/common';
 
 export const cover = wrap400((req: express.Request, res: express.Response) => {
 
     const { games } = database;
-    const player_id = req.body.player_id;
+    const player_id = req.body.player_id
     const game_id = verify_game_id(req.body.game_id);
     verify_player_in_game(game_id, player_id);
 

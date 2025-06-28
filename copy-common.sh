@@ -1,6 +1,6 @@
 #!/bin/bash
 
-SOURCE_FILE="textVersion/network/common.ts"
+SOURCE_FILE="textVersion/network/shared/common.ts"
 DEST_FILE="src/common/common.ts"
 
 # Check if both files exist

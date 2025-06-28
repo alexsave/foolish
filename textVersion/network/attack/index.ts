@@ -1,5 +1,5 @@
 import express from 'express';
-import { Game, wrap400, Card, verify_game_id, verify_player_in_game, database, personalize_game, GAME_STATUS, SERVER_EVENT_TYPE, PLAYER_STATUS, validate_defender_status, verify_hands_in_players_hand, cardDisplay, no_cards_left, check_win } from '../common';
+import { Game, wrap400, Card, verify_game_id, verify_player_in_game, database, personalize_game, GAME_STATUS, SERVER_EVENT_TYPE, PLAYER_STATUS, validate_defender_status, verify_hands_in_players_hand, cardDisplay, no_cards_left, check_win } from '../shared/common';
 
 export const attack = wrap400((req: express.Request, res: express.Response) => {
     const { games } = database;

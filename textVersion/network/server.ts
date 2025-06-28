@@ -1,7 +1,6 @@
 import * as http from 'http';
-import { Card, initialize_hands, draw, cardDisplay, determine_lowest_power_index, set_positions, CARDS_PER_PLAYER, canCover, ACE_VALUE } from './index';
 import WebSocket from 'ws';
-import { wrap400, createId, verify_game_id, personalize_game, verify_player_in_game, start_game, lobbify_game, User, PLAYER_STATUS, Game, Player, PlayerStatus, GAME_STATUS, GameStatus, GAME_MOVE_TYPE, LOBBY_MOVE_TYPE, GameMoveType, Message, LobbyGame, SERVER_EVENT_TYPE, PersonalGame, OtherPlayer, PrivateMessage, GameMessage, check_win } from './common';
+import { database, personalize_game, lobbify_game, Game, GAME_STATUS, GAME_MOVE_TYPE, LOBBY_MOVE_TYPE, Message } from './shared/common';
 import express from 'express'
 import { create } from './create';
 import { login } from './login';
@@ -14,33 +13,12 @@ import { pickup } from './pickup';
 import { cover } from './cover';
 import { good } from './good';
 
-interface GameMap {
-    [key: string]: Game;
-}
-
-interface PlayerGameMap {
-    [key: string]: string[];
-}
-
-
-// game_id -> players: [players], state: {}, status
-const games: GameMap = {};
-
-// also players can have multiple game so
-const player_games: PlayerGameMap = {};
-
-
-interface UserMap {
-    [key: string]: User;
-}
 
 // strictly local. I think
 interface UserPort {
     [key: string]: WebSocket;
 }
 const user_ports: UserPort = {};
-
-const users: UserMap = {};
 
 const PORT = 3000;
 const WS_PORT = 3001;
@@ -50,10 +28,6 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end('Foolish Card Game Server Running\n');
 });
-
-
-// index really
-const name_to_id: { [key: string]: string } = {};
 
 const app = express()
 app.use(express.json());
@@ -83,8 +57,6 @@ app.post('/' + GAME_MOVE_TYPE.GOOD, good);
 
 app.listen(3009)
 
-
-
 // Create WebSocket server
 const wss = new WebSocket.Server({ port: WS_PORT });
 
@@ -92,25 +64,8 @@ console.log(`HTTP Server running on http://localhost:${PORT}`);
 console.log(`WebSocket Server running on ws://localhost:${WS_PORT}`);
 
 
-// different from the one in index.ts because we do this BEFORE shifting positions
-// hope it works
-
-// This will emulate one of the realtime channels of supabase. Most server events will go here
-const public_game_channel: GameMessage[] = [];
-
-// I think just "request good" and "draws _ card" will be here
-const private_user_channel: PrivateMessage[] = [];
-
 wss.on('connection', (ws: WebSocket) => {
     console.log('New client connected');
-
-    // Give the client a unique id
-    //const player_id = createId();
-    //users[player_id] = {
-    //name: '',
-    //id: player_id
-    ////}
-    //user_ports[player_id] = ws;
 
     // Send welcome message to client
     const welcomeMessage: Message = {
@@ -173,16 +128,11 @@ process.on('SIGINT', () => {
 });
 
 
-const broadcast_to_game = (game_id: string, message: Message) => {
-    games[game_id].players.forEach(player => {
-        user_ports[player.id].send(JSON.stringify(message));
-    });
-}
-
 // Speed up or down for the hell of it
 const SERVER_LOOP_INTERVAL = 1000;
 
 setInterval(() => {
+    const { games, public_game_channel, private_user_channel, user_ports } = database;
     // Batch to every 10s?
 
     // assuming they are kinda threadsafe lol

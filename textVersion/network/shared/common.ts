@@ -1,7 +1,6 @@
 // In the actual game, we will have to have a script to copy this from supabase/ to src/
 import express from 'express';
 import WebSocket from 'ws';
-//import {  } from './index';
 
 // user table of id to name
 export interface User {
