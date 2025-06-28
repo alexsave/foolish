@@ -116,11 +116,11 @@ export interface PersonalGame {
     // wait for attackers reveals that people do have hands, so we don't allow this
     // eh it does but there's no way around this. if no one has hands, best we can do is keep status as waitforattackers for a bit
     status: GameStatus;
-    powerSuit: number;
-    firstAttacker: number;
-    currentlyAttacked: number;
-    previousFirstAttacker: number;
-    previousCurrentlyAttacked: number;
+    power_suit: number;
+    first_attacker: number;
+    currently_attacked: number;
+    previous_first_attacker: number;
+    previous_currently_attacked: number;
     table: Battle[];
 }
 
@@ -156,11 +156,11 @@ export interface Game {
     flipped: Card | null;
     players: Player[];
     status: 'waiting' | 'playing' | 'first_attacker' | 'free_play' | 'only_defend' | 'wait_for_attackers';
-    powerSuit: number;
-    firstAttacker: number;
-    currentlyAttacked: number;
-    previousFirstAttacker: number;
-    previousCurrentlyAttacked: number;
+    power_suit: number;
+    first_attacker: number;
+    currently_attacked: number;
+    previous_first_attacker: number;
+    previous_currently_attacked: number;
     table: Battle[];
 }
 
