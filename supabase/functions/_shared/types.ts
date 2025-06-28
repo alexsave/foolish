@@ -108,6 +108,7 @@ export interface OtherPlayer {
 
 // personal game is what gets sent to clients. they do not see other players hands, only length
 export interface PersonalGame {
+    id: string;
     deck_length: number;
     flipped: Card | null;
     self: Player;

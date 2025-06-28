@@ -31,7 +31,6 @@ serve(wrap400(async (req) => {
     }
 
     const response = new Response(JSON.stringify({
-        game_id: game_id,
         game: personalize_game(game, user_id)
     }), {
         headers: {

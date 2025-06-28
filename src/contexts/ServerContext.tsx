@@ -180,10 +180,20 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     };
 
     const joinGame = (gameId: string): Promise<{ game_id: string }> => {
-        return promiseMaker(LOBBY_MOVE_TYPE.JOIN, { game_id: gameId, player_id: player_id }, (data) => {
-            setGameId(data.game_id);
-            setGames({...games, [data.game_id]: data.game});
+        const promise = new Promise<{game_id: string}>((resolve, reject) => {
+            supabase.functions.invoke('join', {
+                body: {
+                    game_id: gameId,
+                }
+            }).then(data => {
+                resolve({game_id: data.data.game.id});  
+                setGameId(data.data.game.id);
+                setGames({...games, [data.data.game.id]: data.data.game});
+            }).catch(error => {
+                reject(error);
+            });
         });
+        return promise;
     };
 
     const startGame = (gameId: string): Promise<{ game_id: string }> => {

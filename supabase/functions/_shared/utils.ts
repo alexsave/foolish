@@ -68,6 +68,7 @@ const other_player = (player: Player): OtherPlayer => {
 
 export const personalize_game = (game: Game, player_id: string): PersonalGame => {
     return {
+        id: game.id,
         deck_length: game.deck.length,
         flipped: game.flipped,
         self: game.players.find(player => player.id === player_id)!,
