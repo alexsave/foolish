@@ -1,4 +1,4 @@
-import { Card, PersonalGame } from '../common/common';
+import { Card, PersonalGame } from '../common/types';
 import React, { useState, useEffect } from 'react';
 import { useServer } from '../contexts/ServerContext';
 import { useParams } from 'react-router-dom';

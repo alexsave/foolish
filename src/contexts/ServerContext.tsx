@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
-import { Card, Game, GAME_MOVE_TYPE, LOBBY_MOVE_TYPE, LobbyGame, PersonalGame, SERVER_EVENT_TYPE } from '../common/common';
+import { Card, Game, GAME_MOVE_TYPE, LOBBY_MOVE_TYPE, LobbyGame, PersonalGame, SERVER_EVENT_TYPE } from '../common/types';
 //import supabase from '../db/supabaseClient';
 
 const ServerContext = createContext<ServerContextType|null>(null);
