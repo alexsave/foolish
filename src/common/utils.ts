@@ -9,7 +9,7 @@ export const lobbify_game = (game: Game): LobbyGame => {
     return {
         id: game.id,
         players: game.players.map(player => ({ name: player.name, status: player.status, id: player.id })),
-        status: game.status === GAME_STATUS.WAITING ? GAME_STATUS.WAITING : GAME_STATUS.PLAYING
+        status: game.status === GAME_STATUS.WAITING ? GAME_STATUS.WAITING : GAME_STATUS.PLAYING,
     };
 };
 

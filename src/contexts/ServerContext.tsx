@@ -136,24 +136,29 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         if (!gameIdRef.current || message.game_id !== gameIdRef.current) {
             return;
         }
+        // small caveat: because these are broadcast, they won't have personal info. So self shoudl not be overwritten
+        const self = games[message.game_id]?.self;
+        if (!self) {
+            console.log("we have no self info. We either didn't fetch it or it was overwritten")
+        }
 
         if (message.type === SERVER_EVENT_TYPE.PLAYER_JOINED_GAME) {
-            setGames(prev => ({...prev, [message.game_id]: message.game}));
+            setGames(prev => ({...prev, [message.game_id]: mergeGameData(message.game_id, message.game, prev)}));
         } else if (message.type === SERVER_EVENT_TYPE.PLAYER_READY) {
-            setGames(prev => ({...prev, [message.game_id]: message.game}));
+            setGames(prev => ({...prev, [message.game_id]: mergeGameData(message.game_id, message.game, prev)}));
         } else if (message.type === SERVER_EVENT_TYPE.GAME_STARTED) {
-            setGames(prev => ({...prev, [message.game_id]: message.game}));
+            setGames(prev => ({...prev, [message.game_id]: mergeGameData(message.game_id, message.game, prev)}));
         } else if (message.type === SERVER_EVENT_TYPE.ATTACK_PLAYED) {
-            setGames(prev => ({...prev, [message.game_id]: message.game}));
+            setGames(prev => ({...prev, [message.game_id]: mergeGameData(message.game_id, message.game, prev)}));
         } else if (message.type === SERVER_EVENT_TYPE.PASS_PLAYED) {
-            setGames(prev => ({...prev, [message.game_id]: message.game}));
+            setGames(prev => ({...prev, [message.game_id]: mergeGameData(message.game_id, message.game, prev)}));
         } else if (message.type === SERVER_EVENT_TYPE.PICKUP_PLAYED) {
-            setGames(prev => ({...prev, [message.game_id]: message.game}));
+            setGames(prev => ({...prev, [message.game_id]: mergeGameData(message.game_id, message.game, prev)}));
         } else {
             // Default handler for other message types
                 // else if chat message, it's a bit different. chat will be stored separeate
             if (message.game) {
-                setGames(prev => ({...prev, [message.game_id]: message.game}));
+                setGames(prev => ({...prev, [message.game_id]: mergeGameData(message.game_id, message.game, prev)}));
             }
         }
     };
@@ -163,6 +168,14 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         console.log('Processing private message:', message);
         // Implement specific private message handling as needed
         handleGameMessage(message);
+    };
+
+    // Helper method to merge game data while preserving self when not present in new data
+    const mergeGameData = (gameId: string, newGameData: any, prevGames: any) => {
+        return {
+            ...newGameData,
+            self: newGameData.self !== undefined && newGameData.self !== null ? newGameData.self : prevGames[gameId]?.self
+        };
     };
 
     const promiseMaker = (endpoint: string, body: any, dataHandler: (data: any) => void): Promise<any> => {
@@ -198,7 +211,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             }).then(data => {
                 resolve({game_id: data.data.game.id});  
                 setGameId(data.data.game.id);
-                setGames(prev => ({...prev, [data.data.game.id]: data.data.game}));
+                setGames(prev => ({...prev, [data.data.game.id]: mergeGameData(data.data.game.id, data.data.game, prev)}));
                 // Subscribe to the new game's channel
                 subscribeToGame(data.data.game.id).catch(console.error);
             }).catch(error => {
@@ -217,7 +230,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             }).then(data => {
                 resolve({game_id: data.data.game.id});  
                 setGameId(data.data.game.id);
-                setGames(prev => ({...prev, [data.data.game.id]: data.data.game}));
+                setGames(prev => ({...prev, [data.data.game.id]: mergeGameData(data.data.game.id, data.data.game, prev)}));
                 // Subscribe to the game's channel
                 subscribeToGame(data.data.game.id).catch(console.error);
             }).catch(error => {
@@ -237,7 +250,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 resolve({game_id: data.data.game.id});  
                 //already in the game
                 //setGameId(data.data.game.id);
-                setGames(prev => ({...prev, [data.data.game.id]: data.data.game}));
+                setGames(prev => ({...prev, [data.data.game.id]: mergeGameData(data.data.game.id, data.data.game, prev)}));
                 // Subscribe to the game's channel
                 // already subscribed
                 //subscribeToGame(data.data.game.id).catch(console.error);
@@ -256,7 +269,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             }).then(data => {
                 resolve({game_id: data.data.game.id});  
                 setGameId(data.data.game.id);
-                setGames(prev => ({...prev, [data.data.game.id]: data.data.game}));
+                setGames(prev => ({...prev, [data.data.game.id]: mergeGameData(data.data.game.id, data.data.game, prev)}));
                 // Subscribe to the game's channel
                 subscribeToGame(data.data.game.id).catch(console.error);
             }).catch(error => {
@@ -267,33 +280,42 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     };
 
     const attack = (cards: Card[]): Promise<{ game_id: string }> => {
-        return promiseMaker(GAME_MOVE_TYPE.ATTACK, { game_id: game_id!, player_id: player_id!, cards: cards }, (data) => {
-            // clear selected cards
-            setGames({...games, [data.game_id]: data.game});
+        return new Promise<{game_id: string}>((resolve, reject) => {
+            supabase.functions.invoke('attack', {
+                body: {
+                    game_id: game_id!,
+                    cards: cards,
+                }
+            }).then(data => {
+                resolve({game_id: data.data.game.id});  
+                setGames(prev => ({...prev, [data.data.game.id]: mergeGameData(data.data.game.id, data.data.game, prev)}));
+            }).catch(error => {
+                reject(error);
+            });
         });
     };
 
     const pass = (cards: Card[]): Promise<{ game_id: string }> => {
         return promiseMaker(GAME_MOVE_TYPE.PASS, { game_id: game_id!, player_id: player_id!, cards: cards }, (data) => {
-            setGames({...games, [data.game_id]: data.game});
+            setGames(prev => ({...prev, [data.game_id]: mergeGameData(data.game_id, data.game, prev)}));
         });
     };
 
     const pickup = (): Promise<{ game_id: string }> => {
         return promiseMaker(GAME_MOVE_TYPE.PICKUP, { game_id: game_id!, player_id: player_id! }, (data) => {
-            setGames({...games, [data.game_id]: data.game});
+            setGames(prev => ({...prev, [data.game_id]: mergeGameData(data.game_id, data.game, prev)}));
         });
     };
 
     const cover = (coverCards: Card[], attackCards: Card[]): Promise<{ game_id: string }> => {
         return promiseMaker(GAME_MOVE_TYPE.COVER, { game_id: game_id!, player_id: player_id!, cover_cards: coverCards, attack_cards: attackCards }, (data) => {
-            setGames({...games, [data.game_id]: data.game});
+            setGames(prev => ({...prev, [data.game_id]: mergeGameData(data.game_id, data.game, prev)}));
         });
     };
 
     const good = (): Promise<{ game_id: string }> => {
         return promiseMaker(GAME_MOVE_TYPE.GOOD, { game_id: game_id!, player_id: player_id! }, (data) => {
-            setGames({...games, [data.game_id]: data.game});
+            setGames(prev => ({...prev, [data.game_id]: mergeGameData(data.game_id, data.game, prev)}));
         });
     };
 
