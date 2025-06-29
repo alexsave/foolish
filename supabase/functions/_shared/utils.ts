@@ -67,12 +67,17 @@ const other_player = (player: Player): OtherPlayer => {
     };
 }
 
-export const personalize_game = (game: Game, player_id: string): PersonalGame => {
+// Come to think of it, if we are broadcasting to the game, we can't be sending "self"
+export const personalize_game = (game: Game, player_id: string | null): PersonalGame => {
+    let self: Player | null = null;
+    if (player_id !== null) {
+        self = game.players.find(player => player.id === player_id)!;
+    }
     return {
         id: game.id,
         deck_length: game.deck.length,
         flipped: game.flipped,
-        self: game.players.find(player => player.id === player_id)!,
+        self: self,
         players: game.players.map(other_player),
         status: game.status,
         first_attacker: game.first_attacker,
@@ -296,3 +301,58 @@ export const seededRand = () => {
     currentSeed = (LCG_A * currentSeed + LCG_C) % LCG_M;
     return currentSeed / LCG_M; // Normalize to a value between 0 (inclusive) and 1 (exclusive)
 };
+
+// Helper method to validate player is/isn't defender
+export const validate_defender_status = (game: Game, player_id: string, should_be_defender: boolean) => {
+    const isDefender = game.players[game.currently_attacked].id === player_id;
+    if (isDefender !== should_be_defender) {
+        throw new Error(`Player ${player_id} is ${should_be_defender ? 'not' : ''} the defender`);
+    }
+}
+
+export const verify_hands_in_players_hand = (player: Player, cards: Card[]) => {
+    for (const card of cards) {
+        if (!player.hand.some(handCard => card_comp(handCard, card))) {
+            throw new Error(`Card ${cardDisplay(card)} is not in player ${player.id}'s hand`);
+        }
+    }
+}
+
+export const no_cards_left = (game: Game) => {
+    return game.deck.length === 0 && game.flipped === null;
+}
+
+export const check_win = (game: Game) => {
+    const the_fool = game_done(game);
+    if (the_fool !== null) {
+
+        game.status = GAME_STATUS.WAITING;
+        // set all players to idle
+        game.players.forEach((player: Player) => {
+            player.status = PLAYER_STATUS.IDLE;
+            player.hand = [];
+        });
+        game.table_battles = [];
+        game.deck = refill_deck();
+
+        broadcastToGame(game.id, {
+            type: 'game_done',
+            message: `Game done. Player ${the_fool} ends up the fool`,
+            game: personalize_game(game, null)
+        });
+    }
+}
+
+export const card_comp = (card1: Card, card2: Card): boolean => {
+    return card1.suit === card2.suit && card1.value === card2.value;
+}
+
+const game_done = (game: Game): string | null => {
+    // only one 1 left, every0one else is out
+    const in_players = game.players.filter(player => player.status === PLAYER_STATUS.IN);
+    const out_players = game.players.filter(player => player.status === PLAYER_STATUS.OUT);
+    if (in_players.length === 1 && out_players.length === game.players.length - 1) {
+        return in_players[0].id;
+    }
+    return null;
+}

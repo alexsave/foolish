@@ -1,4 +1,4 @@
-import { verify_game_id, lobbify_game, wrap400, emailToName, broadcastToGame, verify_player_in_game, start_game } from "../_shared/utils.ts";
+import { verify_game_id, wrap400, emailToName, broadcastToGame, verify_player_in_game, start_game, personalize_game } from "../_shared/utils.ts";
 import { GAME_STATUS, PLAYER_STATUS, SERVER_EVENT_TYPE, ServerEventType } from "../_shared/types.ts";
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
@@ -65,7 +65,7 @@ serve(wrap400(async (req) => {
         type: type,
         message: message,
         game_id: game_id,
-        game: lobbify_game(game),
+        game: personalize_game(game, user_id),
         player_id: user_id
     }).catch(e => { 
         console.error('Error broadcasting game join:', e);
@@ -74,7 +74,7 @@ serve(wrap400(async (req) => {
 
     // Now it's safe to return - user has access to game channel
     const response = new Response(JSON.stringify({
-        game: lobbify_game(game)
+        game: personalize_game(game, user_id)
     }), {
         headers: {
             ...corsHeaders,

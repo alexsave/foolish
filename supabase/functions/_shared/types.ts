@@ -106,6 +106,8 @@ export interface LobbyGame {
     id: string;
     players: LobbyPlayer[];
     status: GameStatus;
+    //optional self
+    self?: Player;
 }
 
 export interface OtherPlayer {
@@ -164,6 +166,7 @@ export interface Player {
 export interface Game {
     id: string;
     deck: Card[];
+    self?: Player;
     flipped: Card | null;
     players: Player[];
     status: 'waiting' | 'playing' | 'first_attacker' | 'free_play' | 'only_defend' | 'wait_for_attackers';

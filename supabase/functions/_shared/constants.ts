@@ -37,7 +37,7 @@ export const NAMES = [
 ];
 
 export const ACE_VALUE = 13;
-export const CARDS_PER_SUIT = 5;
+export const CARDS_PER_SUIT = 9;
 export const START_VALUE = ACE_VALUE - CARDS_PER_SUIT + 1;
 export const PLAYER_COUNT = 7;
 
