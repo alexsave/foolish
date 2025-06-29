@@ -39,8 +39,6 @@ export const GameDisplay = () => {
 
   const [coverMap, setCoverMap] = useState<Map<Card, Card>>(new Map());
 
-
-
   useEffect(() => {
     if (urlGameId && urlGameId !== game_id) {
       setGameIdFromUrl(urlGameId);
@@ -48,6 +46,24 @@ export const GameDisplay = () => {
     }
   }, [urlGameId, game_id, setGameIdFromUrl, loadGame]);
 
+  // Prevent page scrolling/dragging during touch interactions but allow normal touches
+  useEffect(() => {
+    const preventPageScroll = (e: TouchEvent) => {
+      // Only prevent default if it's a move gesture (not a tap)
+      // This allows clicks/taps to work normally
+      if (e.touches.length > 1 || (e.touches.length === 1 && e.type === 'touchmove')) {
+        e.preventDefault();
+      }
+    };
+
+    // Only prevent touchmove to avoid interfering with clicks/taps
+    document.addEventListener("touchmove", preventPageScroll, { passive: false });
+
+    // Cleanup function to remove event listeners
+    return () => {
+      document.removeEventListener("touchmove", preventPageScroll);
+    };
+  }, []);
 
   // we chose a card to cover WITH, now we choose WHICH card to cover
   const [isSelectingCover, setIsSelectingCover] = useState(false);
@@ -80,7 +96,12 @@ export const GameDisplay = () => {
   }
 
   return (
-    <div style={{ backgroundColor: '#982621', width: '100%', height: '100vh' }}>
+    <div style={{ 
+      backgroundColor: '#982621', 
+      width: '100%', 
+      height: '100vh',
+      touchAction: 'manipulation' // Allow taps and pinch-zoom but prevent double-tap zoom and panning
+    }}>
     
       {/* SVG overlay for arrows */}
       <svg style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 500 }}>
