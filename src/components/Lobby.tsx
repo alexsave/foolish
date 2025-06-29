@@ -6,10 +6,12 @@ import { useParams } from "react-router-dom";
 import { QRCodeSVG } from "qrcode.react";
 import { useEffect } from "react";
 import { WEBSITE_DOMAIN } from "../constants/constants";
+import { useAuth } from "../contexts/AuthContext";
 
 export const Lobby = () => {
     const { game_id } = useParams();
-    const { startGame, game, player_id, loadGame } = useServer();
+    const { user_id } = useAuth();
+    const { startGame, game, loadGame } = useServer();
     const navigate = useNavigate();
     console.log(game_id);
     
@@ -36,7 +38,7 @@ export const Lobby = () => {
                     <div key={player.id} style={{ display: 'flex', flexDirection: 'row', gap: '10px', color: 'white', backgroundColor: 'black' }}>
                         <p>{player.name}</p>
                         <p>{player.status !== 'idle' ? '🟢' : 
-                        player.id === player_id ? <button onClick={() => {
+                        player.id === user_id ? <button onClick={() => {
                             startGame(game_id!);
                         }}>Ready</button> : '🔴'}</p>
                     </div>

@@ -228,10 +228,22 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     };
 
     const startGame = (gameId: string): Promise<{ game_id: string }> => {
-        return promiseMaker(LOBBY_MOVE_TYPE.START, { game_id: gameId, player_id: player_id }, (data) => {
-            setGameId(data.game_id);
-            // WS will also do this, but it might have a delay
-            setGames({...games, [data.game_id]: data.game});
+        return new Promise<{game_id: string}>((resolve, reject) => {
+            supabase.functions.invoke('start', {
+                body: {
+                    game_id: gameId,
+                }
+            }).then(data => {
+                resolve({game_id: data.data.game.id});  
+                //already in the game
+                //setGameId(data.data.game.id);
+                setGames(prev => ({...prev, [data.data.game.id]: data.data.game}));
+                // Subscribe to the game's channel
+                // already subscribed
+                //subscribeToGame(data.data.game.id).catch(console.error);
+            }).catch(error => {
+                reject(error);
+            });
         });
     };
 

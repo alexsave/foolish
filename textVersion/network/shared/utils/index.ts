@@ -22,58 +22,6 @@ export const createId = () => {
     return crypto.randomUUID().slice(0, 6);
 }
 
-export const cardDisplay = (card: Card) => `${VALUE_MAP[card.value]} of ${SUIT_MAP[card.suit]}`;
-
-// Seeded random generator
-let currentSeed = 4 + 20;
-
-export const seededRand = () => {
-    // Math.random()
-    currentSeed = (LCG_A * currentSeed + LCG_C) % LCG_M;
-    return currentSeed / LCG_M; // Normalize to a value between 0 (inclusive) and 1 (exclusive)
-};
-
-export const draw = (game: Game): Card | null => {
-    if (game.deck.length === 0) {
-        if (game.flipped === null) {
-            return null;
-        }
-        const copy: Card = game.flipped;
-        game.flipped = null;
-        return copy;
-    }
-    // Make this more secure
-    const index = Math.floor(seededRand() * game.deck.length);
-    const card = game.deck.splice(index, 1)[0];
-    return card;
-};
-
-export const refill_deck = (): Card[] => {
-    const deck: Card[] = [];
-    for (let i = 0; i < SUITS.length; i++) {
-        for (let j = START_VALUE; j <= ACE_VALUE; j++) {
-            deck.push({ suit: SUITS[i], value: j });
-        }
-    }
-    return deck;
-}
-
-export const initialize_hands = (game: Game): Card[][] => {
-    const result: Card[][] = [];
-    for (let j = 0; j < game.players.length; j++) {
-        result.push([]);
-    }
-    for (let i = 0; i < CARDS_PER_PLAYER; i++) {
-        result.push([]);
-        for (let j = 0; j < game.players.length; j++) {
-            //const name = result[j].name;
-            const c = draw(game)!;
-            //console.log(`Player ${name} draws ${cardDisplay(c)}`);
-            result[j].push(c);
-        }
-    }
-    return result;
-}
 
 const other_player = (player: Player): OtherPlayer => {
     return { 
@@ -150,46 +98,6 @@ export const canCover = (attack: Card, defense: Card, powerSuit: number) => {
     return defense.value > attack.value;
 };
 
-export const determine_lowest_power_index = (game: Game): number => {
-    // Whoever has lowest power
-    // With 2 players it's possible no one has it. Also with 4.
-    // With 5 it's guaranteed
-    // This is actually kind interesting
-    // In the 36 card case (6+), you have 9 power cards
-    // only 8 max can be distributed to players at dealing because of the flipped card
-    // there are still non power 27 cards that can be distributed
-    // at most, with 4 players, 4*6=24 cards are all non-power
-    // but odds are 27/35 * 26/34 * 25/33 ...
-    // but with 5, there must be 3 power cards in the hand
-    // with 52, there are 13 power cards and 39 nonpower
-    // max of 6 it's possible, 7 it's impossible cuz 42 cards are out
-    // Because
-    let lowestPowerValue = ACE_VALUE + 1;
-    let lowestPowerPlayer = -1;
-    for (let i = 0; i < game.players.length; i++) {
-        let hand = game.players[i].hand;
-        for (let j = 0; j < hand.length; j++) {
-            let card = hand[j];
-            if (card.suit === game.powerSuit) {
-                if (card.value < lowestPowerValue) {
-                    lowestPowerValue = card.value;
-                    lowestPowerPlayer = i;
-                }
-            }
-        }
-    }
-    if (lowestPowerPlayer === -1) {
-        lowestPowerPlayer = Math.floor(Math.random() * game.players.length);
-    }
-    return lowestPowerPlayer;
-}
-
-export const set_positions = (game: Game) => {
-    game.firstAttacker = game.firstAttacker;
-    game.currentlyAttacked = (game.firstAttacker + 1) % game.players.length;
-    game.previousFirstAttacker = game.firstAttacker;
-    game.previousCurrentlyAttacked = game.currentlyAttacked;
-}
 
 export const check_win = (game_id: string) => {
     const games = getGames();

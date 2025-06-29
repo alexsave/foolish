@@ -7,6 +7,7 @@ import { emailToName } from '../common/utils';
 
 interface AuthContextType {
   user: string | null;
+  user_id: string | null;
   signIn: (username: string, password: string) => Promise<{ user: User; session: Session; weakPassword?: WeakPassword; }>;
   signUp: (username: string, password: string) => Promise<{ user: User | null; session: Session | null; }>;
   signOut: () => Promise<void>;
@@ -120,6 +121,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   return (
     <AuthContext.Provider value={{
       user,
+      user_id,
       loading,
       signIn,
       signUp,

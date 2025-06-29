@@ -80,10 +80,20 @@ export const SERVER_EVENT_TYPE = {
     COVER_PLAYED: 'cover_played',
     PLAYER_WON: 'player_won',
     SUCCESSFULLY_COVERED: 'successfully_covered',
-    PLAYABLE_CARDS: 'playable_cards'
+    PLAYABLE_CARDS: 'playable_cards',
+    FIRST_ATTACKER: 'first_attacker',
+    FLIPPED_CARD: 'flipped_card'
 } as const;
 
 export type ServerEventType = typeof SERVER_EVENT_TYPE[keyof typeof SERVER_EVENT_TYPE];
+
+export const PRIVATE_EVENT_TYPE = {
+    PLAYER_HAND: 'player_hand',
+    REQUEST_FIRST_ATTACK: 'request_first_attack'
+    //PLAYER_STATUS: 'player_status'
+} as const;
+
+export type PrivateEventType = typeof PRIVATE_EVENT_TYPE[keyof typeof PRIVATE_EVENT_TYPE];
 
 // Stripped down versions
 export interface LobbyPlayer {
