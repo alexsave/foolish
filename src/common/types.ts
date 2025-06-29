@@ -80,10 +80,20 @@ export const SERVER_EVENT_TYPE = {
     COVER_PLAYED: 'cover_played',
     PLAYER_WON: 'player_won',
     SUCCESSFULLY_COVERED: 'successfully_covered',
-    PLAYABLE_CARDS: 'playable_cards'
+    PLAYABLE_CARDS: 'playable_cards',
+    FIRST_ATTACKER: 'first_attacker',
+    FLIPPED_CARD: 'flipped_card'
 } as const;
 
 export type ServerEventType = typeof SERVER_EVENT_TYPE[keyof typeof SERVER_EVENT_TYPE];
+
+export const PRIVATE_EVENT_TYPE = {
+    PLAYER_HAND: 'player_hand',
+    REQUEST_FIRST_ATTACK: 'request_first_attack'
+    //PLAYER_STATUS: 'player_status'
+} as const;
+
+export type PrivateEventType = typeof PRIVATE_EVENT_TYPE[keyof typeof PRIVATE_EVENT_TYPE];
 
 // Stripped down versions
 export interface LobbyPlayer {
@@ -93,6 +103,7 @@ export interface LobbyPlayer {
 }
 
 export interface LobbyGame {
+    id: string;
     players: LobbyPlayer[];
     status: GameStatus;
 }
@@ -107,6 +118,7 @@ export interface OtherPlayer {
 
 // personal game is what gets sent to clients. they do not see other players hands, only length
 export interface PersonalGame {
+    id: string;
     deck_length: number;
     flipped: Card | null;
     self: Player;
@@ -115,12 +127,12 @@ export interface PersonalGame {
     // wait for attackers reveals that people do have hands, so we don't allow this
     // eh it does but there's no way around this. if no one has hands, best we can do is keep status as waitforattackers for a bit
     status: GameStatus;
-    powerSuit: number;
-    firstAttacker: number;
-    currentlyAttacked: number;
-    previousFirstAttacker: number;
-    previousCurrentlyAttacked: number;
-    table: Battle[];
+    power_suit: number;
+    first_attacker: number;
+    currently_attacked: number;
+    previous_first_attacker: number;
+    previous_currently_attacked: number;
+    table_battles: Battle[];
 }
 
 export interface Message {
@@ -150,16 +162,17 @@ export interface Player {
 }
 
 export interface Game {
+    id: string;
     deck: Card[];
     flipped: Card | null;
     players: Player[];
     status: 'waiting' | 'playing' | 'first_attacker' | 'free_play' | 'only_defend' | 'wait_for_attackers';
-    powerSuit: number;
-    firstAttacker: number;
-    currentlyAttacked: number;
-    previousFirstAttacker: number;
-    previousCurrentlyAttacked: number;
-    table: Battle[];
+    power_suit: number;
+    first_attacker: number;
+    currently_attacked: number;
+    previous_first_attacker: number;
+    previous_currently_attacked: number;
+    table_battles: Battle[];
 }
 
 export interface Battle {

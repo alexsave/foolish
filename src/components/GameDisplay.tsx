@@ -56,7 +56,7 @@ export const GameDisplay = () => {
 
   const self_index = state.players.findIndex((player) => player.id === player_id);
 
-  const isDefending = state.currentlyAttacked === self_index;
+  const isDefending = state.currently_attacked === self_index;
 
   // a set
 
@@ -90,7 +90,7 @@ export const GameDisplay = () => {
           );
 
           // Find the position of the covered card (on table)
-          const tableCardIndex = state.table.findIndex(battle =>
+          const tableCardIndex = state.table_battles.findIndex(battle =>
             battle.attack.value === coveredCard.value && battle.attack.suit === coveredCard.suit
           );
 
@@ -104,7 +104,7 @@ export const GameDisplay = () => {
 
           // Table cards are in the center
           const tableX = window.innerWidth / 2;
-          const tableY = window.innerHeight / 2 + (tableCardIndex * 80) - (state.table.length * 40); // spread them vertically
+          const tableY = window.innerHeight / 2 + (tableCardIndex * 80) - (state.table_battles.length * 40); // spread them vertically
 
           return (
             <g key={`arrow-${index}`}>
@@ -237,10 +237,10 @@ export const GameDisplay = () => {
         <div style={{ position: 'absolute', display: 'flex', flexDirection: 'column', top: 0, width: '100%', bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
           <div style={{ backgroundColor: 'black', height: '10px', width: '10px' }} />
           <div>
-            {JSON.stringify(state.table)}
+            {JSON.stringify(state.table_battles)}
           </div>
           {
-            state.table.map((battle, index) => {
+            state.table_battles.map((battle, index) => {
               let border = { border: '1px solid black' };
               if (coverMap.values().some(c => c.value === battle.attack.value && c.suit === battle.attack.suit)) {
                 border = { border: '3px solid red' };
@@ -271,9 +271,9 @@ export const GameDisplay = () => {
               const y = ((Math.cos(radians) * 30) + 50) + '%';
 
               let color = 'black';
-              if (index === state.currentlyAttacked) {
+              if (index === state.currently_attacked) {
                 color = 'red';
-              } else if (index === state.firstAttacker) {
+              } else if (index === state.first_attacker) {
                 color = 'orange';
               }
 
