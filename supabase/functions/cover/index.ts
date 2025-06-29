@@ -60,7 +60,7 @@ serve(wrap400(async (req) => {
 }));
 
 
-const handle_cover = (game: Game, game_id: string, player_id: string, cover_cards: Card[], attack_cards: Card[]) => {
+const handle_cover = (game: Game, game_id: string, player_id: string, cover_cards: Card[], attack_cards: Card[]): Game => {
     // cover a card
 
 
@@ -160,7 +160,7 @@ const handle_cover = (game: Game, game_id: string, player_id: string, cover_card
             game.first_attacker = get_next_player_index(game, game.first_attacker);
         }
         game.currently_attacked = get_next_player_index(game, game.first_attacker);
-        return;
+        return game;
     }
 
     // only do this if all table cards are covered but the defender has cards left

@@ -63,7 +63,7 @@ serve(wrap400(async (req) => {
 // previous pass
 
 
-const handle_pass = (game: Game, game_id: string, player_id: string, cards: Card[]) => {
+const handle_pass = (game: Game, game_id: string, player_id: string, cards: Card[]): Game => {
     if (!cards) {
         throw new Error(`No cards provided`);
     }

@@ -66,7 +66,7 @@ serve(wrap400(async (req) => {
 // previous attack
 
 
-const handle_attack = (game: Game, game_id: string, player_id: string, cards: Card[]) => {
+const handle_attack = (game: Game, game_id: string, player_id: string, cards: Card[]): Game => {
     //const public_game_channel = getPublicGameChannel();
     if (!cards) {
         throw new Error(`No cards provided`);

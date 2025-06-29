@@ -333,8 +333,17 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     };
 
     const good = (): Promise<{ game_id: string }> => {
-        return promiseMaker(GAME_MOVE_TYPE.GOOD, { game_id: game_id!, player_id: player_id! }, (data) => {
-            setGames(prev => ({...prev, [data.game_id]: mergeGameData(data.game_id, data.game, prev)}));
+        return new Promise<{game_id: string}>((resolve, reject) => {
+            supabase.functions.invoke('good', {
+                body: {
+                    game_id: game_id!,
+                }
+            }).then(data => {
+                resolve({game_id: data.data.game.id});  
+                setGames(prev => ({...prev, [data.data.game.id]: mergeGameData(data.data.game.id, data.data.game, prev)}));
+            }).catch(error => {
+                reject(error);
+            });
         });
     };
 
