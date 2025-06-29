@@ -102,7 +102,8 @@ export const broadcastToGame = async (game_id: string, message: any): Promise<vo
         await channel.send({
             type: 'broadcast',
             event: 'game_message',
-            payload: message
+            // this is because id is handled differently in places
+            payload: {...message, game_id: game_id}
         });
         
         // Clean up channel
@@ -294,7 +295,7 @@ export const set_positions = (game: Game) => {
 }
 
 // Seeded random generator
-let currentSeed = 4 + 20;
+let currentSeed = Math.floor(Math.random() * 1000000);
 
 export const seededRand = () => {
     // Math.random()

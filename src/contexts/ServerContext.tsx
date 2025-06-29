@@ -202,8 +202,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         });
     }
 
-
-
     const createGame = (): Promise<{ game_id: string }> => {
         const promise = new Promise<{game_id: string}>((resolve, reject) => {
             supabase.functions.invoke('create', {
@@ -296,8 +294,18 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     };
 
     const pass = (cards: Card[]): Promise<{ game_id: string }> => {
-        return promiseMaker(GAME_MOVE_TYPE.PASS, { game_id: game_id!, player_id: player_id!, cards: cards }, (data) => {
-            setGames(prev => ({...prev, [data.game_id]: mergeGameData(data.game_id, data.game, prev)}));
+        return new Promise<{game_id: string}>((resolve, reject) => {
+            supabase.functions.invoke('pass', {
+                body: {
+                    game_id: game_id!,
+                    cards: cards,
+                }
+            }).then(data => {
+                resolve({game_id: data.data.game.id});  
+                setGames(prev => ({...prev, [data.data.game.id]: mergeGameData(data.data.game.id, data.data.game, prev)}));
+            }).catch(error => {
+                reject(error);
+            });
         });
     };
 

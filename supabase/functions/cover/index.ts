@@ -36,14 +36,13 @@ serve(wrap400(async (req) => {
     // Attack can only update players and table_battles
     await supabaseClient.from('games').update({ players: game.players, table_battles: game.table_battles, status: game.status }).eq('id', game_id);
 
-
     broadcastToGame(game_id, {
         type: SERVER_EVENT_TYPE.COVER_PLAYED,
         message: `Player ${user_name} covered ${attack_cards.map(card => cardDisplay(card)).join(', ')} with ${cover_cards.map(card => cardDisplay(card)).join(', ')}`,
         game_id: game_id,
         game: personalize_game(game, null),
         player_id: user_id
-    }).catch(e => { 
+    }).catch(e => {
         console.error('Error broadcasting game join:', e);
     });
 
@@ -191,16 +190,19 @@ const handle_cover = (game: Game, game_id: string, player_id: string, cover_card
         if (playable_players.length === 0) {
             // no one can play cards
             // but don't make it that obvious. give it 30 seconds
+            // I suspect this is not working. Is the timeout too long for the server?
+            // TODO look at this tomorrow
+            console.log('No one can play cards, setting timeout');
             setTimeout(() => {
+                console.log('Timeout done, shifting');
                 //shift 
 
                 broadcastToGame(game_id, {
                     type: SERVER_EVENT_TYPE.SUCCESSFULLY_COVERED,
                     message: `Player ${player_id} successfully defended the attack`,
                     game: personalize_game(game, null)
-
                 });
-                
+
                 game.table_battles = [];
                 refill(game);
                 game.first_attacker = game.currently_attacked;
