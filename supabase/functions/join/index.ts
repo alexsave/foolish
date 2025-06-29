@@ -1,4 +1,4 @@
-import { verify_game_id, lobbify_game, wrap400, emailToName } from "../_shared/utils.ts";
+import { verify_game_id, lobbify_game, wrap400, emailToName, broadcastToGame } from "../_shared/utils.ts";
 import { GAME_STATUS, PLAYER_STATUS, Game, SERVER_EVENT_TYPE } from "../_shared/types.ts";
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
@@ -62,7 +62,17 @@ serve(wrap400(async (req) => {
         }]
     };
 
-    // Return immediately to the user - maximum speed!
+    // CRITICAL: Insert into player_games BEFORE returning response
+    // This ensures the user has permission to subscribe to the game channel immediately
+    // Do the database operations BEFORE returning to avoid race condition
+    // SEQUENTIAL: games table first, then player_games (foreign key constraint)
+    await supabaseClient.from('games').update({ players: dbGameData.players }).eq('id', game_id);
+    await supabaseClient.from('player_games').insert({
+        player_id: user_id,
+        game_id: game_id
+    });
+
+    // Now it's safe to return - user has access to game channel
     const response = new Response(JSON.stringify({
         game: lobbify_game(dbGameData)
     }), {
@@ -72,49 +82,15 @@ serve(wrap400(async (req) => {
         }
     });
 
-    // update players property of game without blocking response
-    supabaseClient
-        .from('games')
-        .update({ players: dbGameData.players })
-        .eq('id', game_id)
-        .then(({ error: gameError }) => {
-            if (gameError) {
-                console.error('Error creating game:', gameError);
-                return; // Don't proceed with other operations if game creation failed
-            }
-
-            // Game created successfully, now do the other operations in parallel
-            return Promise.allSettled([
-                supabaseClient.from('player_games').insert({
-                    player_id: user_id,
-                    game_id: game_id
-                }),
-                supabaseClient.from('public_game_channel').insert({
-                    game_id: game_id,
-                    message: {
-                        type: SERVER_EVENT_TYPE.PLAYER_JOINED_GAME,
-                        message: `Player ${user_name} joined game ${game_id}`,
-                        game_id: game_id,
-                        game: lobbify_game(dbGameData)
-                    }
-                })
-            ]);
-        })
-        .then((results) => {
-            if (results) {
-                const [playerGameResult, publicChannelResult] = results;
-                // Log errors if any, but user already has their response
-                if (playerGameResult.status === 'rejected' || publicChannelResult.status === 'rejected') {
-                    console.error('Error in background operations:', {
-                        playerGame: playerGameResult.status === 'rejected' ? playerGameResult.reason : null,
-                        publicChannel: publicChannelResult.status === 'rejected' ? publicChannelResult.reason : null
-                    });
-                }
-            }
-        })
-        .catch((error) => {
-            console.error('Error in async game creation flow:', error);
-        });
+    // Send broadcast notification asynchronously (non-blocking)
+    broadcastToGame(game_id, {
+        type: SERVER_EVENT_TYPE.PLAYER_JOINED_GAME,
+        message: `Player ${user_name} joined game ${game_id}`,
+        game_id: game_id,
+        game: lobbify_game(dbGameData)
+    }).catch(error => {
+        console.error('Error broadcasting game join:', error);
+    });
 
     return response;
 }));

@@ -221,6 +221,102 @@ CREATE TRIGGER update_games_updated_at
   EXECUTE FUNCTION update_updated_at_column();
 
 -- =============================================================================
+-- REALTIME AUTHORIZATION POLICIES
+-- Enable Supabase Realtime with proper security
+-- =============================================================================
+
+-- Enable RLS on the realtime messages table
+ALTER TABLE IF EXISTS realtime.messages ENABLE ROW LEVEL SECURITY;
+
+-- Drop existing policies if they exist
+DROP POLICY IF EXISTS "authenticated can receive game broadcasts" ON "realtime"."messages";
+DROP POLICY IF EXISTS "authenticated can send game broadcasts" ON "realtime"."messages";
+DROP POLICY IF EXISTS "authenticated can receive private messages" ON "realtime"."messages";
+DROP POLICY IF EXISTS "authenticated can send private messages" ON "realtime"."messages";
+DROP POLICY IF EXISTS "service role can send game broadcasts" ON "realtime"."messages";
+DROP POLICY IF EXISTS "service role can send private messages" ON "realtime"."messages";
+
+-- Policy for public game channels (topic: game-{game_id})
+-- Players can read messages from games they're in
+CREATE POLICY "authenticated can receive game broadcasts"
+ON "realtime"."messages"
+FOR SELECT
+TO authenticated
+USING (
+  EXISTS (
+    SELECT 1
+    FROM player_games
+    WHERE 
+      player_id = auth.uid()
+      AND game_id = REPLACE((SELECT realtime.topic()), 'game-', '')
+      AND realtime.messages.extension IN ('broadcast')
+  )
+);
+
+CREATE POLICY "authenticated can send game broadcasts"
+ON "realtime"."messages"
+FOR INSERT
+TO authenticated
+WITH CHECK (
+  EXISTS (
+    SELECT 1
+    FROM player_games
+    WHERE 
+      player_id = auth.uid()
+      AND game_id = REPLACE((SELECT realtime.topic()), 'game-', '')
+      AND realtime.messages.extension IN ('broadcast')
+  )
+);
+
+-- Policy for private user channels (topic: user-{email_prefix})
+-- Users can read messages sent to them  
+-- TEMPORARY: Allow any authenticated user to read from user channels for testing
+CREATE POLICY "authenticated can receive private messages"
+ON "realtime"."messages"
+FOR SELECT
+TO authenticated
+USING (
+  (SELECT realtime.topic()) = CONCAT('user-', split_part((current_setting('request.jwt.claims', true)::jsonb ->> 'email'), '@', 1))
+  AND realtime.messages.extension IN ('broadcast')
+);
+
+-- Anyone can send private messages to any user (for system notifications)
+-- In production, you might want to restrict this further
+CREATE POLICY "authenticated can send private messages"
+ON "realtime"."messages"
+FOR INSERT
+TO authenticated
+WITH CHECK (
+  (SELECT realtime.topic()) LIKE 'user-%'
+  AND realtime.messages.extension IN ('broadcast')
+);
+
+-- =============================================================================
+-- SERVICE ROLE POLICIES FOR SERVER-SIDE FUNCTIONS
+-- Allow Supabase functions to send broadcasts
+-- =============================================================================
+
+-- Service role can send game broadcasts (for server-initiated game updates)
+CREATE POLICY "service role can send game broadcasts"
+ON "realtime"."messages" 
+FOR INSERT
+TO service_role
+WITH CHECK (
+  (SELECT realtime.topic()) LIKE 'game-%'
+  AND realtime.messages.extension IN ('broadcast')
+);
+
+-- Service role can send private messages (for server notifications)
+CREATE POLICY "service role can send private messages"
+ON "realtime"."messages"
+FOR INSERT
+TO service_role  
+WITH CHECK (
+  (SELECT realtime.topic()) LIKE 'user-%'
+  AND realtime.messages.extension IN ('broadcast')
+);
+
+-- =============================================================================
 -- SETUP COMPLETE!
--- Your database schema is now ready for the game application.
+-- Your database schema is now ready for the game application with Realtime Authorization.
 -- =============================================================================

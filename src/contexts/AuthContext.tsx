@@ -37,9 +37,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         setUser(name);
         // useful for something I think
         setUserId(session.user.id);
-        console.log('user id is ' + name);
       } else {
-        console.log('no session');
       }
       setLoading(false);
     });
@@ -63,11 +61,9 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     });
     
     if (error) {
-      console.error('Supabase signin error:', error);
       throw error;
     }
     
-    console.log('Sign in successful, user:', data?.user?.id);
     return data;
   };
 

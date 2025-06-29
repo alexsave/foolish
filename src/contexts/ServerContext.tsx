@@ -2,6 +2,8 @@ import React, { createContext, useContext, useEffect, useRef, useState } from 'r
 import { Card, Game, GAME_MOVE_TYPE, LOBBY_MOVE_TYPE, LobbyGame, PersonalGame, SERVER_EVENT_TYPE } from '../common/types';
 import supabase from '../backend/Connector';
 import { useParams } from 'react-router-dom';
+import { useAuth } from './AuthContext';
+import { emailToName } from '../common/utils';
 
 const ServerContext = createContext<ServerContextType|null>(null);
 
@@ -11,12 +13,14 @@ const HOST = '10.0.0.243';
 // this will be kinda similar to client.js
 export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
+    const {user} = useAuth()
+
     const url_game_id = useParams().game_id;
     // keep a state of games
     // maybe ref idk
     const [games, setGames] = useState<{[key: string]: (Game | LobbyGame | PersonalGame)}>({});
 
-    const [user, setUser] = useState(null);
+    //const [user, setUser] = useState(null);
     const [loading, setLoading] = useState(true);
 
 
@@ -61,82 +65,105 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
 
     useEffect(() => {
-        // write to player id to local storage
-        if (player_id) {
-            localStorage.setItem('player_id', player_id);
-        }
-    }, [player_id]);
-
-    useEffect(() => {
-        // read from local storage for player id
-        const playerId = localStorage.getItem('player_id');
-        //console.log('player id is ' + playerId);
-        if (playerId) {
-            setPlayerId(playerId);
-            createWebSocket(playerId);
+        if (user) {
+            setPlayerId(user);
+            setupRealtimeSubscriptions().catch(console.error);
         }
 
-        // this is cleanup, right?
+        // cleanup realtime subscriptions
         return () => {
             if (webSocketRef.current) {
                 webSocketRef.current.close();
-            };
+            }
+            // Remove all realtime subscriptions
+            supabase.removeAllChannels();
         };
     }, []);
 
-    // pass as param just to be safe with useState
-    const createWebSocket = (pId: string) => {
-        const ws = new WebSocket(`ws://${HOST}:3001`);
-        ws.onmessage = (event) => {
-            const data = JSON.parse(event.data);
-            console.log(data);
+    // Setup Supabase Realtime subscriptions
+    const setupRealtimeSubscriptions = async () => {
+        // Get current session and set auth token for realtime
+        await supabase.realtime.setAuth();
+        
+        // Subscribe to private user channel for personal messages
+        const privateChannel = supabase.realtime.channel(`user-${user}`, {
+            config: { private: true }
+        });
+        
+        privateChannel
+            .on('broadcast', { event: 'private_message' }, (payload) => {
+                console.log('Private message received:', payload);
+                // Handle private messages (like hand updates, personal notifications)
+                handlePrivateMessage(payload.payload);
+            })
+            .subscribe((status, err) => {
+                if (status === 'SUBSCRIBED') {
+                    console.log('Connected to private channel:', `user-${user}`);
+                } else {
+                    console.error('Private channel error:', err, status);
+                }
+            });
 
-            // Ok so this has SOME important stuff
-            // Let's start with server lobby events
-            // first assert that gameid = current game id, otherwise dont worry parsing it
-            if (gameIdRef.current && data.game_id !== gameIdRef.current) {
-                return;
+        // We'll subscribe to game channels when we join/create games
+        console.log('Realtime subscriptions set up for user:', user);
+    };
+
+    const subscribeToGame = async (gameId: string) => {
+        // Ensure we have proper auth before subscribing
+        await supabase.realtime.setAuth();
+        
+        // Subscribe to public game channel for game updates
+        const gameChannel = supabase.channel(`game-${gameId}`, {
+            config: { private: true }
+        });
+        
+        gameChannel
+            .on('broadcast', { event: 'game_message' }, (payload) => {
+                console.log('Game message received:', payload);
+                handleGameMessage(payload.payload);
+            })
+            .subscribe((status, err) => {
+                if (status === 'SUBSCRIBED') {
+                    console.log('Connected to game channel:', gameId);
+                } else {
+                    console.error('Game channel error:', err);
+                }
+            });
+    };
+
+    const handleGameMessage = (message: any) => {
+        // Process game messages similar to WebSocket messages
+        if (!gameIdRef.current || message.game_id !== gameIdRef.current) {
+            return;
+        }
+
+        if (message.type === SERVER_EVENT_TYPE.PLAYER_JOINED_GAME) {
+            setGames(prev => ({...prev, [message.game_id]: message.game}));
+        } else if (message.type === SERVER_EVENT_TYPE.PLAYER_READY) {
+            setGames(prev => ({...prev, [message.game_id]: message.game}));
+        } else if (message.type === SERVER_EVENT_TYPE.GAME_STARTED) {
+            setGames(prev => ({...prev, [message.game_id]: message.game}));
+        } else if (message.type === SERVER_EVENT_TYPE.ATTACK_PLAYED) {
+            setGames(prev => ({...prev, [message.game_id]: message.game}));
+        } else if (message.type === SERVER_EVENT_TYPE.PASS_PLAYED) {
+            setGames(prev => ({...prev, [message.game_id]: message.game}));
+        } else if (message.type === SERVER_EVENT_TYPE.PICKUP_PLAYED) {
+            setGames(prev => ({...prev, [message.game_id]: message.game}));
+        } else {
+            // Default handler for other message types
+                // else if chat message, it's a bit different. chat will be stored separeate
+            if (message.game) {
+                setGames(prev => ({...prev, [message.game_id]: message.game}));
             }
+        }
+    };
 
-            const message = data.message;
-            if (message.type === SERVER_EVENT_TYPE.PLAYER_JOINED_GAME) {
-                // Because a list of names + statuses of max length 8 isn't THAT long, we'll just send over the entire game
-                setGames({...games, [data.game_id]: message.game});
-            } else if (message.type === SERVER_EVENT_TYPE.PLAYER_READY) {
-                setGames({...games, [data.game_id]: message.game});
-            } else if (message.type === SERVER_EVENT_TYPE.GAME_STARTED) {
-                setGames({...games, [data.game_id]: message.game});
-            } else if (message.type === SERVER_EVENT_TYPE.ATTACK_PLAYED) {
-                setGames({...games, [data.game_id]: message.game});
-            } else if (message.type === SERVER_EVENT_TYPE.PASS_PLAYED) {
-                setGames({...games, [data.game_id]: message.game});
-            } else if (message.type === SERVER_EVENT_TYPE.PICKUP_PLAYED) {
-                setGames({...games, [data.game_id]: message.game});
-            } else {
-                // honestly just do this
-                setGames({...games, [data.game_id]: message.game});
-            }
-
-
-        };
-        ws.onopen = () => {
-            console.log('Connected to server');
-
-            // Send a login to associate the player id with the websocket
-            ws.send(JSON.stringify({
-                type: LOBBY_MOVE_TYPE.WEBSOCKET_CONNECT,
-                player_id: pId
-            }));
-
-        };
-        ws.onclose = () => {
-            console.log('Disconnected from server');
-        };
-        ws.onerror = (event) => {
-            console.log('Error', event);
-        };
-        webSocketRef.current = ws;
-    }
+    const handlePrivateMessage = (message: any) => {
+        // Handle private messages like hand updates, personal notifications
+        console.log('Processing private message:', message);
+        // Implement specific private message handling as needed
+        handleGameMessage(message);
+    };
 
     const promiseMaker = (endpoint: string, body: any, dataHandler: (data: any) => void): Promise<any> => {
         return new Promise((resolve, reject) => {
@@ -162,21 +189,23 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         });
     }
 
-    const serverLogin = (name: string): Promise<{ name: string, player_id: string }> => {
-        return promiseMaker(LOBBY_MOVE_TYPE.LOGIN, { name: name }, (data) => {
-            setPlayerId(data.player_id);
-            createWebSocket(data.player_id);
-        });
-    };
+
 
     const createGame = (): Promise<{ game_id: string }> => {
-        // this should not load the game data yet
-        return promiseMaker(LOBBY_MOVE_TYPE.CREATE, { player_id: player_id }, (data) => {
-            setGameId(data.game_id);
-            // The server should also return game data for this game
-            // so we can set the games state
-            setGames({...games, [data.game_id]: data.game});
+        const promise = new Promise<{game_id: string}>((resolve, reject) => {
+            supabase.functions.invoke('create', {
+                body: {}
+            }).then(data => {
+                resolve({game_id: data.data.game.id});  
+                setGameId(data.data.game.id);
+                setGames(prev => ({...prev, [data.data.game.id]: data.data.game}));
+                // Subscribe to the new game's channel
+                subscribeToGame(data.data.game.id).catch(console.error);
+            }).catch(error => {
+                reject(error);
+            });
         });
+        return promise;
     };
 
     const joinGame = (gameId: string): Promise<{ game_id: string }> => {
@@ -188,7 +217,9 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             }).then(data => {
                 resolve({game_id: data.data.game.id});  
                 setGameId(data.data.game.id);
-                setGames({...games, [data.data.game.id]: data.data.game});
+                setGames(prev => ({...prev, [data.data.game.id]: data.data.game}));
+                // Subscribe to the game's channel
+                subscribeToGame(data.data.game.id).catch(console.error);
             }).catch(error => {
                 reject(error);
             });
@@ -205,16 +236,17 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     };
 
     const loadGame = (gameId: string): Promise<{ game_id: string }> => {
-
         const promise = new Promise<{game_id: string}>((resolve, reject) => {
             supabase.functions.invoke('status', {
                 body: {
                     game_id: gameId,
                 }
             }).then(data => {
-                resolve({game_id: data.data.game.game_id});  
-                setGameId(data.data.game.game_id);
-                setGames({...games, [data.data.game.game_id]: data.data.game});
+                resolve({game_id: data.data.game.id});  
+                setGameId(data.data.game.id);
+                setGames(prev => ({...prev, [data.data.game.id]: data.data.game}));
+                // Subscribe to the game's channel
+                subscribeToGame(data.data.game.id).catch(console.error);
             }).catch(error => {
                 reject(error);
             });
@@ -264,7 +296,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
     return (
         <ServerContext.Provider value={{
-            serverLogin,
             createGame,
             joinGame,
             startGame,
@@ -285,7 +316,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 };
 
 interface ServerContextType {
-    serverLogin: (name: string) => Promise<{name: string, player_id: string}>;
     createGame: () => Promise<{ game_id: string }>;
     joinGame: (gameId: string) => Promise<{ game_id: string }>;
     startGame: (gameId: string) => Promise<{ game_id: string }>;

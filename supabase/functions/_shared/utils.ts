@@ -82,3 +82,60 @@ export const personalize_game = (game: Game, player_id: string): PersonalGame =>
         power_suit: game.power_suit
     }
 }
+
+// =============================================================================
+// REALTIME BROADCAST UTILITIES
+// =============================================================================
+
+export const broadcastToGame = async (game_id: string, message: any): Promise<void> => {
+    try {
+        const channel = supabaseClient.channel(`game-${game_id}`, {
+            config: { private: true }
+        });
+        
+        await channel.send({
+            type: 'broadcast',
+            event: 'game_message',
+            payload: message
+        });
+        
+        // Clean up channel
+        await supabaseClient.removeChannel(channel);
+    } catch (error) {
+        console.error('Error broadcasting to game:', error);
+        // Don't throw error to avoid breaking the main flow
+    }
+};
+
+export const broadcastToUser = async (user_id: string, message: any): Promise<void> => {
+    try {
+        // Get user email and extract prefix
+        const { data: user, error: userError } = await supabaseClient
+            .from('auth.users')
+            .select('email')
+            .eq('id', user_id)
+            .single();
+        
+        if (userError || !user?.email) {
+            console.error('Error getting user email for broadcast:', userError);
+            return;
+        }
+        
+        const name = emailToName(user.email);
+        const channel = supabaseClient.channel(`user-${name}`, {
+            config: { private: true }
+        });
+        
+        await channel.send({
+            type: 'broadcast',
+            event: 'private_message',
+            payload: message
+        });
+        
+        // Clean up channel
+        await supabaseClient.removeChannel(channel);
+    } catch (error) {
+        console.error('Error broadcasting to user:', error);
+        // Don't throw error to avoid breaking the main flow
+    }
+};
