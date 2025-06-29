@@ -77,7 +77,7 @@ export const personalize_game = (game: Game, player_id: string | null): Personal
         id: game.id,
         deck_length: game.deck.length,
         flipped: game.flipped,
-        self: self,
+        self: self ?? undefined,
         players: game.players.map(other_player),
         status: game.status,
         first_attacker: game.first_attacker,
@@ -355,4 +355,97 @@ const game_done = (game: Game): string | null => {
         return in_players[0].id;
     }
     return null;
+}
+
+
+export const canCover = (attack: Card, defense: Card, powerSuit: number) => {
+    if (defense.suit !== attack.suit) {
+        // only different suit scenario that works
+        return defense.suit === powerSuit && attack.suit !== powerSuit;
+    }
+    return defense.value > attack.value;
+};
+
+export const refill = (game: Game) => {
+
+    if (no_cards_left(game)) {
+        return;
+    }
+
+    // If the deck was already empty, defending should've gotten them a win
+    // most importantly, check if currently Attacked cleared their hand
+    let defenseHand = game.players[game.currently_attacked].hand;
+    if (defenseHand.length === 0) {
+        // they draw first
+        let cards_drawn = 0;
+        while (defenseHand.length < CARDS_PER_PLAYER) {
+            const c = draw(game);
+            if (c === null) {
+                broadcastToGame(game.id, {
+                    type: 'deck_ran_out',
+                    message: 'Deck ran out',
+                    game: personalize_game(game, null)
+                });
+                break;
+            }
+            defenseHand.push(c);
+            cards_drawn++;
+        }
+        broadcastToGame(game.id, {
+            type: 'player_refilled',
+            message: `Player ${game.players[game.currently_attacked].name} refilled their empty hand with ${cards_drawn} cards`,
+            cards: defenseHand,
+            game: personalize_game(game, null)
+        });
+    }
+
+    // Then go around starting from firstAttacker
+    let pIndex = game.first_attacker;
+    do {
+        const hand = game.players[pIndex].hand;
+        let cards_drawn = 0;
+
+        while (hand.length < CARDS_PER_PLAYER) {
+            const c = draw(game);
+            if (c === null) {
+                broadcastToGame(game.id, {
+                    type: 'deck_ran_out',
+                    message: 'Deck ran out',
+                    game: personalize_game(game, null)
+                });
+                break;
+            }
+            hand.push(c);
+            cards_drawn++;
+        }
+        if (cards_drawn > 0) {
+            broadcastToGame(game.id, {
+                    type: 'player_refilled',
+                    message: `Player ${game.players[pIndex].name} drew ${cards_drawn} cards`,
+                cards: hand,
+                game: personalize_game(game, null)
+            });
+        } else if (cards_drawn === 0 && game.players[pIndex].hand.length === 0) {
+            // no cards were drawn, but if they were still "in", this is where they win
+            if (game.players[pIndex].status === PLAYER_STATUS.IN) {
+                broadcastToGame(game.id, {
+                        type: 'player_wins',
+                        message: `Player ${game.players[pIndex].name} got rid of all their cards`,
+                        game: personalize_game(game, null)
+                });
+                game.players[pIndex].status = PLAYER_STATUS.OUT;
+                check_win(game);
+            }
+        }
+        pIndex = get_next_player_index(game, pIndex);
+        //pIndex = (pIndex + 1) % game.players.length;
+    } while (pIndex !== game.first_attacker/* && !no_cards_left(game)*/);
+};
+
+export const get_next_player_index = (game: Game, current_player: number): number => {
+    let next_player = (current_player + 1) % game.players.length;
+    while (game.players[next_player].status === PLAYER_STATUS.OUT) {
+        next_player = (next_player + 1) % game.players.length;
+    }
+    return next_player;
 }

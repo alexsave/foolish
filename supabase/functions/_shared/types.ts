@@ -123,7 +123,7 @@ export interface PersonalGame {
     id: string;
     deck_length: number;
     flipped: Card | null;
-    self: Player;
+    self?: Player;
     players: OtherPlayer[];
 
     // wait for attackers reveals that people do have hands, so we don't allow this

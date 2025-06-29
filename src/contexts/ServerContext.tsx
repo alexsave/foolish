@@ -308,8 +308,19 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     };
 
     const cover = (coverCards: Card[], attackCards: Card[]): Promise<{ game_id: string }> => {
-        return promiseMaker(GAME_MOVE_TYPE.COVER, { game_id: game_id!, player_id: player_id!, cover_cards: coverCards, attack_cards: attackCards }, (data) => {
-            setGames(prev => ({...prev, [data.game_id]: mergeGameData(data.game_id, data.game, prev)}));
+        return new Promise<{game_id: string}>((resolve, reject) => {
+            supabase.functions.invoke('cover', {
+                body: {
+                    game_id: game_id!,
+                    cover_cards: coverCards,
+                    attack_cards: attackCards,
+                }
+            }).then(data => {
+                resolve({game_id: data.data.game.id});  
+                setGames(prev => ({...prev, [data.data.game.id]: mergeGameData(data.data.game.id, data.data.game, prev)}));
+            }).catch(error => {
+                reject(error);
+            });
         });
     };
 
