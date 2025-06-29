@@ -81,7 +81,6 @@ export const GameDisplay = () => {
 
   return (
     <div style={{ backgroundColor: '#982621', width: '100%', height: '100vh' }}>
-      <p>{'status: ' + JSON.stringify(state.self.status)}</p>
     
       {/* SVG overlay for arrows */}
       <svg style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 500 }}>
@@ -144,20 +143,19 @@ export const GameDisplay = () => {
 
       <div style={{ display: 'flex', flex: 1, justifyContent: 'center', alignItems: 'center' }}>
         <p>FOOLISH</p>
-        <div style={{ display: 'flex', position: 'absolute', top: '0px', left: '0px', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', height: '100px' }}>
+        <div style={{ display: 'flex', position: 'absolute', top: '0px', left: '0px', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', height: '300px', width: '100px' }}>
           {state.flipped && <CardDisplay card={state.flipped} />}
           <CardBack />
-          <p>{JSON.stringify(state.deck_length)}</p>
+          <p>{state.deck_length}</p>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', position: 'absolute', bottom: '10px', left: '0px', right: '0px', justifyContent: 'end', alignItems: 'center', height: '200px' }}>
           {
-            selectedCards.length > 0 && <div style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)', zIndex: 999 }}>
-              <p>{JSON.stringify(selectedCards)}</p>
+            selectedCards.length > 0 && <div style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)', zIndex: 999, height: '50px '}}>
 
               {
                 isDefending ? (
                   <>
-                    <button onClick={() => {
+                    <button style={{ width: '60px', height: '50px' }} onClick={() => {
                       console.log(selectedCards);
                       pass(selectedCards).then(() => {
                         setSelectedCards([]);
@@ -165,7 +163,7 @@ export const GameDisplay = () => {
                         console.error(e.message);
                       })
                     }}>Pass</button>
-                    <button onClick={() => {
+                    <button style={{ width: '60px', height: '50px' }} onClick={() => {
                       pickup().then(() => {
                         // add cards to hand???
                         setSelectedCards([]);
@@ -174,11 +172,11 @@ export const GameDisplay = () => {
                       })
                     }}>Pickup</button>
 
-                    <button onClick={() => {
+                    <button style={{ width: '60px', height: '50px' }} onClick={() => {
                       setIsSelectingCover(true);
                     }}>Cover</button>
 
-                    <button onClick={() => {
+                    <button style={{ width: '60px', height: '50px' }} onClick={() => {
                       const coverCards = Array.from(coverMap.keys());
                       const attackCards = Array.from(coverMap.values());
                       cover(coverCards, attackCards).then(() => {
@@ -192,12 +190,12 @@ export const GameDisplay = () => {
                   </>
                 ) : (
                   <>
-                  <button onClick={() => attack(selectedCards).then(() => {
+                  <button style={{ width: '60px', height: '50px' }} onClick={() => attack(selectedCards).then(() => {
                     setSelectedCards([]);
                   }).catch((e) => {
                     console.error(e.message);
                   })}>Attack</button>
-                  <button onClick={() => good().then(() => {
+                  <button style={{ width: '60px', height: '50px' }} onClick={() => good().then(() => {
                     setSelectedCards([]);
                   }).catch((e) => {
                     console.error(e.message);
@@ -237,10 +235,6 @@ export const GameDisplay = () => {
         </div>
 
         <div style={{ position: 'absolute', display: 'flex', flexDirection: 'column', top: 0, width: '100%', bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ backgroundColor: 'black', height: '10px', width: '10px' }} />
-          <div>
-            {JSON.stringify(state.table_battles)}
-          </div>
           {
             state.table_battles.map((battle, index) => {
               let border = { border: '1px solid black' };
