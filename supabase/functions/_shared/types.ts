@@ -132,8 +132,6 @@ export interface PersonalGame {
     power_suit: number;
     first_attacker: number;
     currently_attacked: number;
-    previous_first_attacker: number;
-    previous_currently_attacked: number;
     table_battles: Battle[];
 }
 
@@ -173,8 +171,6 @@ export interface Game {
     power_suit: number;
     first_attacker: number;
     currently_attacked: number;
-    previous_first_attacker: number;
-    previous_currently_attacked: number;
     table_battles: Battle[];
 }
 

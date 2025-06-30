@@ -78,8 +78,6 @@ export const personalize_game = (game: Game, player_id: string | null): Personal
         status: game.status,
         first_attacker: game.first_attacker,
         currently_attacked: game.currently_attacked,
-        previous_first_attacker: game.previous_first_attacker,
-        previous_currently_attacked: game.previous_currently_attacked,
         table_battles: game.table_battles,
         power_suit: game.power_suit
     }
@@ -286,8 +284,6 @@ export const determine_lowest_power_index = (game: Game): number => {
 export const set_positions = (game: Game) => {
     game.first_attacker = game.first_attacker;
     game.currently_attacked = (game.first_attacker + 1) % game.players.length;
-    game.previous_first_attacker = game.first_attacker;
-    game.previous_currently_attacked = game.currently_attacked;
 }
 
 // Seeded random generator

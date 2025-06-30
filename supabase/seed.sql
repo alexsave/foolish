@@ -56,8 +56,6 @@ CREATE TABLE games (
   power_suit INTEGER,
   first_attacker INTEGER,
   currently_attacked INTEGER,
-  previous_first_attacker INTEGER,
-  previous_currently_attacked INTEGER,
   table_battles JSONB NOT NULL DEFAULT '[]'::jsonb, -- Battle[]
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()

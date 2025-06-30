@@ -37,8 +37,6 @@ serve(wrap400(async (req) => {
         power_suit: 0,
         first_attacker: 0,
         currently_attacked: 0,
-        previous_first_attacker: 0,
-        previous_currently_attacked: 0,
         table_battles: []
     };
 
