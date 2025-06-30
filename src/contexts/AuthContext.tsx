@@ -3,7 +3,7 @@ import supabase from '../backend/Connector';
 import { WEBSITE_DOMAIN } from '../constants/constants';
 import { Session, User } from '@supabase/supabase-js';
 import { WeakPassword } from '@supabase/supabase-js';
-import { emailToName } from '../common/utils';
+import { emailToName } from '../common/common_utils';
 
 interface AuthContextType {
   user: string | null;

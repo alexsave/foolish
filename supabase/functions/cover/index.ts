@@ -1,5 +1,6 @@
-import { wrap400, emailToName, verify_game_id, verify_player_in_game, broadcastToGame, personalize_game, cardDisplay, validate_defender_status, verify_hands_in_players_hand, check_win, card_comp, canCover, refill, get_next_player_index, broadcastToUser } from "../_shared/utils.ts";
+import { wrap400, verify_game_id, verify_player_in_game, broadcastToGame, personalize_game, cardDisplay, validate_defender_status, verify_hands_in_players_hand, check_win, card_comp, canCover, refill, get_next_player_index, broadcastToUser } from "../_shared/utils.ts";
 import { Game, Card, GAME_STATUS, SERVER_EVENT_TYPE, PLAYER_STATUS } from "../_shared/types.ts";
+import { emailToName } from "../_shared/common_utils.ts";
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"

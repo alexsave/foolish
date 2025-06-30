@@ -1,5 +1,6 @@
-import { createId, lobbify_game, wrap400, emailToName, broadcastToGame } from "../_shared/utils.ts";
+import { createId, lobbify_game, wrap400, broadcastToGame } from "../_shared/utils.ts";
 import { GAME_STATUS, PLAYER_STATUS, Game } from "../_shared/types.ts";
+import { emailToName } from "../_shared/common_utils.ts";
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"

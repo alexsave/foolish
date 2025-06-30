@@ -1,9 +1,8 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
-import { Card, Game, GAME_MOVE_TYPE, LOBBY_MOVE_TYPE, LobbyGame, PersonalGame, SERVER_EVENT_TYPE } from '../common/types';
+import { Card, Game, LobbyGame, PersonalGame, SERVER_EVENT_TYPE } from '../common/types';
 import supabase from '../backend/Connector';
 import { useParams } from 'react-router-dom';
 import { useAuth } from './AuthContext';
-import { emailToName } from '../common/utils';
 
 const ServerContext = createContext<ServerContextType|null>(null);
 

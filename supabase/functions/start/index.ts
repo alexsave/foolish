@@ -1,5 +1,6 @@
-import { verify_game_id, wrap400, emailToName, broadcastToGame, verify_player_in_game, start_game, personalize_game } from "../_shared/utils.ts";
+import { verify_game_id, wrap400, broadcastToGame, verify_player_in_game, start_game, personalize_game } from "../_shared/utils.ts";
 import { GAME_STATUS, PLAYER_STATUS, SERVER_EVENT_TYPE, ServerEventType } from "../_shared/types.ts";
+import { emailToName } from "../_shared/common_utils.ts";
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"

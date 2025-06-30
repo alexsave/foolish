@@ -2,6 +2,7 @@ import { corsHeaders } from './cors.ts';
 import { Card, Game, LobbyGame, GAME_STATUS, Player, OtherPlayer, PLAYER_STATUS, PersonalGame, SERVER_EVENT_TYPE, PRIVATE_EVENT_TYPE } from './types.ts';
 import { ACE_VALUE, CARDS_PER_PLAYER, SUITS, START_VALUE, VALUE_MAP, SUIT_MAP, LCG_A, LCG_C, LCG_M } from './constants.ts';
 import { createClient } from 'jsr:@supabase/supabase-js';
+import { emailToName } from './common_utils.ts';
 
 const supabaseClient = createClient(
     Deno.env.get('SUPABASE_URL') || '',
@@ -36,11 +37,6 @@ export const wrap400 = (execute: (req: Request) => Promise<Response>) => async (
         );
     }
 }
-
-export const emailToName = (email: string): string => {
-  return email.split('@')[0];
-}
-
 
 export const verify_game_id = async (game_id: string): Promise<void> => {
     const { data: game, error: gameError } = await supabaseClient.from('games').select('*').eq('id', game_id).single();
