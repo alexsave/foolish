@@ -1,4 +1,4 @@
-import { wrap400, verify_game_id, verify_player_in_game, broadcastToGame, personalize_game, cardDisplay, validate_defender_status, verify_hands_in_players_hand, check_win, card_comp, canCover, refill, get_next_player_index, broadcastToUser } from "../_shared/utils.ts";
+import { wrap400, verify_game_id, verify_player_in_game, broadcastToGameUsers, personalize_game, cardDisplay, validate_defender_status, verify_hands_in_players_hand, check_win, card_comp, canCover, refill, get_next_player_index, broadcastToGameUser } from "../_shared/utils.ts";
 import { Game, Card, GAME_STATUS, SERVER_EVENT_TYPE, PLAYER_STATUS } from "../_shared/types.ts";
 import { emailToName } from "../_shared/common_utils.ts";
 
@@ -37,14 +37,10 @@ serve(wrap400(async (req) => {
     // Attack can only update players and table_battles
     await supabaseClient.from('games').update({ players: game.players, table_battles: game.table_battles, status: game.status }).eq('id', game_id);
 
-    broadcastToGame(game_id, {
+    broadcastToGameUsers(game, 'game_update', {
         type: SERVER_EVENT_TYPE.COVER_PLAYED,
         message: `Player ${user_name} covered ${attack_cards.map(card => cardDisplay(card)).join(', ')} with ${cover_cards.map(card => cardDisplay(card)).join(', ')}`,
-        game_id: game_id,
-        game: personalize_game(game, null),
         player_id: user_id
-    }).catch(e => {
-        console.error('Error broadcasting game join:', e);
     });
 
 
@@ -198,10 +194,9 @@ const handle_cover = (game: Game, game_id: string, player_id: string, cover_card
                 console.log('Timeout done, shifting');
                 //shift 
 
-                broadcastToGame(game_id, {
+                broadcastToGameUsers(game, 'game_update', {
                     type: SERVER_EVENT_TYPE.SUCCESSFULLY_COVERED,
                     message: `Player ${player_id} successfully defended the attack`,
-                    game: personalize_game(game, null)
                 });
 
                 game.table_battles = [];
@@ -218,17 +213,16 @@ const handle_cover = (game: Game, game_id: string, player_id: string, cover_card
             });
 
             playable_players.forEach(player => {
-                broadcastToUser(player.id, {
+                broadcastToGameUser(game, SERVER_EVENT_TYPE.PLAYABLE_CARDS, {
                     type: SERVER_EVENT_TYPE.PLAYABLE_CARDS,
                     message: `You can still play cards. Either play or confirm you are done attacking with "good"`,
-                    game: personalize_game(game, player.id)
-                });
+                }, player.id);
             });
 
         }
     }
     if (broadcast_message) {
-        broadcastToGame(game_id, { ...broadcast_message, game: personalize_game(game, null) });
+        broadcastToGameUsers(game, 'game_update', { ...broadcast_message });
     }
 
     return game;

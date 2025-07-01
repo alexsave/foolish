@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
-import { Card, Game, LobbyGame, PersonalGame, SERVER_EVENT_TYPE } from '../common/types';
+import { Card, Game, LobbyGame, PersonalGame, SERVER_EVENT_TYPE, PRIVATE_EVENT_TYPE } from '../common/types';
 import supabase from '../backend/Connector';
 import { useParams } from 'react-router-dom';
 import { useAuth } from './AuthContext';
@@ -66,7 +66,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     useEffect(() => {
         if (user) {
             setPlayerId(user);
-            setupRealtimeSubscriptions().catch(console.error);
+            //setupRealtimeSubscriptions().catch(console.error);
         }
 
         // cleanup realtime subscriptions
@@ -111,53 +111,94 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         // Ensure we have proper auth before subscribing
         await supabase.realtime.setAuth();
         
-        // Subscribe to public game channel for game updates
-        const gameChannel = supabase.channel(`game-${gameId}`, {
+        // Subscribe to personalized game-user channel for game updates
+        const gameUserChannel = supabase.channel(`gu-${gameId}-${user}`, {
             config: { private: true }
         });
         
-        gameChannel
-            .on('broadcast', { event: 'game_message' }, (payload) => {
-                console.log('Game message received:', payload);
+        gameUserChannel
+            .on('broadcast', { event: 'game_update' }, (payload) => {
+                console.log('Game update received:', payload);
                 handleGameMessage(payload.payload);
             })
             .subscribe((status, err) => {
                 if (status === 'SUBSCRIBED') {
-                    console.log('Connected to game channel:', gameId);
+                    console.log('Connected to game-user channel:', `gu-${gameId}-${user}`);
                 } else {
-                    console.error('Game channel error:', err);
+                    console.error('Game-user channel error:', err);
                 }
             });
     };
 
     const handleGameMessage = (message: any) => {
-        // Process game messages similar to WebSocket messages
-        if (!gameIdRef.current || message.game_id !== gameIdRef.current) {
+        // Handle both old format (message.game_id) and new format (message.game.id)
+        // Also handle nested message format from broadcastToGame
+        let actualMessage = message;
+        let messageGameId = message.game?.id || message.game_id;
+        
+        // Check if this is a nested message from broadcastToGame
+        if (message.message && typeof message.message === 'object') {
+            actualMessage = message.message;
+            messageGameId = actualMessage.game?.id || message.game_id;
+        }
+        
+        if (!messageGameId || !gameIdRef.current || messageGameId !== gameIdRef.current) {
             return;
         }
-        // small caveat: because these are broadcast, they won't have personal info. So self shoudl not be overwritten
-        const self = games[message.game_id]?.self;
+
+        // small caveat: because these are broadcast, they won't have personal info. So self should not be overwritten
+        const self = games[messageGameId]?.self;
         if (!self) {
             console.log("we have no self info. We either didn't fetch it or it was overwritten")
         }
 
-        if (message.type === SERVER_EVENT_TYPE.PLAYER_JOINED_GAME) {
-            setGames(prev => ({...prev, [message.game_id]: mergeGameData(message.game_id, message.game, prev)}));
-        } else if (message.type === SERVER_EVENT_TYPE.PLAYER_READY) {
-            setGames(prev => ({...prev, [message.game_id]: mergeGameData(message.game_id, message.game, prev)}));
-        } else if (message.type === SERVER_EVENT_TYPE.GAME_STARTED) {
-            setGames(prev => ({...prev, [message.game_id]: mergeGameData(message.game_id, message.game, prev)}));
-        } else if (message.type === SERVER_EVENT_TYPE.ATTACK_PLAYED) {
-            setGames(prev => ({...prev, [message.game_id]: mergeGameData(message.game_id, message.game, prev)}));
-        } else if (message.type === SERVER_EVENT_TYPE.PASS_PLAYED) {
-            setGames(prev => ({...prev, [message.game_id]: mergeGameData(message.game_id, message.game, prev)}));
-        } else if (message.type === SERVER_EVENT_TYPE.PICKUP_PLAYED) {
-            setGames(prev => ({...prev, [message.game_id]: mergeGameData(message.game_id, message.game, prev)}));
+        // Handle all the different message types using the extracted message
+        const gameData = actualMessage.game || message.game;
+        
+        if (actualMessage.type === SERVER_EVENT_TYPE.PLAYER_JOINED_GAME) {
+            setGames(prev => ({...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev)}));
+        } else if (actualMessage.type === SERVER_EVENT_TYPE.PLAYER_READY) {
+            setGames(prev => ({...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev)}));
+        } else if (actualMessage.type === SERVER_EVENT_TYPE.GAME_STARTED) {
+            setGames(prev => ({...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev)}));
+        } else if (actualMessage.type === SERVER_EVENT_TYPE.FLIPPED_CARD) {
+            setGames(prev => ({...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev)}));
+        } else if (actualMessage.type === SERVER_EVENT_TYPE.FIRST_ATTACKER) {
+            setGames(prev => ({...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev)}));
+        } else if (actualMessage.type === SERVER_EVENT_TYPE.ATTACK_PLAYED) {
+            setGames(prev => ({...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev)}));
+        } else if (actualMessage.type === SERVER_EVENT_TYPE.PASS_PLAYED) {
+            setGames(prev => ({...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev)}));
+        } else if (actualMessage.type === SERVER_EVENT_TYPE.PICKUP_PLAYED) {
+            setGames(prev => ({...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev)}));
+        } else if (actualMessage.type === SERVER_EVENT_TYPE.COVER_PLAYED) {
+            setGames(prev => ({...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev)}));
+        } else if (actualMessage.type === SERVER_EVENT_TYPE.PLAYER_WON) {
+            setGames(prev => ({...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev)}));
+        } else if (actualMessage.type === SERVER_EVENT_TYPE.SUCCESSFULLY_COVERED) {
+            setGames(prev => ({...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev)}));
+        } else if (actualMessage.type === SERVER_EVENT_TYPE.PLAYABLE_CARDS) {
+            // This is a personal message - update game state and show notification
+            setGames(prev => ({...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev)}));
+            console.log('Playable cards message:', actualMessage.message);
+        } else if (actualMessage.type === 'no_more_attacks') {
+            setGames(prev => ({...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev)}));
+        } else if (actualMessage.type === 'free_play_mode') {
+            setGames(prev => ({...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev)}));
+        } else if (actualMessage.type === 'game_done') {
+            setGames(prev => ({...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev)}));
+        } else if (actualMessage.type === 'deck_ran_out') {
+            setGames(prev => ({...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev)}));
+        } else if (actualMessage.type === 'player_refilled') {
+            setGames(prev => ({...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev)}));
+        } else if (actualMessage.type === 'player_wins') {
+            setGames(prev => ({...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev)}));
+        } else if (actualMessage.type === 'game_created') {
+            setGames(prev => ({...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev)}));
         } else {
             // Default handler for other message types
-                // else if chat message, it's a bit different. chat will be stored separeate
-            if (message.game) {
-                setGames(prev => ({...prev, [message.game_id]: mergeGameData(message.game_id, message.game, prev)}));
+            if (gameData) {
+                setGames(prev => ({...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev)}));
             }
         }
     };

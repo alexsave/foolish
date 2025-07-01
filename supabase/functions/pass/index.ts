@@ -1,4 +1,4 @@
-import {wrap400, broadcastToGame, verify_game_id, verify_player_in_game, personalize_game, cardDisplay, validate_defender_status, verify_hands_in_players_hand, no_cards_left, check_win, get_next_player_index, card_comp } from "../_shared/utils.ts";
+import {wrap400, broadcastToGameUsers, verify_game_id, verify_player_in_game, personalize_game, cardDisplay, validate_defender_status, verify_hands_in_players_hand, no_cards_left, check_win, get_next_player_index, card_comp, broadcastToGame } from "../_shared/utils.ts";
 import { Game, Card, SERVER_EVENT_TYPE, PLAYER_STATUS } from "../_shared/types.ts";
 import { emailToName } from "../_shared/common_utils.ts";
 
@@ -37,12 +37,9 @@ serve(wrap400(async (req) => {
     // Attack can only update players and table_battles
     await supabaseClient.from('games').update(game).eq('id', game_id);
 
-    broadcastToGame(game_id, {
+    broadcastToGameUsers(game, 'game_update', {
         type: SERVER_EVENT_TYPE.PASS_PLAYED,
-        message: `Player ${user_name} passed using ${cards.map(card => cardDisplay(card)).join(', ')}`,
-        game: personalize_game(game, null)
-    }).catch(e => { 
-        console.error('Error broadcasting game join:', e);
+        message: `Player ${user_name} passed using ${cards.map(card => cardDisplay(card)).join(', ')}`
     });
 
     // Now it's safe to return - user has access to game channel
@@ -131,18 +128,16 @@ const handle_pass = (game: Game, game_id: string, player_id: string, cards: Card
         player.status = PLAYER_STATUS.OUT;
         check_win(game);
         game.currently_attacked = next_player_index;
-        broadcastToGame(game_id, {
+        broadcastToGameUsers(game, 'game_update', {
             type: SERVER_EVENT_TYPE.PLAYER_WON,
             message: `Player ${player_id} passed ${mCards.map(card => cardDisplay(card)).join(', ')} and got rid of all their cards`,
-            game: personalize_game(game, null)
         });
     } else {
         game.currently_attacked = next_player_index;
 
-        broadcastToGame(game_id, {
+        broadcastToGameUsers(game, 'game_update', {
             type: SERVER_EVENT_TYPE.PASS_PLAYED,
             message: `Player ${player_id} used ${mCards.map(card => cardDisplay(card)).join(', ')} to pass to ${next_player.name}`,
-            game: personalize_game(game, null)
         });
     }
 
@@ -153,10 +148,9 @@ const handle_pass = (game: Game, game_id: string, player_id: string, cards: Card
     if (uncovered_cards === defender_cards) {
         // just reached the limit
         game.status = 'only_defend';
-        broadcastToGame(game_id, {
+        broadcastToGameUsers(game, 'game_update', {
             type: 'no_more_attacks',
             message: `Maximum number of attacks reached, only defender can defend`,
-            game: personalize_game(game, null)
         });
     } else if (uncovered_cards > defender_cards) {
         // how the fuck did this happen
@@ -164,10 +158,9 @@ const handle_pass = (game: Game, game_id: string, player_id: string, cards: Card
     } else if (uncovered_cards < defender_cards) {
         // a pass could shift from only_defend to free_play
         game.status = 'free_play';
-        broadcastToGame(game_id, {
+        broadcastToGameUsers(game, 'game_update', {
             type: 'free_play_mode',
             message: `Passed cards, now free play mode`,
-            game: personalize_game(game, null)
         });
     }
 

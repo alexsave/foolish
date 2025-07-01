@@ -1,4 +1,4 @@
-import { createId, lobbify_game, wrap400, broadcastToGame } from "../_shared/utils.ts";
+import { createId, lobbify_game, wrap400, broadcastToGameUsers } from "../_shared/utils.ts";
 import { GAME_STATUS, PLAYER_STATUS, Game } from "../_shared/types.ts";
 import { emailToName } from "../_shared/common_utils.ts";
 
@@ -61,13 +61,9 @@ serve(wrap400(async (req) => {
     });
 
     // Send broadcast notification asynchronously (non-blocking)
-    broadcastToGame(game_id, {
+    broadcastToGameUsers(dbGameData, 'game_update', {
         type: 'game_created',
-        message: `Game created with id ${game_id}`,
-        game_id: game_id,
-        game: lobbify_game(dbGameData)
-    }).catch(error => {
-        console.error('Error broadcasting game creation:', error);
+        message: `Game created with id ${game_id}`
     });
 
     return response;

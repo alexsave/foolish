@@ -231,8 +231,11 @@ DROP POLICY IF EXISTS "authenticated can receive game broadcasts" ON "realtime".
 DROP POLICY IF EXISTS "authenticated can send game broadcasts" ON "realtime"."messages";
 DROP POLICY IF EXISTS "authenticated can receive private messages" ON "realtime"."messages";
 DROP POLICY IF EXISTS "authenticated can send private messages" ON "realtime"."messages";
+DROP POLICY IF EXISTS "authenticated can receive game-user messages" ON "realtime"."messages";
+DROP POLICY IF EXISTS "authenticated can send game-user messages" ON "realtime"."messages";
 DROP POLICY IF EXISTS "service role can send game broadcasts" ON "realtime"."messages";
 DROP POLICY IF EXISTS "service role can send private messages" ON "realtime"."messages";
+DROP POLICY IF EXISTS "service role can send game-user messages" ON "realtime"."messages";
 
 -- Policy for public game channels (topic: game-{game_id})
 -- Players can read messages from games they're in
@@ -304,6 +307,46 @@ WITH CHECK (
   AND realtime.messages.extension IN ('broadcast')
 );
 
+-- Policy for private game-user channels (topic: gu-{game_id}-{username})
+-- Users can only read messages from their own game-user channels
+CREATE POLICY "authenticated can receive game-user messages"
+ON "realtime"."messages"
+FOR SELECT
+TO authenticated
+USING (
+  (SELECT realtime.topic()) LIKE 'gu-%' AND
+  -- Extract username from topic (gu-{game_id}-{username}) and verify it matches current user
+  split_part((SELECT realtime.topic()), '-', 3) = split_part((current_setting('request.jwt.claims', true)::jsonb ->> 'email'), '@', 1) AND
+  -- Extract game_id and verify user is in that game
+  EXISTS (
+    SELECT 1
+    FROM player_games
+    WHERE 
+      player_id = auth.uid()
+      AND game_id = split_part((SELECT realtime.topic()), '-', 2)
+  ) AND
+  realtime.messages.extension IN ('broadcast')
+);
+
+CREATE POLICY "authenticated can send game-user messages"
+ON "realtime"."messages"
+FOR INSERT
+TO authenticated
+WITH CHECK (
+  (SELECT realtime.topic()) LIKE 'gu-%' AND
+  -- Extract username from topic and verify it matches current user
+  split_part((SELECT realtime.topic()), '-', 3) = split_part((current_setting('request.jwt.claims', true)::jsonb ->> 'email'), '@', 1) AND
+  -- Extract game_id and verify user is in that game
+  EXISTS (
+    SELECT 1
+    FROM player_games
+    WHERE 
+      player_id = auth.uid()
+      AND game_id = split_part((SELECT realtime.topic()), '-', 2)
+  ) AND
+  realtime.messages.extension IN ('broadcast')
+);
+
 -- Service role can send private messages (for server notifications)
 CREATE POLICY "service role can send private messages"
 ON "realtime"."messages"
@@ -311,6 +354,16 @@ FOR INSERT
 TO service_role  
 WITH CHECK (
   (SELECT realtime.topic()) LIKE 'user-%'
+  AND realtime.messages.extension IN ('broadcast')
+);
+
+-- Service role can send game-user messages (for server-initiated personalized updates)
+CREATE POLICY "service role can send game-user messages"
+ON "realtime"."messages"
+FOR INSERT
+TO service_role
+WITH CHECK (
+  (SELECT realtime.topic()) LIKE 'gu-%'
   AND realtime.messages.extension IN ('broadcast')
 );
 

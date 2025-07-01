@@ -1,4 +1,4 @@
-import { wrap400, verify_game_id, broadcastToGame, verify_player_in_game, personalize_game, cardDisplay, validate_defender_status, verify_hands_in_players_hand, no_cards_left, check_win } from "../_shared/utils.ts";
+import { wrap400, verify_game_id, broadcastToGameUsers, verify_player_in_game, personalize_game, cardDisplay, validate_defender_status, verify_hands_in_players_hand, no_cards_left, check_win } from "../_shared/utils.ts";
 import { Game, Card, GAME_STATUS, SERVER_EVENT_TYPE, PLAYER_STATUS } from "../_shared/types.ts";
 import { emailToName } from "../_shared/common_utils.ts";
 
@@ -38,14 +38,10 @@ serve(wrap400(async (req) => {
     await supabaseClient.from('games').update({ players: game.players, table_battles: game.table_battles, status: game.status }).eq('id', game_id);
 
 
-    broadcastToGame(game_id, {
+    broadcastToGameUsers(game, 'game_update', {
         type: SERVER_EVENT_TYPE.ATTACK_PLAYED,
         message: `Player ${user_name} played ${cards.map(card => cardDisplay(card)).join(', ')}`,
-        game_id: game_id,
-        game: personalize_game(game, null),
         player_id: user_id
-    }).catch(e => { 
-        console.error('Error broadcasting game join:', e);
     });
 
 
@@ -200,10 +196,9 @@ const handle_attack = (game: Game, game_id: string, player_id: string, cards: Ca
         if (uncovered_cards === defender_cards) {
             // just reached the limit
             game.status = GAME_STATUS.ONLY_DEFEND;
-            broadcastToGame(game_id, {
+            broadcastToGameUsers(game, 'game_update', {
                 type: 'no_more_attacks',
                 message: `Maximum number of attacks reached, only defender can defend`,
-                game: personalize_game(game, null)
             });
         } else if (uncovered_cards > defender_cards) {
             // how the fuck did this happen
@@ -220,9 +215,8 @@ const handle_attack = (game: Game, game_id: string, player_id: string, cards: Ca
 
     // Not the best way but decent
     if (broadcast_message !== null) {
-        broadcastToGame(game_id, {
+        broadcastToGameUsers(game, 'game_update', {
             ...broadcast_message, 
-            game: personalize_game(game, null)
         });
     }
 

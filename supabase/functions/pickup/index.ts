@@ -1,4 +1,4 @@
-import { verify_game_id, wrap400, validate_defender_status, get_next_player_index, refill, verify_player_in_game, personalize_game, broadcastToGame } from "../_shared/utils.ts";
+import { verify_game_id, wrap400, validate_defender_status, get_next_player_index, refill, verify_player_in_game, personalize_game, broadcastToGameUsers } from "../_shared/utils.ts";
 import { GAME_STATUS, PLAYER_STATUS, SERVER_EVENT_TYPE, Game } from "../_shared/types.ts";
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
@@ -33,6 +33,11 @@ serve(wrap400(async (req) => {
     game = handle_pickup(game, game_id, user_id);
 
     await supabaseClient.from('games').update(game).eq('id', game_id);
+
+    broadcastToGameUsers(game, 'game_update', {
+        type: SERVER_EVENT_TYPE.PICKUP_PLAYED,
+        message: `Player ${user_id} picked up cards`
+    });
 
     const response = new Response(JSON.stringify({
         game: personalize_game(game, user_id)
@@ -84,11 +89,7 @@ const handle_pickup = (game: Game, game_id: string, player_id: string): Game => 
     game.currently_attacked = get_next_player_index(game, game.first_attacker);
     game.status = GAME_STATUS.FIRST_ATTACKER;
 
-    broadcastToGame(game_id, {
-        type: SERVER_EVENT_TYPE.PICKUP_PLAYED,
-        message: `Player ${player_id} picked up cards`,
-        game: personalize_game(game, null)
-    });
+    // Broadcasting will be handled by the main function
 
     return game;
 }

@@ -1,4 +1,4 @@
-import { verify_game_id, wrap400, get_next_player_index, refill, verify_player_in_game, personalize_game, broadcastToGame } from "../_shared/utils.ts";
+import { verify_game_id, wrap400, get_next_player_index, refill, verify_player_in_game, personalize_game, broadcastToGameUsers } from "../_shared/utils.ts";
 import { GAME_STATUS, PLAYER_STATUS, SERVER_EVENT_TYPE, Game } from "../_shared/types.ts";
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
@@ -95,10 +95,9 @@ const handle_good = (game: Game, game_id: string, player_id: string): Game => {
     game.currently_attacked = get_next_player_index(game, game.first_attacker);
     game.status = GAME_STATUS.FIRST_ATTACKER;
 
-    broadcastToGame(game_id, {
+    broadcastToGameUsers(game, 'game_update', {
         type: SERVER_EVENT_TYPE.SUCCESSFULLY_COVERED,
-        message: `Player ${player_id} successfully defended the attack`,
-        game: personalize_game(game, null)
+        message: `Player ${player_id} successfully defended the attack`
     });
 
     return game;

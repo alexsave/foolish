@@ -1,4 +1,4 @@
-import { verify_game_id, wrap400, broadcastToGame, verify_player_in_game, start_game, personalize_game } from "../_shared/utils.ts";
+import { verify_game_id, wrap400, broadcastToGameUsers, verify_player_in_game, start_game, personalize_game } from "../_shared/utils.ts";
 import { GAME_STATUS, PLAYER_STATUS, SERVER_EVENT_TYPE, ServerEventType } from "../_shared/types.ts";
 import { emailToName } from "../_shared/common_utils.ts";
 
@@ -62,14 +62,10 @@ serve(wrap400(async (req) => {
         await supabaseClient.from('games').update({ players: game.players }).eq('id', game_id);
     }
 
-    broadcastToGame(game_id, {
+    broadcastToGameUsers(game, 'game_update', {
         type: type,
         message: message,
-        game_id: game_id,
-        game: personalize_game(game, user_id),
         player_id: user_id
-    }).catch(e => { 
-        console.error('Error broadcasting game join:', e);
     });
 
 

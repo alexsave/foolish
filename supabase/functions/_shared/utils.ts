@@ -87,58 +87,78 @@ export const personalize_game = (game: Game, player_id: string | null): Personal
 // REALTIME BROADCAST UTILITIES
 // =============================================================================
 
-export const broadcastToGame = async (game_id: string, message: any): Promise<void> => {
+// private message to specific user
+export const broadcastToGameUser = async (game: Game, messageType: string, baseMessage: any, user_id: string): Promise<void> => {
+    const channel = supabaseClient.channel(`gu-${game.id}-${user_id}`, {
+        config: { private: true }
+    });
+    await channel.send({
+        type: 'broadcast',
+        event: messageType,
+        payload: {
+            ...baseMessage,
+            game: personalize_game(game, user_id)
+        }
+    });
+    await supabaseClient.removeChannel(channel);
+}
+
+// Optimized method that sends personalized messages to each player's game-user channel
+export const broadcastToGameUsers = async (game: Game, messageType: string, baseMessage: any): Promise<void> => {
     try {
-        const channel = supabaseClient.channel(`game-${game_id}`, {
-            config: { private: true }
-        });
-        
-        await channel.send({
-            type: 'broadcast',
-            event: 'game_message',
-            // this is because id is handled differently in places
-            payload: {...message, game_id: game_id}
-        });
-        
-        // Clean up channel
-        await supabaseClient.removeChannel(channel);
+        // Calculate base game state once (shared for all players)
+        const baseGameState = {
+            id: game.id,
+            deck_length: game.deck.length,
+            flipped: game.flipped,
+            players: game.players.map(other_player),
+            status: game.status,
+            first_attacker: game.first_attacker,
+            currently_attacked: game.currently_attacked,
+            table_battles: game.table_battles,
+            power_suit: game.power_suit
+        };
+
+        // Send personalized message to each player
+        for (const player of game.players) {
+            // Create personalized game state by adding player's self data
+            const personalizedGame = {
+                ...baseGameState,
+                self: player
+            };
+            
+            // Create personalized message with filtered game state
+            const personalizedMessage = {
+                ...baseMessage,
+                game: personalizedGame
+            };
+            const channel = supabaseClient.channel(`gu-${game.id}-${player.name}`, {
+                config: { private: true }
+            });
+            await channel.send({
+                type: 'broadcast',
+                event: messageType,
+                payload: personalizedMessage
+            });
+
+            await supabaseClient.removeChannel(channel);
+        }
     } catch (error) {
-        console.error('Error broadcasting to game:', error);
-        // Don't throw error to avoid breaking the main flow
+        console.error('Error broadcasting to game users:', error);
     }
 };
 
+// Legacy functions kept for backward compatibility - will be deprecated
+export const broadcastToGame = async (game_id: string, message: any): Promise<void> => {
+    console.warn('broadcastToGame is deprecated. Use broadcastToGameUsers instead.');
+    // For now, we need the game object to use the new method
+    // This will be removed once all usages are updated
+};
+
 export const broadcastToUser = async (user_id: string, message: any): Promise<void> => {
-    try {
-        // Get user email and extract prefix
-        const { data: user, error: userError } = await supabaseClient
-            .from('auth.users')
-            .select('email')
-            .eq('id', user_id)
-            .single();
-        
-        if (userError || !user?.email) {
-            console.error('Error getting user email for broadcast:', userError);
-            return;
-        }
-        
-        const name = emailToName(user.email);
-        const channel = supabaseClient.channel(`user-${name}`, {
-            config: { private: true }
-        });
-        
-        await channel.send({
-            type: 'broadcast',
-            event: 'private_message',
-            payload: message
-        });
-        
-        // Clean up channel
-        await supabaseClient.removeChannel(channel);
-    } catch (error) {
-        console.error('Error broadcasting to user:', error);
-        // Don't throw error to avoid breaking the main flow
-    }
+    console.warn('broadcastToUser is deprecated. Use broadcastToGameUsers instead.');
+    // For now, we need the game object to use the new method  
+    // This will be removed once all usages are updated
 };
 
 export const start_game = (game: Game) => {
@@ -165,28 +185,20 @@ export const start_game = (game: Game) => {
     game.flipped = flipped_card;
     game.power_suit = game.flipped!.suit;
 
-    // Everyone needs to know
-    broadcastToGame(game.id, {
-        game_id: game.id,
-        message: {
-            type: SERVER_EVENT_TYPE.FLIPPED_CARD,
-            message: `Flipped card is ${cardDisplay(game.flipped!)}`,
-            game: game
-        }
+    // Notify all players about the flipped card
+    broadcastToGameUsers(game, 'game_update', {
+        type: SERVER_EVENT_TYPE.FLIPPED_CARD,
+        message: `Flipped card is ${cardDisplay(game.flipped!)}`
     });
+
     const lowest_power_index = determine_lowest_power_index(game);
-
-
     game.first_attacker = lowest_power_index;
     set_positions(game);
-
-
-    // request attack from first attacker
-
     game.status = GAME_STATUS.FIRST_ATTACKER;
 
 
 
+    // this part needs to be specially handled
     broadcastToGame(game.id, {
         game_id: game.id,
         message: {
@@ -328,10 +340,9 @@ export const check_win = (game: Game) => {
         game.table_battles = [];
         game.deck = refill_deck();
 
-        broadcastToGame(game.id, {
+        broadcastToGameUsers(game, 'game_update', {
             type: 'game_done',
-            message: `Game done. Player ${the_fool} ends up the fool`,
-            game: personalize_game(game, null)
+            message: `Game done. Player ${the_fool} ends up the fool`
         });
     }
 }
@@ -374,21 +385,19 @@ export const refill = (game: Game) => {
         while (defenseHand.length < CARDS_PER_PLAYER) {
             const c = draw(game);
             if (c === null) {
-                broadcastToGame(game.id, {
+                broadcastToGameUsers(game, 'game_update', {
                     type: 'deck_ran_out',
-                    message: 'Deck ran out',
-                    game: personalize_game(game, null)
+                    message: 'Deck ran out'
                 });
                 break;
             }
             defenseHand.push(c);
             cards_drawn++;
         }
-        broadcastToGame(game.id, {
+        broadcastToGameUsers(game, 'game_update', {
             type: 'player_refilled',
             message: `Player ${game.players[game.currently_attacked].name} refilled their empty hand with ${cards_drawn} cards`,
-            cards: defenseHand,
-            game: personalize_game(game, null)
+            cards_drawn: cards_drawn
         });
     }
 
@@ -401,10 +410,9 @@ export const refill = (game: Game) => {
         while (hand.length < CARDS_PER_PLAYER) {
             const c = draw(game);
             if (c === null) {
-                broadcastToGame(game.id, {
+                broadcastToGameUsers(game, 'game_update', {
                     type: 'deck_ran_out',
-                    message: 'Deck ran out',
-                    game: personalize_game(game, null)
+                    message: 'Deck ran out'
                 });
                 break;
             }
@@ -412,19 +420,17 @@ export const refill = (game: Game) => {
             cards_drawn++;
         }
         if (cards_drawn > 0) {
-            broadcastToGame(game.id, {
-                    type: 'player_refilled',
-                    message: `Player ${game.players[pIndex].name} drew ${cards_drawn} cards`,
-                cards: hand,
-                game: personalize_game(game, null)
+            broadcastToGameUsers(game, 'game_update', {
+                type: 'player_refilled',
+                message: `Player ${game.players[pIndex].name} drew ${cards_drawn} cards`,
+                cards_drawn: cards_drawn
             });
         } else if (cards_drawn === 0 && game.players[pIndex].hand.length === 0) {
             // no cards were drawn, but if they were still "in", this is where they win
             if (game.players[pIndex].status === PLAYER_STATUS.IN) {
-                broadcastToGame(game.id, {
-                        type: 'player_wins',
-                        message: `Player ${game.players[pIndex].name} got rid of all their cards`,
-                        game: personalize_game(game, null)
+                broadcastToGameUsers(game, 'game_update', {
+                    type: 'player_wins',
+                    message: `Player ${game.players[pIndex].name} got rid of all their cards`
                 });
                 game.players[pIndex].status = PLAYER_STATUS.OUT;
                 check_win(game);

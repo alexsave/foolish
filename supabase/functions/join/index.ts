@@ -1,4 +1,4 @@
-import { verify_game_id, lobbify_game, wrap400, broadcastToGame } from "../_shared/utils.ts";
+import { verify_game_id, lobbify_game, wrap400, broadcastToGameUsers } from "../_shared/utils.ts";
 import { GAME_STATUS, PLAYER_STATUS, Game, SERVER_EVENT_TYPE } from "../_shared/types.ts";
 import { emailToName } from "../_shared/common_utils.ts";
 
@@ -84,13 +84,9 @@ serve(wrap400(async (req) => {
     });
 
     // Send broadcast notification asynchronously (non-blocking)
-    broadcastToGame(game_id, {
+    broadcastToGameUsers(dbGameData, 'game_update', {
         type: SERVER_EVENT_TYPE.PLAYER_JOINED_GAME,
-        message: `Player ${user_name} joined game ${game_id}`,
-        game_id: game_id,
-        game: lobbify_game(dbGameData)
-    }).catch(error => {
-        console.error('Error broadcasting game join:', error);
+        message: `Player ${user_name} joined game ${game_id}`
     });
 
     return response;
