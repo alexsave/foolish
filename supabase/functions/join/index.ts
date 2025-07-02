@@ -1,5 +1,5 @@
-import { verify_game_id, lobbify_game, wrap400, broadcastToGameUsers } from "../_shared/utils.ts";
-import { GAME_STATUS, PLAYER_STATUS, Game, SERVER_EVENT_TYPE } from "../_shared/types.ts";
+import { verify_game_id, loadCompleteGame, saveCompleteGame, personalize_game, wrap400, broadcastToGameUsers, lobbify_game } from "../_shared/utils.ts";
+import { GAME_STATUS, PLAYER_STATUS, Game, SERVER_EVENT_TYPE, PublicPlayer, PrivatePlayer } from "../_shared/types.ts";
 import { emailToName } from "../_shared/common_utils.ts";
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
@@ -22,28 +22,26 @@ serve(wrap400(async (req) => {
     const user_name = emailToName(user.email);
     const { game_id } = await req.json();
 
-    // This is defeinitely handled by the .single. If there is no game, it will throw an error
+    // We have to load the game no matter what
+    const game: Game = await loadCompleteGame(game_id);
+
+    // Verify game exists
     await verify_game_id(game_id);
 
-    const { data: game, error: gameError } = await supabaseClient.from('games').select('*').eq('id', game_id).single();
-    if (gameError) {
-        console.error('Error loading game', gameError);
-        return new Response('Error loading game', { status: 500 });
-    }
-
-    if (game.status !== GAME_STATUS.WAITING) {
-        throw new Error(`Game ${game_id} is not waiting for players, wait for next game`);
-    }
-    // if player_games is set correctly, then the players shoudl be set correclty in the game too. But not vice versa
-
-    const { data: player_games, error: player_gamesError } = await supabaseClient.from('player_games').select('*').eq('game_id', game_id).eq('player_id', user_id).single();
+    // Check if player is already in game
+    const { data: player_games, error: player_gamesError } = await supabaseClient
+        .from('player_games')
+        .select('*')
+        .eq('game_id', game_id)
+        .eq('player_id', user_id)
+        .single();
 
     if (!player_gamesError && player_games) {
         // because of how we filter, if this is not here, then the player is not in the game
         // going tto assume that player_games is also set correctly
         // quiet return, don't worry about it
         return new Response(JSON.stringify({
-            game: lobbify_game(game)
+            game: personalize_game(game, user_id)
         }), {
             headers: {
                 ...corsHeaders,
@@ -52,30 +50,38 @@ serve(wrap400(async (req) => {
         });
     }
 
-    // Create the game object for database insert (snake_case)
-    const dbGameData: Game = {
-        ...game,
-        players: [...game.players, {
-            name: user_name,
-            id: user_id,
-            status: PLAYER_STATUS.IDLE,
-            hand: []
-        }]
-    };
 
-    // CRITICAL: Insert into player_games BEFORE returning response
-    // This ensures the user has permission to subscribe to the game channel immediately
-    // Do the database operations BEFORE returning to avoid race condition
-    // SEQUENTIAL: games table first, then player_games (foreign key constraint)
-    await supabaseClient.from('games').update({ players: dbGameData.players }).eq('id', game_id);
+    if (game.status !== GAME_STATUS.WAITING) {
+        throw new Error(`Game ${game_id} is not waiting for players, wait for next game`);
+    }
+
+    const publicPlayer: PublicPlayer = {
+        name: user_name,
+        id: user_id,
+        status: PLAYER_STATUS.IDLE,
+        hand_length: 0
+    }
+    const privatePlayer: PrivatePlayer = {
+        player_id: user_id,
+        hand: []
+    }
+
+    // Add new player to game
+    game.players.push(publicPlayer);
+    game.player_hands.push(privatePlayer);
+
+    // Save to database - this handles all separated tables
+    await saveCompleteGame(game);
+    
+    // Add player-game relationship
     await supabaseClient.from('player_games').insert({
         player_id: user_id,
         game_id: game_id
     });
 
-    // Now it's safe to return - user has access to game channel
+    // Return response
     const response = new Response(JSON.stringify({
-        game: lobbify_game(dbGameData)
+        game: personalize_game(game, user_id)
     }), {
         headers: {
             ...corsHeaders,
@@ -83,8 +89,8 @@ serve(wrap400(async (req) => {
         }
     });
 
-    // Send broadcast notification asynchronously (non-blocking)
-    broadcastToGameUsers(dbGameData, 'game_update', {
+    // Send broadcast notification
+    broadcastToGameUsers(game, 'game_update', {
         type: SERVER_EVENT_TYPE.PLAYER_JOINED_GAME,
         message: `Player ${user_name} joined game ${game_id}`
     });
