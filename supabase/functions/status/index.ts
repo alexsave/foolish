@@ -1,4 +1,5 @@
-import { wrap400, personalize_game, verify_game_id, verify_player_in_game } from '../_shared/utils.ts';
+import { wrap400, personalize_game, loadCompleteGame, verify_game_id, verify_player_in_game } from '../_shared/utils.ts';
+import { Game } from '../_shared/types.ts'; 
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
@@ -11,6 +12,7 @@ const supabaseClient = createClient(
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
 );
 
+// TODO: just remove this. With the right policies we can query from client
 serve(wrap400(async (req) => {
     const corsResponse = handleCors(req);
     if (corsResponse) return corsResponse;
@@ -19,16 +21,13 @@ serve(wrap400(async (req) => {
     const user_id = user.id;
     const { game_id } = await req.json();
 
-    // This is defeinitely handled by the .single. If there is no game, it will throw an error
+    // Verify game exists and player is in game. 
+    // TODO do this after loading the game since we load it anyways
     await verify_game_id(game_id); 
-    // ENSURE there is a policy like only game people can see the game, then remove this
     await verify_player_in_game(game_id, user_id);
 
-    const { data: game, error: gameError } = await supabaseClient.from('games').select('*').eq('id', game_id).single();
-    if (gameError) {
-        console.error('Error loading game', gameError);
-        return new Response('Error loading game', { status: 500 });
-    }
+    // Load complete game state from separated tables
+    const game: Game = await loadCompleteGame(game_id);
 
     const response = new Response(JSON.stringify({
         game: personalize_game(game, user_id)

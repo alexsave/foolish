@@ -1,5 +1,5 @@
-import { createId, lobbify_game, wrap400, broadcastToGameUsers } from "../_shared/utils.ts";
-import { GAME_STATUS, PLAYER_STATUS, Game } from "../_shared/types.ts";
+import { createId, wrap400, broadcastToGameUsers, loadCompleteGame, personalize_game } from "../_shared/utils.ts";
+import { GAME_STATUS, PLAYER_STATUS, Game, PublicGame } from "../_shared/types.ts";
 import { emailToName } from "../_shared/common_utils.ts";
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
@@ -22,16 +22,19 @@ serve(wrap400(async (req) => {
     const game_id = createId();
     const user_name = emailToName(user.email);
 
-    // Create the game object for database insert (snake_case)
-    const dbGameData: Game = {
+    // Create the game object for database insert (separated schema)
+
+    // Insert public game data (without deck/hands)
+    const publicGameData: PublicGame = {
         id: game_id,
-        deck: [],
+        name: `${user_name}'s Game`,
+        deck_length: 0,
         flipped: null,
         players: [{
             name: user_name,
             id: user_id,
             status: PLAYER_STATUS.IDLE,
-            hand: []
+            hand_length: 0
         }],
         status: GAME_STATUS.WAITING,
         power_suit: 0,
@@ -40,19 +43,37 @@ serve(wrap400(async (req) => {
         table_battles: []
     };
 
-    // CRITICAL: Insert into player_games BEFORE returning response
-    // This ensures the user has permission to subscribe to the game channel immediately
-    // Do ALL database operations BEFORE returning to avoid race condition
-    // SEQUENTIAL: games table first, then player_games (foreign key constraint)
-    await supabaseClient.from('games').insert(dbGameData);
+    // CRITICAL: Insert into databases in correct order
+    // 1. Games table (public data only)
+    await supabaseClient.from('games').insert(publicGameData);
+    
+    // 2. Player-games relationship
     await supabaseClient.from('player_games').insert({
         player_id: user_id,
         game_id: game_id
     });
 
+    // 3. Initialize empty deck (will be filled when game starts)
+    await supabaseClient.from('game_decks').insert({
+        game_id: game_id,
+        deck: []
+    });
+
+    // 4. Initialize empty hand for creator
+    await supabaseClient.from('player_hands').insert({
+        game_id: game_id,
+        player_id: user_id,
+        hand: []
+    });
+
+    // Load complete game state from separated tables
+    // We could just make this without loading, but I want to see what it looks like first
+    // TODO: see if we can speed this up
+    const dbGameData: Game = await loadCompleteGame(game_id);
+
     // Now it's safe to return - user has access to game channel
     const response = new Response(JSON.stringify({
-        game: lobbify_game(dbGameData)
+        game: personalize_game(dbGameData, user_id)
     }), {
         headers: {
             ...corsHeaders,
