@@ -1,5 +1,5 @@
-import { wrap400, verify_game_id, verify_player_in_game, broadcastToGameUsers, personalize_game, cardDisplay, validate_defender_status, verify_hands_in_players_hand, check_win, card_comp, canCover, refill, get_next_player_index, broadcastToGameUser } from "../_shared/utils.ts";
-import { Game, Card, GAME_STATUS, SERVER_EVENT_TYPE, PLAYER_STATUS } from "../_shared/types.ts";
+import { wrap400, verify_game_id, verify_player_in_game, broadcastToGameUsers, personalize_game, cardDisplay, validate_defender_status, verify_cards_in_players_hand, check_win, card_comp, canCover, refill, get_next_player_index, broadcastToGameUser, loadCompleteGame, saveCompleteGame } from "../_shared/utils.ts";
+import { Game, Card, GAME_STATUS, SERVER_EVENT_TYPE, PLAYER_STATUS, PrivatePlayer } from "../_shared/types.ts";
 import { emailToName } from "../_shared/common_utils.ts";
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
@@ -22,20 +22,18 @@ serve(wrap400(async (req) => {
     const user_name = emailToName(user.email);
     const { game_id, cover_cards, attack_cards } = await req.json();
 
-    // This is defeinitely handled by the .single. If there is no game, it will throw an error
+    // Verify game exists and player is in game
     await verify_game_id(game_id);
     await verify_player_in_game(game_id, user_id);
 
-    let { data: game, error: gameError } = await supabaseClient.from('games').select('*').eq('id', game_id).single();
-    if (gameError) {
-        console.error('Error loading game', gameError);
-        return new Response('Error loading game', { status: 500 });
-    }
+    // Load complete game state using JOINs
+    let game = await loadCompleteGame(game_id);
 
+    // Handle cover logic
     game = handle_cover(game, game_id, user_id, cover_cards, attack_cards);
 
-    // Attack can only update players and table_battles
-    await supabaseClient.from('games').update({ players: game.players, table_battles: game.table_battles, status: game.status }).eq('id', game_id);
+    // Save complete game state back to separated tables
+    await saveCompleteGame(game);
 
     broadcastToGameUsers(game, 'game_update', {
         type: SERVER_EVENT_TYPE.COVER_PLAYED,
@@ -43,8 +41,7 @@ serve(wrap400(async (req) => {
         player_id: user_id
     });
 
-
-    // Now it's safe to return - user has access to game channel
+    // Return personalized game state
     return new Response(JSON.stringify({
         game: personalize_game(game, user_id)
     }), {
@@ -74,10 +71,12 @@ const handle_cover = (game: Game, game_id: string, player_id: string, cover_card
     // the first one is the cards that are being covered
     // the second one is the cards that are being used to cover
 
+    const defender_id = player_id;
+    const defender: PrivatePlayer = game.player_hands.find(hand => hand.player_id === defender_id)!;
 
 
     // ok first just make sure all the cards are in the hand
-    verify_hands_in_players_hand(game.players[game.currently_attacked], cover_cards);
+    verify_cards_in_players_hand(defender, cover_cards);
 
     // check no duplicates
     if (new Set(cover_cards).size !== cover_cards.length) {
@@ -135,17 +134,17 @@ const handle_cover = (game: Game, game_id: string, player_id: string, cover_card
     }
 
     // remove the cards from the hand
-    game.players[game.currently_attacked].hand = game.players[game.currently_attacked].hand.filter(card => !cover_cards.some(cover_card => card_comp(card, cover_card)));
+    defender.hand = defender.hand.filter(card => !cover_cards.some(cover_card => card_comp(card, cover_card)));
 
     // There is one scenario where we instantly move on: the player has no cards left in their hand
-    if (game.players[game.currently_attacked].hand.length === 0) {
+    if (defender.hand.length === 0) {
 
         game.table_battles = []; // burn the cards. TODO keep track of HOW MANY cards are burned but not which
         refill(game);
         // and it's fucking tricky because they can win here
         // shift 
         game.first_attacker = game.currently_attacked;
-        if (game.players[game.first_attacker].hand.length === 0) {
+        if (defender.hand.length === 0) {
             // can't think right now, but we need better win checking 
             broadcast_message = {
                 type: SERVER_EVENT_TYPE.PLAYER_WON,
@@ -183,7 +182,10 @@ const handle_cover = (game: Game, game_id: string, player_id: string, cover_card
         }
 
         // now we need to see who can play cards. not the defender lol
-        const playable_players = game.players.filter(player => player.id !== game.players[game.currently_attacked].id && player.hand.some(card => playable_values.has(card.value)));
+        //const playable_players = game.players.filter(player => player.id !== game.players[game.currently_attacked].id && player.hand.some(card => playable_values.has(card.value)));
+
+        const playable_players = game.player_hands.filter(player => player.player_id !== player_id && player.hand.some(card => playable_values.has(card.value))).map(player => player.player_id);
+
         if (playable_players.length === 0) {
             // no one can play cards
             // but don't make it that obvious. give it 30 seconds
@@ -208,15 +210,17 @@ const handle_cover = (game: Game, game_id: string, player_id: string, cover_card
         } else {
             // someone can play cards
             // so we need to see who can play cards
-            playable_players.forEach(player => {
-                player.status = PLAYER_STATUS.AWAITING_ATTACK;
+            game.players.forEach(player => {
+                if (playable_players.includes(player.id)) {
+                    player.status = PLAYER_STATUS.AWAITING_ATTACK;
+                }
             });
 
-            playable_players.forEach(player => {
+            playable_players.forEach(player_id => {
                 broadcastToGameUser(game, SERVER_EVENT_TYPE.PLAYABLE_CARDS, {
                     type: SERVER_EVENT_TYPE.PLAYABLE_CARDS,
                     message: `You can still play cards. Either play or confirm you are done attacking with "good"`,
-                }, player.id);
+                }, player_id);
             });
 
         }

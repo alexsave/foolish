@@ -151,6 +151,7 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
 };
 
 // Save complete game state to separated tables using efficient upserts
+// TODO This could easily return public state for later use. we calculate lengths here so its very useful
 export const saveCompleteGame = async (game: Game): Promise<void> => {
     // Update lengths here too
     // Update public game data (remove deck and hands from players)
@@ -161,6 +162,7 @@ export const saveCompleteGame = async (game: Game): Promise<void> => {
         // TODO: find a better way
         hand_length: game.player_hands.find(hand => hand.player_id === player.id)!.hand.length
     }));
+    console.log(' deck length', game.game_decks.deck.length);
 
     await supabaseClient
         .from('games')
@@ -468,7 +470,7 @@ export const validate_defender_status = (game: Game, player_id: string, should_b
     }
 }
 
-export const verify_hands_in_players_hand = (player: PrivatePlayer, cards: Card[]) => {
+export const verify_cards_in_players_hand = (player: PrivatePlayer, cards: Card[]) => {
     for (const card of cards) {
         if (!player.hand.some(handCard => card_comp(handCard, card))) {
             throw new Error(`Card ${cardDisplay(card)} is not in player ${player.player_id}'s hand`);
