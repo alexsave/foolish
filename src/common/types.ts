@@ -119,11 +119,11 @@ export interface OtherPlayer {
 }
 
 // personal game is what gets sent to clients. they do not see other players hands, only length
-export interface PersonalGame {
+/*export interface PersonalGame {
     id: string;
     deck_length: number;
     flipped: Card | null;
-    self: Player;
+    self?: Player;
     players: OtherPlayer[];
 
     // wait for attackers reveals that people do have hands, so we don't allow this
@@ -133,7 +133,7 @@ export interface PersonalGame {
     first_attacker: number;
     currently_attacked: number;
     table_battles: Battle[];
-}
+}*/
 
 export interface Message {
     type: string;
@@ -161,17 +161,45 @@ export interface Player {
     status: PlayerStatus;
 }
 
-export interface Game {
+export interface PublicPlayer {
     id: string;
-    deck: Card[];
-    self?: Player;
+    name: string;
+    status: PlayerStatus;
+    hand_length: number; // how to get this? ez. just keep it in sync
+}
+
+export interface PrivatePlayer {
+    player_id: string;
+    hand: Card[];
+}
+
+// base game type
+export interface PublicGame {
+    id: string;
+    name: string;
+    // TODO see if there is a better way to keep this val in sync without exposing deck
+    deck_length: number;
     flipped: Card | null;
-    players: Player[];
-    status: 'waiting' | 'playing' | 'first_attacker' | 'free_play' | 'only_defend' | 'wait_for_attackers';
+    players: PublicPlayer[];
+    status: GameStatus;
     power_suit: number;
     first_attacker: number;
     currently_attacked: number;
     table_battles: Battle[];
+}
+
+// Personal game is what gets sent to clients. they do not see other players hands, only length
+export interface PersonalGame extends PublicGame {
+    self: PrivatePlayer;
+}
+
+// I don't like game_decks.deck either but security is more important
+// Full game for working with game logic
+export interface Game extends PublicGame {
+    game_decks: {
+        deck: Card[];
+    };
+    player_hands: PrivatePlayer[];
 }
 
 export interface Battle {

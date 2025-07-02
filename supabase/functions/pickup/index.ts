@@ -1,4 +1,4 @@
-import { verify_game_id, wrap400, validate_defender_status, get_next_player_index, refill, verify_player_in_game, personalize_game, broadcastToGameUsers } from "../_shared/utils.ts";
+import { verify_game_id, wrap400, validate_defender_status, get_next_player_index, refill, verify_player_in_game, personalize_game, broadcastToGameUsers, loadCompleteGame, saveCompleteGame } from "../_shared/utils.ts";
 import { GAME_STATUS, PLAYER_STATUS, SERVER_EVENT_TYPE, Game } from "../_shared/types.ts";
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
@@ -20,25 +20,25 @@ serve(wrap400(async (req) => {
     const user_id = user.id;
     const { game_id } = await req.json();
 
-    // This is defeinitely handled by the .single. If there is no game, it will throw an error
+    // Verify game exists and player is in game
     await verify_game_id(game_id);
     await verify_player_in_game(game_id, user_id);
 
-    let { data: game, error: gameError } = await supabaseClient.from('games').select('*').eq('id', game_id).single();
-    if (gameError) {
-        console.error('Error loading game', gameError);
-        return new Response('Error loading game', { status: 500 });
-    }
+    // Load complete game state using JOINs
+    let game = await loadCompleteGame(game_id);
 
+    // Handle pickup logic
     game = handle_pickup(game, game_id, user_id);
 
-    await supabaseClient.from('games').update(game).eq('id', game_id);
+    // Save complete game state back to separated tables
+    await saveCompleteGame(game);
 
     broadcastToGameUsers(game, 'game_update', {
         type: SERVER_EVENT_TYPE.PICKUP_PLAYED,
         message: `Player ${user_id} picked up cards`
     });
 
+    // Return personalized game state
     const response = new Response(JSON.stringify({
         game: personalize_game(game, user_id)
     }), {
@@ -50,8 +50,6 @@ serve(wrap400(async (req) => {
 
     return response;
 }));
-
-
 
 const handle_pickup = (game: Game, game_id: string, player_id: string): Game => {
     if (game.status !== GAME_STATUS.FREE_PLAY && game.status !== GAME_STATUS.ONLY_DEFEND) {
@@ -68,12 +66,13 @@ const handle_pickup = (game: Game, game_id: string, player_id: string): Game => 
     }
 
     // ok let's just pick it up
+    const defender = game.player_hands.find(hand => hand.player_id === player_id)!;
 
     // add cards from table to hand
     game.table_battles.forEach(battle => {
-        game.players[game.currently_attacked].hand.push(battle.attack);
+        defender.hand.push(battle.attack);
         if (battle.defense) {
-            game.players[game.currently_attacked].hand.push(battle.defense);
+            defender.hand.push(battle.defense);
         }
     });
 

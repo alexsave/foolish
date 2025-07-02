@@ -196,16 +196,17 @@ const handle_cover = (game: Game, game_id: string, player_id: string, cover_card
                 console.log('Timeout done, shifting');
                 //shift 
 
-                broadcastToGameUsers(game, 'game_update', {
-                    type: SERVER_EVENT_TYPE.SUCCESSFULLY_COVERED,
-                    message: `Player ${player_id} successfully defended the attack`,
-                });
 
                 game.table_battles = [];
                 refill(game);
                 game.first_attacker = game.currently_attacked;
                 game.currently_attacked = get_next_player_index(game, game.first_attacker);
                 game.status = GAME_STATUS.FIRST_ATTACKER;
+
+                broadcastToGameUsers(game, 'game_update', {
+                    type: SERVER_EVENT_TYPE.SUCCESSFULLY_COVERED,
+                    message: `Player ${player_id} successfully defended the attack`,
+                });
             }, 5000 + Math.random() * 20000);
         } else {
             // someone can play cards

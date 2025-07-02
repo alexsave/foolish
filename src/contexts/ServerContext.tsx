@@ -17,7 +17,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     const url_game_id = useParams().game_id;
     // keep a state of games
     // maybe ref idk
-    const [games, setGames] = useState<{[key: string]: (Game | LobbyGame | PersonalGame)}>({});
+    const [games, setGames] = useState<{[key: string]: (PersonalGame)}>({});
 
     //const [user, setUser] = useState(null);
     const [loading, setLoading] = useState(true);
