@@ -7,6 +7,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { useEffect } from "react";
 import { WEBSITE_DOMAIN } from "../constants/constants";
 import { useAuth } from "../contexts/AuthContext";
+import { PublicPlayer } from "../common/types";
 
 export const Lobby = () => {
     const { game_id } = useParams();
@@ -34,7 +35,7 @@ export const Lobby = () => {
                 <QRCodeSVG value={`www.${WEBSITE_DOMAIN}/${game_id}`} size={200} />
             </div>
             {
-                game.players.map(player => (
+                game.players.map((player: PublicPlayer) => (
                     <div key={player.id} style={{ display: 'flex', flexDirection: 'row', gap: '10px', color: 'white', backgroundColor: 'black' }}>
                         <p>{player.name}</p>
                         <p>{player.status !== 'idle' ? '🟢' : 

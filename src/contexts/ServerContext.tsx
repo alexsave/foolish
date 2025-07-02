@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
-import { Card, Game, LobbyGame, PersonalGame, SERVER_EVENT_TYPE, PRIVATE_EVENT_TYPE } from '../common/types';
+import { Card, Game, PersonalGame, SERVER_EVENT_TYPE } from '../common/types';
 import supabase from '../backend/Connector';
 import { useParams } from 'react-router-dom';
 import { useAuth } from './AuthContext';
@@ -431,7 +431,7 @@ interface ServerContextType {
     joinGame: (gameId: string) => Promise<{ game_id: string }>;
     startGame: (gameId: string) => Promise<{ game_id: string }>;
     game_id: string | null;
-    game: Game | LobbyGame | PersonalGame | null;
+    game: PersonalGame | null;
     player_id: string | null;
     loadGame: (gameId: string) => Promise<{ game_id: string }>;
     attack: (cards: Card[]) => Promise<{ game_id: string }>;
