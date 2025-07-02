@@ -1,5 +1,5 @@
-import { verify_game_id, wrap400, get_next_player_index, refill, verify_player_in_game, personalize_game, broadcastToGameUsers } from "../_shared/utils.ts";
-import { GAME_STATUS, PLAYER_STATUS, SERVER_EVENT_TYPE, Game } from "../_shared/types.ts";
+import { verify_game_id, wrap400, get_next_player_index, refill, verify_player_in_game, personalize_game, broadcastToGameUsers, loadCompleteGame, saveCompleteGame } from "../_shared/utils.ts";
+import { GAME_STATUS, PLAYER_STATUS, SERVER_EVENT_TYPE, Game, PrivatePlayer } from "../_shared/types.ts";
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
@@ -20,25 +20,20 @@ serve(wrap400(async (req) => {
     const user_id = user.id;
     const { game_id } = await req.json();
 
-    // This is defeinitely handled by the .single. If there is no game, it will throw an error
+    // Verify game exists and player is in game
     await verify_game_id(game_id);
     await verify_player_in_game(game_id, user_id);
 
-    let { data: game, error: gameError } = await supabaseClient.from('games').select('*').eq('id', game_id).single();
-    if (gameError) {
-        console.error('Error loading game', gameError);
-        return new Response('Error loading game', { status: 500 });
-    }
+    // Load complete game state using JOINs
+    let game = await loadCompleteGame(game_id);
 
-
+    // Handle good logic
     game = handle_good(game, game_id, user_id);
 
+    // Save complete game state back to separated tables
+    await saveCompleteGame(game);
 
-    await supabaseClient.from('games').update(game).eq('id', game_id);
-
-
-    // not something we need to broadcast
-
+    // Return personalized game state
     const response = new Response(JSON.stringify({
         game: personalize_game(game, user_id)
     }), {
@@ -48,10 +43,8 @@ serve(wrap400(async (req) => {
         }
     });
 
-
     return response;
 }));
-
 
 const handle_good = (game: Game, game_id: string, player_id: string): Game => {
     // player is done attacking
@@ -72,8 +65,17 @@ const handle_good = (game: Game, game_id: string, player_id: string): Game => {
     // ok now we need to check if all players are done attacking
     // dont count the defender
     // the status check is critical
-    const playable_players = game.players.filter(player => player.id !== game.players[game.currently_attacked].id && player.hand.some(card => card.value === game.flipped!.value) && player.status === PLAYER_STATUS.AWAITING_ATTACK);
-    if (playable_players.length !== 0) {
+
+
+    const playable_player_ids: string[] = [];
+    for (const player of game.players) {
+        const privatePlayer: PrivatePlayer = game.player_hands.find(hand => hand.player_id === player.id)!;
+        if (player.id !== game.players[game.currently_attacked].id && privatePlayer.hand.some(card => card.value === game.flipped!.value) && player.status === PLAYER_STATUS.AWAITING_ATTACK) {
+            playable_player_ids.push(player.id);
+        }
+    }
+
+    if (playable_player_ids.length !== 0) {
         return game;
     }
 
