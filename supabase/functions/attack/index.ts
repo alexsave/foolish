@@ -1,4 +1,4 @@
-import { wrap400, verify_game_id, loadCompleteGame, saveCompleteGame, broadcastToGameUsers, verify_player_in_game, personalize_game, cardDisplay, validate_defender_status, verify_hands_in_players_hand, no_cards_left, check_win } from "../_shared/utils.ts";
+import { wrap400, verify_game_id, loadCompleteGame, saveCompleteGame, broadcastToGameUsers, verify_player_in_game, personalize_game, cardDisplay, validate_defender_status, verify_cards_in_players_hand, no_cards_left, check_win } from "../_shared/utils.ts";
 import { Game, Card, PrivatePlayer, GAME_STATUS, SERVER_EVENT_TYPE, PLAYER_STATUS, PublicPlayer } from "../_shared/types.ts";
 import { emailToName } from "../_shared/common_utils.ts";
 
@@ -85,7 +85,7 @@ const handle_attack = (game: Game, game_id: string, player_id: string, cards: Ca
     validate_defender_status(game, player_id, false);
 
     // check if every card is in hand
-    verify_hands_in_players_hand(privatePlayer, cards);
+    verify_cards_in_players_hand(privatePlayer, cards);
 
     // make sure there are enough cards in the defenders hand
     let uncovered_cards = game.table_battles.filter(battle => battle.defense === null).length;

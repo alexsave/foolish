@@ -1,5 +1,5 @@
-import {wrap400, broadcastToGameUsers, verify_game_id, verify_player_in_game, personalize_game, cardDisplay, validate_defender_status, verify_hands_in_players_hand, no_cards_left, check_win, get_next_player_index, card_comp, broadcastToGame } from "../_shared/utils.ts";
-import { Game, Card, SERVER_EVENT_TYPE, PLAYER_STATUS } from "../_shared/types.ts";
+import {wrap400, broadcastToGameUsers, verify_game_id, verify_player_in_game, personalize_game, cardDisplay, validate_defender_status, verify_cards_in_players_hand, no_cards_left, check_win, get_next_player_index, card_comp, broadcastToGame, loadCompleteGame, saveCompleteGame } from "../_shared/utils.ts";
+import { Game, Card, SERVER_EVENT_TYPE, PLAYER_STATUS, PrivatePlayer, PublicPlayer} from "../_shared/types.ts";
 import { emailToName } from "../_shared/common_utils.ts";
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
@@ -22,27 +22,25 @@ serve(wrap400(async (req) => {
     const user_name = emailToName(user.email);
     const { game_id, cards } = await req.json();
 
-    // This is defeinitely handled by the .single. If there is no game, it will throw an error
+    // Verify game exists and player is in game
     await verify_game_id(game_id);
     await verify_player_in_game(game_id, user_id);
 
-    let { data: game, error: gameError } = await supabaseClient.from('games').select('*').eq('id', game_id).single();
-    if (gameError) {
-        console.error('Error loading game', gameError);
-        return new Response('Error loading game', { status: 500 });
-    }
+    // Load complete game state using JOINs
+    let game = await loadCompleteGame(game_id);
 
+    // Handle pass logic
     game = handle_pass(game, game_id, user_id, cards);
 
-    // Attack can only update players and table_battles
-    await supabaseClient.from('games').update(game).eq('id', game_id);
+    // Save complete game state back to separated tables
+    await saveCompleteGame(game);
 
     broadcastToGameUsers(game, 'game_update', {
         type: SERVER_EVENT_TYPE.PASS_PLAYED,
         message: `Player ${user_name} passed using ${cards.map(card => cardDisplay(card)).join(', ')}`
     });
 
-    // Now it's safe to return - user has access to game channel
+    // Return personalized game state
     return new Response(JSON.stringify({
         game: personalize_game(game, user_id)
     }), {
@@ -78,12 +76,17 @@ const handle_pass = (game: Game, game_id: string, player_id: string, cards: Card
     }
 
     // Find which player this is
-    const player = game.players.find(player => player.id === player_id)!;
+    //const player = game.players.find(player => player.id === player_id)!;
 
     // also the attacker has to be the defender
     validate_defender_status(game, player_id, true);
 
-    verify_hands_in_players_hand(player, mCards);
+    const defender_id = player_id;
+    const defender: PrivatePlayer = game.player_hands.find(hand => hand.player_id === defender_id)!;
+    // lol variable name
+    const publicDefender: PublicPlayer = game.players.find(player => player.id === defender_id)!;
+
+    verify_cards_in_players_hand(defender, mCards);
 
     // also important: THERE SHOULD BE CARDS ON THE TABLE
     if (game.table_battles.length === 0) {
@@ -104,7 +107,8 @@ const handle_pass = (game: Game, game_id: string, player_id: string, cards: Card
 
     const next_player_index = get_next_player_index(game, game.currently_attacked);
     const next_player = game.players[next_player_index];
-    if (next_player.hand.length < mCards.length + game.table_battles.length) {
+    const next_player_hand: PrivatePlayer = game.player_hands.find(hand => hand.player_id === next_player.id)!;
+    if (next_player_hand.hand.length < mCards.length + game.table_battles.length) {
         throw new Error(`Player ${next_player.name} does not have enough cards in their hand to cover ${mCards.map(card => cardDisplay(card)).join(', ')}`);
     }
 
@@ -119,13 +123,13 @@ const handle_pass = (game: Game, game_id: string, player_id: string, cards: Card
             defense: null
         });
     }
-    player.hand = player.hand.filter(card => !mCards.some(mCard => card_comp(card, mCard)));
+    defender.hand = defender.hand.filter(card => !mCards.some(mCard => card_comp(card, mCard)));
 
 
     // If the deck is empty, they can get out here
-    if (no_cards_left(game) && player.hand.length === 0) {
+    if (no_cards_left(game) && defender.hand.length === 0) {
         // they win
-        player.status = PLAYER_STATUS.OUT;
+        publicDefender.status = PLAYER_STATUS.OUT;
         check_win(game);
         game.currently_attacked = next_player_index;
         broadcastToGameUsers(game, 'game_update', {
@@ -142,7 +146,10 @@ const handle_pass = (game: Game, game_id: string, player_id: string, cards: Card
     }
 
     const uncovered_cards = game.table_battles.filter(battle => battle.defense === null).length;
-    const defender_cards = game.players[game.currently_attacked].hand.length;
+    const new_defender_id = game.players[game.currently_attacked].id;
+    // Lots of find calls. Maybe an intermediate type would be better for this
+    const new_defender: PrivatePlayer = game.player_hands.find(hand => hand.player_id === new_defender_id)!;
+    const defender_cards = new_defender.hand.length;
 
     // it's important to check if we need to shift to only_defend
     if (uncovered_cards === defender_cards) {
