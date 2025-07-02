@@ -1,5 +1,5 @@
-import { wrap400, verify_game_id, broadcastToGameUsers, verify_player_in_game, personalize_game, cardDisplay, validate_defender_status, verify_hands_in_players_hand, no_cards_left, check_win } from "../_shared/utils.ts";
-import { Game, Card, GAME_STATUS, SERVER_EVENT_TYPE, PLAYER_STATUS } from "../_shared/types.ts";
+import { wrap400, verify_game_id, loadCompleteGame, saveCompleteGame, broadcastToGameUsers, verify_player_in_game, personalize_game, cardDisplay, validate_defender_status, verify_hands_in_players_hand, no_cards_left, check_win } from "../_shared/utils.ts";
+import { Game, Card, PrivatePlayer, GAME_STATUS, SERVER_EVENT_TYPE, PLAYER_STATUS, PublicPlayer } from "../_shared/types.ts";
 import { emailToName } from "../_shared/common_utils.ts";
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
@@ -22,21 +22,18 @@ serve(wrap400(async (req) => {
     const user_name = emailToName(user.email);
     const { game_id, cards } = await req.json();
 
-    // This is defeinitely handled by the .single. If there is no game, it will throw an error
+    // Verify game exists and player is in game
     await verify_game_id(game_id);
     await verify_player_in_game(game_id, user_id);
 
-    let { data: game, error: gameError } = await supabaseClient.from('games').select('*').eq('id', game_id).single();
-    if (gameError) {
-        console.error('Error loading game', gameError);
-        return new Response('Error loading game', { status: 500 });
-    }
+    // Load complete game state from separated tables
+    let game = await loadCompleteGame(game_id);
 
+    // Handle attack logic
     game = handle_attack(game, game_id, user_id, cards);
 
-    // Attack can only update players and table_battles
-    await supabaseClient.from('games').update({ players: game.players, table_battles: game.table_battles, status: game.status }).eq('id', game_id);
-
+    // Save complete game state back to separated tables
+    await saveCompleteGame(game);
 
     broadcastToGameUsers(game, 'game_update', {
         type: SERVER_EVENT_TYPE.ATTACK_PLAYED,
@@ -44,8 +41,7 @@ serve(wrap400(async (req) => {
         player_id: user_id
     });
 
-
-    // Now it's safe to return - user has access to game channel
+    // Return personalized game state
     return new Response(JSON.stringify({
         game: personalize_game(game, user_id)
     }), {
@@ -82,17 +78,22 @@ const handle_attack = (game: Game, game_id: string, player_id: string, cards: Ca
     }
 
     // Find which player this is
-    const player = game.players.find(player => player.id === player_id)!;
+    const privatePlayer: PrivatePlayer = game.player_hands.find(hand => hand.player_id === player_id)!;
+    const publicPlayer: PublicPlayer = game.players.find(player => player.id === player_id)!;
 
     // also the attacker cannot be the defender
     validate_defender_status(game, player_id, false);
 
     // check if every card is in hand
-    verify_hands_in_players_hand(player, cards);
+    verify_hands_in_players_hand(privatePlayer, cards);
 
     // make sure there are enough cards in the defenders hand
     let uncovered_cards = game.table_battles.filter(battle => battle.defense === null).length;
-    let defender_cards = game.players[game.currently_attacked].hand.length;
+
+    const defender_id = game.players[game.currently_attacked].id;
+    const defender_hand = game.player_hands.find(hand => hand.player_id === defender_id)!;
+
+    let defender_cards = defender_hand.hand.length;
 
     if (uncovered_cards + cards.length > defender_cards) {
         throw new Error(`Player ${player_id} does not have enough cards in their hand to cover ${cards.map(card => cardDisplay(card)).join(', ')}`);
@@ -102,13 +103,13 @@ const handle_attack = (game: Game, game_id: string, player_id: string, cards: Ca
 
     if (game.status === GAME_STATUS.FIRST_ATTACKER) {
         // check if player is first attacker
-        if (game.players[game.first_attacker].id !== player.id) {
+        if (game.players[game.first_attacker].id !== player_id) {
             throw new Error(`Player ${player_id} is not the first attacker`);
         }
 
         // Ok passed checks, we can put the cards on the table
         // remove from hand, put on table
-        player.hand = player.hand.filter(card =>
+        privatePlayer.hand = privatePlayer.hand.filter(card =>
             !cards.some(mCard => mCard.suit === card.suit && mCard.value === card.value));
 
         for (const card of cards) {
@@ -118,9 +119,9 @@ const handle_attack = (game: Game, game_id: string, player_id: string, cards: Ca
             });
         }
 
-        if (no_cards_left(game) && player.hand.length === 0) {
+        if (no_cards_left(game) && privatePlayer.hand.length === 0) {
             // they win
-            player.status = PLAYER_STATUS.OUT;
+            publicPlayer.status = PLAYER_STATUS.OUT;
             check_win(game);
 
             broadcast_message = {
@@ -160,7 +161,7 @@ const handle_attack = (game: Game, game_id: string, player_id: string, cards: Ca
         });
         game.status = GAME_STATUS.FREE_PLAY;
 
-        player.hand = player.hand.filter(card =>
+        privatePlayer.hand = privatePlayer.hand.filter(card =>
             !cards.some(mCard => mCard.suit === card.suit && mCard.value === card.value));
         for (const card of cards) {
             game.table_battles.push({
@@ -171,9 +172,9 @@ const handle_attack = (game: Game, game_id: string, player_id: string, cards: Ca
 
 
         // It's possible they win here
-        if (no_cards_left(game) && player.hand.length === 0) {
+        if (no_cards_left(game) && privatePlayer.hand.length === 0) {
             // they win
-            player.status = PLAYER_STATUS.OUT;
+            publicPlayer.status = PLAYER_STATUS.OUT;
             check_win(game);
 
             broadcast_message = {
@@ -190,7 +191,7 @@ const handle_attack = (game: Game, game_id: string, player_id: string, cards: Ca
         }
 
         uncovered_cards = game.table_battles.filter(battle => battle.defense === null).length;
-        defender_cards = game.players[game.currently_attacked].hand.length;
+        defender_cards = defender_hand.hand.length;
 
         // it's important to check if we need to shift to only_defend
         if (uncovered_cards === defender_cards) {

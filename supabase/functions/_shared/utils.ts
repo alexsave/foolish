@@ -152,17 +152,21 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
 
 // Save complete game state to separated tables using efficient upserts
 export const saveCompleteGame = async (game: Game): Promise<void> => {
+    // Update lengths here too
     // Update public game data (remove deck and hands from players)
     const publicPlayers = game.players.map(player => ({
         name: player.name,
         id: player.id,
-        status: player.status
+        status: player.status,
+        // TODO: find a better way
+        hand_length: game.player_hands.find(hand => hand.player_id === player.id)!.hand.length
     }));
 
     await supabaseClient
         .from('games')
         .update({
             name: game.name || 'Untitled Game',
+            deck_length: game.game_decks.deck.length,
             flipped: game.flipped,
             players: publicPlayers,
             status: game.status,
@@ -464,10 +468,10 @@ export const validate_defender_status = (game: Game, player_id: string, should_b
     }
 }
 
-export const verify_hands_in_players_hand = (player: Player, cards: Card[]) => {
+export const verify_hands_in_players_hand = (player: PrivatePlayer, cards: Card[]) => {
     for (const card of cards) {
         if (!player.hand.some(handCard => card_comp(handCard, card))) {
-            throw new Error(`Card ${cardDisplay(card)} is not in player ${player.id}'s hand`);
+            throw new Error(`Card ${cardDisplay(card)} is not in player ${player.player_id}'s hand`);
         }
     }
 }
