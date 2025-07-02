@@ -1,17 +1,12 @@
 import { wrap400, verify_game_id, loadCompleteGame, saveCompleteGame, broadcastToGameUsers, verify_player_in_game, personalize_game, cardDisplay, validate_defender_status, verify_cards_in_players_hand, no_cards_left, check_win } from "../_shared/utils.ts";
-import { Game, Card, PrivatePlayer, GAME_STATUS, SERVER_EVENT_TYPE, PLAYER_STATUS, PublicPlayer } from "../_shared/types.ts";
+import { Game, Card, Player, GAME_STATUS, SERVER_EVENT_TYPE, PLAYER_STATUS } from "../_shared/types.ts";
 import { emailToName } from "../_shared/common_utils.ts";
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { getAuthenticatedUser } from "../_shared/auth.ts";
-import { createClient, User } from "npm:@supabase/supabase-js@2.39.0"
+import { User } from "npm:@supabase/supabase-js@2.39.0"
 import { handleCors, corsHeaders } from "../_shared/cors.ts";
-
-const supabaseClient = createClient(
-    Deno.env.get('SUPABASE_URL') || '',
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
-);
 
 serve(wrap400(async (req) => {
     const corsResponse = handleCors(req);
@@ -78,22 +73,20 @@ const handle_attack = (game: Game, game_id: string, player_id: string, cards: Ca
     }
 
     // Find which player this is
-    const privatePlayer: PrivatePlayer = game.player_hands.find(hand => hand.player_id === player_id)!;
-    const publicPlayer: PublicPlayer = game.players.find(player => player.id === player_id)!;
+    const player: Player = game.players.find(player => player.id === player_id)!;
 
     // also the attacker cannot be the defender
     validate_defender_status(game, player_id, false);
 
     // check if every card is in hand
-    verify_cards_in_players_hand(privatePlayer, cards);
+    verify_cards_in_players_hand(player, cards);
 
     // make sure there are enough cards in the defenders hand
     let uncovered_cards = game.table_battles.filter(battle => battle.defense === null).length;
 
-    const defender_id = game.players[game.currently_attacked].id;
-    const defender_hand = game.player_hands.find(hand => hand.player_id === defender_id)!;
+    const defender: Player = game.players[game.currently_attacked];
 
-    let defender_cards = defender_hand.hand.length;
+    let defender_cards = defender.hand.length;
 
     if (uncovered_cards + cards.length > defender_cards) {
         throw new Error(`Player ${player_id} does not have enough cards in their hand to cover ${cards.map(card => cardDisplay(card)).join(', ')}`);
@@ -109,7 +102,7 @@ const handle_attack = (game: Game, game_id: string, player_id: string, cards: Ca
 
         // Ok passed checks, we can put the cards on the table
         // remove from hand, put on table
-        privatePlayer.hand = privatePlayer.hand.filter(card =>
+        player.hand = player.hand.filter(card =>
             !cards.some(mCard => mCard.suit === card.suit && mCard.value === card.value));
 
         for (const card of cards) {
@@ -119,9 +112,9 @@ const handle_attack = (game: Game, game_id: string, player_id: string, cards: Ca
             });
         }
 
-        if (no_cards_left(game) && privatePlayer.hand.length === 0) {
+        if (no_cards_left(game) && player.hand.length === 0) {
             // they win
-            publicPlayer.status = PLAYER_STATUS.OUT;
+            player.status = PLAYER_STATUS.OUT;
             check_win(game);
 
             broadcast_message = {
@@ -161,7 +154,7 @@ const handle_attack = (game: Game, game_id: string, player_id: string, cards: Ca
         });
         game.status = GAME_STATUS.FREE_PLAY;
 
-        privatePlayer.hand = privatePlayer.hand.filter(card =>
+        player.hand = player.hand.filter(card =>
             !cards.some(mCard => mCard.suit === card.suit && mCard.value === card.value));
         for (const card of cards) {
             game.table_battles.push({
@@ -172,9 +165,9 @@ const handle_attack = (game: Game, game_id: string, player_id: string, cards: Ca
 
 
         // It's possible they win here
-        if (no_cards_left(game) && privatePlayer.hand.length === 0) {
+        if (no_cards_left(game) && player.hand.length === 0) {
             // they win
-            publicPlayer.status = PLAYER_STATUS.OUT;
+            player.status = PLAYER_STATUS.OUT;
             check_win(game);
 
             broadcast_message = {
@@ -191,7 +184,7 @@ const handle_attack = (game: Game, game_id: string, player_id: string, cards: Ca
         }
 
         uncovered_cards = game.table_battles.filter(battle => battle.defense === null).length;
-        defender_cards = defender_hand.hand.length;
+        defender_cards = defender.hand.length;
 
         // it's important to check if we need to shift to only_defend
         if (uncovered_cards === defender_cards) {

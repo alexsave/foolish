@@ -4,13 +4,8 @@ import { Game } from '../_shared/types.ts';
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { getAuthenticatedUser } from "../_shared/auth.ts";
-import { createClient, User } from "npm:@supabase/supabase-js@2.39.0"
+import { User } from "npm:@supabase/supabase-js@2.39.0"
 import { handleCors, corsHeaders } from "../_shared/cors.ts";
-
-const supabaseClient = createClient(
-    Deno.env.get('SUPABASE_URL') || '',
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
-);
 
 // TODO: just remove this. With the right policies we can query from client
 serve(wrap400(async (req) => {

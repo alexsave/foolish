@@ -1,17 +1,12 @@
 import { wrap400, verify_game_id, verify_player_in_game, broadcastToGameUsers, personalize_game, cardDisplay, validate_defender_status, verify_cards_in_players_hand, check_win, card_comp, canCover, refill, get_next_player_index, broadcastToGameUser, loadCompleteGame, saveCompleteGame } from "../_shared/utils.ts";
-import { Game, Card, GAME_STATUS, SERVER_EVENT_TYPE, PLAYER_STATUS, PrivatePlayer } from "../_shared/types.ts";
+import { Game, Card, GAME_STATUS, SERVER_EVENT_TYPE, PLAYER_STATUS, Player } from "../_shared/types.ts";
 import { emailToName } from "../_shared/common_utils.ts";
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { getAuthenticatedUser } from "../_shared/auth.ts";
-import { createClient, User } from "npm:@supabase/supabase-js@2.39.0"
+import { User } from "npm:@supabase/supabase-js@2.39.0"
 import { handleCors, corsHeaders } from "../_shared/cors.ts";
-
-const supabaseClient = createClient(
-    Deno.env.get('SUPABASE_URL') || '',
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
-);
 
 serve(wrap400(async (req) => {
     const corsResponse = handleCors(req);
@@ -71,8 +66,7 @@ const handle_cover = (game: Game, game_id: string, player_id: string, cover_card
     // the first one is the cards that are being covered
     // the second one is the cards that are being used to cover
 
-    const defender_id = player_id;
-    const defender: PrivatePlayer = game.player_hands.find(hand => hand.player_id === defender_id)!;
+    const defender: Player = game.players.find(player => player.id === player_id)!;
 
 
     // ok first just make sure all the cards are in the hand
@@ -184,7 +178,7 @@ const handle_cover = (game: Game, game_id: string, player_id: string, cover_card
         // now we need to see who can play cards. not the defender lol
         //const playable_players = game.players.filter(player => player.id !== game.players[game.currently_attacked].id && player.hand.some(card => playable_values.has(card.value)));
 
-        const playable_players = game.player_hands.filter(player => player.player_id !== player_id && player.hand.some(card => playable_values.has(card.value))).map(player => player.player_id);
+        const playable_players = game.players.filter(player => player.id !== player_id && player.hand.some(card => playable_values.has(card.value))).map(player => player.id);
 
         if (playable_players.length === 0) {
             // no one can play cards

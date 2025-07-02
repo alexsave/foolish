@@ -1,16 +1,11 @@
 import { verify_game_id, wrap400, validate_defender_status, get_next_player_index, refill, verify_player_in_game, personalize_game, broadcastToGameUsers, loadCompleteGame, saveCompleteGame } from "../_shared/utils.ts";
-import { GAME_STATUS, PLAYER_STATUS, SERVER_EVENT_TYPE, Game } from "../_shared/types.ts";
+import { GAME_STATUS, SERVER_EVENT_TYPE, Game, Player } from "../_shared/types.ts";
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { getAuthenticatedUser } from "../_shared/auth.ts";
-import { createClient, User } from "npm:@supabase/supabase-js@2.39.0"
+import { User } from "npm:@supabase/supabase-js@2.39.0"
 import { handleCors, corsHeaders } from "../_shared/cors.ts";
-
-const supabaseClient = createClient(
-    Deno.env.get('SUPABASE_URL') || '',
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
-);
 
 serve(wrap400(async (req) => {
     const corsResponse = handleCors(req);
@@ -66,7 +61,7 @@ const handle_pickup = (game: Game, game_id: string, player_id: string): Game => 
     }
 
     // ok let's just pick it up
-    const defender = game.player_hands.find(hand => hand.player_id === player_id)!;
+    const defender: Player = game.players.find(player => player.id === player_id)!;
 
     // add cards from table to hand
     game.table_battles.forEach(battle => {

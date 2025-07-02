@@ -1,16 +1,11 @@
 import { verify_game_id, wrap400, get_next_player_index, refill, verify_player_in_game, personalize_game, broadcastToGameUsers, loadCompleteGame, saveCompleteGame } from "../_shared/utils.ts";
-import { GAME_STATUS, PLAYER_STATUS, SERVER_EVENT_TYPE, Game, PrivatePlayer } from "../_shared/types.ts";
+import { GAME_STATUS, PLAYER_STATUS, SERVER_EVENT_TYPE, Game } from "../_shared/types.ts";
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { getAuthenticatedUser } from "../_shared/auth.ts";
-import { createClient, User } from "npm:@supabase/supabase-js@2.39.0"
+import { User } from "npm:@supabase/supabase-js@2.39.0"
 import { handleCors, corsHeaders } from "../_shared/cors.ts";
-
-const supabaseClient = createClient(
-    Deno.env.get('SUPABASE_URL') || '',
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
-);
 
 serve(wrap400(async (req) => {
     const corsResponse = handleCors(req);
@@ -66,16 +61,9 @@ const handle_good = (game: Game, game_id: string, player_id: string): Game => {
     // dont count the defender
     // the status check is critical
 
+    const playable_players = game.players.filter(player => player.id !== game.players[game.currently_attacked].id && player.hand.some(card => card.value === game.flipped!.value) && player.status === PLAYER_STATUS.AWAITING_ATTACK);
 
-    const playable_player_ids: string[] = [];
-    for (const player of game.players) {
-        const privatePlayer: PrivatePlayer = game.player_hands.find(hand => hand.player_id === player.id)!;
-        if (player.id !== game.players[game.currently_attacked].id && privatePlayer.hand.some(card => card.value === game.flipped!.value) && player.status === PLAYER_STATUS.AWAITING_ATTACK) {
-            playable_player_ids.push(player.id);
-        }
-    }
-
-    if (playable_player_ids.length !== 0) {
+    if (playable_players.length !== 0) {
         return game;
     }
 

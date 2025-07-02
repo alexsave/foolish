@@ -102,39 +102,6 @@ export interface LobbyPlayer {
     id: string;
 }
 
-export interface LobbyGame {
-    id: string;
-    players: LobbyPlayer[];
-    status: GameStatus;
-    //optional self
-    self?: Player;
-}
-
-export interface OtherPlayer {
-    id: string;
-    name: string;
-    hand_length: number;
-    // TODO IMPORTANT: when we get status, we need to map done_attacking to in to avoid revealing values
-    status: 'idle' | 'ready' | 'in' | 'out';
-}
-
-// personal game is what gets sent to clients. they do not see other players hands, only length
-/*export interface PersonalGame {
-    id: string;
-    deck_length: number;
-    flipped: Card | null;
-    self?: Player;
-    players: OtherPlayer[];
-
-    // wait for attackers reveals that people do have hands, so we don't allow this
-    // eh it does but there's no way around this. if no one has hands, best we can do is keep status as waitforattackers for a bit
-    status: GameStatus;
-    power_suit: number;
-    first_attacker: number;
-    currently_attacked: number;
-    table_battles: Battle[];
-}*/
-
 export interface Message {
     type: string;
     message: string;
@@ -144,7 +111,7 @@ export interface Message {
     attack_cards?: Card[];// cards that will be covered
     player_name?: string;
     player_id?: string;
-    game?: Game | LobbyGame | PersonalGame;
+    game?: Game | PersonalGame;
 }
 
 // Interfaces
@@ -156,9 +123,9 @@ export interface Card {
 export interface Player {
     id: string;
     name: string;
+    status: PlayerStatus;
     hand: Card[];
     // TODO IMPORTANT: when we get status, we need to map done_attacking to in to avoid revealing values
-    status: PlayerStatus;
 }
 
 export interface PublicPlayer {
@@ -195,11 +162,19 @@ export interface PersonalGame extends PublicGame {
 
 // I don't like game_decks.deck either but security is more important
 // Full game for working with game logic
-export interface Game extends PublicGame {
-    game_decks: {
-        deck: Card[];
-    };
-    player_hands: PrivatePlayer[];
+// fuck it, complete game. easier to work with
+export interface Game {
+    id: string;
+    name: string;
+    // TODO see if there is a better way to keep this val in sync without exposing deck
+    deck: Card[]
+    flipped: Card | null;
+    players: Player[];
+    status: GameStatus;
+    power_suit: number;
+    first_attacker: number;
+    currently_attacked: number;
+    table_battles: Battle[];
 }
 
 export interface Battle {

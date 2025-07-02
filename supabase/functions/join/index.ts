@@ -1,5 +1,5 @@
 import { verify_game_id, loadCompleteGame, saveCompleteGame, personalize_game, wrap400, broadcastToGameUsers } from "../_shared/utils.ts";
-import { GAME_STATUS, PLAYER_STATUS, Game, SERVER_EVENT_TYPE, PublicPlayer, PrivatePlayer } from "../_shared/types.ts";
+import { GAME_STATUS, PLAYER_STATUS, Game, SERVER_EVENT_TYPE, Player } from "../_shared/types.ts";
 import { emailToName } from "../_shared/common_utils.ts";
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
@@ -56,20 +56,15 @@ serve(wrap400(async (req) => {
     }
 
     // maybe move this to start function
-    const publicPlayer: PublicPlayer = {
+    const publicPlayer: Player = {
         name: user_name,
         id: user_id,
         status: PLAYER_STATUS.IDLE,
-        hand_length: 0
-    }
-    const privatePlayer: PrivatePlayer = {
-        player_id: user_id,
-        hand: []
+        hand: [],
     }
 
     // Add new player to game
     game.players.push(publicPlayer);
-    game.player_hands.push(privatePlayer);
 
     // Add player-game relationship FIRST
     await supabaseClient.from('player_games').insert({

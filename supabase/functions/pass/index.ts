@@ -1,17 +1,12 @@
-import {wrap400, broadcastToGameUsers, verify_game_id, verify_player_in_game, personalize_game, cardDisplay, validate_defender_status, verify_cards_in_players_hand, no_cards_left, check_win, get_next_player_index, card_comp, broadcastToGame, loadCompleteGame, saveCompleteGame } from "../_shared/utils.ts";
-import { Game, Card, SERVER_EVENT_TYPE, PLAYER_STATUS, PrivatePlayer, PublicPlayer} from "../_shared/types.ts";
+import {wrap400, broadcastToGameUsers, verify_game_id, verify_player_in_game, personalize_game, cardDisplay, validate_defender_status, verify_cards_in_players_hand, no_cards_left, check_win, get_next_player_index, card_comp, loadCompleteGame, saveCompleteGame } from "../_shared/utils.ts";
+import { Game, Card, SERVER_EVENT_TYPE, PLAYER_STATUS, Player} from "../_shared/types.ts";
 import { emailToName } from "../_shared/common_utils.ts";
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { getAuthenticatedUser } from "../_shared/auth.ts";
-import { createClient, User } from "npm:@supabase/supabase-js@2.39.0"
+import { User } from "npm:@supabase/supabase-js@2.39.0"
 import { handleCors, corsHeaders } from "../_shared/cors.ts";
-
-const supabaseClient = createClient(
-    Deno.env.get('SUPABASE_URL') || '',
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
-);
 
 serve(wrap400(async (req) => {
     const corsResponse = handleCors(req);
@@ -81,10 +76,7 @@ const handle_pass = (game: Game, game_id: string, player_id: string, cards: Card
     // also the attacker has to be the defender
     validate_defender_status(game, player_id, true);
 
-    const defender_id = player_id;
-    const defender: PrivatePlayer = game.player_hands.find(hand => hand.player_id === defender_id)!;
-    // lol variable name
-    const publicDefender: PublicPlayer = game.players.find(player => player.id === defender_id)!;
+    const defender: Player = game.players.find(player => player.id === player_id)!;
 
     verify_cards_in_players_hand(defender, mCards);
 
@@ -107,8 +99,7 @@ const handle_pass = (game: Game, game_id: string, player_id: string, cards: Card
 
     const next_player_index = get_next_player_index(game, game.currently_attacked);
     const next_player = game.players[next_player_index];
-    const next_player_hand: PrivatePlayer = game.player_hands.find(hand => hand.player_id === next_player.id)!;
-    if (next_player_hand.hand.length < mCards.length + game.table_battles.length) {
+    if (next_player.hand.length < mCards.length + game.table_battles.length) {
         throw new Error(`Player ${next_player.name} does not have enough cards in their hand to cover ${mCards.map(card => cardDisplay(card)).join(', ')}`);
     }
 
@@ -129,7 +120,7 @@ const handle_pass = (game: Game, game_id: string, player_id: string, cards: Card
     // If the deck is empty, they can get out here
     if (no_cards_left(game) && defender.hand.length === 0) {
         // they win
-        publicDefender.status = PLAYER_STATUS.OUT;
+        defender.status = PLAYER_STATUS.OUT;
         check_win(game);
         game.currently_attacked = next_player_index;
         broadcastToGameUsers(game, 'game_update', {
@@ -148,7 +139,7 @@ const handle_pass = (game: Game, game_id: string, player_id: string, cards: Card
     const uncovered_cards = game.table_battles.filter(battle => battle.defense === null).length;
     const new_defender_id = game.players[game.currently_attacked].id;
     // Lots of find calls. Maybe an intermediate type would be better for this
-    const new_defender: PrivatePlayer = game.player_hands.find(hand => hand.player_id === new_defender_id)!;
+    const new_defender: Player = game.players.find(player => player.id === new_defender_id)!;
     const defender_cards = new_defender.hand.length;
 
     // it's important to check if we need to shift to only_defend
