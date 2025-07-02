@@ -70,23 +70,20 @@ CREATE TABLE games (
 
 -- Game decks table - SENSITIVE: Only edge functions can access
 CREATE TABLE game_decks (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  game_id TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+  game_id TEXT PRIMARY KEY REFERENCES games(id) ON DELETE CASCADE,
   deck JSONB NOT NULL DEFAULT '[]'::jsonb, -- Card[] - deck cards
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  UNIQUE(game_id) -- One deck per game
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 -- Player hands table - SENSITIVE: Players can only see their own hands
 CREATE TABLE player_hands (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   game_id TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
   player_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   hand JSONB NOT NULL DEFAULT '[]'::jsonb, -- Card[] - player's cards
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  UNIQUE(game_id, player_id) -- One hand per player per game
+  PRIMARY KEY (game_id, player_id) -- One hand per player per game
 );
 
 -- Junction table for player-game relationships

@@ -1,8 +1,9 @@
 import { corsHeaders } from './cors.ts';
-import { Card, Game, LobbyGame, GAME_STATUS, Player, OtherPlayer, PLAYER_STATUS, PersonalGame, SERVER_EVENT_TYPE, PRIVATE_EVENT_TYPE } from './types.ts';
+import { Card, Game, LobbyGame, GAME_STATUS, Player, OtherPlayer, PLAYER_STATUS, PersonalGame, SERVER_EVENT_TYPE, PRIVATE_EVENT_TYPE, PrivatePlayer, PublicGame, PublicPlayer } from './types.ts';
 import { ACE_VALUE, CARDS_PER_PLAYER, SUITS, START_VALUE, VALUE_MAP, SUIT_MAP, LCG_A, LCG_C, LCG_M } from './constants.ts';
 import { createClient } from 'jsr:@supabase/supabase-js';
 import { emailToName } from './common_utils.ts';
+import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 
 const supabaseClient = createClient(
     Deno.env.get('SUPABASE_URL') || '',
@@ -10,15 +11,6 @@ const supabaseClient = createClient(
 );
 
 export const createId = (): string => crypto.randomUUID().slice(0, 6);
-
-// clear everything but player name and status. save some bytes
-export const lobbify_game = (game: Game): LobbyGame => {
-    return {
-        id: game.id,
-        players: game.players.map(player => ({ name: player.name, status: player.status, id: player.id })),
-        status: game.status === GAME_STATUS.WAITING ? GAME_STATUS.WAITING : GAME_STATUS.PLAYING
-    };
-};
 
 export const wrap400 = (execute: (req: Request) => Promise<Response>) => async (req: Request): Promise<Response> => {
     try {
@@ -64,24 +56,181 @@ const other_player = (player: Player): OtherPlayer => {
 }
 
 // Come to think of it, if we are broadcasting to the game, we can't be sending "self"
-export const personalize_game = (game: Game, player_id: string | null): PersonalGame => {
-    let self: Player | null = null;
-    if (player_id !== null) {
-        self = game.players.find(player => player.id === player_id)!;
-    }
-    return {
+export const personalize_game = (game: Game, player_id: string): PersonalGame => {
+    const self: PrivatePlayer = game.player_hands.find(hand => hand.player_id === player_id)!;
+    // for some reason we can't remove game_decks from the game type
+    // TODO: why?
+    // everything except game_decks , added self
+    const personalGame: PersonalGame = {
         id: game.id,
-        deck_length: game.deck.length,
+        name: game.name,
+        deck_length: game.deck_length,
         flipped: game.flipped,
-        self: self ?? undefined,
-        players: game.players.map(other_player),
+        players: game.players,
         status: game.status,
+        power_suit: game.power_suit,
         first_attacker: game.first_attacker,
         currently_attacked: game.currently_attacked,
         table_battles: game.table_battles,
-        power_suit: game.power_suit
+
+        self: self,
     }
+    return personalGame;
 }
+
+// =============================================================================
+// NEW DATABASE HELPER FUNCTIONS FOR SEPARATED SCHEMA - Using JOINs
+// =============================================================================
+
+// Load complete game state from separated tables using efficient JOINs
+export const loadCompleteGame = async (game_id: string): Promise<Game> => {
+    // Use JOIN to get all data in one query
+    const { data, error } = await supabaseClient
+        .from('games')
+        .select(`
+            *,
+            game_decks(deck),
+            player_hands(player_id, hand)
+        `)
+        .eq('id', game_id)
+        .single();
+
+    if (error) {
+        console.error('Error loading complete game', error);
+        throw new Error(`Game ${game_id} not found`);
+    }
+    // it is already complete. Game type def is wrong
+    return data;
+    /*
+
+    data looks like:
+    {
+  "id": "9c4b97",
+  "name": "alex603's Game",
+  "flipped": null,
+  "players": [
+    {
+      "id": "72c6ac7d-5017-4ff6-86f8-df411d7035dd",
+      "name": "alex603",
+      "status": "idle"
+    }
+  ],
+  "status": "waiting",
+  "power_suit": 0,
+  "first_attacker": 0,
+  "currently_attacked": 0,
+  "table_battles": [],
+  "created_at": "2025-07-01T06:51:13.74066+00:00",
+  "updated_at": "2025-07-01T06:51:13.74066+00:00",
+  "game_decks": {
+    "deck": []
+  },
+  "player_hands": [
+    {
+      "hand": [],
+      "player_id": "72c6ac7d-5017-4ff6-86f8-df411d7035dd"
+    }
+  ]
+}
+    */
+
+    // Reconstruct complete game object
+    /*const completeGame: Game = {
+        ...data,
+        deck: data.game_decks?.[0]?.deck || [],
+        players: data.players.map((player: any) => {
+            const handData = data.player_hands?.find((h: any) => h.player_id === player.id);
+            return {
+                ...player,
+                hand: handData?.hand || []
+            };
+        })
+    };
+
+    return completeGame;*/
+};
+
+// Save complete game state to separated tables using efficient upserts
+export const saveCompleteGame = async (game: Game): Promise<void> => {
+    // Update public game data (remove deck and hands from players)
+    const publicPlayers = game.players.map(player => ({
+        name: player.name,
+        id: player.id,
+        status: player.status
+    }));
+
+    await supabaseClient
+        .from('games')
+        .update({
+            name: game.name || 'Untitled Game',
+            flipped: game.flipped,
+            players: publicPlayers,
+            status: game.status,
+            power_suit: game.power_suit,
+            first_attacker: game.first_attacker,
+            currently_attacked: game.currently_attacked,
+            table_battles: game.table_battles
+        })
+        .eq('id', game.id);
+
+    // Update deck efficiently
+    await supabaseClient
+        .from('game_decks')
+        .upsert({
+            game_id: game.id,
+            deck: game.game_decks.deck
+        });
+    console.log(JSON.stringify(game.player_hands, null, 2));
+
+    // Batch update all player hands
+    const handUpdates: PrivatePlayer[] = game.player_hands.map(hand => {
+        return {
+            game_id: game.id,
+            player_id: hand.player_id,
+            hand: hand.hand
+        }
+    });
+    console.log(JSON.stringify(handUpdates, null, 2));
+
+    if (handUpdates.length > 0) {
+        const { error: handError } = await supabaseClient
+            .from('player_hands')
+            .upsert(handUpdates);
+        
+        if (handError) {
+            console.error('Error upserting player hands:', handError);
+            throw new Error(`Failed to save player hands: ${handError.message}`);
+        }
+    }
+};
+
+// Get player's hand for a specific game using direct query
+export const getPlayerHand = async (game_id: string, player_id: string): Promise<Card[]> => {
+    const { data, error } = await supabaseClient
+        .from('player_hands')
+        .select('hand')
+        .eq('game_id', game_id)
+        .eq('player_id', player_id)
+        .single();
+
+    if (error) {
+        console.error('Error loading player hand', error);
+        return [];
+    }
+
+    return data?.hand || [];
+};
+
+// Update player's hand efficiently
+export const updatePlayerHand = async (game_id: string, player_id: string, hand: Card[]): Promise<void> => {
+    await supabaseClient
+        .from('player_hands')
+        .upsert({
+            game_id: game_id,
+            player_id: player_id,
+            hand: hand
+        });
+};
 
 // =============================================================================
 // REALTIME BROADCAST UTILITIES
@@ -107,26 +256,28 @@ export const broadcastToGameUser = async (game: Game, messageType: string, baseM
 export const broadcastToGameUsers = async (game: Game, messageType: string, baseMessage: any): Promise<void> => {
     try {
         // Calculate base game state once (shared for all players)
-        const baseGameState = {
+        const baseGameState: PublicGame = {
             id: game.id,
-            deck_length: game.deck.length,
+            name: game.name,
+            deck_length: game.deck_length,
             flipped: game.flipped,
-            players: game.players.map(other_player),
+            players: game.players,
             status: game.status,
+            power_suit: game.power_suit,
             first_attacker: game.first_attacker,
             currently_attacked: game.currently_attacked,
             table_battles: game.table_battles,
-            power_suit: game.power_suit
         };
 
         // Send personalized message to each player
         for (const player of game.players) {
+            const self: PrivatePlayer = game.player_hands.find(hand => hand.player_id === player.id)!;
             // Create personalized game state by adding player's self data
-            const personalizedGame = {
+            const personalizedGame: PersonalGame = {
                 ...baseGameState,
-                self: player
+                self: self
             };
-            
+
             // Create personalized message with filtered game state
             const personalizedMessage = {
                 ...baseMessage,
@@ -161,25 +312,26 @@ export const broadcastToUser = async (user_id: string, message: any): Promise<vo
     // This will be removed once all usages are updated
 };
 
-export const start_game = (game: Game) => {
-
+export const start_game = async (game: Game) => {
     // This is the game entry
     game.status = 'playing';
     game.players.forEach(player => {
         player.status = PLAYER_STATUS.IN;
     });
 
-    game.deck = refill_deck();
+    game.game_decks.deck = refill_deck();
 
-    const hands = initialize_hands(game);
+    const hands: Card[][] = initialize_hands(game);
     for (let i = 0; i < game.players.length; i++) {
-        game.players[i].hand = hands[i];
+        const id = game.players[i].id;  
+        const hand = game.player_hands.find(hand => hand.player_id === id)!;
+        hand.hand = hands[i];
     }
 
     let flipped_card = draw(game);
     while (flipped_card!.value === ACE_VALUE) {
         // move back to deck
-        game.deck.push(flipped_card!);
+        game.game_decks.deck.push(flipped_card!);
         flipped_card = draw(game);
     }
     game.flipped = flipped_card;
@@ -196,36 +348,32 @@ export const start_game = (game: Game) => {
     set_positions(game);
     game.status = GAME_STATUS.FIRST_ATTACKER;
 
+    // Save updated game state
+    //await saveCompleteGame(game);
 
-
-    // this part needs to be specially handled
-    broadcastToGame(game.id, {
-        game_id: game.id,
-        message: {
-            type: SERVER_EVENT_TYPE.FIRST_ATTACKER,
-            game: game,
-            message: `Player ${game.players[lowest_power_index].name} is the first attacker, wait for them to attack`
-        }
+    // Send notifications
+    broadcastToGameUsers(game, 'game_update', {
+        type: SERVER_EVENT_TYPE.FIRST_ATTACKER,
+        message: `Player ${game.players[lowest_power_index].name} is the first attacker, wait for them to attack`
     });
 
     for (let i = 0; i < game.players.length; i++) {
+        const id = game.players[i].id;
+        const hand = game.player_hands.find(hand => hand.player_id === id)!;
         if (i === game.first_attacker) {
-            broadcastToUser(game.players[i].id, {
+            broadcastToGameUser(game, 'private_message', {
                 type: PRIVATE_EVENT_TYPE.REQUEST_FIRST_ATTACK,
-                message: `Please choose an attack. Options are ${game.players[game.first_attacker].hand.map(card => cardDisplay(card)).join(', ')}`,
-                game: game
-            });
+                message: `Please choose an attack. Options are ${hand.hand.map(card => cardDisplay(card)).join(', ')}`
+            }, game.players[i].id);
         } else {
-            broadcastToUser(game.players[i].id, {
+            broadcastToGameUser(game, 'private_message', {
                 type: PRIVATE_EVENT_TYPE.PLAYER_HAND,
-                message: `Player ${game.players[i].name} hand ${game.players[i].hand.map(card => cardDisplay(card)).join(', ')}`,
-                game: game
-            });
+                message: `Player ${game.players[i].name} hand ${hand.hand.map(card => cardDisplay(card)).join(', ')}`
+            }, game.players[i].id);
         }
     }
 
     return game;
-
 }
 
 export const refill_deck = (): Card[] => {
@@ -258,7 +406,7 @@ export const initialize_hands = (game: Game): Card[][] => {
 export const cardDisplay = (card: Card) => `${VALUE_MAP[card.value]} of ${SUIT_MAP[card.suit]}`;
 
 export const draw = (game: Game): Card | null => {
-    if (game.deck.length === 0) {
+    if (game.game_decks.deck.length === 0) {
         if (game.flipped === null) {
             return null;
         }
@@ -267,8 +415,8 @@ export const draw = (game: Game): Card | null => {
         return copy;
     }
     // Make this more secure
-    const index = Math.floor(seededRand() * game.deck.length);
-    const card = game.deck.splice(index, 1)[0];
+    const index = Math.floor(seededRand() * game.game_decks.deck.length);
+    const card = game.game_decks.deck.splice(index, 1)[0];
     return card;
 };
 
@@ -276,9 +424,10 @@ export const determine_lowest_power_index = (game: Game): number => {
     let lowestPowerValue = ACE_VALUE + 1;
     let lowestPowerPlayer = -1;
     for (let i = 0; i < game.players.length; i++) {
-        let hand = game.players[i].hand;
-        for (let j = 0; j < hand.length; j++) {
-            let card = hand[j];
+        const id = game.players[i].id;
+        const hand = game.player_hands.find(hand => hand.player_id === id)!;
+        for (let j = 0; j < hand.hand.length; j++) {
+            let card = hand.hand[j];
             if (card.suit === game.power_suit) {
                 if (card.value < lowestPowerValue) {
                     lowestPowerValue = card.value;
@@ -324,7 +473,7 @@ export const verify_hands_in_players_hand = (player: Player, cards: Card[]) => {
 }
 
 export const no_cards_left = (game: Game) => {
-    return game.deck.length === 0 && game.flipped === null;
+    return game.game_decks.deck.length === 0 && game.flipped === null;
 }
 
 export const check_win = (game: Game) => {
@@ -333,12 +482,14 @@ export const check_win = (game: Game) => {
 
         game.status = GAME_STATUS.WAITING;
         // set all players to idle
-        game.players.forEach((player: Player) => {
+        game.players.forEach((player: PublicPlayer) => {
             player.status = PLAYER_STATUS.IDLE;
-            player.hand = [];
+        });
+        game.player_hands.forEach((hand: PrivatePlayer) => {
+            hand.hand = [];
         });
         game.table_battles = [];
-        game.deck = refill_deck();
+        game.game_decks.deck = refill_deck();
 
         broadcastToGameUsers(game, 'game_update', {
             type: 'game_done',
@@ -378,7 +529,8 @@ export const refill = (game: Game) => {
 
     // If the deck was already empty, defending should've gotten them a win
     // most importantly, check if currently Attacked cleared their hand
-    let defenseHand = game.players[game.currently_attacked].hand;
+    const defenseId = game.players[game.currently_attacked].id;
+    const defenseHand = game.player_hands.find(hand => hand.player_id === defenseId)!.hand;
     if (defenseHand.length === 0) {
         // they draw first
         let cards_drawn = 0;
@@ -404,7 +556,8 @@ export const refill = (game: Game) => {
     // Then go around starting from firstAttacker
     let pIndex = game.first_attacker;
     do {
-        const hand = game.players[pIndex].hand;
+        const id = game.players[pIndex].id;
+        const hand = game.player_hands.find(hand => hand.player_id === id)!.hand;
         let cards_drawn = 0;
 
         while (hand.length < CARDS_PER_PLAYER) {
@@ -425,7 +578,7 @@ export const refill = (game: Game) => {
                 message: `Player ${game.players[pIndex].name} drew ${cards_drawn} cards`,
                 cards_drawn: cards_drawn
             });
-        } else if (cards_drawn === 0 && game.players[pIndex].hand.length === 0) {
+        } else if (cards_drawn === 0 && hand.length === 0) {
             // no cards were drawn, but if they were still "in", this is where they win
             if (game.players[pIndex].status === PLAYER_STATUS.IN) {
                 broadcastToGameUsers(game, 'game_update', {

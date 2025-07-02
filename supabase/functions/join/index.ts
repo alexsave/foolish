@@ -1,4 +1,4 @@
-import { verify_game_id, loadCompleteGame, saveCompleteGame, personalize_game, wrap400, broadcastToGameUsers, lobbify_game } from "../_shared/utils.ts";
+import { verify_game_id, loadCompleteGame, saveCompleteGame, personalize_game, wrap400, broadcastToGameUsers } from "../_shared/utils.ts";
 import { GAME_STATUS, PLAYER_STATUS, Game, SERVER_EVENT_TYPE, PublicPlayer, PrivatePlayer } from "../_shared/types.ts";
 import { emailToName } from "../_shared/common_utils.ts";
 
@@ -55,6 +55,7 @@ serve(wrap400(async (req) => {
         throw new Error(`Game ${game_id} is not waiting for players, wait for next game`);
     }
 
+    // maybe move this to start function
     const publicPlayer: PublicPlayer = {
         name: user_name,
         id: user_id,
@@ -70,14 +71,14 @@ serve(wrap400(async (req) => {
     game.players.push(publicPlayer);
     game.player_hands.push(privatePlayer);
 
-    // Save to database - this handles all separated tables
-    await saveCompleteGame(game);
-    
-    // Add player-game relationship
+    // Add player-game relationship FIRST
     await supabaseClient.from('player_games').insert({
         player_id: user_id,
         game_id: game_id
     });
+    
+    // Then save to database - this handles all separated tables
+    await saveCompleteGame(game);
 
     // Return response
     const response = new Response(JSON.stringify({

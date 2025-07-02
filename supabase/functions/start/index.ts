@@ -1,4 +1,4 @@
-import { verify_game_id, wrap400, broadcastToGameUsers, verify_player_in_game, start_game, personalize_game } from "../_shared/utils.ts";
+import { verify_game_id, loadCompleteGame, saveCompleteGame, wrap400, broadcastToGameUsers, verify_player_in_game, start_game, personalize_game } from "../_shared/utils.ts";
 import { GAME_STATUS, PLAYER_STATUS, SERVER_EVENT_TYPE, ServerEventType } from "../_shared/types.ts";
 import { emailToName } from "../_shared/common_utils.ts";
 
@@ -26,40 +26,35 @@ serve(wrap400(async (req) => {
     await verify_game_id(game_id);
     await verify_player_in_game(game_id, user_id);
 
-    let { data: game, error: gameError } = await supabaseClient.from('games').select('*').eq('id', game_id).single();
-    if (gameError) {
-        console.error('Error loading game', gameError);
-        return new Response('Error loading game', { status: 500 });
-    }
+    // Load complete game state from separated tables
+    let game = await loadCompleteGame(game_id);
 
     if (game.status !== GAME_STATUS.WAITING) {
         throw new Error(`Game ${game_id} is not waiting for players, wait for next game`);
     }
     // if player_games is set correctly, then the players shoudl be set correclty in the game too. But not vice versa
 
-    const { data: player_games, error: player_gamesError } = await supabaseClient.from('player_games').select('*').eq('game_id', game_id).eq('player_id', user_id).single();
     // let the error throw
 
     let message: string = `Player ${user_name} is ready`;
     let type: ServerEventType = SERVER_EVENT_TYPE.PLAYER_READY;
 
+    // Update player status to ready
     game.players.find(player => player.id === user_id)!.status = PLAYER_STATUS.READY;
 
     if (game.players.length >= 2 && game.players.every(player => player.status === PLAYER_STATUS.READY)) {
-        // We can start the game
-        game = start_game(game);
-
-        // update the entire thing
-        await supabaseClient.from('games').update(game).eq('id', game_id);
+        // We can start the game 
+        game = await start_game(game);
 
         message = `Player ${user_name} is ready, starting game ${game_id}`;
         type = SERVER_EVENT_TYPE.GAME_STARTED;
+        await saveCompleteGame(game);
 
     } else {
-        // Return without starting the game
-
-        // only update game.players
-        await supabaseClient.from('games').update({ players: game.players }).eq('id', game_id);
+        // Just update player status without starting
+        // We don't need to save EVERYTHING, just the public game
+        // TODO save less
+        await saveCompleteGame(game);
     }
 
     broadcastToGameUsers(game, 'game_update', {
@@ -68,8 +63,7 @@ serve(wrap400(async (req) => {
         player_id: user_id
     });
 
-
-    // Now it's safe to return - user has access to game channel
+    // Return personalized game state
     const response = new Response(JSON.stringify({
         game: personalize_game(game, user_id)
     }), {
@@ -78,8 +72,6 @@ serve(wrap400(async (req) => {
             'Content-Type': 'application/json'
         }
     });
-
-    // Send broadcast notification asynchronously (non-blocking)
 
     return response;
 }));
