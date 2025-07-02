@@ -1,26 +1,18 @@
-import { verify_game_id, wrap400, validate_defender_status, get_next_player_index, refill, verify_player_in_game, personalize_game, broadcastToGameUsers, loadCompleteGame, saveCompleteGame } from "../_shared/utils.ts";
+import { wrap400, validate_defender_status, get_next_player_index, refill, verify_player_in_game, personalize_game, broadcastToGameUsers, loadCompleteGame, saveCompleteGame } from "../_shared/utils.ts";
 import { GAME_STATUS, SERVER_EVENT_TYPE, Game, Player } from "../_shared/types.ts";
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
-import { getAuthenticatedUser } from "../_shared/auth.ts";
-import { User } from "npm:@supabase/supabase-js@2.39.0"
-import { handleCors, corsHeaders } from "../_shared/cors.ts";
 
-serve(wrap400(async (req) => {
-    const corsResponse = handleCors(req);
-    if (corsResponse) return corsResponse;
-
-    const user: User = await getAuthenticatedUser(req);
+serve(wrap400(async (user, user_name, body) => {
     const user_id = user.id;
-    const { game_id } = await req.json();
-
-    // Verify game exists and player is in game
-    await verify_game_id(game_id);
-    await verify_player_in_game(game_id, user_id);
+    const { game_id } = body;
 
     // Load complete game state using JOINs
     let game = await loadCompleteGame(game_id);
+
+    // Verify player is in game
+    verify_player_in_game(game, user_id);
 
     // Handle pickup logic
     game = handle_pickup(game, game_id, user_id);
@@ -33,17 +25,9 @@ serve(wrap400(async (req) => {
         message: `Player ${user_id} picked up cards`
     });
 
-    // Return personalized game state
-    const response = new Response(JSON.stringify({
+    return {
         game: personalize_game(game, user_id)
-    }), {
-        headers: {
-            ...corsHeaders,
-            'Content-Type': 'application/json'
-        }
-    });
-
-    return response;
+    };
 }));
 
 const handle_pickup = (game: Game, game_id: string, player_id: string): Game => {

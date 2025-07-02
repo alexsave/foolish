@@ -1,28 +1,18 @@
-import { verify_game_id, loadCompleteGame, saveCompleteGame, wrap400, broadcastToGameUsers, verify_player_in_game, start_game, personalize_game } from "../_shared/utils.ts";
+import { loadCompleteGame, saveCompleteGame, wrap400, broadcastToGameUsers, verify_player_in_game, start_game, personalize_game } from "../_shared/utils.ts";
 import { GAME_STATUS, PLAYER_STATUS, SERVER_EVENT_TYPE, ServerEventType } from "../_shared/types.ts";
-import { emailToName } from "../_shared/common_utils.ts";
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
-import { getAuthenticatedUser } from "../_shared/auth.ts";
-import { User } from "npm:@supabase/supabase-js@2.39.0"
-import { handleCors, corsHeaders } from "../_shared/cors.ts";
 
-serve(wrap400(async (req) => {
-    const corsResponse = handleCors(req);
-    if (corsResponse) return corsResponse;
-
-    const user: User = await getAuthenticatedUser(req);
+serve(wrap400(async (user, user_name, body) => {
     const user_id = user.id;
-    const user_name = emailToName(user.email);
-    const { game_id } = await req.json();
-
-    // This is defeinitely handled by the .single. If there is no game, it will throw an error
-    await verify_game_id(game_id);
-    await verify_player_in_game(game_id, user_id);
+    const { game_id } = body;
 
     // Load complete game state from separated tables
     let game = await loadCompleteGame(game_id);
+
+    // Verify player is in game
+    verify_player_in_game(game, user_id);
 
     if (game.status !== GAME_STATUS.WAITING) {
         throw new Error(`Game ${game_id} is not waiting for players, wait for next game`);
@@ -58,15 +48,7 @@ serve(wrap400(async (req) => {
         player_id: user_id
     });
 
-    // Return personalized game state
-    const response = new Response(JSON.stringify({
+    return {
         game: personalize_game(game, user_id)
-    }), {
-        headers: {
-            ...corsHeaders,
-            'Content-Type': 'application/json'
-        }
-    });
-
-    return response;
+    };
 }));

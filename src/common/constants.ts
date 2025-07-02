@@ -39,9 +39,4 @@ export const NAMES = [
 export const ACE_VALUE = 13;
 export const CARDS_PER_SUIT = 9;
 export const START_VALUE = ACE_VALUE - CARDS_PER_SUIT + 1;
-export const PLAYER_COUNT = 7;
-
-// LCG algorithm constants for seeded random
-export const LCG_A = 1664525;
-export const LCG_C = 1013904223;
-export const LCG_M = 4294967296; // 2^32 
+export const PLAYER_COUNT = 7; 

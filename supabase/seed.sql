@@ -16,8 +16,6 @@ DROP FUNCTION IF EXISTS get_user_games(UUID) CASCADE;
 
 -- Drop tables in reverse dependency order (this will automatically drop all policies and triggers)
 DROP TABLE IF EXISTS chat_messages CASCADE;
-DROP TABLE IF EXISTS private_user_channel CASCADE;
-DROP TABLE IF EXISTS public_game_channel CASCADE;
 DROP TABLE IF EXISTS player_hands CASCADE;
 DROP TABLE IF EXISTS game_decks CASCADE;
 DROP TABLE IF EXISTS player_games CASCADE;
@@ -95,22 +93,6 @@ CREATE TABLE player_games (
   UNIQUE(player_id, game_id)
 );
 
--- Public game channel for real-time game messages
-CREATE TABLE public_game_channel (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  game_id TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
-  message JSONB NOT NULL, -- Message object
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-
--- Private user channel for direct messages
-CREATE TABLE private_user_channel (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  message JSONB NOT NULL, -- Message object
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-
 -- Chat messages table
 CREATE TABLE chat_messages (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -132,10 +114,6 @@ CREATE INDEX idx_player_hands_game_id ON player_hands(game_id);
 CREATE INDEX idx_player_hands_player_id ON player_hands(player_id);
 CREATE INDEX idx_player_games_player_id ON player_games(player_id);
 CREATE INDEX idx_player_games_game_id ON player_games(game_id);
-CREATE INDEX idx_public_game_channel_game_id ON public_game_channel(game_id);
-CREATE INDEX idx_public_game_channel_created_at ON public_game_channel(created_at);
-CREATE INDEX idx_private_user_channel_user_id ON private_user_channel(user_id);
-CREATE INDEX idx_private_user_channel_created_at ON private_user_channel(created_at);
 CREATE INDEX idx_chat_messages_game_id ON chat_messages(game_id);
 CREATE INDEX idx_chat_messages_user_id ON chat_messages(user_id);
 CREATE INDEX idx_chat_messages_created_at ON chat_messages(created_at);
@@ -148,8 +126,6 @@ ALTER TABLE games ENABLE ROW LEVEL SECURITY;
 ALTER TABLE game_decks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE player_hands ENABLE ROW LEVEL SECURITY;
 ALTER TABLE player_games ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public_game_channel ENABLE ROW LEVEL SECURITY;
-ALTER TABLE private_user_channel ENABLE ROW LEVEL SECURITY;
 ALTER TABLE chat_messages ENABLE ROW LEVEL SECURITY;
 
 -- =============================================================================
@@ -196,30 +172,6 @@ CREATE POLICY "Users can join games" ON player_games
 
 CREATE POLICY "Users can leave games" ON player_games
   FOR DELETE USING (player_id = auth.uid());
-
--- Public game channel: Players can view messages for games they're in
-CREATE POLICY "Players can view game messages" ON public_game_channel
-  FOR SELECT USING (
-    game_id IN (
-      SELECT game_id FROM player_games 
-      WHERE player_id = auth.uid()
-    )
-  );
-
-CREATE POLICY "Players can send game messages" ON public_game_channel
-  FOR INSERT WITH CHECK (
-    game_id IN (
-      SELECT game_id FROM player_games 
-      WHERE player_id = auth.uid()
-    )
-  );
-
--- Private user channel: Users can only see their own messages
-CREATE POLICY "Users can view own private messages" ON private_user_channel
-  FOR SELECT USING (user_id = auth.uid());
-
-CREATE POLICY "Users can receive private messages" ON private_user_channel
-  FOR INSERT WITH CHECK (user_id = auth.uid());
 
 -- Chat messages: Players can view messages for games they're in
 CREATE POLICY "Players can view chat messages for their games" ON chat_messages

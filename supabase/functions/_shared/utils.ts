@@ -1,7 +1,7 @@
-import { corsHeaders } from './cors.ts';
+import { corsHeaders, handleCors } from './cors.ts';
 import { Card, Game, GAME_STATUS, Player, PLAYER_STATUS, PersonalGame, SERVER_EVENT_TYPE, PRIVATE_EVENT_TYPE, PrivatePlayer, PublicGame, PublicPlayer } from './types.ts';
-import { ACE_VALUE, CARDS_PER_PLAYER, SUITS, START_VALUE, VALUE_MAP, SUIT_MAP, LCG_A, LCG_C, LCG_M } from './constants.ts';
-import { createClient } from 'jsr:@supabase/supabase-js';
+import { ACE_VALUE, CARDS_PER_PLAYER, SUITS, START_VALUE, VALUE_MAP, SUIT_MAP } from './constants.ts';
+import { createClient, User } from 'jsr:@supabase/supabase-js';
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 
 const supabaseClient = createClient(
@@ -11,9 +11,32 @@ const supabaseClient = createClient(
 
 export const createId = (): string => crypto.randomUUID().slice(0, 6);
 
-export const wrap400 = (execute: (req: Request) => Promise<Response>) => async (req: Request): Promise<Response> => {
+export const wrap400 = (execute: (user: User, user_name: string, body: any) => Promise<any>) => async (req: Request): Promise<Response> => {
     try {
-        return execute(req);
+        // Handle CORS
+        const corsResponse = handleCors(req);
+        if (corsResponse) return corsResponse;
+
+        // Get authenticated user
+        const { getAuthenticatedUser } = await import('./auth.ts');
+        const user: User = await getAuthenticatedUser(req);
+
+        // Get user name from email
+        const { emailToName } = await import('./common_utils.ts');
+        const user_name = emailToName(user.email);
+
+        // Parse JSON body
+        const body = await req.json();
+
+        const result = await execute(user, user_name, body);
+
+        // Create standardized response
+        return new Response(JSON.stringify(result), {
+            headers: {
+                ...corsHeaders,
+                'Content-Type': 'application/json'
+            }
+        });
     } catch (e: any) {
         console.error('Error processing request:', {
             name: e.name,
@@ -29,19 +52,9 @@ export const wrap400 = (execute: (req: Request) => Promise<Response>) => async (
     }
 }
 
-export const verify_game_id = async (game_id: string): Promise<void> => {
-    const { data: game, error: gameError } = await supabaseClient.from('games').select('*').eq('id', game_id).single();
-    if (gameError) {
-        console.error('Error loading game', gameError);
-        throw new Error(`Game ${game_id} not found`);
-    }
-}
-
-export const verify_player_in_game = async (game_id: string, player_id: string): Promise<void> => {
-    const { data: player_game, error: player_gameError } = await supabaseClient.from('player_games').select('*').eq('game_id', game_id).eq('player_id', player_id).single();
-    if (player_gameError) {
-        console.error('Error loading player game', player_gameError);
-        throw new Error(`Player ${player_id} not in game ${game_id}`);
+export const verify_player_in_game = (game: Game, player_id: string): void => {
+    if (game.players.find(player => player.id === player_id) === undefined) {
+        throw new Error(`Player ${player_id} not in game ${game.id}`);
     }
 }
 
@@ -467,8 +480,7 @@ export const draw = (game: Game): Card | null => {
         game.flipped = null;
         return copy;
     }
-    // Make this more secure
-    const index = Math.floor(seededRand() * game.deck.length);
+    const index = Math.floor(Math.random() * game.deck.length);
     const card = game.deck.splice(index, 1)[0];
     return card;
 };
@@ -498,15 +510,6 @@ export const set_positions = (game: Game) => {
     game.first_attacker = game.first_attacker;
     game.currently_attacked = (game.first_attacker + 1) % game.players.length;
 }
-
-// Seeded random generator
-let currentSeed = Math.floor(Math.random() * 1000000);
-
-export const seededRand = () => {
-    // Math.random()
-    currentSeed = (LCG_A * currentSeed + LCG_C) % LCG_M;
-    return currentSeed / LCG_M; // Normalize to a value between 0 (inclusive) and 1 (exclusive)
-};
 
 // Helper method to validate player is/isn't defender
 export const validate_defender_status = (game: Game, player_id: string, should_be_defender: boolean) => {
