@@ -34,14 +34,11 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
     useEffect(() => {
         //const game_id = use
-        console.log('url game id', url_game_id);
         if (url_game_id) {
             setGameId(url_game_id);
             if (!games[url_game_id]) {
-                console.log('info not in games, loading game');
                 loadGame(url_game_id);
             } else {
-                console.log('info in games, not loading game');
             }
         }
     }, [url_game_id]);
@@ -51,7 +48,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     useEffect(() => {
         gameIdRef.current = game_id;
         if (game_id && player_id) {
-            console.log('game id changed, need to fetch game data');
+            //console.log('game id changed, need to fetch game data');
             // fetch game data. for now it will just be lobby info
             loadGame(game_id);
 
@@ -119,7 +116,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             })
             .subscribe((status, err) => {
                 if (status === 'SUBSCRIBED') {
-                    console.log('Connected to game-user channel:', `gu-${gameId}-${user}`);
+                    //console.log('Connected to game-user channel:', `gu-${gameId}-${user}`);
                 } else {
                     console.error('Game-user channel error:', err);
                 }
@@ -194,6 +191,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         } else if (actualMessage.type === SERVER_EVENT_TYPE.GAME_NAME_UPDATED) {
             setGames(prev => ({...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev)}));
         } else if (actualMessage.type === SERVER_EVENT_TYPE.PLAYERS_REARRANGED) {
+            setGames(prev => ({...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev)}));
+        } else if (actualMessage.type === SERVER_EVENT_TYPE.HAND_REARRANGED) {
             setGames(prev => ({...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev)}));
         } else {
             // Default handler for other message types
@@ -485,6 +484,52 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         });
     };
 
+    const rearrangeHand = (gameId: string, cardIndices: number[]): Promise<{ game_id: string }> => {
+        return new Promise<{ game_id: string }>((resolve, reject) => {
+            // Optimistic update - rearrange hand immediately
+            const previousHand = games[gameId]?.self?.hand ? [...games[gameId].self.hand] : [];
+            if (previousHand.length > 0) {
+                const rearrangedHand = cardIndices.map(index => previousHand[index]);
+                setGames(prev => ({
+                    ...prev,
+                    [gameId]: {
+                        ...prev[gameId],
+                        self: {
+                            ...prev[gameId]?.self,
+                            hand: rearrangedHand
+                        }
+                    }
+                }));
+            }
+
+            supabase.functions.invoke('rearrange-hand', {
+                body: {
+                    game_id: gameId,
+                    card_indices: cardIndices
+                }
+            }).then(data => {
+                resolve({ game_id: data.data.game.id });
+                // Server confirmed the update - merge any other changes from server
+                setGames(prev => ({ ...prev, [data.data.game.id]: mergeGameData(data.data.game.id, data.data.game, prev) }));
+            }).catch(error => {
+                // Revert the optimistic update on error
+                if (previousHand.length > 0) {
+                    setGames(prev => ({
+                        ...prev,
+                        [gameId]: {
+                            ...prev[gameId],
+                            self: {
+                                ...prev[gameId]?.self,
+                                hand: previousHand
+                            }
+                        }
+                    }));
+                }
+                reject(error);
+            });
+        });
+    };
+
     const getUserGames = async (): Promise<void> => {
         try {
             if (!user_id) {
@@ -536,8 +581,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
             setGames(prev => ({...prev, ...games}));
 
-            console.log('User games (player_hands joined with games):', games);
-            console.log('Number of games found:', data?.length || 0);
         } catch (error) {
             console.error('Error in getUserGames:', error);
         }
@@ -570,7 +613,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             setGameIdFromUrl,
             getUserGames,
             updateGameName,
-            rearrangePlayer
+            rearrangePlayer,
+            rearrangeHand
         }}>
             {children}
         </ServerContext.Provider>
@@ -595,6 +639,7 @@ interface ServerContextType {
     getUserGames: () => Promise<void>;
     updateGameName: (gameId: string, name: string) => Promise<{ game_id: string }>;
     rearrangePlayer: (gameId: string, playerIndices: number[]) => Promise<{ game_id: string }>;
+    rearrangeHand: (gameId: string, cardIndices: number[]) => Promise<{ game_id: string }>;
 }
 
 export const useServer = () => {

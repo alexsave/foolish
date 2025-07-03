@@ -29,8 +29,6 @@ export const Lobby = () => {
     const rearrangeTimerRef = useRef<NodeJS.Timeout | null>(null);
     const inputRef = useRef<HTMLInputElement>(null);
     
-    console.log(game_id);
-    
     // Automatically navigate when game status is no longer waiting
     useEffect(() => {
         if (game && game.status !== 'waiting') {

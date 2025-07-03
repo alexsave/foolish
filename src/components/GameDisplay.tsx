@@ -1,5 +1,5 @@
 import { Card, PersonalGame } from '../common/types';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useServer } from '../contexts/ServerContext';
 import { useParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -32,12 +32,19 @@ const VALUE_MAP: Record<number, string> = {
 
 export const GameDisplay = () => {
   const { user_id } = useAuth();
-  const { game, attack, game_id, pass, pickup, setGameIdFromUrl, loadGame, cover, good } = useServer();
+  const { game, attack, game_id, pass, pickup, setGameIdFromUrl, loadGame, cover, good, rearrangeHand } = useServer();
   const urlGameId = useParams().game_id?.toLowerCase() || null;
   const state = game as PersonalGame;
   const [selectedCards, setSelectedCards] = useState<Card[]>([]);
 
   const [coverMap, setCoverMap] = useState<Map<Card, Card>>(new Map());
+
+  // Enhanced drag and drop state for cards
+  const [draggedCardIndex, setDraggedCardIndex] = useState<number | null>(null);
+  const [isDraggingCard, setIsDraggingCard] = useState(false);
+  const [draggedCardElement, setDraggedCardElement] = useState<HTMLElement | null>(null);
+  const [localHandOrder, setLocalHandOrder] = useState<Card[]>([]);
+  const rearrangeCardTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     if (urlGameId && urlGameId !== game_id) {
@@ -46,11 +53,41 @@ export const GameDisplay = () => {
     }
   }, [urlGameId, game_id, setGameIdFromUrl, loadGame]);
 
-  // Prevent page scrolling/dragging during touch interactions but allow normal touches
+  // Update local hand order when game changes
+  useEffect(() => {
+    if (state?.self?.hand) {
+      setLocalHandOrder(state.self.hand);
+    }
+  }, [state?.self?.hand]);
+
+  // Cleanup timer on unmount
+  useEffect(() => {
+    return () => {
+      if (rearrangeCardTimerRef.current) {
+        clearTimeout(rearrangeCardTimerRef.current);
+      }
+    };
+  }, []);
+
+  // Prevent page scrolling/dragging during touch interactions but allow legitimate drags
   useEffect(() => {
     const preventPageScroll = (e: TouchEvent) => {
-      // Only prevent default if it's a move gesture (not a tap)
-      // This allows clicks/taps to work normally
+      const target = e.target as HTMLElement;
+      
+      // Allow dragging on draggable elements (cards)
+      if (target.closest('[draggable="true"]')) {
+        return; // Don't prevent - allow legitimate drag
+      }
+      
+      // Allow interactions on interactive elements (buttons, inputs, or anything with higher z-index)
+      if (target.tagName === 'BUTTON' || 
+          target.tagName === 'INPUT' || 
+          target.closest('input') ||
+          window.getComputedStyle(target).zIndex === '1000') {
+        return; // Don't prevent - allow button clicks and input focus
+      }
+      
+      // Prevent page scrolling/panning on background/text areas
       if (e.touches.length > 1 || (e.touches.length === 1 && e.type === 'touchmove')) {
         e.preventDefault();
       }
@@ -67,6 +104,154 @@ export const GameDisplay = () => {
 
   // we chose a card to cover WITH, now we choose WHICH card to cover
   const [isSelectingCover, setIsSelectingCover] = useState(false);
+
+  // Enhanced drag behavior with mouse following for cards
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (isDraggingCard && draggedCardElement) {
+        const style = draggedCardElement.style;
+        style.position = 'fixed';
+        style.top = e.clientY - draggedCardElement.clientHeight / 2 + 'px';
+        style.left = e.clientX - draggedCardElement.clientWidth / 2 + 'px';
+        style.zIndex = '1500';
+        style.pointerEvents = 'none';
+      }
+    };
+
+    const handleGlobalDragEnd = (e: DragEvent) => {
+      if (isDraggingCard) {
+        setIsDraggingCard(false);
+        setDraggedCardIndex(null);
+        setDraggedCardElement(null);
+      }
+    };
+
+    const handleMouseUp = (e: MouseEvent) => {
+      if (isDraggingCard) {
+        setIsDraggingCard(false);
+        setDraggedCardIndex(null);
+        setDraggedCardElement(null);
+      }
+    };
+
+    const handleTouchEnd = (e: TouchEvent) => {
+      if (isDraggingCard) {
+        setIsDraggingCard(false);
+        setDraggedCardIndex(null);
+        setDraggedCardElement(null);
+      }
+    };
+
+    if (isDraggingCard && draggedCardElement) {
+      document.addEventListener('mousemove', handleMouseMove);
+      document.addEventListener('dragend', handleGlobalDragEnd);
+      document.addEventListener('mouseup', handleMouseUp);
+      document.addEventListener('touchend', handleTouchEnd);
+    } else if (draggedCardElement) {
+      // Clean up styles when drag ends
+      const style = draggedCardElement.style;
+      style.position = '';
+      style.top = '';
+      style.left = '';
+      style.zIndex = '';
+      style.pointerEvents = '';
+    }
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('dragend', handleGlobalDragEnd);
+      document.removeEventListener('mouseup', handleMouseUp);
+      document.removeEventListener('touchend', handleTouchEnd);
+    };
+  }, [isDraggingCard, draggedCardElement]);
+
+  const scheduleCardRearrangeUpdate = (newOrder: Card[]) => {
+    // Cancel existing timer
+    if (rearrangeCardTimerRef.current) {
+      clearTimeout(rearrangeCardTimerRef.current);
+    }
+
+    // Create indices array based on original order
+    const originalHand = state?.self?.hand || [];
+    const indices = newOrder.map(newCard => 
+      originalHand.findIndex(origCard => 
+        origCard.value === newCard.value && origCard.suit === newCard.suit
+      )
+    );
+
+    // Set new 6-second timer
+    rearrangeCardTimerRef.current = setTimeout(() => {
+      rearrangeHand(game_id!, indices).catch(error => {
+        console.error('Failed to rearrange hand:', error);
+        // Revert to original order on error
+        setLocalHandOrder(originalHand);
+      });
+    }, 6000);
+  };
+
+  const handleCardDragStart = (e: React.DragEvent, index: number) => {
+    
+    // Cancel any pending rearrange update since user is still actively dragging
+    if (rearrangeCardTimerRef.current) {
+      clearTimeout(rearrangeCardTimerRef.current);
+      rearrangeCardTimerRef.current = null;
+    }
+
+    e.dataTransfer.setData('text/plain', '');
+    setIsDraggingCard(true);
+    setDraggedCardIndex(index);
+    setDraggedCardElement(e.currentTarget as HTMLElement);
+    e.dataTransfer.effectAllowed = 'move';
+    
+  };
+
+  const handleCardDragEnd = (e: React.DragEvent) => {
+    
+    if (!isDraggingCard || draggedCardIndex === null) {
+      return;
+    }
+    
+    setIsDraggingCard(false);
+    
+    // Reset drag state
+    setDraggedCardIndex(null);
+    setDraggedCardElement(null);
+    
+    // Reset element styles
+    const element = e.currentTarget as HTMLElement;
+    element.style.position = '';
+    element.style.top = '';
+    element.style.left = '';
+    element.style.zIndex = '';
+    
+  };
+
+  const handleCardDragOver = (e: React.DragEvent, index: number) => {
+    if (!isDraggingCard || draggedCardIndex === null) return;
+
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+
+    if (index !== draggedCardIndex) {
+      const newOrder = [...localHandOrder];
+      const draggedCard = newOrder[draggedCardIndex];
+
+      // Remove dragged card from current position
+      newOrder.splice(draggedCardIndex, 1);
+
+      // Insert at new position
+      newOrder.splice(index, 0, draggedCard);
+
+      setLocalHandOrder(newOrder);
+      setDraggedCardIndex(index);
+      scheduleCardRearrangeUpdate(newOrder);
+    }
+  };
+
+  const handleCardDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    // Actual drop logic handled in handleCardDragEnd
+  };
 
   if (!state || !state.players || !state.players.length) {
     return <div>Loading...</div>;
@@ -180,7 +365,6 @@ export const GameDisplay = () => {
                 isDefending ? (
                   <>
                     <button style={{ width: '60px', height: '50px' }} onClick={() => {
-                      console.log(selectedCards);
                       pass(selectedCards).then(() => {
                         setSelectedCards([]);
                       }).catch((e) => {
@@ -233,23 +417,59 @@ export const GameDisplay = () => {
           <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
 
             {
-              state.self ? state.self.hand.map((card) => {
-                const style = selectedCards.includes(card) ? { border: '3px solid red' } : { border: '1px solid black' };
+              state.self ? localHandOrder.map((card, index) => {
+                const isSelected = selectedCards.some(selectedCard => 
+                  selectedCard.value === card.value && selectedCard.suit === card.suit
+                );
+                const isDragging = isDraggingCard && draggedCardIndex === index;
+                const style = isSelected ? { border: '3px solid red' } : { border: '1px solid black' };
+                
                 return (
                   <div
                     key={'' + card.value + card.suit}
-                    // oh boy we're going to have fun with zindex
-                    style={{ ...style, zIndex: 1000, backgroundColor: 'white', width: '40px', height: '70px', borderRadius: '5px', display: 'flex', justifyContent: 'center', alignItems: 'center' }}
+                    draggable={true}
+                    onDragStart={(e) => handleCardDragStart(e, index)}
+                    onDragOver={(e) => handleCardDragOver(e, index)}
+                    onDrop={handleCardDrop}
+                    onDragEnd={handleCardDragEnd}
+                    style={{ 
+                      ...style, 
+                      zIndex: isDragging ? 1500 : 1000, 
+                      backgroundColor: 'white', 
+                      width: '40px', 
+                      height: '70px', 
+                      borderRadius: '5px', 
+                      display: 'flex', 
+                      justifyContent: 'center', 
+                      alignItems: 'center',
+                      opacity: isDragging ? 0.3 : 1,
+                      transition: isDragging ? 'none' : 'all 0.2s ease',
+                      transform: isDragging ? 'scale(1.05)' : 'scale(1)',
+                      position: 'relative',
+                      pointerEvents: isDragging ? 'none' : 'auto',
+                      cursor: 'move'
+                    }}
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (selectedCards.includes(card)) {
-                        setSelectedCards([...selectedCards].filter(c => c !== card));
+                      if (isSelected) {
+                        setSelectedCards(selectedCards.filter(c => !(c.value === card.value && c.suit === card.suit)));
                       } else {
                         setSelectedCards([...selectedCards, card]);
                       }
                     }}
                   >
-                    <p>{VALUE_MAP[card.value] + SUIT_MAP[card.suit]}</p>
+                    {/* Invisible overlay to prevent text selection during drag operations */}
+                    <div style={{
+                      position: 'absolute',
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      zIndex: 1600,
+                      pointerEvents: isDraggingCard ? 'auto' : 'none',
+                      userSelect: 'none'
+                    }} />
+                    <p style={{ zIndex: 10 }}>{VALUE_MAP[card.value] + SUIT_MAP[card.suit]}</p>
                   </div>
                 )
               }) : <p style={{ color: 'white', fontSize: '18px' }}>Spectating</p>
