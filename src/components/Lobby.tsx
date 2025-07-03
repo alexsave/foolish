@@ -30,16 +30,15 @@ export const Lobby = () => {
     const qrUrl = `www.${WEBSITE_DOMAIN}/${game_id}`.toUpperCase();
 
     return (
-        <div>
-            <h1>Lobby</h1>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%', width: '100%' }}>
+            <h1>{game.name}</h1>
             <h2>Game ID: {game_id}</h2>
             <div style={{ marginBottom: '20px' }}>
-                <h3>Join via QR Code:</h3>
-                <QRCodeSVG value={qrUrl} size={200} />
+                <QRCodeSVG value={qrUrl} size={200} fgColor="rgb(152, 38, 33)" bgColor="rgb(255, 255, 255)" />
             </div>
             {
                 game.players.map((player: PublicPlayer) => (
-                    <div key={player.id} style={{ display: 'flex', flexDirection: 'row', gap: '10px', color: 'white', backgroundColor: 'black' }}>
+                    <div key={player.id} style={{ display: 'flex', flexDirection: 'row', gap: '10px', color: 'white' }}>
                         <p>{player.name}</p>
                         <p>{player.status !== 'idle' ? '🟢' : 
                         player.id === user_id ? <button onClick={() => {
@@ -48,9 +47,6 @@ export const Lobby = () => {
                     </div>
                 ))
             }
-            <button disabled={game.status === 'waiting'} onClick={() => {
-                loadGame(game_id!).then(() => navigate(`/game/${game_id}`));
-            }}>Enter Game</button>
         </div>
     );
 };
