@@ -10,7 +10,7 @@ import { useAuth } from "../contexts/AuthContext";
 import { PublicPlayer } from "../common/types";
 
 export const Lobby = () => {
-    const { game_id } = useParams();
+    const game_id = useParams().game_id?.toLowerCase();
     const { user_id } = useAuth();
     const { startGame, game, loadGame } = useServer();
     const navigate = useNavigate();
@@ -26,13 +26,16 @@ export const Lobby = () => {
     if (!game) {
         return <div>Loading...</div>;
     }
+
+    const qrUrl = `www.${WEBSITE_DOMAIN}/${game_id}`.toUpperCase();
+
     return (
         <div>
             <h1>Lobby</h1>
             <h2>Game ID: {game_id}</h2>
             <div style={{ marginBottom: '20px' }}>
                 <h3>Join via QR Code:</h3>
-                <QRCodeSVG value={`www.${WEBSITE_DOMAIN}/${game_id}`} size={200} />
+                <QRCodeSVG value={qrUrl} size={200} />
             </div>
             {
                 game.players.map((player: PublicPlayer) => (

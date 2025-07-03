@@ -14,7 +14,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
     const {user} = useAuth()
 
-    const url_game_id = useParams().game_id;
+    const url_game_id = useParams().game_id?.toLowerCase();
     // keep a state of games
     // maybe ref idk
     const [games, setGames] = useState<{[key: string]: (PersonalGame)}>({});
@@ -298,6 +298,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         });
     };
 
+    // Hmm loading the url should add the player to the game.
+
     const loadGame = (gameId: string): Promise<{ game_id: string }> => {
         const promise = new Promise<{game_id: string}>((resolve, reject) => {
             supabase.functions.invoke('status', {
@@ -308,8 +310,15 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 resolve({game_id: data.data.game.id});  
                 setGameId(data.data.game.id);
                 setGames(prev => ({...prev, [data.data.game.id]: mergeGameData(data.data.game.id, data.data.game, prev)}));
-                // Subscribe to the game's channel
-                subscribeToGame(data.data.game.id).catch(console.error);
+                
+                // If player is not in the game and game is waiting, automatically join
+                if (!data.data.game.self && data.data.game.status === 'waiting') {
+                    console.log('Auto-joining game in waiting status');
+                    joinGame(gameId).catch(console.error);
+                } else {
+                    // Subscribe to the game's channel for updates
+                    subscribeToGame(data.data.game.id).catch(console.error);
+                }
             }).catch(error => {
                 reject(error);
             });

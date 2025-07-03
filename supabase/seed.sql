@@ -121,14 +121,10 @@ ALTER TABLE chat_messages ENABLE ROW LEVEL SECURITY;
 -- RLS POLICIES: Security-first approach
 -- =============================================================================
 
--- Games: Players can view games they're in (PUBLIC DATA ONLY - no sensitive info)
-CREATE POLICY "Users can view games they're in" ON games
-  FOR SELECT USING (
-    id IN (
-      SELECT game_id FROM player_hands 
-      WHERE player_id = auth.uid()
-    )
-  );
+-- Games: Anyone can view games (PUBLIC DATA ONLY - no sensitive info)
+-- This allows users to join games or spectate without being in the game first
+CREATE POLICY "Anyone can view games" ON games
+  FOR SELECT USING (true);
 
 CREATE POLICY "Anyone can create games" ON games
   FOR INSERT WITH CHECK (true);

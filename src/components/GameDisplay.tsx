@@ -33,7 +33,7 @@ const VALUE_MAP: Record<number, string> = {
 export const GameDisplay = () => {
   const { user_id } = useAuth();
   const { game, attack, game_id, pass, pickup, setGameIdFromUrl, loadGame, cover, good } = useServer();
-  const { game_id: urlGameId } = useParams();
+  const urlGameId = useParams().game_id?.toLowerCase() || null;
   const state = game as PersonalGame;
   const [selectedCards, setSelectedCards] = useState<Card[]>([]);
 
@@ -106,6 +106,9 @@ export const GameDisplay = () => {
       {/* SVG overlay for arrows */}
       <svg style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 500 }}>
         {Array.from(coverMap.entries()).map(([coveringCard, coveredCard], index) => {
+          // Skip if spectator (no self)
+          if (!state.self) return null;
+          
           // Find the position of the covering card (in hand)
           const handCardIndex = state.self.hand.findIndex(card =>
             card.value === coveringCard.value && card.suit === coveringCard.suit
@@ -171,7 +174,7 @@ export const GameDisplay = () => {
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', position: 'absolute', bottom: '10px', left: '0px', right: '0px', justifyContent: 'end', alignItems: 'center', height: '200px' }}>
           {
-            selectedCards.length > 0 && <div style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)', zIndex: 999, height: '50px '}}>
+            state.self && selectedCards.length > 0 && <div style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)', zIndex: 999, height: '50px '}}>
 
               {
                 isDefending ? (
@@ -230,7 +233,7 @@ export const GameDisplay = () => {
           <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
 
             {
-              state.self.hand.map((card) => {
+              state.self ? state.self.hand.map((card) => {
                 const style = selectedCards.includes(card) ? { border: '3px solid red' } : { border: '1px solid black' };
                 return (
                   <div
@@ -249,7 +252,7 @@ export const GameDisplay = () => {
                     <p>{VALUE_MAP[card.value] + SUIT_MAP[card.suit]}</p>
                   </div>
                 )
-              })
+              }) : <p style={{ color: 'white', fontSize: '18px' }}>Spectating</p>
             }
           </div>
 
