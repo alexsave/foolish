@@ -317,7 +317,22 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                     joinGame(gameId).catch(console.error);
                 } else {
                     // Subscribe to the game's channel for updates
-                    subscribeToGame(data.data.game.id).catch(console.error);
+                    //subscribeToGame(data.data.game.id).catch(console.error);
+                    // it's a different channel from the gu
+                    const gameChannel = supabase.channel(`game-${gameId}`, {
+                        config: { private: true }
+                    });
+                    gameChannel.on('broadcast', { event: 'game_update' }, (payload) => {
+                        console.log('Game update received:', payload);
+                        handleGameMessage(payload.payload);
+                    });
+                    gameChannel.subscribe((status, err) => {
+                        if (status === 'SUBSCRIBED') {
+                            console.log('Connected to game channel:', `game-${gameId}`);
+                        } else {
+                            console.error('Game channel error:', err);
+                        }
+                    });
                 }
             }).catch(error => {
                 reject(error);
