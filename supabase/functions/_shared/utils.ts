@@ -96,7 +96,7 @@ export const personalize_game = (game: Game, player_id: string): PersonalGame =>
 }
 
 // =============================================================================
-// NEW DATABASE HELPER FUNCTIONS FOR SEPARATED SCHEMA - Using JOINs
+// DATABASE HELPER FUNCTIONS FOR SEPARATED SCHEMA - Using JOINs
 // =============================================================================
 
 // Load complete game state from separated tables using efficient JOINs
@@ -140,7 +140,7 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
         currently_attacked: data.currently_attacked,
         table_battles: data.table_battles,
     }
-    // it is already complete. Game type def is wrong
+    
     return game;
     /*
 
@@ -186,12 +186,11 @@ export const saveCompleteGame = async (game: Game): Promise<any> => {
         name: player.name,
         id: player.id,
         status: player.status,
-        // TODO: find a better way
         hand_length: player.hand.length
     }));
 
     const publicGame: PublicGame = {
-        id: game.id,// will this mess with it?
+        id: game.id,
         name: game.name || 'Untitled Game',
         deck_length: game.deck.length,
         flipped: game.flipped,
@@ -227,7 +226,6 @@ export const saveCompleteGame = async (game: Game): Promise<any> => {
         await supabaseClient
             .from('player_hands')
             .upsert(handUpdates);
-
     }
 
     // dumb? maybe

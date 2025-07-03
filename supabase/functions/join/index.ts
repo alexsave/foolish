@@ -17,29 +17,27 @@ serve(wrap400(async (user, user_name, body) => {
     // We have to load the game no matter what
     const game: Game = await loadCompleteGame(game_id);
 
-    // Check if player is already in game
-    const { data: player_games, error: player_gamesError } = await supabaseClient
-        .from('player_games')
+    // Check if player is already in game by checking player_hands
+    const { data: player_hand, error: player_handError } = await supabaseClient
+        .from('player_hands')
         .select('*')
         .eq('game_id', game_id)
         .eq('player_id', user_id)
         .single();
 
-    if (!player_gamesError && player_games) {
-        // because of how we filter, if this is not here, then the player is not in the game
-        // going tto assume that player_games is also set correctly
+    if (!player_handError && player_hand) {
+        // Player is already in the game
         // quiet return, don't worry about it
         return {
             game: personalize_game(game, user_id)
         };
     }
 
-
     if (game.status !== GAME_STATUS.WAITING) {
         throw new Error(`Game ${game_id} is not waiting for players, wait for next game`);
     }
 
-    // maybe move this to start function
+    // Create new player
     const publicPlayer: Player = {
         name: user_name,
         id: user_id,
@@ -50,13 +48,7 @@ serve(wrap400(async (user, user_name, body) => {
     // Add new player to game
     game.players.push(publicPlayer);
 
-    // Add player-game relationship FIRST
-    await supabaseClient.from('player_games').insert({
-        player_id: user_id,
-        game_id: game_id
-    });
-    
-    // Then save to database - this handles all separated tables
+    // Save to database - this handles all simplified tables
     await saveCompleteGame(game);
 
     // Send broadcast notification

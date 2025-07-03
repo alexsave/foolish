@@ -144,7 +144,6 @@ export interface PrivatePlayer {
 export interface PublicGame {
     id: string;
     name: string;
-    // TODO see if there is a better way to keep this val in sync without exposing deck
     deck_length: number;
     flipped: Card | null;
     players: PublicPlayer[];
@@ -162,12 +161,11 @@ export interface PersonalGame extends PublicGame {
 
 // I don't like game_decks.deck either but security is more important
 // Full game for working with game logic
-// fuck it, complete game. easier to work with
+// Complete game with deck generated on-demand for game logic
 export interface Game {
     id: string;
     name: string;
-    // TODO see if there is a better way to keep this val in sync without exposing deck
-    deck: Card[]
+    deck: Card[];
     flipped: Card | null;
     players: Player[];
     status: GameStatus;

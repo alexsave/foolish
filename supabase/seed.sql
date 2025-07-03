@@ -18,7 +18,6 @@ DROP FUNCTION IF EXISTS get_user_games(UUID) CASCADE;
 DROP TABLE IF EXISTS chat_messages CASCADE;
 DROP TABLE IF EXISTS player_hands CASCADE;
 DROP TABLE IF EXISTS game_decks CASCADE;
-DROP TABLE IF EXISTS player_games CASCADE;
 DROP TABLE IF EXISTS games CASCADE;
 
 -- Drop custom types
@@ -75,22 +74,15 @@ CREATE TABLE game_decks (
 );
 
 -- Player hands table - SENSITIVE: Players can only see their own hands
+-- This table also serves as the player-game relationship table
 CREATE TABLE player_hands (
   game_id TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
   player_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   hand JSONB NOT NULL DEFAULT '[]'::jsonb, -- Card[] - player's cards
+  joined_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   PRIMARY KEY (game_id, player_id) -- One hand per player per game
-);
-
--- Junction table for player-game relationships
-CREATE TABLE player_games (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  player_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  game_id TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
-  joined_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  UNIQUE(player_id, game_id)
 );
 
 -- Chat messages table
@@ -112,8 +104,6 @@ CREATE INDEX idx_games_name ON games(name);
 CREATE INDEX idx_game_decks_game_id ON game_decks(game_id);
 CREATE INDEX idx_player_hands_game_id ON player_hands(game_id);
 CREATE INDEX idx_player_hands_player_id ON player_hands(player_id);
-CREATE INDEX idx_player_games_player_id ON player_games(player_id);
-CREATE INDEX idx_player_games_game_id ON player_games(game_id);
 CREATE INDEX idx_chat_messages_game_id ON chat_messages(game_id);
 CREATE INDEX idx_chat_messages_user_id ON chat_messages(user_id);
 CREATE INDEX idx_chat_messages_created_at ON chat_messages(created_at);
@@ -125,7 +115,6 @@ CREATE INDEX idx_chat_messages_created_at ON chat_messages(created_at);
 ALTER TABLE games ENABLE ROW LEVEL SECURITY;
 ALTER TABLE game_decks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE player_hands ENABLE ROW LEVEL SECURITY;
-ALTER TABLE player_games ENABLE ROW LEVEL SECURITY;
 ALTER TABLE chat_messages ENABLE ROW LEVEL SECURITY;
 
 -- =============================================================================
@@ -136,7 +125,7 @@ ALTER TABLE chat_messages ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Users can view games they're in" ON games
   FOR SELECT USING (
     id IN (
-      SELECT game_id FROM player_games 
+      SELECT game_id FROM player_hands 
       WHERE player_id = auth.uid()
     )
   );
@@ -147,7 +136,7 @@ CREATE POLICY "Anyone can create games" ON games
 CREATE POLICY "Players can update games they're in" ON games
   FOR UPDATE USING (
     id IN (
-      SELECT game_id FROM player_games 
+      SELECT game_id FROM player_hands 
       WHERE player_id = auth.uid()
     )
   );
@@ -160,24 +149,20 @@ CREATE POLICY "Only service role can access game decks" ON game_decks
 CREATE POLICY "Players can view own hand only" ON player_hands
   FOR SELECT USING (player_id = auth.uid());
 
-CREATE POLICY "Service role can manage all hands" ON player_hands
-  FOR ALL USING (auth.role() = 'service_role');
-
--- Player-games: Players can view their own relationships
-CREATE POLICY "Users can view their game memberships" ON player_games
-  FOR SELECT USING (player_id = auth.uid());
-
-CREATE POLICY "Users can join games" ON player_games
+CREATE POLICY "Players can join games" ON player_hands
   FOR INSERT WITH CHECK (player_id = auth.uid());
 
-CREATE POLICY "Users can leave games" ON player_games
+CREATE POLICY "Players can leave games" ON player_hands
   FOR DELETE USING (player_id = auth.uid());
+
+CREATE POLICY "Service role can manage all hands" ON player_hands
+  FOR ALL USING (auth.role() = 'service_role');
 
 -- Chat messages: Players can view messages for games they're in
 CREATE POLICY "Players can view chat messages for their games" ON chat_messages
   FOR SELECT USING (
     game_id IN (
-      SELECT game_id FROM player_games 
+      SELECT game_id FROM player_hands 
       WHERE player_id = auth.uid()
     )
   );
@@ -185,7 +170,7 @@ CREATE POLICY "Players can view chat messages for their games" ON chat_messages
 CREATE POLICY "Players can send chat messages to their games" ON chat_messages
   FOR INSERT WITH CHECK (
     game_id IN (
-      SELECT game_id FROM player_games 
+      SELECT game_id FROM player_hands 
       WHERE player_id = auth.uid()
     ) AND user_id = auth.uid()
   );
@@ -219,12 +204,12 @@ BEGIN
     g.id as game_id, 
     g.name as game_name,
     g.status as game_status,
-    g.deck_length as deck_length,
     jsonb_array_length(g.players) as player_count,
+    g.deck_length as deck_length,
     g.created_at
   FROM games g
-  INNER JOIN player_games pg ON g.id = pg.game_id
-  WHERE pg.player_id = user_id_param
+  INNER JOIN player_hands ph ON g.id = ph.game_id
+  WHERE ph.player_id = user_id_param
   ORDER BY g.created_at DESC;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
@@ -290,7 +275,7 @@ TO authenticated
 USING (
   EXISTS (
     SELECT 1
-    FROM player_games
+    FROM player_hands
     WHERE 
       player_id = auth.uid()
       AND game_id = REPLACE((SELECT realtime.topic()), 'game-', '')
@@ -305,7 +290,7 @@ TO authenticated
 WITH CHECK (
   EXISTS (
     SELECT 1
-    FROM player_games
+    FROM player_hands
     WHERE 
       player_id = auth.uid()
       AND game_id = REPLACE((SELECT realtime.topic()), 'game-', '')
@@ -347,7 +332,7 @@ USING (
   -- Extract game_id and verify user is in that game
   EXISTS (
     SELECT 1
-    FROM player_games
+    FROM player_hands
     WHERE 
       player_id = auth.uid()
       AND game_id = split_part((SELECT realtime.topic()), '-', 2)
@@ -366,7 +351,7 @@ WITH CHECK (
   -- Extract game_id and verify user is in that game
   EXISTS (
     SELECT 1
-    FROM player_games
+    FROM player_hands
     WHERE 
       player_id = auth.uid()
       AND game_id = split_part((SELECT realtime.topic()), '-', 2)

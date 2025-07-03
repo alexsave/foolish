@@ -35,23 +35,17 @@ serve(wrap400(async (user, user_name, body) => {
         table_battles: []
     };
 
-    // CRITICAL: Insert into databases in correct order
+    // Insert into separated schema - removed player_games but kept game_decks
     // 1. Games table (public data only)
     await supabaseClient.from('games').insert(publicGameData);
     
-    // 2. Player-games relationship
-    await supabaseClient.from('player_games').insert({
-        player_id: user_id,
-        game_id: game_id
-    });
-
-    // 3. Initialize empty deck (will be filled when game starts)
+    // 2. Initialize empty deck (will be filled when game starts)
     await supabaseClient.from('game_decks').insert({
         game_id: game_id,
         deck: []
     });
 
-    // 4. Initialize empty hand for creator
+    // 3. Initialize empty hand for creator (also serves as player-game relationship)
     await supabaseClient.from('player_hands').insert({
         game_id: game_id,
         player_id: user_id,
@@ -59,8 +53,6 @@ serve(wrap400(async (user, user_name, body) => {
     });
 
     // Load complete game state from separated tables
-    // We could just make this without loading, but I want to see what it looks like first
-    // TODO: see if we can speed this up
     const dbGameData: Game = await loadCompleteGame(game_id);
 
     // Send broadcast notification asynchronously (non-blocking)
