@@ -30,8 +30,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     // very important for making requests
     const [player_id, setPlayerId] = useState<string | null>(null);
 
-    //useref websocket for sure
-    const webSocketRef = useRef<WebSocket | null>(null);
     
     // Use ref to avoid closure issues in WebSocket handler
     const gameIdRef = useRef<string | null>(null);
@@ -71,9 +69,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
         // cleanup realtime subscriptions
         return () => {
-            if (webSocketRef.current) {
-                webSocketRef.current.close();
-            }
             // Remove all realtime subscriptions
             supabase.removeAllChannels();
         };
