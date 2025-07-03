@@ -3,6 +3,8 @@ import { Card, Game, GAME_STATUS, Player, PLAYER_STATUS, PersonalGame, SERVER_EV
 import { ACE_VALUE, CARDS_PER_PLAYER, SUITS, START_VALUE, VALUE_MAP, SUIT_MAP } from './constants.ts';
 import { createClient, User } from 'jsr:@supabase/supabase-js';
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
+import { emailToName } from './common_utils.ts';
+import { getAuthenticatedUser } from './auth.ts';
 
 const supabaseClient = createClient(
     Deno.env.get('SUPABASE_URL') || '',
@@ -18,15 +20,17 @@ export const wrap400 = (execute: (user: User, user_name: string, body: any) => P
         if (corsResponse) return corsResponse;
 
         // Get authenticated user
-        const { getAuthenticatedUser } = await import('./auth.ts');
         const user: User = await getAuthenticatedUser(req);
 
         // Get user name from email
-        const { emailToName } = await import('./common_utils.ts');
         const user_name = emailToName(user.email);
 
         // Parse JSON body
-        const body = await req.json();
+        let body = {};
+        try {
+            body = await req.json();
+        } catch (e) {}
+        // If JSON parsing fails, keep empty object
 
         const result = await execute(user, user_name, body);
 
