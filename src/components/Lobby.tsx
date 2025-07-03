@@ -39,10 +39,20 @@ export const Lobby = () => {
     };
 
     const handleSaveName = () => {
-        if (editingName.trim() && editingName.trim() !== game.name) {
+        const trimmedName = editingName.trim();
+        
+        // Client-side validation: Check unicode character count
+        if (trimmedName && Array.from(trimmedName).length > 20) {
+            setIsEditingName(false);
+            setEditingName('');
+            return;
+        }
+        
+        if (trimmedName && trimmedName !== game.name) {
             // Fire and forget - optimistic update handles UI immediately
-            updateGameName(game_id!, editingName.trim()).catch(error => {
+            updateGameName(game_id!, trimmedName).catch(error => {
                 console.error('Failed to update game name:', error);
+                // You might want to show user-friendly error message here
             });
         }
         // Always exit editing mode immediately

@@ -18,6 +18,12 @@ serve(wrap400(async (user, user_name, body) => {
         throw new Error('Game name cannot be empty');
     }
 
+    // Server-side validation: Check unicode character count
+    const trimmedName = name.trim();
+    if (Array.from(trimmedName).length > 20) {
+        throw new Error('Game name must be 20 characters or less');
+    }
+
     // Load the complete game
     const game: Game = await loadCompleteGame(game_id);
 
@@ -33,7 +39,7 @@ serve(wrap400(async (user, user_name, body) => {
     }
 
     // Update the game name
-    game.name = name.trim();
+    game.name = trimmedName;
 
     // Save the updated game
     await saveCompleteGame(game);
@@ -41,7 +47,7 @@ serve(wrap400(async (user, user_name, body) => {
     // Send broadcast notification
     broadcastToGameUsers(game, 'game_update', {
         type: SERVER_EVENT_TYPE.GAME_NAME_UPDATED,
-        message: `Game name updated to "${name}" by ${user_name}`
+        message: `Game name updated to "${trimmedName}" by ${user_name}`
     });
 
     return {
