@@ -1,15 +1,13 @@
 import './App.css';
 import { AuthProvider } from './contexts/AuthContext';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Welcome } from './components/Welcome';
 import { Login } from './components/Login';
 import { Tutorial } from './components/Tutorial';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { Dashboard } from './components/Dashboard';
-import { Lobby } from './components/Lobby';
-import { GameDisplay } from './components/GameDisplay';
+import { GameView } from './components/GameView';
 import { UnprotectedRoute } from './components/UnprotectedRoute';
-
 
 function App() {
   return (
@@ -36,14 +34,11 @@ function App() {
             } />
             <Route path="/:game_id" element={
               <ProtectedRoute>
-                <Lobby />
+                <GameView />
               </ProtectedRoute>
             } />
-            <Route path="/game/:game_id" element={
-              <ProtectedRoute>
-                <GameDisplay />
-              </ProtectedRoute>
-            } />
+            {/* Catch-all route for unmatched paths - redirect to dashboard */}
+            <Route path="*" element={<Navigate to="/dashboard" replace />} />
 
           </Routes>
         </AuthProvider>

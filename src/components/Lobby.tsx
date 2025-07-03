@@ -1,5 +1,4 @@
 // this will listen on a different channel than the main game one. I think
-import { useNavigate } from "react-router-dom";
 // or at least the UI is different enough we can have a different route
 import { useServer } from "../contexts/ServerContext";
 import { useParams } from "react-router-dom";
@@ -12,8 +11,7 @@ import { PublicPlayer } from "../common/types";
 export const Lobby = () => {
     const game_id = useParams().game_id?.toLowerCase();
     const { user_id } = useAuth();
-    const { startGame, game, loadGame, updateGameName, rearrangePlayer } = useServer();
-    const navigate = useNavigate();
+    const { startGame, game, updateGameName, rearrangePlayer } = useServer();
     
     const [isEditingName, setIsEditingName] = useState(false);
     const [editingName, setEditingName] = useState('');
@@ -29,15 +27,6 @@ export const Lobby = () => {
     const rearrangeTimerRef = useRef<NodeJS.Timeout | null>(null);
     const inputRef = useRef<HTMLInputElement>(null);
     
-    // Automatically navigate when game status is no longer waiting
-    useEffect(() => {
-        if (game && game.status !== 'waiting') {
-            loadGame(game_id!).then(() => navigate(`/game/${game_id}`)).catch(error => {
-                console.log('Game not found when navigating from lobby:', error.message);
-            });
-        }
-    }, [game?.status, game_id, loadGame, navigate]);
-
     // Update local player order when game changes
     useEffect(() => {
         if (game?.players) {

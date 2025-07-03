@@ -20,7 +20,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
     //const [user, setUser] = useState(null);
     const [loading, setLoading] = useState(true);
-
+    const [gameLoadError, setGameLoadError] = useState<string | null>(null);
 
     const [game_id, setGameId] = useState<string | null>(null);
     // get game id from url
@@ -37,10 +37,11 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         //const game_id = use
         if (url_game_id) {
             setGameId(url_game_id);
+            setGameLoadError(null); // Clear any previous errors
             if (!games[url_game_id]) {
                 loadGame(url_game_id).catch(error => {
                     console.log('Game not found in URL:', error.message);
-                    // Error is handled by individual components that call loadGame
+                    setGameLoadError(url_game_id); // Set error for this specific game
                 });
             } else {
             }
@@ -630,7 +631,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             getUserGames,
             updateGameName,
             rearrangePlayer,
-            rearrangeHand
+            rearrangeHand,
+            gameLoadError
         }}>
             {children}
         </ServerContext.Provider>
@@ -656,6 +658,7 @@ interface ServerContextType {
     updateGameName: (gameId: string, name: string) => Promise<{ game_id: string }>;
     rearrangePlayer: (gameId: string, playerIndices: number[]) => Promise<{ game_id: string }>;
     rearrangeHand: (gameId: string, cardIndices: number[]) => Promise<{ game_id: string }>;
+    gameLoadError: string | null;
 }
 
 export const useServer = () => {
