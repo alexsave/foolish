@@ -328,6 +328,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                         console.log('Auto-joining game in waiting status');
                         joinGame(gameId).catch(console.error);
                     } else {
+                       supabase.realtime.setAuth().then(() => {
                         const gameChannel = supabase.channel(`game-${gameId}`, {
                             config: { private: true }
                         });
@@ -340,7 +341,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                                 console.log('Connected to game channel:', `game-${gameId}`);
                             } else {
                                 console.error('Game channel error:', err);
-                            }
+                                }
+                            });
                         });
                     }
                 }

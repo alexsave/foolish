@@ -253,46 +253,24 @@ ALTER TABLE IF EXISTS realtime.messages ENABLE ROW LEVEL SECURITY;
 
 -- Drop existing policies if they exist
 DROP POLICY IF EXISTS "authenticated can receive game broadcasts" ON "realtime"."messages";
-DROP POLICY IF EXISTS "authenticated can send game broadcasts" ON "realtime"."messages";
 DROP POLICY IF EXISTS "authenticated can receive private messages" ON "realtime"."messages";
 DROP POLICY IF EXISTS "authenticated can send private messages" ON "realtime"."messages";
 DROP POLICY IF EXISTS "authenticated can receive game-user messages" ON "realtime"."messages";
-DROP POLICY IF EXISTS "authenticated can send game-user messages" ON "realtime"."messages";
 DROP POLICY IF EXISTS "service role can send game broadcasts" ON "realtime"."messages";
 DROP POLICY IF EXISTS "service role can send private messages" ON "realtime"."messages";
 DROP POLICY IF EXISTS "service role can send game-user messages" ON "realtime"."messages";
 
 -- Policy for public game channels (topic: game-{game_id})
--- Players can read messages from games they're in
+-- Anyone can read game broadcasts since it's public information
 CREATE POLICY "authenticated can receive game broadcasts"
 ON "realtime"."messages"
 FOR SELECT
 TO authenticated
 USING (
-  EXISTS (
-    SELECT 1
-    FROM player_hands
-    WHERE 
-      player_id = auth.uid()
-      AND game_id = REPLACE((SELECT realtime.topic()), 'game-', '')
-      AND realtime.messages.extension IN ('broadcast')
-  )
+  (SELECT realtime.topic()) LIKE 'game-%'
+  AND realtime.messages.extension IN ('broadcast')
 );
 
-CREATE POLICY "authenticated can send game broadcasts"
-ON "realtime"."messages"
-FOR INSERT
-TO authenticated
-WITH CHECK (
-  EXISTS (
-    SELECT 1
-    FROM player_hands
-    WHERE 
-      player_id = auth.uid()
-      AND game_id = REPLACE((SELECT realtime.topic()), 'game-', '')
-      AND realtime.messages.extension IN ('broadcast')
-  )
-);
 
 -- Policy for private user channels (topic: user-{email_prefix})
 -- Users can read messages sent to them  
@@ -336,26 +314,7 @@ USING (
   realtime.messages.extension IN ('broadcast')
 );
 
-CREATE POLICY "authenticated can send game-user messages"
-ON "realtime"."messages"
-FOR INSERT
-TO authenticated
-WITH CHECK (
-  (SELECT realtime.topic()) LIKE 'gu-%' AND
-  -- Extract username from topic and verify it matches current user
-  split_part((SELECT realtime.topic()), '-', 3) = split_part((current_setting('request.jwt.claims', true)::jsonb ->> 'email'), '@', 1) AND
-  -- Extract game_id and verify user is in that game
-  EXISTS (
-    SELECT 1
-    FROM player_hands
-    WHERE 
-      player_id = auth.uid()
-      AND game_id = split_part((SELECT realtime.topic()), '-', 2)
-  ) AND
-  realtime.messages.extension IN ('broadcast')
-);
-
--- =============================================================================
+-- ===============================
 -- SERVICE ROLE POLICIES FOR SERVER-SIDE FUNCTIONS
 -- Allow Supabase functions to send broadcasts
 -- =============================================================================

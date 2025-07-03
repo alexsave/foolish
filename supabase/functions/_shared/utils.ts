@@ -378,6 +378,18 @@ export const broadcastToGameUsers = async (game: Game, messageType: string, base
 
             await supabaseClient.removeChannel(channel);
         }
+
+        // Send to publicly visible game channel (for spectators)
+        const channel = supabaseClient.channel(`game-${game.id}`, {
+            config: { private: true }
+        });
+        await channel.send({
+            type: 'broadcast',
+            event: messageType,
+            payload: {...baseMessage, game: baseGameState}
+        });
+        await supabaseClient.removeChannel(channel);
+
     } catch (error) {
         console.error('Error broadcasting to game users:', error);
     }
