@@ -13,40 +13,42 @@ import { UnprotectedRoute } from './components/UnprotectedRoute';
 
 function App() {
   return (
-    <BrowserRouter>
-      <AuthProvider>
-        <Routes>
-          <Route path="/" element={
-            <Welcome />
-          } />
-          <Route path="/login" element={
-            <UnprotectedRoute>
-              <Login />
-            </UnprotectedRoute>
-          } />
-          <Route path="/tutorial" element={
-            <Tutorial />
-          } />
+    <div style={{ backgroundColor: '#982621', display: 'flex', height: '100vh' }} >
+      <BrowserRouter>
+        <AuthProvider>
+          <Routes>
+            <Route path="/" element={
+              <Welcome />
+            } />
+            <Route path="/login" element={
+              <UnprotectedRoute>
+                <Login />
+              </UnprotectedRoute>
+            } />
+            <Route path="/tutorial" element={
+              <Tutorial />
+            } />
 
-          <Route path="/dashboard" element={
-            <ProtectedRoute>
-              <Dashboard />
-            </ProtectedRoute>
-          } />
-          <Route path="/:game_id" element={
-            <ProtectedRoute>
-              <Lobby />
-            </ProtectedRoute>
-          } />
-          <Route path="/game/:game_id" element={
-            <ProtectedRoute>
-              <GameDisplay />
-            </ProtectedRoute>
-          } />
+            <Route path="/dashboard" element={
+              <ProtectedRoute>
+                <Dashboard />
+              </ProtectedRoute>
+            } />
+            <Route path="/:game_id" element={
+              <ProtectedRoute>
+                <Lobby />
+              </ProtectedRoute>
+            } />
+            <Route path="/game/:game_id" element={
+              <ProtectedRoute>
+                <GameDisplay />
+              </ProtectedRoute>
+            } />
 
-        </Routes>
-      </AuthProvider>
-    </BrowserRouter>
+          </Routes>
+        </AuthProvider>
+      </BrowserRouter>
+    </div>
   );
 }
 
