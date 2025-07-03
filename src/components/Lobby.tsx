@@ -32,7 +32,9 @@ export const Lobby = () => {
     // Automatically navigate when game status is no longer waiting
     useEffect(() => {
         if (game && game.status !== 'waiting') {
-            loadGame(game_id!).then(() => navigate(`/game/${game_id}`));
+            loadGame(game_id!).then(() => navigate(`/game/${game_id}`)).catch(error => {
+                console.log('Game not found when navigating from lobby:', error.message);
+            });
         }
     }, [game?.status, game_id, loadGame, navigate]);
 

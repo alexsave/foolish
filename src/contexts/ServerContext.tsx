@@ -37,7 +37,10 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         if (url_game_id) {
             setGameId(url_game_id);
             if (!games[url_game_id]) {
-                loadGame(url_game_id);
+                loadGame(url_game_id).catch(error => {
+                    console.log('Game not found in URL:', error.message);
+                    // Error is handled by individual components that call loadGame
+                });
             } else {
             }
         }
@@ -50,7 +53,10 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         if (game_id && player_id) {
             //console.log('game id changed, need to fetch game data');
             // fetch game data. for now it will just be lobby info
-            loadGame(game_id);
+            loadGame(game_id).catch(error => {
+                console.log('Game not found when setting ID:', error.message);
+                // Error is handled by individual components that call loadGame
+            });
 
         }
     }, [game_id]);
@@ -282,6 +288,12 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                     game_id: gameId,
                 }
             }).then(data => {
+                // Check if the response data is valid
+                if (!data.data || !data.data.game) {
+                    reject(new Error('Game not found'));
+                    return;
+                }
+                
                 resolve({game_id: data.data.game.id});  
                 setGameId(data.data.game.id);
                 setGames(prev => ({...prev, [data.data.game.id]: mergeGameData(data.data.game.id, data.data.game, prev)}));
@@ -591,7 +603,10 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             setGameId(gameId);
         }
         if (player_id && game_id) {
-            loadGame(game_id);
+            loadGame(game_id).catch(error => {
+                console.log('Game not found when setting from URL:', error.message);
+                // Error is handled by individual components that call loadGame
+            });
         }
     };
 

@@ -1,7 +1,7 @@
 import { Card, PersonalGame } from '../common/types';
 import React, { useState, useEffect, useRef } from 'react';
 import { useServer } from '../contexts/ServerContext';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
 const SUIT_MAP: Record<number, string> = {
@@ -34,8 +34,11 @@ export const GameDisplay = () => {
   const { user_id } = useAuth();
   const { game, attack, game_id, pass, pickup, setGameIdFromUrl, loadGame, cover, good, rearrangeHand } = useServer();
   const urlGameId = useParams().game_id?.toLowerCase() || null;
+  const navigate = useNavigate();
   const state = game as PersonalGame;
   const [selectedCards, setSelectedCards] = useState<Card[]>([]);
+  const [gameLoadError, setGameLoadError] = useState<boolean>(false);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
 
   const [coverMap, setCoverMap] = useState<Map<Card, Card>>(new Map());
 
@@ -64,9 +67,21 @@ export const GameDisplay = () => {
   useEffect(() => {
     if (urlGameId && urlGameId !== game_id) {
       setGameIdFromUrl(urlGameId);
-      //loadGame(urlGameId);
+      // Try to load the game and handle errors
+      setIsLoading(true);
+      setGameLoadError(false);
+      
+      loadGame(urlGameId).then(() => {
+        setIsLoading(false);
+      }).catch((error) => {
+        console.log('Game not found, redirecting to dashboard:', error.message);
+        setGameLoadError(true);
+        setIsLoading(false);
+        // Redirect to dashboard immediately
+        navigate('/dashboard');
+      });
     }
-  }, [urlGameId, game_id, setGameIdFromUrl, loadGame]);
+  }, [urlGameId, game_id, setGameIdFromUrl, loadGame, navigate]);
 
   // Update local hand order when game changes
   useEffect(() => {
@@ -74,6 +89,13 @@ export const GameDisplay = () => {
       setLocalHandOrder(state.self.hand);
     }
   }, [state?.self?.hand]);
+
+  // Set loading to false when game is loaded
+  useEffect(() => {
+    if (game && urlGameId === game_id) {
+      setIsLoading(false);
+    }
+  }, [game, urlGameId, game_id]);
 
   // Cleanup timer on unmount
   useEffect(() => {
@@ -305,6 +327,17 @@ export const GameDisplay = () => {
     }, 100);
   };
 
+  // Handle loading state
+  if (isLoading) {
+    return <div>Loading...</div>;
+  }
+
+  // Handle error state - game doesn't exist
+  if (gameLoadError) {
+    return <div>Game not found. Redirecting to dashboard...</div>;
+  }
+
+  // Handle missing game data
   if (!state || !state.players || !state.players.length) {
     return <div>Loading...</div>;
   }
