@@ -42,9 +42,31 @@ export const GameDisplay = () => {
   // Enhanced drag and drop state for cards
   const [draggedCardIndex, setDraggedCardIndex] = useState<number | null>(null);
   const [isDraggingCard, setIsDraggingCard] = useState(false);
-  const [draggedCardElement, setDraggedCardElement] = useState<HTMLElement | null>(null);
   const [localHandOrder, setLocalHandOrder] = useState<Card[]>([]);
+  const [dragStartPos, setDragStartPos] = useState<{ x: number; y: number } | null>(null);
+  const [currentDragPos, setCurrentDragPos] = useState<{ x: number; y: number } | null>(null);
+  const [hasSwapped, setHasSwapped] = useState(false);
+  const [isActuallyDragging, setIsActuallyDragging] = useState(false);
+  const [logs, setLogs] = useState<string[]>([]);
+  const [touchStartTime, setTouchStartTime] = useState<number>(0);
   const rearrangeCardTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const addLog = (message: string) => {
+    setLogs(prev => [...prev.slice(-8), `${Date.now() % 10000}: ${message}`]);
+  };
+
+  const handleCardSelection = (card: Card) => {
+    addLog("HANDLE selection");
+    const isSelected = selectedCards.some(selectedCard =>
+      selectedCard.value === card.value && selectedCard.suit === card.suit
+    );
+    
+    if (isSelected) {
+      setSelectedCards(selectedCards.filter(c => !(c.value === card.value && c.suit === card.suit)));
+    } else {
+      setSelectedCards([...selectedCards, card]);
+    }
+  };
 
   useEffect(() => {
     if (urlGameId && urlGameId !== game_id) {
@@ -73,20 +95,20 @@ export const GameDisplay = () => {
   useEffect(() => {
     const preventPageScroll = (e: TouchEvent) => {
       const target = e.target as HTMLElement;
-      
+
       // Allow dragging on draggable elements (cards)
       if (target.closest('[draggable="true"]')) {
         return; // Don't prevent - allow legitimate drag
       }
-      
+
       // Allow interactions on interactive elements (buttons, inputs, or anything with higher z-index)
-      if (target.tagName === 'BUTTON' || 
-          target.tagName === 'INPUT' || 
-          target.closest('input') ||
-          window.getComputedStyle(target).zIndex === '1000') {
+      if (target.tagName === 'BUTTON' ||
+        target.tagName === 'INPUT' ||
+        target.closest('input') ||
+        window.getComputedStyle(target).zIndex === '1000') {
         return; // Don't prevent - allow button clicks and input focus
       }
-      
+
       // Prevent page scrolling/panning on background/text areas
       if (e.touches.length > 1 || (e.touches.length === 1 && e.type === 'touchmove')) {
         e.preventDefault();
@@ -105,65 +127,122 @@ export const GameDisplay = () => {
   // we chose a card to cover WITH, now we choose WHICH card to cover
   const [isSelectingCover, setIsSelectingCover] = useState(false);
 
-  // Enhanced drag behavior with mouse following for cards
+  // Enhanced drag behavior with real-time rearrangement
   useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      if (isDraggingCard && draggedCardElement) {
-        const style = draggedCardElement.style;
-        style.position = 'fixed';
-        style.top = e.clientY - draggedCardElement.clientHeight / 2 + 'px';
-        style.left = e.clientX - draggedCardElement.clientWidth / 2 + 'px';
-        style.zIndex = '1500';
-        style.pointerEvents = 'none';
-      }
-    };
+         const handleMouseMove = (e: MouseEvent) => {
+       if (isDraggingCard && draggedCardIndex !== null) {
+         setCurrentDragPos({ x: e.clientX, y: e.clientY });
 
-    const handleGlobalDragEnd = (e: DragEvent) => {
-      if (isDraggingCard) {
-        setIsDraggingCard(false);
-        setDraggedCardIndex(null);
-        setDraggedCardElement(null);
-      }
-    };
+         // Check if we've moved far enough to consider this actual dragging
+         if (dragStartPos && !isActuallyDragging) {
+           const distance = Math.sqrt(
+             Math.pow(e.clientX - dragStartPos.x, 2) + 
+             Math.pow(e.clientY - dragStartPos.y, 2)
+           );
+           if (distance > 10) { // 10 pixels threshold for actual dragging
+             setIsActuallyDragging(true);
+           }
+         }
+
+         // Only allow swaps when actually dragging (not just tapping)
+         if (isActuallyDragging) {
+           // Find what card we're hovering over for real-time swapping
+           const elements = document.elementsFromPoint(e.clientX, e.clientY);
+           const cardElement = elements.find(el => el.getAttribute('data-card-index') !== null);
+           if (cardElement) {
+             const targetIndex = parseInt(cardElement.getAttribute('data-card-index')!);
+             if (targetIndex !== draggedCardIndex) {
+               // Do immediate swap in the array
+               const newOrder = [...localHandOrder];
+               const draggedCard = newOrder[draggedCardIndex];
+               const targetCard = newOrder[targetIndex];
+               
+               // Swap the cards
+               newOrder[draggedCardIndex] = targetCard;
+               newOrder[targetIndex] = draggedCard;
+               
+               setLocalHandOrder(newOrder);
+               setDraggedCardIndex(targetIndex); // Update dragged index to new position
+               setHasSwapped(true); // Mark that a swap occurred
+               addLog("SWAP mouse");
+             }
+           }
+         }
+       }
+     };
+
+         const handleTouchMove = (e: TouchEvent) => {
+       if (isDraggingCard && draggedCardIndex !== null && e.touches.length > 0) {
+         e.preventDefault();
+         const touch = e.touches[0];
+         setCurrentDragPos({ x: touch.clientX, y: touch.clientY });
+
+         // Check if we've moved far enough to consider this actual dragging
+         if (dragStartPos && !isActuallyDragging) {
+           const distance = Math.sqrt(
+             Math.pow(touch.clientX - dragStartPos.x, 2) + 
+             Math.pow(touch.clientY - dragStartPos.y, 2)
+           );
+           if (distance > 10) { // 10 pixels threshold for actual dragging
+             setIsActuallyDragging(true);
+           }
+         }
+
+         // Only allow swaps when actually dragging (not just tapping)
+         if (isActuallyDragging) {
+           // Find what card we're hovering over for real-time swapping
+           const elements = document.elementsFromPoint(touch.clientX, touch.clientY);
+           const cardElement = elements.find(el => el.getAttribute('data-card-index') !== null);
+           if (cardElement) {
+             const targetIndex = parseInt(cardElement.getAttribute('data-card-index')!);
+             if (targetIndex !== draggedCardIndex) {
+               // Do immediate swap in the array
+               const newOrder = [...localHandOrder];
+               const draggedCard = newOrder[draggedCardIndex];
+               const targetCard = newOrder[targetIndex];
+               
+               // Swap the cards
+               newOrder[draggedCardIndex] = targetCard;
+               newOrder[targetIndex] = draggedCard;
+               
+               setLocalHandOrder(newOrder);
+               setDraggedCardIndex(targetIndex); // Update dragged index to new position
+               setHasSwapped(true); // Mark that a swap occurred
+               addLog("SWAP touch");
+             }
+           }
+         }
+       }
+     };
 
     const handleMouseUp = (e: MouseEvent) => {
       if (isDraggingCard) {
-        setIsDraggingCard(false);
-        setDraggedCardIndex(null);
-        setDraggedCardElement(null);
+        e.preventDefault();
+        endCardDrag();
       }
     };
 
     const handleTouchEnd = (e: TouchEvent) => {
       if (isDraggingCard) {
-        setIsDraggingCard(false);
-        setDraggedCardIndex(null);
-        setDraggedCardElement(null);
+        e.preventDefault();
+        endCardDrag();
       }
     };
 
-    if (isDraggingCard && draggedCardElement) {
+    if (isDraggingCard) {
       document.addEventListener('mousemove', handleMouseMove);
-      document.addEventListener('dragend', handleGlobalDragEnd);
+      document.addEventListener('touchmove', handleTouchMove, { passive: false });
       document.addEventListener('mouseup', handleMouseUp);
       document.addEventListener('touchend', handleTouchEnd);
-    } else if (draggedCardElement) {
-      // Clean up styles when drag ends
-      const style = draggedCardElement.style;
-      style.position = '';
-      style.top = '';
-      style.left = '';
-      style.zIndex = '';
-      style.pointerEvents = '';
     }
 
     return () => {
       document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('dragend', handleGlobalDragEnd);
+      document.removeEventListener('touchmove', handleTouchMove);
       document.removeEventListener('mouseup', handleMouseUp);
       document.removeEventListener('touchend', handleTouchEnd);
     };
-  }, [isDraggingCard, draggedCardElement]);
+     }, [isDraggingCard, draggedCardIndex, localHandOrder, hasSwapped, isActuallyDragging, touchStartTime]);
 
   const scheduleCardRearrangeUpdate = (newOrder: Card[]) => {
     // Cancel existing timer
@@ -173,8 +252,8 @@ export const GameDisplay = () => {
 
     // Create indices array based on original order
     const originalHand = state?.self?.hand || [];
-    const indices = newOrder.map(newCard => 
-      originalHand.findIndex(origCard => 
+    const indices = newOrder.map(newCard =>
+      originalHand.findIndex(origCard =>
         origCard.value === newCard.value && origCard.suit === newCard.suit
       )
     );
@@ -189,68 +268,58 @@ export const GameDisplay = () => {
     }, 6000);
   };
 
-  const handleCardDragStart = (e: React.DragEvent, index: number) => {
-    
+  const startCardDrag = (e: React.MouseEvent | React.TouchEvent, index: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+
     // Cancel any pending rearrange update since user is still actively dragging
     if (rearrangeCardTimerRef.current) {
       clearTimeout(rearrangeCardTimerRef.current);
       rearrangeCardTimerRef.current = null;
     }
 
-    e.dataTransfer.setData('text/plain', '');
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+
     setIsDraggingCard(true);
     setDraggedCardIndex(index);
-    setDraggedCardElement(e.currentTarget as HTMLElement);
-    e.dataTransfer.effectAllowed = 'move';
-    
+    setDragStartPos({ x: clientX, y: clientY });
+    setCurrentDragPos({ x: clientX, y: clientY });
+    setHasSwapped(false);
+    setIsActuallyDragging(false);
+    setTouchStartTime(Date.now());
+    addLog("START drag");
   };
 
-  const handleCardDragEnd = (e: React.DragEvent) => {
-    
-    if (!isDraggingCard || draggedCardIndex === null) {
-      return;
-    }
-    
-    setIsDraggingCard(false);
-    
-    // Reset drag state
-    setDraggedCardIndex(null);
-    setDraggedCardElement(null);
-    
-    // Reset element styles
-    const element = e.currentTarget as HTMLElement;
-    element.style.position = '';
-    element.style.top = '';
-    element.style.left = '';
-    element.style.zIndex = '';
-    
-  };
-
-  const handleCardDragOver = (e: React.DragEvent, index: number) => {
+  const endCardDrag = () => {
     if (!isDraggingCard || draggedCardIndex === null) return;
 
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
+    const touchDuration = Date.now() - touchStartTime;
+    const wasTap = touchDuration < 200 && !hasSwapped && !isActuallyDragging;
+    
+    addLog(`END drag tap:${wasTap} dur:${touchDuration}`);
 
-    if (index !== draggedCardIndex) {
-      const newOrder = [...localHandOrder];
-      const draggedCard = newOrder[draggedCardIndex];
-
-      // Remove dragged card from current position
-      newOrder.splice(draggedCardIndex, 1);
-
-      // Insert at new position
-      newOrder.splice(index, 0, draggedCard);
-
-      setLocalHandOrder(newOrder);
-      setDraggedCardIndex(index);
-      scheduleCardRearrangeUpdate(newOrder);
+    // If this was a tap (not a drag), handle card selection
+    if (wasTap && localHandOrder[draggedCardIndex]) {
+      handleCardSelection(localHandOrder[draggedCardIndex]);
     }
-  };
 
-  const handleCardDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    // Actual drop logic handled in handleCardDragEnd
+    // Schedule the final update to the server with current order
+    if (hasSwapped) {
+      scheduleCardRearrangeUpdate(localHandOrder);
+    }
+
+    setIsDraggingCard(false);
+    setDraggedCardIndex(null);
+    setDragStartPos(null);
+    setCurrentDragPos(null);
+    setIsActuallyDragging(false);
+     
+    // Reset the swap flag after a short delay to prevent immediate click
+    setTimeout(() => {
+      setHasSwapped(false);
+      addLog("RESET hasSwapped");
+    }, 100);
   };
 
   if (!state || !state.players || !state.players.length) {
@@ -281,19 +350,19 @@ export const GameDisplay = () => {
   }
 
   return (
-    <div style={{ 
-      backgroundColor: '#982621', 
-      width: '100%', 
+    <div style={{
+      backgroundColor: '#982621',
+      width: '100%',
       height: '100vh',
       touchAction: 'manipulation' // Allow taps and pinch-zoom but prevent double-tap zoom and panning
     }}>
-    
+
       {/* SVG overlay for arrows */}
       <svg style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 500 }}>
         {Array.from(coverMap.entries()).map(([coveringCard, coveredCard], index) => {
           // Skip if spectator (no self)
           if (!state.self) return null;
-          
+
           // Find the position of the covering card (in hand)
           const handCardIndex = state.self.hand.findIndex(card =>
             card.value === coveringCard.value && card.suit === coveringCard.suit
@@ -352,6 +421,25 @@ export const GameDisplay = () => {
 
       <div style={{ display: 'flex', flex: 1, justifyContent: 'center', alignItems: 'center' }}>
         <p>FOOLISH</p>
+        
+        {/* Debug logs */}
+        <div style={{ 
+          position: 'absolute', 
+          top: '50%', 
+          left: '50%', 
+          transform: 'translate(-50%, -50%)',
+          backgroundColor: 'rgba(0,0,0,0.8)', 
+          color: 'white', 
+          padding: '10px',
+          fontSize: '12px',
+          zIndex: 2000,
+          maxWidth: '250px'
+        }}>
+                     <div>hasSwapped: {hasSwapped.toString()}</div>
+           <div>isDragging: {isDraggingCard.toString()}</div>
+           <div>isActually: {isActuallyDragging.toString()}</div>
+          {logs.map((log, i) => <div key={i}>{log}</div>)}
+        </div>
         <div style={{ display: 'flex', position: 'absolute', top: '0px', left: '0px', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', height: '300px', width: '100px' }}>
           {state.flipped && <CardDisplay card={state.flipped} />}
           <CardBack />
@@ -359,7 +447,7 @@ export const GameDisplay = () => {
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', position: 'absolute', bottom: '10px', left: '0px', right: '0px', justifyContent: 'end', alignItems: 'center', height: '200px' }}>
           {
-            state.self && selectedCards.length > 0 && <div style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)', zIndex: 999, height: '50px '}}>
+            state.self && selectedCards.length > 0 && <div style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)', zIndex: 999, height: '50px ' }}>
 
               {
                 isDefending ? (
@@ -398,16 +486,16 @@ export const GameDisplay = () => {
                   </>
                 ) : (
                   <>
-                  <button style={{ width: '60px', height: '50px' }} onClick={() => attack(selectedCards).then(() => {
-                    setSelectedCards([]);
-                  }).catch((e) => {
-                    console.error(e.message);
-                  })}>Attack</button>
-                  <button style={{ width: '60px', height: '50px' }} onClick={() => good().then(() => {
-                    setSelectedCards([]);
-                  }).catch((e) => {
-                    console.error(e.message);
-                  })}>Good</button>
+                    <button style={{ width: '60px', height: '50px' }} onClick={() => attack(selectedCards).then(() => {
+                      setSelectedCards([]);
+                    }).catch((e) => {
+                      console.error(e.message);
+                    })}>Attack</button>
+                    <button style={{ width: '60px', height: '50px' }} onClick={() => good().then(() => {
+                      setSelectedCards([]);
+                    }).catch((e) => {
+                      console.error(e.message);
+                    })}>Good</button>
                   </>
                 )
               }
@@ -418,58 +506,53 @@ export const GameDisplay = () => {
 
             {
               state.self ? localHandOrder.map((card, index) => {
-                const isSelected = selectedCards.some(selectedCard => 
+                const isSelected = selectedCards.some(selectedCard =>
                   selectedCard.value === card.value && selectedCard.suit === card.suit
                 );
-                const isDragging = isDraggingCard && draggedCardIndex === index;
-                const style = isSelected ? { border: '3px solid red' } : { border: '1px solid black' };
-                
+                const isDragging = isActuallyDragging && draggedCardIndex === index;
+
+                // Determine the style based on state
+                let cardStyle: React.CSSProperties;
+                if (isSelected) {
+                  cardStyle = {
+                    border: '3px solid red',
+                    backgroundColor: 'white'
+                  };
+                } else {
+                  cardStyle = {
+                    border: '1px solid black',
+                    backgroundColor: 'white'
+                  };
+                }
+
                 return (
                   <div
                     key={'' + card.value + card.suit}
-                    draggable={true}
-                    onDragStart={(e) => handleCardDragStart(e, index)}
-                    onDragOver={(e) => handleCardDragOver(e, index)}
-                    onDrop={handleCardDrop}
-                    onDragEnd={handleCardDragEnd}
-                    style={{ 
-                      ...style, 
-                      zIndex: isDragging ? 1500 : 1000, 
-                      backgroundColor: 'white', 
-                      width: '40px', 
-                      height: '70px', 
-                      borderRadius: '5px', 
-                      display: 'flex', 
-                      justifyContent: 'center', 
+                    data-card-index={index}
+                    onMouseDown={(e) => startCardDrag(e, index)}
+                    onTouchStart={(e) => startCardDrag(e, index)}
+                    style={{
+                      ...cardStyle,
+                      zIndex: 1000,
+                      width: '40px',
+                      height: '70px',
+                      borderRadius: '5px',
+                      display: 'flex',
+                      justifyContent: 'center',
                       alignItems: 'center',
-                      opacity: isDragging ? 0.3 : 1,
-                      transition: isDragging ? 'none' : 'all 0.2s ease',
-                      transform: isDragging ? 'scale(1.05)' : 'scale(1)',
-                      position: 'relative',
-                      pointerEvents: isDragging ? 'none' : 'auto',
-                      cursor: 'move'
-                    }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (isSelected) {
-                        setSelectedCards(selectedCards.filter(c => !(c.value === card.value && c.suit === card.suit)));
-                      } else {
-                        setSelectedCards([...selectedCards, card]);
-                      }
-                    }}
-                  >
-                    {/* Invisible overlay to prevent text selection during drag operations */}
-                    <div style={{
-                      position: 'absolute',
-                      top: 0,
-                      left: 0,
-                      right: 0,
-                      bottom: 0,
-                      zIndex: 1600,
-                      pointerEvents: isDraggingCard ? 'auto' : 'none',
+                      opacity: isDragging ? 0.3 : 1, // More transparent when being dragged
+                      transition: 'all 0.1s ease',
+                      cursor: 'move',
                       userSelect: 'none'
-                    }} />
-                    <p style={{ zIndex: 10 }}>{VALUE_MAP[card.value] + SUIT_MAP[card.suit]}</p>
+                    }}
+
+                  >
+                    <p style={{
+                      pointerEvents: 'none', // Prevent text selection
+                      userSelect: 'none'
+                    }}>
+                      {VALUE_MAP[card.value] + SUIT_MAP[card.suit]}
+                    </p>
                   </div>
                 )
               }) : <p style={{ color: 'white', fontSize: '18px' }}>Spectating</p>
