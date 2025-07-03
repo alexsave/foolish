@@ -1,5 +1,6 @@
 import { loadCompleteGame, saveCompleteGame, personalize_game, wrap400, broadcastToGameUsers } from "../_shared/utils.ts";
 import { GAME_STATUS, PLAYER_STATUS, Game, SERVER_EVENT_TYPE, Player } from "../_shared/types.ts";
+import { MAX_PLAYERS } from "../_shared/constants.ts";
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
@@ -35,6 +36,10 @@ serve(wrap400(async (user, user_name, body) => {
 
     if (game.status !== GAME_STATUS.WAITING) {
         throw new Error(`Game ${game_id} is not waiting for players, wait for next game`);
+    }
+
+    if (game.players.length >= MAX_PLAYERS) {
+        throw new Error(`Game ${game_id} is full, wait for next game`);
     }
 
     // Create new player

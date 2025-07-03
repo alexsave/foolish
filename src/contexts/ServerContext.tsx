@@ -3,6 +3,7 @@ import { Card, Game, PersonalGame, PublicGame, SERVER_EVENT_TYPE } from '../comm
 import supabase from '../backend/Connector';
 import { useParams } from 'react-router-dom';
 import { useAuth } from './AuthContext';
+import { MAX_PLAYERS } from '../common/constants';
 
 const ServerContext = createContext<ServerContextType|null>(null);
 
@@ -298,7 +299,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 setGameId(data.data.game.id);
                 setGames(prev => ({...prev, [data.data.game.id]: mergeGameData(data.data.game.id, data.data.game, prev)}));
 
-
                 // no game self + waiting -> join
                 // no game self + not waiting -> subscribe to game
                 // game self + waiting -> subscribe to gu
@@ -311,7 +311,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 } else {
                     // no game self + waiting -> join
                     // no game self + not waiting -> subscribe to game
-                    if (data.data.game.status === 'waiting') {
+                    if (data.data.game.status === 'waiting' && data.data.game.players.length < MAX_PLAYERS) {
+                        // This is kinda iffy. It might be best to automatically spectate, but have an option to join,
                         console.log('Auto-joining game in waiting status');
                         joinGame(gameId).catch(console.error);
                     } else {
