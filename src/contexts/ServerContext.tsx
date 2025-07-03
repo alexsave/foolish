@@ -1,18 +1,16 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
-import { Card, Game, PersonalGame, SERVER_EVENT_TYPE } from '../common/types';
+import { Card, Game, PersonalGame, PublicGame, SERVER_EVENT_TYPE } from '../common/types';
 import supabase from '../backend/Connector';
 import { useParams } from 'react-router-dom';
 import { useAuth } from './AuthContext';
 
 const ServerContext = createContext<ServerContextType|null>(null);
 
-const HOST = '10.0.0.243';
-
 // for now we'll just use a fake auth impl
 // this will be kinda similar to client.js
 export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
-    const {user} = useAuth()
+    const {user, user_id} = useAuth()
 
     const url_game_id = useParams().game_id?.toLowerCase();
     // keep a state of games
@@ -65,6 +63,9 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         if (user) {
             setPlayerId(user);
             //setupRealtimeSubscriptions().catch(console.error);
+            
+            // Call getUserGames to console.log the player's games
+            getUserGames();
         }
 
         // cleanup realtime subscriptions
@@ -72,7 +73,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             // Remove all realtime subscriptions
             supabase.removeAllChannels();
         };
-    }, []);
+    }, [user]);
 
     // Setup Supabase Realtime subscriptions
     const setupRealtimeSubscriptions = async () => {
@@ -212,30 +213,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             self: newGameData.self !== undefined && newGameData.self !== null ? newGameData.self : prevGames[gameId]?.self
         };
     };
-
-    const promiseMaker = (endpoint: string, body: any, dataHandler: (data: any) => void): Promise<any> => {
-        return new Promise((resolve, reject) => {
-            fetch(`http://${HOST}:3009/${endpoint}`, {
-                method: 'POST',
-                headers: {
-                    'Accept': 'application/json',
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(body)
-            }).then(response => {
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-                return response.json();
-            }).then(data => {
-                dataHandler(data);
-                resolve(data);
-            }).catch(error => {
-                console.error('Promise maker error', error);
-                reject(error);
-            });
-        });
-    }
 
     const createGame = (): Promise<{ game_id: string }> => {
         const promise = new Promise<{game_id: string}>((resolve, reject) => {
@@ -427,6 +404,64 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         });
     };
 
+    const getUserGames = async (): Promise<void> => {
+        try {
+            if (!user_id) {
+                console.log('No player_id available for getUserGames');
+                return;
+            }
+
+            // Direct SQL query that respects RLS policies
+            // Join player_hands (user can only see their own) with games (public data)
+            const { data, error } = await supabase
+                .from('player_hands')
+                .select(`
+                    game_id,
+                    hand,
+                    games!inner (
+                        currently_attacked,
+                        deck_length,
+                        first_attacker,
+                        flipped,
+                        id,
+                        name,
+                        players,
+                        power_suit,
+                        status,
+                        table_battles,
+                        updated_at
+                    )
+                `)
+                .eq('player_id', user_id)
+                .order('games(updated_at)',{ ascending: false });
+
+            if (error) {
+                console.error('Error fetching user games:', error);
+                return;
+            }
+
+            const games: {[key: string]: PersonalGame} = {};
+            for (const playerHand of data) {
+                // Fuck you I know this will be a public game type
+                const game = playerHand.games as unknown as PublicGame;
+                games[game.id] = {
+                    ...game,
+                    self: {
+                        player_id: user_id,
+                        hand: playerHand.hand,
+                    },
+                };
+            }
+
+            setGames(prev => ({...prev, ...games}));
+
+            console.log('User games (player_hands joined with games):', games);
+            console.log('Number of games found:', data?.length || 0);
+        } catch (error) {
+            console.error('Error in getUserGames:', error);
+        }
+    };
+
     const setGameIdFromUrl = (gameId: string) => {
         if (gameId !== game_id) {
             setGameId(gameId);
@@ -443,6 +478,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             startGame,
             game_id,
             game: games[game_id!],
+            games,
             player_id,
             loadGame,
             attack,
@@ -450,7 +486,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             pickup,
             cover,
             good,
-            setGameIdFromUrl
+            setGameIdFromUrl,
+            getUserGames
         }}>
             {children}
         </ServerContext.Provider>
@@ -463,6 +500,7 @@ interface ServerContextType {
     startGame: (gameId: string) => Promise<{ game_id: string }>;
     game_id: string | null;
     game: PersonalGame | null;
+    games: {[key: string]: PersonalGame};
     player_id: string | null;
     loadGame: (gameId: string) => Promise<{ game_id: string }>;
     attack: (cards: Card[]) => Promise<{ game_id: string }>;
@@ -471,6 +509,7 @@ interface ServerContextType {
     cover: (coverCards: Card[], attackCards: Card[]) => Promise<{ game_id: string }>;
     setGameIdFromUrl: (gameId: string) => void;
     good: () => Promise<{ game_id: string }>;
+    getUserGames: () => Promise<void>;
 }
 
 export const useServer = () => {

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import supabase from '../backend/Connector';
 import { useServer } from "../contexts/ServerContext";
 import { useNavigate } from "react-router-dom";
@@ -7,8 +7,15 @@ import { useAuth } from "../contexts/AuthContext";
 export const Dashboard = () => {
     const [gameId, setGameId] = useState<string>('');
     const { user } = useAuth();
-    const { createGame, joinGame } = useServer();
+    const { createGame, joinGame, getUserGames, games } = useServer();
     const navigate = useNavigate();
+
+    // Make a call to get player_hands and join them with games
+    useEffect(() => {
+        getUserGames();
+    }, []);
+
+
     return (
         <div>
             <h1>Dashboard for {user}</h1>
@@ -35,6 +42,16 @@ export const Dashboard = () => {
             }}>
                 Create Game
             </button>
+            <p>Games:</p>
+            {Object.values(games).map((game) => (
+                <div key={game.id} style={{border: '1px solid black', cursor: 'pointer'}} onClick={() => {
+                    navigate(`/${game.id}`);
+                }}>
+                    <p>{game.name}</p>
+                    <p>{game.status}</p>
+                    <p>{game.players.map(player => player.name).join(', ')}</p>
+                </div>
+            ))}
         </div>
     );
 };

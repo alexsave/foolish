@@ -61,16 +61,16 @@ CREATE TABLE games (
   first_attacker INTEGER,
   currently_attacked INTEGER,
   table_battles JSONB NOT NULL DEFAULT '[]'::jsonb, -- Battle[] - public info
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
 );
 
 -- Game decks table - SENSITIVE: Only edge functions can access
 CREATE TABLE game_decks (
   game_id TEXT PRIMARY KEY REFERENCES games(id) ON DELETE CASCADE,
   deck JSONB NOT NULL DEFAULT '[]'::jsonb, -- Card[] - deck cards
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
 );
 
 -- Player hands table - SENSITIVE: Players can only see their own hands
@@ -79,9 +79,9 @@ CREATE TABLE player_hands (
   game_id TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
   player_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   hand JSONB NOT NULL DEFAULT '[]'::jsonb, -- Card[] - player's cards
-  joined_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  joined_at TIMESTAMP DEFAULT NOW(),
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW(),
   PRIMARY KEY (game_id, player_id) -- One hand per player per game
 );
 
@@ -92,7 +92,7 @@ CREATE TABLE chat_messages (
   user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   message TEXT NOT NULL,
   is_system BOOLEAN NOT NULL DEFAULT false,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+  created_at TIMESTAMP DEFAULT NOW()
 );
 
 -- =============================================================================
@@ -107,6 +107,7 @@ CREATE INDEX idx_player_hands_player_id ON player_hands(player_id);
 CREATE INDEX idx_chat_messages_game_id ON chat_messages(game_id);
 CREATE INDEX idx_chat_messages_user_id ON chat_messages(user_id);
 CREATE INDEX idx_chat_messages_created_at ON chat_messages(created_at);
+CREATE INDEX idx_games_updated_at ON games(updated_at);
 
 -- =============================================================================
 -- ROW LEVEL SECURITY: Enable RLS on all tables
@@ -192,7 +193,7 @@ RETURNS TABLE(
   game_status game_status,
   player_count INTEGER,
   deck_length INTEGER,
-  created_at TIMESTAMP WITH TIME ZONE
+  created_at TIMESTAMP 
 ) AS $$
 BEGIN
   RETURN QUERY
