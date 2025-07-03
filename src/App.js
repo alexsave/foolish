@@ -8,6 +8,7 @@ import { ProtectedRoute } from './components/ProtectedRoute';
 import { Dashboard } from './components/Dashboard';
 import { Lobby } from './components/Lobby';
 import { GameDisplay } from './components/GameDisplay';
+import { UnprotectedRoute } from './components/UnprotectedRoute';
 
 
 function App() {
@@ -19,7 +20,9 @@ function App() {
             <Welcome />
           } />
           <Route path="/login" element={
-            <Login />
+            <UnprotectedRoute>
+              <Login />
+            </UnprotectedRoute>
           } />
           <Route path="/tutorial" element={
             <Tutorial />
