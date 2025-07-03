@@ -38,17 +38,16 @@ export const Lobby = () => {
         setEditingName(game.name);
     };
 
-    const handleSaveName = async () => {
+    const handleSaveName = () => {
         if (editingName.trim() && editingName.trim() !== game.name) {
-            try {
-                // Do this immediately
-                setIsEditingName(false);
-                setEditingName('');
-                await updateGameName(game_id!, editingName.trim());
-            } catch (error) {
+            // Fire and forget - optimistic update handles UI immediately
+            updateGameName(game_id!, editingName.trim()).catch(error => {
                 console.error('Failed to update game name:', error);
-            }
+            });
         }
+        // Always exit editing mode immediately
+        setIsEditingName(false);
+        setEditingName('');
     };
 
     const handleCancelEdit = () => {

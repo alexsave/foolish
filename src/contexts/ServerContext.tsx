@@ -408,6 +408,16 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
     const updateGameName = (gameId: string, name: string): Promise<{ game_id: string }> => {
         return new Promise<{ game_id: string }>((resolve, reject) => {
+            // Optimistic update - update local state immediately
+            const previousName = games[gameId]?.name;
+            setGames(prev => ({
+                ...prev,
+                [gameId]: {
+                    ...prev[gameId],
+                    name: name
+                }
+            }));
+
             supabase.functions.invoke('update-name', {
                 body: {
                     game_id: gameId,
@@ -415,8 +425,19 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 }
             }).then(data => {
                 resolve({ game_id: data.data.game.id });
+                // Server confirmed the update - merge any other changes from server
                 setGames(prev => ({ ...prev, [data.data.game.id]: mergeGameData(data.data.game.id, data.data.game, prev) }));
             }).catch(error => {
+                // Revert the optimistic update on error
+                if (previousName) {
+                    setGames(prev => ({
+                        ...prev,
+                        [gameId]: {
+                            ...prev[gameId],
+                            name: previousName
+                        }
+                    }));
+                }
                 reject(error);
             });
         });
