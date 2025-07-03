@@ -310,29 +310,39 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 resolve({game_id: data.data.game.id});  
                 setGameId(data.data.game.id);
                 setGames(prev => ({...prev, [data.data.game.id]: mergeGameData(data.data.game.id, data.data.game, prev)}));
-                
-                // If player is not in the game and game is waiting, automatically join
-                if (!data.data.game.self && data.data.game.status === 'waiting') {
-                    console.log('Auto-joining game in waiting status');
-                    joinGame(gameId).catch(console.error);
+
+
+                // no game self + waiting -> join
+                // no game self + not waiting -> subscribe to game
+                // game self + waiting -> subscribe to gu
+                // game self + not waiting -> subscribe to gu
+
+                if (data.data.game.self) {
+                    // game self + waiting -> subscribe to gu
+                    // game self + not waiting -> subscribe to gu
+                    subscribeToGame(gameId).catch(console.error);
                 } else {
-                    // Subscribe to the game's channel for updates
-                    //subscribeToGame(data.data.game.id).catch(console.error);
-                    // it's a different channel from the gu
-                    const gameChannel = supabase.channel(`game-${gameId}`, {
-                        config: { private: true }
-                    });
-                    gameChannel.on('broadcast', { event: 'game_update' }, (payload) => {
-                        console.log('Game update received:', payload);
-                        handleGameMessage(payload.payload);
-                    });
-                    gameChannel.subscribe((status, err) => {
-                        if (status === 'SUBSCRIBED') {
-                            console.log('Connected to game channel:', `game-${gameId}`);
-                        } else {
-                            console.error('Game channel error:', err);
-                        }
-                    });
+                    // no game self + waiting -> join
+                    // no game self + not waiting -> subscribe to game
+                    if (data.data.game.status === 'waiting') {
+                        console.log('Auto-joining game in waiting status');
+                        joinGame(gameId).catch(console.error);
+                    } else {
+                        const gameChannel = supabase.channel(`game-${gameId}`, {
+                            config: { private: true }
+                        });
+                        gameChannel.on('broadcast', { event: 'game_update' }, (payload) => {
+                            console.log('Game update received:', payload);
+                            handleGameMessage(payload.payload);
+                        });
+                        gameChannel.subscribe((status, err) => {
+                            if (status === 'SUBSCRIBED') {
+                                console.log('Connected to game channel:', `game-${gameId}`);
+                            } else {
+                                console.error('Game channel error:', err);
+                            }
+                        });
+                    }
                 }
             }).catch(error => {
                 reject(error);
@@ -342,15 +352,15 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     };
 
     const attack = (cards: Card[]): Promise<{ game_id: string }> => {
-        return new Promise<{game_id: string}>((resolve, reject) => {
+        return new Promise<{ game_id: string }>((resolve, reject) => {
             supabase.functions.invoke('attack', {
                 body: {
                     game_id: game_id!,
                     cards: cards,
                 }
             }).then(data => {
-                resolve({game_id: data.data.game.id});  
-                setGames(prev => ({...prev, [data.data.game.id]: mergeGameData(data.data.game.id, data.data.game, prev)}));
+                resolve({ game_id: data.data.game.id });
+                setGames(prev => ({ ...prev, [data.data.game.id]: mergeGameData(data.data.game.id, data.data.game, prev) }));
             }).catch(error => {
                 reject(error);
             });
@@ -358,15 +368,15 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     };
 
     const pass = (cards: Card[]): Promise<{ game_id: string }> => {
-        return new Promise<{game_id: string}>((resolve, reject) => {
+        return new Promise<{ game_id: string }>((resolve, reject) => {
             supabase.functions.invoke('pass', {
                 body: {
                     game_id: game_id!,
                     cards: cards,
                 }
             }).then(data => {
-                resolve({game_id: data.data.game.id});  
-                setGames(prev => ({...prev, [data.data.game.id]: mergeGameData(data.data.game.id, data.data.game, prev)}));
+                resolve({ game_id: data.data.game.id });
+                setGames(prev => ({ ...prev, [data.data.game.id]: mergeGameData(data.data.game.id, data.data.game, prev) }));
             }).catch(error => {
                 reject(error);
             });
@@ -374,14 +384,14 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     };
 
     const pickup = (): Promise<{ game_id: string }> => {
-        return new Promise<{game_id: string}>((resolve, reject) => {
+        return new Promise<{ game_id: string }>((resolve, reject) => {
             supabase.functions.invoke('pickup', {
                 body: {
                     game_id: game_id!,
                 }
             }).then(data => {
-                resolve({game_id: data.data.game.id});  
-                setGames(prev => ({...prev, [data.data.game.id]: mergeGameData(data.data.game.id, data.data.game, prev)}));
+                resolve({ game_id: data.data.game.id });
+                setGames(prev => ({ ...prev, [data.data.game.id]: mergeGameData(data.data.game.id, data.data.game, prev) }));
             }).catch(error => {
                 reject(error);
             });
@@ -389,7 +399,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     };
 
     const cover = (coverCards: Card[], attackCards: Card[]): Promise<{ game_id: string }> => {
-        return new Promise<{game_id: string}>((resolve, reject) => {
+        return new Promise<{ game_id: string }>((resolve, reject) => {
             supabase.functions.invoke('cover', {
                 body: {
                     game_id: game_id!,
@@ -397,8 +407,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                     attack_cards: attackCards,
                 }
             }).then(data => {
-                resolve({game_id: data.data.game.id});  
-                setGames(prev => ({...prev, [data.data.game.id]: mergeGameData(data.data.game.id, data.data.game, prev)}));
+                resolve({ game_id: data.data.game.id });
+                setGames(prev => ({ ...prev, [data.data.game.id]: mergeGameData(data.data.game.id, data.data.game, prev) }));
             }).catch(error => {
                 reject(error);
             });
@@ -406,14 +416,14 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     };
 
     const good = (): Promise<{ game_id: string }> => {
-        return new Promise<{game_id: string}>((resolve, reject) => {
+        return new Promise<{ game_id: string }>((resolve, reject) => {
             supabase.functions.invoke('good', {
                 body: {
                     game_id: game_id!,
                 }
             }).then(data => {
-                resolve({game_id: data.data.game.id});  
-                setGames(prev => ({...prev, [data.data.game.id]: mergeGameData(data.data.game.id, data.data.game, prev)}));
+                resolve({ game_id: data.data.game.id });
+                setGames(prev => ({ ...prev, [data.data.game.id]: mergeGameData(data.data.game.id, data.data.game, prev) }));
             }).catch(error => {
                 reject(error);
             });
@@ -437,7 +447,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             game_id,
             game: games[game_id!],
             player_id,
-            loadGame,   
+            loadGame,
             attack,
             pass,
             pickup,
