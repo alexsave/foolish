@@ -83,7 +83,8 @@ export const SERVER_EVENT_TYPE = {
     PLAYABLE_CARDS: 'playable_cards',
     FIRST_ATTACKER: 'first_attacker',
     FLIPPED_CARD: 'flipped_card',
-    GAME_NAME_UPDATED: 'game_name_updated'
+    GAME_NAME_UPDATED: 'game_name_updated',
+    PLAYERS_REARRANGED: 'players_rearranged'
 } as const;
 
 export type ServerEventType = typeof SERVER_EVENT_TYPE[keyof typeof SERVER_EVENT_TYPE];

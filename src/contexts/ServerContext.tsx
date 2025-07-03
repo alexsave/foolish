@@ -193,6 +193,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             setGames(prev => ({...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev)}));
         } else if (actualMessage.type === SERVER_EVENT_TYPE.GAME_NAME_UPDATED) {
             setGames(prev => ({...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev)}));
+        } else if (actualMessage.type === SERVER_EVENT_TYPE.PLAYERS_REARRANGED) {
+            setGames(prev => ({...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev)}));
         } else {
             // Default handler for other message types
             if (gameData) {
@@ -443,6 +445,46 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         });
     };
 
+    const rearrangePlayer = (gameId: string, playerIndices: number[]): Promise<{ game_id: string }> => {
+        return new Promise<{ game_id: string }>((resolve, reject) => {
+            // Optimistic update - rearrange local state immediately
+            const previousPlayers = games[gameId]?.players ? [...games[gameId].players] : [];
+            if (previousPlayers.length > 0) {
+                const rearrangedPlayers = playerIndices.map(index => previousPlayers[index]);
+                setGames(prev => ({
+                    ...prev,
+                    [gameId]: {
+                        ...prev[gameId],
+                        players: rearrangedPlayers
+                    }
+                }));
+            }
+
+            supabase.functions.invoke('rearrange-players', {
+                body: {
+                    game_id: gameId,
+                    player_indices: playerIndices
+                }
+            }).then(data => {
+                resolve({ game_id: data.data.game.id });
+                // Server confirmed the update - merge any other changes from server
+                setGames(prev => ({ ...prev, [data.data.game.id]: mergeGameData(data.data.game.id, data.data.game, prev) }));
+            }).catch(error => {
+                // Revert the optimistic update on error
+                if (previousPlayers.length > 0) {
+                    setGames(prev => ({
+                        ...prev,
+                        [gameId]: {
+                            ...prev[gameId],
+                            players: previousPlayers
+                        }
+                    }));
+                }
+                reject(error);
+            });
+        });
+    };
+
     const getUserGames = async (): Promise<void> => {
         try {
             if (!user_id) {
@@ -527,7 +569,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             good,
             setGameIdFromUrl,
             getUserGames,
-            updateGameName
+            updateGameName,
+            rearrangePlayer
         }}>
             {children}
         </ServerContext.Provider>
@@ -551,6 +594,7 @@ interface ServerContextType {
     good: () => Promise<{ game_id: string }>;
     getUserGames: () => Promise<void>;
     updateGameName: (gameId: string, name: string) => Promise<{ game_id: string }>;
+    rearrangePlayer: (gameId: string, playerIndices: number[]) => Promise<{ game_id: string }>;
 }
 
 export const useServer = () => {
