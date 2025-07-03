@@ -44,19 +44,12 @@ export const GameDisplay = () => {
   const [isDraggingCard, setIsDraggingCard] = useState(false);
   const [localHandOrder, setLocalHandOrder] = useState<Card[]>([]);
   const [dragStartPos, setDragStartPos] = useState<{ x: number; y: number } | null>(null);
-  const [currentDragPos, setCurrentDragPos] = useState<{ x: number; y: number } | null>(null);
   const [hasSwapped, setHasSwapped] = useState(false);
   const [isActuallyDragging, setIsActuallyDragging] = useState(false);
-  const [logs, setLogs] = useState<string[]>([]);
   const [touchStartTime, setTouchStartTime] = useState<number>(0);
   const rearrangeCardTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  const addLog = (message: string) => {
-    setLogs(prev => [...prev.slice(-8), `${Date.now() % 10000}: ${message}`]);
-  };
-
   const handleCardSelection = (card: Card) => {
-    addLog("HANDLE selection");
     const isSelected = selectedCards.some(selectedCard =>
       selectedCard.value === card.value && selectedCard.suit === card.suit
     );
@@ -131,7 +124,6 @@ export const GameDisplay = () => {
   useEffect(() => {
          const handleMouseMove = (e: MouseEvent) => {
        if (isDraggingCard && draggedCardIndex !== null) {
-         setCurrentDragPos({ x: e.clientX, y: e.clientY });
 
          // Check if we've moved far enough to consider this actual dragging
          if (dragStartPos && !isActuallyDragging) {
@@ -164,7 +156,6 @@ export const GameDisplay = () => {
                setLocalHandOrder(newOrder);
                setDraggedCardIndex(targetIndex); // Update dragged index to new position
                setHasSwapped(true); // Mark that a swap occurred
-               addLog("SWAP mouse");
              }
            }
          }
@@ -175,7 +166,6 @@ export const GameDisplay = () => {
        if (isDraggingCard && draggedCardIndex !== null && e.touches.length > 0) {
          e.preventDefault();
          const touch = e.touches[0];
-         setCurrentDragPos({ x: touch.clientX, y: touch.clientY });
 
          // Check if we've moved far enough to consider this actual dragging
          if (dragStartPos && !isActuallyDragging) {
@@ -208,7 +198,6 @@ export const GameDisplay = () => {
                setLocalHandOrder(newOrder);
                setDraggedCardIndex(targetIndex); // Update dragged index to new position
                setHasSwapped(true); // Mark that a swap occurred
-               addLog("SWAP touch");
              }
            }
          }
@@ -284,11 +273,9 @@ export const GameDisplay = () => {
     setIsDraggingCard(true);
     setDraggedCardIndex(index);
     setDragStartPos({ x: clientX, y: clientY });
-    setCurrentDragPos({ x: clientX, y: clientY });
     setHasSwapped(false);
     setIsActuallyDragging(false);
     setTouchStartTime(Date.now());
-    addLog("START drag");
   };
 
   const endCardDrag = () => {
@@ -297,8 +284,6 @@ export const GameDisplay = () => {
     const touchDuration = Date.now() - touchStartTime;
     const wasTap = touchDuration < 200 && !hasSwapped && !isActuallyDragging;
     
-    addLog(`END drag tap:${wasTap} dur:${touchDuration}`);
-
     // If this was a tap (not a drag), handle card selection
     if (wasTap && localHandOrder[draggedCardIndex]) {
       handleCardSelection(localHandOrder[draggedCardIndex]);
@@ -312,13 +297,11 @@ export const GameDisplay = () => {
     setIsDraggingCard(false);
     setDraggedCardIndex(null);
     setDragStartPos(null);
-    setCurrentDragPos(null);
     setIsActuallyDragging(false);
      
     // Reset the swap flag after a short delay to prevent immediate click
     setTimeout(() => {
       setHasSwapped(false);
-      addLog("RESET hasSwapped");
     }, 100);
   };
 
@@ -422,24 +405,6 @@ export const GameDisplay = () => {
       <div style={{ display: 'flex', flex: 1, justifyContent: 'center', alignItems: 'center' }}>
         <p>FOOLISH</p>
         
-        {/* Debug logs */}
-        <div style={{ 
-          position: 'absolute', 
-          top: '50%', 
-          left: '50%', 
-          transform: 'translate(-50%, -50%)',
-          backgroundColor: 'rgba(0,0,0,0.8)', 
-          color: 'white', 
-          padding: '10px',
-          fontSize: '12px',
-          zIndex: 2000,
-          maxWidth: '250px'
-        }}>
-                     <div>hasSwapped: {hasSwapped.toString()}</div>
-           <div>isDragging: {isDraggingCard.toString()}</div>
-           <div>isActually: {isActuallyDragging.toString()}</div>
-          {logs.map((log, i) => <div key={i}>{log}</div>)}
-        </div>
         <div style={{ display: 'flex', position: 'absolute', top: '0px', left: '0px', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', height: '300px', width: '100px' }}>
           {state.flipped && <CardDisplay card={state.flipped} />}
           <CardBack />
