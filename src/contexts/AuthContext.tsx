@@ -13,10 +13,12 @@ interface AuthContextType {
   signOut: () => Promise<void>;
   updatePassword: (newPassword: string) => Promise<void>;
   loading: boolean;
+  redirectAfterLogin: string | null;
+  setRedirectAfterLogin: (url: string) => void;
+  clearRedirectAfterLogin: () => void;
 }
 
 const AuthContext = createContext<AuthContextType|null>(null);
-
 
 const nameToEmail = (name: string): string => {
   return name + '@' + WEBSITE_DOMAIN;
@@ -28,6 +30,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [user_id, setUserId] = useState<string | null>(null);
   const [name, setName] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [redirectAfterLogin, setRedirectAfterLoginState] = useState<string | null>(null);
 
   // Keep track of sessions tate
   useEffect(() => {
@@ -53,6 +56,14 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
     return () => subscription.unsubscribe();
   }, []);
+
+  const setRedirectAfterLogin = (url: string) => {
+    setRedirectAfterLoginState(url);
+  };
+
+  const clearRedirectAfterLogin = () => {
+    setRedirectAfterLoginState(null);
+  };
 
   const signIn = async (username: string, password: string) => {
     const email = nameToEmail(username);
@@ -128,6 +139,9 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       signUp,
       signOut,
       updatePassword,
+      redirectAfterLogin,
+      setRedirectAfterLogin,
+      clearRedirectAfterLogin,
     }}>
       {children}
     </AuthContext.Provider>

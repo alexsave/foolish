@@ -1,10 +1,20 @@
-import { Navigate } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { ServerProvider } from '../contexts/ServerContext';
+import { useEffect } from 'react';
 
 // Wrapper component that protects routes and provides ServerContext
 export const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
-    const { user, loading } = useAuth();
+    const { user, loading, setRedirectAfterLogin } = useAuth();
+    const location = useLocation();
+    
+    // Store redirect URL when user is not authenticated
+    useEffect(() => {
+        if (!loading && !user) {
+            const redirectUrl = location.pathname + location.search;
+            setRedirectAfterLogin(redirectUrl);
+        }
+    }, [loading, user, location.pathname, location.search, setRedirectAfterLogin]);
     
     if (loading) {
         return (
@@ -15,12 +25,10 @@ export const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
             </div>
         );
     }
-    if (loading) {
-        return <div>Loading...</div>;
-    }
+    
     // Only allow access if user is authenticated
     if (!user) {
-        return <Navigate to="/" />;
+        return <Navigate to="/login" />;
     }
 
     return (

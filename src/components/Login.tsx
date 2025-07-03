@@ -15,9 +15,8 @@ export const Login = () => {
       const { weakPassword } = await signIn(name, password);
       if (weakPassword) {
         alert('Weak password');
-      } else {
-        navigate('/dashboard');
       }
+      // No need to navigate manually - UnprotectedRoute will handle redirect
     } catch (error: any) {
       alert(error.message);
     }
@@ -27,7 +26,8 @@ export const Login = () => {
     e.preventDefault();
     try {
       await signUp(name, password);
-      navigate('/tutorial');
+      // not sure about this
+      // navigate('/tutorial');
     } catch (error: any) {
       alert(error.message);
     }
