@@ -12,7 +12,6 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- Drop functions first (triggers will be dropped automatically with tables)
 DROP FUNCTION IF EXISTS update_updated_at_column() CASCADE;
-DROP FUNCTION IF EXISTS get_user_games(UUID) CASCADE;
 
 -- Drop tables in reverse dependency order (this will automatically drop all policies and triggers)
 DROP TABLE IF EXISTS chat_messages CASCADE;
@@ -59,7 +58,7 @@ CREATE TABLE games (
   status game_status NOT NULL DEFAULT 'waiting',
   power_suit INTEGER,
   first_attacker INTEGER,
-  currently_attacked INTEGER,
+  defender INTEGER,
   table_battles JSONB NOT NULL DEFAULT '[]'::jsonb, -- Battle[] - public info
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW()
@@ -184,46 +183,6 @@ BEGIN
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
-
--- Helper function to get user's games with basic info (no sensitive data)
-CREATE OR REPLACE FUNCTION get_user_games(user_id_param UUID)
-RETURNS TABLE(
-  game_id TEXT, 
-  game_name TEXT,
-  game_status game_status,
-  player_count INTEGER,
-  deck_length INTEGER,
-  created_at TIMESTAMP 
-) AS $$
-BEGIN
-  RETURN QUERY
-  SELECT 
-    g.id as game_id, 
-    g.name as game_name,
-    g.status as game_status,
-    jsonb_array_length(g.players) as player_count,
-    g.deck_length as deck_length,
-    g.created_at
-  FROM games g
-  INNER JOIN player_hands ph ON g.id = ph.game_id
-  WHERE ph.player_id = user_id_param
-  ORDER BY g.created_at DESC;
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-
--- Helper function to get player's hand for a specific game
-CREATE OR REPLACE FUNCTION get_player_hand(game_id_param TEXT, player_id_param UUID)
-RETURNS JSONB AS $$
-DECLARE
-  player_hand JSONB;
-BEGIN
-  SELECT hand INTO player_hand
-  FROM player_hands
-  WHERE game_id = game_id_param AND player_id = player_id_param;
-  
-  RETURN COALESCE(player_hand, '[]'::jsonb);
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- =============================================================================
 -- TRIGGERS: Set up automatic triggers

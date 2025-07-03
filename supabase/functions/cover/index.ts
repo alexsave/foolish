@@ -107,8 +107,6 @@ const handle_cover = (game: Game, game_id: string, player_id: string, cover_card
             message: `Player ${player_id} covered ${cardDisplay(attack_card)} with ${cardDisplay(cover_card)}`,
         }
         // remove the cards from the hand
-        //game.players[game.currentlyAttacked].hand = game.players[game.currentlyAttacked].hand.filter(card => !card_comp(card, cover_card));
-
     }
 
     // remove the cards from the hand
@@ -121,7 +119,7 @@ const handle_cover = (game: Game, game_id: string, player_id: string, cover_card
         refill(game);
         // and it's fucking tricky because they can win here
         // shift 
-        game.first_attacker = game.currently_attacked;
+        game.first_attacker = game.defender;
         if (defender.hand.length === 0) {
             // can't think right now, but we need better win checking 
             broadcast_message = {
@@ -133,7 +131,7 @@ const handle_cover = (game: Game, game_id: string, player_id: string, cover_card
             check_win(game);
             game.first_attacker = get_next_player_index(game, game.first_attacker);
         }
-        game.currently_attacked = get_next_player_index(game, game.first_attacker);
+        game.defender = get_next_player_index(game, game.first_attacker);
         return game;
     }
 
@@ -160,7 +158,7 @@ const handle_cover = (game: Game, game_id: string, player_id: string, cover_card
         }
 
         // now we need to see who can play cards. not the defender lol
-        //const playable_players = game.players.filter(player => player.id !== game.players[game.currently_attacked].id && player.hand.some(card => playable_values.has(card.value)));
+        //const playable_players = game.players.filter(player => player.id !== game.players[game.defender].id && player.hand.some(card => playable_values.has(card.value)));
 
         const playable_players = game.players.filter(player => player.id !== player_id && player.hand.some(card => playable_values.has(card.value))).map(player => player.id);
 
@@ -177,8 +175,8 @@ const handle_cover = (game: Game, game_id: string, player_id: string, cover_card
 
                 game.table_battles = [];
                 refill(game);
-                game.first_attacker = game.currently_attacked;
-                game.currently_attacked = get_next_player_index(game, game.first_attacker);
+                game.first_attacker = game.defender;
+                game.defender = get_next_player_index(game, game.first_attacker);
                 game.status = GAME_STATUS.FIRST_ATTACKER;
 
                 broadcastToGameUsers(game, 'game_update', {

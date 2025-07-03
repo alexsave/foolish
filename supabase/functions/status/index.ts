@@ -36,7 +36,7 @@ serve(wrap400(async (user, user_name, body) => {
             status: game.status,
             power_suit: game.power_suit,
             first_attacker: game.first_attacker,
-            currently_attacked: game.currently_attacked,
+            defender: game.defender,
             table_battles: game.table_battles,
         };
         

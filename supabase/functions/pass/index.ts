@@ -75,7 +75,7 @@ const handle_pass = (game: Game, game_id: string, player_id: string, cards: Card
         throw new Error(`Cards ${mCards.map(card => cardDisplay(card)).join(', ')} do not match the values on the table`);
     }
 
-    const next_player_index = get_next_player_index(game, game.currently_attacked);
+    const next_player_index = get_next_player_index(game, game.defender);
     const next_player = game.players[next_player_index];
     if (next_player.hand.length < mCards.length + game.table_battles.length) {
         throw new Error(`Player ${next_player.name} does not have enough cards in their hand to cover ${mCards.map(card => cardDisplay(card)).join(', ')}`);
@@ -84,7 +84,7 @@ const handle_pass = (game: Game, game_id: string, player_id: string, cards: Card
     // Now we can pass
     // add to table
     //remove from hand
-    // update currentlyAttacked
+    // update defender
 
     for (const card of mCards) {
         game.table_battles.push({
@@ -100,13 +100,13 @@ const handle_pass = (game: Game, game_id: string, player_id: string, cards: Card
         // they win
         defender.status = PLAYER_STATUS.OUT;
         check_win(game);
-        game.currently_attacked = next_player_index;
+        game.defender = next_player_index;
         broadcastToGameUsers(game, 'game_update', {
             type: SERVER_EVENT_TYPE.PLAYER_WON,
             message: `Player ${player_id} passed ${mCards.map(card => cardDisplay(card)).join(', ')} and got rid of all their cards`,
         });
     } else {
-        game.currently_attacked = next_player_index;
+        game.defender = next_player_index;
 
         broadcastToGameUsers(game, 'game_update', {
             type: SERVER_EVENT_TYPE.PASS_PLAYED,
@@ -115,7 +115,7 @@ const handle_pass = (game: Game, game_id: string, player_id: string, cards: Card
     }
 
     const uncovered_cards = game.table_battles.filter(battle => battle.defense === null).length;
-    const new_defender_id = game.players[game.currently_attacked].id;
+    const new_defender_id = game.players[game.defender].id;
     // Lots of find calls. Maybe an intermediate type would be better for this
     const new_defender: Player = game.players.find(player => player.id === new_defender_id)!;
     const defender_cards = new_defender.hand.length;

@@ -87,7 +87,7 @@ export const personalize_game = (game: Game, player_id: string): PersonalGame =>
         status: game.status,
         power_suit: game.power_suit,
         first_attacker: game.first_attacker,
-        currently_attacked: game.currently_attacked,
+        defender: game.defender,
         table_battles: game.table_battles,
 
         self: self,
@@ -137,7 +137,7 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
         status: data.status,
         power_suit: data.power_suit,
         first_attacker: data.first_attacker,
-        currently_attacked: data.currently_attacked,
+        defender: data.defender,
         table_battles: data.table_battles,
     }
     
@@ -159,7 +159,7 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
   "status": "waiting",
   "power_suit": 0,
   "first_attacker": 0,
-  "currently_attacked": 0,
+  "defender": 0,
   "table_battles": [],
   "created_at": "2025-07-01T06:51:13.74066+00:00",
   "updated_at": "2025-07-01T06:51:13.74066+00:00",
@@ -198,7 +198,7 @@ export const saveCompleteGame = async (game: Game): Promise<any> => {
         status: game.status,
         power_suit: game.power_suit,
         first_attacker: game.first_attacker,
-        currently_attacked: game.currently_attacked,
+        defender: game.defender,
         table_battles: game.table_battles
     };
 
@@ -346,7 +346,7 @@ export const broadcastToGameUsers = async (game: Game, messageType: string, base
             status: game.status,
             power_suit: game.power_suit,
             first_attacker: game.first_attacker,
-            currently_attacked: game.currently_attacked,
+            defender: game.defender,
             table_battles: game.table_battles,
         };
 
@@ -522,12 +522,12 @@ export const determine_lowest_power_index = (game: Game): number => {
 
 export const set_positions = (game: Game) => {
     game.first_attacker = game.first_attacker;
-    game.currently_attacked = (game.first_attacker + 1) % game.players.length;
+    game.defender = (game.first_attacker + 1) % game.players.length;
 }
 
 // Helper method to validate player is/isn't defender
 export const validate_defender_status = (game: Game, player_id: string, should_be_defender: boolean) => {
-    const isDefender = game.players[game.currently_attacked].id === player_id;
+    const isDefender = game.players[game.defender].id === player_id;
     if (isDefender !== should_be_defender) {
         throw new Error(`Player ${player_id} is ${should_be_defender ? 'not' : ''} the defender`);
     }
@@ -594,8 +594,8 @@ export const refill = (game: Game) => {
     }
 
     // If the deck was already empty, defending should've gotten them a win
-    // most importantly, check if currently Attacked cleared their hand
-    const defenseHand = game.players[game.currently_attacked].hand;
+    // most importantly, check if defender cleared their hand
+    const defenseHand = game.players[game.defender].hand;
     if (defenseHand.length === 0) {
         // they draw first
         let cards_drawn = 0;
@@ -613,7 +613,7 @@ export const refill = (game: Game) => {
         }
         broadcastToGameUsers(game, 'game_update', {
             type: 'player_refilled',
-            message: `Player ${game.players[game.currently_attacked].name} refilled their empty hand with ${cards_drawn} cards`,
+            message: `Player ${game.players[game.defender].name} refilled their empty hand with ${cards_drawn} cards`,
             cards_drawn: cards_drawn
         });
     }

@@ -63,8 +63,8 @@ const handle_pickup = (game: Game, game_id: string, player_id: string): Game => 
     refill(game);
 
     // shift
-    game.first_attacker = get_next_player_index(game, game.currently_attacked);
-    game.currently_attacked = get_next_player_index(game, game.first_attacker);
+    game.first_attacker = get_next_player_index(game, game.defender);
+    game.defender = get_next_player_index(game, game.first_attacker);
     game.status = GAME_STATUS.FIRST_ATTACKER;
 
     // Broadcasting will be handled by the main function

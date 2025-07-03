@@ -311,7 +311,7 @@ export const GameDisplay = () => {
 
   const self_index = state.players.findIndex((player) => player.id === user_id);
 
-  const isDefending = state.currently_attacked === self_index;
+  const isDefending = state.defender === self_index;
 
   // a set
 
@@ -559,7 +559,7 @@ export const GameDisplay = () => {
               const y = ((Math.cos(radians) * 30) + 50) + '%';
 
               let color = 'black';
-              if (index === state.currently_attacked) {
+              if (index === state.defender) {
                 color = 'red';
               } else if (index === state.first_attacker) {
                 color = 'orange';

@@ -31,7 +31,7 @@ serve(wrap400(async (user, user_name, body) => {
         status: GAME_STATUS.WAITING,
         power_suit: 0,
         first_attacker: 0,
-        currently_attacked: 0,
+        defender: 0,
         table_battles: []
     };
 

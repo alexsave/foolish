@@ -62,7 +62,7 @@ const handle_attack = (game: Game, game_id: string, player_id: string, cards: Ca
     // make sure there are enough cards in the defenders hand
     let uncovered_cards = game.table_battles.filter(battle => battle.defense === null).length;
 
-    const defender: Player = game.players[game.currently_attacked];
+    const defender: Player = game.players[game.defender];
 
     let defender_cards = defender.hand.length;
 

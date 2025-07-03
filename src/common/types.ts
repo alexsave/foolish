@@ -153,7 +153,7 @@ export interface PublicGame {
     status: GameStatus;
     power_suit: number;
     first_attacker: number;
-    currently_attacked: number;
+    defender: number;
     table_battles: Battle[];
 }
 
@@ -174,7 +174,7 @@ export interface Game {
     status: GameStatus;
     power_suit: number;
     first_attacker: number;
-    currently_attacked: number;
+    defender: number;
     table_battles: Battle[];
 }
 

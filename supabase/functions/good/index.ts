@@ -45,7 +45,7 @@ const handle_good = (game: Game, game_id: string, player_id: string): Game => {
     // dont count the defender
     // the status check is critical
 
-    const playable_players = game.players.filter(player => player.id !== game.players[game.currently_attacked].id && player.hand.some(card => card.value === game.flipped!.value) && player.status === PLAYER_STATUS.AWAITING_ATTACK);
+    const playable_players = game.players.filter(player => player.id !== game.players[game.defender].id && player.hand.some(card => card.value === game.flipped!.value) && player.status === PLAYER_STATUS.AWAITING_ATTACK);
 
     if (playable_players.length !== 0) {
         return game;
@@ -65,8 +65,8 @@ const handle_good = (game: Game, game_id: string, player_id: string): Game => {
     refill(game);
 
     //shift 
-    game.first_attacker = game.currently_attacked;
-    game.currently_attacked = get_next_player_index(game, game.first_attacker);
+    game.first_attacker = game.defender;
+    game.defender = get_next_player_index(game, game.first_attacker);
     game.status = GAME_STATUS.FIRST_ATTACKER;
 
     broadcastToGameUsers(game, 'game_update', {

@@ -545,7 +545,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                     game_id,
                     hand,
                     games!inner (
-                        currently_attacked,
+                        defender,
                         deck_length,
                         first_attacker,
                         flipped,
