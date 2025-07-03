@@ -13,7 +13,7 @@ import { UnprotectedRoute } from './components/UnprotectedRoute';
 
 function App() {
   return (
-    <div style={{ backgroundColor: '#982621', display: 'flex', height: '100vh' }} >
+    <div style={{ backgroundColor: '#982621', display: 'flex', height: '100vh', width: '100vw' }} >
       <BrowserRouter>
         <AuthProvider>
           <Routes>

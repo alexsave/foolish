@@ -191,6 +191,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             setGames(prev => ({...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev)}));
         } else if (actualMessage.type === 'game_created') {
             setGames(prev => ({...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev)}));
+        } else if (actualMessage.type === SERVER_EVENT_TYPE.GAME_NAME_UPDATED) {
+            setGames(prev => ({...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev)}));
         } else {
             // Default handler for other message types
             if (gameData) {
@@ -404,6 +406,22 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         });
     };
 
+    const updateGameName = (gameId: string, name: string): Promise<{ game_id: string }> => {
+        return new Promise<{ game_id: string }>((resolve, reject) => {
+            supabase.functions.invoke('update-name', {
+                body: {
+                    game_id: gameId,
+                    name: name
+                }
+            }).then(data => {
+                resolve({ game_id: data.data.game.id });
+                setGames(prev => ({ ...prev, [data.data.game.id]: mergeGameData(data.data.game.id, data.data.game, prev) }));
+            }).catch(error => {
+                reject(error);
+            });
+        });
+    };
+
     const getUserGames = async (): Promise<void> => {
         try {
             if (!user_id) {
@@ -487,7 +505,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             cover,
             good,
             setGameIdFromUrl,
-            getUserGames
+            getUserGames,
+            updateGameName
         }}>
             {children}
         </ServerContext.Provider>
@@ -510,6 +529,7 @@ interface ServerContextType {
     setGameIdFromUrl: (gameId: string) => void;
     good: () => Promise<{ game_id: string }>;
     getUserGames: () => Promise<void>;
+    updateGameName: (gameId: string, name: string) => Promise<{ game_id: string }>;
 }
 
 export const useServer = () => {
