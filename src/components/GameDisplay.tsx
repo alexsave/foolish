@@ -526,7 +526,14 @@ export const GameDisplay = () => {
 
             </div>
           }
-          <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ 
+            display: 'flex', 
+            flexDirection: 'row', 
+            alignItems: 'center', 
+            justifyContent: 'center',
+            maxWidth: '400px',
+            width: '100%'
+          }}>
 
             {
               state.self ? localHandOrder.map((card, index) => {
@@ -537,22 +544,17 @@ export const GameDisplay = () => {
 
                 // Determine the style based on state
                 let cardStyle: React.CSSProperties;
-                const borderWidth = localHandOrder.length >= 10 ? '1px' : '2px';
                 if (isSelected) {
                   cardStyle = {
-                    border: `${borderWidth} solid red`,
+                    border: '2px solid red',
                     backgroundColor: 'white'
                   };
                 } else {
                   cardStyle = {
-                    border: `${borderWidth} solid black`,
+                    border: '2px solid black',
                     backgroundColor: 'white'
                   };
                 }
-
-                // Reduce card width when there are 10+ cards
-                const cardWidth = localHandOrder.length >= 10 ? '28px' : '40px';
-                const margin = localHandOrder.length >= 10 ? '0' : '0 1px';
 
                 return (
                   <div
@@ -562,8 +564,10 @@ export const GameDisplay = () => {
                     onTouchStart={(e) => startCardDrag(e, index)}
                     style={{
                       ...cardStyle,
+                      flex: '1 1 0',
+                      minWidth: '20px',
+                      maxWidth: '40px',
                       zIndex: 1000,
-                      width: cardWidth,
                       height: '70px',
                       borderRadius: '5px',
                       display: 'flex',
@@ -573,7 +577,7 @@ export const GameDisplay = () => {
                       transition: 'all 0.1s ease',
                       cursor: 'move',
                       userSelect: 'none',
-                      margin: margin,
+                      margin: '0 1px'
                     }}
 
                   >
