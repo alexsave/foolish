@@ -567,6 +567,7 @@ export const GameDisplay = () => {
                       height: '70px',
                       borderRadius: '5px',
                       display: 'flex',
+                      justifyContent: 'center',
                       alignItems: 'center',
                       opacity: isDragging ? 0.3 : 1, // More transparent when being dragged
                       transition: 'all 0.1s ease',
@@ -582,7 +583,9 @@ export const GameDisplay = () => {
                       textAlign: 'center',
                       fontSize: '20px'
                     }}>
-                      {VALUE_MAP[card.value] + '\n' + SUIT_MAP[card.suit]}
+                      {VALUE_MAP[card.value]}
+                      <br />
+                      {SUIT_MAP[card.suit]}
                     </p>
                   </div>
                 )
