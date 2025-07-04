@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
 import supabase from '../backend/Connector';
 import { WEBSITE_DOMAIN } from '../constants/constants';
 import { Session, User } from '@supabase/supabase-js';
@@ -31,17 +31,21 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [name, setName] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [redirectAfterLogin, setRedirectAfterLoginState] = useState<string | null>(null);
+  
+  // Use ref to track current user_id to prevent duplicate updates
+  const currentUserIdRef = useRef<string | null>(null);
 
   // Keep track of sessions tate
   useEffect(() => {
     // Check active sessions and sets the user
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user) {
-        const name = emailToName(session.user.email!);
-        setUser(name);
-        // useful for something I think
-        setUserId(session.user.id);
-      } else {
+        // Only update if user ID has actually changed
+        if (currentUserIdRef.current !== session.user.id) {
+          currentUserIdRef.current = session.user.id;
+          setUser(emailToName(session.user.email!));
+          setUserId(session.user.id);
+        }
       }
       setLoading(false);
     });
@@ -49,8 +53,18 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     // Listen for changes on auth state (sign in, sign out, etc.)
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (session?.user) {
-        setUser(emailToName(session.user.email!));
-        setUserId(session.user.id);
+        if (currentUserIdRef.current !== session.user.id) {
+          currentUserIdRef.current = session.user.id;
+          setUser(emailToName(session.user.email!));
+          setUserId(session.user.id);
+        }
+      } else {
+        // Handle sign out case
+        if (currentUserIdRef.current !== null) {
+          currentUserIdRef.current = null;
+          setUser(null);
+          setUserId(null);
+        }
       }
     });
 
@@ -67,31 +81,31 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
   const signIn = async (username: string, password: string) => {
     const email = nameToEmail(username);
-    
+
     const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
-    
+
     if (error) {
       throw error;
     }
-    
+
     return data;
   };
 
   const signUp = async (username: string, password: string) => {
     // this is a hack to get around the fact that supabase doesn't support username/password auth
     const email = nameToEmail(username);
-    
+
     // Proceed with signup - Supabase handles duplicate email prevention
     // add name as a metadata field
     const { data, error } = await supabase.auth.signUp({ email, password });
-    
+
     if (error) {
       throw error;
     }
-    
+
     return data;
   };
 
@@ -100,20 +114,20 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       console.log('Sign out initiated');
       console.log('Calling supabase.auth.signOut()');
       const { error } = await supabase.auth.signOut();
-      
+
       if (error) {
         console.error('Supabase signOut error:', error);
-        
+
         // Handle "Auth session missing" error specifically
-        if (error.message === 'Auth session missing!' || 
-            error.message.includes('session')) {
+        if (error.message === 'Auth session missing!' ||
+          error.message.includes('session')) {
           console.log('Session missing error detected - performing local sign out');
           // Force a local sign out despite the error
           setUser(null);
           console.log('Local sign out completed');
           return; // Exit without throwing error since we've handled it
         }
-        
+
         throw error;
       }
       console.log('Supabase sign out successful');

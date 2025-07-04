@@ -32,6 +32,9 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     
     // Use ref to avoid closure issues in WebSocket handler
     const gameIdRef = useRef<string | null>(null);
+    
+    // Use ref to prevent duplicate user effect executions
+    const prevUserRef = useRef<string | null>(null);
 
     useEffect(() => {
         //const game_id = use
@@ -65,6 +68,13 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
 
     useEffect(() => {
+        // Skip if user hasn't actually changed
+        if (prevUserRef.current === user) {
+            return;
+        }
+        
+        prevUserRef.current = user;
+        
         if (user) {
             setPlayerId(user);
             //setupRealtimeSubscriptions().catch(console.error);

@@ -7,13 +7,13 @@ import { useAuth } from "../contexts/AuthContext";
 export const Dashboard = () => {
     const [gameId, setGameId] = useState<string>('');
     const { user } = useAuth();
-    const { createGame, joinGame, getUserGames, games } = useServer();
+    const { joinGame, getUserGames, games } = useServer();
     const navigate = useNavigate();
 
     // Make a call to get player_hands and join them with games
-    useEffect(() => {
+    /*useEffect(() => {
         getUserGames();
-    }, []);
+    }, []);*/
 
 
     return (
