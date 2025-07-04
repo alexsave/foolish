@@ -537,17 +537,22 @@ export const GameDisplay = () => {
 
                 // Determine the style based on state
                 let cardStyle: React.CSSProperties;
+                const borderWidth = localHandOrder.length >= 10 ? '1px' : '2px';
                 if (isSelected) {
                   cardStyle = {
-                    border: '2px solid red',
+                    border: `${borderWidth} solid red`,
                     backgroundColor: 'white'
                   };
                 } else {
                   cardStyle = {
-                    border: '2px solid black',
+                    border: `${borderWidth} solid black`,
                     backgroundColor: 'white'
                   };
                 }
+
+                // Reduce card width when there are 10+ cards
+                const cardWidth = localHandOrder.length >= 10 ? '28px' : '40px';
+                const margin = localHandOrder.length >= 10 ? '0' : '0 1px';
 
                 return (
                   <div
@@ -558,25 +563,26 @@ export const GameDisplay = () => {
                     style={{
                       ...cardStyle,
                       zIndex: 1000,
-                      width: '40px',
+                      width: cardWidth,
                       height: '70px',
                       borderRadius: '5px',
                       display: 'flex',
-                      justifyContent: 'center',
                       alignItems: 'center',
                       opacity: isDragging ? 0.3 : 1, // More transparent when being dragged
                       transition: 'all 0.1s ease',
                       cursor: 'move',
                       userSelect: 'none',
-                      margin: '0 1px',
+                      margin: margin,
                     }}
 
                   >
                     <p style={{
                       pointerEvents: 'none', // Prevent text selection
-                      userSelect: 'none'
+                      userSelect: 'none',
+                      textAlign: 'center',
+                      fontSize: '20px'
                     }}>
-                      {VALUE_MAP[card.value] + SUIT_MAP[card.suit]}
+                      {VALUE_MAP[card.value] + '\n' + SUIT_MAP[card.suit]}
                     </p>
                   </div>
                 )
