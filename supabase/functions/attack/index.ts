@@ -1,7 +1,10 @@
 import { wrap400, loadCompleteGame, saveCompleteGame, broadcastToGameUsers, verify_player_in_game, personalize_game, cardDisplay, validate_defender_status, verify_cards_in_players_hand, no_cards_left, check_win } from "../_shared/utils.ts";
 import { Game, Card, Player, GAME_STATUS, SERVER_EVENT_TYPE, PLAYER_STATUS } from "../_shared/types.ts";
 
-wrap400(async (user, user_name, body) => {
+import "jsr:@supabase/functions-js/edge-runtime.d.ts"
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
+
+serve(wrap400(async (user, user_name, body) => {
     const user_id = user.id;
     const { game_id, cards } = body;
 
@@ -27,19 +30,12 @@ wrap400(async (user, user_name, body) => {
         game: personalize_game(game, user_id)
     };
 
-});
+}));
 
 const handle_attack = (game: Game, game_id: string, player_id: string, cards: Card[]): Game => {
     //const public_game_channel = getPublicGameChannel();
     if (!cards) {
         throw new Error(`No cards provided`);
-    }
-
-    // check if cards all have same value. this is kinda iffy because you could put down multiple cards
-    // at the same time as long as the values are on the board
-    // But this also slows down attackign to make it more fair for all attackers
-    if (!cards.every(card => card.value === cards[0].value)) {
-        throw new Error(`Cards ${cards.map(card => cardDisplay(card)).join(', ')} are not all the same value`);
     }
 
     // check no duplicates
@@ -70,6 +66,13 @@ const handle_attack = (game: Game, game_id: string, player_id: string, cards: Ca
     let broadcast_message: any | null = null;
 
     if (game.status === GAME_STATUS.FIRST_ATTACKER) {
+        // check if cards all have same value. this is kinda iffy because you could put down multiple cards
+        // at the same time as long as the values are on the board
+        // But this also slows down attackign to make it more fair for all attackers
+        if (!cards.every(card => card.value === cards[0].value)) {
+            throw new Error(`Cards ${cards.map(card => cardDisplay(card)).join(', ')} are not all the same value`);
+        }
+
         // check if player is first attacker
         if (game.players[game.first_attacker].id !== player_id) {
             throw new Error(`Player ${player_id} is not the first attacker`);
@@ -185,7 +188,7 @@ const handle_attack = (game: Game, game_id: string, player_id: string, cards: Ca
     // Not the best way but decent
     if (broadcast_message !== null) {
         broadcastToGameUsers(game, 'game_update', {
-            ...broadcast_message, 
+            ...broadcast_message,
         });
     }
 
