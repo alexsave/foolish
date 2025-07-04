@@ -413,50 +413,113 @@ export const GameDisplay = () => {
               {
                 isDefending ? (
                   <>
-                    <button style={{ width: '60px', height: '50px' }} onClick={() => {
-                      pass(selectedCards).then(() => {
-                        setSelectedCards([]);
-                      }).catch((e) => {
-                        console.error(e.message);
-                      })
-                    }}>Pass</button>
-                    <button style={{ width: '60px', height: '50px' }} onClick={() => {
-                      pickup().then(() => {
-                        // add cards to hand???
-                        setSelectedCards([]);
-                      }).catch((e) => {
-                        console.error(e.message);
-                      })
-                    }}>Pickup</button>
+                    {/* During first attack, defender can do nothing */}
+                    {state.table_battles.length > 0 && (
+                      <>
+                        {/* Pass is only shown if no attack card is covered */}
+                        {state.table_battles.every(battle => !battle.defense) && (
+                          <button 
+                            style={{ width: '60px', height: '50px' }} 
+                            onClick={() => {
+                              pass(selectedCards).then(() => {
+                                setSelectedCards([]);
+                              }).catch((e) => {
+                                console.error(e.message);
+                              })
+                            }}
+                          >
+                            Pass
+                          </button>
+                        )}
 
-                    <button style={{ width: '60px', height: '50px' }} onClick={() => {
-                      setIsSelectingCover(true);
-                    }}>Cover</button>
+                        <button style={{ width: '60px', height: '50px' }} onClick={() => {
+                          pickup().then(() => {
+                            // add cards to hand???
+                            setSelectedCards([]);
+                          }).catch((e) => {
+                            console.error(e.message);
+                          })
+                        }}>Pickup</button>
 
-                    <button style={{ width: '60px', height: '50px' }} onClick={() => {
-                      const coverCards = Array.from(coverMap.keys());
-                      const attackCards = Array.from(coverMap.values());
-                      cover(coverCards, attackCards).then(() => {
-                        setSelectedCards([]);
-                        setCoverMap(new Map());
-                      }).catch((e) => {
-                        console.error(e.message);
-                      })
-                      setIsSelectingCover(false);
-                    }}>Actually Cover</button>
+                        {/* Cover is only shown if there are uncovered cards */}
+                        {state.table_battles.some(battle => !battle.defense) && (
+                          <button style={{ width: '60px', height: '50px' }} onClick={() => {
+                            // If there's exactly 1 uncovered card, cover it immediately
+                            const uncoveredBattles = state.table_battles.filter(battle => !battle.defense);
+                            if (uncoveredBattles.length === 1) {
+                              // Auto-cover the single uncovered card
+                              const attackCard = uncoveredBattles[0].attack;
+                              const coverCard = selectedCards[0];
+                              setCoverMap(new Map().set(coverCard, attackCard));
+                              
+                              // Immediately execute the cover
+                              cover([coverCard], [attackCard]).then(() => {
+                                setSelectedCards([]);
+                                setCoverMap(new Map());
+                              }).catch((e) => {
+                                console.error(e.message);
+                              });
+                            } else {
+                              // Multiple uncovered cards, need to select which one to cover
+                              setIsSelectingCover(true);
+                            }
+                          }}>Cover</button>
+                        )}
+
+                        {/* Actually Cover is shown when in cover selection mode OR when there are covers queued */}
+                        {(isSelectingCover || coverMap.size > 0) && (
+                          <>
+                            <button style={{ width: '60px', height: '50px' }} onClick={() => {
+                              const coverCards = Array.from(coverMap.keys());
+                              const attackCards = Array.from(coverMap.values());
+                              cover(coverCards, attackCards).then(() => {
+                                setSelectedCards([]);
+                                setCoverMap(new Map());
+                              }).catch((e) => {
+                                console.error(e.message);
+                              })
+                              setIsSelectingCover(false);
+                            }}>Actually Cover</button>
+                            
+                            {/* Cancel Cover button to reset cover selection */}
+                            <button style={{ width: '60px', height: '50px' }} onClick={() => {
+                              setIsSelectingCover(false);
+                              setCoverMap(new Map());
+                            }}>Cancel Cover</button>
+                          </>
+                        )}
+                      </>
+                    )}
                   </>
                 ) : (
                   <>
-                    <button style={{ width: '60px', height: '50px' }} onClick={() => attack(selectedCards).then(() => {
-                      setSelectedCards([]);
-                    }).catch((e) => {
-                      console.error(e.message);
-                    })}>Attack</button>
-                    <button style={{ width: '60px', height: '50px' }} onClick={() => good().then(() => {
-                      setSelectedCards([]);
-                    }).catch((e) => {
-                      console.error(e.message);
-                    })}>Good</button>
+                    {/* Attack is only shown when valid */}
+                    {(state.table_battles.length > 0 || self_index === state.first_attacker) && (
+                      <button 
+                        style={{ width: '60px', height: '50px' }} 
+                        onClick={() => attack(selectedCards).then(() => {
+                          setSelectedCards([]);
+                        }).catch((e) => {
+                          console.error(e.message);
+                        })}
+                      >
+                        Attack
+                      </button>
+                    )}
+
+                    {/* Good is only shown when all attacks are covered and there are 1+ cards */}
+                    {state.table_battles.length > 0 && state.table_battles.every(battle => battle.defense) && (
+                      <button 
+                        style={{ width: '60px', height: '50px' }} 
+                        onClick={() => good().then(() => {
+                          setSelectedCards([]);
+                        }).catch((e) => {
+                          console.error(e.message);
+                        })}
+                      >
+                        Good
+                      </button>
+                    )}
                   </>
                 )
               }
@@ -537,7 +600,7 @@ export const GameDisplay = () => {
                     if (isSelectingCover) {
                       setCoverMap(new Map(coverMap.set(selectedCards[0], battle.attack)));
                       console.log(coverMap);
-                      setIsSelectingCover(false);
+                      // Don't set isSelectingCover to false here - keep it true so "Actually Cover" button remains visible
                     }
                   }}
                 />
