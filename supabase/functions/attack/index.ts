@@ -1,10 +1,7 @@
 import { wrap400, loadCompleteGame, saveCompleteGame, broadcastToGameUsers, verify_player_in_game, personalize_game, cardDisplay, validate_defender_status, verify_cards_in_players_hand, no_cards_left, check_win } from "../_shared/utils.ts";
 import { Game, Card, Player, GAME_STATUS, SERVER_EVENT_TYPE, PLAYER_STATUS } from "../_shared/types.ts";
 
-import "jsr:@supabase/functions-js/edge-runtime.d.ts"
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
-
-serve(wrap400(async (user, user_name, body) => {
+wrap400(async (user, user_name, body) => {
     const user_id = user.id;
     const { game_id, cards } = body;
 
@@ -30,7 +27,7 @@ serve(wrap400(async (user, user_name, body) => {
         game: personalize_game(game, user_id)
     };
 
-}));
+});
 
 const handle_attack = (game: Game, game_id: string, player_id: string, cards: Card[]): Game => {
     //const public_game_channel = getPublicGameChannel();

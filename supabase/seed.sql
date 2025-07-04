@@ -310,6 +310,60 @@ WITH CHECK (
 );
 
 -- =============================================================================
+-- POSTGRESQL ADVISORY LOCK FUNCTIONS
+-- For game operation synchronization across function instances
+-- =============================================================================
+
+-- Function to try acquiring an advisory lock (non-blocking)
+CREATE OR REPLACE FUNCTION pg_try_advisory_lock(key bigint)
+RETURNS boolean
+LANGUAGE sql
+SECURITY DEFINER
+AS $$
+  SELECT pg_try_advisory_lock($1);
+$$;
+
+-- Function to release an advisory lock
+CREATE OR REPLACE FUNCTION pg_advisory_unlock(key bigint)
+RETURNS boolean
+LANGUAGE sql
+SECURITY DEFINER
+AS $$
+  SELECT pg_advisory_unlock($1);
+$$;
+
+-- Function to try acquiring an advisory lock with string key (convenience function)
+CREATE OR REPLACE FUNCTION pg_try_advisory_lock_string(key text)
+RETURNS boolean
+LANGUAGE sql
+SECURITY DEFINER
+AS $$
+  SELECT pg_try_advisory_lock(hashtext($1));
+$$;
+
+-- Function to release an advisory lock with string key (convenience function)
+CREATE OR REPLACE FUNCTION pg_advisory_unlock_string(key text)
+RETURNS boolean
+LANGUAGE sql
+SECURITY DEFINER
+AS $$
+  SELECT pg_advisory_unlock(hashtext($1));
+$$;
+
+-- Grant execute permissions to authenticated users
+GRANT EXECUTE ON FUNCTION pg_try_advisory_lock(bigint) TO authenticated;
+GRANT EXECUTE ON FUNCTION pg_advisory_unlock(bigint) TO authenticated;
+GRANT EXECUTE ON FUNCTION pg_try_advisory_lock_string(text) TO authenticated;
+GRANT EXECUTE ON FUNCTION pg_advisory_unlock_string(text) TO authenticated;
+
+-- Also grant to service_role for function usage
+GRANT EXECUTE ON FUNCTION pg_try_advisory_lock(bigint) TO service_role;
+GRANT EXECUTE ON FUNCTION pg_advisory_unlock(bigint) TO service_role;
+GRANT EXECUTE ON FUNCTION pg_try_advisory_lock_string(text) TO service_role;
+GRANT EXECUTE ON FUNCTION pg_advisory_unlock_string(text) TO service_role;
+
+-- =============================================================================
 -- SETUP COMPLETE!
 -- Your database schema is now secure and ready for the game application.
+-- Advisory locks are configured for game operation synchronization.
 -- =============================================================================

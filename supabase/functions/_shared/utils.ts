@@ -3,6 +3,7 @@ import { Card, Game, GAME_STATUS, Player, PLAYER_STATUS, PersonalGame, SERVER_EV
 import { ACE_VALUE, CARDS_PER_PLAYER, SUITS, START_VALUE, VALUE_MAP, SUIT_MAP } from './constants.ts';
 import { createClient, User } from 'jsr:@supabase/supabase-js';
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { emailToName } from './common_utils.ts';
 import { getAuthenticatedUser } from './auth.ts';
 
@@ -11,53 +12,116 @@ const supabaseClient = createClient(
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
 );
 
+// Database-level game locking using PostgreSQL advisory locks
+const acquireGameLock = async (game_id: string): Promise<boolean> => {
+    const { data, error } = await supabaseClient.rpc('pg_try_advisory_lock_string', { key: game_id });
+    
+    if (error) {
+        console.error(`Failed to acquire lock for game ${game_id}:`, error);
+        return false;
+    }
+    
+    return data as boolean;
+};
+
+const releaseGameLock = async (game_id: string): Promise<void> => {
+    const { error } = await supabaseClient.rpc('pg_advisory_unlock_string', { key: game_id });
+    
+    if (error) {
+        console.error(`Failed to release lock for game ${game_id}:`, error);
+    }
+};
+
+// Sequential operation execution with database-level locking
+const executeWithGameLock = async (game_id: string, operation: () => Promise<any>): Promise<any> => {
+    // Try to acquire database lock with retry logic
+    const maxRetries = 5;
+    let lockAcquired = false;
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        lockAcquired = await acquireGameLock(game_id);
+        if (lockAcquired) break;
+        
+        await new Promise(resolve => setTimeout(resolve, 100 * attempt)); // Exponential backoff
+    }
+    
+    if (!lockAcquired) {
+        throw new Error(`Could not acquire lock for game ${game_id} - too many concurrent operations`);
+    }
+    
+    try {
+        return operation();
+    } finally {
+        await releaseGameLock(game_id);
+    }
+};
+
 export const createId = (): string => crypto.randomUUID().slice(0, 6);
 
-export const wrap400 = (execute: (user: User, user_name: string, body: any) => Promise<any>) => async (req: Request): Promise<Response> => {
-    try {
-        // Handle CORS
-        const corsResponse = handleCors(req);
-        if (corsResponse) return corsResponse;
-
-        // Get authenticated user
-        const user: User = await getAuthenticatedUser(req);
-
-        // Get user name from email
-        const user_name = emailToName(user.email);
-
-        // Parse JSON body
-        let body = {};
+export const wrap400 = (execute: (user: User, user_name: string, body: any) => Promise<any>) => {
+    const handler = async (req: Request): Promise<Response> => {
         try {
-            body = await req.json();
-        } catch (e) {}
-        // If JSON parsing fails, keep empty object
+            // Handle CORS
+            const corsResponse = handleCors(req);
+            if (corsResponse) return corsResponse;
 
-        const result = await execute(user, user_name, body);
+            // Get authenticated user
+            const user: User = await getAuthenticatedUser(req);
 
-        // Create standardized response
-        return new Response(JSON.stringify(result), {
-            headers: {
-                ...corsHeaders,
-                'Content-Type': 'application/json'
+            // Get user name from email
+            const user_name = emailToName(user.email);
+
+            // Parse JSON body
+            let body = {};
+            try {
+                body = await req.json();
+            } catch (e) {}
+            // If JSON parsing fails, keep empty object
+
+            // Extract game_id from body for lock management
+            const game_id = (body as any).game_id;
+            
+            let result: any;
+            
+            if (game_id) {
+                // Execute operation with database lock for this specific game
+                result = await executeWithGameLock(game_id, () => execute(user, user_name, body));
+            } else {
+                // No game_id, execute immediately (for operations that don't involve games)
+                result = await execute(user, user_name, body);
             }
-        });
-    } catch (e: any) {
-        console.error('Error processing request:', {
-            name: e.name,
-            message: e.message,
-            stack: e.stack,
-            cause: e.cause
-        });
 
-        return new Response(
-            JSON.stringify({ error: e.message }),
-            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-    }
-}
+            // Create standardized response
+            return new Response(JSON.stringify(result), {
+                headers: {
+                    ...corsHeaders,
+                    'Content-Type': 'application/json'
+                }
+            });
+        } catch (e: any) {
+            console.error('Error processing request:', {
+                name: e.name,
+                message: e.message,
+                stack: e.stack,
+                cause: e.cause
+            });
+
+            return new Response(
+                JSON.stringify({ error: e.message }),
+                { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+        }
+    };
+
+    // Serve the handler
+    serve(handler);
+    
+    // Return the handler (though it won't be used after serve() is called)
+    return handler;
+};
 
 export const verify_player_in_game = (game: Game, player_id: string): void => {
-    if (game.players.find(player => player.id === player_id) === undefined) {
+    if (!game.players.find(player => player.id === player_id)) {
         throw new Error(`Player ${player_id} not in game ${game.id}`);
     }
 }
@@ -73,10 +137,6 @@ const other_player = (player: Player): PublicPlayer => {
 
 // Come to think of it, if we are broadcasting to the game, we can't be sending "self"
 export const personalize_game = (game: Game, player_id: string): PersonalGame => {
-    const self: PrivatePlayer = {
-        player_id: player_id,
-        hand: game.players.find(player => player.id === player_id)!.hand
-    };
     // everything except game_decks , added self
     const personalGame: PersonalGame = {
         id: game.id,
@@ -90,7 +150,10 @@ export const personalize_game = (game: Game, player_id: string): PersonalGame =>
         defender: game.defender,
         table_battles: game.table_battles,
 
-        self: self,
+        self: {
+            player_id: player_id,
+            hand: game.players.find(player => player.id === player_id)!.hand
+        }
     }
     return personalGame;
 }

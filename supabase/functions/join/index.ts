@@ -2,8 +2,6 @@ import { loadCompleteGame, saveCompleteGame, personalize_game, wrap400, broadcas
 import { GAME_STATUS, PLAYER_STATUS, Game, SERVER_EVENT_TYPE, Player } from "../_shared/types.ts";
 import { MAX_PLAYERS } from "../_shared/constants.ts";
 
-import "jsr:@supabase/functions-js/edge-runtime.d.ts"
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "npm:@supabase/supabase-js@2.39.0"
 
 const supabaseClient = createClient(
@@ -11,7 +9,7 @@ const supabaseClient = createClient(
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
 );
 
-serve(wrap400(async (user, user_name, body) => {
+wrap400(async (user, user_name, body) => {
     const user_id = user.id;
     const { game_id } = body;
 
@@ -65,5 +63,5 @@ serve(wrap400(async (user, user_name, body) => {
     return {
         game: personalize_game(game, user_id)
     };
-}));
+});
 

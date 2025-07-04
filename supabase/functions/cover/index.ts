@@ -1,10 +1,7 @@
 import { wrap400, verify_player_in_game, broadcastToGameUsers, personalize_game, cardDisplay, validate_defender_status, verify_cards_in_players_hand, check_win, card_comp, canCover, refill, get_next_player_index, broadcastToGameUser, loadCompleteGame, saveCompleteGame } from "../_shared/utils.ts";
 import { Game, Card, GAME_STATUS, SERVER_EVENT_TYPE, PLAYER_STATUS, Player } from "../_shared/types.ts";
 
-import "jsr:@supabase/functions-js/edge-runtime.d.ts"
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
-
-serve(wrap400(async (user, user_name, body) => {
+wrap400(async (user, user_name, body) => {
     const user_id = user.id;
     const { game_id, cover_cards, attack_cards } = body;
 
@@ -30,8 +27,7 @@ serve(wrap400(async (user, user_name, body) => {
         game: personalize_game(game, user_id)
     };
 
-}));
-
+});
 
 const handle_cover = (game: Game, game_id: string, player_id: string, cover_cards: Card[], attack_cards: Card[]): Game => {
     // cover a card

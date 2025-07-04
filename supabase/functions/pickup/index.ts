@@ -1,10 +1,7 @@
 import { wrap400, validate_defender_status, get_next_player_index, refill, verify_player_in_game, personalize_game, broadcastToGameUsers, loadCompleteGame, saveCompleteGame } from "../_shared/utils.ts";
 import { GAME_STATUS, SERVER_EVENT_TYPE, Game, Player } from "../_shared/types.ts";
 
-import "jsr:@supabase/functions-js/edge-runtime.d.ts"
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
-
-serve(wrap400(async (user, user_name, body) => {
+wrap400(async (user, user_name, body) => {
     const user_id = user.id;
     const { game_id } = body;
 
@@ -28,7 +25,7 @@ serve(wrap400(async (user, user_name, body) => {
     return {
         game: personalize_game(game, user_id)
     };
-}));
+});
 
 const handle_pickup = (game: Game, game_id: string, player_id: string): Game => {
     if (game.status !== GAME_STATUS.FREE_PLAY && game.status !== GAME_STATUS.ONLY_DEFEND) {

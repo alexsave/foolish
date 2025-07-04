@@ -2,9 +2,8 @@ import { loadCompleteGame, saveCompleteGame, personalize_game, wrap400, broadcas
 import { SERVER_EVENT_TYPE, Game } from "../_shared/types.ts";
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 
-serve(wrap400(async (user, user_name, body) => {
+wrap400(async (user, user_name, body) => {
     const user_id = user.id;
     const { game_id, card_indices } = body;
 
@@ -44,4 +43,4 @@ serve(wrap400(async (user, user_name, body) => {
     return {
         game: personalize_game(game, user_id)
     };
-})); 
+}); 

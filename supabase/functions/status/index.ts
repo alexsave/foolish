@@ -1,11 +1,8 @@
 import { wrap400, personalize_game, loadCompleteGame } from '../_shared/utils.ts';
 import { Game, PublicGame, PublicPlayer } from '../_shared/types.ts'; 
 
-import "jsr:@supabase/functions-js/edge-runtime.d.ts"
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
-
 // TODO: just remove this. With the right policies we can query from client
-serve(wrap400(async (user, user_name, body) => {
+wrap400(async (user, user_name, body) => {
     const user_id = user.id;
     const { game_id } = body;
 
@@ -44,4 +41,4 @@ serve(wrap400(async (user, user_name, body) => {
             game: publicGame
         };
     }
-}));
+});
