@@ -1,4 +1,4 @@
-import { wrap400, verify_player_in_game, broadcastToGameUsers, personalize_game, cardDisplay, validate_defender_status, verify_cards_in_players_hand, check_win, card_comp, canCover, refill, get_next_player_index, broadcastToGameUser, loadCompleteGame, saveCompleteGame } from "../_shared/utils.ts";
+import { wrap400, verify_player_in_game, broadcastToGameUsers, personalize_game, cardDisplay, validate_defender_status, verify_cards_in_players_hand, check_win, card_comp, canCover, refill, get_next_player_index, broadcastToGameUser, loadCompleteGame, saveCompleteGame, acquireGameLock, releaseGameLock, executeWithGameLock } from "../_shared/utils.ts";
 import { Game, Card, GAME_STATUS, SERVER_EVENT_TYPE, PLAYER_STATUS, Player } from "../_shared/types.ts";
 
 wrap400(async (user, user_name, body) => {
@@ -164,7 +164,7 @@ const handle_cover = (game: Game, game_id: string, player_id: string, cover_card
             // I suspect this is not working. Is the timeout too long for the server?
             // TODO look at this tomorrow
             console.log('No one can play cards, setting timeout');
-            setTimeout(() => {
+            setTimeout(async () => {
                 console.log('Timeout done, shifting');
                 //shift 
 
@@ -179,6 +179,10 @@ const handle_cover = (game: Game, game_id: string, player_id: string, cover_card
                     type: SERVER_EVENT_TYPE.SUCCESSFULLY_COVERED,
                     message: `Player ${player_id} successfully defended the attack`,
                 });
+
+                await acquireGameLock(game_id);
+                await executeWithGameLock(game_id, () => saveCompleteGame(game));
+                await releaseGameLock(game_id);
             }, 5000 + Math.random() * 20000);
         } else {
             // someone can play cards

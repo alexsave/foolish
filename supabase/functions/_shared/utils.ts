@@ -13,7 +13,7 @@ const supabaseClient = createClient(
 );
 
 // Database-level game locking using PostgreSQL advisory locks
-const acquireGameLock = async (game_id: string): Promise<boolean> => {
+export const acquireGameLock = async (game_id: string): Promise<boolean> => {
     const { data, error } = await supabaseClient.rpc('pg_try_advisory_lock_string', { key: game_id });
     
     if (error) {
@@ -24,7 +24,7 @@ const acquireGameLock = async (game_id: string): Promise<boolean> => {
     return data as boolean;
 };
 
-const releaseGameLock = async (game_id: string): Promise<void> => {
+export const releaseGameLock = async (game_id: string): Promise<void> => {
     const { error } = await supabaseClient.rpc('pg_advisory_unlock_string', { key: game_id });
     
     if (error) {
@@ -33,7 +33,7 @@ const releaseGameLock = async (game_id: string): Promise<void> => {
 };
 
 // Sequential operation execution with database-level locking
-const executeWithGameLock = async (game_id: string, operation: () => Promise<any>): Promise<any> => {
+export const executeWithGameLock = async (game_id: string, operation: () => Promise<any>): Promise<any> => {
     // Try to acquire database lock with retry logic
     const maxRetries = 5;
     let lockAcquired = false;
