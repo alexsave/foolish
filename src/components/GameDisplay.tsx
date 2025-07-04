@@ -476,12 +476,12 @@ export const GameDisplay = () => {
                 let cardStyle: React.CSSProperties;
                 if (isSelected) {
                   cardStyle = {
-                    border: '3px solid red',
+                    border: '2px solid red',
                     backgroundColor: 'white'
                   };
                 } else {
                   cardStyle = {
-                    border: '1px solid black',
+                    border: '2px solid black',
                     backgroundColor: 'white'
                   };
                 }
@@ -504,7 +504,8 @@ export const GameDisplay = () => {
                       opacity: isDragging ? 0.3 : 1, // More transparent when being dragged
                       transition: 'all 0.1s ease',
                       cursor: 'move',
-                      userSelect: 'none'
+                      userSelect: 'none',
+                      margin: '0 1px',
                     }}
 
                   >
