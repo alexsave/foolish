@@ -183,7 +183,7 @@ const handle_cover = (game: Game, game_id: string, player_id: string, cover_card
                 await acquireGameLock(game_id);
                 await executeWithGameLock(game_id, () => saveCompleteGame(game));
                 await releaseGameLock(game_id);
-            }, 5000 + Math.random() * 20000);
+            }, 1000 + Math.random() * 5000);
         } else {
             // someone can play cards
             // so we need to see who can play cards
