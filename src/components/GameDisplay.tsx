@@ -698,7 +698,7 @@ export const GameDisplay = () => {
             <div style={{
               position: 'absolute',
               left: currentCursorPos.x - 20,
-              top: currentCursorPos.y - 50,
+              top: currentCursorPos.y + 10,
               backgroundColor: 'rgba(0, 0, 0, 0.8)',
               color: 'white',
               padding: '4px 8px',
@@ -744,7 +744,7 @@ export const GameDisplay = () => {
             <div style={{
               position: 'absolute',
               left: currentCursorPos.x - 10,
-              top: currentCursorPos.y - 10,
+              top: currentCursorPos.y - 50,
               display: 'flex',
               flexDirection: 'row',
               alignItems: 'center',
@@ -1092,56 +1092,31 @@ export const GameDisplay = () => {
 
               const visual_index = (state.defender - self_index + state.players.length) % state.players.length;
               const radians = (2) * Math.PI * visual_index / (state.players.length);
-              const playerX = (-1 * Math.sin(radians) * 35) + 50;
-              const playerY = (Math.cos(radians) * 35) + 50;
 
               // Calculate shield position (same as debug dots)
-              const centerX = 50;
-              const centerY = 50;
-              const dirX = centerX - playerX;
-              const dirY = centerY - playerY;
-              const distance = Math.sqrt(dirX * dirX + dirY * dirY);
-              const normalizedDirX = dirX / distance;
-              const normalizedDirY = dirY / distance;
-              //const shieldX = playerX + (normalizedDirX * 8);
-              //const shieldY = playerY + (normalizedDirY * 8);
 
+              const H = window.innerHeight;
+              const W = window.innerWidth;
+              const aPct = 35;                          // ellipse semi-axis in %
+              const cxPct = 50, cyPct = 50;             // centre in %
 
-              const screenWidth = window.innerWidth;
-              const screenHeight = window.innerHeight;
+              // defender in %
+              const dxPct = aPct * Math.cos(radians + Math.PI / 2);  // –sinθ
+              const dyPct = aPct * Math.sin(radians + Math.PI / 2);  //  cosθ
 
-              // Move exactly 30px towards center using the radial angle
-              const shieldX = playerX + (Math.sin(radians) * 60 * 100 / screenWidth);
-              const shieldY = playerY + (-Math.cos(radians) * 60 * 100 / screenHeight);
+              // length of that vector in px
+              const dxPx = dxPct * W / 100;
+              const dyPx = dyPct * H / 100;
+              const rPx = Math.hypot(dxPx, dyPx);
 
-              // Calculate arrow end point (longer towards player from shield)
-              //const arrowEndX = shieldX + (-Math.sin(radians) * 40 * 100 / screenWidth);
-              //const arrowEndY = shieldY + (Math.cos(radians) * 40 * 100 / screenHeight);
+              // step 60 px inward  (= keep direction, shorten length)
+              const startScale = (rPx - 36) / rPx;
+              const arrowStartX = cxPct + dxPct * startScale;
+              const arrowStartY = cyPct + dyPct * startScale;
 
-            const H = window.innerHeight;
-            const W = window.innerWidth;
-            const aPct = 35;                          // ellipse semi-axis in %
-            const cxPct = 50, cyPct = 50;             // centre in %
-
-            const θ = 2 * Math.PI * visual_index / state.players.length;
-
-            // defender in %
-            const dxPct = aPct * Math.cos(θ + Math.PI / 2);  // –sinθ
-            const dyPct = aPct * Math.sin(θ + Math.PI / 2);  //  cosθ
-
-            // length of that vector in px
-            const dxPx = dxPct * W / 100;
-            const dyPx = dyPct * H / 100;
-            const rPx = Math.hypot(dxPx, dyPx);
-
-            // step 60 px inward  (= keep direction, shorten length)
-            const startScale = (rPx - 36) / rPx;
-            const arrowStartX = cxPct + dxPct * startScale;
-            const arrowStartY = cyPct + dyPct * startScale;
-
-            const endScale = (rPx - 35) / rPx;
-            const arrowEndX = cxPct + dxPct * endScale;
-            const arrowEndY = cyPct + dyPct * endScale;
+              const endScale = (rPx - 35) / rPx;
+              const arrowEndX = cxPct + dxPct * endScale;
+              const arrowEndY = cyPct + dyPct * endScale;
 
               return (
                 <line
@@ -1181,46 +1156,18 @@ export const GameDisplay = () => {
             if (!defenderPlayer) return null;
 
             const visual_index = (state.defender - self_index + state.players.length) % state.players.length;
-            const radians = (2) * Math.PI * visual_index / (state.players.length);
 
             // Calculate defender position
-            /*const defenderXPercent = (-1 * Math.sin(radians) * 35) + 50;
-            const defenderYPercent = (Math.cos(radians) * 35) + 50;
-
-            const defenderXCanvas = defenderXPercent * W / 100;
-            const defenderYCanvas = defenderYPercent * H / 100;
-
-            const defenderXCartesian = defenderXCanvas - W / 2;
-            const defenderYCartesian = defenderYCanvas - H / 2;
-
-            // Complex math to calculate the shield position
-            let visualTheta = Math.atan(defenderYCartesian / defenderXCartesian);
-            if (defenderXCartesian < 0) {
-              visualTheta += Math.PI;
-            }
-            const visualRadius = Math.sqrt(defenderXCartesian * defenderXCartesian + defenderYCartesian * defenderYCartesian);
-
-            const shieldRadius = visualRadius - 60;
-
-            const shieldXCartesian = Math.cos(visualTheta) * shieldRadius;
-            const shieldYCartesian = Math.sin(visualTheta) * shieldRadius;
-
-            const shieldXCanvas = shieldXCartesian + W / 2;
-            const shieldYCanvas = shieldYCartesian + H / 2;
-
-            const shieldXPercent = shieldXCanvas * 100 / W;
-            const shieldYPercent = shieldYCanvas * 100 / H;*/
-
             const H = window.innerHeight;
             const W = window.innerWidth;
             const aPct = 35;                          // ellipse semi-axis in %
             const cxPct = 50, cyPct = 50;             // centre in %
 
-            const θ = 2 * Math.PI * visual_index / state.players.length;
+            const radians = 2 * Math.PI * visual_index / state.players.length;
 
             // defender in %
-            const dxPct = aPct * Math.cos(θ + Math.PI / 2);  // –sinθ
-            const dyPct = aPct * Math.sin(θ + Math.PI / 2);  //  cosθ
+            const dxPct = aPct * Math.cos(radians + Math.PI / 2);  // –sinθ
+            const dyPct = aPct * Math.sin(radians + Math.PI / 2);  //  cosθ
 
             // length of that vector in px
             const dxPx = dxPct * W / 100;
