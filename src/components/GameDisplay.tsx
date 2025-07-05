@@ -54,7 +54,7 @@ export const GameDisplay = () => {
 
   // Generate pattern for smaller player cards
   const [playerCardPatternDataUrl, setPlayerCardPatternDataUrl] = useState<string>('');
-  
+
   useEffect(() => {
     // Generate the pattern for player cards once when component mounts
     const dataUrl = generateCardBackPattern(12, 18);
@@ -501,49 +501,49 @@ export const GameDisplay = () => {
     canvas.width = width;
     canvas.height = height;
     const ctx = canvas.getContext('2d')!;
-    
+
     const imageData = ctx.createImageData(width, height);
     const data = imageData.data;
-    
+
     // Red background color (#DC143C crimson red)
     const bgRed = 220;
     const bgGreen = 20;
     const bgBlue = 60;
-    
+
     // Gold line color (#FFD700 gold)
     const lineRed = 255;
     const lineGreen = 215;
     const lineBlue = 0;
-    
+
     // Scale grid size proportionally to card size (base size is 40x70)
     const baseWidth = 40;
     const scaleFactor = width / baseWidth;
     const gridSize = 8 * scaleFactor; // Scale the grid size
     const lineWidth = 0.5 * scaleFactor; // Scale line width too
-    
+
     // Calculate angles for 30° and -30° diagonals
     const angle1 = Math.PI / 3; // 30 degrees
     const angle2 = -Math.PI / 3; // -30 degrees
-    
+
     // Direction vectors for the diagonal lines
     const cos1 = Math.cos(angle1);
     const sin1 = Math.sin(angle1);
     const cos2 = Math.cos(angle2);
     const sin2 = Math.sin(angle2);
-    
+
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         const index = (y * width + x) * 4;
-        
+
         // Calculate distance to diagonal lines using line equation
         // For 30° diagonal: distance from point to parallel lines spaced gridSize apart
         const dist1 = Math.abs((x * sin1 - y * cos1) % gridSize);
         const dist2 = Math.abs((x * sin2 - y * cos2) % gridSize);
-        
+
         // Check if point is close enough to either diagonal line
         const onLine1 = Math.min(dist1, gridSize - dist1) < lineWidth;
         const onLine2 = Math.min(dist2, gridSize - dist2) < lineWidth;
-        
+
         if (onLine1 || onLine2) {
           // Gold line
           data[index] = lineRed;
@@ -558,14 +558,14 @@ export const GameDisplay = () => {
         data[index + 3] = 255; // Alpha
       }
     }
-    
+
     ctx.putImageData(imageData, 0, 0);
     return canvas.toDataURL();
   };
 
   const CardBack = ({ deckSize = 36 }: { deckSize?: number }) => {
     const [patternDataUrl, setPatternDataUrl] = useState<string>('');
-    
+
     useEffect(() => {
       // Generate the pattern once when component mounts
       const dataUrl = generateCardBackPattern(40, 70);
@@ -1115,14 +1115,39 @@ export const GameDisplay = () => {
               const shieldY = playerY + (-Math.cos(radians) * 60 * 100 / screenHeight);
 
               // Calculate arrow end point (longer towards player from shield)
-              const arrowEndX = shieldX + (-Math.sin(radians) * 40 * 100 / screenWidth);
-              const arrowEndY = shieldY + (Math.cos(radians) * 40 * 100 / screenHeight);
+              //const arrowEndX = shieldX + (-Math.sin(radians) * 40 * 100 / screenWidth);
+              //const arrowEndY = shieldY + (Math.cos(radians) * 40 * 100 / screenHeight);
+
+            const H = window.innerHeight;
+            const W = window.innerWidth;
+            const aPct = 35;                          // ellipse semi-axis in %
+            const cxPct = 50, cyPct = 50;             // centre in %
+
+            const θ = 2 * Math.PI * visual_index / state.players.length;
+
+            // defender in %
+            const dxPct = aPct * Math.cos(θ + Math.PI / 2);  // –sinθ
+            const dyPct = aPct * Math.sin(θ + Math.PI / 2);  //  cosθ
+
+            // length of that vector in px
+            const dxPx = dxPct * W / 100;
+            const dyPx = dyPct * H / 100;
+            const rPx = Math.hypot(dxPx, dyPx);
+
+            // step 60 px inward  (= keep direction, shorten length)
+            const startScale = (rPx - 36) / rPx;
+            const arrowStartX = cxPct + dxPct * startScale;
+            const arrowStartY = cyPct + dyPct * startScale;
+
+            const endScale = (rPx - 35) / rPx;
+            const arrowEndX = cxPct + dxPct * endScale;
+            const arrowEndY = cyPct + dyPct * endScale;
 
               return (
                 <line
                   key="debug-arrow-defender"
-                  x1={`${shieldX}%`}
-                  y1={`${shieldY}%`}
+                  x1={`${arrowStartX}%`}
+                  y1={`${arrowStartY}%`}
                   x2={`${arrowEndX}%`}
                   y2={`${arrowEndY}%`}
                   stroke="black"
@@ -1136,14 +1161,14 @@ export const GameDisplay = () => {
             <defs>
               <marker
                 id="blackArrowHead"
-                markerWidth="6"
+                markerWidth="4"
                 markerHeight="4"
-                refX="6"
+                refX="1"
                 refY="2"
                 orient="auto"
               >
                 <polygon
-                  points="0 0, 6 2, 0 4"
+                  points="0 0, 2 2, 0 4"
                   fill="black"
                 />
               </marker>
@@ -1159,49 +1184,59 @@ export const GameDisplay = () => {
             const radians = (2) * Math.PI * visual_index / (state.players.length);
 
             // Calculate defender position
-            const defenderX = (-1 * Math.sin(radians) * 35) + 50;
-            const defenderY = (Math.cos(radians) * 35) + 50;
+            /*const defenderXPercent = (-1 * Math.sin(radians) * 35) + 50;
+            const defenderYPercent = (Math.cos(radians) * 35) + 50;
 
-            // Calculate direction from defender to center
-            const centerX = 50;
-            const centerY = 50;
-            const dirX = centerX - defenderX;
-            const dirY = centerY - defenderY;
-            const distance = Math.sqrt(dirX * dirX + dirY * dirY);
-            const normalizedDirX = dirX / distance;
-            const normalizedDirY = dirY / distance;
+            const defenderXCanvas = defenderXPercent * W / 100;
+            const defenderYCanvas = defenderYPercent * H / 100;
 
-            // Position shield closer to center along the green line (convert to percentage)
-            // Assume viewport is roughly 1000px for conversion
-            //const shieldX = defenderX + (normalizedDirX * 12); // Move 80px closer to center
-            //const shieldY = defenderY + (normalizedDirY * 12); // Move 80px closer to center
+            const defenderXCartesian = defenderXCanvas - W / 2;
+            const defenderYCartesian = defenderYCanvas - H / 2;
 
-            // Ok lets say I want to move the shield exactly 30px towards the center. 
-            // This will be different depending on the angle
-            // If the defnder is to the right, this means we need to move 30px left. defenderY is at 50%, and defenderX is at 85%
-            // shieldY = 50%, shieldX = 85% - (30/width)%
+            // Complex math to calculate the shield position
+            let visualTheta = Math.atan(defenderYCartesian / defenderXCartesian);
+            if (defenderXCartesian < 0) {
+              visualTheta += Math.PI;
+            }
+            const visualRadius = Math.sqrt(defenderXCartesian * defenderXCartesian + defenderYCartesian * defenderYCartesian);
 
-            // To extrapolate, it's like that if the defender is at the bottom, we have shieldY = 85% - (30px/height), shieldX = 50%
+            const shieldRadius = visualRadius - 60;
 
-            //const screenWidth = window.innerWidth;
-            //const screenHeight = window.innerHeight;
-            //// Move exactly 30px towards center
-            //const shieldX = defenderX + (normalizedDirX * 60 * 100 / screenWidth);
-            //const shieldY = defenderY + (normalizedDirY * 60 * 100 / screenHeight);
+            const shieldXCartesian = Math.cos(visualTheta) * shieldRadius;
+            const shieldYCartesian = Math.sin(visualTheta) * shieldRadius;
 
+            const shieldXCanvas = shieldXCartesian + W / 2;
+            const shieldYCanvas = shieldYCartesian + H / 2;
 
-            const screenWidth = window.innerWidth;
-            const screenHeight = window.innerHeight;
+            const shieldXPercent = shieldXCanvas * 100 / W;
+            const shieldYPercent = shieldYCanvas * 100 / H;*/
 
-            // Move exactly 30px towards center using the radial angle
-            const shieldX = defenderX + (Math.sin(radians) * 60 * 100 / screenWidth);
-            const shieldY = defenderY + (-Math.cos(radians) * 60 * 100 / screenHeight);
+            const H = window.innerHeight;
+            const W = window.innerWidth;
+            const aPct = 35;                          // ellipse semi-axis in %
+            const cxPct = 50, cyPct = 50;             // centre in %
+
+            const θ = 2 * Math.PI * visual_index / state.players.length;
+
+            // defender in %
+            const dxPct = aPct * Math.cos(θ + Math.PI / 2);  // –sinθ
+            const dyPct = aPct * Math.sin(θ + Math.PI / 2);  //  cosθ
+
+            // length of that vector in px
+            const dxPx = dxPct * W / 100;
+            const dyPx = dyPct * H / 100;
+            const rPx = Math.hypot(dxPx, dyPx);
+
+            // step 60 px inward  (= keep direction, shorten length)
+            const scale = (rPx - 55) / rPx;
+            const shieldXPct = cxPct + dxPct * scale;
+            const shieldYPct = cyPct + dyPct * scale;
 
             return (
               <div style={{
                 position: 'absolute',
-                left: `${shieldX}%`,
-                top: `${shieldY}%`,
+                left: `${shieldXPct}%`,
+                top: `${shieldYPct}%`,
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center'
