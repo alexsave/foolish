@@ -52,6 +52,15 @@ export const GameDisplay = () => {
   const [draggedCard, setDraggedCard] = useState<Card | null>(null);
   const [currentCursorPos, setCurrentCursorPos] = useState<{ x: number; y: number } | null>(null);
 
+  // Generate pattern for smaller player cards
+  const [playerCardPatternDataUrl, setPlayerCardPatternDataUrl] = useState<string>('');
+  
+  useEffect(() => {
+    // Generate the pattern for player cards once when component mounts
+    const dataUrl = generateCardBackPattern(12, 18);
+    setPlayerCardPatternDataUrl(dataUrl);
+  }, []);
+
   const handleCardSelection = (card: Card) => {
     const isSelected = selectedCards.some(selectedCard =>
       selectedCard.value === card.value && selectedCard.suit === card.suit
@@ -122,7 +131,7 @@ export const GameDisplay = () => {
 
   // Helper function to detect if drag is in the hand area
   const isInHandArea = (x: number, y: number) => {
-    const handAreaTop = window.innerHeight - 200; // Hand area starts 200px from bottom
+    const handAreaTop = window.innerHeight - 150; // Hand area starts 200px from bottom
     return y >= handAreaTop;
   };
 
@@ -141,11 +150,24 @@ export const GameDisplay = () => {
   const canPass = (draggedCard: Card) => {
     const table_battles = state.table_battles;
     if (table_battles.length === 0) return false;
-    
+
+    // Check if the dragged card is part of selected cards
+    const isDraggedCardSelected = selectedCards.some(selectedCard =>
+      selectedCard.value === draggedCard.value && selectedCard.suit === draggedCard.suit
+    );
+
+    // Use all selected cards if the dragged card is selected, otherwise just the dragged card
+    const cardsToCheck = isDraggedCardSelected && selectedCards.length > 0 ? selectedCards : [draggedCard];
+
+    // All cards must have the same value
+    if (!cardsToCheck.every(card => card.value === cardsToCheck[0].value)) {
+      return false;
+    }
+
     // All table battles must be uncovered (defense === null)
-    // All uncovered attacks must have the same value as the dragged card
-    return table_battles.every(battle => 
-      battle.defense === null && battle.attack.value === draggedCard.value
+    // All uncovered attacks must have the same value as the cards to check
+    return table_battles.every(battle =>
+      battle.defense === null && battle.attack.value === cardsToCheck[0].value
     );
   };
 
@@ -161,7 +183,7 @@ export const GameDisplay = () => {
     if (isDefending) {
       const tableCardUnderCursor = getTableCardUnderCursor(x, y);
       const passIsPossible = canPass(draggedCard);
-      
+
       if (tableCardUnderCursor && !tableCardUnderCursor.defense) {
         // Dragging to an uncovered attack card = cover
         return { type: 'cover', targetCard: tableCardUnderCursor.attack };
@@ -388,10 +410,19 @@ export const GameDisplay = () => {
     if (isDraggingForGameAction && draggedCard && isActuallyDragging && currentCursorPos) {
       const action = determineGameAction(currentCursorPos.x, currentCursorPos.y, draggedCard);
 
+      // Check if the dragged card is part of selected cards
+      const isDraggedCardSelected = selectedCards.some(selectedCard =>
+        selectedCard.value === draggedCard.value && selectedCard.suit === draggedCard.suit
+      );
+
+      // Use all selected cards if the dragged card is selected, otherwise just the dragged card
+      const cardsToUse = isDraggedCardSelected && selectedCards.length > 0 ? selectedCards : [draggedCard];
+
       switch (action.type) {
         case 'attack':
-          attack([draggedCard]).then(() => {
+          attack(cardsToUse).then(() => {
             console.log('Attack performed via drag');
+            setSelectedCards([]); // Clear selection after successful action
           }).catch((e) => {
             console.error('Attack failed:', e.message);
           });
@@ -399,8 +430,12 @@ export const GameDisplay = () => {
 
         case 'cover':
           if (action.targetCard) {
-            cover([draggedCard], [action.targetCard]).then(() => {
+            // For cover, we can only cover one card at a time, so use just the first card
+            // But we could extend this later to handle multiple covers
+            const cardToUse = cardsToUse[0];
+            cover([cardToUse], [action.targetCard]).then(() => {
               console.log('Cover performed via drag');
+              setSelectedCards([]); // Clear selection after successful action
             }).catch((e) => {
               console.error('Cover failed:', e.message);
             });
@@ -408,8 +443,9 @@ export const GameDisplay = () => {
           break;
 
         case 'pass':
-          pass([draggedCard]).then(() => {
+          pass(cardsToUse).then(() => {
             console.log('Pass performed via drag');
+            setSelectedCards([]); // Clear selection after successful action
           }).catch((e) => {
             console.error('Pass failed:', e.message);
           });
@@ -450,16 +486,133 @@ export const GameDisplay = () => {
 
   const CardDisplay = ({ card, onClick }: { card: Card, onClick?: () => void }) => {
     return (
-      <div onClick={onClick} style={{ backgroundColor: 'white', width: '40px', height: '70px', borderRadius: '5px', border: '1px solid black', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-        <p>{VALUE_MAP[card.value] + SUIT_MAP[card.suit]}</p>
+      <div onClick={onClick} style={{ backgroundColor: 'white', width: '40px', height: '70px', borderRadius: '5px', border: '2px solid black', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+        <p style={{ margin: 0, fontSize: '18px', textAlign: 'center' }}>
+          {VALUE_MAP[card.value]}
+          <br />
+          {SUIT_MAP[card.suit]}
+        </p>
       </div>
     )
   }
 
-  const CardBack = () => {
+  const generateCardBackPattern = (width: number, height: number): string => {
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d')!;
+    
+    const imageData = ctx.createImageData(width, height);
+    const data = imageData.data;
+    
+    // Red background color (#DC143C crimson red)
+    const bgRed = 220;
+    const bgGreen = 20;
+    const bgBlue = 60;
+    
+    // Gold line color (#FFD700 gold)
+    const lineRed = 255;
+    const lineGreen = 215;
+    const lineBlue = 0;
+    
+    // Scale grid size proportionally to card size (base size is 40x70)
+    const baseWidth = 40;
+    const scaleFactor = width / baseWidth;
+    const gridSize = 8 * scaleFactor; // Scale the grid size
+    const lineWidth = 0.5 * scaleFactor; // Scale line width too
+    
+    // Calculate angles for 30° and -30° diagonals
+    const angle1 = Math.PI / 3; // 30 degrees
+    const angle2 = -Math.PI / 3; // -30 degrees
+    
+    // Direction vectors for the diagonal lines
+    const cos1 = Math.cos(angle1);
+    const sin1 = Math.sin(angle1);
+    const cos2 = Math.cos(angle2);
+    const sin2 = Math.sin(angle2);
+    
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const index = (y * width + x) * 4;
+        
+        // Calculate distance to diagonal lines using line equation
+        // For 30° diagonal: distance from point to parallel lines spaced gridSize apart
+        const dist1 = Math.abs((x * sin1 - y * cos1) % gridSize);
+        const dist2 = Math.abs((x * sin2 - y * cos2) % gridSize);
+        
+        // Check if point is close enough to either diagonal line
+        const onLine1 = Math.min(dist1, gridSize - dist1) < lineWidth;
+        const onLine2 = Math.min(dist2, gridSize - dist2) < lineWidth;
+        
+        if (onLine1 || onLine2) {
+          // Gold line
+          data[index] = lineRed;
+          data[index + 1] = lineGreen;
+          data[index + 2] = lineBlue;
+        } else {
+          // Red background
+          data[index] = bgRed;
+          data[index + 1] = bgGreen;
+          data[index + 2] = bgBlue;
+        }
+        data[index + 3] = 255; // Alpha
+      }
+    }
+    
+    ctx.putImageData(imageData, 0, 0);
+    return canvas.toDataURL();
+  };
+
+  const CardBack = ({ deckSize = 36 }: { deckSize?: number }) => {
+    const [patternDataUrl, setPatternDataUrl] = useState<string>('');
+    
+    useEffect(() => {
+      // Generate the pattern once when component mounts
+      const dataUrl = generateCardBackPattern(40, 70);
+      setPatternDataUrl(dataUrl);
+    }, []);
+
     return (
-      <div style={{ backgroundColor: 'black', width: '40px', height: '70px', borderRadius: '5px', border: '1px solid black', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-        <p>?</p>
+      <div style={{ position: 'relative', width: '40px', height: '70px' }}>
+        {/* Multiple card layers to show deck thickness */}
+        {Array.from({ length: Math.min(Math.ceil(deckSize / 6), 6) }).map((_, layerIndex) => (
+          <div
+            key={`deck-layer-${layerIndex}`}
+            style={{
+              position: 'absolute',
+              top: `${-layerIndex * 2}px`,
+              left: `${-layerIndex * 1}px`,
+              width: '40px',
+              height: '70px',
+              backgroundColor: '#DC143C', // Fallback crimson red
+              border: '1px solid #8B0000', // Dark red border
+              borderRadius: '5px',
+              zIndex: layerIndex,
+              transform: 'rotate(90deg)',
+              backgroundImage: patternDataUrl ? `url(${patternDataUrl})` : undefined,
+              backgroundSize: '100% 100%',
+              backgroundRepeat: 'no-repeat'
+            }}
+          />
+        ))}
+
+        {/* Top card with more detailed pattern */}
+        <div style={{
+          position: 'absolute',
+          top: `${-Math.min(Math.ceil(deckSize / 6), 6) * 2}px`,
+          left: `${-Math.min(Math.ceil(deckSize / 6), 6) * 1}px`,
+          width: '40px',
+          height: '70px',
+          backgroundColor: '#DC143C', // Fallback crimson red
+          border: '2px solid #8B0000',
+          borderRadius: '5px',
+          zIndex: 10,
+          transform: 'rotate(90deg)',
+          backgroundImage: patternDataUrl ? `url(${patternDataUrl})` : undefined,
+          backgroundSize: '100% 100%',
+          backgroundRepeat: 'no-repeat',
+          boxShadow: '0 2px 4px rgba(0,0,0,0.3)'
+        }} />
       </div>
     )
   }
@@ -535,50 +688,217 @@ export const GameDisplay = () => {
       </svg>
 
       <div style={{ display: 'flex', flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-        <p>FOOLISH</p>
+        <p style={{ color: 'white', fontSize: '24px', fontWeight: 'bold' }}>{state.name}</p>
 
         {/* Floating action indicator during game action drag */}
         {isDraggingForGameAction && draggedCard && currentCursorPos && (() => {
           const action = determineGameAction(currentCursorPos.x, currentCursorPos.y, draggedCard);
           return action.type === 'attack' || action.type === 'cover' || action.type === 'pass';
         })() && (
-          <div style={{
-            position: 'absolute',
-            left: currentCursorPos.x + 10,
-            top: currentCursorPos.y - 30,
-            backgroundColor: 'rgba(0, 0, 0, 0.8)',
-            color: 'white',
-            padding: '4px 8px',
-            borderRadius: '4px',
-            fontSize: '12px',
-            zIndex: 1001,
-            pointerEvents: 'none'
-          }}>
-            {(() => {
-              const self_index = state.players.findIndex((player) => player.id === user_id);
-              const isDefending = state.defender === self_index;
-              const action = determineGameAction(currentCursorPos.x, currentCursorPos.y, draggedCard);
-              
-              switch (action.type) {
-                case 'attack':
-                  return '⚔️ Attack';
-                case 'cover':
-                  return '🛡️ Cover';
-                case 'pass':
-                  return '🔄 Pass';
-                default:
-                  return '❓';
-              }
-            })()}
-          </div>
-        )}
+            <div style={{
+              position: 'absolute',
+              left: currentCursorPos.x - 20,
+              top: currentCursorPos.y - 50,
+              backgroundColor: 'rgba(0, 0, 0, 0.8)',
+              color: 'white',
+              padding: '4px 8px',
+              borderRadius: '4px',
+              fontSize: '12px',
+              zIndex: 1001,
+              pointerEvents: 'none'
+            }}>
+              {(() => {
+                const self_index = state.players.findIndex((player) => player.id === user_id);
+                const isDefending = state.defender === self_index;
+                const action = determineGameAction(currentCursorPos.x, currentCursorPos.y, draggedCard);
 
-        <div style={{ display: 'flex', position: 'absolute', top: '0px', left: '0px', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', height: '300px', width: '100px' }}>
-          {state.flipped && <CardDisplay card={state.flipped} />}
-          <CardBack />
-          <p>{state.deck_length}</p>
+                // Check if the dragged card is part of selected cards
+                const isDraggedCardSelected = selectedCards.some(selectedCard =>
+                  selectedCard.value === draggedCard.value && selectedCard.suit === draggedCard.suit
+                );
+
+                // Use all selected cards if the dragged card is selected, otherwise just the dragged card
+                const cardsToUse = isDraggedCardSelected && selectedCards.length > 0 ? selectedCards : [draggedCard];
+                const cardCount = cardsToUse.length;
+                const cardCountText = '';//cardCount > 1 ? ` (${cardCount})` : '';
+
+                switch (action.type) {
+                  case 'attack':
+                    return `⚔️ Attack${cardCountText}`;
+                  case 'cover':
+                    return '🛡️ Cover';
+                  case 'pass':
+                    return `🔄 Pass${cardCountText}`;
+                  default:
+                    return '❓';
+                }
+              })()}
+            </div>
+          )}
+
+        {/* Shadow cards showing what's being dragged */}
+        {isDraggingForGameAction && draggedCard && currentCursorPos && (() => {
+          const action = determineGameAction(currentCursorPos.x, currentCursorPos.y, draggedCard);
+          return action.type === 'attack' || action.type === 'cover' || action.type === 'pass';
+        })() && (
+            <div style={{
+              position: 'absolute',
+              left: currentCursorPos.x - 10,
+              top: currentCursorPos.y - 10,
+              display: 'flex',
+              flexDirection: 'row',
+              alignItems: 'center',
+              zIndex: 1002,
+              pointerEvents: 'none'
+            }}>
+              {(() => {
+                // Check if the dragged card is part of selected cards
+                const isDraggedCardSelected = selectedCards.some(selectedCard =>
+                  selectedCard.value === draggedCard.value && selectedCard.suit === draggedCard.suit
+                );
+
+                // Use all selected cards if the dragged card is selected, otherwise just the dragged card
+                const cardsToUse = isDraggedCardSelected && selectedCards.length > 0 ? selectedCards : [draggedCard];
+
+                return cardsToUse.map((card, index) => (
+                  <div
+                    key={`shadow-${card.value}-${card.suit}-${index}`}
+                    style={{
+                      border: '2px solid black',
+                      backgroundColor: 'white',
+                      width: '30px',
+                      height: '50px',
+                      borderRadius: '4px',
+                      display: 'flex',
+                      justifyContent: 'center',
+                      alignItems: 'center',
+                      marginRight: '2px',
+                      boxShadow: '0 2px 4px rgba(0,0,0,0.3)',
+                      opacity: 0.9
+                    }}
+                  >
+                    <p style={{
+                      pointerEvents: 'none',
+                      userSelect: 'none',
+                      textAlign: 'center',
+                      fontSize: '12px',
+                      margin: 0
+                    }}>
+                      {VALUE_MAP[card.value]}
+                      <br />
+                      {SUIT_MAP[card.suit]}
+                    </p>
+                  </div>
+                ));
+              })()}
+            </div>
+          )}
+
+        <div style={{ display: 'flex', position: 'absolute', top: '0px', left: '0px', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', height: '240px', width: '100px' }}>
+          {state.deck_length > 0 && (
+            <div style={{ position: 'relative' }}>
+              <CardBack deckSize={state.deck_length} />
+              <p style={{
+                position: 'absolute',
+                top: '50%',
+                left: '50%',
+                transform: 'translate(-50%, -50%)',
+                margin: 0,
+                color: 'white',
+                fontSize: '16px',
+                fontWeight: 'bold',
+                textShadow: '1px 1px 2px rgba(0,0,0,0.8)',
+                pointerEvents: 'none',
+                zIndex: 1003
+              }}>
+                {state.deck_length + (state.flipped ? 1 : 0)}
+              </p>
+            </div>
+          )}
+          {state.flipped && (
+            <div style={{ marginTop: state.deck_length > 0 ? '-30px' : '0px' }}>
+              <CardDisplay card={state.flipped} />
+            </div>
+          )}
+          {/* Trump indicator appears when deck and flipped card are gone */}
+          {state.deck_length === 0 && !state.flipped && (
+            <div style={{
+              fontSize: '64px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}>
+              <span>{SUIT_MAP[state.power_suit]}</span>
+            </div>
+          )}
         </div>
+
+
+
         <div style={{ display: 'flex', flexDirection: 'column', position: 'absolute', bottom: '10px', left: '0px', right: '0px', justifyContent: 'end', alignItems: 'center', height: '200px' }}>
+          {/* Always visible pickup and good buttons */}
+          {state.self && (
+            <div style={{
+              position: 'absolute',
+              bottom: '90px',
+              right: '20px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '5px',
+              zIndex: 999
+            }}>
+              {/* Pickup button for defenders */}
+              {isDefending && state.table_battles.length > 0 && (
+                <button
+                  style={{
+                    width: '60px',
+                    height: '40px',
+                    fontSize: '12px',
+                    backgroundColor: '#ff6b6b',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '4px',
+                    cursor: 'pointer'
+                  }}
+                  onClick={() => {
+                    pickup().then(() => {
+                      setSelectedCards([]);
+                    }).catch((e) => {
+                      console.error(e.message);
+                    })
+                  }}
+                >
+                  Pickup
+                </button>
+              )}
+
+              {/* Good button for attackers when all attacks are covered */}
+              {!isDefending && state.table_battles.length > 0 && state.table_battles.every(battle => battle.defense) && (
+                <button
+                  style={{
+                    width: '60px',
+                    height: '40px',
+                    fontSize: '12px',
+                    backgroundColor: '#51cf66',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '4px',
+                    cursor: 'pointer'
+                  }}
+                  onClick={() => {
+                    good().then(() => {
+                      setSelectedCards([]);
+                    }).catch((e) => {
+                      console.error(e.message);
+                    })
+                  }}
+                >
+                  Good
+                </button>
+              )}
+            </div>
+          )}
+
           {
             state.self && selectedCards.length > 0 && <div style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)', zIndex: 999, height: '50px ' }}>
 
@@ -603,15 +923,6 @@ export const GameDisplay = () => {
                             Pass
                           </button>
                         )}
-
-                        <button style={{ width: '60px', height: '50px' }} onClick={() => {
-                          pickup().then(() => {
-                            // add cards to hand???
-                            setSelectedCards([]);
-                          }).catch((e) => {
-                            console.error(e.message);
-                          })
-                        }}>Pickup</button>
 
                         {/* Cover is only shown if there are uncovered cards */}
                         {state.table_battles.some(battle => !battle.defense) && (
@@ -676,20 +987,6 @@ export const GameDisplay = () => {
                         })}
                       >
                         Attack
-                      </button>
-                    )}
-
-                    {/* Good is only shown when all attacks are covered and there are 1+ cards */}
-                    {state.table_battles.length > 0 && state.table_battles.every(battle => battle.defense) && (
-                      <button
-                        style={{ width: '60px', height: '50px' }}
-                        onClick={() => good().then(() => {
-                          setSelectedCards([]);
-                        }).catch((e) => {
-                          console.error(e.message);
-                        })}
-                      >
-                        Good
                       </button>
                     )}
                   </>
@@ -784,6 +1081,145 @@ export const GameDisplay = () => {
         </div>
 
         <div style={{ position: 'absolute', display: 'flex', flexDirection: 'column', top: 0, width: '100%', bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
+
+
+          {/* Debug: Green arrow from shield center towards defender player (20px long) */}
+          <svg style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 50 }}>
+            {(() => {
+              // Only show for defender
+              const defenderPlayer = state.players[state.defender];
+              if (!defenderPlayer) return null;
+
+              const visual_index = (state.defender - self_index + state.players.length) % state.players.length;
+              const radians = (2) * Math.PI * visual_index / (state.players.length);
+              const playerX = (-1 * Math.sin(radians) * 35) + 50;
+              const playerY = (Math.cos(radians) * 35) + 50;
+
+              // Calculate shield position (same as debug dots)
+              const centerX = 50;
+              const centerY = 50;
+              const dirX = centerX - playerX;
+              const dirY = centerY - playerY;
+              const distance = Math.sqrt(dirX * dirX + dirY * dirY);
+              const normalizedDirX = dirX / distance;
+              const normalizedDirY = dirY / distance;
+              //const shieldX = playerX + (normalizedDirX * 8);
+              //const shieldY = playerY + (normalizedDirY * 8);
+
+
+              const screenWidth = window.innerWidth;
+              const screenHeight = window.innerHeight;
+
+              // Move exactly 30px towards center using the radial angle
+              const shieldX = playerX + (Math.sin(radians) * 60 * 100 / screenWidth);
+              const shieldY = playerY + (-Math.cos(radians) * 60 * 100 / screenHeight);
+
+              // Calculate arrow end point (longer towards player from shield)
+              const arrowEndX = shieldX + (-Math.sin(radians) * 40 * 100 / screenWidth);
+              const arrowEndY = shieldY + (Math.cos(radians) * 40 * 100 / screenHeight);
+
+              return (
+                <line
+                  key="debug-arrow-defender"
+                  x1={`${shieldX}%`}
+                  y1={`${shieldY}%`}
+                  x2={`${arrowEndX}%`}
+                  y2={`${arrowEndY}%`}
+                  stroke="black"
+                  strokeWidth="4"
+                  markerEnd="url(#blackArrowHead)"
+                />
+              );
+            })()}
+
+            {/* Arrow marker definition for black arrows */}
+            <defs>
+              <marker
+                id="blackArrowHead"
+                markerWidth="6"
+                markerHeight="4"
+                refX="6"
+                refY="2"
+                orient="auto"
+              >
+                <polygon
+                  points="0 0, 6 2, 0 4"
+                  fill="black"
+                />
+              </marker>
+            </defs>
+          </svg>
+
+          {/* Shield and arrow pointing to defender */}
+          {(() => {
+            const defenderPlayer = state.players[state.defender];
+            if (!defenderPlayer) return null;
+
+            const visual_index = (state.defender - self_index + state.players.length) % state.players.length;
+            const radians = (2) * Math.PI * visual_index / (state.players.length);
+
+            // Calculate defender position
+            const defenderX = (-1 * Math.sin(radians) * 35) + 50;
+            const defenderY = (Math.cos(radians) * 35) + 50;
+
+            // Calculate direction from defender to center
+            const centerX = 50;
+            const centerY = 50;
+            const dirX = centerX - defenderX;
+            const dirY = centerY - defenderY;
+            const distance = Math.sqrt(dirX * dirX + dirY * dirY);
+            const normalizedDirX = dirX / distance;
+            const normalizedDirY = dirY / distance;
+
+            // Position shield closer to center along the green line (convert to percentage)
+            // Assume viewport is roughly 1000px for conversion
+            //const shieldX = defenderX + (normalizedDirX * 12); // Move 80px closer to center
+            //const shieldY = defenderY + (normalizedDirY * 12); // Move 80px closer to center
+
+            // Ok lets say I want to move the shield exactly 30px towards the center. 
+            // This will be different depending on the angle
+            // If the defnder is to the right, this means we need to move 30px left. defenderY is at 50%, and defenderX is at 85%
+            // shieldY = 50%, shieldX = 85% - (30/width)%
+
+            // To extrapolate, it's like that if the defender is at the bottom, we have shieldY = 85% - (30px/height), shieldX = 50%
+
+            //const screenWidth = window.innerWidth;
+            //const screenHeight = window.innerHeight;
+            //// Move exactly 30px towards center
+            //const shieldX = defenderX + (normalizedDirX * 60 * 100 / screenWidth);
+            //const shieldY = defenderY + (normalizedDirY * 60 * 100 / screenHeight);
+
+
+            const screenWidth = window.innerWidth;
+            const screenHeight = window.innerHeight;
+
+            // Move exactly 30px towards center using the radial angle
+            const shieldX = defenderX + (Math.sin(radians) * 60 * 100 / screenWidth);
+            const shieldY = defenderY + (-Math.cos(radians) * 60 * 100 / screenHeight);
+
+            return (
+              <div style={{
+                position: 'absolute',
+                left: `${shieldX}%`,
+                top: `${shieldY}%`,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}>
+
+
+                {/* Shield */}
+                <div style={{
+                  position: 'absolute',
+                  fontSize: '24px',
+                  zIndex: 400
+                }}>
+                  🛡️
+                </div>
+              </div>
+            );
+          })()}
+
           {
             state.table_battles.map((battle, index) => {
               let containerStyle: React.CSSProperties = {
@@ -824,30 +1260,123 @@ export const GameDisplay = () => {
               </div>
             })
           }
-          {
-            state.players.map((player, index) => {
-
-              const visual_index = (index - self_index + state.players.length) % state.players.length;
-              // array of 100 black squares
-              //Array.from({length: state.players.length-1}).map((_, index) => {
-              const radians = (2) * Math.PI * visual_index / (state.players.length)// + Math.PI / 4;
-              const x = ((-1 * Math.sin(radians) * 30) + 50) + '%';
-              const y = ((Math.cos(radians) * 30) + 50) + '%';
-
-              let color = 'black';
-              if (index === state.defender) {
-                color = 'red';
-              } else if (index === state.first_attacker) {
-                color = 'orange';
-              }
-
-              return <div key={player.id} style={{ backgroundColor: color, height: '10px', width: '10px', position: 'absolute', top: y, left: x }}>
-                <p>{player.name}</p>
-                {player.hand_length && <p>{player.hand_length}</p>}
-              </div>
-            })
-          }
         </div>
+
+        {/* Player display section */}
+        {
+          state.players.map((player, index) => {
+
+            const visual_index = (index - self_index + state.players.length) % state.players.length;
+            const radians = (2) * Math.PI * visual_index / (state.players.length);
+            const x = ((-1 * Math.sin(radians) * 35) + 50) + '%';
+            const y = ((Math.cos(radians) * 35) + 50) + '%';
+
+            return <div key={player.id} style={{
+              position: 'absolute',
+              top: y,
+              left: x,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              width: '80px',
+              height: '80px',
+              transform: 'translate(-50%, -50%)' // Center the element relative to its position
+            }}>
+
+
+              {/* Sword area (top) - either sword or empty space */}
+              {index === state.first_attacker && state.table_battles.length === 0 ? (
+                <div style={{
+                  fontSize: '16px',
+                  height: '20px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}>
+                  ⚔️
+                </div>
+              ) : (
+                <div style={{ height: '20px' }} />
+              )}
+
+              {/* Player name (center) */}
+              <p style={{
+                margin: 0,
+                fontSize: '12px',
+                color: 'white',
+                textAlign: 'center',
+                height: '20px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}>
+                {player.name}
+              </p>
+
+              {/* Cards area (bottom) */}
+              {player.hand_length && player.hand_length > 0 ? (
+                <div style={{
+                  display: 'flex',
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  position: 'relative',
+                  height: '20px',
+                  width: '100px'
+                }}>
+                  {Array.from({ length: Math.min(player.hand_length, 8) }).map((_, cardIndex) => {
+
+                    // Calculate proper centering: total span divided by 2, then offset each card
+
+                    const mid = (player.hand_length + 1) / 2;
+                    const halfCardWidth = 12 / 2;
+                    const halfDivWidth = 100 / 2;
+
+                    return (
+                      <div
+                        key={`player-${player.id}-card-${cardIndex}`}
+                        style={{
+                          backgroundColor: '#DC143C', // Fallback red background
+                          width: '12px',
+                          height: '18px',
+                          borderRadius: '2px',
+                          border: '1px solid #8B0000', // Same dark red border
+                          position: 'absolute',
+                          left: `${halfDivWidth + (cardIndex - mid) * 2 - halfCardWidth}px`,
+                          zIndex: cardIndex,
+                          boxShadow: '0 1px 2px rgba(0,0,0,0.3)',
+                          backgroundImage: playerCardPatternDataUrl ? `url(${playerCardPatternDataUrl})` : undefined,
+                          backgroundSize: '100% 100%',
+                          backgroundRepeat: 'no-repeat'
+                        }}
+                      />
+                    );
+                  })}
+
+                  {/* Card count overlay */}
+                  <div style={{
+                    position: 'absolute',
+                    top: '50%',
+                    left: '50%',
+                    transform: 'translate(-50%, -50%)',
+                    color: 'white',
+                    fontSize: '10px',
+                    fontWeight: 'bold',
+                    zIndex: 15,
+                    pointerEvents: 'none',
+                    textShadow: '1px 1px 2px rgba(0,0,0,0.8)'
+                  }}>
+                    {player.hand_length}
+                  </div>
+                </div>
+              ) : (
+                <div style={{ height: '20px' }} />
+              )}
+            </div>
+          })
+        }
+
+
       </div>
     </div>
   );
