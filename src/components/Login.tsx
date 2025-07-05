@@ -43,6 +43,7 @@ export const Login = () => {
             type="text" 
             value={name} 
             onChange={(e) => setName(e.target.value)} 
+            autoComplete="username"
             required
           />
         </div>
@@ -53,6 +54,7 @@ export const Login = () => {
             type="password" 
             value={password} 
             onChange={(e) => setPassword(e.target.value)} 
+            autoComplete="current-password"
             required
           />
         </div>
