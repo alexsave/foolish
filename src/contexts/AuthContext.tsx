@@ -3,35 +3,28 @@ import supabase from '../backend/Connector';
 import { WEBSITE_DOMAIN } from '../constants/constants';
 import { Session, User } from '@supabase/supabase-js';
 import { WeakPassword } from '@supabase/supabase-js';
-import { emailToName } from '../common/common_utils';
-
-interface AuthContextType {
-  user: string | null;
-  user_id: string | null;
-  signIn: (username: string, password: string) => Promise<{ user: User; session: Session; weakPassword?: WeakPassword; }>;
-  signUp: (username: string, password: string) => Promise<{ user: User | null; session: Session | null; }>;
-  signOut: () => Promise<void>;
-  updatePassword: (newPassword: string) => Promise<void>;
-  loading: boolean;
-  redirectAfterLogin: string | null;
-  setRedirectAfterLogin: (url: string) => void;
-  clearRedirectAfterLogin: () => void;
-}
 
 const AuthContext = createContext<AuthContextType|null>(null);
 
-const nameToEmail = (name: string): string => {
-  return name + '@' + WEBSITE_DOMAIN;
+const nameToEmail = async (name: string): Promise<string> => {
+  // Unfortunately this doesn't support CJKT characters
+  const buf = new TextEncoder().encode(name);
+  const digest = await crypto.subtle.digest('SHA-256', buf);  
+  const hex = Array.from(new Uint8Array(digest))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('')
+    .slice(0, 16);
+
+  return `${hex}@${WEBSITE_DOMAIN}`
 }
 
 // for now we'll just use a fake auth impl
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
-  const [user, setUser] = useState<string | null>(null);
   const [user_id, setUserId] = useState<string | null>(null);
-  const [name, setName] = useState<string | null>(null);
+  const [username, setUsername] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [redirectAfterLogin, setRedirectAfterLoginState] = useState<string | null>(null);
-  
+
   // Use ref to track current user_id to prevent duplicate updates
   const currentUserIdRef = useRef<string | null>(null);
 
@@ -43,8 +36,9 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         // Only update if user ID has actually changed
         if (currentUserIdRef.current !== session.user.id) {
           currentUserIdRef.current = session.user.id;
-          setUser(emailToName(session.user.email!));
+          //setUser(emailToName(session.user.email!));
           setUserId(session.user.id);
+          setUsername(session.user.user_metadata.username);
         }
       }
       setLoading(false);
@@ -55,15 +49,18 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       if (session?.user) {
         if (currentUserIdRef.current !== session.user.id) {
           currentUserIdRef.current = session.user.id;
-          setUser(emailToName(session.user.email!));
+          //setUser(emailToName(session.user.email!));
           setUserId(session.user.id);
+          console.log(JSON.stringify(session.user));
+          console.log(session.user);
+          setUsername(session.user.user_metadata.username);
         }
       } else {
         // Handle sign out case
         if (currentUserIdRef.current !== null) {
           currentUserIdRef.current = null;
-          setUser(null);
           setUserId(null);
+          setUsername(null);
         }
       }
     });
@@ -80,7 +77,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   };
 
   const signIn = async (username: string, password: string) => {
-    const email = nameToEmail(username);
+    const email = await nameToEmail(username);
 
     const { data, error } = await supabase.auth.signInWithPassword({
       email,
@@ -96,11 +93,11 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
   const signUp = async (username: string, password: string) => {
     // this is a hack to get around the fact that supabase doesn't support username/password auth
-    const email = nameToEmail(username);
+    const email = await nameToEmail(username);
 
     // Proceed with signup - Supabase handles duplicate email prevention
     // add name as a metadata field
-    const { data, error } = await supabase.auth.signUp({ email, password });
+    const { data, error } = await supabase.auth.signUp({ email, password, options: { data: { username: username } } });
 
     if (error) {
       throw error;
@@ -123,7 +120,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           error.message.includes('session')) {
           console.log('Session missing error detected - performing local sign out');
           // Force a local sign out despite the error
-          setUser(null);
+          setUserId(null);
+          setUsername(null);
           console.log('Local sign out completed');
           return; // Exit without throwing error since we've handled it
         }
@@ -146,8 +144,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
   return (
     <AuthContext.Provider value={{
-      user,
       user_id,
+      username,
       loading,
       signIn,
       signUp,
@@ -161,6 +159,20 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     </AuthContext.Provider>
   );
 };
+
+interface AuthContextType {
+  user_id: string | null;
+  username: string | null;
+  signIn: (username: string, password: string) => Promise<{ user: User; session: Session; weakPassword?: WeakPassword; }>;
+  signUp: (username: string, password: string) => Promise<{ user: User | null; session: Session | null; }>;
+  signOut: () => Promise<void>;
+  updatePassword: (newPassword: string) => Promise<void>;
+  loading: boolean;
+  redirectAfterLogin: string | null;
+  setRedirectAfterLogin: (url: string) => void;
+  clearRedirectAfterLogin: () => void;
+}
+
 
 export const useAuth = () => {
   const context = useContext(AuthContext);

@@ -12,7 +12,7 @@ const ServerContext = createContext<ServerContextType|null>(null);
 // this will be kinda similar to client.js
 export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
-    const {user, user_id} = useAuth()
+    const {user_id, username} = useAuth()
 
     const url_game_id = useParams().game_id?.toLowerCase();
     // keep a state of games
@@ -24,12 +24,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     const [gameLoadError, setGameLoadError] = useState<string | null>(null);
 
     const [game_id, setGameId] = useState<string | null>(null);
-    // get game id from url
-    //const [game_id, setGameId] = useState<string | null>(null);
-
-    // very important for making requests
-    const [player_id, setPlayerId] = useState<string | null>(null);
-
     
     // Use ref to avoid closure issues in WebSocket handler
     const gameIdRef = useRef<string | null>(null);
@@ -56,7 +50,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     // Keep ref in sync with state
     useEffect(() => {
         gameIdRef.current = game_id;
-        if (game_id && player_id) {
+        if (game_id && user_id) {
             //console.log('game id changed, need to fetch game data');
             // fetch game data. for now it will just be lobby info
             loadGame(game_id).catch(error => {
@@ -70,14 +64,13 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
     useEffect(() => {
         // Skip if user hasn't actually changed
-        if (prevUserRef.current === user) {
+        if (prevUserRef.current === user_id) {
             return;
         }
         
-        prevUserRef.current = user;
+        prevUserRef.current = user_id;
         
-        if (user) {
-            setPlayerId(user);
+        if (user_id) {
             //setupRealtimeSubscriptions().catch(console.error);
             
             // Call getUserGames to console.log the player's games
@@ -89,7 +82,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             // Remove all realtime subscriptions
             supabase.removeAllChannels();
         };
-    }, [user]);
+    }, [user_id]);
 
     // Setup Supabase Realtime subscriptions
     const setupRealtimeSubscriptions = async () => {
@@ -97,7 +90,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         await supabase.realtime.setAuth();
         
         // Subscribe to private user channel for personal messages
-        const privateChannel = supabase.realtime.channel(`user-${user}`, {
+        const privateChannel = supabase.realtime.channel(`user-${username}`, {
             config: { private: true }
         });
         
@@ -109,14 +102,14 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             })
             .subscribe((status, err) => {
                 if (status === 'SUBSCRIBED') {
-                    console.log('Connected to private channel:', `user-${user}`);
+                    console.log('Connected to private channel:', `user-${username}`);
                 } else {
                     console.error('Private channel error:', err, status);
                 }
             });
 
         // We'll subscribe to game channels when we join/create games
-        console.log('Realtime subscriptions set up for user:', user);
+        console.log('Realtime subscriptions set up for user:', user_id);
     };
 
     const subscribeToGame = async (gameId: string) => {
@@ -124,7 +117,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         await supabase.realtime.setAuth();
         
         // Subscribe to personalized game-user channel for game updates
-        const gameUserChannel = supabase.channel(`gu-${gameId}-${user}`, {
+        const gameUserChannel = supabase.channel(`gu-${gameId}-${username}`, {
             config: { private: true }
         });
         
@@ -693,7 +686,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         if (gameId !== game_id) {
             setGameId(gameId);
         }
-        if (player_id && game_id) {
+        if (user_id && game_id) {
             loadGame(game_id).catch(error => {
                 console.log('Game not found when setting from URL:', error.message);
                 // Error is handled by individual components that call loadGame
@@ -709,7 +702,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             game_id,
             game: games[game_id!],
             games,
-            player_id,
             loadGame,
             attack,
             pass,
@@ -735,7 +727,6 @@ interface ServerContextType {
     game_id: string | null;
     game: PersonalGame | null;
     games: { [key: string]: PersonalGame };
-    player_id: string | null;
     loadGame: (gameId: string) => Promise<{ game_id: string }>;
     attack: (cards: Card[]) => Promise<{ game_id: string }>;
     pass: (cards: Card[]) => Promise<{ game_id: string }>;

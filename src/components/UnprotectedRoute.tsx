@@ -6,13 +6,13 @@ import { useEffect, useState } from 'react';
 
 // Wrapper component that protects routes and provides ServerContext
 export const UnprotectedRoute = ({ children }: { children: React.ReactNode }) => {
-    const { user, loading, redirectAfterLogin, clearRedirectAfterLogin } = useAuth();
+    const { user_id, loading, redirectAfterLogin, clearRedirectAfterLogin } = useAuth();
     const [shouldRedirect, setShouldRedirect] = useState<string | null>(null);
     const [hasHandledRedirect, setHasHandledRedirect] = useState(false);
     
     // Handle redirect logic when user is authenticated
     useEffect(() => {
-        if (!loading && user && !hasHandledRedirect) {
+        if (!loading && user_id && !hasHandledRedirect) {
             if (redirectAfterLogin) {
                 // Store the destination and clear the redirect URL
                 setShouldRedirect(redirectAfterLogin);
@@ -24,7 +24,7 @@ export const UnprotectedRoute = ({ children }: { children: React.ReactNode }) =>
                 setHasHandledRedirect(true);
             }
         }
-    }, [loading, user, redirectAfterLogin, hasHandledRedirect, clearRedirectAfterLogin]);
+    }, [loading, user_id, redirectAfterLogin, hasHandledRedirect, clearRedirectAfterLogin]);
     
     if (loading) {
         return (
@@ -40,7 +40,7 @@ export const UnprotectedRoute = ({ children }: { children: React.ReactNode }) =>
     }
     
     // If user is authenticated, redirect to intended destination or dashboard
-    if (user && shouldRedirect) {
+    if (user_id && shouldRedirect) {
         return <Navigate to={shouldRedirect} replace />;
     }
 

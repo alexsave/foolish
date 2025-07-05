@@ -5,7 +5,6 @@ import { ACE_VALUE, CARDS_PER_PLAYER, SUITS, START_VALUE, VALUE_MAP, SUIT_MAP } 
 import { createClient, User } from 'jsr:@supabase/supabase-js';
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
-import { emailToName } from './common_utils.ts';
 import { getAuthenticatedUser } from './auth.ts';
 
 const supabaseClient = createClient(
@@ -70,7 +69,7 @@ export const wrap400 = (execute: (user: User, user_name: string, body: any) => P
             const user: User = await getAuthenticatedUser(req);
 
             // Get user name from email
-            const user_name = emailToName(user.email);
+            const user_name = user.user_metadata.username;
 
             // Parse JSON body
             let body = {};

@@ -6,13 +6,13 @@ import { useAuth } from "../contexts/AuthContext";
 
 export const Dashboard = () => {
     const [gameId, setGameId] = useState<string>('');
-    const { user } = useAuth();
+    const { username } = useAuth();
     const { joinGame, games } = useServer();
     const navigate = useNavigate();
 
     return (
         <div>
-            <h1>Dashboard for {user}</h1>
+            <h1>Dashboard for {username}</h1>
             <input type="text" value={gameId} onChange={(e) => setGameId(e.target.value)} />
             <button onClick={() => {
                 joinGame(gameId.toLowerCase()).then(data => {
