@@ -137,6 +137,18 @@ export const GameDisplay = () => {
     return null;
   };
 
+  // Helper function to check if passing is possible
+  const canPass = (draggedCard: Card) => {
+    const table_battles = state.table_battles;
+    if (table_battles.length === 0) return false;
+    
+    // All table battles must be uncovered (defense === null)
+    // All uncovered attacks must have the same value as the dragged card
+    return table_battles.every(battle => 
+      battle.defense === null && battle.attack.value === draggedCard.value
+    );
+  };
+
   // Helper function to determine what action should be taken
   const determineGameAction = (x: number, y: number, draggedCard: Card) => {
     if (isInHandArea(x, y)) {
@@ -148,11 +160,23 @@ export const GameDisplay = () => {
 
     if (isDefending) {
       const tableCardUnderCursor = getTableCardUnderCursor(x, y);
+      const passIsPossible = canPass(draggedCard);
+      
       if (tableCardUnderCursor && !tableCardUnderCursor.defense) {
         // Dragging to an uncovered attack card = cover
         return { type: 'cover', targetCard: tableCardUnderCursor.attack };
+      } else if (!passIsPossible) {
+        // Can't pass and in empty space - check if there's only one card to cover
+        const uncoveredBattles = state.table_battles.filter(battle => !battle.defense);
+        if (uncoveredBattles.length === 1) {
+          // Auto-cover the single uncovered card
+          return { type: 'cover', targetCard: uncoveredBattles[0].attack };
+        } else {
+          // Multiple uncovered cards or no uncovered cards - no valid action
+          return { type: 'invalid' };
+        }
       } else {
-        // Dragging to empty space = pass
+        // Pass is possible and dragging to empty space = pass
         return { type: 'pass' };
       }
     } else {
@@ -514,7 +538,10 @@ export const GameDisplay = () => {
         <p>FOOLISH</p>
 
         {/* Floating action indicator during game action drag */}
-        {isDraggingForGameAction && draggedCard && currentCursorPos && (
+        {isDraggingForGameAction && draggedCard && currentCursorPos && (() => {
+          const action = determineGameAction(currentCursorPos.x, currentCursorPos.y, draggedCard);
+          return action.type === 'attack' || action.type === 'cover' || action.type === 'pass';
+        })() && (
           <div style={{
             position: 'absolute',
             left: currentCursorPos.x + 10,
@@ -531,7 +558,7 @@ export const GameDisplay = () => {
               const self_index = state.players.findIndex((player) => player.id === user_id);
               const isDefending = state.defender === self_index;
               const action = determineGameAction(currentCursorPos.x, currentCursorPos.y, draggedCard);
-
+              
               switch (action.type) {
                 case 'attack':
                   return '⚔️ Attack';
