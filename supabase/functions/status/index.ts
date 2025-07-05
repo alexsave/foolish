@@ -1,5 +1,5 @@
-import { wrap400, personalize_game, loadCompleteGame } from '../_shared/utils.ts';
-import { Game, PublicGame, PublicPlayer } from '../_shared/types.ts'; 
+import { wrap400, personalize_game, loadCompleteGame, saveCompleteGame } from '../_shared/utils.ts';
+import { Game, PublicGame, PublicPlayer, GAME_STATUS } from '../_shared/types.ts'; 
 
 // TODO: just remove this. With the right policies we can query from client
 wrap400(async (user, user_name, body) => {
@@ -13,6 +13,13 @@ wrap400(async (user, user_name, body) => {
     const playerInGame = game.players.find(player => player.id === user_id);
     
     if (playerInGame) {
+        // Bandaid, but if  all players have 0 cards, set to waiting status
+        // TODO: figure out why ending the game doesn't set status to waiting
+        if (game.players.every(player => player.hand.length === 0)) {
+            game.status = GAME_STATUS.WAITING;
+            await saveCompleteGame(game);
+        }
+
         // Player is in game, return personalized view
         return {
             game: personalize_game(game, user_id)
