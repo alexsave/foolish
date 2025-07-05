@@ -1,4 +1,5 @@
-import { wrap400, validate_defender_status, get_next_player_index, refill, verify_player_in_game, personalize_game, broadcastToGameUsers, loadCompleteGame, saveCompleteGame } from "../_shared/utils.ts";
+import { wrap400, validate_defender_status, refill, verify_player_in_game, personalize_game, broadcastToGameUsers, loadCompleteGame, saveCompleteGame } from "../_shared/utils.ts";
+import { get_next_player_index } from "../_shared/common_utils.ts";
 import { GAME_STATUS, SERVER_EVENT_TYPE, Game, Player } from "../_shared/types.ts";
 
 wrap400(async (user, user_name, body) => {

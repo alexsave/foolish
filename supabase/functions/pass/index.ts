@@ -1,4 +1,5 @@
-import {wrap400, broadcastToGameUsers, verify_player_in_game, personalize_game, cardDisplay, validate_defender_status, verify_cards_in_players_hand, no_cards_left, check_win, get_next_player_index, card_comp, loadCompleteGame, saveCompleteGame } from "../_shared/utils.ts";
+import {wrap400, broadcastToGameUsers, verify_player_in_game, personalize_game, cardDisplay, validate_defender_status, verify_cards_in_players_hand, no_cards_left, check_win, card_comp, loadCompleteGame, saveCompleteGame } from "../_shared/utils.ts";
+import { get_next_player_index } from "../_shared/common_utils.ts"; 
 import { Game, Card, SERVER_EVENT_TYPE, PLAYER_STATUS, Player} from "../_shared/types.ts";
 
 wrap400(async (user, user_name, body) => {

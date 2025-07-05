@@ -1,4 +1,5 @@
 import { corsHeaders, handleCors } from './cors.ts';
+import { get_next_player_index } from './common_utils.ts';
 import { Card, Game, GAME_STATUS, Player, PLAYER_STATUS, PersonalGame, SERVER_EVENT_TYPE, PRIVATE_EVENT_TYPE, PrivatePlayer, PublicGame, PublicPlayer } from './types.ts';
 import { ACE_VALUE, CARDS_PER_PLAYER, SUITS, START_VALUE, VALUE_MAP, SUIT_MAP } from './constants.ts';
 import { createClient, User } from 'jsr:@supabase/supabase-js';
@@ -642,14 +643,6 @@ const game_done = (game: Game): string | null => {
     return null;
 }
 
-export const canCover = (attack: Card, defense: Card, powerSuit: number) => {
-    if (defense.suit !== attack.suit) {
-        // only different suit scenario that works
-        return defense.suit === powerSuit && attack.suit !== powerSuit;
-    }
-    return defense.value > attack.value;
-};
-
 export const refill = (game: Game) => {
 
     if (no_cards_left(game)) {
@@ -720,11 +713,3 @@ export const refill = (game: Game) => {
         //pIndex = (pIndex + 1) % game.players.length;
     } while (pIndex !== game.first_attacker/* && !no_cards_left(game)*/);
 };
-
-export const get_next_player_index = (game: Game, current_player: number): number => {
-    let next_player = (current_player + 1) % game.players.length;
-    while (game.players[next_player].status === PLAYER_STATUS.OUT) {
-        next_player = (next_player + 1) % game.players.length;
-    }
-    return next_player;
-}

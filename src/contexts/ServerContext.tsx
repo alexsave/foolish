@@ -1,9 +1,10 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
-import { Card, Game, PersonalGame, PublicGame, SERVER_EVENT_TYPE } from '../common/types';
+import { Card, Game, PersonalGame, PublicGame, PublicPlayer, SERVER_EVENT_TYPE } from '../common/types';
 import supabase from '../backend/Connector';
 import { useParams } from 'react-router-dom';
 import { useAuth } from './AuthContext';
 import { MAX_PLAYERS } from '../common/constants';
+import { get_next_player_index, canCover } from '../common/common_utils';
 
 const ServerContext = createContext<ServerContextType|null>(null);
 
@@ -353,6 +354,29 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     };
 
     const attack = (cards: Card[]): Promise<{ game_id: string }> => {
+        // Quick check to see if valid attack, then optimistic update
+        // What is most likely to happen?
+        // let's assume that they are using this client, so they attacked with a hand in their deck.
+        // All we need to confirm is that the valu is on the board + defender has enough
+
+        const g: PersonalGame = games[game_id!];
+        const table_battles = g.table_battles;
+        let uncovered_cards = table_battles.filter(battle => battle.defense === null).length;
+
+        const defender: PublicPlayer = g.players[g.defender];
+
+        let defender_cards = defender.hand_length;
+
+        if (uncovered_cards + cards.length > defender_cards) {
+            return Promise.reject(new Error(`No room in defenders hand`));
+        }
+        if (table_battles.length > 0 && !cards.every(card => table_battles.some(battle => battle.attack.value === card.value || battle.defense?.value === card.value))) {
+            return Promise.reject(new Error(`Some card values are not on the table`));
+        }
+
+        // Optimistic update
+        setGames(prev => ({ ...prev, [game_id!]: { ...prev[game_id!], table_battles: [...table_battles, { attack: cards[0], defense: null }], self: { ...prev[game_id!].self, hand: prev[game_id!].self.hand.filter(card => !cards.includes(card)) } } }));
+
         return new Promise<{ game_id: string }>((resolve, reject) => {
             supabase.functions.invoke('attack', {
                 body: {
@@ -369,6 +393,23 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     };
 
     const pass = (cards: Card[]): Promise<{ game_id: string }> => {
+        // Quick check to see if valid attack, then optimistic update
+        // We're also leaning on checks elsewhere in the client
+        const g: PersonalGame = games[game_id!];
+        const table_battles = g.table_battles;
+        if (!cards.every(card => card.value === cards[0].value)) {
+            return Promise.reject(new Error(`Some card values are not the same`));
+        }
+        if (!table_battles.every(battle => battle.defense === null && battle.attack.value === cards[0].value)) {
+            return Promise.reject(new Error(`Cannot pass`));
+        }
+
+        // Optimistic update
+        // I don't like this cast 
+        // But refactoring it to work would involve also changing the player type
+        const next_defender = get_next_player_index(g as unknown as Game, g.defender);
+        setGames(prev => ({ ...prev, [game_id!]: { ...prev[game_id!], table_battles: [...table_battles, { attack: cards[0], defense: null }], self: { ...prev[game_id!].self, hand: prev[game_id!].self.hand.filter(card => !cards.includes(card)) }, defender: next_defender } }));
+
         return new Promise<{ game_id: string }>((resolve, reject) => {
             supabase.functions.invoke('pass', {
                 body: {
@@ -385,6 +426,16 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     };
 
     const pickup = (): Promise<{ game_id: string }> => {
+        // Optimistic update
+        const g: PersonalGame = games[game_id!];
+        const table_battles = g.table_battles;
+        if (table_battles.length === 0) {
+            return Promise.reject(new Error(`Cannot pickup`));
+        }
+        const next_defender = get_next_player_index(g as unknown as Game, g.defender);
+        // move all table cards to self, defenses and attacks
+        setGames(prev => ({ ...prev, [game_id!]: { ...prev[game_id!], table_battles: [], self: { ...prev[game_id!].self, hand: [...prev[game_id!].self.hand, ...table_battles.map(battle => battle.defense ?? battle.attack)] }, defender: next_defender } }));
+
         return new Promise<{ game_id: string }>((resolve, reject) => {
             supabase.functions.invoke('pickup', {
                 body: {
@@ -400,6 +451,34 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     };
 
     const cover = (coverCards: Card[], attackCards: Card[]): Promise<{ game_id: string }> => {
+        // Optimistic update
+        const g: PersonalGame = games[game_id!];
+        const table_battles = g.table_battles;
+        if (table_battles.length === 0) {
+            return Promise.reject(new Error(`Cannot cover`));
+        }
+        for (let i = 0; i < coverCards.length; i++) {
+            const coverCard = coverCards[i];
+            const attackCard = attackCards[i];
+            if (!canCover(attackCard, coverCard, g.power_suit)) {
+                return Promise.reject(new Error(`Cover card value does not match attack card value`));
+            }
+        }
+
+        // Optimistic update. Move cover cards out of self, put cover card as defense on corresponding attack
+        setGames(prev => {
+            return {
+                ...prev, [game_id!]: {
+                    ...prev[game_id!],
+
+                    // this could use card_comp
+                    table_battles: table_battles.map(battle => attackCards.findIndex(card => card.value === battle.attack.value && card.suit === battle.attack.suit) !== -1 ? { ...battle, defense: coverCards[attackCards.findIndex(card => card.value === battle.attack.value && card.suit === battle.attack.suit)] } : battle),
+
+                    self: { ...prev[game_id!].self, hand: prev[game_id!].self.hand.filter(card => !coverCards.includes(card)) }
+                }
+            }
+        });
+
         return new Promise<{ game_id: string }>((resolve, reject) => {
             supabase.functions.invoke('cover', {
                 body: {
@@ -583,14 +662,14 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                     )
                 `)
                 .eq('player_id', user_id)
-                .order('games(updated_at)',{ ascending: false });
+                .order('games(updated_at)', { ascending: false });
 
             if (error) {
                 console.error('Error fetching user games:', error);
                 return;
             }
 
-            const games: {[key: string]: PersonalGame} = {};
+            const games: { [key: string]: PersonalGame } = {};
             for (const playerHand of data) {
                 // Fuck you I know this will be a public game type
                 const game = playerHand.games as unknown as PublicGame;
@@ -603,7 +682,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 };
             }
 
-            setGames(prev => ({...prev, ...games}));
+            setGames(prev => ({ ...prev, ...games }));
 
         } catch (error) {
             console.error('Error in getUserGames:', error);
@@ -655,7 +734,7 @@ interface ServerContextType {
     startGame: (gameId: string) => Promise<{ game_id: string }>;
     game_id: string | null;
     game: PersonalGame | null;
-    games: {[key: string]: PersonalGame};
+    games: { [key: string]: PersonalGame };
     player_id: string | null;
     loadGame: (gameId: string) => Promise<{ game_id: string }>;
     attack: (cards: Card[]) => Promise<{ game_id: string }>;

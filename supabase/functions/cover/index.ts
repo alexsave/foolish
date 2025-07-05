@@ -1,4 +1,5 @@
-import { wrap400, verify_player_in_game, broadcastToGameUsers, personalize_game, cardDisplay, validate_defender_status, verify_cards_in_players_hand, check_win, card_comp, canCover, refill, get_next_player_index, broadcastToGameUser, loadCompleteGame, saveCompleteGame, acquireGameLock, releaseGameLock, executeWithGameLock } from "../_shared/utils.ts";
+import { wrap400, verify_player_in_game, broadcastToGameUsers, personalize_game, cardDisplay, validate_defender_status, verify_cards_in_players_hand, check_win, card_comp, refill, broadcastToGameUser, loadCompleteGame, saveCompleteGame, acquireGameLock, releaseGameLock, executeWithGameLock } from "../_shared/utils.ts";
+import { canCover, get_next_player_index } from "../_shared/common_utils.ts";
 import { Game, Card, GAME_STATUS, SERVER_EVENT_TYPE, PLAYER_STATUS, Player } from "../_shared/types.ts";
 
 wrap400(async (user, user_name, body) => {
