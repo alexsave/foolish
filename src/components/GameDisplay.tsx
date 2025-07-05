@@ -47,6 +47,11 @@ export const GameDisplay = () => {
   const [touchStartTime, setTouchStartTime] = useState<number>(0);
   const rearrangeCardTimerRef = useRef<NodeJS.Timeout | null>(null);
 
+  // New state for game action drag detection
+  const [isDraggingForGameAction, setIsDraggingForGameAction] = useState(false);
+  const [draggedCard, setDraggedCard] = useState<Card | null>(null);
+  const [currentCursorPos, setCurrentCursorPos] = useState<{ x: number; y: number } | null>(null);
+
   const handleCardSelection = (card: Card) => {
     const isSelected = selectedCards.some(selectedCard =>
       selectedCard.value === card.value && selectedCard.suit === card.suit
@@ -115,10 +120,54 @@ export const GameDisplay = () => {
   // we chose a card to cover WITH, now we choose WHICH card to cover
   const [isSelectingCover, setIsSelectingCover] = useState(false);
 
+  // Helper function to detect if drag is in the hand area
+  const isInHandArea = (x: number, y: number) => {
+    const handAreaTop = window.innerHeight - 200; // Hand area starts 200px from bottom
+    return y >= handAreaTop;
+  };
+
+  // Helper function to detect which table card is under the cursor
+  const getTableCardUnderCursor = (x: number, y: number) => {
+    const elements = document.elementsFromPoint(x, y);
+    const battleCardElement = elements.find(el => el.getAttribute('data-battle-index') !== null);
+    if (battleCardElement) {
+      const battleIndex = parseInt(battleCardElement.getAttribute('data-battle-index')!);
+      return state.table_battles[battleIndex];
+    }
+    return null;
+  };
+
+  // Helper function to determine what action should be taken
+  const determineGameAction = (x: number, y: number, draggedCard: Card) => {
+    if (isInHandArea(x, y)) {
+      return { type: 'rearrange' };
+    }
+
+    const self_index = state.players.findIndex((player) => player.id === user_id);
+    const isDefending = state.defender === self_index;
+
+    if (isDefending) {
+      const tableCardUnderCursor = getTableCardUnderCursor(x, y);
+      if (tableCardUnderCursor && !tableCardUnderCursor.defense) {
+        // Dragging to an uncovered attack card = cover
+        return { type: 'cover', targetCard: tableCardUnderCursor.attack };
+      } else {
+        // Dragging to empty space = pass
+        return { type: 'pass' };
+      }
+    } else {
+      // Attacker: dragging to table = attack
+      return { type: 'attack' };
+    }
+  };
+
   // Enhanced drag behavior with real-time rearrangement
   useEffect(() => {
          const handleMouseMove = (e: MouseEvent) => {
        if (isDraggingCard && draggedCardIndex !== null) {
+
+         // Update current cursor position
+         setCurrentCursorPos({ x: e.clientX, y: e.clientY });
 
          // Check if we've moved far enough to consider this actual dragging
          if (dragStartPos && !isActuallyDragging) {
@@ -131,8 +180,20 @@ export const GameDisplay = () => {
            }
          }
 
-         // Only allow swaps when actually dragging (not just tapping)
-         if (isActuallyDragging) {
+         // Check if dragging outside hand area for game actions
+         if (isActuallyDragging && !isInHandArea(e.clientX, e.clientY)) {
+           if (!isDraggingForGameAction) {
+             setIsDraggingForGameAction(true);
+             setDraggedCard(localHandOrder[draggedCardIndex]);
+           }
+         } else if (isDraggingForGameAction && isInHandArea(e.clientX, e.clientY)) {
+           // Dragged back into hand area
+           setIsDraggingForGameAction(false);
+           setDraggedCard(null);
+         }
+
+         // Only allow swaps when actually dragging and still in hand area
+         if (isActuallyDragging && !isDraggingForGameAction) {
            // Find what card we're hovering over for real-time swapping
            const elements = document.elementsFromPoint(e.clientX, e.clientY);
            const cardElement = elements.find(el => el.getAttribute('data-card-index') !== null);
@@ -162,6 +223,9 @@ export const GameDisplay = () => {
          e.preventDefault();
          const touch = e.touches[0];
 
+         // Update current cursor position
+         setCurrentCursorPos({ x: touch.clientX, y: touch.clientY });
+
          // Check if we've moved far enough to consider this actual dragging
          if (dragStartPos && !isActuallyDragging) {
            const distance = Math.sqrt(
@@ -173,8 +237,20 @@ export const GameDisplay = () => {
            }
          }
 
-         // Only allow swaps when actually dragging (not just tapping)
-         if (isActuallyDragging) {
+         // Check if dragging outside hand area for game actions
+         if (isActuallyDragging && !isInHandArea(touch.clientX, touch.clientY)) {
+           if (!isDraggingForGameAction) {
+             setIsDraggingForGameAction(true);
+             setDraggedCard(localHandOrder[draggedCardIndex]);
+           }
+         } else if (isDraggingForGameAction && isInHandArea(touch.clientX, touch.clientY)) {
+           // Dragged back into hand area
+           setIsDraggingForGameAction(false);
+           setDraggedCard(null);
+         }
+
+         // Only allow swaps when actually dragging and still in hand area
+         if (isActuallyDragging && !isDraggingForGameAction) {
            // Find what card we're hovering over for real-time swapping
            const elements = document.elementsFromPoint(touch.clientX, touch.clientY);
            const cardElement = elements.find(el => el.getAttribute('data-card-index') !== null);
@@ -226,7 +302,7 @@ export const GameDisplay = () => {
       document.removeEventListener('mouseup', handleMouseUp);
       document.removeEventListener('touchend', handleTouchEnd);
     };
-     }, [isDraggingCard, draggedCardIndex, localHandOrder, hasSwapped, isActuallyDragging, touchStartTime]);
+     }, [isDraggingCard, draggedCardIndex, localHandOrder, hasSwapped, isActuallyDragging, touchStartTime, isDraggingForGameAction, draggedCard, currentCursorPos]);
 
   const scheduleCardRearrangeUpdate = (newOrder: Card[]) => {
     // Cancel existing timer
@@ -249,7 +325,7 @@ export const GameDisplay = () => {
         // Revert to original order on error
         setLocalHandOrder(originalHand);
       });
-    }, 6000);
+    }, 5000);
   };
 
   const startCardDrag = (e: React.MouseEvent | React.TouchEvent, index: number) => {
@@ -277,14 +353,47 @@ export const GameDisplay = () => {
     if (!isDraggingCard || draggedCardIndex === null) return;
 
     const touchDuration = Date.now() - touchStartTime;
-    const wasTap = touchDuration < 200 && !hasSwapped && !isActuallyDragging;
+    const wasTap = touchDuration < 150 && !hasSwapped && !isActuallyDragging;
     
     // If this was a tap (not a drag), handle card selection
     if (wasTap && localHandOrder[draggedCardIndex]) {
       handleCardSelection(localHandOrder[draggedCardIndex]);
     }
-
-    // Schedule the final update to the server with current order
+    
+    // Handle game actions if dragging ended outside hand area
+    if (isDraggingForGameAction && draggedCard && isActuallyDragging && currentCursorPos) {
+      const action = determineGameAction(currentCursorPos.x, currentCursorPos.y, draggedCard);
+      
+      switch (action.type) {
+        case 'attack':
+          attack([draggedCard]).then(() => {
+            console.log('Attack performed via drag');
+          }).catch((e) => {
+            console.error('Attack failed:', e.message);
+          });
+          break;
+          
+        case 'cover':
+          if (action.targetCard) {
+            cover([draggedCard], [action.targetCard]).then(() => {
+              console.log('Cover performed via drag');
+            }).catch((e) => {
+              console.error('Cover failed:', e.message);
+            });
+          }
+          break;
+          
+        case 'pass':
+          pass([draggedCard]).then(() => {
+            console.log('Pass performed via drag');
+          }).catch((e) => {
+            console.error('Pass failed:', e.message);
+          });
+          break;
+      }
+    }
+    
+    // Schedule the final update to the server with current order (for rearranging)
     if (hasSwapped) {
       scheduleCardRearrangeUpdate(localHandOrder);
     }
@@ -293,6 +402,9 @@ export const GameDisplay = () => {
     setDraggedCardIndex(null);
     setDragStartPos(null);
     setIsActuallyDragging(false);
+    setIsDraggingForGameAction(false);
+    setDraggedCard(null);
+    setCurrentCursorPos(null);
      
     // Reset the swap flag after a short delay to prevent immediate click
     setTimeout(() => {
@@ -400,6 +512,39 @@ export const GameDisplay = () => {
 
       <div style={{ display: 'flex', flex: 1, justifyContent: 'center', alignItems: 'center' }}>
         <p>FOOLISH</p>
+        
+        {/* Floating action indicator during game action drag */}
+        {isDraggingForGameAction && draggedCard && currentCursorPos && (
+          <div style={{
+            position: 'absolute',
+            left: currentCursorPos.x + 10,
+            top: currentCursorPos.y - 30,
+            backgroundColor: 'rgba(0, 0, 0, 0.8)',
+            color: 'white',
+            padding: '4px 8px',
+            borderRadius: '4px',
+            fontSize: '12px',
+            zIndex: 1001,
+            pointerEvents: 'none'
+          }}>
+            {(() => {
+              const self_index = state.players.findIndex((player) => player.id === user_id);
+              const isDefending = state.defender === self_index;
+              const action = determineGameAction(currentCursorPos.x, currentCursorPos.y, draggedCard);
+              
+              switch (action.type) {
+                case 'attack':
+                  return '⚔️ Attack';
+                case 'cover':
+                  return '🛡️ Cover';
+                case 'pass':
+                  return '🔄 Pass';
+                default:
+                  return '❓';
+              }
+            })()}
+          </div>
+        )}
         
         <div style={{ display: 'flex', position: 'absolute', top: '0px', left: '0px', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', height: '300px', width: '100px' }}>
           {state.flipped && <CardDisplay card={state.flipped} />}
@@ -531,7 +676,6 @@ export const GameDisplay = () => {
             flexDirection: 'row', 
             alignItems: 'center', 
             justifyContent: 'center',
-            maxWidth: '400px',
             width: '100%'
           }}>
 
@@ -541,10 +685,23 @@ export const GameDisplay = () => {
                   selectedCard.value === card.value && selectedCard.suit === card.suit
                 );
                 const isDragging = isActuallyDragging && draggedCardIndex === index;
+                const isDraggingForAction = isDraggingForGameAction && draggedCardIndex === index;
 
                 // Determine the style based on state
                 let cardStyle: React.CSSProperties;
-                if (isSelected) {
+                if (isDraggingForAction) {
+                  // Special styling for game action drag
+                  //hmm
+                  /*cardStyle = {
+                    border: '3px solid yellow',
+                    backgroundColor: 'lightyellow',
+                    boxShadow: '0 4px 8px rgba(0,0,0,0.3)'
+                  };*/
+                  cardStyle = {
+                    border: '2px solid red',
+                    backgroundColor: 'white'
+                  };
+                } else if (isSelected) {
                   cardStyle = {
                     border: '2px solid red',
                     backgroundColor: 'white'
@@ -573,7 +730,7 @@ export const GameDisplay = () => {
                       display: 'flex',
                       justifyContent: 'center',
                       alignItems: 'center',
-                      opacity: isDragging ? 0.3 : 1, // More transparent when being dragged
+                      opacity: (isDragging && !isDraggingForAction) ? 0.3 : 1, // Only fade for rearranging, not game actions
                       transition: 'all 0.1s ease',
                       cursor: 'move',
                       userSelect: 'none',
@@ -602,21 +759,40 @@ export const GameDisplay = () => {
         <div style={{ position: 'absolute', display: 'flex', flexDirection: 'column', top: 0, width: '100%', bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
           {
             state.table_battles.map((battle, index) => {
-              let border = { border: '1px solid black' };
+              let containerStyle: React.CSSProperties = { 
+                border: '1px solid black',
+                display: 'flex',
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center'
+              };
+              
               if (coverMap.values().some(c => c.value === battle.attack.value && c.suit === battle.attack.suit)) {
-                border = { border: '3px solid red' };
+                containerStyle.border = '3px solid red';
               }
-              return <div key={battle.attack.value + ' ' + battle.attack.suit} style={{ ...border, display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
-                <CardDisplay
-                  card={battle.attack}
-                  onClick={() => {
-                    if (isSelectingCover) {
-                      setCoverMap(new Map(coverMap.set(selectedCards[0], battle.attack)));
-                      console.log(coverMap);
-                      // Don't set isSelectingCover to false here - keep it true so "Actually Cover" button remains visible
-                    }
-                  }}
-                />
+              
+              // Add highlighting for valid drop zones during game action drag
+              const isDefending = state.defender === self_index;
+              const isValidCoverTarget = isDraggingForGameAction && isDefending && !battle.defense;
+              
+              if (isValidCoverTarget) {
+                containerStyle.border = '3px solid green';
+                containerStyle.backgroundColor = 'rgba(0, 255, 0, 0.1)';
+              }
+              
+              return <div key={battle.attack.value + ' ' + battle.attack.suit} style={containerStyle}>
+                <div data-battle-index={index}>
+                  <CardDisplay
+                    card={battle.attack}
+                    onClick={() => {
+                      if (isSelectingCover) {
+                        setCoverMap(new Map(coverMap.set(selectedCards[0], battle.attack)));
+                        console.log(coverMap);
+                        // Don't set isSelectingCover to false here - keep it true so "Actually Cover" button remains visible
+                      }
+                    }}
+                  />
+                </div>
                 {battle.defense && <CardDisplay card={battle.defense} />}
               </div>
             })
