@@ -375,7 +375,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         }
 
         // Optimistic update
-        setGames(prev => ({ ...prev, [game_id!]: { ...prev[game_id!], table_battles: [...table_battles, { attack: cards[0], defense: null }], self: { ...prev[game_id!].self, hand: prev[game_id!].self.hand.filter(card => !cards.includes(card)) } } }));
+        setGames(prev => ({ ...prev, [game_id!]: { ...prev[game_id!], table_battles: [...table_battles, ...cards.map(card => ({ attack: card, defense: null }))], self: { ...prev[game_id!].self, hand: prev[game_id!].self.hand.filter(card => !cards.includes(card)) } } }));
 
         return new Promise<{ game_id: string }>((resolve, reject) => {
             supabase.functions.invoke('attack', {
