@@ -657,6 +657,7 @@ const game_done = (game: Game): string | null => {
 }
 
 // TODO: find a better way to communicate refill without interfering with other broadcasts
+// timestamps???
 export const refill = (game: Game) => {
 
     if (no_cards_left(game)) {
