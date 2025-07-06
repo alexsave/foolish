@@ -156,7 +156,7 @@ export const Lobby = () => {
         // Create indices array based on original order
         const originalPlayers = game!.players;
         const indices = newOrder.map(newPlayer => 
-            originalPlayers.findIndex(origPlayer => origPlayer.id === newPlayer.id)
+            originalPlayers.findIndex(origPlayer => origPlayer.player_id === newPlayer.player_id)
         );
 
         // Set new 6-second timer
@@ -294,7 +294,7 @@ export const Lobby = () => {
                     
                     return (
                         <div
-                            key={player.id}
+                            key={player.player_id}
                             draggable={canDrag}
                             onDragStart={(e) => handleDragStart(e, index)}
                             onDragOver={(e) => handleDragOver(e, index)}
@@ -337,7 +337,7 @@ export const Lobby = () => {
                             }} />
                             <p style={{ zIndex: 10 }}>{player.name}</p>
                             <p>{player.status !== 'idle' ? '🟢' :
-                                player.id === user_id ? <button 
+                                player.player_id === user_id ? <button 
                                     onClick={() => {
                                         startGame(game_id!);
                                     }}

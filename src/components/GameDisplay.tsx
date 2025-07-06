@@ -177,7 +177,7 @@ export const GameDisplay = () => {
       return { type: 'rearrange' };
     }
 
-    const self_index = state.players.findIndex((player) => player.id === user_id);
+    const self_index = state.players.findIndex((player) => player.player_id === user_id);
     const isDefending = state.defender === self_index;
 
     if (isDefending) {
@@ -477,7 +477,7 @@ export const GameDisplay = () => {
     return <div>Loading...</div>;
   }
 
-  const self_index = state.players.findIndex((player) => player.id === user_id);
+  const self_index = state.players.findIndex((player) => player.player_id === user_id);
 
   const isDefending = state.defender === self_index;
 
@@ -708,7 +708,7 @@ export const GameDisplay = () => {
               pointerEvents: 'none'
             }}>
               {(() => {
-                const self_index = state.players.findIndex((player) => player.id === user_id);
+                const self_index = state.players.findIndex((player) => player.player_id === user_id);
                 const isDefending = state.defender === self_index;
                 const action = determineGameAction(currentCursorPos.x, currentCursorPos.y, draggedCard);
 
@@ -1253,7 +1253,7 @@ export const GameDisplay = () => {
             const x = ((-1 * Math.sin(radians) * 35) + 50) + '%';
             const y = ((Math.cos(radians) * 35) + 50) + '%';
 
-            return <div key={player.id} style={{
+            return <div key={player.player_id} style={{
               position: 'absolute',
               top: y,
               left: x,
@@ -1316,7 +1316,7 @@ export const GameDisplay = () => {
 
                     return (
                       <div
-                        key={`player-${player.id}-card-${cardIndex}`}
+                        key={`player-${player.player_id}-card-${cardIndex}`}
                         style={{
                           backgroundColor: '#DC143C', // Fallback red background
                           width: '12px',

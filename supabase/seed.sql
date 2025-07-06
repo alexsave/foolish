@@ -31,8 +31,7 @@ CREATE TYPE player_status AS ENUM (
   'idle',
   'ready', 
   'in',
-  'out',
-  'awaiting_attack'
+  'out'
 );
 
 CREATE TYPE game_status AS ENUM (
@@ -78,6 +77,7 @@ CREATE TABLE player_hands (
   game_id TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
   player_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   hand JSONB NOT NULL DEFAULT '[]'::jsonb, -- Card[] - player's cards
+  awaiting_attack BOOLEAN NOT NULL DEFAULT false, -- Private status for attack confirmation
   joined_at TIMESTAMP DEFAULT NOW(),
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW(),
@@ -253,7 +253,7 @@ WITH CHECK (
   AND realtime.messages.extension IN ('broadcast')
 );
 
--- Policy for private game-user channels (topic: gu-{game_id}-{username})
+-- Policy for private game-user channels (topic: gu-{game_id}-{user_id})
 -- Users can only read messages from their own game-user channels
 CREATE POLICY "authenticated can receive game-user messages"
 ON "realtime"."messages"
@@ -261,8 +261,8 @@ FOR SELECT
 TO authenticated
 USING (
   (SELECT realtime.topic()) LIKE 'gu-%' AND
-  -- Extract username from topic (gu-{game_id}-{username}) and verify it matches current user
-  split_part((SELECT realtime.topic()), '-', 3) = split_part((current_setting('request.jwt.claims', true)::jsonb ->> 'email'), '@', 1) AND
+  -- Extract user_id from topic (gu-{game_id}-{user_id}) and verify it matches current user
+  split_part((SELECT realtime.topic()), '-', 3) = auth.uid()::text AND
   -- Extract game_id and verify user is in that game
   EXISTS (
     SELECT 1

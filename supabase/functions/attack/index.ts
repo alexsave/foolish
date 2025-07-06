@@ -1,5 +1,5 @@
 import { wrap400, loadCompleteGame, saveCompleteGame, broadcastToGameUsers, verify_player_in_game, personalize_game, cardDisplay, validate_defender_status, verify_cards_in_players_hand, no_cards_left, check_win } from "../_shared/utils.ts";
-import { Game, Card, Player, GAME_STATUS, SERVER_EVENT_TYPE, PLAYER_STATUS } from "../_shared/types.ts";
+import { Game, Card, GAME_STATUS, SERVER_EVENT_TYPE, PLAYER_STATUS, PrivatePlayer } from "../_shared/types.ts";
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
@@ -44,7 +44,7 @@ const handle_attack = (game: Game, game_id: string, player_id: string, cards: Ca
     }
 
     // Find which player this is
-    const player: Player = game.players.find(player => player.id === player_id)!;
+    const player: PrivatePlayer = game.players.find(player => player.player_id === player_id)!;
 
     // also the attacker cannot be the defender
     validate_defender_status(game, player_id, false);
@@ -55,7 +55,7 @@ const handle_attack = (game: Game, game_id: string, player_id: string, cards: Ca
     // make sure there are enough cards in the defenders hand
     let uncovered_cards = game.table_battles.filter(battle => battle.defense === null).length;
 
-    const defender: Player = game.players[game.defender];
+    const defender: PrivatePlayer = game.players[game.defender];
 
     let defender_cards = defender.hand.length;
 
@@ -74,7 +74,7 @@ const handle_attack = (game: Game, game_id: string, player_id: string, cards: Ca
         }
 
         // check if player is first attacker
-        if (game.players[game.first_attacker].id !== player_id) {
+        if (game.players[game.first_attacker].player_id !== player_id) {
             throw new Error(`Player ${player_id} is not the first attacker`);
         }
 
@@ -126,7 +126,7 @@ const handle_attack = (game: Game, game_id: string, player_id: string, cards: Ca
         }
         // a valid attack will move us out of wait_for_attackers
         game.players.forEach(player => {
-            if (player.status === PLAYER_STATUS.AWAITING_ATTACK) {
+            if (player.awaiting_attack) {
                 player.status = PLAYER_STATUS.IN;
             }
         });

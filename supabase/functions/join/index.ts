@@ -1,5 +1,5 @@
 import { loadCompleteGame, saveCompleteGame, personalize_game, wrap400, broadcastToGameUsers } from "../_shared/utils.ts";
-import { GAME_STATUS, PLAYER_STATUS, Game, SERVER_EVENT_TYPE, Player } from "../_shared/types.ts";
+import { GAME_STATUS, PLAYER_STATUS, Game, SERVER_EVENT_TYPE, PrivatePlayer } from "../_shared/types.ts";
 import { MAX_PLAYERS } from "../_shared/constants.ts";
 
 import { createClient } from "npm:@supabase/supabase-js@2.39.0"
@@ -41,15 +41,17 @@ wrap400(async (user, user_name, body) => {
     }
 
     // Create new player
-    const publicPlayer: Player = {
+    const privatePlayer: PrivatePlayer = {
         name: user_name,
-        id: user_id,
+        player_id: user_id,
         status: PLAYER_STATUS.IDLE,
         hand: [],
+        awaiting_attack: false,
+        hand_length: 0
     }
 
     // Add new player to game
-    game.players.push(publicPlayer);
+    game.players.push(privatePlayer);
 
     // Save to database - this handles all simplified tables
     await saveCompleteGame(game);

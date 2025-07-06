@@ -14,7 +14,6 @@ wrap400(async (user, user_name, body) => {
     if (game.status !== GAME_STATUS.WAITING) {
         throw new Error(`Game ${game_id} is not waiting for players, wait for next game`);
     }
-    // if player_games is set correctly, then the players shoudl be set correclty in the game too. But not vice versa
 
     // let the error throw
 
@@ -22,7 +21,7 @@ wrap400(async (user, user_name, body) => {
     let type: ServerEventType = SERVER_EVENT_TYPE.PLAYER_READY;
 
     // Update player status to ready
-    game.players.find(player => player.id === user_id)!.status = PLAYER_STATUS.READY;
+    game.players.find(player => player.player_id === user_id)!.status = PLAYER_STATUS.READY;
 
     if (game.players.length >= 2 && game.players.every(player => player.status === PLAYER_STATUS.READY)) {
         // We can start the game 

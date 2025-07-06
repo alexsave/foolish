@@ -1,5 +1,3 @@
-//import { createClient } from '@supabase/supabase-js';
-//import { createClient, User } from "npm:@supabase/supabase-js@2.39.0"
 import { createClient, User } from 'jsr:@supabase/supabase-js';
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 

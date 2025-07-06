@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
-import { Card, Game, PersonalGame, PublicGame, PublicPlayer, SERVER_EVENT_TYPE } from '../common/types';
+import { Card, Game, PersonalGame, PrivatePlayer, PublicGame, PublicPlayer, SERVER_EVENT_TYPE } from '../common/types';
 import supabase from '../backend/Connector';
 import { useParams } from 'react-router-dom';
 import { useAuth } from './AuthContext';
@@ -34,22 +34,24 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     useEffect(() => {
         //const game_id = use
         if (url_game_id) {
+            gameIdRef.current = url_game_id;
             setGameId(url_game_id);
             setGameLoadError(null); // Clear any previous errors
-            if (!games[url_game_id]) {
+            if (!games[url_game_id]/* && !loading*/) {
+                //setLoading(true);
                 loadGame(url_game_id).catch(error => {
                     console.log('Game not found in URL:', error.message);
                     setGameLoadError(url_game_id); // Set error for this specific game
+                }).then(() => {
+                    setLoading(false);
                 });
-            } else {
             }
         }
     }, [url_game_id]);
 
 
     // Keep ref in sync with state
-    useEffect(() => {
-        gameIdRef.current = game_id;
+    /*useEffect(() => {
         if (game_id && user_id) {
             //console.log('game id changed, need to fetch game data');
             // fetch game data. for now it will just be lobby info
@@ -59,7 +61,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             });
 
         }
-    }, [game_id]);
+    }, [game_id]);*/
 
 
     useEffect(() => {
@@ -117,7 +119,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         await supabase.realtime.setAuth();
         
         // Subscribe to personalized game-user channel for game updates
-        const gameUserChannel = supabase.channel(`gu-${gameId}-${username}`, {
+        const gameUserChannel = supabase.channel(`gu-${gameId}-${user_id}`, {
             config: { private: true }
         });
         
@@ -128,7 +130,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             })
             .subscribe((status, err) => {
                 if (status === 'SUBSCRIBED') {
-                    //console.log('Connected to game-user channel:', `gu-${gameId}-${user}`);
+                    console.log('Connected to game-user channel:', `gu-${gameId}-${user_id}`);
                 } else {
                     console.error('Game-user channel error:', err);
                 }
@@ -148,6 +150,9 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         }
         
         if (!messageGameId || !gameIdRef.current || messageGameId !== gameIdRef.current) {
+            console.log("messageGameId", messageGameId);
+            console.log("gameIdRef.current", gameIdRef.current);
+            console.log("messageGameId !== gameIdRef.current", messageGameId !== gameIdRef.current);
             return;
         }
 
@@ -159,6 +164,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
         // Handle all the different message types using the extracted message
         const gameData = actualMessage.game || message.game;
+        console.log(JSON.stringify(gameData) + " gameData");
         
         if (actualMessage.type === SERVER_EVENT_TYPE.PLAYER_JOINED_GAME) {
             setGames(prev => ({...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev)}));
@@ -400,7 +406,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         // Optimistic update
         // I don't like this cast 
         // But refactoring it to work would involve also changing the player type
-        const next_defender = get_next_player_index(g as unknown as Game, g.defender);
+        const next_defender = get_next_player_index(g, g.defender);
         setGames(prev => ({ ...prev, [game_id!]: { ...prev[game_id!], table_battles: [...table_battles, { attack: cards[0], defense: null }], self: { ...prev[game_id!].self, hand: prev[game_id!].self.hand.filter(card => !cards.includes(card)) }, defender: next_defender } }));
 
         return new Promise<{ game_id: string }>((resolve, reject) => {
@@ -425,7 +431,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         if (table_battles.length === 0) {
             return Promise.reject(new Error(`Cannot pickup`));
         }
-        const next_defender = get_next_player_index(g as unknown as Game, g.defender);
+        const next_defender = get_next_player_index(g, g.defender);
         // move all table cards to self, defenses and attacks
         setGames(prev => ({ ...prev, [game_id!]: { ...prev[game_id!], table_battles: [], self: { ...prev[game_id!].self, hand: [...prev[game_id!].self.hand, ...table_battles.map(battle => battle.defense ?? battle.attack)] }, defender: next_defender } }));
 
@@ -668,10 +674,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 const game = playerHand.games as unknown as PublicGame;
                 games[game.id] = {
                     ...game,
-                    self: {
-                        player_id: user_id,
-                        hand: playerHand.hand,
-                    },
+                    self: playerHand.hand// as unknown as PrivatePlayer
                 };
             }
 
@@ -679,18 +682,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
         } catch (error) {
             console.error('Error in getUserGames:', error);
-        }
-    };
-
-    const setGameIdFromUrl = (gameId: string) => {
-        if (gameId !== game_id) {
-            setGameId(gameId);
-        }
-        if (user_id && game_id) {
-            loadGame(game_id).catch(error => {
-                console.log('Game not found when setting from URL:', error.message);
-                // Error is handled by individual components that call loadGame
-            });
         }
     };
 
@@ -702,13 +693,13 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             game_id,
             game: games[game_id!],
             games,
-            loadGame,
+            //loadGame,
             attack,
             pass,
             pickup,
             cover,
             good,
-            setGameIdFromUrl,
+            //setGameIdFromUrl,
             getUserGames,
             updateGameName,
             rearrangePlayer,
@@ -727,12 +718,12 @@ interface ServerContextType {
     game_id: string | null;
     game: PersonalGame | null;
     games: { [key: string]: PersonalGame };
-    loadGame: (gameId: string) => Promise<{ game_id: string }>;
+    //loadGame: (gameId: string) => Promise<{ game_id: string }>;
     attack: (cards: Card[]) => Promise<{ game_id: string }>;
     pass: (cards: Card[]) => Promise<{ game_id: string }>;
     pickup: () => Promise<{ game_id: string }>;
     cover: (coverCards: Card[], attackCards: Card[]) => Promise<{ game_id: string }>;
-    setGameIdFromUrl: (gameId: string) => void;
+    //setGameIdFromUrl: (gameId: string) => void;
     good: () => Promise<{ game_id: string }>;
     getUserGames: () => Promise<void>;
     updateGameName: (gameId: string, name: string) => Promise<{ game_id: string }>;

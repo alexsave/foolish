@@ -24,7 +24,7 @@ wrap400(async (user, user_name, body) => {
     }
 
     // Check if the user is in the game (only players can change the name)
-    const playerExists = game.players.some(player => player.id === user_id);
+    const playerExists = game.players.some(player => player.player_id === user_id);
     if (!playerExists) {
         throw new Error('Only players in the game can change the name');
     }

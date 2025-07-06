@@ -1,5 +1,5 @@
 import { createId, wrap400, broadcastToGameUsers, loadCompleteGame, personalize_game } from "../_shared/utils.ts";
-import { GAME_STATUS, PLAYER_STATUS, Game, PublicGame } from "../_shared/types.ts";
+import { GAME_STATUS, PLAYER_STATUS, Game, PublicGame, PlayerHand, GameDeck } from "../_shared/types.ts";
 
 import { createClient } from "npm:@supabase/supabase-js@2.39.0"
 
@@ -22,9 +22,9 @@ wrap400(async (user, user_name, body) => {
         flipped: null,
         players: [{
             name: user_name,
-            id: user_id,
+            player_id: user_id,
             status: PLAYER_STATUS.IDLE,
-            hand_length: 0
+            hand_length: 0,
         }],
         status: GAME_STATUS.WAITING,
         power_suit: 0,
@@ -33,7 +33,6 @@ wrap400(async (user, user_name, body) => {
         table_battles: []
     };
 
-    // Insert into separated schema - removed player_games but kept game_decks
     // 1. Games table (public data only)
     await supabaseClient.from('games').insert(publicGameData);
     
@@ -41,14 +40,15 @@ wrap400(async (user, user_name, body) => {
     await supabaseClient.from('game_decks').insert({
         game_id: game_id,
         deck: []
-    });
+    } as GameDeck);
 
     // 3. Initialize empty hand for creator (also serves as player-game relationship)
     await supabaseClient.from('player_hands').insert({
         game_id: game_id,
         player_id: user_id,
-        hand: []
-    });
+        hand: [],
+        awaiting_attack: false
+    } as PlayerHand);
 
     // Load complete game state from separated tables
     const dbGameData: Game = await loadCompleteGame(game_id);

@@ -1,6 +1,6 @@
 import {wrap400, broadcastToGameUsers, verify_player_in_game, personalize_game, cardDisplay, validate_defender_status, verify_cards_in_players_hand, no_cards_left, check_win, card_comp, loadCompleteGame, saveCompleteGame } from "../_shared/utils.ts";
 import { get_next_player_index } from "../_shared/common_utils.ts"; 
-import { Game, Card, SERVER_EVENT_TYPE, PLAYER_STATUS, Player} from "../_shared/types.ts";
+import { Game, Card, SERVER_EVENT_TYPE, PLAYER_STATUS, PrivatePlayer} from "../_shared/types.ts";
 
 wrap400(async (user, user_name, body) => {
     const user_id = user.id;
@@ -51,7 +51,7 @@ const handle_pass = (game: Game, game_id: string, player_id: string, cards: Card
     // also the attacker has to be the defender
     validate_defender_status(game, player_id, true);
 
-    const defender: Player = game.players.find(player => player.id === player_id)!;
+    const defender: PrivatePlayer = game.players.find(player => player.player_id === player_id)!;
 
     verify_cards_in_players_hand(defender, mCards);
 
@@ -112,9 +112,9 @@ const handle_pass = (game: Game, game_id: string, player_id: string, cards: Card
     }
 
     const uncovered_cards = game.table_battles.filter(battle => battle.defense === null).length;
-    const new_defender_id = game.players[game.defender].id;
+    const new_defender_id = game.players[game.defender].player_id;
     // Lots of find calls. Maybe an intermediate type would be better for this
-    const new_defender: Player = game.players.find(player => player.id === new_defender_id)!;
+    const new_defender: PrivatePlayer = game.players.find(player => player.player_id === new_defender_id)!;
     const defender_cards = new_defender.hand.length;
 
     // it's important to check if we need to shift to only_defend

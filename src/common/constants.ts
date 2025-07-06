@@ -1,6 +1,4 @@
 // Game constants
-
-// Constants
 export const CARDS_PER_PLAYER = 6;
 
 // Suits
@@ -29,14 +27,5 @@ export const VALUE_MAP = [
     'A', //13
 ];
 
-export const NAMES = [
-    'Rando', 'Smarty', 'John', 'Blake', 'William', 'Zach', 'Alex', 'Ben', 
-    'Caleb', 'Dylan', 'Ethan', 'Finn', 'Gavin', 'Hunter', 'Isaiah', 'Jack', 
-    'Kyle', 'Landon', 'Mason', 'Nathan', 'Oliver', 'Parker', 'Quinn', 'Ryan', 
-    'Samuel', 'Thomas', 'Ulysses', 'Vance', 'Wesley', 'Xavier', 'Yusuf', 'Zane'
-];
-
 export const ACE_VALUE = 13;
-export const CARDS_PER_SUIT = 9;
-export const START_VALUE = ACE_VALUE - CARDS_PER_SUIT + 1;
-export const MAX_PLAYERS = 7; 
+export const MAX_PLAYERS = 8; 

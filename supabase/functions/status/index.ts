@@ -10,9 +10,11 @@ wrap400(async (user, user_name, body) => {
     const game: Game = await loadCompleteGame(game_id);
 
     // Check if player is in game
-    const playerInGame = game.players.find(player => player.id === user_id);
+    const playerInGame = game.players.find(player => player.player_id === user_id);
+    console.log(JSON.stringify(playerInGame) + " playerInGame " + JSON.stringify(game.players) + " game.players " + user_id + " user_id");
     
     if (playerInGame) {
+        console.log("player in the game");
         // Bandaid, but if  all players have 0 cards, set to waiting status
         // TODO: figure out why ending the game doesn't set status to waiting
         if (game.players.every(player => player.hand.length === 0)) {
@@ -25,6 +27,7 @@ wrap400(async (user, user_name, body) => {
             game: personalize_game(game, user_id)
         };
     } else {
+        console.log("player not in the game");
         // Player is not in game, return public view for spectating
         const publicGame: PublicGame = {
             id: game.id,
@@ -33,7 +36,7 @@ wrap400(async (user, user_name, body) => {
             flipped: game.flipped,
             players: game.players.map(player => ({
                 name: player.name,
-                id: player.id,
+                player_id: player.player_id,
                 status: player.status,
                 hand_length: player.hand.length
             } as PublicPlayer)),

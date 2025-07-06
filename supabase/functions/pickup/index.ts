@@ -1,6 +1,6 @@
 import { wrap400, validate_defender_status, refill, verify_player_in_game, personalize_game, broadcastToGameUsers, loadCompleteGame, saveCompleteGame } from "../_shared/utils.ts";
 import { get_next_player_index } from "../_shared/common_utils.ts";
-import { GAME_STATUS, SERVER_EVENT_TYPE, Game, Player } from "../_shared/types.ts";
+import { GAME_STATUS, SERVER_EVENT_TYPE, Game, PrivatePlayer } from "../_shared/types.ts";
 
 wrap400(async (user, user_name, body) => {
     const user_id = user.id;
@@ -43,7 +43,7 @@ const handle_pickup = (game: Game, game_id: string, player_id: string): Game => 
     }
 
     // ok let's just pick it up
-    const defender: Player = game.players.find(player => player.id === player_id)!;
+    const defender: PrivatePlayer = game.players.find(player => player.player_id === player_id)!;
 
     // add cards from table to hand
     game.table_battles.forEach(battle => {

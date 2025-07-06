@@ -1,7 +1,7 @@
 import { corsHeaders, handleCors } from './cors.ts';
 import { get_next_player_index } from './common_utils.ts';
-import { Card, Game, GAME_STATUS, Player, PLAYER_STATUS, PersonalGame, SERVER_EVENT_TYPE, PRIVATE_EVENT_TYPE, PrivatePlayer, PublicGame, PublicPlayer } from './types.ts';
-import { ACE_VALUE, CARDS_PER_PLAYER, SUITS, START_VALUE, VALUE_MAP, SUIT_MAP } from './constants.ts';
+import { Card, Game, GAME_STATUS, PLAYER_STATUS, PersonalGame, SERVER_EVENT_TYPE, PRIVATE_EVENT_TYPE, PrivatePlayer, PublicGame, PublicPlayer, PlayerHand } from './types.ts';
+import { ACE_VALUE, CARDS_PER_PLAYER, SUITS, VALUE_MAP, SUIT_MAP } from './constants.ts';
 import { createClient, User } from 'jsr:@supabase/supabase-js';
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
@@ -121,16 +121,16 @@ export const wrap400 = (execute: (user: User, user_name: string, body: any) => P
 };
 
 export const verify_player_in_game = (game: Game, player_id: string): void => {
-    if (!game.players.find(player => player.id === player_id)) {
+    if (!game.players.find(player => player.player_id === player_id)) {
         throw new Error(`Player ${player_id} not in game ${game.id}`);
     }
 }
 
-const other_player = (player: Player): PublicPlayer => {
+const other_player = (player: PrivatePlayer): PublicPlayer => {
     return { 
         name: player.name, 
-        id: player.id, 
-        status: player.status === PLAYER_STATUS.AWAITING_ATTACK ? PLAYER_STATUS.IN : player.status,
+        player_id: player.player_id, 
+        status: player.status,
         hand_length: player.hand.length, 
     };
 }
@@ -138,6 +138,7 @@ const other_player = (player: Player): PublicPlayer => {
 // Come to think of it, if we are broadcasting to the game, we can't be sending "self"
 export const personalize_game = (game: Game, player_id: string): PersonalGame => {
     // everything except game_decks , added self
+    const self = game.players.find(player => player.player_id === player_id)!;
     const personalGame: PersonalGame = {
         id: game.id,
         name: game.name,
@@ -150,10 +151,12 @@ export const personalize_game = (game: Game, player_id: string): PersonalGame =>
         defender: game.defender,
         table_battles: game.table_battles,
 
-        self: {
-            player_id: player_id,
-            hand: game.players.find(player => player.id === player_id)!.hand
-        }
+        //self: {
+            //...self,
+            //player_id: player_id,
+            //hand: game.players.find(player => player.player_id === player_id)!.hand,
+        //}
+        self: self
     }
     return personalGame;
 }
@@ -171,7 +174,7 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
         .select(`
             *,
             game_decks(deck),
-            player_hands(player_id, hand)
+            player_hands(player_id, hand, awaiting_attack)
         `)
         .eq('id', game_id)
         .single();
@@ -181,20 +184,28 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
         throw new Error(`Game ${game_id} not found`);
     }
 
-    const players: Player[] = data.players.map((player: any) => {
+    console.log(JSON.stringify(data));
+
+    const players: PrivatePlayer[] = data.players.map((player: any) => {
+        console.log(JSON.stringify(data.player_hands) + " data.player_hands");
+        console.log(JSON.stringify(player) + " player");
+        const hand = data.player_hands.find(hand => hand.player_id === player.player_id)!;
         return {
-            id: player.id,
+            player_id: player.player_id,
             name: player.name,
             status: player.status,
             // The only find we have to do
-            hand: data.player_hands.find(hand => hand.player_id === player.id)!.hand,
-        }
+            hand: hand.hand, // this is failing for som reason
+            awaiting_attack: hand.awaiting_attack,
+        } as PrivatePlayer;
     });
 
     const game: Game = {
         id: data.id,
         name: data.name,
         deck: data.game_decks.deck,
+        // unused but necessary for type
+        deck_length: data.game_decks.deck.length,
         flipped: data.flipped,
         players: players,
         status: data.status,
@@ -233,6 +244,7 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
     {
       "hand": [],
       "player_id": "72c6ac7d-5017-4ff6-86f8-df411d7035dd"
+      "awaiting_attack": false,
     }
   ]
 }
@@ -247,7 +259,7 @@ export const saveCompleteGame = async (game: Game): Promise<any> => {
     // Update public game data (remove deck and hands from players)
     const publicPlayers: PublicPlayer[] = game.players.map(player => ({
         name: player.name,
-        id: player.id,
+        player_id: player.player_id,
         status: player.status,
         hand_length: player.hand.length
     }));
@@ -279,10 +291,11 @@ export const saveCompleteGame = async (game: Game): Promise<any> => {
         });
 
     // Batch update all player hands
-    const handUpdates: PrivatePlayer[] = game.players.map(player => ({
+    const handUpdates: PlayerHand[] = game.players.map(player => ({
         game_id: game.id,
-        player_id: player.id,
+        player_id: player.player_id,
         hand: player.hand,
+        awaiting_attack: player.awaiting_attack,
     }));
 
     if (handUpdates.length > 0) {
@@ -295,17 +308,13 @@ export const saveCompleteGame = async (game: Game): Promise<any> => {
     const game_utils = {
         broadcast: async (messageType: string, baseMessage: any) => {
             for (const player of game.players) {
-                const self: PrivatePlayer = {
-                    player_id: player.id,
-                    hand: player.hand
-                };
                 // Create personalized game state by adding player's self data
                 const personalizedGame: PersonalGame = {
                     ...publicGame,
-                    self: self
+                    self: player
                 };
 
-                const channel = supabaseClient.channel(`gu-${game.id}-${player.name}`, {
+                const channel = supabaseClient.channel(`gu-${game.id}-${player.player_id}`, {
                     config: { private: true }
                 });
                 await channel.send({
@@ -325,10 +334,7 @@ export const saveCompleteGame = async (game: Game): Promise<any> => {
 
             const personalizedGame: PersonalGame = {
                 ...publicGame,
-                self: {
-                    player_id: user_id,
-                    hand: game.players.find(player => player.id === user_id)!.hand
-                }
+                self: game.players.find(player => player.player_id === user_id)!
             }
             await channel.send({
                 type: 'broadcast',
@@ -400,12 +406,12 @@ export const broadcastToGameUsers = async (game: Game, messageType: string, base
             name: game.name,
             deck_length: game.deck.length,
             flipped: game.flipped,
-            players: game.players.map(player => ({
+            players: game.players.map((player: PrivatePlayer) => ({
                 name: player.name,
-                id: player.id,
+                player_id: player.player_id,
                 status: player.status,
                 hand_length: player.hand.length
-            })),
+            }) as PublicPlayer),
             status: game.status,
             power_suit: game.power_suit,
             first_attacker: game.first_attacker,
@@ -413,16 +419,22 @@ export const broadcastToGameUsers = async (game: Game, messageType: string, base
             table_battles: game.table_battles,
         };
 
+        console.log(JSON.stringify(baseGameState) + " baseGameState");
+
         // Send personalized message to each player
         for (const player of game.players) {
-            const self: PrivatePlayer = {
-                player_id: player.id,
-                hand: player.hand
-            };
+            /*const self: PrivatePlayer = {
+                ...player,
+                hand: player.hand,
+                awaiting_attack: player.awaiting_attack,
+                status: player.status,
+                name: player.name,
+                hand_length: player.hand.length
+            };*/
             // Create personalized game state by adding player's self data
             const personalizedGame: PersonalGame = {
                 ...baseGameState,
-                self: self
+                self: player
             };
 
             // Create personalized message with filtered game state
@@ -430,7 +442,7 @@ export const broadcastToGameUsers = async (game: Game, messageType: string, base
                 ...baseMessage,
                 game: personalizedGame
             };
-            const channel = supabaseClient.channel(`gu-${game.id}-${player.name}`, {
+            const channel = supabaseClient.channel(`gu-${game.id}-${player.player_id}`, {
                 config: { private: true }
             });
             await channel.send({
@@ -465,7 +477,7 @@ export const start_game = async (game: Game) => {
         player.status = PLAYER_STATUS.IN;
     });
 
-    game.deck = refill_deck();
+    game.deck = refill_deck(game.players.length);
 
     const hands: Card[][] = initialize_hands(game);
     for (let i = 0; i < game.players.length; i++) {
@@ -507,22 +519,24 @@ export const start_game = async (game: Game) => {
             broadcastToGameUser(game, 'private_message', {
                 type: PRIVATE_EVENT_TYPE.REQUEST_FIRST_ATTACK,
                 message: `Please choose an attack. Options are ${hand.map(card => cardDisplay(card)).join(', ')}`
-            }, game.players[i].id);
+            }, game.players[i].player_id);
         } else {
             broadcastToGameUser(game, 'private_message', {
                 type: PRIVATE_EVENT_TYPE.PLAYER_HAND,
                 message: `Player ${game.players[i].name} hand ${hand.map(card => cardDisplay(card)).join(', ')}`
-            }, game.players[i].id);
+            }, game.players[i].player_id);
         }
     }
 
     return game;
 }
 
-export const refill_deck = (): Card[] => {
+export const refill_deck = (players: number): Card[] => {
     const deck: Card[] = [];
+    // Start at 6 vs 2
+    const startValue = players > 4 ? 1 : 5;
     for (let i = 0; i < SUITS.length; i++) {
-        for (let j = START_VALUE; j <= ACE_VALUE; j++) {
+        for (let j = startValue; j <= ACE_VALUE; j++) {
             deck.push({ suit: SUITS[i], value: j });
         }
     }
@@ -590,16 +604,16 @@ export const set_positions = (game: Game) => {
 
 // Helper method to validate player is/isn't defender
 export const validate_defender_status = (game: Game, player_id: string, should_be_defender: boolean) => {
-    const isDefender = game.players[game.defender].id === player_id;
+    const isDefender = game.players[game.defender].player_id === player_id;
     if (isDefender !== should_be_defender) {
         throw new Error(`Player ${player_id} is ${should_be_defender ? 'not' : ''} the defender`);
     }
 }
 
-export const verify_cards_in_players_hand = (player: Player, cards: Card[]) => {
+export const verify_cards_in_players_hand = (player: PrivatePlayer, cards: Card[]) => {
     for (const card of cards) {
         if (!player.hand.some(handCard => card_comp(handCard, card))) {
-            throw new Error(`Card ${cardDisplay(card)} is not in player ${player.id}'s hand`);
+            throw new Error(`Card ${cardDisplay(card)} is not in player ${player.player_id}'s hand`);
         }
     }
 }
@@ -614,12 +628,12 @@ export const check_win = (game: Game) => {
 
         game.status = GAME_STATUS.WAITING;
         // set all players to idle
-        game.players.forEach((player: Player) => {
+        game.players.forEach((player: PrivatePlayer) => {
             player.status = PLAYER_STATUS.IDLE;
             player.hand = [];
         });
         game.table_battles = [];
-        game.deck = refill_deck();
+        game.deck = refill_deck(game.players.length);
 
         broadcastToGameUsers(game, 'game_update', {
             type: 'game_done',
@@ -637,7 +651,7 @@ const game_done = (game: Game): string | null => {
     const in_players = game.players.filter(player => player.status === PLAYER_STATUS.IN);
     const out_players = game.players.filter(player => player.status === PLAYER_STATUS.OUT);
     if (in_players.length === 1 && out_players.length === game.players.length - 1) {
-        return in_players[0].id;
+        return in_players[0].player_id;
     }
     return null;
 }

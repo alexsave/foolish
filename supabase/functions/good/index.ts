@@ -30,9 +30,9 @@ const handle_good = (game: Game, game_id: string, player_id: string): Game => {
     if (game.status !== GAME_STATUS.WAIT_FOR_ATTACKERS) {
         throw new Error(`Game ${game_id} is not in wait_for_attackers mode`);
     }
-    const player = game.players.find(player => player.id === player_id)!;
+    const player = game.players.find(player => player.player_id === player_id)!;
     // If they're in but can't play cards, just let them proceed
-    if (player.status !== PLAYER_STATUS.IN && player.status !== PLAYER_STATUS.AWAITING_ATTACK) {
+    if (player.status !== PLAYER_STATUS.IN && player.awaiting_attack) {
         throw new Error(`Player ${player_id} is not ready to attack`);
     }
 
@@ -44,9 +44,9 @@ const handle_good = (game: Game, game_id: string, player_id: string): Game => {
     // the status check is critical
 
     const playable_players = game.players.filter(player => 
-        player.id !== game.players[game.defender].id && 
+        player.player_id !== game.players[game.defender].player_id && 
         player.hand.some(card => game.table_battles.some(battle => battle.attack.value === card.value || (battle.defense && battle.defense.value === card.value))) &&
-        player.status === PLAYER_STATUS.AWAITING_ATTACK);
+        player.awaiting_attack);
 
     if (playable_players.length !== 0) {
         return game;
@@ -57,7 +57,7 @@ const handle_good = (game: Game, game_id: string, player_id: string): Game => {
     // shift
     // change all done_attacking to in
     game.players.forEach(player => {
-        if (player.status === PLAYER_STATUS.AWAITING_ATTACK) {
+        if (player.awaiting_attack) {
             player.status = PLAYER_STATUS.IN;
         }
     });

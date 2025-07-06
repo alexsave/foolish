@@ -18,7 +18,7 @@ wrap400(async (user, user_name, body) => {
     }
 
     // Check if the user is in the game
-    const playerExists = game.players.some(player => player.id === user_id);
+    const playerExists = game.players.some(player => player.player_id === user_id);
     if (!playerExists) {
         throw new Error('Only players in the game can rearrange players');
     }

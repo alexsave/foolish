@@ -1,6 +1,6 @@
 import { wrap400, verify_player_in_game, broadcastToGameUsers, personalize_game, cardDisplay, validate_defender_status, verify_cards_in_players_hand, check_win, card_comp, refill, broadcastToGameUser, loadCompleteGame, saveCompleteGame, acquireGameLock, releaseGameLock, executeWithGameLock } from "../_shared/utils.ts";
 import { canCover, get_next_player_index } from "../_shared/common_utils.ts";
-import { Game, Card, GAME_STATUS, SERVER_EVENT_TYPE, PLAYER_STATUS, Player } from "../_shared/types.ts";
+import { Game, Card, GAME_STATUS, SERVER_EVENT_TYPE, PLAYER_STATUS, PrivatePlayer} from "../_shared/types.ts";
 
 wrap400(async (user, user_name, body) => {
     const user_id = user.id;
@@ -47,8 +47,7 @@ const handle_cover = (game: Game, game_id: string, player_id: string, cover_card
     // the first one is the cards that are being covered
     // the second one is the cards that are being used to cover
 
-    const defender: Player = game.players.find(player => player.id === player_id)!;
-
+    const defender: PrivatePlayer = game.players.find(player => player.player_id === player_id)!;
 
     // ok first just make sure all the cards are in the hand
     verify_cards_in_players_hand(defender, cover_cards);
@@ -157,7 +156,7 @@ const handle_cover = (game: Game, game_id: string, player_id: string, cover_card
         // now we need to see who can play cards. not the defender lol
         //const playable_players = game.players.filter(player => player.id !== game.players[game.defender].id && player.hand.some(card => playable_values.has(card.value)));
 
-        const playable_players = game.players.filter(player => player.id !== player_id && player.hand.some(card => playable_values.has(card.value))).map(player => player.id);
+        const playable_players = game.players.filter(player => player.player_id !== player_id && player.hand.some(card => playable_values.has(card.value))).map(player => player.player_id);
 
         if (playable_players.length === 0) {
             // no one can play cards
@@ -189,8 +188,8 @@ const handle_cover = (game: Game, game_id: string, player_id: string, cover_card
             // someone can play cards
             // so we need to see who can play cards
             game.players.forEach(player => {
-                if (playable_players.includes(player.id)) {
-                    player.status = PLAYER_STATUS.AWAITING_ATTACK;
+                if (playable_players.includes(player.player_id)) {
+                    player.awaiting_attack = true;
                 }
             });
 

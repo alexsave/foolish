@@ -7,7 +7,6 @@ import { WeakPassword } from '@supabase/supabase-js';
 const AuthContext = createContext<AuthContextType|null>(null);
 
 const nameToEmail = async (name: string): Promise<string> => {
-  // Unfortunately this doesn't support CJKT characters
   const buf = new TextEncoder().encode(name);
   const digest = await crypto.subtle.digest('SHA-256', buf);  
   const hex = Array.from(new Uint8Array(digest))
@@ -51,8 +50,6 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           currentUserIdRef.current = session.user.id;
           //setUser(emailToName(session.user.email!));
           setUserId(session.user.id);
-          console.log(JSON.stringify(session.user));
-          console.log(session.user);
           setUsername(session.user.user_metadata.username);
         }
       } else {
@@ -108,8 +105,6 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
   const signOut = async () => {
     try {
-      console.log('Sign out initiated');
-      console.log('Calling supabase.auth.signOut()');
       const { error } = await supabase.auth.signOut();
 
       if (error) {

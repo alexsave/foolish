@@ -1,9 +1,5 @@
 // Types and interfaces for the game
-
-export interface User {
-    name: string;
-    id: string;
-}
+// Player was id name status hand
 
 export interface GameMessage {
     game_id: string;
@@ -26,9 +22,7 @@ export const PLAYER_STATUS = {
     IDLE: 'idle',
     READY: 'ready',
     IN: 'in',
-    OUT: 'out',
-    // players that need to confirm "good" will be put in this state
-    AWAITING_ATTACK: 'awaiting_attack' 
+    OUT: 'out'
 } as const;
 
 export type PlayerStatus = typeof PLAYER_STATUS[keyof typeof PLAYER_STATUS];
@@ -123,24 +117,16 @@ export interface Card {
     value: number;
 }
 
-export interface Player {
-    id: string;
-    name: string;
-    status: PlayerStatus;
-    hand: Card[];
-    // TODO IMPORTANT: when we get status, we need to map done_attacking to in to avoid revealing values
-}
-
 export interface PublicPlayer {
-    id: string;
-    name: string;
+    player_id: string;
     status: PlayerStatus;
+    name: string;
     hand_length: number; // how to get this? ez. just keep it in sync
 }
 
-export interface PrivatePlayer {
-    player_id: string;
+export interface PrivatePlayer extends PublicPlayer {
     hand: Card[];
+    awaiting_attack: boolean; // private info stored in player_hands table
 }
 
 // base game type
@@ -162,20 +148,11 @@ export interface PersonalGame extends PublicGame {
     self: PrivatePlayer;
 }
 
-// I don't like game_decks.deck either but security is more important
 // Full game for working with game logic
 // Complete game with deck generated on-demand for game logic
-export interface Game {
-    id: string;
-    name: string;
+export interface Game extends PublicGame {
     deck: Card[];
-    flipped: Card | null;
-    players: Player[];
-    status: GameStatus;
-    power_suit: number;
-    first_attacker: number;
-    defender: number;
-    table_battles: Battle[];
+    players: PrivatePlayer[];
 }
 
 export interface Battle {
@@ -183,18 +160,15 @@ export interface Battle {
     defense: Card | null;
 }
 
-// Internal interfaces
-export interface CardListMapping {
-    [key: string]: Card[];
+// What is actually in the database
+export interface PlayerHand {
+    game_id: string;
+    player_id: string;
+    hand: Card[];
+    awaiting_attack: boolean;
 }
 
-export interface CardMap {
-    [key: string]: Card;
+export interface GameDeck {
+    game_id: string;
+    deck: Card[];
 }
-
-export interface Move {
-    type: 'pass' | 'throw' | 'pickup' | 'cover' | 'success';
-    player: string;
-    card?: Card;
-    coverMap?: Map<Card, Card>;
-} 

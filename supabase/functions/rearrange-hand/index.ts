@@ -15,7 +15,7 @@ wrap400(async (user, user_name, body) => {
     const game: Game = await loadCompleteGame(game_id);
 
     // Check if the user is in the game
-    const player = game.players.find(player => player.id === user_id);
+    const player = game.players.find(player => player.player_id === user_id);
     if (!player) {
         throw new Error('You are not in this game');
     }
