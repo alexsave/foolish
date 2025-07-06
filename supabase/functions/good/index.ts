@@ -31,13 +31,13 @@ const handle_good = (game: Game, game_id: string, player_id: string): Game => {
         throw new Error(`Game ${game_id} is not in wait_for_attackers mode`);
     }
     const player = game.players.find(player => player.player_id === player_id)!;
-    // If they're in but can't play cards, just let them proceed
-    if (player.status !== PLAYER_STATUS.IN && player.awaiting_attack) {
+    if (player.status !== PLAYER_STATUS.IN){//} && player.awaiting_attack) {
         throw new Error(`Player ${player_id} is not ready to attack`);
     }
+    // If they're in but can't play cards, just let them proceed
 
     // set them to done attacking
-    player.status = PLAYER_STATUS.IN;
+    player.awaiting_attack = false;
 
     // ok now we need to check if all players are done attacking
     // dont count the defender
@@ -56,11 +56,11 @@ const handle_good = (game: Game, game_id: string, player_id: string): Game => {
     // this has to be after a successful cover. Otherwise we'd still be waiting on the defender
     // shift
     // change all done_attacking to in
-    game.players.forEach(player => {
+    /*game.players.forEach(player => {
         if (player.awaiting_attack) {
             player.status = PLAYER_STATUS.IN;
         }
-    });
+    });*/
 
     game.table_battles = [];
     refill(game);

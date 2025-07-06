@@ -656,6 +656,7 @@ const game_done = (game: Game): string | null => {
     return null;
 }
 
+// TODO: find a better way to communicate refill without interfering with other broadcasts
 export const refill = (game: Game) => {
 
     if (no_cards_left(game)) {
@@ -671,20 +672,20 @@ export const refill = (game: Game) => {
         while (defenseHand.length < CARDS_PER_PLAYER) {
             const c = draw(game);
             if (c === null) {
-                broadcastToGameUsers(game, 'game_update', {
+                /*broadcastToGameUsers(game, 'game_update', {
                     type: 'deck_ran_out',
                     message: 'Deck ran out'
-                });
+                });*/
                 break;
             }
             defenseHand.push(c);
             cards_drawn++;
         }
-        broadcastToGameUsers(game, 'game_update', {
+        /*broadcastToGameUsers(game, 'game_update', {
             type: 'player_refilled',
             message: `Player ${game.players[game.defender].name} refilled their empty hand with ${cards_drawn} cards`,
             cards_drawn: cards_drawn
-        });
+        });*/
     }
 
     // Then go around starting from firstAttacker
@@ -696,28 +697,28 @@ export const refill = (game: Game) => {
         while (hand.length < CARDS_PER_PLAYER) {
             const c = draw(game);
             if (c === null) {
-                broadcastToGameUsers(game, 'game_update', {
+                /*broadcastToGameUsers(game, 'game_update', {
                     type: 'deck_ran_out',
                     message: 'Deck ran out'
-                });
+                });*/
                 break;
             }
             hand.push(c);
             cards_drawn++;
         }
         if (cards_drawn > 0) {
-            broadcastToGameUsers(game, 'game_update', {
+            /*broadcastToGameUsers(game, 'game_update', {
                 type: 'player_refilled',
                 message: `Player ${game.players[pIndex].name} drew ${cards_drawn} cards`,
                 cards_drawn: cards_drawn
-            });
+            });*/
         } else if (cards_drawn === 0 && hand.length === 0) {
             // no cards were drawn, but if they were still "in", this is where they win
             if (game.players[pIndex].status === PLAYER_STATUS.IN) {
-                broadcastToGameUsers(game, 'game_update', {
+                /*broadcastToGameUsers(game, 'game_update', {
                     type: 'player_wins',
                     message: `Player ${game.players[pIndex].name} got rid of all their cards`
-                });
+                });*/
                 game.players[pIndex].status = PLAYER_STATUS.OUT;
                 check_win(game);
             }
