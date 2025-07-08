@@ -2,14 +2,25 @@ import React, { createContext, useContext, useEffect, useState, useRef } from 'r
 import supabase from '../backend/Connector';
 import { WEBSITE_DOMAIN } from '../constants/constants';
 import { Session, User } from '@supabase/supabase-js';
+import { Sha256 } from '@aws-crypto/sha256-js';
 import { WeakPassword } from '@supabase/supabase-js';
 
-const AuthContext = createContext<AuthContextType|null>(null);
+const AuthContext = createContext<AuthContextType | null>(null);
 
 const nameToEmail = async (name: string): Promise<string> => {
   const buf = new TextEncoder().encode(name);
-  const digest = await crypto.subtle.digest('SHA-256', buf);  
-  const hex = Array.from(new Uint8Array(digest))
+  let digestArray: Uint8Array;
+  // TODO remove this along with the aws lib
+  if (window.location.hostname.startsWith('10.0.0')) {
+    const hash = new Sha256();
+    hash.update(buf);
+    digestArray = await hash.digest();
+  } else {
+    const digest = await crypto.subtle.digest('SHA-256', buf);
+    digestArray = new Uint8Array(digest);
+  }
+
+  const hex = Array.from(digestArray)
     .map(b => b.toString(16).padStart(2, '0'))
     .join('')
     .slice(0, 16);
@@ -17,7 +28,6 @@ const nameToEmail = async (name: string): Promise<string> => {
   return `${hex}@${WEBSITE_DOMAIN}`
 }
 
-// for now we'll just use a fake auth impl
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [user_id, setUserId] = useState<string | null>(null);
   const [username, setUsername] = useState<string | null>(null);
