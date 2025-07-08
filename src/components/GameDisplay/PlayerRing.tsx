@@ -1,12 +1,17 @@
 import { PersonalGame } from "../../common/types";
+import { useAuth } from "../../contexts/AuthContext";
+import { useServer } from "../../contexts/ServerContext";
 
-export const PlayerRing = ({ state, self_index, playerCardPatternDataUrl, tableBattlesLength }: { state: PersonalGame, self_index: number, playerCardPatternDataUrl: string, tableBattlesLength: number }) => {
+export const PlayerRing = ({ playerCardPatternDataUrl }: { playerCardPatternDataUrl: string }) => {
+    const game: PersonalGame = useServer().game as PersonalGame;
+    const { user_id } = useAuth();
+    const self_index = game.players.findIndex(p => p.player_id === user_id);
     return <>
         {
-            state.players.map((player, index) => {
+            game.players.map((player, index) => {
 
-                const visual_index = (index - self_index + state.players.length) % state.players.length;
-                const radians = (2) * Math.PI * visual_index / (state.players.length);
+                const visual_index = (index - self_index + game.players.length) % game.players.length;
+                const radians = (2) * Math.PI * visual_index / (game.players.length);
                 const x = ((-1 * Math.sin(radians) * 35) + 50) + '%';
                 const y = ((Math.cos(radians) * 35) + 50) + '%';
 
@@ -24,7 +29,7 @@ export const PlayerRing = ({ state, self_index, playerCardPatternDataUrl, tableB
 
 
                     {/* Sword area (top) - either sword or empty space */}
-                    {index === state.first_attacker && state.table_battles.length === 0 ? (
+                    {index === game.first_attacker && game.table_battles.length === 0 ? (
                         <div style={{
                             fontSize: '16px',
                             height: '20px',

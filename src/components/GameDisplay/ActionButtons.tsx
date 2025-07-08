@@ -1,10 +1,17 @@
 import { PersonalGame, Card } from "../../common/types";
+import { useAuth } from "../../contexts/AuthContext";
+import { useServer } from "../../contexts/ServerContext";
 import { VALUE_MAP, SUIT_MAP } from "../../utils/cards";
 
-export const ActionButtons = ({ state, isDefending, pickup, setSelectedCards, good, setCoverMap, isSelectingCover, coverMap, selectedCards, self_index, isDraggingForGameAction, draggedCardIndex, startCardDrag, isActuallyDragging, cover, attack, localHandOrder, pass, setIsSelectingCover }: { state: PersonalGame, isDefending: boolean, pickup: () => Promise<any>, setSelectedCards: (cards: Card[]) => void, good: () => Promise<any>, setCoverMap: (map: Map<Card, Card>) => void, isSelectingCover: boolean, coverMap: Map<Card, Card>, selectedCards: Card[], self_index: number, isDraggingForGameAction: boolean, draggedCardIndex: number | null, startCardDrag: (e: React.MouseEvent | React.TouchEvent, index: number) => void, isActuallyDragging: boolean, cover: (coverCards: Card[], attackCards: Card[]) => Promise<any>, attack: (cards: Card[]) => Promise<any>, localHandOrder: Card[], pass: (cards: Card[]) => Promise<any>, setIsSelectingCover: (isSelectingCover: boolean) => void }) => {
+export const ActionButtons = ({ setSelectedCards, setCoverMap, isSelectingCover, coverMap, selectedCards, isDraggingForGameAction, draggedCardIndex, startCardDrag, isActuallyDragging, setIsSelectingCover, localHandOrder }: { setSelectedCards: (cards: Card[]) => void, setCoverMap: (map: Map<Card, Card>) => void, isSelectingCover: boolean, coverMap: Map<Card, Card>, selectedCards: Card[], isDraggingForGameAction: boolean, draggedCardIndex: number | null, startCardDrag: (e: React.MouseEvent | React.TouchEvent, index: number) => void, isActuallyDragging: boolean, setIsSelectingCover: (isSelectingCover: boolean) => void, localHandOrder: Card[] }) => {
+    const { user_id } = useAuth();
+    const { game, attack, pass, pickup, cover, good } = useServer() as { game: PersonalGame, attack: (cards: Card[]) => Promise<any>, pass: (cards: Card[]) => Promise<any>, pickup: () => Promise<any>, cover: (coverCards: Card[], attackCards: Card[]) => Promise<any>, good: () => Promise<any> };
+
+    const self_index = game.players.findIndex((player) => player.player_id === user_id);
+    const isDefending = game.defender === self_index;
     return <div style={{ display: 'flex', flexDirection: 'column', position: 'absolute', bottom: '10px', left: '0px', right: '0px', justifyContent: 'end', alignItems: 'center', height: '200px' }}>
         {/* Always visible pickup and good buttons */}
-        {state.self && (
+        {game.self && (
             <div style={{
                 position: 'absolute',
                 bottom: '90px',
@@ -15,7 +22,7 @@ export const ActionButtons = ({ state, isDefending, pickup, setSelectedCards, go
                 zIndex: 999
             }}>
                 {/* Pickup button for defenders */}
-                {isDefending && state.table_battles.length > 0 && (
+                {isDefending && game.table_battles.length > 0 && (
                     <button
                         style={{
                             width: '60px',
@@ -40,7 +47,7 @@ export const ActionButtons = ({ state, isDefending, pickup, setSelectedCards, go
                 )}
 
                 {/* Good button for attackers when all attacks are covered */}
-                {!isDefending && state.table_battles.length > 0 && state.table_battles.every(battle => battle.defense) && (
+                {!isDefending && game.table_battles.length > 0 && game.table_battles.every(battle => battle.defense) && (
                     <button
                         style={{
                             width: '60px',
@@ -67,16 +74,16 @@ export const ActionButtons = ({ state, isDefending, pickup, setSelectedCards, go
         )}
 
         {
-            state.self && selectedCards.length > 0 && <div style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)', zIndex: 999, height: '50px ' }}>
+            game.self && selectedCards.length > 0 && <div style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)', zIndex: 999, height: '50px ' }}>
 
                 {
                     isDefending ? (
                         <>
                             {/* During first attack, defender can do nothing */}
-                            {state.table_battles.length > 0 && (
+                            {game.table_battles.length > 0 && (
                                 <>
                                     {/* Pass is only shown if no attack card is covered */}
-                                    {state.table_battles.every(battle => !battle.defense) && (
+                                    {game.table_battles.every(battle => !battle.defense) && (
                                         <button
                                             style={{ width: '60px', height: '50px' }}
                                             onClick={() => {
@@ -92,10 +99,10 @@ export const ActionButtons = ({ state, isDefending, pickup, setSelectedCards, go
                                     )}
 
                                     {/* Cover is only shown if there are uncovered cards */}
-                                    {state.table_battles.some(battle => !battle.defense) && (
+                                    {game.table_battles.some(battle => !battle.defense) && (
                                         <button style={{ width: '60px', height: '50px' }} onClick={() => {
                                             // If there's exactly 1 uncovered card, cover it immediately
-                                            const uncoveredBattles = state.table_battles.filter(battle => !battle.defense);
+                                            const uncoveredBattles = game.table_battles.filter(battle => !battle.defense);
                                             if (uncoveredBattles.length === 1) {
                                                 // Auto-cover the single uncovered card
                                                 const attackCard = uncoveredBattles[0].attack;
@@ -144,7 +151,7 @@ export const ActionButtons = ({ state, isDefending, pickup, setSelectedCards, go
                     ) : (
                         <>
                             {/* Attack is only shown when valid */}
-                            {(state.table_battles.length > 0 || self_index === state.first_attacker) && (
+                            {(game.table_battles.length > 0 || self_index === game.first_attacker) && (
                                 <button
                                     style={{ width: '60px', height: '50px' }}
                                     onClick={() => attack(selectedCards).then(() => {
@@ -171,14 +178,14 @@ export const ActionButtons = ({ state, isDefending, pickup, setSelectedCards, go
         }}>
 
             {
-                state.self ? localHandOrder.map((card, index) => {
+                game.self ? localHandOrder.map((card, index) => {
                     const isSelected = selectedCards.some(selectedCard =>
                         selectedCard.value === card.value && selectedCard.suit === card.suit
                     );
                     const isDragging = isActuallyDragging && draggedCardIndex === index;
                     const isDraggingForAction = isDraggingForGameAction && draggedCardIndex === index;
 
-                    // Determine the style based on state
+                    // Determine the style based on game
                     let cardStyle: React.CSSProperties;
                     if (isDraggingForAction) {
                         // Special styling for game action drag

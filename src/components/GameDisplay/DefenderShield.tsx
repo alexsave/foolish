@@ -1,17 +1,22 @@
 import { PersonalGame } from "../../common/types";
+import { useAuth } from "../../contexts/AuthContext";
+import { useServer } from "../../contexts/ServerContext";
 
-export const DefenderShield = ({ state, self_index }: { state: PersonalGame, self_index: number }) => {
+export const DefenderShield = () => {
+    const game: PersonalGame = useServer().game as PersonalGame;
+    const { user_id } = useAuth();
+    const self_index = game.players.findIndex((player) => player.player_id === user_id);
     return <>
 
         {/* Debug: Green arrow from shield center towards defender player (20px long) */}
         <svg style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 50 }}>
             {(() => {
                 // Only show for defender
-                const defenderPlayer = state.players[state.defender];
+                const defenderPlayer = game.players[game.defender];
                 if (!defenderPlayer) return null;
 
-                const visual_index = (state.defender - self_index + state.players.length) % state.players.length;
-                const radians = (2) * Math.PI * visual_index / (state.players.length);
+                const visual_index = (game.defender - self_index + game.players.length) % game.players.length;
+                const radians = (2) * Math.PI * visual_index / (game.players.length);
 
                 // Calculate shield position (same as debug dots)
 
@@ -72,10 +77,10 @@ export const DefenderShield = ({ state, self_index }: { state: PersonalGame, sel
 
         {/* Shield and arrow pointing to defender */}
         {(() => {
-            const defenderPlayer = state.players[state.defender];
+            const defenderPlayer = game.players[game.defender];
             if (!defenderPlayer) return null;
 
-            const visual_index = (state.defender - self_index + state.players.length) % state.players.length;
+            const visual_index = (game.defender - self_index + game.players.length) % game.players.length;
 
             // Calculate defender position
             const H = window.innerHeight;
@@ -83,7 +88,7 @@ export const DefenderShield = ({ state, self_index }: { state: PersonalGame, sel
             const aPct = 35;                          // ellipse semi-axis in %
             const cxPct = 50, cyPct = 50;             // centre in %
 
-            const radians = 2 * Math.PI * visual_index / state.players.length;
+            const radians = 2 * Math.PI * visual_index / game.players.length;
 
             // defender in %
             const dxPct = aPct * Math.cos(radians + Math.PI / 2);  // –sinθ

@@ -1,18 +1,20 @@
 import { PersonalGame, Card } from "../../common/types";
+import { useServer } from "../../contexts/ServerContext";
 
-export const CoverArrows = ({ state, coverMap }: { state: PersonalGame, coverMap: Map<Card, Card> }) => {
+export const CoverArrows = ({ coverMap }: { coverMap: Map<Card, Card> }) => {
+    const game: PersonalGame = useServer().game as PersonalGame;
     return <svg style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 500 }}>
         {Array.from(coverMap.entries()).map(([coveringCard, coveredCard], index) => {
             // Skip if spectator (no self)
-            if (!state.self) return null;
+            if (!game.self) return null;
 
             // Find the position of the covering card (in hand)
-            const handCardIndex = state.self.hand.findIndex(card =>
+            const handCardIndex = game.self.hand.findIndex(card =>
                 card.value === coveringCard.value && card.suit === coveringCard.suit
             );
 
             // Find the position of the covered card (on table)
-            const tableCardIndex = state.table_battles.findIndex(battle =>
+            const tableCardIndex = game.table_battles.findIndex(battle =>
                 battle.attack.value === coveredCard.value && battle.attack.suit === coveredCard.suit
             );
 
@@ -20,13 +22,13 @@ export const CoverArrows = ({ state, coverMap }: { state: PersonalGame, coverMap
 
             // Calculate approximate positions
             // Hand cards are at the bottom center
-            const handCardsStartX = window.innerWidth / 2 - (state.self.hand.length * 40) / 2;
+            const handCardsStartX = window.innerWidth / 2 - (game.self.hand.length * 40) / 2;
             const handX = handCardsStartX + (handCardIndex * 40) + 20; // 20 is half card width
             const handY = window.innerHeight - 100; // approximate bottom position
 
             // Table cards are in the center
             const tableX = window.innerWidth / 2;
-            const tableY = window.innerHeight / 2 + (tableCardIndex * 80) - (state.table_battles.length * 40); // spread them vertically
+            const tableY = window.innerHeight / 2 + (tableCardIndex * 80) - (game.table_battles.length * 40); // spread them vertically
 
             return (
                 <g key={`arrow-${index}`}>

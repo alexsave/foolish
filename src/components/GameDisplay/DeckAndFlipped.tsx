@@ -2,12 +2,14 @@ import { PersonalGame } from "../../common/types";
 import { CardBack } from "./CardBack";
 import { CardFace } from "./CardFace";
 import { SUIT_MAP } from "../../utils/cards";
+import { useServer } from "../../contexts/ServerContext";
 
-export const DeckAndFlipped = ({ state }: { state: PersonalGame }) => {
+export const DeckAndFlipped = () => {
+    const game: PersonalGame = useServer().game as PersonalGame;
     return <div style={{ display: 'flex', position: 'absolute', top: '0px', left: '0px', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', height: '240px', width: '100px' }}>
-        {state.deck_length > 0 && (
+        {game.deck_length > 0 && (
             <div style={{ position: 'relative' }}>
-                <CardBack deckSize={state.deck_length} />
+                <CardBack deckSize={game.deck_length} />
                 <p style={{
                     position: 'absolute',
                     top: '50%',
@@ -21,24 +23,24 @@ export const DeckAndFlipped = ({ state }: { state: PersonalGame }) => {
                     pointerEvents: 'none',
                     zIndex: 1003
                 }}>
-                    {state.deck_length + (state.flipped ? 1 : 0)}
+                    {game.deck_length + (game.flipped ? 1 : 0)}
                 </p>
             </div>
         )}
-        {state.flipped && (
-            <div style={{ marginTop: state.deck_length > 0 ? '-30px' : '0px' }}>
-                <CardFace card={state.flipped} />
+        {game.flipped && (
+            <div style={{ marginTop: game.deck_length > 0 ? '-30px' : '0px' }}>
+                <CardFace card={game.flipped} />
             </div>
         )}
         {/* Trump indicator appears when deck and flipped card are gone */}
-        {state.deck_length === 0 && !state.flipped && (
+        {game.deck_length === 0 && !game.flipped && (
             <div style={{
                 fontSize: '64px',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center'
             }}>
-                <span>{SUIT_MAP[state.power_suit]}</span>
+                <span>{SUIT_MAP[game.power_suit]}</span>
             </div>
         )}
     </div>

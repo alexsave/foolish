@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
-import { Card, Game, PersonalGame, PrivatePlayer, PublicGame, PublicPlayer, SERVER_EVENT_TYPE } from '../common/types';
+import { Card, PublicPlayer, PersonalGame, PublicGame, SERVER_EVENT_TYPE } from '../common/types';
 import supabase from '../backend/Connector';
 import { useParams } from 'react-router-dom';
 import { useAuth } from './AuthContext';
@@ -12,14 +12,13 @@ const ServerContext = createContext<ServerContextType|null>(null);
 // this will be kinda similar to client.js
 export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
-    const {user_id, username} = useAuth()
+    const {user_id} = useAuth()
 
     const url_game_id = useParams().game_id?.toLowerCase();
     // keep a state of games
     // maybe ref idk
     const [games, setGames] = useState<{[key: string]: (PersonalGame)}>({});
 
-    //const [user, setUser] = useState(null);
     const [loading, setLoading] = useState(true);
     const [gameLoadError, setGameLoadError] = useState<string | null>(null);
 
@@ -86,33 +85,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         };
     }, [user_id]);
 
-    // Setup Supabase Realtime subscriptions
-    const setupRealtimeSubscriptions = async () => {
-        // Get current session and set auth token for realtime
-        await supabase.realtime.setAuth();
-        
-        // Subscribe to private user channel for personal messages
-        const privateChannel = supabase.realtime.channel(`user-${username}`, {
-            config: { private: true }
-        });
-        
-        privateChannel
-            .on('broadcast', { event: 'private_message' }, (payload) => {
-                console.log('Private message received:', payload);
-                // Handle private messages (like hand updates, personal notifications)
-                handlePrivateMessage(payload.payload);
-            })
-            .subscribe((status, err) => {
-                if (status === 'SUBSCRIBED') {
-                    console.log('Connected to private channel:', `user-${username}`);
-                } else {
-                    console.error('Private channel error:', err, status);
-                }
-            });
-
-        // We'll subscribe to game channels when we join/create games
-        console.log('Realtime subscriptions set up for user:', user_id);
-    };
 
     const subscribeToGame = async (gameId: string) => {
         // Ensure we have proper auth before subscribing
@@ -218,13 +190,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 setGames(prev => ({...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev)}));
             }
         }
-    };
-
-    const handlePrivateMessage = (message: any) => {
-        // Handle private messages like hand updates, personal notifications
-        console.log('Processing private message:', message);
-        // Implement specific private message handling as needed
-        handleGameMessage(message);
     };
 
     // Helper method to merge game data while preserving self when not present in new data

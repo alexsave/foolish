@@ -1,8 +1,7 @@
-import { PersonalGame } from "../../common/types";
 import { Card } from "../../common/types";
 import { VALUE_MAP, SUIT_MAP } from "../../utils/cards";
 
-export const DragShadow = ({ state, isDraggingForGameAction, draggedCard, currentCursorPos, selectedCards, determineGameAction, user_id }: { state: PersonalGame, isDraggingForGameAction: boolean, draggedCard: Card | null, currentCursorPos: { x: number, y: number } | null, selectedCards: Card[], determineGameAction: (x: number, y: number, draggedCard: Card) => { type: string }, user_id: string | null }) => {
+export const DragShadow = ({ isDraggingForGameAction, draggedCard, currentCursorPos, selectedCards, determineGameAction }: { isDraggingForGameAction: boolean, draggedCard: Card | null, currentCursorPos: { x: number, y: number } | null, selectedCards: Card[], determineGameAction: (x: number, y: number, draggedCard: Card) => { type: string } }) => {
     return <>
         {/* Floating action indicator during game action drag */}
         {isDraggingForGameAction && draggedCard && currentCursorPos && (() => {
@@ -22,18 +21,11 @@ export const DragShadow = ({ state, isDraggingForGameAction, draggedCard, curren
                     pointerEvents: 'none'
                 }}>
                     {(() => {
-                        const self_index = state.players.findIndex((player) => player.player_id === user_id);
-                        const isDefending = state.defender === self_index;
                         const action = determineGameAction(currentCursorPos.x, currentCursorPos.y, draggedCard);
 
                         // Check if the dragged card is part of selected cards
-                        const isDraggedCardSelected = selectedCards.some(selectedCard =>
-                            selectedCard.value === draggedCard.value && selectedCard.suit === draggedCard.suit
-                        );
 
                         // Use all selected cards if the dragged card is selected, otherwise just the dragged card
-                        const cardsToUse = isDraggedCardSelected && selectedCards.length > 0 ? selectedCards : [draggedCard];
-                        const cardCount = cardsToUse.length;
                         const cardCountText = '';//cardCount > 1 ? ` (${cardCount})` : '';
 
                         switch (action.type) {

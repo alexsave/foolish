@@ -13,7 +13,7 @@ import { CoverArrows } from './GameDisplay/CoverArrows';
 
 export const GameDisplay = () => {
   const { user_id } = useAuth();
-  const { game, attack, pass, pickup, cover, good, rearrangeHand } = useServer();
+  const { game, attack, pass, cover, rearrangeHand } = useServer();
   const state = game as PersonalGame;
   const [selectedCards, setSelectedCards] = useState<Card[]>([]);
 
@@ -459,10 +459,6 @@ export const GameDisplay = () => {
     return <div>Loading...</div>;
   }
 
-  const self_index = state.players.findIndex((player) => player.player_id === user_id);
-
-  const isDefending = state.defender === self_index;
-
 
   return (
     <div style={{
@@ -471,26 +467,26 @@ export const GameDisplay = () => {
       height: '100vh',
       touchAction: 'manipulation' // Allow taps and pinch-zoom but prevent double-tap zoom and panning
     }}>
-      <CoverArrows state={state} coverMap={coverMap} />
+      <CoverArrows coverMap={coverMap} />
 
       <div style={{ display: 'flex', flex: 1, justifyContent: 'center', alignItems: 'center' }}>
         <p style={{ color: 'white', fontSize: '24px', fontWeight: 'bold' }}>{state.name}</p>
 
-        <DragShadow state={state} isDraggingForGameAction={isDraggingForGameAction} draggedCard={draggedCard} currentCursorPos={currentCursorPos} selectedCards={selectedCards} determineGameAction={determineGameAction} user_id={user_id} />
+        <DragShadow isDraggingForGameAction={isDraggingForGameAction} draggedCard={draggedCard} currentCursorPos={currentCursorPos} selectedCards={selectedCards} determineGameAction={determineGameAction} />
 
-        <DeckAndFlipped state={state} />
+        <DeckAndFlipped />
 
-        <ActionButtons state={state} isDefending={isDefending} pickup={pickup} setSelectedCards={setSelectedCards} good={good} setCoverMap={setCoverMap} isSelectingCover={isSelectingCover} coverMap={coverMap} selectedCards={selectedCards} self_index={self_index} isDraggingForGameAction={isDraggingForGameAction} draggedCardIndex={draggedCardIndex} startCardDrag={startCardDrag} isActuallyDragging={isActuallyDragging} cover={cover} attack={attack} localHandOrder={localHandOrder} pass={pass} setIsSelectingCover={setIsSelectingCover} />
+        <ActionButtons setSelectedCards={setSelectedCards} setCoverMap={setCoverMap} isSelectingCover={isSelectingCover} coverMap={coverMap} selectedCards={selectedCards} isDraggingForGameAction={isDraggingForGameAction} draggedCardIndex={draggedCardIndex} startCardDrag={startCardDrag} isActuallyDragging={isActuallyDragging} setIsSelectingCover={setIsSelectingCover} localHandOrder={localHandOrder} />
 
         <div style={{ position: 'absolute', display: 'flex', flexDirection: 'column', top: 0, width: '100%', bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
-          <DefenderShield state={state} self_index={self_index} />
+          <DefenderShield />
 
-          <TableBattles state={state} coverMap={coverMap} self_index={self_index} isDraggingForGameAction={isDraggingForGameAction} isSelectingCover={isSelectingCover} setCoverMap={setCoverMap} selectedCards={selectedCards} />
+          <TableBattles coverMap={coverMap} isDraggingForGameAction={isDraggingForGameAction} isSelectingCover={isSelectingCover} setCoverMap={setCoverMap} selectedCards={selectedCards} />
         </div>
 
 
         {/* Player display section */}
-        <PlayerRing state={state} self_index={self_index} playerCardPatternDataUrl={playerCardPatternDataUrl} tableBattlesLength={state.table_battles.length} />
+        <PlayerRing playerCardPatternDataUrl={playerCardPatternDataUrl} />
 
       </div>
     </div>

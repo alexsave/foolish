@@ -1,10 +1,15 @@
 import { Card, PersonalGame } from "../../common/types";
 import { CardFace } from "./CardFace";
+import { useServer } from "../../contexts/ServerContext";
+import { useAuth } from "../../contexts/AuthContext";
 
-export const TableBattles = ({ state, coverMap, self_index, isDraggingForGameAction, isSelectingCover, setCoverMap, selectedCards }: { state: PersonalGame, coverMap: Map<Card, Card>, self_index: number, isDraggingForGameAction: boolean, isSelectingCover: boolean, setCoverMap: (map: Map<Card, Card>) => void, selectedCards: Card[] }) => {
+export const TableBattles = ({ coverMap, isDraggingForGameAction, isSelectingCover, setCoverMap, selectedCards }: { coverMap: Map<Card, Card>, isDraggingForGameAction: boolean, isSelectingCover: boolean, setCoverMap: (map: Map<Card, Card>) => void, selectedCards: Card[] }) => {
+    const game: PersonalGame = useServer().game as PersonalGame;
+    const { user_id } = useAuth();
+    const self_index = game.players.findIndex(p => p.player_id === user_id);
     return <>
         {
-            state.table_battles.map((battle, index) => {
+            game.table_battles.map((battle, index) => {
                 let containerStyle: React.CSSProperties = {
                     border: '1px solid black',
                     display: 'flex',
@@ -18,7 +23,7 @@ export const TableBattles = ({ state, coverMap, self_index, isDraggingForGameAct
                 }
 
                 // Add highlighting for valid drop zones during game action drag
-                const isDefending = state.defender === self_index;
+                const isDefending = game.defender === self_index;
                 const isValidCoverTarget = isDraggingForGameAction && isDefending && !battle.defense;
 
                 if (isValidCoverTarget) {

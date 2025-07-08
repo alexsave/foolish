@@ -22,7 +22,6 @@ export const Lobby = () => {
     const [localPlayerOrder, setLocalPlayerOrder] = useState<PublicPlayer[]>([]);
     const [isDragging, setIsDragging] = useState(false);
     const [draggedElement, setDraggedElement] = useState<HTMLElement | null>(null);
-    const [dragStartIndex, setDragStartIndex] = useState<number>(0);
     
     const rearrangeTimerRef = useRef<NodeJS.Timeout | null>(null);
     const inputRef = useRef<HTMLInputElement>(null);
@@ -182,7 +181,6 @@ export const Lobby = () => {
         setIsDragging(true);
         setDraggedIndex(index);
         setDraggedElement(e.currentTarget as HTMLElement);
-        setDragStartIndex(index);
         e.dataTransfer.effectAllowed = 'move';
     };
 
@@ -195,7 +193,6 @@ export const Lobby = () => {
         setDraggedIndex(null);
         setDragOverIndex(null);
         setDraggedElement(null);
-        setDragStartIndex(0);
         
         // Reset element styles
         const element = e.currentTarget as HTMLElement;
