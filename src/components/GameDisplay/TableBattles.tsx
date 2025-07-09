@@ -1,12 +1,19 @@
-import { Card, PersonalGame } from "../../common/types";
+import { PersonalGame } from "../../common/types";
 import { CardFace } from "./CardFace";
 import { useServer } from "../../contexts/ServerContext";
 import { useAuth } from "../../contexts/AuthContext";
+import { useGame } from "../../contexts/GameContext";
+import { useDrag } from "../../contexts/DragContext";
 
-export const TableBattles = ({ coverMap, isDraggingForGameAction, isSelectingCover, setCoverMap, selectedCards }: { coverMap: Map<Card, Card>, isDraggingForGameAction: boolean, isSelectingCover: boolean, setCoverMap: (map: Map<Card, Card>) => void, selectedCards: Card[] }) => {
+export const TableBattles = () => {
     const game: PersonalGame = useServer().game as PersonalGame;
     const { user_id } = useAuth();
     const self_index = game.players.findIndex(p => p.player_id === user_id);
+
+    const { coverMap, setCoverMap, isSelectingCover, selectedCards } = useGame();
+
+    const {isDraggingForGameAction} = useDrag();
+
     return <>
         {
             game.table_battles.map((battle, index) => {

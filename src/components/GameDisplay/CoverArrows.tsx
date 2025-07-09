@@ -1,8 +1,12 @@
-import { PersonalGame, Card } from "../../common/types";
+import { PersonalGame } from "../../common/types";
+import { useGame } from "../../contexts/GameContext";
 import { useServer } from "../../contexts/ServerContext";
 
-export const CoverArrows = ({ coverMap }: { coverMap: Map<Card, Card> }) => {
+export const CoverArrows = () => {
     const game: PersonalGame = useServer().game as PersonalGame;
+
+    const { coverMap } = useGame();
+
     return <svg style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 500 }}>
         {Array.from(coverMap.entries()).map(([coveringCard, coveredCard], index) => {
             // Skip if spectator (no self)

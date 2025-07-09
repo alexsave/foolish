@@ -1,8 +1,17 @@
+import { useEffect, useState } from "react";
 import { PersonalGame } from "../../common/types";
 import { useAuth } from "../../contexts/AuthContext";
 import { useServer } from "../../contexts/ServerContext";
+import { generateCardBackPattern } from "../../utils/cards";
 
-export const PlayerRing = ({ playerCardPatternDataUrl }: { playerCardPatternDataUrl: string }) => {
+export const PlayerRing = () => {
+    const [playerCardPatternDataUrl, setPlayerCardPatternDataUrl] = useState<string>('');
+    useEffect(() => {
+        // Generate the pattern for player cards once when component mounts
+        const dataUrl = generateCardBackPattern(12, 18);
+        setPlayerCardPatternDataUrl(dataUrl);
+    }, []);
+
     const game: PersonalGame = useServer().game as PersonalGame;
     const { user_id } = useAuth();
     const self_index = game.players.findIndex(p => p.player_id === user_id);

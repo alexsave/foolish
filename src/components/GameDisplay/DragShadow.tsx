@@ -1,7 +1,11 @@
-import { Card } from "../../common/types";
 import { VALUE_MAP, SUIT_MAP } from "../../utils/cards";
+import { useDrag } from "../../contexts/DragContext";
+import { useGame } from "../../contexts/GameContext";
 
-export const DragShadow = ({ isDraggingForGameAction, draggedCard, currentCursorPos, selectedCards, determineGameAction }: { isDraggingForGameAction: boolean, draggedCard: Card | null, currentCursorPos: { x: number, y: number } | null, selectedCards: Card[], determineGameAction: (x: number, y: number, draggedCard: Card) => { type: string } }) => {
+export const DragShadow = () => {
+    const { selectedCards } = useGame();
+    const { isDraggingForGameAction, draggedCard, currentCursorPos, determineGameAction } = useDrag();
+
     return <>
         {/* Floating action indicator during game action drag */}
         {isDraggingForGameAction && draggedCard && currentCursorPos && (() => {

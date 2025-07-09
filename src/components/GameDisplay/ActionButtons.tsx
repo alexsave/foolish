@@ -1,14 +1,21 @@
 import { PersonalGame, Card } from "../../common/types";
 import { useAuth } from "../../contexts/AuthContext";
+import { useGame } from "../../contexts/GameContext";
 import { useServer } from "../../contexts/ServerContext";
 import { VALUE_MAP, SUIT_MAP } from "../../utils/cards";
+import { useDrag } from "../../contexts/DragContext";
 
-export const ActionButtons = ({ setSelectedCards, setCoverMap, isSelectingCover, coverMap, selectedCards, isDraggingForGameAction, draggedCardIndex, startCardDrag, isActuallyDragging, setIsSelectingCover, localHandOrder }: { setSelectedCards: (cards: Card[]) => void, setCoverMap: (map: Map<Card, Card>) => void, isSelectingCover: boolean, coverMap: Map<Card, Card>, selectedCards: Card[], isDraggingForGameAction: boolean, draggedCardIndex: number | null, startCardDrag: (e: React.MouseEvent | React.TouchEvent, index: number) => void, isActuallyDragging: boolean, setIsSelectingCover: (isSelectingCover: boolean) => void, localHandOrder: Card[] }) => {
+export const ActionButtons = () => {
     const { user_id } = useAuth();
     const { game, attack, pass, pickup, cover, good } = useServer() as { game: PersonalGame, attack: (cards: Card[]) => Promise<any>, pass: (cards: Card[]) => Promise<any>, pickup: () => Promise<any>, cover: (coverCards: Card[], attackCards: Card[]) => Promise<any>, good: () => Promise<any> };
 
+    const { coverMap, setCoverMap, localHandOrder, selectedCards, setSelectedCards, isSelectingCover, setIsSelectingCover } = useGame();
+
+    const { draggedCardIndex, isDraggingForGameAction, startCardDrag, isActuallyDragging } = useDrag();
+
     const self_index = game.players.findIndex((player) => player.player_id === user_id);
     const isDefending = game.defender === self_index;
+
     return <div style={{ display: 'flex', flexDirection: 'column', position: 'absolute', bottom: '10px', left: '0px', right: '0px', justifyContent: 'end', alignItems: 'center', height: '200px' }}>
         {/* Always visible pickup and good buttons */}
         {game.self && (
