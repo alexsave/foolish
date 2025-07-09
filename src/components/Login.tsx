@@ -36,22 +36,22 @@ export const Login = () => {
       <form onSubmit={handleLogin}>
         <div>
           <label htmlFor="username">Username:</label>
-          <input 
+          <input
             id="username"
-            type="text" 
-            value={name} 
-            onChange={(e) => setName(e.target.value)} 
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
             autoComplete="username"
             required
           />
         </div>
         <div>
           <label htmlFor="password">Password:</label>
-          <input 
+          <input
             id="password"
-            type="password" 
-            value={password} 
-            onChange={(e) => setPassword(e.target.value)} 
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
             autoComplete="current-password"
             required
           />

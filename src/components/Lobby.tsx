@@ -7,25 +7,103 @@ import { useEffect, useState, useRef } from "react";
 import { WEBSITE_DOMAIN } from "../constants/constants";
 import { useAuth } from "../contexts/AuthContext";
 import { PublicPlayer } from "../common/types";
+import { usePreventScroll } from "../hooks/usePreventScroll";
+
+interface PlayerCardProps {
+    player: PublicPlayer;
+    index: number;
+    isDragging: boolean;
+    isDropTarget: boolean;
+    onDragStart: (e: React.DragEvent, index: number) => void;
+    onDragOver: (e: React.DragEvent, index: number) => void;
+    onDragLeave: (e: React.DragEvent) => void;
+    onDrop: (e: React.DragEvent, index: number) => void;
+    onDragEnd: (e: React.DragEvent) => void;
+}
+
+const PlayerCard: React.FC<PlayerCardProps> = ({
+    player,
+    index,
+    isDragging,
+    isDropTarget,
+    onDragStart,
+    onDragOver,
+    onDragLeave,
+    onDrop,
+    onDragEnd
+}) => {
+    const game_id = useParams().game_id!.toLowerCase();
+    const { startGame } = useServer();
+    const { user_id } = useAuth();
+    const style: React.CSSProperties = {
+        width: '180px',
+        display: 'flex',
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        gap: '10px',
+        padding: '0 10px',
+        color: 'white',
+        border: '1px solid white',
+        opacity: isDragging ? 0.3 : 1,
+        backgroundColor: isDropTarget ? 'rgba(255, 255, 255, 0.1)' : 'transparent',
+        cursor: 'move',
+        transition: isDragging ? 'none' : 'all 0.2s ease',
+        transform: isDragging ? 'scale(1.05)' : 'scale(1)',
+        userSelect: 'none',
+        borderRadius: '4px',
+        marginBottom: '4px',
+        position: 'relative',
+        zIndex: 1500,
+        pointerEvents: isDragging ? 'none' : 'auto'
+    };
+
+    return (
+        <div
+            key={player.player_id}
+            draggable={true}
+            onDragStart={(e) => onDragStart(e, index)}
+            onDragOver={(e) => onDragOver(e, index)}
+            onDragLeave={onDragLeave}
+            onDrop={(e) => onDrop(e, index)}
+            onDragEnd={onDragEnd}
+            style={style}
+        >
+            {/* Invisible overlay to prevent text selection during drag operations */}
+            <div style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                zIndex: 1600,
+                pointerEvents: isDragging ? 'auto' : 'none',
+                userSelect: 'none'
+            }} />
+            <p style={{ zIndex: 10 }}>{player.name}</p>
+            <p>{player.status !== 'idle' ? '🟢' : player.player_id === user_id ? <button
+                onClick={() => startGame(game_id)}
+            >Ready</button> : '🔴'}</p>
+        </div>
+    );
+};
 
 export const Lobby = () => {
     const game_id = useParams().game_id?.toLowerCase();
-    const { user_id } = useAuth();
-    const { startGame, game, updateGameName, rearrangePlayer } = useServer();
-    
+    const { game, updateGameName, rearrangePlayer } = useServer();
+
     const [isEditingName, setIsEditingName] = useState(false);
     const [editingName, setEditingName] = useState('');
-    
+
     // Enhanced drag and drop state
     const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
     const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
     const [localPlayerOrder, setLocalPlayerOrder] = useState<PublicPlayer[]>([]);
     const [isDragging, setIsDragging] = useState(false);
     const [draggedElement, setDraggedElement] = useState<HTMLElement | null>(null);
-    
+
     const rearrangeTimerRef = useRef<NodeJS.Timeout | null>(null);
     const inputRef = useRef<HTMLInputElement>(null);
-    
+
     // Update local player order when game changes
     useEffect(() => {
         if (game?.players) {
@@ -64,39 +142,8 @@ export const Lobby = () => {
         };
     }, [isDragging, draggedElement]);
 
-    // Prevent page scrolling/dragging during touch interactions but allow legitimate drags
-    useEffect(() => {
-        const preventPageScroll = (e: TouchEvent) => {
-            const target = e.target as HTMLElement;
-            
-            // Allow dragging on draggable elements (player blocks)
-            if (target.closest('[draggable="true"]')) {
-                return; // Don't prevent - allow legitimate drag
-            }
-            
-            // Allow interactions on interactive elements (buttons, inputs, or anything with higher z-index)
-            if (target.tagName === 'BUTTON' || 
-                target.tagName === 'INPUT' || 
-                target.closest('input') ||
-                window.getComputedStyle(target).zIndex === '1000') {
-                return; // Don't prevent - allow button clicks and input focus
-            }
-            
-            // Prevent page scrolling/panning on background/text areas
-            if (e.touches.length > 1 || (e.touches.length === 1 && e.type === 'touchmove')) {
-                e.preventDefault();
-            }
-        };
+    usePreventScroll();
 
-        // Only prevent touchmove to avoid interfering with clicks/taps
-        document.addEventListener("touchmove", preventPageScroll, { passive: false });
-
-        // Cleanup function to remove event listeners
-        return () => {
-            document.removeEventListener("touchmove", preventPageScroll);
-        };
-    }, []);
-    
     if (!game) {
         return <div>Loading...</div>;
     }
@@ -110,14 +157,14 @@ export const Lobby = () => {
 
     const handleSaveName = () => {
         const trimmedName = editingName.trim();
-        
+
         // Client-side validation: Check unicode character count
         if (trimmedName && Array.from(trimmedName).length > 20) {
             setIsEditingName(false);
             setEditingName('');
             return;
         }
-        
+
         if (trimmedName && trimmedName !== game.name) {
             // Fire and forget - optimistic update handles UI immediately
             updateGameName(game_id!, trimmedName).catch(error => {
@@ -154,7 +201,7 @@ export const Lobby = () => {
 
         // Create indices array based on original order
         const originalPlayers = game!.players;
-        const indices = newOrder.map(newPlayer => 
+        const indices = newOrder.map(newPlayer =>
             originalPlayers.findIndex(origPlayer => origPlayer.player_id === newPlayer.player_id)
         );
 
@@ -170,13 +217,13 @@ export const Lobby = () => {
 
     const handleDragStart = (e: React.DragEvent, index: number) => {
         if (game?.status !== 'waiting') return;
-        
+
         // Cancel any pending rearrange update since user is still actively dragging
         if (rearrangeTimerRef.current) {
             clearTimeout(rearrangeTimerRef.current);
             rearrangeTimerRef.current = null;
         }
-        
+
         e.dataTransfer.setData('text/plain', '');
         setIsDragging(true);
         setDraggedIndex(index);
@@ -186,14 +233,14 @@ export const Lobby = () => {
 
     const handleDragEnd = (e: React.DragEvent) => {
         if (!isDragging || draggedIndex === null) return;
-        
+
         setIsDragging(false);
-        
+
         // Reset drag state
         setDraggedIndex(null);
         setDragOverIndex(null);
         setDraggedElement(null);
-        
+
         // Reset element styles
         const element = e.currentTarget as HTMLElement;
         element.style.position = '';
@@ -204,20 +251,20 @@ export const Lobby = () => {
 
     const handleDragOver = (e: React.DragEvent, index: number) => {
         if (game?.status !== 'waiting' || !isDragging || draggedIndex === null) return;
-        
+
         e.preventDefault();
         e.dataTransfer.dropEffect = 'move';
-        
+
         if (index !== draggedIndex) {
             const newOrder = [...localPlayerOrder];
             const draggedPlayer = newOrder[draggedIndex];
-            
+
             // Remove dragged player from current position
             newOrder.splice(draggedIndex, 1);
-            
+
             // Insert at new position
             newOrder.splice(index, 0, draggedPlayer);
-            
+
             setLocalPlayerOrder(newOrder);
             setDraggedIndex(index);
             scheduleRearrangeUpdate(newOrder);
@@ -233,120 +280,68 @@ export const Lobby = () => {
         // Actual drop logic handled in handleDragEnd
     };
 
+    return <div style={{
+        touchAction: 'manipulation',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        height: '100%',
+        width: '100%'
+    }}>
 
-
-    return (
-        <div style={{ 
-            touchAction: 'manipulation', 
-            display: 'flex', 
-            flexDirection: 'column', 
-            alignItems: 'center', 
-            height: '100%', 
-            width: '100%' 
-        }}>
-            
-            <input
-                ref={inputRef}
-                type="text"
-                value={isEditingName ? editingName : game.name}
-                onChange={(e) => {
-                    if (isEditingName) {
-                        setEditingName(e.target.value);
-                    }
-                }}
-                onBlur={isEditingName ? handleSaveName : undefined}
-                onKeyDown={handleKeyDown}
-                onFocus={() => {
-                    if (!isEditingName) {
-                        handleStartEditing();
-                    }
-                }}
-                autoFocus={isEditingName}
-                inputMode={isEditingName ? 'text' : 'none'}
-                style={{
-                    width: '100%',
-                    fontSize: '2rem',
-                    fontWeight: 'bold',
-                    textAlign: 'center',
-                    color: isEditingName ? 'black' : 'white',
-                    background: isEditingName ? 'white' : 'transparent',
-                    border: 'none',
-                    padding: '0.75rem 0 0.5rem 0',
-                    cursor: isEditingName ? 'text' : 'pointer',
-                    transition: 'all 0.2s ease',
-                    position: 'relative',
-                    zIndex: 1000
-                }}
-                title={!isEditingName ? "Click to edit game name" : undefined}
-            />
-            <h2 style={{ margin: '1rem' }}>Game ID: {game_id}</h2>
-            <div style={{ marginBottom: '20px' }}>
-                <QRCodeSVG value={qrUrl} size={200} fgColor="rgb(152, 38, 33)" bgColor="rgb(255, 255, 255)" />
-            </div>
-            {
-                localPlayerOrder.map((player: PublicPlayer, index: number) => {
-                    const isDragging = draggedIndex === index;
-                    const isDropTarget = dragOverIndex === index;
-                    const canDrag = game?.status === 'waiting';
-                    
-                    return (
-                        <div
-                            key={player.player_id}
-                            draggable={canDrag}
-                            onDragStart={(e) => handleDragStart(e, index)}
-                            onDragOver={(e) => handleDragOver(e, index)}
-                            onDragLeave={handleDragLeave}
-                            onDrop={(e) => handleDrop(e, index)}
-                            onDragEnd={handleDragEnd}
-                            style={{
-                                width: '180px',
-                                display: 'flex',
-                                flexDirection: 'row',
-                                justifyContent: 'space-between',
-                                gap: '10px',
-                                padding: '0 10px',
-                                color: 'white',
-                                border: '1px solid white',
-                                opacity: isDragging && draggedIndex === index ? 0.3 : 1,
-                                backgroundColor: isDropTarget ? 'rgba(255, 255, 255, 0.1)' : 'transparent',
-                                cursor: canDrag ? 'move' : 'default',
-                                transition: isDragging && draggedIndex === index ? 'none' : 'all 0.2s ease',
-                                transform: isDragging && draggedIndex === index ? 'scale(1.05)' : 'scale(1)',
-                                userSelect: 'none',
-                                borderRadius: '4px',
-                                marginBottom: '4px',
-                                position: 'relative',
-                                //zIndex: isDragging && draggedIndex === index ? 1500 : 1001,
-                                zIndex: 1500,
-                                pointerEvents: isDragging && draggedIndex === index ? 'none' : 'auto'
-                            }}
-                        >
-                            {/* Invisible overlay to prevent text selection during drag operations */}
-                            <div style={{
-                                position: 'absolute',
-                                top: 0,
-                                left: 0,
-                                right: 0,
-                                bottom: 0,
-                                zIndex: 1600,
-                                pointerEvents: isDragging ? 'auto' : 'none',
-                                userSelect: 'none'
-                            }} />
-                            <p style={{ zIndex: 10 }}>{player.name}</p>
-                            <p>{player.status !== 'idle' ? '🟢' :
-                                player.player_id === user_id ? <button 
-                                    onClick={() => {
-                                        startGame(game_id!);
-                                    }}
-                                    style={{
-                                        position: 'relative',
-                                        zIndex: 1001
-                                    }}
-                                >Ready</button> : '🔴'}</p>
-                        </div>
-                    );
-                })
-            }
+        <input
+            ref={inputRef}
+            type="text"
+            value={isEditingName ? editingName : game.name}
+            onChange={(e) => {
+                if (isEditingName) {
+                    setEditingName(e.target.value);
+                }
+            }}
+            onBlur={isEditingName ? handleSaveName : undefined}
+            onKeyDown={handleKeyDown}
+            onFocus={() => {
+                if (!isEditingName) {
+                    handleStartEditing();
+                }
+            }}
+            autoFocus={isEditingName}
+            inputMode={isEditingName ? 'text' : 'none'}
+            style={{
+                width: '100%',
+                fontSize: '2rem',
+                fontWeight: 'bold',
+                textAlign: 'center',
+                color: isEditingName ? 'black' : 'white',
+                background: isEditingName ? 'white' : 'transparent',
+                border: 'none',
+                padding: '0.75rem 0 0.5rem 0',
+                cursor: isEditingName ? 'text' : 'pointer',
+                transition: 'all 0.2s ease',
+                position: 'relative',
+                zIndex: 1000
+            }}
+            title={!isEditingName ? "Click to edit game name" : undefined}
+        />
+        <h2 style={{ margin: '1rem' }}>Game ID: {game_id}</h2>
+        <div style={{ marginBottom: '20px' }}>
+            <QRCodeSVG value={qrUrl} size={200} fgColor="rgb(152, 38, 33)" bgColor="rgb(255, 255, 255)" />
         </div>
-    );
+        {
+            localPlayerOrder.map((player: PublicPlayer, index: number) => (
+                <PlayerCard
+                    key={player.player_id}
+                    player={player}
+                    index={index}
+                    isDragging={draggedIndex === index}
+                    isDropTarget={dragOverIndex === index}
+                    onDragStart={handleDragStart}
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onDrop={handleDrop}
+                    onDragEnd={handleDragEnd}
+                />
+            ))
+        }
+    </div>;
 };

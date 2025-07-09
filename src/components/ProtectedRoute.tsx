@@ -7,7 +7,7 @@ import { useEffect } from 'react';
 export const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
     const { user_id, loading, setRedirectAfterLogin } = useAuth();
     const location = useLocation();
-    
+
     // Store redirect URL when user is not authenticated
     useEffect(() => {
         if (!loading && !user_id) {

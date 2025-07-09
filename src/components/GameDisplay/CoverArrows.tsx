@@ -34,20 +34,18 @@ export const CoverArrows = () => {
             const tableX = window.innerWidth / 2;
             const tableY = window.innerHeight / 2 + (tableCardIndex * 80) - (game.table_battles.length * 40); // spread them vertically
 
-            return (
-                <g key={`arrow-${index}`}>
-                    {/* Arrow line */}
-                    <line
-                        x1={handX}
-                        y1={handY}
-                        x2={tableX}
-                        y2={tableY}
-                        stroke="yellow"
-                        strokeWidth="3"
-                        markerEnd="url(#arrowhead)"
-                    />
-                </g>
-            );
+            return <g key={`arrow-${index}`}>
+                {/* Arrow line */}
+                <line
+                    x1={handX}
+                    y1={handY}
+                    x2={tableX}
+                    y2={tableY}
+                    stroke="yellow"
+                    strokeWidth="3"
+                    markerEnd="url(#arrowhead)"
+                />
+            </g>;
         })}
 
         {/* Arrow marker definition */}
