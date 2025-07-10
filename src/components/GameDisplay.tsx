@@ -7,6 +7,7 @@ import { ActionButtons } from './GameDisplay/ActionButtons';
 import { DeckAndFlipped } from './GameDisplay/DeckAndFlipped';
 import { DragShadow } from './GameDisplay/DragShadow';
 import { CoverArrows } from './GameDisplay/CoverArrows';
+import { Chat } from './GameDisplay/Chat';
 import { usePreventScroll } from '../hooks/usePreventScroll';
 
 export const GameDisplay = () => {
@@ -19,31 +20,37 @@ export const GameDisplay = () => {
         return <div>Loading...</div>;
     }
 
-    return <div style={{
-        backgroundColor: '#982621',
-        width: '100%',
-        height: '100vh',
-        touchAction: 'manipulation' // Allow taps and pinch-zoom but prevent double-tap zoom and panning
-    }}>
-    <CoverArrows />
+    return <div
+        data-game-container
+        style={{
+            backgroundColor: '#982621',
+            width: '100%',
+            height: '100vh',
+            touchAction: 'manipulation', // Allow taps and pinch-zoom but prevent double-tap zoom and panning
+        }}
+    >
+        <CoverArrows />
 
-    <div style={{ display: 'flex', flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-        <p style={{ color: 'white', fontSize: '24px', fontWeight: 'bold' }}>{game.name}</p>
+        <div style={{ display: 'flex', flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+            <p style={{ color: 'white', fontSize: '24px', fontWeight: 'bold' }}>{game.name}</p>
 
-        <DragShadow />
+            <DragShadow />
 
-        <DeckAndFlipped />
+            <DeckAndFlipped />
 
-        <ActionButtons />
+            <ActionButtons />
 
-        <div style={{ position: 'absolute', display: 'flex', flexDirection: 'column', top: 0, width: '100%', bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
-            <DefenderShield />
-  
-            <TableBattles />
+            <div style={{ position: 'absolute', display: 'flex', flexDirection: 'column', top: 0, width: '100%', bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
+                <DefenderShield />
+
+                <TableBattles />
+            </div>
+
+            <PlayerRing />
+
+            <Chat />
+
         </div>
 
-        <PlayerRing />
-
     </div>
-  </div>
 };

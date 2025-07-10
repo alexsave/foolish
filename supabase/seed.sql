@@ -184,6 +184,27 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- Function to broadcast chat message changes
+CREATE OR REPLACE FUNCTION public.chat_messages_changes()
+RETURNS TRIGGER
+SECURITY DEFINER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  -- Broadcast to game-specific topic for chat messages
+  PERFORM realtime.broadcast_changes(
+    'chat:' || COALESCE(NEW.game_id, OLD.game_id)::text, -- topic - chat:{game_id}
+    TG_OP,                                                -- event - INSERT, UPDATE, DELETE
+    TG_OP,                                                -- operation - same as event
+    TG_TABLE_NAME,                                        -- table - chat_messages
+    TG_TABLE_SCHEMA,                                      -- schema - public
+    NEW,                                                  -- new record - the record after the change
+    OLD                                                   -- old record - the record before the change
+  );
+  RETURN COALESCE(NEW, OLD);
+END;
+$$;
+
 -- =============================================================================
 -- TRIGGERS: Set up automatic triggers
 -- =============================================================================
@@ -203,6 +224,13 @@ CREATE TRIGGER update_player_hands_updated_at
   FOR EACH ROW 
   EXECUTE FUNCTION update_updated_at_column();
 
+-- Trigger for chat message changes
+CREATE TRIGGER handle_chat_messages_changes
+  AFTER INSERT OR UPDATE OR DELETE
+  ON public.chat_messages
+  FOR EACH ROW
+  EXECUTE FUNCTION chat_messages_changes();
+
 -- =============================================================================
 -- REALTIME AUTHORIZATION POLICIES
 -- Enable Supabase Realtime with proper security
@@ -216,6 +244,7 @@ DROP POLICY IF EXISTS "authenticated can receive game broadcasts" ON "realtime".
 DROP POLICY IF EXISTS "authenticated can receive private messages" ON "realtime"."messages";
 DROP POLICY IF EXISTS "authenticated can send private messages" ON "realtime"."messages";
 DROP POLICY IF EXISTS "authenticated can receive game-user messages" ON "realtime"."messages";
+DROP POLICY IF EXISTS "authenticated can receive chat broadcasts" ON "realtime"."messages";
 DROP POLICY IF EXISTS "service role can send game broadcasts" ON "realtime"."messages";
 DROP POLICY IF EXISTS "service role can send private messages" ON "realtime"."messages";
 DROP POLICY IF EXISTS "service role can send game-user messages" ON "realtime"."messages";
@@ -270,6 +299,25 @@ USING (
     WHERE 
       player_id = auth.uid()
       AND game_id = split_part((SELECT realtime.topic()), '-', 2)
+  ) AND
+  realtime.messages.extension IN ('broadcast')
+);
+
+-- Policy for chat broadcasts (topic: chat-{game_id})
+-- Users can receive chat broadcasts for games they're participating in
+CREATE POLICY "authenticated can receive chat broadcasts"
+ON "realtime"."messages"
+FOR SELECT
+TO authenticated
+USING (
+  (SELECT realtime.topic()) LIKE 'chat:%' AND
+  -- Extract game_id from topic (chat:{game_id}) and verify user is in that game
+  EXISTS (
+    SELECT 1
+    FROM player_hands
+    WHERE 
+      player_id = auth.uid()
+      AND game_id = split_part((SELECT realtime.topic()), ':', 2)
   ) AND
   realtime.messages.extension IN ('broadcast')
 );

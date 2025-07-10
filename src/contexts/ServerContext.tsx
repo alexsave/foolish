@@ -35,14 +35,29 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     // keep a state of games
     // maybe ref idk
     const [games, setGames] = useState<{ [key: string]: (PersonalGame) }>({});
+    
+    // Update user names ref when games change
+    useEffect(() => {
+        Object.values(games).forEach(game => {
+            if (game.players) {
+                game.players.forEach(player => {
+                    userNamesRef.current[player.player_id] = player.name;
+                });
+            }
+        });
+    }, [games]);
+    
+    // Chat messages state - keyed by game_id
+    const [chatMessages, setChatMessages] = useState<{ [key: string]: any[] }>({});
 
-    const [loading, setLoading] = useState(true);
+
     const [gameLoadError, setGameLoadError] = useState<string | null>(null);
 
     const [game_id, setGameId] = useState<string | null>(null);
 
     // Use ref to avoid closure issues in WebSocket handler
     const gameIdRef = useRef<string | null>(null);
+    const userNamesRef = useRef<{ [userId: string]: string }>({});
 
     // Use ref to prevent duplicate user effect executions
     const prevUserRef = useRef<string | null>(null);
@@ -58,8 +73,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 loadGame(url_game_id).catch(error => {
                     console.log('Game not found in URL:', error.message);
                     setGameLoadError(url_game_id); // Set error for this specific game
-                }).then(() => {
-                    setLoading(false);
                 });
             }
         }
@@ -78,8 +91,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         prevUserRef.current = user_id;
 
         if (user_id) {
-            //setupRealtimeSubscriptions().catch(console.error);
-
             // Call getUserGames to console.log the player's games
             getUserGames();
         }
@@ -115,6 +126,28 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             });
     };
 
+    const subscribeToChatMessages = async (gameId: string) => {
+        // Ensure we have proper auth before subscribing
+        await supabase.realtime.setAuth();
+
+        // Subscribe to chat messages for this game
+        const chatChannel = supabase.channel(`chat:${gameId}`, {
+            config: { private: true }
+        });
+
+        chatChannel
+            .on('broadcast', { event: 'INSERT' }, (payload) => {
+                handleChatMessage(payload.payload);
+            })
+            .subscribe((status, err) => {
+                if (status === 'SUBSCRIBED') {
+                    console.log('Connected to chat channel:', `chat:${gameId}`);
+                } else {
+                    console.error('Chat channel error:', err);
+                }
+            });
+    };
+
     const handleGameMessage = (message: any) => {
         // Handle both old format (message.game_id) and new format (message.game.id)
         // Also handle nested message format from broadcastToGame
@@ -128,9 +161,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         }
 
         if (!messageGameId || !gameIdRef.current || messageGameId !== gameIdRef.current) {
-            console.log("messageGameId", messageGameId);
-            console.log("gameIdRef.current", gameIdRef.current);
-            console.log("messageGameId !== gameIdRef.current", messageGameId !== gameIdRef.current);
             return;
         }
 
@@ -140,9 +170,18 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             console.log("we have no self info. We either didn't fetch it or it was overwritten")
         }
 
+        // Handle animation events if present
+        if (actualMessage.animation_events && actualMessage.animation_events.length > 0) {
+            console.log('Animation events received:', actualMessage.animation_events);
+            // Trigger custom event for animation context to listen to
+            const animationEvent = new CustomEvent('gameAnimationEvents', {
+                detail: { events: actualMessage.animation_events, gameId: messageGameId }
+            });
+            window.dispatchEvent(animationEvent);
+        }
+
         // Handle all the different message types using the extracted message
         const gameData = actualMessage.game || message.game;
-        console.log(JSON.stringify(gameData) + " gameData");
 
         if (actualMessage.type === SERVER_EVENT_TYPE.PLAYER_JOINED_GAME) {
             setGames(prev => ({ ...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev) }));
@@ -206,13 +245,51 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         };
     };
 
+    const handleChatMessage = (message: any) => {
+        // Handle database changes for chat messages
+        const { record: newRecord, old_record: oldRecord, table, operation } = message;
+        
+        if (table !== 'chat_messages') {
+            return;
+        }
+
+        const gameId = newRecord?.game_id || oldRecord?.game_id;
+        
+        if (!gameId) {
+            return;
+        }
+
+        if (operation === 'INSERT') {
+            // Add new message with user info
+            const messageWithUserInfo = {
+                ...newRecord,
+                sender_name: userNamesRef.current[newRecord.user_id] || 'Unknown'
+            };
+
+            setChatMessages(prev => {
+                const existingMessages = prev[gameId] || [];
+                // Check if message already exists to avoid duplicates
+                const messageExists = existingMessages.some(msg => msg.id === newRecord.id);
+                if (!messageExists) {
+                    const newState = {
+                        ...prev,
+                        [gameId]: [...existingMessages, messageWithUserInfo]
+                    };
+                    return newState;
+                }
+                return prev;
+            });
+        } 
+    };
+
     const createGame = (): Promise<{ game_id: string }> => {
         return invokeGameFunctions('create', {}, {
             onSuccess: (data) => {
                 setGameId(data.data.game.id);
                 setGames(prev => ({ ...prev, [data.data.game.id]: mergeGameData(data.data.game.id, data.data.game, prev) }));
-                // Subscribe to the new game's channel
+                // Subscribe to the new game's channel and chat messages
                 subscribeToGame(data.data.game.id).catch(console.error);
+                subscribeToChatMessages(data.data.game.id).catch(console.error);
             }
         });
     };
@@ -224,8 +301,11 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             onSuccess: (data) => {
                 setGameId(data.data.game.id);
                 //setGames(prev => ({ ...prev, [data.data.game.id]: mergeGameData(data.data.game.id, data.data.game, prev) }));
-                // Subscribe to the game's channel
+                // Subscribe to the game's channel and chat messages
                 subscribeToGame(data.data.game.id).catch(console.error);
+                subscribeToChatMessages(data.data.game.id).catch(console.error);
+                // Load chat history with game data
+                loadChatHistory(data.data.game.id, data.data.game).catch(console.error);
             }
         })
     };
@@ -251,17 +331,25 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
     const joinOrSubscribe = (game: PersonalGame) => {
         const gameId = game.id;
+        
+        // Set game_id state and game data first, then load chat history
+        setGameId(gameId);
+        setGames(prev => ({ ...prev, [gameId]: mergeGameData(gameId, game, prev) }));
+        
+        // Load chat history with game data
+        loadChatHistory(gameId, game).catch(console.error);
+
         if (game.self) {
             // game self + waiting -> subscribe to gu
             // game self + not waiting -> subscribe to gu
             subscribeToGame(gameId).catch(console.error);
+            subscribeToChatMessages(gameId).catch(console.error);
             return;
         }
         // no game self + waiting -> join
         // no game self + not waiting -> subscribe to game
         if (game.status === 'waiting' && game.players.length < MAX_PLAYERS) {
             // This is kinda iffy. It might be best to automatically spectate, but have an option to join,
-            console.log('Auto-joining game in waiting status');
             joinGame(gameId).catch(console.error);
         } else {
             supabase.realtime.setAuth().then(() => {
@@ -275,9 +363,41 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 gameChannel.subscribe((status, err) => status === 'SUBSCRIBED'
                     ? console.log('Connected to game channel:', `game-${gameId}`)
                     : console.error('Game channel error:', err));
+                
+                // Subscribe to chat messages for spectators too
+                subscribeToChatMessages(gameId).catch(console.error);
             });
         }
     }
+
+    const loadChatHistory = async (gameId: string, gameData?: PersonalGame): Promise<void> => {
+        try {
+            const { data, error } = await supabase
+                .from('chat_messages')
+                .select('*')
+                .eq('game_id', gameId)
+                .order('created_at', { ascending: true })
+                .limit(100); // Load last 100 messages
+
+            if (error) {
+                console.error('Error loading chat history:', error);
+                return;
+            }
+
+            // Transform messages to include sender names from userNamesRef
+            const messagesWithNames = data.map(msg => ({
+                ...msg,
+                sender_name: userNamesRef.current[msg.user_id] || 'Unknown'
+            }));
+
+            setChatMessages(prev => ({
+                ...prev,
+                [gameId]: messagesWithNames
+            }));
+        } catch (error) {
+            console.error('Error in loadChatHistory:', error);
+        }
+    };
 
     const attack = (cards: Card[]): Promise<{ game_id: string }> => {
         // Quick check to see if valid attack, then optimistic update
@@ -387,6 +507,36 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         return invokeGameFunctions('good', {
             game_id: game_id!,
         });
+    };
+
+    const sendMessage = async (message: string): Promise<void> => {
+        if (!game_id || !user_id) {
+            throw new Error('No game or user available');
+        }
+
+        if (!message || message.trim() === '') {
+            throw new Error('Message cannot be empty');
+        }
+
+        if (message.length > 1000) {
+            throw new Error('Message is too long');
+        }
+
+        const trimmedMessage = message.trim();
+
+        // Save message to database - the trigger will handle broadcasting
+        const { error } = await supabase
+            .from('chat_messages')
+            .insert({
+                game_id: game_id,
+                user_id: user_id,
+                message: trimmedMessage,
+                is_system: false
+            });
+
+        if (error) {
+            throw error;
+        }
     };
 
     const updateGameName = (gameId: string, name: string): Promise<{ game_id: string }> => {
@@ -542,6 +692,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         }
     }
 
+    const currentChatMessages = chatMessages[game_id!] || [];
+
     return (
         <ServerContext.Provider value={{
             createGame,
@@ -550,18 +702,18 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             game_id,
             game: games[game_id!],
             games,
-            //loadGame,
             attack,
             pass,
             pickup,
             cover,
             good,
-            //setGameIdFromUrl,
+            sendMessage,
             getUserGames,
             updateGameName,
             rearrangePlayer,
             rearrangeHand,
-            gameLoadError
+            gameLoadError,
+            chatMessages: currentChatMessages
         }}>
             {children}
         </ServerContext.Provider>
@@ -575,18 +727,18 @@ interface ServerContextType {
     game_id: string | null;
     game: PersonalGame | null;
     games: { [key: string]: PersonalGame };
-    //loadGame: (gameId: string) => Promise<{ game_id: string }>;
     attack: (cards: Card[]) => Promise<{ game_id: string }>;
     pass: (cards: Card[]) => Promise<{ game_id: string }>;
     pickup: () => Promise<{ game_id: string }>;
     cover: (coverCards: Card[], attackCards: Card[]) => Promise<{ game_id: string }>;
-    //setGameIdFromUrl: (gameId: string) => void;
     good: () => Promise<{ game_id: string }>;
+    sendMessage: (message: string) => Promise<void>;
     getUserGames: () => Promise<void>;
     updateGameName: (gameId: string, name: string) => Promise<{ game_id: string }>;
     rearrangePlayer: (gameId: string, playerIndices: number[]) => Promise<{ game_id: string }>;
     rearrangeHand: (gameId: string, cardIndices: number[]) => Promise<{ game_id: string }>;
     gameLoadError: string | null;
+    chatMessages: any[];
 }
 
 export const useServer = () => {
