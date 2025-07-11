@@ -5,9 +5,9 @@ export const CardBack = ({ deckSize = 36 }: { deckSize?: number }) => {
     const [patternDataUrl, setPatternDataUrl] = useState<string>('');
 
     useEffect(() => {
-        // Generate the pattern once when component mounts
-        const dataUrl = generateCardBackPattern(40, 70);
-        setPatternDataUrl(dataUrl);
+        generateCardBackPattern(40, 70).then(dataUrl => {
+            setPatternDataUrl(dataUrl);
+        });
     }, []);
 
     return <div style={{ position: 'relative', width: '40px', height: '70px' }}>

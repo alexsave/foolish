@@ -26,7 +26,7 @@ export const GameDisplay = () => {
             backgroundColor: '#982621',
             width: '100%',
             height: '100vh',
-            touchAction: 'none', // Prevent all touch gestures by default - specific elements will override
+            touchAction: 'none', 
         }}
     >
         <CoverArrows />

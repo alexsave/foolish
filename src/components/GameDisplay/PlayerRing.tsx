@@ -67,8 +67,9 @@ export const PlayerRing = () => {
     const [playerCardPatternDataUrl, setPlayerCardPatternDataUrl] = useState<string>('');
     useEffect(() => {
         // Generate the pattern for player cards once when component mounts
-        const dataUrl = generateCardBackPattern(12, 18);
-        setPlayerCardPatternDataUrl(dataUrl);
+        generateCardBackPattern(12, 18).then(dataUrl => {
+            setPlayerCardPatternDataUrl(dataUrl);
+        });
     }, []);
 
     const game: PersonalGame = useServer().game as PersonalGame;
