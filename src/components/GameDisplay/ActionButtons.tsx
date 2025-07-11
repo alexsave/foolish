@@ -115,13 +115,15 @@ const CardDiv = () => {
         return <p style={{ color: 'white', fontSize: '18px' }}>Spectating</p>
     }
 
-    return <div style={{
-        display: 'flex',
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        width: '100%'
-    }}> {localHandOrder.map((card, index) => {
+    return <div 
+        data-touch-interactive
+        style={{
+            display: 'flex',
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: '100%'
+        }}> {localHandOrder.map((card, index) => {
         const isSelected = selectedCards.some(selectedCard =>
             selectedCard.value === card.value && selectedCard.suit === card.suit
         );
@@ -145,6 +147,7 @@ const CardDiv = () => {
         return <div
             key={'' + card.value + card.suit}
             data-card-index={index}
+            draggable={true}
             onMouseDown={(e) => startCardDrag(e, index)}
             onTouchStart={(e) => startCardDrag(e, index)}
             style={{
@@ -189,17 +192,21 @@ export const ActionButtons = () => {
     const self_index = game.players.findIndex((player) => player.player_id === user_id);
     const isDefending = game.defender === self_index;
 
-    return <div style={{ display: 'flex', flexDirection: 'column', position: 'absolute', bottom: '10px', left: '0px', right: '0px', justifyContent: 'end', alignItems: 'center', height: '200px' }}>
+    return <div 
+        data-touch-interactive
+        style={{ display: 'flex', flexDirection: 'column', position: 'absolute', bottom: '10px', left: '0px', right: '0px', justifyContent: 'end', alignItems: 'center', height: '200px' }}>
         {/* Always visible pickup and good buttons */}
-        {game.self && <div style={{
-            position: 'absolute',
-            bottom: '90px',
-            right: '20px',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '5px',
-            zIndex: 999
-        }}>
+        {game.self && <div 
+            data-touch-interactive
+            style={{
+                position: 'absolute',
+                bottom: '90px',
+                right: '20px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '5px',
+                zIndex: 999
+            }}>
             {/* Pickup button for defenders */}
             {isDefending && game.table_battles.length > 0 && <button
                 style={{
@@ -247,7 +254,9 @@ export const ActionButtons = () => {
         }
 
         {
-            game.self && selectedCards.length > 0 && <div style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)', zIndex: 999, height: '50px ' }}>
+            game.self && selectedCards.length > 0 && <div 
+                data-touch-interactive
+                style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)', zIndex: 999, height: '50px ' }}>
 
                 {
                     isDefending ? <DefenderActionPanel /> : <AttackerActionPanel />

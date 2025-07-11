@@ -1,36 +1,97 @@
 import { useEffect } from "react";
 
 export const usePreventScroll = () => {
-  // Prevent page scrolling/dragging during touch interactions but allow legitimate drags
-  useEffect(() => {
-    const preventPageScroll = (e: TouchEvent) => {
-      const target = e.target as HTMLElement;
+    useEffect(() => {
+        // Handle touchstart events to prevent unwanted gestures
+        const handleTouchStart = (e: TouchEvent) => {
+            const target = e.target as HTMLElement;
 
-      // Allow dragging on draggable elements (cards)
-      if (target.closest('[draggable="true"]')) {
-        return; // Don't prevent - allow legitimate drag
-      }
+            // Allow multi-touch on draggable elements (for potential drag gestures)
+            if (target.closest('[draggable="true"]')) {
+                return;
+            }
 
-      // Allow interactions on interactive elements (buttons, inputs, or anything with higher z-index)
-      if (target.tagName === 'BUTTON' ||
-        target.tagName === 'INPUT' ||
-        target.closest('input') ||
-        window.getComputedStyle(target).zIndex === '1000') {
-        return; // Don't prevent - allow button clicks and input focus
-      }
+            // Allow multi-touch on chat scrollable areas (though we'll limit to pan-y via CSS)
+            if (target.closest('[data-chat-scrollable]')) {
+                return;
+            }
 
-      // Prevent page scrolling/panning on background/text areas
-      if (e.touches.length > 1 || (e.touches.length === 1 && e.type === 'touchmove')) {
-        e.preventDefault();
-      }
-    };
+            // Allow single touch on interactive elements
+            if (target.closest('[data-touch-interactive]') ||
+                target.tagName === 'BUTTON' ||
+                target.tagName === 'INPUT' ||
+                target.closest('input')) {
+                // But prevent multi-touch (pinch-to-zoom) on interactive elements
+                if (e.touches.length > 1) {
+                    e.preventDefault();
+                }
+                return;
+            }
 
-    // Only prevent touchmove to avoid interfering with clicks/taps
-    document.addEventListener("touchmove", preventPageScroll, { passive: false });
+            // For all other areas, prevent multi-touch gestures
+            if (e.touches.length > 1) {
+                e.preventDefault();
+            }
+        };
 
-    // Cleanup function to remove event listeners
-    return () => {
-      document.removeEventListener("touchmove", preventPageScroll);
-    };
-  }, []);
+        // Handle touchmove events to prevent unwanted scrolling/dragging
+        const handleTouchMove = (e: TouchEvent) => {
+            const target = e.target as HTMLElement;
+
+            // Allow dragging on draggable elements (cards)
+            if (target.closest('[draggable="true"]')) {
+                return;
+            }
+
+            // Allow scrolling within chat area
+            if (target.closest('[data-chat-scrollable]')) {
+                return;
+            }
+
+            // Allow limited interaction on interactive elements (taps, not drags)
+            if (target.closest('[data-touch-interactive]') ||
+                target.tagName === 'BUTTON' ||
+                target.tagName === 'INPUT' ||
+                target.closest('input')) {
+                // Prevent dragging on interactive elements
+                e.preventDefault();
+                return;
+            }
+
+            // Prevent all other touch movements (background scrolling/panning)
+            e.preventDefault();
+        };
+
+        // Handle touchend to clean up any zoom gestures
+        const handleTouchEnd = (e: TouchEvent) => {
+            const target = e.target as HTMLElement;
+
+            // Allow normal touch end on draggable elements
+            if (target.closest('[draggable="true"]')) {
+                return;
+            }
+
+            // Allow normal touch end on chat scrollable areas
+            if (target.closest('[data-chat-scrollable]')) {
+                return;
+            }
+
+            // For multi-touch on non-draggable elements, prevent zoom
+            if (e.changedTouches.length > 1) {
+                e.preventDefault();
+            }
+        };
+
+        // Add event listeners with passive: false to allow preventDefault
+        document.addEventListener("touchstart", handleTouchStart, { passive: false });
+        document.addEventListener("touchmove", handleTouchMove, { passive: false });
+        document.addEventListener("touchend", handleTouchEnd, { passive: false });
+
+        // Cleanup function
+        return () => {
+            document.removeEventListener("touchstart", handleTouchStart);
+            document.removeEventListener("touchmove", handleTouchMove);
+            document.removeEventListener("touchend", handleTouchEnd);
+        };
+    }, []);
 }

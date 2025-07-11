@@ -635,6 +635,12 @@ export const check_win = (game: Game) => {
         game.table_battles = [];
         game.deck = refill_deck(game.players.length);
 
+        // Clear chat messages for the game (fire and forget)
+        supabaseClient
+            .from('chat_messages')
+            .delete()
+            .eq('game_id', game.id);
+
         broadcastToGameUsers(game, 'game_update', {
             type: 'game_done',
             message: `Game done. Player ${the_fool} ends up the fool`
