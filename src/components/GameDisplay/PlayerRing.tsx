@@ -15,7 +15,7 @@ const CardsVisual = ({ player, playerCardPatternDataUrl }: { player: PublicPlaye
         height: '20px',
         width: '100px'
     }}>
-        {Array.from({ length: Math.min(player.hand_length, 8) }).map((_, cardIndex) => {
+        {Array.from({ length: player.hand_length }).map((_, cardIndex) => {
             const mid = (player.hand_length + 1) / 2;
             const halfCardWidth = 10 / 2; // Updated for 5:7 ratio
             const halfDivWidth = 100 / 2;
