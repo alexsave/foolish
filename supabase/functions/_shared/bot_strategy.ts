@@ -1,12 +1,12 @@
 import { Card, Game, PrivatePlayer, GAME_STATUS } from './types.ts';
-import { canCover } from './common_utils.ts';
-import { card_comp } from './utils.ts';
+import { canCover, card_comp } from './common_utils.ts';
 
 // Legal moves that a bot can make
 export interface LegalMove {
     type: 'attack' | 'cover' | 'pass' | 'pickup' | 'good';
     cards?: Card[];
     attack_cards?: Card[]; // For cover moves, which cards to cover
+    done_attacking_this_round?: boolean; // For attack moves, whether to be done attacking this round
 }
 
 // Bot strategy interface
@@ -27,15 +27,97 @@ export class RandomBotStrategy implements BotStrategy {
             throw new Error('No legal moves available');
         }
         
+        // Find bot for debug logging
+        const bot = game.players.find(p => p.player_id === botPlayerId);
+        const botName = bot ? bot.name : 'Unknown Bot';
+        
+        // Debug logging for random strategy
+        console.log(`Bot ${botName} (random) has ${legalMoves.length} legal moves:`);
+        for (let index = 0; index < legalMoves.length; index++) {
+            const move = legalMoves[index];
+            let moveDescription = `  ${index + 1}. ${move.type}`;
+            if (move.cards) {
+                moveDescription += ` with cards: [${move.cards.map(c => `${c.value}${['♠','♥','♦','♣'][c.suit]}`).join(', ')}]`;
+            }
+            if (move.attack_cards) {
+                moveDescription += ` covering: [${move.attack_cards.map(c => `${c.value}${['♠','♥','♦','♣'][c.suit]}`).join(', ')}]`;
+            }
+            if (move.type === 'attack' && move.done_attacking_this_round !== undefined) {
+                moveDescription += ` (done attacking: ${move.done_attacking_this_round})`;
+            }
+            console.log(moveDescription);
+        }
         // Choose a random legal move
+        const randomIndex = Math.floor(Math.random() * legalMoves.length);
+        const chosenMove = legalMoves[randomIndex];
+        
+        // Log the chosen move
+        let chosenDescription = `Bot ${botName} chose: ${chosenMove.type}`;
+        if (chosenMove.cards) {
+            chosenDescription += ` with cards: [${chosenMove.cards.map(c => `${c.value}${['♠','♥','♦','♣'][c.suit]}`).join(', ')}]`;
+        }
+        if (chosenMove.attack_cards) {
+            chosenDescription += ` covering: [${chosenMove.attack_cards.map(c => `${c.value}${['♠','♥','♦','♣'][c.suit]}`).join(', ')}]`;
+        }
+        if (chosenMove.type === 'attack' && chosenMove.done_attacking_this_round !== undefined) {
+            chosenDescription += ` (done attacking: ${chosenMove.done_attacking_this_round})`;
+        }
+        console.log(chosenDescription);
+        
+        return chosenMove;
+    }
+}
+
+// One card per attack strategy - only puts down one card per attack round
+export class OneCardBotStrategy implements BotStrategy {
+    readonly name = 'one_card';
+    
+    chooseMove(game: Game, botPlayerId: string, legalMoves: LegalMove[]): LegalMove {
+        if (legalMoves.length === 0) {
+            throw new Error('No legal moves available');
+        }
+        
+        // Filter to only attack moves that use exactly one card AND are done attacking this round
+        const singleCardDoneAttackMoves = legalMoves.filter(move => 
+            move.type === 'attack' && 
+            move.cards && 
+            move.cards.length === 1 && 
+            move.done_attacking_this_round === true
+        );
+        
+        // If we have single card "done attacking" moves, prefer those
+        if (singleCardDoneAttackMoves.length > 0) {
+            const randomIndex = Math.floor(Math.random() * singleCardDoneAttackMoves.length);
+            return singleCardDoneAttackMoves[randomIndex];
+        }
+        
+        // Otherwise, for non-attack moves, choose randomly
+        const nonAttackMoves = legalMoves.filter(move => move.type !== 'attack');
+        if (nonAttackMoves.length > 0) {
+            const randomIndex = Math.floor(Math.random() * nonAttackMoves.length);
+            return nonAttackMoves[randomIndex];
+        }
+        
+        // If only other attack moves available, prefer "done attacking" versions
+        const doneAttackMoves = legalMoves.filter(move => 
+            move.type === 'attack' && move.done_attacking_this_round === true
+        );
+        if (doneAttackMoves.length > 0) {
+            // Sort by number of cards, pick the one with fewest cards
+            doneAttackMoves.sort((a, b) => (a.cards?.length || 0) - (b.cards?.length || 0));
+            return doneAttackMoves[0];
+        }
+        
+        // Fallback to random move
         const randomIndex = Math.floor(Math.random() * legalMoves.length);
         return legalMoves[randomIndex];
     }
 }
 
 // Strategy registry
-export const BOT_STRATEGIES: Map<string, BotStrategy> = new Map([
+export const BOT_STRATEGIES: Map<string, BotStrategy> = new Map<string, BotStrategy>([
     ['random', new RandomBotStrategy()],
+    ['one_card', new OneCardBotStrategy()],
 ]);
 
 // Get strategy by key
@@ -90,8 +172,10 @@ export function calculateLegalMoves(game: Game, botPlayerId: string): LegalMove[
                 const attackMoves = calculateRegularAttackMoves(game, botPlayer);
                 moves.push(...attackMoves);
                 
-                // Can always say "good" to indicate done attacking
-                moves.push({ type: 'good' });
+                // Can only say "good" if awaiting_attack is true
+                if (botPlayer.awaiting_attack) {
+                    moves.push({ type: 'good' });
+                }
             }
             break;
             
@@ -112,8 +196,10 @@ export function calculateLegalMoves(game: Game, botPlayerId: string): LegalMove[
                 const attackMoves = calculateRegularAttackMoves(game, botPlayer);
                 moves.push(...attackMoves);
                 
-                // Can also confirm they're done attacking
-                moves.push({ type: 'good' });
+                // Can only say "good" if awaiting_attack is true
+                if (botPlayer.awaiting_attack) {
+                    moves.push({ type: 'good' });
+                }
             }
             break;
     }
@@ -146,7 +232,9 @@ function calculateFirstAttackMoves(game: Game, botPlayer: PrivatePlayer): LegalM
                 const uncoveredCards = game.table_battles.filter(b => b.defense === null).length;
                 
                 if (uncoveredCards + combo.length <= defenderCards) {
-                    moves.push({ type: 'attack', cards: combo });
+                    // Add both versions: continue attacking and done attacking this round
+                    moves.push({ type: 'attack', cards: combo, done_attacking_this_round: false });
+                    moves.push({ type: 'attack', cards: combo, done_attacking_this_round: true });
                 }
             });
         }
@@ -186,7 +274,9 @@ function calculateRegularAttackMoves(game: Game, botPlayer: PrivatePlayer): Lega
             const uncoveredCards = game.table_battles.filter(b => b.defense === null).length;
             
             if (uncoveredCards + combo.length <= defenderCards) {
-                moves.push({ type: 'attack', cards: combo });
+                // Add both versions: continue attacking and done attacking this round
+                moves.push({ type: 'attack', cards: combo, done_attacking_this_round: false });
+                moves.push({ type: 'attack', cards: combo, done_attacking_this_round: true });
             }
         });
     }

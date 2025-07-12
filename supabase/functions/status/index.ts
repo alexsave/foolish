@@ -1,5 +1,6 @@
-import { wrap400, personalize_game, loadCompleteGame, saveCompleteGame } from '../_shared/utils.ts';
+import { wrap400, loadCompleteGame, saveCompleteGame } from '../_shared/utils.ts';
 import { Game, PublicGame, PublicPlayer, GAME_STATUS } from '../_shared/types.ts'; 
+import { personalize_game } from '../_shared/common_utils.ts';
 
 // TODO: just remove this. With the right policies we can query from client
 wrap400(async (user, user_name, body) => {
@@ -38,13 +39,15 @@ wrap400(async (user, user_name, body) => {
                 name: player.name,
                 player_id: player.player_id,
                 status: player.status,
-                hand_length: player.hand.length
+                hand_length: player.hand.length,
+                is_ai: player.is_ai,
             } as PublicPlayer)),
             status: game.status,
             power_suit: game.power_suit,
             first_attacker: game.first_attacker,
             defender: game.defender,
             table_battles: game.table_battles,
+            elimination_order: game.elimination_order
         };
         
         return {

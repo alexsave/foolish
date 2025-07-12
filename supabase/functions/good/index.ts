@@ -1,6 +1,6 @@
-import { wrap400, refill, verify_player_in_game, personalize_game, broadcastToGameUsers, loadCompleteGame, saveCompleteGame } from "../_shared/utils.ts";
-import { GAME_STATUS, PLAYER_STATUS, SERVER_EVENT_TYPE, Game } from "../_shared/types.ts";
-import { get_next_player_index } from "../_shared/common_utils.ts";
+import { wrap400, loadCompleteGame, saveCompleteGame } from "../_shared/utils.ts";
+import { handleGood } from "../_shared/actions/good.ts";
+import { verify_player_in_game, personalize_game } from "../_shared/common_utils.ts";
 
 wrap400(async (user, user_name, body) => {
     const user_id = user.id;
@@ -13,7 +13,7 @@ wrap400(async (user, user_name, body) => {
     verify_player_in_game(game, user_id);
 
     // Handle good logic
-    game = handle_good(game, game_id, user_id);
+    handleGood(game, user_id);
 
     // Save complete game state back to separated tables
     await saveCompleteGame(game);
@@ -23,57 +23,3 @@ wrap400(async (user, user_name, body) => {
     };
 });
 
-const handle_good = (game: Game, game_id: string, player_id: string): Game => {
-    // player is done attacking
-    // we need to check if they have any cards left in their hand
-
-    if (game.status !== GAME_STATUS.WAIT_FOR_ATTACKERS) {
-        throw new Error(`Game ${game_id} is not in wait_for_attackers mode`);
-    }
-    const player = game.players.find(player => player.player_id === player_id)!;
-    if (player.status !== PLAYER_STATUS.IN){//} && player.awaiting_attack) {
-        throw new Error(`Player ${player_id} is not ready to attack`);
-    }
-    // If they're in but can't play cards, just let them proceed
-
-    // set them to done attacking
-    player.awaiting_attack = false;
-
-    // ok now we need to check if all players are done attacking
-    // dont count the defender
-    // the status check is critical
-
-    const playable_players = game.players.filter(player => 
-        player.player_id !== game.players[game.defender].player_id && 
-        player.hand.some(card => game.table_battles.some(battle => battle.attack.value === card.value || (battle.defense && battle.defense.value === card.value))) &&
-        player.awaiting_attack);
-
-    if (playable_players.length !== 0) {
-        return game;
-    }
-
-    // we are done attacking.
-    // this has to be after a successful cover. Otherwise we'd still be waiting on the defender
-    // shift
-    // change all done_attacking to in
-    /*game.players.forEach(player => {
-        if (player.awaiting_attack) {
-            player.status = PLAYER_STATUS.IN;
-        }
-    });*/
-
-    game.table_battles = [];
-    refill(game);
-
-    //shift 
-    game.first_attacker = game.defender;
-    game.defender = get_next_player_index(game, game.first_attacker);
-    game.status = GAME_STATUS.FIRST_ATTACKER;
-
-    broadcastToGameUsers(game, 'game_update', {
-        type: SERVER_EVENT_TYPE.SUCCESSFULLY_COVERED,
-        message: `Player ${player_id} successfully defended the attack`
-    });
-
-    return game;
-}

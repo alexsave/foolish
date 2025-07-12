@@ -15,10 +15,11 @@ DROP FUNCTION IF EXISTS update_updated_at_column() CASCADE;
 
 -- Drop tables in reverse dependency order (this will automatically drop all policies and triggers)
 DROP TABLE IF EXISTS chat_messages CASCADE;
-DROP TABLE IF EXISTS bot_cards CASCADE;
+DROP TABLE IF EXISTS bot_hands CASCADE;
 DROP TABLE IF EXISTS player_hands CASCADE;
 DROP TABLE IF EXISTS game_decks CASCADE;
 DROP TABLE IF EXISTS games CASCADE;
+DROP TABLE IF EXISTS user_elo_ratings CASCADE;
 DROP TABLE IF EXISTS bots CASCADE;
 
 -- Drop custom types
@@ -117,12 +118,13 @@ CREATE TABLE bots (
   updated_at TIMESTAMP DEFAULT NOW()
 );
 
--- Bot cards table - SENSITIVE: Only edge functions can access (similar to player_hands)
-CREATE TABLE bot_cards (
+-- Bot hands table - SENSITIVE: Only edge functions can access (similar to player_hands)
+CREATE TABLE bot_hands (
   game_id TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
   bot_id UUID NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
   hand JSONB NOT NULL DEFAULT '[]'::jsonb, -- Card[] - bot's cards
   awaiting_attack BOOLEAN NOT NULL DEFAULT false, -- Private status for attack confirmation
+  done_attacking_this_round BOOLEAN NOT NULL DEFAULT false, -- Flag to indicate bot is done attacking this round
   joined_at TIMESTAMP DEFAULT NOW(),
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW(),
@@ -146,8 +148,8 @@ CREATE INDEX idx_user_elo_ratings_user_id ON user_elo_ratings(user_id);
 CREATE INDEX idx_user_elo_ratings_elo_rating ON user_elo_ratings(elo_rating);
 CREATE INDEX idx_bots_strategy_key ON bots(strategy_key);
 CREATE INDEX idx_bots_elo_rating ON bots(elo_rating);
-CREATE INDEX idx_bot_cards_game_id ON bot_cards(game_id);
-CREATE INDEX idx_bot_cards_bot_id ON bot_cards(bot_id);
+CREATE INDEX idx_bot_hands_game_id ON bot_hands(game_id);
+CREATE INDEX idx_bot_hands_bot_id ON bot_hands(bot_id);
 
 -- =============================================================================
 -- ROW LEVEL SECURITY: Enable RLS on all tables
@@ -159,7 +161,7 @@ ALTER TABLE player_hands ENABLE ROW LEVEL SECURITY;
 ALTER TABLE chat_messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_elo_ratings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bots ENABLE ROW LEVEL SECURITY;
-ALTER TABLE bot_cards ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bot_hands ENABLE ROW LEVEL SECURITY;
 
 -- =============================================================================
 -- RLS POLICIES: Security-first approach
@@ -229,8 +231,8 @@ CREATE POLICY "Anyone can view bots" ON bots
 CREATE POLICY "Only service role can manage bots" ON bots
   FOR ALL USING (auth.role() = 'service_role');
 
--- Bot cards: ONLY service role can access (edge functions only)
-CREATE POLICY "Only service role can access bot cards" ON bot_cards
+-- Bot hands: ONLY service role can access (edge functions only)
+CREATE POLICY "Only service role can access bot hands" ON bot_hands
   FOR ALL USING (auth.role() = 'service_role');
 
 -- =============================================================================
@@ -310,8 +312,8 @@ CREATE TRIGGER update_bots_updated_at
   FOR EACH ROW 
   EXECUTE FUNCTION update_updated_at_column();
 
-CREATE TRIGGER update_bot_cards_updated_at 
-  BEFORE UPDATE ON bot_cards
+CREATE TRIGGER update_bot_hands_updated_at 
+  BEFORE UPDATE ON bot_hands
   FOR EACH ROW 
   EXECUTE FUNCTION update_updated_at_column();
 
@@ -521,7 +523,8 @@ INSERT INTO bots (nickname, strategy_key) VALUES
 ('BoldBot', 'random'),
 ('CautiousBot', 'random'),
 ('WildBot', 'random'),
-('SteadyBot', 'random');
+('SteadyBot', 'random'),
+('OneCardBot', 'one_card');
 
 -- =============================================================================
 -- SETUP COMPLETE!

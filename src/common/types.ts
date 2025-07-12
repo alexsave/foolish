@@ -128,7 +128,7 @@ export interface PublicPlayer {
 export interface PrivatePlayer extends PublicPlayer {
     hand: Card[];
     awaiting_attack: boolean; // private info stored in player_hands table
-    // is_ai is inherited from PublicPlayer
+    done_attacking_this_round: boolean; // Flag to indicate bot is done attacking this round
 }
 
 // base game type
@@ -195,9 +195,9 @@ export interface Bot {
     updated_at: string;
 }
 
-export interface BotCard {
-    game_id: string;
+export interface BotHand {
     bot_id: string;
     hand: Card[];
     awaiting_attack: boolean;
+    done_attacking_this_round: boolean;
 }

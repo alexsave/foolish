@@ -1,0 +1,51 @@
+import { Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS } from '../types.ts';
+import { refillPlayerHands } from '../common_utils.ts';
+import { get_next_player_index } from '../common_utils.ts';
+
+// Validation function for good moves
+export function validateGood(game: Game, player_id: string): void {
+    if (game.status !== GAME_STATUS.WAIT_FOR_ATTACKERS) {
+        throw new Error(`Game ${game.id} is not in wait_for_attackers mode`);
+    }
+
+    const player = game.players.find(player => player.player_id === player_id)!;
+    if (player.status !== PLAYER_STATUS.IN) {
+        throw new Error(`Player ${player_id} is not ready to attack`);
+    }
+}
+
+// Execution function for good moves
+export function executeGood(game: Game, player_id: string): void {
+    const player: PrivatePlayer = game.players.find(player => player.player_id === player_id)!;
+
+    // set them to done attacking
+    player.awaiting_attack = false;
+
+    // check if all players are done attacking
+    const playable_players = game.players.filter(player => 
+        player.player_id !== game.players[game.defender].player_id && 
+        player.hand.some(card => game.table_battles.some(battle => battle.attack.value === card.value || (battle.defense && battle.defense.value === card.value))) &&
+        player.awaiting_attack);
+
+    if (playable_players.length !== 0) {
+        return;
+    }
+
+    // we are done attacking, shift positions
+    game.table_battles = [];
+    refillPlayerHands(game);
+    game.first_attacker = game.defender;
+    game.defender = get_next_player_index(game, game.first_attacker);
+    game.status = GAME_STATUS.FIRST_ATTACKER;
+    
+    // Reset done_attacking_this_round flag for all players when attacking shifts
+    game.players.forEach(player => {
+        player.done_attacking_this_round = false;
+    });
+}
+
+// Combined function with validation
+export function handleGood(game: Game, player_id: string): void {
+    validateGood(game, player_id);
+    executeGood(game, player_id);
+} 

@@ -1,5 +1,6 @@
-import { loadCompleteGame, saveCompleteGame, wrap400, broadcastToGameUsers, verify_player_in_game, start_game, personalize_game } from "../_shared/utils.ts";
+import { loadCompleteGame, saveCompleteGame, wrap400, broadcastToGameUsers, start_game } from "../_shared/utils.ts";
 import { GAME_STATUS, PLAYER_STATUS, SERVER_EVENT_TYPE, ServerEventType } from "../_shared/types.ts";
+import { verify_player_in_game, personalize_game } from "../_shared/common_utils.ts";
 
 wrap400(async (user, user_name, body) => {
     const user_id = user.id;

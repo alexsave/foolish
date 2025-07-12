@@ -1,6 +1,7 @@
-import { loadCompleteGame, saveCompleteGame, personalize_game, wrap400, broadcastToGameUsers } from "../_shared/utils.ts";
+import { loadCompleteGame, saveCompleteGame, wrap400, broadcastToGameUsers } from "../_shared/utils.ts";
 import { GAME_STATUS, PLAYER_STATUS, Game, SERVER_EVENT_TYPE, PrivatePlayer } from "../_shared/types.ts";
 import { MAX_PLAYERS } from "../_shared/constants.ts";
+import { personalize_game } from "../_shared/common_utils.ts";
 
 import { createClient } from "npm:@supabase/supabase-js@2.39.0"
 
@@ -47,7 +48,9 @@ wrap400(async (user, user_name, body) => {
         status: PLAYER_STATUS.IDLE,
         hand: [],
         awaiting_attack: false,
-        hand_length: 0
+        hand_length: 0,
+        is_ai: false,
+        done_attacking_this_round: false
     }
 
     // Add new player to game

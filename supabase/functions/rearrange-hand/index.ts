@@ -1,5 +1,6 @@
-import { loadCompleteGame, saveCompleteGame, personalize_game, wrap400, broadcastToGameUser } from "../_shared/utils.ts";
+import { loadCompleteGame, saveCompleteGame, wrap400, broadcastToGameUser } from "../_shared/utils.ts";
 import { SERVER_EVENT_TYPE, Game } from "../_shared/types.ts";
+import { personalize_game } from "../_shared/common_utils.ts";
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 

@@ -1,5 +1,6 @@
-import { createId, wrap400, broadcastToGameUsers, loadCompleteGame, personalize_game } from "../_shared/utils.ts";
+import { wrap400, broadcastToGameUsers, loadCompleteGame } from "../_shared/utils.ts";
 import { GAME_STATUS, PLAYER_STATUS, Game, PublicGame, PlayerHand, GameDeck } from "../_shared/types.ts";
+import { createId, personalize_game } from "../_shared/common_utils.ts";
 
 import { createClient } from "npm:@supabase/supabase-js@2.39.0"
 
@@ -25,12 +26,14 @@ wrap400(async (user, user_name, body) => {
             player_id: user_id,
             status: PLAYER_STATUS.IDLE,
             hand_length: 0,
+            is_ai: false,
         }],
         status: GAME_STATUS.WAITING,
         power_suit: 0,
         first_attacker: 0,
         defender: 0,
-        table_battles: []
+        table_battles: [],
+        elimination_order: []
     };
 
     // 1. Games table (public data only)

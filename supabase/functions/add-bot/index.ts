@@ -1,7 +1,8 @@
-import { wrap400, loadCompleteGame, saveCompleteGame, broadcastToGameUsers, verify_player_in_game, personalize_game } from "../_shared/utils.ts";
+import { wrap400, loadCompleteGame, saveCompleteGame, broadcastToGameUsers } from "../_shared/utils.ts";
 import { Game, GAME_STATUS, SERVER_EVENT_TYPE, PLAYER_STATUS, PrivatePlayer, Bot } from "../_shared/types.ts";
 import { MAX_PLAYERS } from "../_shared/constants.ts";
 import { createClient } from 'jsr:@supabase/supabase-js';
+import { verify_player_in_game, personalize_game } from "../_shared/common_utils.ts";
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 
@@ -55,7 +56,8 @@ wrap400(async (user, user_name, body) => {
         hand: [],
         awaiting_attack: false,
         hand_length: 0,
-        is_ai: true
+        is_ai: true,
+        done_attacking_this_round: false
     };
 
     // Add bot to game

@@ -1,6 +1,26 @@
 import { corsHeaders, handleCors } from './cors.ts';
-import { get_next_player_index } from './common_utils.ts';
-import { Card, Game, GAME_STATUS, PLAYER_STATUS, PersonalGame, SERVER_EVENT_TYPE, PRIVATE_EVENT_TYPE, PrivatePlayer, PublicGame, PublicPlayer, PlayerHand, UserEloRating, BotCard } from './types.ts';
+import { 
+    get_next_player_index, 
+    canCover, 
+    cardDisplay, 
+    card_comp, 
+    validate_defender_status, 
+    verify_cards_in_players_hand, 
+    no_cards_left, 
+    refill_deck, 
+    draw, 
+    determine_lowest_power_index, 
+    set_positions, 
+    initialize_hands, 
+    game_done,
+    createId,
+    verify_player_in_game,
+    other_player,
+    personalize_game,
+    calculateEloChange,
+    calculateGameRankings
+} from './common_utils.ts';
+import { Card, Game, GAME_STATUS, PLAYER_STATUS, PersonalGame, SERVER_EVENT_TYPE, PRIVATE_EVENT_TYPE, PrivatePlayer, PublicGame, PublicPlayer, PlayerHand, UserEloRating, BotHand } from './types.ts';
 import { ACE_VALUE, CARDS_PER_PLAYER, SUITS, VALUE_MAP, SUIT_MAP } from './constants.ts';
 import { createClient, User } from 'jsr:@supabase/supabase-js';
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
@@ -57,7 +77,7 @@ export const executeWithGameLock = async (game_id: string, operation: () => Prom
     }
 };
 
-export const createId = (): string => crypto.randomUUID().slice(0, 6);
+
 
 export const wrap400 = (execute: (user: User, user_name: string, body: any) => Promise<any>) => {
     const handler = async (req: Request): Promise<Response> => {
@@ -94,6 +114,7 @@ export const wrap400 = (execute: (user: User, user_name: string, body: any) => P
 
             // Schedule bot actions if this was a game operation
             if (game_id) {
+                // TODO: not quite. Only after start/attack/cover/pass/pickup/good 
                 scheduleBotActions(game_id);
             }
 
@@ -126,48 +147,11 @@ export const wrap400 = (execute: (user: User, user_name: string, body: any) => P
     return handler;
 };
 
-export const verify_player_in_game = (game: Game, player_id: string): void => {
-    if (!game.players.find(player => player.player_id === player_id)) {
-        throw new Error(`Player ${player_id} not in game ${game.id}`);
-    }
-}
 
-const other_player = (player: PrivatePlayer): PublicPlayer => {
-    return { 
-        name: player.name, 
-        player_id: player.player_id, 
-        status: player.status,
-        hand_length: player.hand.length,
-        is_ai: player.is_ai,
-    };
-}
 
-// Come to think of it, if we are broadcasting to the game, we can't be sending "self"
-export const personalize_game = (game: Game, player_id: string): PersonalGame => {
-    // everything except game_decks , added self
-    const self = game.players.find(player => player.player_id === player_id)!;
-    const personalGame: PersonalGame = {
-        id: game.id,
-        name: game.name,
-        deck_length: game.deck.length,
-        flipped: game.flipped,
-        players: game.players.map(player => other_player(player)),
-        status: game.status,
-        power_suit: game.power_suit,
-        first_attacker: game.first_attacker,
-        defender: game.defender,
-        table_battles: game.table_battles,
-        elimination_order: game.elimination_order,
 
-        //self: {
-            //...self,
-            //player_id: player_id,
-            //hand: game.players.find(player => player.player_id === player_id)!.hand,
-        //}
-        self: self
-    }
-    return personalGame;
-}
+
+
 
 // =============================================================================
 // DATABASE HELPER FUNCTIONS FOR SEPARATED SCHEMA - Using JOINs
@@ -183,7 +167,7 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
             *,
             game_decks(deck),
             player_hands(player_id, hand, awaiting_attack),
-            bot_cards(bot_id, hand, awaiting_attack)
+            bot_hands(bot_id, hand, awaiting_attack, done_attacking_this_round)
         `)
         .eq('id', game_id)
         .single();
@@ -197,21 +181,23 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
 
     const players: PrivatePlayer[] = data.players.map((player: any) => {
         console.log(JSON.stringify(data.player_hands) + " data.player_hands");
-        console.log(JSON.stringify(data.bot_cards) + " data.bot_cards");
+        console.log(JSON.stringify(data.bot_hands) + " data.bot_hands");
         console.log(JSON.stringify(player) + " player");
         
-        let hand, awaiting_attack;
+        let hand, awaiting_attack, done_attacking_this_round;
         
         if (player.is_ai) {
-            // Look up in bot_cards table
-            const botCard = data.bot_cards.find(card => card.bot_id === player.player_id)!;
-            hand = botCard.hand;
-            awaiting_attack = botCard.awaiting_attack;
+            // Look up in bot_hands table
+            const botHand = data.bot_hands.find(hand => hand.bot_id === player.player_id)!;
+            hand = botHand.hand;
+            awaiting_attack = botHand.awaiting_attack;
+            done_attacking_this_round = botHand.done_attacking_this_round;
         } else {
             // Look up in player_hands table
             const playerHand = data.player_hands.find(hand => hand.player_id === player.player_id)!;
             hand = playerHand.hand;
             awaiting_attack = playerHand.awaiting_attack;
+            done_attacking_this_round = false; // Human players don't use this flag, just set it to false for type simplicity
         }
         
         return {
@@ -221,6 +207,7 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
             is_ai: player.is_ai,
             hand: hand,
             awaiting_attack: awaiting_attack,
+            done_attacking_this_round: done_attacking_this_round,
             hand_length: hand.length,
         } as PrivatePlayer;
     });
@@ -333,19 +320,20 @@ export const saveCompleteGame = async (game: Game): Promise<any> => {
             .upsert(handUpdates);
     }
 
-    // Batch update bot cards
+    // Batch update bot hands
     const botPlayers = game.players.filter(player => player.is_ai);
-    const botCardUpdates: BotCard[] = botPlayers.map(player => ({
+    const botHandUpdates: BotHand[] = botPlayers.map(player => ({
         game_id: game.id,
         bot_id: player.player_id,
         hand: player.hand,
         awaiting_attack: player.awaiting_attack,
+        done_attacking_this_round: player.done_attacking_this_round,
     }));
 
-    if (botCardUpdates.length > 0) {
+    if (botHandUpdates.length > 0) {
         await supabaseClient
-            .from('bot_cards')
-            .upsert(botCardUpdates);
+            .from('bot_hands')
+            .upsert(botHandUpdates);
     }
 
     // dumb? maybe
@@ -577,96 +565,7 @@ export const start_game = async (game: Game) => {
     return game;
 }
 
-export const refill_deck = (players: number): Card[] => {
-    const deck: Card[] = [];
-    // Start at 6 vs 2
-    const startValue = players > 4 ? 1 : 5;
-    for (let i = 0; i < SUITS.length; i++) {
-        for (let j = startValue; j <= ACE_VALUE; j++) {
-            deck.push({ suit: SUITS[i], value: j });
-        }
-    }
-    return deck;
-}
-
-export const initialize_hands = (game: Game): Card[][] => {
-    const result: Card[][] = [];
-    for (let j = 0; j < game.players.length; j++) {
-        result.push([]);
-    }
-    for (let i = 0; i < CARDS_PER_PLAYER; i++) {
-        result.push([]);
-        for (let j = 0; j < game.players.length; j++) {
-            //const name = result[j].name;
-            const c = draw(game)!;
-            //console.log(`Player ${name} draws ${cardDisplay(c)}`);
-            result[j].push(c);
-        }
-    }
-    return result;
-}
-
-export const cardDisplay = (card: Card) => `${VALUE_MAP[card.value]} of ${SUIT_MAP[card.suit]}`;
-
-export const draw = (game: Game): Card | null => {
-    if (game.deck.length === 0) {
-        if (game.flipped === null) {
-            return null;
-        }
-        const copy: Card = game.flipped;
-        game.flipped = null;
-        return copy;
-    }
-    const index = Math.floor(Math.random() * game.deck.length);
-    const card = game.deck.splice(index, 1)[0];
-    return card;
-};
-
-export const determine_lowest_power_index = (game: Game): number => {
-    let lowestPowerValue = ACE_VALUE + 1;
-    let lowestPowerPlayer = -1;
-    for (let i = 0; i < game.players.length; i++) {
-        const hand = game.players[i].hand;
-        for (let j = 0; j < hand.length; j++) {
-            let card = hand[j];
-            if (card.suit === game.power_suit) {
-                if (card.value < lowestPowerValue) {
-                    lowestPowerValue = card.value;
-                    lowestPowerPlayer = i;
-                }
-            }
-        }
-    }
-    if (lowestPowerPlayer === -1) {
-        lowestPowerPlayer = Math.floor(Math.random() * game.players.length);
-    }
-    return lowestPowerPlayer;
-}
-
-export const set_positions = (game: Game) => {
-    game.first_attacker = game.first_attacker;
-    game.defender = (game.first_attacker + 1) % game.players.length;
-}
-
-// Helper method to validate player is/isn't defender
-export const validate_defender_status = (game: Game, player_id: string, should_be_defender: boolean) => {
-    const isDefender = game.players[game.defender].player_id === player_id;
-    if (isDefender !== should_be_defender) {
-        throw new Error(`Player ${player_id} is ${should_be_defender ? 'not' : ''} the defender`);
-    }
-}
-
-export const verify_cards_in_players_hand = (player: PrivatePlayer, cards: Card[]) => {
-    for (const card of cards) {
-        if (!player.hand.some(handCard => card_comp(handCard, card))) {
-            throw new Error(`Card ${cardDisplay(card)} is not in player ${player.player_id}'s hand`);
-        }
-    }
-}
-
-export const no_cards_left = (game: Game) => {
-    return game.deck.length === 0 && game.flipped === null;
-}
+// Functions moved to common_utils.ts
 
 export const check_win = async (game: Game) => {
     const the_fool = game_done(game);
@@ -698,19 +597,7 @@ export const check_win = async (game: Game) => {
     }
 }
 
-export const card_comp = (card1: Card, card2: Card): boolean => {
-    return card1.suit === card2.suit && card1.value === card2.value;
-}
-
-const game_done = (game: Game): string | null => {
-    // only one 1 left, every0one else is out
-    const in_players = game.players.filter(player => player.status === PLAYER_STATUS.IN);
-    const out_players = game.players.filter(player => player.status === PLAYER_STATUS.OUT);
-    if (in_players.length === 1 && out_players.length === game.players.length - 1) {
-        return in_players[0].player_id;
-    }
-    return null;
-}
+// Functions moved to common_utils.ts
 
 // TODO: find a better way to communicate refill without interfering with other broadcasts
 // timestamps???
@@ -790,11 +677,7 @@ export const refill = async (game: Game) => {
 // ELO RATING SYSTEM
 // =============================================================================
 
-// Standard ELO rating calculation
-const calculateEloChange = (playerRating: number, opponentRating: number, actualScore: number, kFactor: number = 32): number => {
-    const expectedScore = 1 / (1 + Math.pow(10, (opponentRating - playerRating) / 400));
-    return Math.round(kFactor * (actualScore - expectedScore));
-};
+
 
 // Get or create ELO rating for a user
 export const getOrCreateEloRating = async (userId: string): Promise<UserEloRating> => {
@@ -875,21 +758,7 @@ export const updateEloRatings = async (game: Game): Promise<void> => {
         }
 
         // Determine final rankings based on elimination order
-        // elimination_order contains players in order they WON (got rid of cards)
-        // The first player in elimination_order is the winner (1st place)
-        // The player NOT in elimination_order is the fool (last place)
-        const rankings: string[] = [];
-        
-        // Add winners in order they got rid of cards (elimination_order[0] = 1st place, etc.)
-        for (let i = 0; i < game.elimination_order.length; i++) {
-            rankings.push(game.elimination_order[i]);
-        }
-        
-        // Add the fool (player not in elimination_order) as last place
-        const fool = game.players.find(p => !game.elimination_order.includes(p.player_id));
-        if (fool) {
-            rankings.push(fool.player_id); // Fool is last place
-        }
+        const rankings = calculateGameRankings(game);
 
         // Calculate ELO changes for each player
         const ratingChanges = new Map<string, number>();
