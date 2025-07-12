@@ -12,7 +12,7 @@ export interface LegalMove {
 // Bot strategy interface
 export interface BotStrategy {
     // Given the game state and bot's hand, choose a legal move
-    chooseMove(game: Game, botPlayerId: string, legalMoves: LegalMove[]): LegalMove;
+    chooseMove(game: Game, botPlayerId: string, legalMoves: LegalMove[]): Promise<LegalMove>;
     
     // Strategy identifier
     readonly name: string;
@@ -22,7 +22,7 @@ export interface BotStrategy {
 export class RandomBotStrategy implements BotStrategy {
     readonly name = 'random';
     
-    chooseMove(game: Game, botPlayerId: string, legalMoves: LegalMove[]): LegalMove {
+    async chooseMove(game: Game, botPlayerId: string, legalMoves: LegalMove[]): Promise<LegalMove> {
         if (legalMoves.length === 0) {
             throw new Error('No legal moves available');
         }
@@ -52,7 +52,7 @@ export class RandomBotStrategy implements BotStrategy {
         const chosenMove = legalMoves[randomIndex];
         
         // Log the chosen move
-        let chosenDescription = `Bot ${botName} chose: ${chosenMove.type}`;
+        let chosenDescription = `Bot ${botName} chose: ${JSON.stringify(chosenMove)}`;
         if (chosenMove.cards) {
             chosenDescription += ` with cards: [${chosenMove.cards.map(c => `${c.value}${['♠','♥','♦','♣'][c.suit]}`).join(', ')}]`;
         }
@@ -72,7 +72,7 @@ export class RandomBotStrategy implements BotStrategy {
 export class OneCardBotStrategy implements BotStrategy {
     readonly name = 'one_card';
     
-    chooseMove(game: Game, botPlayerId: string, legalMoves: LegalMove[]): LegalMove {
+    async chooseMove(game: Game, botPlayerId: string, legalMoves: LegalMove[]): Promise<LegalMove> {
         if (legalMoves.length === 0) {
             throw new Error('No legal moves available');
         }

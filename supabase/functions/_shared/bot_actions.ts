@@ -32,12 +32,13 @@ export async function processBotActions(game_id: string): Promise<void> {
 // Process bot actions for a specific game
 async function processBotActionsForGame(game_id: string): Promise<void> {
     // Load initial game state to get bot and game info
+    let game: Game | null = null;
     let players: any[] = [];
     let gameStatus: any = null;
     
     try {
         await executeWithGameLock(game_id, async () => {
-            const game = await loadCompleteGame(game_id);
+            game = await loadCompleteGame(game_id);
             
             // Only process bot actions if game is in a state where bots can act
             if (game.status === GAME_STATUS.WAITING) {
@@ -69,7 +70,7 @@ async function processBotActionsForGame(game_id: string): Promise<void> {
         switch (gameStatus) {
             case GAME_STATUS.FIRST_ATTACKER:
                 // Only the first attacker bot should act
-                shouldConsider = index === players.findIndex(p => p.is_ai); // First bot found
+                shouldConsider = index === game!.first_attacker; // First bot found
                 break;
                 
             case GAME_STATUS.FREE_PLAY:
@@ -211,7 +212,7 @@ async function processBotAction(game: Game, bot: PrivatePlayer): Promise<void> {
         }
         
         // Let the strategy choose a move
-        const chosenMove = strategy.chooseMove(game, bot.player_id, legalMoves);
+        const chosenMove = await strategy.chooseMove(game, bot.player_id, legalMoves);
         console.log(`Chosen move: ${chosenMove.type}`);
         
         // Execute the chosen move using shared actions (skip validation since bots choose valid moves)
