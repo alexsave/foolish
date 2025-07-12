@@ -26,13 +26,13 @@ export const CoverArrows = () => {
 
             // Calculate approximate positions
             // Hand cards are at the bottom center
-            const handCardsStartX = window.innerWidth / 2 - (game.self.hand.length * 40) / 2;
-            const handX = handCardsStartX + (handCardIndex * 40) + 20; // 20 is half card width
+            const handCardsStartX = window.innerWidth / 2 - (game.self.hand.length * 50) / 2; // Updated for 5:7 ratio cards
+            const handX = handCardsStartX + (handCardIndex * 50) + 25; // 25 is half card width (50px)
             const handY = window.innerHeight - 100; // approximate bottom position
 
             // Table cards are in the center
             const tableX = window.innerWidth / 2;
-            const tableY = window.innerHeight / 2 + (tableCardIndex * 80) - (game.table_battles.length * 40); // spread them vertically
+            const tableY = window.innerHeight / 2 + (tableCardIndex * 80) - (game.table_battles.length * 40);
 
             return <g key={`arrow-${index}`}>
                 {/* Arrow line */}

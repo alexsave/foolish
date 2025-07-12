@@ -17,7 +17,6 @@ export const TableBattles = () => {
     return <> {
         game.table_battles.map((battle, index) => {
             let containerStyle: React.CSSProperties = {
-                border: '1px solid black',
                 display: 'flex',
                 flexDirection: 'row',
                 alignItems: 'center',

@@ -1,74 +1,85 @@
-import { PersonalGame, Card } from "../../common/types";
+import { Card, PersonalGame } from "../../common/types";
 import { useAuth } from "../../contexts/AuthContext";
-import { useGame } from "../../contexts/GameContext";
 import { useServer } from "../../contexts/ServerContext";
 import { VALUE_MAP, SUIT_MAP } from "../../utils/cards";
+import { useGame } from "../../contexts/GameContext";
 import { useDrag } from "../../contexts/DragContext";
 
 const DefenderActionPanel = () => {
-    const { game, pass, cover } = useServer() as { game: PersonalGame, pass: (cards: Card[]) => Promise<any>, cover: (coverCards: Card[], attackCards: Card[]) => Promise<any> };
-    const { coverMap, setCoverMap, selectedCards, setSelectedCards, isSelectingCover, setIsSelectingCover } = useGame();
+    const { game, cover, pass } = useServer() as { game: PersonalGame, cover: (covering_cards: Card[], covered_cards: Card[]) => Promise<any>, pass: (cards: Card[]) => Promise<any> };
+    const { selectedCards, setSelectedCards, coverMap, setCoverMap, isSelectingCover, setIsSelectingCover } = useGame();
 
-    // During first attack, defender can do nothing
-    if (game.status === 'first_attacker' || game.table_battles.length === 0) {
-        return <></>;
-    }
+    const canPass = (card: Card) => {
+        const table_battles = game.table_battles;
+        if (table_battles.length === 0) return false;
 
-    const everyCardUncovered = game.table_battles.every(battle => !battle.defense);
+        // Check if the card is part of selected cards
+        const isCardSelected = selectedCards.some(selectedCard =>
+            selectedCard.value === card.value && selectedCard.suit === card.suit
+        );
+
+        // Use all selected cards if the card is selected, otherwise just the card
+        const cardsToCheck = isCardSelected && selectedCards.length > 0 ? selectedCards : [card];
+
+        // All cards must have the same value
+        if (!cardsToCheck.every(c => c.value === cardsToCheck[0].value)) {
+            return false;
+        }
+
+        // All table battles must be uncovered (defense === null)
+        // All uncovered attacks must have the same value as the cards to check
+        return table_battles.every(battle =>
+            battle.defense === null && battle.attack.value === cardsToCheck[0].value
+        );
+    };
+
     const someCardUncovered = game.table_battles.some(battle => !battle.defense);
 
     return <>
-        {/* Pass is only shown if no attack card is covered */}
-        {everyCardUncovered && <button
-            style={{ width: '60px', height: '50px' }}
-            onClick={() => {
-                pass(selectedCards).then(() => {
+        {/* Rework conditional logic for pass */}
+        {/* Pass is only shown when valid */}
+        {someCardUncovered && selectedCards.some(card => canPass(card)) && (
+            <button
+                style={{ width: '60px', height: '50px' }}
+                onClick={() => pass(selectedCards).then(() => {
                     setSelectedCards([]);
                 }).catch((e) => {
                     console.error(e.message);
-                })
-            }}
-        >
-            Pass
-        </button>
-        }
+                })}
+            >
+                Pass
+            </button>
+        )}
 
-        {/* Cover is only shown if there are uncovered cards */}
         {someCardUncovered && <button style={{ width: '60px', height: '50px' }} onClick={() => {
-            // If there's exactly 1 uncovered card, cover it immediately
-            const uncoveredBattles = game.table_battles.filter(battle => !battle.defense);
-            if (uncoveredBattles.length === 1) {
-                // Auto-cover the single uncovered card
-                const attackCard = uncoveredBattles[0].attack;
-                const coverCard = selectedCards[0];
-                setCoverMap(new Map().set(coverCard, attackCard));
+            if (isSelectingCover) {
+                // Cancel cover mode
+                setIsSelectingCover(false);
+                setCoverMap(new Map());
+            } else {
+                // Enter cover mode
+                setIsSelectingCover(true);
+                setCoverMap(new Map());
+            }
+        }}>
+            {isSelectingCover ? 'Cancel' : 'Cover'}
+        </button>}
 
-                // Immediately execute the cover
-                cover([coverCard], [attackCard]).then(() => {
+        {/* Cover mode buttons */}
+        {isSelectingCover && <>
+            {/* We're in cover mode - show cover actions */}
+            <button style={{ width: '60px', height: '100%', fontSize: '10px' }} onClick={() => {
+                // Execute the covering action
+                const coveringCards = Array.from(coverMap.keys());
+                const coveredCards = Array.from(coverMap.values());
+
+                cover(coveringCards, coveredCards).then(() => {
                     setSelectedCards([]);
                     setCoverMap(new Map());
+                    setIsSelectingCover(false);
                 }).catch((e) => {
                     console.error(e.message);
                 });
-            } else {
-                // Multiple uncovered cards, need to select which one to cover
-                setIsSelectingCover(true);
-            }
-        }}>Cover</button>
-        }
-
-        {/* Actually Cover is shown when in cover selection mode OR when there are covers queued */}
-        {(isSelectingCover || coverMap.size > 0) && <>
-            <button style={{ width: '60px', height: '100%', fontSize: '10px' }} onClick={() => {
-                const coverCards = Array.from(coverMap.keys());
-                const attackCards = Array.from(coverMap.values());
-                cover(coverCards, attackCards).then(() => {
-                    setSelectedCards([]);
-                    setCoverMap(new Map());
-                }).catch((e) => {
-                    console.error(e.message);
-                })
-                setIsSelectingCover(false);
             }}>Actually Cover</button>
 
             {/* Cancel Cover button to reset cover selection */}
@@ -130,18 +141,10 @@ const CardDiv = () => {
         const isDragging = isActuallyDragging && draggedCardIndex === index;
         const isDraggingForAction = isDraggingForGameAction && draggedCardIndex === index;
 
-        // Determine the style based on game
-        let cardStyle: React.CSSProperties;
+        // Determine the border color based on state
+        let borderColor = 'black';
         if (isDraggingForAction || isSelected) {
-            cardStyle = {
-                border: '2px solid red',
-                backgroundColor: 'white'
-            };
-        } else {
-            cardStyle = {
-                border: '2px solid black',
-                backgroundColor: 'white'
-            };
+            borderColor = 'red';
         }
 
         return <div
@@ -151,35 +154,36 @@ const CardDiv = () => {
             onMouseDown={(e) => startCardDrag(e, index)}
             onTouchStart={(e) => startCardDrag(e, index)}
             style={{
-                ...cardStyle,
                 flex: '1 1 0',
                 minWidth: '20px',
-                maxWidth: '40px',
+                maxWidth: '50px',
                 zIndex: 1000,
                 height: '70px',
                 borderRadius: '5px',
                 display: 'flex',
                 justifyContent: 'center',
                 alignItems: 'center',
-                opacity: (isDragging && !isDraggingForAction) ? 0.3 : 1, // Only fade for rearranging, not game actions
+                opacity: (isDragging && !isDraggingForAction) ? 0.3 : 1,
                 transition: 'all 0.1s ease',
                 cursor: 'move',
                 userSelect: 'none',
-                margin: '0 1px'
+                margin: '0 1px',
+                border: `2px solid ${borderColor}`,
+                backgroundColor: 'white'
             }}
-
         >
             <p style={{
-                pointerEvents: 'none', // Prevent text selection
+                pointerEvents: 'none',
                 userSelect: 'none',
                 textAlign: 'center',
-                fontSize: '20px'
+                fontSize: '20px',
+                margin: 0
             }}>
                 {VALUE_MAP[card.value]}
                 <br />
                 {SUIT_MAP[card.suit]}
             </p>
-        </div>
+        </div>;
     })} </div>
 }
 

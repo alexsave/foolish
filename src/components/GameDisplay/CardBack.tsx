@@ -10,7 +10,7 @@ export const CardBack = ({ deckSize = 36 }: { deckSize?: number }) => {
         });
     }, []);
 
-    return <div style={{ position: 'relative', width: '40px', height: '70px' }}>
+    return <div style={{ position: 'relative', width: '50px', height: '70px' }}> {/* Updated to 5:7 ratio */}
         {/* Multiple card layers to show deck thickness */}
         {Array.from({ length: Math.min(Math.ceil(deckSize / 6), 6) }).map((_, layerIndex) => (
             <div
@@ -19,7 +19,7 @@ export const CardBack = ({ deckSize = 36 }: { deckSize?: number }) => {
                     position: 'absolute',
                     top: `${-layerIndex * 2}px`,
                     left: `${-layerIndex * 1}px`,
-                    width: '40px',
+                    width: '50px', // Updated to 5:7 ratio
                     height: '70px',
                     backgroundColor: '#DC143C', // Fallback crimson red
                     border: '1px solid #8B0000', // Dark red border
@@ -38,7 +38,7 @@ export const CardBack = ({ deckSize = 36 }: { deckSize?: number }) => {
             position: 'absolute',
             top: `${-Math.min(Math.ceil(deckSize / 6), 6) * 2}px`,
             left: `${-Math.min(Math.ceil(deckSize / 6), 6) * 1}px`,
-            width: '40px',
+            width: '50px', // Updated to 5:7 ratio
             height: '70px',
             backgroundColor: '#DC143C', // Fallback crimson red
             border: '2px solid #8B0000',

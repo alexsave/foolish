@@ -17,12 +17,12 @@ const CardsVisual = ({ player, playerCardPatternDataUrl }: { player: PublicPlaye
     }}>
         {Array.from({ length: Math.min(player.hand_length, 8) }).map((_, cardIndex) => {
             const mid = (player.hand_length + 1) / 2;
-            const halfCardWidth = 12 / 2;
+            const halfCardWidth = 10 / 2; // Updated for 5:7 ratio
             const halfDivWidth = 100 / 2;
             const style: React.CSSProperties = {
                 backgroundColor: '#DC143C', // Fallback red background
-                width: '12px',
-                height: '18px',
+                width: '10px', // 5:7 ratio - width
+                height: '14px', // 5:7 ratio - height  
                 borderRadius: '2px',
                 border: '1px solid #8B0000', // Same dark red border
                 position: 'absolute',

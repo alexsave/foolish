@@ -9,7 +9,7 @@ export const DragShadow = () => {
     const dragStyle = {
         border: '2px solid black',
         backgroundColor: 'white',
-        width: '30px',
+        width: '36px', // Updated to 5:7 ratio (36:50, rounded from 35.7)
         height: '50px',
         borderRadius: '4px',
         display: 'flex',
@@ -20,8 +20,8 @@ export const DragShadow = () => {
         opacity: 0.9
     }
 
-    const getIndicatorText = () => {
-        switch (action.type) {
+    const getIndicatorText = (actionType: string) => {
+        switch (actionType) {
             case 'attack':
                 return `⚔️ Attack`;
             case 'cover':
@@ -29,19 +29,17 @@ export const DragShadow = () => {
             case 'pass':
                 return `🔄 Pass`;
             default:
-                return '❓';
+                return null; // No indicator for invalid actions
         }
     }
 
+    // Always show the card when dragging for game action, even if no valid action
     if (!isDraggingForGameAction || !draggedCard || !currentCursorPos) {
         return <></>;
     }
 
     const action = determineGameAction(currentCursorPos.x, currentCursorPos.y, draggedCard);
-
-    if (!['attack', 'cover', 'pass'].includes(action.type)) {
-        return <></>;
-    }
+    const indicatorText = getIndicatorText(action.type);
 
     const isDraggedCardSelected = selectedCards.some(selectedCard =>
         selectedCard.value === draggedCard.value && selectedCard.suit === draggedCard.suit
@@ -59,18 +57,20 @@ export const DragShadow = () => {
         alignItems: 'center',
         zIndex: 2001,
     }}>
-        {/* Floating action indicator during game action drag */}
-        <div style={{
-            backgroundColor: 'rgba(0, 0, 0, 0.8)',
-            color: 'white',
-            padding: '4px 8px',
-            borderRadius: '4px',
-            fontSize: '12px',
-            pointerEvents: 'none'
-        }}>
-            {getIndicatorText()}
-        </div>
-        {/* Shadow cards showing what's being dragged */}
+        {/* Only show action indicator when there's a valid action */}
+        {indicatorText && (
+            <div style={{
+                backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                color: 'white',
+                padding: '4px 8px',
+                borderRadius: '4px',
+                fontSize: '12px',
+                pointerEvents: 'none'
+            }}>
+                {indicatorText}
+            </div>
+        )}
+        {/* Always show shadow cards when dragging outside hand */}
         <div>{
             cardsToUse.map((card, index) => <div
                 key={`shadow-${card.value}-${card.suit}-${index}`}
