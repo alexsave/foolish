@@ -59,6 +59,7 @@ CREATE TABLE games (
   first_attacker INTEGER,
   defender INTEGER,
   table_battles JSONB NOT NULL DEFAULT '[]'::jsonb, -- Battle[] - public info
+  elimination_order JSONB NOT NULL DEFAULT '[]'::jsonb, -- Array of player_ids in order they were eliminated
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW()
 );
@@ -94,6 +95,15 @@ CREATE TABLE chat_messages (
   created_at TIMESTAMP DEFAULT NOW()
 );
 
+-- User ELO ratings table
+CREATE TABLE user_elo_ratings (
+  user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  elo_rating INTEGER NOT NULL DEFAULT 1000,
+  games_played INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
 -- =============================================================================
 -- INDEXES: Create indexes for better performance
 -- =============================================================================
@@ -107,6 +117,8 @@ CREATE INDEX idx_chat_messages_game_id ON chat_messages(game_id);
 CREATE INDEX idx_chat_messages_user_id ON chat_messages(user_id);
 CREATE INDEX idx_chat_messages_created_at ON chat_messages(created_at);
 CREATE INDEX idx_games_updated_at ON games(updated_at);
+CREATE INDEX idx_user_elo_ratings_user_id ON user_elo_ratings(user_id);
+CREATE INDEX idx_user_elo_ratings_elo_rating ON user_elo_ratings(elo_rating);
 
 -- =============================================================================
 -- ROW LEVEL SECURITY: Enable RLS on all tables
@@ -116,6 +128,7 @@ ALTER TABLE games ENABLE ROW LEVEL SECURITY;
 ALTER TABLE game_decks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE player_hands ENABLE ROW LEVEL SECURITY;
 ALTER TABLE chat_messages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_elo_ratings ENABLE ROW LEVEL SECURITY;
 
 -- =============================================================================
 -- RLS POLICIES: Security-first approach
@@ -171,6 +184,13 @@ CREATE POLICY "Players can send chat messages to their games" ON chat_messages
     ) AND user_id = auth.uid()
   );
 
+-- User ELO ratings: Read-only for authenticated users
+CREATE POLICY "Anyone can view ELO ratings" ON user_elo_ratings
+  FOR SELECT USING (true);
+
+CREATE POLICY "Only service role can manage ELO ratings" ON user_elo_ratings
+  FOR ALL USING (auth.role() = 'service_role');
+
 -- =============================================================================
 -- FUNCTIONS: Helper functions and triggers
 -- =============================================================================
@@ -205,6 +225,19 @@ BEGIN
 END;
 $$;
 
+-- Function to create default ELO rating for new users
+CREATE OR REPLACE FUNCTION public.create_default_elo_rating()
+RETURNS TRIGGER
+SECURITY DEFINER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  INSERT INTO public.user_elo_ratings (user_id, elo_rating, games_played)
+  VALUES (NEW.id, 1000, 0);
+  RETURN NEW;
+END;
+$$;
+
 -- =============================================================================
 -- TRIGGERS: Set up automatic triggers
 -- =============================================================================
@@ -224,12 +257,24 @@ CREATE TRIGGER update_player_hands_updated_at
   FOR EACH ROW 
   EXECUTE FUNCTION update_updated_at_column();
 
+CREATE TRIGGER update_user_elo_ratings_updated_at 
+  BEFORE UPDATE ON user_elo_ratings
+  FOR EACH ROW 
+  EXECUTE FUNCTION update_updated_at_column();
+
 -- Trigger for chat message changes
 CREATE TRIGGER handle_chat_messages_changes
   AFTER INSERT OR UPDATE OR DELETE
   ON public.chat_messages
   FOR EACH ROW
   EXECUTE FUNCTION chat_messages_changes();
+
+-- Trigger to create default ELO rating for new users
+CREATE TRIGGER handle_new_user_elo_rating
+  AFTER INSERT
+  ON auth.users
+  FOR EACH ROW
+  EXECUTE FUNCTION create_default_elo_rating();
 
 -- =============================================================================
 -- REALTIME AUTHORIZATION POLICIES

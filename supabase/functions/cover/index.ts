@@ -13,7 +13,7 @@ wrap400(async (user, user_name, body) => {
     verify_player_in_game(game, user_id);
 
     // Handle cover logic
-    game = handle_cover(game, game_id, user_id, cover_cards, attack_cards);
+    game = await handle_cover(game, game_id, user_id, cover_cards, attack_cards);
 
     // Save complete game state back to separated tables
     await saveCompleteGame(game);
@@ -30,7 +30,7 @@ wrap400(async (user, user_name, body) => {
 
 });
 
-const handle_cover = (game: Game, game_id: string, player_id: string, cover_cards: Card[], attack_cards: Card[]): Game => {
+const handle_cover = async (game: Game, game_id: string, player_id: string, cover_cards: Card[], attack_cards: Card[]): Promise<Game> => {
     // cover a card
 
 
@@ -124,7 +124,8 @@ const handle_cover = (game: Game, game_id: string, player_id: string, cover_card
             }
             // win if still empty after refill
             game.players[game.first_attacker].status = PLAYER_STATUS.OUT;
-            check_win(game);
+            game.elimination_order.push(game.players[game.first_attacker].player_id); // Track elimination order
+            await check_win(game);
             game.first_attacker = get_next_player_index(game, game.first_attacker);
         }
         game.defender = get_next_player_index(game, game.first_attacker);

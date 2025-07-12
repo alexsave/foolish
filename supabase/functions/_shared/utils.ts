@@ -1,6 +1,6 @@
 import { corsHeaders, handleCors } from './cors.ts';
 import { get_next_player_index } from './common_utils.ts';
-import { Card, Game, GAME_STATUS, PLAYER_STATUS, PersonalGame, SERVER_EVENT_TYPE, PRIVATE_EVENT_TYPE, PrivatePlayer, PublicGame, PublicPlayer, PlayerHand } from './types.ts';
+import { Card, Game, GAME_STATUS, PLAYER_STATUS, PersonalGame, SERVER_EVENT_TYPE, PRIVATE_EVENT_TYPE, PrivatePlayer, PublicGame, PublicPlayer, PlayerHand, UserEloRating } from './types.ts';
 import { ACE_VALUE, CARDS_PER_PLAYER, SUITS, VALUE_MAP, SUIT_MAP } from './constants.ts';
 import { createClient, User } from 'jsr:@supabase/supabase-js';
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
@@ -150,6 +150,7 @@ export const personalize_game = (game: Game, player_id: string): PersonalGame =>
         first_attacker: game.first_attacker,
         defender: game.defender,
         table_battles: game.table_battles,
+        elimination_order: game.elimination_order,
 
         //self: {
             //...self,
@@ -213,6 +214,7 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
         first_attacker: data.first_attacker,
         defender: data.defender,
         table_battles: data.table_battles,
+        elimination_order: data.elimination_order,
     }
     
     return game;
@@ -274,7 +276,8 @@ export const saveCompleteGame = async (game: Game): Promise<any> => {
         power_suit: game.power_suit,
         first_attacker: game.first_attacker,
         defender: game.defender,
-        table_battles: game.table_battles
+        table_battles: game.table_battles,
+        elimination_order: game.elimination_order
     };
 
     await supabaseClient
@@ -417,6 +420,7 @@ export const broadcastToGameUsers = async (game: Game, messageType: string, base
             first_attacker: game.first_attacker,
             defender: game.defender,
             table_battles: game.table_battles,
+            elimination_order: game.elimination_order,
         };
 
         console.log(JSON.stringify(baseGameState) + " baseGameState");
@@ -478,6 +482,7 @@ export const start_game = async (game: Game) => {
     });
 
     game.deck = refill_deck(game.players.length);
+    game.elimination_order = []; // Initialize elimination order tracking
 
     const hands: Card[][] = initialize_hands(game);
     for (let i = 0; i < game.players.length; i++) {
@@ -622,9 +627,12 @@ export const no_cards_left = (game: Game) => {
     return game.deck.length === 0 && game.flipped === null;
 }
 
-export const check_win = (game: Game) => {
+export const check_win = async (game: Game) => {
     const the_fool = game_done(game);
     if (the_fool !== null) {
+
+        // Update ELO ratings before resetting game state
+        await updateEloRatings(game);
 
         game.status = GAME_STATUS.WAITING;
         // set all players to idle
@@ -634,6 +642,7 @@ export const check_win = (game: Game) => {
         });
         game.table_battles = [];
         game.deck = refill_deck(game.players.length);
+        game.elimination_order = []; // Reset elimination order
 
         // Clear chat messages for the game (fire and forget)
         supabaseClient
@@ -664,7 +673,7 @@ const game_done = (game: Game): string | null => {
 
 // TODO: find a better way to communicate refill without interfering with other broadcasts
 // timestamps???
-export const refill = (game: Game) => {
+export const refill = async (game: Game) => {
 
     if (no_cards_left(game)) {
         return;
@@ -727,10 +736,148 @@ export const refill = (game: Game) => {
                     message: `Player ${game.players[pIndex].name} got rid of all their cards`
                 });*/
                 game.players[pIndex].status = PLAYER_STATUS.OUT;
-                check_win(game);
+                game.elimination_order.push(game.players[pIndex].player_id); // Track elimination order
+                await check_win(game);
             }
         }
         pIndex = get_next_player_index(game, pIndex);
         //pIndex = (pIndex + 1) % game.players.length;
     } while (pIndex !== game.first_attacker/* && !no_cards_left(game)*/);
+};
+
+// =============================================================================
+// ELO RATING SYSTEM
+// =============================================================================
+
+// Standard ELO rating calculation
+const calculateEloChange = (playerRating: number, opponentRating: number, actualScore: number, kFactor: number = 32): number => {
+    const expectedScore = 1 / (1 + Math.pow(10, (opponentRating - playerRating) / 400));
+    return Math.round(kFactor * (actualScore - expectedScore));
+};
+
+// Get or create ELO rating for a user
+export const getOrCreateEloRating = async (userId: string): Promise<UserEloRating> => {
+    const { data, error } = await supabaseClient
+        .from('user_elo_ratings')
+        .select('*')
+        .eq('user_id', userId)
+        .single();
+
+    if (error && error.code === 'PGRST116') {
+        // User doesn't have ELO rating, create one
+        const newRating = {
+            user_id: userId,
+            elo_rating: 1000,
+            games_played: 0
+        };
+
+        const { data: insertData, error: insertError } = await supabaseClient
+            .from('user_elo_ratings')
+            .insert(newRating)
+            .select()
+            .single();
+
+        if (insertError) {
+            console.error('Error creating ELO rating:', insertError);
+            throw new Error('Failed to create ELO rating');
+        }
+
+        return insertData;
+    }
+
+    if (error) {
+        console.error('Error fetching ELO rating:', error);
+        throw new Error('Failed to fetch ELO rating');
+    }
+
+    return data;
+};
+
+// Update ELO ratings for all players after game completion
+export const updateEloRatings = async (game: Game): Promise<void> => {
+    if (game.players.length < 2) {
+        return; // No ELO updates for single player games
+    }
+
+    try {
+        // Get all player ELO ratings
+        const playerRatings = new Map<string, UserEloRating>();
+        for (const player of game.players) {
+            const rating = await getOrCreateEloRating(player.player_id);
+            playerRatings.set(player.player_id, rating);
+        }
+
+        // Determine final rankings based on elimination order
+        // elimination_order contains players in order they WON (got rid of cards)
+        // The first player in elimination_order is the winner (1st place)
+        // The player NOT in elimination_order is the fool (last place)
+        const rankings: string[] = [];
+        
+        // Add winners in order they got rid of cards (elimination_order[0] = 1st place, etc.)
+        for (let i = 0; i < game.elimination_order.length; i++) {
+            rankings.push(game.elimination_order[i]);
+        }
+        
+        // Add the fool (player not in elimination_order) as last place
+        const fool = game.players.find(p => !game.elimination_order.includes(p.player_id));
+        if (fool) {
+            rankings.push(fool.player_id); // Fool is last place
+        }
+
+        // Calculate ELO changes for each player
+        const ratingChanges = new Map<string, number>();
+        
+        for (let i = 0; i < rankings.length; i++) {
+            const playerId = rankings[i];
+            const playerRating = playerRatings.get(playerId)!;
+            let totalChange = 0;
+
+            // For each other player, calculate 1v1 ELO change
+            for (let j = 0; j < rankings.length; j++) {
+                if (i === j) continue;
+                
+                const opponentId = rankings[j];
+                const opponentRating = playerRatings.get(opponentId)!;
+                
+                // Determine score: 1 if player finished better, 0 if worse, 0.5 if tie
+                let score: number;
+                if (i < j) {
+                    score = 1; // Player finished better
+                } else if (i > j) {
+                    score = 0; // Player finished worse
+                } else {
+                    score = 0.5; // Tie (shouldn't happen in our ranking system)
+                }
+
+                const change = calculateEloChange(playerRating.elo_rating, opponentRating.elo_rating, score);
+                totalChange += change;
+            }
+
+            ratingChanges.set(playerId, totalChange);
+        }
+
+        // Update all player ratings in database with a single batch upsert
+        const ratingUpdates: Array<{user_id: string, elo_rating: number, games_played: number}> = [];
+        for (const [playerId, change] of ratingChanges) {
+            const currentRating = playerRatings.get(playerId)!;
+            const newRating = Math.max(0, currentRating.elo_rating + change); // Prevent negative ratings
+            
+            ratingUpdates.push({
+                user_id: playerId,
+                elo_rating: newRating,
+                games_played: currentRating.games_played + 1
+            });
+        }
+
+        if (ratingUpdates.length > 0) {
+            await supabaseClient
+                .from('user_elo_ratings')
+                .upsert(ratingUpdates);
+        }
+
+        console.log('ELO ratings updated successfully for game:', game.id);
+    } catch (error) {
+        console.error('Error updating ELO ratings:', error);
+        // Don't throw error to prevent breaking game completion
+    }
 };

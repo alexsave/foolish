@@ -13,7 +13,7 @@ wrap400(async (user, user_name, body) => {
     verify_player_in_game(game, user_id);
 
     // Handle pass logic
-    game = handle_pass(game, game_id, user_id, cards);
+    game = await handle_pass(game, game_id, user_id, cards);
 
     // Save complete game state back to separated tables
     await saveCompleteGame(game);
@@ -29,7 +29,7 @@ wrap400(async (user, user_name, body) => {
 
 });
 
-const handle_pass = (game: Game, game_id: string, player_id: string, cards: Card[]): Game => {
+const handle_pass = async (game: Game, game_id: string, player_id: string, cards: Card[]): Promise<Game> => {
     if (!cards) {
         throw new Error(`No cards provided`);
     }
@@ -96,7 +96,8 @@ const handle_pass = (game: Game, game_id: string, player_id: string, cards: Card
     if (no_cards_left(game) && defender.hand.length === 0) {
         // they win
         defender.status = PLAYER_STATUS.OUT;
-        check_win(game);
+        game.elimination_order.push(defender.player_id); // Track elimination order
+        await check_win(game);
         game.defender = next_player_index;
         broadcastToGameUsers(game, 'game_update', {
             type: SERVER_EVENT_TYPE.PLAYER_WON,

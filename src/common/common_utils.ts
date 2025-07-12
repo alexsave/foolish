@@ -1,4 +1,4 @@
-import { Card, Game, PLAYER_STATUS, PersonalGame } from "./types";
+import { Card, Game, PersonalGame, PLAYER_STATUS } from "./types";
 
 export const get_next_player_index = (game: Game | PersonalGame, current_player: number): number => {
     let next_player = (current_player + 1) % game.players.length;

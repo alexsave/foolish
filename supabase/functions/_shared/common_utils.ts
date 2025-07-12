@@ -1,6 +1,6 @@
-import { Card, Game, PLAYER_STATUS } from "./types.ts";
+import { Card, Game, PersonalGame, PLAYER_STATUS } from "./types.ts";
 
-export const get_next_player_index = (game: Game, current_player: number): number => {
+export const get_next_player_index = (game: Game | PersonalGame, current_player: number): number => {
     let next_player = (current_player + 1) % game.players.length;
     while (game.players[next_player].status === PLAYER_STATUS.OUT) {
         next_player = (next_player + 1) % game.players.length;

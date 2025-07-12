@@ -141,6 +141,7 @@ export interface PublicGame {
     first_attacker: number;
     defender: number;
     table_battles: Battle[];
+    elimination_order: string[]; // Array of player_ids in order they were eliminated
 }
 
 // Personal game is what gets sent to clients. they do not see other players hands, only length
@@ -171,4 +172,12 @@ export interface PlayerHand {
 export interface GameDeck {
     game_id: string;
     deck: Card[];
+}
+
+export interface UserEloRating {
+    user_id: string;
+    elo_rating: number;
+    games_played: number;
+    created_at: string;
+    updated_at: string;
 }

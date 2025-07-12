@@ -15,7 +15,7 @@ serve(wrap400(async (user, user_name, body) => {
     verify_player_in_game(game, user_id);
 
     // Handle attack logic
-    game = handle_attack(game, game_id, user_id, cards);
+    game = await handle_attack(game, game_id, user_id, cards);
 
     // Save complete game state back to separated tables
     await saveCompleteGame(game);
@@ -32,7 +32,7 @@ serve(wrap400(async (user, user_name, body) => {
 
 }));
 
-const handle_attack = (game: Game, game_id: string, player_id: string, cards: Card[]): Game => {
+const handle_attack = async (game: Game, game_id: string, player_id: string, cards: Card[]): Promise<Game> => {
     //const public_game_channel = getPublicGameChannel();
     if (!cards) {
         throw new Error(`No cards provided`);
@@ -93,7 +93,8 @@ const handle_attack = (game: Game, game_id: string, player_id: string, cards: Ca
         if (no_cards_left(game) && player.hand.length === 0) {
             // they win
             player.status = PLAYER_STATUS.OUT;
-            check_win(game);
+            game.elimination_order.push(player.player_id); // Track elimination order
+            await check_win(game);
 
             broadcast_message = {
                 type: 'player_wins',
@@ -146,7 +147,8 @@ const handle_attack = (game: Game, game_id: string, player_id: string, cards: Ca
         if (no_cards_left(game) && player.hand.length === 0) {
             // they win
             player.status = PLAYER_STATUS.OUT;
-            check_win(game);
+            game.elimination_order.push(player.player_id); // Track elimination order
+            await check_win(game);
 
             broadcast_message = {
                 type: 'player_wins',
