@@ -316,6 +316,12 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         })
     };
 
+    const addBot = (gameId: string): Promise<{ game_id: string }> => {
+        return invokeGameFunctions('add-bot', {
+            game_id: gameId,
+        })
+    };
+
     // Hmm loading the url should add the player to the game.
 
     const loadGame = (gameId: string): Promise<{ game_id: string }> => {
@@ -699,6 +705,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             createGame,
             joinGame,
             startGame,
+            addBot,
             game_id,
             game: games[game_id!],
             games,
@@ -724,6 +731,7 @@ interface ServerContextType {
     createGame: () => Promise<{ game_id: string }>;
     joinGame: (gameId: string) => Promise<{ game_id: string }>;
     startGame: (gameId: string) => Promise<{ game_id: string }>;
+    addBot: (gameId: string) => Promise<{ game_id: string }>;
     game_id: string | null;
     game: PersonalGame | null;
     games: { [key: string]: PersonalGame };

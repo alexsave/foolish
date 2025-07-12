@@ -122,6 +122,7 @@ export interface PublicPlayer {
     status: PlayerStatus;
     name: string;
     hand_length: number; // how to get this? ez. just keep it in sync
+    is_ai: boolean; // true if this is an AI bot player
 }
 
 export interface PrivatePlayer extends PublicPlayer {
@@ -180,4 +181,22 @@ export interface UserEloRating {
     games_played: number;
     created_at: string;
     updated_at: string;
+}
+
+// Bot-related interfaces
+export interface Bot {
+    id: string;
+    nickname: string;
+    strategy_key: string;
+    elo_rating: number;
+    games_played: number;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface BotCard {
+    game_id: string;
+    bot_id: string;
+    hand: Card[];
+    awaiting_attack: boolean;
 }

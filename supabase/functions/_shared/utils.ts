@@ -1,11 +1,12 @@
 import { corsHeaders, handleCors } from './cors.ts';
 import { get_next_player_index } from './common_utils.ts';
-import { Card, Game, GAME_STATUS, PLAYER_STATUS, PersonalGame, SERVER_EVENT_TYPE, PRIVATE_EVENT_TYPE, PrivatePlayer, PublicGame, PublicPlayer, PlayerHand, UserEloRating } from './types.ts';
+import { Card, Game, GAME_STATUS, PLAYER_STATUS, PersonalGame, SERVER_EVENT_TYPE, PRIVATE_EVENT_TYPE, PrivatePlayer, PublicGame, PublicPlayer, PlayerHand, UserEloRating, BotCard } from './types.ts';
 import { ACE_VALUE, CARDS_PER_PLAYER, SUITS, VALUE_MAP, SUIT_MAP } from './constants.ts';
 import { createClient, User } from 'jsr:@supabase/supabase-js';
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { getAuthenticatedUser } from './auth.ts';
+import { scheduleBotActions } from './bot_actions.ts';
 
 const supabaseClient = createClient(
     Deno.env.get('SUPABASE_URL') || '',
@@ -91,6 +92,11 @@ export const wrap400 = (execute: (user: User, user_name: string, body: any) => P
                 result = await execute(user, user_name, body);
             }
 
+            // Schedule bot actions if this was a game operation
+            if (game_id) {
+                scheduleBotActions(game_id);
+            }
+
             // Create standardized response
             return new Response(JSON.stringify(result), {
                 headers: {
@@ -131,7 +137,8 @@ const other_player = (player: PrivatePlayer): PublicPlayer => {
         name: player.name, 
         player_id: player.player_id, 
         status: player.status,
-        hand_length: player.hand.length, 
+        hand_length: player.hand.length,
+        is_ai: player.is_ai,
     };
 }
 
@@ -175,7 +182,8 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
         .select(`
             *,
             game_decks(deck),
-            player_hands(player_id, hand, awaiting_attack)
+            player_hands(player_id, hand, awaiting_attack),
+            bot_cards(bot_id, hand, awaiting_attack)
         `)
         .eq('id', game_id)
         .single();
@@ -189,15 +197,31 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
 
     const players: PrivatePlayer[] = data.players.map((player: any) => {
         console.log(JSON.stringify(data.player_hands) + " data.player_hands");
+        console.log(JSON.stringify(data.bot_cards) + " data.bot_cards");
         console.log(JSON.stringify(player) + " player");
-        const hand = data.player_hands.find(hand => hand.player_id === player.player_id)!;
+        
+        let hand, awaiting_attack;
+        
+        if (player.is_ai) {
+            // Look up in bot_cards table
+            const botCard = data.bot_cards.find(card => card.bot_id === player.player_id)!;
+            hand = botCard.hand;
+            awaiting_attack = botCard.awaiting_attack;
+        } else {
+            // Look up in player_hands table
+            const playerHand = data.player_hands.find(hand => hand.player_id === player.player_id)!;
+            hand = playerHand.hand;
+            awaiting_attack = playerHand.awaiting_attack;
+        }
+        
         return {
             player_id: player.player_id,
             name: player.name,
             status: player.status,
-            // The only find we have to do
-            hand: hand.hand, // this is failing for som reason
-            awaiting_attack: hand.awaiting_attack,
+            is_ai: player.is_ai,
+            hand: hand,
+            awaiting_attack: awaiting_attack,
+            hand_length: hand.length,
         } as PrivatePlayer;
     });
 
@@ -263,7 +287,8 @@ export const saveCompleteGame = async (game: Game): Promise<any> => {
         name: player.name,
         player_id: player.player_id,
         status: player.status,
-        hand_length: player.hand.length
+        hand_length: player.hand.length,
+        is_ai: player.is_ai
     }));
 
     const publicGame: PublicGame = {
@@ -293,8 +318,9 @@ export const saveCompleteGame = async (game: Game): Promise<any> => {
             deck: game.deck
         });
 
-    // Batch update all player hands
-    const handUpdates: PlayerHand[] = game.players.map(player => ({
+    // Batch update human player hands
+    const humanPlayers = game.players.filter(player => !player.is_ai);
+    const handUpdates: PlayerHand[] = humanPlayers.map(player => ({
         game_id: game.id,
         player_id: player.player_id,
         hand: player.hand,
@@ -305,6 +331,21 @@ export const saveCompleteGame = async (game: Game): Promise<any> => {
         await supabaseClient
             .from('player_hands')
             .upsert(handUpdates);
+    }
+
+    // Batch update bot cards
+    const botPlayers = game.players.filter(player => player.is_ai);
+    const botCardUpdates: BotCard[] = botPlayers.map(player => ({
+        game_id: game.id,
+        bot_id: player.player_id,
+        hand: player.hand,
+        awaiting_attack: player.awaiting_attack,
+    }));
+
+    if (botCardUpdates.length > 0) {
+        await supabaseClient
+            .from('bot_cards')
+            .upsert(botCardUpdates);
     }
 
     // dumb? maybe
@@ -793,6 +834,22 @@ export const getOrCreateEloRating = async (userId: string): Promise<UserEloRatin
     return data;
 };
 
+// Get ELO rating for a bot
+export const getBotEloRating = async (botId: string): Promise<{elo_rating: number, games_played: number}> => {
+    const { data, error } = await supabaseClient
+        .from('bots')
+        .select('elo_rating, games_played')
+        .eq('id', botId)
+        .single();
+
+    if (error) {
+        console.error('Error fetching bot ELO rating:', error);
+        throw new Error('Failed to fetch bot ELO rating');
+    }
+
+    return data;
+};
+
 // Update ELO ratings for all players after game completion
 export const updateEloRatings = async (game: Game): Promise<void> => {
     if (game.players.length < 2) {
@@ -800,11 +857,21 @@ export const updateEloRatings = async (game: Game): Promise<void> => {
     }
 
     try {
-        // Get all player ELO ratings
-        const playerRatings = new Map<string, UserEloRating>();
+        // Get all player ELO ratings (both human and bot)
+        const playerRatings = new Map<string, {elo_rating: number, games_played: number}>();
+        const humanPlayers: string[] = [];
+        const botPlayers: string[] = [];
+        
         for (const player of game.players) {
-            const rating = await getOrCreateEloRating(player.player_id);
-            playerRatings.set(player.player_id, rating);
+            if (player.is_ai) {
+                const rating = await getBotEloRating(player.player_id);
+                playerRatings.set(player.player_id, rating);
+                botPlayers.push(player.player_id);
+            } else {
+                const rating = await getOrCreateEloRating(player.player_id);
+                playerRatings.set(player.player_id, rating);
+                humanPlayers.push(player.player_id);
+            }
         }
 
         // Determine final rankings based on elimination order
@@ -856,23 +923,44 @@ export const updateEloRatings = async (game: Game): Promise<void> => {
             ratingChanges.set(playerId, totalChange);
         }
 
-        // Update all player ratings in database with a single batch upsert
-        const ratingUpdates: Array<{user_id: string, elo_rating: number, games_played: number}> = [];
-        for (const [playerId, change] of ratingChanges) {
+        // Update human player ratings
+        const humanRatingUpdates: Array<{user_id: string, elo_rating: number, games_played: number}> = [];
+        for (const playerId of humanPlayers) {
+            const change = ratingChanges.get(playerId) || 0;
             const currentRating = playerRatings.get(playerId)!;
             const newRating = Math.max(0, currentRating.elo_rating + change); // Prevent negative ratings
             
-            ratingUpdates.push({
+            humanRatingUpdates.push({
                 user_id: playerId,
                 elo_rating: newRating,
                 games_played: currentRating.games_played + 1
             });
         }
 
-        if (ratingUpdates.length > 0) {
+        if (humanRatingUpdates.length > 0) {
             await supabaseClient
                 .from('user_elo_ratings')
-                .upsert(ratingUpdates);
+                .upsert(humanRatingUpdates);
+        }
+
+        // Update bot ratings
+        const botRatingUpdates: Array<{id: string, elo_rating: number, games_played: number}> = [];
+        for (const playerId of botPlayers) {
+            const change = ratingChanges.get(playerId) || 0;
+            const currentRating = playerRatings.get(playerId)!;
+            const newRating = Math.max(0, currentRating.elo_rating + change); // Prevent negative ratings
+            
+            botRatingUpdates.push({
+                id: playerId,
+                elo_rating: newRating,
+                games_played: currentRating.games_played + 1
+            });
+        }
+
+        if (botRatingUpdates.length > 0) {
+            await supabaseClient
+                .from('bots')
+                .upsert(botRatingUpdates);
         }
 
         console.log('ELO ratings updated successfully for game:', game.id);

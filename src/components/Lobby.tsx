@@ -79,7 +79,7 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
                 pointerEvents: isDragging ? 'auto' : 'none',
                 userSelect: 'none'
             }} />
-            <p style={{ zIndex: 10 }}>{player.name}</p>
+            <p style={{ zIndex: 10 }}>{player.is_ai ? '🤖 ' : ''}{player.name}</p>
             <p>{player.status !== 'idle' ? '🟢' : player.player_id === user_id ? <button
                 onClick={() => startGame(game_id)}
             >Ready</button> : '🔴'}</p>
@@ -89,7 +89,7 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
 
 export const Lobby = () => {
     const game_id = useParams().game_id?.toLowerCase();
-    const { game, updateGameName, rearrangePlayer } = useServer();
+    const { game, updateGameName, rearrangePlayer, addBot } = useServer();
 
     const [isEditingName, setIsEditingName] = useState(false);
     const [editingName, setEditingName] = useState('');
@@ -343,5 +343,24 @@ export const Lobby = () => {
                 />
             ))
         }
+        {game.status === 'waiting' && (
+            <div style={{ marginTop: '20px' }}>
+                <button 
+                    onClick={() => addBot(game_id!)}
+                    style={{
+                        padding: '10px 20px',
+                        backgroundColor: '#4CAF50',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '5px',
+                        cursor: 'pointer',
+                        fontSize: '16px',
+                        fontWeight: 'bold'
+                    }}
+                >
+                    Add Bot
+                </button>
+            </div>
+        )}
     </div>;
 };

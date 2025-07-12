@@ -15,9 +15,11 @@ DROP FUNCTION IF EXISTS update_updated_at_column() CASCADE;
 
 -- Drop tables in reverse dependency order (this will automatically drop all policies and triggers)
 DROP TABLE IF EXISTS chat_messages CASCADE;
+DROP TABLE IF EXISTS bot_cards CASCADE;
 DROP TABLE IF EXISTS player_hands CASCADE;
 DROP TABLE IF EXISTS game_decks CASCADE;
 DROP TABLE IF EXISTS games CASCADE;
+DROP TABLE IF EXISTS bots CASCADE;
 
 -- Drop custom types
 DROP TYPE IF EXISTS game_status CASCADE;
@@ -104,6 +106,29 @@ CREATE TABLE user_elo_ratings (
   updated_at TIMESTAMP DEFAULT NOW()
 );
 
+-- Bots table - AI players with strategies
+CREATE TABLE bots (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  nickname TEXT NOT NULL,
+  strategy_key TEXT NOT NULL,
+  elo_rating INTEGER NOT NULL DEFAULT 1000,
+  games_played INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Bot cards table - SENSITIVE: Only edge functions can access (similar to player_hands)
+CREATE TABLE bot_cards (
+  game_id TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+  bot_id UUID NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+  hand JSONB NOT NULL DEFAULT '[]'::jsonb, -- Card[] - bot's cards
+  awaiting_attack BOOLEAN NOT NULL DEFAULT false, -- Private status for attack confirmation
+  joined_at TIMESTAMP DEFAULT NOW(),
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW(),
+  PRIMARY KEY (game_id, bot_id) -- One hand per bot per game
+);
+
 -- =============================================================================
 -- INDEXES: Create indexes for better performance
 -- =============================================================================
@@ -119,6 +144,10 @@ CREATE INDEX idx_chat_messages_created_at ON chat_messages(created_at);
 CREATE INDEX idx_games_updated_at ON games(updated_at);
 CREATE INDEX idx_user_elo_ratings_user_id ON user_elo_ratings(user_id);
 CREATE INDEX idx_user_elo_ratings_elo_rating ON user_elo_ratings(elo_rating);
+CREATE INDEX idx_bots_strategy_key ON bots(strategy_key);
+CREATE INDEX idx_bots_elo_rating ON bots(elo_rating);
+CREATE INDEX idx_bot_cards_game_id ON bot_cards(game_id);
+CREATE INDEX idx_bot_cards_bot_id ON bot_cards(bot_id);
 
 -- =============================================================================
 -- ROW LEVEL SECURITY: Enable RLS on all tables
@@ -129,6 +158,8 @@ ALTER TABLE game_decks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE player_hands ENABLE ROW LEVEL SECURITY;
 ALTER TABLE chat_messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_elo_ratings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bots ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bot_cards ENABLE ROW LEVEL SECURITY;
 
 -- =============================================================================
 -- RLS POLICIES: Security-first approach
@@ -191,6 +222,17 @@ CREATE POLICY "Anyone can view ELO ratings" ON user_elo_ratings
 CREATE POLICY "Only service role can manage ELO ratings" ON user_elo_ratings
   FOR ALL USING (auth.role() = 'service_role');
 
+-- Bots: Read-only for authenticated users (for lobby bot selection)
+CREATE POLICY "Anyone can view bots" ON bots
+  FOR SELECT USING (true);
+
+CREATE POLICY "Only service role can manage bots" ON bots
+  FOR ALL USING (auth.role() = 'service_role');
+
+-- Bot cards: ONLY service role can access (edge functions only)
+CREATE POLICY "Only service role can access bot cards" ON bot_cards
+  FOR ALL USING (auth.role() = 'service_role');
+
 -- =============================================================================
 -- FUNCTIONS: Helper functions and triggers
 -- =============================================================================
@@ -233,7 +275,8 @@ LANGUAGE plpgsql
 AS $$
 BEGIN
   INSERT INTO public.user_elo_ratings (user_id, elo_rating, games_played)
-  VALUES (NEW.id, 1000, 0);
+  VALUES (NEW.id, 1000, 0)
+  ON CONFLICT (user_id) DO NOTHING;
   RETURN NEW;
 END;
 $$;
@@ -262,6 +305,16 @@ CREATE TRIGGER update_user_elo_ratings_updated_at
   FOR EACH ROW 
   EXECUTE FUNCTION update_updated_at_column();
 
+CREATE TRIGGER update_bots_updated_at 
+  BEFORE UPDATE ON bots
+  FOR EACH ROW 
+  EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_bot_cards_updated_at 
+  BEFORE UPDATE ON bot_cards
+  FOR EACH ROW 
+  EXECUTE FUNCTION update_updated_at_column();
+
 -- Trigger for chat message changes
 CREATE TRIGGER handle_chat_messages_changes
   AFTER INSERT OR UPDATE OR DELETE
@@ -270,6 +323,7 @@ CREATE TRIGGER handle_chat_messages_changes
   EXECUTE FUNCTION chat_messages_changes();
 
 -- Trigger to create default ELO rating for new users
+DROP TRIGGER IF EXISTS handle_new_user_elo_rating ON auth.users;
 CREATE TRIGGER handle_new_user_elo_rating
   AFTER INSERT
   ON auth.users
@@ -456,7 +510,22 @@ GRANT EXECUTE ON FUNCTION pg_try_advisory_lock_string(text) TO service_role;
 GRANT EXECUTE ON FUNCTION pg_advisory_unlock_string(text) TO service_role;
 
 -- =============================================================================
+-- SEED DATA: Initial bots with different strategies
+-- =============================================================================
+
+INSERT INTO bots (nickname, strategy_key) VALUES
+('RandomBot', 'random'),
+('ChaoticBot', 'random'),
+('SimpleBot', 'random'),
+('QuickBot', 'random'),
+('BoldBot', 'random'),
+('CautiousBot', 'random'),
+('WildBot', 'random'),
+('SteadyBot', 'random');
+
+-- =============================================================================
 -- SETUP COMPLETE!
 -- Your database schema is now secure and ready for the game application.
 -- Advisory locks are configured for game operation synchronization.
+-- Bot system is initialized with sample strategies.
 -- =============================================================================
