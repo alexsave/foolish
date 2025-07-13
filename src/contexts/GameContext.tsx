@@ -11,18 +11,9 @@ export const GameProvider = ({ children }: { children: React.ReactNode }) => {
 
     const [coverMap, setCoverMap] = useState<Map<Card, Card>>(new Map());
 
-    const [localHandOrder, setLocalHandOrder] = useState<Card[]>([]);
-
     const [selectedCards, setSelectedCards] = useState<Card[]>([]);
     // we chose a card to cover WITH, now we choose WHICH card to cover
     const [isSelectingCover, setIsSelectingCover] = useState(false);
-
-    // Update local hand order when game changes
-    useEffect(() => {
-        if (game?.self?.hand) {
-            setLocalHandOrder(game.self.hand);
-        }
-    }, [game?.self?.hand]);
 
     // Game loading state is now handled by ServerContext
 
@@ -41,8 +32,6 @@ export const GameProvider = ({ children }: { children: React.ReactNode }) => {
     return (
         <GameContext.Provider value={{
             selectedCards,
-            localHandOrder,
-            setLocalHandOrder,
             setSelectedCards,
             coverMap,
             isSelectingCover,
@@ -57,8 +46,6 @@ export const GameProvider = ({ children }: { children: React.ReactNode }) => {
 
 interface GameContextType {
     selectedCards: Card[];
-    localHandOrder: Card[];
-    setLocalHandOrder: (localHandOrder: Card[]) => void;
     setSelectedCards: (selectedCards: Card[]) => void;
     coverMap: Map<Card, Card>;
     isSelectingCover: boolean;

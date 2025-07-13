@@ -10,9 +10,9 @@ const DragContext = createContext<DragContextType | null>(null);
 export const DragProvider = ({ children }: { children: React.ReactNode }) => {
     const { user_id } = useAuth();
     const game: PersonalGame = useServer().game as PersonalGame;
-    const { attack, pass, cover, rearrangeHand } = useServer();
+    const { attack, pass, cover, rearrangeHand, localHandOrder, setLocalHandOrder } = useServer();
 
-    const { selectedCards, setSelectedCards, localHandOrder, setLocalHandOrder, handleCardSelection } = useGame();
+    const { selectedCards, setSelectedCards, handleCardSelection } = useGame();
 
     const [draggedCardIndex, setDraggedCardIndex] = useState<number | null>(null);
     const [isDraggingCard, setIsDraggingCard] = useState(false);

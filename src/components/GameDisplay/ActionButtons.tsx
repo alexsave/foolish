@@ -116,9 +116,9 @@ const AttackerActionPanel = () => {
 }
 
 const CardDiv = () => {
-    const { game } = useServer() as { game: PersonalGame };
+    const { game, localHandOrder } = useServer() as { game: PersonalGame, localHandOrder: Card[] };
 
-    const { localHandOrder, selectedCards } = useGame();
+    const { selectedCards } = useGame();
 
     const { draggedCardIndex, isDraggingForGameAction, startCardDrag, isActuallyDragging } = useDrag();
 

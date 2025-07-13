@@ -57,6 +57,9 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
     const [game_id, setGameId] = useState<string | null>(null);
 
+    // Local hand order state - keyed by game_id
+    const [localHandOrders, setLocalHandOrders] = useState<{ [key: string]: Card[] }>({});
+
     // Use ref to avoid closure issues in WebSocket handler
     const gameIdRef = useRef<string | null>(null);
     const userNamesRef = useRef<{ [userId: string]: string }>({});
@@ -235,13 +238,81 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         }
     };
 
+    // Helper method to merge hands while preserving local card order
+    const mergeHandOrder = (oldHand: Card[], newHand: Card[]): Card[] => {
+        if (!oldHand || !newHand) return newHand || [];
+        
+        // Create a map of card positions in the old hand for quick lookup
+        const oldCardPositions = new Map<string, number>();
+        oldHand.forEach((card, index) => {
+            const key = `${card.suit}-${card.value}`;
+            oldCardPositions.set(key, index);
+        });
+        
+        // Create a set of new cards for quick lookup
+        const newCardSet = new Set(newHand.map(card => `${card.suit}-${card.value}`));
+        
+        // Keep existing cards in their current positions
+        const preservedCards: Card[] = [];
+        const preservedPositions = new Set<number>();
+        
+        oldHand.forEach((card, oldIndex) => {
+            const key = `${card.suit}-${card.value}`;
+            if (newCardSet.has(key)) {
+                preservedCards.push(card);
+                preservedPositions.add(oldIndex);
+            }
+        });
+        
+        // Find new cards (cards in newHand but not in oldHand)
+        const newCards = newHand.filter(card => {
+            const key = `${card.suit}-${card.value}`;
+            return !oldCardPositions.has(key);
+        });
+        
+        // Combine preserved cards with new cards (new cards go to the end)
+        return [...preservedCards, ...newCards];
+    };
+
+    // Helper method to update local hand order when game state changes
+    const updateLocalHandOrder = (gameId: string, newHand: Card[]) => {
+        setLocalHandOrders(prev => {
+            const currentOrder = prev[gameId] || [];
+            
+            // If we don't have a previous order, just use the new hand
+            if (currentOrder.length === 0) {
+                return { ...prev, [gameId]: newHand };
+            }
+            
+            // Otherwise, preserve existing order and add new cards to the end
+            const mergedOrder = mergeHandOrder(currentOrder, newHand);
+            return { ...prev, [gameId]: mergedOrder };
+        });
+    };
+
     // Helper method to merge game data while preserving self when not present in new data
     const mergeGameData = (gameId: string, newGameData: any, prevGames: any) => {
-        return {
+        const result = {
             ...newGameData,
             // If self is explicitly provided (including null), use it; otherwise preserve previous self
             self: newGameData.hasOwnProperty('self') ? newGameData.self : prevGames[gameId]?.self
         };
+        
+        // If we have both old and new self data with hands, preserve the hand order
+        if (newGameData.self && prevGames[gameId]?.self && 
+            newGameData.self.hand && prevGames[gameId].self.hand) {
+            result.self = {
+                ...newGameData.self,
+                hand: mergeHandOrder(prevGames[gameId].self.hand, newGameData.self.hand)
+            };
+        }
+        
+        // Update local hand order when game data changes
+        if (result.self?.hand) {
+            updateLocalHandOrder(gameId, result.self.hand);
+        }
+        
+        return result;
     };
 
     const handleChatMessage = (message: any) => {
@@ -488,7 +559,14 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         }
 
         // Optimistic update
-        setGames(prev => ({ ...prev, [game_id!]: { ...prev[game_id!], table_battles: [...table_battles, ...cards.map(card => ({ attack: card, defense: null }))], self: { ...prev[game_id!].self, hand: prev[game_id!].self.hand.filter(card => !cards.includes(card)) } } }));
+        const newHand = g.self.hand.filter(card => !cards.includes(card));
+        setGames(prev => ({ ...prev, [game_id!]: { ...prev[game_id!], table_battles: [...table_battles, ...cards.map(card => ({ attack: card, defense: null }))], self: { ...prev[game_id!].self, hand: newHand } } }));
+        
+        // Update local hand order
+        setLocalHandOrders(prev => ({
+            ...prev,
+            [game_id!]: (prev[game_id!] || []).filter(card => !cards.some(c => c.suit === card.suit && c.value === card.value))
+        }));
 
         return invokeGameFunctions('attack', {
             game_id: game_id!,
@@ -512,7 +590,14 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         // I don't like this cast 
         // But refactoring it to work would involve also changing the player type
         const next_defender = get_next_player_index(g, g.defender);
-        setGames(prev => ({ ...prev, [game_id!]: { ...prev[game_id!], table_battles: [...table_battles, ...cards.map(card => ({ attack: card, defense: null }))], self: { ...prev[game_id!].self, hand: prev[game_id!].self.hand.filter(card => !cards.includes(card)) }, defender: next_defender } }));
+        const newHand = g.self.hand.filter(card => !cards.includes(card));
+        setGames(prev => ({ ...prev, [game_id!]: { ...prev[game_id!], table_battles: [...table_battles, ...cards.map(card => ({ attack: card, defense: null }))], self: { ...prev[game_id!].self, hand: newHand }, defender: next_defender } }));
+        
+        // Update local hand order
+        setLocalHandOrders(prev => ({
+            ...prev,
+            [game_id!]: (prev[game_id!] || []).filter(card => !cards.some(c => c.suit === card.suit && c.value === card.value))
+        }));
 
         return invokeGameFunctions('pass', {
             game_id: game_id!,
@@ -534,6 +619,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         const allTableCards = table_battles.flatMap(battle => 
             battle.defense ? [battle.attack, battle.defense] : [battle.attack]
         );
+        const newHand = [...g.self.hand, ...allTableCards];
         setGames(prev => ({
             ...prev,
             [game_id!]: {
@@ -541,11 +627,17 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 table_battles: [],
                 self: {
                     ...prev[game_id!].self,
-                    hand: [...prev[game_id!].self.hand, ...allTableCards]
+                    hand: newHand
                 },
                 first_attacker: next_first_attacker,
                 defender: next_defender
             }
+        }));
+        
+        // Update local hand order (add new cards to the end)
+        setLocalHandOrders(prev => ({
+            ...prev,
+            [game_id!]: [...(prev[game_id!] || []), ...allTableCards]
         }));
 
         return invokeGameFunctions('pickup', {
@@ -569,6 +661,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         }
 
         // Optimistic update. Move cover cards out of self, put cover card as defense on corresponding attack
+        const newHand = g.self.hand.filter(card => !coverCards.includes(card));
         setGames(prev => ({
             ...prev, [game_id!]: {
                 ...prev[game_id!],
@@ -576,8 +669,14 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 // this could use card_comp
                 table_battles: table_battles.map(battle => attackCards.findIndex(card => card.value === battle.attack.value && card.suit === battle.attack.suit) !== -1 ? { ...battle, defense: coverCards[attackCards.findIndex(card => card.value === battle.attack.value && card.suit === battle.attack.suit)] } : battle),
 
-                self: { ...prev[game_id!].self, hand: prev[game_id!].self.hand.filter(card => !coverCards.includes(card)) }
+                self: { ...prev[game_id!].self, hand: newHand }
             }
+        }));
+        
+        // Update local hand order
+        setLocalHandOrders(prev => ({
+            ...prev,
+            [game_id!]: (prev[game_id!] || []).filter(card => !coverCards.some(c => c.suit === card.suit && c.value === card.value))
         }));
         return invokeGameFunctions('cover', {
             game_id: game_id!,
@@ -781,6 +880,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     }
 
     const currentChatMessages = chatMessages[game_id!] || [];
+    const currentLocalHandOrder = localHandOrders[game_id!] || [];
 
     return (
         <ServerContext.Provider value={{
@@ -804,7 +904,13 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             rearrangeHand,
             continueGame,
             gameLoadError,
-            chatMessages: currentChatMessages
+            chatMessages: currentChatMessages,
+            localHandOrder: currentLocalHandOrder,
+            setLocalHandOrder: (order: Card[]) => {
+                if (game_id) {
+                    setLocalHandOrders(prev => ({ ...prev, [game_id]: order }));
+                }
+            }
         }}>
             {children}
         </ServerContext.Provider>
@@ -833,6 +939,8 @@ interface ServerContextType {
     continueGame: (gameId: string) => Promise<{ game_id: string }>;
     gameLoadError: string | null;
     chatMessages: any[];
+    localHandOrder: Card[];
+    setLocalHandOrder: (order: Card[]) => void;
 }
 
 export const useServer = () => {
