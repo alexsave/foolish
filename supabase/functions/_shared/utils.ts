@@ -1,27 +1,20 @@
 import { corsHeaders, handleCors } from './cors.ts';
 import { 
-    get_next_player_index, 
-    canCover, 
     cardDisplay, 
-    card_comp, 
-    validate_defender_status, 
-    verify_cards_in_players_hand, 
-    no_cards_left, 
     refill_deck, 
     draw, 
-    determine_lowest_power_index, 
-    set_positions, 
-    initialize_hands, 
-    game_done,
-    createId,
-    verify_player_in_game,
-    other_player,
     personalize_game,
     calculateEloChange,
-    calculateGameRankings
+    calculateGameRankings,
+    determine_lowest_power_index,
+    set_positions,
+    initialize_hands,
+    get_next_player_index,
+    no_cards_left,
+    game_done,
 } from './common_utils.ts';
 import { Card, Game, GAME_STATUS, PLAYER_STATUS, PersonalGame, SERVER_EVENT_TYPE, PRIVATE_EVENT_TYPE, PrivatePlayer, PublicGame, PublicPlayer, PlayerHand, UserEloRating, BotHand } from './types.ts';
-import { ACE_VALUE, CARDS_PER_PLAYER, SUITS, VALUE_MAP, SUIT_MAP } from './constants.ts';
+import { ACE_VALUE, CARDS_PER_PLAYER } from './constants.ts';
 import { createClient, User } from 'jsr:@supabase/supabase-js';
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
@@ -571,24 +564,19 @@ export const check_win = async (game: Game) => {
     const the_fool = game_done(game);
     if (the_fool !== null) {
 
-        // Update ELO ratings before resetting game state
+        // Update ELO ratings before changing game state
         await updateEloRatings(game);
 
-        game.status = GAME_STATUS.WAITING;
-        // set all players to idle
+        // Set game status to GAME_OVER to show win screen
+        game.status = GAME_STATUS.GAME_OVER;
+        
+        // set all players to idle but keep their hands for display
         game.players.forEach((player: PrivatePlayer) => {
             player.status = PLAYER_STATUS.IDLE;
-            player.hand = [];
         });
-        game.table_battles = [];
-        game.deck = refill_deck(game.players.length);
-        game.elimination_order = []; // Reset elimination order
-
-        // Clear chat messages for the game (fire and forget)
-        supabaseClient
-            .from('chat_messages')
-            .delete()
-            .eq('game_id', game.id);
+        
+        // Keep table_battles, deck, and elimination_order for win screen display
+        // These will be cleared when someone hits continue
 
         broadcastToGameUsers(game, 'game_update', {
             type: 'game_done',
@@ -793,7 +781,7 @@ export const updateEloRatings = async (game: Game): Promise<void> => {
         }
 
         // Update human player ratings
-        const humanRatingUpdates: Array<{user_id: string, elo_rating: number, games_played: number}> = [];
+        const humanRatingUpdates: Array<{user_id: string, elo_rating: number, previous_elo: number, games_played: number}> = [];
         for (const playerId of humanPlayers) {
             const change = ratingChanges.get(playerId) || 0;
             const currentRating = playerRatings.get(playerId)!;
@@ -802,6 +790,7 @@ export const updateEloRatings = async (game: Game): Promise<void> => {
             humanRatingUpdates.push({
                 user_id: playerId,
                 elo_rating: newRating,
+                previous_elo: currentRating.elo_rating, // Store previous ELO
                 games_played: currentRating.games_played + 1
             });
         }
@@ -813,7 +802,7 @@ export const updateEloRatings = async (game: Game): Promise<void> => {
         }
 
         // Update bot ratings
-        const botRatingUpdates: Array<{id: string, elo_rating: number, games_played: number}> = [];
+        const botRatingUpdates: Array<{id: string, elo_rating: number, previous_elo: number, games_played: number}> = [];
         for (const playerId of botPlayers) {
             const change = ratingChanges.get(playerId) || 0;
             const currentRating = playerRatings.get(playerId)!;
@@ -822,6 +811,7 @@ export const updateEloRatings = async (game: Game): Promise<void> => {
             botRatingUpdates.push({
                 id: playerId,
                 elo_rating: newRating,
+                previous_elo: currentRating.elo_rating, // Store previous ELO
                 games_played: currentRating.games_played + 1
             });
         }

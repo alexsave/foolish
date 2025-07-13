@@ -1,5 +1,6 @@
 import { Game, PrivatePlayer, GAME_STATUS } from '../types.ts';
 import { get_next_player_index, validate_defender_status, refillPlayerHands } from '../common_utils.ts';
+import { check_win } from '../utils.ts';
 
 // Validation function for pickup moves
 export function validatePickup(game: Game, player_id: string): void {
@@ -17,7 +18,7 @@ export function validatePickup(game: Game, player_id: string): void {
 }
 
 // Execution function for pickup moves
-export function executePickup(game: Game, player_id: string): void {
+export async function executePickup(game: Game, player_id: string): Promise<void> {
     const defender: PrivatePlayer = game.players.find(player => player.player_id === player_id)!;
 
     // add cards from table to hand
@@ -33,6 +34,7 @@ export function executePickup(game: Game, player_id: string): void {
 
     // Draw cards and shift positions
     refillPlayerHands(game);
+    
     game.first_attacker = get_next_player_index(game, game.defender);
     game.defender = get_next_player_index(game, game.first_attacker);
     game.status = GAME_STATUS.FIRST_ATTACKER;
@@ -41,10 +43,13 @@ export function executePickup(game: Game, player_id: string): void {
     game.players.forEach(player => {
         player.done_attacking_this_round = false;
     });
+    
+    // Check if game should end after refilling - at the very end
+    await check_win(game);
 }
 
 // Combined function with validation
-export function handlePickup(game: Game, player_id: string): void {
+export async function handlePickup(game: Game, player_id: string): Promise<void> {
     validatePickup(game, player_id);
-    executePickup(game, player_id);
+    await executePickup(game, player_id);
 } 

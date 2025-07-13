@@ -13,7 +13,7 @@ wrap400(async (user, user_name, body) => {
     verify_player_in_game(game, user_id);
 
     // Handle good logic
-    handleGood(game, user_id);
+    await handleGood(game, user_id);
 
     // Save complete game state back to separated tables
     await saveCompleteGame(game);

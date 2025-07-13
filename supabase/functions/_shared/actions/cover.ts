@@ -112,6 +112,7 @@ export async function executeCover(game: Game, player_id: string, cover_cards: C
                     
                     currentGame.table_battles = [];
                     refillPlayerHands(currentGame);
+                    
                     currentGame.first_attacker = currentGame.defender;
                     currentGame.defender = get_next_player_index(currentGame, currentGame.first_attacker);
                     currentGame.status = GAME_STATUS.FIRST_ATTACKER;
@@ -119,6 +120,10 @@ export async function executeCover(game: Game, player_id: string, cover_cards: C
                     currentGame.players.forEach(player => {
                         player.done_attacking_this_round = false;
                     });
+                    
+                    // Check if game should end after refilling - at the very end
+                    await check_win(currentGame);
+                    
                     await saveCompleteGame(currentGame);
 
                     broadcastToGameUsers(currentGame, 'game_update', {

@@ -33,7 +33,8 @@ export const GAME_STATUS = {
     FIRST_ATTACKER: 'first_attacker',
     FREE_PLAY: 'free_play',
     ONLY_DEFEND: 'only_defend',
-    WAIT_FOR_ATTACKERS: 'wait_for_attackers'
+    WAIT_FOR_ATTACKERS: 'wait_for_attackers',
+    GAME_OVER: 'game_over'
 } as const;
 
 export type GameStatus = typeof GAME_STATUS[keyof typeof GAME_STATUS];
@@ -179,6 +180,7 @@ export interface GameDeck {
 export interface UserEloRating {
     user_id: string;
     elo_rating: number;
+    previous_elo: number;
     games_played: number;
     created_at: string;
     updated_at: string;
@@ -190,6 +192,7 @@ export interface Bot {
     nickname: string;
     strategy_key: string;
     elo_rating: number;
+    previous_elo: number;
     games_played: number;
     created_at: string;
     updated_at: string;

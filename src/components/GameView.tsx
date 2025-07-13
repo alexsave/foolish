@@ -3,6 +3,8 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useServer } from '../contexts/ServerContext';
 import { Lobby } from './Lobby';
 import { GameDisplay } from './GameDisplay';
+import { WinScreen } from './WinScreen';
+import { GAME_STATUS } from '../common/types';
 
 export const GameView = () => {
     const { game, gameLoadError } = useServer();
@@ -28,8 +30,10 @@ export const GameView = () => {
     }
     
     // Conditionally render based on game status
-    if (game.status === 'waiting') {
+    if (game.status === GAME_STATUS.WAITING) {
         return <Lobby />;
+    } else if (game.status === GAME_STATUS.GAME_OVER) {
+        return <WinScreen />;
     } else {
         return <GameDisplay />;
     }

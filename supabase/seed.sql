@@ -43,7 +43,8 @@ CREATE TYPE game_status AS ENUM (
   'first_attacker', 
   'free_play',
   'only_defend',
-  'wait_for_attackers'
+  'wait_for_attackers',
+  'game_over'
 );
 
 -- =============================================================================
@@ -102,6 +103,7 @@ CREATE TABLE chat_messages (
 CREATE TABLE user_elo_ratings (
   user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   elo_rating INTEGER NOT NULL DEFAULT 1000,
+  previous_elo INTEGER NOT NULL DEFAULT 1000,
   games_played INTEGER NOT NULL DEFAULT 0,
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW()
@@ -113,6 +115,7 @@ CREATE TABLE bots (
   nickname TEXT NOT NULL,
   strategy_key TEXT NOT NULL,
   elo_rating INTEGER NOT NULL DEFAULT 1000,
+  previous_elo INTEGER NOT NULL DEFAULT 1000,
   games_played INTEGER NOT NULL DEFAULT 0,
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW()

@@ -14,7 +14,7 @@ wrap400(async (user, user_name, body) => {
     verify_player_in_game(game, user_id);
 
     // Handle pickup logic
-    handlePickup(game, user_id);
+    await handlePickup(game, user_id);
 
     // Save complete game state back to separated tables
     await saveCompleteGame(game);

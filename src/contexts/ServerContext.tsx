@@ -671,6 +671,10 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         }
     };
 
+    const continueGame = (gameId: string): Promise<{ game_id: string }> => {
+        return invokeGameFunctions('continue', { game_id: gameId });
+    };
+
     const invokeGameFunctions = async <T = any>(
         functionName: string,
         body: any = {},
@@ -719,6 +723,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             updateGameName,
             rearrangePlayer,
             rearrangeHand,
+            continueGame,
             gameLoadError,
             chatMessages: currentChatMessages
         }}>
@@ -745,6 +750,7 @@ interface ServerContextType {
     updateGameName: (gameId: string, name: string) => Promise<{ game_id: string }>;
     rearrangePlayer: (gameId: string, playerIndices: number[]) => Promise<{ game_id: string }>;
     rearrangeHand: (gameId: string, cardIndices: number[]) => Promise<{ game_id: string }>;
+    continueGame: (gameId: string) => Promise<{ game_id: string }>;
     gameLoadError: string | null;
     chatMessages: any[];
 }

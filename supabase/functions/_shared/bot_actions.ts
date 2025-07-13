@@ -257,11 +257,11 @@ async function executeBotMove(game: Game, bot: PrivatePlayer, move: LegalMove): 
                 break;
                 
             case 'pickup':
-                executePickup(game, bot.player_id);
+                await executePickup(game, bot.player_id);
                 break;
                 
             case 'good':
-                executeGood(game, bot.player_id);
+                await executeGood(game, bot.player_id);
                 break;
         }
         

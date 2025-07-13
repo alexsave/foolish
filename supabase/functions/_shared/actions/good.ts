@@ -1,6 +1,7 @@
 import { Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS } from '../types.ts';
 import { refillPlayerHands } from '../common_utils.ts';
 import { get_next_player_index } from '../common_utils.ts';
+import { check_win } from '../utils.ts';
 
 // Validation function for good moves
 export function validateGood(game: Game, player_id: string): void {
@@ -15,7 +16,7 @@ export function validateGood(game: Game, player_id: string): void {
 }
 
 // Execution function for good moves
-export function executeGood(game: Game, player_id: string): void {
+export async function executeGood(game: Game, player_id: string): Promise<void> {
     const player: PrivatePlayer = game.players.find(player => player.player_id === player_id)!;
 
     // set them to done attacking
@@ -34,6 +35,7 @@ export function executeGood(game: Game, player_id: string): void {
     // we are done attacking, shift positions
     game.table_battles = [];
     refillPlayerHands(game);
+    
     game.first_attacker = game.defender;
     game.defender = get_next_player_index(game, game.first_attacker);
     game.status = GAME_STATUS.FIRST_ATTACKER;
@@ -42,10 +44,13 @@ export function executeGood(game: Game, player_id: string): void {
     game.players.forEach(player => {
         player.done_attacking_this_round = false;
     });
+    
+    // Check if game should end after refilling - at the very end
+    await check_win(game);
 }
 
 // Combined function with validation
-export function handleGood(game: Game, player_id: string): void {
+export async function handleGood(game: Game, player_id: string): Promise<void> {
     validateGood(game, player_id);
-    executeGood(game, player_id);
+    await executeGood(game, player_id);
 } 
