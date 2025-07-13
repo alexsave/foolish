@@ -26,7 +26,8 @@ export async function executeGood(game: Game, player_id: string): Promise<void> 
     const playable_players = game.players.filter(player => 
         player.player_id !== game.players[game.defender].player_id && 
         player.hand.some(card => game.table_battles.some(battle => battle.attack.value === card.value || (battle.defense && battle.defense.value === card.value))) &&
-        player.awaiting_attack);
+        player.awaiting_attack &&
+        !player.done_attacking_this_round);
 
     if (playable_players.length !== 0) {
         return;

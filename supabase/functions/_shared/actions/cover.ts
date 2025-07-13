@@ -104,7 +104,11 @@ export async function executeCover(game: Game, player_id: string, cover_cards: C
             }
         }
 
-        const playable_players = game.players.filter(player => player.player_id !== player_id && player.hand.some(card => playable_values.has(card.value))).map(player => player.player_id);
+        const playable_players = game.players.filter(player => 
+            player.player_id !== player_id && 
+            player.hand.some(card => playable_values.has(card.value)) &&
+            !player.done_attacking_this_round
+        ).map(player => player.player_id);
 
         if (playable_players.length === 0) {
             // No one can play, end the round

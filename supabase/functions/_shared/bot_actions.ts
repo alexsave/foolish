@@ -8,7 +8,7 @@ import { executeAttack } from './actions/attack.ts';
 import { executeCover } from './actions/cover.ts';
 import { executePass } from './actions/pass.ts';
 import { executePickup } from './actions/pickup.ts';
-import { executeGood } from './actions/good.ts';
+import { executeGood, handleGood } from './actions/good.ts';
 
 const supabaseClient = createClient(
     Deno.env.get('SUPABASE_URL') || '',
@@ -285,13 +285,23 @@ async function executeBotMove(game: Game, bot: PrivatePlayer, move: LegalMove): 
                 // Set done_attacking_this_round flag based on the move's choice
                 if (move.done_attacking_this_round !== undefined) {
                     bot.done_attacking_this_round = move.done_attacking_this_round;
-                    // Only execute "good" logic if bot was in FREE_PLAY or WAIT_FOR_ATTACKERS mode BEFORE the attack
-                    // Do NOT execute good logic after a first attack (was FIRST_ATTACKER mode)
-                    if (move.done_attacking_this_round && 
-                        (statusBeforeAttack === GAME_STATUS.FREE_PLAY || statusBeforeAttack === GAME_STATUS.WAIT_FOR_ATTACKERS)) {
+                    // If bot is done attacking this round, set awaiting_attack = false
+                    if (move.done_attacking_this_round) {
                         bot.awaiting_attack = false;
-                        console.log(`Bot ${bot.name} is done attacking this round - executing good logic`);
-                        await executeGood(game, bot.player_id);
+                        console.log(`Bot ${bot.name} is done attacking this round`);
+                        
+                        // Only try to execute "good" logic if game is now in WAIT_FOR_ATTACKERS mode
+                        // Use handleGood for proper validation
+                        if (game.status === GAME_STATUS.WAIT_FOR_ATTACKERS) {
+                            try {
+                                console.log(`Bot ${bot.name} attempting good logic`);
+                                await handleGood(game, bot.player_id);
+                                console.log(`Bot ${bot.name} successfully executed good logic`);
+                            } catch (error) {
+                                console.log(`Bot ${bot.name} good logic failed validation: ${error.message}`);
+                                // Bot is still marked as done attacking this round, which is correct
+                            }
+                        }
                     }
                 }
                 break;
@@ -309,7 +319,7 @@ async function executeBotMove(game: Game, bot: PrivatePlayer, move: LegalMove): 
                 break;
                 
             case 'good':
-                await executeGood(game, bot.player_id);
+                await handleGood(game, bot.player_id);
                 break;
         }
         
