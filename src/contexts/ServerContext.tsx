@@ -451,7 +451,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         // I don't like this cast 
         // But refactoring it to work would involve also changing the player type
         const next_defender = get_next_player_index(g, g.defender);
-        setGames(prev => ({ ...prev, [game_id!]: { ...prev[game_id!], table_battles: [...table_battles, { attack: cards[0], defense: null }], self: { ...prev[game_id!].self, hand: prev[game_id!].self.hand.filter(card => !cards.includes(card)) }, defender: next_defender } }));
+        setGames(prev => ({ ...prev, [game_id!]: { ...prev[game_id!], table_battles: [...table_battles, ...cards.map(card => ({ attack: card, defense: null }))], self: { ...prev[game_id!].self, hand: prev[game_id!].self.hand.filter(card => !cards.includes(card)) }, defender: next_defender } }));
 
         return invokeGameFunctions('pass', {
             game_id: game_id!,
