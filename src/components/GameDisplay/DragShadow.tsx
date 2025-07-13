@@ -26,6 +26,8 @@ export const DragShadow = () => {
                 return `⚔️ Attack`;
             case 'cover':
                 return '🛡️ Cover';
+            case 'multicover':
+                return '🛡️ Cover';
             case 'pass':
                 return `🔄 Pass`;
             default:

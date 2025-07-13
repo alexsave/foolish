@@ -3,6 +3,7 @@ import { Card, PersonalGame } from '../common/types';
 import { useServer } from './ServerContext';
 import { useAuth } from './AuthContext';
 import { useGame } from './GameContext';
+import { canCover } from '../common/common_utils';
 
 const DragContext = createContext<DragContextType | null>(null);
 
@@ -40,10 +41,84 @@ export const DragProvider = ({ children }: { children: React.ReactNode }) => {
         return y >= handAreaTop;
     };
 
+    // Helper function to find all valid cover combinations for multiple cards
+    const findCoverCombinations = (coverCards: Card[], uncoveredAttacks: Card[]): { coverCards: Card[], attackCards: Card[] }[] => {
+        const combinations: { coverCards: Card[], attackCards: Card[] }[] = [];
+        
+        if (coverCards.length === 0 || uncoveredAttacks.length === 0) {
+            return combinations;
+        }
+
+        // For each permutation of uncovered attacks (taking coverCards.length items)
+        const generatePermutations = (arr: Card[], length: number): Card[][] => {
+            if (length === 1) return arr.map(item => [item]);
+            
+            const result: Card[][] = [];
+            for (let i = 0; i < arr.length; i++) {
+                const rest = arr.slice(0, i).concat(arr.slice(i + 1));
+                const subPermutations = generatePermutations(rest, length - 1);
+                for (const subPerm of subPermutations) {
+                    result.push([arr[i], ...subPerm]);
+                }
+            }
+            return result;
+        };
+
+        // Only consider combinations where we have the right number of cards
+        if (coverCards.length <= uncoveredAttacks.length) {
+            const attackPermutations = generatePermutations(uncoveredAttacks, coverCards.length);
+            
+            for (const attackPerm of attackPermutations) {
+                // Check if this cover-attack pairing is valid
+                const isValidCombination = coverCards.every((coverCard, index) => 
+                    canCover(attackPerm[index], coverCard, game.power_suit)
+                );
+                
+                if (isValidCombination) {
+                    combinations.push({
+                        coverCards: [...coverCards],
+                        attackCards: [...attackPerm]
+                    });
+                }
+            }
+        }
+
+        return combinations;
+    };
+
+    // Helper function to check if a multi-card cover is unambiguous
+    const findUnambiguousCover = (cardsToUse: Card[]): { coverCards: Card[], attackCards: Card[] } | null => {
+        const uncoveredBattles = game.table_battles.filter(battle => !battle.defense);
+        const uncoveredAttacks = uncoveredBattles.map(battle => battle.attack);
+        
+        const validCombinations = findCoverCombinations(cardsToUse, uncoveredAttacks);
+        
+        if (validCombinations.length === 0) {
+            return null;
+        }
+        
+        // Check if all valid combinations result in the same set of attack cards being covered
+        const cardToString = (card: Card) => `${card.value}-${card.suit}`;
+        const firstCombinationAttackSet = new Set(validCombinations[0].attackCards.map(cardToString));
+        
+        const allCombinationsHaveSameAttackSet = validCombinations.every(combo => {
+            const comboAttackSet = new Set(combo.attackCards.map(cardToString));
+            return comboAttackSet.size === firstCombinationAttackSet.size && 
+                   Array.from(comboAttackSet).every(cardStr => firstCombinationAttackSet.has(cardStr));
+        });
+        
+        // If all combinations cover the same set of attack cards, it's unambiguous
+        if (allCombinationsHaveSameAttackSet) {
+            return validCombinations[0]; // Return any valid combination since they all cover the same attacks
+        }
+        
+        return null;
+    };
+
     // Helper function to determine what action should be taken
     const determineGameAction = (x: number, y: number, draggedCard: Card) => {
         if (isInHandArea(x, y)) {
-            return { type: 'rearrange' };
+            return { type: 'rearrange' as const };
         }
 
         const self_index = game.players.findIndex((player) => player.player_id === user_id);
@@ -53,26 +128,54 @@ export const DragProvider = ({ children }: { children: React.ReactNode }) => {
             const tableCardUnderCursor = getTableCardUnderCursor(x, y);
             const passIsPossible = canPass(draggedCard);
 
+            // Check if the dragged card is part of selected cards
+            const isDraggedCardSelected = selectedCards.some(selectedCard =>
+                selectedCard.value === draggedCard.value && selectedCard.suit === draggedCard.suit
+            );
+
+            // Use all selected cards if the dragged card is selected, otherwise just the dragged card
+            const cardsToUse = isDraggedCardSelected && selectedCards.length > 0 ? selectedCards : [draggedCard];
+
             if (tableCardUnderCursor && !tableCardUnderCursor.defense) {
-                // Dragging to an uncovered attack card = cover
-                return { type: 'cover', targetCard: tableCardUnderCursor.attack };
-            } else if (!passIsPossible) {
-                // Can't pass and in empty space - check if there's only one card to cover
-                const uncoveredBattles = game.table_battles.filter(battle => !battle.defense);
-                if (uncoveredBattles.length === 1) {
-                    // Auto-cover the single uncovered card
-                    return { type: 'cover', targetCard: uncoveredBattles[0].attack };
+                // Dragging to an uncovered attack card
+                if (cardsToUse.length === 1) {
+                    // Single card cover - existing logic
+                    return { type: 'cover' as const, targetCard: tableCardUnderCursor.attack };
                 } else {
-                    // Multiple uncovered cards or no uncovered cards - no valid action
-                    return { type: 'invalid' };
+                    // Multi-card cover - check if unambiguous
+                    const unambiguousCover = findUnambiguousCover(cardsToUse);
+                    if (unambiguousCover) {
+                        return { type: 'multicover' as const, coverCards: unambiguousCover.coverCards, attackCards: unambiguousCover.attackCards };
+                    } else {
+                        return { type: 'invalid' as const };
+                    }
+                }
+            } else if (!passIsPossible) {
+                // Can't pass and in empty space
+                if (cardsToUse.length === 1) {
+                    // Single card - existing logic
+                    const uncoveredBattles = game.table_battles.filter(battle => !battle.defense);
+                    if (uncoveredBattles.length === 1) {
+                        return { type: 'cover' as const, targetCard: uncoveredBattles[0].attack };
+                    } else {
+                        return { type: 'invalid' as const };
+                    }
+                } else {
+                    // Multi-card cover - check if unambiguous
+                    const unambiguousCover = findUnambiguousCover(cardsToUse);
+                    if (unambiguousCover) {
+                        return { type: 'multicover' as const, coverCards: unambiguousCover.coverCards, attackCards: unambiguousCover.attackCards };
+                    } else {
+                        return { type: 'invalid' as const };
+                    }
                 }
             } else {
                 // Pass is possible and dragging to empty space = pass
-                return { type: 'pass' };
+                return { type: 'pass' as const };
             }
         } else {
             // Attacker: dragging to table = attack
-            return { type: 'attack' };
+            return { type: 'attack' as const };
         }
     };
 
@@ -259,14 +362,22 @@ export const DragProvider = ({ children }: { children: React.ReactNode }) => {
                 });
 
             } else if (action.type === 'cover' && action.targetCard) {
-                // For cover, we can only cover one card at a time, so use just the first card
-                // But we could extend this later to handle multiple covers
+                // Single card cover
                 const cardToUse = cardsToUse[0];
                 cover([cardToUse], [action.targetCard]).then(() => {
                     console.log('Cover performed via drag');
                     setSelectedCards([]); // Clear selection after successful action
                 }).catch((e) => {
                     console.error('Cover failed:', e.message);
+                });
+
+            } else if (action.type === 'multicover' && action.coverCards && action.attackCards) {
+                // Multi-card cover with unambiguous mapping
+                cover(action.coverCards, action.attackCards).then(() => {
+                    console.log('Multi-card cover performed via drag');
+                    setSelectedCards([]); // Clear selection after successful action
+                }).catch((e) => {
+                    console.error('Multi-card cover failed:', e.message);
                 });
 
             } else if (action.type === 'pass') {
@@ -348,7 +459,13 @@ interface DragContextType {
     isDraggingForGameAction: boolean;
     draggedCard: Card | null;
     currentCursorPos: { x: number; y: number } | null;
-    determineGameAction: (x: number, y: number, draggedCard: Card) => { type: string, targetCard?: Card } | { type: 'invalid' };
+    determineGameAction: (x: number, y: number, draggedCard: Card) => 
+        | { type: 'attack' }
+        | { type: 'cover', targetCard: Card }
+        | { type: 'multicover', coverCards: Card[], attackCards: Card[] }
+        | { type: 'pass' }
+        | { type: 'rearrange' }
+        | { type: 'invalid' };
     startCardDrag: (e: React.MouseEvent | React.TouchEvent, index: number) => void;
 }
 
