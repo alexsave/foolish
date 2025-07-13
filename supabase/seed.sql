@@ -519,15 +519,14 @@ GRANT EXECUTE ON FUNCTION pg_advisory_unlock_string(text) TO service_role;
 -- =============================================================================
 
 INSERT INTO bots (nickname, strategy_key) VALUES
-('RandomBot', 'random'),
-('ChaoticBot', 'random'),
-('SimpleBot', 'random'),
-('QuickBot', 'random'),
-('BoldBot', 'random'),
-('CautiousBot', 'random'),
-('WildBot', 'random'),
-('SteadyBot', 'random'),
-('OneCardBot', 'one_card');
+('0xDEADBEEF', 'random'),
+('0x00C0FFEE', 'random'),
+('0xBABEFACE', 'random'),
+('0x000FADED', 'random'),
+('0xCAFEBABE', 'random'),
+('0xFEEDBEEF', 'random'),
+('0x0BADC0DE', 'random'),
+('0xFACEFEED', 'random');
 
 -- =============================================================================
 -- SETUP COMPLETE!

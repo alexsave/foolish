@@ -40,13 +40,16 @@ wrap400(async (user, user_name, body) => {
         throw new Error('No bots available');
     }
 
-    const selectedBot: Bot = bots[Math.floor(Math.random() * bots.length)];
+    // Filter out bots that are already in the game
+    const availableBots = bots.filter(bot => 
+        !game.players.some(player => player.player_id === bot.id)
+    );
 
-    // Check if this bot is already in the game
-    const botAlreadyInGame = game.players.some(player => player.player_id === selectedBot.id);
-    if (botAlreadyInGame) {
-        throw new Error('This bot is already in the game');
+    if (availableBots.length === 0) {
+        throw new Error('No available bots (all bots are already in the game)');
     }
+
+    const selectedBot: Bot = availableBots[Math.floor(Math.random() * availableBots.length)];
 
     // Create a bot player
     const botPlayer: PrivatePlayer = {
