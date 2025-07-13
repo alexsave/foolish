@@ -77,12 +77,16 @@ export async function executeCover(game: Game, player_id: string, cover_cards: C
             player.done_attacking_this_round = false;
         });
         if (defender.hand.length === 0) {
+            // Defender still has no cards after refilling - they win this round
             game.players[game.first_attacker].status = PLAYER_STATUS.OUT;
             game.elimination_order.push(game.players[game.first_attacker].player_id);
             await check_win(game);
             game.first_attacker = get_next_player_index(game, game.first_attacker);
         }
         game.defender = get_next_player_index(game, game.first_attacker);
+        if (game.status !== GAME_STATUS.GAME_OVER) {
+            game.status = GAME_STATUS.FIRST_ATTACKER;
+        }
         return;
     }
 
@@ -115,7 +119,7 @@ export async function executeCover(game: Game, player_id: string, cover_cards: C
                     
                     currentGame.first_attacker = currentGame.defender;
                     currentGame.defender = get_next_player_index(currentGame, currentGame.first_attacker);
-                    currentGame.status = GAME_STATUS.FIRST_ATTACKER;
+                    
                     // Reset done_attacking_this_round flag for all players when attacking shifts
                     currentGame.players.forEach(player => {
                         player.done_attacking_this_round = false;
@@ -123,6 +127,10 @@ export async function executeCover(game: Game, player_id: string, cover_cards: C
                     
                     // Check if game should end after refilling - at the very end
                     await check_win(currentGame);
+                    
+                    if (currentGame.status !== GAME_STATUS.GAME_OVER) {
+                        currentGame.status = GAME_STATUS.FIRST_ATTACKER;
+                    }
                     
                     await saveCompleteGame(currentGame);
 

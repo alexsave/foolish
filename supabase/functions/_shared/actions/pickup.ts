@@ -37,7 +37,6 @@ export async function executePickup(game: Game, player_id: string): Promise<void
     
     game.first_attacker = get_next_player_index(game, game.defender);
     game.defender = get_next_player_index(game, game.first_attacker);
-    game.status = GAME_STATUS.FIRST_ATTACKER;
     
     // Reset done_attacking_this_round flag for all players when attacking shifts
     game.players.forEach(player => {
@@ -46,6 +45,10 @@ export async function executePickup(game: Game, player_id: string): Promise<void
     
     // Check if game should end after refilling - at the very end
     await check_win(game);
+    
+    if (game.status !== GAME_STATUS.GAME_OVER) {
+        game.status = GAME_STATUS.FIRST_ATTACKER;
+    }
 }
 
 // Combined function with validation
