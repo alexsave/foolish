@@ -1,4 +1,4 @@
-import { Game, PrivatePlayer, Bot, GAME_STATUS } from './types.ts';
+import { Game, PrivatePlayer, Bot, GAME_STATUS, PLAYER_STATUS } from './types.ts';
 import { loadCompleteGame, saveCompleteGame, broadcastToGameUsers, executeWithGameLock } from './utils.ts';
 import { calculateLegalMoves, getBotStrategy, LegalMove } from './bot_strategy.ts';
 import { createClient } from 'jsr:@supabase/supabase-js';
@@ -41,8 +41,18 @@ export async function processBotActions(game_id: string, cycle: number = 0): Pro
             game = await loadCompleteGame(game_id);
             
             // Only process bot actions if game is in a state where bots can act
-            if (game.status === GAME_STATUS.WAITING) {
-                return; // No bot actions needed in waiting state
+            if (game.status === GAME_STATUS.WAITING || game.status === GAME_STATUS.GAME_OVER) {
+                return; // No bot actions needed in waiting state or game over
+            }
+            
+            // Safety check: if there's only one player left, the game should have ended
+            const in_players = game.players.filter(player => player.status === PLAYER_STATUS.IN);
+            if (in_players.length <= 1) {
+                console.warn(`Bot processing stopped - only ${in_players.length} player(s) left, ending game`);
+                // Import check_win to end the game properly
+                const { check_win } = await import('./utils.ts');
+                await check_win(game);
+                return;
             }
             
             players = game.players;
@@ -312,6 +322,28 @@ async function executeBotMove(game: Game, bot: PrivatePlayer, move: LegalMove): 
                 
             case 'pass':
                 await executePass(game, bot.player_id, move.cards!);
+                // Set done_attacking_this_round flag based on the move's choice
+                if (move.done_attacking_this_round !== undefined) {
+                    bot.done_attacking_this_round = move.done_attacking_this_round;
+                    // If bot is done attacking this round, set awaiting_attack = false
+                    if (move.done_attacking_this_round) {
+                        bot.awaiting_attack = false;
+                        console.log(`Bot ${bot.name} is done attacking this round after pass`);
+                        
+                        // Only try to execute "good" logic if game is now in WAIT_FOR_ATTACKERS mode
+                        // Use handleGood for proper validation
+                        if (game.status === GAME_STATUS.WAIT_FOR_ATTACKERS) {
+                            try {
+                                console.log(`Bot ${bot.name} attempting good logic after pass`);
+                                await handleGood(game, bot.player_id);
+                                console.log(`Bot ${bot.name} successfully executed good logic after pass`);
+                            } catch (error) {
+                                console.log(`Bot ${bot.name} good logic failed validation after pass: ${error.message}`);
+                                // Bot is still marked as done attacking this round, which is correct
+                            }
+                        }
+                    }
+                }
                 break;
                 
             case 'pickup':
@@ -353,6 +385,11 @@ async function getBotData(botId: string): Promise<Bot | null> {
 
 // Check if any bots in the game have legal moves available
 function checkIfAnyBotHasLegalMoves(game: Game): boolean {
+    // Don't process bots if game is not in a playable state
+    if (game.status === GAME_STATUS.WAITING || game.status === GAME_STATUS.GAME_OVER) {
+        return false;
+    }
+    
     // Find all bots in the game
     const bots = game.players.filter(player => player.is_ai);
     

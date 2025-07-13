@@ -1,5 +1,5 @@
 import { Card, Game, PrivatePlayer, GAME_STATUS } from './types.ts';
-import { canCover, card_comp } from './common_utils.ts';
+import { canCover, card_comp, get_next_player_index } from './common_utils.ts';
 
 // Legal moves that a bot can make
 export interface LegalMove {
@@ -398,13 +398,36 @@ function calculatePassMoves(game: Game, botPlayer: PrivatePlayer): LegalMove[] {
         // Find cards with the same value
         const matchingCards = hand.filter(card => card.value === firstValue);
         
-        // Can pass with any single card of this value
-        matchingCards.forEach(card => {
-            moves.push({
-                type: 'pass',
-                cards: [card]
-            });
-        });
+        if (matchingCards.length > 0) {
+            // Get next player index using the same logic as pass validation
+            const nextPlayerIndex = get_next_player_index(game, game.defender);
+            const nextPlayer = game.players[nextPlayerIndex];
+            
+            // Generate all possible combinations of matching cards (1 to all matching cards)
+            for (let i = 1; i <= matchingCards.length; i++) {
+                const combinations = getCombinations(matchingCards, i);
+                
+                combinations.forEach(combo => {
+                    // Check if next player has enough cards to cover all attacks
+                    // This matches pass validation: next_player.hand.length < cards.length + game.table_battles.length
+                    const totalCardsAfterPass = combo.length + game.table_battles.length;
+                    
+                    if (nextPlayer.hand.length >= totalCardsAfterPass) {
+                        // Add both versions: continue attacking and done attacking this round
+                        moves.push({
+                            type: 'pass',
+                            cards: combo,
+                            done_attacking_this_round: false
+                        });
+                        moves.push({
+                            type: 'pass',
+                            cards: combo,
+                            done_attacking_this_round: true
+                        });
+                    }
+                });
+            }
+        }
     }
     
     return moves;

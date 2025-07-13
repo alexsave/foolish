@@ -28,7 +28,8 @@ wrap400(async (user, user_name, body) => {
     
     // Reset all players to idle and clear their hands
     game.players.forEach((player) => {
-        player.status = PLAYER_STATUS.IDLE;
+        // Set bots to ready status, human players to idle
+        player.status = player.is_ai ? PLAYER_STATUS.READY : PLAYER_STATUS.IDLE;
         player.hand = [];
         player.awaiting_attack = false;
         player.done_attacking_this_round = false;

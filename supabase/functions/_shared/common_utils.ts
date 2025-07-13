@@ -2,6 +2,15 @@ import { Card, Game, PersonalGame, PLAYER_STATUS, PrivatePlayer, PublicPlayer, G
 import { ACE_VALUE, CARDS_PER_PLAYER, SUITS, VALUE_MAP, SUIT_MAP } from './constants.ts';
 
 export const get_next_player_index = (game: Game | PersonalGame, current_player: number): number => {
+    // Check if there's only one player left in the game
+    const in_players = game.players.filter(player => player.status === PLAYER_STATUS.IN);
+    if (in_players.length <= 1) {
+        // If there's only one player left, the game should end
+        // Return the current player to avoid infinite loops, but this shouldn't happen
+        console.warn('get_next_player_index called with only one player left - game should have ended');
+        return current_player;
+    }
+    
     let next_player = (current_player + 1) % game.players.length;
     while (game.players[next_player].status === PLAYER_STATUS.OUT) {
         next_player = (next_player + 1) % game.players.length;
@@ -169,12 +178,14 @@ export const calculateGameRankings = (game: Game): string[] => {
     const rankings: string[] = [];
     
     // Add winners in order they got rid of cards (elimination_order[0] = 1st place, etc.)
-    for (let i = 0; i < game.elimination_order.length; i++) {
-        rankings.push(game.elimination_order[i]);
+    // Deduplicate elimination_order to handle backend bugs
+    const uniqueEliminationOrder = Array.from(new Set(game.elimination_order));
+    for (let i = 0; i < uniqueEliminationOrder.length; i++) {
+        rankings.push(uniqueEliminationOrder[i]);
     }
     
     // Add the fool (player not in elimination_order) as last place
-    const fool = game.players.find(p => !game.elimination_order.includes(p.player_id));
+    const fool = game.players.find(p => !uniqueEliminationOrder.includes(p.player_id));
     if (fool) {
         rankings.push(fool.player_id); // Fool is last place
     }

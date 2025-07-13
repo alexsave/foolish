@@ -17,7 +17,7 @@ interface PlayerResult {
 export const WinScreen: React.FC = () => {
     const { game, continueGame } = useServer();
     const { user_id } = useAuth();
-    const [playerResults, setPlayerResults] = useState<PlayerResult[]>([]);
+    const [playerResults, setPlayerResults] = useState<Map<string, PlayerResult>>(new Map());
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
@@ -27,44 +27,64 @@ export const WinScreen: React.FC = () => {
 
         const loadEloData = async () => {
             try {
+                // Separate player IDs by type
+                const userIds = game.players.filter(p => !p.is_ai).map(p => p.player_id);
+                const botIds = game.players.filter(p => p.is_ai).map(p => p.player_id);
+                
+                // Make bulk calls for ELO data
+                const [userEloData, botEloData] = await Promise.all([
+                    userIds.length > 0 ? supabase
+                        .from('user_elo_ratings')
+                        .select('user_id, elo_rating, previous_elo')
+                        .in('user_id', userIds) : Promise.resolve({ data: [] }),
+                    botIds.length > 0 ? supabase
+                        .from('bots')
+                        .select('id, elo_rating, previous_elo')
+                        .in('id', botIds) : Promise.resolve({ data: [] })
+                ]);
+                
+                // Create lookup maps
+                const userEloMap = new Map();
+                const botEloMap = new Map();
+                
+                if (userEloData.data) {
+                    userEloData.data.forEach(user => {
+                        userEloMap.set(user.user_id, {
+                            elo_rating: user.elo_rating,
+                            previous_elo: user.previous_elo
+                        });
+                    });
+                }
+                
+                if (botEloData.data) {
+                    botEloData.data.forEach(bot => {
+                        botEloMap.set(bot.id, {
+                            elo_rating: bot.elo_rating,
+                            previous_elo: bot.previous_elo
+                        });
+                    });
+                }
+                
                 // Calculate player results from elimination order
-                const results: PlayerResult[] = [];
+                const results = new Map<string, PlayerResult>();
                 
                 // Winners in order (elimination_order[0] = 1st place, etc.)
-                for (let index = 0; index < game.elimination_order.length; index++) {
-                    const playerId = game.elimination_order[index];
+                // Deduplicate elimination_order to handle backend bugs
+                const uniqueEliminationOrder = Array.from(new Set(game.elimination_order));
+                for (let index = 0; index < uniqueEliminationOrder.length; index++) {
+                    const playerId = uniqueEliminationOrder[index];
                     const player = game.players.find(p => p.player_id === playerId);
                     if (player) {
-                        let eloData = { elo_rating: 0, previous_elo: 0 };
-                        
-                        if (player.is_ai) {
-                            // Load bot ELO data
-                            const { data, error } = await supabase
-                                .from('bots')
-                                .select('elo_rating, previous_elo')
-                                .eq('id', playerId)
-                                .single();
-                            
-                            if (!error && data) {
-                                eloData = data;
-                            }
-                        } else {
-                            // Load user ELO data
-                            const { data, error } = await supabase
-                                .from('user_elo_ratings')
-                                .select('elo_rating, previous_elo')
-                                .eq('user_id', playerId)
-                                .single();
-                            
-                            if (!error && data) {
-                                eloData = data;
-                            }
-                        }
+                        const eloData = player.is_ai 
+                            ? botEloMap.get(playerId) || { elo_rating: 0, previous_elo: 0 }
+                            : userEloMap.get(playerId) || { elo_rating: 0, previous_elo: 0 };
 
-                        results.push({
+                        const playerRank = index + 1;
+                        
+                        results.set(playerId, {
                             player_id: playerId,
                             name: player.name,
-                            rank: index + 1,
+                            rank: playerRank,
                             old_elo: eloData.previous_elo,
                             new_elo: eloData.elo_rating,
                             elo_change: eloData.elo_rating - eloData.previous_elo,
@@ -73,39 +93,20 @@ export const WinScreen: React.FC = () => {
                     }
                 }
 
-                // Add the fool (last place)
-                const fool = game.players.find(p => !game.elimination_order.includes(p.player_id));
-                if (fool) {
-                    let eloData = { elo_rating: 0, previous_elo: 0 };
+                // Add the fool (last place) - only if not already in results
+                const fool = game.players.find(p => !uniqueEliminationOrder.includes(p.player_id));
+                
+                if (fool && !results.has(fool.player_id)) {
+                    const foolRank = game.players.length;
                     
-                    if (fool.is_ai) {
-                        // Load bot ELO data
-                        const { data, error } = await supabase
-                            .from('bots')
-                            .select('elo_rating, previous_elo')
-                            .eq('id', fool.player_id)
-                            .single();
-                        
-                        if (!error && data) {
-                            eloData = data;
-                        }
-                    } else {
-                        // Load user ELO data
-                        const { data, error } = await supabase
-                            .from('user_elo_ratings')
-                            .select('elo_rating, previous_elo')
-                            .eq('user_id', fool.player_id)
-                            .single();
-                        
-                        if (!error && data) {
-                            eloData = data;
-                        }
-                    }
+                    const eloData = fool.is_ai 
+                        ? botEloMap.get(fool.player_id) || { elo_rating: 0, previous_elo: 0 }
+                        : userEloMap.get(fool.player_id) || { elo_rating: 0, previous_elo: 0 };
 
-                    results.push({
+                    results.set(fool.player_id, {
                         player_id: fool.player_id,
                         name: fool.name,
-                        rank: game.players.length,
+                        rank: foolRank,
                         old_elo: eloData.previous_elo,
                         new_elo: eloData.elo_rating,
                         elo_change: eloData.elo_rating - eloData.previous_elo,
@@ -154,7 +155,7 @@ export const WinScreen: React.FC = () => {
                         </h2>
                         
                         <div className="space-y-3">
-                            {playerResults.map((result) => (
+                            {Array.from(playerResults.values()).sort((a, b) => a.rank - b.rank).map((result) => (
                                 <div 
                                     key={result.player_id}
                                     className={`flex items-center justify-between p-4 rounded-lg border-2 ${

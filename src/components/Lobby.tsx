@@ -238,7 +238,7 @@ export const Lobby = () => {
                 // Revert to original order on error
                 setLocalPlayerOrder(originalPlayers);
             });
-        }, 1300);
+        }, 400);
     };
 
     const handleDragStart = (e: React.DragEvent, index: number) => {
