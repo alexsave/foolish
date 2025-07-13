@@ -527,9 +527,10 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         if (table_battles.length === 0) {
             return Promise.reject(new Error(`Cannot pickup`));
         }
-        const next_defender = get_next_player_index(g, g.defender);
+        const next_first_attacker = get_next_player_index(g, g.defender);
+        const next_defender = get_next_player_index(g, next_first_attacker);
         // move all table cards to self, defenses and attacks
-        setGames(prev => ({ ...prev, [game_id!]: { ...prev[game_id!], table_battles: [], self: { ...prev[game_id!].self, hand: [...prev[game_id!].self.hand, ...table_battles.map(battle => battle.defense ?? battle.attack)] }, defender: next_defender } }));
+        setGames(prev => ({ ...prev, [game_id!]: { ...prev[game_id!], table_battles: [], self: { ...prev[game_id!].self, hand: [...prev[game_id!].self.hand, ...table_battles.map(battle => battle.defense ?? battle.attack)] }, first_attacker: next_first_attacker, defender: next_defender } }));
 
         return invokeGameFunctions('pickup', {
             game_id: game_id!,
