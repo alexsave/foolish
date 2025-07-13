@@ -530,7 +530,23 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         const next_first_attacker = get_next_player_index(g, g.defender);
         const next_defender = get_next_player_index(g, next_first_attacker);
         // move all table cards to self, defenses and attacks
-        setGames(prev => ({ ...prev, [game_id!]: { ...prev[game_id!], table_battles: [], self: { ...prev[game_id!].self, hand: [...prev[game_id!].self.hand, ...table_battles.map(battle => battle.defense ?? battle.attack)] }, first_attacker: next_first_attacker, defender: next_defender } }));
+        // Collect all cards from the table (both attacks and defenses)
+        const allTableCards = table_battles.flatMap(battle => 
+            battle.defense ? [battle.attack, battle.defense] : [battle.attack]
+        );
+        setGames(prev => ({
+            ...prev,
+            [game_id!]: {
+                ...prev[game_id!],
+                table_battles: [],
+                self: {
+                    ...prev[game_id!].self,
+                    hand: [...prev[game_id!].self.hand, ...allTableCards]
+                },
+                first_attacker: next_first_attacker,
+                defender: next_defender
+            }
+        }));
 
         return invokeGameFunctions('pickup', {
             game_id: game_id!,
