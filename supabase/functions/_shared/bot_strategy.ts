@@ -376,16 +376,23 @@ function calculatePassMoves(game: Game, botPlayer: PrivatePlayer): LegalMove[] {
     const moves: LegalMove[] = [];
     const hand = botPlayer.hand;
     
-    // Can only pass if all attacks are same value and uncovered
-    const uncoveredAttacks = game.table_battles.filter(battle => battle.defense === null);
+    // Can only pass if ALL attacks are uncovered (no covered battles)
+    // This matches the validation in pass.ts: if (game.table_battles.some(battle => battle.defense !== null))
+    const hasCoveredBattles = game.table_battles.some(battle => battle.defense !== null);
     
-    if (uncoveredAttacks.length === 0) {
+    if (hasCoveredBattles) {
+        // Cannot pass if any battle is covered
+        return moves;
+    }
+    
+    // All battles must be uncovered at this point
+    if (game.table_battles.length === 0) {
         return moves;
     }
     
     // Check if all attacks have same value
-    const firstValue = uncoveredAttacks[0].attack.value;
-    const allSameValue = uncoveredAttacks.every(battle => battle.attack.value === firstValue);
+    const firstValue = game.table_battles[0].attack.value;
+    const allSameValue = game.table_battles.every(battle => battle.attack.value === firstValue);
     
     if (allSameValue) {
         // Find cards with the same value
