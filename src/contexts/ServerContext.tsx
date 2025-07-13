@@ -166,12 +166,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             return;
         }
 
-        // small caveat: because these are broadcast, they won't have personal info. So self should not be overwritten
-        const self = games[messageGameId]?.self;
-        if (!self) {
-            console.log("we have no self info. We either didn't fetch it or it was overwritten")
-        }
-
         // Handle animation events if present
         if (actualMessage.animation_events && actualMessage.animation_events.length > 0) {
             console.log('Animation events received:', actualMessage.animation_events);

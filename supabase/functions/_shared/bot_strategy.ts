@@ -31,38 +31,39 @@ export class RandomBotStrategy implements BotStrategy {
         const bot = game.players.find(p => p.player_id === botPlayerId);
         const botName = bot ? bot.name : 'Unknown Bot';
         
-        // Debug logging for random strategy
-        console.log(`Bot ${botName} (random) has ${legalMoves.length} legal moves:`);
-        for (let index = 0; index < legalMoves.length; index++) {
-            const move = legalMoves[index];
-            let moveDescription = `  ${index + 1}. ${move.type}`;
+        // Create a clean summary of legal moves
+        const moveSummary = legalMoves.map((move, index) => {
+            let description = `${index + 1}. ${move.type}`;
             if (move.cards) {
-                moveDescription += ` with cards: [${move.cards.map(c => `${c.value}${['♠','♥','♦','♣'][c.suit]}`).join(', ')}]`;
+                description += ` [${move.cards.map(c => `${c.value}${['♠','♥','♦','♣'][c.suit]}`).join(', ')}]`;
             }
             if (move.attack_cards) {
-                moveDescription += ` covering: [${move.attack_cards.map(c => `${c.value}${['♠','♥','♦','♣'][c.suit]}`).join(', ')}]`;
+                description += ` covering [${move.attack_cards.map(c => `${c.value}${['♠','♥','♦','♣'][c.suit]}`).join(', ')}]`;
             }
             if (move.type === 'attack' && move.done_attacking_this_round !== undefined) {
-                moveDescription += ` (done attacking: ${move.done_attacking_this_round})`;
+                description += move.done_attacking_this_round ? ' (done)' : ' (continue)';
             }
-            console.log(moveDescription);
-        }
+            return description;
+        }).join(', ');
+        
+        console.log(`Bot ${botName} has ${legalMoves.length} moves: ${moveSummary}`);
+        
         // Choose a random legal move
         const randomIndex = Math.floor(Math.random() * legalMoves.length);
         const chosenMove = legalMoves[randomIndex];
         
-        // Log the chosen move
-        let chosenDescription = `Bot ${botName} chose: ${JSON.stringify(chosenMove)}`;
+        // Log the chosen move concisely
+        let chosenDescription = `${chosenMove.type}`;
         if (chosenMove.cards) {
-            chosenDescription += ` with cards: [${chosenMove.cards.map(c => `${c.value}${['♠','♥','♦','♣'][c.suit]}`).join(', ')}]`;
+            chosenDescription += ` [${chosenMove.cards.map(c => `${c.value}${['♠','♥','♦','♣'][c.suit]}`).join(', ')}]`;
         }
         if (chosenMove.attack_cards) {
-            chosenDescription += ` covering: [${chosenMove.attack_cards.map(c => `${c.value}${['♠','♥','♦','♣'][c.suit]}`).join(', ')}]`;
+            chosenDescription += ` covering [${chosenMove.attack_cards.map(c => `${c.value}${['♠','♥','♦','♣'][c.suit]}`).join(', ')}]`;
         }
         if (chosenMove.type === 'attack' && chosenMove.done_attacking_this_round !== undefined) {
-            chosenDescription += ` (done attacking: ${chosenMove.done_attacking_this_round})`;
+            chosenDescription += chosenMove.done_attacking_this_round ? ' (done)' : ' (continue)';
         }
-        console.log(chosenDescription);
+        console.log(`Bot ${botName} chose: ${chosenDescription}`);
         
         return chosenMove;
     }

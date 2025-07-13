@@ -173,10 +173,6 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
     console.log(JSON.stringify(data));
 
     const players: PrivatePlayer[] = data.players.map((player: any) => {
-        console.log(JSON.stringify(data.player_hands) + " data.player_hands");
-        console.log(JSON.stringify(data.bot_hands) + " data.bot_hands");
-        console.log(JSON.stringify(player) + " player");
-        
         let hand, awaiting_attack, done_attacking_this_round;
         
         if (player.is_ai) {

@@ -16,21 +16,21 @@ const supabaseClient = createClient(
 );
 
 // Process bot responses for a game after a user action
-export async function processBotActions(game_id: string): Promise<void> {
-    try {
+export async function processBotActions(game_id: string, cycle: number = 0): Promise<void> {
+    //try {
         // Small delay to ensure user action is fully processed
-        await new Promise(resolve => setTimeout(resolve, 1000));
         
         // Process bot actions for this game - each bot will load its own fresh game state
-        await processBotActionsForGame(game_id);
+        //await processBotActionsForGame(game_id, cycle);
         
-    } catch (error) {
-        console.error('Error processing bot actions:', error);
-    }
-}
+    //} catch (error) {
+        //console.error('Error processing bot actions:', error);
+    //}
+//}
 
 // Process bot actions for a specific game
-async function processBotActionsForGame(game_id: string): Promise<void> {
+//async function processBotActionsForGame(game_id: string, cycle: number = 0): Promise<void> {
+    await new Promise(resolve => setTimeout(resolve, 1000));
     // Load initial game state to get bot and game info
     let game: Game | null = null;
     let players: any[] = [];
@@ -70,14 +70,26 @@ async function processBotActionsForGame(game_id: string): Promise<void> {
         switch (gameStatus) {
             case GAME_STATUS.FIRST_ATTACKER:
                 // Only the first attacker bot should act
-                shouldConsider = index === game!.first_attacker; // First bot found
+                shouldConsider = index === game!.first_attacker;
                 break;
                 
             case GAME_STATUS.FREE_PLAY:
+                // Defender should always be considered, attackers only if awaiting_attack = true and not done attacking
+                if (index === game!.defender) {
+                    shouldConsider = true;
+                } else {
+                    shouldConsider = player.awaiting_attack && !player.done_attacking_this_round;
+                }
+                break;
+                
             case GAME_STATUS.ONLY_DEFEND:
+                // Only the defender bot should act
+                shouldConsider = index === game!.defender;
+                break;
+                
             case GAME_STATUS.WAIT_FOR_ATTACKERS:
-                // All bots could potentially act (defender or attackers)
-                shouldConsider = true;
+                // Only attackers with awaiting_attack = true should be considered
+                shouldConsider = index !== game!.defender && player.awaiting_attack;
                 break;
         }
         
@@ -87,8 +99,15 @@ async function processBotActionsForGame(game_id: string): Promise<void> {
     });
     
     if (eligibleBots.length === 0) {
+        console.log(`No eligible bots found for game ${game_id} in status ${gameStatus}`);
         return; // No eligible bots
     }
+    
+    console.log(`Found ${eligibleBots.length} eligible bots for game ${game_id}:`, eligibleBots.map(bot => ({
+        name: bot.name,
+        awaiting_attack: bot.awaiting_attack,
+        done_attacking_this_round: bot.done_attacking_this_round
+    })));
     
     // Randomize the order of eligible bots for this round
     // This simulates real-life "first come, first serve" gameplay
@@ -144,11 +163,18 @@ async function processBotActionsForGame(game_id: string): Promise<void> {
         await executeWithGameLock(game_id, async () => {
             const currentGame = await loadCompleteGame(game_id);
             const anyBotHasLegalMoves = checkIfAnyBotHasLegalMoves(currentGame);
+            
             if (anyBotHasLegalMoves) {
-                console.log(`Bot cycle completed, scheduling next bot action cycle`);
-                scheduleBotActions(game_id);
+                console.log(`Bot cycle completed, scheduling next bot action cycle for game ${game_id}`);
+                
+                // Log bot states for debugging
+                const bots = currentGame.players.filter(p => p.is_ai);
+                const botStates = bots.map(bot => `${bot.name}(${bot.awaiting_attack ? 'awaiting' : 'not awaiting'}, ${bot.done_attacking_this_round ? 'done' : 'continuing'}, ${bot.hand.length} cards)`).join(', ');
+                console.log(`Bot states: ${botStates}`);
+                
+                scheduleBotActions(game_id, cycle + 1);
             } else {
-                console.log(`Bot cycle completed, no more bot moves available`);
+                console.log(`Bot cycle completed, no more bot moves available for game ${game_id}`);
             }
         });
     } catch (error) {
@@ -159,32 +185,47 @@ async function processBotActionsForGame(game_id: string): Promise<void> {
 // Determine if a bot should act given current game state
 async function shouldBotAct(game: Game, bot: PrivatePlayer): Promise<boolean> {
     const botIndex = game.players.indexOf(bot);
-    
-    // If bot is done attacking this round, they should not act as an attacker
-    if (bot.done_attacking_this_round && botIndex !== game.defender) {
-        return false;
-    }
+    let shouldAct = false;
+    let reason = '';
     
     switch (game.status) {
         case GAME_STATUS.FIRST_ATTACKER:
             // Bot should act if it's the first attacker
-            return botIndex === game.first_attacker;
+            shouldAct = botIndex === game.first_attacker;
+            reason = shouldAct ? 'is first attacker' : 'not first attacker';
+            break;
             
         case GAME_STATUS.FREE_PLAY:
-            // Bot should act if it's the defender or an attacker (unless done for this round)
-            return botIndex === game.defender || botIndex !== game.defender;
+            // Bot should act if it's the defender OR if it's an attacker with awaiting_attack = true and not done attacking this round
+            if (botIndex === game.defender) {
+                shouldAct = true;
+                reason = 'is defender';
+            } else {
+                // For attackers, check if they're awaiting attack and not done attacking this round
+                shouldAct = bot.awaiting_attack && !bot.done_attacking_this_round;
+                reason = shouldAct ? 'awaiting attack and not done' : `awaiting_attack=${bot.awaiting_attack}, done_attacking=${bot.done_attacking_this_round}`;
+            }
+            break;
             
         case GAME_STATUS.ONLY_DEFEND:
             // Bot should act if it's the defender
-            return botIndex === game.defender;
+            shouldAct = botIndex === game.defender;
+            reason = shouldAct ? 'is defender' : 'not defender';
+            break;
             
         case GAME_STATUS.WAIT_FOR_ATTACKERS:
-            // Bot should act if it's an attacker (can attack or confirm done)
-            return botIndex !== game.defender;
+            // Bot should act if it's an attacker with awaiting_attack = true
+            shouldAct = botIndex !== game.defender && bot.awaiting_attack;
+            reason = shouldAct ? 'is attacker awaiting attack' : `is_defender=${botIndex === game.defender}, awaiting_attack=${bot.awaiting_attack}`;
+            break;
             
         default:
-            return false;
+            shouldAct = false;
+            reason = 'unknown game status';
     }
+    
+    console.log(`Bot ${bot.name} should act: ${shouldAct} (${reason})`);
+    return shouldAct;
 }
 
 // Process a single bot's action
@@ -201,10 +242,7 @@ async function processBotAction(game: Game, bot: PrivatePlayer): Promise<void> {
         const strategy = getBotStrategy(botData.strategy_key);
         
         // Calculate legal moves for this bot
-        console.log(`Calculating legal moves for bot ${bot.name}`);
         const legalMoves = calculateLegalMoves(game, bot.player_id);
-        console.log(`Legal moves: ${legalMoves.length}`);
-        console.log(`Legal moves: ${JSON.stringify(legalMoves)}`);
         
         if (legalMoves.length === 0) {
             console.log(`No legal moves for bot ${bot.name}`);
@@ -213,7 +251,7 @@ async function processBotAction(game: Game, bot: PrivatePlayer): Promise<void> {
         
         // Let the strategy choose a move
         const chosenMove = await strategy.chooseMove(game, bot.player_id, legalMoves);
-        console.log(`Chosen move: ${chosenMove.type}`);
+        console.log(`Chosen move: ${JSON.stringify(chosenMove)}`);
         
         // Execute the chosen move using shared actions (skip validation since bots choose valid moves)
         await executeBotMove(game, bot, chosenMove);
@@ -241,10 +279,20 @@ async function executeBotMove(game: Game, bot: PrivatePlayer, move: LegalMove): 
     try {
         switch (move.type) {
             case 'attack':
+                // Capture the game status before executing the attack
+                const statusBeforeAttack = game.status;
                 await executeAttack(game, bot.player_id, move.cards!);
                 // Set done_attacking_this_round flag based on the move's choice
                 if (move.done_attacking_this_round !== undefined) {
                     bot.done_attacking_this_round = move.done_attacking_this_round;
+                    // Only execute "good" logic if bot was in FREE_PLAY or WAIT_FOR_ATTACKERS mode BEFORE the attack
+                    // Do NOT execute good logic after a first attack (was FIRST_ATTACKER mode)
+                    if (move.done_attacking_this_round && 
+                        (statusBeforeAttack === GAME_STATUS.FREE_PLAY || statusBeforeAttack === GAME_STATUS.WAIT_FOR_ATTACKERS)) {
+                        bot.awaiting_attack = false;
+                        console.log(`Bot ${bot.name} is done attacking this round - executing good logic`);
+                        await executeGood(game, bot.player_id);
+                    }
                 }
                 break;
                 
@@ -314,7 +362,13 @@ function checkIfAnyBotHasLegalMoves(game: Game): boolean {
                 break;
                 
             case GAME_STATUS.FREE_PLAY:
-                shouldAct = true; // Both defenders and attackers can act
+                // Bot should act if it's the defender OR if it's an attacker with awaiting_attack = true
+                if (botIndex === game.defender) {
+                    shouldAct = true;
+                } else {
+                    // For attackers, check if they're awaiting attack and not done attacking this round
+                    shouldAct = bot.awaiting_attack && !bot.done_attacking_this_round;
+                }
                 break;
                 
             case GAME_STATUS.ONLY_DEFEND:
@@ -322,7 +376,8 @@ function checkIfAnyBotHasLegalMoves(game: Game): boolean {
                 break;
                 
             case GAME_STATUS.WAIT_FOR_ATTACKERS:
-                shouldAct = botIndex !== game.defender;
+                // Bot should act if it's an attacker with awaiting_attack = true
+                shouldAct = botIndex !== game.defender && bot.awaiting_attack;
                 break;
                 
             default:
@@ -342,10 +397,16 @@ function checkIfAnyBotHasLegalMoves(game: Game): boolean {
 }
 
 // Schedule bot actions to run after user action (called from wrap400)
-export function scheduleBotActions(game_id: string): void {
+export function scheduleBotActions(game_id: string, cycle: number = 0): void {
+    // Check if we've had too many bot action cycles recently
+    if (cycle >= 100) {
+        console.warn(`Bot action cycle limit reached for game ${game_id}, stopping to prevent infinite loop`);
+        return;
+    }
+    
     // Run bot actions in the background with a delay
     setTimeout(() => {
-        processBotActions(game_id).catch(error => {
+        processBotActions(game_id, cycle).catch(error => {
             console.error('Error in scheduled bot actions:', error);
         });
     }, 5000); // 5 second delay as requested
