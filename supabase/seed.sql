@@ -56,6 +56,7 @@ CREATE TABLE games (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL DEFAULT 'Untitled Game',
   deck_length INTEGER NOT NULL DEFAULT 0,
+  discard_pile_length INTEGER NOT NULL DEFAULT 0,
   flipped JSONB, -- Card | null - public info
   players JSONB NOT NULL DEFAULT '[]'::jsonb, -- Player[] WITHOUT hands - only name, id, status, position, hand_length
   status game_status NOT NULL DEFAULT 'waiting',

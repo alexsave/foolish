@@ -139,6 +139,7 @@ export interface PublicGame {
     id: string;
     name: string;
     deck_length: number;
+    discard_pile_length: number;
     flipped: Card | null;
     players: PublicPlayer[];
     status: GameStatus;

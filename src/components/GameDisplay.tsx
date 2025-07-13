@@ -5,6 +5,7 @@ import { PlayerRing } from './GameDisplay/PlayerRing';
 import { DefenderShield } from './GameDisplay/DefenderShield';
 import { ActionButtons } from './GameDisplay/ActionButtons';
 import { DeckAndFlipped } from './GameDisplay/DeckAndFlipped';
+import { DiscardPile } from './GameDisplay/DiscardPile';
 import { DragShadow } from './GameDisplay/DragShadow';
 import { CoverArrows } from './GameDisplay/CoverArrows';
 import { Chat } from './GameDisplay/Chat';
@@ -37,6 +38,8 @@ export const GameDisplay = () => {
             <DragShadow />
 
             <DeckAndFlipped />
+
+            <DiscardPile />
 
             <ActionButtons />
 

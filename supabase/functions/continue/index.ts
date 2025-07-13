@@ -39,6 +39,7 @@ wrap400(async (user, user_name, body) => {
     game.table_battles = [];
     game.deck = refill_deck(game.players.length);
     game.elimination_order = []; // Clear elimination order
+    game.discard_pile_length = 0; // Reset discard pile length
     game.flipped = null;
     game.first_attacker = 0;
     game.defender = 0;

@@ -39,6 +39,10 @@ export async function executeGood(game: Game, player_id: string): Promise<void> 
     }
 
     // we are done attacking, shift positions
+    // Count cards being discarded before clearing table_battles
+    const discardedCards = game.table_battles.length * 2; // Each battle has attack + defense
+    game.discard_pile_length += discardedCards;
+    
     game.table_battles = [];
     refillPlayerHands(game);
     
@@ -53,6 +57,7 @@ export async function executeGood(game: Game, player_id: string): Promise<void> 
     // Check if game should end after refilling - at the very end
     await check_win(game);
     
+    // @ts-ignore - check_win() above can change status to GAME_OVER
     if (game.status !== GAME_STATUS.GAME_OVER) {
         game.status = GAME_STATUS.FIRST_ATTACKER;
     }

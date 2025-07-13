@@ -154,6 +154,7 @@ export const personalize_game = (game: Game, player_id: string): PersonalGame =>
         id: game.id,
         name: game.name,
         deck_length: game.deck.length,
+        discard_pile_length: game.discard_pile_length,
         flipped: game.flipped,
         players: game.players.map(player => other_player(player)),
         status: game.status,
@@ -277,6 +278,7 @@ export const checkWinAndResetGame = (game: Game): string | null => {
         game.table_battles = [];
         game.deck = refill_deck(game.players.length);
         game.elimination_order = []; // Reset elimination order
+        game.discard_pile_length = 0; // Reset discard pile length
         
         return the_fool;
     }

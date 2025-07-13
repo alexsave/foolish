@@ -74,6 +74,10 @@ export async function executeCover(game: Game, player_id: string, cover_cards: C
 
     // If defender has no cards left, they may win
     if (defender.hand.length === 0) {
+        // Count cards being discarded before clearing table_battles
+        const discardedCards = game.table_battles.length * 2; // Each battle has attack + defense
+        game.discard_pile_length += discardedCards;
+        
         game.table_battles = [];
         refillPlayerHands(game);
         game.first_attacker = game.defender;
@@ -127,6 +131,10 @@ export async function executeCover(game: Game, player_id: string, cover_cards: C
                     // Reload game to ensure we have the latest state
                     const { loadCompleteGame } = await import('../utils.ts');
                     const currentGame = await loadCompleteGame(game.id);
+                    
+                    // Count cards being discarded before clearing table_battles
+                    const discardedCards = currentGame.table_battles.length * 2; // Each battle has attack + defense
+                    currentGame.discard_pile_length += discardedCards;
                     
                     currentGame.table_battles = [];
                     refillPlayerHands(currentGame);

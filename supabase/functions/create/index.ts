@@ -20,6 +20,7 @@ wrap400(async (user, user_name, body) => {
         id: game_id,
         name: `${user_name}'s Game`,
         deck_length: 0,
+        discard_pile_length: 0,
         flipped: null,
         players: [{
             name: user_name,

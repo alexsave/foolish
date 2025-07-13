@@ -207,6 +207,7 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
         deck: data.game_decks.deck,
         // unused but necessary for type
         deck_length: data.game_decks.deck.length,
+        discard_pile_length: data.discard_pile_length,
         flipped: data.flipped,
         players: players,
         status: data.status,
@@ -271,6 +272,7 @@ export const saveCompleteGame = async (game: Game): Promise<any> => {
         id: game.id,
         name: game.name || 'Untitled Game',
         deck_length: game.deck.length,
+        discard_pile_length: game.discard_pile_length,
         flipped: game.flipped,
         players: publicPlayers,
         status: game.status,
@@ -426,6 +428,7 @@ export const broadcastToGameUsers = async (game: Game, messageType: string, base
             id: game.id,
             name: game.name,
             deck_length: game.deck.length,
+            discard_pile_length: game.discard_pile_length,
             flipped: game.flipped,
             players: game.players.map((player: PrivatePlayer) => ({
                 name: player.name,

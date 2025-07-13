@@ -2,6 +2,15 @@ import { Card, Game, PersonalGame, PLAYER_STATUS, PrivatePlayer, PublicPlayer, G
 import { ACE_VALUE, CARDS_PER_PLAYER, SUITS, VALUE_MAP, SUIT_MAP } from './constants';
 
 export const get_next_player_index = (game: Game | PersonalGame, current_player: number): number => {
+    // Check if there's only one player left in the game
+    const in_players = game.players.filter(player => player.status === PLAYER_STATUS.IN);
+    if (in_players.length <= 1) {
+        // If there's only one player left, the game should end
+        // Return the current player to avoid infinite loops, but this shouldn't happen
+        console.warn('get_next_player_index called with only one player left - game should have ended');
+        return current_player;
+    }
+    
     let next_player = (current_player + 1) % game.players.length;
     while (game.players[next_player].status === PLAYER_STATUS.OUT) {
         next_player = (next_player + 1) % game.players.length;
@@ -145,6 +154,7 @@ export const personalize_game = (game: Game, player_id: string): PersonalGame =>
         id: game.id,
         name: game.name,
         deck_length: game.deck.length,
+        discard_pile_length: game.discard_pile_length,
         flipped: game.flipped,
         players: game.players.map(player => other_player(player)),
         status: game.status,
@@ -168,23 +178,46 @@ export const calculateEloChange = (playerRating: number, opponentRating: number,
 export const calculateGameRankings = (game: Game): string[] => {
     const rankings: string[] = [];
     
+    console.log('calculateGameRankings debug:');
+    console.log('- elimination_order:', game.elimination_order);
+    console.log('- all players:', game.players.map(p => ({ id: p.player_id, name: p.name, status: p.status })));
+    
     // Add winners in order they got rid of cards (elimination_order[0] = 1st place, etc.)
-    for (let i = 0; i < game.elimination_order.length; i++) {
-        rankings.push(game.elimination_order[i]);
+    // Deduplicate elimination_order to handle backend bugs
+    const uniqueEliminationOrder = Array.from(new Set(game.elimination_order));
+    console.log('- unique elimination_order:', uniqueEliminationOrder);
+    
+    for (let i = 0; i < uniqueEliminationOrder.length; i++) {
+        rankings.push(uniqueEliminationOrder[i]);
     }
     
     // Add the fool (player not in elimination_order) as last place
-    const fool = game.players.find(p => !game.elimination_order.includes(p.player_id));
+    const fool = game.players.find(p => !uniqueEliminationOrder.includes(p.player_id));
+    console.log('- fool found:', fool ? { id: fool.player_id, name: fool.name, status: fool.status } : null);
+    
     if (fool) {
         rankings.push(fool.player_id); // Fool is last place
     }
+    
+    console.log('- final rankings:', rankings);
+    console.log('- expected player count:', game.players.length, 'actual ranking count:', rankings.length);
     
     return rankings;
 };
 
 // Pure refill logic without side effects (no broadcasting, no async check_win)
 export const refillPlayerHands = (game: Game): void => {
+    // If no cards left in deck, still need to mark players with 0 cards as OUT
     if (no_cards_left(game)) {
+        // Check all players and mark those with 0 cards as OUT
+        for (let i = 0; i < game.players.length; i++) {
+            const player = game.players[i];
+            if (player.hand.length === 0 && player.status === PLAYER_STATUS.IN) {
+                player.status = PLAYER_STATUS.OUT;
+                player.awaiting_attack = false;
+                game.elimination_order.push(player.player_id);
+            }
+        }
         return;
     }
 
@@ -218,6 +251,7 @@ export const refillPlayerHands = (game: Game): void => {
         // Check if player has no cards and should be marked as OUT
         if (hand.length === 0 && game.players[pIndex].status === PLAYER_STATUS.IN) {
             game.players[pIndex].status = PLAYER_STATUS.OUT;
+            game.players[pIndex].awaiting_attack = false;
             game.elimination_order.push(game.players[pIndex].player_id);
         }
         
@@ -235,7 +269,7 @@ export const checkWinAndResetGame = (game: Game): string | null => {
         }
         
         // Reset game state to waiting
-        game.status = GAME_STATUS.GAME_OVER;
+        game.status = GAME_STATUS.WAITING;
         // set all players to idle
         game.players.forEach((player: PrivatePlayer) => {
             player.status = PLAYER_STATUS.IDLE;
@@ -244,6 +278,7 @@ export const checkWinAndResetGame = (game: Game): string | null => {
         game.table_battles = [];
         game.deck = refill_deck(game.players.length);
         game.elimination_order = []; // Reset elimination order
+        game.discard_pile_length = 0; // Reset discard pile length
         
         return the_fool;
     }
