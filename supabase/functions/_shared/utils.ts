@@ -435,7 +435,8 @@ export const broadcastToGameUsers = async (game: Game, messageType: string, base
                 name: player.name,
                 player_id: player.player_id,
                 status: player.status,
-                hand_length: player.hand.length
+                hand_length: player.hand.length,
+                is_ai: player.is_ai
             }) as PublicPlayer),
             status: game.status,
             power_suit: game.power_suit,
