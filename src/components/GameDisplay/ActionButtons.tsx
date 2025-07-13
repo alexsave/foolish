@@ -196,6 +196,12 @@ export const ActionButtons = () => {
     const self_index = game.players.findIndex((player) => player.player_id === user_id);
     const isDefending = game.defender === self_index;
 
+    const isOut = game.self.status === 'out';
+    if (isOut) {
+        return <div>
+        </div>
+    }
+
     return <div 
         data-touch-interactive
         style={{ display: 'flex', flexDirection: 'column', position: 'absolute', bottom: '10px', left: '0px', right: '0px', justifyContent: 'end', alignItems: 'center', height: '200px' }}>
