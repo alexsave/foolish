@@ -75,6 +75,7 @@ export async function executeAttack(game: Game, player_id: string, cards: Card[]
 
         if (no_cards_left(game) && player.hand.length === 0) {
             player.status = PLAYER_STATUS.OUT;
+            player.awaiting_attack = false;
             game.elimination_order.push(player.player_id);
             await check_win(game);
         }
@@ -87,7 +88,7 @@ export async function executeAttack(game: Game, player_id: string, cards: Card[]
     } else if (game.status === GAME_STATUS.FREE_PLAY || game.status === GAME_STATUS.WAIT_FOR_ATTACKERS) {
         // a valid attack will move us out of wait_for_attackers
         game.players.forEach(player => {
-            if (player.awaiting_attack) {
+            if (player.awaiting_attack && player.status !== PLAYER_STATUS.OUT) {
                 player.status = PLAYER_STATUS.IN;
             }
         });
@@ -107,6 +108,7 @@ export async function executeAttack(game: Game, player_id: string, cards: Card[]
 
         if (no_cards_left(game) && player.hand.length === 0) {
             player.status = PLAYER_STATUS.OUT;
+            player.awaiting_attack = false;
             game.elimination_order.push(player.player_id);
             await check_win(game);
         }

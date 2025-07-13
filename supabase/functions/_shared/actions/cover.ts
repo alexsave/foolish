@@ -84,6 +84,7 @@ export async function executeCover(game: Game, player_id: string, cover_cards: C
         if (defender.hand.length === 0) {
             // Defender still has no cards after refilling - they win this round
             game.players[game.first_attacker].status = PLAYER_STATUS.OUT;
+            game.players[game.first_attacker].awaiting_attack = false;
             game.elimination_order.push(game.players[game.first_attacker].player_id);
             await check_win(game);
             game.first_attacker = get_next_player_index(game, game.first_attacker);

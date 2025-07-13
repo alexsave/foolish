@@ -68,6 +68,7 @@ export async function executePass(game: Game, player_id: string, cards: Card[]):
     // If the deck is empty, they can get out here
     if (no_cards_left(game) && defender.hand.length === 0) {
         defender.status = PLAYER_STATUS.OUT;
+        defender.awaiting_attack = false;
         game.elimination_order.push(defender.player_id);
         await check_win(game);
         game.defender = next_player_index;

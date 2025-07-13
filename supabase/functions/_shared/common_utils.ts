@@ -206,7 +206,17 @@ export const calculateGameRankings = (game: Game): string[] => {
 
 // Pure refill logic without side effects (no broadcasting, no async check_win)
 export const refillPlayerHands = (game: Game): void => {
+    // If no cards left in deck, still need to mark players with 0 cards as OUT
     if (no_cards_left(game)) {
+        // Check all players and mark those with 0 cards as OUT
+        for (let i = 0; i < game.players.length; i++) {
+            const player = game.players[i];
+            if (player.hand.length === 0 && player.status === PLAYER_STATUS.IN) {
+                player.status = PLAYER_STATUS.OUT;
+                player.awaiting_attack = false;
+                game.elimination_order.push(player.player_id);
+            }
+        }
         return;
     }
 
@@ -240,6 +250,7 @@ export const refillPlayerHands = (game: Game): void => {
         // Check if player has no cards and should be marked as OUT
         if (hand.length === 0 && game.players[pIndex].status === PLAYER_STATUS.IN) {
             game.players[pIndex].status = PLAYER_STATUS.OUT;
+            game.players[pIndex].awaiting_attack = false;
             game.elimination_order.push(game.players[pIndex].player_id);
         }
         

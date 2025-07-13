@@ -654,6 +654,7 @@ export const refill = async (game: Game) => {
                     message: `Player ${game.players[pIndex].name} got rid of all their cards`
                 });*/
                 game.players[pIndex].status = PLAYER_STATUS.OUT;
+                game.players[pIndex].awaiting_attack = false;
                 game.elimination_order.push(game.players[pIndex].player_id); // Track elimination order
                 await check_win(game);
             }
