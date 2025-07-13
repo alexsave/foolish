@@ -205,14 +205,14 @@ export const Lobby = () => {
             originalPlayers.findIndex(origPlayer => origPlayer.player_id === newPlayer.player_id)
         );
 
-        // Set new 6-second timer
+        // Set new 2-second timer
         rearrangeTimerRef.current = setTimeout(() => {
             rearrangePlayer(game_id!, indices).catch(error => {
                 console.error('Failed to rearrange players:', error);
                 // Revert to original order on error
                 setLocalPlayerOrder(originalPlayers);
             });
-        }, 6000);
+        }, 2000);
     };
 
     const handleDragStart = (e: React.DragEvent, index: number) => {
