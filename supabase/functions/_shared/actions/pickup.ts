@@ -19,6 +19,11 @@ export function validatePickup(game: Game, player_id: string): void {
 
 // Execution function for pickup moves
 export async function executePickup(game: Game, player_id: string): Promise<void> {
+    // Guard against modifying game state if game is already over
+    if (game.status === GAME_STATUS.GAME_OVER) {
+        return;
+    }
+    
     const defender: PrivatePlayer = game.players.find(player => player.player_id === player_id)!;
 
     // add cards from table to hand

@@ -53,6 +53,11 @@ export function validateAttack(game: Game, player_id: string, cards: Card[]): vo
 
 // Execution function for attack moves
 export async function executeAttack(game: Game, player_id: string, cards: Card[]): Promise<void> {
+    // Guard against modifying game state if game is already over
+    if (game.status === GAME_STATUS.GAME_OVER) {
+        return;
+    }
+    
     const player: PrivatePlayer = game.players.find(player => player.player_id === player_id)!;
     const defender: PrivatePlayer = game.players[game.defender];
 
@@ -74,7 +79,10 @@ export async function executeAttack(game: Game, player_id: string, cards: Card[]
             await check_win(game);
         }
 
-        game.status = GAME_STATUS.FREE_PLAY;
+        // @ts-ignore - check_win() above can change status to GAME_OVER
+        if (game.status !== GAME_STATUS.GAME_OVER) {
+            game.status = GAME_STATUS.FREE_PLAY;
+        }
 
     } else if (game.status === GAME_STATUS.FREE_PLAY || game.status === GAME_STATUS.WAIT_FOR_ATTACKERS) {
         // a valid attack will move us out of wait_for_attackers
@@ -83,7 +91,10 @@ export async function executeAttack(game: Game, player_id: string, cards: Card[]
                 player.status = PLAYER_STATUS.IN;
             }
         });
-        game.status = GAME_STATUS.FREE_PLAY;
+        // @ts-ignore - check_win() can change status to GAME_OVER during execution
+        if (game.status !== GAME_STATUS.GAME_OVER) {
+            game.status = GAME_STATUS.FREE_PLAY;
+        }
 
         player.hand = player.hand.filter(card =>
             !cards.some(mCard => mCard.suit === card.suit && mCard.value === card.value));
@@ -104,7 +115,10 @@ export async function executeAttack(game: Game, player_id: string, cards: Card[]
         const defender_cards = defender.hand.length;
 
         if (uncovered_cards === defender_cards) {
-            game.status = GAME_STATUS.ONLY_DEFEND;
+            // @ts-ignore - check_win() can change status to GAME_OVER during execution
+            if (game.status !== GAME_STATUS.GAME_OVER) {
+                game.status = GAME_STATUS.ONLY_DEFEND;
+            }
         } else if (uncovered_cards > defender_cards) {
             throw new Error('SEVERE: Uncovered cards > defender_cards');
         }

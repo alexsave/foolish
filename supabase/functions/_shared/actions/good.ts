@@ -17,6 +17,11 @@ export function validateGood(game: Game, player_id: string): void {
 
 // Execution function for good moves
 export async function executeGood(game: Game, player_id: string): Promise<void> {
+    // Guard against modifying game state if game is already over
+    if (game.status === GAME_STATUS.GAME_OVER) {
+        return;
+    }
+    
     const player: PrivatePlayer = game.players.find(player => player.player_id === player_id)!;
 
     // set them to done attacking

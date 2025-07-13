@@ -51,6 +51,11 @@ export function validateCover(game: Game, player_id: string, cover_cards: Card[]
 
 // Execution function for cover moves
 export async function executeCover(game: Game, player_id: string, cover_cards: Card[], attack_cards: Card[]): Promise<void> {
+    // Guard against modifying game state if game is already over
+    if (game.status === GAME_STATUS.GAME_OVER) {
+        return;
+    }
+    
     const defender: PrivatePlayer = game.players.find(player => player.player_id === player_id)!;
 
     // now cover the cards
@@ -84,6 +89,7 @@ export async function executeCover(game: Game, player_id: string, cover_cards: C
             game.first_attacker = get_next_player_index(game, game.first_attacker);
         }
         game.defender = get_next_player_index(game, game.first_attacker);
+        // @ts-ignore - check_win() above can change status to GAME_OVER
         if (game.status !== GAME_STATUS.GAME_OVER) {
             game.status = GAME_STATUS.FIRST_ATTACKER;
         }
@@ -93,7 +99,10 @@ export async function executeCover(game: Game, player_id: string, cover_cards: C
     // Check if all attacks are covered
     const all_attacks_covered = game.table_battles.every(battle => battle.defense !== null);
     if (all_attacks_covered) {
-        game.status = GAME_STATUS.WAIT_FOR_ATTACKERS;
+        // @ts-ignore - check_win() can change status to GAME_OVER during execution
+        if (game.status !== GAME_STATUS.GAME_OVER) {
+            game.status = GAME_STATUS.WAIT_FOR_ATTACKERS;
+        }
 
         // Check who can still play cards
         const playable_values = new Set<number>();

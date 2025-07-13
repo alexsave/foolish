@@ -494,6 +494,11 @@ export const broadcastToGameUsers = async (game: Game, messageType: string, base
 };
 
 export const start_game = async (game: Game) => {
+    // Guard against starting game if it's already over
+    if (game.status === GAME_STATUS.GAME_OVER) {
+        return game;
+    }
+    
     // This is the game entry
     game.status = 'playing';
     game.players.forEach(player => {

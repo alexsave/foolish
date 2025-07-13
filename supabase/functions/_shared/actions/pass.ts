@@ -47,6 +47,11 @@ export function validatePass(game: Game, player_id: string, cards: Card[]): void
 
 // Execution function for pass moves
 export async function executePass(game: Game, player_id: string, cards: Card[]): Promise<void> {
+    // Guard against modifying game state if game is already over
+    if (game.status === GAME_STATUS.GAME_OVER) {
+        return;
+    }
+    
     const defender: PrivatePlayer = game.players.find(player => player.player_id === player_id)!;
 
     // Add to table and remove from hand
@@ -76,11 +81,17 @@ export async function executePass(game: Game, player_id: string, cards: Card[]):
 
     // Check game status
     if (uncovered_cards === defender_cards) {
-        game.status = GAME_STATUS.ONLY_DEFEND;
+        // @ts-ignore - check_win() can change status to GAME_OVER during execution
+        if (game.status !== GAME_STATUS.GAME_OVER) {
+            game.status = GAME_STATUS.ONLY_DEFEND;
+        }
     } else if (uncovered_cards > defender_cards) {
         throw new Error('Uncovered cards > defender_cards');
     } else if (uncovered_cards < defender_cards) {
-        game.status = GAME_STATUS.FREE_PLAY;
+        // @ts-ignore - check_win() can change status to GAME_OVER during execution
+        if (game.status !== GAME_STATUS.GAME_OVER) {
+            game.status = GAME_STATUS.FREE_PLAY;
+        }
     }
 }
 

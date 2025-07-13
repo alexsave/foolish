@@ -240,6 +240,11 @@ export const refillPlayerHands = (game: Game): void => {
 export const checkWinAndResetGame = (game: Game): string | null => {
     const the_fool = game_done(game);
     if (the_fool !== null) {
+        // Guard against overwriting GAME_OVER status - only continue/ should do this
+        if (game.status === GAME_STATUS.GAME_OVER) {
+            return the_fool;
+        }
+        
         // Reset game state to waiting
         game.status = GAME_STATUS.WAITING;
         // set all players to idle

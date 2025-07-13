@@ -18,7 +18,8 @@ wrap400(async (user, user_name, body) => {
         console.log("player in the game");
         // Bandaid, but if  all players have 0 cards, set to waiting status
         // TODO: figure out why ending the game doesn't set status to waiting
-        if (game.players.every(player => player.hand.length === 0)) {
+        // Guard against overwriting GAME_OVER status
+        if (game.status !== GAME_STATUS.GAME_OVER && game.players.every(player => player.hand.length === 0)) {
             game.status = GAME_STATUS.WAITING;
             await saveCompleteGame(game);
         }
