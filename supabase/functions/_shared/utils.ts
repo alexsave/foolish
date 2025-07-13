@@ -708,10 +708,10 @@ export const getOrCreateEloRating = async (userId: string): Promise<UserEloRatin
 };
 
 // Get ELO rating for a bot
-export const getBotEloRating = async (botId: string): Promise<{elo_rating: number, games_played: number}> => {
+export const getBotEloRating = async (botId: string): Promise<{elo_rating: number, games_played: number, nickname: string, strategy_key: string}> => {
     const { data, error } = await supabaseClient
         .from('bots')
-        .select('elo_rating, games_played')
+        .select('elo_rating, games_played, nickname, strategy_key')
         .eq('id', botId)
         .single();
 
@@ -732,13 +732,15 @@ export const updateEloRatings = async (game: Game): Promise<void> => {
     try {
         // Get all player ELO ratings (both human and bot)
         const playerRatings = new Map<string, {elo_rating: number, games_played: number}>();
+        const botData = new Map<string, {elo_rating: number, games_played: number, nickname: string, strategy_key: string}>();
         const humanPlayers: string[] = [];
         const botPlayers: string[] = [];
         
         for (const player of game.players) {
             if (player.is_ai) {
-                const rating = await getBotEloRating(player.player_id);
-                playerRatings.set(player.player_id, rating);
+                const botInfo = await getBotEloRating(player.player_id);
+                playerRatings.set(player.player_id, botInfo);
+                botData.set(player.player_id, botInfo);
                 botPlayers.push(player.player_id);
             } else {
                 const rating = await getOrCreateEloRating(player.player_id);
@@ -749,6 +751,20 @@ export const updateEloRatings = async (game: Game): Promise<void> => {
 
         // Determine final rankings based on elimination order
         const rankings = calculateGameRankings(game);
+        console.log('=== ELO UPDATE DEBUG ===');
+        console.log('Game ID:', game.id);
+        console.log('Players in game:', game.players.map(p => ({ id: p.player_id, name: p.name, is_ai: p.is_ai, status: p.status })));
+        console.log('Elimination order from game:', game.elimination_order);
+        console.log('Rankings calculated:', rankings);
+        console.log('Game rankings:', rankings.map((id, index) => `${index + 1}. ${game.players.find(p => p.player_id === id)?.name} (${id})`));
+        console.log('========================');
+
+        // Safety check: ensure all players are in rankings
+        if (rankings.length !== game.players.length) {
+            console.error(`ERROR: Rankings incomplete! Expected ${game.players.length} players, got ${rankings.length} in rankings`);
+            console.error('This will cause incorrect ELO calculations. Skipping ELO update.');
+            return;
+        }
 
         // Calculate ELO changes for each player
         const ratingChanges = new Map<string, number>();
@@ -780,6 +796,7 @@ export const updateEloRatings = async (game: Game): Promise<void> => {
             }
 
             ratingChanges.set(playerId, totalChange);
+            console.log(`Player ${game.players.find(p => p.player_id === playerId)?.name} (${playerId}) - Total ELO change: ${totalChange > 0 ? '+' : ''}${totalChange}`);
         }
 
         // Update human player ratings
@@ -804,24 +821,38 @@ export const updateEloRatings = async (game: Game): Promise<void> => {
         }
 
         // Update bot ratings
-        const botRatingUpdates: Array<{id: string, elo_rating: number, previous_elo: number, games_played: number}> = [];
+        const botRatingUpdates: Array<{id: string, nickname: string, strategy_key: string, elo_rating: number, previous_elo: number, games_played: number}> = [];
         for (const playerId of botPlayers) {
             const change = ratingChanges.get(playerId) || 0;
             const currentRating = playerRatings.get(playerId)!;
+            const currentBotData = botData.get(playerId)!;
             const newRating = Math.max(0, currentRating.elo_rating + change); // Prevent negative ratings
+            
+            console.log(`Bot ${playerId} ELO change: ${currentRating.elo_rating} → ${newRating} (${change > 0 ? '+' : ''}${change})`);
             
             botRatingUpdates.push({
                 id: playerId,
+                nickname: currentBotData.nickname,
+                strategy_key: currentBotData.strategy_key,
                 elo_rating: newRating,
-                previous_elo: currentRating.elo_rating, // Store previous ELO
+                previous_elo: currentRating.elo_rating,
                 games_played: currentRating.games_played + 1
             });
         }
 
         if (botRatingUpdates.length > 0) {
-            await supabaseClient
+            console.log('Updating bot ratings:', JSON.stringify(botRatingUpdates, null, 2));
+            
+            const { data: botUpdateData, error: botUpdateError } = await supabaseClient
                 .from('bots')
-                .upsert(botRatingUpdates);
+                .upsert(botRatingUpdates)
+                .select();
+            
+            if (botUpdateError) {
+                console.error('Error updating bot ratings:', botUpdateError);
+            } else {
+                console.log('Bot ratings updated successfully:', botUpdateData);
+            }
         }
 
         console.log('ELO ratings updated successfully for game:', game.id);

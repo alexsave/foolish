@@ -177,18 +177,29 @@ export const calculateEloChange = (playerRating: number, opponentRating: number,
 export const calculateGameRankings = (game: Game): string[] => {
     const rankings: string[] = [];
     
+    console.log('calculateGameRankings debug:');
+    console.log('- elimination_order:', game.elimination_order);
+    console.log('- all players:', game.players.map(p => ({ id: p.player_id, name: p.name, status: p.status })));
+    
     // Add winners in order they got rid of cards (elimination_order[0] = 1st place, etc.)
     // Deduplicate elimination_order to handle backend bugs
     const uniqueEliminationOrder = Array.from(new Set(game.elimination_order));
+    console.log('- unique elimination_order:', uniqueEliminationOrder);
+    
     for (let i = 0; i < uniqueEliminationOrder.length; i++) {
         rankings.push(uniqueEliminationOrder[i]);
     }
     
     // Add the fool (player not in elimination_order) as last place
     const fool = game.players.find(p => !uniqueEliminationOrder.includes(p.player_id));
+    console.log('- fool found:', fool ? { id: fool.player_id, name: fool.name, status: fool.status } : null);
+    
     if (fool) {
         rankings.push(fool.player_id); // Fool is last place
     }
+    
+    console.log('- final rankings:', rankings);
+    console.log('- expected player count:', game.players.length, 'actual ranking count:', rankings.length);
     
     return rankings;
 };
