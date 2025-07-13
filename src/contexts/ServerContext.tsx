@@ -50,6 +50,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     // Chat messages state - keyed by game_id
     const [chatMessages, setChatMessages] = useState<{ [key: string]: any[] }>({});
 
+    // Spectator mode state - tracks which games user is spectating
+    const [spectatorGames, setSpectatorGames] = useState<Set<string>>(new Set());
 
     const [gameLoadError, setGameLoadError] = useState<string | null>(null);
 
@@ -185,6 +187,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
         if (actualMessage.type === SERVER_EVENT_TYPE.PLAYER_JOINED_GAME) {
             setGames(prev => ({ ...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev) }));
+        } else if (actualMessage.type === SERVER_EVENT_TYPE.PLAYER_LEFT_GAME) {
+            setGames(prev => ({ ...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev) }));
         } else if (actualMessage.type === SERVER_EVENT_TYPE.PLAYER_READY) {
             setGames(prev => ({ ...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev) }));
         } else if (actualMessage.type === SERVER_EVENT_TYPE.GAME_STARTED) {
@@ -241,7 +245,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     const mergeGameData = (gameId: string, newGameData: any, prevGames: any) => {
         return {
             ...newGameData,
-            self: newGameData.self !== undefined && newGameData.self !== null ? newGameData.self : prevGames[gameId]?.self
+            // If self is explicitly provided (including null), use it; otherwise preserve previous self
+            self: newGameData.hasOwnProperty('self') ? newGameData.self : prevGames[gameId]?.self
         };
     };
 
@@ -300,6 +305,21 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         }, {
             onSuccess: (data) => {
                 setGameId(data.data.game.id);
+                // Remove from spectator mode when joining
+                setSpectatorGames(prev => {
+                    const newSet = new Set(prev);
+                    newSet.delete(gameId);
+                    return newSet;
+                });
+                
+                // Clean up old game channel (for spectators) and switch to game-user channel
+                const oldChannelName = `game-${gameId}`;
+                const channels = supabase.getChannels();
+                const oldChannel = channels.find(channel => channel.topic === oldChannelName);
+                if (oldChannel) {
+                    supabase.removeChannel(oldChannel);
+                }
+                
                 //setGames(prev => ({ ...prev, [data.data.game.id]: mergeGameData(data.data.game.id, data.data.game, prev) }));
                 // Subscribe to the game's channel and chat messages
                 subscribeToGame(data.data.game.id).catch(console.error);
@@ -319,6 +339,42 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     const addBot = (gameId: string): Promise<{ game_id: string }> => {
         return invokeGameFunctions('add-bot', {
             game_id: gameId,
+        })
+    };
+
+    const exitGame = (gameId: string, botId?: string): Promise<{ game_id: string }> => {
+        return invokeGameFunctions('exit', {
+            game_id: gameId,
+            bot_id: botId,
+        }, {
+            onSuccess: (data) => {
+                // If user removed themselves (not a bot), mark as spectating and switch channels
+                if (!botId) {
+                    setSpectatorGames(prev => new Set(prev).add(gameId));
+                    
+                    // Clean up old game-user channel and switch to game channel for spectators
+                    const oldChannelName = `gu-${gameId}-${user_id}`;
+                    const channels = supabase.getChannels();
+                    const oldChannel = channels.find(channel => channel.topic === oldChannelName);
+                    if (oldChannel) {
+                        supabase.removeChannel(oldChannel);
+                    }
+                    
+                    // Subscribe to game channel for spectators
+                    supabase.realtime.setAuth().then(() => {
+                        const gameChannel = supabase.channel(`game-${gameId}`, {
+                            config: { private: true }
+                        });
+                        gameChannel.on('broadcast', { event: 'game_update' }, (payload) => {
+                            console.log('Game update received:', payload);
+                            handleGameMessage(payload.payload);
+                        });
+                        gameChannel.subscribe((status, err) => status === 'SUBSCRIBED'
+                            ? console.log('Connected to game channel:', `game-${gameId}`)
+                            : console.error('Game channel error:', err));
+                    });
+                }
+            }
         })
     };
 
@@ -346,18 +402,29 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         loadChatHistory(gameId, game).catch(console.error);
 
         if (game.self) {
+            // Player is in the game - remove from spectator mode if present
+            setSpectatorGames(prev => {
+                const newSet = new Set(prev);
+                newSet.delete(gameId);
+                return newSet;
+            });
             // game self + waiting -> subscribe to gu
             // game self + not waiting -> subscribe to gu
             subscribeToGame(gameId).catch(console.error);
             subscribeToChatMessages(gameId).catch(console.error);
             return;
         }
-        // no game self + waiting -> join
-        // no game self + not waiting -> subscribe to game
-        if (game.status === 'waiting' && game.players.length < MAX_PLAYERS) {
-            // This is kinda iffy. It might be best to automatically spectate, but have an option to join,
+        
+        // Check if user is intentionally spectating this game
+        const isSpectating = spectatorGames.has(gameId);
+        
+        // no game self + waiting + not spectating + room available -> join
+        // no game self + (not waiting OR spectating OR no room) -> subscribe to game
+        if (!isSpectating && game.status === 'waiting' && game.players.length < MAX_PLAYERS) {
+            // Auto-join only if not intentionally spectating
             joinGame(gameId).catch(console.error);
         } else {
+            // Subscribe as spectator
             supabase.realtime.setAuth().then(() => {
                 const gameChannel = supabase.channel(`game-${gameId}`, {
                     config: { private: true }
@@ -710,6 +777,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             joinGame,
             startGame,
             addBot,
+            exitGame,
             game_id,
             game: games[game_id!],
             games,
@@ -737,6 +805,7 @@ interface ServerContextType {
     joinGame: (gameId: string) => Promise<{ game_id: string }>;
     startGame: (gameId: string) => Promise<{ game_id: string }>;
     addBot: (gameId: string) => Promise<{ game_id: string }>;
+    exitGame: (gameId: string, botId?: string) => Promise<{ game_id: string }>;
     game_id: string | null;
     game: PersonalGame | null;
     games: { [key: string]: PersonalGame };

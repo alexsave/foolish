@@ -8,6 +8,7 @@ import { WEBSITE_DOMAIN } from "../constants/constants";
 import { useAuth } from "../contexts/AuthContext";
 import { PublicPlayer } from "../common/types";
 import { usePreventScroll } from "../hooks/usePreventScroll";
+import { MAX_PLAYERS } from "../common/constants";
 
 interface PlayerCardProps {
     player: PublicPlayer;
@@ -19,6 +20,7 @@ interface PlayerCardProps {
     onDragLeave: (e: React.DragEvent) => void;
     onDrop: (e: React.DragEvent, index: number) => void;
     onDragEnd: (e: React.DragEvent) => void;
+    onRemoveBot?: (botId: string) => void;
 }
 
 const PlayerCard: React.FC<PlayerCardProps> = ({
@@ -30,10 +32,12 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
     onDragOver,
     onDragLeave,
     onDrop,
-    onDragEnd
+    onDragEnd,
+    onRemoveBot,
 }) => {
     const game_id = useParams().game_id!.toLowerCase();
-    const { startGame } = useServer();
+    const { startGame, game } = useServer();
+    const gameStatus = game?.status;
     const { user_id } = useAuth();
     const style: React.CSSProperties = {
         width: '180px',
@@ -80,16 +84,38 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
                 userSelect: 'none'
             }} />
             <p style={{ zIndex: 10 }}>{player.is_ai ? '🤖 ' : ''}{player.name}</p>
-            <p>{player.status !== 'idle' ? '🟢' : player.player_id === user_id ? <button
-                onClick={() => startGame(game_id)}
-            >Ready</button> : '🔴'}</p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                {player.status !== 'idle' ? '🟢' : player.player_id === user_id ? <button
+                    onClick={() => startGame(game_id)}
+                >Ready</button> : '🔴'}
+                {player.is_ai && gameStatus === 'waiting' && onRemoveBot && game?.self && (
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onRemoveBot(player.player_id);
+                        }}
+                        style={{
+                            padding: '2px 6px',
+                            backgroundColor: '#f44336',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '3px',
+                            cursor: 'pointer',
+                            fontSize: '12px'
+                        }}
+                        title="Remove bot"
+                    >
+                        ✕
+                    </button>
+                )}
+            </div>
         </div>
     );
 };
 
 export const Lobby = () => {
     const game_id = useParams().game_id?.toLowerCase();
-    const { game, updateGameName, rearrangePlayer, addBot } = useServer();
+    const { game, updateGameName, rearrangePlayer, addBot, exitGame, joinGame } = useServer();
 
     const [isEditingName, setIsEditingName] = useState(false);
     const [editingName, setEditingName] = useState('');
@@ -340,26 +366,64 @@ export const Lobby = () => {
                     onDragLeave={handleDragLeave}
                     onDrop={handleDrop}
                     onDragEnd={handleDragEnd}
+                    onRemoveBot={(botId) => exitGame(game_id!, botId)}
                 />
             ))
         }
         {game.status === 'waiting' && (
-            <div style={{ marginTop: '20px' }}>
-                <button 
-                    onClick={() => addBot(game_id!)}
-                    style={{
-                        padding: '10px 20px',
-                        backgroundColor: '#4CAF50',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '5px',
-                        cursor: 'pointer',
-                        fontSize: '16px',
-                        fontWeight: 'bold'
-                    }}
-                >
-                    Add Bot
-                </button>
+            <div style={{ marginTop: '20px', display: 'flex', flexDirection: 'column', gap: '10px', alignItems: 'center' }}>
+                {game.self && (
+                    <button 
+                        onClick={() => addBot(game_id!)}
+                        style={{
+                            padding: '10px 20px',
+                            backgroundColor: '#4CAF50',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '5px',
+                            cursor: 'pointer',
+                            fontSize: '16px',
+                            fontWeight: 'bold'
+                        }}
+                    >
+                        Add Bot
+                    </button>
+                )}
+                
+                {/* Exit/Join buttons */}
+                {game.self ? (
+                    <button 
+                        onClick={() => exitGame(game_id!)}
+                        style={{
+                            padding: '10px 20px',
+                            backgroundColor: '#f44336',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '5px',
+                            cursor: 'pointer',
+                            fontSize: '16px',
+                            fontWeight: 'bold'
+                        }}
+                    >
+                        Exit Game
+                    </button>
+                ) : game.players.length < MAX_PLAYERS && (
+                    <button 
+                        onClick={() => joinGame(game_id!)}
+                        style={{
+                            padding: '10px 20px',
+                            backgroundColor: '#2196F3',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '5px',
+                            cursor: 'pointer',
+                            fontSize: '16px',
+                            fontWeight: 'bold'
+                        }}
+                    >
+                        Join Game
+                    </button>
+                )}
             </div>
         )}
     </div>;

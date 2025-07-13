@@ -67,6 +67,7 @@ export type GameMoveType = typeof GAME_MOVE_TYPE[keyof typeof GAME_MOVE_TYPE];
 
 export const SERVER_EVENT_TYPE = {
     PLAYER_JOINED_GAME: 'player_joined_game',
+    PLAYER_LEFT_GAME: 'player_left_game',
     PLAYER_READY: 'player_ready',
     GAME_STARTED: 'game_started',
     ATTACK_PLAYED: 'attack_played',
@@ -80,7 +81,8 @@ export const SERVER_EVENT_TYPE = {
     FLIPPED_CARD: 'flipped_card',
     GAME_NAME_UPDATED: 'game_name_updated',
     PLAYERS_REARRANGED: 'players_rearranged',
-    HAND_REARRANGED: 'hand_rearranged'
+    HAND_REARRANGED: 'hand_rearranged',
+    GOOD_PLAYED: 'good_played'
 } as const;
 
 export type ServerEventType = typeof SERVER_EVENT_TYPE[keyof typeof SERVER_EVENT_TYPE];

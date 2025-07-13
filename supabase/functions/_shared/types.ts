@@ -67,6 +67,7 @@ export type GameMoveType = typeof GAME_MOVE_TYPE[keyof typeof GAME_MOVE_TYPE];
 
 export const SERVER_EVENT_TYPE = {
     PLAYER_JOINED_GAME: 'player_joined_game',
+    PLAYER_LEFT_GAME: 'player_left_game',
     PLAYER_READY: 'player_ready',
     GAME_STARTED: 'game_started',
     ATTACK_PLAYED: 'attack_played',
