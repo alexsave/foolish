@@ -9,6 +9,10 @@ const DefenderActionPanel = () => {
     const { game, cover, pass } = useServer() as { game: PersonalGame, cover: (covering_cards: Card[], covered_cards: Card[]) => Promise<any>, pass: (cards: Card[]) => Promise<any> };
     const { selectedCards, setSelectedCards, coverMap, setCoverMap, isSelectingCover, setIsSelectingCover } = useGame();
 
+    if (!game) {
+        return <div></div>
+    }
+
     const canPass = (card: Card) => {
         const table_battles = game.table_battles;
         if (table_battles.length === 0) return false;
@@ -96,6 +100,11 @@ const AttackerActionPanel = () => {
     const { user_id } = useAuth();
     const { game, attack } = useServer() as { game: PersonalGame, attack: (cards: Card[]) => Promise<any> };
     const { selectedCards, setSelectedCards } = useGame();
+    
+    if (!game) {
+        return <div></div>
+    }
+    
     const self_index = game.players.findIndex((player) => player.player_id === user_id);
 
     return <>
@@ -122,7 +131,7 @@ const CardDiv = () => {
 
     const { draggedCardIndex, isDraggingForGameAction, startCardDrag, isActuallyDragging } = useDrag();
 
-    if (!game.self) {
+    if (!game || !game.self) {
         return <p style={{ color: 'white', fontSize: '18px' }}>Spectating</p>
     }
 
@@ -193,6 +202,12 @@ export const ActionButtons = () => {
 
     const { selectedCards, setSelectedCards } = useGame();
 
+    // Handle case where game is not loaded yet
+    if (!game || !game.self) {
+        return <div>
+        </div>
+    }
+
     const self_index = game.players.findIndex((player) => player.player_id === user_id);
     const isDefending = game.defender === self_index;
 
@@ -206,7 +221,7 @@ export const ActionButtons = () => {
         data-touch-interactive
         style={{ display: 'flex', flexDirection: 'column', position: 'absolute', bottom: '10px', left: '0px', right: '0px', justifyContent: 'end', alignItems: 'center', height: '200px' }}>
         {/* Always visible pickup and good buttons */}
-        {game.self && <div 
+        {game && game.self && <div 
             data-touch-interactive
             style={{
                 position: 'absolute',
@@ -264,7 +279,7 @@ export const ActionButtons = () => {
         }
 
         {
-            game.self && selectedCards.length > 0 && <div 
+            game && game.self && selectedCards.length > 0 && <div 
                 data-touch-interactive
                 style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)', zIndex: 999, height: '50px ' }}>
 
