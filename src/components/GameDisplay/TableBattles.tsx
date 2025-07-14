@@ -8,6 +8,12 @@ import { useDrag } from "../../contexts/DragContext";
 export const TableBattles = () => {
     const game: PersonalGame = useServer().game as PersonalGame;
     const { user_id } = useAuth();
+    
+    // Handle case where game is not loaded yet
+    if (!game || !game.players || !game.table_battles) {
+        return <div></div>;
+    }
+    
     const self_index = game.players.findIndex(p => p.player_id === user_id);
 
     const { coverMap, setCoverMap, isSelectingCover, selectedCards } = useGame();
@@ -23,7 +29,7 @@ export const TableBattles = () => {
                 justifyContent: 'center'
             };
 
-            if (coverMap.values().some(c => c.value === battle.attack.value && c.suit === battle.attack.suit)) {
+            if (Array.from(coverMap.values()).some(c => c.value === battle.attack.value && c.suit === battle.attack.suit)) {
                 containerStyle.border = '3px solid red';
             }
 
