@@ -8,6 +8,8 @@ import { useDrag } from "../../contexts/DragContext";
 export const TableBattles = () => {
     const game: PersonalGame = useServer().game as PersonalGame;
     const { user_id } = useAuth();
+    const { coverMap, setCoverMap, isSelectingCover, selectedCards } = useGame();
+    const { isDraggingForGameAction } = useDrag();
     
     // Handle case where game is not loaded yet
     if (!game || !game.players || !game.table_battles) {
@@ -15,10 +17,6 @@ export const TableBattles = () => {
     }
     
     const self_index = game.players.findIndex(p => p.player_id === user_id);
-
-    const { coverMap, setCoverMap, isSelectingCover, selectedCards } = useGame();
-
-    const { isDraggingForGameAction } = useDrag();
 
     return <> {
         game.table_battles.map((battle, index) => {
