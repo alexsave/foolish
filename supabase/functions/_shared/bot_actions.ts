@@ -110,6 +110,54 @@ export async function processBotActions(game_id: string, cycle: number = 0): Pro
     
     if (eligibleBots.length === 0) {
         console.log(`No eligible bots found for game ${game_id} in status ${gameStatus}`);
+        
+        // Special case: if we're in WAIT_FOR_ATTACKERS state and no attackers are awaiting,
+        // check if the game should automatically transition to the next phase
+        if (gameStatus === GAME_STATUS.WAIT_FOR_ATTACKERS) {
+            console.log('Checking if game should auto-transition from WAIT_FOR_ATTACKERS');
+            
+            try {
+                await executeWithGameLock(game_id, async () => {
+                    const currentGame = await loadCompleteGame(game_id);
+                    
+                    // Use the same logic as good.ts to check if all attackers are done
+                    const playable_players = currentGame.players.filter(player => 
+                        player.player_id !== currentGame.players[currentGame.defender].player_id && 
+                        player.hand.some(card => currentGame.table_battles.some(battle => battle.attack.value === card.value || (battle.defense && battle.defense.value === card.value))) &&
+                        player.awaiting_attack &&
+                        !player.done_attacking_this_round);
+                    
+                    if (playable_players.length === 0) {
+                        console.log(`Auto-transitioning game ${game_id} from WAIT_FOR_ATTACKERS - all attackers done`);
+                        
+                        // Execute the same logic as good.ts
+                        const { executeGood } = await import('./actions/good.ts');
+                        
+                        // Find any non-defender player to trigger the good logic
+                        // (the good logic doesn't actually use the player_id for the transition)
+                        const anyNonDefender = currentGame.players.find((p, index) => index !== currentGame.defender);
+                        if (anyNonDefender) {
+                            await executeGood(currentGame, anyNonDefender.player_id);
+                            await saveCompleteGame(currentGame);
+                            await broadcastToGameUsers(currentGame, 'game_update', {
+                                type: 'auto_transition',
+                                message: 'All attackers finished - automatically proceeding to next round'
+                            });
+                            
+                            // Schedule bot actions for the new game state
+                            if (currentGame.status === GAME_STATUS.FIRST_ATTACKER && currentGame.players[currentGame.first_attacker].is_ai) {
+                                scheduleBotActions(currentGame.id);
+                            }
+                        }
+                    } else {
+                        console.log(`${playable_players.length} players still have moves available, not auto-transitioning`);
+                    }
+                });
+            } catch (error) {
+                console.error('Error in auto-transition check:', error);
+            }
+        }
+        
         return; // No eligible bots
     }
     
