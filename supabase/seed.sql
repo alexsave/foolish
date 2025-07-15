@@ -528,6 +528,8 @@ INSERT INTO bots (nickname, strategy_key) VALUES
 ('0xFEEDBEEF', 'random'),
 ('0x0BADC0DE', 'random'),
 ('0xFACEFEED', 'random');
+('0x0C4EA7E9', 'random');
+('0xFFFFFFFF', 'random');
 
 -- =============================================================================
 -- SETUP COMPLETE!

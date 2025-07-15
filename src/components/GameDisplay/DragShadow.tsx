@@ -1,6 +1,7 @@
 import { VALUE_MAP, SUIT_MAP } from "../../utils/cards";
 import { useDrag } from "../../contexts/DragContext";
 import { useGame } from "../../contexts/GameContext";
+import { CardFace } from "./CardFace";
 
 export const DragShadow = () => {
     const { selectedCards } = useGame();
@@ -17,7 +18,8 @@ export const DragShadow = () => {
         alignItems: 'center',
         marginRight: '2px',
         boxShadow: '0 2px 4px rgba(0,0,0,0.3)',
-        opacity: 0.9
+        opacity: 0.9,
+        fontSize: '12px',
     }
 
     const getIndicatorText = (actionType: string) => {
@@ -74,22 +76,14 @@ export const DragShadow = () => {
         )}
         {/* Always show shadow cards when dragging outside hand */}
         <div>{
-            cardsToUse.map((card, index) => <div
-                key={`shadow-${card.value}-${card.suit}-${index}`}
-                style={dragStyle}
-            >
-                <p style={{
-                    pointerEvents: 'none',
-                    userSelect: 'none',
-                    textAlign: 'center',
-                    fontSize: '12px',
-                    margin: 0
-                }}>
-                    {VALUE_MAP[card.value]}
-                    <br />
-                    {SUIT_MAP[card.suit]}
-                </p>
-            </div>)
+            cardsToUse.map((card, index) => 
+                // Maybe a scale down is all we need?
+                <CardFace 
+                    card={card}
+                    key={`shadow-${card.value}-${card.suit}-${index}`}
+                    style={dragStyle}
+                />
+            )
         }</div>
     </div>
 }

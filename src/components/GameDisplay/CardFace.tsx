@@ -13,7 +13,8 @@ export const CardFace = ({ card, onClick, style = {}, ...props }: { card: Card, 
         alignItems: 'center',
         cursor: onClick ? 'pointer' : 'default',
         userSelect: 'none',
-        pointerEvents: onClick ? 'auto' : 'none' // Don't block pointer events unless there's an onClick
+        pointerEvents: onClick ? 'auto' : 'none', // Don't block pointer events unless there's an onClick
+        fontSize: '20px',
     }
 
     return (
@@ -22,7 +23,6 @@ export const CardFace = ({ card, onClick, style = {}, ...props }: { card: Card, 
                 pointerEvents: 'none',
                 userSelect: 'none',
                 textAlign: 'center',
-                fontSize: '20px',
                 margin: '1px'
             }}>
                 {VALUE_MAP[card.value]}

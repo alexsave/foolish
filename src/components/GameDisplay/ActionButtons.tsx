@@ -4,6 +4,7 @@ import { useServer } from "../../contexts/ServerContext";
 import { VALUE_MAP, SUIT_MAP } from "../../utils/cards";
 import { useGame } from "../../contexts/GameContext";
 import { useDrag } from "../../contexts/DragContext";
+import { CardFace} from "./CardFace";
 
 const DefenderActionPanel = () => {
     const { game, cover, pass } = useServer() as { game: PersonalGame, cover: (covering_cards: Card[], covered_cards: Card[]) => Promise<any>, pass: (cards: Card[]) => Promise<any> };
@@ -156,12 +157,14 @@ const CardDiv = () => {
             borderColor = 'red';
         }
 
-        return <div
+        return <CardFace
+            card={card}
             key={'' + card.value + card.suit}
             data-card-index={index}
             draggable={true}
             onMouseDown={(e) => startCardDrag(e, index)}
             onTouchStart={(e) => startCardDrag(e, index)}
+            onClick={() => /*bruh*/true}
             style={{
                 flex: '1 1 0',
                 minWidth: '20px',
@@ -180,19 +183,8 @@ const CardDiv = () => {
                 border: `2px solid ${borderColor}`,
                 backgroundColor: 'white'
             }}
-        >
-            <p style={{
-                pointerEvents: 'none',
-                userSelect: 'none',
-                textAlign: 'center',
-                fontSize: '20px',
-                margin: 0
-            }}>
-                {VALUE_MAP[card.value]}
-                <br />
-                {SUIT_MAP[card.suit]}
-            </p>
-        </div>;
+        />
+
     })} </div>
 }
 
