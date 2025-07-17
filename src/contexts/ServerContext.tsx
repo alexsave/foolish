@@ -4,13 +4,14 @@ import supabase from '../backend/Connector';
 import { useParams } from 'react-router-dom';
 import { useAuth } from './AuthContext';
 import { MAX_PLAYERS } from '../common/constants';
-import { get_next_player_index, canCover } from '../common/common_utils';
+import { get_next_player_index, canCover, card_comp } from '../common/common_utils';
 
 const ServerContext = createContext<ServerContextType | null>(null);
 
 const handsQuery = 
 `game_id,
 hand,
+awaiting_attack,
 games!inner (
     defender,
     deck_length,
@@ -58,7 +59,10 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     const [game_id, setGameId] = useState<string | null>(null);
 
     // Local hand order state - keyed by game_id
+    // Thinking we just need one tbh
     const [localHandOrders, setLocalHandOrders] = useState<{ [key: string]: Card[] }>({});
+
+    const [localHand, setLocalHand] = useState<Card[]>([]);
 
     // Use ref to avoid closure issues in WebSocket handler
     const gameIdRef = useRef<string | null>(null);
@@ -68,11 +72,16 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     const prevUserRef = useRef<string | null>(null);
 
     useEffect(() => {
-        //const game_id = use
         if (url_game_id) {
             gameIdRef.current = url_game_id;
             setGameId(url_game_id);
             setGameLoadError(null); // Clear any previous errors
+            // iffy on this call. Just load the specific game
+            getUserGames();
+            // The problem is that getUserGames and loadGame are incompatible
+            if ( games[url_game_id]?.self){
+                setLocalHandOrders(prev => ({ ...prev, [url_game_id]: games[url_game_id].self.hand }));
+            }
             if (!games[url_game_id]/* && !loading*/) {
                 //setLoading(true);
                 loadGame(url_game_id).catch(error => {
@@ -84,13 +93,14 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     }, [url_game_id]);
 
 
+
     // Keep ref in sync with state
 
 
     useEffect(() => {
         // Skip if user hasn't actually changed
         if (prevUserRef.current === user_id) {
-            return;
+            //return;
         }
 
         prevUserRef.current = user_id;
@@ -461,7 +471,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         
         // Set game_id state and game data first, then load chat history
         setGameId(gameId);
-        setGames(prev => ({ ...prev, [gameId]: mergeGameData(gameId, game, prev) }));
+        //setGames(prev => ({ ...prev, [gameId]: mergeGameData(gameId, game, prev) }));
         
         // Load chat history with game data
         loadChatHistory(gameId, game).catch(console.error);
@@ -676,7 +686,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         // Update local hand order
         setLocalHandOrders(prev => ({
             ...prev,
-            [game_id!]: (prev[game_id!] || []).filter(card => !coverCards.some(c => c.suit === card.suit && c.value === card.value))
+            [game_id!]: (prev[game_id!] || []).filter(card => !coverCards.some(c => card_comp(c, card)))
         }));
         return invokeGameFunctions('cover', {
             game_id: game_id!,
@@ -812,6 +822,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     };
 
     const getUserGames = async (): Promise<void> => {
+        // This needs to also throw in status at least
         try {
             if (!user_id) {
                 console.log('No player_id available for getUserGames');
@@ -833,12 +844,18 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
             const games: { [key: string]: PersonalGame } = {};
             for (const playerHand of data) {
+
                 // Fuck you I know this will be a public game type
                 const game = playerHand.games as unknown as PublicGame;
+                const selfPlayer = game.players.find((player) => player.player_id === user_id);
+                if (!selfPlayer){
+                    continue
+                }
                 games[game.id] = {
                     ...game,
-                    self: playerHand.hand// as unknown as PrivatePlayer
+                    self: {...selfPlayer, player_id: user_id, hand: playerHand.hand, awaiting_attack: playerHand.awaiting_attack, done_attacking_this_round: false}// as unknown as PrivatePlayer
                 };
+
             }
 
             setGames(prev => ({ ...prev, ...games }));
