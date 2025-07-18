@@ -28,7 +28,7 @@ export const Dashboard = () => {
             supabase.functions.invoke('create')
                 .then(data => {
                     console.log(data);
-                    navigate(`/${data.data.game.id}`);
+                    navigate(`/${data.data.id}`);
                 }).catch(error => {
                     alert(error);
                 });

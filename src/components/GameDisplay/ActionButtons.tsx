@@ -209,6 +209,9 @@ export const ActionButtons = () => {
         </div>
     }
 
+    // can play if you have any value on the table
+    const canPlay = game.self.hand.some(card => game.table_battles.some(battle => battle.attack.value === card.value || battle.defense?.value === card.value));
+
     return <div 
         data-touch-interactive
         style={{ display: 'flex', flexDirection: 'column', position: 'absolute', bottom: '10px', left: '0px', right: '0px', justifyContent: 'end', alignItems: 'center', height: '200px' }}>
@@ -247,7 +250,7 @@ export const ActionButtons = () => {
             }
 
             {/* Good button for attackers when all attacks are covered */}
-            {!isDefending && game.table_battles.length > 0 && game.table_battles.every(battle => battle.defense) && <button
+            {!isDefending && game.table_battles.length > 0 && game.table_battles.every(battle => battle.defense) && canPlay && <button
                 style={{
                     width: '60px',
                     height: '40px',
