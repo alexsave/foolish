@@ -28,9 +28,7 @@ wrap400(async (user, user_name, body, game) => {
     if (!player_handError && player_hand) {
         // Player is already in the game
         // quiet return, don't worry about it
-        return {
-            game: personalize_game(game, user_id)
-        };
+        return;
     }
 
     if (game.status !== GAME_STATUS.WAITING) {

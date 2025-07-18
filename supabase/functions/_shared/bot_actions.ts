@@ -132,7 +132,7 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
 
     let shouldLoop = false;
 
-    await new Promise(resolve => setTimeout(resolve, 3500));
+    await new Promise(resolve => setTimeout(resolve, 1500));
     // Load initial game state to get bot and game info
     let localGame: Game | null = null;
     let players: any[] = [];
@@ -214,6 +214,7 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
                     // Use the same logic as good.ts to check if all attackers are done
                     const playable_players = currentGame.players.filter(player => 
                         player.player_id !== currentGame.players[currentGame.defender].player_id && 
+                        player.status !== PLAYER_STATUS.OUT &&
                         player.hand.some(card => currentGame.table_battles.some(battle => battle.attack.value === card.value || (battle.defense && battle.defense.value === card.value))) &&
                         player.awaiting_attack &&
                         !player.done_attacking_this_round);
