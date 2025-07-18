@@ -28,5 +28,5 @@ wrap400(async (user, user_name, body) => {
         game: personalize_game(game, user_id)
     };
 
-});
+}, true);
 

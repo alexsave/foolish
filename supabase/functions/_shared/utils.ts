@@ -19,7 +19,7 @@ import { createClient, User } from 'jsr:@supabase/supabase-js';
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { getAuthenticatedUser } from './auth.ts';
-import { scheduleBotActions } from './bot_actions.ts';
+import { lockedBotLoop, releaseBotLoopLock } from './bot_actions.ts';
 
 const supabaseClient = createClient(
     Deno.env.get('SUPABASE_URL') || '',
@@ -64,7 +64,7 @@ export const executeWithGameLock = async (game_id: string, operation: () => Prom
     }
     
     try {
-        return operation();
+        return await operation();
     } finally {
         await releaseGameLock(game_id);
     }
@@ -72,7 +72,7 @@ export const executeWithGameLock = async (game_id: string, operation: () => Prom
 
 
 
-export const wrap400 = (execute: (user: User, user_name: string, body: any) => Promise<any>) => {
+export const wrap400 = (execute: (user: User, user_name: string, body: any) => Promise<any>, run_bots: boolean = false) => {
     const handler = async (req: Request): Promise<Response> => {
         try {
             // Handle CORS
@@ -106,9 +106,14 @@ export const wrap400 = (execute: (user: User, user_name: string, body: any) => P
             }
 
             // Schedule bot actions if this was a game operation
-            if (game_id) {
+            if (game_id && run_bots) {
                 // TODO: not quite. Only after start/attack/cover/pass/pickup/good 
-                scheduleBotActions(game_id);
+                lockedBotLoop(game_id);
+                globalThis.addEventListener('beforeunload', () => {
+                    // in case the server shuts down before bot loop
+                    releaseBotLoopLock(game_id);
+                })
+
             }
 
             // Create standardized response

@@ -55,4 +55,5 @@ wrap400(async (user, user_name, body) => {
             game: publicGame
         };
     }
-});
+}, true);
+

@@ -1,5 +1,5 @@
 import { Game, PrivatePlayer, Bot, GAME_STATUS, PLAYER_STATUS } from './types.ts';
-import { loadCompleteGame, saveCompleteGame, broadcastToGameUsers, executeWithGameLock } from './utils.ts';
+import { check_win, loadCompleteGame, saveCompleteGame, broadcastToGameUsers, executeWithGameLock } from './utils.ts';
 import { calculateLegalMoves, getBotStrategy, LegalMove } from './bot_strategy.ts';
 import { createClient } from 'jsr:@supabase/supabase-js';
 
@@ -15,22 +15,35 @@ const supabaseClient = createClient(
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
 );
 
-// Process bot responses for a game after a user action
-export async function processBotActions(game_id: string, cycle: number = 0): Promise<void> {
-    //try {
-        // Small delay to ensure user action is fully processed
-        
-        // Process bot actions for this game - each bot will load its own fresh game state
-        //await processBotActionsForGame(game_id, cycle);
-        
-    //} catch (error) {
-        //console.error('Error processing bot actions:', error);
-    //}
-//}
+export const acquireBotLoopLock = async (game_id: string): Promise<boolean> =>
+    (await supabaseClient.rpc('pg_try_advisory_lock_string', { key: `botloop-${game_id}` })).data;
 
-// Process bot actions for a specific game
-//async function processBotActionsForGame(game_id: string, cycle: number = 0): Promise<void> {
-    await new Promise(resolve => setTimeout(resolve, 1000));
+export const releaseBotLoopLock = async (game_id: string) =>
+    await supabaseClient.rpc('pg_advisory_unlock_string', { key: `botloop-${game_id}` });
+
+export const lockedBotLoop = async (game_id: string): Promise<void> => {
+    if (!(await acquireBotLoopLock(game_id))) {
+        console.log(`Bot loop already running for ${game_id}`);
+        return;         // another cycle has the baton
+    }
+    try {
+        await processBotActions(game_id, 0);   
+    } finally {
+        await releaseBotLoopLock(game_id);
+    }
+}
+
+
+// Process bot responses for a game after a user action
+//export async function processBotActions(game_id: string, cycle: number = 0): Promise<void> {
+const processBotActions = async (game_id: string, cycle: number = 0): Promise<void> => {
+    if (cycle > 100) {
+        return;
+    }
+
+    let shouldLoop = false;
+
+    await new Promise(resolve => setTimeout(resolve, 5000));
     // Load initial game state to get bot and game info
     let game: Game | null = null;
     let players: any[] = [];
@@ -49,8 +62,6 @@ export async function processBotActions(game_id: string, cycle: number = 0): Pro
             const in_players = game.players.filter(player => player.status === PLAYER_STATUS.IN);
             if (in_players.length <= 1) {
                 console.warn(`Bot processing stopped - only ${in_players.length} player(s) left, ending game`);
-                // Import check_win to end the game properly
-                const { check_win } = await import('./utils.ts');
                 await check_win(game);
                 return;
             }
@@ -71,45 +82,38 @@ export async function processBotActions(game_id: string, cycle: number = 0): Pro
     const eligibleBots: any[] = [];
     
     // Add bots based on game state
-    players.forEach((player, index) => {
-        if (!player.is_ai) return;
+    //players.forEach((player, index) => {
+    for (let index = 0; index < players.length; index++){
+        const player = players[index];
+        if (!player.is_ai) continue;
         
         // Check if this bot should potentially act based on game state
         let shouldConsider = false;
         
-        switch (gameStatus) {
-            case GAME_STATUS.FIRST_ATTACKER:
-                // Only the first attacker bot should act
-                shouldConsider = index === game!.first_attacker;
-                break;
-                
-            case GAME_STATUS.FREE_PLAY:
-                // Defender should always be considered, attackers only if awaiting_attack = true and not done attacking
-                if (index === game!.defender) {
-                    shouldConsider = true;
-                } else {
-                    shouldConsider = player.awaiting_attack && !player.done_attacking_this_round;
-                }
-                break;
-                
-            case GAME_STATUS.ONLY_DEFEND:
-                // Only the defender bot should act
-                shouldConsider = index === game!.defender;
-                break;
-                
-            case GAME_STATUS.WAIT_FOR_ATTACKERS:
-                // Only attackers with awaiting_attack = true should be considered
-                shouldConsider = index !== game!.defender && player.awaiting_attack;
-                break;
+        if (gameStatus === GAME_STATUS.FIRST_ATTACKER){
+            shouldConsider = index === game!.first_attacker;
+        } else if (gameStatus === GAME_STATUS.FREE_PLAY){
+            if (index === game!.defender) {
+                shouldConsider = true;
+            } else {
+                shouldConsider = player.awaiting_attack && !player.done_attacking_this_round;
+            }
+        } else if (gameStatus === GAME_STATUS.ONLY_DEFEND){
+            shouldConsider = index === game!.defender;
+        } else if (gameStatus === GAME_STATUS.WAIT_FOR_ATTACKERS){
+            shouldConsider = index !== game!.defender && player.awaiting_attack;
         }
-        
+
         if (shouldConsider) {
             eligibleBots.push(player);
         }
-    });
+    }
     
     if (eligibleBots.length === 0) {
         console.log(`No eligible bots found for game ${game_id} in status ${gameStatus}`);
+
+
+        //let shouldLoop = false;
         
         // Special case: if we're in WAIT_FOR_ATTACKERS state and no attackers are awaiting,
         // check if the game should automatically transition to the next phase
@@ -127,30 +131,30 @@ export async function processBotActions(game_id: string, cycle: number = 0): Pro
                         player.awaiting_attack &&
                         !player.done_attacking_this_round);
                     
-                    if (playable_players.length === 0) {
-                        console.log(`Auto-transitioning game ${game_id} from WAIT_FOR_ATTACKERS - all attackers done`);
-                        
-                        // Execute the same logic as good.ts
-                        const { executeGood } = await import('./actions/good.ts');
-                        
-                        // Find any non-defender player to trigger the good logic
-                        // (the good logic doesn't actually use the player_id for the transition)
-                        const anyNonDefender = currentGame.players.find((p, index) => index !== currentGame.defender);
-                        if (anyNonDefender) {
-                            await executeGood(currentGame, anyNonDefender.player_id);
-                            await saveCompleteGame(currentGame);
-                            await broadcastToGameUsers(currentGame, 'game_update', {
-                                type: 'auto_transition',
-                                message: 'All attackers finished - automatically proceeding to next round'
-                            });
-                            
-                            // Schedule bot actions for the new game state
-                            if (currentGame.status === GAME_STATUS.FIRST_ATTACKER && currentGame.players[currentGame.first_attacker].is_ai) {
-                                scheduleBotActions(currentGame.id);
-                            }
-                        }
-                    } else {
+                    if (playable_players.length !== 0) {
                         console.log(`${playable_players.length} players still have moves available, not auto-transitioning`);
+                        return;
+                    }
+                    console.log(`Auto-transitioning game ${game_id} from WAIT_FOR_ATTACKERS - all attackers done`);
+                    
+                    // Execute the same logic as good.ts
+                    
+                    // Find any non-defender player to trigger the good logic
+                    // (the good logic doesn't actually use the player_id for the transition)
+                    const anyNonDefender = currentGame.players.find((p, index) => index !== currentGame.defender);
+                    if (anyNonDefender) {
+                        await executeGood(currentGame, anyNonDefender.player_id);
+                        await saveCompleteGame(currentGame);
+                        await broadcastToGameUsers(currentGame, 'game_update', {
+                            type: 'auto_transition',
+                            message: 'All attackers finished - automatically proceeding to next round'
+                        });
+                        
+                        // Schedule bot actions for the new game state
+                        if (currentGame.status === GAME_STATUS.FIRST_ATTACKER && currentGame.players[currentGame.first_attacker].is_ai) {
+                            // yeah we need to loop
+                            shouldLoop = true;
+                        }
                     }
                 });
             } catch (error) {
@@ -158,7 +162,10 @@ export async function processBotActions(game_id: string, cycle: number = 0): Pro
             }
         }
         
-        return; // No eligible bots
+        if (shouldLoop) {
+            // No eligible bots
+            return await processBotActions(game_id, cycle+1); 
+        }
     }
     
     console.log(`Found ${eligibleBots.length} eligible bots for game ${game_id}:`, eligibleBots.map(bot => ({
@@ -230,13 +237,18 @@ export async function processBotActions(game_id: string, cycle: number = 0): Pro
                 const botStates = bots.map(bot => `${bot.name}(${bot.awaiting_attack ? 'awaiting' : 'not awaiting'}, ${bot.done_attacking_this_round ? 'done' : 'continuing'}, ${bot.hand.length} cards)`).join(', ');
                 console.log(`Bot states: ${botStates}`);
                 
-                scheduleBotActions(game_id, cycle + 1);
+                shouldLoop = true;
             } else {
                 console.log(`Bot cycle completed, no more bot moves available for game ${game_id}`);
             }
         });
     } catch (error) {
         console.error('Error checking for additional bot actions:', error);
+    }
+
+    if (shouldLoop) {
+        // massive chain of promises
+        return await processBotActions(game_id, cycle+1); 
     }
 }
 
@@ -491,18 +503,3 @@ function checkIfAnyBotHasLegalMoves(game: Game): boolean {
     return false; // No bots have legal moves
 }
 
-// Schedule bot actions to run after user action (called from wrap400)
-export function scheduleBotActions(game_id: string, cycle: number = 0): void {
-    // Check if we've had too many bot action cycles recently
-    if (cycle >= 100) {
-        console.warn(`Bot action cycle limit reached for game ${game_id}, stopping to prevent infinite loop`);
-        return;
-    }
-    
-    // Run bot actions in the background with a delay
-    setTimeout(() => {
-        processBotActions(game_id, cycle).catch(error => {
-            console.error('Error in scheduled bot actions:', error);
-        });
-    }, 5000); // 5 second delay as requested
-} 

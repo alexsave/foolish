@@ -91,4 +91,4 @@ wrap400(async (user, user_name, body) => {
         removed_player: playerToRemove.name,
         is_spectator: !isRemovingBot  // User is spectating if they removed themselves
     };
-}); 
+}, true); 
