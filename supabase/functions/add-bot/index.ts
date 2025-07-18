@@ -1,4 +1,4 @@
-import { wrap400, loadCompleteGame, saveCompleteGame, broadcastToGameUsers } from "../_shared/utils.ts";
+import { wrap400, broadcastToGameUsers, start_game } from "../_shared/utils.ts";
 import { Game, GAME_STATUS, SERVER_EVENT_TYPE, PLAYER_STATUS, PrivatePlayer, Bot } from "../_shared/types.ts";
 import { MAX_PLAYERS } from "../_shared/constants.ts";
 import { createClient } from 'jsr:@supabase/supabase-js';
@@ -11,12 +11,10 @@ const supabaseClient = createClient(
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
 );
 
-wrap400(async (user, user_name, body) => {
+wrap400(async (user, user_name, body, game) => {
     const user_id = user.id;
-    const { game_id } = body;
 
     // Load complete game state from separated tables
-    let game: Game = await loadCompleteGame(game_id);
 
     // Verify player is in game (only players in game can add bots)
     verify_player_in_game(game, user_id);
@@ -67,7 +65,16 @@ wrap400(async (user, user_name, body) => {
     game.players.push(botPlayer);
 
     // Save complete game state back to separated tables
-    await saveCompleteGame(game);
+    //await saveCompleteGame(game);
+    if (game.players.length >= 2 && game.players.every(player => player.status === PLAYER_STATUS.READY)) {
+        // We can start the game 
+        /*game = */await start_game(game);
+
+        //message = `Player ${user_name} is ready, starting game ${game_id}`;
+        //type = SERVER_EVENT_TYPE.GAME_STARTED;
+        //await saveCompleteGame(game);
+
+    } //else {
 
     broadcastToGameUsers(game, 'game_update', {
         type: SERVER_EVENT_TYPE.PLAYER_JOINED_GAME,
@@ -75,9 +82,6 @@ wrap400(async (user, user_name, body) => {
         player_id: selectedBot.id
     });
 
-    return {
-        game: personalize_game(game, user_id),
-        bot_added: selectedBot.nickname
-    };
+    //return game;
 
 }); 

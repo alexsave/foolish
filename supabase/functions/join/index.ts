@@ -1,5 +1,5 @@
-import { loadCompleteGame, saveCompleteGame, wrap400, broadcastToGameUsers } from "../_shared/utils.ts";
-import { GAME_STATUS, PLAYER_STATUS, Game, SERVER_EVENT_TYPE, PrivatePlayer } from "../_shared/types.ts";
+import { wrap400, broadcastToGameUsers } from "../_shared/utils.ts";
+import { GAME_STATUS, PLAYER_STATUS, SERVER_EVENT_TYPE, PrivatePlayer } from "../_shared/types.ts";
 import { MAX_PLAYERS } from "../_shared/constants.ts";
 import { personalize_game } from "../_shared/common_utils.ts";
 
@@ -10,12 +10,12 @@ const supabaseClient = createClient(
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
 );
 
-wrap400(async (user, user_name, body) => {
+wrap400(async (user, user_name, body, game) => {
     const user_id = user.id;
     const { game_id } = body;
 
     // We have to load the game no matter what
-    const game: Game = await loadCompleteGame(game_id);
+    //const game: Game = await loadCompleteGame(game_id);
 
     // Check if player is already in game by checking player_hands
     const { data: player_hand, error: player_handError } = await supabaseClient
@@ -57,7 +57,7 @@ wrap400(async (user, user_name, body) => {
     game.players.push(privatePlayer);
 
     // Save to database - this handles all simplified tables
-    await saveCompleteGame(game);
+    //await saveCompleteGame(game);
 
     // Send broadcast notification
     broadcastToGameUsers(game, 'game_update', {
@@ -65,8 +65,8 @@ wrap400(async (user, user_name, body) => {
         message: `Player ${user_name} joined game ${game_id}`
     });
 
-    return {
-        game: personalize_game(game, user_id)
-    };
+    //return {
+    //    game: personalize_game(game, user_id)
+    //};
 });
 

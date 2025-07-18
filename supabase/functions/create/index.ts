@@ -1,6 +1,6 @@
 import { wrap400, broadcastToGameUsers, loadCompleteGame } from "../_shared/utils.ts";
 import { GAME_STATUS, PLAYER_STATUS, Game, PublicGame, PlayerHand, GameDeck } from "../_shared/types.ts";
-import { createId, personalize_game } from "../_shared/common_utils.ts";
+import { createId } from "../_shared/common_utils.ts";
 
 import { createClient } from "npm:@supabase/supabase-js@2.39.0"
 
@@ -9,9 +9,26 @@ const supabaseClient = createClient(
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
 );
 
-wrap400(async (user, user_name, body) => {
+wrap400(async (user, user_name, body, game) => {
     const user_id = user.id;
-    const game_id = createId();
+    
+    // Generate unique game ID
+    let game_id: string;
+    do {
+        game_id = createId();
+        try {
+
+            const { data: existingGame } = await supabaseClient
+                .from('games')
+                .select('id')
+                .eq('id', game_id)
+                .single();
+
+            if (!existingGame) break;
+        } catch (error) {
+            continue;
+        }
+    } while (true);
 
     // Create the game object for database insert (separated schema)
 
@@ -39,7 +56,7 @@ wrap400(async (user, user_name, body) => {
 
     // 1. Games table (public data only)
     await supabaseClient.from('games').insert(publicGameData);
-    
+
     // 2. Initialize empty deck (will be filled when game starts)
     await supabaseClient.from('game_decks').insert({
         game_id: game_id,
@@ -63,7 +80,5 @@ wrap400(async (user, user_name, body) => {
         message: `Game created with id ${game_id}`
     });
 
-    return {
-        game: personalize_game(dbGameData, user_id)
-    };
+    return dbGameData;
 });

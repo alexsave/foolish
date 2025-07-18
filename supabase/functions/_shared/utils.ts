@@ -19,7 +19,7 @@ import { createClient, User } from 'jsr:@supabase/supabase-js';
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { getAuthenticatedUser } from './auth.ts';
-import { lockedBotLoop, releaseBotLoopLock } from './bot_actions.ts';
+import { lockedBotLoop } from './bot_actions.ts';
 
 const supabaseClient = createClient(
     Deno.env.get('SUPABASE_URL') || '',
@@ -47,7 +47,7 @@ export const releaseGameLock = async (game_id: string): Promise<void> => {
 };
 
 // Sequential operation execution with database-level locking
-export const executeWithGameLock = async (game_id: string, operation: () => Promise<any>): Promise<any> => {
+export const executeWithGameLock = async (game_id: string, operation: (game: Game) => Promise<false|void|Game>): Promise<Game> => {
     // Try to acquire database lock with retry logic
     const maxRetries = 5;
     let lockAcquired = false;
@@ -64,15 +64,20 @@ export const executeWithGameLock = async (game_id: string, operation: () => Prom
     }
     
     try {
-        return await operation();
+        const loadedGame: Game = await loadCompleteGame(game_id);
+        // Ez if this returns specifically null, we don't save
+        const save = await operation(loadedGame);
+        if (save !== null) {
+            await saveCompleteGame(loadedGame);
+        }
+        return loadedGame;
     } finally {
         await releaseGameLock(game_id);
     }
 };
 
 
-
-export const wrap400 = (execute: (user: User, user_name: string, body: any) => Promise<any>, run_bots: boolean = false) => {
+export const wrap400 = (execute: (user: User, user_name: string, body: any, game: Game) => Promise<false|void|Game>, run_bots: boolean = false) => {
     const handler = async (req: Request): Promise<Response> => {
         try {
             // Handle CORS
@@ -99,25 +104,24 @@ export const wrap400 = (execute: (user: User, user_name: string, body: any) => P
             
             if (game_id) {
                 // Execute operation with database lock for this specific game
-                result = await executeWithGameLock(game_id, () => execute(user, user_name, body));
+                result = await executeWithGameLock(game_id, (game) => execute(user, user_name, body, game)) as Game;
             } else {
                 // No game_id, execute immediately (for operations that don't involve games)
-                result = await execute(user, user_name, body);
+                // pretty much only create
+                result = await execute(user, user_name, body, {} as Game) as Game;
             }
 
             // Schedule bot actions if this was a game operation
             if (game_id && run_bots) {
                 // TODO: not quite. Only after start/attack/cover/pass/pickup/good 
                 lockedBotLoop(game_id);
-                globalThis.addEventListener('beforeunload', () => {
-                    // in case the server shuts down before bot loop
-                    releaseBotLoopLock(game_id);
-                })
-
             }
 
+            // handle spectating here too 
+            const personalized_result = personalize_game(result, user.id);
+
             // Create standardized response
-            return new Response(JSON.stringify(result), {
+            return new Response(JSON.stringify(personalized_result), {
                 headers: {
                     ...corsHeaders,
                     'Content-Type': 'application/json'

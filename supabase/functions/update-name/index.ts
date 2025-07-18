@@ -1,10 +1,9 @@
-import { loadCompleteGame, saveCompleteGame, wrap400, broadcastToGameUsers } from "../_shared/utils.ts";
-import { GAME_STATUS, SERVER_EVENT_TYPE, Game } from "../_shared/types.ts";
-import { personalize_game } from "../_shared/common_utils.ts";
+import { wrap400, broadcastToGameUsers } from "../_shared/utils.ts";
+import { GAME_STATUS, SERVER_EVENT_TYPE } from "../_shared/types.ts";
 
-wrap400(async (user, user_name, body) => {
+wrap400(async (user, user_name, body, game) => {
     const user_id = user.id;
-    const { game_id, name } = body;
+    const { name } = body;
 
     if (!name || name.trim() === '') {
         throw new Error('Game name cannot be empty');
@@ -17,7 +16,7 @@ wrap400(async (user, user_name, body) => {
     }
 
     // Load the complete game
-    const game: Game = await loadCompleteGame(game_id);
+    //const game: Game = await loadCompleteGame(game_id);
 
     // Check if the game is in waiting status (only allow name changes in lobby)
     if (game.status !== GAME_STATUS.WAITING) {
@@ -34,7 +33,7 @@ wrap400(async (user, user_name, body) => {
     game.name = trimmedName;
 
     // Save the updated game
-    await saveCompleteGame(game);
+    //await saveCompleteGame(game);
 
     // Send broadcast notification
     broadcastToGameUsers(game, 'game_update', {
@@ -42,7 +41,7 @@ wrap400(async (user, user_name, body) => {
         message: `Game name updated to "${trimmedName}" by ${user_name}`
     });
 
-    return {
-        game: personalize_game(game, user_id)
-    };
+    //return {
+    //    game: personalize_game(game, user_id)
+    //};
 }); 

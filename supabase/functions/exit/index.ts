@@ -1,4 +1,4 @@
-import { loadCompleteGame, saveCompleteGame, wrap400, broadcastToGameUsers } from "../_shared/utils.ts";
+import { wrap400, broadcastToGameUsers } from "../_shared/utils.ts";
 import { GAME_STATUS, Game, SERVER_EVENT_TYPE, PrivatePlayer } from "../_shared/types.ts";
 import { personalize_game, verify_player_in_game } from "../_shared/common_utils.ts";
 
@@ -10,12 +10,11 @@ const supabaseClient = createClient(
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
 );
 
-wrap400(async (user, user_name, body) => {
+wrap400(async (user, user_name, body, game) => {
     const user_id = user.id;
     const { game_id, bot_id } = body;
 
     // Load complete game state
-    const game: Game = await loadCompleteGame(game_id);
     verify_player_in_game(game, user_id);
 
     // Determine which player to remove
@@ -63,7 +62,6 @@ wrap400(async (user, user_name, body) => {
     }
 
     // Save updated game state
-    await saveCompleteGame(game);
 
     // Send broadcast notification
     const messageText = isRemovingBot 
@@ -79,16 +77,24 @@ wrap400(async (user, user_name, body) => {
     // Return game state for the requesting user
     // If they removed themselves, they won't have self data (spectator mode)
     // If they removed a bot, they'll still have their self data
-    const responseGame = isRemovingBot
+    /*const responseGame = isRemovingBot
         ? personalize_game(game, user_id)  // User removed a bot, they're still in game
         : {
             ...game,
             self: null // User removed themselves, now spectating
-        };
+        };*/
 
-    return {
+    if (game.players.length === 0) {
+        // Game is empty, delete it
+        await supabaseClient
+            .from('games')
+            .delete()
+            .eq('id', game_id);
+    }
+
+    /*return {
         game: responseGame,
         removed_player: playerToRemove.name,
         is_spectator: !isRemovingBot  // User is spectating if they removed themselves
-    };
+    };*/
 }, true); 

@@ -135,6 +135,13 @@ CREATE TABLE bot_hands (
   PRIMARY KEY (game_id, bot_id) -- One hand per bot per game
 );
 
+-- Bot locks table - Simple table-based locking for bot processing
+CREATE TABLE bot_locks (
+  game_id TEXT PRIMARY KEY REFERENCES games(id) ON DELETE CASCADE,
+  lock_id TEXT NOT NULL, -- Random ID to verify lock ownership
+  acquired_at TIMESTAMP DEFAULT NOW()
+);
+
 -- =============================================================================
 -- INDEXES: Create indexes for better performance
 -- =============================================================================
@@ -154,6 +161,8 @@ CREATE INDEX idx_bots_strategy_key ON bots(strategy_key);
 CREATE INDEX idx_bots_elo_rating ON bots(elo_rating);
 CREATE INDEX idx_bot_hands_game_id ON bot_hands(game_id);
 CREATE INDEX idx_bot_hands_bot_id ON bot_hands(bot_id);
+CREATE INDEX idx_bot_locks_game_id ON bot_locks(game_id);
+CREATE INDEX idx_bot_locks_acquired_at ON bot_locks(acquired_at);
 
 -- =============================================================================
 -- ROW LEVEL SECURITY: Enable RLS on all tables
@@ -166,6 +175,7 @@ ALTER TABLE chat_messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_elo_ratings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bots ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bot_hands ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bot_locks ENABLE ROW LEVEL SECURITY;
 
 -- =============================================================================
 -- RLS POLICIES: Security-first approach
@@ -237,6 +247,10 @@ CREATE POLICY "Only service role can manage bots" ON bots
 
 -- Bot hands: ONLY service role can access (edge functions only)
 CREATE POLICY "Only service role can access bot hands" ON bot_hands
+  FOR ALL USING (auth.role() = 'service_role');
+
+-- Bot locks: ONLY service role can access (edge functions only)
+CREATE POLICY "Only service role can access bot locks" ON bot_locks
   FOR ALL USING (auth.role() = 'service_role');
 
 -- =============================================================================
@@ -462,74 +476,52 @@ WITH CHECK (
   AND realtime.messages.extension IN ('broadcast')
 );
 
--- =============================================================================
--- POSTGRESQL ADVISORY LOCK FUNCTIONS
--- For game operation synchronization across function instances
--- =============================================================================
 
--- Function to try acquiring an advisory lock (non-blocking)
-CREATE OR REPLACE FUNCTION pg_try_advisory_lock(key bigint)
-RETURNS boolean
-LANGUAGE sql
-SECURITY DEFINER
-AS $$
-  SELECT pg_try_advisory_lock($1);
-$$;
-
--- Function to release an advisory lock
-CREATE OR REPLACE FUNCTION pg_advisory_unlock(key bigint)
-RETURNS boolean
-LANGUAGE sql
-SECURITY DEFINER
-AS $$
-  SELECT pg_advisory_unlock($1);
-$$;
-
--- Function to try acquiring an advisory lock with string key (convenience function)
-CREATE OR REPLACE FUNCTION pg_try_advisory_lock_string(key text)
-RETURNS boolean
-LANGUAGE sql
-SECURITY DEFINER
-AS $$
-  SELECT pg_try_advisory_lock(hashtext($1));
-$$;
-
--- Function to release an advisory lock with string key (convenience function)
-CREATE OR REPLACE FUNCTION pg_advisory_unlock_string(key text)
-RETURNS boolean
-LANGUAGE sql
-SECURITY DEFINER
-AS $$
-  SELECT pg_advisory_unlock(hashtext($1));
-$$;
-
--- Grant execute permissions to authenticated users
-GRANT EXECUTE ON FUNCTION pg_try_advisory_lock(bigint) TO authenticated;
-GRANT EXECUTE ON FUNCTION pg_advisory_unlock(bigint) TO authenticated;
-GRANT EXECUTE ON FUNCTION pg_try_advisory_lock_string(text) TO authenticated;
-GRANT EXECUTE ON FUNCTION pg_advisory_unlock_string(text) TO authenticated;
-
--- Also grant to service_role for function usage
-GRANT EXECUTE ON FUNCTION pg_try_advisory_lock(bigint) TO service_role;
-GRANT EXECUTE ON FUNCTION pg_advisory_unlock(bigint) TO service_role;
-GRANT EXECUTE ON FUNCTION pg_try_advisory_lock_string(text) TO service_role;
-GRANT EXECUTE ON FUNCTION pg_advisory_unlock_string(text) TO service_role;
 
 -- =============================================================================
 -- SEED DATA: Initial bots with different strategies
 -- =============================================================================
 
 INSERT INTO bots (nickname, strategy_key) VALUES
-('0xDEADBEEF', 'random'),
-('0x00C0FFEE', 'random'),
+-- Handwritten strategy bots (rule-based)
+('0xDEADBEEF', 'handwritten'),
+('0x00C0FFEE', 'handwritten'),
+('0x00000001', 'handwritten'),
+('0x00BEADED', 'handwritten'),
+
+-- Random strategy bots (chaotic)
 ('0xBABEFACE', 'random'),
 ('0x000FADED', 'random'),
 ('0xCAFEBABE', 'random'),
 ('0xFEEDBEEF', 'random'),
 ('0x0BADC0DE', 'random'),
-('0xFACEFEED', 'random');
-('0x0C4EA7E9', 'random');
-('0xFFFFFFFF', 'random');
+('0xFACEFEED', 'random'),
+('0x0C4EA7E9', 'random'),
+
+-- One card strategy bots (minimalist efficiency)
+('0x0EE0CA5D', 'one_card'),
+('0x50105010', 'one_card'),
+('0x1A57C45D', 'one_card'),
+
+-- Simple heuristic strategy bots (logical rule-based)
+('0x10C1CA11', 'simple_heuristic'),
+('0x51A3E357', 'simple_heuristic'),
+('0xBA5ED0A5', 'simple_heuristic'),
+
+-- Ultimate champion strategy bots (advanced AI)
+('0xCEA4E10E', 'ultimate_champion'),
+('0xE1179A7E', 'ultimate_champion'),
+('0x0EE51055', 'ultimate_champion'),
+
+-- Champion strategy bots (tournament winners)
+('0x11C705E1', 'champion'),
+('0x751243A1', 'champion'),
+('0xE1179B07', 'champion'),
+('0xC0E4EE50', 'champion'),
+
+-- Hacker strategy bots (perfect information - UNFAIR ADVANTAGE)
+('0x00000000', 'hacker'),
+('0xFFFFFFFF', 'hacker');
 
 -- =============================================================================
 -- SETUP COMPLETE!

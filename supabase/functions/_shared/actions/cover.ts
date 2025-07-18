@@ -1,7 +1,7 @@
 import { Card, Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, SERVER_EVENT_TYPE } from '../types.ts';
-import { saveCompleteGame, executeWithGameLock, check_win, broadcastToGameUsers } from '../utils.ts';
+import { executeWithGameLock, check_win, broadcastToGameUsers } from '../utils.ts';
 import { canCover, get_next_player_index, validate_defender_status, verify_cards_in_players_hand, card_comp, cardDisplay, refillPlayerHands } from '../common_utils.ts';
-import { scheduleBotActions } from '../bot_actions.ts';
+import { lockedBotLoop } from '../bot_actions.ts';
 
 // Validation function for cover moves
 export function validateCover(game: Game, player_id: string, cover_cards: Card[], attack_cards: Card[]): void {
@@ -127,10 +127,10 @@ export async function executeCover(game: Game, player_id: string, cover_cards: C
         if (playable_players.length === 0) {
             // No one can play, end the round
             setTimeout(async () => {
-                await executeWithGameLock(game.id, async () => {
+                await executeWithGameLock(game.id, async (currentGame) => {
                     // Reload game to ensure we have the latest state
-                    const { loadCompleteGame } = await import('../utils.ts');
-                    const currentGame = await loadCompleteGame(game.id);
+                    //const { loadCompleteGame } = await import('../utils.ts');
+                    //const currentGame = await loadCompleteGame(game.id);
                     
                     // Count cards being discarded before clearing table_battles
                     const discardedCards = currentGame.table_battles.length * 2; // Each battle has attack + defense
@@ -154,7 +154,7 @@ export async function executeCover(game: Game, player_id: string, cover_cards: C
                         currentGame.status = GAME_STATUS.FIRST_ATTACKER;
                     }
                     
-                    await saveCompleteGame(currentGame);
+                    //await saveCompleteGame(currentGame);
 
                     broadcastToGameUsers(currentGame, 'game_update', {
                         type: SERVER_EVENT_TYPE.SUCCESSFULLY_COVERED,
@@ -163,7 +163,7 @@ export async function executeCover(game: Game, player_id: string, cover_cards: C
 
                     // Schedule bot actions if the new first attacker is a bot. We only do this because this is async
                     if (currentGame.players[currentGame.first_attacker].is_ai) {
-                        scheduleBotActions(currentGame.id);
+                        lockedBotLoop(currentGame.id);
                     }
                 });
             }, 1000 + Math.random() * 5000);

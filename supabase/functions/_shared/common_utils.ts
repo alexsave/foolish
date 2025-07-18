@@ -1,4 +1,4 @@
-import { Card, Game, PersonalGame, PLAYER_STATUS, PrivatePlayer, PublicPlayer, GAME_STATUS } from "./types.ts";
+import { Card, Game, PersonalGame, PLAYER_STATUS, PrivatePlayer, PublicPlayer, GAME_STATUS, PublicGame } from "./types.ts";
 import { ACE_VALUE, CARDS_PER_PLAYER, SUITS, VALUE_MAP, SUIT_MAP } from './constants.ts';
 
 export const get_next_player_index = (game: Game | PersonalGame, current_player: number): number => {
@@ -147,25 +147,43 @@ export const other_player = (player: PrivatePlayer): PublicPlayer => {
     };
 }
 
-export const personalize_game = (game: Game, player_id: string): PersonalGame => {
+export const personalize_game = (game: Game, player_id: string): PersonalGame | PublicGame => {
     // everything except game_decks , added self
     const self = game.players.find(player => player.player_id === player_id)!;
-    const personalGame: PersonalGame = {
-        id: game.id,
-        name: game.name,
-        deck_length: game.deck.length,
-        discard_pile_length: game.discard_pile_length,
-        flipped: game.flipped,
-        players: game.players.map(player => other_player(player)),
-        status: game.status,
-        power_suit: game.power_suit,
-        first_attacker: game.first_attacker,
-        defender: game.defender,
-        table_battles: game.table_battles,
-        elimination_order: game.elimination_order,
-        self: self
+    if (self) {
+        const personalGame: PersonalGame = {
+            id: game.id,
+            name: game.name,
+            deck_length: game.deck.length,
+            discard_pile_length: game.discard_pile_length,
+            flipped: game.flipped,
+            players: game.players.map(player => other_player(player)),
+            status: game.status,
+            power_suit: game.power_suit,
+            first_attacker: game.first_attacker,
+            defender: game.defender,
+            table_battles: game.table_battles,
+                elimination_order: game.elimination_order,
+                self: self
+            }
+        return personalGame;
+    } else {
+        const publicGame: PublicGame = {
+            id: game.id,
+            name: game.name,
+            deck_length: game.deck.length,
+            discard_pile_length: game.discard_pile_length,
+            flipped: game.flipped,
+            players: game.players.map(player => other_player(player)),
+            status: game.status,
+            power_suit: game.power_suit,
+            first_attacker: game.first_attacker,
+            defender: game.defender,
+            table_battles: game.table_battles,
+            elimination_order: game.elimination_order,
+        }
+        return publicGame;
     }
-    return personalGame;
 }
 
 // Standard ELO rating calculation

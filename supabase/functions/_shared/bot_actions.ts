@@ -1,5 +1,5 @@
 import { Game, PrivatePlayer, Bot, GAME_STATUS, PLAYER_STATUS } from './types.ts';
-import { check_win, loadCompleteGame, saveCompleteGame, broadcastToGameUsers, executeWithGameLock } from './utils.ts';
+import { check_win, broadcastToGameUsers, executeWithGameLock } from './utils.ts';
 import { calculateLegalMoves, getBotStrategy, LegalMove } from './bot_strategy.ts';
 import { createClient } from 'jsr:@supabase/supabase-js';
 
@@ -15,17 +15,106 @@ const supabaseClient = createClient(
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
 );
 
-export const acquireBotLoopLock = async (game_id: string): Promise<boolean> =>
-    (await supabaseClient.rpc('pg_try_advisory_lock_string', { key: `botloop-${game_id}` })).data;
+const acquireBotLoopLock = async (game_id: string): Promise<boolean> => {
+    try {
+        // Generate a random lock ID for this instance
+        const lockId = crypto.randomUUID();
+        
+        const { error } = await supabaseClient
+            .from('bot_locks')
+            .insert({ game_id, lock_id: lockId });
+        
+        if (error) {
+            // Handle non-unique constraint errors
+            if (error.code !== '23505') {
+                console.error(`Failed to acquire lock for game ${game_id}:`, error);
+                return false;
+            }
+            
+            // Check if existing lock is older than 150 seconds
+            const { data: existingLock } = await supabaseClient
+                .from('bot_locks')
+                .select('acquired_at')
+                .eq('game_id', game_id)
+                .single();
+            
+            if (!existingLock) {
+                console.log(`Bot loop already running for game ${game_id}`);
+                return false;
+            }
+            
+            const lockAge = Date.now() - new Date(existingLock.acquired_at).getTime();
+            if (lockAge <= 150000) { // 150 seconds in milliseconds
+                console.log(`Bot loop already running for game ${game_id}`);
+                return false;
+            }
+            
+            console.log(`Removing stale lock for game ${game_id} (${Math.round(lockAge/1000)}s old)`);
+            
+            // Delete the stale lock
+            await supabaseClient
+                .from('bot_locks')
+                .delete()
+                .eq('game_id', game_id);
+            
+            // Try to insert again
+            const { error: retryError } = await supabaseClient
+                .from('bot_locks')
+                .insert({ game_id, lock_id: lockId });
+            
+            if (retryError) {
+                console.log(`Failed to acquire lock after stale cleanup for game ${game_id}:`, retryError);
+                return false;
+            }
+        }
+        
+        // Verify we actually got the lock by checking the lock_id
+        const { data, error: selectError } = await supabaseClient
+            .from('bot_locks')
+            .select('lock_id')
+            .eq('game_id', game_id)
+            .single();
+        
+        if (selectError || !data || data.lock_id !== lockId) {
+            console.log(`Lock verification failed for game ${game_id} - another instance won the race`);
+            return false;
+        }
+        
+        console.log(`Acquired bot loop lock for game ${game_id} with lock_id ${lockId}`);
+        return true;
+    } catch (error) {
+        console.error(`Error acquiring lock for game ${game_id}:`, error);
+        return false;
+    }
+};
 
-export const releaseBotLoopLock = async (game_id: string) =>
-    await supabaseClient.rpc('pg_advisory_unlock_string', { key: `botloop-${game_id}` });
+const releaseBotLoopLock = async (game_id: string): Promise<void> => {
+    try {
+        console.log(`Releasing bot loop lock for game ${game_id}`);
+
+        // Only delete if we have the correct lock_id
+        const { error } = await supabaseClient
+            .from('bot_locks')
+            .delete()
+            .eq('game_id', game_id)
+            //.eq('lock_id', lockId);
+        
+        if (error) {
+            console.error(`Failed to release lock for game ${game_id}:`, error);
+        } else {
+            console.log(`Released bot loop lock for game ${game_id}`);
+        }
+        
+    } catch (error) {
+        console.error(`Error releasing lock for game ${game_id}:`, error);
+    }
+};
 
 export const lockedBotLoop = async (game_id: string): Promise<void> => {
     if (!(await acquireBotLoopLock(game_id))) {
-        console.log(`Bot loop already running for ${game_id}`);
         return;         // another cycle has the baton
     }
+
     try {
         await processBotActions(game_id, 0);   
     } finally {
@@ -43,15 +132,15 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
 
     let shouldLoop = false;
 
-    await new Promise(resolve => setTimeout(resolve, 5000));
+    await new Promise(resolve => setTimeout(resolve, 3500));
     // Load initial game state to get bot and game info
-    let game: Game | null = null;
+    let localGame: Game | null = null;
     let players: any[] = [];
     let gameStatus: any = null;
     
     try {
-        await executeWithGameLock(game_id, async () => {
-            game = await loadCompleteGame(game_id);
+        await executeWithGameLock(game_id, async (game) => {
+            localGame = game;
             
             // Only process bot actions if game is in a state where bots can act
             if (game.status === GAME_STATUS.WAITING || game.status === GAME_STATUS.GAME_OVER) {
@@ -91,17 +180,17 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
         let shouldConsider = false;
         
         if (gameStatus === GAME_STATUS.FIRST_ATTACKER){
-            shouldConsider = index === game!.first_attacker;
+            shouldConsider = index === localGame!.first_attacker;
         } else if (gameStatus === GAME_STATUS.FREE_PLAY){
-            if (index === game!.defender) {
+            if (index === localGame!.defender) {
                 shouldConsider = true;
             } else {
                 shouldConsider = player.awaiting_attack && !player.done_attacking_this_round;
             }
         } else if (gameStatus === GAME_STATUS.ONLY_DEFEND){
-            shouldConsider = index === game!.defender;
+            shouldConsider = index === localGame!.defender;
         } else if (gameStatus === GAME_STATUS.WAIT_FOR_ATTACKERS){
-            shouldConsider = index !== game!.defender && player.awaiting_attack;
+            shouldConsider = index !== localGame!.defender && player.awaiting_attack;
         }
 
         if (shouldConsider) {
@@ -121,9 +210,7 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
             console.log('Checking if game should auto-transition from WAIT_FOR_ATTACKERS');
             
             try {
-                await executeWithGameLock(game_id, async () => {
-                    const currentGame = await loadCompleteGame(game_id);
-                    
+                await executeWithGameLock(game_id, async (currentGame) => {
                     // Use the same logic as good.ts to check if all attackers are done
                     const playable_players = currentGame.players.filter(player => 
                         player.player_id !== currentGame.players[currentGame.defender].player_id && 
@@ -144,7 +231,7 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
                     const anyNonDefender = currentGame.players.find((p, index) => index !== currentGame.defender);
                     if (anyNonDefender) {
                         await executeGood(currentGame, anyNonDefender.player_id);
-                        await saveCompleteGame(currentGame);
+                        //await saveCompleteGame(currentGame);
                         await broadcastToGameUsers(currentGame, 'game_update', {
                             type: 'auto_transition',
                             message: 'All attackers finished - automatically proceeding to next round'
@@ -197,9 +284,8 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
         
         // Each bot gets its own game lock to allow human players to act between bots
         try {
-            await executeWithGameLock(game_id, async () => {
+            await executeWithGameLock(game_id, async (currentGame) => {
                 // Reload game state to get latest state before bot action
-                const currentGame = await loadCompleteGame(game_id);
                 const currentBot = currentGame.players.find(p => p.player_id === player.player_id);
                 
                 if (!currentBot) {
@@ -215,7 +301,7 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
             });
             
             // Small delay between bot actions to make it feel more natural
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            await new Promise(resolve => setTimeout(resolve, 200));
             
         } catch (error) {
             console.error(`Error processing bot action for ${player.name}:`, error);
@@ -225,8 +311,7 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
     // After processing all bots in this cycle, check if any more bot actions are needed
     // This check needs to be done within a lock to ensure safe game state access
     try {
-        await executeWithGameLock(game_id, async () => {
-            const currentGame = await loadCompleteGame(game_id);
+        await executeWithGameLock(game_id, async (currentGame) => {
             const anyBotHasLegalMoves = checkIfAnyBotHasLegalMoves(currentGame);
             
             if (anyBotHasLegalMoves) {
@@ -239,8 +324,10 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
                 
                 shouldLoop = true;
             } else {
+                shouldLoop = false;
                 console.log(`Bot cycle completed, no more bot moves available for game ${game_id}`);
             }
+            return false;
         });
     } catch (error) {
         console.error('Error checking for additional bot actions:', error);
@@ -285,7 +372,7 @@ async function shouldBotAct(game: Game, bot: PrivatePlayer): Promise<boolean> {
             
         case GAME_STATUS.WAIT_FOR_ATTACKERS:
             // Bot should act if it's an attacker with awaiting_attack = true
-            shouldAct = botIndex !== game.defender && bot.awaiting_attack;
+            shouldAct = botIndex !== game.defender && bot.awaiting_attack && !bot.done_attacking_this_round;
             reason = shouldAct ? 'is attacker awaiting attack' : `is_defender=${botIndex === game.defender}, awaiting_attack=${bot.awaiting_attack}`;
             break;
             
@@ -327,7 +414,7 @@ async function processBotAction(game: Game, bot: PrivatePlayer): Promise<void> {
         await executeBotMove(game, bot, chosenMove);
         
         // Save the updated game state after the bot action
-        await saveCompleteGame(game);
+        //await saveCompleteGame(game);
         
         // Broadcast the updated game state to all players
         await broadcastToGameUsers(game, 'game_update', {
@@ -484,7 +571,7 @@ function checkIfAnyBotHasLegalMoves(game: Game): boolean {
                 
             case GAME_STATUS.WAIT_FOR_ATTACKERS:
                 // Bot should act if it's an attacker with awaiting_attack = true
-                shouldAct = botIndex !== game.defender && bot.awaiting_attack;
+                shouldAct = botIndex !== game.defender && bot.awaiting_attack && !bot.done_attacking_this_round;
                 break;
                 
             default:

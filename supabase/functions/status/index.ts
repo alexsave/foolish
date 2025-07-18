@@ -1,14 +1,13 @@
-import { wrap400, loadCompleteGame, saveCompleteGame } from '../_shared/utils.ts';
-import { Game, PublicGame, PublicPlayer, GAME_STATUS } from '../_shared/types.ts'; 
-import { personalize_game } from '../_shared/common_utils.ts';
+import { wrap400 } from '../_shared/utils.ts';
+import { PublicGame, PublicPlayer, GAME_STATUS } from '../_shared/types.ts'; 
 
 // TODO: just remove this. With the right policies we can query from client
-wrap400(async (user, user_name, body) => {
+wrap400(async (user, user_name, body, game) => {
     const user_id = user.id;
     const { game_id } = body;
 
     // Load complete game state from separated tables
-    const game: Game = await loadCompleteGame(game_id);
+    //const game: Game = await loadCompleteGame(game_id);
 
     // Check if player is in game
     const playerInGame = game.players.find(player => player.player_id === user_id);
@@ -21,13 +20,13 @@ wrap400(async (user, user_name, body) => {
         // Guard against overwriting GAME_OVER status
         if (game.status !== GAME_STATUS.GAME_OVER && game.players.every(player => player.hand.length === 0)) {
             game.status = GAME_STATUS.WAITING;
-            await saveCompleteGame(game);
+            //await saveCompleteGame(game);
         }
 
         // Player is in game, return personalized view
-        return {
-            game: personalize_game(game, user_id)
-        };
+        //return {
+        //    game: personalize_game(game, user_id)
+        //};
     } else {
         console.log("player not in the game");
         // Player is not in game, return public view for spectating
@@ -48,12 +47,13 @@ wrap400(async (user, user_name, body) => {
             first_attacker: game.first_attacker,
             defender: game.defender,
             table_battles: game.table_battles,
-            elimination_order: game.elimination_order
+            elimination_order: game.elimination_order,
+            discard_pile_length: game.discard_pile_length
         };
         
-        return {
-            game: publicGame
-        };
+        //return {
+        //    game: publicGame
+        //};
     }
 }, true);
 

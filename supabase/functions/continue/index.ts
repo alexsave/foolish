@@ -1,5 +1,5 @@
-import { wrap400, loadCompleteGame, saveCompleteGame, broadcastToGameUsers } from "../_shared/utils.ts";
-import { verify_player_in_game, personalize_game, refill_deck } from "../_shared/common_utils.ts";
+import { wrap400, broadcastToGameUsers } from "../_shared/utils.ts";
+import { verify_player_in_game, refill_deck } from "../_shared/common_utils.ts";
 import { GAME_STATUS, PLAYER_STATUS, SERVER_EVENT_TYPE } from "../_shared/types.ts";
 import { createClient } from 'jsr:@supabase/supabase-js';
 
@@ -8,12 +8,12 @@ const supabaseClient = createClient(
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
 );
 
-wrap400(async (user, user_name, body) => {
+wrap400(async (user, user_name, body, game) => {
     const user_id = user.id;
     const { game_id } = body;
 
     // Load complete game state using JOINs
-    let game = await loadCompleteGame(game_id);
+    //let game = await loadCompleteGame(game_id);
 
     // Verify player is in game
     verify_player_in_game(game, user_id);
@@ -51,7 +51,7 @@ wrap400(async (user, user_name, body) => {
         .eq('game_id', game.id);
 
     // Save complete game state back to separated tables
-    await saveCompleteGame(game);
+    //await saveCompleteGame(game);
 
     // Broadcast the game reset to all players
     await broadcastToGameUsers(game, 'game_update', {
@@ -59,7 +59,4 @@ wrap400(async (user, user_name, body) => {
         message: `Game has been reset and is ready for new players`
     });
 
-    return {
-        game: personalize_game(game, user_id)
-    };
 }); 
