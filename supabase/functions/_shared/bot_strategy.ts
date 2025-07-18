@@ -1,124 +1,30 @@
 import { Card, Game, PrivatePlayer, GAME_STATUS } from './types.ts';
 import { canCover, card_comp, get_next_player_index } from './common_utils.ts';
+import { BotStrategy, LegalMove } from './bot_interfaces.ts';
+import { RandomBotStrategy } from './random_strategy.ts';
+import { OneCardBotStrategy } from './one_card_strategy.ts';
+import { HandwrittenBotStrategy } from './handwritten_strategy.ts';
+import { SimpleHeuristicStrategy } from './simple_heuristic_strategy.ts';
+import { UltimateChampionStrategy } from './ultimate_champion_strategy.ts';
+import { ChampionStrategy } from './champion_strategy.ts';
+import { HackerStrategy } from './hacker_strategy.ts';
 
-// Legal moves that a bot can make
-export interface LegalMove {
-    type: 'attack' | 'cover' | 'pass' | 'pickup' | 'good';
-    cards?: Card[];
-    attack_cards?: Card[]; // For cover moves, which cards to cover
-    done_attacking_this_round?: boolean; // For attack moves, whether to be done attacking this round
-}
+// Re-export interfaces for backwards compatibility
+export type { BotStrategy, LegalMove };
 
-// Bot strategy interface
-export interface BotStrategy {
-    // Given the game state and bot's hand, choose a legal move
-    chooseMove(game: Game, botPlayerId: string, legalMoves: LegalMove[]): Promise<LegalMove>;
-    
-    // Strategy identifier
-    readonly name: string;
-}
 
-// Random strategy implementation
-export class RandomBotStrategy implements BotStrategy {
-    readonly name = 'random';
-    
-    async chooseMove(game: Game, botPlayerId: string, legalMoves: LegalMove[]): Promise<LegalMove> {
-        if (legalMoves.length === 0) {
-            throw new Error('No legal moves available');
-        }
-        
-        // Find bot for debug logging
-        const bot = game.players.find(p => p.player_id === botPlayerId);
-        const botName = bot ? bot.name : 'Unknown Bot';
-        
-        // Create a clean summary of legal moves
-        const moveSummary = legalMoves.map((move, index) => {
-            let description = `${index + 1}. ${move.type}`;
-            if (move.cards) {
-                description += ` [${move.cards.map(c => `${c.value}${['♠','♥','♦','♣'][c.suit]}`).join(', ')}]`;
-            }
-            if (move.attack_cards) {
-                description += ` covering [${move.attack_cards.map(c => `${c.value}${['♠','♥','♦','♣'][c.suit]}`).join(', ')}]`;
-            }
-            if (move.type === 'attack' && move.done_attacking_this_round !== undefined) {
-                description += move.done_attacking_this_round ? ' (done)' : ' (continue)';
-            }
-            return description;
-        }).join(', ');
-        
-        console.log(`Bot ${botName} has ${legalMoves.length} moves: ${moveSummary}`);
-        
-        // Choose a random legal move
-        const randomIndex = Math.floor(Math.random() * legalMoves.length);
-        const chosenMove = legalMoves[randomIndex];
-        
-        // Log the chosen move concisely
-        let chosenDescription = `${chosenMove.type}`;
-        if (chosenMove.cards) {
-            chosenDescription += ` [${chosenMove.cards.map(c => `${c.value}${['♠','♥','♦','♣'][c.suit]}`).join(', ')}]`;
-        }
-        if (chosenMove.attack_cards) {
-            chosenDescription += ` covering [${chosenMove.attack_cards.map(c => `${c.value}${['♠','♥','♦','♣'][c.suit]}`).join(', ')}]`;
-        }
-        if (chosenMove.type === 'attack' && chosenMove.done_attacking_this_round !== undefined) {
-            chosenDescription += chosenMove.done_attacking_this_round ? ' (done)' : ' (continue)';
-        }
-        console.log(`Bot ${botName} chose: ${chosenDescription}`);
-        
-        return chosenMove;
-    }
-}
 
-// One card per attack strategy - only puts down one card per attack round
-export class OneCardBotStrategy implements BotStrategy {
-    readonly name = 'one_card';
-    
-    async chooseMove(game: Game, botPlayerId: string, legalMoves: LegalMove[]): Promise<LegalMove> {
-        if (legalMoves.length === 0) {
-            throw new Error('No legal moves available');
-        }
-        
-        // Filter to only attack moves that use exactly one card AND are done attacking this round
-        const singleCardDoneAttackMoves = legalMoves.filter(move => 
-            move.type === 'attack' && 
-            move.cards && 
-            move.cards.length === 1 && 
-            move.done_attacking_this_round === true
-        );
-        
-        // If we have single card "done attacking" moves, prefer those
-        if (singleCardDoneAttackMoves.length > 0) {
-            const randomIndex = Math.floor(Math.random() * singleCardDoneAttackMoves.length);
-            return singleCardDoneAttackMoves[randomIndex];
-        }
-        
-        // Otherwise, for non-attack moves, choose randomly
-        const nonAttackMoves = legalMoves.filter(move => move.type !== 'attack');
-        if (nonAttackMoves.length > 0) {
-            const randomIndex = Math.floor(Math.random() * nonAttackMoves.length);
-            return nonAttackMoves[randomIndex];
-        }
-        
-        // If only other attack moves available, prefer "done attacking" versions
-        const doneAttackMoves = legalMoves.filter(move => 
-            move.type === 'attack' && move.done_attacking_this_round === true
-        );
-        if (doneAttackMoves.length > 0) {
-            // Sort by number of cards, pick the one with fewest cards
-            doneAttackMoves.sort((a, b) => (a.cards?.length || 0) - (b.cards?.length || 0));
-            return doneAttackMoves[0];
-        }
-        
-        // Fallback to random move
-        const randomIndex = Math.floor(Math.random() * legalMoves.length);
-        return legalMoves[randomIndex];
-    }
-}
+
 
 // Strategy registry
 export const BOT_STRATEGIES: Map<string, BotStrategy> = new Map<string, BotStrategy>([
     ['random', new RandomBotStrategy()],
     ['one_card', new OneCardBotStrategy()],
+    ['handwritten', new HandwrittenBotStrategy()],
+    ['simple_heuristic', new SimpleHeuristicStrategy()],
+    ['ultimate_champion', new UltimateChampionStrategy()],
+    ['champion', new ChampionStrategy()],
+    ['hacker', new HackerStrategy()],
 ]);
 
 // Get strategy by key
