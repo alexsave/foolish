@@ -29,7 +29,7 @@ export const Chat = () => {
         if (smooth) {
             messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
         } else {
-            messagesEndRef.current?.scrollIntoView({ behavior: 'instant' });
+            messagesEndRef.current?.scrollIntoView({ behavior: 'instant' as ScrollBehavior });
         }
     };
 
