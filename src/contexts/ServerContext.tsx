@@ -365,11 +365,11 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     const createGame = (): Promise<{ game_id: string }> => {
         return invokeGameFunctions('create', {}, {
             onSuccess: (data) => {
-                setGameId(data.data.game.id);
-                setGames(prev => ({ ...prev, [data.data.game.id]: mergeGameData(data.data.game.id, data.data.game, prev) }));
+                setGameId(data.data.id);
+                setGames(prev => ({ ...prev, [data.data.id]: mergeGameData(data.data.id, data.data, prev) }));
                 // Subscribe to the new game's channel and chat messages
-                subscribeToGame(data.data.game.id).catch(console.error);
-                subscribeToChatMessages(data.data.game.id).catch(console.error);
+                subscribeToGame(data.data.id).catch(console.error);
+                subscribeToChatMessages(data.data.id).catch(console.error);
             }
         });
     };
@@ -379,7 +379,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             game_id: gameId,
         }, {
             onSuccess: (data) => {
-                setGameId(data.data.game.id);
+                setGameId(data.data.id);
                 // Remove from spectator mode when joining
                 setSpectatorGames(prev => {
                     const newSet = new Set(prev);
@@ -395,12 +395,11 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                     supabase.removeChannel(oldChannel);
                 }
                 
-                //setGames(prev => ({ ...prev, [data.data.game.id]: mergeGameData(data.data.game.id, data.data.game, prev) }));
                 // Subscribe to the game's channel and chat messages
-                subscribeToGame(data.data.game.id).catch(console.error);
-                subscribeToChatMessages(data.data.game.id).catch(console.error);
+                subscribeToGame(data.data.id).catch(console.error);
+                subscribeToChatMessages(data.data.id).catch(console.error);
                 // Load chat history with game data
-                loadChatHistory(data.data.game.id, data.data.game).catch(console.error);
+                loadChatHistory(data.data.id, data.data).catch(console.error);
             }
         })
     };
@@ -460,8 +459,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             game_id: gameId,
         }, {
             onSuccess: (data) => {
-                setGameId(data.data.game.id);
-                joinOrSubscribe(data.data.game);
+                setGameId(data.data.id);
+                joinOrSubscribe(data.data);
             }
         })
     };
@@ -879,11 +878,11 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     ): Promise<{ game_id: string }> => {
         try {
             const data = await supabase.functions.invoke(functionName, { body })
-            const game_id = data.data.game.id;
+            const game_id = data.data.id;
 
             setGames(prev => ({
                 ...prev,
-                [game_id]: mergeGameData(game_id, data.data.game, prev)
+                [game_id]: mergeGameData(game_id, data.data, prev)
             }))
 
             options.onSuccess?.(data as T);
