@@ -100,6 +100,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 
                 // Queue all events from the sequence
                 console.log('[ANIMATION] Adding events to queue:', event.detail.events);
+                console.log('[ANIMATION] Event types being queued:', event.detail.events.map((e: any) => e.type));
                 setAnimationQueue(prev => [...prev, ...event.detail.events]);
             }
         };
@@ -135,11 +136,24 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         }
 
         const nextAnimation = animationQueueRef.current[0];
+        console.log('[ANIMATION] Full queue before processing:', animationQueueRef.current.map((e: any) => e.type));
+        console.log('[ANIMATION] About to dequeue and process event:', nextAnimation.type);
         setCurrentAnimation(nextAnimation);
         setAnimationQueue(prev => prev.slice(1));
         setIsAnimating(true);
 
         console.log('[ANIMATION] Processing animation:', nextAnimation);
+        console.log('[ANIMATION] Animation type:', nextAnimation.type, 'Has cards:', !!nextAnimation.cards, 'Cards count:', nextAnimation.cards?.length || 0);
+        
+        // Special debugging for cards_to_trash
+        if (nextAnimation.type === 'cards_to_trash') {
+            console.log('[ANIMATION] CARDS_TO_TRASH DEBUG:');
+            console.log('[ANIMATION] Full event:', JSON.stringify(nextAnimation, null, 2));
+            console.log('[ANIMATION] Cards property:', nextAnimation.cards);
+            console.log('[ANIMATION] From location:', nextAnimation.from_location);
+            console.log('[ANIMATION] To location:', nextAnimation.to_location);
+            console.log('[ANIMATION] Setting currentAnimation to cards_to_trash event');
+        }
 
         // Start tracking cards in this animation
         if (nextAnimation.cards && nextAnimation.cards.length > 0) {
@@ -174,7 +188,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                         
                         if (cardAnimation) {
                             const elapsed = now - cardAnimation.startTime;
-                            const progress = Math.min(elapsed / 800, 1); // 800ms animation duration
+                            const progress = Math.min(elapsed / 2000, 1); // 2000ms animation duration
                             
                             if (progress < 1) {
                                 allCompleted = false;
@@ -198,7 +212,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             updateProgress();
         }
 
-        // Animation duration: 800ms to match AnimationOverlay
+        // Animation duration: 2000ms to match AnimationOverlay
         timeoutRef.current = setTimeout(() => {
             // Remove cards from animating state
             if (nextAnimation.cards) {
@@ -224,9 +238,9 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 console.log('[ANIMATION] Animation completed, remaining sequence events:', remainingSequenceEventsRef.current);
             }
             
-            // Process next animation after 800ms delay
+            // Process next animation after 2000ms delay
             setTimeout(processAnimationQueue, 200);
-        }, 800);
+        }, 2000);
     }, []);
 
     // Start processing queue when items are added and no animation is running
@@ -271,12 +285,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         };
     };
 
-    // Start processing when queue has items and we're not already animating
-    useEffect(() => {
-        if (animationQueue.length > 0 && !isAnimating) {
-            processAnimationQueue();
-        }
-    }, [animationQueue, isAnimating]);
+
 
     // Cleanup timeouts on unmount
     useEffect(() => {

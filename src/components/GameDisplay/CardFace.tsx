@@ -2,11 +2,12 @@ import { SUIT_MAP, VALUE_MAP } from "../../utils/cards";
 import { Card } from "../../common/types";
 import { useAnimation } from "../../contexts/AnimationContext";
 
-export const CardFace = ({ card, onClick, style = {}, playerId, ...props }: { 
+export const CardFace = ({ card, onClick, style = {}, playerId, isAnimationOverlay = false, ...props }: { 
     card: Card, 
     onClick?: () => void, 
     style?: React.CSSProperties,
-    playerId?: string
+    playerId?: string,
+    isAnimationOverlay?: boolean
 } & React.HTMLAttributes<HTMLDivElement>) => {
     const { getCardAnimationState } = useAnimation();
     const animationState = getCardAnimationState(card, playerId);
@@ -30,8 +31,9 @@ export const CardFace = ({ card, onClick, style = {}, playerId, ...props }: {
     // Apply animation styles based on animation state
     const animationStyle: React.CSSProperties = {};
     
-    if (animationState.isAnimating) {
+    if (animationState.isAnimating && !isAnimationOverlay) {
         // Hide the original card since the AnimationOverlay is showing the animated version
+        // But don't hide cards that are being rendered inside the AnimationOverlay itself
         animationStyle.opacity = 0;
         animationStyle.pointerEvents = 'none';
     }

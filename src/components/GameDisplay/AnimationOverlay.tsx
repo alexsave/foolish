@@ -29,17 +29,32 @@ export const AnimationOverlay = () => {
 
     // Helper function to find element by data attributes with retry logic
     const findElementByLocation = (location: string, playerId?: string, cardSuit?: number, cardValue?: number, retryCount = 0): HTMLElement | null => {
-        let selector = `[data-location="${location}"]`;
+        // For table cards, try to find the specific card element first
+        if (location === 'table' && cardSuit !== undefined && cardValue !== undefined) {
+            const cardSelector = `[data-card="${cardSuit}-${cardValue}"]`;
+            const cardElement = document.querySelector(cardSelector) as HTMLElement | null;
+            if (cardElement) {
+                console.log('[ANIMATION_OVERLAY] Found specific table card element:', cardElement);
+                return cardElement;
+            }
+        }
         
+        // First try to find the specific card (for current user's hand)
+        if (playerId && cardSuit !== undefined && cardValue !== undefined) {
+            const specificCardSelector = `[data-location="${location}"][data-player-id="${playerId}"][data-card="${cardSuit}-${cardValue}"]`;
+            const specificElement = document.querySelector(specificCardSelector) as HTMLElement | null;
+            if (specificElement) {
+                return specificElement;
+            }
+        }
+        
+        // Fall back to general location area
+        let generalSelector = `[data-location="${location}"]`;
         if (playerId) {
-            selector += `[data-player-id="${playerId}"]`;
+            generalSelector += `[data-player-id="${playerId}"]`;
         }
         
-        if (cardSuit !== undefined && cardValue !== undefined) {
-            selector += `[data-card="${cardSuit}-${cardValue}"]`;
-        }
-        
-        const element = document.querySelector(selector) as HTMLElement | null;
+        const element = document.querySelector(generalSelector) as HTMLElement | null;
         
         // If element not found and we haven't retried too many times, try again after a short delay
         if (!element && retryCount < 3) {
@@ -65,7 +80,7 @@ export const AnimationOverlay = () => {
             case 'deck':
                 return { x: 100, y: 120 };
             case 'discard':
-                return { x: window.innerWidth - 100, y: 120 };
+                return { x: window.innerWidth - 100, y: 120 }; // Top-right corner
             default:
                 return { x: centerX, y: centerY };
         }
@@ -78,11 +93,38 @@ export const AnimationOverlay = () => {
 
         const { type, cards, from_location, to_location, player_id } = currentAnimation;
 
+        // Handle magic_transition separately since it doesn't have cards
+        if (type === 'magic_transition') {
+            console.log('[ANIMATION_OVERLAY] Processing magic_transition:', currentAnimation.message);
+            return; // Magic transitions are just messages, no visual animation needed
+        }
+        
+        // All other animation types need cards
         if (!cards || cards.length === 0) {
+            console.log('[ANIMATION_OVERLAY] No cards in animation or cards array empty');
+            console.log('[ANIMATION_OVERLAY] Animation type:', type);
+            console.log('[ANIMATION_OVERLAY] Cards value:', cards);
+            console.log('[ANIMATION_OVERLAY] Full currentAnimation object:', JSON.stringify(currentAnimation, null, 2));
             return;
         }
 
-        console.log('[ANIMATION_OVERLAY] Starting animation:', { type, cards, from_location, to_location, player_id });
+        console.log('[ANIMATION_OVERLAY] ==> ANIMATION STARTED <==');
+        console.log('[ANIMATION_OVERLAY] Type:', type);
+        console.log('[ANIMATION_OVERLAY] Cards:', cards); 
+        console.log('[ANIMATION_OVERLAY] From:', from_location, 'To:', to_location);
+        console.log('[ANIMATION_OVERLAY] Player ID:', player_id);
+        
+        // Special logging for cards_to_trash animations
+        if (type === 'cards_to_trash') {
+            console.log('[ANIMATION_OVERLAY] cards_to_trash animation detected - table to discard');
+            console.log('[ANIMATION_OVERLAY] Looking for table elements with data-location="table"');
+            const allTableElements = document.querySelectorAll('[data-location="table"]');
+            console.log('[ANIMATION_OVERLAY] Found table elements:', allTableElements.length, allTableElements);
+            
+            console.log('[ANIMATION_OVERLAY] Looking for discard elements with data-location="discard"');
+            const allDiscardElements = document.querySelectorAll('[data-location="discard"]');
+            console.log('[ANIMATION_OVERLAY] Found discard elements:', allDiscardElements.length, allDiscardElements);
+        }
 
         // Small delay to ensure DOM is ready
         setTimeout(() => {
@@ -100,14 +142,15 @@ export const AnimationOverlay = () => {
                     sourceElement = findElementByLocation('deck');
                 } else if (from_location === 'table') {
                     sourceElement = findElementByLocation('table', undefined, card.suit, card.value);
+                    console.log('[ANIMATION_OVERLAY] Looking for table card:', card, 'found element:', sourceElement);
                 }
 
                 if (sourceElement) {
                     startPos = getElementPosition(sourceElement);
-                    console.log('[ANIMATION_OVERLAY] Found source element:', sourceElement, 'at position:', startPos);
+                    console.log('[ANIMATION_OVERLAY] Found source element for player', player_id, ':', sourceElement, 'at position:', startPos);
                 } else {
                     startPos = getFallbackPosition(from_location || 'hand', player_id);
-                    console.log('[ANIMATION_OVERLAY] Using fallback start position:', startPos);
+                    console.log('[ANIMATION_OVERLAY] Using fallback start position for player', player_id, 'at', from_location, ':', startPos);
                 }
 
                 // Find destination element
@@ -120,6 +163,7 @@ export const AnimationOverlay = () => {
                     destinationElement = findElementByLocation('table');
                 } else if (to_location === 'discard') {
                     destinationElement = findElementByLocation('discard');
+                    console.log('[ANIMATION_OVERLAY] Looking for discard pile, found element:', destinationElement);
                 }
 
                 if (destinationElement) {
@@ -149,8 +193,8 @@ export const AnimationOverlay = () => {
             console.log('[ANIMATION_OVERLAY] Created animated cards:', newAnimatedCards);
             setAnimatedCards(newAnimatedCards);
 
-            // Animate the cards - use longer duration for visible animations
-            const animationDuration = 800; // Increased duration to make animations more visible
+            // Animate the cards - Make it very slow to see what's happening
+            const animationDuration = 2000; // Very slow for debugging
             const startTime = Date.now();
 
             const animate = () => {
@@ -184,7 +228,7 @@ export const AnimationOverlay = () => {
         return null;
     }
 
-    console.log('[ANIMATION_OVERLAY] Rendering', animatedCards.length, 'animated cards');
+    //console.log('[ANIMATION_OVERLAY] Rendering', animatedCards.length, 'animated cards');
 
     return (
         <div 
@@ -216,15 +260,19 @@ export const AnimationOverlay = () => {
                         key={id}
                         style={{
                             position: 'absolute',
-                            left: currentX - 25, // Half card width
-                            top: currentY - 35,  // Half card height
-                            transform: `scale(${1 + progress * 0.1})`,
-                            opacity: 0.9,
-                            transition: 'none'
+                            left: currentX - 35, // Half card width (bigger card)
+                            top: currentY - 45,  // Half card height (bigger card)
+                            transform: `scale(${1.5 + progress * 0.3})`, // Much bigger
+                            opacity: 1,
+                            transition: 'none',
+                            border: '3px solid red', // Bright red border
+                            borderRadius: '8px',
+                            boxShadow: '0 0 15px rgba(255, 0, 0, 0.8)' // Glowing effect
                         }}
                     >
                         <CardFace 
-                            card={card} 
+                            card={card}
+                            isAnimationOverlay={true}
                             style={{
                                 boxShadow: `0 ${progress * 10}px ${progress * 20}px rgba(0,0,0,0.4)`,
                                 filter: `brightness(${1 + progress * 0.2})`

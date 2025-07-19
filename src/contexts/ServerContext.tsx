@@ -195,6 +195,15 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         if (animationEvents && Array.isArray(animationEvents) && animationEvents.length > 0) {
             console.log(`[${source.toUpperCase()}] Animation events detected:`, animationEvents);
             
+            // Debug cards_to_trash events specifically
+            const cardsToTrashEvents = animationEvents.filter(e => e.type === 'cards_to_trash');
+            if (cardsToTrashEvents.length > 0) {
+                console.log(`[${source.toUpperCase()}] CARDS_TO_TRASH events found:`, cardsToTrashEvents);
+                cardsToTrashEvents.forEach((event, index) => {
+                    console.log(`[${source.toUpperCase()}] CARDS_TO_TRASH event ${index}:`, JSON.stringify(event, null, 2));
+                });
+            }
+            
             // Create a custom event that includes both the animations and the pending game state
             const animationEvent = new CustomEvent('gameAnimationEvents', {
                 detail: { 
