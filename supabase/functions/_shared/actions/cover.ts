@@ -1,12 +1,18 @@
 import { Card, Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, SERVER_EVENT_TYPE, AnimationEvent, ANIMATION_EVENT_TYPE } from '../types.ts';
 import { executeWithGameLock, check_win, broadcastToGameUsers } from '../utils.ts';
-import { canCover, get_next_player_index, validate_defender_status, verify_cards_in_players_hand, card_comp, cardDisplay, refillPlayerHands } from '../common_utils.ts';
+import { canCover, get_next_player_index, validate_defender_status, verify_cards_in_players_hand, card_comp, cardDisplay, refillPlayerHandsWithEvents } from '../common_utils.ts';
 import { lockedBotLoop } from '../bot_actions.ts';
 
 // Validation function for cover moves
 export function validateCover(game: Game, player_id: string, cover_cards: Card[], attack_cards: Card[]): void {
-    if (game.status !== GAME_STATUS.FREE_PLAY && game.status !== GAME_STATUS.ONLY_DEFEND) {
-        throw new Error(`Game ${game.id} is not in free_play or only_defend mode`);
+    // Can only cover during playing state
+    if (game.status !== GAME_STATUS.PLAYING) {
+        throw new Error(`Game ${game.id} is not in playing state`);
+    }
+
+    const uncoveredAttacks = game.table_battles.filter(battle => battle.defense === null);
+    if (uncoveredAttacks.length === 0) {
+        throw new Error('No uncovered attacks to cover');
     }
 
     // check if player is the defender
@@ -105,7 +111,8 @@ export async function executeCover(game: Game, player_id: string, cover_cards: C
         });
         
         game.table_battles = [];
-        refillPlayerHands(game);
+        const { refillEvents } = refillPlayerHandsWithEvents(game);
+        events.push(...refillEvents);
         game.first_attacker = game.defender;
         // Reset done_attacking_this_round flag for all players when attacking shifts
         game.players.forEach(player => {
@@ -136,20 +143,14 @@ export async function executeCover(game: Game, player_id: string, cover_cards: C
             message: `${game.players[game.defender].name} is now the defender`
         });
         
-        // @ts-ignore - check_win() above can change status to GAME_OVER
-        if (game.status !== GAME_STATUS.GAME_OVER) {
-            game.status = GAME_STATUS.FIRST_ATTACKER;
-        }
+        // Game continues in playing state (no status change needed)
         return events;
     }
 
     // Check if all attacks are covered
     const all_attacks_covered = game.table_battles.every(battle => battle.defense !== null);
     if (all_attacks_covered) {
-        // @ts-ignore - check_win() can change status to GAME_OVER during execution
-        if (game.status !== GAME_STATUS.GAME_OVER) {
-            game.status = GAME_STATUS.WAIT_FOR_ATTACKERS;
-        }
+        // All attacks are covered - no status change needed, game continues in playing state
 
         // Check who can still play cards
         const playable_values = new Set<number>();
@@ -187,7 +188,7 @@ export async function executeCover(game: Game, player_id: string, cover_cards: C
                     };
                     
                     currentGame.table_battles = [];
-                    refillPlayerHands(currentGame);
+                    const { refillEvents } = refillPlayerHandsWithEvents(currentGame);
                     
                     currentGame.first_attacker = currentGame.defender;
                     currentGame.defender = get_next_player_index(currentGame, currentGame.first_attacker);
@@ -200,15 +201,14 @@ export async function executeCover(game: Game, player_id: string, cover_cards: C
                     // Check if game should end after refilling - at the very end
                     await check_win(currentGame);
                     
-                    if (currentGame.status !== GAME_STATUS.GAME_OVER) {
-                        currentGame.status = GAME_STATUS.FIRST_ATTACKER;
-                    }
+                    // Game continues in playing state (no status change needed unless game is over)
                     
-                    // Broadcast the discard event
+                    // Broadcast the discard event and refill events
                     if (!skipBroadcast) {
+                        const allEvents = [discardEvent, ...refillEvents];
                         await broadcastToGameUsers(currentGame, 'animation_events', {
                             type: 'animation_sequence',
-                            events: [discardEvent],
+                            events: allEvents,
                             sequence_id: crypto.randomUUID(),
                             timestamp: Date.now()
                         });
@@ -220,7 +220,7 @@ export async function executeCover(game: Game, player_id: string, cover_cards: C
                     }
                     
                     // Return the standardized format
-                    return { game: currentGame, events: [discardEvent] };
+                    return { game: currentGame, events: [discardEvent, ...refillEvents] };
                 });
             }, 1000 + Math.random() * 5000);
         } else {

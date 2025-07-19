@@ -40,10 +40,6 @@ CREATE TYPE player_status AS ENUM (
 CREATE TYPE game_status AS ENUM (
   'waiting',
   'playing',
-  'first_attacker', 
-  'free_play',
-  'only_defend',
-  'wait_for_attackers',
   'game_over'
 );
 

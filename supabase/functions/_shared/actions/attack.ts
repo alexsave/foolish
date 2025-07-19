@@ -1,7 +1,6 @@
-import { Card, Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, SERVER_EVENT_TYPE, AnimationEvent, ANIMATION_EVENT_TYPE } from '../types.ts';
-import { executeWithGameLock, check_win, broadcastToGameUsers } from '../utils.ts';
-import { validate_defender_status, verify_cards_in_players_hand, no_cards_left, cardDisplay, card_comp } from '../common_utils.ts';
-import { lockedBotLoop } from '../bot_actions.ts';
+import { Card, Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, AnimationEvent, ANIMATION_EVENT_TYPE } from '../types.ts';
+import { check_win } from '../utils.ts';
+import { validate_defender_status, verify_cards_in_players_hand, cardDisplay, card_comp } from '../common_utils.ts';
 
 // Validation function for attack moves
 export function validateAttack(game: Game, player_id: string, cards: Card[]): void {
@@ -9,8 +8,9 @@ export function validateAttack(game: Game, player_id: string, cards: Card[]): vo
         throw new Error('No cards provided');
     }
 
-    if (game.status !== GAME_STATUS.FIRST_ATTACKER && game.status !== GAME_STATUS.FREE_PLAY && game.status !== GAME_STATUS.WAIT_FOR_ATTACKERS) {
-        throw new Error(`Game ${game.id} is not in valid attack state`);
+    // Can only attack during playing state
+    if (game.status !== GAME_STATUS.PLAYING) {
+        throw new Error(`Game ${game.id} is not in playing state`);
     }
 
     const attacker: PrivatePlayer = game.players.find(player => player.player_id === player_id)!;
@@ -29,8 +29,10 @@ export function validateAttack(game: Game, player_id: string, cards: Card[]): vo
         throw new Error(`Cards ${cards.map(card => cardDisplay(card)).join(', ')} have duplicates`);
     }
 
-    // Basic attack validation based on game state
-    if (game.status === GAME_STATUS.FIRST_ATTACKER) {
+    // Determine if this is a first attack or subsequent attack
+    const isFirstAttack = game.table_battles.length === 0;
+    
+    if (isFirstAttack) {
         // First attacker must play cards of same value
         if (!cards.every(card => card.value === cards[0].value)) {
             throw new Error(`Cards ${cards.map(card => cardDisplay(card)).join(', ')} are not all the same value`);
@@ -40,8 +42,8 @@ export function validateAttack(game: Game, player_id: string, cards: Card[]): vo
         if (game.players[game.first_attacker].player_id !== player_id) {
             throw new Error(`Player ${player_id} is not the first attacker`);
         }
-    } else if (game.status === GAME_STATUS.FREE_PLAY || game.status === GAME_STATUS.WAIT_FOR_ATTACKERS) {
-        // Every value has to be on the table
+    } else {
+        // Subsequent attacks: every value has to be on the table
         if (!cards.every(card => game.table_battles.some(battle => battle.attack.value === card.value || battle.defense?.value === card.value))) {
             throw new Error(`Some card values of ${cards.map(card => cardDisplay(card)).join(', ')} are not on the table`);
         }
@@ -98,21 +100,18 @@ export async function executeAttack(game: Game, player_id: string, cards: Card[]
         return events;
     }
 
-    // Update game state based on current status
-    if (game.status === GAME_STATUS.FIRST_ATTACKER) {
-        game.status = GAME_STATUS.FREE_PLAY;
-        
-        // Set awaiting_attack for all players except defender
-        game.players.forEach((player, index) => {
-            if (index !== game.defender) {
-                player.awaiting_attack = true;
+    // Update awaiting_attack flags based on game state
+    const isFirstAttack = game.table_battles.length === cards.length; // Was zero before adding these cards
+    
+    if (isFirstAttack) {
+        // After first attack, set awaiting_attack for all players except defender
+        for (let i = 0; i < game.players.length; i++) {
+            if (i !== game.defender) {
+                game.players[i].awaiting_attack = true;
             }
-        });
-    } else if (game.status === GAME_STATUS.FREE_PLAY) {
-        // Already in free play, attacker continues to await
-        attacker.awaiting_attack = true;
-    } else if (game.status === GAME_STATUS.WAIT_FOR_ATTACKERS) {
-        // Player can attack in this state
+        }
+    } else {
+        // Subsequent attacks: attacker continues to await
         attacker.awaiting_attack = true;
     }
 

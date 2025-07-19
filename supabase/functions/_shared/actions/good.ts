@@ -1,17 +1,33 @@
 import { Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, AnimationEvent, ANIMATION_EVENT_TYPE } from '../types.ts';
-import { refillPlayerHands } from '../common_utils.ts';
+import { refillPlayerHandsWithEvents } from '../common_utils.ts';
 import { get_next_player_index } from '../common_utils.ts';
 import { check_win } from '../utils.ts';
 
 // Validation function for good moves
 export function validateGood(game: Game, player_id: string): void {
-    if (game.status !== GAME_STATUS.WAIT_FOR_ATTACKERS) {
-        throw new Error(`Game ${game.id} is not in wait_for_attackers mode`);
+    // Can only say good during playing state
+    if (game.status !== GAME_STATUS.PLAYING) {
+        throw new Error(`Game ${game.id} is not in playing state`);
     }
 
     const player = game.players.find(player => player.player_id === player_id)!;
     if (player.status !== PLAYER_STATUS.IN) {
         throw new Error(`Player ${player_id} is not ready to attack`);
+    }
+
+    // Can only say good when all attacks are covered and player is not defender
+    if (game.players[game.defender].player_id === player_id) {
+        throw new Error(`Defender cannot say good`);
+    }
+
+    // Can only say good when all attacks are covered
+    if (!game.table_battles.every(battle => battle.defense !== null)) {
+        throw new Error(`Cannot say good - not all attacks are covered`);
+    }
+
+    // Must be awaiting attack to say good
+    if (!player.awaiting_attack) {
+        throw new Error(`Player is not awaiting attack`);
     }
 }
 
@@ -55,18 +71,27 @@ export async function executeGood(game: Game, player_id: string): Promise<Animat
     const allTableCards = game.table_battles.flatMap(battle => 
         battle.defense ? [battle.attack, battle.defense] : [battle.attack]
     );
+    console.log('[GOOD ACTION] Table battles before clearing:', game.table_battles);
+    console.log('[GOOD ACTION] All table cards for discard:', allTableCards);
     if (allTableCards.length > 0) {
-        events.push({
+        const discardEvent: AnimationEvent = {
             type: ANIMATION_EVENT_TYPE.CARDS_TO_TRASH,
             cards: allTableCards,
             from_location: 'table',
             to_location: 'discard',
             message: `${allTableCards.length} cards discarded`
-        });
+        };
+        console.log('[GOOD ACTION] Adding cards_to_trash event:', discardEvent);
+        events.push(discardEvent);
+    } else {
+        console.log('[GOOD ACTION] No cards to discard - table is empty');
     }
     
     game.table_battles = [];
-    refillPlayerHands(game);
+    
+    // Refill player hands and get animation events
+    const { refillEvents } = refillPlayerHandsWithEvents(game);
+    events.push(...refillEvents);
     
     game.first_attacker = game.defender;
     game.defender = get_next_player_index(game, game.first_attacker);
@@ -79,10 +104,8 @@ export async function executeGood(game: Game, player_id: string): Promise<Animat
     // Check if game should end after refilling - at the very end
     await check_win(game);
     
-    // @ts-ignore - check_win() above can change status to GAME_OVER
-    if (game.status !== GAME_STATUS.GAME_OVER) {
-        game.status = GAME_STATUS.FIRST_ATTACKER;
-    }
+    // Game continues in playing state (no status change needed unless game is over)
+    console.log('[GOOD ACTION] Final events array:', events);
     return events;
 }
 

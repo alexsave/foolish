@@ -746,7 +746,7 @@ export const start_game = async (game: Game) => {
     const lowest_power_index = determine_lowest_power_index(game);
     game.first_attacker = lowest_power_index;
     set_positions(game);
-    game.status = GAME_STATUS.FIRST_ATTACKER;
+    // Stay in playing status - no need to set FIRST_ATTACKER
 
     // Save updated game state
     //await saveCompleteGame(game);

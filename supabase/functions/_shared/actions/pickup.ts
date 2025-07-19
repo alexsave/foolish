@@ -1,11 +1,12 @@
 import { Game, PrivatePlayer, GAME_STATUS, AnimationEvent, ANIMATION_EVENT_TYPE } from '../types.ts';
-import { get_next_player_index, validate_defender_status, refillPlayerHands } from '../common_utils.ts';
+import { get_next_player_index, validate_defender_status, refillPlayerHandsWithEvents } from '../common_utils.ts';
 import { check_win } from '../utils.ts';
 
 // Validation function for pickup moves
 export function validatePickup(game: Game, player_id: string): void {
-    if (game.status !== GAME_STATUS.FREE_PLAY && game.status !== GAME_STATUS.ONLY_DEFEND) {
-        throw new Error(`Game ${game.id} is not in free_play or only_defend mode`);
+    // Can only pickup during playing state
+    if (game.status !== GAME_STATUS.PLAYING) {
+        throw new Error(`Game ${game.id} is not in playing state`);
     }
 
     // check if player is the defender
@@ -55,7 +56,8 @@ export async function executePickup(game: Game, player_id: string): Promise<Anim
     game.table_battles = [];
 
     // Draw cards and shift positions
-    refillPlayerHands(game);
+    const { refillEvents } = refillPlayerHandsWithEvents(game);
+    events.push(...refillEvents);
     
     game.first_attacker = get_next_player_index(game, game.defender);
     game.defender = get_next_player_index(game, game.first_attacker);
@@ -67,10 +69,7 @@ export async function executePickup(game: Game, player_id: string): Promise<Anim
     
     // Check if game should end after refilling - at the very end
     await check_win(game);
-    // Set game status to first attacker (check_win may have changed it to game_over)
-    if (game.status === GAME_STATUS.GAME_OVER) {
-        game.status = GAME_STATUS.FIRST_ATTACKER;
-    }
+    // Game continues in playing state (no status change needed unless game is over)
     
     return events;
 }

@@ -30,10 +30,6 @@ export type PlayerStatus = typeof PLAYER_STATUS[keyof typeof PLAYER_STATUS];
 export const GAME_STATUS = {
     WAITING: 'waiting',
     PLAYING: 'playing',
-    FIRST_ATTACKER: 'first_attacker',
-    FREE_PLAY: 'free_play',
-    ONLY_DEFEND: 'only_defend',
-    WAIT_FOR_ATTACKERS: 'wait_for_attackers',
     GAME_OVER: 'game_over'
 } as const;
 

@@ -4,6 +4,11 @@ import { get_next_player_index, validate_defender_status, verify_cards_in_player
 
 // Validation function for pass moves
 export function validatePass(game: Game, player_id: string, cards: Card[]): void {
+    // Can only pass during playing state
+    if (game.status !== GAME_STATUS.PLAYING) {
+        throw new Error(`Game ${game.id} is not in playing state`);
+    }
+
     if (!cards) {
         throw new Error(`No cards provided`);
     }
@@ -100,20 +105,15 @@ export async function executePass(game: Game, player_id: string, cards: Card[]):
     const new_defender: PrivatePlayer = game.players[game.defender];
     const defender_cards = new_defender.hand.length;
 
-    // Check game status
-    if (uncovered_cards === defender_cards) {
-        // @ts-ignore - check_win() can change status to GAME_OVER during execution
-        if (game.status !== GAME_STATUS.GAME_OVER) {
-            game.status = GAME_STATUS.ONLY_DEFEND;
-        }
-    } else if (uncovered_cards > defender_cards) {
+    // Check for impossible game state
+    if (uncovered_cards > defender_cards) {
         throw new Error('Uncovered cards > defender_cards');
-    } else if (uncovered_cards < defender_cards) {
-        // @ts-ignore - check_win() can change status to GAME_OVER during execution
-        if (game.status !== GAME_STATUS.GAME_OVER) {
-            game.status = GAME_STATUS.FREE_PLAY;
-        }
     }
+    
+    // Game continues in playing state (no status changes needed)
+    // The logical state is determined by checking uncovered_cards vs defender_cards
+    // - If uncovered_cards === defender_cards: defender can only defend
+    // - If uncovered_cards < defender_cards: defender can cover, pickup, or pass
     
     return events;
 }

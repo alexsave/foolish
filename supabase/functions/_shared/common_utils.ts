@@ -224,7 +224,11 @@ export const calculateGameRankings = (game: Game): string[] => {
 };
 
 // Pure refill logic without side effects (no broadcasting, no async check_win)
-export const refillPlayerHands = (game: Game): void => {
+
+// Refill logic that creates animation events for cards drawn
+export const refillPlayerHandsWithEvents = (game: Game): { refillEvents: any[] } => {
+    const refillEvents: any[] = [];
+
     // If no cards left in deck, still need to mark players with 0 cards as OUT
     if (no_cards_left(game)) {
         // Check all players and mark those with 0 cards as OUT
@@ -236,7 +240,7 @@ export const refillPlayerHands = (game: Game): void => {
                 game.elimination_order.push(player.player_id);
             }
         }
-        return;
+        return { refillEvents };
     }
 
     // If the deck was already empty, defending should've gotten them a win
@@ -244,6 +248,7 @@ export const refillPlayerHands = (game: Game): void => {
     const defenseHand = game.players[game.defender].hand;
     if (defenseHand.length === 0) {
         // they draw first
+        const defenderInitialHandSize = defenseHand.length;
         while (defenseHand.length < CARDS_PER_PLAYER) {
             const c = draw(game);
             if (c === null) {
@@ -251,12 +256,27 @@ export const refillPlayerHands = (game: Game): void => {
             }
             defenseHand.push(c);
         }
+        
+        // Add refill event for defender if they drew cards
+        const defenderCardsDrawn = defenseHand.length - defenderInitialHandSize;
+        if (defenderCardsDrawn > 0) {
+            const cardsDrawn = defenseHand.slice(-defenderCardsDrawn);
+            refillEvents.push({
+                type: 'refill',
+                player_id: game.players[game.defender].player_id,
+                cards: cardsDrawn,
+                from_location: 'deck',
+                to_location: 'hand',
+                message: `${game.players[game.defender].name} drew ${defenderCardsDrawn} cards`
+            });
+        }
     }
 
     // Then go around starting from firstAttacker
     let pIndex = game.first_attacker;
     do {
         const hand = game.players[pIndex].hand;
+        const initialHandSize = hand.length;
 
         while (hand.length < CARDS_PER_PLAYER) {
             const c = draw(game);
@@ -264,6 +284,20 @@ export const refillPlayerHands = (game: Game): void => {
                 break;
             }
             hand.push(c);
+        }
+        
+        // Add refill event for this player if they drew cards
+        const cardsDrawn = hand.length - initialHandSize;
+        if (cardsDrawn > 0) {
+            const drawnCards = hand.slice(-cardsDrawn);
+            refillEvents.push({
+                type: 'refill',
+                player_id: game.players[pIndex].player_id,
+                cards: drawnCards,
+                from_location: 'deck',
+                to_location: 'hand',
+                message: `${game.players[pIndex].name} drew ${cardsDrawn} cards`
+            });
         }
         
         // Check if player has no cards and should be marked as OUT
@@ -275,6 +309,8 @@ export const refillPlayerHands = (game: Game): void => {
         
         pIndex = get_next_player_index(game, pIndex);
     } while (pIndex !== game.first_attacker);
+    
+    return { refillEvents };
 };
 
 // Pure win check logic without side effects (no ELO updates, no broadcasting)

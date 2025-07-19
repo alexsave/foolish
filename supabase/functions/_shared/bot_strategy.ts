@@ -12,10 +12,6 @@ import { HackerStrategy } from './hacker_strategy.ts';
 // Re-export interfaces for backwards compatibility
 export type { BotStrategy, LegalMove };
 
-
-
-
-
 // Strategy registry
 export const BOT_STRATEGIES: Map<string, BotStrategy> = new Map<string, BotStrategy>([
     ['random', new RandomBotStrategy()],
@@ -51,64 +47,37 @@ export function calculateLegalMoves(game: Game, botPlayerId: string): LegalMove[
     const isDefender = botIndex === game.defender;
     const isFirstAttacker = botIndex === game.first_attacker;
     
-    // Game state specific moves
-    switch (game.status) {
-        case GAME_STATUS.FIRST_ATTACKER:
-            if (isFirstAttacker) {
-                // Bot is first attacker - can attack with same value cards
-                // CANNOT just say "good" - must make a move
-                const attackMoves = calculateFirstAttackMoves(game, botPlayer);
-                moves.push(...attackMoves);
-            }
-            break;
+    // Game state specific moves based on logical conditions
+    if (game.status === GAME_STATUS.PLAYING) {
+        const isFirstAttack = game.table_battles.length === 0;
+        const allAttacksCovered = game.table_battles.every(battle => battle.defense !== null);
+        
+        if (isFirstAttack && isFirstAttacker) {
+            // Bot is first attacker - can attack with same value cards
+            // CANNOT just say "good" - must make a move
+            const attackMoves = calculateFirstAttackMoves(game, botPlayer);
+            moves.push(...attackMoves);
+        } else if (isDefender && game.table_battles.length > 0) {
+            // Bot is defender - can cover, pickup, or pass
+            const coverMoves = calculateCoverMoves(game, botPlayer);
+            moves.push(...coverMoves);
             
-        case GAME_STATUS.FREE_PLAY:
-            if (isDefender) {
-                // Bot is defender - can cover, pickup, or pass
-                const coverMoves = calculateCoverMoves(game, botPlayer);
-                moves.push(...coverMoves);
-                
-                // Can always pickup
-                moves.push({ type: 'pickup' });
-                
-                // Can pass if all attacks are same value and bot has that value
-                const passMoves = calculatePassMoves(game, botPlayer);
-                moves.push(...passMoves);
-            } else {
-                // Bot is attacker - can attack with cards on table or say "good"
-                const attackMoves = calculateRegularAttackMoves(game, botPlayer);
-                moves.push(...attackMoves);
-                
-                // Can only say "good" if awaiting_attack is true
-                if (botPlayer.awaiting_attack) {
-                    moves.push({ type: 'good' });
-                }
-            }
-            break;
+            // Can always pickup
+            moves.push({ type: 'pickup' });
             
-        case GAME_STATUS.ONLY_DEFEND:
-            if (isDefender) {
-                // Bot is defender - can only cover or pickup
-                const coverMoves = calculateCoverMoves(game, botPlayer);
-                moves.push(...coverMoves);
-                
-                // Can always pickup
-                moves.push({ type: 'pickup' });
-            }
-            break;
+            // Can pass if all attacks are same value and bot has that value
+            const passMoves = calculatePassMoves(game, botPlayer);
+            moves.push(...passMoves);
+        } else if (!isDefender && game.table_battles.length > 0) {
+            // Bot is attacker - can attack with cards on table or say "good"
+            const attackMoves = calculateRegularAttackMoves(game, botPlayer);
+            moves.push(...attackMoves);
             
-        case GAME_STATUS.WAIT_FOR_ATTACKERS:
-            if (!isDefender) {
-                // Bot is an attacker - can attack with cards on table or confirm done
-                const attackMoves = calculateRegularAttackMoves(game, botPlayer);
-                moves.push(...attackMoves);
-                
-                // Can only say "good" if awaiting_attack is true
-                if (botPlayer.awaiting_attack) {
-                    moves.push({ type: 'good' });
-                }
+            // Can only say "good" if awaiting_attack is true and all attacks are covered
+            if (botPlayer.awaiting_attack && allAttacksCovered) {
+                moves.push({ type: 'good' });
             }
-            break;
+        }
     }
     
     return moves;

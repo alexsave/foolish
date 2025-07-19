@@ -180,21 +180,7 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
         if (!player.is_ai) continue;
         
         // Check if this bot should potentially act based on game state
-        let shouldConsider = false;
-        
-        if (gameStatus === GAME_STATUS.FIRST_ATTACKER){
-            shouldConsider = index === localGame!.first_attacker;
-        } else if (gameStatus === GAME_STATUS.FREE_PLAY){
-            if (index === localGame!.defender) {
-                shouldConsider = true;
-            } else {
-                shouldConsider = player.awaiting_attack && !player.done_attacking_this_round;
-            }
-        } else if (gameStatus === GAME_STATUS.ONLY_DEFEND){
-            shouldConsider = index === localGame!.defender;
-        } else if (gameStatus === GAME_STATUS.WAIT_FOR_ATTACKERS){
-            shouldConsider = index !== localGame!.defender && player.awaiting_attack;
-        }
+        const shouldConsider = shouldBotActCore(localGame!, player, index);
 
         if (shouldConsider) {
             eligibleBots.push(player);
@@ -207,9 +193,9 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
 
         //let shouldLoop = false;
         
-        // Special case: if we're in WAIT_FOR_ATTACKERS state and no attackers are awaiting,
+        // Special case: if all attacks are covered and no attackers are awaiting,
         // check if the game should automatically transition to the next phase
-        if (gameStatus === GAME_STATUS.WAIT_FOR_ATTACKERS) {
+        if (gameStatus === GAME_STATUS.PLAYING && localGame!.table_battles.length > 0 && localGame!.table_battles.every(battle => battle.defense !== null)) {
             console.log('Checking if game should auto-transition from WAIT_FOR_ATTACKERS');
             
             try {
@@ -240,7 +226,7 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
                         animationEvents.addMagicTransitionEvent('All attackers finished - automatically proceeding to next round');
                         
                         // Schedule bot actions for the new game state
-                        if (currentGame.status === GAME_STATUS.FIRST_ATTACKER && currentGame.players[currentGame.first_attacker].is_ai) {
+                        if (currentGame.status === GAME_STATUS.PLAYING && currentGame.players[currentGame.first_attacker].is_ai) {
                             // yeah we need to loop
                             shouldLoop = true;
                         }
@@ -300,7 +286,8 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
                     return { game: currentGame, events: [] };
                 }
                 
-                const shouldAct = await shouldBotAct(currentGame, currentBot);
+                const botIndex = currentGame.players.indexOf(currentBot);
+                const shouldAct = shouldBotActCore(currentGame, currentBot, botIndex);
                 
                 if (shouldAct) {
                     await processBotAction(currentGame, currentBot);
@@ -362,45 +349,35 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
 }
 
 // Determine if a bot should act given current game state
-async function shouldBotAct(game: Game, bot: PrivatePlayer): Promise<boolean> {
-    const botIndex = game.players.indexOf(bot);
+function shouldBotActCore(game: Game, bot: PrivatePlayer, botIndex: number): boolean {
+    if (game.status !== GAME_STATUS.PLAYING) {
+        console.log(`Bot ${bot.name} should act: false (not in playing state)`);
+        return false;
+    }
+    
+    const isFirstAttack = game.table_battles.length === 0;
+    const isDefender = botIndex === game.defender;
+    const allAttacksCovered = game.table_battles.every(battle => battle.defense !== null);
+    
     let shouldAct = false;
     let reason = '';
     
-    switch (game.status) {
-        case GAME_STATUS.FIRST_ATTACKER:
-            // Bot should act if it's the first attacker
-            shouldAct = botIndex === game.first_attacker;
-            reason = shouldAct ? 'is first attacker' : 'not first attacker';
-            break;
-            
-        case GAME_STATUS.FREE_PLAY:
-            // Bot should act if it's the defender OR if it's an attacker with awaiting_attack = true and not done attacking this round
-            if (botIndex === game.defender) {
-                shouldAct = true;
-                reason = 'is defender';
-            } else {
-                // For attackers, check if they're awaiting attack and not done attacking this round
-                shouldAct = bot.awaiting_attack && !bot.done_attacking_this_round;
-                reason = shouldAct ? 'awaiting attack and not done' : `awaiting_attack=${bot.awaiting_attack}, done_attacking=${bot.done_attacking_this_round}`;
-            }
-            break;
-            
-        case GAME_STATUS.ONLY_DEFEND:
-            // Bot should act if it's the defender
-            shouldAct = botIndex === game.defender;
-            reason = shouldAct ? 'is defender' : 'not defender';
-            break;
-            
-        case GAME_STATUS.WAIT_FOR_ATTACKERS:
-            // Bot should act if it's an attacker with awaiting_attack = true
-            shouldAct = botIndex !== game.defender && bot.awaiting_attack && !bot.done_attacking_this_round;
-            reason = shouldAct ? 'is attacker awaiting attack' : `is_defender=${botIndex === game.defender}, awaiting_attack=${bot.awaiting_attack}`;
-            break;
-            
-        default:
-            shouldAct = false;
-            reason = 'unknown game status';
+    if (isFirstAttack) {
+        // First attack: only first attacker can act
+        shouldAct = botIndex === game.first_attacker;
+        reason = shouldAct ? 'is first attacker' : 'not first attacker';
+    } else if (isDefender) {
+        // Defender can always act when there are attacks
+        shouldAct = true;
+        reason = 'is defender';
+    } else if (allAttacksCovered) {
+        // All attacks covered: attackers can attack or say good
+        shouldAct = bot.awaiting_attack && !bot.done_attacking_this_round;
+        reason = shouldAct ? 'awaiting attack and not done' : `awaiting_attack=${bot.awaiting_attack}, done_attacking=${bot.done_attacking_this_round}`;
+    } else {
+        // Some attacks uncovered: attackers can still attack
+        shouldAct = bot.awaiting_attack && !bot.done_attacking_this_round;
+        reason = shouldAct ? 'awaiting attack and not done' : `awaiting_attack=${bot.awaiting_attack}, done_attacking=${bot.done_attacking_this_round}`;
     }
     
     console.log(`Bot ${bot.name} should act: ${shouldAct} (${reason})`);
@@ -460,9 +437,9 @@ async function executeBotMove(game: Game, bot: PrivatePlayer, move: LegalMove): 
                         bot.awaiting_attack = false;
                         console.log(`Bot ${bot.name} is done attacking this round`);
                         
-                        // Only try to execute "good" logic if game is now in WAIT_FOR_ATTACKERS mode
+                        // Only try to execute "good" logic if all attacks are covered
                         // Use handleGood for proper validation
-                        if (game.status === GAME_STATUS.WAIT_FOR_ATTACKERS) {
+                        if (game.table_battles.length > 0 && game.table_battles.every(battle => battle.defense !== null)) {
                             try {
                                 console.log(`Bot ${bot.name} attempting good logic`);
                                 await handleGood(game, bot.player_id);
@@ -496,9 +473,9 @@ async function executeBotMove(game: Game, bot: PrivatePlayer, move: LegalMove): 
                         bot.awaiting_attack = false;
                         console.log(`Bot ${bot.name} is done attacking this round after pass`);
                         
-                        // Only try to execute "good" logic if game is now in WAIT_FOR_ATTACKERS mode
+                        // Only try to execute "good" logic if all attacks are covered
                         // Use handleGood for proper validation
-                        if (game.status === GAME_STATUS.WAIT_FOR_ATTACKERS) {
+                        if (game.table_battles.length > 0 && game.table_battles.every(battle => battle.defense !== null)) {
                             try {
                                 console.log(`Bot ${bot.name} attempting good logic after pass`);
                                 await handleGood(game, bot.player_id);
@@ -594,34 +571,8 @@ function checkIfAnyBotHasLegalMoves(game: Game): boolean {
         const botIndex = game.players.indexOf(bot);
         let shouldAct = false;
         
-        // Determine if this bot should act in current game state
-        switch (game.status) {
-            case GAME_STATUS.FIRST_ATTACKER:
-                shouldAct = botIndex === game.first_attacker;
-                break;
-                
-            case GAME_STATUS.FREE_PLAY:
-                // Bot should act if it's the defender OR if it's an attacker with awaiting_attack = true
-                if (botIndex === game.defender) {
-                    shouldAct = true;
-                } else {
-                    // For attackers, check if they're awaiting attack and not done attacking this round
-                    shouldAct = bot.awaiting_attack && !bot.done_attacking_this_round;
-                }
-                break;
-                
-            case GAME_STATUS.ONLY_DEFEND:
-                shouldAct = botIndex === game.defender;
-                break;
-                
-            case GAME_STATUS.WAIT_FOR_ATTACKERS:
-                // Bot should act if it's an attacker with awaiting_attack = true
-                shouldAct = botIndex !== game.defender && bot.awaiting_attack && !bot.done_attacking_this_round;
-                break;
-                
-            default:
-                shouldAct = false;
-        }
+        // Determine if this bot should act in current game state using logical checks
+        shouldAct = shouldBotActCore(game, bot, botIndex);
         
         if (shouldAct) {
             // Check if this bot has any legal moves
