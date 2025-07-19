@@ -65,42 +65,46 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     const pendingCompletionCallbackRef = useRef<(() => void) | null>(null);
     const remainingSequenceEventsRef = useRef<number>(0);
 
-    // Keep track of processed sequence IDs to avoid duplicates
+    // Keep track of processed sequence IDs and event content to avoid duplicates
     const processedSequenceIds = useRef<Set<string>>(new Set());
+    const processedEventContent = useRef<Set<string>>(new Set());
 
     // Listen for animation events from ServerContext
     useEffect(() => {
         const handleAnimationEvents = (event: any) => {
             console.log('[ANIMATION] Animation events received:', event.detail);
-            console.log('[ANIMATION] Current queue length before adding:', animationQueueRef.current.length);
             
             if (event.detail.events && Array.isArray(event.detail.events)) {
-                // Check for duplicate sequences using sequence_id if available
-                const sequenceId = event.detail.sequence_id || event.detail.gameId + '-' + Date.now();
+                // Check for duplicate events using stringified content
+                const eventsString = JSON.stringify(event.detail.events);
                 
-                if (processedSequenceIds.current.has(sequenceId)) {
-                    console.log('[ANIMATION] Skipping duplicate sequence:', sequenceId);
+                if (processedEventContent.current.has(eventsString)) {
                     return;
                 }
                 
+                processedEventContent.current.add(eventsString);
+                
+                // Also check sequence_id as backup (in case events are identical but from different sources)
+                const sequenceId = event.detail.sequence_id || event.detail.gameId + '-' + Date.now();
+                if (processedSequenceIds.current.has(sequenceId)) {
+                    return;
+                }
                 processedSequenceIds.current.add(sequenceId);
                 
-                // Clean up old sequence IDs (keep only last 100)
-                if (processedSequenceIds.current.size > 100) {
+                // Clean up old sequence IDs to prevent memory leaks (keep only last 50)  
+                // Event content is cleared after each sequence, so no cleanup needed there
+                if (processedSequenceIds.current.size > 50) {
                     const ids = Array.from(processedSequenceIds.current);
-                    processedSequenceIds.current = new Set(ids.slice(-50));
+                    processedSequenceIds.current = new Set(ids.slice(-25));
                 }
                 
                 // Store the completion callback if provided
                 if (event.detail.onAnimationComplete) {
-                    console.log('[ANIMATION] Setting completion callback, events count:', event.detail.events.length);
                     pendingCompletionCallbackRef.current = event.detail.onAnimationComplete;
                     remainingSequenceEventsRef.current = event.detail.events.length;
                 }
                 
                 // Queue all events from the sequence
-                console.log('[ANIMATION] Adding events to queue:', event.detail.events);
-                console.log('[ANIMATION] Event types being queued:', event.detail.events.map((e: any) => e.type));
                 setAnimationQueue(prev => [...prev, ...event.detail.events]);
             }
         };
@@ -123,6 +127,11 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             setIsAnimating(false);
             setCurrentAnimation(null);
             
+            // Clear processed event content when queue is empty (allows future legitimate duplicates)
+            if (processedEventContent.current.size > 0) {
+                processedEventContent.current.clear();
+            }
+            
             // Check if we have a pending completion callback and we've finished the sequence
             if (pendingCompletionCallbackRef.current && remainingSequenceEventsRef.current === 0) {
                 console.log('[ANIMATION] Animation sequence completed, calling completion callback');
@@ -136,24 +145,9 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         }
 
         const nextAnimation = animationQueueRef.current[0];
-        console.log('[ANIMATION] Full queue before processing:', animationQueueRef.current.map((e: any) => e.type));
-        console.log('[ANIMATION] About to dequeue and process event:', nextAnimation.type);
         setCurrentAnimation(nextAnimation);
         setAnimationQueue(prev => prev.slice(1));
         setIsAnimating(true);
-
-        console.log('[ANIMATION] Processing animation:', nextAnimation);
-        console.log('[ANIMATION] Animation type:', nextAnimation.type, 'Has cards:', !!nextAnimation.cards, 'Cards count:', nextAnimation.cards?.length || 0);
-        
-        // Special debugging for cards_to_trash
-        if (nextAnimation.type === 'cards_to_trash') {
-            console.log('[ANIMATION] CARDS_TO_TRASH DEBUG:');
-            console.log('[ANIMATION] Full event:', JSON.stringify(nextAnimation, null, 2));
-            console.log('[ANIMATION] Cards property:', nextAnimation.cards);
-            console.log('[ANIMATION] From location:', nextAnimation.from_location);
-            console.log('[ANIMATION] To location:', nextAnimation.to_location);
-            console.log('[ANIMATION] Setting currentAnimation to cards_to_trash event');
-        }
 
         // Start tracking cards in this animation
         if (nextAnimation.cards && nextAnimation.cards.length > 0) {

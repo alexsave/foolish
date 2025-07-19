@@ -34,7 +34,6 @@ export const AnimationOverlay = () => {
             const cardSelector = `[data-card="${cardSuit}-${cardValue}"]`;
             const cardElement = document.querySelector(cardSelector) as HTMLElement | null;
             if (cardElement) {
-                console.log('[ANIMATION_OVERLAY] Found specific table card element:', cardElement);
                 return cardElement;
             }
         }
@@ -95,35 +94,12 @@ export const AnimationOverlay = () => {
 
         // Handle magic_transition separately since it doesn't have cards
         if (type === 'magic_transition') {
-            console.log('[ANIMATION_OVERLAY] Processing magic_transition:', currentAnimation.message);
             return; // Magic transitions are just messages, no visual animation needed
         }
         
         // All other animation types need cards
         if (!cards || cards.length === 0) {
-            console.log('[ANIMATION_OVERLAY] No cards in animation or cards array empty');
-            console.log('[ANIMATION_OVERLAY] Animation type:', type);
-            console.log('[ANIMATION_OVERLAY] Cards value:', cards);
-            console.log('[ANIMATION_OVERLAY] Full currentAnimation object:', JSON.stringify(currentAnimation, null, 2));
             return;
-        }
-
-        console.log('[ANIMATION_OVERLAY] ==> ANIMATION STARTED <==');
-        console.log('[ANIMATION_OVERLAY] Type:', type);
-        console.log('[ANIMATION_OVERLAY] Cards:', cards); 
-        console.log('[ANIMATION_OVERLAY] From:', from_location, 'To:', to_location);
-        console.log('[ANIMATION_OVERLAY] Player ID:', player_id);
-        
-        // Special logging for cards_to_trash animations
-        if (type === 'cards_to_trash') {
-            console.log('[ANIMATION_OVERLAY] cards_to_trash animation detected - table to discard');
-            console.log('[ANIMATION_OVERLAY] Looking for table elements with data-location="table"');
-            const allTableElements = document.querySelectorAll('[data-location="table"]');
-            console.log('[ANIMATION_OVERLAY] Found table elements:', allTableElements.length, allTableElements);
-            
-            console.log('[ANIMATION_OVERLAY] Looking for discard elements with data-location="discard"');
-            const allDiscardElements = document.querySelectorAll('[data-location="discard"]');
-            console.log('[ANIMATION_OVERLAY] Found discard elements:', allDiscardElements.length, allDiscardElements);
         }
 
         // Small delay to ensure DOM is ready
@@ -142,15 +118,12 @@ export const AnimationOverlay = () => {
                     sourceElement = findElementByLocation('deck');
                 } else if (from_location === 'table') {
                     sourceElement = findElementByLocation('table', undefined, card.suit, card.value);
-                    console.log('[ANIMATION_OVERLAY] Looking for table card:', card, 'found element:', sourceElement);
                 }
 
                 if (sourceElement) {
                     startPos = getElementPosition(sourceElement);
-                    console.log('[ANIMATION_OVERLAY] Found source element for player', player_id, ':', sourceElement, 'at position:', startPos);
                 } else {
                     startPos = getFallbackPosition(from_location || 'hand', player_id);
-                    console.log('[ANIMATION_OVERLAY] Using fallback start position for player', player_id, 'at', from_location, ':', startPos);
                 }
 
                 // Find destination element
@@ -163,15 +136,12 @@ export const AnimationOverlay = () => {
                     destinationElement = findElementByLocation('table');
                 } else if (to_location === 'discard') {
                     destinationElement = findElementByLocation('discard');
-                    console.log('[ANIMATION_OVERLAY] Looking for discard pile, found element:', destinationElement);
                 }
 
                 if (destinationElement) {
                     endPos = getElementPosition(destinationElement);
-                    console.log('[ANIMATION_OVERLAY] Found destination element:', destinationElement, 'at position:', endPos);
                 } else {
                     endPos = getFallbackPosition(to_location || 'table', player_id);
-                    console.log('[ANIMATION_OVERLAY] Using fallback end position:', endPos);
                 }
 
                 // Add some offset for multiple cards
@@ -190,7 +160,6 @@ export const AnimationOverlay = () => {
                 });
             });
 
-            console.log('[ANIMATION_OVERLAY] Created animated cards:', newAnimatedCards);
             setAnimatedCards(newAnimatedCards);
 
             // Animate the cards - Make it very slow to see what's happening
@@ -227,8 +196,6 @@ export const AnimationOverlay = () => {
     if (animatedCards.length === 0) {
         return null;
     }
-
-    //console.log('[ANIMATION_OVERLAY] Rendering', animatedCards.length, 'animated cards');
 
     return (
         <div 

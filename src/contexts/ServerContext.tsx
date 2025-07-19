@@ -129,7 +129,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
         gameUserChannel
             .on('broadcast', { event: 'animation_events' }, (payload) => {
-                console.log('[CHANNEL] Animation events received:', payload);
                 handleGameMessage(payload.payload, 'animation_events');
             })
             .subscribe((status, err) => {

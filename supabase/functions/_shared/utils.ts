@@ -199,10 +199,7 @@ export const animationEvents = new AnimationEventManager();
 
 // Broadcast animation events to all players
 export const broadcastAnimationEvents = async (game: Game, events: AnimationEvent[]): Promise<void> => {
-    console.log(`[ANIMATION DEBUG] broadcastAnimationEvents called with ${events.length} events for game ${game.id}`);
-    
     if (events.length === 0) {
-        console.log(`[ANIMATION DEBUG] No events to broadcast, returning early`);
         return;
     }
     
