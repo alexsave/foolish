@@ -21,7 +21,7 @@ export const DiscardPile = () => {
                 {/* Always render the discard pile area for animations, but only show cards if there are any */}
                 {game.discard_pile_length > 0 && (
                     <>
-                        <CardBack deckSize={game.discard_pile_length} />
+                        <CardBack deckSize={game.discard_pile_length} enableRandomRotation />
                         <p style={{
                             position: 'absolute',
                             top: '50%',
