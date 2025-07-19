@@ -24,6 +24,7 @@ games!inner (
     power_suit,
     status,
     table_battles,
+    discard_pile_length,
     updated_at
 )`;
 
