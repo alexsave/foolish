@@ -34,16 +34,6 @@ export async function executePickup(game: Game, player_id: string): Promise<Anim
         battle.defense ? [battle.attack, battle.defense] : [battle.attack]
     );
 
-    // Add animation event for the pickup
-    events.push({
-        type: ANIMATION_EVENT_TYPE.PICKUP,
-        player_id: player_id,
-        cards: allTableCards,
-        from_location: 'table',
-        to_location: 'hand',
-        message: `${defender.name} picked up ${allTableCards.length} cards`
-    });
-
     // add cards from table to hand
     game.table_battles.forEach(battle => {
         defender.hand.push(battle.attack);
@@ -55,9 +45,30 @@ export async function executePickup(game: Game, player_id: string): Promise<Anim
     // clear table
     game.table_battles = [];
 
-    // Draw cards and shift positions
+    // Capture game state after pickup
+    const gameStateAfterPickup = JSON.parse(JSON.stringify(game));
+
+    // Add animation event for the pickup with intermediate game state
+    events.push({
+        type: ANIMATION_EVENT_TYPE.PICKUP,
+        player_id: player_id,
+        cards: allTableCards,
+        from_location: 'table',
+        to_location: 'hand',
+        message: `${defender.name} picked up ${allTableCards.length} cards`,
+        game_state: gameStateAfterPickup
+    });
+
+    // Draw cards and capture states for each refill event
     const { refillEvents } = refillPlayerHandsWithEvents(game);
-    events.push(...refillEvents);
+    for (const refillEvent of refillEvents) {
+        // The refillPlayerHandsWithEvents already modified the game state
+        const gameStateAfterRefill = JSON.parse(JSON.stringify(game));
+        events.push({
+            ...refillEvent,
+            game_state: gameStateAfterRefill
+        });
+    }
     
     game.first_attacker = get_next_player_index(game, game.defender);
     game.defender = get_next_player_index(game, game.first_attacker);

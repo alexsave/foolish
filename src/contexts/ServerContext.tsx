@@ -3,6 +3,7 @@ import { Card, PublicPlayer, PersonalGame, PublicGame, PRIVATE_EVENT_TYPE } from
 import supabase from '../backend/Connector';
 import { useParams } from 'react-router-dom';
 import { useAuth } from './AuthContext';
+import { useAnimation } from './AnimationContext';
 import { MAX_PLAYERS } from '../common/constants';
 import { get_next_player_index, canCover, card_comp } from '../common/common_utils';
 
@@ -30,7 +31,8 @@ games!inner (
 // this will be kinda similar to client.js
 export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
-    const { user_id } = useAuth()
+    const { user_id } = useAuth();
+    const { queueAnimation } = useAnimation();
 
     const url_game_id = useParams().game_id?.toLowerCase();
     // keep a state of games
@@ -70,6 +72,9 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
     // Use ref to prevent duplicate user effect executions
     const prevUserRef = useRef<string | null>(null);
+    
+    // Track locally triggered optimistic animations to avoid server duplicates
+    const locallyTriggeredAnimations = useRef<Set<string>>(new Set());
 
     useEffect(() => {
         if (url_game_id) {
@@ -162,6 +167,27 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             });
     };
 
+    // Helper function to trigger local animations for optimistic updates
+    const triggerLocalAnimation = (animationType: 'pickup' | 'cover' | 'attack_pass', cards: Card[], fromLocation: string, toLocation: string, playerId?: string) => {
+        const animationEvent = {
+            type: animationType,
+            cards: cards,
+            from_location: fromLocation,
+            to_location: toLocation,
+            player_id: playerId,
+            message: `Local ${animationType} animation`
+        } as any; // Cast to avoid strict typing issues
+        
+        // Track this animation to avoid duplicates from server
+        const eventString = JSON.stringify(animationEvent);
+        locallyTriggeredAnimations.current.add(eventString);
+        
+        // Queue the local animation
+        queueAnimation(animationEvent);
+        
+        console.log(`[OPTIMISTIC] Triggered local ${animationType} animation:`, animationEvent);
+    };
+
     const handleGameMessage = (message: any, source: string = 'unknown') => {
         // Handle both old format (message.game_id) and new format (message.game.id)
         // Also handle nested message format from broadcastToGame
@@ -189,6 +215,41 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
         if (animationEvents && Array.isArray(animationEvents) && animationEvents.length > 0) {
             console.log(`[${source.toUpperCase()}] Animation events detected:`, animationEvents);
+            
+            // Check if any of these events were triggered locally (optimistic animations)
+            const hasLocallyTriggeredEvent = animationEvents.some((serverEvent: any) => {
+                const serverEventString = JSON.stringify({
+                    type: serverEvent.type,
+                    cards: serverEvent.cards,
+                    from_location: serverEvent.from_location,
+                    to_location: serverEvent.to_location,
+                    player_id: serverEvent.player_id,
+                    message: `Local ${serverEvent.type} animation`
+                });
+                return locallyTriggeredAnimations.current.has(serverEventString);
+            });
+            
+            if (hasLocallyTriggeredEvent) {
+                console.log('[OPTIMISTIC] Ignoring server animation - already triggered locally');
+                // Clear the local animations since server confirmed them
+                animationEvents.forEach((serverEvent: any) => {
+                    const serverEventString = JSON.stringify({
+                        type: serverEvent.type,
+                        cards: serverEvent.cards,
+                        from_location: serverEvent.from_location,
+                        to_location: serverEvent.to_location,
+                        player_id: serverEvent.player_id,
+                        message: `Local ${serverEvent.type} animation`
+                    });
+                    locallyTriggeredAnimations.current.delete(serverEventString);
+                });
+                
+                // Still update game state from server, but skip animations
+                if (gameData) {
+                    setGames(prev => ({ ...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev) }));
+                }
+                return;
+            }
             
             // Debug cards_to_trash events specifically
             const cardsToTrashEvents = animationEvents.filter(e => e.type === 'cards_to_trash');
@@ -550,6 +611,9 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             return Promise.reject(new Error(`Some card values are not on the table`));
         }
 
+        // Trigger local attack animation BEFORE updating state
+        triggerLocalAnimation('attack_pass', cards, 'hand', 'table', g.self.player_id);
+
         // Optimistic update
         const newHand = g.self.hand.filter(card => !cards.includes(card));
         setGames(prev => ({ ...prev, [game_id!]: { ...prev[game_id!], table_battles: [...table_battles, ...cards.map(card => ({ attack: card, defense: null }))], self: { ...prev[game_id!].self, hand: newHand } } }));
@@ -577,6 +641,9 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         if (!table_battles.every(battle => battle.defense === null && battle.attack.value === cards[0].value)) {
             return Promise.reject(new Error(`Cannot pass`));
         }
+
+        // Trigger local pass animation BEFORE updating state
+        triggerLocalAnimation('attack_pass', cards, 'hand', 'table', g.self.player_id);
 
         // Optimistic update
         // I don't like this cast 
@@ -611,6 +678,10 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         const allTableCards = table_battles.flatMap(battle => 
             battle.defense ? [battle.attack, battle.defense] : [battle.attack]
         );
+
+        // Trigger local pickup animation BEFORE updating state
+        triggerLocalAnimation('pickup', allTableCards, 'table', 'hand', g.self.player_id);
+
         const newHand = [...g.self.hand, ...allTableCards];
         setGames(prev => ({
             ...prev,
@@ -650,6 +721,14 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             if (!canCover(attackCard, coverCard, g.power_suit)) {
                 return Promise.reject(new Error(`Cover card value does not match attack card value`));
             }
+        }
+
+        // Trigger local cover animations BEFORE updating state
+        for (let i = 0; i < coverCards.length; i++) {
+            const coverCard = coverCards[i];
+            const attackCard = attackCards[i];
+            // Create individual cover animation for each card
+            triggerLocalAnimation('cover', [coverCard], 'hand', 'table', g.self.player_id);
         }
 
         // Optimistic update. Move cover cards out of self, put cover card as defense on corresponding attack

@@ -37,13 +37,7 @@ function App() {
             } />
             <Route path="/:game_id" element={
               <ProtectedRoute>
-                <AnimationProvider>
-                  <GameProvider>
-                    <DragProvider>
-                      <GameView />
-                    </DragProvider>
-                  </GameProvider>
-                </AnimationProvider>
+                <GameView />
               </ProtectedRoute>
             } />
             {/* Catch-all route for unmatched paths - redirect to dashboard */}

@@ -72,14 +72,18 @@ export async function executeAttack(game: Game, player_id: string, cards: Card[]
         });
     }
 
-    // Add animation event for the attack
+    // Capture game state after attack
+    const gameStateAfterAttack = JSON.parse(JSON.stringify(game));
+
+    // Add animation event for the attack with intermediate game state
     events.push({
         type: ANIMATION_EVENT_TYPE.ATTACK_PASS,
         player_id: player_id,
         cards: cards,
         from_location: 'hand',
         to_location: 'table',
-        message: `${attacker.name} attacked with ${cards.map(c => cardDisplay(c)).join(', ')}`
+        message: `${attacker.name} attacked with ${cards.map(c => cardDisplay(c)).join(', ')}`,
+        game_state: gameStateAfterAttack
     });
 
     // Check if attacker has no cards left
@@ -89,11 +93,15 @@ export async function executeAttack(game: Game, player_id: string, cards: Card[]
         attacker.awaiting_attack = false;
         game.elimination_order.push(attacker.player_id);
         
+        // Capture game state after player goes out
+        const gameStateAfterOut = JSON.parse(JSON.stringify(game));
+        
         // Add animation event for player going out
         events.push({
             type: ANIMATION_EVENT_TYPE.OUT,
             player_id: player_id,
-            message: `${attacker.name} is out`
+            message: `${attacker.name} is out`,
+            game_state: gameStateAfterOut
         });
         
         await check_win(game);
@@ -101,7 +109,7 @@ export async function executeAttack(game: Game, player_id: string, cards: Card[]
     }
 
     // Update awaiting_attack flags based on game state
-    const isFirstAttack = game.table_battles.length === cards.length; // Was zero before adding these cards
+    const isFirstAttack = game.table_battles.length === cards.length;
     
     if (isFirstAttack) {
         // After first attack, set awaiting_attack for all players except defender

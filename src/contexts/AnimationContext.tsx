@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
-import { Card, PersonalGame } from '../common/types';
+import { Card, PersonalGame, Game } from '../common/types';
 import { useServer } from './ServerContext';
 
 interface AnimationEvent {
@@ -11,6 +11,7 @@ interface AnimationEvent {
     target_card?: Card;
     battle_index?: number;
     message?: string;
+    game_state?: Game; // intermediate game state after this event
 }
 
 interface AnimationSequence {
@@ -59,7 +60,6 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     }>>(new Map());
     
     const timeoutRef = useRef<NodeJS.Timeout | null>(null);
-    const progressIntervalRef = useRef<NodeJS.Timeout | null>(null);
     const animationQueueRef = useRef<AnimationEvent[]>([]);
     const isAnimatingRef = useRef<boolean>(false);
     const pendingCompletionCallbackRef = useRef<(() => void) | null>(null);
@@ -149,9 +149,8 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         setAnimationQueue(prev => prev.slice(1));
         setIsAnimating(true);
 
-        // Start tracking cards in this animation
+        // Start tracking cards in this animation (simplified - CSS handles the actual animation)
         if (nextAnimation.cards && nextAnimation.cards.length > 0) {
-            const currentTime = Date.now();
             setAnimatingCards(prev => {
                 const newAnimatingCards = new Map(prev);
                 
@@ -159,54 +158,18 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                     const cardKey = getCardKey(card, nextAnimation.player_id);
                     newAnimatingCards.set(cardKey, {
                         animationType: nextAnimation.type,
-                        progress: 0,
+                        progress: 1, // Always 1 - CSS transitions handle the animation
                         fromLocation: nextAnimation.from_location || null,
                         toLocation: nextAnimation.to_location || null,
-                        startTime: currentTime
+                        startTime: Date.now()
                     });
                 });
                 
                 return newAnimatingCards;
             });
-
-            // Update progress over the animation duration
-            const updateProgress = () => {
-                const now = Date.now();
-                setAnimatingCards(prev => {
-                    const updated = new Map(prev);
-                    let allCompleted = true;
-
-                    nextAnimation.cards!.forEach(card => {
-                        const cardKey = getCardKey(card, nextAnimation.player_id);
-                        const cardAnimation = updated.get(cardKey);
-                        
-                        if (cardAnimation) {
-                            const elapsed = now - cardAnimation.startTime;
-                            const progress = Math.min(elapsed / 2000, 1); // 2000ms animation duration
-                            
-                            if (progress < 1) {
-                                allCompleted = false;
-                            }
-                            
-                            updated.set(cardKey, {
-                                ...cardAnimation,
-                                progress
-                            });
-                        }
-                    });
-
-                    if (!allCompleted) {
-                        progressIntervalRef.current = setTimeout(updateProgress, 16); // ~60fps
-                    }
-                    
-                    return updated;
-                });
-            };
-
-            updateProgress();
         }
 
-        // Animation duration: 2000ms to match AnimationOverlay
+        // Animation duration: 500ms for fast, smooth animations
         timeoutRef.current = setTimeout(() => {
             // Remove cards from animating state
             if (nextAnimation.cards) {
@@ -220,21 +183,15 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 });
             }
 
-            // Clear the progress interval
-            if (progressIntervalRef.current) {
-                clearTimeout(progressIntervalRef.current);
-                progressIntervalRef.current = null;
-            }
-
             // Decrement remaining sequence events count if we're tracking a sequence
             if (pendingCompletionCallbackRef.current && remainingSequenceEventsRef.current > 0) {
                 remainingSequenceEventsRef.current--;
                 console.log('[ANIMATION] Animation completed, remaining sequence events:', remainingSequenceEventsRef.current);
             }
             
-            // Process next animation after 2000ms delay
-            setTimeout(processAnimationQueue, 200);
-        }, 2000);
+            // Process next animation after a short delay
+            setTimeout(processAnimationQueue, 100);
+        }, 500);
     }, []);
 
     // Start processing queue when items are added and no animation is running
@@ -286,9 +243,6 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         return () => {
             if (timeoutRef.current) {
                 clearTimeout(timeoutRef.current);
-            }
-            if (progressIntervalRef.current) {
-                clearTimeout(progressIntervalRef.current);
             }
         };
     }, []);

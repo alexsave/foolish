@@ -1,5 +1,5 @@
 import { Card, Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, SERVER_EVENT_TYPE, AnimationEvent, ANIMATION_EVENT_TYPE } from '../types.ts';
-import { executeWithGameLock, check_win, broadcastToGameUsers } from '../utils.ts';
+import { executeWithGameLock, check_win, broadcastToGameUsers, saveCompleteGame } from '../utils.ts';
 import { canCover, get_next_player_index, validate_defender_status, verify_cards_in_players_hand, card_comp, cardDisplay, refillPlayerHandsWithEvents } from '../common_utils.ts';
 import { lockedBotLoop } from '../bot_actions.ts';
 
@@ -76,7 +76,13 @@ export async function executeCover(game: Game, player_id: string, cover_cards: C
         }
         game.table_battles[attack_card_index].defense = cover_card;
         
-        // Add animation event for this cover
+        // Remove the card from the hand immediately
+        defender.hand = defender.hand.filter(card => !card_comp(card, cover_card));
+        
+        // Capture game state after this specific cover
+        const gameStateAfterCover = JSON.parse(JSON.stringify(game));
+        
+        // Add animation event for this cover with the intermediate game state
         events.push({
             type: ANIMATION_EVENT_TYPE.COVER,
             player_id: player_id,
@@ -85,12 +91,10 @@ export async function executeCover(game: Game, player_id: string, cover_cards: C
             battle_index: attack_card_index,
             from_location: 'hand',
             to_location: 'table',
-            message: `${defender.name} covered ${cardDisplay(attack_card)} with ${cardDisplay(cover_card)}`
+            message: `${defender.name} covered ${cardDisplay(attack_card)} with ${cardDisplay(cover_card)}`,
+            game_state: gameStateAfterCover
         });
     }
-
-    // remove the cards from the hand
-    defender.hand = defender.hand.filter(card => !cover_cards.some(cover_card => card_comp(card, cover_card)));
 
     // If defender has no cards left, they may win
     if (defender.hand.length === 0) {
@@ -98,49 +102,73 @@ export async function executeCover(game: Game, player_id: string, cover_cards: C
         const discardedCards = game.table_battles.length * 2; // Each battle has attack + defense
         game.discard_pile_length += discardedCards;
         
-        // Add discard event
+        // Add discard event with current game state
         const allTableCards = game.table_battles.flatMap(battle => 
             battle.defense ? [battle.attack, battle.defense] : [battle.attack]
         );
+        
+        // Clear table battles
+        game.table_battles = [];
+        const gameStateAfterDiscard = JSON.parse(JSON.stringify(game));
+        
         events.push({
             type: ANIMATION_EVENT_TYPE.DISCARD,
             cards: allTableCards,
             from_location: 'table',
             to_location: 'discard',
-            message: `${allTableCards.length} cards discarded`
+            message: `${allTableCards.length} cards discarded`,
+            game_state: gameStateAfterDiscard
         });
         
-        game.table_battles = [];
+        // Refill hands and capture states for each refill event
         const { refillEvents } = refillPlayerHandsWithEvents(game);
-        events.push(...refillEvents);
+        for (const refillEvent of refillEvents) {
+            // Apply the refill to get the intermediate state
+            const gameStateAfterRefill = JSON.parse(JSON.stringify(game));
+            events.push({
+                ...refillEvent,
+                game_state: gameStateAfterRefill
+            });
+        }
+        
         game.first_attacker = game.defender;
         // Reset done_attacking_this_round flag for all players when attacking shifts
         game.players.forEach(player => {
             player.done_attacking_this_round = false;
         });
+        
         if (defender.hand.length === 0) {
             // Defender still has no cards after refilling - they win this round
             game.players[game.first_attacker].status = PLAYER_STATUS.OUT;
             game.players[game.first_attacker].awaiting_attack = false;
             game.elimination_order.push(game.players[game.first_attacker].player_id);
             
+            // Capture state after player goes out
+            const gameStateAfterOut = JSON.parse(JSON.stringify(game));
+            
             // Add out event
             events.push({
                 type: ANIMATION_EVENT_TYPE.OUT,
                 player_id: game.players[game.first_attacker].player_id,
-                message: `${game.players[game.first_attacker].name} is out`
+                message: `${game.players[game.first_attacker].name} is out`,
+                game_state: gameStateAfterOut
             });
             
             await check_win(game);
             game.first_attacker = get_next_player_index(game, game.first_attacker);
         }
+        
         game.defender = get_next_player_index(game, game.first_attacker);
+        
+        // Capture state after defender move
+        const gameStateAfterDefenderMove = JSON.parse(JSON.stringify(game));
         
         // Add defender move event
         events.push({
             type: ANIMATION_EVENT_TYPE.DEFENDER_MOVE,
             player_id: game.players[game.defender].player_id,
-            message: `${game.players[game.defender].name} is now the defender`
+            message: `${game.players[game.defender].name} is now the defender`,
+            game_state: gameStateAfterDefenderMove
         });
         
         // Game continues in playing state (no status change needed)
@@ -168,61 +196,64 @@ export async function executeCover(game: Game, player_id: string, cover_cards: C
         ).map(player => player.player_id);
 
         if (playable_players.length === 0) {
-            // No one can play, end the round
-            setTimeout(async () => {
-                await executeWithGameLock(game.id, async (currentGame) => {
-                    // Count cards being discarded before clearing table_battles
-                    const discardedCards = currentGame.table_battles.length * 2; // Each battle has attack + defense
-                    currentGame.discard_pile_length += discardedCards;
-                    
-                    // Add discard event
-                    const allTableCards = currentGame.table_battles.flatMap(battle => 
-                        battle.defense ? [battle.attack, battle.defense] : [battle.attack]
-                    );
-                    const discardEvent: AnimationEvent = {
-                        type: ANIMATION_EVENT_TYPE.DISCARD,
-                        cards: allTableCards,
-                        from_location: 'table',
-                        to_location: 'discard',
-                        message: `${allTableCards.length} cards discarded`
-                    };
-                    
-                    currentGame.table_battles = [];
-                    const { refillEvents } = refillPlayerHandsWithEvents(currentGame);
-                    
-                    currentGame.first_attacker = currentGame.defender;
-                    currentGame.defender = get_next_player_index(currentGame, currentGame.first_attacker);
-                    
-                    // Reset done_attacking_this_round flag for all players when attacking shifts
-                    currentGame.players.forEach(player => {
-                        player.done_attacking_this_round = false;
-                    });
-                    
-                    // Check if game should end after refilling - at the very end
-                    await check_win(currentGame);
-                    
-                    // Game continues in playing state (no status change needed unless game is over)
-                    
-                    // Broadcast the discard event and refill events
-                    if (!skipBroadcast) {
-                        const allEvents = [discardEvent, ...refillEvents];
-                        await broadcastToGameUsers(currentGame, 'animation_events', {
-                            type: 'animation_sequence',
-                            events: allEvents,
-                            sequence_id: crypto.randomUUID(),
-                            timestamp: Date.now()
-                        });
-                    }
-
-                    // Schedule bot actions if the new first attacker is a bot
-                    if (currentGame.players[currentGame.first_attacker].is_ai) {
-                        lockedBotLoop(currentGame.id);
-                    }
-                    
-                    // Return the standardized format
-                    return { game: currentGame, events: [discardEvent, ...refillEvents] };
+            // This whole part used to be async but it's too fucking complicated so here we are
+            // No one can play, end the round immediately (synchronously like good.ts)
+            
+            // Add animation event for magic transition
+            const gameStateForTransition = JSON.parse(JSON.stringify(game));
+            events.push({
+                type: ANIMATION_EVENT_TYPE.MAGIC_TRANSITION,
+                message: `All attacks covered and no more cards can be played - proceeding to next round`,
+                game_state: gameStateForTransition
+            });
+            
+            // Count cards being discarded before clearing table_battles
+            const discardedCards = game.table_battles.length * 2; // Each battle has attack + defense
+            game.discard_pile_length += discardedCards;
+            
+            // Add discard event
+            const allTableCards = game.table_battles.flatMap(battle => 
+                battle.defense ? [battle.attack, battle.defense] : [battle.attack]
+            );
+            
+            // Clear table battles
+            game.table_battles = [];
+            
+            if (allTableCards.length > 0) {
+                const gameStateAfterDiscard = JSON.parse(JSON.stringify(game));
+                events.push({
+                    type: ANIMATION_EVENT_TYPE.CARDS_TO_TRASH,
+                    cards: allTableCards,
+                    from_location: 'table',
+                    to_location: 'discard',
+                    message: `${allTableCards.length} cards discarded`,
+                    game_state: gameStateAfterDiscard
                 });
-            }, 1000 + Math.random() * 5000);
+            }
+            
+            // Refill player hands and capture states for each refill event
+            const { refillEvents } = refillPlayerHandsWithEvents(game);
+            for (const refillEvent of refillEvents) {
+                // The refillPlayerHandsWithEvents already modified the game state
+                const gameStateAfterRefill = JSON.parse(JSON.stringify(game));
+                events.push({
+                    ...refillEvent,
+                    game_state: gameStateAfterRefill
+                });
+            }
+            
+            game.first_attacker = game.defender;
+            game.defender = get_next_player_index(game, game.first_attacker);
+            
+            // Reset done_attacking_this_round flag for all players when attacking shifts
+            game.players.forEach(player => {
+                player.done_attacking_this_round = false;
+            });
+            
+            // Check if game should end after refilling - at the very end
+            await check_win(game);
+            
+            // Game continues in playing state (no status change needed unless game is over)
         } else {
             // Someone can play cards
             game.players.forEach(player => {

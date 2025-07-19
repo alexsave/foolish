@@ -116,6 +116,7 @@ export interface AnimationEvent {
     target_card?: Card; // for cover events
     battle_index?: number; // for cover events
     message?: string;
+    game_state?: Game; // intermediate game state after this event
 }
 
 // Stripped down versions

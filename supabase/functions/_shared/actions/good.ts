@@ -57,9 +57,11 @@ export async function executeGood(game: Game, player_id: string): Promise<Animat
     }
 
     // Add animation event for magic transition
+    const gameStateForTransition = JSON.parse(JSON.stringify(game));
     events.push({
         type: ANIMATION_EVENT_TYPE.MAGIC_TRANSITION,
-        message: `${player.name} said good - proceeding to next round`
+        message: `${player.name} said good - proceeding to next round`,
+        game_state: gameStateForTransition
     });
 
     // we are done attacking, shift positions
@@ -73,13 +75,19 @@ export async function executeGood(game: Game, player_id: string): Promise<Animat
     );
     console.log('[GOOD ACTION] Table battles before clearing:', game.table_battles);
     console.log('[GOOD ACTION] All table cards for discard:', allTableCards);
+    
+    // Clear table battles
+    game.table_battles = [];
+    
     if (allTableCards.length > 0) {
+        const gameStateAfterDiscard = JSON.parse(JSON.stringify(game));
         const discardEvent: AnimationEvent = {
             type: ANIMATION_EVENT_TYPE.CARDS_TO_TRASH,
             cards: allTableCards,
             from_location: 'table',
             to_location: 'discard',
-            message: `${allTableCards.length} cards discarded`
+            message: `${allTableCards.length} cards discarded`,
+            game_state: gameStateAfterDiscard
         };
         console.log('[GOOD ACTION] Adding cards_to_trash event:', discardEvent);
         events.push(discardEvent);
@@ -87,11 +95,16 @@ export async function executeGood(game: Game, player_id: string): Promise<Animat
         console.log('[GOOD ACTION] No cards to discard - table is empty');
     }
     
-    game.table_battles = [];
-    
-    // Refill player hands and get animation events
+    // Refill player hands and capture states for each refill event
     const { refillEvents } = refillPlayerHandsWithEvents(game);
-    events.push(...refillEvents);
+    for (const refillEvent of refillEvents) {
+        // The refillPlayerHandsWithEvents already modified the game state
+        const gameStateAfterRefill = JSON.parse(JSON.stringify(game));
+        events.push({
+            ...refillEvent,
+            game_state: gameStateAfterRefill
+        });
+    }
     
     game.first_attacker = game.defender;
     game.defender = get_next_player_index(game, game.first_attacker);

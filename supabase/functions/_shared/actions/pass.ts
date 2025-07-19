@@ -70,14 +70,18 @@ export async function executePass(game: Game, player_id: string, cards: Card[]):
     }
     defender.hand = defender.hand.filter(card => !cards.some(mCard => card_comp(card, mCard)));
 
-    // Add animation event for the pass
+    // Capture game state after pass
+    const gameStateAfterPass = JSON.parse(JSON.stringify(game));
+
+    // Add animation event for the pass with intermediate game state
     events.push({
         type: ANIMATION_EVENT_TYPE.ATTACK_PASS,
         player_id: player_id,
         cards: cards,
         from_location: 'hand',
         to_location: 'table',
-        message: `${defender.name} passed with ${cards.map(c => cardDisplay(c)).join(', ')}`
+        message: `${defender.name} passed with ${cards.map(c => cardDisplay(c)).join(', ')}`,
+        game_state: gameStateAfterPass
     });
 
     const next_player_index = get_next_player_index(game, game.defender);
@@ -88,11 +92,15 @@ export async function executePass(game: Game, player_id: string, cards: Card[]):
         defender.awaiting_attack = false;
         game.elimination_order.push(defender.player_id);
         
+        // Capture game state after player goes out
+        const gameStateAfterOut = JSON.parse(JSON.stringify(game));
+        
         // Add animation event for player going out
         events.push({
             type: ANIMATION_EVENT_TYPE.OUT,
             player_id: player_id,
-            message: `${defender.name} is out`
+            message: `${defender.name} is out`,
+            game_state: gameStateAfterOut
         });
         
         await check_win(game);

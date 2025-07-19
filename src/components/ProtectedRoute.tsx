@@ -2,6 +2,9 @@ import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { ServerProvider } from '../contexts/ServerContext';
 import { useEffect } from 'react';
+import { DragProvider } from '../contexts/DragContext';
+import { GameProvider } from '../contexts/GameContext';
+import { AnimationProvider } from '../contexts/AnimationContext';
 
 // Wrapper component that protects routes and provides ServerContext
 export const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
@@ -32,8 +35,14 @@ export const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
     }
 
     return (
-        <ServerProvider>
-            {children}
-        </ServerProvider>
+        <AnimationProvider>
+            <ServerProvider>
+                <GameProvider>
+                    <DragProvider>
+                        {children}
+                    </DragProvider>
+                </GameProvider>
+            </ServerProvider>
+        </AnimationProvider>
     );
 };

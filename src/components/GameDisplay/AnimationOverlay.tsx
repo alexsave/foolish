@@ -162,33 +162,21 @@ export const AnimationOverlay = () => {
 
             setAnimatedCards(newAnimatedCards);
 
-            // Animate the cards - Make it very slow to see what's happening
-            const animationDuration = 2000; // Very slow for debugging
-            const startTime = Date.now();
-
-            const animate = () => {
-                const currentTime = Date.now();
-                const elapsed = currentTime - startTime;
-                const progress = Math.min(elapsed / animationDuration, 1);
-
+            // Use CSS transitions - much smoother than manual animation
+            // Set progress to 1 after a small delay to trigger CSS transition
+            setTimeout(() => {
                 setAnimatedCards(prev => 
                     prev.map(animatedCard => ({
                         ...animatedCard,
-                        progress
+                        progress: 1 // This triggers the CSS transition
                     }))
                 );
+            }, 50);
 
-                if (progress < 1) {
-                    requestAnimationFrame(animate);
-                } else {
-                    // Animation complete, clear animated cards
-                    setTimeout(() => {
-                        setAnimatedCards([]);
-                    }, 50);
-                }
-            };
-
-            requestAnimationFrame(animate);
+            // Clear animated cards after animation completes
+            setTimeout(() => {
+                setAnimatedCards([]);
+            }, 550); // 500ms animation + 50ms buffer
         }, 50); // Small delay to ensure DOM is ready
 
     }, [currentAnimation, isAnimating]);
@@ -207,34 +195,33 @@ export const AnimationOverlay = () => {
                 width: '100%',
                 height: '100%',
                 pointerEvents: 'none',
-                zIndex: 10000,
-                // Add a semi-transparent background to see the overlay
-                backgroundColor: 'rgba(255, 0, 0, 0.1)'
+                zIndex: 10000
             }}
         >
             {animatedCards.map(animatedCard => {
                 const { startPosition, endPosition, progress, card, id } = animatedCard;
                 
-                // Calculate current position using easing
-                const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
-                const easedProgress = easeOutCubic(progress);
-                
-                const currentX = startPosition.x + (endPosition.x - startPosition.x) * easedProgress;
-                const currentY = startPosition.y + (endPosition.y - startPosition.y) * easedProgress;
+                // Use actual position based on progress (CSS will animate the transition)
+                const currentX = progress === 0 
+                    ? startPosition.x 
+                    : endPosition.x;
+                const currentY = progress === 0 
+                    ? startPosition.y 
+                    : endPosition.y;
 
                 return (
                     <div
                         key={id}
                         style={{
                             position: 'absolute',
-                            left: currentX - 35, // Half card width (bigger card)
-                            top: currentY - 45,  // Half card height (bigger card)
-                            transform: `scale(${1.5 + progress * 0.3})`, // Much bigger
+                            left: currentX - 35, // Half card width
+                            top: currentY - 45,  // Half card height
+                            transform: `scale(${1.5 + progress * 0.3})`, // Scale up during animation
                             opacity: 1,
-                            transition: 'none',
-                            border: '3px solid red', // Bright red border
-                            borderRadius: '8px',
-                            boxShadow: '0 0 15px rgba(255, 0, 0, 0.8)' // Glowing effect
+                            // CSS transitions for smooth animation
+                            transition: progress === 0 
+                                ? 'none' // No transition for initial position
+                                : 'left 500ms cubic-bezier(0.25, 0.46, 0.45, 0.94), top 500ms cubic-bezier(0.25, 0.46, 0.45, 0.94), transform 500ms ease-out'
                         }}
                     >
                         <CardFace 
