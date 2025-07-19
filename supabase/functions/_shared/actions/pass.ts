@@ -1,4 +1,4 @@
-import { Card, Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS } from '../types.ts';
+import { Card, Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, AnimationEvent, ANIMATION_EVENT_TYPE } from '../types.ts';
 import { check_win } from '../utils.ts';
 import { get_next_player_index, validate_defender_status, verify_cards_in_players_hand, no_cards_left, card_comp, cardDisplay } from '../common_utils.ts';
 
@@ -46,10 +46,12 @@ export function validatePass(game: Game, player_id: string, cards: Card[]): void
 }
 
 // Execution function for pass moves
-export async function executePass(game: Game, player_id: string, cards: Card[]): Promise<void> {
+export async function executePass(game: Game, player_id: string, cards: Card[]): Promise<AnimationEvent[]> {
+    const events: AnimationEvent[] = [];
+    
     // Guard against modifying game state if game is already over
     if (game.status === GAME_STATUS.GAME_OVER) {
-        return;
+        return events;
     }
     
     const defender: PrivatePlayer = game.players.find(player => player.player_id === player_id)!;
@@ -63,6 +65,16 @@ export async function executePass(game: Game, player_id: string, cards: Card[]):
     }
     defender.hand = defender.hand.filter(card => !cards.some(mCard => card_comp(card, mCard)));
 
+    // Add animation event for the pass
+    events.push({
+        type: ANIMATION_EVENT_TYPE.ATTACK_PASS,
+        player_id: player_id,
+        cards: cards,
+        from_location: 'hand',
+        to_location: 'table',
+        message: `${defender.name} passed with ${cards.map(c => cardDisplay(c)).join(', ')}`
+    });
+
     const next_player_index = get_next_player_index(game, game.defender);
 
     // If the deck is empty, they can get out here
@@ -70,6 +82,14 @@ export async function executePass(game: Game, player_id: string, cards: Card[]):
         defender.status = PLAYER_STATUS.OUT;
         defender.awaiting_attack = false;
         game.elimination_order.push(defender.player_id);
+        
+        // Add animation event for player going out
+        events.push({
+            type: ANIMATION_EVENT_TYPE.OUT,
+            player_id: player_id,
+            message: `${defender.name} is out`
+        });
+        
         await check_win(game);
         game.defender = next_player_index;
     } else {
@@ -94,10 +114,12 @@ export async function executePass(game: Game, player_id: string, cards: Card[]):
             game.status = GAME_STATUS.FREE_PLAY;
         }
     }
+    
+    return events;
 }
 
 // Combined function with validation
-export async function handlePass(game: Game, player_id: string, cards: Card[]): Promise<void> {
+export async function handlePass(game: Game, player_id: string, cards: Card[]): Promise<AnimationEvent[]> {
     validatePass(game, player_id, cards);
-    await executePass(game, player_id, cards);
+    return await executePass(game, player_id, cards);
 } 

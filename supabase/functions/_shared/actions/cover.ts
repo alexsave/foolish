@@ -1,4 +1,4 @@
-import { Card, Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, SERVER_EVENT_TYPE } from '../types.ts';
+import { Card, Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, SERVER_EVENT_TYPE, AnimationEvent, ANIMATION_EVENT_TYPE } from '../types.ts';
 import { executeWithGameLock, check_win, broadcastToGameUsers } from '../utils.ts';
 import { canCover, get_next_player_index, validate_defender_status, verify_cards_in_players_hand, card_comp, cardDisplay, refillPlayerHands } from '../common_utils.ts';
 import { lockedBotLoop } from '../bot_actions.ts';
@@ -50,10 +50,12 @@ export function validateCover(game: Game, player_id: string, cover_cards: Card[]
 }
 
 // Execution function for cover moves
-export async function executeCover(game: Game, player_id: string, cover_cards: Card[], attack_cards: Card[]): Promise<void> {
+export async function executeCover(game: Game, player_id: string, cover_cards: Card[], attack_cards: Card[], skipBroadcast: boolean = false): Promise<AnimationEvent[]> {
+    const events: AnimationEvent[] = [];
+    
     // Guard against modifying game state if game is already over
     if (game.status === GAME_STATUS.GAME_OVER) {
-        return;
+        return events;
     }
     
     const defender: PrivatePlayer = game.players.find(player => player.player_id === player_id)!;
@@ -67,6 +69,18 @@ export async function executeCover(game: Game, player_id: string, cover_cards: C
             throw new Error('SEVERE: Card not found on table');
         }
         game.table_battles[attack_card_index].defense = cover_card;
+        
+        // Add animation event for this cover
+        events.push({
+            type: ANIMATION_EVENT_TYPE.COVER,
+            player_id: player_id,
+            cards: [cover_card],
+            target_card: attack_card,
+            battle_index: attack_card_index,
+            from_location: 'hand',
+            to_location: 'table',
+            message: `${defender.name} covered ${cardDisplay(attack_card)} with ${cardDisplay(cover_card)}`
+        });
     }
 
     // remove the cards from the hand
@@ -77,6 +91,18 @@ export async function executeCover(game: Game, player_id: string, cover_cards: C
         // Count cards being discarded before clearing table_battles
         const discardedCards = game.table_battles.length * 2; // Each battle has attack + defense
         game.discard_pile_length += discardedCards;
+        
+        // Add discard event
+        const allTableCards = game.table_battles.flatMap(battle => 
+            battle.defense ? [battle.attack, battle.defense] : [battle.attack]
+        );
+        events.push({
+            type: ANIMATION_EVENT_TYPE.DISCARD,
+            cards: allTableCards,
+            from_location: 'table',
+            to_location: 'discard',
+            message: `${allTableCards.length} cards discarded`
+        });
         
         game.table_battles = [];
         refillPlayerHands(game);
@@ -90,15 +116,31 @@ export async function executeCover(game: Game, player_id: string, cover_cards: C
             game.players[game.first_attacker].status = PLAYER_STATUS.OUT;
             game.players[game.first_attacker].awaiting_attack = false;
             game.elimination_order.push(game.players[game.first_attacker].player_id);
+            
+            // Add out event
+            events.push({
+                type: ANIMATION_EVENT_TYPE.OUT,
+                player_id: game.players[game.first_attacker].player_id,
+                message: `${game.players[game.first_attacker].name} is out`
+            });
+            
             await check_win(game);
             game.first_attacker = get_next_player_index(game, game.first_attacker);
         }
         game.defender = get_next_player_index(game, game.first_attacker);
+        
+        // Add defender move event
+        events.push({
+            type: ANIMATION_EVENT_TYPE.DEFENDER_MOVE,
+            player_id: game.players[game.defender].player_id,
+            message: `${game.players[game.defender].name} is now the defender`
+        });
+        
         // @ts-ignore - check_win() above can change status to GAME_OVER
         if (game.status !== GAME_STATUS.GAME_OVER) {
             game.status = GAME_STATUS.FIRST_ATTACKER;
         }
-        return;
+        return events;
     }
 
     // Check if all attacks are covered
@@ -128,13 +170,21 @@ export async function executeCover(game: Game, player_id: string, cover_cards: C
             // No one can play, end the round
             setTimeout(async () => {
                 await executeWithGameLock(game.id, async (currentGame) => {
-                    // Reload game to ensure we have the latest state
-                    //const { loadCompleteGame } = await import('../utils.ts');
-                    //const currentGame = await loadCompleteGame(game.id);
-                    
                     // Count cards being discarded before clearing table_battles
                     const discardedCards = currentGame.table_battles.length * 2; // Each battle has attack + defense
                     currentGame.discard_pile_length += discardedCards;
+                    
+                    // Add discard event
+                    const allTableCards = currentGame.table_battles.flatMap(battle => 
+                        battle.defense ? [battle.attack, battle.defense] : [battle.attack]
+                    );
+                    const discardEvent: AnimationEvent = {
+                        type: ANIMATION_EVENT_TYPE.DISCARD,
+                        cards: allTableCards,
+                        from_location: 'table',
+                        to_location: 'discard',
+                        message: `${allTableCards.length} cards discarded`
+                    };
                     
                     currentGame.table_battles = [];
                     refillPlayerHands(currentGame);
@@ -154,17 +204,23 @@ export async function executeCover(game: Game, player_id: string, cover_cards: C
                         currentGame.status = GAME_STATUS.FIRST_ATTACKER;
                     }
                     
-                    //await saveCompleteGame(currentGame);
+                    // Broadcast the discard event
+                    if (!skipBroadcast) {
+                        await broadcastToGameUsers(currentGame, 'animation_events', {
+                            type: 'animation_sequence',
+                            events: [discardEvent],
+                            sequence_id: crypto.randomUUID(),
+                            timestamp: Date.now()
+                        });
+                    }
 
-                    broadcastToGameUsers(currentGame, 'game_update', {
-                        type: SERVER_EVENT_TYPE.SUCCESSFULLY_COVERED,
-                        message: `Player ${defender.name} successfully covered ${attack_cards.map(card => cardDisplay(card)).join(', ')}`
-                    });
-
-                    // Schedule bot actions if the new first attacker is a bot. We only do this because this is async
+                    // Schedule bot actions if the new first attacker is a bot
                     if (currentGame.players[currentGame.first_attacker].is_ai) {
                         lockedBotLoop(currentGame.id);
                     }
+                    
+                    // Return the standardized format
+                    return { game: currentGame, events: [discardEvent] };
                 });
             }, 1000 + Math.random() * 5000);
         } else {
@@ -176,10 +232,12 @@ export async function executeCover(game: Game, player_id: string, cover_cards: C
             });
         }
     }
+    
+    return events;
 }
 
 // Combined function with validation
-export async function handleCover(game: Game, player_id: string, cover_cards: Card[], attack_cards: Card[]): Promise<void> {
+export async function handleCover(game: Game, player_id: string, cover_cards: Card[], attack_cards: Card[]): Promise<AnimationEvent[]> {
     validateCover(game, player_id, cover_cards, attack_cards);
-    await executeCover(game, player_id, cover_cards, attack_cards);
+    return await executeCover(game, player_id, cover_cards, attack_cards, true);
 } 

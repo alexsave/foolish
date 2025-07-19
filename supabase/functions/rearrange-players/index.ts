@@ -1,54 +1,44 @@
-import { wrap400, broadcastToGameUsers } from "../_shared/utils.ts";
-import { GAME_STATUS, SERVER_EVENT_TYPE } from "../_shared/types.ts";
+import { wrap400 } from "../_shared/utils.ts";
+import { Game, GAME_STATUS, SERVER_EVENT_TYPE } from "../_shared/types.ts";
+import { verify_player_in_game } from "../_shared/common_utils.ts";
 
 wrap400(async (user, user_name, body, game) => {
     const user_id = user.id;
-    const { player_indices } = body;
+    const { new_order } = body;
 
-    if (!Array.isArray(player_indices)) {
-        throw new Error('player_indices must be an array');
-    }
+    // Load complete game state from separated tables
+    //let game = await loadCompleteGame(game_id);
 
-    // Load the complete game
-    //const game: Game = await loadCompleteGame(game_id);
+    // Verify player is in game
+    verify_player_in_game(game, user_id);
 
-    // Check if the game is in waiting status (only allow rearrangement in lobby)
+    // Can only rearrange during waiting phase
     if (game.status !== GAME_STATUS.WAITING) {
-        throw new Error('Players can only be rearranged in the lobby');
+        throw new Error(`Can only rearrange players during game lobby`);
     }
 
-    // Check if the user is in the game
-    const playerExists = game.players.some(player => player.player_id === user_id);
-    if (!playerExists) {
-        throw new Error('Only players in the game can rearrange players');
+    // Validate new order - must contain all current players
+    if (!Array.isArray(new_order) || new_order.length !== game.players.length) {
+        throw new Error(`New order must contain exactly ${game.players.length} player IDs`);
     }
 
-    // Validate indices array
-    if (player_indices.length !== game.players.length) {
-        throw new Error('Invalid player indices length');
+    // Verify all player IDs are valid
+    for (const player_id of new_order) {
+        if (!game.players.some(p => p.player_id === player_id)) {
+            throw new Error(`Player ID ${player_id} not found in game`);
+        }
     }
 
-    // Check if all indices are valid and unique
-    const sortedIndices = [...player_indices].sort((a, b) => a - b);
-    const expectedIndices = Array.from({ length: game.players.length }, (_, i) => i);
-    if (!sortedIndices.every((val, i) => val === expectedIndices[i])) {
-        throw new Error('Invalid player indices');
-    }
+    // Rearrange players according to new order
+    const rearrangedPlayers = new_order.map(player_id => 
+        game.players.find(p => p.player_id === player_id)!
+    );
 
-    // Rearrange players according to the indices
-    const originalPlayers = [...game.players];
-    game.players = player_indices.map((index: number) => originalPlayers[index]);
+    game.players = rearrangedPlayers;
 
-    // Save the updated game
+    // Save complete game state back to separated tables
     //await saveCompleteGame(game);
 
-    // Send broadcast notification
-    broadcastToGameUsers(game, 'game_update', {
-        type: SERVER_EVENT_TYPE.PLAYERS_REARRANGED,
-        message: `Players rearranged by ${user_name}`
-    });
+    return { game, events: [] };
 
-    //return {
-    //    game: personalize_game(game, user_id)
-    //};
-}); 
+}, false); 

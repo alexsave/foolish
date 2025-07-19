@@ -1,5 +1,5 @@
 import { Game, PrivatePlayer, Bot, GAME_STATUS, PLAYER_STATUS } from './types.ts';
-import { check_win, broadcastToGameUsers, executeWithGameLock } from './utils.ts';
+import { check_win, broadcastToGameUsers, executeWithGameLock, broadcastAnimationEvents, animationEvents } from './utils.ts';
 import { calculateLegalMoves, getBotStrategy, LegalMove } from './bot_strategy.ts';
 import { createClient } from 'jsr:@supabase/supabase-js';
 
@@ -139,12 +139,12 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
     let gameStatus: any = null;
     
     try {
-        await executeWithGameLock(game_id, async (game) => {
+        const result = await executeWithGameLock(game_id, async (game) => {
             localGame = game;
             
             // Only process bot actions if game is in a state where bots can act
             if (game.status === GAME_STATUS.WAITING || game.status === GAME_STATUS.GAME_OVER) {
-                return; // No bot actions needed in waiting state or game over
+                return { game, events: [] }; // No bot actions needed in waiting state or game over
             }
             
             // Safety check: if there's only one player left, the game should have ended
@@ -152,12 +152,15 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
             if (in_players.length <= 1) {
                 console.warn(`Bot processing stopped - only ${in_players.length} player(s) left, ending game`);
                 await check_win(game);
-                return;
+                return { game, events: [] };
             }
             
             players = game.players;
             gameStatus = game.status;
+            return { game, events: [] };
         });
+        
+        localGame = result.game;
     } catch (error) {
         console.error('Error loading game state for bot processing:', error);
         return;
@@ -221,7 +224,7 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
                     
                     if (playable_players.length !== 0) {
                         console.log(`${playable_players.length} players still have moves available, not auto-transitioning`);
-                        return;
+                        return { game: currentGame, events: [] };
                     }
                     console.log(`Auto-transitioning game ${game_id} from WAIT_FOR_ATTACKERS - all attackers done`);
                     
@@ -232,11 +235,9 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
                     const anyNonDefender = currentGame.players.find((p, index) => index !== currentGame.defender);
                     if (anyNonDefender) {
                         await executeGood(currentGame, anyNonDefender.player_id);
-                        //await saveCompleteGame(currentGame);
-                        await broadcastToGameUsers(currentGame, 'game_update', {
-                            type: 'auto_transition',
-                            message: 'All attackers finished - automatically proceeding to next round'
-                        });
+                        
+                        // Add animation event for auto-transition
+                        animationEvents.addMagicTransitionEvent('All attackers finished - automatically proceeding to next round');
                         
                         // Schedule bot actions for the new game state
                         if (currentGame.status === GAME_STATUS.FIRST_ATTACKER && currentGame.players[currentGame.first_attacker].is_ai) {
@@ -244,6 +245,8 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
                             shouldLoop = true;
                         }
                     }
+                    
+                    return { game: currentGame, events: [] };
                 });
             } catch (error) {
                 console.error('Error in auto-transition check:', error);
@@ -275,6 +278,9 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
     // Process bots in randomized order
     const processedBots = new Set<string>();
     
+    // Clear animation events before processing bots
+    animationEvents.clear();
+    
     for (const player of shuffledBots) {
         // Skip if already processed (shouldn't happen but safety check)
         if (processedBots.has(player.player_id)) {
@@ -291,7 +297,7 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
                 
                 if (!currentBot) {
                     console.log(`Bot ${player.name} not found in current game state`);
-                    return;
+                    return { game: currentGame, events: [] };
                 }
                 
                 const shouldAct = await shouldBotAct(currentGame, currentBot);
@@ -299,6 +305,8 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
                 if (shouldAct) {
                     await processBotAction(currentGame, currentBot);
                 }
+                
+                return { game: currentGame, events: [] };
             });
             
             // Small delay between bot actions to make it feel more natural
@@ -306,6 +314,19 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
             
         } catch (error) {
             console.error(`Error processing bot action for ${player.name}:`, error);
+        }
+    }
+    
+    // After processing all bots in this cycle, broadcast animation events
+    const events = animationEvents.getEvents();
+    if (events.length > 0) {
+        try {
+            await executeWithGameLock(game_id, async (currentGame) => {
+                await broadcastAnimationEvents(currentGame, events);
+                return { game: currentGame, events: [] };
+            });
+        } catch (error) {
+            console.error('Error broadcasting bot animation events:', error);
         }
     }
     
@@ -328,7 +349,7 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
                 shouldLoop = false;
                 console.log(`Bot cycle completed, no more bot moves available for game ${game_id}`);
             }
-            return false;
+            return { game: currentGame, events: [] };
         });
     } catch (error) {
         console.error('Error checking for additional bot actions:', error);
@@ -414,17 +435,6 @@ async function processBotAction(game: Game, bot: PrivatePlayer): Promise<void> {
         // Execute the chosen move using shared actions (skip validation since bots choose valid moves)
         await executeBotMove(game, bot, chosenMove);
         
-        // Save the updated game state after the bot action
-        //await saveCompleteGame(game);
-        
-        // Broadcast the updated game state to all players
-        await broadcastToGameUsers(game, 'game_update', {
-            type: 'bot_action',
-            message: `Bot ${bot.name} performed ${chosenMove.type} action`,
-            bot_name: bot.name,
-            action_type: chosenMove.type
-        });
-        
         console.log(`Bot ${bot.name} completed ${chosenMove.type} action`);
         
     } catch (error) {
@@ -435,6 +445,8 @@ async function processBotAction(game: Game, bot: PrivatePlayer): Promise<void> {
 // Execute a bot's chosen move using shared action handlers
 async function executeBotMove(game: Game, bot: PrivatePlayer, move: LegalMove): Promise<void> {
     try {
+        let specialMessage: string | undefined;
+        
         switch (move.type) {
             case 'attack':
                 // Capture the game status before executing the attack
@@ -465,7 +477,13 @@ async function executeBotMove(game: Game, bot: PrivatePlayer, move: LegalMove): 
                 break;
                 
             case 'cover':
-                await executeCover(game, bot.player_id, move.cards!, move.attack_cards!);
+                await executeCover(game, bot.player_id, move.cards!, move.attack_cards!, true);
+                // Check if this cover completed the round (all attacks covered)
+                const all_attacks_covered = game.table_battles.every(battle => battle.defense !== null);
+                if (all_attacks_covered) {
+                    // Add special message for successful cover that ends the round
+                    specialMessage = `Bot ${bot.name} successfully covered and ended the round`;
+                }
                 break;
                 
             case 'pass':
@@ -504,6 +522,32 @@ async function executeBotMove(game: Game, bot: PrivatePlayer, move: LegalMove): 
         }
         
         console.log(`Bot ${bot.name} performed ${move.type} action`);
+        
+        // Add animation event for the move based on move type
+        switch (move.type) {
+            case 'attack':
+                animationEvents.addAttackEvent(bot.player_id, move.cards!);
+                break;
+            case 'pass':
+                animationEvents.addPassEvent(bot.player_id, move.cards!);
+                break;
+            case 'cover':
+                // For cover moves, we need to add events for each card being covered
+                for (let i = 0; i < move.cards!.length; i++) {
+                    animationEvents.addCoverEvent(bot.player_id, move.cards![i], move.attack_cards![i], i);
+                }
+                break;
+            case 'pickup':
+                // Get all cards from table battles for pickup animation
+                const allTableCards = game.table_battles.flatMap(battle => 
+                    battle.defense ? [battle.attack, battle.defense] : [battle.attack]
+                );
+                animationEvents.addPickupEvent(bot.player_id, allTableCards);
+                break;
+            case 'good':
+                animationEvents.addMagicTransitionEvent(`Bot ${bot.name} said good - proceeding to next round`);
+                break;
+        }
         
     } catch (error) {
         console.error(`Error executing bot move for ${bot.name}:`, error);

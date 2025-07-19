@@ -1,9 +1,7 @@
-import { wrap400, broadcastToGameUsers } from "../_shared/utils.ts";
-import { GAME_STATUS, PLAYER_STATUS, SERVER_EVENT_TYPE, PrivatePlayer } from "../_shared/types.ts";
-import { MAX_PLAYERS } from "../_shared/constants.ts";
-import { personalize_game } from "../_shared/common_utils.ts";
-
-import { createClient } from "npm:@supabase/supabase-js@2.39.0"
+import { wrap400 } from "../_shared/utils.ts";
+import { Game, PlayerHand } from "../_shared/types.ts";
+import { verify_player_in_game } from "../_shared/common_utils.ts";
+import { createClient } from 'jsr:@supabase/supabase-js';
 
 const supabaseClient = createClient(
     Deno.env.get('SUPABASE_URL') || '',
@@ -14,57 +12,56 @@ wrap400(async (user, user_name, body, game) => {
     const user_id = user.id;
     const { game_id } = body;
 
-    // We have to load the game no matter what
-    //const game: Game = await loadCompleteGame(game_id);
+    // Load complete game state from separated tables
+    //let game = await loadCompleteGame(game_id);
 
-    // Check if player is already in game by checking player_hands
-    const { data: player_hand, error: player_handError } = await supabaseClient
-        .from('player_hands')
-        .select('*')
-        .eq('game_id', game_id)
-        .eq('player_id', user_id)
-        .single();
-
-    if (!player_handError && player_hand) {
-        // Player is already in the game
-        // quiet return, don't worry about it
-        return;
+    if (game.status !== 'waiting') {
+        throw new Error(`Game ${game_id} is not waiting for players`);
     }
 
-    if (game.status !== GAME_STATUS.WAITING) {
-        throw new Error(`Game ${game_id} is not waiting for players, wait for next game`);
+    // Check if player is already in game
+    if (game.players.some(p => p.player_id === user_id)) {
+        throw new Error(`Player ${user_id} is already in game ${game_id}`);
     }
 
-    if (game.players.length >= MAX_PLAYERS) {
-        throw new Error(`Game ${game_id} is full, wait for next game`);
-    }
-
-    // Create new player
-    const privatePlayer: PrivatePlayer = {
-        name: user_name,
+    // Add player to game
+    game.players.push({
         player_id: user_id,
-        status: PLAYER_STATUS.IDLE,
+        name: user_name,
+        status: 'idle',
+        is_ai: false,
         hand: [],
         awaiting_attack: false,
-        hand_length: 0,
-        is_ai: false,
-        done_attacking_this_round: false
-    }
-
-    // Add new player to game
-    game.players.push(privatePlayer);
-
-    // Save to database - this handles all simplified tables
-    //await saveCompleteGame(game);
-
-    // Send broadcast notification
-    broadcastToGameUsers(game, 'game_update', {
-        type: SERVER_EVENT_TYPE.PLAYER_JOINED_GAME,
-        message: `Player ${user_name} joined game ${game_id}`
+        done_attacking_this_round: false,
+        hand_length: 0
     });
 
-    //return {
-    //    game: personalize_game(game, user_id)
-    //};
-});
+    // Update game in database
+    await supabaseClient
+        .from('games')
+        .update({ 
+            players: game.players.map(p => ({
+                player_id: p.player_id,
+                name: p.name,
+                status: p.status,
+                is_ai: p.is_ai,
+                hand_length: p.hand_length
+            }))
+        })
+        .eq('id', game_id);
+
+    // Initialize empty hand for new player
+    await supabaseClient.from('player_hands').insert({
+        game_id: game_id,
+        player_id: user_id,
+        hand: [],
+        awaiting_attack: false
+    } as PlayerHand);
+
+    // Save complete game state back to separated tables
+    //await saveCompleteGame(game);
+
+    return { game, events: [] };
+
+}, false);
 

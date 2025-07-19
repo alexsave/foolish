@@ -10,6 +10,7 @@ import { GameView } from './components/GameView';
 import { UnprotectedRoute } from './components/UnprotectedRoute';
 import { GameProvider } from './contexts/GameContext';
 import { DragProvider } from './contexts/DragContext';
+import { AnimationProvider } from './contexts/AnimationContext';
 
 function App() {
   return (
@@ -36,11 +37,13 @@ function App() {
             } />
             <Route path="/:game_id" element={
               <ProtectedRoute>
-                <GameProvider>
-                  <DragProvider>
-                    <GameView />
-                  </DragProvider>
-                </GameProvider>
+                <AnimationProvider>
+                  <GameProvider>
+                    <DragProvider>
+                      <GameView />
+                    </DragProvider>
+                  </GameProvider>
+                </AnimationProvider>
               </ProtectedRoute>
             } />
             {/* Catch-all route for unmatched paths - redirect to dashboard */}

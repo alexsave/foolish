@@ -129,8 +129,12 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
         gameUserChannel
             .on('broadcast', { event: 'game_update' }, (payload) => {
-                console.log('Game update received:', payload);
-                handleGameMessage(payload.payload);
+                console.log('[CHANNEL] Game update received:', payload);
+                handleGameMessage(payload.payload, 'game_update');
+            })
+            .on('broadcast', { event: 'animation_events' }, (payload) => {
+                console.log('[CHANNEL] Animation events received:', payload);
+                handleGameMessage(payload.payload, 'animation_events');
             })
             .subscribe((status, err) => {
                 if (status === 'SUBSCRIBED') {
@@ -163,7 +167,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             });
     };
 
-    const handleGameMessage = (message: any) => {
+    const handleGameMessage = (message: any, source: string = 'unknown') => {
         // Handle both old format (message.game_id) and new format (message.game.id)
         // Also handle nested message format from broadcastToGame
         let actualMessage = message;
@@ -179,18 +183,41 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             return;
         }
 
-        // Handle animation events if present
-        if (actualMessage.animation_events && actualMessage.animation_events.length > 0) {
-            console.log('Animation events received:', actualMessage.animation_events);
-            // Trigger custom event for animation context to listen to
+        console.log(`[${source.toUpperCase()}] Game message received:`, actualMessage);
+
+        // Handle animation events first - check multiple possible formats
+        const animationEvents = actualMessage.animation_events || 
+                              actualMessage.events || 
+                              (actualMessage.type === 'animation_sequence' ? actualMessage.events : null);
+
+        const gameData = actualMessage.game || message.game;
+
+        if (animationEvents && Array.isArray(animationEvents) && animationEvents.length > 0) {
+            console.log(`[${source.toUpperCase()}] Animation events detected:`, animationEvents);
+            
+            // Create a custom event that includes both the animations and the pending game state
             const animationEvent = new CustomEvent('gameAnimationEvents', {
-                detail: { events: actualMessage.animation_events, gameId: messageGameId }
+                detail: { 
+                    events: animationEvents, 
+                    gameId: messageGameId,
+                    pendingGameState: gameData,
+                    onAnimationComplete: () => {
+                        // Update game state after animations complete
+                        console.log(`[${source.toUpperCase()}] Animations completed, updating game state`);
+                        if (gameData) {
+                            setGames(prev => ({ ...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev) }));
+                        }
+                    }
+                }
             });
+            console.log(`[${source.toUpperCase()}] Dispatching animation event with ${animationEvents.length} events`);
             window.dispatchEvent(animationEvent);
+            
+            // Don't update game state immediately - wait for animations to complete
+            return;
         }
 
         // Handle all the different message types using the extracted message
-        const gameData = actualMessage.game || message.game;
 
         if (actualMessage.type === SERVER_EVENT_TYPE.PLAYER_JOINED_GAME) {
             setGames(prev => ({ ...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev) }));
@@ -240,6 +267,11 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             setGames(prev => ({ ...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev) }));
         } else if (actualMessage.type === SERVER_EVENT_TYPE.HAND_REARRANGED) {
             setGames(prev => ({ ...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev) }));
+        } else if (actualMessage.type === 'animation_sequence') {
+            // Animation sequence already handled above, but also update game state if present
+            if (gameData) {
+                setGames(prev => ({ ...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev) }));
+            }
         } else {
             // Default handler for other message types
             if (gameData) {

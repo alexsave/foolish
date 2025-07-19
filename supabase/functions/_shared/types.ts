@@ -95,6 +95,33 @@ export const PRIVATE_EVENT_TYPE = {
 
 export type PrivateEventType = typeof PRIVATE_EVENT_TYPE[keyof typeof PRIVATE_EVENT_TYPE];
 
+export const ANIMATION_EVENT_TYPE = {
+    MAGIC_TRANSITION: 'magic_transition', // change online view
+    DEAL: 'deal', // deck -> hand
+    FLIPPED: 'flipped', // deck -> flipped
+    DEFENDER_MOVE: 'defender_move', // defender shall move
+    ATTACK_PASS: 'attack_pass', // hand -> table
+    COVER: 'cover', // hand -> specific card
+    PICKUP: 'pickup', // hand -> table -> hand
+    DISCARD: 'discard', // table -> garbage
+    OUT: 'out', // dim the name
+    REFILL: 'refill', // cards to hand
+    CARDS_TO_TRASH: 'cards_to_trash' // cards to discard pile
+} as const;
+
+export type AnimationEventType = typeof ANIMATION_EVENT_TYPE[keyof typeof ANIMATION_EVENT_TYPE];
+
+export interface AnimationEvent {
+    type: AnimationEventType;
+    player_id?: string;
+    cards?: Card[];
+    from_location?: 'deck' | 'hand' | 'table' | 'discard';
+    to_location?: 'deck' | 'hand' | 'table' | 'discard' | 'flipped';
+    target_card?: Card; // for cover events
+    battle_index?: number; // for cover events
+    message?: string;
+}
+
 // Stripped down versions
 export interface LobbyPlayer {
     name: string;

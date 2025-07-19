@@ -8,7 +8,7 @@ export const DeckAndFlipped = () => {
     const game: PersonalGame = useServer().game as PersonalGame;
     return <div style={{ display: 'flex', position: 'absolute', top: '0px', left: '0px', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', height: '240px', width: '100px' }}>
         {game.deck_length > 0 && (
-            <div style={{ position: 'relative' }}>
+            <div style={{ position: 'relative' }} data-location="deck">
                 <CardBack deckSize={game.deck_length} />
                 <p style={{
                     position: 'absolute',
@@ -28,8 +28,8 @@ export const DeckAndFlipped = () => {
             </div>
         )}
         {game.flipped && (
-            <div style={{ marginTop: game.deck_length > 0 ? '-30px' : '0px' }}>
-                <CardFace card={game.flipped} />
+            <div style={{ marginTop: game.deck_length > 0 ? '-30px' : '0px' }} data-location="flipped">
+                <CardFace card={game.flipped} playerId="flipped" />
             </div>
         )}
         {/* Trump indicator appears when deck and flipped card are gone */}

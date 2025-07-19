@@ -22,7 +22,7 @@ export const DiscardPile = () => {
             height: '240px', 
             width: '100px' 
         }}>
-            <div style={{ position: 'relative' }}>
+            <div style={{ position: 'relative' }} data-location="discard">
                 <CardBack deckSize={game.discard_pile_length} />
                 <p style={{
                     position: 'absolute',

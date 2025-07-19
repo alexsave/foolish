@@ -13,7 +13,7 @@ import {
     no_cards_left,
     game_done,
 } from './common_utils.ts';
-import { Card, Game, GAME_STATUS, PLAYER_STATUS, PersonalGame, SERVER_EVENT_TYPE, PRIVATE_EVENT_TYPE, PrivatePlayer, PublicGame, PublicPlayer, PlayerHand, UserEloRating, BotHand } from './types.ts';
+import { Card, Game, GAME_STATUS, PLAYER_STATUS, PersonalGame, SERVER_EVENT_TYPE, PRIVATE_EVENT_TYPE, PrivatePlayer, PublicGame, PublicPlayer, PlayerHand, UserEloRating, BotHand, AnimationEvent, ANIMATION_EVENT_TYPE } from './types.ts';
 import { ACE_VALUE, CARDS_PER_PLAYER } from './constants.ts';
 import { createClient, User } from 'jsr:@supabase/supabase-js';
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
@@ -47,9 +47,9 @@ export const releaseGameLock = async (game_id: string): Promise<void> => {
 };
 
 // Sequential operation execution with database-level locking
-export const executeWithGameLock = async (game_id: string, operation: (game: Game) => Promise<false|void|Game>): Promise<Game> => {
+export const executeWithGameLock = async (game_id: string, operation: (game: Game) => Promise<{game: Game, events: AnimationEvent[]}>): Promise<{game: Game, events: AnimationEvent[]}> => {
     // Try to acquire database lock with retry logic
-    const maxRetries = 5;
+    const maxRetries = 9;
     let lockAcquired = false;
     
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -65,19 +65,162 @@ export const executeWithGameLock = async (game_id: string, operation: (game: Gam
     
     try {
         const loadedGame: Game = await loadCompleteGame(game_id);
-        // Ez if this returns specifically null, we don't save
-        const save = await operation(loadedGame);
-        if (save !== null) {
-            await saveCompleteGame(loadedGame);
-        }
-        return loadedGame;
+        const result = await operation(loadedGame);
+        
+        // Always save the game state
+        await saveCompleteGame(result.game);
+        
+        return { game: result.game, events: result.events };
     } finally {
         await releaseGameLock(game_id);
     }
 };
 
+// Animation event manager for collecting events during operations
+class AnimationEventManager {
+    private events: AnimationEvent[] = [];
+    
+    clear() {
+        this.events = [];
+    }
+    
+    getEvents(): AnimationEvent[] {
+        return [...this.events];
+    }
+    
+    addEvent(event: AnimationEvent) {
+        this.events.push(event);
+    }
+    
+    addAttackEvent(player_id: string, cards: Card[]) {
+        this.addEvent({
+            type: ANIMATION_EVENT_TYPE.ATTACK_PASS,
+            player_id,
+            cards,
+            from_location: 'hand',
+            to_location: 'table'
+        });
+    }
+    
+    addPassEvent(player_id: string, cards: Card[]) {
+        this.addEvent({
+            type: ANIMATION_EVENT_TYPE.ATTACK_PASS,
+            player_id,
+            cards,
+            from_location: 'hand',
+            to_location: 'table'
+        });
+    }
+    
+    addCoverEvent(player_id: string, cover_card: Card, attack_card: Card, battle_index: number) {
+        this.addEvent({
+            type: ANIMATION_EVENT_TYPE.COVER,
+            player_id,
+            cards: [cover_card],
+            target_card: attack_card,
+            battle_index,
+            from_location: 'hand',
+            to_location: 'table'
+        });
+    }
+    
+    addPickupEvent(player_id: string, cards: Card[]) {
+        this.addEvent({
+            type: ANIMATION_EVENT_TYPE.PICKUP,
+            player_id,
+            cards,
+            from_location: 'table',
+            to_location: 'hand'
+        });
+    }
+    
+    addMagicTransitionEvent(message: string) {
+        this.addEvent({
+            type: ANIMATION_EVENT_TYPE.MAGIC_TRANSITION,
+            message
+        });
+    }
+    
+    addDealEvent(player_id: string, cards: Card[]) {
+        this.addEvent({
+            type: ANIMATION_EVENT_TYPE.DEAL,
+            player_id,
+            cards,
+            from_location: 'deck',
+            to_location: 'hand'
+        });
+    }
+    
+    addFlippedEvent(card: Card) {
+        this.addEvent({
+            type: ANIMATION_EVENT_TYPE.FLIPPED,
+            cards: [card],
+            from_location: 'deck',
+            to_location: 'flipped'
+        });
+    }
+    
+    addDefenderMoveEvent(player_id: string) {
+        this.addEvent({
+            type: ANIMATION_EVENT_TYPE.DEFENDER_MOVE,
+            player_id
+        });
+    }
+    
+    addOutEvent(player_id: string) {
+        this.addEvent({
+            type: ANIMATION_EVENT_TYPE.OUT,
+            player_id
+        });
+    }
+    
+    addRefillEvent(player_id: string, cards: Card[]) {
+        this.addEvent({
+            type: ANIMATION_EVENT_TYPE.REFILL,
+            player_id,
+            cards,
+            from_location: 'deck',
+            to_location: 'hand'
+        });
+    }
+    
+    addCardsToTrashEvent(cards: Card[]) {
+        this.addEvent({
+            type: ANIMATION_EVENT_TYPE.CARDS_TO_TRASH,
+            cards,
+            from_location: 'table',
+            to_location: 'discard'
+        });
+    }
+}
 
-export const wrap400 = (execute: (user: User, user_name: string, body: any, game: Game) => Promise<false|void|Game>, run_bots: boolean = false) => {
+// Export a global instance for use across the application
+export const animationEvents = new AnimationEventManager();
+
+// Broadcast animation events to all players
+export const broadcastAnimationEvents = async (game: Game, events: AnimationEvent[]): Promise<void> => {
+    console.log(`[ANIMATION DEBUG] broadcastAnimationEvents called with ${events.length} events for game ${game.id}`);
+    
+    if (events.length === 0) {
+        console.log(`[ANIMATION DEBUG] No events to broadcast, returning early`);
+        return;
+    }
+    
+    const payload = {
+        type: 'animation_sequence',
+        events: events,
+        sequence_id: crypto.randomUUID(),
+        timestamp: Date.now()
+    };
+    
+    console.log(`[ANIMATION DEBUG] Broadcasting animation_events to game users with payload:`, JSON.stringify(payload, null, 2));
+    
+    await broadcastToGameUsers(game, 'animation_events', payload);
+    
+    console.log(`[ANIMATION DEBUG] broadcastToGameUsers completed`);
+};
+
+export const wrap400 = (execute: (user: User, user_name: string, body: any, game: Game) => Promise<{game: Game, events: AnimationEvent[]}>, run_bots: boolean = false) => {
     const handler = async (req: Request): Promise<Response> => {
         try {
             // Handle CORS
@@ -101,14 +244,41 @@ export const wrap400 = (execute: (user: User, user_name: string, body: any, game
             const game_id = (body as any).game_id;
             
             let result: any;
+            let events: AnimationEvent[] = [];
             
             if (game_id) {
                 // Execute operation with database lock for this specific game
-                result = await executeWithGameLock(game_id, (game) => execute(user, user_name, body, game)) as Game;
+                const { game, events: operationEvents } = await executeWithGameLock(game_id, (game) => execute(user, user_name, body, game));
+                result = game;
+                events = operationEvents;
+                
+                console.log(`[ANIMATION DEBUG] Game ${game_id}: Received ${events.length} events from action`);
+                if (events.length > 0) {
+                    console.log(`[ANIMATION DEBUG] Events:`, JSON.stringify(events, null, 2));
+                }
+                
+                // Broadcast animation events if any were collected
+                if (events.length > 0) {
+                    console.log(`[ANIMATION DEBUG] Broadcasting ${events.length} events to game users`);
+                    await broadcastAnimationEvents(result, events);
+                    console.log(`[ANIMATION DEBUG] Broadcast complete`);
+                }
             } else {
                 // No game_id, execute immediately (for operations that don't involve games)
                 // pretty much only create
-                result = await execute(user, user_name, body, {} as Game) as Game;
+                const operationResult = await execute(user, user_name, body, {} as Game);
+                
+                result = operationResult.game;
+                events = operationResult.events;
+                
+                console.log(`[ANIMATION DEBUG] No game_id: Received ${events.length} events from action`);
+                
+                // Broadcast for game creation
+                if (result && result.id && events.length > 0) {
+                    console.log(`[ANIMATION DEBUG] Broadcasting ${events.length} events for game creation`);
+                    await broadcastAnimationEvents(result, events);
+                    console.log(`[ANIMATION DEBUG] Creation broadcast complete`);
+                }
             }
 
             // Schedule bot actions if this was a game operation
@@ -149,12 +319,6 @@ export const wrap400 = (execute: (user: User, user_name: string, body: any, game
     return handler;
 };
 
-
-
-
-
-
-
 // =============================================================================
 // DATABASE HELPER FUNCTIONS FOR SEPARATED SCHEMA - Using JOINs
 // =============================================================================
@@ -187,9 +351,11 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
         if (player.is_ai) {
             // Look up in bot_hands table
             const botHand = data.bot_hands.find(hand => hand.bot_id === player.player_id)!;
-            hand = botHand.hand;
-            awaiting_attack = botHand.awaiting_attack;
-            done_attacking_this_round = botHand.done_attacking_this_round;
+            if (botHand) {
+                hand = botHand.hand;
+                awaiting_attack = botHand.awaiting_attack;
+                done_attacking_this_round = botHand.done_attacking_this_round;
+            }
         } else {
             // Look up in player_hands table
             const playerHand = data.player_hands.find(hand => hand.player_id === player.player_id)!;
@@ -429,8 +595,31 @@ export const broadcastToGameUser = async (game: Game, messageType: string, baseM
     await supabaseClient.removeChannel(channel);
 }
 
+// Broadcast bot cycle completion - consolidates all bot actions into a single broadcast
+export const broadcastBotCycleComplete = async (game: Game, botActions: Array<{botName: string, actionType: string, message: string}>): Promise<void> => {
+    if (botActions.length === 0) {
+        return;
+    }
+    
+    // Create a summary message of all bot actions
+    const actionSummary = botActions.map(action => `${action.botName}: ${action.actionType}`).join(', ');
+    const message = botActions.length === 1 
+        ? botActions[0].message 
+        : `Multiple bot actions: ${actionSummary}`;
+    
+    await broadcastToGameUsers(game, 'game_update', {
+        type: 'bot_cycle_complete',
+        message: message,
+        bot_actions: botActions,
+        action_count: botActions.length
+    });
+}
+
 // Optimized method that sends personalized messages to each player's game-user channel
 export const broadcastToGameUsers = async (game: Game, messageType: string, baseMessage: any): Promise<void> => {
+    console.log(`[BROADCAST DEBUG] broadcastToGameUsers called for game ${game.id} with messageType: ${messageType}`);
+    console.log(`[BROADCAST DEBUG] baseMessage:`, JSON.stringify(baseMessage, null, 2));
+    
     try {
         // Calculate base game state once (shared for all players)
         const baseGameState: PublicGame = {
@@ -456,6 +645,8 @@ export const broadcastToGameUsers = async (game: Game, messageType: string, base
 
         console.log(JSON.stringify(baseGameState) + " baseGameState");
 
+        console.log(`[BROADCAST DEBUG] Sending to ${game.players.length} players`);
+
         // Send personalized message to each player
         for (const player of game.players) {
             /*const self: PrivatePlayer = {
@@ -477,9 +668,14 @@ export const broadcastToGameUsers = async (game: Game, messageType: string, base
                 ...baseMessage,
                 game: personalizedGame
             };
-            const channel = supabaseClient.channel(`gu-${game.id}-${player.player_id}`, {
+            const channelName = `gu-${game.id}-${player.player_id}`;
+            console.log(`[BROADCAST DEBUG] Creating channel: ${channelName} for player ${player.name}`);
+            
+            const channel = supabaseClient.channel(channelName, {
                 config: { private: true }
             });
+            
+            console.log(`[BROADCAST DEBUG] Sending to channel ${channelName}`);
             await channel.send({
                 type: 'broadcast',
                 event: messageType,
@@ -487,18 +683,25 @@ export const broadcastToGameUsers = async (game: Game, messageType: string, base
             });
 
             await supabaseClient.removeChannel(channel);
+            console.log(`[BROADCAST DEBUG] Sent and removed channel ${channelName}`);
         }
 
         // Send to publicly visible game channel (for spectators)
-        const channel = supabaseClient.channel(`game-${game.id}`, {
+        const publicChannelName = `game-${game.id}`;
+        console.log(`[BROADCAST DEBUG] Creating public channel: ${publicChannelName}`);
+        
+        const channel = supabaseClient.channel(publicChannelName, {
             config: { private: true }
         });
+        
+        console.log(`[BROADCAST DEBUG] Sending to public channel ${publicChannelName}`);
         await channel.send({
             type: 'broadcast',
             event: messageType,
             payload: {...baseMessage, game: baseGameState}
         });
         await supabaseClient.removeChannel(channel);
+        console.log(`[BROADCAST DEBUG] Sent and removed public channel ${publicChannelName}`);
 
     } catch (error) {
         console.error('Error broadcasting to game users:', error);

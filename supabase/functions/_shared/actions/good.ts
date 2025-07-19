@@ -1,4 +1,4 @@
-import { Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS } from '../types.ts';
+import { Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, AnimationEvent, ANIMATION_EVENT_TYPE } from '../types.ts';
 import { refillPlayerHands } from '../common_utils.ts';
 import { get_next_player_index } from '../common_utils.ts';
 import { check_win } from '../utils.ts';
@@ -16,10 +16,12 @@ export function validateGood(game: Game, player_id: string): void {
 }
 
 // Execution function for good moves
-export async function executeGood(game: Game, player_id: string): Promise<void> {
+export async function executeGood(game: Game, player_id: string): Promise<AnimationEvent[]> {
+    const events: AnimationEvent[] = [];
+    
     // Guard against modifying game state if game is already over
     if (game.status === GAME_STATUS.GAME_OVER) {
-        return;
+        return events;
     }
     
     const player: PrivatePlayer = game.players.find(player => player.player_id === player_id)!;
@@ -35,13 +37,33 @@ export async function executeGood(game: Game, player_id: string): Promise<void> 
         !player.done_attacking_this_round);
 
     if (playable_players.length !== 0) {
-        return;
+        return events;
     }
+
+    // Add animation event for magic transition
+    events.push({
+        type: ANIMATION_EVENT_TYPE.MAGIC_TRANSITION,
+        message: `${player.name} said good - proceeding to next round`
+    });
 
     // we are done attacking, shift positions
     // Count cards being discarded before clearing table_battles
     const discardedCards = game.table_battles.length * 2; // Each battle has attack + defense
     game.discard_pile_length += discardedCards;
+    
+    // Add animation event for cards going to discard pile
+    const allTableCards = game.table_battles.flatMap(battle => 
+        battle.defense ? [battle.attack, battle.defense] : [battle.attack]
+    );
+    if (allTableCards.length > 0) {
+        events.push({
+            type: ANIMATION_EVENT_TYPE.CARDS_TO_TRASH,
+            cards: allTableCards,
+            from_location: 'table',
+            to_location: 'discard',
+            message: `${allTableCards.length} cards discarded`
+        });
+    }
     
     game.table_battles = [];
     refillPlayerHands(game);
@@ -61,10 +83,11 @@ export async function executeGood(game: Game, player_id: string): Promise<void> 
     if (game.status !== GAME_STATUS.GAME_OVER) {
         game.status = GAME_STATUS.FIRST_ATTACKER;
     }
+    return events;
 }
 
 // Combined function with validation
-export async function handleGood(game: Game, player_id: string): Promise<void> {
+export async function handleGood(game: Game, player_id: string): Promise<AnimationEvent[]> {
     validateGood(game, player_id);
-    await executeGood(game, player_id);
+    return await executeGood(game, player_id);
 } 

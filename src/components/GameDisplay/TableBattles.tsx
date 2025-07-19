@@ -40,13 +40,15 @@ export const TableBattles = () => {
                 containerStyle.backgroundColor = 'rgba(0, 255, 0, 0.1)';
             }
 
-            return <div key={battle.attack.value + ' ' + battle.attack.suit} style={containerStyle}>
+            return <div key={battle.attack.value + ' ' + battle.attack.suit} style={containerStyle} data-location="table">
                 <CardFace
                     data-battle-index={index}
+                    data-card={`${battle.attack.suit}-${battle.attack.value}`}
                     card={battle.attack}
+                    playerId="table"
                     onClick={() => isSelectingCover && setCoverMap(new Map(coverMap.set(selectedCards[0], battle.attack))) }
                 />
-                {battle.defense && <CardFace card={battle.defense} />}
+                {battle.defense && <CardFace card={battle.defense} playerId="table" data-card={`${battle.defense.suit}-${battle.defense.value}`} />}
             </div>
         })
     }

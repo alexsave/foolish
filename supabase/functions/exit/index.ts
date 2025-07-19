@@ -1,9 +1,7 @@
-import { wrap400, broadcastToGameUsers } from "../_shared/utils.ts";
-import { GAME_STATUS, Game, SERVER_EVENT_TYPE, PrivatePlayer } from "../_shared/types.ts";
-import { personalize_game, verify_player_in_game } from "../_shared/common_utils.ts";
-
+import { wrap400 } from "../_shared/utils.ts";
+import { Game, GAME_STATUS, PLAYER_STATUS, SERVER_EVENT_TYPE } from "../_shared/types.ts";
+import { verify_player_in_game } from "../_shared/common_utils.ts";
 import { createClient } from 'jsr:@supabase/supabase-js';
-import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 
 const supabaseClient = createClient(
     Deno.env.get('SUPABASE_URL') || '',
@@ -12,89 +10,62 @@ const supabaseClient = createClient(
 
 wrap400(async (user, user_name, body, game) => {
     const user_id = user.id;
-    const { game_id, bot_id } = body;
 
-    // Load complete game state
+    // Load complete game state from separated tables
+    //let game = await loadCompleteGame(game_id);
+
+    // Verify player is in game
     verify_player_in_game(game, user_id);
 
-    // Determine which player to remove
-    let playerToRemove: PrivatePlayer | undefined;
-    let isRemovingBot = false;
-
-    if (bot_id) {
-        // Remove specified bot - only players in the game can do this
-        playerToRemove = game.players.find(p => p.player_id === bot_id && p.is_ai);
-        if (!playerToRemove) {
-            throw new Error(`Bot ${bot_id} not found in game`);
-        }
-        isRemovingBot = true;
-    } else {
-        // Remove self - must be a player in the game
-        playerToRemove = game.players.find(p => p.player_id === user_id);
-        if (!playerToRemove) {
-            throw new Error(`You are not in this game`);
-        }
-    }
-
-    // Can only exit during waiting phase
-    if (game.status !== GAME_STATUS.WAITING) {
-        throw new Error(`Can only exit during game lobby`);
-    }
-
     // Remove player from game
-    game.players = game.players.filter(p => p.player_id !== playerToRemove.player_id);
+    game.players = game.players.filter(player => player.player_id !== user_id);
 
-    // Remove from appropriate database table
-    if (playerToRemove.is_ai) {
-        // Remove bot hand
-        await supabaseClient
-            .from('bot_hands')
-            .delete()
-            .eq('game_id', game_id)
-            .eq('bot_id', playerToRemove.player_id);
-    } else {
-        // Remove player hand
-        await supabaseClient
-            .from('player_hands')
-            .delete()
-            .eq('game_id', game_id)
-            .eq('player_id', playerToRemove.player_id);
-    }
+    // Update game in database
+    await supabaseClient
+        .from('games')
+        .update({ 
+            players: game.players.map(p => ({
+                player_id: p.player_id,
+                name: p.name,
+                status: p.status,
+                is_ai: p.is_ai,
+                hand_length: p.hand_length
+            }))
+        })
+        .eq('id', game.id);
 
-    // Save updated game state
+    // Remove player's hand from database
+    await supabaseClient
+        .from('player_hands')
+        .delete()
+        .eq('game_id', game.id)
+        .eq('player_id', user_id);
 
-    // Send broadcast notification
-    const messageText = isRemovingBot 
-        ? `Bot ${playerToRemove.name} was removed from the game`
-        : `${playerToRemove.name} left the game`;
-
-    broadcastToGameUsers(game, 'game_update', {
-        type: SERVER_EVENT_TYPE.PLAYER_LEFT_GAME,
-        message: messageText,
-        player_id: playerToRemove.player_id
-    });
-
-    // Return game state for the requesting user
-    // If they removed themselves, they won't have self data (spectator mode)
-    // If they removed a bot, they'll still have their self data
-    /*const responseGame = isRemovingBot
-        ? personalize_game(game, user_id)  // User removed a bot, they're still in game
-        : {
-            ...game,
-            self: null // User removed themselves, now spectating
-        };*/
-
+    // If no players left, clean up the game
     if (game.players.length === 0) {
-        // Game is empty, delete it
         await supabaseClient
             .from('games')
             .delete()
-            .eq('id', game_id);
+            .eq('id', game.id);
+        
+        await supabaseClient
+            .from('game_decks')
+            .delete()
+            .eq('game_id', game.id);
     }
 
-    /*return {
-        game: responseGame,
-        removed_player: playerToRemove.name,
-        is_spectator: !isRemovingBot  // User is spectating if they removed themselves
-    };*/
-}, true); 
+    // If game is in progress and player leaves, they should be marked as out
+    if (game.status === GAME_STATUS.PLAYING) {
+        // Player is already removed from game.players above
+        // Add them to elimination order if not already there
+        if (!game.elimination_order.includes(user_id)) {
+            game.elimination_order.push(user_id);
+        }
+    }
+
+    // Save complete game state back to separated tables
+    //await saveCompleteGame(game);
+
+    return { game, events: [] };
+
+}, false); 

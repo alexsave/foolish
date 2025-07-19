@@ -9,6 +9,7 @@ import { DiscardPile } from './GameDisplay/DiscardPile';
 import { DragShadow } from './GameDisplay/DragShadow';
 import { CoverArrows } from './GameDisplay/CoverArrows';
 import { Chat } from './GameDisplay/Chat';
+import { AnimationOverlay } from './GameDisplay/AnimationOverlay';
 import { usePreventScroll } from '../hooks/usePreventScroll';
 
 export const GameDisplay = () => {
@@ -54,6 +55,8 @@ export const GameDisplay = () => {
             <Chat />
 
         </div>
+
+        <AnimationOverlay />
 
     </div>
 };

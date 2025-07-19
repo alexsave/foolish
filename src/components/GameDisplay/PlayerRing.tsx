@@ -14,7 +14,7 @@ const CardsVisual = ({ player, playerCardPatternDataUrl }: { player: PublicPlaye
         position: 'relative',
         height: '20px',
         width: '100px'
-    }}>
+    }} data-location="hand" data-player-id={player.player_id}>
         {Array.from({ length: player.hand_length }).map((_, cardIndex) => {
             const mid = (player.hand_length + 1) / 2;
             const halfCardWidth = 10 / 2; // Updated for 5:7 ratio

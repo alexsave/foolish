@@ -55,5 +55,7 @@ wrap400(async (user, user_name, body, game) => {
         //    game: publicGame
         //};
     }
+    
+    return { game, events: [] };
 }, true);
 

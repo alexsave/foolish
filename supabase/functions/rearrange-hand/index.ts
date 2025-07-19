@@ -40,7 +40,5 @@ wrap400(async (user, user_name, body, game) => {
         message: `${user_name} rearranged their hand`
     }, user_id);
 
-    //return {
-    //    game: personalize_game(game, user_id)
-    //};
+    return { game, events: [] };
 }); 

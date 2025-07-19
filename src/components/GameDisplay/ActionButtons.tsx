@@ -125,7 +125,7 @@ const AttackerActionPanel = () => {
     </>
 }
 
-const CardDiv = () => {
+const CardDiv = ({ user_id }: { user_id: string }) => {
     const { game, localHandOrder } = useServer() as { game: PersonalGame, localHandOrder: Card[] };
 
     const { selectedCards } = useGame();
@@ -159,8 +159,12 @@ const CardDiv = () => {
 
         return <CardFace
             card={card}
+            playerId={user_id}
             key={'' + card.value + card.suit}
             data-card-index={index}
+            data-location="hand"
+            data-player-id={user_id}
+            data-card={`${card.suit}-${card.value}`}
             draggable={true}
             onMouseDown={(e) => startCardDrag(e, index)}
             onTouchStart={(e) => startCardDrag(e, index)}
@@ -284,7 +288,7 @@ export const ActionButtons = () => {
 
             </div>
         }
-        <CardDiv />
+        {user_id && <CardDiv user_id={user_id} />}
 
     </div>
 };
