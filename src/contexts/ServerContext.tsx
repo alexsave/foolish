@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
-import { Card, PublicPlayer, PersonalGame, PublicGame, SERVER_EVENT_TYPE } from '../common/types';
+import { Card, PublicPlayer, PersonalGame, PublicGame, PRIVATE_EVENT_TYPE } from '../common/types';
 import supabase from '../backend/Connector';
 import { useParams } from 'react-router-dom';
 import { useAuth } from './AuthContext';
@@ -128,10 +128,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         });
 
         gameUserChannel
-            .on('broadcast', { event: 'game_update' }, (payload) => {
-                console.log('[CHANNEL] Game update received:', payload);
-                handleGameMessage(payload.payload, 'game_update');
-            })
             .on('broadcast', { event: 'animation_events' }, (payload) => {
                 console.log('[CHANNEL] Animation events received:', payload);
                 handleGameMessage(payload.payload, 'animation_events');
@@ -160,7 +156,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             })
             .subscribe((status, err) => {
                 if (status === 'SUBSCRIBED') {
-                    console.log('Connected to chat channel:', `chat:${gameId}`);
+                    //console.log('Connected to chat channel:', `chat:${gameId}`);
                 } else {
                     console.error('Chat channel error:', err);
                 }
@@ -226,66 +222,17 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             return;
         }
 
-        // Handle all the different message types using the extracted message
-
-        if (actualMessage.type === SERVER_EVENT_TYPE.PLAYER_JOINED_GAME) {
+        // Handle non-animation messages (private messages, etc.)
+        // Most game state updates now come through animation events
+        
+        if (actualMessage.type === PRIVATE_EVENT_TYPE.REQUEST_FIRST_ATTACK || 
+            actualMessage.type === PRIVATE_EVENT_TYPE.PLAYER_HAND) {
+            // These are private messages that don't need game state updates
+            console.log('Private message received:', actualMessage.message);
+        } else if (gameData) {
+            // For any other message type that includes game data, update the game state
+            // This handles cases like direct function invocation responses
             setGames(prev => ({ ...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev) }));
-        } else if (actualMessage.type === SERVER_EVENT_TYPE.PLAYER_LEFT_GAME) {
-            setGames(prev => ({ ...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev) }));
-        } else if (actualMessage.type === SERVER_EVENT_TYPE.PLAYER_READY) {
-            setGames(prev => ({ ...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev) }));
-        } else if (actualMessage.type === SERVER_EVENT_TYPE.GAME_STARTED) {
-            setGames(prev => ({ ...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev) }));
-        } else if (actualMessage.type === SERVER_EVENT_TYPE.FLIPPED_CARD) {
-            setGames(prev => ({ ...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev) }));
-        } else if (actualMessage.type === SERVER_EVENT_TYPE.FIRST_ATTACKER) {
-            setGames(prev => ({ ...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev) }));
-        } else if (actualMessage.type === SERVER_EVENT_TYPE.ATTACK_PLAYED) {
-            setGames(prev => ({ ...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev) }));
-        } else if (actualMessage.type === SERVER_EVENT_TYPE.PASS_PLAYED) {
-            setGames(prev => ({ ...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev) }));
-        } else if (actualMessage.type === SERVER_EVENT_TYPE.PICKUP_PLAYED) {
-            setGames(prev => ({ ...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev) }));
-        } else if (actualMessage.type === SERVER_EVENT_TYPE.COVER_PLAYED) {
-            setGames(prev => ({ ...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev) }));
-        } else if (actualMessage.type === SERVER_EVENT_TYPE.PLAYER_WON) {
-            setGames(prev => ({ ...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev) }));
-        } else if (actualMessage.type === SERVER_EVENT_TYPE.SUCCESSFULLY_COVERED) {
-            setGames(prev => ({ ...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev) }));
-        } else if (actualMessage.type === SERVER_EVENT_TYPE.PLAYABLE_CARDS) {
-            // This is a personal message - update game state and show notification
-            setGames(prev => ({ ...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev) }));
-            console.log('Playable cards message:', actualMessage.message);
-        } else if (actualMessage.type === 'no_more_attacks') {
-            setGames(prev => ({ ...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev) }));
-        } else if (actualMessage.type === 'free_play_mode') {
-            setGames(prev => ({ ...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev) }));
-        } else if (actualMessage.type === 'game_done') {
-            setGames(prev => ({ ...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev) }));
-        } else if (actualMessage.type === 'deck_ran_out') {
-            setGames(prev => ({ ...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev) }));
-        } else if (actualMessage.type === 'player_refilled') {
-            setGames(prev => ({ ...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev) }));
-        } else if (actualMessage.type === 'player_wins') {
-            setGames(prev => ({ ...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev) }));
-        } else if (actualMessage.type === 'game_created') {
-            setGames(prev => ({ ...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev) }));
-        } else if (actualMessage.type === SERVER_EVENT_TYPE.GAME_NAME_UPDATED) {
-            setGames(prev => ({ ...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev) }));
-        } else if (actualMessage.type === SERVER_EVENT_TYPE.PLAYERS_REARRANGED) {
-            setGames(prev => ({ ...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev) }));
-        } else if (actualMessage.type === SERVER_EVENT_TYPE.HAND_REARRANGED) {
-            setGames(prev => ({ ...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev) }));
-        } else if (actualMessage.type === 'animation_sequence') {
-            // Animation sequence already handled above, but also update game state if present
-            if (gameData) {
-                setGames(prev => ({ ...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev) }));
-            }
-        } else {
-            // Default handler for other message types
-            if (gameData) {
-                setGames(prev => ({ ...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev) }));
-            }
         }
     };
 
@@ -480,10 +427,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                         const gameChannel = supabase.channel(`game-${gameId}`, {
                             config: { private: true }
                         });
-                        gameChannel.on('broadcast', { event: 'game_update' }, (payload) => {
-                            console.log('Game update received:', payload);
-                            handleGameMessage(payload.payload);
-                        });
+                        // Spectators currently don't need to listen to any events
+                        // All game state is included in animation events
                         gameChannel.subscribe((status, err) => status === 'SUBSCRIBED'
                             ? console.log('Connected to game channel:', `game-${gameId}`)
                             : console.error('Game channel error:', err));
@@ -544,10 +489,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 const gameChannel = supabase.channel(`game-${gameId}`, {
                     config: { private: true }
                 });
-                gameChannel.on('broadcast', { event: 'game_update' }, (payload) => {
-                    console.log('Game update received:', payload);
-                    handleGameMessage(payload.payload);
-                });
+                // Spectators currently don't need to listen to any events
+                // All game state is included in animation events
                 gameChannel.subscribe((status, err) => status === 'SUBSCRIBED'
                     ? console.log('Connected to game channel:', `game-${gameId}`)
                     : console.error('Game channel error:', err));

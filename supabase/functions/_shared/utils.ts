@@ -595,25 +595,8 @@ export const broadcastToGameUser = async (game: Game, messageType: string, baseM
     await supabaseClient.removeChannel(channel);
 }
 
-// Broadcast bot cycle completion - consolidates all bot actions into a single broadcast
-export const broadcastBotCycleComplete = async (game: Game, botActions: Array<{botName: string, actionType: string, message: string}>): Promise<void> => {
-    if (botActions.length === 0) {
-        return;
-    }
-    
-    // Create a summary message of all bot actions
-    const actionSummary = botActions.map(action => `${action.botName}: ${action.actionType}`).join(', ');
-    const message = botActions.length === 1 
-        ? botActions[0].message 
-        : `Multiple bot actions: ${actionSummary}`;
-    
-    await broadcastToGameUsers(game, 'game_update', {
-        type: 'bot_cycle_complete',
-        message: message,
-        bot_actions: botActions,
-        action_count: botActions.length
-    });
-}
+// Bot cycle completion is now handled through animation events
+// This function is no longer needed since bot actions emit their own animation events
 
 // Optimized method that sends personalized messages to each player's game-user channel
 export const broadcastToGameUsers = async (game: Game, messageType: string, baseMessage: any): Promise<void> => {
@@ -737,35 +720,26 @@ export const start_game = async (game: Game) => {
     game.flipped = flipped_card;
     game.power_suit = game.flipped!.suit;
 
-    // Notify all players about the flipped card
-    broadcastToGameUsers(game, 'game_update', {
-        type: SERVER_EVENT_TYPE.FLIPPED_CARD,
-        message: `Flipped card is ${cardDisplay(game.flipped!)}`
-    });
+    // Flipped card event will be included in the start game animation sequence
+    animationEvents.addFlippedEvent(game.flipped!);
 
     const lowest_power_index = determine_lowest_power_index(game);
     game.first_attacker = lowest_power_index;
     set_positions(game);
-    // Stay in playing status - no need to set FIRST_ATTACKER
 
-    // Save updated game state
-    //await saveCompleteGame(game);
+    // First attacker notification will be included in the start game animation sequence
+    animationEvents.addMagicTransitionEvent(`Player ${game.players[lowest_power_index].name} is the first attacker, wait for them to attack`);
 
-    // Send notifications
-    broadcastToGameUsers(game, 'game_update', {
-        type: SERVER_EVENT_TYPE.FIRST_ATTACKER,
-        message: `Player ${game.players[lowest_power_index].name} is the first attacker, wait for them to attack`
-    });
-
+    // Send private messages to players (these don't go through animation events)
     for (let i = 0; i < game.players.length; i++) {
         const hand = game.players[i].hand;
         if (i === game.first_attacker) {
-            broadcastToGameUser(game, 'private_message', {
+            await broadcastToGameUser(game, 'private_message', {
                 type: PRIVATE_EVENT_TYPE.REQUEST_FIRST_ATTACK,
                 message: `Please choose an attack. Options are ${hand.map(card => cardDisplay(card)).join(', ')}`
             }, game.players[i].player_id);
         } else {
-            broadcastToGameUser(game, 'private_message', {
+            await broadcastToGameUser(game, 'private_message', {
                 type: PRIVATE_EVENT_TYPE.PLAYER_HAND,
                 message: `Player ${game.players[i].name} hand ${hand.map(card => cardDisplay(card)).join(', ')}`
             }, game.players[i].player_id);
@@ -795,10 +769,8 @@ export const check_win = async (game: Game) => {
         // Keep table_battles, deck, and elimination_order for win screen display
         // These will be cleared when someone hits continue
 
-        broadcastToGameUsers(game, 'game_update', {
-            type: 'game_done',
-            message: `Game done. Player ${the_fool} ends up the fool`
-        });
+        // Game done notification will be sent through animation events
+        animationEvents.addMagicTransitionEvent(`Game done. Player ${the_fool} ends up the fool`);
     }
 }
 
@@ -821,20 +793,13 @@ export const refill = async (game: Game) => {
         while (defenseHand.length < CARDS_PER_PLAYER) {
             const c = draw(game);
             if (c === null) {
-                /*broadcastToGameUsers(game, 'game_update', {
-                    type: 'deck_ran_out',
-                    message: 'Deck ran out'
-                });*/
+                // Deck ran out - no special notification needed
                 break;
             }
             defenseHand.push(c);
             cards_drawn++;
         }
-        /*broadcastToGameUsers(game, 'game_update', {
-            type: 'player_refilled',
-            message: `Player ${game.players[game.defender].name} refilled their empty hand with ${cards_drawn} cards`,
-            cards_drawn: cards_drawn
-        });*/
+        // Player refill handled through animation events
     }
 
     // Then go around starting from firstAttacker
@@ -846,28 +811,18 @@ export const refill = async (game: Game) => {
         while (hand.length < CARDS_PER_PLAYER) {
             const c = draw(game);
             if (c === null) {
-                /*broadcastToGameUsers(game, 'game_update', {
-                    type: 'deck_ran_out',
-                    message: 'Deck ran out'
-                });*/
+                // Deck ran out - no special notification needed
                 break;
             }
             hand.push(c);
             cards_drawn++;
         }
         if (cards_drawn > 0) {
-            /*broadcastToGameUsers(game, 'game_update', {
-                type: 'player_refilled',
-                message: `Player ${game.players[pIndex].name} drew ${cards_drawn} cards`,
-                cards_drawn: cards_drawn
-            });*/
+            // Player refill handled through animation events
         } else if (cards_drawn === 0 && hand.length === 0) {
             // no cards were drawn, but if they were still "in", this is where they win
             if (game.players[pIndex].status === PLAYER_STATUS.IN) {
-                /*broadcastToGameUsers(game, 'game_update', {
-                    type: 'player_wins',
-                    message: `Player ${game.players[pIndex].name} got rid of all their cards`
-                });*/
+                // Player win handled through animation events in check_win
                 game.players[pIndex].status = PLAYER_STATUS.OUT;
                 game.players[pIndex].awaiting_attack = false;
                 game.elimination_order.push(game.players[pIndex].player_id); // Track elimination order
