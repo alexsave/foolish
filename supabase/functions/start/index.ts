@@ -22,7 +22,7 @@ wrap400(async ({user, user_name, game}: ExecutionParams) => {
         }
         
         // Check if ALL players are ready
-        const allPlayersReady = game.players.every(p => p.status === PLAYER_STATUS.READY);
+        const allPlayersReady = game.players.every(p => p.status === PLAYER_STATUS.READY) && game.players.length >= 2;
         
         if (allPlayersReady) {
             // All players are ready - start the game!
