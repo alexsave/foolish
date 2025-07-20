@@ -1,5 +1,5 @@
 import { wrap400 } from "../_shared/utils.ts";
-import { Game, BotHand } from "../_shared/types.ts";
+import { Game, BotHand, PLAYER_STATUS } from "../_shared/types.ts";
 import { createClient } from 'jsr:@supabase/supabase-js';
 
 const supabaseClient = createClient(
@@ -9,29 +9,42 @@ const supabaseClient = createClient(
 
 wrap400(async (user, user_name, body, game) => {
     const user_id = user.id;
-    const { game_id, bot_strategy } = body;
+    const { game_id } = body;
 
     if (game.status !== 'waiting') {
         throw new Error(`Game ${game_id} is not waiting for players`);
     }
 
-    // Find available bot by strategy
-    const { data: availableBot, error } = await supabaseClient
+    // Fetch all bots
+    const { data: allBots, error } = await supabaseClient
         .from('bots')
-        .select('*')
-        .eq('strategy_key', bot_strategy)
-        .limit(1)
-        .single();
+        .select('*');
 
-    if (error || !availableBot) {
-        throw new Error(`No bot available with strategy ${bot_strategy}`);
+    if (error || !allBots) {
+        throw new Error(`Failed to fetch bots`);
     }
+
+    // Get IDs of bots already in the game
+    const existingBotIds = game.players
+        .filter(p => p.is_ai)
+        .map(p => p.player_id);
+
+    // Filter out bots already in the game
+    const availableBots = allBots.filter(bot => !existingBotIds.includes(bot.id));
+
+    if (availableBots.length === 0) {
+        throw new Error(`No available bots to add to the game`);
+    }
+
+    // Choose a random bot from available ones
+    const randomIndex = Math.floor(Math.random() * availableBots.length);
+    const availableBot = availableBots[randomIndex];
 
     // Add bot to game
     game.players.push({
         player_id: availableBot.id,
         name: availableBot.nickname,
-        status: 'idle',
+        status: PLAYER_STATUS.READY,
         is_ai: true,
         hand: [],
         awaiting_attack: false,

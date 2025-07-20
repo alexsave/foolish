@@ -10,15 +10,52 @@ const supabaseClient = createClient(
 
 wrap400(async (user, user_name, body, game) => {
     const user_id = user.id;
+    const { bot_id } = body;
 
     // Load complete game state from separated tables
     //let game = await loadCompleteGame(game_id);
 
-    // Verify player is in game
-    verify_player_in_game(game, user_id);
+    if (bot_id) {
+        // Removing a bot
+        // Verify bot is in game
+        const botPlayer = game.players.find(player => player.player_id === bot_id && player.is_ai);
+        if (!botPlayer) {
+            throw new Error(`Bot ${bot_id} is not in the game`);
+        }
 
-    // Remove player from game
-    game.players = game.players.filter(player => player.player_id !== user_id);
+        // Remove bot from game
+        game.players = game.players.filter(player => player.player_id !== bot_id);
+
+        // Remove bot's hand from database
+        await supabaseClient
+            .from('bot_hands')
+            .delete()
+            .eq('game_id', game.id)
+            .eq('bot_id', bot_id);
+    } else {
+        // Removing the user
+        // Verify player is in game
+        verify_player_in_game(game, user_id);
+
+        // Remove player from game
+        game.players = game.players.filter(player => player.player_id !== user_id);
+
+        // Remove player's hand from database
+        await supabaseClient
+            .from('player_hands')
+            .delete()
+            .eq('game_id', game.id)
+            .eq('player_id', user_id);
+
+        // If game is in progress and player leaves, they should be marked as out
+        if (game.status === GAME_STATUS.PLAYING) {
+            // Player is already removed from game.players above
+            // Add them to elimination order if not already there
+            if (!game.elimination_order.includes(user_id)) {
+                game.elimination_order.push(user_id);
+            }
+        }
+    }
 
     // Update game in database
     await supabaseClient
@@ -34,13 +71,6 @@ wrap400(async (user, user_name, body, game) => {
         })
         .eq('id', game.id);
 
-    // Remove player's hand from database
-    await supabaseClient
-        .from('player_hands')
-        .delete()
-        .eq('game_id', game.id)
-        .eq('player_id', user_id);
-
     // If no players left, clean up the game
     if (game.players.length === 0) {
         await supabaseClient
@@ -52,15 +82,6 @@ wrap400(async (user, user_name, body, game) => {
             .from('game_decks')
             .delete()
             .eq('game_id', game.id);
-    }
-
-    // If game is in progress and player leaves, they should be marked as out
-    if (game.status === GAME_STATUS.PLAYING) {
-        // Player is already removed from game.players above
-        // Add them to elimination order if not already there
-        if (!game.elimination_order.includes(user_id)) {
-            game.elimination_order.push(user_id);
-        }
     }
 
     // Save complete game state back to separated tables
