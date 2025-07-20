@@ -70,6 +70,12 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
     // Use ref to prevent duplicate user effect executions
     const prevUserRef = useRef<string | null>(null);
+    
+    // Track ongoing loadGame calls to prevent duplicates
+    const loadGamePromises = useRef<Map<string, Promise<{ game_id: string }>>>(new Map());
+    
+    // Track ongoing getUserGames call to prevent duplicates
+    const getUserGamesPromise = useRef<Promise<void> | null>(null);
 
     // Simple reconnection state
     const gameChannelRetryInterval = useRef(1000); // Start with 1 second
@@ -80,18 +86,21 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             gameIdRef.current = url_game_id;
             setGameId(url_game_id);
             setGameLoadError(null); // Clear any previous errors
-            // iffy on this call. Just load the specific game
-            getUserGames();
-            // The problem is that getUserGames and loadGame are incompatible
-            if ( games[url_game_id]?.self){
+            
+            // Set local hand order if we already have the game data
+            if (games[url_game_id]?.self) {
                 setLocalHandOrders(prev => ({ ...prev, [url_game_id]: games[url_game_id].self.hand }));
             }
-            if (!games[url_game_id]/* && !loading*/) {
-                //setLoading(true);
+            
+            // Only load if we don't have this game data yet
+            if (!games[url_game_id]) {
+                console.log(`[NETWORK] Loading game data for ${url_game_id}`);
                 loadGame(url_game_id).catch(error => {
                     console.log('Game not found in URL:', error.message);
                     setGameLoadError(url_game_id); // Set error for this specific game
                 });
+            } else {
+                console.log(`[CACHE] Game ${url_game_id} already loaded, skipping network call`);
             }
         }
     }, [url_game_id]);
@@ -104,14 +113,20 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     useEffect(() => {
         // Skip if user hasn't actually changed
         if (prevUserRef.current === user_id) {
-            //return;
+            return;
         }
 
         prevUserRef.current = user_id;
 
         if (user_id) {
-            // Call getUserGames to console.log the player's games
-            getUserGames();
+            // Only call getUserGames if we don't have a specific game loaded
+            // If we have a URL game, loadGame will handle it
+            if (!url_game_id) {
+                console.log('[NETWORK] Calling getUserGames for user dashboard');
+                getUserGames();
+            } else {
+                console.log('[CACHE] Skipping getUserGames - specific game URL present');
+            }
         }
 
         // cleanup realtime subscriptions
@@ -119,7 +134,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             // Remove all realtime subscriptions
             supabase.removeAllChannels();
         };
-    }, [user_id]);
+    }, [user_id, url_game_id]);
 
 
     const subscribeToGame = async (gameId: string) => {
@@ -433,15 +448,79 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
     // Hmm loading the url should add the player to the game.
 
-    const loadGame = (gameId: string): Promise<{ game_id: string }> => {
-        return invokeGameFunctions('status', {
-            game_id: gameId,
-        }, {
-            onSuccess: (data) => {
-                setGameId(data.data.id);
-                joinOrSubscribe(data.data);
+    const loadGame = async (gameId: string): Promise<{ game_id: string }> => {
+        // Check if we already have an ongoing request for this game
+        const existingPromise = loadGamePromises.current.get(gameId);
+        if (existingPromise) {
+            console.log(`[CACHE] Reusing existing loadGame promise for ${gameId}`);
+            return existingPromise;
+        }
+
+        // Create new promise and cache it
+        const gamePromise = loadGameInternal(gameId);
+        loadGamePromises.current.set(gameId, gamePromise);
+
+        // Clean up cache when promise resolves or rejects
+        gamePromise.finally(() => {
+            loadGamePromises.current.delete(gameId);
+        });
+
+        return gamePromise;
+    };
+
+    const loadGameInternal = async (gameId: string): Promise<{ game_id: string }> => {
+        // First try to get game data if user is a player (only if user_id exists)
+        if (user_id) {
+            const { data: playerData, error: playerError } = await supabase
+                .from('player_hands')
+                .select(handsQuery)
+                .eq('game_id', gameId)
+                .eq('player_id', user_id)
+                .single();
+
+            if (playerData && !playerError) {
+                // User is in the game - return personalized data
+                const game = playerData.games as unknown as PublicGame;
+                const selfPlayer = game.players.find((player) => player.player_id === user_id);
+                
+                if (selfPlayer) {
+                    const personalizedGame: PersonalGame = {
+                        ...game,
+                        self: {
+                            ...selfPlayer, 
+                            player_id: user_id, 
+                            hand: playerData.hand, 
+                            awaiting_attack: playerData.awaiting_attack, 
+                            done_attacking_this_round: false
+                        }
+                    };
+                    
+                    setGames(prev => ({ ...prev, [gameId]: mergeGameData(gameId, personalizedGame, prev) }));
+                    joinOrSubscribe(personalizedGame);
+                    return { game_id: gameId };
+                }
             }
-        })
+        }
+
+        // User is not in the game - try to get public game data for spectating
+        const { data: publicData, error: publicError } = await supabase
+            .from('games')
+            .select('*')
+            .eq('id', gameId)
+            .single();
+
+        if (publicError) {
+            throw new Error(`Game ${gameId} not found`);
+        }
+
+        const publicGame: PersonalGame = {
+            ...publicData,
+            self: null // No self data for spectators
+        };
+
+        setGames(prev => ({ ...prev, [gameId]: mergeGameData(gameId, publicGame, prev) }));
+        joinOrSubscribe(publicGame);
+        return { game_id: gameId };
     };
 
     const joinOrSubscribe = (game: PersonalGame) => {
@@ -807,6 +886,25 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     };
 
     const getUserGames = async (): Promise<void> => {
+        // Check if we already have an ongoing getUserGames request
+        if (getUserGamesPromise.current) {
+            console.log('[CACHE] Reusing existing getUserGames promise');
+            return getUserGamesPromise.current;
+        }
+
+        // Create new promise and cache it
+        const gamesPromise = getUserGamesInternal();
+        getUserGamesPromise.current = gamesPromise;
+
+        // Clean up cache when promise resolves or rejects
+        gamesPromise.finally(() => {
+            getUserGamesPromise.current = null;
+        });
+
+        return gamesPromise;
+    };
+
+    const getUserGamesInternal = async (): Promise<void> => {
         // This needs to also throw in status at least
         try {
             if (!user_id) {
