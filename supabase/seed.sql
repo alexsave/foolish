@@ -21,6 +21,8 @@ DROP TABLE IF EXISTS game_decks CASCADE;
 DROP TABLE IF EXISTS games CASCADE;
 DROP TABLE IF EXISTS user_elo_ratings CASCADE;
 DROP TABLE IF EXISTS bots CASCADE;
+DROP TABLE IF EXISTS game_locks CASCADE;
+DROP TABLE IF EXISTS bot_locks CASCADE;
 
 -- Drop custom types
 DROP TYPE IF EXISTS game_status CASCADE;
@@ -138,6 +140,13 @@ CREATE TABLE bot_locks (
   acquired_at TIMESTAMP DEFAULT NOW()
 );
 
+-- Game locks table - Simple table-based locking for game operations
+CREATE TABLE game_locks (
+  game_id TEXT PRIMARY KEY REFERENCES games(id) ON DELETE CASCADE,
+  lock_id TEXT NOT NULL, -- Random ID to verify lock ownership
+  acquired_at TIMESTAMP DEFAULT NOW()
+);
+
 -- =============================================================================
 -- INDEXES: Create indexes for better performance
 -- =============================================================================
@@ -159,6 +168,8 @@ CREATE INDEX idx_bot_hands_game_id ON bot_hands(game_id);
 CREATE INDEX idx_bot_hands_bot_id ON bot_hands(bot_id);
 CREATE INDEX idx_bot_locks_game_id ON bot_locks(game_id);
 CREATE INDEX idx_bot_locks_acquired_at ON bot_locks(acquired_at);
+CREATE INDEX idx_game_locks_game_id ON game_locks(game_id);
+CREATE INDEX idx_game_locks_acquired_at ON game_locks(acquired_at);
 
 -- =============================================================================
 -- ROW LEVEL SECURITY: Enable RLS on all tables
@@ -172,6 +183,7 @@ ALTER TABLE user_elo_ratings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bots ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bot_hands ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bot_locks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE game_locks ENABLE ROW LEVEL SECURITY;
 
 -- =============================================================================
 -- RLS POLICIES: Security-first approach
@@ -182,40 +194,41 @@ ALTER TABLE bot_locks ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Anyone can view games" ON games
   FOR SELECT USING (true);
 
-CREATE POLICY "Anyone can create games" ON games
-  FOR INSERT WITH CHECK (true);
-
-CREATE POLICY "Players can update games they're in" ON games
-  FOR UPDATE USING (
-    id IN (
-      SELECT game_id FROM player_hands 
-      WHERE player_id = auth.uid()
-    )
+CREATE POLICY "Authenticated users can create games" ON games
+  FOR INSERT WITH CHECK (
+    (select auth.role()) = 'authenticated'
   );
 
 -- Game Decks: ONLY service role can access (edge functions only)
 CREATE POLICY "Only service role can access game decks" ON game_decks
-  FOR ALL USING (auth.role() = 'service_role');
+  FOR ALL USING ((select auth.role()) = 'service_role');
 
 -- Player Hands: Players can ONLY see their own hands
-CREATE POLICY "Players can view own hand only" ON player_hands
-  FOR SELECT USING (player_id = auth.uid());
+CREATE POLICY "Player hands select policy" ON player_hands
+  FOR SELECT USING (
+    player_id = (select auth.uid()) OR 
+    (select auth.role()) = 'service_role'
+  );
 
-CREATE POLICY "Players can join games" ON player_hands
-  FOR INSERT WITH CHECK (player_id = auth.uid());
+CREATE POLICY "Player hands insert policy" ON player_hands
+  FOR INSERT WITH CHECK (
+    (select auth.role()) = 'service_role'
+  );
 
-CREATE POLICY "Players can leave games" ON player_hands
-  FOR DELETE USING (player_id = auth.uid());
+CREATE POLICY "Player hands update policy" ON player_hands
+  FOR UPDATE USING ((select auth.role()) = 'service_role');
 
-CREATE POLICY "Service role can manage all hands" ON player_hands
-  FOR ALL USING (auth.role() = 'service_role');
+CREATE POLICY "Player hands delete policy" ON player_hands
+  FOR DELETE USING (
+    (select auth.role()) = 'service_role'
+  );
 
 -- Chat messages: Players can view messages for games they're in
 CREATE POLICY "Players can view chat messages for their games" ON chat_messages
   FOR SELECT USING (
     game_id IN (
       SELECT game_id FROM player_hands 
-      WHERE player_id = auth.uid()
+      WHERE player_id = (select auth.uid())
     )
   );
 
@@ -223,31 +236,47 @@ CREATE POLICY "Players can send chat messages to their games" ON chat_messages
   FOR INSERT WITH CHECK (
     game_id IN (
       SELECT game_id FROM player_hands 
-      WHERE player_id = auth.uid()
-    ) AND user_id = auth.uid()
+      WHERE player_id = (select auth.uid())
+    ) AND user_id = (select auth.uid())
   );
 
 -- User ELO ratings: Read-only for authenticated users
-CREATE POLICY "Anyone can view ELO ratings" ON user_elo_ratings
+CREATE POLICY "ELO ratings access policy" ON user_elo_ratings
   FOR SELECT USING (true);
 
-CREATE POLICY "Only service role can manage ELO ratings" ON user_elo_ratings
-  FOR ALL USING (auth.role() = 'service_role');
+CREATE POLICY "Only service role can modify ELO ratings" ON user_elo_ratings
+  FOR INSERT WITH CHECK ((select auth.role()) = 'service_role');
+
+CREATE POLICY "Only service role can update ELO ratings" ON user_elo_ratings
+  FOR UPDATE USING ((select auth.role()) = 'service_role');
+
+CREATE POLICY "Only service role can delete ELO ratings" ON user_elo_ratings
+  FOR DELETE USING ((select auth.role()) = 'service_role');
 
 -- Bots: Read-only for authenticated users (for lobby bot selection)
-CREATE POLICY "Anyone can view bots" ON bots
+CREATE POLICY "Bots access policy" ON bots
   FOR SELECT USING (true);
 
-CREATE POLICY "Only service role can manage bots" ON bots
-  FOR ALL USING (auth.role() = 'service_role');
+CREATE POLICY "Only service role can modify bots" ON bots
+  FOR INSERT WITH CHECK ((select auth.role()) = 'service_role');
+
+CREATE POLICY "Only service role can update bots" ON bots
+  FOR UPDATE USING ((select auth.role()) = 'service_role');
+
+CREATE POLICY "Only service role can delete bots" ON bots
+  FOR DELETE USING ((select auth.role()) = 'service_role');
 
 -- Bot hands: ONLY service role can access (edge functions only)
 CREATE POLICY "Only service role can access bot hands" ON bot_hands
-  FOR ALL USING (auth.role() = 'service_role');
+  FOR ALL USING ((select auth.role()) = 'service_role');
 
 -- Bot locks: ONLY service role can access (edge functions only)
 CREATE POLICY "Only service role can access bot locks" ON bot_locks
-  FOR ALL USING (auth.role() = 'service_role');
+  FOR ALL USING ((select auth.role()) = 'service_role');
+
+-- Game locks: ONLY service role can access (edge functions only)
+CREATE POLICY "Only service role can access game locks" ON game_locks
+  FOR ALL USING ((select auth.role()) = 'service_role');
 
 -- =============================================================================
 -- FUNCTIONS: Helper functions and triggers
@@ -255,7 +284,9 @@ CREATE POLICY "Only service role can access bot locks" ON bot_locks
 
 -- Functions for automatic updated_at timestamps
 CREATE OR REPLACE FUNCTION update_updated_at_column()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER 
+SET search_path = ''
+AS $$
 BEGIN
     NEW.updated_at = NOW();
     RETURN NEW;
@@ -266,6 +297,7 @@ $$ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION public.chat_messages_changes()
 RETURNS TRIGGER
 SECURITY DEFINER
+SET search_path = ''
 LANGUAGE plpgsql
 AS $$
 BEGIN
@@ -287,6 +319,7 @@ $$;
 CREATE OR REPLACE FUNCTION public.create_default_elo_rating()
 RETURNS TRIGGER
 SECURITY DEFINER
+SET search_path = ''
 LANGUAGE plpgsql
 AS $$
 BEGIN
@@ -383,7 +416,7 @@ ON "realtime"."messages"
 FOR SELECT
 TO authenticated
 USING (
-  (SELECT realtime.topic()) = CONCAT('user-', split_part((current_setting('request.jwt.claims', true)::jsonb ->> 'email'), '@', 1))
+  (SELECT realtime.topic()) = CONCAT('user-', split_part(((select current_setting('request.jwt.claims', true))::jsonb ->> 'email'), '@', 1))
   AND realtime.messages.extension IN ('broadcast')
 );
 
@@ -406,13 +439,13 @@ TO authenticated
 USING (
   (SELECT realtime.topic()) LIKE 'gu-%' AND
   -- Extract user_id from topic (gu-{game_id}-{user_id}) and verify it matches current user
-  split_part((SELECT realtime.topic()), '-', 3) = auth.uid()::text AND
+  split_part((SELECT realtime.topic()), '-', 3) = (select auth.uid())::text AND
   -- Extract game_id and verify user is in that game
   EXISTS (
     SELECT 1
     FROM player_hands
     WHERE 
-      player_id = auth.uid()
+      player_id = (select auth.uid())
       AND game_id = split_part((SELECT realtime.topic()), '-', 2)
   ) AND
   realtime.messages.extension IN ('broadcast')
@@ -431,7 +464,7 @@ USING (
     SELECT 1
     FROM player_hands
     WHERE 
-      player_id = auth.uid()
+      player_id = (select auth.uid())
       AND game_id = split_part((SELECT realtime.topic()), ':', 2)
   ) AND
   realtime.messages.extension IN ('broadcast')

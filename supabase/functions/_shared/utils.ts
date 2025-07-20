@@ -27,23 +27,84 @@ const supabaseClient = createClient(
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
 );
 
-// Database-level game locking using PostgreSQL advisory locks
+// Database-level game locking using table-based locks
 export const acquireGameLock = async (game_id: string): Promise<boolean> => {
-    const { data, error } = await supabaseClient.rpc('pg_try_advisory_lock_string', { key: game_id });
-    
-    if (error) {
-        console.error(`Failed to acquire lock for game ${game_id}:`, error);
+    try {
+        // Generate a random lock ID for this instance
+        const lockId = crypto.randomUUID();
+        
+        const { error } = await supabaseClient
+            .from('game_locks')
+            .insert({ game_id, lock_id: lockId });
+        
+        if (error) {
+            // Handle non-unique constraint errors
+            if (error.code !== '23505') {
+                return false;
+            }
+            
+            // Check if existing lock is older than 150 seconds
+            const { data: existingLock } = await supabaseClient
+                .from('game_locks')
+                .select('acquired_at')
+                .eq('game_id', game_id)
+                .single();
+            
+            if (!existingLock) {
+                return false;
+            }
+            
+            const lockAge = Date.now() - new Date(existingLock.acquired_at).getTime();
+            if (lockAge <= 5000) { // 5 seconds in milliseconds
+                return false;
+            }
+            
+            // Delete the stale lock
+            await supabaseClient
+                .from('game_locks')
+                .delete()
+                .eq('game_id', game_id);
+            
+            // Try to insert again
+            const { error: retryError } = await supabaseClient
+                .from('game_locks')
+                .insert({ game_id, lock_id: lockId });
+            
+            if (retryError) {
+                return false;
+            }
+        }
+        
+        // Verify we actually got the lock by checking the lock_id
+        const { data, error: selectError } = await supabaseClient
+            .from('game_locks')
+            .select('lock_id')
+            .eq('game_id', game_id)
+            .single();
+        
+        if (selectError || !data || data.lock_id !== lockId) {
+            return false;
+        }
+        
+        return true;
+    } catch (error) {
         return false;
     }
-    
-    return data as boolean;
 };
 
 export const releaseGameLock = async (game_id: string): Promise<void> => {
-    const { error } = await supabaseClient.rpc('pg_advisory_unlock_string', { key: game_id });
-    
-    if (error) {
-        console.error(`Failed to release lock for game ${game_id}:`, error);
+    try {
+        const { error } = await supabaseClient
+            .from('game_locks')
+            .delete()
+            .eq('game_id', game_id);
+        
+        if (error) {
+            console.error(`Failed to release lock for game ${game_id}:`, error);
+        }
+        
+    } catch (error) {
+        console.error(`Error releasing lock for game ${game_id}:`, error);
     }
 };
 
