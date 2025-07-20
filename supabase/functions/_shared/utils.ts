@@ -80,9 +80,9 @@ export const executeWithGameLock = async (game_id: string, operation: (game: Gam
 // Sanitize animation events for a specific player - hide other players' cards
 export const sanitizeEventsForPlayer = (events: AnimationEvent[], forPlayerId: string): AnimationEvent[] => {
     return events.map(event => {
-        // Only sanitize REFILL events from other players - these show cards going to their hands
-        if (event.type === 'refill' && event.cards && event.player_id && event.player_id !== forPlayerId) {
-            // For refill events involving other players, replace with sanitized version
+        // Sanitize REFILL and DEAL events from other players - these show cards going to their hands
+        if ((event.type === ANIMATION_EVENT_TYPE.REFILL || event.type === ANIMATION_EVENT_TYPE.DEAL) && event.cards && event.player_id && event.player_id !== forPlayerId) {
+            // For events involving other players' hand cards, replace with sanitized version
             // Keep the same structure but replace actual card data with placeholder for card backs
             const sanitizedEvent: AnimationEvent = {
                 ...event,
@@ -130,7 +130,7 @@ export const broadcastAnimationEvents = async (game: Game, events: AnimationEven
                 const cardCount = event.cards.length;
                 const hasSanitizedCards = event.cards.some(card => card.suit === -1 && card.value === -1);
                 if (hasSanitizedCards) {
-                    console.log(`[SECURITY] Event ${index + 1} for player ${player.name}: ${cardCount} cards from ${event.player_id} sanitized to card backs`);
+                    console.log(`[SECURITY] Event ${index + 1} (${event.type}) for player ${player.name}: ${cardCount} cards from ${event.player_id} sanitized to card backs`);
                 }
             }
         });
