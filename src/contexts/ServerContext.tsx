@@ -122,14 +122,17 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         // Ensure we have proper auth before subscribing
         await supabase.realtime.setAuth();
 
-        // Subscribe to personalized game-user channel for game updates
+        // Subscribe to personalized game-user channel for non-animation game updates  
         const gameUserChannel = supabase.channel(`gu-${gameId}-${user_id}`, {
             config: { private: true }
         });
 
         gameUserChannel
-            .on('broadcast', { event: 'animation_events' }, (payload) => {
-                handleGameMessage(payload.payload, 'animation_events');
+            .on('broadcast', { event: 'private_message' }, (payload) => {
+                handleGameMessage(payload.payload, 'private_message');
+            })
+            .on('broadcast', { event: 'HAND_REARRANGED' }, (payload) => {
+                handleGameMessage(payload.payload, 'HAND_REARRANGED');
             })
             .subscribe((status, err) => {
                 if (status === 'SUBSCRIBED') {
@@ -180,85 +183,9 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
         console.log(`[${source.toUpperCase()}] Game message received:`, actualMessage);
 
-        // Handle animation events first - check multiple possible formats
-        const animationEvents = actualMessage.animation_events || 
-                              actualMessage.events || 
-                              (actualMessage.type === 'animation_sequence' ? actualMessage.events : null);
-
         const gameData = actualMessage.game || message.game;
 
-        if (animationEvents && Array.isArray(animationEvents) && animationEvents.length > 0) {
-            console.log(`[${source.toUpperCase()}] Animation events detected:`, animationEvents);
-            
-            // Check if any of these events were triggered locally (optimistic animations)
-            // const hasLocallyTriggeredEvent = animationEvents.some((serverEvent: any) => {
-            //     const serverEventString = JSON.stringify({
-            //         type: serverEvent.type,
-            //         cards: serverEvent.cards,
-            //         from_location: serverEvent.from_location,
-            //         to_location: serverEvent.to_location,
-            //         player_id: serverEvent.player_id,
-            //         message: `Local ${serverEvent.type} animation`
-            //     });
-            //     return locallyTriggeredAnimations.current.has(serverEventString);
-            // });
-            
-            // if (hasLocallyTriggeredEvent) {
-            //     console.log('[OPTIMISTIC] Ignoring server animation - already triggered locally');
-            //     // Clear the local animations since server confirmed them
-            //     animationEvents.forEach((serverEvent: any) => {
-            //         const serverEventString = JSON.stringify({
-            //             type: serverEvent.type,
-            //             cards: serverEvent.cards,
-            //             from_location: serverEvent.from_location,
-            //             to_location: serverEvent.to_location,
-            //             player_id: serverEvent.player_id,
-            //             message: `Local ${serverEvent.type} animation`
-            //         });
-            //         locallyTriggeredAnimations.current.delete(serverEventString);
-            //     });
-                
-            //     // Still update game state from server, but skip animations
-            //     if (gameData) {
-            //         setGames(prev => ({ ...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev) }));
-            //     }
-            //     return;
-            // }
-            
-            // Debug cards_to_trash events specifically
-            const cardsToTrashEvents = animationEvents.filter(e => e.type === 'cards_to_trash');
-            if (cardsToTrashEvents.length > 0) {
-                console.log(`[${source.toUpperCase()}] CARDS_TO_TRASH events found:`, cardsToTrashEvents);
-                cardsToTrashEvents.forEach((event, index) => {
-                    console.log(`[${source.toUpperCase()}] CARDS_TO_TRASH event ${index}:`, JSON.stringify(event, null, 2));
-                });
-            }
-            
-            // Create a custom event that includes both the animations and the pending game state
-            const animationEvent = new CustomEvent('gameAnimationEvents', {
-                detail: { 
-                    events: animationEvents, 
-                    gameId: messageGameId,
-                    pendingGameState: gameData,
-                    onAnimationComplete: () => {
-                        // Update game state after animations complete
-                        console.log(`[${source.toUpperCase()}] Animations completed, updating game state`);
-                        if (gameData) {
-                            setGames(prev => ({ ...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev) }));
-                        }
-                    }
-                }
-            });
-            console.log(`[${source.toUpperCase()}] Dispatching animation event with ${animationEvents.length} events`);
-            window.dispatchEvent(animationEvent);
-            
-            // Don't update game state immediately - wait for animations to complete
-            return;
-        }
-
-        // Handle non-animation messages (private messages, etc.)
-        // Most game state updates now come through animation events
-        
+        // Handle non-animation messages (private messages, direct responses, etc.)
         if (actualMessage.type === PRIVATE_EVENT_TYPE.REQUEST_FIRST_ATTACK || 
             actualMessage.type === PRIVATE_EVENT_TYPE.PLAYER_HAND) {
             // These are private messages that don't need game state updates
