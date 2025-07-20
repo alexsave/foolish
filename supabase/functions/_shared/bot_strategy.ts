@@ -234,7 +234,7 @@ function generateCoverCombinations(
         // For each combination of the rest
         restCombinations.forEach(restCombo => {
             // Make sure we don't use the same card twice
-            if (!restCombo.coverCards.some(card => cardEquals(card, coverCard))) {
+            if (!restCombo.coverCards.some(card => card_comp(card, coverCard))) {
                 result.push({
                     coverCards: [coverCard, ...restCombo.coverCards],
                     attackCards: [first.attackCard, ...restCombo.attackCards]
@@ -306,11 +306,6 @@ function calculatePassMoves(game: Game, botPlayer: PrivatePlayer): LegalMove[] {
     }
     
     return moves;
-}
-
-// Helper function to check if two cards are equal
-function cardEquals(card1: Card, card2: Card): boolean {
-    return card_comp(card1, card2);
 }
 
 // Helper function to generate combinations

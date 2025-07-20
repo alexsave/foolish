@@ -1,12 +1,9 @@
-import { wrap400 } from "../_shared/utils.ts";
-import { Game, GAME_STATUS, PLAYER_STATUS, SERVER_EVENT_TYPE } from "../_shared/types.ts";
+import { wrap400, ExecutionParams } from "../_shared/utils.ts";
+import { GAME_STATUS, PLAYER_STATUS } from "../_shared/types.ts";
 import { verify_player_in_game } from "../_shared/common_utils.ts";
 
-wrap400(async (user, user_name, body, game) => {
+wrap400(async ({user, game}: ExecutionParams) => {
     const user_id = user.id;
-
-    // Load complete game state from separated tables
-    //let game = await loadCompleteGame(game_id);
 
     // Verify player is in game
     verify_player_in_game(game, user_id);
@@ -18,7 +15,12 @@ wrap400(async (user, user_name, body, game) => {
     // Reset game state for new round
     game.status = GAME_STATUS.WAITING;
     game.players.forEach(player => {
-        player.status = PLAYER_STATUS.IDLE;
+        // Set status appropriately: bots to READY, humans to IDLE
+        if (player.is_ai) {
+            player.status = PLAYER_STATUS.READY;
+        } else {
+            player.status = PLAYER_STATUS.IDLE;
+        }
         player.hand = [];
         player.hand_length = 0;
         player.awaiting_attack = false;
@@ -34,9 +36,6 @@ wrap400(async (user, user_name, body, game) => {
     game.defender = 0;
     game.table_battles = [];
     game.elimination_order = [];
-
-    // Save complete game state back to separated tables
-    //await saveCompleteGame(game);
 
     // Determine message based on who won
     const winner = game.players.find(p => p.status === PLAYER_STATUS.OUT);

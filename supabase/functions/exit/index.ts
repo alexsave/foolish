@@ -1,5 +1,5 @@
-import { wrap400 } from "../_shared/utils.ts";
-import { Game, GAME_STATUS, PLAYER_STATUS, SERVER_EVENT_TYPE } from "../_shared/types.ts";
+import { ExecutionParams, wrap400 } from "../_shared/utils.ts";
+import { GAME_STATUS } from "../_shared/types.ts";
 import { verify_player_in_game } from "../_shared/common_utils.ts";
 import { createClient } from 'jsr:@supabase/supabase-js';
 
@@ -8,12 +8,9 @@ const supabaseClient = createClient(
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
 );
 
-wrap400(async (user, user_name, body, game) => {
+wrap400(async ({user, body, game}: ExecutionParams) => {
     const user_id = user.id;
     const { bot_id } = body;
-
-    // Load complete game state from separated tables
-    //let game = await loadCompleteGame(game_id);
 
     if (bot_id) {
         // Removing a bot
@@ -84,9 +81,5 @@ wrap400(async (user, user_name, body, game) => {
             .eq('game_id', game.id);
     }
 
-    // Save complete game state back to separated tables
-    //await saveCompleteGame(game);
-
     return { game, events: [] };
-
 }, false); 

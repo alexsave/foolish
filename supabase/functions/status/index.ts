@@ -1,13 +1,9 @@
-import { wrap400 } from '../_shared/utils.ts';
+import { ExecutionParams, wrap400 } from '../_shared/utils.ts';
 import { PublicGame, PublicPlayer, GAME_STATUS } from '../_shared/types.ts'; 
 
 // TODO: just remove this. With the right policies we can query from client
-wrap400(async (user, user_name, body, game) => {
+wrap400(async ({user, game}: ExecutionParams) => {
     const user_id = user.id;
-    const { game_id } = body;
-
-    // Load complete game state from separated tables
-    //const game: Game = await loadCompleteGame(game_id);
 
     // Check if player is in game
     const playerInGame = game.players.find(player => player.player_id === user_id);

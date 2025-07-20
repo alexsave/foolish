@@ -1,18 +1,15 @@
-import { wrap400, broadcastToGameUser } from "../_shared/utils.ts";
+import { wrap400, broadcastToGameUser, ExecutionParams } from "../_shared/utils.ts";
 import { SERVER_EVENT_TYPE } from "../_shared/types.ts";
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 
-wrap400(async (user, user_name, body, game) => {
+wrap400(async ({user, user_name, body, game}: ExecutionParams) => {
     const user_id = user.id;
     const { card_indices } = body;
 
     if (!card_indices || !Array.isArray(card_indices)) {
         throw new Error('Missing required field: card_indices');
     }
-
-    // Load the complete game
-    //const game: Game = await loadCompleteGame(game_id);
 
     // Check if the user is in the game
     const player = game.players.find(player => player.player_id === user_id);
@@ -31,9 +28,6 @@ wrap400(async (user, user_name, body, game) => {
 
     // Update the player's hand in the game object
     player.hand = rearrangedHand;
-
-    // Update the player's hand in the database
-    //await saveCompleteGame(game);
 
     // This doesn't need a broadcast to everyone
     broadcastToGameUser(game, SERVER_EVENT_TYPE.HAND_REARRANGED, {

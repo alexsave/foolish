@@ -1,6 +1,5 @@
-import { wrap400 } from "../_shared/utils.ts";
-import { Game, PlayerHand } from "../_shared/types.ts";
-import { verify_player_in_game } from "../_shared/common_utils.ts";
+import { wrap400, ExecutionParams } from "../_shared/utils.ts";
+import { PlayerHand } from "../_shared/types.ts";
 import { createClient } from 'jsr:@supabase/supabase-js';
 
 const supabaseClient = createClient(
@@ -8,12 +7,9 @@ const supabaseClient = createClient(
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
 );
 
-wrap400(async (user, user_name, body, game) => {
+wrap400(async ({user, user_name, body, game}: ExecutionParams) => {
     const user_id = user.id;
     const { game_id } = body;
-
-    // Load complete game state from separated tables
-    //let game = await loadCompleteGame(game_id);
 
     if (game.status !== 'waiting') {
         throw new Error(`Game ${game_id} is not waiting for players`);
@@ -57,9 +53,6 @@ wrap400(async (user, user_name, body, game) => {
         hand: [],
         awaiting_attack: false
     } as PlayerHand);
-
-    // Save complete game state back to separated tables
-    //await saveCompleteGame(game);
 
     return { game, events: [] };
 

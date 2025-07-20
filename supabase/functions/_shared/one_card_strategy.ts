@@ -1,4 +1,4 @@
-import { Game, PrivatePlayer } from './types.ts';
+import { Game } from './types.ts';
 import { BotStrategy, LegalMove } from './bot_interfaces.ts';
 
 // One card per attack strategy - only puts down one card per attack round

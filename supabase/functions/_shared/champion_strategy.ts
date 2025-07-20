@@ -1,7 +1,6 @@
 import { Card, Game, PrivatePlayer } from './types.ts';
 import { BotStrategy, LegalMove } from './bot_interfaces.ts';
-import { canCover, cardDisplay, get_next_player_index } from './common_utils.ts';
-import { ACE_VALUE } from './constants.ts';
+import { get_next_player_index } from './common_utils.ts';
 
 /**
  * Champion Durak Strategy - Tournament Winner (TypeScript)

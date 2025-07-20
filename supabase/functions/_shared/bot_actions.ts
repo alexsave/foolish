@@ -28,7 +28,6 @@ const acquireBotLoopLock = async (game_id: string): Promise<boolean> => {
         if (error) {
             // Handle non-unique constraint errors
             if (error.code !== '23505') {
-                console.error(`Failed to acquire lock for game ${game_id}:`, error);
                 return false;
             }
             
@@ -40,17 +39,13 @@ const acquireBotLoopLock = async (game_id: string): Promise<boolean> => {
                 .single();
             
             if (!existingLock) {
-                console.log(`Bot loop already running for game ${game_id}`);
                 return false;
             }
             
             const lockAge = Date.now() - new Date(existingLock.acquired_at).getTime();
             if (lockAge <= 150000) { // 150 seconds in milliseconds
-                console.log(`Bot loop already running for game ${game_id}`);
                 return false;
             }
-            
-            console.log(`Removing stale lock for game ${game_id} (${Math.round(lockAge/1000)}s old)`);
             
             // Delete the stale lock
             await supabaseClient
@@ -64,7 +59,6 @@ const acquireBotLoopLock = async (game_id: string): Promise<boolean> => {
                 .insert({ game_id, lock_id: lockId });
             
             if (retryError) {
-                console.log(`Failed to acquire lock after stale cleanup for game ${game_id}:`, retryError);
                 return false;
             }
         }
@@ -77,22 +71,17 @@ const acquireBotLoopLock = async (game_id: string): Promise<boolean> => {
             .single();
         
         if (selectError || !data || data.lock_id !== lockId) {
-            console.log(`Lock verification failed for game ${game_id} - another instance won the race`);
             return false;
         }
         
-        console.log(`Acquired bot loop lock for game ${game_id} with lock_id ${lockId}`);
         return true;
     } catch (error) {
-        console.error(`Error acquiring lock for game ${game_id}:`, error);
         return false;
     }
 };
 
 const releaseBotLoopLock = async (game_id: string): Promise<void> => {
     try {
-        console.log(`Releasing bot loop lock for game ${game_id}`);
-
         // Only delete if we have the correct lock_id
         const { error } = await supabaseClient
             .from('bot_locks')
@@ -102,8 +91,6 @@ const releaseBotLoopLock = async (game_id: string): Promise<void> => {
         
         if (error) {
             console.error(`Failed to release lock for game ${game_id}:`, error);
-        } else {
-            console.log(`Released bot loop lock for game ${game_id}`);
         }
         
     } catch (error) {
@@ -189,8 +176,6 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
     }
     
     if (eligibleBots.length === 0) {
-        console.log(`No eligible bots found for game ${game_id} in status ${gameStatus}`);
-
 
         //let shouldLoop = false;
         
@@ -528,13 +513,11 @@ async function getBotData(botId: string): Promise<Bot | null> {
             .single();
             
         if (error) {
-            console.error('Error fetching bot data:', error);
             return null;
         }
         
         return data;
     } catch (error) {
-        console.error('Error in getBotData:', error);
         return null;
     }
 }

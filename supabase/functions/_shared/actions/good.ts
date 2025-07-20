@@ -73,8 +73,6 @@ export async function executeGood(game: Game, player_id: string): Promise<Animat
     const allTableCards = game.table_battles.flatMap(battle => 
         battle.defense ? [battle.attack, battle.defense] : [battle.attack]
     );
-    console.log('[GOOD ACTION] Table battles before clearing:', game.table_battles);
-    console.log('[GOOD ACTION] All table cards for discard:', allTableCards);
     
     // Clear table battles
     game.table_battles = [];
@@ -89,10 +87,7 @@ export async function executeGood(game: Game, player_id: string): Promise<Animat
             message: `${allTableCards.length} cards discarded`,
             game_state: gameStateAfterDiscard
         };
-        console.log('[GOOD ACTION] Adding cards_to_trash event:', discardEvent);
         events.push(discardEvent);
-    } else {
-        console.log('[GOOD ACTION] No cards to discard - table is empty');
     }
     
     // Refill player hands and capture states for each refill event
@@ -118,7 +113,6 @@ export async function executeGood(game: Game, player_id: string): Promise<Animat
     await check_win(game);
     
     // Game continues in playing state (no status change needed unless game is over)
-    console.log('[GOOD ACTION] Final events array:', events);
     return events;
 }
 

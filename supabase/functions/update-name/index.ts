@@ -1,13 +1,10 @@
-import { wrap400 } from "../_shared/utils.ts";
-import { Game, GAME_STATUS, SERVER_EVENT_TYPE } from "../_shared/types.ts";
+import { wrap400, ExecutionParams } from "../_shared/utils.ts";
+import { GAME_STATUS } from "../_shared/types.ts";
 import { verify_player_in_game } from "../_shared/common_utils.ts";
 
-wrap400(async (user, user_name, body, game) => {
+wrap400(async ({user, body, game}: ExecutionParams) => {
     const user_id = user.id;
     const { new_name } = body;
-
-    // Load complete game state from separated tables
-    //let game = await loadCompleteGame(game_id);
 
     // Verify player is in game
     verify_player_in_game(game, user_id);
@@ -28,9 +25,6 @@ wrap400(async (user, user_name, body, game) => {
 
     // Update game name
     game.name = new_name.trim();
-
-    // Save complete game state back to separated tables
-    //await saveCompleteGame(game);
 
     return { game, events: [] };
 

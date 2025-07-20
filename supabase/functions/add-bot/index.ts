@@ -1,5 +1,5 @@
-import { wrap400 } from "../_shared/utils.ts";
-import { Game, BotHand, PLAYER_STATUS } from "../_shared/types.ts";
+import { wrap400, ExecutionParams } from "../_shared/utils.ts";
+import { BotHand, PLAYER_STATUS } from "../_shared/types.ts";
 import { createClient } from 'jsr:@supabase/supabase-js';
 
 const supabaseClient = createClient(
@@ -7,8 +7,7 @@ const supabaseClient = createClient(
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
 );
 
-wrap400(async (user, user_name, body, game) => {
-    const user_id = user.id;
+wrap400(async ({body, game}: ExecutionParams) => {
     const { game_id } = body;
 
     if (game.status !== 'waiting') {

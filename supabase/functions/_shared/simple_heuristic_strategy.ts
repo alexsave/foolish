@@ -1,7 +1,6 @@
 import { Card, Game, PrivatePlayer } from './types.ts';
 import { BotStrategy, LegalMove } from './bot_interfaces.ts';
-import { canCover, cardDisplay } from './common_utils.ts';
-import { ACE_VALUE } from './constants.ts';
+import { canCover } from './common_utils.ts';
 
 /**
  * Simple Heuristic Durak Strategy

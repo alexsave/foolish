@@ -1,12 +1,11 @@
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
-import { Card, PersonalGame, Game, PublicPlayer } from '../common/types';
+import { Card, Game } from '../common/types';
 import { useServer } from './ServerContext';
 import { useAuth } from './AuthContext';
 import { useParams } from 'react-router-dom';
 import supabase from '../backend/Connector';
 import { ANIMATION_TIME } from '../constants/constants';
 import { validateAttack, validatePass, validatePickup, validateCover } from '../utils/gameValidation';
-import { get_next_player_index, card_comp } from '../common/common_utils';
 
 // Animation timing constant
 export { ANIMATION_TIME } from '../constants/constants';
@@ -356,18 +355,6 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         setCurrentAnimation(nextAnimation);
         setAnimationQueue(prev => prev.slice(1));
         setIsAnimating(true);
-
-        // Log intermediate game state info
-        if (nextAnimation.game_state) {
-            console.log(`[ANIMATION] Processing ${nextAnimation.type} with intermediate game state:`);
-            console.log(`  - Table battles: ${nextAnimation.game_state.table_battles?.length || 0} battles`);
-            console.log(`  - Deck size: ${nextAnimation.game_state.deck?.length || 0}`);
-            console.log(`  - Discard pile: ${nextAnimation.game_state.discard_pile_length || 0}`);
-            console.log(`  - Current defender: ${nextAnimation.game_state.players?.[nextAnimation.game_state.defender]?.name || 'unknown'}`);
-            console.log(`  - Player hands:`, nextAnimation.game_state.players?.map(p => `${p.name}: ${p.hand?.length || 0} cards`));
-        } else {
-            console.log(`[ANIMATION] Processing ${nextAnimation.type} WITHOUT intermediate game state`);
-        }
 
         // Start tracking cards in this animation (simplified - CSS handles the actual animation)
         if (nextAnimation.cards && nextAnimation.cards.length > 0) {

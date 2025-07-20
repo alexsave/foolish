@@ -10,7 +10,7 @@ const seededRandom = (seed: number): number => {
 // Generate random rotation between -40 and 40 degrees
 const getRandomRotation = (seed: number, index: number): number => {
     const randomValue = seededRandom(seed + index * 1000);
-    return (randomValue * 50) - 25; // Maps 0-1 to -25 to 25
+    return (randomValue * 40) - 20; // Maps 0-1 to -20 to 20
 };
 
 export const CardBack = ({ deckSize = 36, enableRandomRotation = false }: { deckSize?: number; enableRandomRotation?: boolean }) => {

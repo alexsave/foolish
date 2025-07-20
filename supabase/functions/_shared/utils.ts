@@ -152,7 +152,14 @@ export const broadcastAnimationEvents = async (game: Game, events: AnimationEven
     }
 };
 
-export const wrap400 = (execute: (user: User, user_name: string, body: any, game: Game) => Promise<{game: Game, events: AnimationEvent[]}>, run_bots: boolean = false) => {
+export interface ExecutionParams {
+    user: User;
+    user_name: string;
+    body: any;
+    game: Game;
+}
+
+export const wrap400 = (execute: (params: ExecutionParams) => Promise<{game: Game, events: AnimationEvent[]}>, run_bots: boolean = false) => {
     const handler = async (req: Request): Promise<Response> => {
         try {
             // Handle CORS
@@ -180,7 +187,7 @@ export const wrap400 = (execute: (user: User, user_name: string, body: any, game
             
             if (game_id) {
                 // Execute operation with database lock for this specific game
-                const { game, events: operationEvents } = await executeWithGameLock(game_id, (game) => execute(user, user_name, body, game));
+                const { game, events: operationEvents } = await executeWithGameLock(game_id, (game) => execute({user, user_name, body, game}));
                 result = game;
                 events = operationEvents;
                 
@@ -191,7 +198,7 @@ export const wrap400 = (execute: (user: User, user_name: string, body: any, game
             } else {
                 // No game_id, execute immediately (for operations that don't involve games)
                 // pretty much only create
-                const operationResult = await execute(user, user_name, body, {} as Game);
+                const operationResult = await execute({user, user_name, body, game: {} as Game});
                 
                 result = operationResult.game;
                 events = operationResult.events;
@@ -847,13 +854,6 @@ export const updateEloRatings = async (game: Game): Promise<void> => {
 
         // Determine final rankings based on elimination order
         const rankings = calculateGameRankings(game);
-        console.log('=== ELO UPDATE DEBUG ===');
-        console.log('Game ID:', game.id);
-        console.log('Players in game:', game.players.map(p => ({ id: p.player_id, name: p.name, is_ai: p.is_ai, status: p.status })));
-        console.log('Elimination order from game:', game.elimination_order);
-        console.log('Rankings calculated:', rankings);
-        console.log('Game rankings:', rankings.map((id, index) => `${index + 1}. ${game.players.find(p => p.player_id === id)?.name} (${id})`));
-        console.log('========================');
 
         // Safety check: ensure all players are in rankings
         if (rankings.length !== game.players.length) {
@@ -892,7 +892,6 @@ export const updateEloRatings = async (game: Game): Promise<void> => {
             }
 
             ratingChanges.set(playerId, totalChange);
-            console.log(`Player ${game.players.find(p => p.player_id === playerId)?.name} (${playerId}) - Total ELO change: ${totalChange > 0 ? '+' : ''}${totalChange}`);
         }
 
         // Update human player ratings
@@ -924,8 +923,6 @@ export const updateEloRatings = async (game: Game): Promise<void> => {
             const currentBotData = botData.get(playerId)!;
             const newRating = Math.max(0, currentRating.elo_rating + change); // Prevent negative ratings
             
-            console.log(`Bot ${playerId} ELO change: ${currentRating.elo_rating} → ${newRating} (${change > 0 ? '+' : ''}${change})`);
-            
             botRatingUpdates.push({
                 id: playerId,
                 nickname: currentBotData.nickname,
@@ -937,8 +934,6 @@ export const updateEloRatings = async (game: Game): Promise<void> => {
         }
 
         if (botRatingUpdates.length > 0) {
-            console.log('Updating bot ratings:', JSON.stringify(botRatingUpdates, null, 2));
-            
             const { data: botUpdateData, error: botUpdateError } = await supabaseClient
                 .from('bots')
                 .upsert(botRatingUpdates)
@@ -947,11 +942,9 @@ export const updateEloRatings = async (game: Game): Promise<void> => {
             if (botUpdateError) {
                 console.error('Error updating bot ratings:', botUpdateError);
             } else {
-                console.log('Bot ratings updated successfully:', botUpdateData);
             }
         }
 
-        console.log('ELO ratings updated successfully for game:', game.id);
     } catch (error) {
         console.error('Error updating ELO ratings:', error);
         // Don't throw error to prevent breaking game completion

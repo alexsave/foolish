@@ -1,6 +1,6 @@
-import { wrap400, loadCompleteGame } from "../_shared/utils.ts";
-import { PersonalGame, Game, PlayerHand, AnimationEvent, ANIMATION_EVENT_TYPE } from "../_shared/types.ts";
-import { personalize_game, createId } from "../_shared/common_utils.ts";
+import { wrap400, loadCompleteGame, ExecutionParams } from "../_shared/utils.ts";
+import { Game, PlayerHand, AnimationEvent, ANIMATION_EVENT_TYPE } from "../_shared/types.ts";
+import { createId } from "../_shared/common_utils.ts";
 import { createClient } from 'jsr:@supabase/supabase-js';
 
 const supabaseClient = createClient(
@@ -8,7 +8,7 @@ const supabaseClient = createClient(
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
 );
 
-wrap400(async (user, user_name, body, game) => {
+wrap400(async ({user, user_name }: ExecutionParams) => {
     const user_id = user.id;
     
     // Generate unique game ID
