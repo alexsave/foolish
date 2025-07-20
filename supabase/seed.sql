@@ -271,13 +271,13 @@ AS $$
 BEGIN
   -- Broadcast to game-specific topic for chat messages
   PERFORM realtime.broadcast_changes(
-    'chat:' || COALESCE(NEW.game_id, OLD.game_id)::text, -- topic - chat:{game_id}
-    TG_OP,                                                -- event - INSERT, UPDATE, DELETE
-    TG_OP,                                                -- operation - same as event
-    TG_TABLE_NAME,                                        -- table - chat_messages
-    TG_TABLE_SCHEMA,                                      -- schema - public
-    NEW,                                                  -- new record - the record after the change
-    OLD                                                   -- old record - the record before the change
+    'chat:' || COALESCE(NEW.game_id, OLD.game_id)::text, 
+    TG_OP,
+    TG_OP,
+    TG_TABLE_NAME,
+    TG_TABLE_SCHEMA,
+    NEW,
+    OLD
   );
   RETURN COALESCE(NEW, OLD);
 END;

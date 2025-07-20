@@ -9,6 +9,7 @@ import { executeCover } from './actions/cover.ts';
 import { executePass } from './actions/pass.ts';
 import { executePickup } from './actions/pickup.ts';
 import { executeGood, handleGood } from './actions/good.ts';
+import { AnimationEvent } from './types.ts';
 
 const supabaseClient = createClient(
     Deno.env.get('SUPABASE_URL') || '',
@@ -214,16 +215,20 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
                     }
                     console.log(`Auto-transitioning game ${game_id} from WAIT_FOR_ATTACKERS - all attackers done`);
                     
-                    // Execute the same logic as good.ts
-                    
-                    // Find any non-defender player to trigger the good logic
-                    // (the good logic doesn't actually use the player_id for the transition)
-                    const anyNonDefender = currentGame.players.find((p, index) => index !== currentGame.defender);
-                    if (anyNonDefender) {
-                        await executeGood(currentGame, anyNonDefender.player_id);
+                        // Execute the same logic as good.ts
                         
-                        // Add animation event for auto-transition
-                        animationEvents.addMagicTransitionEvent('All attackers finished - automatically proceeding to next round');
+                        // Find any non-defender player to trigger the good logic
+                        // (the good logic doesn't actually use the player_id for the transition)
+                        const anyNonDefender = currentGame.players.find((p, index) => index !== currentGame.defender);
+                        if (anyNonDefender) {
+                            const goodEvents = await handleGood(currentGame, anyNonDefender.player_id);
+                            // Add the good events to the animation manager
+                            for (const event of goodEvents) {
+                                animationEvents.addEvent(event);
+                            }
+                            
+                            // Add animation event for auto-transition
+                            animationEvents.addMagicTransitionEvent('All attackers finished - automatically proceeding to next round');
                         
                         // Schedule bot actions for the new game state
                         if (currentGame.status === GAME_STATUS.PLAYING && currentGame.players[currentGame.first_attacker].is_ai) {
@@ -423,12 +428,13 @@ async function processBotAction(game: Game, bot: PrivatePlayer): Promise<void> {
 async function executeBotMove(game: Game, bot: PrivatePlayer, move: LegalMove): Promise<void> {
     try {
         let specialMessage: string | undefined;
+        let actionEvents: AnimationEvent[] = [];
         
         switch (move.type) {
             case 'attack':
                 // Capture the game status before executing the attack
                 const statusBeforeAttack = game.status;
-                await executeAttack(game, bot.player_id, move.cards!);
+                actionEvents = await executeAttack(game, bot.player_id, move.cards!);
                 // Set done_attacking_this_round flag based on the move's choice
                 if (move.done_attacking_this_round !== undefined) {
                     bot.done_attacking_this_round = move.done_attacking_this_round;
@@ -442,7 +448,8 @@ async function executeBotMove(game: Game, bot: PrivatePlayer, move: LegalMove): 
                         if (game.table_battles.length > 0 && game.table_battles.every(battle => battle.defense !== null)) {
                             try {
                                 console.log(`Bot ${bot.name} attempting good logic`);
-                                await handleGood(game, bot.player_id);
+                                const goodEvents = await handleGood(game, bot.player_id);
+                                actionEvents.push(...goodEvents);
                                 console.log(`Bot ${bot.name} successfully executed good logic`);
                             } catch (error) {
                                 console.log(`Bot ${bot.name} good logic failed validation: ${error.message}`);
@@ -454,7 +461,7 @@ async function executeBotMove(game: Game, bot: PrivatePlayer, move: LegalMove): 
                 break;
                 
             case 'cover':
-                await executeCover(game, bot.player_id, move.cards!, move.attack_cards!, true);
+                actionEvents = await executeCover(game, bot.player_id, move.cards!, move.attack_cards!, true);
                 // Check if this cover completed the round (all attacks covered)
                 const all_attacks_covered = game.table_battles.every(battle => battle.defense !== null);
                 if (all_attacks_covered) {
@@ -464,7 +471,7 @@ async function executeBotMove(game: Game, bot: PrivatePlayer, move: LegalMove): 
                 break;
                 
             case 'pass':
-                await executePass(game, bot.player_id, move.cards!);
+                actionEvents = await executePass(game, bot.player_id, move.cards!);
                 // Set done_attacking_this_round flag based on the move's choice
                 if (move.done_attacking_this_round !== undefined) {
                     bot.done_attacking_this_round = move.done_attacking_this_round;
@@ -478,7 +485,8 @@ async function executeBotMove(game: Game, bot: PrivatePlayer, move: LegalMove): 
                         if (game.table_battles.length > 0 && game.table_battles.every(battle => battle.defense !== null)) {
                             try {
                                 console.log(`Bot ${bot.name} attempting good logic after pass`);
-                                await handleGood(game, bot.player_id);
+                                const goodEvents = await handleGood(game, bot.player_id);
+                                actionEvents.push(...goodEvents);
                                 console.log(`Bot ${bot.name} successfully executed good logic after pass`);
                             } catch (error) {
                                 console.log(`Bot ${bot.name} good logic failed validation after pass: ${error.message}`);
@@ -490,40 +498,19 @@ async function executeBotMove(game: Game, bot: PrivatePlayer, move: LegalMove): 
                 break;
                 
             case 'pickup':
-                await executePickup(game, bot.player_id);
+                actionEvents = await executePickup(game, bot.player_id);
                 break;
                 
             case 'good':
-                await handleGood(game, bot.player_id);
+                actionEvents = await handleGood(game, bot.player_id);
                 break;
         }
         
         console.log(`Bot ${bot.name} performed ${move.type} action`);
         
-        // Add animation event for the move based on move type
-        switch (move.type) {
-            case 'attack':
-                animationEvents.addAttackEvent(bot.player_id, move.cards!);
-                break;
-            case 'pass':
-                animationEvents.addPassEvent(bot.player_id, move.cards!);
-                break;
-            case 'cover':
-                // For cover moves, we need to add events for each card being covered
-                for (let i = 0; i < move.cards!.length; i++) {
-                    animationEvents.addCoverEvent(bot.player_id, move.cards![i], move.attack_cards![i], i);
-                }
-                break;
-            case 'pickup':
-                // Get all cards from table battles for pickup animation
-                const allTableCards = game.table_battles.flatMap(battle => 
-                    battle.defense ? [battle.attack, battle.defense] : [battle.attack]
-                );
-                animationEvents.addPickupEvent(bot.player_id, allTableCards);
-                break;
-            case 'good':
-                animationEvents.addMagicTransitionEvent(`Bot ${bot.name} said good - proceeding to next round`);
-                break;
+        // Add all events from the action to the animation manager
+        for (const event of actionEvents) {
+            animationEvents.addEvent(event);
         }
         
     } catch (error) {
