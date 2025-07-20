@@ -40,7 +40,7 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
     const gameStatus = game?.status;
     const { user_id } = useAuth();
     const style: React.CSSProperties = {
-        width: '180px',
+        width: '200px',
         display: 'flex',
         flexDirection: 'row',
         justifyContent: 'space-between',
@@ -350,8 +350,8 @@ export const Lobby = () => {
             title={!isEditingName ? "Click to edit game name" : undefined}
         />
         <h2 style={{ margin: '1rem' }}>Game ID: {game_id}</h2>
-        <div style={{ marginBottom: '20px' }}>
-            <QRCodeSVG value={qrUrl} size={200} fgColor="rgb(152, 38, 33)" bgColor="rgb(255, 255, 255)" />
+        <div style={{ marginBottom: '10px' }}>
+            <QRCodeSVG value={qrUrl} size={220} fgColor="rgb(152, 38, 33)" bgColor="rgb(255, 255, 255)" />
         </div>
         {
             localPlayerOrder.map((player: PublicPlayer, index: number) => (
