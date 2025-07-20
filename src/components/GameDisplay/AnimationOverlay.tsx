@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Card } from '../../common/types';
-import { useAnimation } from '../../contexts/AnimationContext';
+import { ANIMATION_TIME, useAnimation } from '../../contexts/AnimationContext';
 import { CardFace } from './CardFace';
 
 interface AnimatedCard {
@@ -176,7 +176,7 @@ export const AnimationOverlay = () => {
             // Clear animated cards after animation completes
             setTimeout(() => {
                 setAnimatedCards([]);
-            }, 550); // 500ms animation + 50ms buffer
+            }, ANIMATION_TIME + 50); // 500ms animation + 50ms buffer
         }, 50); // Small delay to ensure DOM is ready
 
     }, [currentAnimation, isAnimating]);
@@ -221,7 +221,7 @@ export const AnimationOverlay = () => {
                             // CSS transitions for smooth animation
                             transition: progress === 0 
                                 ? 'none' // No transition for initial position
-                                : 'left 500ms cubic-bezier(0.25, 0.46, 0.45, 0.94), top 500ms cubic-bezier(0.25, 0.46, 0.45, 0.94), transform 500ms ease-out'
+                                : `left ${ANIMATION_TIME}ms cubic-bezier(0.25, 0.46, 0.45, 0.94), top ${ANIMATION_TIME}ms cubic-bezier(0.25, 0.46, 0.45, 0.94), transform ${ANIMATION_TIME}ms ease-out`
                         }}
                     >
                         <CardFace 

@@ -93,6 +93,9 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
     // Track optimistically triggered animations to avoid server duplicates
     const optimisticAnimations = useRef<Set<string>>(new Set());
+    
+    // Store channel reference for proper cleanup
+    const gameUserChannelRef = useRef<any>(null);
 
     // Subscribe to game-user channel for animation events
     useEffect(() => {
@@ -101,35 +104,64 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         }
 
         const subscribeToGameAnimations = async () => {
-            // Ensure we have proper auth before subscribing
-            await supabase.realtime.setAuth();
+            try {
+                // Clean up any existing channel first
+                if (gameUserChannelRef.current) {
+                    await supabase.removeChannel(gameUserChannelRef.current);
+                    gameUserChannelRef.current = null;
+                }
 
-            // Subscribe to personalized game-user channel for game updates
-            const gameUserChannel = supabase.channel(`gu-${url_game_id}-${user_id}`, {
-                config: { private: true }
-            });
+                // Ensure we have proper auth before subscribing
+                await supabase.realtime.setAuth();
 
-            gameUserChannel
-                .on('broadcast', { event: 'animation_events' }, (payload) => {
-                    handleAnimationMessage(payload.payload);
-                })
-                .subscribe((status, err) => {
-                    if (status === 'SUBSCRIBED') {
-                        console.log('Connected to game-user channel:', `gu-${url_game_id}-${user_id}`);
-                    } else {
-                        console.error('Game-user channel error:', err);
-                    }
+                // Subscribe to personalized game-user channel for game updates
+                const gameUserChannel = supabase.channel(`gu-${url_game_id}-${user_id}`, {
+                    config: { private: true }
                 });
 
-            return () => {
-                supabase.removeChannel(gameUserChannel);
-            };
+                // Store the channel reference
+                gameUserChannelRef.current = gameUserChannel;
+
+                gameUserChannel
+                    .on('broadcast', { event: 'animation_events' }, (payload) => {
+                        handleAnimationMessage(payload.payload);
+                    })
+                    .subscribe((status, err) => {
+                        if (status === 'SUBSCRIBED') {
+                            console.log('[WEBSOCKET] Successfully subscribed to channel:', `gu-${url_game_id}-${user_id}`);
+                        } else if (status === 'CHANNEL_ERROR') {
+                            console.error('[WEBSOCKET] Channel error:', err || 'Unknown error');
+                        } else if (status === 'TIMED_OUT') {
+                            console.error('[WEBSOCKET] Channel subscription timed out');
+                        } else if (status === 'CLOSED') {
+                            console.log('[WEBSOCKET] Channel closed:', `gu-${url_game_id}-${user_id}`);
+                        } else {
+                            console.log('[WEBSOCKET] Channel status:', status, err);
+                        }
+                    });
+            } catch (error) {
+                console.error('Error setting up game animation subscription:', error);
+            }
         };
 
-        const cleanup = subscribeToGameAnimations();
+        subscribeToGameAnimations();
         
+        // Cleanup function
         return () => {
-            cleanup.then(cleanupFn => cleanupFn && cleanupFn());
+            if (gameUserChannelRef.current) {
+                // Use a timeout to avoid immediate cleanup race conditions
+                setTimeout(async () => {
+                    try {
+                        if (gameUserChannelRef.current) {
+                            await supabase.removeChannel(gameUserChannelRef.current);
+                            gameUserChannelRef.current = null;
+                        }
+                    } catch (error) {
+                        // Ignore cleanup errors - channel might already be closed
+                        console.debug('Channel cleanup error (expected if WebSocket closed):', error);
+                    }
+                }, 100);
+            }
         };
     }, [user_id, url_game_id]);
 
@@ -143,9 +175,37 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 currentGameIdRef.current = message.game.id;
             }
             
+            // Check for duplicate sequence_id FIRST (before checking optimistic events)
+            const sequenceId = message.sequence_id || message.gameId + '-' + Date.now();
+            console.log(`[DUPLICATION] Checking sequence_id for duplicates:`, sequenceId);
+            console.log(`[DUPLICATION] Currently processed sequence_ids:`, Array.from(processedSequenceIds.current));
+            
+            if (processedSequenceIds.current.has(sequenceId)) {
+                console.log(`[DUPLICATION] Duplicate sequence_id detected, ignoring:`, sequenceId);
+                return;
+            }
+            
+            // Also check event content as backup
+            const eventsString = JSON.stringify(message.events);
+            console.log(`[DUPLICATION] Checking event content for duplicates (first 100 chars):`, eventsString.substring(0, 100) + '...');
+            
+            if (processedEventContent.current.has(eventsString)) {
+                console.log(`[DUPLICATION] Duplicate event content detected, ignoring`);
+                return;
+            }
+            
+            // Mark as processed early to prevent race conditions
+            processedSequenceIds.current.add(sequenceId);
+            processedEventContent.current.add(eventsString);
+            console.log(`[DUPLICATION] Marked sequence_id as processed:`, sequenceId);
+            
             // Check if any of these events were triggered optimistically
             const serverEvents = message.events;
-            const hasOptimisticEvent = serverEvents.some((serverEvent: any) => {
+            console.log(`[DUPLICATION] Checking ${serverEvents.length} server events for duplicates`);
+            console.log(`[DUPLICATION] Current optimistic set size:`, optimisticAnimations.current.size);
+            console.log(`[DUPLICATION] Current optimistic set contents:`, Array.from(optimisticAnimations.current));
+            
+            const hasOptimisticEvent = serverEvents.some((serverEvent: any, index: number) => {
                 const serverEventString = JSON.stringify({
                     type: serverEvent.type,
                     cards: serverEvent.cards,
@@ -153,13 +213,25 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                     to_location: serverEvent.to_location,
                     player_id: serverEvent.player_id
                 });
-                return optimisticAnimations.current.has(serverEventString);
+                console.log(`[DUPLICATION] Server event ${index + 1}:`, {
+                    type: serverEvent.type,
+                    cards: serverEvent.cards,
+                    from_location: serverEvent.from_location,
+                    to_location: serverEvent.to_location,
+                    player_id: serverEvent.player_id
+                });
+                console.log(`[DUPLICATION] Server event ${index + 1} string:`, serverEventString);
+                const isOptimistic = optimisticAnimations.current.has(serverEventString);
+                console.log(`[DUPLICATION] Server event ${index + 1} is optimistic:`, isOptimistic);
+                return isOptimistic;
             });
+
+            console.log(`[DUPLICATION] Has optimistic event:`, hasOptimisticEvent);
 
             if (hasOptimisticEvent) {
                 console.log('[OPTIMISTIC] Ignoring server animations - already triggered optimistically');
                 // Clear the optimistic animations since server confirmed them
-                serverEvents.forEach((serverEvent: any) => {
+                serverEvents.forEach((serverEvent: any, index: number) => {
                     const serverEventString = JSON.stringify({
                         type: serverEvent.type,
                         cards: serverEvent.cards,
@@ -167,14 +239,21 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                         to_location: serverEvent.to_location,
                         player_id: serverEvent.player_id
                     });
-                    optimisticAnimations.current.delete(serverEventString);
+                    console.log(`[DUPLICATION] Removing server event ${index + 1} from optimistic set:`, serverEventString);
+                    const wasDeleted = optimisticAnimations.current.delete(serverEventString);
+                    console.log(`[DUPLICATION] Server event ${index + 1} was deleted:`, wasDeleted);
                 });
+                
+                console.log(`[DUPLICATION] After cleanup, optimistic set size:`, optimisticAnimations.current.size);
+                console.log(`[DUPLICATION] After cleanup, optimistic set contents:`, Array.from(optimisticAnimations.current));
                 
                 // Still update game state from server, but skip animations
                 if (message.game) {
                     updateGameState(message.game.id, message.game);
                 }
                 return;
+            } else {
+                console.log('[DUPLICATION] No optimistic events found, processing server animations normally');
             }
             
             // Log which events have intermediate game states
@@ -187,21 +266,22 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 console.log(`  ${index + 1}. ${animEvent.type} (${animEvent.message}) - ${stateInfo}`);
             });
             
+            // Remove the duplicate checking logic that was moved to the top
             // Check for duplicate events using stringified content
-            const eventsString = JSON.stringify(message.events);
+            // const eventsString = JSON.stringify(message.events);
             
-            if (processedEventContent.current.has(eventsString)) {
-                return;
-            }
+            // if (processedEventContent.current.has(eventsString)) {
+            //     return;
+            // }
             
-            processedEventContent.current.add(eventsString);
+            // processedEventContent.current.add(eventsString);
             
             // Also check sequence_id as backup (in case events are identical but from different sources)
-            const sequenceId = message.sequence_id || message.gameId + '-' + Date.now();
-            if (processedSequenceIds.current.has(sequenceId)) {
-                return;
-            }
-            processedSequenceIds.current.add(sequenceId);
+            // const sequenceId = message.sequence_id || message.gameId + '-' + Date.now();
+            // if (processedSequenceIds.current.has(sequenceId)) {
+            //     return;
+            // }
+            // processedSequenceIds.current.add(sequenceId);
             
             // Clean up old sequence IDs to prevent memory leaks (keep only last 50)  
             // Event content is cleared after each sequence, so no cleanup needed there
@@ -232,6 +312,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     // Process the animation queue
     const processAnimationQueue = useCallback(() => {
         if (animationQueueRef.current.length === 0) {
+            console.log('[QUEUE] Animation queue is empty, stopping processing');
             setIsAnimating(false);
             setCurrentAnimation(null);
             
@@ -253,6 +334,16 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         }
 
         const nextAnimation = animationQueueRef.current[0];
+        console.log('[QUEUE] Processing animation from queue:', {
+            type: nextAnimation.type,
+            player_id: nextAnimation.player_id,
+            cards: nextAnimation.cards,
+            from_location: nextAnimation.from_location,
+            to_location: nextAnimation.to_location,
+            message: nextAnimation.message
+        });
+        console.log('[QUEUE] Remaining animations in queue after this one:', animationQueueRef.current.length - 1);
+        
         setCurrentAnimation(nextAnimation);
         setAnimationQueue(prev => prev.slice(1));
         setIsAnimating(true);
@@ -330,7 +421,20 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
     // Queue a single animation
     const queueAnimation = (event: AnimationEvent) => {
-        setAnimationQueue(prev => [...prev, event]);
+        console.log('[QUEUE] Queueing animation:', {
+            type: event.type,
+            player_id: event.player_id,
+            cards: event.cards,
+            from_location: event.from_location,
+            to_location: event.to_location,
+            message: event.message
+        });
+        setAnimationQueue(prev => {
+            console.log('[QUEUE] Animation queue length before adding:', prev.length);
+            const newQueue = [...prev, event];
+            console.log('[QUEUE] Animation queue length after adding:', newQueue.length);
+            return newQueue;
+        });
     };
 
     // Queue an animation sequence
@@ -387,6 +491,9 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         queueAnimation(animationEvent);
         
         console.log(`[OPTIMISTIC] Triggered ${animationType} animation:`, animationEvent);
+        console.log(`[OPTIMISTIC] Event string added to set:`, eventString);
+        console.log(`[OPTIMISTIC] Current optimistic set size:`, optimisticAnimations.current.size);
+        console.log(`[OPTIMISTIC] Current optimistic set contents:`, Array.from(optimisticAnimations.current));
         return eventString;
     };
 

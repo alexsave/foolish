@@ -15,7 +15,7 @@ const getRandomRotation = (seed: number, index: number): number => {
 
 export const CardBack = ({ deckSize = 36, enableRandomRotation = false }: { deckSize?: number; enableRandomRotation?: boolean }) => {
     const [patternDataUrl, setPatternDataUrl] = useState<string>('');
-    const seed = 12345; // Fixed seed for deterministic results
+    const seed = 42; // Fixed seed for deterministic results
 
     useEffect(() => {
         generateCardBackPattern(40, 70).then(dataUrl => {

@@ -20,6 +20,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { getAuthenticatedUser } from './auth.ts';
 import { lockedBotLoop } from './bot_actions.ts';
+import { AnimationEventManager } from './animation_event_manager.ts';
 
 const supabaseClient = createClient(
     Deno.env.get('SUPABASE_URL') || '',
@@ -76,123 +77,28 @@ export const executeWithGameLock = async (game_id: string, operation: (game: Gam
     }
 };
 
-// Animation event manager for collecting events during operations
-class AnimationEventManager {
-    private events: AnimationEvent[] = [];
-    
-    clear() {
-        this.events = [];
-    }
-    
-    getEvents(): AnimationEvent[] {
-        return [...this.events];
-    }
-    
-    addEvent(event: AnimationEvent) {
-        this.events.push(event);
-    }
-    
-    addAttackEvent(player_id: string, cards: Card[]) {
-        this.addEvent({
-            type: ANIMATION_EVENT_TYPE.ATTACK_PASS,
-            player_id,
-            cards,
-            from_location: 'hand',
-            to_location: 'table'
-        });
-    }
-    
-    addPassEvent(player_id: string, cards: Card[]) {
-        this.addEvent({
-            type: ANIMATION_EVENT_TYPE.ATTACK_PASS,
-            player_id,
-            cards,
-            from_location: 'hand',
-            to_location: 'table'
-        });
-    }
-    
-    addCoverEvent(player_id: string, cover_card: Card, attack_card: Card, battle_index: number) {
-        this.addEvent({
-            type: ANIMATION_EVENT_TYPE.COVER,
-            player_id,
-            cards: [cover_card],
-            target_card: attack_card,
-            battle_index,
-            from_location: 'hand',
-            to_location: 'table'
-        });
-    }
-    
-    addPickupEvent(player_id: string, cards: Card[]) {
-        this.addEvent({
-            type: ANIMATION_EVENT_TYPE.PICKUP,
-            player_id,
-            cards,
-            from_location: 'table',
-            to_location: 'hand'
-        });
-    }
-    
-    addMagicTransitionEvent(message: string) {
-        this.addEvent({
-            type: ANIMATION_EVENT_TYPE.MAGIC_TRANSITION,
-            message
-        });
-    }
-    
-    addDealEvent(player_id: string, cards: Card[]) {
-        this.addEvent({
-            type: ANIMATION_EVENT_TYPE.DEAL,
-            player_id,
-            cards,
-            from_location: 'deck',
-            to_location: 'hand'
-        });
-    }
-    
-    addFlippedEvent(card: Card) {
-        this.addEvent({
-            type: ANIMATION_EVENT_TYPE.FLIPPED,
-            cards: [card],
-            from_location: 'deck',
-            to_location: 'flipped'
-        });
-    }
-    
-    addDefenderMoveEvent(player_id: string) {
-        this.addEvent({
-            type: ANIMATION_EVENT_TYPE.DEFENDER_MOVE,
-            player_id
-        });
-    }
-    
-    addOutEvent(player_id: string) {
-        this.addEvent({
-            type: ANIMATION_EVENT_TYPE.OUT,
-            player_id
-        });
-    }
-    
-    addRefillEvent(player_id: string, cards: Card[]) {
-        this.addEvent({
-            type: ANIMATION_EVENT_TYPE.REFILL,
-            player_id,
-            cards,
-            from_location: 'deck',
-            to_location: 'hand'
-        });
-    }
-    
-    addCardsToTrashEvent(cards: Card[]) {
-        this.addEvent({
-            type: ANIMATION_EVENT_TYPE.CARDS_TO_TRASH,
-            cards,
-            from_location: 'table',
-            to_location: 'discard'
-        });
-    }
-}
+// Sanitize animation events for a specific player - hide other players' cards
+export const sanitizeEventsForPlayer = (events: AnimationEvent[], forPlayerId: string): AnimationEvent[] => {
+    return events.map(event => {
+        // Only sanitize REFILL events from other players - these show cards going to their hands
+        if (event.type === 'refill' && event.cards && event.player_id && event.player_id !== forPlayerId) {
+            // For refill events involving other players, replace with sanitized version
+            // Keep the same structure but replace actual card data with placeholder for card backs
+            const sanitizedEvent: AnimationEvent = {
+                ...event,
+                cards: event.cards.map(() => ({
+                    suit: -1, // Special value to indicate "card back"
+                    value: -1
+                }))
+            };
+            
+            return sanitizedEvent;
+        }
+        
+        // All other events (attack, pass, cover, etc.) are not sanitized - cards are visible on table anyway
+        return event;
+    });
+};
 
 // Export a global instance for use across the application
 export const animationEvents = new AnimationEventManager();
@@ -203,14 +109,47 @@ export const broadcastAnimationEvents = async (game: Game, events: AnimationEven
         return;
     }
     
-    const payload = {
-        type: 'animation_sequence',
-        events: events,
-        sequence_id: crypto.randomUUID(),
-        timestamp: Date.now()
-    };
+    console.log(`[BROADCAST DEBUG] broadcastAnimationEvents called for game ${game.id} with ${events.length} events`);
     
-    await broadcastToGameUsers(game, 'animation_events', payload);
+    // Send sanitized events to each player individually
+    for (const player of game.players) {
+        const sanitizedEvents = sanitizeEventsForPlayer(events, player.player_id);
+        
+        const payload = {
+            type: 'animation_sequence',
+            events: sanitizedEvents,
+            sequence_id: crypto.randomUUID(),
+            timestamp: Date.now()
+        };
+        
+        console.log(`[SECURITY] Sending ${sanitizedEvents.length} sanitized events to player ${player.name} (${player.player_id})`);
+        
+        // Log any cards that were sanitized for this player
+        sanitizedEvents.forEach((event, index) => {
+            if (event.cards && event.player_id && event.player_id !== player.player_id) {
+                const cardCount = event.cards.length;
+                const hasSanitizedCards = event.cards.some(card => card.suit === -1 && card.value === -1);
+                if (hasSanitizedCards) {
+                    console.log(`[SECURITY] Event ${index + 1} for player ${player.name}: ${cardCount} cards from ${event.player_id} sanitized to card backs`);
+                }
+            }
+        });
+        
+        const channel = supabaseClient.channel(`gu-${game.id}-${player.player_id}`, {
+            config: { private: true }
+        });
+        
+        await channel.send({
+            type: 'broadcast',
+            event: 'animation_events',
+            payload: {
+                ...payload,
+                game: personalize_game(game, player.player_id)
+            }
+        });
+        
+        await supabaseClient.removeChannel(channel);
+    }
 };
 
 export const wrap400 = (execute: (user: User, user_name: string, body: any, game: Game) => Promise<{game: Game, events: AnimationEvent[]}>, run_bots: boolean = false) => {
