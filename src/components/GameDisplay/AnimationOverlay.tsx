@@ -81,6 +81,8 @@ export const AnimationOverlay = () => {
                 return { x: centerX, y: centerY };
             case 'deck':
                 return { x: 100, y: 120 };
+            case 'flipped':
+                return { x: 100, y: 180 }; // Slightly below the deck
             case 'discard':
                 return { x: window.innerWidth - 100, y: 120 }; // Top-right corner
             default:
@@ -162,18 +164,36 @@ export const AnimationOverlay = () => {
                     let destinationElement: HTMLElement | null = null;
                     let endPos: { x: number; y: number };
                     
-                    if (to_location === 'hand') {
-                        destinationElement = findElementByLocation('hand', player_id);
-                    } else if (to_location === 'table') {
-                        destinationElement = findElementByLocation('table');
-                    } else if (to_location === 'discard') {
-                        destinationElement = findElementByLocation('discard');
-                    }
-
-                    if (destinationElement) {
-                        endPos = getElementPosition(destinationElement);
+                    if (to_location === 'flipped') {
+                        // First try to find the actual flipped card element
+                        destinationElement = findElementByLocation('flipped');
+                        if (destinationElement) {
+                            endPos = getElementPosition(destinationElement);
+                        } else {
+                            // Fall back to positioning relative to deck
+                            const deckElement = findElementByLocation('deck');
+                            if (deckElement) {
+                                const deckPos = getElementPosition(deckElement);
+                                endPos = { x: deckPos.x, y: deckPos.y + 60 }; // 60px below deck
+                            } else {
+                                endPos = getFallbackPosition('flipped', player_id);
+                            }
+                        }
                     } else {
-                        endPos = getFallbackPosition(to_location || 'table', player_id);
+                        // Handle all other destination types
+                        if (to_location === 'hand') {
+                            destinationElement = findElementByLocation('hand', player_id);
+                        } else if (to_location === 'table') {
+                            destinationElement = findElementByLocation('table');
+                        } else if (to_location === 'discard') {
+                            destinationElement = findElementByLocation('discard');
+                        }
+
+                        if (destinationElement) {
+                            endPos = getElementPosition(destinationElement);
+                        } else {
+                            endPos = getFallbackPosition(to_location || 'table', player_id);
+                        }
                     }
 
                     // Add some offset for multiple cards
