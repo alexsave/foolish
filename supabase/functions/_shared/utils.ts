@@ -210,11 +210,7 @@ export const broadcastAnimationEvents = async (game: Game, events: AnimationEven
         timestamp: Date.now()
     };
     
-    console.log(`[ANIMATION DEBUG] Broadcasting animation_events to game users with payload:`, JSON.stringify(payload, null, 2));
-    
     await broadcastToGameUsers(game, 'animation_events', payload);
-    
-    console.log(`[ANIMATION DEBUG] broadcastToGameUsers completed`);
 };
 
 export const wrap400 = (execute: (user: User, user_name: string, body: any, game: Game) => Promise<{game: Game, events: AnimationEvent[]}>, run_bots: boolean = false) => {
@@ -249,16 +245,9 @@ export const wrap400 = (execute: (user: User, user_name: string, body: any, game
                 result = game;
                 events = operationEvents;
                 
-                console.log(`[ANIMATION DEBUG] Game ${game_id}: Received ${events.length} events from action`);
-                if (events.length > 0) {
-                    console.log(`[ANIMATION DEBUG] Events:`, JSON.stringify(events, null, 2));
-                }
-                
                 // Broadcast animation events if any were collected
                 if (events.length > 0) {
-                    console.log(`[ANIMATION DEBUG] Broadcasting ${events.length} events to game users`);
                     await broadcastAnimationEvents(result, events);
-                    console.log(`[ANIMATION DEBUG] Broadcast complete`);
                 }
             } else {
                 // No game_id, execute immediately (for operations that don't involve games)
@@ -268,13 +257,9 @@ export const wrap400 = (execute: (user: User, user_name: string, body: any, game
                 result = operationResult.game;
                 events = operationResult.events;
                 
-                console.log(`[ANIMATION DEBUG] No game_id: Received ${events.length} events from action`);
-                
                 // Broadcast for game creation
                 if (result && result.id && events.length > 0) {
-                    console.log(`[ANIMATION DEBUG] Broadcasting ${events.length} events for game creation`);
                     await broadcastAnimationEvents(result, events);
-                    console.log(`[ANIMATION DEBUG] Creation broadcast complete`);
                 }
             }
 
