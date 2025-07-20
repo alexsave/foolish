@@ -99,6 +99,17 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     // Simple retry interval for animation channel
     const animationChannelRetryInterval = useRef(1000);
 
+    // Clear optimistic animations every 10 seconds to prevent missing repeat events
+    useEffect(() => {
+        const interval = setInterval(() => {
+            if (optimisticAnimations.current.size > 0) {
+                optimisticAnimations.current.clear();
+            }
+        }, 10000); // Clear every 10 seconds
+
+        return () => clearInterval(interval);
+    }, []);
+
     // Subscribe to game-user channel for animation events
     useEffect(() => {
         if (!user_id || !url_game_id) {
@@ -130,17 +141,14 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                     })
                     .subscribe((status, err) => {
                         if (status === 'SUBSCRIBED') {
-                            console.log('[WEBSOCKET] Successfully subscribed to channel:', `gu-${url_game_id}-${user_id}`);
                             animationChannelRetryInterval.current = 1000; // Reset retry interval on success
                         } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
                             console.error('[WEBSOCKET] Animation channel error:', err || 'Unknown error');
-                            console.log(`Retrying animation channel connection in ${animationChannelRetryInterval.current}ms`);
                             setTimeout(() => {
                                 subscribeToGameAnimations().catch(console.error);
                                 animationChannelRetryInterval.current *= 2; // Double the interval
                             }, animationChannelRetryInterval.current);
                         } else {
-                            console.log('[WEBSOCKET] Channel status:', status, err);
                         }
                     });
             } catch (error) {
@@ -175,8 +183,6 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
     // Handle animation messages from real-time channel
     const handleAnimationMessage = (message: any) => {
-        console.log('[ANIMATION_EVENTS] Animation message received:', message);
-        
         if (message.events && Array.isArray(message.events)) {
             // Store the game ID for use during animations
             if (message.game?.id) {
@@ -185,33 +191,24 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             
             // Check for duplicate sequence_id FIRST (before checking optimistic events)
             const sequenceId = message.sequence_id || message.gameId + '-' + Date.now();
-            console.log(`[DUPLICATION] Checking sequence_id for duplicates:`, sequenceId);
-            console.log(`[DUPLICATION] Currently processed sequence_ids:`, Array.from(processedSequenceIds.current));
             
             if (processedSequenceIds.current.has(sequenceId)) {
-                console.log(`[DUPLICATION] Duplicate sequence_id detected, ignoring:`, sequenceId);
                 return;
             }
             
             // Also check event content as backup
             const eventsString = JSON.stringify(message.events);
-            console.log(`[DUPLICATION] Checking event content for duplicates (first 100 chars):`, eventsString.substring(0, 100) + '...');
             
             if (processedEventContent.current.has(eventsString)) {
-                console.log(`[DUPLICATION] Duplicate event content detected, ignoring`);
                 return;
             }
             
             // Mark as processed early to prevent race conditions
             processedSequenceIds.current.add(sequenceId);
             processedEventContent.current.add(eventsString);
-            console.log(`[DUPLICATION] Marked sequence_id as processed:`, sequenceId);
             
             // Check if any of these events were triggered optimistically
             const serverEvents = message.events;
-            console.log(`[DUPLICATION] Checking ${serverEvents.length} server events for duplicates`);
-            console.log(`[DUPLICATION] Current optimistic set size:`, optimisticAnimations.current.size);
-            console.log(`[DUPLICATION] Current optimistic set contents:`, Array.from(optimisticAnimations.current));
             
             const hasOptimisticEvent = serverEvents.some((serverEvent: any, index: number) => {
                 const serverEventString = JSON.stringify({
@@ -221,23 +218,11 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                     to_location: serverEvent.to_location,
                     player_id: serverEvent.player_id
                 });
-                console.log(`[DUPLICATION] Server event ${index + 1}:`, {
-                    type: serverEvent.type,
-                    cards: serverEvent.cards,
-                    from_location: serverEvent.from_location,
-                    to_location: serverEvent.to_location,
-                    player_id: serverEvent.player_id
-                });
-                console.log(`[DUPLICATION] Server event ${index + 1} string:`, serverEventString);
                 const isOptimistic = optimisticAnimations.current.has(serverEventString);
-                console.log(`[DUPLICATION] Server event ${index + 1} is optimistic:`, isOptimistic);
                 return isOptimistic;
             });
 
-            console.log(`[DUPLICATION] Has optimistic event:`, hasOptimisticEvent);
-
             if (hasOptimisticEvent) {
-                console.log('[OPTIMISTIC] Ignoring server animations - already triggered optimistically');
                 // Clear the optimistic animations since server confirmed them
                 serverEvents.forEach((serverEvent: any, index: number) => {
                     const serverEventString = JSON.stringify({
@@ -247,13 +232,8 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                         to_location: serverEvent.to_location,
                         player_id: serverEvent.player_id
                     });
-                    console.log(`[DUPLICATION] Removing server event ${index + 1} from optimistic set:`, serverEventString);
                     const wasDeleted = optimisticAnimations.current.delete(serverEventString);
-                    console.log(`[DUPLICATION] Server event ${index + 1} was deleted:`, wasDeleted);
                 });
-                
-                console.log(`[DUPLICATION] After cleanup, optimistic set size:`, optimisticAnimations.current.size);
-                console.log(`[DUPLICATION] After cleanup, optimistic set contents:`, Array.from(optimisticAnimations.current));
                 
                 // Still update game state from server, but skip animations
                 if (message.game) {
@@ -261,17 +241,14 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 }
                 return;
             } else {
-                console.log('[DUPLICATION] No optimistic events found, processing server animations normally');
             }
             
             // Log which events have intermediate game states
-            console.log('[ANIMATION] Events breakdown:');
             message.events.forEach((animEvent: AnimationEvent, index: number) => {
                 const hasGameState = !!animEvent.game_state;
                 const stateInfo = hasGameState ? 
                     `table:${animEvent.game_state!.table_battles?.length || 0}, hands:${animEvent.game_state!.players?.map(p => p.hand?.length || 0).join(',')}` :
                     'NO STATE';
-                console.log(`  ${index + 1}. ${animEvent.type} (${animEvent.message}) - ${stateInfo}`);
             });
             
             // Remove the duplicate checking logic that was moved to the top
@@ -300,7 +277,6 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             
             // Store the completion callback to update final game state
             pendingCompletionCallbackRef.current = () => {
-                console.log('[ANIMATION] Animation sequence completed, updating final game state');
                 if (message.game) {
                     updateGameState(message.game.id, message.game);
                 }
@@ -320,7 +296,6 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     // Process the animation queue
     const processAnimationQueue = useCallback(() => {
         if (animationQueueRef.current.length === 0) {
-            console.log('[QUEUE] Animation queue is empty, stopping processing');
             setIsAnimating(false);
             setCurrentAnimation(null);
             
@@ -331,7 +306,6 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             
             // Check if we have a pending completion callback and we've finished the sequence
             if (pendingCompletionCallbackRef.current && remainingSequenceEventsRef.current === 0) {
-                console.log('[ANIMATION] Animation sequence completed, calling completion callback');
                 const callback = pendingCompletionCallbackRef.current;
                 pendingCompletionCallbackRef.current = null;
                 remainingSequenceEventsRef.current = 0;
@@ -342,15 +316,6 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         }
 
         const nextAnimation = animationQueueRef.current[0];
-        console.log('[QUEUE] Processing animation from queue:', {
-            type: nextAnimation.type,
-            player_id: nextAnimation.player_id,
-            cards: nextAnimation.cards,
-            from_location: nextAnimation.from_location,
-            to_location: nextAnimation.to_location,
-            message: nextAnimation.message
-        });
-        console.log('[QUEUE] Remaining animations in queue after this one:', animationQueueRef.current.length - 1);
         
         setCurrentAnimation(nextAnimation);
         setAnimationQueue(prev => prev.slice(1));
@@ -380,7 +345,6 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         timeoutRef.current = setTimeout(() => {
             // UPDATE THE GAME STATE WITH THE INTERMEDIATE STATE AFTER ANIMATION COMPLETES
             if (nextAnimation.game_state && currentGameIdRef.current) {
-                console.log('[ANIMATION] Updating game state after animation completes');
                 updateGameState(currentGameIdRef.current, nextAnimation.game_state);
             }
             
@@ -399,7 +363,6 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             // Decrement remaining sequence events count if we're tracking a sequence
             if (pendingCompletionCallbackRef.current && remainingSequenceEventsRef.current > 0) {
                 remainingSequenceEventsRef.current--;
-                console.log('[ANIMATION] Animation completed, remaining sequence events:', remainingSequenceEventsRef.current);
             }
             
             // Process next animation after a short delay
@@ -410,25 +373,14 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     // Start processing queue when items are added and no animation is running
     useEffect(() => {
         if (animationQueue.length > 0 && !isAnimating) {
-            console.log('[ANIMATION] Starting animation queue processing, queue length:', animationQueue.length);
             processAnimationQueue();
         }
     }, [animationQueue, isAnimating, processAnimationQueue]);
 
     // Queue a single animation
     const queueAnimation = (event: AnimationEvent) => {
-        console.log('[QUEUE] Queueing animation:', {
-            type: event.type,
-            player_id: event.player_id,
-            cards: event.cards,
-            from_location: event.from_location,
-            to_location: event.to_location,
-            message: event.message
-        });
         setAnimationQueue(prev => {
-            console.log('[QUEUE] Animation queue length before adding:', prev.length);
             const newQueue = [...prev, event];
-            console.log('[QUEUE] Animation queue length after adding:', newQueue.length);
             return newQueue;
         });
     };
@@ -486,10 +438,6 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         // Queue the optimistic animation immediately
         queueAnimation(animationEvent);
         
-        console.log(`[OPTIMISTIC] Triggered ${animationType} animation:`, animationEvent);
-        console.log(`[OPTIMISTIC] Event string added to set:`, eventString);
-        console.log(`[OPTIMISTIC] Current optimistic set size:`, optimisticAnimations.current.size);
-        console.log(`[OPTIMISTIC] Current optimistic set contents:`, Array.from(optimisticAnimations.current));
         return eventString;
     };
 

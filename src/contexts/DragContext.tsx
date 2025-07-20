@@ -362,7 +362,6 @@ export const DragProvider = ({ children }: { children: React.ReactNode }) => {
 
             if (action.type === 'attack') {
                 attack(cardsToUse).then(() => {
-                    console.log('Attack performed via drag');
                     setSelectedCards([]); // Clear selection after successful action
                 }).catch((e) => {
                     console.error('Attack failed:', e.message);
@@ -372,7 +371,6 @@ export const DragProvider = ({ children }: { children: React.ReactNode }) => {
                 // Single card cover
                 const cardToUse = cardsToUse[0];
                 cover([cardToUse], [action.targetCard]).then(() => {
-                    console.log('Cover performed via drag');
                     setSelectedCards([]); // Clear selection after successful action
                 }).catch((e) => {
                     console.error('Cover failed:', e.message);
@@ -381,7 +379,6 @@ export const DragProvider = ({ children }: { children: React.ReactNode }) => {
             } else if (action.type === 'multicover' && action.coverCards && action.attackCards) {
                 // Multi-card cover with unambiguous mapping
                 cover(action.coverCards, action.attackCards).then(() => {
-                    console.log('Multi-card cover performed via drag');
                     setSelectedCards([]); // Clear selection after successful action
                 }).catch((e) => {
                     console.error('Multi-card cover failed:', e.message);
@@ -390,7 +387,6 @@ export const DragProvider = ({ children }: { children: React.ReactNode }) => {
             } else if (action.type === 'pass') {
 
                 pass(cardsToUse).then(() => {
-                    console.log('Pass performed via drag');
                     setSelectedCards([]); // Clear selection after successful action
                 }).catch((e) => {
                     console.error('Pass failed:', e.message);

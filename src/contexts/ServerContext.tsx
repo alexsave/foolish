@@ -94,13 +94,10 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             
             // Only load if we don't have this game data yet
             if (!games[url_game_id]) {
-                console.log(`[NETWORK] Loading game data for ${url_game_id}`);
                 loadGame(url_game_id).catch(error => {
-                    console.log('Game not found in URL:', error.message);
                     setGameLoadError(url_game_id); // Set error for this specific game
                 });
             } else {
-                console.log(`[CACHE] Game ${url_game_id} already loaded, skipping network call`);
             }
         }
     }, [url_game_id]);
@@ -122,10 +119,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             // Only call getUserGames if we don't have a specific game loaded
             // If we have a URL game, loadGame will handle it
             if (!url_game_id) {
-                console.log('[NETWORK] Calling getUserGames for user dashboard');
                 getUserGames();
             } else {
-                console.log('[CACHE] Skipping getUserGames - specific game URL present');
             }
         }
 
@@ -156,11 +151,9 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 })
                 .subscribe((status, err) => {
                     if (status === 'SUBSCRIBED') {
-                        console.log('Connected to game-user channel:', `gu-${gameId}-${user_id}`);
                         gameChannelRetryInterval.current = 1000; // Reset retry interval on success
                     } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
                         console.error('Game-user channel error:', err);
-                        console.log(`Retrying game channel connection in ${gameChannelRetryInterval.current}ms`);
                         setTimeout(() => {
                             subscribeToGame(gameId).catch(console.error);
                             gameChannelRetryInterval.current *= 2; // Double the interval
@@ -192,11 +185,9 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 })
                 .subscribe((status, err) => {
                     if (status === 'SUBSCRIBED') {
-                        //console.log('Connected to chat channel:', `chat:${gameId}`);
                         chatChannelRetryInterval.current = 1000; // Reset retry interval on success
                     } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
                         console.error('Chat channel error:', err);
-                        console.log(`Retrying chat channel connection in ${chatChannelRetryInterval.current}ms`);
                         setTimeout(() => {
                             subscribeToChatMessages(gameId).catch(console.error);
                             chatChannelRetryInterval.current *= 2; // Double the interval
@@ -228,15 +219,12 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             return;
         }
 
-        console.log(`[${source.toUpperCase()}] Game message received:`, actualMessage);
-
         const gameData = actualMessage.game || message.game;
 
         // Handle non-animation messages (private messages, direct responses, etc.)
         if (actualMessage.type === PRIVATE_EVENT_TYPE.REQUEST_FIRST_ATTACK || 
             actualMessage.type === PRIVATE_EVENT_TYPE.PLAYER_HAND) {
             // These are private messages that don't need game state updates
-            console.log('Private message received:', actualMessage.message);
         } else if (gameData) {
             // For any other message type that includes game data, update the game state
             // This handles cases like direct function invocation responses
@@ -452,7 +440,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         // Check if we already have an ongoing request for this game
         const existingPromise = loadGamePromises.current.get(gameId);
         if (existingPromise) {
-            console.log(`[CACHE] Reusing existing loadGame promise for ${gameId}`);
             return existingPromise;
         }
 
@@ -626,7 +613,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 [game_id!]: (prev[game_id!] || []).filter(card => !cards.some(c => c.suit === card.suit && c.value === card.value))
             }));
             
-            console.log('[OPTIMISTIC] Updated game state after attack animation');
         }, ANIMATION_TIME);
 
         // Server API call
@@ -662,7 +648,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 [game_id!]: (prev[game_id!] || []).filter(card => !cards.some(c => c.suit === card.suit && c.value === card.value))
             }));
             
-            console.log('[OPTIMISTIC] Updated game state after pass animation');
         }, ANIMATION_TIME);
 
         // Server API call
@@ -708,7 +693,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 [game_id!]: [...(prev[game_id!] || []), ...allTableCards]
             }));
             
-            console.log('[OPTIMISTIC] Updated game state after pickup animation');
         }, ANIMATION_TIME);
 
         // Server API call
@@ -749,7 +733,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 [game_id!]: (prev[game_id!] || []).filter(card => !coverCards.some(c => card_comp(c, card)))
             }));
             
-            console.log('[OPTIMISTIC] Updated game state after cover animations');
         }, ANIMATION_TIME);
 
         // Server API call
@@ -888,7 +871,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     const getUserGames = async (): Promise<void> => {
         // Check if we already have an ongoing getUserGames request
         if (getUserGamesPromise.current) {
-            console.log('[CACHE] Reusing existing getUserGames promise');
             return getUserGamesPromise.current;
         }
 
@@ -908,7 +890,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         // This needs to also throw in status at least
         try {
             if (!user_id) {
-                console.log('No player_id available for getUserGames');
                 return;
             }
 
@@ -1000,7 +981,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             sendMessage,
             getUserGames,
             updateGameState: (gameId: string, gameState: any) => {
-                console.log('[SERVER] Updating intermediate game state for game', gameId);
                 setGames(prev => ({ 
                     ...prev, 
                     [gameId]: mergeGameData(gameId, gameState, prev) 
