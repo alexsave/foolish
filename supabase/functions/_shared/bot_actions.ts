@@ -3,11 +3,11 @@ import { check_win, executeWithGameLock, broadcastAnimationEvents, animationEven
 import { calculateLegalMoves, getBotStrategy, LegalMove } from './bot_strategy.ts';
 import { createClient } from 'jsr:@supabase/supabase-js';
 
-// Import shared action handlers
-import { executeAttack } from './actions/attack.ts';
-import { executeCover } from './actions/cover.ts';
-import { executePass } from './actions/pass.ts';
-import { executePickup } from './actions/pickup.ts';
+// Import shared action handlers with validation
+import { handleAttack } from './actions/attack.ts';
+import { handleCover } from './actions/cover.ts';
+import { handlePass } from './actions/pass.ts';
+import { handlePickup } from './actions/pickup.ts';
 import { handleGood } from './actions/good.ts';
 import { AnimationEvent } from './types.ts';
 
@@ -165,18 +165,29 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
                 }
             }
 
-            // If we have eligible bots, randomly choose one and execute its action
+            // If we have eligible bots, try them until one succeeds
             if (eligibleBots.length > 0) {
-                const randomIndex = Math.floor(Math.random() * eligibleBots.length);
-                const selectedBot = eligibleBots[randomIndex];
+                // Shuffle the eligible bots to try them in random order
+                const shuffledBots = [...eligibleBots].sort(() => Math.random() - 0.5);
+                
+                for (const selectedBot of shuffledBots) {
+                    console.log(`Trying bot ${selectedBot.bot.name} from ${eligibleBots.length} eligible bots in game ${game_id}`);
 
-                console.log(`Selected bot ${selectedBot.bot.name} from ${eligibleBots.length} eligible bots in game ${game_id}`);
-
-                // Process the selected bot's action
-                await processBotAction(game, selectedBot.bot);
-                botProcessed = true;
-
-                console.log(`Bot ${selectedBot.bot.name} completed action`);
+                    // Try to process this bot's action
+                    const success = await processBotAction(game, selectedBot.bot);
+                    
+                    if (success) {
+                        botProcessed = true;
+                        console.log(`Bot ${selectedBot.bot.name} completed action`);
+                        break; // Exit the loop since we successfully processed a bot
+                    } else {
+                        console.log(`Bot ${selectedBot.bot.name} move failed, trying next bot`);
+                    }
+                }
+                
+                if (!botProcessed) {
+                    console.log(`No eligible bots could make valid moves in game ${game_id}`);
+                }
             } else {
                 // No eligible bots - check for auto-transition
                 if (game.status === GAME_STATUS.PLAYING &&
@@ -283,13 +294,13 @@ function shouldBotActCore(game: Game, bot: PrivatePlayer, botIndex: number): boo
 }
 
 // Process a single bot's action
-async function processBotAction(game: Game, bot: PrivatePlayer): Promise<void> {
+async function processBotAction(game: Game, bot: PrivatePlayer): Promise<boolean> {
     try {
         // Get bot's strategy
         const botData = await getBotData(bot.player_id);
         if (!botData) {
             console.error(`Bot data not found for ${bot.player_id}`);
-            return;
+            return false;
         }
 
         console.log(`Bot ${bot.name} using strategy ${botData.strategy_key}`);
@@ -300,34 +311,41 @@ async function processBotAction(game: Game, bot: PrivatePlayer): Promise<void> {
 
         if (legalMoves.length === 0) {
             console.log(`No legal moves for bot ${bot.name}`);
-            return;
+            return false;
         }
 
         // Let the strategy choose a move
         const chosenMove = await strategy.chooseMove(game, bot.player_id, legalMoves);
         console.log(`Chosen move: ${JSON.stringify(chosenMove)}`);
 
-        // Execute the chosen move using shared actions (skip validation since bots choose valid moves)
-        await executeBotMove(game, bot, chosenMove);
+        // Execute the chosen move using shared actions (with validation to handle race conditions)
+        const success = await executeBotMove(game, bot, chosenMove);
+        
+        if (!success) {
+            return false;
+        }
 
         console.log(`Bot ${bot.name} completed ${chosenMove.type} action`);
+        return true;
 
     } catch (error) {
         console.error(`Error processing bot action for ${bot.name}:`, error);
+        return false;
     }
 }
 
 // Execute a bot's chosen move using shared action handlers
-async function executeBotMove(game: Game, bot: PrivatePlayer, move: LegalMove): Promise<void> {
+async function executeBotMove(game: Game, bot: PrivatePlayer, move: LegalMove): Promise<boolean> {
     try {
         let specialMessage: string | undefined;
         let actionEvents: AnimationEvent[] = [];
 
-        switch (move.type) {
+        try {
+            switch (move.type) {
             case 'attack':
                 // Capture the game status before executing the attack
                 const statusBeforeAttack = game.status;
-                actionEvents = await executeAttack(game, bot.player_id, move.cards!);
+                actionEvents = await handleAttack(game, bot.player_id, move.cards!);
                 // Set done_attacking_this_round flag based on the move's choice
                 if (move.done_attacking_this_round !== undefined) {
                     bot.done_attacking_this_round = move.done_attacking_this_round;
@@ -354,7 +372,7 @@ async function executeBotMove(game: Game, bot: PrivatePlayer, move: LegalMove): 
                 break;
 
             case 'cover':
-                actionEvents = await executeCover(game, bot.player_id, move.cards!, move.attack_cards!, true);
+                actionEvents = await handleCover(game, bot.player_id, move.cards!, move.attack_cards!);
                 // Check if this cover completed the round (all attacks covered)
                 const all_attacks_covered = game.table_battles.every(battle => battle.defense !== null);
                 if (all_attacks_covered) {
@@ -364,7 +382,7 @@ async function executeBotMove(game: Game, bot: PrivatePlayer, move: LegalMove): 
                 break;
 
             case 'pass':
-                actionEvents = await executePass(game, bot.player_id, move.cards!);
+                actionEvents = await handlePass(game, bot.player_id, move.cards!);
                 // Set done_attacking_this_round flag based on the move's choice
                 if (move.done_attacking_this_round !== undefined) {
                     bot.done_attacking_this_round = move.done_attacking_this_round;
@@ -391,7 +409,7 @@ async function executeBotMove(game: Game, bot: PrivatePlayer, move: LegalMove): 
                 break;
 
             case 'pickup':
-                actionEvents = await executePickup(game, bot.player_id);
+                actionEvents = await handlePickup(game, bot.player_id);
                 break;
 
             case 'good':
@@ -406,8 +424,17 @@ async function executeBotMove(game: Game, bot: PrivatePlayer, move: LegalMove): 
             animationEvents.addEvent(event);
         }
 
+        } catch (error) {
+            // Handle validation failures gracefully (e.g., due to race conditions)
+            console.log(`Bot ${bot.name} move validation failed: ${error.message} - this can happen due to race conditions and is normal`);
+            return false;
+        }
+
+        return true;
+
     } catch (error) {
         console.error(`Error executing bot move for ${bot.name}:`, error);
+        return false;
     }
 }
 

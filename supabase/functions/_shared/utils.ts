@@ -56,7 +56,7 @@ export const acquireGameLock = async (game_id: string): Promise<boolean> => {
             }
 
             const lockAge = Date.now() - new Date(existingLock.acquired_at).getTime();
-            if (lockAge <= 5000) { // 5 seconds in milliseconds
+            if (lockAge <= 150000) { // 150 seconds in milliseconds
                 return false;
             }
 
