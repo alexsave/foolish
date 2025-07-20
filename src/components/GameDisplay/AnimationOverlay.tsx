@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { Card } from '../../common/types';
 import { ANIMATION_TIME, useAnimation } from '../../contexts/AnimationContext';
 import { CardFace } from './CardFace';
+import { CardBack } from './CardBack';
 
 interface AnimatedCard {
     id: string;
@@ -11,6 +12,8 @@ interface AnimatedCard {
     progress: number;
     animationType: string;
     playerId?: string;
+    isSanitizedRefill?: boolean;
+    cardCount?: number;
 }
 
 export const AnimationOverlay = () => {
@@ -102,65 +105,95 @@ export const AnimationOverlay = () => {
             return;
         }
 
+        // Check if cards are sanitized (refill from other players)
+        const isSanitized = cards.every(card => card.suit === -1 && card.value === -1);
+
         // Small delay to ensure DOM is ready
         setTimeout(() => {
-            // Calculate positions for each card
-            const newAnimatedCards: AnimatedCard[] = [];
-
-            cards.forEach((card, index) => {
-                // Find source element
-                let sourceElement: HTMLElement | null = null;
-                let startPos: { x: number; y: number };
+            if (isSanitized) {
+                // Render single CardBack for sanitized refill
+                const sourceElement = findElementByLocation('deck');
+                const destinationElement = findElementByLocation('hand', player_id);
                 
-                if (from_location === 'hand') {
-                    sourceElement = findElementByLocation('hand', player_id, card.suit, card.value);
-                } else if (from_location === 'deck') {
-                    sourceElement = findElementByLocation('deck');
-                } else if (from_location === 'table') {
-                    sourceElement = findElementByLocation('table', undefined, card.suit, card.value);
-                }
+                const startPos = sourceElement 
+                    ? getElementPosition(sourceElement) 
+                    : getFallbackPosition('deck');
+                const endPos = destinationElement 
+                    ? getElementPosition(destinationElement) 
+                    : getFallbackPosition('hand', player_id);
 
-                if (sourceElement) {
-                    startPos = getElementPosition(sourceElement);
-                } else {
-                    startPos = getFallbackPosition(from_location || 'hand', player_id);
-                }
-
-                // Find destination element
-                let destinationElement: HTMLElement | null = null;
-                let endPos: { x: number; y: number };
-                
-                if (to_location === 'hand') {
-                    destinationElement = findElementByLocation('hand', player_id);
-                } else if (to_location === 'table') {
-                    destinationElement = findElementByLocation('table');
-                } else if (to_location === 'discard') {
-                    destinationElement = findElementByLocation('discard');
-                }
-
-                if (destinationElement) {
-                    endPos = getElementPosition(destinationElement);
-                } else {
-                    endPos = getFallbackPosition(to_location || 'table', player_id);
-                }
-
-                // Add some offset for multiple cards
-                const offset = index * 5;
-                endPos.x += offset;
-                endPos.y += offset;
-
-                newAnimatedCards.push({
-                    id: `${card.suit}-${card.value}-${player_id}-${Date.now()}-${index}`,
-                    card,
+                const newAnimatedCard: AnimatedCard = {
+                    id: `sanitized-refill-${player_id}-${Date.now()}`,
+                    card: { suit: -1, value: -1 }, // Keep original sanitized card
                     startPosition: startPos,
                     endPosition: endPos,
                     progress: 0,
                     animationType: type,
-                    playerId: player_id
-                });
-            });
+                    playerId: player_id,
+                    isSanitizedRefill: true,
+                    cardCount: cards.length
+                };
 
-            setAnimatedCards(newAnimatedCards);
+                setAnimatedCards([newAnimatedCard]);
+            } else {
+                // Render individual CardFaces for normal cards
+                const newAnimatedCards: AnimatedCard[] = [];
+
+                cards.forEach((card, index) => {
+                    // Find source element
+                    let sourceElement: HTMLElement | null = null;
+                    let startPos: { x: number; y: number };
+                    
+                    if (from_location === 'hand') {
+                        sourceElement = findElementByLocation('hand', player_id, card.suit, card.value);
+                    } else if (from_location === 'deck') {
+                        sourceElement = findElementByLocation('deck');
+                    } else if (from_location === 'table') {
+                        sourceElement = findElementByLocation('table', undefined, card.suit, card.value);
+                    }
+
+                    if (sourceElement) {
+                        startPos = getElementPosition(sourceElement);
+                    } else {
+                        startPos = getFallbackPosition(from_location || 'hand', player_id);
+                    }
+
+                    // Find destination element
+                    let destinationElement: HTMLElement | null = null;
+                    let endPos: { x: number; y: number };
+                    
+                    if (to_location === 'hand') {
+                        destinationElement = findElementByLocation('hand', player_id);
+                    } else if (to_location === 'table') {
+                        destinationElement = findElementByLocation('table');
+                    } else if (to_location === 'discard') {
+                        destinationElement = findElementByLocation('discard');
+                    }
+
+                    if (destinationElement) {
+                        endPos = getElementPosition(destinationElement);
+                    } else {
+                        endPos = getFallbackPosition(to_location || 'table', player_id);
+                    }
+
+                    // Add some offset for multiple cards
+                    const offset = index * 5;
+                    endPos.x += offset;
+                    endPos.y += offset;
+
+                    newAnimatedCards.push({
+                        id: `${card.suit}-${card.value}-${player_id}-${Date.now()}-${index}`,
+                        card,
+                        startPosition: startPos,
+                        endPosition: endPos,
+                        progress: 0,
+                        animationType: type,
+                        playerId: player_id
+                    });
+                });
+
+                setAnimatedCards(newAnimatedCards);
+            }
 
             // Use CSS transitions - much smoother than manual animation
             // Set progress to 1 after a small delay to trigger CSS transition
@@ -199,7 +232,7 @@ export const AnimationOverlay = () => {
             }}
         >
             {animatedCards.map(animatedCard => {
-                const { startPosition, endPosition, progress, card, id } = animatedCard;
+                const { startPosition, endPosition, progress, card, id, isSanitizedRefill, cardCount } = animatedCard;
                 
                 // Use actual position based on progress (CSS will animate the transition)
                 const currentX = progress === 0 
@@ -224,14 +257,21 @@ export const AnimationOverlay = () => {
                                 : `left ${ANIMATION_TIME}ms cubic-bezier(0.25, 0.46, 0.45, 0.94), top ${ANIMATION_TIME}ms cubic-bezier(0.25, 0.46, 0.45, 0.94), transform ${ANIMATION_TIME}ms ease-out`
                         }}
                     >
-                        <CardFace 
-                            card={card}
-                            isAnimationOverlay={true}
-                            style={{
-                                boxShadow: `0 ${progress * 10}px ${progress * 20}px rgba(0,0,0,0.4)`,
-                                filter: `brightness(${1 + progress * 0.2})`
-                            }}
-                        />
+                        {isSanitizedRefill ? (
+                            <CardBack 
+                                deckSize={cardCount || 1}
+                                enableRandomRotation={false}
+                            />
+                        ) : (
+                            <CardFace 
+                                card={card}
+                                isAnimationOverlay={true}
+                                style={{
+                                    boxShadow: `0 ${progress * 10}px ${progress * 20}px rgba(0,0,0,0.4)`,
+                                    filter: `brightness(${1 + progress * 0.2})`
+                                }}
+                            />
+                        )}
                     </div>
                 );
             })}
