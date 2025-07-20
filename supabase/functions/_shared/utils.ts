@@ -684,7 +684,11 @@ export const check_win = async (game: Game) => {
         
         // set all players to idle but keep their hands for display
         game.players.forEach((player: PrivatePlayer) => {
-            player.status = PLAYER_STATUS.IDLE;
+            if (player.is_ai) {
+                player.status = PLAYER_STATUS.READY;
+            } else {
+                player.status = PLAYER_STATUS.IDLE;
+            }
         });
         
         // Keep table_battles, deck, and elimination_order for win screen display
