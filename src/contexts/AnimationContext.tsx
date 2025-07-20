@@ -356,12 +356,6 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             console.log(`  - Discard pile: ${nextAnimation.game_state.discard_pile_length || 0}`);
             console.log(`  - Current defender: ${nextAnimation.game_state.players?.[nextAnimation.game_state.defender]?.name || 'unknown'}`);
             console.log(`  - Player hands:`, nextAnimation.game_state.players?.map(p => `${p.name}: ${p.hand?.length || 0} cards`));
-            
-            // UPDATE THE GAME STATE WITH THE INTERMEDIATE STATE
-            if (currentGameIdRef.current) {
-                console.log('[ANIMATION] Updating game state with intermediate state');
-                updateGameState(currentGameIdRef.current, nextAnimation.game_state);
-            }
         } else {
             console.log(`[ANIMATION] Processing ${nextAnimation.type} WITHOUT intermediate game state`);
         }
@@ -388,6 +382,12 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
         // Animation duration: use ANIMATION_TIME constant for consistency
         timeoutRef.current = setTimeout(() => {
+            // UPDATE THE GAME STATE WITH THE INTERMEDIATE STATE AFTER ANIMATION COMPLETES
+            if (nextAnimation.game_state && currentGameIdRef.current) {
+                console.log('[ANIMATION] Updating game state after animation completes');
+                updateGameState(currentGameIdRef.current, nextAnimation.game_state);
+            }
+            
             // Remove cards from animating state
             if (nextAnimation.cards) {
                 setAnimatingCards(prev => {
