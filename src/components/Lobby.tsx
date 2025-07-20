@@ -372,7 +372,7 @@ export const Lobby = () => {
         }
         {game.status === 'waiting' && (
             <div style={{ marginTop: '20px', display: 'flex', flexDirection: 'column', gap: '10px', alignItems: 'center' }}>
-                {game.self && (
+                {game.self && game.players.length < MAX_PLAYERS && (
                     <button 
                         onClick={() => addBot(game_id!)}
                         style={{
