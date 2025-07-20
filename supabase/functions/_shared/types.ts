@@ -107,16 +107,27 @@ export const ANIMATION_EVENT_TYPE = {
 
 export type AnimationEventType = typeof ANIMATION_EVENT_TYPE[keyof typeof ANIMATION_EVENT_TYPE];
 
-export interface AnimationEvent {
+// Base animation event for public view (spectators)
+export interface PublicAnimationEvent {
     type: AnimationEventType;
     player_id?: string;
-    cards?: Card[];
+    cards?: Card[]; // May contain card backs (-1, -1) for hidden cards
     from_location?: 'deck' | 'hand' | 'table' | 'discard';
     to_location?: 'deck' | 'hand' | 'table' | 'discard' | 'flipped';
     target_card?: Card; // for cover events
     battle_index?: number; // for cover events
     message?: string;
-    game_state?: Game; // intermediate game state after this event
+    game_state?: PublicGame; // public game state
+}
+
+// Personal animation event for individual players
+export interface PersonalAnimationEvent extends PublicAnimationEvent {
+    game_state?: PersonalGame; // personalized game state with self data
+}
+
+// Full animation event with all private data (server-side only)
+export interface AnimationEvent extends PublicAnimationEvent {
+    game_state?: Game; // full game state with all private data
 }
 
 // Stripped down versions

@@ -1,8 +1,8 @@
 import { corsHeaders, handleCors } from './cors.ts';
-import { 
-    cardDisplay, 
-    refill_deck, 
-    draw, 
+import {
+    cardDisplay,
+    refill_deck,
+    draw,
     personalize_game,
     calculateEloChange,
     calculateGameRankings,
@@ -12,8 +12,9 @@ import {
     get_next_player_index,
     no_cards_left,
     game_done,
+    other_player,
 } from './common_utils.ts';
-import { Card, Game, GAME_STATUS, PLAYER_STATUS, PersonalGame, SERVER_EVENT_TYPE, PRIVATE_EVENT_TYPE, PrivatePlayer, PublicGame, PublicPlayer, PlayerHand, UserEloRating, BotHand, AnimationEvent, ANIMATION_EVENT_TYPE } from './types.ts';
+import { Card, Game, GAME_STATUS, PLAYER_STATUS, PersonalGame, SERVER_EVENT_TYPE, PRIVATE_EVENT_TYPE, PrivatePlayer, PublicGame, PublicPlayer, PlayerHand, UserEloRating, BotHand, AnimationEvent, PublicAnimationEvent, PersonalAnimationEvent, ANIMATION_EVENT_TYPE } from './types.ts';
 import { ACE_VALUE, CARDS_PER_PLAYER } from './constants.ts';
 import { createClient, User } from 'jsr:@supabase/supabase-js';
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
@@ -32,60 +33,60 @@ export const acquireGameLock = async (game_id: string): Promise<boolean> => {
     try {
         // Generate a random lock ID for this instance
         const lockId = crypto.randomUUID();
-        
+
         const { error } = await supabaseClient
             .from('game_locks')
             .insert({ game_id, lock_id: lockId });
-        
+
         if (error) {
             // Handle non-unique constraint errors
             if (error.code !== '23505') {
                 return false;
             }
-            
+
             // Check if existing lock is older than 150 seconds
             const { data: existingLock } = await supabaseClient
                 .from('game_locks')
                 .select('acquired_at')
                 .eq('game_id', game_id)
                 .single();
-            
+
             if (!existingLock) {
                 return false;
             }
-            
+
             const lockAge = Date.now() - new Date(existingLock.acquired_at).getTime();
             if (lockAge <= 5000) { // 5 seconds in milliseconds
                 return false;
             }
-            
+
             // Delete the stale lock
             await supabaseClient
                 .from('game_locks')
                 .delete()
                 .eq('game_id', game_id);
-            
+
             // Try to insert again
             const { error: retryError } = await supabaseClient
                 .from('game_locks')
                 .insert({ game_id, lock_id: lockId });
-            
+
             if (retryError) {
                 return false;
             }
         }
-        
+
         // Verify we actually got the lock by checking the lock_id
         const { data, error: selectError } = await supabaseClient
             .from('game_locks')
             .select('lock_id')
             .eq('game_id', game_id)
             .single();
-        
+
         if (selectError || !data || data.lock_id !== lockId) {
             return false;
         }
-        
+
         return true;
     } catch (error) {
         return false;
@@ -98,95 +99,165 @@ export const releaseGameLock = async (game_id: string): Promise<void> => {
             .from('game_locks')
             .delete()
             .eq('game_id', game_id);
-        
+
         if (error) {
             console.error(`Failed to release lock for game ${game_id}:`, error);
         }
-        
+
     } catch (error) {
         console.error(`Error releasing lock for game ${game_id}:`, error);
     }
 };
 
 // Sequential operation execution with database-level locking
-export const executeWithGameLock = async (game_id: string, operation: (game: Game) => Promise<{game: Game, events: AnimationEvent[]}>): Promise<{game: Game, events: AnimationEvent[]}> => {
+export const executeWithGameLock = async (game_id: string, operation: (game: Game) => Promise<{ game: Game, events: AnimationEvent[] }>): Promise<{ game: Game, events: AnimationEvent[] }> => {
     // Try to acquire database lock with retry logic
     const maxRetries = 9;
     let lockAcquired = false;
-    
+
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         lockAcquired = await acquireGameLock(game_id);
         if (lockAcquired) break;
-        
+
         await new Promise(resolve => setTimeout(resolve, 100 * attempt)); // Exponential backoff
     }
-    
+
     if (!lockAcquired) {
         throw new Error(`Could not acquire lock for game ${game_id} - too many concurrent operations`);
     }
-    
+
     try {
         const loadedGame: Game = await loadCompleteGame(game_id);
         const result = await operation(loadedGame);
-        
+
         // Always save the game state
         await saveCompleteGame(result.game);
-        
+
         return { game: result.game, events: result.events };
     } finally {
         await releaseGameLock(game_id);
     }
 };
 
-// Sanitize animation events for a specific player - hide other players' cards
-export const sanitizeEventsForPlayer = (events: AnimationEvent[], forPlayerId: string): AnimationEvent[] => {
+// Helper function to convert full Game to PublicGame (removes private data)
+const gameToPublicGame = (game: Game): PublicGame => {
+    return {
+        id: game.id,
+        name: game.name,
+        deck_length: game.deck.length,
+        discard_pile_length: game.discard_pile_length,
+        flipped: game.flipped,
+        players: game.players.map(other_player),
+        status: game.status,
+        power_suit: game.power_suit,
+        first_attacker: game.first_attacker,
+        defender: game.defender,
+        table_battles: game.table_battles,
+        elimination_order: game.elimination_order,
+    };
+};
+
+// Helper function to create PersonalGame from Game and player
+const gameToPersonalGame = (game: Game, player: PrivatePlayer): PersonalGame => {
+    return {
+        ...gameToPublicGame(game),
+        self: player
+    };
+};
+
+// Helper function to create card backs for sanitization
+const createCardBacks = (count: number): Card[] => {
+    return Array(count).fill({ suit: -1, value: -1 });
+};
+
+// Helper function to check if event should have cards sanitized
+const shouldSanitizeCards = (event: AnimationEvent): boolean => {
+    return (event.type === ANIMATION_EVENT_TYPE.REFILL || event.type === ANIMATION_EVENT_TYPE.DEAL) && !!event.cards;
+};
+
+// Convert server AnimationEvents to PublicAnimationEvents for spectators
+export const convertToPublicAnimationEvents = (events: AnimationEvent[]): PublicAnimationEvent[] => {
     return events.map(event => {
-        // Sanitize REFILL and DEAL events from other players - these show cards going to their hands
-        if ((event.type === ANIMATION_EVENT_TYPE.REFILL || event.type === ANIMATION_EVENT_TYPE.DEAL) && event.cards && event.player_id && event.player_id !== forPlayerId) {
-            // For events involving other players' hand cards, replace with sanitized version
-            // Keep the same structure but replace actual card data with placeholder for card backs
-            const sanitizedEvent: AnimationEvent = {
-                ...event,
-                cards: event.cards.map(() => ({
-                    suit: -1, // Special value to indicate "card back"
-                    value: -1
-                }))
-            };
-            
-            return sanitizedEvent;
+        // Extract game_state separately to avoid type conflicts with spread
+        const { game_state, ...baseEvent } = event;
+        const publicEvent: PublicAnimationEvent = { ...baseEvent };
+
+        // Sanitize REFILL and DEAL events - hide all cards going to players' hands
+        if (shouldSanitizeCards(event)) {
+            publicEvent.cards = createCardBacks(event.cards!.length);
         }
-        
-        // All other events (attack, pass, cover, etc.) are not sanitized - cards are visible on table anyway
-        return event;
+
+        // Convert game_state from full Game to PublicGame
+        if (game_state) {
+            publicEvent.game_state = gameToPublicGame(game_state);
+        }
+
+        return publicEvent;
+    });
+};
+
+// Convert server AnimationEvents to PersonalAnimationEvents for a specific player
+export const convertToPersonalAnimationEvents = (events: AnimationEvent[], forPlayerId: string): PersonalAnimationEvent[] => {
+    return events.map(event => {
+        // Extract game_state separately to avoid type conflicts with spread
+        const { game_state, ...baseEvent } = event;
+        const personalEvent: PersonalAnimationEvent = { ...baseEvent };
+
+        // Sanitize REFILL and DEAL events from OTHER players - hide their cards going to hands
+        if (shouldSanitizeCards(event) && event.player_id && event.player_id !== forPlayerId) {
+            personalEvent.cards = createCardBacks(event.cards!.length);
+        }
+        // Note: If it's the current player's REFILL/DEAL event, keep their cards visible
+
+        // Convert game_state from full Game to PersonalGame
+        if (game_state) {
+            const baseGameState = gameToPublicGame(game_state);
+
+            // Create personalized game state by adding player's self data
+            const playerSelf = game_state.players.find(p => p.player_id === forPlayerId);
+            if (!playerSelf) {
+                console.warn(`Player ${forPlayerId} not found in game state, removing game_state from animation event`);
+            } else {
+                personalEvent.game_state = {
+                    ...baseGameState,
+                    self: playerSelf
+                };
+            }
+        }
+
+        return personalEvent;
     });
 };
 
 // Export a global instance for use across the application
 export const animationEvents = new AnimationEventManager();
 
-// Broadcast animation events to all players
+// Broadcast animation events to all players and spectators
 export const broadcastAnimationEvents = async (game: Game, events: AnimationEvent[]): Promise<void> => {
     if (events.length === 0) {
         return;
     }
-    
+
     console.log(`[BROADCAST DEBUG] broadcastAnimationEvents called for game ${game.id} with ${events.length} events`);
-    
-    // Send sanitized events to each player individually
+
+    // Calculate base game state once (shared for all players) - removes private information
+    const baseGameState = gameToPublicGame(game);
+
+    // Send personalized events to each player individually
     for (const player of game.players) {
-        const sanitizedEvents = sanitizeEventsForPlayer(events, player.player_id);
-        
+        const personalEvents = convertToPersonalAnimationEvents(events, player.player_id);
+
         const payload = {
             type: 'animation_sequence',
-            events: sanitizedEvents,
+            events: personalEvents,
             sequence_id: crypto.randomUUID(),
             timestamp: Date.now()
         };
-        
-        console.log(`[SECURITY] Sending ${sanitizedEvents.length} sanitized events to player ${player.name} (${player.player_id})`);
-        
+
+        console.log(`[SECURITY] Sending ${personalEvents.length} personal events to player ${player.name} (${player.player_id})`);
+
         // Log any cards that were sanitized for this player
-        sanitizedEvents.forEach((event, index) => {
+        personalEvents.forEach((event, index) => {
             if (event.cards && event.player_id && event.player_id !== player.player_id) {
                 const cardCount = event.cards.length;
                 const hasSanitizedCards = event.cards.some(card => card.suit === -1 && card.value === -1);
@@ -195,22 +266,52 @@ export const broadcastAnimationEvents = async (game: Game, events: AnimationEven
                 }
             }
         });
-        
+
+        // Create personalized game state by adding player's self data
+        const personalizedGame = gameToPersonalGame(game, player);
+
         const channel = supabaseClient.channel(`gu-${game.id}-${player.player_id}`, {
             config: { private: true }
         });
-        
+
         await channel.send({
             type: 'broadcast',
             event: 'animation_events',
             payload: {
                 ...payload,
-                game: personalize_game(game, player.player_id)
+                game: personalizedGame
             }
         });
-        
+
         await supabaseClient.removeChannel(channel);
     }
+
+    // Send public events to spectator channel
+    const publicEvents = convertToPublicAnimationEvents(events);
+
+    const spectatorPayload = {
+        type: 'animation_sequence',
+        events: publicEvents,
+        sequence_id: crypto.randomUUID(),
+        timestamp: Date.now()
+    };
+
+    console.log(`[SECURITY] Sending ${publicEvents.length} public events to spectator channel`);
+
+    const spectatorChannel = supabaseClient.channel(`game-${game.id}`, {
+        config: { private: true }
+    });
+
+    await spectatorChannel.send({
+        type: 'broadcast',
+        event: 'animation_events',
+        payload: {
+            ...spectatorPayload,
+            game: baseGameState
+        }
+    });
+
+    await supabaseClient.removeChannel(spectatorChannel);
 };
 
 export interface ExecutionParams {
@@ -220,7 +321,7 @@ export interface ExecutionParams {
     game: Game;
 }
 
-export const wrap400 = (execute: (params: ExecutionParams) => Promise<{game: Game, events: AnimationEvent[]}>, run_bots: boolean = false) => {
+export const wrap400 = (execute: (params: ExecutionParams) => Promise<{ game: Game, events: AnimationEvent[] }>, run_bots: boolean = false) => {
     const handler = async (req: Request): Promise<Response> => {
         try {
             // Handle CORS
@@ -237,21 +338,21 @@ export const wrap400 = (execute: (params: ExecutionParams) => Promise<{game: Gam
             let body = {};
             try {
                 body = await req.json();
-            } catch (e) {}
+            } catch (e) { }
             // If JSON parsing fails, keep empty object
 
             // Extract game_id from body for lock management
             const game_id = (body as any).game_id;
-            
+
             let result: any;
             let events: AnimationEvent[] = [];
-            
+
             if (game_id) {
                 // Execute operation with database lock for this specific game
-                const { game, events: operationEvents } = await executeWithGameLock(game_id, (game) => execute({user, user_name, body, game}));
+                const { game, events: operationEvents } = await executeWithGameLock(game_id, (game) => execute({ user, user_name, body, game }));
                 result = game;
                 events = operationEvents;
-                
+
                 // Broadcast animation events if any were collected
                 if (events.length > 0) {
                     await broadcastAnimationEvents(result, events);
@@ -259,11 +360,11 @@ export const wrap400 = (execute: (params: ExecutionParams) => Promise<{game: Gam
             } else {
                 // No game_id, execute immediately (for operations that don't involve games)
                 // pretty much only create
-                const operationResult = await execute({user, user_name, body, game: {} as Game});
-                
+                const operationResult = await execute({ user, user_name, body, game: {} as Game });
+
                 result = operationResult.game;
                 events = operationResult.events;
-                
+
                 // Broadcast for game creation
                 if (result && result.id && events.length > 0) {
                     await broadcastAnimationEvents(result, events);
@@ -303,7 +404,7 @@ export const wrap400 = (execute: (params: ExecutionParams) => Promise<{game: Gam
 
     // Serve the handler
     serve(handler);
-    
+
     // Return the handler (though it won't be used after serve() is called)
     return handler;
 };
@@ -336,7 +437,7 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
 
     const players: PrivatePlayer[] = data.players.map((player: any) => {
         let hand, awaiting_attack, done_attacking_this_round;
-        
+
         if (player.is_ai) {
             // Look up in bot_hands table
             const botHand = data.bot_hands.find(hand => hand.bot_id === player.player_id)!;
@@ -352,7 +453,7 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
             awaiting_attack = playerHand.awaiting_attack;
             done_attacking_this_round = false; // Human players don't use this flag, just set it to false for type simplicity
         }
-        
+
         return {
             player_id: player.player_id,
             name: player.name,
@@ -381,7 +482,7 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
         table_battles: data.table_battles,
         elimination_order: data.elimination_order,
     }
-    
+
     return game;
     /*
 
@@ -424,28 +525,7 @@ export const saveCompleteGame = async (game: Game): Promise<any> => {
     // converter of game to SQL
     // Update lengths here too
     // Update public game data (remove deck and hands from players)
-    const publicPlayers: PublicPlayer[] = game.players.map(player => ({
-        name: player.name,
-        player_id: player.player_id,
-        status: player.status,
-        hand_length: player.hand.length,
-        is_ai: player.is_ai
-    }));
-
-    const publicGame: PublicGame = {
-        id: game.id,
-        name: game.name || 'Untitled Game',
-        deck_length: game.deck.length,
-        discard_pile_length: game.discard_pile_length,
-        flipped: game.flipped,
-        players: publicPlayers,
-        status: game.status,
-        power_suit: game.power_suit,
-        first_attacker: game.first_attacker,
-        defender: game.defender,
-        table_battles: game.table_battles,
-        elimination_order: game.elimination_order
-    };
+    const publicGame: PublicGame = gameToPublicGame(game);
 
     await supabaseClient
         .from('games')
@@ -496,10 +576,7 @@ export const saveCompleteGame = async (game: Game): Promise<any> => {
         broadcast: async (messageType: string, baseMessage: any) => {
             for (const player of game.players) {
                 // Create personalized game state by adding player's self data
-                const personalizedGame: PersonalGame = {
-                    ...publicGame,
-                    self: player
-                };
+                const personalizedGame = gameToPersonalGame(game, player);
 
                 const channel = supabaseClient.channel(`gu-${game.id}-${player.player_id}`, {
                     config: { private: true }
@@ -507,26 +584,24 @@ export const saveCompleteGame = async (game: Game): Promise<any> => {
                 await channel.send({
                     type: 'broadcast',
                     event: messageType,
-                    payload: {...baseMessage, game: personalizedGame}
+                    payload: { ...baseMessage, game: personalizedGame }
                 });
-    
+
                 await supabaseClient.removeChannel(channel);
             }
 
-        }, 
+        },
         sendToUser: async (messageType: string, baseMessage: any, user_id: string) => {
             const channel = supabaseClient.channel(`gu-${game.id}-${user_id}`, {
                 config: { private: true }
             });
 
-            const personalizedGame: PersonalGame = {
-                ...publicGame,
-                self: game.players.find(player => player.player_id === user_id)!
-            }
+            const playerSelf = game.players.find(player => player.player_id === user_id)!;
+            const personalizedGame = gameToPersonalGame(game, playerSelf);
             await channel.send({
                 type: 'broadcast',
                 event: messageType,
-                payload: {...baseMessage, game: personalizedGame}
+                payload: { ...baseMessage, game: personalizedGame }
             });
             await supabaseClient.removeChannel(channel);
         },
@@ -584,108 +659,12 @@ export const broadcastToGameUser = async (game: Game, messageType: string, baseM
     await supabaseClient.removeChannel(channel);
 }
 
-// Bot cycle completion is now handled through animation events
-// This function is no longer needed since bot actions emit their own animation events
-
-// Optimized method that sends personalized messages to each player's game-user channel
-export const broadcastToGameUsers = async (game: Game, messageType: string, baseMessage: any): Promise<void> => {
-    console.log(`[BROADCAST DEBUG] broadcastToGameUsers called for game ${game.id} with messageType: ${messageType}`);
-    console.log(`[BROADCAST DEBUG] baseMessage:`, JSON.stringify(baseMessage, null, 2));
-    
-    try {
-        // Calculate base game state once (shared for all players)
-        const baseGameState: PublicGame = {
-            id: game.id,
-            name: game.name,
-            deck_length: game.deck.length,
-            discard_pile_length: game.discard_pile_length,
-            flipped: game.flipped,
-            players: game.players.map((player: PrivatePlayer) => ({
-                name: player.name,
-                player_id: player.player_id,
-                status: player.status,
-                hand_length: player.hand.length,
-                is_ai: player.is_ai
-            }) as PublicPlayer),
-            status: game.status,
-            power_suit: game.power_suit,
-            first_attacker: game.first_attacker,
-            defender: game.defender,
-            table_battles: game.table_battles,
-            elimination_order: game.elimination_order,
-        };
-
-        console.log(JSON.stringify(baseGameState) + " baseGameState");
-
-        console.log(`[BROADCAST DEBUG] Sending to ${game.players.length} players`);
-
-        // Send personalized message to each player
-        for (const player of game.players) {
-            /*const self: PrivatePlayer = {
-                ...player,
-                hand: player.hand,
-                awaiting_attack: player.awaiting_attack,
-                status: player.status,
-                name: player.name,
-                hand_length: player.hand.length
-            };*/
-            // Create personalized game state by adding player's self data
-            const personalizedGame: PersonalGame = {
-                ...baseGameState,
-                self: player
-            };
-
-            // Create personalized message with filtered game state
-            const personalizedMessage = {
-                ...baseMessage,
-                game: personalizedGame
-            };
-            const channelName = `gu-${game.id}-${player.player_id}`;
-            console.log(`[BROADCAST DEBUG] Creating channel: ${channelName} for player ${player.name}`);
-            
-            const channel = supabaseClient.channel(channelName, {
-                config: { private: true }
-            });
-            
-            console.log(`[BROADCAST DEBUG] Sending to channel ${channelName}`);
-            await channel.send({
-                type: 'broadcast',
-                event: messageType,
-                payload: personalizedMessage
-            });
-
-            await supabaseClient.removeChannel(channel);
-            console.log(`[BROADCAST DEBUG] Sent and removed channel ${channelName}`);
-        }
-
-        // Send to publicly visible game channel (for spectators)
-        const publicChannelName = `game-${game.id}`;
-        console.log(`[BROADCAST DEBUG] Creating public channel: ${publicChannelName}`);
-        
-        const channel = supabaseClient.channel(publicChannelName, {
-            config: { private: true }
-        });
-        
-        console.log(`[BROADCAST DEBUG] Sending to public channel ${publicChannelName}`);
-        await channel.send({
-            type: 'broadcast',
-            event: messageType,
-            payload: {...baseMessage, game: baseGameState}
-        });
-        await supabaseClient.removeChannel(channel);
-        console.log(`[BROADCAST DEBUG] Sent and removed public channel ${publicChannelName}`);
-
-    } catch (error) {
-        console.error('Error broadcasting to game users:', error);
-    }
-};
-
 export const start_game = async (game: Game) => {
     // Guard against starting game if it's already over
     if (game.status === GAME_STATUS.GAME_OVER) {
         return game;
     }
-    
+
     // This is the game entry
     game.status = 'playing';
     game.players.forEach(player => {
@@ -749,7 +728,7 @@ export const check_win = async (game: Game) => {
 
         // Set game status to GAME_OVER to show win screen
         game.status = GAME_STATUS.GAME_OVER;
-        
+
         // set all players to idle but keep their hands for display
         game.players.forEach((player: PrivatePlayer) => {
             if (player.is_ai) {
@@ -758,7 +737,7 @@ export const check_win = async (game: Game) => {
                 player.status = PLAYER_STATUS.IDLE;
             }
         });
-        
+
         // Keep table_battles, deck, and elimination_order for win screen display
         // These will be cleared when someone hits continue
 
@@ -872,7 +851,7 @@ export const getOrCreateEloRating = async (userId: string): Promise<UserEloRatin
 };
 
 // Get ELO rating for a bot
-export const getBotEloRating = async (botId: string): Promise<{elo_rating: number, games_played: number, nickname: string, strategy_key: string}> => {
+export const getBotEloRating = async (botId: string): Promise<{ elo_rating: number, games_played: number, nickname: string, strategy_key: string }> => {
     const { data, error } = await supabaseClient
         .from('bots')
         .select('elo_rating, games_played, nickname, strategy_key')
@@ -895,11 +874,11 @@ export const updateEloRatings = async (game: Game): Promise<void> => {
 
     try {
         // Get all player ELO ratings (both human and bot)
-        const playerRatings = new Map<string, {elo_rating: number, games_played: number}>();
-        const botData = new Map<string, {elo_rating: number, games_played: number, nickname: string, strategy_key: string}>();
+        const playerRatings = new Map<string, { elo_rating: number, games_played: number }>();
+        const botData = new Map<string, { elo_rating: number, games_played: number, nickname: string, strategy_key: string }>();
         const humanPlayers: string[] = [];
         const botPlayers: string[] = [];
-        
+
         for (const player of game.players) {
             if (player.is_ai) {
                 const botInfo = await getBotEloRating(player.player_id);
@@ -925,7 +904,7 @@ export const updateEloRatings = async (game: Game): Promise<void> => {
 
         // Calculate ELO changes for each player
         const ratingChanges = new Map<string, number>();
-        
+
         for (let i = 0; i < rankings.length; i++) {
             const playerId = rankings[i];
             const playerRating = playerRatings.get(playerId)!;
@@ -934,10 +913,10 @@ export const updateEloRatings = async (game: Game): Promise<void> => {
             // For each other player, calculate 1v1 ELO change
             for (let j = 0; j < rankings.length; j++) {
                 if (i === j) continue;
-                
+
                 const opponentId = rankings[j];
                 const opponentRating = playerRatings.get(opponentId)!;
-                
+
                 // Determine score: 1 if player finished better, 0 if worse, 0.5 if tie
                 let score: number;
                 if (i < j) {
@@ -956,12 +935,12 @@ export const updateEloRatings = async (game: Game): Promise<void> => {
         }
 
         // Update human player ratings
-        const humanRatingUpdates: Array<{user_id: string, elo_rating: number, previous_elo: number, games_played: number}> = [];
+        const humanRatingUpdates: Array<{ user_id: string, elo_rating: number, previous_elo: number, games_played: number }> = [];
         for (const playerId of humanPlayers) {
             const change = ratingChanges.get(playerId) || 0;
             const currentRating = playerRatings.get(playerId)!;
             const newRating = Math.max(0, currentRating.elo_rating + change); // Prevent negative ratings
-            
+
             humanRatingUpdates.push({
                 user_id: playerId,
                 elo_rating: newRating,
@@ -977,13 +956,13 @@ export const updateEloRatings = async (game: Game): Promise<void> => {
         }
 
         // Update bot ratings
-        const botRatingUpdates: Array<{id: string, nickname: string, strategy_key: string, elo_rating: number, previous_elo: number, games_played: number}> = [];
+        const botRatingUpdates: Array<{ id: string, nickname: string, strategy_key: string, elo_rating: number, previous_elo: number, games_played: number }> = [];
         for (const playerId of botPlayers) {
             const change = ratingChanges.get(playerId) || 0;
             const currentRating = playerRatings.get(playerId)!;
             const currentBotData = botData.get(playerId)!;
             const newRating = Math.max(0, currentRating.elo_rating + change); // Prevent negative ratings
-            
+
             botRatingUpdates.push({
                 id: playerId,
                 nickname: currentBotData.nickname,
@@ -999,7 +978,7 @@ export const updateEloRatings = async (game: Game): Promise<void> => {
                 .from('bots')
                 .upsert(botRatingUpdates)
                 .select();
-            
+
             if (botUpdateError) {
                 console.error('Error updating bot ratings:', botUpdateError);
             } else {
