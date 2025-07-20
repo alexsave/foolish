@@ -71,6 +71,10 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     // Use ref to prevent duplicate user effect executions
     const prevUserRef = useRef<string | null>(null);
 
+    // Simple reconnection state
+    const gameChannelRetryInterval = useRef(1000); // Start with 1 second
+    const chatChannelRetryInterval = useRef(1000); // Start with 1 second
+
     useEffect(() => {
         if (url_game_id) {
             gameIdRef.current = url_game_id;
@@ -119,50 +123,78 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
 
     const subscribeToGame = async (gameId: string) => {
-        // Ensure we have proper auth before subscribing
-        await supabase.realtime.setAuth();
+        try {
+            // Ensure we have proper auth before subscribing
+            await supabase.realtime.setAuth();
 
-        // Subscribe to personalized game-user channel for non-animation game updates  
-        const gameUserChannel = supabase.channel(`gu-${gameId}-${user_id}`, {
-            config: { private: true }
-        });
-
-        gameUserChannel
-            .on('broadcast', { event: 'private_message' }, (payload) => {
-                handleGameMessage(payload.payload, 'private_message');
-            })
-            .on('broadcast', { event: 'HAND_REARRANGED' }, (payload) => {
-                handleGameMessage(payload.payload, 'HAND_REARRANGED');
-            })
-            .subscribe((status, err) => {
-                if (status === 'SUBSCRIBED') {
-                    console.log('Connected to game-user channel:', `gu-${gameId}-${user_id}`);
-                } else {
-                    console.error('Game-user channel error:', err);
-                }
+            // Subscribe to personalized game-user channel for non-animation game updates  
+            const gameUserChannel = supabase.channel(`gu-${gameId}-${user_id}`, {
+                config: { private: true }
             });
+
+            gameUserChannel
+                .on('broadcast', { event: 'private_message' }, (payload) => {
+                    handleGameMessage(payload.payload, 'private_message');
+                })
+                .on('broadcast', { event: 'HAND_REARRANGED' }, (payload) => {
+                    handleGameMessage(payload.payload, 'HAND_REARRANGED');
+                })
+                .subscribe((status, err) => {
+                    if (status === 'SUBSCRIBED') {
+                        console.log('Connected to game-user channel:', `gu-${gameId}-${user_id}`);
+                        gameChannelRetryInterval.current = 1000; // Reset retry interval on success
+                    } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+                        console.error('Game-user channel error:', err);
+                        console.log(`Retrying game channel connection in ${gameChannelRetryInterval.current}ms`);
+                        setTimeout(() => {
+                            subscribeToGame(gameId).catch(console.error);
+                            gameChannelRetryInterval.current *= 2; // Double the interval
+                        }, gameChannelRetryInterval.current);
+                    }
+                });
+        } catch (error) {
+            console.error('Error subscribing to game channel:', error);
+            setTimeout(() => {
+                subscribeToGame(gameId).catch(console.error);
+                gameChannelRetryInterval.current *= 2; // Double the interval
+            }, gameChannelRetryInterval.current);
+        }
     };
 
     const subscribeToChatMessages = async (gameId: string) => {
-        // Ensure we have proper auth before subscribing
-        await supabase.realtime.setAuth();
+        try {
+            // Ensure we have proper auth before subscribing
+            await supabase.realtime.setAuth();
 
-        // Subscribe to chat messages for this game
-        const chatChannel = supabase.channel(`chat:${gameId}`, {
-            config: { private: true }
-        });
-
-        chatChannel
-            .on('broadcast', { event: 'INSERT' }, (payload) => {
-                handleChatMessage(payload.payload);
-            })
-            .subscribe((status, err) => {
-                if (status === 'SUBSCRIBED') {
-                    //console.log('Connected to chat channel:', `chat:${gameId}`);
-                } else {
-                    console.error('Chat channel error:', err);
-                }
+            // Subscribe to chat messages for this game
+            const chatChannel = supabase.channel(`chat:${gameId}`, {
+                config: { private: true }
             });
+
+            chatChannel
+                .on('broadcast', { event: 'INSERT' }, (payload) => {
+                    handleChatMessage(payload.payload);
+                })
+                .subscribe((status, err) => {
+                    if (status === 'SUBSCRIBED') {
+                        //console.log('Connected to chat channel:', `chat:${gameId}`);
+                        chatChannelRetryInterval.current = 1000; // Reset retry interval on success
+                    } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+                        console.error('Chat channel error:', err);
+                        console.log(`Retrying chat channel connection in ${chatChannelRetryInterval.current}ms`);
+                        setTimeout(() => {
+                            subscribeToChatMessages(gameId).catch(console.error);
+                            chatChannelRetryInterval.current *= 2; // Double the interval
+                        }, chatChannelRetryInterval.current);
+                    }
+                });
+        } catch (error) {
+            console.error('Error subscribing to chat channel:', error);
+            setTimeout(() => {
+                subscribeToChatMessages(gameId).catch(console.error);
+                chatChannelRetryInterval.current *= 2; // Double the interval
+            }, chatChannelRetryInterval.current);
+        }
     };
 
     const handleGameMessage = (message: any, source: string = 'unknown') => {

@@ -96,6 +96,9 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     
     // Store channel reference for proper cleanup
     const gameUserChannelRef = useRef<any>(null);
+    
+    // Simple retry interval for animation channel
+    const animationChannelRetryInterval = useRef(1000);
 
     // Subscribe to game-user channel for animation events
     useEffect(() => {
@@ -129,18 +132,24 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                     .subscribe((status, err) => {
                         if (status === 'SUBSCRIBED') {
                             console.log('[WEBSOCKET] Successfully subscribed to channel:', `gu-${url_game_id}-${user_id}`);
-                        } else if (status === 'CHANNEL_ERROR') {
-                            console.error('[WEBSOCKET] Channel error:', err || 'Unknown error');
-                        } else if (status === 'TIMED_OUT') {
-                            console.error('[WEBSOCKET] Channel subscription timed out');
-                        } else if (status === 'CLOSED') {
-                            console.log('[WEBSOCKET] Channel closed:', `gu-${url_game_id}-${user_id}`);
+                            animationChannelRetryInterval.current = 1000; // Reset retry interval on success
+                        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+                            console.error('[WEBSOCKET] Animation channel error:', err || 'Unknown error');
+                            console.log(`Retrying animation channel connection in ${animationChannelRetryInterval.current}ms`);
+                            setTimeout(() => {
+                                subscribeToGameAnimations().catch(console.error);
+                                animationChannelRetryInterval.current *= 2; // Double the interval
+                            }, animationChannelRetryInterval.current);
                         } else {
                             console.log('[WEBSOCKET] Channel status:', status, err);
                         }
                     });
             } catch (error) {
                 console.error('Error setting up game animation subscription:', error);
+                setTimeout(() => {
+                    subscribeToGameAnimations().catch(console.error);
+                    animationChannelRetryInterval.current *= 2; // Double the interval
+                }, animationChannelRetryInterval.current);
             }
         };
 
