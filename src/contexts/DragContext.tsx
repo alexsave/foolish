@@ -155,10 +155,15 @@ export const DragProvider = ({ children }: { children: React.ReactNode }) => {
             } else if (!passIsPossible) {
                 // Can't pass and in empty space
                 if (cardsToUse.length === 1) {
-                    // Single card - existing logic
+                    // Single card - check which uncovered attacks this card can actually cover
                     const uncoveredBattles = game.table_battles.filter(battle => !battle.defense);
-                    if (uncoveredBattles.length === 1) {
-                        return { type: 'cover' as const, targetCard: uncoveredBattles[0].attack };
+                    const validTargets = uncoveredBattles.filter(battle => 
+                        canCover(battle.attack, cardsToUse[0], game.power_suit)
+                    );
+                    
+                    if (validTargets.length === 1) {
+                        // Card can only cover one specific attack - allow cover action
+                        return { type: 'cover' as const, targetCard: validTargets[0].attack };
                     } else {
                         return { type: 'invalid' as const };
                     }

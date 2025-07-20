@@ -1,4 +1,3 @@
-import { VALUE_MAP, SUIT_MAP } from "../../utils/cards";
 import { useDrag } from "../../contexts/DragContext";
 import { useGame } from "../../contexts/GameContext";
 import { CardFace } from "./CardFace";
@@ -27,7 +26,6 @@ export const DragShadow = () => {
             case 'attack':
                 return `⚔️ Attack`;
             case 'cover':
-                return '🛡️ Cover';
             case 'multicover':
                 return '🛡️ Cover';
             case 'pass':
