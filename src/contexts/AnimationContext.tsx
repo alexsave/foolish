@@ -1,6 +1,12 @@
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
-import { Card, PersonalGame, Game } from '../common/types';
+import { Card, PersonalGame, Game, PublicPlayer } from '../common/types';
 import { useServer } from './ServerContext';
+import { ANIMATION_TIME } from '../constants/constants';
+import { validateAttack, validatePass, validatePickup, validateCover } from '../utils/gameValidation';
+import { get_next_player_index, card_comp } from '../common/common_utils';
+
+// Animation timing constant
+export { ANIMATION_TIME } from '../constants/constants';
 
 interface AnimationEvent {
     type: 'magic_transition' | 'deal' | 'flipped' | 'defender_move' | 'attack_pass' | 'cover' | 'pickup' | 'discard' | 'out' | 'refill' | 'cards_to_trash';
@@ -34,11 +40,18 @@ interface AnimationContextType {
         fromLocation: string | null;
         toLocation: string | null;
     };
+    // Game action methods that handle optimistic animations + server calls
+    attack: (cards: Card[]) => Promise<{ game_id: string }>;
+    pass: (cards: Card[]) => Promise<{ game_id: string }>;
+    pickup: () => Promise<{ game_id: string }>;
+    cover: (coverCards: Card[], attackCards: Card[]) => Promise<{ game_id: string }>;
+    good: () => Promise<{ game_id: string }>;
 }
 
 const AnimationContext = createContext<AnimationContextType | null>(null);
 
 export const AnimationProvider = ({ children }: { children: React.ReactNode }) => {
+    const { updateGameState, games, game_id, ...serverMethods } = useServer();
     const [isAnimating, setIsAnimating] = useState(false);
     const [currentAnimation, setCurrentAnimation] = useState<AnimationEvent | null>(null);
     const [animationQueue, setAnimationQueue] = useState<AnimationEvent[]>([]);
@@ -68,6 +81,12 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     // Keep track of processed sequence IDs and event content to avoid duplicates
     const processedSequenceIds = useRef<Set<string>>(new Set());
     const processedEventContent = useRef<Set<string>>(new Set());
+    
+    // Store the current game ID for this animation sequence
+    const currentGameIdRef = useRef<string | null>(null);
+
+    // Track optimistically triggered animations to avoid server duplicates
+    const optimisticAnimations = useRef<Set<string>>(new Set());
 
     // Listen for animation events from ServerContext
     useEffect(() => {
@@ -75,6 +94,55 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             console.log('[ANIMATION] Animation events received:', event.detail);
             
             if (event.detail.events && Array.isArray(event.detail.events)) {
+                // Store the game ID for use during animations
+                if (event.detail.gameId) {
+                    currentGameIdRef.current = event.detail.gameId;
+                }
+                
+                // Check if any of these events were triggered optimistically
+                const serverEvents = event.detail.events;
+                const hasOptimisticEvent = serverEvents.some((serverEvent: any) => {
+                    const serverEventString = JSON.stringify({
+                        type: serverEvent.type,
+                        cards: serverEvent.cards,
+                        from_location: serverEvent.from_location,
+                        to_location: serverEvent.to_location,
+                        player_id: serverEvent.player_id
+                    });
+                    return optimisticAnimations.current.has(serverEventString);
+                });
+
+                if (hasOptimisticEvent) {
+                    console.log('[OPTIMISTIC] Ignoring server animations - already triggered optimistically');
+                    // Clear the optimistic animations since server confirmed them
+                    serverEvents.forEach((serverEvent: any) => {
+                        const serverEventString = JSON.stringify({
+                            type: serverEvent.type,
+                            cards: serverEvent.cards,
+                            from_location: serverEvent.from_location,
+                            to_location: serverEvent.to_location,
+                            player_id: serverEvent.player_id
+                        });
+                        optimisticAnimations.current.delete(serverEventString);
+                    });
+                    
+                    // Still update game state from server, but skip animations
+                    if (event.detail.onAnimationComplete) {
+                        event.detail.onAnimationComplete();
+                    }
+                    return;
+                }
+                
+                // Log which events have intermediate game states
+                console.log('[ANIMATION] Events breakdown:');
+                event.detail.events.forEach((animEvent: AnimationEvent, index: number) => {
+                    const hasGameState = !!animEvent.game_state;
+                    const stateInfo = hasGameState ? 
+                        `table:${animEvent.game_state!.table_battles?.length || 0}, hands:${animEvent.game_state!.players?.map(p => p.hand?.length || 0).join(',')}` :
+                        'NO STATE';
+                    console.log(`  ${index + 1}. ${animEvent.type} (${animEvent.message}) - ${stateInfo}`);
+                });
+                
                 // Check for duplicate events using stringified content
                 const eventsString = JSON.stringify(event.detail.events);
                 
@@ -149,6 +217,24 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         setAnimationQueue(prev => prev.slice(1));
         setIsAnimating(true);
 
+        // Log intermediate game state info
+        if (nextAnimation.game_state) {
+            console.log(`[ANIMATION] Processing ${nextAnimation.type} with intermediate game state:`);
+            console.log(`  - Table battles: ${nextAnimation.game_state.table_battles?.length || 0} battles`);
+            console.log(`  - Deck size: ${nextAnimation.game_state.deck?.length || 0}`);
+            console.log(`  - Discard pile: ${nextAnimation.game_state.discard_pile_length || 0}`);
+            console.log(`  - Current defender: ${nextAnimation.game_state.players?.[nextAnimation.game_state.defender]?.name || 'unknown'}`);
+            console.log(`  - Player hands:`, nextAnimation.game_state.players?.map(p => `${p.name}: ${p.hand?.length || 0} cards`));
+            
+            // UPDATE THE GAME STATE WITH THE INTERMEDIATE STATE
+            if (currentGameIdRef.current) {
+                console.log('[ANIMATION] Updating game state with intermediate state');
+                updateGameState(currentGameIdRef.current, nextAnimation.game_state);
+            }
+        } else {
+            console.log(`[ANIMATION] Processing ${nextAnimation.type} WITHOUT intermediate game state`);
+        }
+
         // Start tracking cards in this animation (simplified - CSS handles the actual animation)
         if (nextAnimation.cards && nextAnimation.cards.length > 0) {
             setAnimatingCards(prev => {
@@ -169,7 +255,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             });
         }
 
-        // Animation duration: 500ms for fast, smooth animations
+        // Animation duration: use ANIMATION_TIME constant for consistency
         timeoutRef.current = setTimeout(() => {
             // Remove cards from animating state
             if (nextAnimation.cards) {
@@ -191,8 +277,8 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             
             // Process next animation after a short delay
             setTimeout(processAnimationQueue, 100);
-        }, 500);
-    }, []);
+        }, ANIMATION_TIME);
+    }, [updateGameState]);
 
     // Start processing queue when items are added and no animation is running
     useEffect(() => {
@@ -236,7 +322,129 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         };
     };
 
+    // Helper function to trigger optimistic animation and track it
+    const triggerOptimisticAnimation = (animationType: string, cards: Card[], fromLocation: string, toLocation: string, playerId?: string) => {
+        const animationEvent: AnimationEvent = {
+            type: animationType as any,
+            cards: cards,
+            from_location: fromLocation as any,
+            to_location: toLocation as any,
+            player_id: playerId,
+            message: `Optimistic ${animationType} animation`
+        };
+        
+        // Track this animation to avoid duplicates from server
+        const eventString = JSON.stringify({
+            type: animationType,
+            cards: cards,
+            from_location: fromLocation,
+            to_location: toLocation,
+            player_id: playerId
+        });
+        optimisticAnimations.current.add(eventString);
+        
+        // Queue the optimistic animation immediately
+        queueAnimation(animationEvent);
+        
+        console.log(`[OPTIMISTIC] Triggered ${animationType} animation:`, animationEvent);
+        return eventString;
+    };
 
+    // TIMING FLOW:
+    // 1. User action validates in AnimationContext (instant rejection if invalid)
+    // 2. Optimistic animation triggers immediately (instant feedback)
+    // 3. ServerContext does optimistic game state updates after ANIMATION_TIME (UI consistency)  
+    // 4. Server response with intermediate states provides final truth
+
+    // Game action methods that handle optimistic animations + server calls
+    const attack = async (cards: Card[]): Promise<{ game_id: string }> => {
+        if (!game_id || !games[game_id]) {
+            throw new Error('No active game');
+        }
+        
+        const game = games[game_id];
+        
+        // 1. Validate first - don't do anything if validation fails
+        validateAttack(game, cards);
+        
+        // 2. Trigger optimistic animation
+        triggerOptimisticAnimation('attack_pass', cards, 'hand', 'table', game.self?.player_id);
+        
+        // 3. Call server method (which will do optimistic game state updates)
+        const result = await serverMethods.attack(cards);
+        
+        return result;
+    };
+
+    const pass = async (cards: Card[]): Promise<{ game_id: string }> => {
+        if (!game_id || !games[game_id]) {
+            throw new Error('No active game');
+        }
+        
+        const game = games[game_id];
+        
+        // 1. Validate first - don't do anything if validation fails
+        validatePass(game, cards);
+        
+        // 2. Trigger optimistic animation
+        triggerOptimisticAnimation('attack_pass', cards, 'hand', 'table', game.self?.player_id);
+        
+        // 3. Call server method (which will do optimistic game state updates)
+        const result = await serverMethods.pass(cards);
+        
+        return result;
+    };
+
+    const pickup = async (): Promise<{ game_id: string }> => {
+        if (!game_id || !games[game_id]) {
+            throw new Error('No active game');
+        }
+        
+        const game = games[game_id];
+        
+        // 1. Validate first - don't do anything if validation fails
+        validatePickup(game);
+        
+        const allTableCards = game.table_battles.flatMap(battle => 
+            battle.defense ? [battle.attack, battle.defense] : [battle.attack]
+        );
+        
+        // 2. Trigger optimistic animation
+        triggerOptimisticAnimation('pickup', allTableCards, 'table', 'hand', game.self?.player_id);
+        
+        // 3. Call server method (which will do optimistic game state updates)
+        const result = await serverMethods.pickup();
+        
+        return result;
+    };
+
+    const cover = async (coverCards: Card[], attackCards: Card[]): Promise<{ game_id: string }> => {
+        if (!game_id || !games[game_id]) {
+            throw new Error('No active game');
+        }
+        
+        const game = games[game_id];
+        
+        // 1. Validate first - don't do anything if validation fails
+        validateCover(game, coverCards, attackCards);
+        
+        // 2. Trigger optimistic cover animations (one for each card)
+        for (let i = 0; i < coverCards.length; i++) {
+            const coverCard = coverCards[i];
+            triggerOptimisticAnimation('cover', [coverCard], 'hand', 'table', game.self?.player_id);
+        }
+        
+        // 3. Call server method (which will do optimistic game state updates)
+        const result = await serverMethods.cover(coverCards, attackCards);
+        
+        return result;
+    };
+
+    const good = async (): Promise<{ game_id: string }> => {
+        // Good doesn't have an optimistic animation - it's just a signal
+        const result = await serverMethods.good();
+        return result;
+    };
 
     // Cleanup timeouts on unmount
     useEffect(() => {
@@ -254,7 +462,12 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             animationQueue,
             queueAnimation,
             queueAnimationSequence,
-            getCardAnimationState
+            getCardAnimationState,
+            attack,
+            pass,
+            pickup,
+            cover,
+            good
         }}>
             {children}
         </AnimationContext.Provider>

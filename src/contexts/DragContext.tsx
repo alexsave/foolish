@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { Card, PersonalGame } from '../common/types';
 import { useServer } from './ServerContext';
+import { useAnimation } from './AnimationContext';
 import { useAuth } from './AuthContext';
 import { useGame } from './GameContext';
 import { canCover } from '../common/common_utils';
@@ -10,7 +11,8 @@ const DragContext = createContext<DragContextType | null>(null);
 export const DragProvider = ({ children }: { children: React.ReactNode }) => {
     const { user_id } = useAuth();
     const game: PersonalGame = useServer().game as PersonalGame;
-    const { attack, pass, cover, rearrangeHand, localHandOrder, setLocalHandOrder } = useServer();
+    const { rearrangeHand, localHandOrder, setLocalHandOrder } = useServer();
+    const { attack, pass, cover } = useAnimation();
 
     const { selectedCards, setSelectedCards, handleCardSelection } = useGame();
 

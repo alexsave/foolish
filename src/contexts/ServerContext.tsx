@@ -3,9 +3,9 @@ import { Card, PublicPlayer, PersonalGame, PublicGame, PRIVATE_EVENT_TYPE } from
 import supabase from '../backend/Connector';
 import { useParams } from 'react-router-dom';
 import { useAuth } from './AuthContext';
-import { useAnimation } from './AnimationContext';
 import { MAX_PLAYERS } from '../common/constants';
 import { get_next_player_index, canCover, card_comp } from '../common/common_utils';
+import { ANIMATION_TIME } from '../constants/constants';
 
 const ServerContext = createContext<ServerContextType | null>(null);
 
@@ -31,10 +31,7 @@ games!inner (
 // for now we'll just use a fake auth impl
 // this will be kinda similar to client.js
 export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
-
     const { user_id } = useAuth();
-    const { queueAnimation } = useAnimation();
-
     const url_game_id = useParams().game_id?.toLowerCase();
     // keep a state of games
     // maybe ref idk
@@ -73,9 +70,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
     // Use ref to prevent duplicate user effect executions
     const prevUserRef = useRef<string | null>(null);
-    
-    // Track locally triggered optimistic animations to avoid server duplicates
-    const locallyTriggeredAnimations = useRef<Set<string>>(new Set());
 
     useEffect(() => {
         if (url_game_id) {
@@ -168,27 +162,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             });
     };
 
-    // Helper function to trigger local animations for optimistic updates
-    const triggerLocalAnimation = (animationType: 'pickup' | 'cover' | 'attack_pass', cards: Card[], fromLocation: string, toLocation: string, playerId?: string) => {
-        const animationEvent = {
-            type: animationType,
-            cards: cards,
-            from_location: fromLocation,
-            to_location: toLocation,
-            player_id: playerId,
-            message: `Local ${animationType} animation`
-        } as any; // Cast to avoid strict typing issues
-        
-        // Track this animation to avoid duplicates from server
-        const eventString = JSON.stringify(animationEvent);
-        locallyTriggeredAnimations.current.add(eventString);
-        
-        // Queue the local animation
-        queueAnimation(animationEvent);
-        
-        console.log(`[OPTIMISTIC] Triggered local ${animationType} animation:`, animationEvent);
-    };
-
     const handleGameMessage = (message: any, source: string = 'unknown') => {
         // Handle both old format (message.game_id) and new format (message.game.id)
         // Also handle nested message format from broadcastToGame
@@ -218,39 +191,39 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             console.log(`[${source.toUpperCase()}] Animation events detected:`, animationEvents);
             
             // Check if any of these events were triggered locally (optimistic animations)
-            const hasLocallyTriggeredEvent = animationEvents.some((serverEvent: any) => {
-                const serverEventString = JSON.stringify({
-                    type: serverEvent.type,
-                    cards: serverEvent.cards,
-                    from_location: serverEvent.from_location,
-                    to_location: serverEvent.to_location,
-                    player_id: serverEvent.player_id,
-                    message: `Local ${serverEvent.type} animation`
-                });
-                return locallyTriggeredAnimations.current.has(serverEventString);
-            });
+            // const hasLocallyTriggeredEvent = animationEvents.some((serverEvent: any) => {
+            //     const serverEventString = JSON.stringify({
+            //         type: serverEvent.type,
+            //         cards: serverEvent.cards,
+            //         from_location: serverEvent.from_location,
+            //         to_location: serverEvent.to_location,
+            //         player_id: serverEvent.player_id,
+            //         message: `Local ${serverEvent.type} animation`
+            //     });
+            //     return locallyTriggeredAnimations.current.has(serverEventString);
+            // });
             
-            if (hasLocallyTriggeredEvent) {
-                console.log('[OPTIMISTIC] Ignoring server animation - already triggered locally');
-                // Clear the local animations since server confirmed them
-                animationEvents.forEach((serverEvent: any) => {
-                    const serverEventString = JSON.stringify({
-                        type: serverEvent.type,
-                        cards: serverEvent.cards,
-                        from_location: serverEvent.from_location,
-                        to_location: serverEvent.to_location,
-                        player_id: serverEvent.player_id,
-                        message: `Local ${serverEvent.type} animation`
-                    });
-                    locallyTriggeredAnimations.current.delete(serverEventString);
-                });
+            // if (hasLocallyTriggeredEvent) {
+            //     console.log('[OPTIMISTIC] Ignoring server animation - already triggered locally');
+            //     // Clear the local animations since server confirmed them
+            //     animationEvents.forEach((serverEvent: any) => {
+            //         const serverEventString = JSON.stringify({
+            //             type: serverEvent.type,
+            //             cards: serverEvent.cards,
+            //             from_location: serverEvent.from_location,
+            //             to_location: serverEvent.to_location,
+            //             player_id: serverEvent.player_id,
+            //             message: `Local ${serverEvent.type} animation`
+            //         });
+            //         locallyTriggeredAnimations.current.delete(serverEventString);
+            //     });
                 
-                // Still update game state from server, but skip animations
-                if (gameData) {
-                    setGames(prev => ({ ...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev) }));
-                }
-                return;
-            }
+            //     // Still update game state from server, but skip animations
+            //     if (gameData) {
+            //         setGames(prev => ({ ...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev) }));
+            //     }
+            //     return;
+            // }
             
             // Debug cards_to_trash events specifically
             const cardsToTrashEvents = animationEvents.filter(e => e.type === 'cards_to_trash');
@@ -592,39 +565,33 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     };
 
     const attack = (cards: Card[]): Promise<{ game_id: string }> => {
-        // Quick check to see if valid attack, then optimistic update
-        // What is most likely to happen?
-        // let's assume that they are using this client, so they attacked with a hand in their deck.
-        // All we need to confirm is that the valu is on the board + defender has enough
+        // Optimistic game state update after animation completes
+        setTimeout(() => {
+            const g: PersonalGame = games[game_id!];
+            if (!g) return;
+            
+            const table_battles = g.table_battles;
+            const newHand = g.self.hand.filter(card => !cards.some(c => card_comp(c, card)));
+            
+            setGames(prev => ({ 
+                ...prev, 
+                [game_id!]: { 
+                    ...prev[game_id!], 
+                    table_battles: [...table_battles, ...cards.map(card => ({ attack: card, defense: null }))], 
+                    self: { ...prev[game_id!].self, hand: newHand } 
+                } 
+            }));
+            
+            // Update local hand order
+            setLocalHandOrders(prev => ({
+                ...prev,
+                [game_id!]: (prev[game_id!] || []).filter(card => !cards.some(c => c.suit === card.suit && c.value === card.value))
+            }));
+            
+            console.log('[OPTIMISTIC] Updated game state after attack animation');
+        }, ANIMATION_TIME);
 
-        const g: PersonalGame = games[game_id!];
-        const table_battles = g.table_battles;
-        let uncovered_cards = table_battles.filter(battle => battle.defense === null).length;
-
-        const defender: PublicPlayer = g.players[g.defender];
-
-        let defender_cards = defender.hand_length;
-
-        if (uncovered_cards + cards.length > defender_cards) {
-            return Promise.reject(new Error(`No room in defenders hand`));
-        }
-        if (table_battles.length > 0 && !cards.every(card => table_battles.some(battle => battle.attack.value === card.value || battle.defense?.value === card.value))) {
-            return Promise.reject(new Error(`Some card values are not on the table`));
-        }
-
-        // Trigger local attack animation BEFORE updating state
-        triggerLocalAnimation('attack_pass', cards, 'hand', 'table', g.self.player_id);
-
-        // Optimistic update
-        const newHand = g.self.hand.filter(card => !cards.includes(card));
-        setGames(prev => ({ ...prev, [game_id!]: { ...prev[game_id!], table_battles: [...table_battles, ...cards.map(card => ({ attack: card, defense: null }))], self: { ...prev[game_id!].self, hand: newHand } } }));
-        
-        // Update local hand order
-        setLocalHandOrders(prev => ({
-            ...prev,
-            [game_id!]: (prev[game_id!] || []).filter(card => !cards.some(c => c.suit === card.suit && c.value === card.value))
-        }));
-
+        // Server API call
         return invokeGameFunctions('attack', {
             game_id: game_id!,
             cards: cards,
@@ -632,33 +599,35 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     };
 
     const pass = (cards: Card[]): Promise<{ game_id: string }> => {
-        // Quick check to see if valid attack, then optimistic update
-        // We're also leaning on checks elsewhere in the client
-        const g: PersonalGame = games[game_id!];
-        const table_battles = g.table_battles;
-        if (!cards.every(card => card.value === cards[0].value)) {
-            return Promise.reject(new Error(`Some card values are not the same`));
-        }
-        if (!table_battles.every(battle => battle.defense === null && battle.attack.value === cards[0].value)) {
-            return Promise.reject(new Error(`Cannot pass`));
-        }
+        // Optimistic game state update after animation completes
+        setTimeout(() => {
+            const g: PersonalGame = games[game_id!];
+            if (!g) return;
+            
+            const table_battles = g.table_battles;
+            const next_defender = get_next_player_index(g, g.defender);
+            const newHand = g.self.hand.filter(card => !cards.some(c => card_comp(c, card)));
+            
+            setGames(prev => ({ 
+                ...prev, 
+                [game_id!]: { 
+                    ...prev[game_id!], 
+                    table_battles: [...table_battles, ...cards.map(card => ({ attack: card, defense: null }))], 
+                    self: { ...prev[game_id!].self, hand: newHand }, 
+                    defender: next_defender 
+                } 
+            }));
+            
+            // Update local hand order
+            setLocalHandOrders(prev => ({
+                ...prev,
+                [game_id!]: (prev[game_id!] || []).filter(card => !cards.some(c => c.suit === card.suit && c.value === card.value))
+            }));
+            
+            console.log('[OPTIMISTIC] Updated game state after pass animation');
+        }, ANIMATION_TIME);
 
-        // Trigger local pass animation BEFORE updating state
-        triggerLocalAnimation('attack_pass', cards, 'hand', 'table', g.self.player_id);
-
-        // Optimistic update
-        // I don't like this cast 
-        // But refactoring it to work would involve also changing the player type
-        const next_defender = get_next_player_index(g, g.defender);
-        const newHand = g.self.hand.filter(card => !cards.includes(card));
-        setGames(prev => ({ ...prev, [game_id!]: { ...prev[game_id!], table_battles: [...table_battles, ...cards.map(card => ({ attack: card, defense: null }))], self: { ...prev[game_id!].self, hand: newHand }, defender: next_defender } }));
-        
-        // Update local hand order
-        setLocalHandOrders(prev => ({
-            ...prev,
-            [game_id!]: (prev[game_id!] || []).filter(card => !cards.some(c => c.suit === card.suit && c.value === card.value))
-        }));
-
+        // Server API call
         return invokeGameFunctions('pass', {
             game_id: game_id!,
             cards: cards,
@@ -666,96 +635,91 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     };
 
     const pickup = (): Promise<{ game_id: string }> => {
-        // Optimistic update
-        const g: PersonalGame = games[game_id!];
-        const table_battles = g.table_battles;
-        if (table_battles.length === 0) {
-            return Promise.reject(new Error(`Cannot pickup`));
-        }
-        const next_first_attacker = get_next_player_index(g, g.defender);
-        const next_defender = get_next_player_index(g, next_first_attacker);
-        // move all table cards to self, defenses and attacks
-        // Collect all cards from the table (both attacks and defenses)
-        const allTableCards = table_battles.flatMap(battle => 
-            battle.defense ? [battle.attack, battle.defense] : [battle.attack]
-        );
+        // Optimistic game state update after animation completes
+        setTimeout(() => {
+            const g: PersonalGame = games[game_id!];
+            if (!g) return;
+            
+            const table_battles = g.table_battles;
+            const next_first_attacker = get_next_player_index(g, g.defender);
+            const next_defender = get_next_player_index(g, next_first_attacker);
+            
+            // Collect all cards from the table (both attacks and defenses)
+            const allTableCards = table_battles.flatMap(battle => 
+                battle.defense ? [battle.attack, battle.defense] : [battle.attack]
+            );
+            const newHand = [...g.self.hand, ...allTableCards];
+            
+            setGames(prev => ({
+                ...prev,
+                [game_id!]: {
+                    ...prev[game_id!],
+                    table_battles: [],
+                    self: {
+                        ...prev[game_id!].self,
+                        hand: newHand
+                    },
+                    first_attacker: next_first_attacker,
+                    defender: next_defender
+                }
+            }));
+            
+            // Update local hand order (add new cards to the end)
+            setLocalHandOrders(prev => ({
+                ...prev,
+                [game_id!]: [...(prev[game_id!] || []), ...allTableCards]
+            }));
+            
+            console.log('[OPTIMISTIC] Updated game state after pickup animation');
+        }, ANIMATION_TIME);
 
-        // Trigger local pickup animation BEFORE updating state
-        triggerLocalAnimation('pickup', allTableCards, 'table', 'hand', g.self.player_id);
-
-        const newHand = [...g.self.hand, ...allTableCards];
-        setGames(prev => ({
-            ...prev,
-            [game_id!]: {
-                ...prev[game_id!],
-                table_battles: [],
-                self: {
-                    ...prev[game_id!].self,
-                    hand: newHand
-                },
-                first_attacker: next_first_attacker,
-                defender: next_defender
-            }
-        }));
-        
-        // Update local hand order (add new cards to the end)
-        setLocalHandOrders(prev => ({
-            ...prev,
-            [game_id!]: [...(prev[game_id!] || []), ...allTableCards]
-        }));
-
+        // Server API call
         return invokeGameFunctions('pickup', {
             game_id: game_id!,
         });
     };
 
     const cover = (coverCards: Card[], attackCards: Card[]): Promise<{ game_id: string }> => {
-        // Optimistic update
-        const g: PersonalGame = games[game_id!];
-        const table_battles = g.table_battles;
-        if (table_battles.length === 0) {
-            return Promise.reject(new Error(`Cannot cover`));
-        }
-        for (let i = 0; i < coverCards.length; i++) {
-            const coverCard = coverCards[i];
-            const attackCard = attackCards[i];
-            if (!canCover(attackCard, coverCard, g.power_suit)) {
-                return Promise.reject(new Error(`Cover card value does not match attack card value`));
-            }
-        }
+        // Optimistic game state update after animation completes
+        setTimeout(() => {
+            const g: PersonalGame = games[game_id!];
+            if (!g) return;
+            
+            const newHand = g.self.hand.filter(card => !coverCards.some(c => card_comp(c, card)));
+            const updatedTableBattles = g.table_battles.map(battle => {
+                const attackIndex = attackCards.findIndex(card => 
+                    card_comp(card, battle.attack)
+                );
+                if (attackIndex !== -1) {
+                    return { ...battle, defense: coverCards[attackIndex] };
+                }
+                return battle;
+            });
+            
+            setGames(prev => ({
+                ...prev, 
+                [game_id!]: {
+                    ...prev[game_id!],
+                    table_battles: updatedTableBattles,
+                    self: { ...prev[game_id!].self, hand: newHand }
+                }
+            }));
+            
+            // Update local hand order
+            setLocalHandOrders(prev => ({
+                ...prev,
+                [game_id!]: (prev[game_id!] || []).filter(card => !coverCards.some(c => card_comp(c, card)))
+            }));
+            
+            console.log('[OPTIMISTIC] Updated game state after cover animations');
+        }, ANIMATION_TIME);
 
-        // Trigger local cover animations BEFORE updating state
-        for (let i = 0; i < coverCards.length; i++) {
-            const coverCard = coverCards[i];
-            const attackCard = attackCards[i];
-            // Create individual cover animation for each card
-            triggerLocalAnimation('cover', [coverCard], 'hand', 'table', g.self.player_id);
-        }
-
-        // Optimistic update. Move cover cards out of self, put cover card as defense on corresponding attack
-        const newHand = g.self.hand.filter(card => !coverCards.includes(card));
-        setGames(prev => ({
-            ...prev, [game_id!]: {
-                ...prev[game_id!],
-
-                // this could use card_comp
-                table_battles: table_battles.map(battle => attackCards.findIndex(card => card.value === battle.attack.value && card.suit === battle.attack.suit) !== -1 ? { ...battle, defense: coverCards[attackCards.findIndex(card => card.value === battle.attack.value && card.suit === battle.attack.suit)] } : battle),
-
-                self: { ...prev[game_id!].self, hand: newHand }
-            }
-        }));
-        
-        // Update local hand order
-        setLocalHandOrders(prev => ({
-            ...prev,
-            [game_id!]: (prev[game_id!] || []).filter(card => !coverCards.some(c => card_comp(c, card)))
-        }));
+        // Server API call
         return invokeGameFunctions('cover', {
             game_id: game_id!,
             cover_cards: coverCards,
             attack_cards: attackCards,
         });
-
     };
 
     const good = (): Promise<{ game_id: string }> => {
@@ -978,6 +942,13 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             good,
             sendMessage,
             getUserGames,
+            updateGameState: (gameId: string, gameState: any) => {
+                console.log('[SERVER] Updating intermediate game state for game', gameId);
+                setGames(prev => ({ 
+                    ...prev, 
+                    [gameId]: mergeGameData(gameId, gameState, prev) 
+                }));
+            },
             updateGameName,
             rearrangePlayer,
             rearrangeHand,
@@ -1012,6 +983,7 @@ interface ServerContextType {
     good: () => Promise<{ game_id: string }>;
     sendMessage: (message: string) => Promise<void>;
     getUserGames: () => Promise<void>;
+    updateGameState: (gameId: string, gameState: any) => void;
     updateGameName: (gameId: string, name: string) => Promise<{ game_id: string }>;
     rearrangePlayer: (gameId: string, playerIndices: number[]) => Promise<{ game_id: string }>;
     rearrangeHand: (gameId: string, cardIndices: number[]) => Promise<{ game_id: string }>;

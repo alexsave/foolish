@@ -1,3 +1,4 @@
+import React from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { ServerProvider } from '../contexts/ServerContext';
@@ -18,7 +19,7 @@ export const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
             setRedirectAfterLogin(redirectUrl);
         }
     }, [loading, user_id, location.pathname, location.search, setRedirectAfterLogin]);
-    
+
     if (loading) {
         return (
             <div className="auth-container">
@@ -28,21 +29,21 @@ export const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
             </div>
         );
     }
-    
+
     // Only allow access if user is authenticated
     if (!user_id) {
         return <Navigate to="/login" />;
     }
 
     return (
-        <AnimationProvider>
-            <ServerProvider>
+        <ServerProvider>
+            <AnimationProvider>
                 <GameProvider>
                     <DragProvider>
                         {children}
                     </DragProvider>
                 </GameProvider>
-            </ServerProvider>
-        </AnimationProvider>
+            </AnimationProvider>
+        </ServerProvider>
     );
 };

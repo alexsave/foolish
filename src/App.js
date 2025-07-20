@@ -8,9 +8,6 @@ import { ProtectedRoute } from './components/ProtectedRoute';
 import { Dashboard } from './components/Dashboard';
 import { GameView } from './components/GameView';
 import { UnprotectedRoute } from './components/UnprotectedRoute';
-import { GameProvider } from './contexts/GameContext';
-import { DragProvider } from './contexts/DragContext';
-import { AnimationProvider } from './contexts/AnimationContext';
 
 function App() {
   return (

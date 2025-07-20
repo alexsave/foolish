@@ -1,13 +1,15 @@
 import { Card, PersonalGame } from "../../common/types";
 import { useAuth } from "../../contexts/AuthContext";
 import { useServer } from "../../contexts/ServerContext";
+import { useAnimation } from "../../contexts/AnimationContext";
 import { VALUE_MAP, SUIT_MAP } from "../../utils/cards";
 import { useGame } from "../../contexts/GameContext";
 import { useDrag } from "../../contexts/DragContext";
 import { CardFace} from "./CardFace";
 
 const DefenderActionPanel = () => {
-    const { game, cover, pass } = useServer() as { game: PersonalGame, cover: (covering_cards: Card[], covered_cards: Card[]) => Promise<any>, pass: (cards: Card[]) => Promise<any> };
+    const { game } = useServer() as { game: PersonalGame };
+    const { cover, pass } = useAnimation();
     const { selectedCards, setSelectedCards, coverMap, setCoverMap, isSelectingCover, setIsSelectingCover } = useGame();
 
     if (!game) {
@@ -99,7 +101,8 @@ const DefenderActionPanel = () => {
 
 const AttackerActionPanel = () => {
     const { user_id } = useAuth();
-    const { game, attack } = useServer() as { game: PersonalGame, attack: (cards: Card[]) => Promise<any> };
+    const { game } = useServer() as { game: PersonalGame };
+    const { attack } = useAnimation();
     const { selectedCards, setSelectedCards } = useGame();
     
     if (!game) {
@@ -194,7 +197,8 @@ const CardDiv = ({ user_id }: { user_id: string }) => {
 
 export const ActionButtons = () => {
     const { user_id } = useAuth();
-    const { game, pickup, good } = useServer() as { game: PersonalGame, pickup: () => Promise<any>, good: () => Promise<any> };
+    const { game } = useServer() as { game: PersonalGame };
+    const { pickup, good } = useAnimation();
 
     const { selectedCards, setSelectedCards } = useGame();
 
