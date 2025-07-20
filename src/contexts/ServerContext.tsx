@@ -468,6 +468,11 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             if (playerData && !playerError) {
                 // User is in the game - return personalized data
                 const game = playerData.games as unknown as PublicGame;
+                
+                // Trigger bot loop for this game (doesn't mutate state, just keeps bots active)
+                // Ignore result who cares
+                supabase.functions.invoke('bot_bump', { body: { game_id: gameId } });
+                
                 const selfPlayer = game.players.find((player) => player.player_id === user_id);
                 
                 if (selfPlayer) {

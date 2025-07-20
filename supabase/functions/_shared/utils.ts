@@ -271,7 +271,7 @@ export const wrap400 = (execute: (params: ExecutionParams) => Promise<{game: Gam
             }
 
             // Schedule bot actions if this was a game operation
-            if (game_id && run_bots) {
+            if (game_id/* && run_bots*/) {
                 // TODO: not quite. Only after start/attack/cover/pass/pickup/good 
                 lockedBotLoop(game_id);
             }
