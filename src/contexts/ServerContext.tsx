@@ -743,7 +743,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
         return invokeGameFunctions('update-name', {
             game_id: gameId,
-            name: name
+            new_name: name
         }, {
             onError: revert
         });

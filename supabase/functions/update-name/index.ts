@@ -26,11 +26,8 @@ wrap400(async (user, user_name, body, game) => {
         throw new Error('Name must be 50 characters or less');
     }
 
-    // Update player name
-    const player = game.players.find(p => p.player_id === user_id);
-    if (player) {
-        player.name = new_name.trim();
-    }
+    // Update game name
+    game.name = new_name.trim();
 
     // Save complete game state back to separated tables
     //await saveCompleteGame(game);
