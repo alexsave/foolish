@@ -1,4 +1,4 @@
-import { ExecutionParams, wrap400 } from "../_shared/utils.ts";
+import { ExecutionParams, wrap400, animationEvents } from "../_shared/utils.ts";
 import { GAME_STATUS } from "../_shared/types.ts";
 import { verify_player_in_game } from "../_shared/common_utils.ts";
 import { createClient } from 'jsr:@supabase/supabase-js';
@@ -12,6 +12,8 @@ wrap400(async ({user, body, game}: ExecutionParams) => {
     const user_id = user.id;
     const { bot_id } = body;
 
+    let exitedPlayerName = '';
+
     if (bot_id) {
         // Removing a bot
         // Verify bot is in game
@@ -19,6 +21,8 @@ wrap400(async ({user, body, game}: ExecutionParams) => {
         if (!botPlayer) {
             throw new Error(`Bot ${bot_id} is not in the game`);
         }
+
+        exitedPlayerName = botPlayer.name;
 
         // Remove bot from game
         game.players = game.players.filter(player => player.player_id !== bot_id);
@@ -33,6 +37,11 @@ wrap400(async ({user, body, game}: ExecutionParams) => {
         // Removing the user
         // Verify player is in game
         verify_player_in_game(game, user_id);
+
+        const userPlayer = game.players.find(player => player.player_id === user_id);
+        if (userPlayer) {
+            exitedPlayerName = userPlayer.name;
+        }
 
         // Remove player from game
         game.players = game.players.filter(player => player.player_id !== user_id);
@@ -79,7 +88,18 @@ wrap400(async ({user, body, game}: ExecutionParams) => {
             .from('game_decks')
             .delete()
             .eq('game_id', game.id);
+        
+        // No animation event needed if game is being deleted
+        return { game, events: [] };
     }
 
-    return { game, events: [] };
+    // Add animation event to notify remaining players
+    const playerType = bot_id ? 'Bot' : 'Player';
+    animationEvents.addMagicTransitionEvent(`${playerType} ${exitedPlayerName} left the game`, game);
+
+    const events = animationEvents.getEvents();
+    animationEvents.clear();
+
+    return { game, events };
+
 }, false); 

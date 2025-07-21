@@ -1,4 +1,4 @@
-import { wrap400, ExecutionParams } from "../_shared/utils.ts";
+import { wrap400, ExecutionParams, animationEvents } from "../_shared/utils.ts";
 import { BotHand, PLAYER_STATUS } from "../_shared/types.ts";
 import { createClient } from 'jsr:@supabase/supabase-js';
 
@@ -74,6 +74,12 @@ wrap400(async ({body, game}: ExecutionParams) => {
         done_attacking_this_round: false
     } as BotHand);
 
-    return { game, events: [] };
+    // Add animation event to notify players
+    animationEvents.addMagicTransitionEvent(`Bot ${availableBot.nickname} joined the game`, game);
+
+    const events = animationEvents.getEvents();
+    animationEvents.clear();
+
+    return { game, events };
 
 }, false); 

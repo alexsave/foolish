@@ -1,4 +1,4 @@
-import { wrap400, ExecutionParams } from "../_shared/utils.ts";
+import { wrap400, ExecutionParams, animationEvents } from "../_shared/utils.ts";
 import { GAME_STATUS, PLAYER_STATUS } from "../_shared/types.ts";
 import { verify_player_in_game } from "../_shared/common_utils.ts";
 
@@ -48,6 +48,12 @@ wrap400(async ({user, game}: ExecutionParams) => {
         message = `Player ${fool.name} was the fool! Game reset for another round`;
     }
 
-    return { game, events: [] };
+    // Add animation event to notify all players about the game reset
+    animationEvents.addMagicTransitionEvent(message, game);
+
+    const events = animationEvents.getEvents();
+    animationEvents.clear();
+
+    return { game, events };
 
 }, false); 

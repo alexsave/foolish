@@ -1,4 +1,4 @@
-import { wrap400, ExecutionParams } from "../_shared/utils.ts";
+import { wrap400, ExecutionParams, animationEvents } from "../_shared/utils.ts";
 import { GAME_STATUS } from "../_shared/types.ts";
 import { verify_player_in_game } from "../_shared/common_utils.ts";
 
@@ -33,6 +33,14 @@ wrap400(async ({user, body, game}: ExecutionParams) => {
 
     game.players = rearrangedPlayers;
 
-    return { game, events: [] };
+    // Add animation event to notify all players about the rearrangement
+    const userPlayer = game.players.find(p => p.player_id === user_id);
+    const userName = userPlayer?.name || 'Someone';
+    animationEvents.addMagicTransitionEvent(`${userName} rearranged the player order`, game);
+
+    const events = animationEvents.getEvents();
+    animationEvents.clear();
+
+    return { game, events };
 
 }, false); 

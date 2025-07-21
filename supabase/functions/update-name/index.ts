@@ -1,4 +1,4 @@
-import { wrap400, ExecutionParams } from "../_shared/utils.ts";
+import { wrap400, ExecutionParams, animationEvents } from "../_shared/utils.ts";
 import { GAME_STATUS } from "../_shared/types.ts";
 import { verify_player_in_game } from "../_shared/common_utils.ts";
 
@@ -23,9 +23,19 @@ wrap400(async ({user, body, game}: ExecutionParams) => {
         throw new Error('Name must be 50 characters or less');
     }
 
+    const oldName = game.name;
+
     // Update game name
     game.name = new_name.trim();
 
-    return { game, events: [] };
+    // Add animation event to notify all players about the name change
+    const userPlayer = game.players.find(p => p.player_id === user_id);
+    const userName = userPlayer?.name || 'Someone';
+    animationEvents.addMagicTransitionEvent(`${userName} changed game name from "${oldName}" to "${game.name}"`, game);
+
+    const events = animationEvents.getEvents();
+    animationEvents.clear();
+
+    return { game, events };
 
 }, false); 

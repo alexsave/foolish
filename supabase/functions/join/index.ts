@@ -1,4 +1,4 @@
-import { wrap400, ExecutionParams } from "../_shared/utils.ts";
+import { wrap400, ExecutionParams, animationEvents } from "../_shared/utils.ts";
 import { PlayerHand } from "../_shared/types.ts";
 import { createClient } from 'jsr:@supabase/supabase-js';
 
@@ -54,7 +54,13 @@ wrap400(async ({user, user_name, body, game}: ExecutionParams) => {
         awaiting_attack: false
     } as PlayerHand);
 
-    return { game, events: [] };
+    // Add animation event to notify other players
+    animationEvents.addMagicTransitionEvent(`${user_name} joined the game`, game);
+
+    const events = animationEvents.getEvents();
+    animationEvents.clear();
+
+    return { game, events };
 
 }, false);
 
