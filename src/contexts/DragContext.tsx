@@ -181,8 +181,37 @@ export const DragProvider = ({ children }: { children: React.ReactNode }) => {
                 return { type: 'pass' as const };
             }
         } else {
-            // Attacker: dragging to table = attack
-            return { type: 'attack' as const };
+            // Attacker: check if attack is valid before allowing it
+            // Check if the dragged card is part of selected cards
+            const isDraggedCardSelected = selectedCards.some(selectedCard =>
+                selectedCard.value === draggedCard.value && selectedCard.suit === draggedCard.suit
+            );
+
+            // Use all selected cards if the dragged card is selected, otherwise just the dragged card
+            const cardsToUse = isDraggedCardSelected && selectedCards.length > 0 ? selectedCards : [draggedCard];
+
+            // Check if attack is valid
+            if (game.table_battles.length === 0) {
+                // First attack: all cards must have the same value
+                const allSameValue = cardsToUse.every(card => card.value === cardsToUse[0].value);
+                if (allSameValue) {
+                    return { type: 'attack' as const };
+                } else {
+                    return { type: 'invalid' as const };
+                }
+            } else {
+                // Subsequent attack: all card values must already be on the table
+                const tableValues = new Set(game.table_battles.flatMap(battle => 
+                    [battle.attack.value, ...(battle.defense ? [battle.defense.value] : [])]
+                ));
+                
+                const allValuesOnTable = cardsToUse.every(card => tableValues.has(card.value));
+                if (allValuesOnTable) {
+                    return { type: 'attack' as const };
+                } else {
+                    return { type: 'invalid' as const };
+                }
+            }
         }
     };
 

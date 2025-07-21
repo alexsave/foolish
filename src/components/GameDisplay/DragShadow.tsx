@@ -66,7 +66,10 @@ export const DragShadow = () => {
             </div>
         )}
         {/* Always show shadow cards when dragging outside hand */}
-        <div>{
+        <div style={{
+            display: 'flex',
+            flexDirection: 'row',
+        }}>{
             cardsToUse.map((card, index) => 
                 // Maybe a scale down is all we need?
                 <CardFace 
