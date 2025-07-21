@@ -28,7 +28,7 @@ export const DeckAndFlipped = () => {
             </div>
         )}
         {game.flipped && (
-            <div style={{ marginTop: game.deck_length > 0 ? '-30px' : '0px' }} data-location="flipped">
+            <div style={{ marginTop: game.deck_length > 0 ? '-30px' : '0px', zIndex: 0 }} data-location="flipped">
                 <CardFace card={game.flipped} playerId="flipped" />
             </div>
         )}

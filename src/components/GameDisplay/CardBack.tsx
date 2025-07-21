@@ -39,7 +39,7 @@ export const CardBack = ({ deckSize = 36, enableRandomRotation = false }: { deck
                         backgroundColor: '#DC143C', // Fallback crimson red
                         border: '1px solid #8B0000', // Dark red border
                         borderRadius: '5px',
-                        zIndex: layerIndex,
+                        zIndex: layerIndex + 2,
                         transform: `rotate(90deg) rotate(${rotation}deg)`,
                         transformOrigin: 'center center',
                         backgroundImage: patternDataUrl ? `url(${patternDataUrl})` : undefined,
