@@ -216,7 +216,7 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
                             }
 
                             // Add animation event for auto-transition
-                            animationEvents.addMagicTransitionEvent('All attackers finished - automatically proceeding to next round');
+                            animationEvents.addMagicTransitionEvent('All attackers finished - automatically proceeding to next round', game);
 
                             // Check if we should continue after auto-transition
                             if (game.status === GAME_STATUS.PLAYING && game.players[game.first_attacker].is_ai) {

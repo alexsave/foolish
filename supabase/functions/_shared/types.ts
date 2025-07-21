@@ -117,17 +117,17 @@ export interface PublicAnimationEvent {
     target_card?: Card; // for cover events
     battle_index?: number; // for cover events
     message?: string;
-    game_state?: PublicGame; // public game state
+    game_state: PublicGame; // public game state
 }
 
 // Personal animation event for individual players
 export interface PersonalAnimationEvent extends PublicAnimationEvent {
-    game_state?: PersonalGame; // personalized game state with self data
+    game_state: PersonalGame; // personalized game state with self data
 }
 
 // Full animation event with all private data (server-side only)
 export interface AnimationEvent extends PublicAnimationEvent {
-    game_state?: Game; // full game state with all private data
+    game_state: Game; // full game state with all private data
 }
 
 // Stripped down versions

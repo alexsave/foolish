@@ -178,9 +178,7 @@ const shouldSanitizeCards = (event: AnimationEvent): boolean => {
 // Convert server AnimationEvents to PublicAnimationEvents for spectators
 export const convertToPublicAnimationEvents = (events: AnimationEvent[]): PublicAnimationEvent[] => {
     return events.map(event => {
-        // Extract game_state separately to avoid type conflicts with spread
-        const { game_state, ...baseEvent } = event;
-        const publicEvent: PublicAnimationEvent = { ...baseEvent };
+        const publicEvent: PublicAnimationEvent = { ...event };
 
         // Sanitize REFILL and DEAL events - hide all cards going to players' hands
         if (shouldSanitizeCards(event)) {
@@ -188,8 +186,8 @@ export const convertToPublicAnimationEvents = (events: AnimationEvent[]): Public
         }
 
         // Convert game_state from full Game to PublicGame
-        if (game_state) {
-            publicEvent.game_state = gameToPublicGame(game_state);
+        if (event.game_state) {
+            publicEvent.game_state = gameToPublicGame(event.game_state);
         }
 
         return publicEvent;
@@ -199,33 +197,31 @@ export const convertToPublicAnimationEvents = (events: AnimationEvent[]): Public
 // Convert server AnimationEvents to PersonalAnimationEvents for a specific player
 export const convertToPersonalAnimationEvents = (events: AnimationEvent[], forPlayerId: string): PersonalAnimationEvent[] => {
     return events.map(event => {
-        // Extract game_state separately to avoid type conflicts with spread
         const { game_state, ...baseEvent } = event;
-        const personalEvent: PersonalAnimationEvent = { ...baseEvent };
 
-        // Sanitize REFILL and DEAL events from OTHER players - hide their cards going to hands
+        const rawGameState: Game = event.game_state;
+
+        if (!rawGameState) {
+            throw new Error(`Game state not found in animation event, removing game_state from animation event`);
+        }
+
+        const baseGameState: PublicGame = gameToPublicGame(rawGameState);
+
+        const playerSelf = rawGameState.players.find(p => p.player_id === forPlayerId);
+        if (!playerSelf) {
+            throw new Error(`Player ${forPlayerId} not found in game state, removing game_state from animation event`);
+        }
+
+        const personalGameState: PersonalGame = { ...baseGameState, self: playerSelf };
+
         if (shouldSanitizeCards(event) && event.player_id && event.player_id !== forPlayerId) {
-            personalEvent.cards = createCardBacks(event.cards!.length);
-        }
-        // Note: If it's the current player's REFILL/DEAL event, keep their cards visible
-
-        // Convert game_state from full Game to PersonalGame
-        if (game_state) {
-            const baseGameState = gameToPublicGame(game_state);
-
-            // Create personalized game state by adding player's self data
-            const playerSelf = game_state.players.find(p => p.player_id === forPlayerId);
-            if (!playerSelf) {
-                console.warn(`Player ${forPlayerId} not found in game state, removing game_state from animation event`);
-            } else {
-                personalEvent.game_state = {
-                    ...baseGameState,
-                    self: playerSelf
-                };
-            }
+            baseEvent.cards = createCardBacks(event.cards!.length);
         }
 
-        return personalEvent;
+        return {
+            ...baseEvent,
+            game_state: personalGameState
+        }
     });
 };
 
@@ -677,6 +673,7 @@ export const start_game = async (game: Game) => {
     const hands: Card[][] = initialize_hands(game);
     for (let i = 0; i < game.players.length; i++) {
         game.players[i].hand = hands[i];
+        animationEvents.addDealEvent(game.players[i].player_id, hands[i], game);
     }
 
     let flipped_card = draw(game);
@@ -688,15 +685,20 @@ export const start_game = async (game: Game) => {
     game.flipped = flipped_card;
     game.power_suit = game.flipped!.suit;
 
-    // Flipped card event will be included in the start game animation sequence
-    animationEvents.addFlippedEvent(game.flipped!);
+    // Add flipped card animation AFTER deal animations
+    animationEvents.addFlippedEvent(game.flipped!, game);
 
     const lowest_power_index = determine_lowest_power_index(game);
     game.first_attacker = lowest_power_index;
     set_positions(game);
 
+    // Add animation event for defender position
+    if (game.players[game.defender]) {
+        animationEvents.addDefenderMoveEvent(game.players[game.defender].player_id, game);
+    }
+
     // First attacker notification will be included in the start game animation sequence
-    animationEvents.addMagicTransitionEvent(`Player ${game.players[lowest_power_index].name} is the first attacker, wait for them to attack`);
+    animationEvents.addMagicTransitionEvent(`Player ${game.players[lowest_power_index].name} is the first attacker, wait for them to attack`, game);
 
     // Send private messages to players (these don't go through animation events)
     for (let i = 0; i < game.players.length; i++) {
@@ -742,7 +744,7 @@ export const check_win = async (game: Game) => {
         // These will be cleared when someone hits continue
 
         // Game done notification will be sent through animation events
-        animationEvents.addMagicTransitionEvent(`Game done. Player ${the_fool} ends up the fool`);
+        animationEvents.addMagicTransitionEvent(`Game done. Player ${the_fool} ends up the fool`, game);
     }
 }
 

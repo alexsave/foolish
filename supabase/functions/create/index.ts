@@ -58,7 +58,8 @@ wrap400(async ({user, user_name }: ExecutionParams) => {
     // Create game creation event
     const creationEvent: AnimationEvent = {
         type: ANIMATION_EVENT_TYPE.MAGIC_TRANSITION,
-        message: `Game created by ${user_name}`
+        message: `Game created by ${user_name}`,
+        game_state: dbGameData
     };
 
     return { game: dbGameData, events: [creationEvent] };

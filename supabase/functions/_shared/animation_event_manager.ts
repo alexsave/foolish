@@ -1,4 +1,9 @@
-import { Card, AnimationEvent, ANIMATION_EVENT_TYPE } from './types.ts';
+import { Card, AnimationEvent, ANIMATION_EVENT_TYPE, Game } from './types.ts';
+
+// Helper function to create a deep copy of the game state for animation events
+const cloneGameState = (game: Game): Game => {
+    return JSON.parse(JSON.stringify(game));
+}
 
 // Animation event manager for collecting events during operations
 export class AnimationEventManager {
@@ -16,27 +21,29 @@ export class AnimationEventManager {
         this.events.push(event);
     }
     
-    addAttackEvent(player_id: string, cards: Card[]) {
+    addAttackEvent(player_id: string, cards: Card[], game: Game) {
         this.addEvent({
             type: ANIMATION_EVENT_TYPE.ATTACK_PASS,
             player_id,
             cards,
             from_location: 'hand',
-            to_location: 'table'
+            to_location: 'table',
+            game_state: cloneGameState(game)
         });
     }
     
-    addPassEvent(player_id: string, cards: Card[]) {
+    addPassEvent(player_id: string, cards: Card[], game: Game) {
         this.addEvent({
             type: ANIMATION_EVENT_TYPE.ATTACK_PASS,
             player_id,
             cards,
             from_location: 'hand',
-            to_location: 'table'
+            to_location: 'table',
+            game_state: cloneGameState(game)
         });
     }
     
-    addCoverEvent(player_id: string, cover_card: Card, attack_card: Card, battle_index: number) {
+    addCoverEvent(player_id: string, cover_card: Card, attack_card: Card, battle_index: number, game: Game) {
         this.addEvent({
             type: ANIMATION_EVENT_TYPE.COVER,
             player_id,
@@ -44,76 +51,85 @@ export class AnimationEventManager {
             target_card: attack_card,
             battle_index,
             from_location: 'hand',
-            to_location: 'table'
+            to_location: 'table',
+            game_state: cloneGameState(game)
         });
     }
     
-    addPickupEvent(player_id: string, cards: Card[]) {
+    addPickupEvent(player_id: string, cards: Card[], game: Game) {
         this.addEvent({
             type: ANIMATION_EVENT_TYPE.PICKUP,
             player_id,
             cards,
             from_location: 'table',
-            to_location: 'hand'
+            to_location: 'hand',
+            game_state: cloneGameState(game)
         });
     }
     
-    addMagicTransitionEvent(message: string) {
+    addMagicTransitionEvent(message: string, game: Game) {
         this.addEvent({
             type: ANIMATION_EVENT_TYPE.MAGIC_TRANSITION,
-            message
+            message,
+            game_state: cloneGameState(game)
         });
     }
     
-    addDealEvent(player_id: string, cards: Card[]) {
+    addDealEvent(player_id: string, cards: Card[], game: Game) {
         this.addEvent({
             type: ANIMATION_EVENT_TYPE.DEAL,
             player_id,
             cards,
             from_location: 'deck',
-            to_location: 'hand'
+            to_location: 'hand',
+            game_state: cloneGameState(game)
         });
     }
     
-    addFlippedEvent(card: Card) {
+    addFlippedEvent(card: Card, game: Game) {
         this.addEvent({
             type: ANIMATION_EVENT_TYPE.FLIPPED,
             cards: [card],
             from_location: 'deck',
-            to_location: 'flipped'
+            to_location: 'flipped',
+            game_state: cloneGameState(game)
         });
     }
     
-    addDefenderMoveEvent(player_id: string) {
+    addDefenderMoveEvent(player_id: string, game: Game) {
         this.addEvent({
             type: ANIMATION_EVENT_TYPE.DEFENDER_MOVE,
-            player_id
+            player_id,
+            game_state: cloneGameState(game)
         });
     }
     
-    addOutEvent(player_id: string) {
+    addOutEvent(player_id: string, game: Game) {
         this.addEvent({
             type: ANIMATION_EVENT_TYPE.OUT,
-            player_id
+            player_id,
+            game_state: cloneGameState(game)
         });
     }
     
-    addRefillEvent(player_id: string, cards: Card[]) {
+    addRefillEvent(player_id: string, cards: Card[], game: Game) {
         this.addEvent({
             type: ANIMATION_EVENT_TYPE.REFILL,
             player_id,
             cards,
             from_location: 'deck',
-            to_location: 'hand'
+            to_location: 'hand',
+            game_state: cloneGameState(game)
         });
     }
     
-    addCardsToTrashEvent(cards: Card[]) {
+    addCardsToTrashEvent(cards: Card[], game: Game) {
         this.addEvent({
             type: ANIMATION_EVENT_TYPE.CARDS_TO_TRASH,
             cards,
             from_location: 'table',
-            to_location: 'discard'
+            to_location: 'discard',
+            game_state: cloneGameState(game)
         });
     }
 } 
