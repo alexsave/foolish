@@ -5,6 +5,8 @@ import { useAuth } from "../../contexts/AuthContext";
 import { useGame } from "../../contexts/GameContext";
 import { useDrag } from "../../contexts/DragContext";
 
+const COVER_ROTATION: string = (Math.PI/ 16) + 'rad';
+
 export const TableBattles = () => {
     const game: PersonalGame = useServer().game as PersonalGame;
     const { user_id } = useAuth();
@@ -22,9 +24,13 @@ export const TableBattles = () => {
         game.table_battles.map((battle, index) => {
             let containerStyle: React.CSSProperties = {
                 display: 'flex',
-                flexDirection: 'row',
+                flexDirection: 'column',
                 alignItems: 'center',
-                justifyContent: 'center'
+                position: 'relative',
+                width: '60px', // Slightly wider to accommodate rotation
+                height: '80px', // Taller to accommodate stacked/rotated cards
+                margin: '5px',
+                justifyContent: 'center',
             };
 
             if (Array.from(coverMap.values()).some(c => c.value === battle.attack.value && c.suit === battle.attack.suit)) {
@@ -40,15 +46,47 @@ export const TableBattles = () => {
                 containerStyle.backgroundColor = 'rgba(0, 255, 0, 0.1)';
             }
 
+            // Determine if this battle is covered
+            const isCovered = !!battle.defense;
+
+            // Card styles with rotation around bottom center
+            const attackCardStyle: React.CSSProperties = {
+                position: 'absolute',
+                bottom: '5px', // Position at bottom of container
+                left: '50%', // Center horizontally
+                transform: isCovered 
+                    ? `translateX(-50%) rotate(-${COVER_ROTATION})` 
+                    : 'translateX(-50%)', // Just center if not covered
+                transformOrigin: 'center bottom', // Rotate around bottom center of card
+                zIndex: isCovered ? 1 : 2, // Attack goes behind when covered
+            };
+
+            const defenseCardStyle: React.CSSProperties = {
+                position: 'absolute',
+                bottom: '5px', // Position at bottom of container
+                left: '50%', // Center horizontally  
+                transform: `translateX(-50%) rotate(${COVER_ROTATION})`,
+                transformOrigin: 'center bottom', // Rotate around bottom center of card
+                zIndex: 2, // Defense always on top when present
+            };
+
             return <div key={battle.attack.value + ' ' + battle.attack.suit} style={containerStyle} data-location="table">
                 <CardFace
                     data-battle-index={index}
                     data-card={`${battle.attack.suit}-${battle.attack.value}`}
                     card={battle.attack}
                     playerId="table"
+                    style={attackCardStyle}
                     onClick={() => isSelectingCover && setCoverMap(new Map(coverMap.set(selectedCards[0], battle.attack))) }
                 />
-                {battle.defense && <CardFace card={battle.defense} playerId="table" data-card={`${battle.defense.suit}-${battle.defense.value}`} />}
+                {battle.defense && (
+                    <CardFace 
+                        card={battle.defense} 
+                        playerId="table" 
+                        style={defenseCardStyle}
+                        data-card={`${battle.defense.suit}-${battle.defense.value}`} 
+                    />
+                )}
             </div>
         })
     }

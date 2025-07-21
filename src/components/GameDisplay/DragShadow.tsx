@@ -7,18 +7,11 @@ export const DragShadow = () => {
     const { isDraggingForGameAction, draggedCard, currentCursorPos, determineGameAction } = useDrag();
 
     const dragStyle = {
-        border: '2px solid black',
-        backgroundColor: 'white',
-        width: '36px', // Updated to 5:7 ratio (36:50, rounded from 35.7)
-        height: '50px',
-        borderRadius: '4px',
-        display: 'flex',
-        justifyContent: 'center',
-        alignItems: 'center',
+        transform: 'scale(0.8)',
+        transformOrigin: 'center',
         marginRight: '2px',
         boxShadow: '0 2px 4px rgba(0,0,0,0.3)',
         opacity: 0.9,
-        fontSize: '12px',
     }
 
     const getIndicatorText = (actionType: string) => {
