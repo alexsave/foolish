@@ -143,7 +143,6 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                         if (status === 'SUBSCRIBED') {
                             animationChannelRetryInterval.current = 1000; // Reset retry interval on success
                         } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-                            //console.error('[WEBSOCKET] Animation channel error:', err || 'Unknown error');
                             setTimeout(() => {
                                 subscribeToGameAnimations().catch(console.error);
                                 animationChannelRetryInterval.current *= 2; // Double the interval
@@ -275,11 +274,8 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 processedSequenceIds.current = new Set(ids.slice(-25));
             }
             
-            console.log('[ANIMATION SEQUENCE] Starting animation sequence with', message.events.length, 'events');
-            
             // Store the completion callback to update final game state
             pendingCompletionCallbackRef.current = () => {
-                console.log('[ANIMATION SEQUENCE] Animation sequence complete - applying final game state');
                 if (message.game) {
                     updateGameState(message.game.id, message.game);
                 }
@@ -320,8 +316,6 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
         const nextAnimation = animationQueueRef.current[0];
         
-        console.log('[ANIMATION] Starting individual animation:', nextAnimation.type, 'with', nextAnimation.cards?.length || 0, 'cards');
-        
         setCurrentAnimation(nextAnimation);
         setAnimationQueue(prev => prev.slice(1));
         setIsAnimating(true);
@@ -350,7 +344,6 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         timeoutRef.current = setTimeout(() => {
             // UPDATE THE GAME STATE WITH THE INTERMEDIATE STATE AFTER ANIMATION COMPLETES
             if (nextAnimation.game_state && currentGameIdRef.current) {
-                console.log('[ANIMATION] Setting intermediate game state after', nextAnimation.type, 'animation');
                 updateGameState(currentGameIdRef.current, nextAnimation.game_state);
             }
             
