@@ -225,15 +225,21 @@ export const Lobby = () => {
             clearTimeout(rearrangeTimerRef.current);
         }
 
-        // Create indices array based on original order
+        // Create player IDs array based on new order
         const originalPlayers = game!.players;
-        const indices = newOrder.map(newPlayer =>
-            originalPlayers.findIndex(origPlayer => origPlayer.player_id === newPlayer.player_id)
-        );
+        const playerIds = newOrder.map(player => player.player_id);
+
+        console.log('LOBBY DEBUG: About to rearrange players:', {
+            game_id: game_id,
+            newOrder: newOrder.map(p => ({ name: p.name, id: p.player_id })),
+            playerIds: playerIds,
+            playerIds_type: typeof playerIds,
+            playerIds_length: playerIds.length
+        });
 
         // Set new 1.3-second timer
         rearrangeTimerRef.current = setTimeout(() => {
-            rearrangePlayer(game_id!, indices).catch(error => {
+            rearrangePlayer(game_id!, playerIds).catch(error => {
                 console.error('Failed to rearrange players:', error);
                 // Revert to original order on error
                 setLocalPlayerOrder(originalPlayers);

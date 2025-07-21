@@ -6,6 +6,15 @@ wrap400(async ({user, body, game}: ExecutionParams) => {
     const user_id = user.id;
     const { new_order } = body;
 
+    console.log('Rearrange players debug:', {
+        body: JSON.stringify(body),
+        new_order: JSON.stringify(new_order),
+        new_order_type: typeof new_order,
+        new_order_length: new_order?.length,
+        game_players_length: game.players.length,
+        game_players: game.players.map(p => p.player_id)
+    });
+
     // Verify player is in game
     verify_player_in_game(game, user_id);
 
@@ -16,6 +25,11 @@ wrap400(async ({user, body, game}: ExecutionParams) => {
 
     // Validate new order - must contain all current players
     if (!Array.isArray(new_order) || new_order.length !== game.players.length) {
+        console.error('Validation failed:', {
+            is_array: Array.isArray(new_order),
+            new_order_length: new_order?.length,
+            game_players_length: game.players.length
+        });
         throw new Error(`New order must contain exactly ${game.players.length} player IDs`);
     }
 

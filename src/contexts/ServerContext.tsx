@@ -816,12 +816,14 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         });
     };
 
-    const rearrangePlayer = (gameId: string, playerIndices: number[]): Promise<{ game_id: string }> => {
+    const rearrangePlayer = (gameId: string, playerIds: string[]): Promise<{ game_id: string }> => {
         const previousPlayers = games[gameId]?.players ? [...games[gameId].players] : [];
         if (previousPlayers.length === 0) {
             return Promise.reject(new Error(`Cannot rearrange players`));
         }
-        const rearrangedPlayers = playerIndices.map(index => previousPlayers[index]);
+        const rearrangedPlayers = playerIds.map(playerId => 
+            previousPlayers.find(p => p.player_id === playerId)!
+        );
         setGames(prev => ({ ...prev, [gameId]: { ...prev[gameId], players: rearrangedPlayers } }));
 
         const revert = () => {
@@ -831,9 +833,17 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             setGames(prev => ({ ...prev, [gameId]: { ...prev[gameId], players: previousPlayers } }));
         }
 
+        console.log('CLIENT: Sending rearrange request:', {
+            game_id: gameId,
+            new_order: playerIds,
+            playerIds_type: typeof playerIds,
+            playerIds_length: playerIds.length,
+            playerIds_content: playerIds
+        });
+
         return invokeGameFunctions('rearrange-players', {
             game_id: gameId,
-            player_indices: playerIndices
+            new_order: playerIds
         }, {
             onError: revert
         });
@@ -1028,7 +1038,7 @@ interface ServerContextType {
     getUserGames: () => Promise<void>;
     updateGameState: (gameId: string, gameState: any) => void;
     updateGameName: (gameId: string, name: string) => Promise<{ game_id: string }>;
-    rearrangePlayer: (gameId: string, playerIndices: number[]) => Promise<{ game_id: string }>;
+    rearrangePlayer: (gameId: string, playerIds: string[]) => Promise<{ game_id: string }>;
     rearrangeHand: (gameId: string, cardIndices: number[]) => Promise<{ game_id: string }>;
     continueGame: (gameId: string) => Promise<{ game_id: string }>;
     gameLoadError: string | null;
