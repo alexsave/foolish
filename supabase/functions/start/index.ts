@@ -17,6 +17,9 @@ wrap400(async ({ user, game }: ExecutionParams) => {
     const player = game.players.find(p => p.player_id === user_id);
     if (player) {
         player.status = PLAYER_STATUS.READY;
+        
+        // Notify other players that this player is ready
+        animationEvents.addMagicTransitionEvent(`${player.name} is ready`, game);
     }
 
     // Check if ALL players are ready AND we have at least 2 players
