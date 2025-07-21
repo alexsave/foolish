@@ -55,12 +55,15 @@ export const DragShadow = () => {
         {/* Only show action indicator when there's a valid action */}
         {indicatorText && (
             <div style={{
+                width: '50px',
+                justifyContent: 'center',
                 backgroundColor: 'rgba(0, 0, 0, 0.8)',
                 color: 'white',
                 padding: '4px 8px',
                 borderRadius: '4px',
                 fontSize: '12px',
-                pointerEvents: 'none'
+                pointerEvents: 'none',
+                textAlign: 'center',
             }}>
                 {indicatorText}
             </div>

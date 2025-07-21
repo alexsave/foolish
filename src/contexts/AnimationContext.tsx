@@ -105,7 +105,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             if (optimisticAnimations.current.size > 0) {
                 optimisticAnimations.current.clear();
             }
-        }, 10000); // Clear every 10 seconds
+        }, 60000); // Clear every 60 seconds
 
         return () => clearInterval(interval);
     }, []);
@@ -143,7 +143,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                         if (status === 'SUBSCRIBED') {
                             animationChannelRetryInterval.current = 1000; // Reset retry interval on success
                         } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-                            console.error('[WEBSOCKET] Animation channel error:', err || 'Unknown error');
+                            //console.error('[WEBSOCKET] Animation channel error:', err || 'Unknown error');
                             setTimeout(() => {
                                 subscribeToGameAnimations().catch(console.error);
                                 animationChannelRetryInterval.current *= 2; // Double the interval
@@ -275,8 +275,11 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 processedSequenceIds.current = new Set(ids.slice(-25));
             }
             
+            console.log('[ANIMATION SEQUENCE] Starting animation sequence with', message.events.length, 'events');
+            
             // Store the completion callback to update final game state
             pendingCompletionCallbackRef.current = () => {
+                console.log('[ANIMATION SEQUENCE] Animation sequence complete - applying final game state');
                 if (message.game) {
                     updateGameState(message.game.id, message.game);
                 }
@@ -317,6 +320,8 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
         const nextAnimation = animationQueueRef.current[0];
         
+        console.log('[ANIMATION] Starting individual animation:', nextAnimation.type, 'with', nextAnimation.cards?.length || 0, 'cards');
+        
         setCurrentAnimation(nextAnimation);
         setAnimationQueue(prev => prev.slice(1));
         setIsAnimating(true);
@@ -345,6 +350,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         timeoutRef.current = setTimeout(() => {
             // UPDATE THE GAME STATE WITH THE INTERMEDIATE STATE AFTER ANIMATION COMPLETES
             if (nextAnimation.game_state && currentGameIdRef.current) {
+                console.log('[ANIMATION] Setting intermediate game state after', nextAnimation.type, 'animation');
                 updateGameState(currentGameIdRef.current, nextAnimation.game_state);
             }
             
@@ -415,13 +421,15 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     };
 
     // Helper function to trigger optimistic animation and track it
-    const triggerOptimisticAnimation = (animationType: string, cards: Card[], fromLocation: string, toLocation: string, playerId?: string) => {
+    const triggerOptimisticAnimation = (animationType: string, cards: Card[], fromLocation: string, toLocation: string, playerId?: string, targetCard?: Card, battleIndex?: number) => {
         const animationEvent: AnimationEvent = {
             type: animationType as any,
             cards: cards,
             from_location: fromLocation as any,
             to_location: toLocation as any,
             player_id: playerId,
+            target_card: targetCard,
+            battle_index: battleIndex,
             message: `Optimistic ${animationType} animation`
         };
         
@@ -458,7 +466,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         // 1. Validate first - don't do anything if validation fails
         validateAttack(game, cards);
         
-        // 2. Trigger optimistic animation
+        // 2. Trigger optimistic animation - single animation with all cards going to their spots
         triggerOptimisticAnimation('attack_pass', cards, 'hand', 'table', game.self?.player_id);
         
         // 3. Call server method (which will do optimistic game state updates)
@@ -477,7 +485,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         // 1. Validate first - don't do anything if validation fails
         validatePass(game, cards);
         
-        // 2. Trigger optimistic animation
+        // 2. Trigger optimistic animation - single animation with all cards going to their spots
         triggerOptimisticAnimation('attack_pass', cards, 'hand', 'table', game.self?.player_id);
         
         // 3. Call server method (which will do optimistic game state updates)
@@ -519,11 +527,8 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         // 1. Validate first - don't do anything if validation fails
         validateCover(game, coverCards, attackCards);
         
-        // 2. Trigger optimistic cover animations (one for each card)
-        for (let i = 0; i < coverCards.length; i++) {
-            const coverCard = coverCards[i];
-            triggerOptimisticAnimation('cover', [coverCard], 'hand', 'table', game.self?.player_id);
-        }
+        // 2. Trigger optimistic cover animation - single animation with all cards going to their targets
+        triggerOptimisticAnimation('cover', coverCards, 'hand', 'table', game.self?.player_id);
         
         // 3. Call server method (which will do optimistic game state updates)
         const result = await serverMethods.cover(coverCards, attackCards);

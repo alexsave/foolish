@@ -3,6 +3,8 @@ import { Card } from '../../common/types';
 import { ANIMATION_TIME, useAnimation } from '../../contexts/AnimationContext';
 import { CardFace } from './CardFace';
 import { CardBack } from './CardBack';
+import { useServer } from '../../contexts/ServerContext';
+import { canCover } from '../../common/common_utils';
 
 interface AnimatedCard {
     id: string;
@@ -19,7 +21,9 @@ interface AnimatedCard {
 export const AnimationOverlay = () => {
     const [animatedCards, setAnimatedCards] = useState<AnimatedCard[]>([]);
     const { currentAnimation, isAnimating } = useAnimation();
+    const { game } = useServer();
     const overlayRef = useRef<HTMLDivElement>(null);
+    const [placeholderPositions, setPlaceholderPositions] = useState<Map<string, { x: number; y: number }>>(new Map());
 
     // Helper function to get element position relative to viewport
     const getElementPosition = (element: HTMLElement): { x: number; y: number } => {
@@ -31,13 +35,25 @@ export const AnimationOverlay = () => {
     };
 
     // Helper function to find element by data attributes with retry logic
-    const findElementByLocation = (location: string, playerId?: string, cardSuit?: number, cardValue?: number, retryCount = 0): HTMLElement | null => {
-        // For table cards, try to find the specific card element first
-        if (location === 'table' && cardSuit !== undefined && cardValue !== undefined) {
-            const cardSelector = `[data-card="${cardSuit}-${cardValue}"]`;
-            const cardElement = document.querySelector(cardSelector) as HTMLElement | null;
-            if (cardElement) {
-                return cardElement;
+    const findElementByLocation = (location: string, playerId?: string, cardSuit?: number, cardValue?: number, battleIndex?: number, retryCount = 0): HTMLElement | null => {
+        // For table destinations, try specific targeting first
+        if (location === 'table') {
+            // If we have a battle index, try to find the specific battle container
+            if (battleIndex !== undefined) {
+                const battleSelector = `[data-battle-index="${battleIndex}"]`;
+                const battleElement = document.querySelector(battleSelector) as HTMLElement | null;
+                if (battleElement) {
+                    return battleElement;
+                }
+            }
+            
+            // If we have specific card coordinates, try to find that card
+            if (cardSuit !== undefined && cardValue !== undefined) {
+                const cardSelector = `[data-card="${cardSuit}-${cardValue}"]`;
+                const cardElement = document.querySelector(cardSelector) as HTMLElement | null;
+                if (cardElement) {
+                    return cardElement;
+                }
             }
         }
         
@@ -61,12 +77,71 @@ export const AnimationOverlay = () => {
         // If element not found and we haven't retried too many times, try again after a short delay
         if (!element && retryCount < 3) {
             setTimeout(() => {
-                return findElementByLocation(location, playerId, cardSuit, cardValue, retryCount + 1);
+                return findElementByLocation(location, playerId, cardSuit, cardValue, battleIndex, retryCount + 1);
             }, 50);
             return null;
         }
         
         return element;
+    };
+
+    // Helper function to create invisible placeholders and measure their positions
+    const measurePlaceholderPositions = (type: string, cards: Card[], player_id?: string): Map<string, { x: number; y: number }> => {
+        const positions = new Map<string, { x: number; y: number }>();
+        
+        if (type === 'attack_pass') {
+            // Find the table battles container
+            const tableBattlesElement = document.querySelector('[data-location="table"]')?.parentElement;
+            if (!tableBattlesElement) return positions;
+            
+            const currentBattleCount = game?.table_battles?.length || 0;
+            
+            // Create invisible placeholder battle containers
+            const placeholders: HTMLElement[] = [];
+            cards.forEach((card, index) => {
+                const placeholder = document.createElement('div');
+                placeholder.style.cssText = `
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    position: relative;
+                    width: 60px;
+                    height: 80px;
+                    margin: 5px;
+                    justify-content: center;
+                    visibility: hidden;
+                    pointer-events: none;
+                `;
+                placeholder.setAttribute('data-placeholder', 'true');
+                
+                // Insert at the correct position (after existing battles)
+                const existingBattles = tableBattlesElement.children;
+                if (existingBattles.length > currentBattleCount + index) {
+                    tableBattlesElement.insertBefore(placeholder, existingBattles[currentBattleCount + index]);
+                } else {
+                    tableBattlesElement.appendChild(placeholder);
+                }
+                
+                placeholders.push(placeholder);
+            });
+            
+            // Force layout and measure positions
+            const _ = tableBattlesElement.offsetHeight; // Force reflow
+            
+            placeholders.forEach((placeholder, index) => {
+                const rect = placeholder.getBoundingClientRect();
+                const position = {
+                    x: rect.left + rect.width / 2,
+                    y: rect.top + rect.height / 2
+                };
+                positions.set(`${index}`, position);
+            });
+            
+            // Clean up placeholders
+            placeholders.forEach(placeholder => placeholder.remove());
+        }
+        
+        return positions;
     };
 
     // Helper function to get fallback positions when elements aren't found
@@ -95,7 +170,7 @@ export const AnimationOverlay = () => {
             return;
         }
 
-        const { type, cards, from_location, to_location, player_id } = currentAnimation;
+        const { type, cards, from_location, to_location, player_id, target_card, battle_index } = currentAnimation;
 
         // Handle magic_transition separately since it doesn't have cards
         if (type === 'magic_transition') {
@@ -112,6 +187,9 @@ export const AnimationOverlay = () => {
 
         // Small delay to ensure DOM is ready
         setTimeout(() => {
+            // Measure placeholder positions for precise targeting
+            const measuredPositions = measurePlaceholderPositions(type, cards, player_id);
+            
             if (isSanitized) {
                 // Render single CardBack for sanitized refill
                 const sourceElement = findElementByLocation('deck');
@@ -140,6 +218,9 @@ export const AnimationOverlay = () => {
             } else {
                 // Render individual CardFaces for normal cards
                 const newAnimatedCards: AnimatedCard[] = [];
+                
+                // For cover animations, keep track of which attack cards have been targeted
+                const targetedAttackCards = new Set<string>();
 
                 cards.forEach((card, index) => {
                     // Find source element
@@ -160,7 +241,7 @@ export const AnimationOverlay = () => {
                         startPos = getFallbackPosition(from_location || 'hand', player_id);
                     }
 
-                    // Find destination element
+                    // Find destination element - enhanced logic for multiple cards in one animation
                     let destinationElement: HTMLElement | null = null;
                     let endPos: { x: number; y: number };
                     
@@ -179,12 +260,86 @@ export const AnimationOverlay = () => {
                                 endPos = getFallbackPosition('flipped', player_id);
                             }
                         }
+                    } else if (to_location === 'table') {
+                        // Enhanced table targeting logic for multiple cards
+                        if (type === 'cover') {
+                            // For cover animations, find which attack card this cover card targets
+                            // Use the game state and cover logic to determine the target
+                            let targetAttackCard = null;
+                            
+                            if (game?.table_battles) {
+                                // Find uncovered attack cards that this cover card can cover
+                                const uncoveredBattles = game.table_battles.filter(battle => !battle.defense);
+                                const powerSuit = game.power_suit;
+                                
+                                // Find the first uncovered attack card that this cover card can cover
+                                // and hasn't already been targeted by another cover card in this animation
+                                const targetBattle = uncoveredBattles.find(battle => {
+                                    const cardKey = `${battle.attack.suit}-${battle.attack.value}`;
+                                    return canCover(battle.attack, card, powerSuit) && !targetedAttackCards.has(cardKey);
+                                });
+                                
+                                if (targetBattle) {
+                                    targetAttackCard = targetBattle.attack;
+                                    // Mark this attack card as targeted
+                                    const cardKey = `${targetAttackCard.suit}-${targetAttackCard.value}`;
+                                    targetedAttackCards.add(cardKey);
+                                }
+                            }
+                            
+                            if (targetAttackCard) {
+                                // Try to find the specific attack card element
+                                destinationElement = findElementByLocation('table', undefined, targetAttackCard.suit, targetAttackCard.value);
+                                if (destinationElement) {
+                                    endPos = getElementPosition(destinationElement);
+                                } else {
+                                    endPos = getFallbackPosition('table', player_id);
+                                }
+                            } else {
+                                // Fallback: general table area with offset
+                                destinationElement = findElementByLocation('table');
+                                if (destinationElement) {
+                                    endPos = getElementPosition(destinationElement);
+                                    // Add offset for multiple cover cards
+                                    const offset = index * 70; // 70px spacing between battles
+                                    endPos.x += offset;
+                                } else {
+                                    endPos = getFallbackPosition('table', player_id);
+                                }
+                            }
+                        } else if (type === 'attack_pass') {
+                            // For attack/pass, use measured placeholder positions for precision
+                            const measuredPos = measuredPositions.get(`${index}`);
+                            
+                            if (measuredPos) {
+                                // Use the precisely measured position from invisible placeholder
+                                endPos = measuredPos;
+                            } else {
+                                // Fallback to finding existing drop zones or general table position
+                                const currentBattleCount = game?.table_battles?.length || 0;
+                                const targetBattleIndex = currentBattleCount + index;
+                                
+                                destinationElement = findElementByLocation('table', undefined, undefined, undefined, targetBattleIndex);
+                                if (destinationElement) {
+                                    endPos = getElementPosition(destinationElement);
+                                } else {
+                                    endPos = getFallbackPosition('table', player_id);
+                                    endPos.x += targetBattleIndex * 60;
+                                }
+                            }
+                        } else {
+                            // General table targeting (fallback)
+                            destinationElement = findElementByLocation('table');
+                            if (destinationElement) {
+                                endPos = getElementPosition(destinationElement);
+                            } else {
+                                endPos = getFallbackPosition('table', player_id);
+                            }
+                        }
                     } else {
                         // Handle all other destination types
                         if (to_location === 'hand') {
                             destinationElement = findElementByLocation('hand', player_id);
-                        } else if (to_location === 'table') {
-                            destinationElement = findElementByLocation('table');
                         } else if (to_location === 'discard') {
                             destinationElement = findElementByLocation('discard');
                         }
@@ -196,10 +351,10 @@ export const AnimationOverlay = () => {
                         }
                     }
 
-                    // Add some offset for multiple cards
-                    const offset = index * 5;
-                    endPos.x += offset;
-                    endPos.y += offset;
+                    // Small offset for stacking if multiple cards go to same area
+                    const stackOffset = index * 3;
+                    endPos.x += stackOffset;
+                    endPos.y += stackOffset;
 
                     newAnimatedCards.push({
                         id: `${card.suit}-${card.value}-${player_id}-${Date.now()}-${index}`,

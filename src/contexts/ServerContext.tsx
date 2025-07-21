@@ -228,7 +228,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         } else if (gameData) {
             // For any other message type that includes game data, update the game state
             // This handles cases like direct function invocation responses
-            setGames(prev => ({ ...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev) }));
+            //setGames(prev => ({ ...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev) }));
         }
     };
 
@@ -950,10 +950,11 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             const data = await supabase.functions.invoke(functionName, { body })
             const game_id = data.data.id;
 
-            setGames(prev => ({
-                ...prev,
-                [game_id]: mergeGameData(game_id, data.data, prev)
-            }))
+            // TEMPORARILY DISABLED: Let animations handle game state updates instead of immediately jumping to final state
+            // setGames(prev => ({
+            //     ...prev,
+            //     [game_id]: mergeGameData(game_id, data.data, prev)
+            // }))
 
             options.onSuccess?.(data as T);
 

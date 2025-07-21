@@ -141,19 +141,24 @@ export const TableBattles = () => {
     }
     {/* Render empty drop zones for attack/pass actions */}
     {Array.from({ length: emptyDropZones }, (_, index) => (
-        <div key={`empty-${index}`} style={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            position: 'relative',
-            width: '60px',
-            height: '80px',
-            margin: '5px',
-            justifyContent: 'center',
-            border: '3px dashed #d29002',
-            backgroundColor: 'rgba(210, 144, 2, 0.1)',
-            borderRadius: '8px'
-        }}>
+        <div 
+            key={`empty-${index}`} 
+            data-location="table"
+            data-battle-index={game.table_battles.length + index}
+            style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                position: 'relative',
+                width: '60px',
+                height: '80px',
+                margin: '5px',
+                justifyContent: 'center',
+                border: '3px dashed #d29002',
+                backgroundColor: 'rgba(210, 144, 2, 0.1)',
+                borderRadius: '8px'
+            }}
+        >
             {/* Empty placeholder for new card */}
             <div style={{
                 width: '40px',
