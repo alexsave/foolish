@@ -97,7 +97,9 @@ export const PlayerRing = () => {
 
 
                 {/* Sword area (top) - either sword or empty space */}
-                {index === game.first_attacker && game.table_battles.length === 0 ? <div style={{
+                {index === game.first_attacker && 
+                 game.table_battles.length === 0 && 
+                 !(game.deck_length > 0 && game.flipped === null) ? <div style={{
                     fontSize: '16px',
                     height: '20px',
                     display: 'flex',

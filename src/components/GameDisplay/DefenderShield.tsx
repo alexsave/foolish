@@ -7,6 +7,11 @@ export const DefenderShield = () => {
     const { user_id } = useAuth();
     const self_index = game.players.findIndex((player) => player.player_id === user_id);
 
+    // Don't show shield during intermediate initialization state (deck exists but flipped card not set)
+    if (game.deck_length > 0 && game.flipped === null) {
+        return <></>;
+    }
+
     const defenderPlayer = game.players[game.defender];
     if (!defenderPlayer) {
         return <></>;
