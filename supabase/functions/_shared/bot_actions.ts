@@ -17,7 +17,11 @@ const supabaseClient = createClient(
 );
 
 // Bot timing constants
-const BOT_PROCESSING_DELAY = 3500; // Delay before processing bot actions in a cycle (ms)
+const BOT_PROCESSING_DELAY_WITH_HUMANS = 3500; // Delay when humans are still playing (ms)
+const BOT_PROCESSING_DELAY_BOTS_ONLY = 800; // Delay when only bots remain (ms)
+
+// Global variable to track current bot processing delay
+let currentBotDelay = BOT_PROCESSING_DELAY_WITH_HUMANS;
 
 const acquireBotLoopLock = async (game_id: string): Promise<boolean> => {
     try {
@@ -121,7 +125,7 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
         return;
     }
 
-    await new Promise(resolve => setTimeout(resolve, BOT_PROCESSING_DELAY));
+    await new Promise(resolve => setTimeout(resolve, currentBotDelay));
 
     let botProcessed = false;
     let shouldAutoTransition = false;
@@ -129,6 +133,16 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
     // Do everything within a single lock: find eligible bots, choose one, execute action
     try {
         const { game } = await executeWithGameLock(game_id, async (game) => {
+            // Update global delay only if state has changed
+            if (currentBotDelay === BOT_PROCESSING_DELAY_WITH_HUMANS) {
+                const humanPlayersStillIn = game.players.filter(player =>
+                    !player.is_ai && player.status === PLAYER_STATUS.IN
+                ).length;
+
+                const newDelay = humanPlayersStillIn > 0 ? BOT_PROCESSING_DELAY_WITH_HUMANS : BOT_PROCESSING_DELAY_BOTS_ONLY;
+                currentBotDelay = newDelay;
+            }
+
             // Capture game state for broadcasting later
             // Only process bot actions if game is in a state where bots can act
             if (game.status === GAME_STATUS.WAITING || game.status === GAME_STATUS.GAME_OVER) {
@@ -169,13 +183,13 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
             if (eligibleBots.length > 0) {
                 // Shuffle the eligible bots to try them in random order
                 const shuffledBots = [...eligibleBots].sort(() => Math.random() - 0.5);
-                
+
                 for (const selectedBot of shuffledBots) {
                     console.log(`Trying bot ${selectedBot.bot.name} from ${eligibleBots.length} eligible bots in game ${game_id}`);
 
                     // Try to process this bot's action
                     const success = await processBotAction(game, selectedBot.bot);
-                    
+
                     if (success) {
                         botProcessed = true;
                         console.log(`Bot ${selectedBot.bot.name} completed action`);
@@ -184,7 +198,7 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
                         console.log(`Bot ${selectedBot.bot.name} move failed, trying next bot`);
                     }
                 }
-                
+
                 if (!botProcessed) {
                     console.log(`No eligible bots could make valid moves in game ${game_id}`);
                 }
@@ -320,7 +334,7 @@ async function processBotAction(game: Game, bot: PrivatePlayer): Promise<boolean
 
         // Execute the chosen move using shared actions (with validation to handle race conditions)
         const success = await executeBotMove(game, bot, chosenMove);
-        
+
         if (!success) {
             return false;
         }
@@ -342,87 +356,92 @@ async function executeBotMove(game: Game, bot: PrivatePlayer, move: LegalMove): 
 
         try {
             switch (move.type) {
-            case 'attack':
-                // Capture the game status before executing the attack
-                const statusBeforeAttack = game.status;
-                actionEvents = await handleAttack(game, bot.player_id, move.cards!);
-                // Set done_attacking_this_round flag based on the move's choice
-                if (move.done_attacking_this_round !== undefined) {
-                    bot.done_attacking_this_round = move.done_attacking_this_round;
-                    // If bot is done attacking this round, set awaiting_attack = false
-                    if (move.done_attacking_this_round) {
-                        bot.awaiting_attack = false;
-                        console.log(`Bot ${bot.name} is done attacking this round`);
+                case 'attack':
+                    // Capture the game status before executing the attack
+                    const statusBeforeAttack = game.status;
+                    actionEvents = await handleAttack(game, bot.player_id, move.cards!);
+                    // Set done_attacking_this_round flag based on the move's choice
+                    if (move.done_attacking_this_round !== undefined) {
+                        bot.done_attacking_this_round = move.done_attacking_this_round;
+                        // If bot is done attacking this round, set awaiting_attack = false
+                        if (move.done_attacking_this_round) {
+                            bot.awaiting_attack = false;
+                            console.log(`Bot ${bot.name} is done attacking this round`);
 
-                        // Only try to execute "good" logic if all attacks are covered
-                        // Use handleGood for proper validation
-                        if (game.table_battles.length > 0 && game.table_battles.every(battle => battle.defense !== null)) {
-                            try {
-                                console.log(`Bot ${bot.name} attempting good logic`);
-                                const goodEvents = await handleGood(game, bot.player_id);
-                                actionEvents.push(...goodEvents);
-                                console.log(`Bot ${bot.name} successfully executed good logic`);
-                            } catch (error) {
-                                console.log(`Bot ${bot.name} good logic failed validation: ${error.message}`);
-                                // Bot is still marked as done attacking this round, which is correct
+                            // Only try to execute "good" logic if all attacks are covered
+                            // Use handleGood for proper validation
+                            if (game.table_battles.length > 0 && game.table_battles.every(battle => battle.defense !== null)) {
+                                try {
+                                    console.log(`Bot ${bot.name} attempting good logic`);
+                                    const goodEvents = await handleGood(game, bot.player_id);
+                                    actionEvents.push(...goodEvents);
+                                    console.log(`Bot ${bot.name} successfully executed good logic`);
+                                } catch (error) {
+                                    console.log(`Bot ${bot.name} good logic failed validation: ${error.message}`);
+                                    // Bot is still marked as done attacking this round, which is correct
+                                }
                             }
                         }
                     }
-                }
-                break;
+                    break;
 
-            case 'cover':
-                actionEvents = await handleCover(game, bot.player_id, move.cards!, move.attack_cards!);
-                // Check if this cover completed the round (all attacks covered)
-                const all_attacks_covered = game.table_battles.every(battle => battle.defense !== null);
-                if (all_attacks_covered) {
-                    // Add special message for successful cover that ends the round
-                    specialMessage = `Bot ${bot.name} successfully covered and ended the round`;
-                }
-                break;
+                case 'cover':
+                    actionEvents = await handleCover(game, bot.player_id, move.cards!, move.attack_cards!);
+                    // Check if this cover completed the round (all attacks covered)
+                    const all_attacks_covered = game.table_battles.every(battle => battle.defense !== null);
+                    if (all_attacks_covered) {
+                        // Add special message for successful cover that ends the round
+                        specialMessage = `Bot ${bot.name} successfully covered and ended the round`;
+                    }
+                    break;
 
-            case 'pass':
-                actionEvents = await handlePass(game, bot.player_id, move.cards!);
-                // Set done_attacking_this_round flag based on the move's choice
-                if (move.done_attacking_this_round !== undefined) {
-                    bot.done_attacking_this_round = move.done_attacking_this_round;
-                    // If bot is done attacking this round, set awaiting_attack = false
-                    if (move.done_attacking_this_round) {
-                        bot.awaiting_attack = false;
-                        console.log(`Bot ${bot.name} is done attacking this round after pass`);
+                case 'pass':
+                    actionEvents = await handlePass(game, bot.player_id, move.cards!);
+                    // Set done_attacking_this_round flag based on the move's choice
+                    if (move.done_attacking_this_round !== undefined) {
+                        bot.done_attacking_this_round = move.done_attacking_this_round;
+                        // If bot is done attacking this round, set awaiting_attack = false
+                        if (move.done_attacking_this_round) {
+                            bot.awaiting_attack = false;
+                            console.log(`Bot ${bot.name} is done attacking this round after pass`);
 
-                        // Only try to execute "good" logic if all attacks are covered
-                        // Use handleGood for proper validation
-                        if (game.table_battles.length > 0 && game.table_battles.every(battle => battle.defense !== null)) {
-                            try {
-                                console.log(`Bot ${bot.name} attempting good logic after pass`);
-                                const goodEvents = await handleGood(game, bot.player_id);
-                                actionEvents.push(...goodEvents);
-                                console.log(`Bot ${bot.name} successfully executed good logic after pass`);
-                            } catch (error) {
-                                console.log(`Bot ${bot.name} good logic failed validation after pass: ${error.message}`);
-                                // Bot is still marked as done attacking this round, which is correct
+                            // Only try to execute "good" logic if all attacks are covered
+                            // Use handleGood for proper validation
+                            if (game.table_battles.length > 0 && game.table_battles.every(battle => battle.defense !== null)) {
+                                try {
+                                    console.log(`Bot ${bot.name} attempting good logic after pass`);
+                                    const goodEvents = await handleGood(game, bot.player_id);
+                                    actionEvents.push(...goodEvents);
+                                    console.log(`Bot ${bot.name} successfully executed good logic after pass`);
+                                } catch (error) {
+                                    console.log(`Bot ${bot.name} good logic failed validation after pass: ${error.message}`);
+                                    // Bot is still marked as done attacking this round, which is correct
+                                }
                             }
                         }
                     }
-                }
-                break;
+                    break;
 
-            case 'pickup':
-                actionEvents = await handlePickup(game, bot.player_id);
-                break;
+                case 'pickup':
+                    actionEvents = await handlePickup(game, bot.player_id);
+                    break;
 
-            case 'good':
-                actionEvents = await handleGood(game, bot.player_id);
-                break;
-        }
+                case 'good':
+                    actionEvents = await handleGood(game, bot.player_id);
+                    break;
 
-        console.log(`Bot ${bot.name} performed ${move.type} action`);
+                case 'wait':
+                    // Bot chooses to wait - no action needed, just log it
+                    console.log(`Bot ${bot.name} chose to wait`);
+                    break;
+            }
 
-        // Add all events from the action to the animation manager
-        for (const event of actionEvents) {
-            animationEvents.addEvent(event);
-        }
+            console.log(`Bot ${bot.name} performed ${move.type} action`);
+
+            // Add all events from the action to the animation manager
+            for (const event of actionEvents) {
+                animationEvents.addEvent(event);
+            }
 
         } catch (error) {
             // Handle validation failures gracefully (e.g., due to race conditions)

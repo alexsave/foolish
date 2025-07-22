@@ -24,6 +24,12 @@ export class OneCardBotStrategy implements BotStrategy {
             return singleCardDoneAttackMoves[randomIndex];
         }
         
+        // Prefer wait over other non-attack moves (smart defensive play)
+        const waitMoves = legalMoves.filter(move => move.type === 'wait');
+        if (waitMoves.length > 0) {
+            return waitMoves[0];
+        }
+        
         // Otherwise, for non-attack moves, choose randomly
         const nonAttackMoves = legalMoves.filter(move => move.type !== 'attack');
         if (nonAttackMoves.length > 0) {

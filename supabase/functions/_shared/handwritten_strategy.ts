@@ -140,16 +140,35 @@ export class HandwrittenBotStrategy implements BotStrategy {
         // Handle cover moves with smart defense logic (after pass preference)
         const coverMoves = legalMoves.filter(move => move.type === 'cover');
         if (coverMoves.length > 0) {
-            const bestCover = this.findBestCoverCombination(game, bot as PrivatePlayer, coverMoves);
-            if (bestCover) {
-                console.log(`Bot ${botName} (handwritten) chose optimal cover`);
-                return bestCover;
+            // Count uncovered attacks - only cover if we can cover ALL of them
+            const uncoveredAttacks = game.table_battles.filter(battle => battle.defense === null);
+            
+            // Find cover moves that cover all uncovered attacks
+            const fullCoverMoves = coverMoves.filter(move => 
+                move.attack_cards && move.attack_cards.length === uncoveredAttacks.length
+            );
+            
+            if (fullCoverMoves.length > 0) {
+                const bestCover = this.findBestCoverCombination(game, bot as PrivatePlayer, fullCoverMoves);
+                if (bestCover) {
+                    console.log(`Bot ${botName} (handwritten) chose to cover all ${uncoveredAttacks.length} attacks`);
+                    return bestCover;
+                }
+            } else {
+                console.log(`Bot ${botName} (handwritten) cannot cover all ${uncoveredAttacks.length} attacks - will not cover partially`);
             }
         }
         
-        // For other non-attack moves (good), choose randomly - but NOT pickup
+        // Prefer wait over other moves when available
+        const waitMoves = legalMoves.filter(move => move.type === 'wait');
+        if (waitMoves.length > 0) {
+            console.log(`Bot ${botName} (handwritten) chose to wait - other players still attacking`);
+            return waitMoves[0];
+        }
+
+        // For other non-attack moves (good), choose randomly - but NOT pickup or wait
         const nonAttackNonPickupMoves = legalMoves.filter(move => 
-            move.type !== 'attack' && move.type !== 'cover' && move.type !== 'pass' && move.type !== 'pickup'
+            move.type !== 'attack' && move.type !== 'cover' && move.type !== 'pass' && move.type !== 'pickup' && move.type !== 'wait'
         );
         if (nonAttackNonPickupMoves.length > 0) {
             const randomIndex = Math.floor(Math.random() * nonAttackNonPickupMoves.length);

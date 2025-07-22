@@ -1,4 +1,4 @@
-import { Card, Game, PrivatePlayer, GAME_STATUS } from './types.ts';
+import { Card, Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS } from './types.ts';
 import { canCover, card_comp, get_next_player_index } from './common_utils.ts';
 import { BotStrategy, LegalMove } from './bot_interfaces.ts';
 import { RandomBotStrategy } from './random_strategy.ts';
@@ -58,12 +58,18 @@ export function calculateLegalMoves(game: Game, botPlayerId: string): LegalMove[
             const attackMoves = calculateFirstAttackMoves(game, botPlayer);
             moves.push(...attackMoves);
         } else if (isDefender && game.table_battles.length > 0) {
-            // Bot is defender - can cover, pickup, or pass
+            // Bot is defender - can cover, pickup, pass, and optionally wait
             const coverMoves = calculateCoverMoves(game, botPlayer);
             moves.push(...coverMoves);
             
             // Can always pickup
             moves.push({ type: 'pickup' });
+            
+            // Can wait if all attacks are covered and there are players still attacking
+            const canWait = allAttacksCovered && hasPlayersStillAttacking(game);
+            if (canWait) {
+                moves.push({ type: 'wait' });
+            }
             
             // Can pass if all attacks are same value and bot has that value
             const passMoves = calculatePassMoves(game, botPlayer);
@@ -306,6 +312,19 @@ function calculatePassMoves(game: Game, botPlayer: PrivatePlayer): LegalMove[] {
     }
     
     return moves;
+}
+
+// Helper function to check if there are players still attacking
+function hasPlayersStillAttacking(game: Game): boolean {
+    // Use the same logic as auto-transition in bot_actions.ts
+    const playable_players = game.players.filter(player =>
+        player.player_id !== game.players[game.defender].player_id &&
+        player.status !== PLAYER_STATUS.OUT &&
+        player.hand.some(card => game.table_battles.some(battle => battle.attack.value === card.value || (battle.defense && battle.defense.value === card.value))) &&
+        player.awaiting_attack &&
+        !player.done_attacking_this_round);
+    
+    return playable_players.length > 0;
 }
 
 // Helper function to generate combinations

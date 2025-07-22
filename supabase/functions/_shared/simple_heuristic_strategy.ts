@@ -61,6 +61,13 @@ export class SimpleHeuristicStrategy implements BotStrategy {
             return goodMoves[0];
         }
         
+        // Wait when appropriate (all attacks covered but players still attacking)
+        const waitMoves = legalMoves.filter(move => move.type === 'wait');
+        if (waitMoves.length > 0) {
+            console.log(`Bot ${bot.name} (simple_heuristic) chooses to wait - other players still attacking`);
+            return waitMoves[0];
+        }
+        
         // Pickup as last resort
         const pickupMoves = legalMoves.filter(move => move.type === 'pickup');
         if (pickupMoves.length > 0) {
