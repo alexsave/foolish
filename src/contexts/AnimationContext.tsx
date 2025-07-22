@@ -10,6 +10,9 @@ import { validateAttack, validatePass, validatePickup, validateCover } from '../
 // Animation timing constant
 export { ANIMATION_TIME } from '../constants/constants';
 
+// Bot bump timeout - 12 seconds of no animations
+const BOT_BUMP_TIMEOUT = 12000;
+
 interface AnimationEvent {
     type: 'magic_transition' | 'deal' | 'flipped' | 'defender_move' | 'attack_pass' | 'cover' | 'pickup' | 'discard' | 'out' | 'refill' | 'cards_to_trash';
     player_id?: string;
@@ -83,6 +86,9 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     const pendingCompletionCallbackRef = useRef<(() => void) | null>(null);
     const remainingSequenceEventsRef = useRef<number>(0);
 
+    // Bot bump timer ref
+    const botBumpTimerRef = useRef<NodeJS.Timeout | null>(null);
+
     // Keep track of processed sequence IDs and event content to avoid duplicates
     const processedSequenceIds = useRef<Set<string>>(new Set());
     const processedEventContent = useRef<Set<string>>(new Set());
@@ -98,6 +104,40 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     
     // Simple retry interval for animation channel
     const animationChannelRetryInterval = useRef(1000);
+
+    // Bot bump timer management
+    const startBotBumpTimer = useCallback(() => {
+        // Clear existing timer
+        if (botBumpTimerRef.current) {
+            clearTimeout(botBumpTimerRef.current);
+        }
+        
+        // Start new 12-second timer
+        botBumpTimerRef.current = setTimeout(() => {
+            if (url_game_id) {
+                console.log('No animations for 12s, calling bot bump for game:', url_game_id);
+                supabase.functions.invoke('bot_bump', { 
+                    body: { game_id: url_game_id } 
+                }).catch(error => {
+                    console.error('Bot bump failed:', error);
+                });
+            }
+        }, BOT_BUMP_TIMEOUT);
+    }, [url_game_id]);
+
+    // Start bot bump timer when component mounts and game is loaded
+    useEffect(() => {
+        if (url_game_id) {
+            startBotBumpTimer();
+        }
+        
+        // Cleanup on unmount
+        return () => {
+            if (botBumpTimerRef.current) {
+                clearTimeout(botBumpTimerRef.current);
+            }
+        };
+    }, [url_game_id, startBotBumpTimer]);
 
     // Clear optimistic animations every 10 seconds to prevent missing repeat events
     useEffect(() => {
@@ -316,6 +356,9 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
         const nextAnimation = animationQueueRef.current[0];
         
+        // Reset bot bump timer when processing animations
+        startBotBumpTimer();
+        
         setCurrentAnimation(nextAnimation);
         setAnimationQueue(prev => prev.slice(1));
         setIsAnimating(true);
@@ -367,7 +410,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             // Process next animation after a short delay
             setTimeout(processAnimationQueue, 100);
         }, ANIMATION_TIME);
-    }, [updateGameState]);
+    }, [updateGameState, startBotBumpTimer]);
 
     // Start processing queue when items are added and no animation is running
     useEffect(() => {
@@ -435,6 +478,9 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             player_id: playerId
         });
         optimisticAnimations.current.add(eventString);
+        
+        // Reset bot bump timer when triggering optimistic animations
+        startBotBumpTimer();
         
         // Queue the optimistic animation immediately
         queueAnimation(animationEvent);
@@ -540,6 +586,9 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         return () => {
             if (timeoutRef.current) {
                 clearTimeout(timeoutRef.current);
+            }
+            if (botBumpTimerRef.current) {
+                clearTimeout(botBumpTimerRef.current);
             }
         };
     }, []);
