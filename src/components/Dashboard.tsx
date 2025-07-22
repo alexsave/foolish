@@ -3,6 +3,7 @@ import supabase from '../backend/Connector';
 import { useServer } from "../contexts/ServerContext";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
+import { SUIT_MAP } from "../utils/cards";
 
 export const Dashboard = () => {
     const [gameId, setGameId] = useState<string>('');
@@ -14,10 +15,12 @@ export const Dashboard = () => {
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
-        height: '100%',
+        minHeight: '100vh',
         width: '100%',
         padding: '0.25rem',
-        boxSizing: 'border-box'
+        boxSizing: 'border-box',
+        overflowY: 'auto',
+        overflowX: 'hidden'
     }}>
         <h1 style={{ 
             color: 'white', 
@@ -55,7 +58,7 @@ export const Dashboard = () => {
                     alignItems: 'center',
                     //gap: '0.5rem',
                     width: '100%',
-                    justifyContent: 'center'
+                    justifyContent: 'space-between'
                 }}
             >
                 <input 
@@ -71,8 +74,8 @@ export const Dashboard = () => {
                         border: '1px solid white',
                         backgroundColor: 'rgba(255, 255, 255, 0.1)',
                         color: 'white',
-                        width: '150px',
-                        textAlign: 'center'
+                        textAlign: 'center',
+                        flex: 1,
                     }}
                 />
                 <button 
@@ -86,7 +89,9 @@ export const Dashboard = () => {
                         borderRadius: '4px',
                         cursor: gameId.trim() ? 'pointer' : 'not-allowed',
                         fontSize: '14px',
-                        fontWeight: 'bold'
+                        fontWeight: 'bold',
+                        flex: '1',
+                        marginLeft: '0.5rem'
                     }}
                 >
                     Join
@@ -114,7 +119,8 @@ export const Dashboard = () => {
                     cursor: 'pointer',
                     fontSize: '14px',
                     fontWeight: 'bold',
-                    width: '240px'
+                    flex: '1',
+                    width: '100%'
                 }}
             >
                 Create New Game
@@ -173,13 +179,13 @@ export const Dashboard = () => {
                             e.currentTarget.style.backgroundColor = isGameOver ? 'rgba(255, 255, 255, 0.02)' : 'rgba(255, 255, 255, 0.05)';
                         }}
                         >
-                            <div style={{ 
-                                                            display: 'flex', 
-                            justifyContent: 'space-between', 
-                            alignItems: 'center',
-                            marginBottom: '4px' 
+                                                        <div style={{ 
+                                display: 'flex', 
+                                justifyContent: 'space-between', 
+                                alignItems: 'center',
+                                marginBottom: '4px' 
                             }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: '1' }}>
                                     <h3 style={{ 
                                         margin: '0', 
                                         fontSize: '1.1rem', 
@@ -187,7 +193,27 @@ export const Dashboard = () => {
                                     }}>
                                         {game.name}
                                     </h3>
-
+                                    
+                                    {/* Game-specific info inline */}
+                                    {isWaiting && (
+                                        <span style={{ 
+                                            fontSize: '0.75rem', 
+                                            opacity: '0.6',
+                                            marginLeft: '8px'
+                                        }}>
+                                            Ready: {readyPlayers}/{totalPlayers}
+                                        </span>
+                                    )}
+                                    
+                                    {isPlaying && games[game.id] && (
+                                        <span style={{ 
+                                            fontSize: '0.75rem', 
+                                            opacity: '0.6',
+                                            marginLeft: '8px'
+                                        }}>
+                                            Deck cards: {games[game.id].deck_length + (games[game.id].flipped ? 1 : 0)} {SUIT_MAP[games[game.id].power_suit]}
+                                        </span>
+                                    )}
                                 </div>
                                 <span style={{ 
                                     padding: '4px 8px', 
@@ -250,28 +276,7 @@ export const Dashboard = () => {
                                     })}
                                 </div>
                             </div>
-                            
-                            {/* Game-specific info */}
-                            {isWaiting && (
-                                <p style={{ 
-                                    margin: '4px 0 0 0', 
-                                    fontSize: '0.8rem', 
-                                    opacity: '0.6' 
-                                }}>
-                                    Ready: {readyPlayers}/{totalPlayers} players
-                                </p>
-                            )}
-                            
-                            {isPlaying && games[game.id] && (
-                                <p style={{ 
-                                    margin: '4px 0 0 0', 
-                                    fontSize: '0.8rem', 
-                                    opacity: '0.6' 
-                                }}>
-                                    Cards left: {games[game.id].deck_length} • 
-                                    Battles: {games[game.id].table_battles?.length || 0}
-                                </p>
-                            )}
+
 
                         </div>
                     );
