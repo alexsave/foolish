@@ -10,6 +10,7 @@ import { DragShadow } from './GameDisplay/DragShadow';
 import { CoverArrows } from './GameDisplay/CoverArrows';
 import { Chat } from './GameDisplay/Chat';
 import { AnimationOverlay } from './GameDisplay/AnimationOverlay';
+import { KeyboardInputHandler } from './KeyboardInputHandler';
 import { usePreventScroll } from '../hooks/usePreventScroll';
 
 export const GameDisplay = () => {
@@ -31,6 +32,8 @@ export const GameDisplay = () => {
             touchAction: 'none', 
         }}
     >
+        <KeyboardInputHandler />
+        
         <CoverArrows />
 
         <div style={{ display: 'flex', flex: 1, justifyContent: 'center', alignItems: 'center' }}>
