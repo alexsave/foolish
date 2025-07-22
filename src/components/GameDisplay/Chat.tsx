@@ -134,7 +134,7 @@ export const Chat = () => {
                     data-chat-button
                     style={{
                         position: 'fixed',
-                        top: '50%',
+                        top: '70%',
                         left: 'env(safe-area-inset-left, 0)',
                         transform: 'translateY(-50%)',
                         width: '60px',
@@ -316,7 +316,7 @@ export const Chat = () => {
                 data-chat-button
                 style={{
                     position: 'fixed',
-                    top: '50%',
+                    top: '70%',
                     left: '0',
                     transform: 'translateY(-50%)',
                     width: '60px',
