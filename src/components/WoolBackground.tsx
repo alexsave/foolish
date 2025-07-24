@@ -14,6 +14,7 @@ const WoolBackground: React.FC<WoolBackgroundProps> = ({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
   const pixelsCache = useRef<Array<{x: number, y: number, color: string, width?: number, height?: number}> | null>(null);
+  const hasRendered = useRef<boolean>(false);
 
   // Dwitter shortcuts translated to JavaScript
   const C = Math.cos;
@@ -52,8 +53,8 @@ const WoolBackground: React.FC<WoolBackgroundProps> = ({
         }
         
         const phase = S(i / u);
-        const dx = S(i - 1) + phase * 3;
-        const red = ((T((Math.floor((r - width/2) / 40 + z() / 2)) ^ (Math.floor((i % height - height/2) / 40)))) > 0.3) ? 100 : 0;
+        const dx = S(i - 1) + phase * 6; // Doubled from 3 to 6 for 2x scale
+        const red = ((T((Math.floor((r - width/2) / 80 + z() / 4)) ^ (Math.floor((i % height - height/2) / 80)))) > 0.3) ? 100 : 0; // Doubled divisions from 40 to 80, 2 to 4
         
         const color = R(209 + 46 * phase + red, 208 + 45 * phase - red, 183 + 53 * phase - red / 2, 1);
         
@@ -66,8 +67,8 @@ const WoolBackground: React.FC<WoolBackgroundProps> = ({
             x,
             y,
             color,
-            width: 1,
-            height: 1
+            width: 2, // Doubled thread thickness
+            height: 2
           });
         }
       } else {
@@ -78,14 +79,14 @@ const WoolBackground: React.FC<WoolBackgroundProps> = ({
         }
         
         const phase = S(i / u);
-        const red = ((T((Math.floor((r - height/2) / 40 + z() / 2)) ^ (Math.floor((i % width - width/2) / 40)))) > 0.3) ? 100 : 0;
-        const dx = 2 * S(i - 1) + S(i / u) * 2;
+        const red = ((T((Math.floor((r - height/2) / 80 + z() / 4)) ^ (Math.floor((i % width - width/2) / 80)))) > 0.3) ? 100 : 0; // Doubled divisions from 40 to 80, 2 to 4
+        const dx = 4 * S(i - 1) + S(i / u) * 4; // Doubled from 2 to 4 for 2x scale
         
         const color = R(189 + 46 * phase + red, 188 + 45 * phase - red, 163 + 53 * phase - red / 2, 1);
         
         const x = i % width;
         const y = r + dx;
-        const pixelWidth = 0.7 * (phase + 1.7);
+        const pixelWidth = 1.4 * (phase + 1.7); // Doubled from 0.7 to 1.4
         
         // Only add pixels within bounds
         if (x >= 0 && x < width && y >= 0 && y < height) {
@@ -94,7 +95,7 @@ const WoolBackground: React.FC<WoolBackgroundProps> = ({
             y,
             color,
             width: pixelWidth,
-            height: 1
+            height: 2 // Doubled thread thickness
           });
         }
       }
@@ -105,12 +106,96 @@ const WoolBackground: React.FC<WoolBackgroundProps> = ({
     return pixels;
   };
 
+  const drawFractalBranch = (ctx: CanvasRenderingContext2D, xPos: number, yPos: number, size: number, rotationFactor: number, pointIndex: number) => {
+    // Base case: If the branch size is small enough, draw a dot and stop
+    if (size <= 1) {
+      // Scale and center the final coordinates on the screen - adjusted for native 2x scale
+      const screenX = 4 * xPos * (width / 640) + width / 2; // Doubled from 2 to 4
+      const screenY = 4 * yPos * (height / 1080) + height / 2; // Doubled from 2 to 4
+      
+      // Draw a bigger point for 2x scale
+      ctx.fillRect(screenX, screenY, 0.6, 2); // Doubled from 0.3, 1 to 0.6, 2
+    } else {
+      // Recursive step: calculate the next segment
+      drawFractalBranch(
+        ctx,
+        // New X position calculation
+        yPos + size * Math.tan(size / 300 + rotationFactor * pointIndex) * Math.sin(rotationFactor * pointIndex),
+        // New Y position is the old X position
+        xPos,
+        // The size is halved for the next segment
+        size / 2,
+        // The rotation factor is scaled up
+        rotationFactor / 0.4,
+        pointIndex
+      );
+    }
+  };
+
+  const drawWearPattern = (ctx: CanvasRenderingContext2D) => {
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.12)'; // Toned down wear marks
+    let animationTime = 0.1;
+
+    // Add wear pattern layers - reduced for subtlety
+    for (let t = 0; t < 800; t++) { // Much fewer iterations
+      animationTime += 0.01;
+
+      // Draw fractal structures for wear
+      for (let pointIndex = 0; pointIndex < 1000; pointIndex++) { // Fewer points for subtler pattern
+        drawFractalBranch(ctx, 0, 0, 240, animationTime, pointIndex);
+      }
+    }
+  };
+
+  const applySpeckleNoise = (ctx: CanvasRenderingContext2D) => {
+    const imgData = ctx.getImageData(0, 0, width, height);
+    const data = imgData.data;
+    const totalPixels = width * height;
+    const speckleCount = totalPixels * 0.15; // 15% of pixels get speckles (much more visible)
+
+    for (let i = 0; i < speckleCount; i++) {
+      const p = (Math.random() * totalPixels) | 0; // Random pixel index
+      const idx = p * 4; // RGBA start index
+      const delta = Math.random() < 0.5 ? -40 : 40; // Much stronger brightness change
+
+      data[idx] = Math.max(0, Math.min(255, data[idx] + delta));     // R
+      data[idx + 1] = Math.max(0, Math.min(255, data[idx + 1] + delta)); // G
+      data[idx + 2] = Math.max(0, Math.min(255, data[idx + 2] + delta)); // B
+    }
+    ctx.putImageData(imgData, 0, 0);
+  };
+
+  const applyVignette = (ctx: CanvasRenderingContext2D) => {
+    // Create radial gradient for vignette - back to normal since no CSS scaling
+    const centerX = width / 2;
+    const centerY = height / 2;
+    const radius = Math.max(width, height) * 0.7; // Normal radius for natural vignette
+    
+    const gradient = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, radius);
+    gradient.addColorStop(0, 'rgba(0, 0, 0, 0)');
+    gradient.addColorStop(0.4, 'rgba(0, 0, 0, 0.05)'); // Natural progression
+    gradient.addColorStop(0.7, 'rgba(0, 0, 0, 0.3)'); 
+    gradient.addColorStop(1, 'rgba(0, 0, 0, 0.8)'); // Strong but natural edge darkening
+    
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, width, height);
+  };
+
   const renderCanvas = async () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
+    // Prevent double generation
+    if (hasRendered.current || isGenerating) {
+      console.log('Skipping render - already generated or generating');
+      return;
+    }
+
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
+
+    console.log('Starting wool texture generation...');
+    hasRendered.current = true;
 
     // Base wool color
     ctx.fillStyle = '#71411b';
@@ -139,7 +224,21 @@ const WoolBackground: React.FC<WoolBackgroundProps> = ({
         await new Promise(resolve => setTimeout(resolve, 0));
       }
     }
+
+    // Add enhancement layers after main texture with visible delays
+    console.log('Adding fractal wear pattern...');
+    //await new Promise(resolve => setTimeout(resolve, 500)); // 500ms delay
+    //drawWearPattern(ctx);
     
+    console.log('Adding speckle noise...');
+    //await new Promise(resolve => setTimeout(resolve, 500)); // 500ms delay
+    //applySpeckleNoise(ctx);
+    
+    console.log('Adding vignette...');
+    //await new Promise(resolve => setTimeout(resolve, 500)); // 500ms delay
+    //applyVignette(ctx);
+    
+    console.log('Wool texture complete!');
     setIsGenerating(false);
   };
 
@@ -169,22 +268,31 @@ const WoolBackground: React.FC<WoolBackgroundProps> = ({
     pointerEvents: 'none'
   };
 
-  return (
-    <>
-      <canvas
-        ref={canvasRef}
-        width={width}
-        height={height}
-        style={{
-          ...containerStyle,
-          objectFit: 'cover',
-          transform: 'scale(2)',
-          //transformOrigin: 'center center'
-        }}
-      />
-      <div style={vignetteStyle} />
-    </>
-  );
+    return (
+        <>
+            <canvas
+                ref={canvasRef}
+                width={width}
+                height={height}
+                style={{
+                    ...containerStyle,
+                    objectFit: 'cover',
+                    transform: 'scale(2)',
+                    //transformOrigin: 'center center'
+                }}
+            />
+            <div style={vignetteStyle} />
+            <canvas
+                ref={canvasRef}
+                width={width}
+                height={height}
+                style={{
+                    ...containerStyle,
+                    objectFit: 'cover'
+                }}
+            />
+        </>
+    );
 };
 
 export default WoolBackground; 
