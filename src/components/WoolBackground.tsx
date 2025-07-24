@@ -158,18 +158,32 @@ const WoolBackground: React.FC<WoolBackgroundProps> = ({
     zIndex: useFixed ? -1 : 0,
   };
 
+  const vignetteStyle: React.CSSProperties = {
+    ...containerStyle,
+    zIndex: (useFixed ? -1 : 0) + 1, // One layer above the wool texture
+    background: `radial-gradient(ellipse at center, 
+      rgba(101, 67, 33, 0) 0%, 
+      rgba(101, 67, 33, 0) 40%, 
+      rgba(101, 67, 33, 0.2) 70%, 
+      rgba(101, 67, 33, 0.6) 100%)`,
+    pointerEvents: 'none'
+  };
+
   return (
-    <canvas
-      ref={canvasRef}
-      width={width}
-      height={height}
-      style={{
-        ...containerStyle,
-        objectFit: 'cover',
-        transform: 'scale(2)',
-        //transformOrigin: 'center center'
-      }}
-    />
+    <>
+      <canvas
+        ref={canvasRef}
+        width={width}
+        height={height}
+        style={{
+          ...containerStyle,
+          objectFit: 'cover',
+          transform: 'scale(2)',
+          //transformOrigin: 'center center'
+        }}
+      />
+      <div style={vignetteStyle} />
+    </>
   );
 };
 
