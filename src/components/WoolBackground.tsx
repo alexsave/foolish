@@ -298,15 +298,6 @@ const WoolBackground: React.FC<WoolBackgroundProps> = ({
                 }}
             />
             <div style={vignetteStyle} />
-            <canvas
-                ref={canvasRef}
-                width={width}
-                height={height}
-                style={{
-                    ...containerStyle,
-                    objectFit: 'cover'
-                }}
-            />
         </>
     );
 };

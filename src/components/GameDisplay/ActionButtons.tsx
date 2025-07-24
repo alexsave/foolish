@@ -5,6 +5,7 @@ import { useAnimation } from "../../contexts/AnimationContext";
 import { useGame } from "../../contexts/GameContext";
 import { useDrag } from "../../contexts/DragContext";
 import { CardFace} from "./CardFace";
+import { getWoodTextureStyle } from "../WoodTexture";
 
 const CardDiv = ({ user_id }: { user_id: string }) => {
     const { game, localHandOrder } = useServer() as { game: PersonalGame, localHandOrder: Card[] };
@@ -116,14 +117,31 @@ export const ActionButtons = () => {
             {/* Pickup button for defenders */}
             {isDefending && game.table_battles.length > 0 && <button
                 style={{
+                    ...getWoodTextureStyle(0.15), // Wood texture for pickup button
                     width: '60px',
                     height: '40px',
                     fontSize: '12px',
-                    backgroundColor: '#ff6b6b',
                     color: 'white',
-                    border: 'none',
-                    borderRadius: '4px',
-                    cursor: 'pointer'
+                    fontWeight: 'bold',
+                    textShadow: '2px 2px 4px rgba(0,0,0,0.9)',
+                    border: '2px solid #5D3A1A',
+                    borderRadius: '0',
+                    cursor: 'pointer',
+                    position: 'relative' as const,
+                    overflow: 'hidden' as const,
+                    boxShadow: `
+                        inset 0 1px 0 rgba(255,255,255,0.2),
+                        inset 0 -1px 0 rgba(0,0,0,0.3),
+                        0 2px 4px rgba(0,0,0,0.4)`,
+                    transition: 'all 0.2s ease'
+                }}
+                onMouseEnter={(e) => {
+                    e.currentTarget.style.filter = 'brightness(1.1) contrast(1.1)';
+                    e.currentTarget.style.transform = 'translateY(-1px)';
+                }}
+                onMouseLeave={(e) => {
+                    e.currentTarget.style.filter = '';
+                    e.currentTarget.style.transform = '';
                 }}
                 onClick={() => pickup().then(() => {
                     setSelectedCards([]);
@@ -138,14 +156,31 @@ export const ActionButtons = () => {
             {/* Good button for attackers when all attacks are covered */}
             {!isDefending && game.table_battles.length > 0 && game.table_battles.every(battle => battle.defense) && canPlay && <button
                 style={{
+                    ...getWoodTextureStyle(0.85), // Wood texture for good button
                     width: '60px',
                     height: '40px',
                     fontSize: '12px',
-                    backgroundColor: '#51cf66',
                     color: 'white',
-                    border: 'none',
-                    borderRadius: '4px',
-                    cursor: 'pointer'
+                    fontWeight: 'bold',
+                    textShadow: '2px 2px 4px rgba(0,0,0,0.9)',
+                    border: '2px solid #5D3A1A',
+                    borderRadius: '0',
+                    cursor: 'pointer',
+                    position: 'relative' as const,
+                    overflow: 'hidden' as const,
+                    boxShadow: `
+                        inset 0 1px 0 rgba(255,255,255,0.2),
+                        inset 0 -1px 0 rgba(0,0,0,0.3),
+                        0 2px 4px rgba(0,0,0,0.4)`,
+                    transition: 'all 0.2s ease'
+                }}
+                onMouseEnter={(e) => {
+                    e.currentTarget.style.filter = 'brightness(1.1) contrast(1.1)';
+                    e.currentTarget.style.transform = 'translateY(-1px)';
+                }}
+                onMouseLeave={(e) => {
+                    e.currentTarget.style.filter = '';
+                    e.currentTarget.style.transform = '';
                 }}
                 onClick={() => good().then(() => {
                     setSelectedCards([]);

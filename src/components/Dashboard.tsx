@@ -4,6 +4,75 @@ import { useServer } from "../contexts/ServerContext";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { SUIT_MAP } from "../utils/cards";
+import { getWoodTextureStyle } from "./WoodTexture";
+
+// Wood-style button and input styling - using random positions for variety
+const woodButtonStyle: React.CSSProperties = {
+    ...getWoodTextureStyle(0.1), // Random position seed 0.1
+    border: '3px solid #5D3A1A', // Darker wood border color
+    borderRadius: '0', // Sharp 90-degree corners
+    color: '#ffffff',
+    fontWeight: 'bold',
+    cursor: 'pointer',
+    transition: 'all 0.2s ease',
+    textShadow: '2px 2px 4px rgba(0,0,0,0.9)',
+    boxShadow: `
+        inset 0 1px 0 rgba(255,255,255,0.2),
+        inset 0 -1px 0 rgba(0,0,0,0.3),
+        0 2px 4px rgba(0,0,0,0.4)`,
+    position: 'relative' as const,
+    overflow: 'hidden' as const,
+};
+
+const woodButtonStyle2: React.CSSProperties = {
+    ...getWoodTextureStyle(0.7), // Different random position seed 0.7
+    border: '3px solid #5D3A1A', // Darker wood border color
+    borderRadius: '0', // Sharp 90-degree corners
+    color: '#ffffff',
+    fontWeight: 'bold',
+    cursor: 'pointer',
+    transition: 'all 0.2s ease',
+    textShadow: '2px 2px 4px rgba(0,0,0,0.9)',
+    boxShadow: `
+        inset 0 1px 0 rgba(255,255,255,0.2),
+        inset 0 -1px 0 rgba(0,0,0,0.3),
+        0 2px 4px rgba(0,0,0,0.4)`,
+    position: 'relative' as const,
+    overflow: 'hidden' as const,
+};
+
+const woodButtonHoverStyle: React.CSSProperties = {
+    ...getWoodTextureStyle(0.1), // Match primary button seed
+    filter: 'brightness(1.1) contrast(1.1)',
+    transform: 'translateY(-1px)',
+    boxShadow: `
+        inset 0 2px 0 rgba(255,255,255,0.3),
+        inset 0 -2px 0 rgba(0,0,0,0.4),
+        0 4px 8px rgba(0,0,0,0.5)`,
+};
+
+const woodButtonHoverStyle2: React.CSSProperties = {
+    ...getWoodTextureStyle(0.7), // Match secondary button seed
+    filter: 'brightness(1.1) contrast(1.1)',
+    transform: 'translateY(-1px)',
+    boxShadow: `
+        inset 0 2px 0 rgba(255,255,255,0.3),
+        inset 0 -2px 0 rgba(0,0,0,0.4),
+        0 4px 8px rgba(0,0,0,0.5)`,
+};
+
+const woodInputStyle: React.CSSProperties = {
+    ...getWoodTextureStyle(0.3), // Random position for inputs
+    border: '2px solid #5D3A1A', // Darker wood border color
+    borderRadius: '0', // Sharp 90-degree corners
+    color: '#ffffff',
+    textShadow: '2px 2px 4px rgba(0,0,0,0.9)',
+    boxShadow: `
+        inset 2px 2px 4px rgba(0,0,0,0.4),
+        inset -1px -1px 2px rgba(255,255,255,0.2)`,
+};
+
+
 
 export const Dashboard = () => {
     const [gameId, setGameId] = useState<string>('');
@@ -68,12 +137,9 @@ export const Dashboard = () => {
                     placeholder="Enter existing game ID"
                     inputMode="text"
                     style={{
-                        padding: '6px 10px',
+                        ...woodInputStyle,
+                        padding: '8px 12px',
                         fontSize: '16px',
-                        borderRadius: '4px',
-                        border: '1px solid white',
-                        backgroundColor: 'rgba(255, 255, 255, 0.1)',
-                        color: 'white',
                         textAlign: 'center',
                         flex: 1,
                     }}
@@ -82,16 +148,23 @@ export const Dashboard = () => {
                     type="submit"
                     disabled={!gameId.trim()}
                     style={{
-                        padding: '6px 12px',
-                        backgroundColor: gameId.trim() ? '#2196F3' : 'rgba(33, 150, 243, 0.5)',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '4px',
-                        cursor: gameId.trim() ? 'pointer' : 'not-allowed',
+                        ...woodButtonStyle,
+                        padding: '8px 16px',
                         fontSize: '14px',
-                        fontWeight: 'bold',
                         flex: '1',
-                        marginLeft: '0.5rem'
+                        marginLeft: '0.5rem',
+                        opacity: gameId.trim() ? 1 : 0.6,
+                        cursor: gameId.trim() ? 'pointer' : 'not-allowed',
+                    }}
+                    onMouseEnter={(e) => {
+                        if (gameId.trim()) {
+                            Object.assign(e.currentTarget.style, woodButtonHoverStyle);
+                        }
+                    }}
+                    onMouseLeave={(e) => {
+                        if (gameId.trim()) {
+                            Object.assign(e.currentTarget.style, woodButtonStyle);
+                        }
                     }}
                 >
                     Join
@@ -111,16 +184,17 @@ export const Dashboard = () => {
                         });
                 }}
                 style={{
-                    padding: '6px 16px',
-                    backgroundColor: '#4CAF50',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '4px',
-                    cursor: 'pointer',
+                    ...woodButtonStyle2, // Use secondary texture for variety
+                    padding: '8px 16px',
                     fontSize: '14px',
-                    fontWeight: 'bold',
                     flex: '1',
                     width: '100%'
+                }}
+                onMouseEnter={(e) => {
+                    Object.assign(e.currentTarget.style, woodButtonHoverStyle2);
+                }}
+                onMouseLeave={(e) => {
+                    Object.assign(e.currentTarget.style, woodButtonStyle2);
                 }}
             >
                 Create New Game
@@ -150,13 +224,18 @@ export const Dashboard = () => {
                     return (
                         <div 
                             key={game.id} 
-                                                    style={{ 
-                            border: isGameOver ? '1px solid rgba(255, 255, 255, 0.3)' : '1px solid white',
-                            borderRadius: '6px',
+                            style={{ 
+                            border: '2px solid #5D3A1A',
+                            borderRadius: '0',
+                            boxShadow: `
+                                inset 0 1px 0 rgba(255,255,255,0.2),
+                                inset 0 -1px 0 rgba(0,0,0,0.3),
+                                0 3px 6px rgba(0,0,0,0.4)`,
+                            position: 'relative' as const,
+                            overflow: 'hidden' as const,
                             cursor: 'pointer',
-                            padding: '8px 12px',
-                            backgroundColor: isGameOver ? 'rgba(255, 255, 255, 0.02)' : 'rgba(255, 255, 255, 0.05)',
-                            color: isGameOver ? 'rgba(255, 255, 255, 0.6)' : 'white',
+                            padding: '12px 16px',
+                            color: isGameOver ? 'rgba(255, 255, 255, 0.7)' : 'white',
                             width: '100%',
                             maxWidth: '95vw',
                             height: '90px',
@@ -170,15 +249,38 @@ export const Dashboard = () => {
                             onClick={() => {
                                 navigate(`/${game.id}`);
                             }}
-                                                    onMouseEnter={(e) => {
+                            onMouseEnter={(e) => {
                             if (!isGameOver) {
-                                e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.1)';
+                                e.currentTarget.style.transform = 'translateY(-2px)';
+                                e.currentTarget.style.boxShadow = `
+                                    inset 0 1px 0 rgba(255,255,255,0.15),
+                                    inset 0 -1px 0 rgba(0,0,0,0.25),
+                                    0 5px 10px rgba(0,0,0,0.4)`;
                             }
                         }}
                         onMouseLeave={(e) => {
-                            e.currentTarget.style.backgroundColor = isGameOver ? 'rgba(255, 255, 255, 0.02)' : 'rgba(255, 255, 255, 0.05)';
+                            if (!isGameOver) {
+                                e.currentTarget.style.transform = 'translateY(0)';
+                                e.currentTarget.style.boxShadow = `
+                                    inset 0 1px 0 rgba(255,255,255,0.1),
+                                    inset 0 -1px 0 rgba(0,0,0,0.2),
+                                    0 3px 6px rgba(0,0,0,0.3)`;
+                            }
                         }}
                         >
+                            {/* Wood texture background layer - can be transformed independently */}
+                            <div style={{
+                                position: 'absolute',
+                                top: 0,
+                                left: 0,
+                                right: 0,
+                                bottom: 0,
+                                zIndex: -1,
+                                ...getWoodTextureStyle((game.id.charCodeAt(0) + game.id.charCodeAt(1)) / 200),
+                                transform: `scaleX(${(game.id.charCodeAt(3) || 0) % 2 === 0 ? 1 : -1})`,
+                                transformOrigin: 'center center'
+                            }} />
+                            
                                                         <div style={{ 
                                 display: 'flex', 
                                 justifyContent: 'space-between', 

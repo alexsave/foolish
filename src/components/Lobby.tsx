@@ -9,6 +9,48 @@ import { useAuth } from "../contexts/AuthContext";
 import { PublicPlayer } from "../common/types";
 import { usePreventScroll } from "../hooks/usePreventScroll";
 import { MAX_PLAYERS } from "../common/constants";
+import { getWoodTextureStyle } from "./WoodTexture";
+
+// Wood-style button and input styling - using random positions for variety
+const woodButtonStyle: React.CSSProperties = {
+    ...getWoodTextureStyle(0.2), // Random position seed 0.2
+    border: '3px solid #5D3A1A', // Darker wood border color
+    borderRadius: '0', // Sharp 90-degree corners
+    color: '#ffffff',
+    fontWeight: 'bold',
+    cursor: 'pointer',
+    transition: 'all 0.2s ease',
+    textShadow: '2px 2px 4px rgba(0,0,0,0.9)',
+    boxShadow: `
+        inset 0 1px 0 rgba(255,255,255,0.2),
+        inset 0 -1px 0 rgba(0,0,0,0.3),
+        0 2px 4px rgba(0,0,0,0.4)`,
+    position: 'relative' as const,
+    overflow: 'hidden' as const,
+};
+
+const woodButtonHoverStyle: React.CSSProperties = {
+    ...getWoodTextureStyle(0.2), // Match primary button seed
+    filter: 'brightness(1.1) contrast(1.1)',
+    transform: 'translateY(-1px)',
+    boxShadow: `
+        inset 0 2px 0 rgba(255,255,255,0.3),
+        inset 0 -2px 0 rgba(0,0,0,0.4),
+        0 4px 8px rgba(0,0,0,0.5)`,
+};
+
+const woodInputStyle: React.CSSProperties = {
+    ...getWoodTextureStyle(0.8), // Random position for inputs
+    border: '2px solid #5D3A1A', // Darker wood border color
+    borderRadius: '0', // Sharp 90-degree corners
+    color: '#ffffff',
+    textShadow: '2px 2px 4px rgba(0,0,0,0.9)',
+    boxShadow: `
+        inset 2px 2px 4px rgba(0,0,0,0.4),
+        inset -1px -1px 2px rgba(255,255,255,0.2)`,
+};
+
+
 
 interface PlayerCardProps {
     player: PublicPlayer;
@@ -39,24 +81,32 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
     const { startGame, game } = useServer();
     const gameStatus = game?.status;
     const { user_id } = useAuth();
+    // Generate unique wood texture and transforms for each player card
+    const playerSeed = (player.player_id.charCodeAt(0) + player.player_id.charCodeAt(1)) / 200;
+    const flip = (player.player_id.charCodeAt(3) || 0) % 2 === 0 ? 1 : -1;
+    
     const style: React.CSSProperties = {
+        border: '2px solid #5D3A1A',
+        borderRadius: '0',
+        boxShadow: `
+            inset 0 1px 0 rgba(255,255,255,0.2),
+            inset 0 -1px 0 rgba(0,0,0,0.3),
+            0 2px 4px rgba(0,0,0,0.4)`,
+        position: 'relative' as const,
+        overflow: 'hidden' as const,
         width: '200px',
         display: 'flex',
         flexDirection: 'row',
         justifyContent: 'space-between',
         gap: '10px',
-        padding: '0 10px',
-        color: 'white',
-        border: '1px solid white',
+        padding: '8px 12px',
         opacity: isDragging ? 0.3 : 1,
-        backgroundColor: isDropTarget ? 'rgba(255, 255, 255, 0.1)' : 'transparent',
+        backgroundColor: isDropTarget ? 'rgba(255, 255, 255, 0.1)' : undefined,
         cursor: 'move',
         transition: isDragging ? 'none' : 'all 0.2s ease',
-        transform: isDragging ? 'scale(1.05)' : 'scale(1)',
+        transform: isDragging ? 'scale(1.05)' : 'scale(1)', // Don't flip the entire card
         userSelect: 'none',
-        borderRadius: '4px',
-        marginBottom: '4px',
-        position: 'relative',
+        marginBottom: '6px',
         zIndex: 1500,
         pointerEvents: isDragging ? 'none' : 'auto'
     };
@@ -72,6 +122,19 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
             onDragEnd={onDragEnd}
             style={style}
         >
+            {/* Wood texture background layer - can be transformed independently */}
+            <div style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                zIndex: -1,
+                ...getWoodTextureStyle(playerSeed),
+                transform: `scaleX(${flip})`,
+                transformOrigin: 'center center'
+            }} />
+            
             {/* Invisible overlay to prevent text selection during drag operations */}
             <div style={{
                 position: 'absolute',
@@ -87,6 +150,17 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 {player.status !== 'idle' ? '🟢' : player.player_id === user_id ? <button
                     onClick={() => startGame(game_id)}
+                    style={{
+                        ...woodButtonStyle,
+                        padding: '4px 8px',
+                        fontSize: '12px',
+                    }}
+                    onMouseEnter={(e) => {
+                        Object.assign(e.currentTarget.style, woodButtonHoverStyle);
+                    }}
+                    onMouseLeave={(e) => {
+                        Object.assign(e.currentTarget.style, woodButtonStyle);
+                    }}
                 >Ready</button> : '🔴'}
                 {player.is_ai && gameStatus === 'waiting' && onRemoveBot && game?.self && (
                     <button
@@ -340,14 +414,15 @@ export const Lobby = () => {
             autoFocus={isEditingName}
             inputMode={isEditingName ? 'text' : 'none'}
             style={{
+                ...(isEditingName ? woodInputStyle : {}),
                 width: '100%',
                 fontSize: '2rem',
                 fontWeight: 'bold',
                 textAlign: 'center',
-                color: isEditingName ? 'black' : 'white',
-                background: isEditingName ? 'white' : 'transparent',
-                border: 'none',
-                padding: '0.75rem 0 0.5rem 0',
+                color: 'white',
+                background: isEditingName ? undefined : 'transparent',
+                border: isEditingName ? undefined : 'none',
+                padding: '0.75rem 1rem 0.5rem 1rem',
                 cursor: isEditingName ? 'text' : 'pointer',
                 transition: 'all 0.2s ease',
                 position: 'relative',
@@ -382,14 +457,15 @@ export const Lobby = () => {
                     <button 
                         onClick={() => addBot(game_id!)}
                         style={{
+                            ...woodButtonStyle,
                             padding: '10px 20px',
-                            backgroundColor: '#4CAF50',
-                            color: 'white',
-                            border: 'none',
-                            borderRadius: '5px',
-                            cursor: 'pointer',
                             fontSize: '16px',
-                            fontWeight: 'bold'
+                        }}
+                        onMouseEnter={(e) => {
+                            Object.assign(e.currentTarget.style, woodButtonHoverStyle);
+                        }}
+                        onMouseLeave={(e) => {
+                            Object.assign(e.currentTarget.style, woodButtonStyle);
                         }}
                     >
                         Add Bot
@@ -401,14 +477,15 @@ export const Lobby = () => {
                     <button 
                         onClick={() => exitGame(game_id!)}
                         style={{
+                            ...woodButtonStyle,
                             padding: '10px 20px',
-                            backgroundColor: '#f44336',
-                            color: 'white',
-                            border: 'none',
-                            borderRadius: '5px',
-                            cursor: 'pointer',
                             fontSize: '16px',
-                            fontWeight: 'bold'
+                        }}
+                        onMouseEnter={(e) => {
+                            Object.assign(e.currentTarget.style, woodButtonHoverStyle);
+                        }}
+                        onMouseLeave={(e) => {
+                            Object.assign(e.currentTarget.style, woodButtonStyle);
                         }}
                     >
                         Exit Game
@@ -417,14 +494,15 @@ export const Lobby = () => {
                     <button 
                         onClick={() => joinGame(game_id!)}
                         style={{
+                            ...woodButtonStyle,
                             padding: '10px 20px',
-                            backgroundColor: '#2196F3',
-                            color: 'white',
-                            border: 'none',
-                            borderRadius: '5px',
-                            cursor: 'pointer',
                             fontSize: '16px',
-                            fontWeight: 'bold'
+                        }}
+                        onMouseEnter={(e) => {
+                            Object.assign(e.currentTarget.style, woodButtonHoverStyle);
+                        }}
+                        onMouseLeave={(e) => {
+                            Object.assign(e.currentTarget.style, woodButtonStyle);
                         }}
                     >
                         Join Game
