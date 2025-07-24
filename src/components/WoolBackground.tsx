@@ -6,6 +6,19 @@ interface WoolBackgroundProps {
   useFixed?: boolean;
 }
 
+// Generate random offsets once per page load
+let globalRandomOffsetX: number | null = null;
+let globalRandomOffsetY: number | null = null;
+
+const getRandomOffsets = () => {
+  if (globalRandomOffsetX === null || globalRandomOffsetY === null) {
+    globalRandomOffsetX = Math.random() * 1000 - 500; // Random offset between -500 and 500
+    globalRandomOffsetY = Math.random() * 1000 - 500; // Random offset between -500 and 500
+    console.log('Generated new random wool pattern offsets:', { x: globalRandomOffsetX, y: globalRandomOffsetY });
+  }
+  return { offsetX: globalRandomOffsetX, offsetY: globalRandomOffsetY };
+};
+
 const WoolBackground: React.FC<WoolBackgroundProps> = ({ 
   width = 3840, // Large base size for 4K displays
   height = 2160,
@@ -28,6 +41,9 @@ const WoolBackground: React.FC<WoolBackgroundProps> = ({
     if (pixelsCache.current) {
       return pixelsCache.current;
     }
+
+    // Get random offsets for this pattern
+    const { offsetX, offsetY } = getRandomOffsets();
 
     let r = 0;
     const z = () => C(r) * 1000 - Math.floor(C(r) * 1000);
@@ -54,7 +70,7 @@ const WoolBackground: React.FC<WoolBackgroundProps> = ({
         
         const phase = S(i / u);
         const dx = S(i - 1) + phase * 6; // Doubled from 3 to 6 for 2x scale
-        const red = ((T((Math.floor((r - width/2) / 80 + z() / 4)) ^ (Math.floor((i % height - height/2) / 80)))) > 0.3) ? 100 : 0; // Doubled divisions from 40 to 80, 2 to 4
+        const red = ((T((Math.floor((r + offsetX) / 80 + z() / 4)) ^ (Math.floor((i % height + offsetY) / 80)))) > 0.3) ? 100 : 0; // Using random offsets instead of centering
         
         const color = R(209 + 46 * phase + red, 208 + 45 * phase - red, 183 + 53 * phase - red / 2, 1);
         
@@ -79,7 +95,7 @@ const WoolBackground: React.FC<WoolBackgroundProps> = ({
         }
         
         const phase = S(i / u);
-        const red = ((T((Math.floor((r - height/2) / 80 + z() / 4)) ^ (Math.floor((i % width - width/2) / 80)))) > 0.3) ? 100 : 0; // Doubled divisions from 40 to 80, 2 to 4
+        const red = ((T((Math.floor((r + offsetY) / 80 + z() / 4)) ^ (Math.floor((i % width + offsetX) / 80)))) > 0.3) ? 100 : 0; // Using random offsets instead of centering
         const dx = 4 * S(i - 1) + S(i / u) * 4; // Doubled from 2 to 4 for 2x scale
         
         const color = R(189 + 46 * phase + red, 188 + 45 * phase - red, 163 + 53 * phase - red / 2, 1);
@@ -194,7 +210,7 @@ const WoolBackground: React.FC<WoolBackgroundProps> = ({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    console.log('Starting wool texture generation...');
+    console.log('Starting wool texture generation with random pattern...');
     hasRendered.current = true;
 
     // Base wool color
