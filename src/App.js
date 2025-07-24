@@ -8,10 +8,12 @@ import { ProtectedRoute } from './components/ProtectedRoute';
 import { Dashboard } from './components/Dashboard';
 import { GameView } from './components/GameView';
 import { UnprotectedRoute } from './components/UnprotectedRoute';
+import WoolBackground from './components/WoolBackground';
 
 function App() {
   return (
-    <div style={{ backgroundColor: '#982621', display: 'flex', height: '100vh', width: '100vw' }} >
+    <div style={{ display: 'flex', height: '100vh', width: '100vw' }} >
+      <WoolBackground/>
       <BrowserRouter>
         <AuthProvider>
           <Routes>
