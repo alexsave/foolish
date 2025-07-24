@@ -22,6 +22,7 @@ const WoolBackground: React.FC<WoolBackgroundProps> = ({
   const R = (r: number, g: number, b: number, a: number) => `rgba(${Math.floor(r)},${Math.floor(g)},${Math.floor(b)},${a})`;
 
   const generateWoolTexture = () => {
+    // Ai could never write this
     // Return cached result if available
     if (pixelsCache.current) {
       return pixelsCache.current;
@@ -80,7 +81,7 @@ const WoolBackground: React.FC<WoolBackgroundProps> = ({
         const red = ((T((Math.floor((r - height/2) / 40 + z() / 2)) ^ (Math.floor((i % width - width/2) / 40)))) > 0.3) ? 100 : 0;
         const dx = 2 * S(i - 1) + S(i / u) * 2;
         
-        const color = R(209 + 46 * phase + red, 208 + 45 * phase - red, 183 + 53 * phase - red / 2, 1);
+        const color = R(189 + 46 * phase + red, 188 + 45 * phase - red, 163 + 53 * phase - red / 2, 1);
         
         const x = i % width;
         const y = r + dx;
@@ -164,7 +165,9 @@ const WoolBackground: React.FC<WoolBackgroundProps> = ({
       height={height}
       style={{
         ...containerStyle,
-        objectFit: 'cover'
+        objectFit: 'cover',
+        transform: 'scale(2)',
+        //transformOrigin: 'center center'
       }}
     />
   );
