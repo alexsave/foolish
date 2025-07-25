@@ -1,10 +1,20 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { PersonalGame, PublicPlayer } from "../../common/types";
 import { useAuth } from "../../contexts/AuthContext";
 import { useServer } from "../../contexts/ServerContext";
 import { generateFernPattern } from "../../utils/fernFractal";
 
-const CardsVisual = ({ player, playerCardPatternDataUrl }: { player: PublicPlayer, playerCardPatternDataUrl: string }) => {
+const CardsVisual = ({ player }: { player: PublicPlayer }) => {
+    const [playerCardPatternDataUrl, setPlayerCardPatternDataUrl] = useState<string>('');
+    useEffect(() => {
+        // Generate the pattern for player cards once when component mounts
+        generateFernPattern().then((dataUrl: string) => { // Hardcoded 1000x1400 resolution
+            setPlayerCardPatternDataUrl(dataUrl);
+        });
+    }, []);
+
+    const cardWidth = 25;
+    const cardHeight = cardWidth * 1.4;
 
     return <div style={{
         display: 'flex',
@@ -13,26 +23,27 @@ const CardsVisual = ({ player, playerCardPatternDataUrl }: { player: PublicPlaye
         justifyContent: 'center',
         position: 'relative',
         height: '20px',
-        width: '100px'
+        width: '100px',
     }} data-location="hand" data-player-id={player.player_id}>
         {Array.from({ length: player.hand_length }).map((_, cardIndex) => {
-            const mid = (player.hand_length + 1) / 2;
-            const halfCardWidth = 10 / 2; // Updated for 5:7 ratio
+            const mid = (player.hand_length -1) / 2;
+            const halfCardWidth = cardWidth / 2; // Updated for 5:7 ratio
             const halfDivWidth = 100 / 2;
             const style: React.CSSProperties = {
+                //display: 'block',
+                boxSizing: 'border-box',
                 backgroundColor: '#000000', // Black background
-                width: '10px', // 5:7 ratio - width
-                height: '14px', // 5:7 ratio - height  
+                width: cardWidth + 'px', // 5:7 ratio - width
+                height: cardHeight + 'px', // 5:7 ratio - height  
                 borderRadius: '2px',
                 border: '1px solid #8B0000', // Same dark red border
                 position: 'absolute',
-                left: `${halfDivWidth + (cardIndex - mid) * 2 - halfCardWidth}px`,
+                left: `${halfDivWidth + (cardIndex - mid) * 10 - halfCardWidth}px`,
                 zIndex: cardIndex,
                 boxShadow: '0 1px 2px rgba(0,0,0,0.3)',
                 backgroundImage: playerCardPatternDataUrl ? `url(${playerCardPatternDataUrl})` : undefined,
                 backgroundSize: '100% 100%',
                 backgroundRepeat: 'no-repeat'
-
             }
 
             // Calculate proper centering: total span divided by 2, then offset each card
@@ -64,13 +75,6 @@ const CardsVisual = ({ player, playerCardPatternDataUrl }: { player: PublicPlaye
 }
 
 export const PlayerRing = () => {
-    const [playerCardPatternDataUrl, setPlayerCardPatternDataUrl] = useState<string>('');
-    useEffect(() => {
-        // Generate the pattern for player cards once when component mounts
-        generateFernPattern().then((dataUrl: string) => { // Hardcoded 1000x1400 resolution
-            setPlayerCardPatternDataUrl(dataUrl);
-        });
-    }, []);
 
     const game: PersonalGame = useServer().game as PersonalGame;
     const { user_id } = useAuth();
@@ -117,7 +121,7 @@ export const PlayerRing = () => {
                     fontSize: '12px',
                     color: 'white',
                     textAlign: 'center',
-                    height: '20px',
+                    height: '30px',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center'
@@ -128,8 +132,7 @@ export const PlayerRing = () => {
                 {/* Cards area (bottom) */}
                 {player.hand_length && player.hand_length > 0 ?
 
-
-                    <CardsVisual player={player} playerCardPatternDataUrl={playerCardPatternDataUrl} />
+                    <CardsVisual player={player} />
                     : <div style={{ height: '20px' }} />
                 }
             </div>
