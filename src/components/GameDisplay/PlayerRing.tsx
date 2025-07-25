@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { PersonalGame, PublicPlayer } from "../../common/types";
 import { useAuth } from "../../contexts/AuthContext";
 import { useServer } from "../../contexts/ServerContext";
-import { generateCardBackPattern } from "../../utils/cards";
+import { generateFernPattern } from "../../utils/fernFractal";
 
 const CardsVisual = ({ player, playerCardPatternDataUrl }: { player: PublicPlayer, playerCardPatternDataUrl: string }) => {
 
@@ -20,7 +20,7 @@ const CardsVisual = ({ player, playerCardPatternDataUrl }: { player: PublicPlaye
             const halfCardWidth = 10 / 2; // Updated for 5:7 ratio
             const halfDivWidth = 100 / 2;
             const style: React.CSSProperties = {
-                backgroundColor: '#DC143C', // Fallback red background
+                backgroundColor: '#000000', // Black background
                 width: '10px', // 5:7 ratio - width
                 height: '14px', // 5:7 ratio - height  
                 borderRadius: '2px',
@@ -67,7 +67,7 @@ export const PlayerRing = () => {
     const [playerCardPatternDataUrl, setPlayerCardPatternDataUrl] = useState<string>('');
     useEffect(() => {
         // Generate the pattern for player cards once when component mounts
-        generateCardBackPattern(12, 18).then(dataUrl => {
+        generateFernPattern().then((dataUrl: string) => { // Hardcoded 1000x1400 resolution
             setPlayerCardPatternDataUrl(dataUrl);
         });
     }, []);
