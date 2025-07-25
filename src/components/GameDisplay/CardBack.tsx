@@ -1,5 +1,4 @@
-import { useEffect, useState } from "react";
-import { generateFernPattern } from "../../utils/fernFractal";
+import { useFernFractal } from "../../utils/fernFractal";
 
 // Deterministic random function using a simple LCG (Linear Congruential Generator)
 const seededRandom = (seed: number): number => {
@@ -14,18 +13,8 @@ const getRandomRotation = (seed: number, index: number): number => {
 };
 
 export const CardBack = ({ deckSize = 36, enableRandomRotation = false }: { deckSize?: number; enableRandomRotation?: boolean }) => {
-    const [patternDataUrl, setPatternDataUrl] = useState<string>('');
+    const { fernPattern } = useFernFractal();
     const seed = 42; // Fixed seed for deterministic results
-
-    useEffect(() => {
-        console.log('CardBack: Generating fern pattern 50x70...');
-        generateFernPattern().then((dataUrl: string) => { // Hardcoded 1000x1400 resolution
-            console.log('CardBack: Pattern generated:', dataUrl.substring(0, 50) + '...');
-            setPatternDataUrl(dataUrl);
-        }).catch((error) => {
-            console.error('CardBack: Error generating pattern:', error);
-        });
-    }, []);
 
     return <div style={{ position: 'relative', width: '50px', height: '70px' }}> {/* Updated to 5:7 ratio */}
         {/* Multiple card layers to show deck thickness */}
@@ -46,7 +35,7 @@ export const CardBack = ({ deckSize = 36, enableRandomRotation = false }: { deck
                         zIndex: layerIndex + 2,
                         transform: `rotate(90deg) rotate(${rotation}deg)`,
                         transformOrigin: 'center center',
-                        backgroundImage: patternDataUrl ? `url(${patternDataUrl})` : undefined,
+                        backgroundImage: fernPattern ? `url(${fernPattern})` : undefined,
                         backgroundSize: '100% 100%',
                         backgroundRepeat: 'no-repeat'
                     }}

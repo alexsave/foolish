@@ -1,3 +1,5 @@
+import React, { createContext, useContext, useEffect, useState } from 'react';
+
 interface FernParameters {
     render: {
         iterations: number;
@@ -285,4 +287,45 @@ export async function generateFernPattern(
         console.log('Fern pattern generated and cached');
         resolve(dataUrl);
     });
-} 
+}
+
+// React Context for sharing the fractal pattern
+interface FernFractalContextType {
+  fernPattern: string;
+  isLoading: boolean;
+}
+
+const FernFractalContext = createContext<FernFractalContextType | undefined>(undefined);
+
+export const FernFractalProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [fernPattern, setFernPattern] = useState<string>('');
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+
+  useEffect(() => {
+    console.log('FernFractalProvider: Generating fractal pattern...');
+    generateFernPattern()
+      .then((dataUrl: string) => {
+        console.log('FernFractalProvider: Pattern generated and ready');
+        setFernPattern(dataUrl);
+        setIsLoading(false);
+      })
+      .catch((error: any) => {
+        console.error('FernFractalProvider: Error generating pattern:', error);
+        setIsLoading(false);
+      });
+  }, []);
+
+  return (
+    <FernFractalContext.Provider value={{ fernPattern, isLoading }}>
+      {children}
+    </FernFractalContext.Provider>
+  );
+};
+
+export const useFernFractal = (): FernFractalContextType => {
+  const context = useContext(FernFractalContext);
+  if (context === undefined) {
+    throw new Error('useFernFractal must be used within a FernFractalProvider');
+  }
+  return context;
+};

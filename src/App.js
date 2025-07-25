@@ -1,5 +1,6 @@
 import './App.css';
 import { AuthProvider } from './contexts/AuthContext';
+import { FernFractalProvider } from './utils/fernFractal';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Welcome } from './components/Welcome';
 import { Login } from './components/Login';
@@ -16,7 +17,8 @@ function App() {
       <WoolBackground/>
       <BrowserRouter>
         <AuthProvider>
-          <Routes>
+          <FernFractalProvider>
+            <Routes>
             <Route path="/" element={
               <Welcome />
             } />
@@ -42,7 +44,8 @@ function App() {
             {/* Catch-all route for unmatched paths - redirect to dashboard */}
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
 
-          </Routes>
+            </Routes>
+          </FernFractalProvider>
         </AuthProvider>
       </BrowserRouter>
     </div>

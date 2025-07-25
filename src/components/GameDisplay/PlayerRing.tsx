@@ -1,17 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
 import { PersonalGame, PublicPlayer } from "../../common/types";
 import { useAuth } from "../../contexts/AuthContext";
 import { useServer } from "../../contexts/ServerContext";
-import { generateFernPattern } from "../../utils/fernFractal";
+import { useFernFractal } from "../../utils/fernFractal";
 
 const CardsVisual = ({ player }: { player: PublicPlayer }) => {
-    const [playerCardPatternDataUrl, setPlayerCardPatternDataUrl] = useState<string>('');
-    useEffect(() => {
-        // Generate the pattern for player cards once when component mounts
-        generateFernPattern().then((dataUrl: string) => { // Hardcoded 1000x1400 resolution
-            setPlayerCardPatternDataUrl(dataUrl);
-        });
-    }, []);
+    const { fernPattern } = useFernFractal();
 
     const cardWidth = 25;
     const cardHeight = cardWidth * 1.4;
@@ -41,7 +34,7 @@ const CardsVisual = ({ player }: { player: PublicPlayer }) => {
                 left: `${halfDivWidth + (cardIndex - mid) * 10 - halfCardWidth}px`,
                 zIndex: cardIndex,
                 boxShadow: '0 1px 2px rgba(0,0,0,0.3)',
-                backgroundImage: playerCardPatternDataUrl ? `url(${playerCardPatternDataUrl})` : undefined,
+                backgroundImage: fernPattern ? `url(${fernPattern})` : undefined,
                 backgroundSize: '100% 100%',
                 backgroundRepeat: 'no-repeat'
             }
@@ -75,7 +68,6 @@ const CardsVisual = ({ player }: { player: PublicPlayer }) => {
 }
 
 export const PlayerRing = () => {
-
     const game: PersonalGame = useServer().game as PersonalGame;
     const { user_id } = useAuth();
     const self_index = game.players.findIndex(p => p.player_id === user_id);
