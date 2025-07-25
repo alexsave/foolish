@@ -35,7 +35,7 @@ const CardsVisual = ({ player }: { player: PublicPlayer }) => {
                 backgroundColor: '#000000', // Black background
                 width: cardWidth + 'px', // 5:7 ratio - width
                 height: cardHeight + 'px', // 5:7 ratio - height  
-                borderRadius: '2px',
+                borderRadius: '3px',
                 border: '1px solid #8B0000', // Same dark red border
                 position: 'absolute',
                 left: `${halfDivWidth + (cardIndex - mid) * 10 - halfCardWidth}px`,
