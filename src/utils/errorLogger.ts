@@ -606,11 +606,121 @@ class ErrorLogger {
         domInfo: {
           elementsCount: document.querySelectorAll('*').length,
           bodyHTML: document.body.innerHTML.length,
+          svgElements: document.querySelectorAll('svg').length,
+          canvasElements: document.querySelectorAll('canvas').length,
         },
         activeElements: {
           activeElement: document.activeElement?.tagName,
           focusedElement: document.querySelector(':focus')?.tagName,
         },
+        svgAnalysis: this.analyzeSVGElements(),
+        canvasAnalysis: this.analyzeCanvasElements(),
+      },
+    });
+  }
+
+  // Analyze SVG elements for potential memory issues
+  private analyzeSVGElements() {
+    const svgs = document.querySelectorAll('svg');
+    const analysis = {
+      totalSVGs: svgs.length,
+      svgDetails: [] as any[],
+    };
+
+    svgs.forEach((svg, index) => {
+      try {
+        const rect = svg.getBoundingClientRect();
+        const paths = svg.querySelectorAll('path').length;
+        const filters = svg.querySelectorAll('filter').length;
+        const patterns = svg.querySelectorAll('pattern').length;
+        const defs = svg.querySelectorAll('defs').length;
+        
+        analysis.svgDetails.push({
+          index,
+          width: rect.width,
+          height: rect.height,
+          paths,
+          filters,
+          patterns,
+          defs,
+          viewBox: svg.getAttribute('viewBox'),
+          innerHTML: svg.innerHTML?.length || 0,
+        });
+      } catch (error) {
+        analysis.svgDetails.push({
+          index,
+          error: 'Failed to analyze SVG',
+        });
+      }
+    });
+
+    return analysis;
+  }
+
+  // Analyze Canvas elements for memory usage
+  private analyzeCanvasElements() {
+    const canvases = document.querySelectorAll('canvas');
+    const analysis = {
+      totalCanvases: canvases.length,
+      canvasDetails: [] as any[],
+    };
+
+    canvases.forEach((canvas, index) => {
+      try {
+        const rect = canvas.getBoundingClientRect();
+        const memoryUsage = canvas.width * canvas.height * 4; // 4 bytes per pixel (RGBA)
+        
+        analysis.canvasDetails.push({
+          index,
+          width: canvas.width,
+          height: canvas.height,
+          displayWidth: rect.width,
+          displayHeight: rect.height,
+          estimatedMemoryMB: (memoryUsage / (1024 * 1024)).toFixed(2),
+        });
+      } catch (error) {
+        analysis.canvasDetails.push({
+          index,
+          error: 'Failed to analyze Canvas',
+        });
+      }
+    });
+
+    return analysis;
+  }
+
+  // Monitor SVG creation and operations
+  public logSVGOperation(operation: string, details: any) {
+    this.logError({
+      type: 'custom',
+      context: `SVG Operation - ${operation}`,
+      error: {
+        name: 'SVGOperation',
+        message: `SVG ${operation} performed`,
+      },
+      additionalInfo: {
+        operation,
+        details,
+        memoryInfo: this.getMemoryInfo(),
+        svgCount: document.querySelectorAll('svg').length,
+      },
+    });
+  }
+
+  // Monitor Canvas operations
+  public logCanvasOperation(operation: string, details: any) {
+    this.logError({
+      type: 'custom',
+      context: `Canvas Operation - ${operation}`,
+      error: {
+        name: 'CanvasOperation',
+        message: `Canvas ${operation} performed`,
+      },
+      additionalInfo: {
+        operation,
+        details,
+        memoryInfo: this.getMemoryInfo(),
+        canvasCount: document.querySelectorAll('canvas').length,
       },
     });
   }

@@ -211,6 +211,17 @@ const WoolBackground: React.FC<WoolBackgroundProps> = ({
     if (!ctx) return;
 
     console.log('Starting wool texture generation with random pattern...');
+    
+    // Import errorLogger and log the massive operation
+    const { errorLogger } = await import('../utils/errorLogger');
+    errorLogger.logCanvasOperation('Wool Background Generation Start', {
+      canvasWidth: width,
+      canvasHeight: height,
+      estimatedMemoryMB: ((width * height * 4) / (1024 * 1024)).toFixed(2),
+      maxIterations: Math.floor((width * height / (1920 * 1080)) * 2000000),
+    });
+    
+    const startTime = performance.now();
     hasRendered.current = true;
 
     // Base wool color
@@ -255,6 +266,18 @@ const WoolBackground: React.FC<WoolBackgroundProps> = ({
     //applyVignette(ctx);
     
     console.log('Wool texture complete!');
+    
+    const endTime = performance.now();
+    const generationTime = endTime - startTime;
+    
+    // Log completion with memory analysis
+    const { errorLogger } = await import('../utils/errorLogger');
+    errorLogger.logCanvasOperation('Wool Background Generation Complete', {
+      generationTimeMs: generationTime.toFixed(2),
+      pixelCount: pixels.length,
+      estimatedFinalMemoryMB: ((width * height * 4) / (1024 * 1024)).toFixed(2),
+    });
+    
     setIsGenerating(false);
   };
 

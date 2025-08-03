@@ -15,6 +15,20 @@ const getRandomRotation = (seed: number, index: number): number => {
 export const CardBack = ({ deckSize = 36, enableRandomRotation = false }: { deckSize?: number; enableRandomRotation?: boolean }) => {
     const { fernPattern } = useFernFractal();
     const seed = 42; // Fixed seed for deterministic results
+    
+    // Log when CardBack renders with fern pattern
+    React.useEffect(() => {
+      if (fernPattern) {
+        import('../../utils/errorLogger').then(({ errorLogger }) => {
+          errorLogger.logSVGOperation('CardBack Render', {
+            deckSize,
+            enableRandomRotation,
+            fernPatternSize: fernPattern.length,
+            fernPatternSizeKB: (fernPattern.length / 1024).toFixed(2),
+          });
+        });
+      }
+    }, [fernPattern, deckSize, enableRandomRotation]);
 
     return <div style={{ position: 'relative', width: '50px', height: '70px' }}> {/* Updated to 5:7 ratio */}
         {/* Multiple card layers to show deck thickness */}

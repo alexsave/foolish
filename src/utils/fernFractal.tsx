@@ -151,6 +151,9 @@ export async function generateFernPattern(
     //canvasHeight: number,
     params?: FernParameters
 ): Promise<string> {
+    // Import errorLogger dynamically to avoid circular imports
+    const { errorLogger } = await import('./errorLogger');
+    
     // Return cached pattern if available
     if (cachedFernPattern) {
         console.log('Using cached fern pattern');
@@ -158,7 +161,17 @@ export async function generateFernPattern(
     }
     
     console.log('Generating new fern pattern...');
+    
+    // Log the start of fern pattern generation
+    errorLogger.logCanvasOperation('Fern Pattern Generation Start', {
+        canvasWidth: 200 * 5,
+        canvasHeight: 280 * 5,
+        estimatedMemoryMB: ((200 * 5) * (280 * 5) * 4 / (1024 * 1024)).toFixed(2),
+        iterations: params?.render?.iterations || 5000000,
+    });
+    
     return new Promise((resolve) => {
+        const startTime = performance.now();
         const canvas = document.createElement('canvas');
         const canvasWidth = 200 * 5;
         const canvasHeight = 280 * 5
@@ -284,7 +297,18 @@ export async function generateFernPattern(
         // Convert canvas to data URL and cache it
         const dataUrl = canvas.toDataURL('image/png');
         cachedFernPattern = dataUrl;
+        const endTime = performance.now();
+        const generationTime = endTime - startTime;
+        
         console.log('Fern pattern generated and cached');
+        
+        // Log successful completion
+        errorLogger.logCanvasOperation('Fern Pattern Generation Complete', {
+          generationTimeMs: generationTime.toFixed(2),
+          dataUrlSizeKB: (dataUrl.length / 1024).toFixed(2),
+          totalMemoryEstimateMB: ((dataUrl.length + (canvasWidth * canvasHeight * 4)) / (1024 * 1024)).toFixed(2),
+        });
+        
         resolve(dataUrl);
     });
 }

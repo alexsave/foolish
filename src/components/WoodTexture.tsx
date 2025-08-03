@@ -29,8 +29,18 @@ const WoodTexture: React.FC<WoodTextureProps> = ({
       return woodTexturePromise;
     }
 
+    // Import errorLogger dynamically
+    import('../utils/errorLogger').then(({ errorLogger }) => {
+      errorLogger.logCanvasOperation('Wood Texture Generation Start', {
+        canvasWidth: width,
+        canvasHeight: height,
+        estimatedMemoryMB: ((width * height * 4) / (1024 * 1024)).toFixed(2),
+      });
+    });
+
     // Create new promise for texture generation
     woodTexturePromise = new Promise((resolve) => {
+      const startTime = performance.now();
       const canvas = document.createElement('canvas');
       canvas.width = width;
       canvas.height = height;
@@ -161,6 +171,16 @@ export const getWoodTextureStyle = (randomSeed?: number, willRotate: boolean = f
 // Initialize wood texture on module load using the exact dwitter algorithm
 const initializeWoodTexture = () => {
   if (typeof window !== 'undefined' && !woodTextureDataUrl) {
+    // Log initialization start
+    import('../utils/errorLogger').then(({ errorLogger }) => {
+      errorLogger.logCanvasOperation('Wood Texture Initialization Start', {
+        canvasWidth: 1920,
+        canvasHeight: 1080,
+        estimatedMemoryMB: ((1920 * 1080 * 4) / (1024 * 1024)).toFixed(2),
+      });
+    });
+    
+    const startTime = performance.now();
     const canvas = document.createElement('canvas');
     canvas.width = 1920;
     canvas.height = 1080;
@@ -199,6 +219,18 @@ const initializeWoodTexture = () => {
       }
       
       woodTextureDataUrl = canvas.toDataURL('image/png', 1.0);
+      const endTime = performance.now();
+      const generationTime = endTime - startTime;
+      
+      // Log completion
+      import('../utils/errorLogger').then(({ errorLogger }) => {
+        errorLogger.logCanvasOperation('Wood Texture Initialization Complete', {
+          generationTimeMs: generationTime.toFixed(2),
+          dataUrlSizeKB: woodTextureDataUrl ? (woodTextureDataUrl.length / 1024).toFixed(2) : 0,
+          totalMemoryEstimateMB: woodTextureDataUrl ? 
+            ((woodTextureDataUrl.length + (1920 * 1080 * 4)) / (1024 * 1024)).toFixed(2) : 0,
+        });
+      });
     }
   }
 };
