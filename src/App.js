@@ -1,3 +1,4 @@
+import React from 'react';
 import './App.css';
 import { AuthProvider } from './contexts/AuthContext';
 import { FernFractalProvider } from './utils/fernFractal';
@@ -10,45 +11,76 @@ import { Dashboard } from './components/Dashboard';
 import { GameView } from './components/GameView';
 import { UnprotectedRoute } from './components/UnprotectedRoute';
 import WoolBackground from './components/WoolBackground';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import { DebugPanel } from './components/DebugPanel';
+import { errorLogger } from './utils/errorLogger';
 
 function App() {
+  // Initialize error logging on app start
+  React.useEffect(() => {
+    console.log('🛡️ Error logging initialized');
+    errorLogger.logCustomError('App Initialization', new Error('App started'), {
+      timestamp: new Date().toISOString(),
+      userAgent: navigator.userAgent,
+    });
+  }, []);
+
   return (
-    <div style={{ display: 'flex', height: '100vh', width: '100vw' }} >
-      <WoolBackground/>
-      <BrowserRouter>
-        <AuthProvider>
-          <FernFractalProvider>
-            <Routes>
-            <Route path="/" element={
-              <Welcome />
-            } />
-            <Route path="/login" element={
-              <UnprotectedRoute>
-                <Login />
-              </UnprotectedRoute>
-            } />
-            <Route path="/tutorial" element={
-              <Tutorial />
-            } />
+    <ErrorBoundary context="App Root">
+      <div style={{ display: 'flex', height: '100vh', width: '100vw' }} >
+        <WoolBackground/>
+        <DebugPanel />
+        <BrowserRouter>
+          <ErrorBoundary context="Router">
+            <AuthProvider>
+              <ErrorBoundary context="Auth Provider">
+                <FernFractalProvider>
+                  <ErrorBoundary context="Routes">
+                    <Routes>
+                      <Route path="/" element={
+                        <ErrorBoundary context="Welcome Page">
+                          <Welcome />
+                        </ErrorBoundary>
+                      } />
+                      <Route path="/login" element={
+                        <ErrorBoundary context="Login Page">
+                          <UnprotectedRoute>
+                            <Login />
+                          </UnprotectedRoute>
+                        </ErrorBoundary>
+                      } />
+                      <Route path="/tutorial" element={
+                        <ErrorBoundary context="Tutorial Page">
+                          <Tutorial />
+                        </ErrorBoundary>
+                      } />
 
-            <Route path="/dashboard" element={
-              <ProtectedRoute>
-                <Dashboard />
-              </ProtectedRoute>
-            } />
-            <Route path="/:game_id" element={
-              <ProtectedRoute>
-                <GameView />
-              </ProtectedRoute>
-            } />
-            {/* Catch-all route for unmatched paths - redirect to dashboard */}
-            <Route path="*" element={<Navigate to="/dashboard" replace />} />
+                      <Route path="/dashboard" element={
+                        <ErrorBoundary context="Dashboard Page">
+                          <ProtectedRoute>
+                            <Dashboard />
+                          </ProtectedRoute>
+                        </ErrorBoundary>
+                      } />
+                      <Route path="/:game_id" element={
+                        <ErrorBoundary context="Game Page">
+                          <ProtectedRoute>
+                            <GameView />
+                          </ProtectedRoute>
+                        </ErrorBoundary>
+                      } />
+                      {/* Catch-all route for unmatched paths - redirect to dashboard */}
+                      <Route path="*" element={<Navigate to="/dashboard" replace />} />
 
-            </Routes>
-          </FernFractalProvider>
-        </AuthProvider>
-      </BrowserRouter>
-    </div>
+                    </Routes>
+                  </ErrorBoundary>
+                </FernFractalProvider>
+              </ErrorBoundary>
+            </AuthProvider>
+          </ErrorBoundary>
+        </BrowserRouter>
+      </div>
+    </ErrorBoundary>
   );
 }
 

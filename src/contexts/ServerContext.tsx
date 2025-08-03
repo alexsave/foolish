@@ -6,6 +6,7 @@ import { useAuth } from './AuthContext';
 import { MAX_PLAYERS } from '../common/constants';
 import { get_next_player_index, canCover, card_comp } from '../common/common_utils';
 import { ANIMATION_TIME } from '../constants/constants';
+import { errorLogger } from '../utils/errorLogger';
 
 const ServerContext = createContext<ServerContextType | null>(null);
 
@@ -456,63 +457,110 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     };
 
     const loadGameInternal = async (gameId: string): Promise<{ game_id: string }> => {
-        // First try to get game data if user is a player (only if user_id exists)
-        if (user_id) {
-            const { data: playerData, error: playerError } = await supabase
-                .from('player_hands')
-                .select(handsQuery)
-                .eq('game_id', gameId)
-                .eq('player_id', user_id)
-                .single();
+        try {
+            errorLogger.logCustomError('ServerContext - LoadGame Start', new Error('Loading game'), {
+                gameId,
+                userId: user_id,
+                hasUserId: !!user_id,
+            });
 
-            if (playerData && !playerError) {
-                // User is in the game - return personalized data
-                const game = playerData.games as unknown as PublicGame;
-                
-                // Trigger bot loop for this game (doesn't mutate state, just keeps bots active)
-                // Ignore result who cares
-                supabase.functions.invoke('bot_bump', { body: { game_id: gameId } });
-                
-                const selfPlayer = game.players.find((player) => player.player_id === user_id);
-                
-                if (selfPlayer) {
-                    const personalizedGame: PersonalGame = {
-                        ...game,
-                        self: {
-                            ...selfPlayer, 
-                            player_id: user_id, 
-                            hand: playerData.hand, 
-                            awaiting_attack: playerData.awaiting_attack, 
-                            done_attacking_this_round: false
-                        }
-                    };
+            // First try to get game data if user is a player (only if user_id exists)
+            if (user_id) {
+                const { data: playerData, error: playerError } = await supabase
+                    .from('player_hands')
+                    .select(handsQuery)
+                    .eq('game_id', gameId)
+                    .eq('player_id', user_id)
+                    .single();
+
+                if (playerError) {
+                    errorLogger.logCustomError('ServerContext - Player Data Error', playerError, {
+                        gameId,
+                        userId: user_id,
+                        errorCode: playerError.code,
+                        errorDetails: playerError.details,
+                    });
+                }
+
+                if (playerData && !playerError) {
+                    // User is in the game - return personalized data
+                    const game = playerData.games as unknown as PublicGame;
                     
-                    setGames(prev => ({ ...prev, [gameId]: mergeGameData(gameId, personalizedGame, prev) }));
-                    joinOrSubscribe(personalizedGame);
-                    return { game_id: gameId };
+                    // Trigger bot loop for this game (doesn't mutate state, just keeps bots active)
+                    // Ignore result who cares
+                    try {
+                        await supabase.functions.invoke('bot_bump', { body: { game_id: gameId } });
+                    } catch (botError) {
+                        errorLogger.logCustomError('ServerContext - Bot Bump Error', botError as Error, {
+                            gameId,
+                            userId: user_id,
+                        });
+                        // Don't fail the entire load for bot bump issues
+                    }
+                    
+                    const selfPlayer = game.players.find((player) => player.player_id === user_id);
+                    
+                    if (selfPlayer) {
+                        const personalizedGame: PersonalGame = {
+                            ...game,
+                            self: {
+                                ...selfPlayer, 
+                                player_id: user_id, 
+                                hand: playerData.hand, 
+                                awaiting_attack: playerData.awaiting_attack, 
+                                done_attacking_this_round: false
+                            }
+                        };
+                        
+                        setGames(prev => ({ ...prev, [gameId]: mergeGameData(gameId, personalizedGame, prev) }));
+                        joinOrSubscribe(personalizedGame);
+                        
+                        errorLogger.logCustomError('ServerContext - Game Loaded Successfully', new Error('Game loaded as player'), {
+                            gameId,
+                            userId: user_id,
+                            playerCount: game.players.length,
+                            gameStatus: game.status,
+                        });
+                        
+                        return { game_id: gameId };
+                    }
                 }
             }
+
+            // User is not in the game - try to get public game data for spectating
+            const { data: publicData, error: publicError } = await supabase
+                .from('games')
+                .select('*')
+                .eq('id', gameId)
+                .single();
+
+            if (publicError) {
+                errorLogger.logCustomError('ServerContext - Public Game Error', publicError, {
+                    gameId,
+                    userId: user_id,
+                    errorCode: publicError.code,
+                    errorDetails: publicError.details,
+                });
+                throw new Error(`Game ${gameId} not found`);
+            }
+
+            // Create public game for spectating
+            const publicGame: PersonalGame = {
+                ...publicData,
+                self: null // No self data for spectators
+            };
+
+            setGames(prev => ({ ...prev, [gameId]: mergeGameData(gameId, publicGame, prev) }));
+            joinOrSubscribe(publicGame);
+            return { game_id: gameId };
+            
+        } catch (error) {
+            errorLogger.logCustomError('ServerContext - LoadGame Failed', error as Error, {
+                gameId,
+                userId: user_id,
+            });
+            throw error;
         }
-
-        // User is not in the game - try to get public game data for spectating
-        const { data: publicData, error: publicError } = await supabase
-            .from('games')
-            .select('*')
-            .eq('id', gameId)
-            .single();
-
-        if (publicError) {
-            throw new Error(`Game ${gameId} not found`);
-        }
-
-        const publicGame: PersonalGame = {
-            ...publicData,
-            self: null // No self data for spectators
-        };
-
-        setGames(prev => ({ ...prev, [gameId]: mergeGameData(gameId, publicGame, prev) }));
-        joinOrSubscribe(publicGame);
-        return { game_id: gameId };
     };
 
     const joinOrSubscribe = (game: PersonalGame) => {
@@ -755,31 +803,78 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     };
 
     const sendMessage = async (message: string): Promise<void> => {
-        if (!game_id || !user_id) {
-            throw new Error('No game or user available');
-        }
+        try {
+            if (!game_id || !user_id) {
+                const error = new Error('No game or user available');
+                errorLogger.logCustomError('ServerContext - SendMessage No Context', error, {
+                    hasGameId: !!game_id,
+                    hasUserId: !!user_id,
+                    messageLength: message?.length || 0,
+                });
+                throw error;
+            }
 
-        if (!message || message.trim() === '') {
-            throw new Error('Message cannot be empty');
-        }
+            if (!message || message.trim() === '') {
+                const error = new Error('Message cannot be empty');
+                errorLogger.logCustomError('ServerContext - SendMessage Empty', error, {
+                    gameId: game_id,
+                    userId: user_id,
+                    originalMessage: message,
+                });
+                throw error;
+            }
 
-        if (message.length > 1000) {
-            throw new Error('Message is too long');
-        }
+            if (message.length > 1000) {
+                const error = new Error('Message is too long');
+                errorLogger.logCustomError('ServerContext - SendMessage Too Long', error, {
+                    gameId: game_id,
+                    userId: user_id,
+                    messageLength: message.length,
+                });
+                throw error;
+            }
 
-        const trimmedMessage = message.trim();
+            const trimmedMessage = message.trim();
 
-        // Save message to database - the trigger will handle broadcasting
-        const { error } = await supabase
-            .from('chat_messages')
-            .insert({
-                game_id: game_id,
-                user_id: user_id,
-                message: trimmedMessage,
-                is_system: false
+            errorLogger.logCustomError('ServerContext - SendMessage Start', new Error('Sending message'), {
+                gameId: game_id,
+                userId: user_id,
+                messageLength: trimmedMessage.length,
             });
 
-        if (error) {
+            // Save message to database - the trigger will handle broadcasting
+            const { error } = await supabase
+                .from('chat_messages')
+                .insert({
+                    game_id: game_id,
+                    user_id: user_id,
+                    message: trimmedMessage,
+                    is_system: false
+                });
+
+            if (error) {
+                errorLogger.logCustomError('ServerContext - SendMessage DB Error', error, {
+                    gameId: game_id,
+                    userId: user_id,
+                    messageLength: trimmedMessage.length,
+                    errorCode: error.code,
+                    errorDetails: error.details,
+                });
+                throw error;
+            }
+
+            errorLogger.logCustomError('ServerContext - SendMessage Success', new Error('Message sent'), {
+                gameId: game_id,
+                userId: user_id,
+                messageLength: trimmedMessage.length,
+            });
+
+        } catch (error) {
+            errorLogger.logCustomError('ServerContext - SendMessage Failed', error as Error, {
+                gameId: game_id,
+                userId: user_id,
+                messageLength: message?.length || 0,
+            });
             throw error;
         }
     };
@@ -905,8 +1000,15 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         // This needs to also throw in status at least
         try {
             if (!user_id) {
+                errorLogger.logCustomError('ServerContext - GetUserGames No User', new Error('No user_id available'), {
+                    hasUserId: false,
+                });
                 return;
             }
+
+            errorLogger.logCustomError('ServerContext - GetUserGames Start', new Error('Fetching user games'), {
+                userId: user_id,
+            });
 
             // Direct SQL query that respects RLS policies
             // Join player_hands (user can only see their own) with games (public data)
@@ -917,29 +1019,55 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 .order('games(updated_at)', { ascending: false });
 
             if (error) {
+                errorLogger.logCustomError('ServerContext - GetUserGames DB Error', error, {
+                    userId: user_id,
+                    errorCode: error.code,
+                    errorDetails: error.details,
+                });
                 console.error('Error fetching user games:', error);
                 return;
             }
 
             const games: { [key: string]: PersonalGame } = {};
+            let processedGames = 0;
+            let skippedGames = 0;
+
             for (const playerHand of data) {
-
-                // Fuck you I know this will be a public game type
-                const game = playerHand.games as unknown as PublicGame;
-                const selfPlayer = game.players.find((player) => player.player_id === user_id);
-                if (!selfPlayer){
-                    continue
+                try {
+                    // Fuck you I know this will be a public game type
+                    const game = playerHand.games as unknown as PublicGame;
+                    const selfPlayer = game.players.find((player) => player.player_id === user_id);
+                    if (!selfPlayer) {
+                        skippedGames++;
+                        continue;
+                    }
+                    games[game.id] = {
+                        ...game,
+                        self: {...selfPlayer, player_id: user_id, hand: playerHand.hand, awaiting_attack: playerHand.awaiting_attack, done_attacking_this_round: false}// as unknown as PrivatePlayer
+                    };
+                    processedGames++;
+                } catch (gameError) {
+                    errorLogger.logCustomError('ServerContext - ProcessGame Error', gameError as Error, {
+                        userId: user_id,
+                        gameId: (playerHand?.games as any)?.id || 'unknown',
+                    });
+                    skippedGames++;
                 }
-                games[game.id] = {
-                    ...game,
-                    self: {...selfPlayer, player_id: user_id, hand: playerHand.hand, awaiting_attack: playerHand.awaiting_attack, done_attacking_this_round: false}// as unknown as PrivatePlayer
-                };
-
             }
 
             setGames(prev => ({ ...prev, ...games }));
 
+            errorLogger.logCustomError('ServerContext - GetUserGames Success', new Error('User games loaded'), {
+                userId: user_id,
+                totalGames: data.length,
+                processedGames,
+                skippedGames,
+            });
+
         } catch (error) {
+            errorLogger.logCustomError('ServerContext - GetUserGames Failed', error as Error, {
+                userId: user_id,
+            });
             console.error('Error in getUserGames:', error);
         }
     };
@@ -957,7 +1085,20 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         } = {}
     ): Promise<{ game_id: string }> => {
         try {
+            errorLogger.logCustomError('ServerContext - InvokeFunction Start', new Error(`Invoking ${functionName}`), {
+                functionName,
+                userId: user_id,
+                bodyKeys: Object.keys(body),
+                hasOnSuccess: !!options.onSuccess,
+                hasOnError: !!options.onError,
+            });
+
             const data = await supabase.functions.invoke(functionName, { body })
+            
+            if (!data.data || !data.data.id) {
+                throw new Error(`Invalid response from ${functionName}: missing game ID`);
+            }
+            
             const game_id = data.data.id;
 
             // TEMPORARILY DISABLED: Let animations handle game state updates instead of immediately jumping to final state
@@ -966,11 +1107,27 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             //     [game_id]: mergeGameData(game_id, data.data, prev)
             // }))
 
+            errorLogger.logCustomError('ServerContext - InvokeFunction Success', new Error(`${functionName} successful`), {
+                functionName,
+                gameId: game_id,
+                userId: user_id,
+                responseDataKeys: Object.keys(data.data),
+            });
+
             options.onSuccess?.(data as T);
 
             return { game_id };
 
         } catch (error) {
+            const err = error as Error;
+            errorLogger.logCustomError('ServerContext - InvokeFunction Failed', err, {
+                functionName,
+                userId: user_id,
+                bodyKeys: Object.keys(body),
+                errorMessage: err.message,
+                errorCode: (err as any).code,
+            });
+            
             options.onError?.(error);
             throw error;
         }
