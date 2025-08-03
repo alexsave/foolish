@@ -159,6 +159,7 @@ export const DebugPanel: React.FC = () => {
             border: 'none',
             borderRadius: '4px',
             cursor: 'pointer',
+            fontSize: '10px',
           }}
         >
           Clear Logs
@@ -166,15 +167,58 @@ export const DebugPanel: React.FC = () => {
         <button
           onClick={exportLogs}
           style={{
+            marginRight: '8px',
             padding: '4px 8px',
             backgroundColor: '#4dabf7',
             color: 'white',
             border: 'none',
             borderRadius: '4px',
             cursor: 'pointer',
+            fontSize: '10px',
           }}
         >
           Export Logs
+        </button>
+        <button
+          onClick={() => {
+            errorLogger.emergencyDiagnostic();
+            // Refresh logs
+            const logs = errorLogger.getStoredErrors();
+            setErrorLogs(logs);
+          }}
+          style={{
+            marginRight: '8px',
+            padding: '4px 8px',
+            backgroundColor: '#ff9800',
+            color: 'white',
+            border: 'none',
+            borderRadius: '4px',
+            cursor: 'pointer',
+            fontSize: '10px',
+          }}
+        >
+          Diagnostic
+        </button>
+        <button
+          onClick={() => {
+            // Force garbage collection if available
+            if (window.gc) window.gc();
+            // Refresh logs to check memory
+            errorLogger.emergencyDiagnostic();
+            const logs = errorLogger.getStoredErrors();
+            setErrorLogs(logs);
+          }}
+          style={{
+            padding: '4px 8px',
+            backgroundColor: '#9c27b0',
+            color: 'white',
+            border: 'none',
+            borderRadius: '4px',
+            cursor: 'pointer',
+            fontSize: '10px',
+          }}
+        >
+          GC
         </button>
       </div>
 

@@ -145,6 +145,9 @@ class ErrorLogger {
   private setupIOSSpecificHandlers() {
     if (!this.isIOS) return;
 
+    // Monitor memory usage continuously
+    this.startMemoryMonitoring();
+
     // Handle memory warnings on iOS (Safari specific)
     window.addEventListener('pagehide', () => {
       this.logError({
@@ -154,8 +157,21 @@ class ErrorLogger {
           name: 'PageHide',
           message: 'Page is being hidden (potential memory warning)',
         },
+        additionalInfo: {
+          memoryInfo: this.getMemoryInfo(),
+          performanceInfo: this.getPerformanceInfo(),
+        },
       });
     });
+
+    // Detect page freeze/unresponsive state
+    this.setupFreezeDetection();
+
+    // Monitor for excessive DOM mutations
+    this.setupDOMObserver();
+
+    // Monitor for excessive animations
+    this.setupAnimationMonitoring();
 
     // Handle viewport changes that might indicate problems
     if (window.visualViewport) {
@@ -430,6 +446,173 @@ class ErrorLogger {
     // } catch (e) {
     //   console.error('Failed to send error to external service:', e);
     // }
+  }
+
+  // Continuous memory monitoring for iOS
+  private startMemoryMonitoring() {
+    const checkMemory = () => {
+      const memory = this.getMemoryInfo();
+      if (memory) {
+        const usagePercent = (memory.usedJSHeapSize / memory.jsHeapSizeLimit) * 100;
+        
+        if (usagePercent > 80) {
+          this.logError({
+            type: 'ios_specific',
+            context: 'High Memory Usage',
+            error: {
+              name: 'MemoryWarning',
+              message: `Memory usage at ${usagePercent.toFixed(1)}%`,
+            },
+            additionalInfo: {
+              memoryInfo: memory,
+              usagePercent,
+            },
+          });
+        }
+      }
+    };
+
+    // Check memory every 30 seconds
+    setInterval(checkMemory, 30000);
+    
+    // Also check after significant actions
+    document.addEventListener('visibilitychange', checkMemory);
+    window.addEventListener('focus', checkMemory);
+  }
+
+  // Detect page freezes/unresponsive state
+  private setupFreezeDetection() {
+    let lastTime = Date.now();
+    let freezeCount = 0;
+
+    const checkFreeze = () => {
+      const now = Date.now();
+      const timeDiff = now - lastTime;
+      
+      // If more than 5 seconds have passed, consider it a freeze
+      if (timeDiff > 5000) {
+        freezeCount++;
+        this.logError({
+          type: 'ios_specific',
+          context: 'Page Freeze Detected',
+          error: {
+            name: 'PageFreeze',
+            message: `Page was unresponsive for ${(timeDiff / 1000).toFixed(1)}s`,
+          },
+          additionalInfo: {
+            freezeDuration: timeDiff,
+            freezeCount,
+            memoryInfo: this.getMemoryInfo(),
+          },
+        });
+      }
+      
+      lastTime = now;
+    };
+
+    // Check every 2 seconds
+    setInterval(checkFreeze, 2000);
+  }
+
+  // Monitor excessive DOM mutations
+  private setupDOMObserver() {
+    if (!window.MutationObserver) return;
+
+    let mutationCount = 0;
+    let lastReset = Date.now();
+
+    const observer = new MutationObserver((mutations) => {
+      mutationCount += mutations.length;
+      
+      const now = Date.now();
+      if (now - lastReset > 10000) { // Every 10 seconds
+        if (mutationCount > 1000) {
+          this.logError({
+            type: 'ios_specific',
+            context: 'Excessive DOM Mutations',
+            error: {
+              name: 'DOMThrashing',
+              message: `${mutationCount} DOM mutations in 10 seconds`,
+            },
+            additionalInfo: {
+              mutationsPerSecond: mutationCount / 10,
+              memoryInfo: this.getMemoryInfo(),
+            },
+          });
+        }
+        mutationCount = 0;
+        lastReset = now;
+      }
+    });
+
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+    });
+  }
+
+  // Monitor excessive animations
+  private setupAnimationMonitoring() {
+    let frameCount = 0;
+    let lastCheck = Date.now();
+
+    const countFrames = () => {
+      frameCount++;
+      const now = Date.now();
+      
+      if (now - lastCheck > 5000) { // Every 5 seconds
+        const fps = (frameCount / 5);
+        
+        if (fps > 120) { // Excessive frame rate might indicate runaway animations
+          this.logError({
+            type: 'ios_specific',
+            context: 'High Frame Rate',
+            error: {
+              name: 'ExcessiveAnimations',
+              message: `${fps.toFixed(1)} FPS detected`,
+            },
+            additionalInfo: {
+              fps,
+              frameCount,
+              memoryInfo: this.getMemoryInfo(),
+            },
+          });
+        }
+        
+        frameCount = 0;
+        lastCheck = now;
+      }
+      
+      requestAnimationFrame(countFrames);
+    };
+
+    requestAnimationFrame(countFrames);
+  }
+
+  // Emergency diagnostic method
+  public emergencyDiagnostic() {
+    this.logError({
+      type: 'custom',
+      context: 'Emergency Diagnostic',
+      error: {
+        name: 'DiagnosticSnapshot',
+        message: 'Manual diagnostic snapshot triggered',
+      },
+      additionalInfo: {
+        timestamp: Date.now(),
+        memoryInfo: this.getMemoryInfo(),
+        performanceInfo: this.getPerformanceInfo(),
+        domInfo: {
+          elementsCount: document.querySelectorAll('*').length,
+          bodyHTML: document.body.innerHTML.length,
+        },
+        activeElements: {
+          activeElement: document.activeElement?.tagName,
+          focusedElement: document.querySelector(':focus')?.tagName,
+        },
+      },
+    });
   }
 }
 

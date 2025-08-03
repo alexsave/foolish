@@ -22,7 +22,25 @@ function App() {
     errorLogger.logCustomError('App Initialization', new Error('App started'), {
       timestamp: new Date().toISOString(),
       userAgent: navigator.userAgent,
+      isIOS: /iPad|iPhone|iPod/.test(navigator.userAgent),
+      memoryInfo: (performance as any).memory ? {
+        usedJSHeapSize: (performance as any).memory.usedJSHeapSize,
+        totalJSHeapSize: (performance as any).memory.totalJSHeapSize,
+        jsHeapSizeLimit: (performance as any).memory.jsHeapSizeLimit,
+      } : null,
     });
+
+    // Add periodic crash detection check
+    const crashCheckInterval = setInterval(() => {
+      try {
+        // Simple heartbeat to detect if the app is still responsive
+        console.log('🔄 App heartbeat:', new Date().toISOString());
+      } catch (error) {
+        errorLogger.logCustomError('App Heartbeat Error', error as Error);
+      }
+    }, 10000); // Every 10 seconds
+
+    return () => clearInterval(crashCheckInterval);
   }, []);
 
   return (
