@@ -126,6 +126,9 @@ function executeTransformStep(
     }
 }
 
+// TEMPORARY DISABLE FLAG - Set to false to re-enable complex fern fractal
+const FERN_TEXTURE_DISABLED = true;
+
 // Global cache for the fractal pattern
 let cachedFernPattern: string | null = null;
 
@@ -153,8 +156,7 @@ export async function generateFernPattern(
 ): Promise<string> {
     
     // TEMPORARY DISABLE: Skip complex fractal generation to prevent Safari iOS crashes
-    // TODO: Remove this early return when ready to re-enable fern pattern
-    if (true) {
+    if (FERN_TEXTURE_DISABLED) {
         console.log('Fern pattern disabled - using simple green background');
         // Create a simple green canvas instead of complex fractal
         const canvas = document.createElement('canvas');
@@ -175,7 +177,7 @@ export async function generateFernPattern(
     // Import errorLogger dynamically to avoid circular imports
     const { errorLogger } = await import('./errorLogger');
     
-    // Return cached pattern if available
+    // Return cached pattern if available  
     if (cachedFernPattern) {
         console.log('Using cached fern pattern');
         return Promise.resolve(cachedFernPattern);

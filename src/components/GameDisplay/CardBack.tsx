@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { useFernFractal } from "../../utils/fernFractal";
 
 // Deterministic random function using a simple LCG (Linear Congruential Generator)
@@ -17,7 +18,7 @@ export const CardBack = ({ deckSize = 36, enableRandomRotation = false }: { deck
     const seed = 42; // Fixed seed for deterministic results
     
     // Log when CardBack renders with fern pattern
-    React.useEffect(() => {
+    useEffect(() => {
       if (fernPattern) {
         import('../../utils/errorLogger').then(({ errorLogger }) => {
           errorLogger.logSVGOperation('CardBack Render', {

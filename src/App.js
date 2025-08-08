@@ -10,11 +10,10 @@ import { ProtectedRoute } from './components/ProtectedRoute';
 import { Dashboard } from './components/Dashboard';
 import { GameView } from './components/GameView';
 import { UnprotectedRoute } from './components/UnprotectedRoute';
-import WoolBackground from './components/WoolBackground';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { DebugPanel } from './components/DebugPanel';
 import { errorLogger } from './utils/errorLogger';
-
+// SERVICE WORKERS ARE MAKING THIS EVEN MORE CONVOLUTED TO DEBUG
 function App() {
   // Initialize error logging on app start
   React.useEffect(() => {
@@ -23,10 +22,10 @@ function App() {
       timestamp: new Date().toISOString(),
       userAgent: navigator.userAgent,
       isIOS: /iPad|iPhone|iPod/.test(navigator.userAgent),
-      memoryInfo: (performance as any).memory ? {
-        usedJSHeapSize: (performance as any).memory.usedJSHeapSize,
-        totalJSHeapSize: (performance as any).memory.totalJSHeapSize,
-        jsHeapSizeLimit: (performance as any).memory.jsHeapSizeLimit,
+      memoryInfo: performance.memory ? {
+        usedJSHeapSize: performance.memory.usedJSHeapSize,
+        totalJSHeapSize: performance.memory.totalJSHeapSize,
+        jsHeapSizeLimit: performance.memory.jsHeapSizeLimit,
       } : null,
     });
 
@@ -36,7 +35,7 @@ function App() {
         // Simple heartbeat to detect if the app is still responsive
         console.log('🔄 App heartbeat:', new Date().toISOString());
       } catch (error) {
-        errorLogger.logCustomError('App Heartbeat Error', error as Error);
+        errorLogger.logCustomError('App Heartbeat Error', error);
       }
     }, 10000); // Every 10 seconds
 
@@ -46,7 +45,6 @@ function App() {
   return (
     <ErrorBoundary context="App Root">
       <div style={{ display: 'flex', height: '100vh', width: '100vw' }} >
-        <WoolBackground/>
         <DebugPanel />
         <BrowserRouter>
           <ErrorBoundary context="Router">

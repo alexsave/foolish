@@ -21,7 +21,7 @@ const WoodTexture: React.FC<WoodTextureProps> = ({
   const generateWoodTexture = (): Promise<string> => {
     // TEMPORARY DISABLE: Skip complex texture generation to prevent Safari iOS crashes
     // TODO: Remove this early return when ready to re-enable wood texture
-    if (true) {
+    if (1==1) {
       console.log('Wood texture disabled - using simple wood color');
       // Create simple brown canvas instead of complex texture
       const canvas = document.createElement('canvas');
@@ -178,7 +178,7 @@ export const getWoodTextureStyle = (randomSeed?: number, willRotate: boolean = f
 const initializeWoodTexture = () => {
   // TEMPORARY DISABLE: Skip initialization to prevent Safari iOS crashes  
   // TODO: Remove this early return when ready to re-enable wood texture
-  if (true) {
+  if (1==1) {
     console.log('Wood texture initialization disabled - using simple brown canvas');
     // Create simple brown canvas for consistency
     const canvas = document.createElement('canvas');

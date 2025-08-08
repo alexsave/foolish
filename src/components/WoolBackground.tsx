@@ -36,6 +36,11 @@ const WoolBackground: React.FC<WoolBackgroundProps> = ({
   const R = (r: number, g: number, b: number, a: number) => `rgba(${Math.floor(r)},${Math.floor(g)},${Math.floor(b)},${a})`;
 
   const generateWoolTexture = () => {
+    if (1===1){
+      console.log('Wool texture disabled - using simple brown background');
+      return [];
+    }
+
     // Ai could never write this
     // Return cached result if available
     if (pixelsCache.current) {
@@ -203,7 +208,7 @@ const WoolBackground: React.FC<WoolBackgroundProps> = ({
 
     // TEMPORARY DISABLE: Skip complex texture generation to prevent Safari iOS crashes
     // TODO: Remove this early return when ready to re-enable wool texture
-    if (true) {
+    if (1===1) {
       const ctx = canvas.getContext('2d');
       if (ctx) {
         // Simple solid wool color background
