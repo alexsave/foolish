@@ -20,8 +20,8 @@ export class HandwrittenBotStrategy implements BotStrategy {
     // Probability of attacking with a power (trump) card based on game progression
     private getTrumpAttackProbability(game: Game): number {
         // While deck exists (and flipped is still up), strongly avoid trump attacks
-        if (game.deck.length > 0 || game.flipped !== null) {
-            return 0.04; // "don't use trumps unless you have to"
+        if (game.deck_length > 0 || game.flipped !== null) {
+            return 0.02; // strictly avoid trump attacks while deck/flipped exist
         }
 
         // Endgame: deck exhausted, flipped taken – loosen restrictions
@@ -123,12 +123,21 @@ export class HandwrittenBotStrategy implements BotStrategy {
                 } else {
                     const p = this.getTrumpAttackProbability(game).toFixed(2);
                     console.log(`Bot ${botName} (handwritten) declines trump attack (p=${p}) to conserve power early`);
+                    // Prefer saying good (end round) or waiting if available
+                    const goodMoves = legalMoves.filter(move => move.type === 'good');
+                    if (goodMoves.length > 0) {
+                        return goodMoves[0];
+                    }
+                    const waitMovesDirect = legalMoves.filter(move => move.type === 'wait');
+                    if (waitMovesDirect.length > 0) {
+                        return waitMovesDirect[0];
+                    }
                     // Optionally end attacking this round if that move exists
                     const endAttackMoves = legalMoves.filter(move => move.type === 'attack' && move.done_attacking_this_round === true);
                     if (endAttackMoves.length > 0) {
                         return endAttackMoves[0];
                     }
-                    // Otherwise, fall through to consider pass/cover/wait logic
+                    // Otherwise, fall through to consider pass/cover logic
                 }
             }
 
@@ -229,9 +238,25 @@ export class HandwrittenBotStrategy implements BotStrategy {
             return chosenMove;
         }
         
-        // If only "done attacking" moves available, still choose them but prefer lowest value cards
+        // If only attacks remain here, re-apply the no-early-trump rule
         const doneAttackMoves = legalMoves.filter(move => move.type === 'attack');
         if (doneAttackMoves.length > 0) {
+            if (game.deck.length > 0 || game.flipped !== null) {
+                const nonTrumpFallback = doneAttackMoves.filter(m => m.cards && m.cards.every(c => c.suit !== game.power_suit));
+                if (nonTrumpFallback.length > 0) {
+                    // Prefer non-trump fallback
+                    nonTrumpFallback.sort((a, b) => (b.cards?.length || 0) - (a.cards?.length || 0));
+                    return nonTrumpFallback[0];
+                }
+                // Prefer good/wait instead of trump in early phase
+                const goodMoves = legalMoves.filter(move => move.type === 'good');
+                if (goodMoves.length > 0) return goodMoves[0];
+                const waitMovesLate = legalMoves.filter(move => move.type === 'wait');
+                if (waitMovesLate.length > 0) return waitMovesLate[0];
+                // If nothing else, try to end attack if possible
+                const endAttackMoves = legalMoves.filter(move => move.type === 'attack' && move.done_attacking_this_round === true);
+                if (endAttackMoves.length > 0) return endAttackMoves[0];
+            }
             // Sort by number of cards descending, then by card value ascending
             doneAttackMoves.sort((a, b) => {
                 const cardDiff = (b.cards?.length || 0) - (a.cards?.length || 0);
