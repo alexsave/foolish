@@ -7,6 +7,36 @@ import { canCover, card_comp } from './common_utils.ts';
 export class HandwrittenBotStrategy implements BotStrategy {
     readonly name = 'handwritten';
     
+    // Compute total cards dynamically: deck + discard + table + all hands
+    private computeTotalCardCount(game: Game): number {
+        const deckCount = game.deck.length;
+        const discardCount = game.discard_pile_length;
+        const tableCount = game.table_battles.reduce((sum, battle) => sum + 1 + (battle.defense ? 1 : 0), 0);
+        const handsCount = game.players.reduce((sum, p) => sum + p.hand.length, 0);
+        const flippedCount = game.flipped ? 1 : 0;
+        return deckCount + discardCount + tableCount + handsCount + flippedCount;
+    }
+
+    // Probability of attacking with a power (trump) card based on game progression
+    private getTrumpAttackProbability(game: Game): number {
+        // While deck exists (and flipped is still up), strongly avoid trump attacks
+        if (game.deck.length > 0 || game.flipped !== null) {
+            return 0.04; // "don't use trumps unless you have to"
+        }
+
+        // Endgame: deck exhausted, flipped taken – loosen restrictions
+        const totalCards = Math.max(1, this.computeTotalCardCount(game));
+        const discardRatio = Math.max(0, Math.min(1, game.discard_pile_length / totalCards));
+        // Higher tendency to use trumps late, scaled by how many cards are already dead
+        const p = 0.65 + 0.35 * discardRatio;
+        return Math.max(0.5, Math.min(0.95, p));
+    }
+
+    private shouldAttackWithTrump(game: Game): boolean {
+        const prob = this.getTrumpAttackProbability(game);
+        return Math.random() < prob;
+    }
+
     // Calculate card score: value + (1000 if power suit)
     private cardScore(card: Card, powerSuit: number): number {
         return card.value + (card.suit === powerSuit ? 1000 : 0);
@@ -78,38 +108,60 @@ export class HandwrittenBotStrategy implements BotStrategy {
             move.type === 'attack' && move.done_attacking_this_round === false
         );
         
-        // If we have continue attack moves, choose the one with most cards but lowest values
+        // If we have continue attack moves, prefer non-trump attacks; gate trump attacks by probability
         if (continueAttackMoves.length > 0) {
-            // Sort by number of cards descending, pick the one with most cards
-            continueAttackMoves.sort((a, b) => (b.cards?.length || 0) - (a.cards?.length || 0));
-            const maxCards = continueAttackMoves[0].cards?.length || 0;
-            
-            // Filter to all moves with maximum cards
-            const maxCardMoves = continueAttackMoves.filter(move => 
-                (move.cards?.length || 0) === maxCards
-            );
-            
-            // Among moves with max cards, choose the one with lowest value cards
-            let bestAttackMove = maxCardMoves[0];
-            let bestAttackScore = Infinity;
-            
-            maxCardMoves.forEach(move => {
-                if (move.cards) {
-                    // Calculate total score for this attack combination
-                    let totalScore = 0;
-                    move.cards.forEach(card => {
-                        totalScore += this.cardScore(card, game.power_suit);
-                    });
-                    
-                    if (totalScore < bestAttackScore) {
-                        bestAttackScore = totalScore;
-                        bestAttackMove = move;
+            const nonTrumpAttacks = continueAttackMoves.filter(m => m.cards && m.cards.every(c => c.suit !== game.power_suit));
+            const trumpAttacks = continueAttackMoves.filter(m => m.cards && m.cards.some(c => c.suit === game.power_suit));
+
+            // Candidate pool prefers non-trump; if only trump is available, probabilistically allow it
+            let candidateMoves: LegalMove[] = [];
+            if (nonTrumpAttacks.length > 0) {
+                candidateMoves = nonTrumpAttacks;
+            } else if (trumpAttacks.length > 0) {
+                if (this.shouldAttackWithTrump(game)) {
+                    candidateMoves = trumpAttacks;
+                } else {
+                    const p = this.getTrumpAttackProbability(game).toFixed(2);
+                    console.log(`Bot ${botName} (handwritten) declines trump attack (p=${p}) to conserve power early`);
+                    // Optionally end attacking this round if that move exists
+                    const endAttackMoves = legalMoves.filter(move => move.type === 'attack' && move.done_attacking_this_round === true);
+                    if (endAttackMoves.length > 0) {
+                        return endAttackMoves[0];
                     }
+                    // Otherwise, fall through to consider pass/cover/wait logic
                 }
-            });
-            
-            console.log(`Bot ${botName} (handwritten) chose attack with ${bestAttackMove.cards?.length || 0} lowest value cards`);
-            return bestAttackMove;
+            }
+
+            if (candidateMoves.length > 0) {
+                // Sort by number of cards descending, pick the one with most cards
+                candidateMoves.sort((a, b) => (b.cards?.length || 0) - (a.cards?.length || 0));
+                const maxCards = candidateMoves[0].cards?.length || 0;
+
+                // Filter to all moves with maximum cards
+                const maxCardMoves = candidateMoves.filter(move => (move.cards?.length || 0) === maxCards);
+
+                // Among moves with max cards, choose the one with lowest value cards
+                let bestAttackMove = maxCardMoves[0];
+                let bestAttackScore = Infinity;
+
+                maxCardMoves.forEach(move => {
+                    if (move.cards) {
+                        // Calculate total score for this attack combination
+                        let totalScore = 0;
+                        move.cards.forEach(card => {
+                            totalScore += this.cardScore(card, game.power_suit);
+                        });
+
+                        if (totalScore < bestAttackScore) {
+                            bestAttackScore = totalScore;
+                            bestAttackMove = move;
+                        }
+                    }
+                });
+
+                console.log(`Bot ${botName} (handwritten) chose attack with ${bestAttackMove.cards?.length || 0} lowest value cards`);
+                return bestAttackMove;
+            }
         }
         
         // Handle pass moves (similar to attack logic - prefer lowest value)

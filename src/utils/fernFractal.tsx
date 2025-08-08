@@ -151,6 +151,27 @@ export async function generateFernPattern(
     //canvasHeight: number,
     params?: FernParameters
 ): Promise<string> {
+    
+    // TEMPORARY DISABLE: Skip complex fractal generation to prevent Safari iOS crashes
+    // TODO: Remove this early return when ready to re-enable fern pattern
+    if (true) {
+        console.log('Fern pattern disabled - using simple green background');
+        // Create a simple green canvas instead of complex fractal
+        const canvas = document.createElement('canvas');
+        canvas.width = 200 * 5;
+        canvas.height = 280 * 5;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+            // Simple green gradient background
+            const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+            gradient.addColorStop(0, '#2d5016');
+            gradient.addColorStop(1, '#1a3009');
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+        return Promise.resolve(canvas.toDataURL('image/png'));
+    }
+    
     // Import errorLogger dynamically to avoid circular imports
     const { errorLogger } = await import('./errorLogger');
     

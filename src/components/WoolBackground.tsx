@@ -201,6 +201,19 @@ const WoolBackground: React.FC<WoolBackgroundProps> = ({
     const canvas = canvasRef.current;
     if (!canvas) return;
 
+    // TEMPORARY DISABLE: Skip complex texture generation to prevent Safari iOS crashes
+    // TODO: Remove this early return when ready to re-enable wool texture
+    if (true) {
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        // Simple solid wool color background
+        ctx.fillStyle = '#8B5A2B'; // Brown wool color
+        ctx.fillRect(0, 0, width, height);
+        console.log('Wool texture disabled - using simple brown background');
+      }
+      return;
+    }
+
     // Prevent double generation
     if (hasRendered.current || isGenerating) {
       console.log('Skipping render - already generated or generating');
@@ -270,8 +283,7 @@ const WoolBackground: React.FC<WoolBackgroundProps> = ({
     const endTime = performance.now();
     const generationTime = endTime - startTime;
     
-    // Log completion with memory analysis
-    const { errorLogger } = await import('../utils/errorLogger');
+    // Log completion with memory analysis (reuse errorLogger variable)
     errorLogger.logCanvasOperation('Wool Background Generation Complete', {
       generationTimeMs: generationTime.toFixed(2),
       pixelCount: pixels.length,
