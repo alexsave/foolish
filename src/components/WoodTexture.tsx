@@ -21,19 +21,6 @@ const WoodTexture: React.FC<WoodTextureProps> = ({
   const generateWoodTexture = (): Promise<string> => {
     // TEMPORARY DISABLE: Skip complex texture generation to prevent Safari iOS crashes
     // TODO: Remove this early return when ready to re-enable wood texture
-    if (1==1) {
-      console.log('Wood texture disabled - using simple wood color');
-      // Create simple brown canvas instead of complex texture
-      const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        ctx.fillStyle = '#8B4513'; // Simple brown wood color
-        ctx.fillRect(0, 0, width, height);
-      }
-      return Promise.resolve(canvas.toDataURL('image/png'));
-    }
 
     // Return cached texture if available
     if (woodTextureDataUrl) {
@@ -178,21 +165,6 @@ export const getWoodTextureStyle = (randomSeed?: number, willRotate: boolean = f
 const initializeWoodTexture = () => {
   // TEMPORARY DISABLE: Skip initialization to prevent Safari iOS crashes  
   // TODO: Remove this early return when ready to re-enable wood texture
-  if (1==1) {
-    console.log('Wood texture initialization disabled - using simple brown canvas');
-    // Create simple brown canvas for consistency
-    const canvas = document.createElement('canvas');
-    canvas.width = 1920;
-    canvas.height = 1080;
-    const ctx = canvas.getContext('2d');
-    if (ctx) {
-      ctx.fillStyle = '#8B4513';
-      ctx.fillRect(0, 0, 1920, 1080);
-      woodTextureDataUrl = canvas.toDataURL('image/png', 1.0);
-    }
-    return;
-  }
-  
   if (typeof window !== 'undefined' && !woodTextureDataUrl) {
     const canvas = document.createElement('canvas');
     canvas.width = 1920;

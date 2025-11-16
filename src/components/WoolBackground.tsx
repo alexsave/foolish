@@ -36,10 +36,6 @@ const WoolBackground: React.FC<WoolBackgroundProps> = ({
   const R = (r: number, g: number, b: number, a: number) => `rgba(${Math.floor(r)},${Math.floor(g)},${Math.floor(b)},${a})`;
 
   const generateWoolTexture = () => {
-    if (1===1){
-      console.log('Wool texture disabled - using simple brown background');
-      return [];
-    }
 
     // Ai could never write this
     // Return cached result if available
@@ -203,21 +199,12 @@ const WoolBackground: React.FC<WoolBackgroundProps> = ({
   };
 
   const renderCanvas = async () => {
+    console.log('renderCanvas for wool background');
     const canvas = canvasRef.current;
     if (!canvas) return;
 
     // TEMPORARY DISABLE: Skip complex texture generation to prevent Safari iOS crashes
     // TODO: Remove this early return when ready to re-enable wool texture
-    if (1===1) {
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        // Simple solid wool color background
-        ctx.fillStyle = '#8B5A2B'; // Brown wool color
-        ctx.fillRect(0, 0, width, height);
-        console.log('Wool texture disabled - using simple brown background');
-      }
-      return;
-    }
 
     // Prevent double generation
     if (hasRendered.current || isGenerating) {

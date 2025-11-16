@@ -127,7 +127,7 @@ function executeTransformStep(
 }
 
 // TEMPORARY DISABLE FLAG - Set to false to re-enable complex fern fractal
-const FERN_TEXTURE_DISABLED = true;
+const FERN_TEXTURE_DISABLED = false;
 
 // Global cache for the fractal pattern
 let cachedFernPattern: string | null = null;
