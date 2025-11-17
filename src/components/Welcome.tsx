@@ -1,12 +1,13 @@
 import { useNavigate } from 'react-router-dom';
-import { getWoodTextureStyle, useWoodTexture } from './WoodTexture';
+import { useWoodStyle } from './WoodTexture';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
 
 export const Welcome = () => {
     const navigate = useNavigate();
+    const woodStyle = useWoodStyle(0.5);
 
     const woodButtonStyle: React.CSSProperties = {
-        ...getWoodTextureStyle(0.5), // Random position seed 0.5
+        ...woodStyle, // Random position seed 0.5
         border: '3px solid #5D3A1A', // Darker wood border color
         borderRadius: '0', // Sharp 90-degree corners
         color: '#ffffff',
@@ -25,7 +26,7 @@ export const Welcome = () => {
     };
 
     const woodButtonHoverStyle: React.CSSProperties = {
-        ...getWoodTextureStyle(0.5), // Match button seed
+        ...woodStyle, // Match button seed
         filter: 'brightness(1.1) contrast(1.1)',
         transform: 'translateY(-1px)',
         boxShadow: `

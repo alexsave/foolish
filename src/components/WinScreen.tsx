@@ -3,7 +3,7 @@ import { useServer } from '../contexts/ServerContext';
 import { useAuth } from '../contexts/AuthContext';
 import { GAME_STATUS } from '../common/types';
 import supabase from '../backend/Connector';
-import { getWoodTextureStyle } from './WoodTexture';
+import { useWoodStyle } from './WoodTexture';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
 
 interface PlayerResult {
@@ -21,9 +21,10 @@ export const WinScreen: React.FC = () => {
     const { user_id } = useAuth();
     const [playerResults, setPlayerResults] = useState<Map<string, PlayerResult>>(new Map());
     const [loading, setLoading] = useState(true);
+    const woodStyle = useWoodStyle(0.6);
 
     const woodButtonStyle: React.CSSProperties = {
-        ...getWoodTextureStyle(0.6), // Random position seed 0.6
+        ...woodStyle, // Random position seed 0.6
         border: '3px solid #5D3A1A', // Darker wood border color
         borderRadius: '0', // Sharp 90-degree corners
         color: '#ffffff',
@@ -42,7 +43,7 @@ export const WinScreen: React.FC = () => {
     };
 
     const woodButtonHoverStyle: React.CSSProperties = {
-        ...getWoodTextureStyle(0.6), // Match button seed
+        ...woodStyle, // Match button seed
         filter: 'brightness(1.1) contrast(1.1)',
         transform: 'translateY(-1px)',
         boxShadow: `

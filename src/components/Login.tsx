@@ -1,15 +1,18 @@
 import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { getWoodTextureStyle } from './WoodTexture';
+import { useWoodStyle } from './WoodTexture';
 
 export const Login = () => {
   const [name, setName] = useState('');
   const [password, setPassword] = useState('');
 
   const { signIn, signUp } = useAuth();
+  
+  const woodStyle1 = useWoodStyle(0.4);
+  const woodStyle2 = useWoodStyle(0.9);
 
   const woodButtonStyle: React.CSSProperties = {
-    ...getWoodTextureStyle(0.4), // Random position seed 0.4
+    ...woodStyle1, // Random position seed 0.4
     border: '3px solid #5D3A1A', // Darker wood border color
     borderRadius: '0', // Sharp 90-degree corners
     color: '#ffffff',
@@ -29,7 +32,7 @@ export const Login = () => {
   };
 
   const woodButtonStyle2: React.CSSProperties = {
-    ...getWoodTextureStyle(0.9), // Different random position seed 0.9
+    ...woodStyle2, // Different random position seed 0.9
     border: '3px solid #5D3A1A', // Darker wood border color
     borderRadius: '0', // Sharp 90-degree corners
     color: '#ffffff',
@@ -48,7 +51,7 @@ export const Login = () => {
   };
 
   const woodButtonHoverStyle: React.CSSProperties = {
-    ...getWoodTextureStyle(0.4), // Match first button seed
+    ...woodStyle1, // Match first button seed
     filter: 'brightness(1.1) contrast(1.1)',
     transform: 'translateY(-1px)',
     boxShadow: `
@@ -58,7 +61,7 @@ export const Login = () => {
   };
 
   const woodButtonHoverStyle2: React.CSSProperties = {
-    ...getWoodTextureStyle(0.9), // Match second button seed
+    ...woodStyle2, // Match second button seed
     filter: 'brightness(1.1) contrast(1.1)',
     transform: 'translateY(-1px)',
     boxShadow: `

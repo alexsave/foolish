@@ -5,7 +5,7 @@ import { useAnimation } from "../../contexts/AnimationContext";
 import { useGame } from "../../contexts/GameContext";
 import { useDrag } from "../../contexts/DragContext";
 import { CardFace} from "./CardFace";
-import { getWoodTextureStyle } from "../WoodTexture";
+import { useWoodStyle } from "../WoodTexture";
 
 const CardDiv = ({ user_id }: { user_id: string }) => {
     const { game, localHandOrder } = useServer() as { game: PersonalGame, localHandOrder: Card[] };
@@ -80,6 +80,10 @@ export const ActionButtons = () => {
     const { pickup, good } = useAnimation();
 
     const { selectedCards, setSelectedCards } = useGame();
+    
+    // Use wood texture hooks at the top level
+    const woodStylePickup = useWoodStyle(0.15);
+    const woodStyleGood = useWoodStyle(0.85);
 
     // Handle case where game is not loaded yet
     if (!game || !game.self) {
@@ -117,7 +121,7 @@ export const ActionButtons = () => {
             {/* Pickup button for defenders */}
             {isDefending && game.table_battles.length > 0 && <button
                 style={{
-                    ...getWoodTextureStyle(0.15), // Wood texture for pickup button
+                    ...woodStylePickup, // Wood texture for pickup button
                     width: '60px',
                     height: '40px',
                     fontSize: '12px',
@@ -156,7 +160,7 @@ export const ActionButtons = () => {
             {/* Good button for attackers when all attacks are covered */}
             {!isDefending && game.table_battles.length > 0 && game.table_battles.every(battle => battle.defense) && canPlay && <button
                 style={{
-                    ...getWoodTextureStyle(0.85), // Wood texture for good button
+                    ...woodStyleGood, // Wood texture for good button
                     width: '60px',
                     height: '40px',
                     fontSize: '12px',

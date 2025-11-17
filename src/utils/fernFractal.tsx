@@ -271,8 +271,8 @@ export async function generateFernPattern(
 
         // Main iteration loop with yielding
         for (let i = 0; i < render.iterations; i++) {
-            // Yield every 10000 iterations to let React render
-            if (i > 0 && i % 10000 === 0) {
+            // Yield every 100000 iterations to let React render
+            if (i > 0 && i % 100000 === 0) {
                 await new Promise(resolve => setTimeout(resolve, 0));
             }
             

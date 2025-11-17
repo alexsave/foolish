@@ -5,6 +5,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { SUIT_MAP } from "../utils/cards";
 import { useWoodStyle, getWoodTextureStyle } from "./WoodTexture";
+import { WoolBackgroundLayer } from "./WoolBackgroundLayer";
 
 export const Dashboard = () => {
     const [gameId, setGameId] = useState<string>('');
@@ -71,6 +72,7 @@ export const Dashboard = () => {
         overflowY: 'auto',
         overflowX: 'hidden'
     }}>
+        <WoolBackgroundLayer />
         <h1 style={{ 
             color: 'white', 
             fontSize: '1.3rem', 

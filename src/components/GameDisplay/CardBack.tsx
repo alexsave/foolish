@@ -14,7 +14,7 @@ const getRandomRotation = (seed: number, index: number): number => {
 };
 
 export const CardBack = ({ deckSize = 36, enableRandomRotation = false }: { deckSize?: number; enableRandomRotation?: boolean }) => {
-    const { fernPattern } = useFernFractal();
+    const { fernPattern, isLoading } = useFernFractal();
     const seed = 42; // Fixed seed for deterministic results
     
     // Log when CardBack renders with fern pattern
@@ -36,7 +36,7 @@ export const CardBack = ({ deckSize = 36, enableRandomRotation = false }: { deck
                         left: enableRandomRotation ? '0' : `${-layerIndex * 1}px`,
                         width: '50px', // Updated to 5:7 ratio
                         height: '70px',
-                        backgroundColor: '#e91a02', // Fern fallback color
+                        backgroundColor: fernPattern ? '#000000' : '#e91a02', // Red while loading, black when pattern loaded
                         border: '1px solid #8B0000', // Dark red border
                         borderRadius: '5px',
                         zIndex: layerIndex + 2,
