@@ -10,8 +10,8 @@ import { validateAttack, validatePass, validatePickup, validateCover } from '../
 // Animation timing constant
 export { ANIMATION_TIME } from '../constants/constants';
 
-// Bot bump timeout - 12 seconds of no animations
-const BOT_BUMP_TIMEOUT = 12000;
+// Bot bump timeout - 20 seconds of no animations
+const BOT_BUMP_TIMEOUT = 20000;
 
 interface AnimationEvent {
     type: 'magic_transition' | 'deal' | 'flipped' | 'defender_move' | 'attack_pass' | 'cover' | 'pickup' | 'discard' | 'out' | 'refill' | 'cards_to_trash';
@@ -121,6 +121,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 }).catch(error => {
                     console.error('Bot bump failed:', error);
                 });
+                startBotBumpTimer();
             }
         }, BOT_BUMP_TIMEOUT);
     }, [url_game_id]);
