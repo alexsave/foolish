@@ -2,19 +2,15 @@
 // or at least the UI is different enough we can have a different route
 import { useServer } from "../contexts/ServerContext";
 import { useParams } from "react-router-dom";
-import { useEffect, useState, useRef, lazy, Suspense } from "react";
+import { useEffect, useState, useRef, useMemo } from "react";
 import { WEBSITE_DOMAIN } from "../constants/constants";
 import { useAuth } from "../contexts/AuthContext";
+import { QRCodeSVG } from "qrcode.react";
 import { PublicPlayer } from "../common/types";
 import { usePreventScroll } from "../hooks/usePreventScroll";
 import { MAX_PLAYERS } from "../common/constants";
 import { useWoodStyle } from "./WoodTexture";
 import { WoolBackgroundLayer } from "./WoolBackgroundLayer";
-
-// Lazy load QRCode to reduce initial bundle size (only needed in Lobby)
-const QRCodeSVG = lazy(() => 
-    import("qrcode.react").then(module => ({ default: module.QRCodeSVG }))
-);
 
 interface PlayerCardProps {
     player: PublicPlayer;
@@ -171,15 +167,20 @@ export const Lobby = () => {
     const game_id = useParams().game_id?.toLowerCase();
     const { game, updateGameName, rearrangePlayer, addBot, exitGame, joinGame } = useServer();
 
-    // Get wood styles with seeds
-    const woodButtonStyle = useWoodStyle(0.2);
-    const woodButtonHoverStyle = { 
-        ...woodButtonStyle, 
+    // Get wood styles with seeds - memoized to prevent new object creation
+    const woodButtonBaseStyle = useWoodStyle(0.2);
+    const woodInputBaseStyle = useWoodStyle(0.8);
+    const woodQRBaseStyle = useWoodStyle(0.3);
+    
+    const woodButtonStyle = useMemo(() => woodButtonBaseStyle, [woodButtonBaseStyle]);
+    const woodButtonHoverStyle = useMemo(() => ({ 
+        ...woodButtonBaseStyle, 
         filter: 'brightness(1.1) contrast(1.1)', 
         transform: 'translateY(-1px)',
         boxShadow: `inset 0 2px 0 rgba(255,255,255,0.3), inset 0 -2px 0 rgba(0,0,0,0.4), 0 4px 8px rgba(0,0,0,0.5)`
-    };
-    const woodInputStyle = useWoodStyle(0.8);
+    }), [woodButtonBaseStyle]);
+    const woodInputStyle = useMemo(() => woodInputBaseStyle, [woodInputBaseStyle]);
+    const woodQRStyle = useMemo(() => woodQRBaseStyle, [woodQRBaseStyle]);
 
     const [isEditingName, setIsEditingName] = useState(false);
     const [editingName, setEditingName] = useState('');
@@ -427,10 +428,40 @@ export const Lobby = () => {
             title={!isEditingName ? "Click to edit game name" : undefined}
         />
         <h2 style={{ margin: '1rem' }}>Game ID: {game_id}</h2>
-        <div style={{ marginBottom: '10px' }}>
-            <Suspense fallback={<div style={{ width: '220px', height: '220px', backgroundColor: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>Loading QR...</div>}>
-                <QRCodeSVG value={qrUrl} size={220} fgColor="rgb(152, 38, 33)" bgColor="rgb(255, 255, 255)" />
-            </Suspense>
+        <div style={{ 
+            marginBottom: '10px',
+            position: 'relative',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: '228px',
+            height: '228px',
+            ...woodQRStyle,  // Wood background
+            //padding: '3px',
+            border: '2px solid #5D3A1A',
+            boxSizing: 'border-box',
+            boxShadow: `
+                inset 0 1px 0 rgba(255,255,255,0.2),
+                inset 0 -1px 0 rgba(0,0,0,0.3),
+                0 3px 6px rgba(0,0,0,0.4)`
+        }}>
+            <div style={{
+                position: 'relative',
+                width: '204px',
+                height: '204px',
+                backgroundColor: 'rgba(139, 69, 19, 0.0)',  // Light wood tone for background
+            }}>
+                <QRCodeSVG 
+                    value={qrUrl} 
+                    size={204} 
+                    fgColor="rgba(70, 35, 20, 0.7)"  // Dark wood tone for QR pattern
+                    bgColor="transparent"
+                    style={{
+                        mixBlendMode: 'color-burn',  // Blend with wood background
+                        filter: 'contrast(1.2) brightness(0.9) blur(.3px)'
+                    }}
+                />
+            </div>
         </div>
         {
             localPlayerOrder.map((player: PublicPlayer, index: number) => (

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 
 interface WoodTextureProps {
   width?: number;
@@ -120,8 +120,6 @@ export async function generateWoodTexture(): Promise<string> {
     return woodTexturePromise;
   }
 
-  console.log('Generating new wood texture...');
-  
   // Create and cache the promise to prevent duplicate generations
   woodTexturePromise = (async () => {
     const startTime = performance.now();
@@ -199,40 +197,35 @@ export const useWoodTexture = () => {
 export const useWoodStyle = (seed?: number, willRotate: boolean = false): React.CSSProperties => {
   const textureUrl = useWoodTexture();
 
-  if (!textureUrl) {
-    // Fallback to solid wood color if texture not ready
+  // Memoize calculations to prevent randomSeed from changing on every render
+  const styleParams = useMemo(() => {
+    const randomSeed = seed !== undefined ? seed : Math.random();
+    const xOffset = Math.floor(randomSeed * 1920);
+    const yOffset = Math.floor((randomSeed * 1000) % 1080);
+    const scaleFactor = willRotate ? 1.5 : 1;
+    const scaledWidth = Math.floor(1920 * scaleFactor);
+    const scaledHeight = Math.floor(1080 * scaleFactor);
+    const adjustedXOffset = Math.floor(xOffset * scaleFactor);
+    const adjustedYOffset = Math.floor(yOffset * scaleFactor);
+    
+    return { scaledWidth, scaledHeight, adjustedXOffset, adjustedYOffset };
+  }, [seed, willRotate]);
+
+  // Memoize the style object - SAME structure always, just texture changes
+  const style = useMemo(() => {
+    // Always return the same structure - texture just "pops in" when loaded
     return {
       backgroundColor: '#8B4513',
-      backgroundImage: `repeating-linear-gradient(
-        90deg,
-        transparent,
-        transparent 1px,
-        rgba(0,0,0,0.1) 1px,
-        rgba(0,0,0,0.1) 2px
-      )`
+      backgroundImage: textureUrl 
+        ? `url(${textureUrl})`
+        : `repeating-linear-gradient(90deg, transparent, transparent 1px, rgba(0,0,0,0.1) 1px, rgba(0,0,0,0.1) 2px)`,
+      backgroundSize: `${styleParams.scaledWidth}px ${styleParams.scaledHeight}px`,
+      backgroundPosition: `${styleParams.adjustedXOffset}px ${styleParams.adjustedYOffset}px`,
+      backgroundRepeat: 'repeat'
     };
-  }
-
-  // Generate random position based on seed or truly random
-  const randomSeed = seed !== undefined ? seed : Math.random();
-  const xOffset = Math.floor(randomSeed * 1920);
-  const yOffset = Math.floor((randomSeed * 1000) % 1080);
-
-  // Scale up background size for rotated elements to avoid gaps
-  const scaleFactor = willRotate ? 1.5 : 1; // 150% size for rotated elements
-  const scaledWidth = Math.floor(1920 * scaleFactor);
-  const scaledHeight = Math.floor(1080 * scaleFactor);
+  }, [textureUrl, styleParams]);
   
-  // Adjust positioning for scaled background
-  const adjustedXOffset = Math.floor(xOffset * scaleFactor);
-  const adjustedYOffset = Math.floor(yOffset * scaleFactor);
-
-  return {
-    backgroundImage: `url(${textureUrl})`,
-    backgroundSize: `${scaledWidth}px ${scaledHeight}px`,
-    backgroundPosition: `${adjustedXOffset}px ${adjustedYOffset}px`,
-    backgroundRepeat: 'repeat'
-  };
+  return style;
 };
 
 // Legacy function for non-React contexts (kept for backward compatibility)

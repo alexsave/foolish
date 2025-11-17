@@ -1,15 +1,16 @@
 import { useNavigate } from 'react-router-dom';
+import { useMemo } from 'react';
 import { useWoodStyle } from './WoodTexture';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
 
 export const Welcome = () => {
     const navigate = useNavigate();
-    const woodStyle = useWoodStyle(0.5);
+    const woodStyleBase = useWoodStyle(0.5);
 
-    const woodButtonStyle: React.CSSProperties = {
-        ...woodStyle, // Random position seed 0.5
-        border: '3px solid #5D3A1A', // Darker wood border color
-        borderRadius: '0', // Sharp 90-degree corners
+    const woodButtonStyle: React.CSSProperties = useMemo(() => ({
+        ...woodStyleBase,
+        border: '3px solid #5D3A1A',
+        borderRadius: '0',
         color: '#ffffff',
         fontWeight: 'bold',
         cursor: 'pointer',
@@ -23,17 +24,17 @@ export const Welcome = () => {
         overflow: 'hidden' as const,
         padding: '10px 20px',
         fontSize: '16px',
-    };
+    }), [woodStyleBase]);
 
-    const woodButtonHoverStyle: React.CSSProperties = {
-        ...woodStyle, // Match button seed
+    const woodButtonHoverStyle: React.CSSProperties = useMemo(() => ({
+        ...woodStyleBase,
         filter: 'brightness(1.1) contrast(1.1)',
         transform: 'translateY(-1px)',
         boxShadow: `
             inset 0 2px 0 rgba(255,255,255,0.3),
             inset 0 -2px 0 rgba(0,0,0,0.4),
             0 4px 8px rgba(0,0,0,0.5)`,
-    };
+    }), [woodStyleBase]);
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', width: '100%' }}>

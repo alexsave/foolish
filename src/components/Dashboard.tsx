@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import supabase from '../backend/Connector';
 import { useServer } from "../contexts/ServerContext";
 import { useNavigate } from "react-router-dom";
@@ -13,9 +13,13 @@ export const Dashboard = () => {
     const { joinGame, games } = useServer();
     const navigate = useNavigate();
     
-    // Get wood styles with different seeds for variety
-    const woodButtonStyle = {
-        ...useWoodStyle(0.1),
+    // Get wood styles with different seeds for variety - memoized to prevent new object creation
+    const woodBase1 = useWoodStyle(0.1);
+    const woodBase2 = useWoodStyle(0.7);
+    const woodBase3 = useWoodStyle(0.3);
+    
+    const woodButtonStyle = useMemo(() => ({
+        ...woodBase1,
         border: '3px solid #5D3A1A',
         borderRadius: '0',
         color: '#ffffff',
@@ -26,15 +30,17 @@ export const Dashboard = () => {
         boxShadow: `inset 0 1px 0 rgba(255,255,255,0.2), inset 0 -1px 0 rgba(0,0,0,0.3), 0 2px 4px rgba(0,0,0,0.4)`,
         position: 'relative' as const,
         overflow: 'hidden' as const,
-    };
-    const woodButtonHoverStyle = {
+    }), [woodBase1]);
+    
+    const woodButtonHoverStyle = useMemo(() => ({
         ...woodButtonStyle,
         filter: 'brightness(1.1) contrast(1.1)',
         transform: 'translateY(-1px)',
         boxShadow: `inset 0 2px 0 rgba(255,255,255,0.3), inset 0 -2px 0 rgba(0,0,0,0.4), 0 4px 8px rgba(0,0,0,0.5)`
-    };
-    const woodButtonStyle2 = {
-        ...useWoodStyle(0.7),
+    }), [woodButtonStyle]);
+    
+    const woodButtonStyle2 = useMemo(() => ({
+        ...woodBase2,
         border: '3px solid #5D3A1A',
         borderRadius: '0',
         color: '#ffffff',
@@ -45,21 +51,23 @@ export const Dashboard = () => {
         boxShadow: `inset 0 1px 0 rgba(255,255,255,0.2), inset 0 -1px 0 rgba(0,0,0,0.3), 0 2px 4px rgba(0,0,0,0.4)`,
         position: 'relative' as const,
         overflow: 'hidden' as const,
-    };
-    const woodButtonHoverStyle2 = {
+    }), [woodBase2]);
+    
+    const woodButtonHoverStyle2 = useMemo(() => ({
         ...woodButtonStyle2,
         filter: 'brightness(1.1) contrast(1.1)',
         transform: 'translateY(-1px)',
         boxShadow: `inset 0 2px 0 rgba(255,255,255,0.3), inset 0 -2px 0 rgba(0,0,0,0.4), 0 4px 8px rgba(0,0,0,0.5)`
-    };
-    const woodInputStyle = {
-        ...useWoodStyle(0.3),
+    }), [woodButtonStyle2]);
+    
+    const woodInputStyle = useMemo(() => ({
+        ...woodBase3,
         border: '2px solid #5D3A1A',
         borderRadius: '0',
         color: '#ffffff',
         textShadow: '2px 2px 4px rgba(0,0,0,0.9)',
         boxShadow: `inset 2px 2px 4px rgba(0,0,0,0.4), inset -1px -1px 2px rgba(255,255,255,0.2)`,
-    };
+    }), [woodBase3]);
 
     return <div style={{
         display: 'flex',

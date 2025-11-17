@@ -12,7 +12,6 @@ const getRandomOffsets = () => {
   if (globalRandomOffsetX === null || globalRandomOffsetY === null) {
     globalRandomOffsetX = Math.random() * 1000 - 500; // Random offset between -500 and 500
     globalRandomOffsetY = Math.random() * 1000 - 500; // Random offset between -500 and 500
-    console.log('Generated new random wool pattern offsets:', { x: globalRandomOffsetX, y: globalRandomOffsetY });
   }
   return { offsetX: globalRandomOffsetX, offsetY: globalRandomOffsetY };
 };
@@ -177,7 +176,6 @@ export async function generateWoolTexture(): Promise<string> {
     return woolTexturePromise;
   }
 
-  console.log('Generating new wool texture (async with yielding)...');
   
   // Create and cache the promise to prevent duplicate generations
   woolTexturePromise = (async () => {
