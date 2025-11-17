@@ -4,81 +4,61 @@ import { useServer } from "../contexts/ServerContext";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { SUIT_MAP } from "../utils/cards";
-import { getWoodTextureStyle } from "./WoodTexture";
-
-// Wood-style button and input styling - using random positions for variety
-const woodButtonStyle: React.CSSProperties = {
-    ...getWoodTextureStyle(0.1), // Random position seed 0.1
-    border: '3px solid #5D3A1A', // Darker wood border color
-    borderRadius: '0', // Sharp 90-degree corners
-    color: '#ffffff',
-    fontWeight: 'bold',
-    cursor: 'pointer',
-    transition: 'all 0.2s ease',
-    textShadow: '2px 2px 4px rgba(0,0,0,0.9)',
-    boxShadow: `
-        inset 0 1px 0 rgba(255,255,255,0.2),
-        inset 0 -1px 0 rgba(0,0,0,0.3),
-        0 2px 4px rgba(0,0,0,0.4)`,
-    position: 'relative' as const,
-    overflow: 'hidden' as const,
-};
-
-const woodButtonStyle2: React.CSSProperties = {
-    ...getWoodTextureStyle(0.7), // Different random position seed 0.7
-    border: '3px solid #5D3A1A', // Darker wood border color
-    borderRadius: '0', // Sharp 90-degree corners
-    color: '#ffffff',
-    fontWeight: 'bold',
-    cursor: 'pointer',
-    transition: 'all 0.2s ease',
-    textShadow: '2px 2px 4px rgba(0,0,0,0.9)',
-    boxShadow: `
-        inset 0 1px 0 rgba(255,255,255,0.2),
-        inset 0 -1px 0 rgba(0,0,0,0.3),
-        0 2px 4px rgba(0,0,0,0.4)`,
-    position: 'relative' as const,
-    overflow: 'hidden' as const,
-};
-
-const woodButtonHoverStyle: React.CSSProperties = {
-    ...getWoodTextureStyle(0.1), // Match primary button seed
-    filter: 'brightness(1.1) contrast(1.1)',
-    transform: 'translateY(-1px)',
-    boxShadow: `
-        inset 0 2px 0 rgba(255,255,255,0.3),
-        inset 0 -2px 0 rgba(0,0,0,0.4),
-        0 4px 8px rgba(0,0,0,0.5)`,
-};
-
-const woodButtonHoverStyle2: React.CSSProperties = {
-    ...getWoodTextureStyle(0.7), // Match secondary button seed
-    filter: 'brightness(1.1) contrast(1.1)',
-    transform: 'translateY(-1px)',
-    boxShadow: `
-        inset 0 2px 0 rgba(255,255,255,0.3),
-        inset 0 -2px 0 rgba(0,0,0,0.4),
-        0 4px 8px rgba(0,0,0,0.5)`,
-};
-
-const woodInputStyle: React.CSSProperties = {
-    ...getWoodTextureStyle(0.3), // Random position for inputs
-    border: '2px solid #5D3A1A', // Darker wood border color
-    borderRadius: '0', // Sharp 90-degree corners
-    color: '#ffffff',
-    textShadow: '2px 2px 4px rgba(0,0,0,0.9)',
-    boxShadow: `
-        inset 2px 2px 4px rgba(0,0,0,0.4),
-        inset -1px -1px 2px rgba(255,255,255,0.2)`,
-};
-
-
+import { useWoodStyle, getWoodTextureStyle } from "./WoodTexture";
 
 export const Dashboard = () => {
     const [gameId, setGameId] = useState<string>('');
     const { username } = useAuth();
     const { joinGame, games } = useServer();
     const navigate = useNavigate();
+    
+    // Get wood styles with different seeds for variety
+    const woodButtonStyle = {
+        ...useWoodStyle(0.1),
+        border: '3px solid #5D3A1A',
+        borderRadius: '0',
+        color: '#ffffff',
+        fontWeight: 'bold',
+        cursor: 'pointer',
+        transition: 'all 0.2s ease',
+        textShadow: '2px 2px 4px rgba(0,0,0,0.9)',
+        boxShadow: `inset 0 1px 0 rgba(255,255,255,0.2), inset 0 -1px 0 rgba(0,0,0,0.3), 0 2px 4px rgba(0,0,0,0.4)`,
+        position: 'relative' as const,
+        overflow: 'hidden' as const,
+    };
+    const woodButtonHoverStyle = {
+        ...woodButtonStyle,
+        filter: 'brightness(1.1) contrast(1.1)',
+        transform: 'translateY(-1px)',
+        boxShadow: `inset 0 2px 0 rgba(255,255,255,0.3), inset 0 -2px 0 rgba(0,0,0,0.4), 0 4px 8px rgba(0,0,0,0.5)`
+    };
+    const woodButtonStyle2 = {
+        ...useWoodStyle(0.7),
+        border: '3px solid #5D3A1A',
+        borderRadius: '0',
+        color: '#ffffff',
+        fontWeight: 'bold',
+        cursor: 'pointer',
+        transition: 'all 0.2s ease',
+        textShadow: '2px 2px 4px rgba(0,0,0,0.9)',
+        boxShadow: `inset 0 1px 0 rgba(255,255,255,0.2), inset 0 -1px 0 rgba(0,0,0,0.3), 0 2px 4px rgba(0,0,0,0.4)`,
+        position: 'relative' as const,
+        overflow: 'hidden' as const,
+    };
+    const woodButtonHoverStyle2 = {
+        ...woodButtonStyle2,
+        filter: 'brightness(1.1) contrast(1.1)',
+        transform: 'translateY(-1px)',
+        boxShadow: `inset 0 2px 0 rgba(255,255,255,0.3), inset 0 -2px 0 rgba(0,0,0,0.4), 0 4px 8px rgba(0,0,0,0.5)`
+    };
+    const woodInputStyle = {
+        ...useWoodStyle(0.3),
+        border: '2px solid #5D3A1A',
+        borderRadius: '0',
+        color: '#ffffff',
+        textShadow: '2px 2px 4px rgba(0,0,0,0.9)',
+        boxShadow: `inset 2px 2px 4px rgba(0,0,0,0.4), inset -1px -1px 2px rgba(255,255,255,0.2)`,
+    };
 
     return <div style={{
         display: 'flex',

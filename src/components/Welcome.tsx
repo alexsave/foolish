@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { getWoodTextureStyle } from './WoodTexture';
+import { getWoodTextureStyle, useWoodTexture } from './WoodTexture';
 
 export const Welcome = () => {
     const navigate = useNavigate();

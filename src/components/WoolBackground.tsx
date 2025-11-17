@@ -32,75 +32,134 @@ const WoolBackground: React.FC<WoolBackgroundProps> = ({
   const C = Math.cos;
   const S = Math.sin;
   const T = Math.tan;
-  const R = (r: number, g: number, b: number, a: number) => `rgba(${Math.floor(r)},${Math.floor(g)},${Math.floor(b)},${a})`;
 
-  const generateWoolTexture = (ctx: CanvasRenderingContext2D) => {
-    // Ai could never write this
-    // Render DIRECTLY to canvas instead of storing 8 million objects in memory!
-    
-    // Get random offsets for this pattern
-    const { offsetX, offsetY } = getRandomOffsets();
-
-    let r = 0;
-    const z = () => C(r) * 1000 - Math.floor(C(r) * 1000);
-    let h = 1;
-    let u = 0;
-
-    // Scale up the iteration for larger canvas
-    const maxIterations = Math.floor((width * height / (1920 * 1080)) * 2000000);
-
-    for (let i = 0; i < maxIterations; i++) {
-      if (i === Math.floor(maxIterations * 0.4)) {
-        h = 0;
-        r = 0;
-      }
-
-      if (h) {
-        // Horizontal wool fiber phase
-        if (i % width === 0) {
-          u = z() * 500 + 100;
-          r += h ? 5 : 3;
+    const generateWoolTexture = (ctx: CanvasRenderingContext2D) => {
+        // Optimized wool texture using ImageData for direct pixel manipulation
+        const imageData = ctx.createImageData(width, height);
+        const data = new Uint8ClampedArray(imageData.data.buffer);
+        
+        // Pre-fill with brown base color (#71411b = rgb(113, 65, 27))
+        const BASE_R = 113;
+        const BASE_G = 65;
+        const BASE_B = 27;
+        for (let i = 0; i < data.length; i += 4) {
+            data[i] = BASE_R;
+            data[i + 1] = BASE_G;
+            data[i + 2] = BASE_B;
+            data[i + 3] = 255;
         }
         
-        const phase = S(i / u);
-        const dx = S(i - 1) + phase * 6; // Doubled from 3 to 6 for 2x scale
-        const red = ((T((Math.floor((r + offsetX) / 80 + z() / 4)) ^ (Math.floor((i % height + offsetY) / 80)))) > 0.3) ? 100 : 0; // Using random offsets instead of centering
-        
-        const color = R(209 + 46 * phase + red, 208 + 45 * phase - red, 183 + 53 * phase - red / 2, 1);
-        
-        const x = r + dx;
-        const y = i % height;
-        
-        // Only draw pixels within bounds - DIRECTLY to canvas
-        if (x >= 0 && x < width && y >= 0 && y < height) {
-          ctx.fillStyle = color;
-          ctx.fillRect(x, y, 2, 2); // Doubled thread thickness
+        // Get random offsets for this pattern
+        const { offsetX, offsetY } = getRandomOffsets();
+
+        let r = 0;
+        // Pre-calculate z function - eliminate repeated floor operations
+        const zValue = () => {
+            const cr = C(r) * 1000;
+            return cr - Math.floor(cr);
+        };
+        let h = 1;
+        let u = 0;
+
+        // Scale up the iteration for larger canvas
+        const maxIterations = Math.floor((width * height / (1920 * 1080)) * 2000000);
+        const switchPoint = Math.floor(maxIterations * 0.4);
+
+        // Helper to write pixel with soft edges (anti-aliasing) like canvas fillRect
+        const writePixel = (x: number, y: number, r: number, g: number, b: number, size: number = 2) => {
+            const xi = Math.floor(x);
+            const yi = Math.floor(y);
+            const sizeInt = Math.ceil(size);
+            
+            // Calculate fractional parts for anti-aliasing
+            const fx = x - xi;
+            const fy = y - yi;
+            
+            for (let dy = 0; dy < sizeInt; dy++) {
+                for (let dx = 0; dx < sizeInt; dx++) {
+                    const px = xi + dx;
+                    const py = yi + dy;
+                    if (px >= 0 && px < width && py >= 0 && py < height) {
+                        const idx = (py * width + px) << 2;
+                        
+                        // Calculate alpha for anti-aliasing at edges (mimics subpixel rendering)
+                        // Center pixels get full opacity, edge pixels get partial for soft look
+                        const distX = Math.abs(dx - fx);
+                        const distY = Math.abs(dy - fy);
+                        const edgeSoftness = Math.max(0.1, 1 - (distX + distY) / 4);
+                        const alpha = edgeSoftness * 0.99; // High opacity for brightness, soft edges
+                        const invAlpha = 1 - alpha;
+                        
+                        // Alpha blend with existing pixel for soft overlapping effect
+                        data[idx] = data[idx] * invAlpha + r * alpha;
+                        data[idx + 1] = data[idx + 1] * invAlpha + g * alpha;
+                        data[idx + 2] = data[idx + 2] * invAlpha + b * alpha;
+                        data[idx + 3] = 255;
+                    }
+                }
+            }
+        };
+
+        for (let i = 0; i < maxIterations; i++) {
+            if (i === switchPoint) {
+                h = 0;
+                r = 0;
+            }
+
+            if (h) {
+                // Horizontal wool fiber phase
+                if (i % width === 0) {
+                    u = zValue() * 500 + 100;
+                    r += 5;
+                }
+                
+                const phase = S(i / u);
+                const dx = S(i - 1) + phase * 6;
+                
+                // Simplified red calculation - pre-calculate z and offsets
+                const zVal = zValue();
+                const red = ((T((Math.floor((r + offsetX) / 80 + zVal / 4)) ^ (Math.floor((i % height + offsetY) / 80)))) > 0.3) ? 100 : 0;
+                
+                // Calculate colors directly
+                const colorR = (209 + 46 * phase + red) | 0;
+                const colorG = (208 + 45 * phase - red) | 0;
+                const colorB = (183 + 53 * phase - red / 2) | 0;
+                
+                const x = r + dx;
+                const y = i % height;
+                
+                if (x >= 0 && x < width && y >= 0 && y < height) {
+                    writePixel(x, y, colorR, colorG, colorB, 2);
+                }
+            } else {
+                // Vertical wool fiber phase
+                if (i % height === 0) {
+                    u = zValue() * 500 + 100;
+                    r += 3;
+                }
+                
+                const phase = S(i / u);
+                const zVal = zValue();
+                const red = ((T((Math.floor((r + offsetY) / 80 + zVal / 4)) ^ (Math.floor((i % width + offsetX) / 80)))) > 0.3) ? 100 : 0;
+                const dx = 4 * S(i - 1) + S(i / u) * 4;
+                
+                const colorR = (189 + 46 * phase + red) | 0;
+                const colorG = (188 + 45 * phase - red) | 0;
+                const colorB = (163 + 53 * phase - red / 2) | 0;
+                
+                const x = i % width;
+                const y = r + dx;
+                const pixelWidth = 1.4 * (phase + 1.7);
+                
+                if (x >= 0 && x < width && y >= 0 && y < height) {
+                    writePixel(x, y, colorR, colorG, colorB, pixelWidth);
+                }
+            }
         }
-      } else {
-        // Vertical wool fiber phase
-        if (i % height === 0) {
-          u = z() * 500 + 100;
-          r += h ? 5 : 3;
-        }
         
-        const phase = S(i / u);
-        const red = ((T((Math.floor((r + offsetY) / 80 + z() / 4)) ^ (Math.floor((i % width + offsetX) / 80)))) > 0.3) ? 100 : 0; // Using random offsets instead of centering
-        const dx = 4 * S(i - 1) + S(i / u) * 4; // Doubled from 2 to 4 for 2x scale
-        
-        const color = R(189 + 46 * phase + red, 188 + 45 * phase - red, 163 + 53 * phase - red / 2, 1);
-        
-        const x = i % width;
-        const y = r + dx;
-        const pixelWidth = 1.4 * (phase + 1.7); // Doubled from 0.7 to 1.4
-        
-        // Only draw pixels within bounds - DIRECTLY to canvas
-        if (x >= 0 && x < width && y >= 0 && y < height) {
-          ctx.fillStyle = color;
-          ctx.fillRect(x, y, pixelWidth, 2); // Doubled thread thickness
-        }
-      }
-    }
-  };
+        // Single canvas operation - write all pixels at once
+        ctx.putImageData(imageData, 0, 0);
+    };
 
   const drawFractalBranch = (ctx: CanvasRenderingContext2D, xPos: number, yPos: number, size: number, rotationFactor: number, pointIndex: number) => {
     // Base case: If the branch size is small enough, draw a dot and stop
@@ -177,73 +236,77 @@ const WoolBackground: React.FC<WoolBackgroundProps> = ({
     ctx.fillRect(0, 0, width, height);
   };
 
-  const renderCanvas = async () => {
-    console.log('renderCanvas for wool background');
-    const canvas = canvasRef.current;
-    if (!canvas) return;
+    const renderCanvas = async () => {
+        console.log('renderCanvas for wool background');
+        const canvas = canvasRef.current;
+        if (!canvas) return;
 
-    // TEMPORARY DISABLE: Skip complex texture generation to prevent Safari iOS crashes
-    // TODO: Remove this early return when ready to re-enable wool texture
+        // TEMPORARY DISABLE: Skip complex texture generation to prevent Safari iOS crashes
+        // TODO: Remove this early return when ready to re-enable wool texture
 
-    // Prevent double generation
-    if (hasRendered.current || isGenerating) {
-      console.log('Skipping render - already generated or generating');
-      return;
-    }
+        // Prevent double generation
+        if (hasRendered.current || isGenerating) {
+            console.log('Skipping render - already generated or generating');
+            return;
+        }
 
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
 
-    console.log('Starting wool texture generation with random pattern...');
-    
-    // Import errorLogger and log the massive operation
-    const { errorLogger } = await import('../utils/errorLogger');
-    errorLogger.logCanvasOperation('Wool Background Generation Start', {
-      canvasWidth: width,
-      canvasHeight: height,
-      estimatedMemoryMB: ((width * height * 4) / (1024 * 1024)).toFixed(2),
-      maxIterations: Math.floor((width * height / (1920 * 1080)) * 2000000),
-    });
-    
-    const startTime = performance.now();
-    hasRendered.current = true;
+        console.log('Starting wool texture generation with random pattern...');
+        
+        const startTime = performance.now();
+        hasRendered.current = true;
 
-    // Base wool color
-    ctx.fillStyle = '#71411b';
-    ctx.fillRect(0, 0, width, height);
+        // Base wool color
+        ctx.fillStyle = '#71411b';
+        ctx.fillRect(0, 0, width, height);
 
-    setIsGenerating(true);
-    
-    // Generate wool texture pattern directly to canvas (no memory-hungry array!)
-    generateWoolTexture(ctx);
+        setIsGenerating(true);
+        
+        // Generate wool texture pattern directly to canvas (no memory-hungry array!)
+        generateWoolTexture(ctx);
 
-    // Add enhancement layers after main texture with visible delays
-    console.log('Adding fractal wear pattern...');
-    //await new Promise(resolve => setTimeout(resolve, 500)); // 500ms delay
-    //drawWearPattern(ctx);
-    
-    console.log('Adding speckle noise...');
-    //await new Promise(resolve => setTimeout(resolve, 500)); // 500ms delay
-    //applySpeckleNoise(ctx);
-    
-    console.log('Adding vignette...');
-    //await new Promise(resolve => setTimeout(resolve, 500)); // 500ms delay
-    //applyVignette(ctx);
-    
-    console.log('Wool texture complete!');
-    
-    const endTime = performance.now();
-    const generationTime = endTime - startTime;
-    
-    // Log completion with memory analysis (reuse errorLogger variable)
-    errorLogger.logCanvasOperation('Wool Background Generation Complete', {
-      generationTimeMs: generationTime.toFixed(2),
-      estimatedFinalMemoryMB: ((width * height * 4) / (1024 * 1024)).toFixed(2),
-      note: 'Another 40 TB to memory. Now rendering directly to canvas - no pixel array overhead!',
-    });
-    
-    setIsGenerating(false);
-  };
+        // Add enhancement layers after main texture with visible delays
+        console.log('Adding fractal wear pattern...');
+        //await new Promise(resolve => setTimeout(resolve, 500)); // 500ms delay
+        //drawWearPattern(ctx);
+        
+        console.log('Adding speckle noise...');
+        //await new Promise(resolve => setTimeout(resolve, 500)); // 500ms delay
+        //applySpeckleNoise(ctx);
+        
+        console.log('Adding vignette...');
+        //await new Promise(resolve => setTimeout(resolve, 500)); // 500ms delay
+        //applyVignette(ctx);
+        
+        console.log('Wool texture complete!');
+        
+        const endTime = performance.now();
+        const generationTime = endTime - startTime;
+        
+        setIsGenerating(false);
+        
+        // Defer logging to not block rendering - run async after generation
+        setTimeout(async () => {
+            try {
+                const { errorLogger } = await import('../utils/errorLogger');
+                errorLogger.logCanvasOperation('Wool Background Generation Start', {
+                    canvasWidth: width,
+                    canvasHeight: height,
+                    estimatedMemoryMB: ((width * height * 4) / (1024 * 1024)).toFixed(2),
+                    maxIterations: Math.floor((width * height / (1920 * 1080)) * 2000000),
+                });
+                errorLogger.logCanvasOperation('Wool Background Generation Complete', {
+                    generationTimeMs: generationTime.toFixed(2),
+                    estimatedFinalMemoryMB: ((width * height * 4) / (1024 * 1024)).toFixed(2),
+                    note: 'Optimized with ImageData - direct pixel manipulation',
+                });
+            } catch (e) {
+                console.error('Logging error:', e);
+            }
+        }, 0);
+    };
 
 
 

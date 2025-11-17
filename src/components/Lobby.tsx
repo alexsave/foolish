@@ -9,46 +9,7 @@ import { useAuth } from "../contexts/AuthContext";
 import { PublicPlayer } from "../common/types";
 import { usePreventScroll } from "../hooks/usePreventScroll";
 import { MAX_PLAYERS } from "../common/constants";
-import { getWoodTextureStyle } from "./WoodTexture";
-
-// Wood-style button and input styling - using random positions for variety
-const woodButtonStyle: React.CSSProperties = {
-    ...getWoodTextureStyle(0.2), // Random position seed 0.2
-    border: '3px solid #5D3A1A', // Darker wood border color
-    borderRadius: '0', // Sharp 90-degree corners
-    color: '#ffffff',
-    fontWeight: 'bold',
-    cursor: 'pointer',
-    transition: 'all 0.2s ease',
-    textShadow: '2px 2px 4px rgba(0,0,0,0.9)',
-    boxShadow: `
-        inset 0 1px 0 rgba(255,255,255,0.2),
-        inset 0 -1px 0 rgba(0,0,0,0.3),
-        0 2px 4px rgba(0,0,0,0.4)`,
-    position: 'relative' as const,
-    overflow: 'hidden' as const,
-};
-
-const woodButtonHoverStyle: React.CSSProperties = {
-    ...getWoodTextureStyle(0.2), // Match primary button seed
-    filter: 'brightness(1.1) contrast(1.1)',
-    transform: 'translateY(-1px)',
-    boxShadow: `
-        inset 0 2px 0 rgba(255,255,255,0.3),
-        inset 0 -2px 0 rgba(0,0,0,0.4),
-        0 4px 8px rgba(0,0,0,0.5)`,
-};
-
-const woodInputStyle: React.CSSProperties = {
-    ...getWoodTextureStyle(0.8), // Random position for inputs
-    border: '2px solid #5D3A1A', // Darker wood border color
-    borderRadius: '0', // Sharp 90-degree corners
-    color: '#ffffff',
-    textShadow: '2px 2px 4px rgba(0,0,0,0.9)',
-    boxShadow: `
-        inset 2px 2px 4px rgba(0,0,0,0.4),
-        inset -1px -1px 2px rgba(255,255,255,0.2)`,
-};
+import { useWoodStyle } from "./WoodTexture";
 
 
 
@@ -81,9 +42,15 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
     const { startGame, game } = useServer();
     const gameStatus = game?.status;
     const { user_id } = useAuth();
-    // Generate unique wood texture and transforms for each player card
+    
+    // Generate unique wood texture seed and transform for each player card
     const playerSeed = (player.player_id.charCodeAt(0) + player.player_id.charCodeAt(1)) / 200;
     const flip = (player.player_id.charCodeAt(3) || 0) % 2 === 0 ? 1 : -1;
+    
+    // Get wood styles with seeds
+    const woodButtonStyle = useWoodStyle(0.2);
+    const woodButtonHoverStyle = { ...woodButtonStyle, filter: 'brightness(1.1) contrast(1.1)', transform: 'translateY(-1px)' };
+    const playerCardWoodStyle = useWoodStyle(playerSeed);
     
     const style: React.CSSProperties = {
         border: '2px solid #5D3A1A',
@@ -130,7 +97,7 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
                 right: 0,
                 bottom: 0,
                 zIndex: -1,
-                ...getWoodTextureStyle(playerSeed),
+                ...playerCardWoodStyle,
                 transform: `scaleX(${flip})`,
                 transformOrigin: 'center center'
             }} />
@@ -154,6 +121,16 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
                         ...woodButtonStyle,
                         padding: '4px 8px',
                         fontSize: '12px',
+                        border: '3px solid #5D3A1A',
+                        borderRadius: '0',
+                        color: '#ffffff',
+                        fontWeight: 'bold',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s ease',
+                        textShadow: '2px 2px 4px rgba(0,0,0,0.9)',
+                        boxShadow: `inset 0 1px 0 rgba(255,255,255,0.2), inset 0 -1px 0 rgba(0,0,0,0.3), 0 2px 4px rgba(0,0,0,0.4)`,
+                        position: 'relative' as const,
+                        overflow: 'hidden' as const,
                     }}
                     onMouseEnter={(e) => {
                         Object.assign(e.currentTarget.style, woodButtonHoverStyle);
@@ -190,6 +167,16 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
 export const Lobby = () => {
     const game_id = useParams().game_id?.toLowerCase();
     const { game, updateGameName, rearrangePlayer, addBot, exitGame, joinGame } = useServer();
+
+    // Get wood styles with seeds
+    const woodButtonStyle = useWoodStyle(0.2);
+    const woodButtonHoverStyle = { 
+        ...woodButtonStyle, 
+        filter: 'brightness(1.1) contrast(1.1)', 
+        transform: 'translateY(-1px)',
+        boxShadow: `inset 0 2px 0 rgba(255,255,255,0.3), inset 0 -2px 0 rgba(0,0,0,0.4), 0 4px 8px rgba(0,0,0,0.5)`
+    };
+    const woodInputStyle = useWoodStyle(0.8);
 
     const [isEditingName, setIsEditingName] = useState(false);
     const [editingName, setEditingName] = useState('');
@@ -414,7 +401,13 @@ export const Lobby = () => {
             autoFocus={isEditingName}
             inputMode={isEditingName ? 'text' : 'none'}
             style={{
-                ...(isEditingName ? woodInputStyle : {}),
+                ...(isEditingName ? {
+                    ...woodInputStyle,
+                    border: '2px solid #5D3A1A',
+                    borderRadius: '0',
+                    textShadow: '2px 2px 4px rgba(0,0,0,0.9)',
+                    boxShadow: `inset 2px 2px 4px rgba(0,0,0,0.4), inset -1px -1px 2px rgba(255,255,255,0.2)`
+                } : {}),
                 width: '100%',
                 fontSize: '2rem',
                 fontWeight: 'bold',
@@ -460,6 +453,16 @@ export const Lobby = () => {
                             ...woodButtonStyle,
                             padding: '10px 20px',
                             fontSize: '16px',
+                            border: '3px solid #5D3A1A',
+                            borderRadius: '0',
+                            color: '#ffffff',
+                            fontWeight: 'bold',
+                            cursor: 'pointer',
+                            transition: 'all 0.2s ease',
+                            textShadow: '2px 2px 4px rgba(0,0,0,0.9)',
+                            boxShadow: `inset 0 1px 0 rgba(255,255,255,0.2), inset 0 -1px 0 rgba(0,0,0,0.3), 0 2px 4px rgba(0,0,0,0.4)`,
+                            position: 'relative' as const,
+                            overflow: 'hidden' as const,
                         }}
                         onMouseEnter={(e) => {
                             Object.assign(e.currentTarget.style, woodButtonHoverStyle);
@@ -480,6 +483,16 @@ export const Lobby = () => {
                             ...woodButtonStyle,
                             padding: '10px 20px',
                             fontSize: '16px',
+                            border: '3px solid #5D3A1A',
+                            borderRadius: '0',
+                            color: '#ffffff',
+                            fontWeight: 'bold',
+                            cursor: 'pointer',
+                            transition: 'all 0.2s ease',
+                            textShadow: '2px 2px 4px rgba(0,0,0,0.9)',
+                            boxShadow: `inset 0 1px 0 rgba(255,255,255,0.2), inset 0 -1px 0 rgba(0,0,0,0.3), 0 2px 4px rgba(0,0,0,0.4)`,
+                            position: 'relative' as const,
+                            overflow: 'hidden' as const,
                         }}
                         onMouseEnter={(e) => {
                             Object.assign(e.currentTarget.style, woodButtonHoverStyle);
@@ -497,6 +510,16 @@ export const Lobby = () => {
                             ...woodButtonStyle,
                             padding: '10px 20px',
                             fontSize: '16px',
+                            border: '3px solid #5D3A1A',
+                            borderRadius: '0',
+                            color: '#ffffff',
+                            fontWeight: 'bold',
+                            cursor: 'pointer',
+                            transition: 'all 0.2s ease',
+                            textShadow: '2px 2px 4px rgba(0,0,0,0.9)',
+                            boxShadow: `inset 0 1px 0 rgba(255,255,255,0.2), inset 0 -1px 0 rgba(0,0,0,0.3), 0 2px 4px rgba(0,0,0,0.4)`,
+                            position: 'relative' as const,
+                            overflow: 'hidden' as const,
                         }}
                         onMouseEnter={(e) => {
                             Object.assign(e.currentTarget.style, woodButtonHoverStyle);
