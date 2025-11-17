@@ -2,8 +2,7 @@
 // or at least the UI is different enough we can have a different route
 import { useServer } from "../contexts/ServerContext";
 import { useParams } from "react-router-dom";
-import { QRCodeSVG } from "qrcode.react";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, lazy, Suspense } from "react";
 import { WEBSITE_DOMAIN } from "../constants/constants";
 import { useAuth } from "../contexts/AuthContext";
 import { PublicPlayer } from "../common/types";
@@ -11,6 +10,11 @@ import { usePreventScroll } from "../hooks/usePreventScroll";
 import { MAX_PLAYERS } from "../common/constants";
 import { useWoodStyle } from "./WoodTexture";
 import { WoolBackgroundLayer } from "./WoolBackgroundLayer";
+
+// Lazy load QRCode to reduce initial bundle size (only needed in Lobby)
+const QRCodeSVG = lazy(() => 
+    import("qrcode.react").then(module => ({ default: module.QRCodeSVG }))
+);
 
 interface PlayerCardProps {
     player: PublicPlayer;
@@ -424,7 +428,9 @@ export const Lobby = () => {
         />
         <h2 style={{ margin: '1rem' }}>Game ID: {game_id}</h2>
         <div style={{ marginBottom: '10px' }}>
-            <QRCodeSVG value={qrUrl} size={220} fgColor="rgb(152, 38, 33)" bgColor="rgb(255, 255, 255)" />
+            <Suspense fallback={<div style={{ width: '220px', height: '220px', backgroundColor: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>Loading QR...</div>}>
+                <QRCodeSVG value={qrUrl} size={220} fgColor="rgb(152, 38, 33)" bgColor="rgb(255, 255, 255)" />
+            </Suspense>
         </div>
         {
             localPlayerOrder.map((player: PublicPlayer, index: number) => (

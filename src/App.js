@@ -3,28 +3,25 @@ import './App.css';
 import { AuthProvider } from './contexts/AuthContext';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ErrorBoundary } from './components/ErrorBoundary';
+// Eagerly import critical infrastructure to reduce round trips
+import { ProtectedRoute } from './components/ProtectedRoute';
+import { UnprotectedRoute } from './components/UnprotectedRoute';
 
-// Lazy load heavy components for better performance
+// Lazy load route components with preload hints for faster loading
 const Welcome = lazy(() => 
-  import('./components/Welcome').then(m => ({ default: m.Welcome }))
+  import(/* webpackPreload: true */ './components/Welcome').then(m => ({ default: m.Welcome }))
 );
 const Login = lazy(() => 
-  import('./components/Login').then(m => ({ default: m.Login }))
+  import(/* webpackPreload: true */ './components/Login').then(m => ({ default: m.Login }))
 );
 const Tutorial = lazy(() => 
   import('./components/Tutorial').then(m => ({ default: m.Tutorial }))
 );
 const Dashboard = lazy(() => 
-  import('./components/Dashboard').then(m => ({ default: m.Dashboard }))
+  import(/* webpackPrefetch: true */ './components/Dashboard').then(m => ({ default: m.Dashboard }))
 );
 const GameView = lazy(() => 
-  import('./components/GameView').then(m => ({ default: m.GameView }))
-);
-const ProtectedRoute = lazy(() => 
-  import('./components/ProtectedRoute').then(m => ({ default: m.ProtectedRoute }))
-);
-const UnprotectedRoute = lazy(() => 
-  import('./components/UnprotectedRoute').then(m => ({ default: m.UnprotectedRoute }))
+  import(/* webpackPreload: true */ './components/GameView').then(m => ({ default: m.GameView }))
 );
 
 

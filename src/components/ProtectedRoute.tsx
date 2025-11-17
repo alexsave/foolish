@@ -1,4 +1,4 @@
-import React, { Suspense, lazy } from 'react';
+import React from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { ServerProvider } from '../contexts/ServerContext';
@@ -6,10 +6,7 @@ import { useEffect } from 'react';
 import { DragProvider } from '../contexts/DragContext';
 import { GameProvider } from '../contexts/GameContext';
 import { AnimationProvider } from '../contexts/AnimationContext';
-
-const FernFractalProvider = lazy(() => 
-  import('../utils/fernFractal').then(m => ({ default: m.FernFractalProvider }))
-);
+import { FernFractalProvider } from '../utils/fernFractal';
 
 // Wrapper component that protects routes and provides ServerContext
 export const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
@@ -41,17 +38,15 @@ export const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
 
     return (
         <ServerProvider>
-            <Suspense fallback={<div>Loading textures...</div>}>
-                <FernFractalProvider>
-                    <AnimationProvider>
-                        <GameProvider>
-                            <DragProvider>
-                                {children}
-                            </DragProvider>
-                        </GameProvider>
-                    </AnimationProvider>
-                </FernFractalProvider>
-            </Suspense>
+            <FernFractalProvider>
+                <AnimationProvider>
+                    <GameProvider>
+                        <DragProvider>
+                            {children}
+                        </DragProvider>
+                    </GameProvider>
+                </AnimationProvider>
+            </FernFractalProvider>
         </ServerProvider>
     );
 };
