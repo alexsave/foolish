@@ -93,9 +93,15 @@ const generateWoodTextureAsync = async (width: number = 1920, height: number = 1
   // Run the D function with increasing time values, yielding periodically
   for (let i = 0; i < 576; i++) {
     D(i / 60);
-    // Yield every 5 iterations to let React render (very frequent to stay responsive)
-    if (i > 0 && i % 5 === 0) {
-      await new Promise(resolve => setTimeout(resolve, 0));
+    // Yield every 10 iterations using requestIdleCallback for better performance
+    if (i > 0 && i % 200 === 0) {
+      await new Promise(resolve => {
+        if ('requestIdleCallback' in window) {
+          requestIdleCallback(() => resolve(undefined), { timeout: 50 });
+        } else {
+          setTimeout(resolve, 0);
+        }
+      });
     }
   }
   
@@ -122,18 +128,11 @@ export async function generateWoodTexture(): Promise<string> {
 
   // Create and cache the promise to prevent duplicate generations
   woodTexturePromise = (async () => {
-    const startTime = performance.now();
-    
     // Yield control immediately to let React render first
     await new Promise(resolve => setTimeout(resolve, 0));
     
     const dataUrl = await generateWoodTextureAsync(1920, 1080);
     woodTextureDataUrl = dataUrl;
-    
-    const endTime = performance.now();
-    const generationTime = endTime - startTime;
-    
-    console.log('Wood texture generated and cached in', generationTime.toFixed(2), 'ms');
     
     // Log completion
     
@@ -152,11 +151,9 @@ const WoodTexture: React.FC<WoodTextureProps> = ({
   onTextureReady 
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [textureReady, setTextureReady] = useState<boolean>(false);
 
   useEffect(() => {
     generateWoodTexture().then((dataUrl) => {
-      setTextureReady(true);
       if (onTextureReady) {
         onTextureReady(dataUrl);
       }

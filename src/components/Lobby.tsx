@@ -122,11 +122,9 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
                         fontSize: '12px',
                         border: '3px solid #5D3A1A',
                         borderRadius: '0',
-                        color: '#ffffff',
                         fontWeight: 'bold',
                         cursor: 'pointer',
                         transition: 'all 0.2s ease',
-                        textShadow: '2px 2px 4px rgba(0,0,0,0.9)',
                         boxShadow: `inset 0 1px 0 rgba(255,255,255,0.2), inset 0 -1px 0 rgba(0,0,0,0.3), 0 2px 4px rgba(0,0,0,0.4)`,
                         position: 'relative' as const,
                         overflow: 'hidden' as const,
@@ -137,7 +135,11 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
                     onMouseLeave={(e) => {
                         Object.assign(e.currentTarget.style, woodButtonStyle);
                     }}
-                >Ready</button> : '🔴'}
+                ><span style={{
+                    color: 'rgba(70, 35, 20, 0.8)',
+                    mixBlendMode: 'color-burn',
+                    filter: 'contrast(1.2) brightness(0.9) blur(.3px)',
+                }}>Ready</span></button> : '🔴'}
                 {player.is_ai && gameStatus === 'waiting' && onRemoveBot && game?.self && (
                     <button
                         onClick={(e) => {
@@ -172,12 +174,16 @@ export const Lobby = () => {
     const woodInputBaseStyle = useWoodStyle(0.8);
     const woodQRBaseStyle = useWoodStyle(0.3);
     
-    const woodButtonStyle = useMemo(() => woodButtonBaseStyle, [woodButtonBaseStyle]);
+    const woodButtonStyle = useMemo(() => ({
+        ...woodButtonBaseStyle,
+        mixBlendMode: 'normal' as const,
+    }), [woodButtonBaseStyle]);
     const woodButtonHoverStyle = useMemo(() => ({ 
         ...woodButtonBaseStyle, 
         filter: 'brightness(1.1) contrast(1.1)', 
         transform: 'translateY(-1px)',
-        boxShadow: `inset 0 2px 0 rgba(255,255,255,0.3), inset 0 -2px 0 rgba(0,0,0,0.4), 0 4px 8px rgba(0,0,0,0.5)`
+        boxShadow: `inset 0 2px 0 rgba(255,255,255,0.3), inset 0 -2px 0 rgba(0,0,0,0.4), 0 4px 8px rgba(0,0,0,0.5)`,
+        mixBlendMode: 'normal' as const,
     }), [woodButtonBaseStyle]);
     const woodInputStyle = useMemo(() => woodInputBaseStyle, [woodInputBaseStyle]);
     const woodQRStyle = useMemo(() => woodQRBaseStyle, [woodQRBaseStyle]);
@@ -491,11 +497,9 @@ export const Lobby = () => {
                             fontSize: '16px',
                             border: '3px solid #5D3A1A',
                             borderRadius: '0',
-                            color: '#ffffff',
                             fontWeight: 'bold',
                             cursor: 'pointer',
                             transition: 'all 0.2s ease',
-                            textShadow: '2px 2px 4px rgba(0,0,0,0.9)',
                             boxShadow: `inset 0 1px 0 rgba(255,255,255,0.2), inset 0 -1px 0 rgba(0,0,0,0.3), 0 2px 4px rgba(0,0,0,0.4)`,
                             position: 'relative' as const,
                             overflow: 'hidden' as const,
@@ -507,7 +511,11 @@ export const Lobby = () => {
                             Object.assign(e.currentTarget.style, woodButtonStyle);
                         }}
                     >
-                        Add Bot
+                        <span style={{
+                            color: 'rgba(70, 35, 20, 0.8)',
+                            mixBlendMode: 'color-burn',
+                            filter: 'contrast(1.2) brightness(0.9) blur(.3px)',
+                        }}>Add Bot</span>
                     </button>
                 )}
                 
@@ -521,11 +529,9 @@ export const Lobby = () => {
                             fontSize: '16px',
                             border: '3px solid #5D3A1A',
                             borderRadius: '0',
-                            color: '#ffffff',
                             fontWeight: 'bold',
                             cursor: 'pointer',
                             transition: 'all 0.2s ease',
-                            textShadow: '2px 2px 4px rgba(0,0,0,0.9)',
                             boxShadow: `inset 0 1px 0 rgba(255,255,255,0.2), inset 0 -1px 0 rgba(0,0,0,0.3), 0 2px 4px rgba(0,0,0,0.4)`,
                             position: 'relative' as const,
                             overflow: 'hidden' as const,
@@ -537,7 +543,11 @@ export const Lobby = () => {
                             Object.assign(e.currentTarget.style, woodButtonStyle);
                         }}
                     >
-                        Exit Game
+                        <span style={{
+                            color: 'rgba(70, 35, 20, 0.8)',
+                            mixBlendMode: 'color-burn',
+                            filter: 'contrast(1.2) brightness(0.9) blur(.3px)',
+                        }}>Exit Game</span>
                     </button>
                 ) : game.players.length < MAX_PLAYERS && (
                     <button 
@@ -548,11 +558,9 @@ export const Lobby = () => {
                             fontSize: '16px',
                             border: '3px solid #5D3A1A',
                             borderRadius: '0',
-                            color: '#ffffff',
                             fontWeight: 'bold',
                             cursor: 'pointer',
                             transition: 'all 0.2s ease',
-                            textShadow: '2px 2px 4px rgba(0,0,0,0.9)',
                             boxShadow: `inset 0 1px 0 rgba(255,255,255,0.2), inset 0 -1px 0 rgba(0,0,0,0.3), 0 2px 4px rgba(0,0,0,0.4)`,
                             position: 'relative' as const,
                             overflow: 'hidden' as const,
@@ -564,7 +572,11 @@ export const Lobby = () => {
                             Object.assign(e.currentTarget.style, woodButtonStyle);
                         }}
                     >
-                        Join Game
+                        <span style={{
+                            color: 'rgba(70, 35, 20, 0.8)',
+                            mixBlendMode: 'color-burn',
+                            filter: 'contrast(1.2) brightness(0.9) blur(.3px)',
+                        }}>Join Game</span>
                     </button>
                 )}
             </div>

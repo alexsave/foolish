@@ -125,9 +125,7 @@ export const ActionButtons = () => {
                     width: '60px',
                     height: '40px',
                     fontSize: '12px',
-                    color: 'white',
                     fontWeight: 'bold',
-                    textShadow: '2px 2px 4px rgba(0,0,0,0.9)',
                     border: '2px solid #5D3A1A',
                     borderRadius: '0',
                     cursor: 'pointer',
@@ -137,7 +135,8 @@ export const ActionButtons = () => {
                         inset 0 1px 0 rgba(255,255,255,0.2),
                         inset 0 -1px 0 rgba(0,0,0,0.3),
                         0 2px 4px rgba(0,0,0,0.4)`,
-                    transition: 'all 0.2s ease'
+                    transition: 'all 0.2s ease',
+                    mixBlendMode: 'normal' as const,
                 }}
                 onMouseEnter={(e) => {
                     e.currentTarget.style.filter = 'brightness(1.1) contrast(1.1)';
@@ -153,7 +152,11 @@ export const ActionButtons = () => {
                     console.error(e.message);
                 })}
             >
-                Pickup
+                <span style={{
+                    color: 'rgba(70, 35, 20, 0.8)',
+                    mixBlendMode: 'color-burn',
+                    filter: 'contrast(1.2) brightness(0.9) blur(.3px)',
+                }}>Pickup</span>
             </button>
             }
 
@@ -164,9 +167,7 @@ export const ActionButtons = () => {
                     width: '60px',
                     height: '40px',
                     fontSize: '12px',
-                    color: 'white',
                     fontWeight: 'bold',
-                    textShadow: '2px 2px 4px rgba(0,0,0,0.9)',
                     border: '2px solid #5D3A1A',
                     borderRadius: '0',
                     cursor: 'pointer',
@@ -176,7 +177,8 @@ export const ActionButtons = () => {
                         inset 0 1px 0 rgba(255,255,255,0.2),
                         inset 0 -1px 0 rgba(0,0,0,0.3),
                         0 2px 4px rgba(0,0,0,0.4)`,
-                    transition: 'all 0.2s ease'
+                    transition: 'all 0.2s ease',
+                    mixBlendMode: 'normal' as const,
                 }}
                 onMouseEnter={(e) => {
                     e.currentTarget.style.filter = 'brightness(1.1) contrast(1.1)';
@@ -192,7 +194,11 @@ export const ActionButtons = () => {
                     console.error(e.message);
                 })}
             >
-                Good
+                <span style={{
+                    color: 'rgba(70, 35, 20, 0.8)',
+                    mixBlendMode: 'color-burn',
+                    filter: 'contrast(1.2) brightness(0.9) blur(.3px)',
+                }}>Good</span>
             </button>
             }
         </div>

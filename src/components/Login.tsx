@@ -15,11 +15,9 @@ export const Login = () => {
     ...woodStyle1, // Random position seed 0.4
     border: '3px solid #5D3A1A', // Darker wood border color
     borderRadius: '0', // Sharp 90-degree corners
-    color: '#ffffff',
     fontWeight: 'bold',
     cursor: 'pointer',
     transition: 'all 0.2s ease',
-    textShadow: '2px 2px 4px rgba(0,0,0,0.9)',
     boxShadow: `
         inset 0 1px 0 rgba(255,255,255,0.2),
         inset 0 -1px 0 rgba(0,0,0,0.3),
@@ -29,17 +27,16 @@ export const Login = () => {
     padding: '10px 20px',
     fontSize: '16px',
     marginRight: '10px',
+    mixBlendMode: 'normal' as const,
   };
 
   const woodButtonStyle2: React.CSSProperties = {
     ...woodStyle2, // Different random position seed 0.9
     border: '3px solid #5D3A1A', // Darker wood border color
     borderRadius: '0', // Sharp 90-degree corners
-    color: '#ffffff',
     fontWeight: 'bold',
     cursor: 'pointer',
     transition: 'all 0.2s ease',
-    textShadow: '2px 2px 4px rgba(0,0,0,0.9)',
     boxShadow: `
         inset 0 1px 0 rgba(255,255,255,0.2),
         inset 0 -1px 0 rgba(0,0,0,0.3),
@@ -48,6 +45,7 @@ export const Login = () => {
     overflow: 'hidden' as const,
     padding: '10px 20px',
     fontSize: '16px',
+    mixBlendMode: 'normal' as const,
   };
 
   const woodButtonHoverStyle: React.CSSProperties = {
@@ -58,6 +56,7 @@ export const Login = () => {
         inset 0 2px 0 rgba(255,255,255,0.3),
         inset 0 -2px 0 rgba(0,0,0,0.4),
         0 4px 8px rgba(0,0,0,0.5)`,
+    mixBlendMode: 'normal' as const,
   };
 
   const woodButtonHoverStyle2: React.CSSProperties = {
@@ -68,6 +67,7 @@ export const Login = () => {
         inset 0 2px 0 rgba(255,255,255,0.3),
         inset 0 -2px 0 rgba(0,0,0,0.4),
         0 4px 8px rgba(0,0,0,0.5)`,
+    mixBlendMode: 'normal' as const,
   };
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -129,7 +129,11 @@ export const Login = () => {
             Object.assign(e.currentTarget.style, woodButtonStyle);
           }}
         >
-          Login
+          <span style={{
+            color: 'rgba(70, 35, 20, 0.8)',
+            mixBlendMode: 'color-burn',
+            filter: 'contrast(1.2) brightness(0.9) blur(.3px)',
+          }}>Login</span>
         </button>
         <button 
           type="button" 
@@ -142,7 +146,11 @@ export const Login = () => {
             Object.assign(e.currentTarget.style, woodButtonStyle2);
           }}
         >
-          Sign Up
+          <span style={{
+            color: 'rgba(70, 35, 20, 0.8)',
+            mixBlendMode: 'color-burn',
+            filter: 'contrast(1.2) brightness(0.9) blur(.3px)',
+          }}>Sign Up</span>
         </button>
       </form>
     </div>

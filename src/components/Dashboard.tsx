@@ -22,42 +22,42 @@ export const Dashboard = () => {
         ...woodBase1,
         border: '3px solid #5D3A1A',
         borderRadius: '0',
-        color: '#ffffff',
         fontWeight: 'bold',
         cursor: 'pointer',
         transition: 'all 0.2s ease',
-        textShadow: '2px 2px 4px rgba(0,0,0,0.9)',
         boxShadow: `inset 0 1px 0 rgba(255,255,255,0.2), inset 0 -1px 0 rgba(0,0,0,0.3), 0 2px 4px rgba(0,0,0,0.4)`,
         position: 'relative' as const,
         overflow: 'hidden' as const,
+        mixBlendMode: 'normal' as const,
     }), [woodBase1]);
     
     const woodButtonHoverStyle = useMemo(() => ({
         ...woodButtonStyle,
         filter: 'brightness(1.1) contrast(1.1)',
         transform: 'translateY(-1px)',
-        boxShadow: `inset 0 2px 0 rgba(255,255,255,0.3), inset 0 -2px 0 rgba(0,0,0,0.4), 0 4px 8px rgba(0,0,0,0.5)`
+        boxShadow: `inset 0 2px 0 rgba(255,255,255,0.3), inset 0 -2px 0 rgba(0,0,0,0.4), 0 4px 8px rgba(0,0,0,0.5)`,
+        mixBlendMode: 'normal' as const,
     }), [woodButtonStyle]);
     
     const woodButtonStyle2 = useMemo(() => ({
         ...woodBase2,
         border: '3px solid #5D3A1A',
         borderRadius: '0',
-        color: '#ffffff',
         fontWeight: 'bold',
         cursor: 'pointer',
         transition: 'all 0.2s ease',
-        textShadow: '2px 2px 4px rgba(0,0,0,0.9)',
         boxShadow: `inset 0 1px 0 rgba(255,255,255,0.2), inset 0 -1px 0 rgba(0,0,0,0.3), 0 2px 4px rgba(0,0,0,0.4)`,
         position: 'relative' as const,
         overflow: 'hidden' as const,
+        mixBlendMode: 'normal' as const,
     }), [woodBase2]);
     
     const woodButtonHoverStyle2 = useMemo(() => ({
         ...woodButtonStyle2,
         filter: 'brightness(1.1) contrast(1.1)',
         transform: 'translateY(-1px)',
-        boxShadow: `inset 0 2px 0 rgba(255,255,255,0.3), inset 0 -2px 0 rgba(0,0,0,0.4), 0 4px 8px rgba(0,0,0,0.5)`
+        boxShadow: `inset 0 2px 0 rgba(255,255,255,0.3), inset 0 -2px 0 rgba(0,0,0,0.4), 0 4px 8px rgba(0,0,0,0.5)`,
+        mixBlendMode: 'normal' as const,
     }), [woodButtonStyle2]);
     
     const woodInputStyle = useMemo(() => ({
@@ -157,7 +157,11 @@ export const Dashboard = () => {
                         }
                     }}
                 >
-                    Join
+                    <span style={{
+                        color: 'rgba(70, 35, 20, 0.8)',
+                        mixBlendMode: 'color-burn',
+                        filter: 'contrast(1.2) brightness(0.9) blur(.3px)',
+                    }}>Join</span>
                 </button>
             </form>
             
@@ -187,7 +191,11 @@ export const Dashboard = () => {
                     Object.assign(e.currentTarget.style, woodButtonStyle2);
                 }}
             >
-                Create New Game
+                <span style={{
+                    color: 'rgba(70, 35, 20, 0.8)',
+                    mixBlendMode: 'color-burn',
+                    filter: 'contrast(1.2) brightness(0.9) blur(.3px)',
+                }}>Create New Game</span>
             </button>
         </div>
 

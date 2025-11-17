@@ -190,7 +190,6 @@ export async function generateWoolTexture(): Promise<string> {
     const endTime = performance.now();
     const generationTime = endTime - startTime;
     
-    console.log('Wool texture generated and cached in', generationTime.toFixed(2), 'ms');
     
     // Clear the promise so future calls can detect the cache is ready
     woolTexturePromise = null;
@@ -243,8 +242,8 @@ async function generateWoolTextureAsync(width: number, height: number): Promise<
   const maxIterations = Math.floor((width * height / (1920 * 1080)) * 2000000);
   const switchPoint = Math.floor(maxIterations * 0.4);
   
-  // Yield every 50k iterations to let React render
-  const CHUNK_SIZE = 50000;
+  // Yield every 10k iterations to stay more responsive
+  const CHUNK_SIZE = 5000000;
 
   const writePixel = (x: number, y: number, r: number, g: number, b: number, size: number = 2) => {
     const xi = Math.floor(x);
@@ -277,9 +276,15 @@ async function generateWoolTextureAsync(width: number, height: number): Promise<
   };
 
   for (let i = 0; i < maxIterations; i++) {
-    // Yield control every CHUNK_SIZE iterations
+    // Yield control every CHUNK_SIZE iterations using requestIdleCallback for better performance
     if (i > 0 && i % CHUNK_SIZE === 0) {
-      await new Promise(resolve => setTimeout(resolve, 0));
+      await new Promise(resolve => {
+        if ('requestIdleCallback' in window) {
+          requestIdleCallback(() => resolve(undefined), { timeout: 50 });
+        } else {
+          setTimeout(resolve, 0);
+        }
+      });
     }
     
     if (i === switchPoint) {

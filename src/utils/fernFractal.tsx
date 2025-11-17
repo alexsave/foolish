@@ -126,9 +126,6 @@ function executeTransformStep(
     }
 }
 
-// TEMPORARY DISABLE FLAG - Set to false to re-enable complex fern fractal
-const FERN_TEXTURE_DISABLED = false;
-
 // Global cache for the fractal pattern
 let cachedFernPattern: string | null = null;
 let fernPatternPromise: Promise<string> | null = null;
@@ -156,45 +153,20 @@ export async function generateFernPattern(
     params?: FernParameters
 ): Promise<string> {
     
-    // TEMPORARY DISABLE: Skip complex fractal generation to prevent Safari iOS crashes
-    if (FERN_TEXTURE_DISABLED) {
-        console.log('Fern pattern disabled - using simple green background');
-        // Create a simple green canvas instead of complex fractal
-        const canvas = document.createElement('canvas');
-        canvas.width = 200 * 5;
-        canvas.height = 280 * 5;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-            // Simple green gradient background
-            const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
-            gradient.addColorStop(0, '#2d5016');
-            gradient.addColorStop(1, '#1a3009');
-            ctx.fillStyle = gradient;
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-        }
-        return Promise.resolve(canvas.toDataURL('image/png'));
-    }
-    
-    
     // Return cached pattern if available  
     if (cachedFernPattern) {
-        console.log('Using cached fern pattern');
         return Promise.resolve(cachedFernPattern);
     }
     
     // Return existing promise if generation is already in progress
     if (fernPatternPromise) {
-        console.log('Fern pattern generation already in progress, reusing promise');
         return fernPatternPromise;
     }
-    
-    console.log('Generating new fern pattern...');
-    
+        
     // Log the start of fern pattern generation
     
     // Create and cache the promise to prevent duplicate generations
     fernPatternPromise = (async () => {
-        const startTime = performance.now();
         
         // Yield control immediately to let React render first
         await new Promise(resolve => setTimeout(resolve, 0));
@@ -272,7 +244,7 @@ export async function generateFernPattern(
         // Main iteration loop with yielding
         for (let i = 0; i < render.iterations; i++) {
             // Yield every 100000 iterations to let React render
-            if (i > 0 && i % 100000 === 0) {
+            if (i > 0 && i % 1000000 === 0) {
                 await new Promise(resolve => setTimeout(resolve, 0));
             }
             
@@ -363,10 +335,6 @@ export async function generateFernPattern(
         // Convert canvas to data URL and cache it
         const dataUrl = canvas.toDataURL('image/png');
         cachedFernPattern = dataUrl;
-        const endTime = performance.now();
-        const generationTime = endTime - startTime;
-        
-        console.log('Fern pattern generated and cached in', generationTime.toFixed(2), 'ms');
         
         // Clear the promise so future calls can detect the cache is ready
         fernPatternPromise = null;
@@ -406,16 +374,13 @@ export const FernFractalProvider: React.FC<{ children: React.ReactNode }> = ({ c
     }
 
     generationRequestedRef.current = true;
-    console.log('FernFractalProvider: Generating fractal pattern on demand...');
     
     generateFernPattern()
       .then((dataUrl: string) => {
-        console.log('FernFractalProvider: Pattern generated and ready');
         setFernPattern(dataUrl);
         setIsLoading(false);
       })
       .catch((error: any) => {
-        console.error('FernFractalProvider: Error generating pattern:', error);
         setIsLoading(false);
       });
   }, []);
