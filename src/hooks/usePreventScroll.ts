@@ -1,14 +1,8 @@
 import { useEffect } from "react";
-import { errorLogger } from "../utils/errorLogger";
 
 export const usePreventScroll = () => {
     useEffect(() => {
         try {
-            errorLogger.logCustomError('usePreventScroll - Hook Initialize', new Error('Initializing touch event handlers'), {
-                userAgent: navigator.userAgent,
-                touchPoints: navigator.maxTouchPoints,
-                platform: navigator.platform,
-            });
         // Handle touchstart events to prevent unwanted gestures
         const handleTouchStart = (e: TouchEvent) => {
             try {
@@ -41,10 +35,6 @@ export const usePreventScroll = () => {
                     e.preventDefault();
                 }
             } catch (error) {
-                errorLogger.logCustomError('usePreventScroll - TouchStart Error', error as Error, {
-                    touchCount: e.touches?.length,
-                    targetTag: (e.target as HTMLElement)?.tagName,
-                });
             }
         };
 
@@ -76,10 +66,6 @@ export const usePreventScroll = () => {
                 // Prevent all other touch movements (background scrolling/panning)
                 e.preventDefault();
             } catch (error) {
-                errorLogger.logCustomError('usePreventScroll - TouchMove Error', error as Error, {
-                    touchCount: e.touches?.length,
-                    targetTag: (e.target as HTMLElement)?.tagName,
-                });
             }
         };
 
@@ -103,10 +89,6 @@ export const usePreventScroll = () => {
                     e.preventDefault();
                 }
             } catch (error) {
-                errorLogger.logCustomError('usePreventScroll - TouchEnd Error', error as Error, {
-                    changedTouchCount: e.changedTouches?.length,
-                    targetTag: (e.target as HTMLElement)?.tagName,
-                });
             }
         };
 
@@ -115,26 +97,13 @@ export const usePreventScroll = () => {
             document.addEventListener("touchmove", handleTouchMove, { passive: false });
             document.addEventListener("touchend", handleTouchEnd, { passive: false });
 
-            errorLogger.logCustomError('usePreventScroll - Listeners Added', new Error('Touch event listeners attached'), {
-                listenerCount: 3,
-            });
-
             // Cleanup function
             return () => {
-                try {
                     document.removeEventListener("touchstart", handleTouchStart);
                     document.removeEventListener("touchmove", handleTouchMove);
                     document.removeEventListener("touchend", handleTouchEnd);
-
-                    errorLogger.logCustomError('usePreventScroll - Cleanup', new Error('Touch event listeners removed'), {
-                        listenerCount: 3,
-                    });
-                } catch (error) {
-                    errorLogger.logCustomError('usePreventScroll - Cleanup Error', error as Error);
-                }
             };
         } catch (error) {
-            errorLogger.logCustomError('usePreventScroll - Hook Setup Error', error as Error);
         }
     }, []);
 }

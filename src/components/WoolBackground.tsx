@@ -1,10 +1,8 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 
-interface WoolBackgroundProps {
-  width?: number;
-  height?: number;
-  useFixed?: boolean;
-}
+// Global cache for wool texture to prevent regeneration
+let woolTextureDataUrl: string | null = null;
+let woolTexturePromise: Promise<string> | null = null;
 
 // Generate random offsets once per page load
 let globalRandomOffsetX: number | null = null;
@@ -19,21 +17,22 @@ const getRandomOffsets = () => {
   return { offsetX: globalRandomOffsetX, offsetY: globalRandomOffsetY };
 };
 
-const WoolBackground: React.FC<WoolBackgroundProps> = ({ 
-  width = 3840, // Large base size for 4K displays
-  height = 2160,
-  useFixed = true
-}) => {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [isGenerating, setIsGenerating] = useState<boolean>(false);
-  const hasRendered = useRef<boolean>(false);
+// Shared function to generate wool texture
+const generateWoolTextureSync = (width: number = 3840, height: number = 2160): string => {
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  
+  if (!ctx) {
+    return '';
+  }
 
   // Dwitter shortcuts translated to JavaScript
   const C = Math.cos;
   const S = Math.sin;
   const T = Math.tan;
 
-    const generateWoolTexture = (ctx: CanvasRenderingContext2D) => {
         // Optimized wool texture using ImageData for direct pixel manipulation
         const imageData = ctx.createImageData(width, height);
         const data = new Uint8ClampedArray(imageData.data.buffer);
@@ -159,198 +158,230 @@ const WoolBackground: React.FC<WoolBackgroundProps> = ({
         
         // Single canvas operation - write all pixels at once
         ctx.putImageData(imageData, 0, 0);
-    };
+  
+  // Convert to data URL
+  return canvas.toDataURL('image/png', 1.0);
+};
 
-  const drawFractalBranch = (ctx: CanvasRenderingContext2D, xPos: number, yPos: number, size: number, rotationFactor: number, pointIndex: number) => {
-    // Base case: If the branch size is small enough, draw a dot and stop
-    if (size <= 1) {
-      // Scale and center the final coordinates on the screen - adjusted for native 2x scale
-      const screenX = 4 * xPos * (width / 640) + width / 2; // Doubled from 2 to 4
-      const screenY = 4 * yPos * (height / 1080) + height / 2; // Doubled from 2 to 4
-      
-      // Draw a bigger point for 2x scale
-      ctx.fillRect(screenX, screenY, 0.6, 2); // Doubled from 0.3, 1 to 0.6, 2
-    } else {
-      // Recursive step: calculate the next segment
-      drawFractalBranch(
-        ctx,
-        // New X position calculation
-        yPos + size * Math.tan(size / 300 + rotationFactor * pointIndex) * Math.sin(rotationFactor * pointIndex),
-        // New Y position is the old X position
-        xPos,
-        // The size is halved for the next segment
-        size / 2,
-        // The rotation factor is scaled up
-        rotationFactor / 0.4,
-        pointIndex
-      );
-    }
+// Async generator function with chunked processing to yield control
+export async function generateWoolTexture(): Promise<string> {
+  // Return cached texture if available
+  if (woolTextureDataUrl) {
+    console.log('Using cached wool texture');
+    return Promise.resolve(woolTextureDataUrl);
+  }
+
+  // Return existing promise if generation is already in progress
+  if (woolTexturePromise) {
+    console.log('Wool texture generation already in progress, reusing promise');
+    return woolTexturePromise;
+  }
+
+  console.log('Generating new wool texture (async with yielding)...');
+  
+  // Create and cache the promise to prevent duplicate generations
+  woolTexturePromise = (async () => {
+    const startTime = performance.now();
+    
+    // Yield control immediately to let React render first
+    await new Promise(resolve => setTimeout(resolve, 0));
+    
+    const dataUrl = await generateWoolTextureAsync(3840, 2160);
+    woolTextureDataUrl = dataUrl;
+    
+    const endTime = performance.now();
+    const generationTime = endTime - startTime;
+    
+    console.log('Wool texture generated and cached in', generationTime.toFixed(2), 'ms');
+    
+    // Clear the promise so future calls can detect the cache is ready
+    woolTexturePromise = null;
+    
+    return dataUrl;
+  })();
+
+  return woolTexturePromise;
+}
+
+// Async version that yields control periodically
+async function generateWoolTextureAsync(width: number, height: number): Promise<string> {
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  
+  if (!ctx) {
+    return '';
+  }
+
+  const C = Math.cos;
+  const S = Math.sin;
+  const T = Math.tan;
+
+  const imageData = ctx.createImageData(width, height);
+  const data = new Uint8ClampedArray(imageData.data.buffer);
+  
+  // Pre-fill with brown base color
+  const BASE_R = 113;
+  const BASE_G = 65;
+  const BASE_B = 27;
+  for (let i = 0; i < data.length; i += 4) {
+    data[i] = BASE_R;
+    data[i + 1] = BASE_G;
+    data[i + 2] = BASE_B;
+    data[i + 3] = 255;
+  }
+  
+  const { offsetX, offsetY } = getRandomOffsets();
+
+  let r = 0;
+  const zValue = () => {
+    const cr = C(r) * 1000;
+    return cr - Math.floor(cr);
   };
+  let h = 1;
+  let u = 0;
 
-  const drawWearPattern = (ctx: CanvasRenderingContext2D) => {
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.12)'; // Toned down wear marks
-    let animationTime = 0.1;
+  const maxIterations = Math.floor((width * height / (1920 * 1080)) * 2000000);
+  const switchPoint = Math.floor(maxIterations * 0.4);
+  
+  // Yield every 50k iterations to let React render
+  const CHUNK_SIZE = 50000;
 
-    // Add wear pattern layers - reduced for subtlety
-    for (let t = 0; t < 800; t++) { // Much fewer iterations
-      animationTime += 0.01;
-
-      // Draw fractal structures for wear
-      for (let pointIndex = 0; pointIndex < 1000; pointIndex++) { // Fewer points for subtler pattern
-        drawFractalBranch(ctx, 0, 0, 240, animationTime, pointIndex);
+  const writePixel = (x: number, y: number, r: number, g: number, b: number, size: number = 2) => {
+    const xi = Math.floor(x);
+    const yi = Math.floor(y);
+    const sizeInt = Math.ceil(size);
+    
+    const fx = x - xi;
+    const fy = y - yi;
+    
+    for (let dy = 0; dy < sizeInt; dy++) {
+      for (let dx = 0; dx < sizeInt; dx++) {
+        const px = xi + dx;
+        const py = yi + dy;
+        if (px >= 0 && px < width && py >= 0 && py < height) {
+          const idx = (py * width + px) << 2;
+          
+          const distX = Math.abs(dx - fx);
+          const distY = Math.abs(dy - fy);
+          const edgeSoftness = Math.max(0.1, 1 - (distX + distY) / 4);
+          const alpha = edgeSoftness * 0.99;
+          const invAlpha = 1 - alpha;
+          
+          data[idx] = data[idx] * invAlpha + r * alpha;
+          data[idx + 1] = data[idx + 1] * invAlpha + g * alpha;
+          data[idx + 2] = data[idx + 2] * invAlpha + b * alpha;
+          data[idx + 3] = 255;
+        }
       }
     }
   };
 
-  const applySpeckleNoise = (ctx: CanvasRenderingContext2D) => {
-    const imgData = ctx.getImageData(0, 0, width, height);
-    const data = imgData.data;
-    const totalPixels = width * height;
-    const speckleCount = totalPixels * 0.15; // 15% of pixels get speckles (much more visible)
-
-    for (let i = 0; i < speckleCount; i++) {
-      const p = (Math.random() * totalPixels) | 0; // Random pixel index
-      const idx = p * 4; // RGBA start index
-      const delta = Math.random() < 0.5 ? -40 : 40; // Much stronger brightness change
-
-      data[idx] = Math.max(0, Math.min(255, data[idx] + delta));     // R
-      data[idx + 1] = Math.max(0, Math.min(255, data[idx + 1] + delta)); // G
-      data[idx + 2] = Math.max(0, Math.min(255, data[idx + 2] + delta)); // B
+  for (let i = 0; i < maxIterations; i++) {
+    // Yield control every CHUNK_SIZE iterations
+    if (i > 0 && i % CHUNK_SIZE === 0) {
+      await new Promise(resolve => setTimeout(resolve, 0));
     }
-    ctx.putImageData(imgData, 0, 0);
-  };
-
-  const applyVignette = (ctx: CanvasRenderingContext2D) => {
-    // Create radial gradient for vignette - back to normal since no CSS scaling
-    const centerX = width / 2;
-    const centerY = height / 2;
-    const radius = Math.max(width, height) * 0.7; // Normal radius for natural vignette
     
-    const gradient = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, radius);
-    gradient.addColorStop(0, 'rgba(0, 0, 0, 0)');
-    gradient.addColorStop(0.4, 'rgba(0, 0, 0, 0.05)'); // Natural progression
-    gradient.addColorStop(0.7, 'rgba(0, 0, 0, 0.3)'); 
-    gradient.addColorStop(1, 'rgba(0, 0, 0, 0.8)'); // Strong but natural edge darkening
-    
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, width, height);
-  };
+    if (i === switchPoint) {
+      h = 0;
+      r = 0;
+    }
 
-    const renderCanvas = async () => {
-        console.log('renderCanvas for wool background');
-        const canvas = canvasRef.current;
-        if (!canvas) return;
+    if (h) {
+      // Horizontal wool fiber phase
+      if (i % width === 0) {
+        u = zValue() * 500 + 100;
+        r += 5;
+      }
+      
+      const phase = S(i / u);
+      const dx = S(i - 1) + phase * 6;
+      
+      const zVal = zValue();
+      const red = ((T((Math.floor((r + offsetX) / 80 + zVal / 4)) ^ (Math.floor((i % height + offsetY) / 80)))) > 0.3) ? 100 : 0;
+      
+      const colorR = (209 + 46 * phase + red) | 0;
+      const colorG = (208 + 45 * phase - red) | 0;
+      const colorB = (183 + 53 * phase - red / 2) | 0;
+      
+      const x = r + dx;
+      const y = i % height;
+      
+      if (x >= 0 && x < width && y >= 0 && y < height) {
+        writePixel(x, y, colorR, colorG, colorB, 2);
+      }
+    } else {
+      // Vertical wool fiber phase
+      if (i % height === 0) {
+        u = zValue() * 500 + 100;
+        r += 3;
+      }
+      
+      const phase = S(i / u);
+      const zVal = zValue();
+      const red = ((T((Math.floor((r + offsetY) / 80 + zVal / 4)) ^ (Math.floor((i % width + offsetX) / 80)))) > 0.3) ? 100 : 0;
+      const dx = 4 * S(i - 1) + S(i / u) * 4;
+      
+      const colorR = (189 + 46 * phase + red) | 0;
+      const colorG = (188 + 45 * phase - red) | 0;
+      const colorB = (163 + 53 * phase - red / 2) | 0;
+      
+      const x = i % width;
+      const y = r + dx;
+      const pixelWidth = 1.4 * (phase + 1.7);
+      
+      if (x >= 0 && x < width && y >= 0 && y < height) {
+        writePixel(x, y, colorR, colorG, colorB, pixelWidth);
+      }
+    }
+  }
+  
+  ctx.putImageData(imageData, 0, 0);
+  return canvas.toDataURL('image/png', 1.0);
+}
 
-        // TEMPORARY DISABLE: Skip complex texture generation to prevent Safari iOS crashes
-        // TODO: Remove this early return when ready to re-enable wool texture
-
-        // Prevent double generation
-        if (hasRendered.current || isGenerating) {
-            console.log('Skipping render - already generated or generating');
-            return;
-        }
-
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
-
-        console.log('Starting wool texture generation with random pattern...');
-        
-        const startTime = performance.now();
-        hasRendered.current = true;
-
-        // Base wool color
-        ctx.fillStyle = '#71411b';
-        ctx.fillRect(0, 0, width, height);
-
-        setIsGenerating(true);
-        
-        // Generate wool texture pattern directly to canvas (no memory-hungry array!)
-        generateWoolTexture(ctx);
-
-        // Add enhancement layers after main texture with visible delays
-        console.log('Adding fractal wear pattern...');
-        //await new Promise(resolve => setTimeout(resolve, 500)); // 500ms delay
-        //drawWearPattern(ctx);
-        
-        console.log('Adding speckle noise...');
-        //await new Promise(resolve => setTimeout(resolve, 500)); // 500ms delay
-        //applySpeckleNoise(ctx);
-        
-        console.log('Adding vignette...');
-        //await new Promise(resolve => setTimeout(resolve, 500)); // 500ms delay
-        //applyVignette(ctx);
-        
-        console.log('Wool texture complete!');
-        
-        const endTime = performance.now();
-        const generationTime = endTime - startTime;
-        
-        setIsGenerating(false);
-        
-        // Defer logging to not block rendering - run async after generation
-        setTimeout(async () => {
-            try {
-                const { errorLogger } = await import('../utils/errorLogger');
-                errorLogger.logCanvasOperation('Wool Background Generation Start', {
-                    canvasWidth: width,
-                    canvasHeight: height,
-                    estimatedMemoryMB: ((width * height * 4) / (1024 * 1024)).toFixed(2),
-                    maxIterations: Math.floor((width * height / (1920 * 1080)) * 2000000),
-                });
-                errorLogger.logCanvasOperation('Wool Background Generation Complete', {
-                    generationTimeMs: generationTime.toFixed(2),
-                    estimatedFinalMemoryMB: ((width * height * 4) / (1024 * 1024)).toFixed(2),
-                    note: 'Optimized with ImageData - direct pixel manipulation',
-                });
-            } catch (e) {
-                console.error('Logging error:', e);
-            }
-        }, 0);
-    };
-
-
+// Hook to get wool texture with lazy loading
+export const useWoolTexture = () => {
+  const [textureUrl, setTextureUrl] = useState<string | null>(woolTextureDataUrl);
 
   useEffect(() => {
-    console.log('useEffect for wool background');
-    renderCanvas();
-  }, [width, height]);
+    if (woolTextureDataUrl) {
+      // If already cached, set it immediately
+      setTextureUrl(woolTextureDataUrl);
+    } else if (woolTexturePromise) {
+      // If generation is in progress, wait for it
+      woolTexturePromise.then(setTextureUrl);
+    } else {
+      // Start generation - the async chunking will handle yielding
+      generateWoolTexture().then(setTextureUrl);
+    }
+  }, []);
 
-  const containerStyle: React.CSSProperties = {
-    position: useFixed ? 'fixed' : 'absolute',
-    top: 0,
-    left: 0,
-    width: useFixed ? '100vw' : '100%',
-    height: useFixed ? '100vh' : '100%',
-    zIndex: useFixed ? -1 : 0,
-  };
-
-  const vignetteStyle: React.CSSProperties = {
-    ...containerStyle,
-    zIndex: (useFixed ? -1 : 0) + 1, // One layer above the wool texture
-    background: `radial-gradient(ellipse at center, 
-      rgba(101, 67, 33, 0) 0%, 
-      rgba(101, 67, 33, 0) 40%, 
-      rgba(101, 67, 33, 0.2) 70%, 
-      rgba(101, 67, 33, 0.6) 100%)`,
-    pointerEvents: 'none'
-  };
-
-    return (
-        <>
-            <canvas
-                ref={canvasRef}
-                width={width}
-                height={height}
-                style={{
-                    ...containerStyle,
-                    objectFit: 'cover',
-                    transform: 'scale(2)',
-                    //transformOrigin: 'center center'
-                }}
-            />
-            <div style={vignetteStyle} />
-        </>
-    );
+  return textureUrl;
 };
 
-export default WoolBackground; 
+
+// Legacy function for non-React contexts (kept for backward compatibility)
+export const getWoolTextureStyle = (): React.CSSProperties => {
+  // Trigger lazy loading if not already generated
+  if (!woolTextureDataUrl && !woolTexturePromise && typeof window !== 'undefined') {
+    generateWoolTexture();
+  }
+
+  if (!woolTextureDataUrl) {
+    return {
+      backgroundColor: '#cac5af',
+    };
+  }
+
+  return {
+    backgroundImage: `url(${woolTextureDataUrl})`,
+    backgroundSize: 'cover',
+    backgroundPosition: 'center',
+    backgroundRepeat: 'no-repeat'
+  };
+};
+
+export default generateWoolTexture;

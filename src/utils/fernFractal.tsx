@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 
 interface FernParameters {
     render: {
@@ -131,6 +131,7 @@ const FERN_TEXTURE_DISABLED = false;
 
 // Global cache for the fractal pattern
 let cachedFernPattern: string | null = null;
+let fernPatternPromise: Promise<string> | null = null;
 
 // Create card-specific parameters for small sizes
 function createCardParams(canvasWidth: number, canvasHeight: number): FernParameters {
@@ -174,8 +175,6 @@ export async function generateFernPattern(
         return Promise.resolve(canvas.toDataURL('image/png'));
     }
     
-    // Import errorLogger dynamically to avoid circular imports
-    const { errorLogger } = await import('./errorLogger');
     
     // Return cached pattern if available  
     if (cachedFernPattern) {
@@ -183,18 +182,23 @@ export async function generateFernPattern(
         return Promise.resolve(cachedFernPattern);
     }
     
+    // Return existing promise if generation is already in progress
+    if (fernPatternPromise) {
+        console.log('Fern pattern generation already in progress, reusing promise');
+        return fernPatternPromise;
+    }
+    
     console.log('Generating new fern pattern...');
     
     // Log the start of fern pattern generation
-    errorLogger.logCanvasOperation('Fern Pattern Generation Start', {
-        canvasWidth: 200 * 5,
-        canvasHeight: 280 * 5,
-        estimatedMemoryMB: ((200 * 5) * (280 * 5) * 4 / (1024 * 1024)).toFixed(2),
-        iterations: params?.render?.iterations || 5000000,
-    });
     
-    return new Promise((resolve) => {
+    // Create and cache the promise to prevent duplicate generations
+    fernPatternPromise = (async () => {
         const startTime = performance.now();
+        
+        // Yield control immediately to let React render first
+        await new Promise(resolve => setTimeout(resolve, 0));
+        
         const canvas = document.createElement('canvas');
         const canvasWidth = 200 * 5;
         const canvasHeight = 280 * 5
@@ -203,8 +207,7 @@ export async function generateFernPattern(
         const ctx = canvas.getContext('2d');
 
         if (!ctx) {
-            resolve('');
-            return;
+            return '';
         }
 
         // Use ImageData for direct pixel manipulation (much faster than fillRect)
@@ -266,8 +269,13 @@ export async function generateFernPattern(
             [x, y] = executeTransformStep(idx, x, y, finalParams);
         }
 
-        // Main iteration loop
+        // Main iteration loop with yielding
         for (let i = 0; i < render.iterations; i++) {
+            // Yield every 10000 iterations to let React render
+            if (i > 0 && i % 10000 === 0) {
+                await new Promise(resolve => setTimeout(resolve, 0));
+            }
+            
             const idx = pickTransformIndex(cumulative);
             [x, y] = executeTransformStep(idx, x, y, finalParams);
 
@@ -358,39 +366,48 @@ export async function generateFernPattern(
         const endTime = performance.now();
         const generationTime = endTime - startTime;
         
-        console.log('Fern pattern generated and cached');
+        console.log('Fern pattern generated and cached in', generationTime.toFixed(2), 'ms');
         
-        // Defer logging to not block rendering
-        setTimeout(async () => {
-            try {
-                errorLogger.logCanvasOperation('Fern Pattern Generation Complete', {
-                  generationTimeMs: generationTime.toFixed(2),
-                  dataUrlSizeKB: (dataUrl.length / 1024).toFixed(2),
-                  totalMemoryEstimateMB: ((dataUrl.length + (canvasWidth * canvasHeight * 4)) / (1024 * 1024)).toFixed(2),
-                });
-            } catch (e) {
-                console.error('Logging error:', e);
-            }
-        }, 0);
+        // Clear the promise so future calls can detect the cache is ready
+        fernPatternPromise = null;
         
-        resolve(dataUrl);
-    });
+        return dataUrl;
+    })();
+    
+    return fernPatternPromise;
 }
 
 // React Context for sharing the fractal pattern
 interface FernFractalContextType {
   fernPattern: string;
   isLoading: boolean;
+  triggerGeneration?: () => void;
 }
 
 const FernFractalContext = createContext<FernFractalContextType | undefined>(undefined);
 
 export const FernFractalProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [fernPattern, setFernPattern] = useState<string>('');
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [fernPattern, setFernPattern] = useState<string>(cachedFernPattern || '');
+  const [isLoading, setIsLoading] = useState<boolean>(!cachedFernPattern);
+  const generationRequestedRef = useRef<boolean>(false);
 
-  useEffect(() => {
-    console.log('FernFractalProvider: Generating fractal pattern...');
+  // Function to trigger generation (called by useFernFractal when component needs it)
+  const triggerGeneration = useCallback(() => {
+    if (cachedFernPattern) {
+      // Already have cached pattern
+      setFernPattern(cachedFernPattern);
+      setIsLoading(false);
+      return;
+    }
+
+    if (generationRequestedRef.current) {
+      // Already requested
+      return;
+    }
+
+    generationRequestedRef.current = true;
+    console.log('FernFractalProvider: Generating fractal pattern on demand...');
+    
     generateFernPattern()
       .then((dataUrl: string) => {
         console.log('FernFractalProvider: Pattern generated and ready');
@@ -404,7 +421,7 @@ export const FernFractalProvider: React.FC<{ children: React.ReactNode }> = ({ c
   }, []);
 
   return (
-    <FernFractalContext.Provider value={{ fernPattern, isLoading }}>
+    <FernFractalContext.Provider value={{ fernPattern, isLoading, triggerGeneration }}>
       {children}
     </FernFractalContext.Provider>
   );
@@ -415,5 +432,13 @@ export const useFernFractal = (): FernFractalContextType => {
   if (context === undefined) {
     throw new Error('useFernFractal must be used within a FernFractalProvider');
   }
+  
+  // Trigger generation on first use
+  useEffect(() => {
+    if (context && context.triggerGeneration) {
+      context.triggerGeneration();
+    }
+  }, [context]);
+  
   return context;
 };

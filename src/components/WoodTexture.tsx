@@ -10,8 +10,8 @@ interface WoodTextureProps {
 let woodTextureDataUrl: string | null = null;
 let woodTexturePromise: Promise<string> | null = null;
 
-// Shared function to generate wood texture with optimized algorithm
-const generateWoodTextureSync = (width: number = 1920, height: number = 1080): string => {
+// Async version that yields control to prevent blocking
+const generateWoodTextureAsync = async (width: number = 1920, height: number = 1080): Promise<string> => {
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
@@ -28,11 +28,10 @@ const generateWoodTextureSync = (width: number = 1920, height: number = 1080): s
   const C = Math.cos;
   
   // Base wood color RGB values
-  const BASE_R = 70; // #8B
-  const BASE_G = 14;  // #45
-  const BASE_B = 9;  // #13
+  const BASE_R = 70;
+  const BASE_G = 14;
+  const BASE_B = 9;
   const ALPHA = 0.1;
-  const INV_ALPHA = 0.9;
   
   // Pre-fill entire buffer with base wood color
   for (let i = 0; i < data.length; i += 4) {
@@ -42,7 +41,7 @@ const generateWoodTextureSync = (width: number = 1920, height: number = 1080): s
     data[i + 3] = 255;
   }
   
-  // Pre-calculate I_factor values for all rows (eliminates 15.5M divisions)
+  // Pre-calculate I_factor values for all rows
   const I_factors = new Float32Array(height);
   for (let I = 0; I < height; I++) {
     I_factors[I] = I * 0.001;
@@ -66,35 +65,38 @@ const generateWoodTextureSync = (width: number = 1920, height: number = 1080): s
         b = C(I_factor+C(b_sq_half)*b + 4) * b - 2.8;
         
         if (b > 0) {
-          // Calculate colors - exactly as in original
+          // Calculate colors
           const red = (b * 120) | 0;
           const green = (b * b * 14) | 0;
           const blue = 9;
           
-          // Write to all 40 pixels in horizontal stripe with soft edges for anti-aliasing
+          // Write to all 40 pixels in horizontal stripe with soft edges
           for (let x = xPos; x < xEnd; x++) {
             const idx = (rowOffset + x) << 2;
             
-            // Calculate edge softness based on distance from center (anti-aliasing)
+            // Calculate edge softness based on distance from center
             const distFromCenter = Math.abs(x - xCenter) / (RECT_WIDTH / 2);
-            const edgeSoftness = Math.max(0.3, 1 - distFromCenter * 0.5); // Soft edges
+            const edgeSoftness = Math.max(0.3, 1 - distFromCenter * 0.5);
             const effectiveAlpha = ALPHA * edgeSoftness;
             const invEffectiveAlpha = 1 - effectiveAlpha;
             
-            // Alpha compositing with soft edges: result = src * alpha + dest * (1 - alpha)
+            // Alpha compositing with soft edges
             data[idx] = red * effectiveAlpha + data[idx] * invEffectiveAlpha;
             data[idx + 1] = green * effectiveAlpha + data[idx + 1] * invEffectiveAlpha;
             data[idx + 2] = blue * effectiveAlpha + data[idx + 2] * invEffectiveAlpha;
-            // Alpha channel already set to 255
           }
         }
       }
     }
   };
   
-  // Run the D function with increasing time values
+  // Run the D function with increasing time values, yielding periodically
   for (let i = 0; i < 576; i++) {
     D(i / 60);
+    // Yield every 5 iterations to let React render (very frequent to stay responsive)
+    if (i > 0 && i % 5 === 0) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
   }
   
   // Single canvas operation - write all pixels at once
@@ -122,30 +124,20 @@ export async function generateWoodTexture(): Promise<string> {
   
   // Create and cache the promise to prevent duplicate generations
   woodTexturePromise = (async () => {
-    // Import errorLogger dynamically to avoid circular imports
-    const { errorLogger } = await import('../utils/errorLogger');
-    
-    // Log the start of wood texture generation
-    errorLogger.logCanvasOperation('Wood Texture Generation Start', {
-      canvasWidth: 1920,
-      canvasHeight: 1080,
-      estimatedMemoryMB: ((1920 * 1080 * 4) / (1024 * 1024)).toFixed(2),
-    });
-
     const startTime = performance.now();
-    const dataUrl = generateWoodTextureSync(1920, 1080);
+    
+    // Yield control immediately to let React render first
+    await new Promise(resolve => setTimeout(resolve, 0));
+    
+    const dataUrl = await generateWoodTextureAsync(1920, 1080);
     woodTextureDataUrl = dataUrl;
     
     const endTime = performance.now();
     const generationTime = endTime - startTime;
     
-    console.log('Wood texture generated and cached');
+    console.log('Wood texture generated and cached in', generationTime.toFixed(2), 'ms');
     
     // Log completion
-    errorLogger.logCanvasOperation('Wood Texture Generation Complete', {
-      generationTimeMs: generationTime.toFixed(2),
-      dataUrlSizeKB: (dataUrl.length / 1024).toFixed(2),
-    });
     
     // Clear the promise so future calls can detect the cache is ready
     woodTexturePromise = null;
@@ -188,23 +180,15 @@ export const useWoodTexture = () => {
   const [textureUrl, setTextureUrl] = useState<string | null>(woodTextureDataUrl);
 
   useEffect(() => {
-    if (!woodTextureDataUrl && !woodTexturePromise) {
-      // Defer generation until browser is idle (after FCP) for better perceived performance
-      const scheduleGeneration = () => {
-        if ('requestIdleCallback' in window) {
-          // Use requestIdleCallback for best performance - runs when browser is idle
-          requestIdleCallback(() => {
-            generateWoodTexture().then(setTextureUrl);
-          }, { timeout: 1000 }); // Fallback timeout after 1s
-        } else {
-          // Fallback for browsers without requestIdleCallback
-          setTimeout(() => {
-            generateWoodTexture().then(setTextureUrl);
-          }, 100); // Small delay to ensure FCP happens first
-        }
-      };
-      
-      scheduleGeneration();
+    if (woodTextureDataUrl) {
+      // If already cached, set it immediately
+      setTextureUrl(woodTextureDataUrl);
+    } else if (woodTexturePromise) {
+      // If generation is in progress, wait for it
+      woodTexturePromise.then(setTextureUrl);
+    } else {
+      // Start generation - the async chunking will handle yielding
+      generateWoodTexture().then(setTextureUrl);
     }
   }, []);
 
@@ -253,21 +237,9 @@ export const useWoodStyle = (seed?: number, willRotate: boolean = false): React.
 
 // Legacy function for non-React contexts (kept for backward compatibility)
 export const getWoodTextureStyle = (randomSeed?: number, willRotate: boolean = false): React.CSSProperties => {
-  // Trigger lazy loading after browser is idle for better FCP
+  // Trigger lazy loading if not already generated - the async chunking will handle yielding
   if (!woodTextureDataUrl && !woodTexturePromise && typeof window !== 'undefined') {
-    if ('requestIdleCallback' in window) {
-      requestIdleCallback(() => {
-        if (!woodTextureDataUrl && !woodTexturePromise) {
-          generateWoodTexture();
-        }
-      }, { timeout: 1000 });
-    } else {
-      setTimeout(() => {
-        if (!woodTextureDataUrl && !woodTexturePromise) {
-          generateWoodTexture();
-        }
-      }, 100);
-    }
+    generateWoodTexture();
   }
 
   if (!woodTextureDataUrl) {

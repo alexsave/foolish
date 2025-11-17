@@ -20,14 +20,6 @@ export const CardBack = ({ deckSize = 36, enableRandomRotation = false }: { deck
     // Log when CardBack renders with fern pattern
     useEffect(() => {
       if (fernPattern) {
-        import('../../utils/errorLogger').then(({ errorLogger }) => {
-          errorLogger.logSVGOperation('CardBack Render', {
-            deckSize,
-            enableRandomRotation,
-            fernPatternSize: fernPattern.length,
-            fernPatternSizeKB: (fernPattern.length / 1024).toFixed(2),
-          });
-        });
       }
     }, [fernPattern, deckSize, enableRandomRotation]);
 
@@ -44,7 +36,7 @@ export const CardBack = ({ deckSize = 36, enableRandomRotation = false }: { deck
                         left: enableRandomRotation ? '0' : `${-layerIndex * 1}px`,
                         width: '50px', // Updated to 5:7 ratio
                         height: '70px',
-                        backgroundColor: '#000000', // Black background
+                        backgroundColor: '#e91a02', // Fern fallback color
                         border: '1px solid #8B0000', // Dark red border
                         borderRadius: '5px',
                         zIndex: layerIndex + 2,

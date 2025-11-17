@@ -10,8 +10,7 @@ import { PublicPlayer } from "../common/types";
 import { usePreventScroll } from "../hooks/usePreventScroll";
 import { MAX_PLAYERS } from "../common/constants";
 import { useWoodStyle } from "./WoodTexture";
-
-
+import { WoolBackgroundLayer } from "./WoolBackgroundLayer";
 
 interface PlayerCardProps {
     player: PublicPlayer;
@@ -381,7 +380,7 @@ export const Lobby = () => {
         height: '100%',
         width: '100%'
     }}>
-
+        <WoolBackgroundLayer />
         <input
             ref={inputRef}
             type="text"

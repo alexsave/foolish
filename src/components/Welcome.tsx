@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import { getWoodTextureStyle, useWoodTexture } from './WoodTexture';
+import { WoolBackgroundLayer } from './WoolBackgroundLayer';
 
 export const Welcome = () => {
     const navigate = useNavigate();
@@ -35,7 +36,7 @@ export const Welcome = () => {
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', width: '100%' }}>
-
+            <WoolBackgroundLayer />
             <p style={{ fontSize: '48px', fontWeight: 'bold', color: 'rgb(239, 151, 28)' }}>FOOLISH</p>
             <button 
                 style={woodButtonStyle}

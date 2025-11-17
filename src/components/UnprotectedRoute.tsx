@@ -35,9 +35,6 @@ export const UnprotectedRoute = ({ children }: { children: React.ReactNode }) =>
             </div>
         );
     }
-    if (loading) {
-        return <div>Loading...</div>;
-    }
     
     // If user is authenticated, redirect to intended destination or dashboard
     if (user_id && shouldRedirect) {

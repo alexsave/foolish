@@ -3,12 +3,8 @@ import './App.css';
 import { AuthProvider } from './contexts/AuthContext';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { errorLogger } from './utils/errorLogger';
 
 // Lazy load heavy components for better performance
-const FernFractalProvider = lazy(() => 
-  import('./utils/fernFractal').then(m => ({ default: m.FernFractalProvider }))
-);
 const Welcome = lazy(() => 
   import('./components/Welcome').then(m => ({ default: m.Welcome }))
 );
@@ -30,35 +26,19 @@ const ProtectedRoute = lazy(() =>
 const UnprotectedRoute = lazy(() => 
   import('./components/UnprotectedRoute').then(m => ({ default: m.UnprotectedRoute }))
 );
-const DebugPanel = lazy(() => 
-  import('./components/DebugPanel').then(m => ({ default: m.DebugPanel }))
-);
-const WoolBackground = lazy(() => 
-  import('./components/WoolBackground')
-);
+
+
 // SERVICE WORKERS ARE MAKING THIS EVEN MORE CONVOLUTED TO DEBUG
 function App() {
   // Initialize error logging on app start
   React.useEffect(() => {
     console.log('🛡️ Error logging initialized');
-    errorLogger.logCustomError('App Initialization', new Error('App started'), {
-      timestamp: new Date().toISOString(),
-      userAgent: navigator.userAgent,
-      isIOS: /iPad|iPhone|iPod/.test(navigator.userAgent),
-      memoryInfo: performance.memory ? {
-        usedJSHeapSize: performance.memory.usedJSHeapSize,
-        totalJSHeapSize: performance.memory.totalJSHeapSize,
-        jsHeapSizeLimit: performance.memory.jsHeapSizeLimit,
-      } : null,
-    });
-
     // Add periodic crash detection check
     const crashCheckInterval = setInterval(() => {
       try {
         // Simple heartbeat to detect if the app is still responsive
         console.log('🔄 App heartbeat:', new Date().toISOString());
       } catch (error) {
-        errorLogger.logCustomError('App Heartbeat Error', error);
       }
     }, 10000); // Every 10 seconds
 
@@ -78,21 +58,18 @@ function App() {
           color: '#fff',
           fontFamily: 'sans-serif'
         }}>
-          Loading...
+          Loading App.js...
         </div>
       }>
-        <WoolBackground />
         <div style={{ display: 'flex', height: '100vh', width: '100vw' }} >
-          <DebugPanel />
           <BrowserRouter>
             <ErrorBoundary context="Router">
               <AuthProvider>
                 <ErrorBoundary context="Auth Provider">
                   <Suspense fallback={<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', width: '100vw' }}>Loading app...</div>}>
-                    <FernFractalProvider>
-                      <ErrorBoundary context="Routes">
-                        <Suspense fallback={<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', width: '100vw', color: '#fff' }}>Loading page...</div>}>
-                          <Routes>
+                    <ErrorBoundary context="Routes">
+                      <Suspense fallback={<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', width: '100vw', color: '#fff' }}>Loading page...</div>}>
+                        <Routes>
                             <Route path="/" element={
                               <ErrorBoundary context="Welcome Page">
                                 <Welcome />
@@ -128,10 +105,9 @@ function App() {
                             {/* Catch-all route for unmatched paths - redirect to dashboard */}
                             <Route path="*" element={<Navigate to="/dashboard" replace />} />
 
-                          </Routes>
-                        </Suspense>
-                      </ErrorBoundary>
-                    </FernFractalProvider>
+                        </Routes>
+                      </Suspense>
+                    </ErrorBoundary>
                   </Suspense>
                 </ErrorBoundary>
               </AuthProvider>

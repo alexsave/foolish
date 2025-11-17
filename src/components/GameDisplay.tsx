@@ -12,6 +12,7 @@ import { Chat } from './GameDisplay/Chat';
 import { AnimationOverlay } from './GameDisplay/AnimationOverlay';
 import { KeyboardInputHandler } from './KeyboardInputHandler';
 import { usePreventScroll } from '../hooks/usePreventScroll';
+import { WoolBackgroundLayer } from './WoolBackgroundLayer';
 
 export const GameDisplay = () => {
     const game = useServer().game as PersonalGame;
@@ -20,7 +21,7 @@ export const GameDisplay = () => {
 
     // Handle missing game data (GameView handles loading and error states)
     if (!game || !game.players || !game.players.length) {
-        return <div>Loading...</div>;
+        return <div>Loading GameDisplay...</div>;
     }
 
     return <div
@@ -32,6 +33,7 @@ export const GameDisplay = () => {
             touchAction: 'none', 
         }}
     >
+        <WoolBackgroundLayer />
         <KeyboardInputHandler />
         
         <CoverArrows />

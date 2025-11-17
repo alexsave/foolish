@@ -6,7 +6,6 @@ import { useAuth } from './AuthContext';
 import { MAX_PLAYERS } from '../common/constants';
 import { get_next_player_index, canCover, card_comp } from '../common/common_utils';
 import { ANIMATION_TIME } from '../constants/constants';
-import { errorLogger } from '../utils/errorLogger';
 
 const ServerContext = createContext<ServerContextType | null>(null);
 
@@ -458,12 +457,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
     const loadGameInternal = async (gameId: string): Promise<{ game_id: string }> => {
         try {
-            errorLogger.logCustomError('ServerContext - LoadGame Start', new Error('Loading game'), {
-                gameId,
-                userId: user_id,
-                hasUserId: !!user_id,
-            });
-
             // First try to get game data if user is a player (only if user_id exists)
             if (user_id) {
                 const { data: playerData, error: playerError } = await supabase
@@ -474,29 +467,11 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                     .single();
 
                 if (playerError) {
-                    errorLogger.logCustomError('ServerContext - Player Data Error', playerError, {
-                        gameId,
-                        userId: user_id,
-                        errorCode: playerError.code,
-                        errorDetails: playerError.details,
-                    });
                 }
 
                 if (playerData && !playerError) {
                     // User is in the game - return personalized data
                     const game = playerData.games as unknown as PublicGame;
-                    
-                    // Trigger bot loop for this game (doesn't mutate state, just keeps bots active)
-                    // Ignore result who cares
-                    try {
-                        await supabase.functions.invoke('bot_bump', { body: { game_id: gameId } });
-                    } catch (botError) {
-                        errorLogger.logCustomError('ServerContext - Bot Bump Error', botError as Error, {
-                            gameId,
-                            userId: user_id,
-                        });
-                        // Don't fail the entire load for bot bump issues
-                    }
                     
                     const selfPlayer = game.players.find((player) => player.player_id === user_id);
                     
@@ -515,11 +490,9 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                         setGames(prev => ({ ...prev, [gameId]: mergeGameData(gameId, personalizedGame, prev) }));
                         joinOrSubscribe(personalizedGame);
                         
-                        errorLogger.logCustomError('ServerContext - Game Loaded Successfully', new Error('Game loaded as player'), {
-                            gameId,
-                            userId: user_id,
-                            playerCount: game.players.length,
-                            gameStatus: game.status,
+                        // Trigger bot loop for this game (doesn't mutate state, just keeps bots active)
+                        // Fire and forget - don't block UI rendering
+                        supabase.functions.invoke('bot_bump', { body: { game_id: gameId } }).catch(botError => {
                         });
                         
                         return { game_id: gameId };
@@ -535,12 +508,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 .single();
 
             if (publicError) {
-                errorLogger.logCustomError('ServerContext - Public Game Error', publicError, {
-                    gameId,
-                    userId: user_id,
-                    errorCode: publicError.code,
-                    errorDetails: publicError.details,
-                });
                 throw new Error(`Game ${gameId} not found`);
             }
 
@@ -555,10 +522,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             return { game_id: gameId };
             
         } catch (error) {
-            errorLogger.logCustomError('ServerContext - LoadGame Failed', error as Error, {
-                gameId,
-                userId: user_id,
-            });
             throw error;
         }
     };
@@ -806,41 +769,20 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         try {
             if (!game_id || !user_id) {
                 const error = new Error('No game or user available');
-                errorLogger.logCustomError('ServerContext - SendMessage No Context', error, {
-                    hasGameId: !!game_id,
-                    hasUserId: !!user_id,
-                    messageLength: message?.length || 0,
-                });
                 throw error;
             }
 
             if (!message || message.trim() === '') {
                 const error = new Error('Message cannot be empty');
-                errorLogger.logCustomError('ServerContext - SendMessage Empty', error, {
-                    gameId: game_id,
-                    userId: user_id,
-                    originalMessage: message,
-                });
                 throw error;
             }
 
             if (message.length > 1000) {
                 const error = new Error('Message is too long');
-                errorLogger.logCustomError('ServerContext - SendMessage Too Long', error, {
-                    gameId: game_id,
-                    userId: user_id,
-                    messageLength: message.length,
-                });
                 throw error;
             }
 
             const trimmedMessage = message.trim();
-
-            errorLogger.logCustomError('ServerContext - SendMessage Start', new Error('Sending message'), {
-                gameId: game_id,
-                userId: user_id,
-                messageLength: trimmedMessage.length,
-            });
 
             // Save message to database - the trigger will handle broadcasting
             const { error } = await supabase
@@ -853,28 +795,10 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 });
 
             if (error) {
-                errorLogger.logCustomError('ServerContext - SendMessage DB Error', error, {
-                    gameId: game_id,
-                    userId: user_id,
-                    messageLength: trimmedMessage.length,
-                    errorCode: error.code,
-                    errorDetails: error.details,
-                });
                 throw error;
             }
 
-            errorLogger.logCustomError('ServerContext - SendMessage Success', new Error('Message sent'), {
-                gameId: game_id,
-                userId: user_id,
-                messageLength: trimmedMessage.length,
-            });
-
         } catch (error) {
-            errorLogger.logCustomError('ServerContext - SendMessage Failed', error as Error, {
-                gameId: game_id,
-                userId: user_id,
-                messageLength: message?.length || 0,
-            });
             throw error;
         }
     };
@@ -1000,15 +924,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         // This needs to also throw in status at least
         try {
             if (!user_id) {
-                errorLogger.logCustomError('ServerContext - GetUserGames No User', new Error('No user_id available'), {
-                    hasUserId: false,
-                });
                 return;
             }
-
-            errorLogger.logCustomError('ServerContext - GetUserGames Start', new Error('Fetching user games'), {
-                userId: user_id,
-            });
 
             // Direct SQL query that respects RLS policies
             // Join player_hands (user can only see their own) with games (public data)
@@ -1019,11 +936,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 .order('games(updated_at)', { ascending: false });
 
             if (error) {
-                errorLogger.logCustomError('ServerContext - GetUserGames DB Error', error, {
-                    userId: user_id,
-                    errorCode: error.code,
-                    errorDetails: error.details,
-                });
                 console.error('Error fetching user games:', error);
                 return;
             }
@@ -1047,27 +959,13 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                     };
                     processedGames++;
                 } catch (gameError) {
-                    errorLogger.logCustomError('ServerContext - ProcessGame Error', gameError as Error, {
-                        userId: user_id,
-                        gameId: (playerHand?.games as any)?.id || 'unknown',
-                    });
                     skippedGames++;
                 }
             }
 
             setGames(prev => ({ ...prev, ...games }));
 
-            errorLogger.logCustomError('ServerContext - GetUserGames Success', new Error('User games loaded'), {
-                userId: user_id,
-                totalGames: data.length,
-                processedGames,
-                skippedGames,
-            });
-
         } catch (error) {
-            errorLogger.logCustomError('ServerContext - GetUserGames Failed', error as Error, {
-                userId: user_id,
-            });
             console.error('Error in getUserGames:', error);
         }
     };
@@ -1085,14 +983,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         } = {}
     ): Promise<{ game_id: string }> => {
         try {
-            errorLogger.logCustomError('ServerContext - InvokeFunction Start', new Error(`Invoking ${functionName}`), {
-                functionName,
-                userId: user_id,
-                bodyKeys: Object.keys(body),
-                hasOnSuccess: !!options.onSuccess,
-                hasOnError: !!options.onError,
-            });
-
             const data = await supabase.functions.invoke(functionName, { body })
             
             if (!data.data || !data.data.id) {
@@ -1107,26 +997,12 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             //     [game_id]: mergeGameData(game_id, data.data, prev)
             // }))
 
-            errorLogger.logCustomError('ServerContext - InvokeFunction Success', new Error(`${functionName} successful`), {
-                functionName,
-                gameId: game_id,
-                userId: user_id,
-                responseDataKeys: Object.keys(data.data),
-            });
-
             options.onSuccess?.(data as T);
 
             return { game_id };
 
         } catch (error) {
             const err = error as Error;
-            errorLogger.logCustomError('ServerContext - InvokeFunction Failed', err, {
-                functionName,
-                userId: user_id,
-                bodyKeys: Object.keys(body),
-                errorMessage: err.message,
-                errorCode: (err as any).code,
-            });
             
             options.onError?.(error);
             throw error;
