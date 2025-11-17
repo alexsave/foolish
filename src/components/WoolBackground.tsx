@@ -26,7 +26,6 @@ const WoolBackground: React.FC<WoolBackgroundProps> = ({
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
-  const pixelsCache = useRef<Array<{x: number, y: number, color: string, width?: number, height?: number}> | null>(null);
   const hasRendered = useRef<boolean>(false);
 
   // Dwitter shortcuts translated to JavaScript
@@ -35,14 +34,10 @@ const WoolBackground: React.FC<WoolBackgroundProps> = ({
   const T = Math.tan;
   const R = (r: number, g: number, b: number, a: number) => `rgba(${Math.floor(r)},${Math.floor(g)},${Math.floor(b)},${a})`;
 
-  const generateWoolTexture = () => {
-
+  const generateWoolTexture = (ctx: CanvasRenderingContext2D) => {
     // Ai could never write this
-    // Return cached result if available
-    if (pixelsCache.current) {
-      return pixelsCache.current;
-    }
-
+    // Render DIRECTLY to canvas instead of storing 8 million objects in memory!
+    
     // Get random offsets for this pattern
     const { offsetX, offsetY } = getRandomOffsets();
 
@@ -50,8 +45,6 @@ const WoolBackground: React.FC<WoolBackgroundProps> = ({
     const z = () => C(r) * 1000 - Math.floor(C(r) * 1000);
     let h = 1;
     let u = 0;
-    
-    const pixels: Array<{x: number, y: number, color: string, width?: number, height?: number}> = [];
 
     // Scale up the iteration for larger canvas
     const maxIterations = Math.floor((width * height / (1920 * 1080)) * 2000000);
@@ -78,15 +71,10 @@ const WoolBackground: React.FC<WoolBackgroundProps> = ({
         const x = r + dx;
         const y = i % height;
         
-        // Only add pixels within bounds
+        // Only draw pixels within bounds - DIRECTLY to canvas
         if (x >= 0 && x < width && y >= 0 && y < height) {
-          pixels.push({
-            x,
-            y,
-            color,
-            width: 2, // Doubled thread thickness
-            height: 2
-          });
+          ctx.fillStyle = color;
+          ctx.fillRect(x, y, 2, 2); // Doubled thread thickness
         }
       } else {
         // Vertical wool fiber phase
@@ -105,22 +93,13 @@ const WoolBackground: React.FC<WoolBackgroundProps> = ({
         const y = r + dx;
         const pixelWidth = 1.4 * (phase + 1.7); // Doubled from 0.7 to 1.4
         
-        // Only add pixels within bounds
+        // Only draw pixels within bounds - DIRECTLY to canvas
         if (x >= 0 && x < width && y >= 0 && y < height) {
-          pixels.push({
-            x,
-            y,
-            color,
-            width: pixelWidth,
-            height: 2 // Doubled thread thickness
-          });
+          ctx.fillStyle = color;
+          ctx.fillRect(x, y, pixelWidth, 2); // Doubled thread thickness
         }
       }
     }
-
-    // Cache the result for future use
-    pixelsCache.current = pixels;
-    return pixels;
   };
 
   const drawFractalBranch = (ctx: CanvasRenderingContext2D, xPos: number, yPos: number, size: number, rotationFactor: number, pointIndex: number) => {
@@ -235,27 +214,8 @@ const WoolBackground: React.FC<WoolBackgroundProps> = ({
 
     setIsGenerating(true);
     
-    // Generate wool texture pattern (this might take a moment)
-    const pixels = await new Promise<Array<{x: number, y: number, color: string, width?: number, height?: number}>>((resolve) => {
-      setTimeout(() => {
-        resolve(generateWoolTexture());
-      }, 0);
-    });
-    
-    // Render pixels in batches to avoid blocking the UI
-    const batchSize = 10000;
-    for (let i = 0; i < pixels.length; i += batchSize) {
-      const batch = pixels.slice(i, i + batchSize);
-      batch.forEach(pixel => {
-        ctx.fillStyle = pixel.color;
-        ctx.fillRect(pixel.x, pixel.y, pixel.width || 1, pixel.height || 1);
-      });
-      
-      // Allow other tasks to run between batches
-      if (i + batchSize < pixels.length) {
-        await new Promise(resolve => setTimeout(resolve, 0));
-      }
-    }
+    // Generate wool texture pattern directly to canvas (no memory-hungry array!)
+    generateWoolTexture(ctx);
 
     // Add enhancement layers after main texture with visible delays
     console.log('Adding fractal wear pattern...');
@@ -278,8 +238,8 @@ const WoolBackground: React.FC<WoolBackgroundProps> = ({
     // Log completion with memory analysis (reuse errorLogger variable)
     errorLogger.logCanvasOperation('Wool Background Generation Complete', {
       generationTimeMs: generationTime.toFixed(2),
-      pixelCount: pixels.length,
       estimatedFinalMemoryMB: ((width * height * 4) / (1024 * 1024)).toFixed(2),
+      note: 'Another 40 TB to memory. Now rendering directly to canvas - no pixel array overhead!',
     });
     
     setIsGenerating(false);
@@ -288,6 +248,7 @@ const WoolBackground: React.FC<WoolBackgroundProps> = ({
 
 
   useEffect(() => {
+    console.log('useEffect for wool background');
     renderCanvas();
   }, [width, height]);
 
