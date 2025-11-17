@@ -48,10 +48,13 @@ const generateWoodTextureSync = (width: number = 1920, height: number = 1080): s
     I_factors[I] = I * 0.001;
   }
   
-  // The D function - highly optimized with direct pixel manipulation
+  // The D function - highly optimized with direct pixel manipulation and soft edges
   const D = (T: number) => {
-    const xPos = ((T * 200) % width) | 0;
-    const xEnd = Math.min(xPos + 30, width);
+    const xPosFloat = (T * 200) % width;
+    const xPos = xPosFloat | 0;
+    const RECT_WIDTH = 40;
+    const xEnd = Math.min(xPos + RECT_WIDTH, width);
+    const xCenter = xPos + RECT_WIDTH / 2;
     
     for (let I = height - 1; I >= 0; I--) {
       const I_factor = I_factors[I];
@@ -68,13 +71,20 @@ const generateWoodTextureSync = (width: number = 1920, height: number = 1080): s
           const green = (b * b * 14) | 0;
           const blue = 9;
           
-          // Write to all 40 pixels in this horizontal stripe with proper alpha compositing
+          // Write to all 40 pixels in horizontal stripe with soft edges for anti-aliasing
           for (let x = xPos; x < xEnd; x++) {
             const idx = (rowOffset + x) << 2;
-            // Proper alpha compositing: result = src * alpha + dest * (1 - alpha)
-            data[idx] = red * ALPHA + data[idx] * INV_ALPHA;
-            data[idx + 1] = green * ALPHA + data[idx + 1] * INV_ALPHA;
-            data[idx + 2] = blue * ALPHA + data[idx + 2] * INV_ALPHA;
+            
+            // Calculate edge softness based on distance from center (anti-aliasing)
+            const distFromCenter = Math.abs(x - xCenter) / (RECT_WIDTH / 2);
+            const edgeSoftness = Math.max(0.3, 1 - distFromCenter * 0.5); // Soft edges
+            const effectiveAlpha = ALPHA * edgeSoftness;
+            const invEffectiveAlpha = 1 - effectiveAlpha;
+            
+            // Alpha compositing with soft edges: result = src * alpha + dest * (1 - alpha)
+            data[idx] = red * effectiveAlpha + data[idx] * invEffectiveAlpha;
+            data[idx + 1] = green * effectiveAlpha + data[idx + 1] * invEffectiveAlpha;
+            data[idx + 2] = blue * effectiveAlpha + data[idx + 2] * invEffectiveAlpha;
             // Alpha channel already set to 255
           }
         }

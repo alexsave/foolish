@@ -207,18 +207,58 @@ export async function generateFernPattern(
             return;
         }
 
-        // Clear canvas with transparent background
-        ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+        // Use ImageData for direct pixel manipulation (much faster than fillRect)
+        const imageData = ctx.createImageData(canvasWidth, canvasHeight);
+        const data = new Uint8ClampedArray(imageData.data.buffer);
 
         // Use provided params or auto-scale for card size
         const finalParams = params || createCardParams(canvasWidth, canvasHeight);
         const { render, colors, probabilities } = finalParams;
         const cumulative = normalizeProbabilities(probabilities);
 
+        // Parse hex colors to RGB once (avoid repeated parsing)
+        const parseHex = (hex: string) => {
+            const r = parseInt(hex.slice(1, 3), 16);
+            const g = parseInt(hex.slice(3, 5), 16);
+            const b = parseInt(hex.slice(5, 7), 16);
+            return [r, g, b];
+        };
+        const [primaryR, primaryG, primaryB] = parseHex(colors.primary);
+        const [secondaryR, secondaryG, secondaryB] = parseHex(colors.secondary);
+        const [tertiaryR, tertiaryG, tertiaryB] = parseHex(colors.tertiary);
+
+        // Pre-calculate rotation constants (used millions of times)
+        const rotationRadians = -67 * Math.PI / 180;
+        const cosRot = Math.cos(rotationRadians);
+        const sinRot = Math.sin(rotationRadians);
+        
+        // Pre-calculate canvas center
+        const centerX = canvasWidth / 2;
+        const centerY = canvasHeight / 2;
+
         let x = 0, y = 0;
         let propagateColor = 0; // 0=primary, 1=secondary (circle1), 2=tertiary (circle2)
 
         const pointSize = Math.max(1, Math.floor(render.dotSize));
+        
+        // Helper to draw pixel directly to ImageData
+        const drawPixel = (px: number, py: number, r: number, g: number, b: number) => {
+            const pxi = px | 0;
+            const pyi = py | 0;
+            for (let dy = 0; dy < pointSize; dy++) {
+                for (let dx = 0; dx < pointSize; dx++) {
+                    const x = pxi + dx;
+                    const y = pyi + dy;
+                    if (x >= 0 && x < canvasWidth && y >= 0 && y < canvasHeight) {
+                        const idx = (y * canvasWidth + x) << 2;
+                        data[idx] = r;
+                        data[idx + 1] = g;
+                        data[idx + 2] = b;
+                        data[idx + 3] = 255;
+                    }
+                }
+            }
+        };
 
         // Skip first 20 iterations to let the system settle
         for (let i = 0; i < 20; i++) {
@@ -242,18 +282,14 @@ export async function generateFernPattern(
                     dy = -dy;
                 }
 
-                // Apply 5-degree clockwise rotation
-                const rotationRadians = -67 * Math.PI / 180; // Negative for clockwise
-                const rotatedDx = dx * Math.cos(rotationRadians) - dy * Math.sin(rotationRadians);
-                const rotatedDy = dx * Math.sin(rotationRadians) + dy * Math.cos(rotationRadians);
+                // Apply rotation (pre-calculated)
+                const rotatedDx = dx * cosRot - dy * sinRot;
+                const rotatedDy = dx * sinRot + dy * cosRot;
 
-                const px = Math.floor((canvasWidth / 2) + rotatedDx * render.scaleY + render.translateX);
-                const py = Math.floor((canvasHeight / 2) - (rotatedDy * render.scaleY - render.translateY));
+                const px = centerX + rotatedDx * render.scaleY + render.translateX;
+                const py = centerY - (rotatedDy * render.scaleY - render.translateY);
 
-                if (px >= 0 && px < canvasWidth && py >= 0 && py < canvasHeight) {
-                    ctx.fillStyle = colors.secondary;
-                    ctx.fillRect(px, py, pointSize, pointSize);
-                }
+                drawPixel(px, py, secondaryR, secondaryG, secondaryB);
 
                 propagateColor = 1;
                 continue;
@@ -269,18 +305,14 @@ export async function generateFernPattern(
                     dy = -dy;
                 }
 
-                // Apply 5-degree clockwise rotation
-                const rotationRadians2 = -67 * Math.PI / 180; // Negative for clockwise
-                const rotatedDx2 = dx * Math.cos(rotationRadians2) - dy * Math.sin(rotationRadians2);
-                const rotatedDy2 = dx * Math.sin(rotationRadians2) + dy * Math.cos(rotationRadians2);
+                // Apply rotation (pre-calculated)
+                const rotatedDx = dx * cosRot - dy * sinRot;
+                const rotatedDy = dx * sinRot + dy * cosRot;
 
-                const px = Math.floor((canvasWidth / 2) + rotatedDx2 * render.scaleY + render.translateX);
-                const py = Math.floor((canvasHeight / 2) - (rotatedDy2 * render.scaleY - render.translateY));
+                const px = centerX + rotatedDx * render.scaleY + render.translateX;
+                const py = centerY - (rotatedDy * render.scaleY - render.translateY);
 
-                if (px >= 0 && px < canvasWidth && py >= 0 && py < canvasHeight) {
-                    ctx.fillStyle = colors.tertiary;
-                    ctx.fillRect(px, py, pointSize, pointSize);
-                }
+                drawPixel(px, py, tertiaryR, tertiaryG, tertiaryB);
 
                 propagateColor = 2;
                 continue;
@@ -300,22 +332,25 @@ export async function generateFernPattern(
                 drawY = -y;
             }
 
-            // Apply 5-degree clockwise rotation
-            const rotationRadians = -67 * Math.PI / 180; // Negative for clockwise
-            const rotatedX = drawX * Math.cos(rotationRadians) - drawY * Math.sin(rotationRadians);
-            const rotatedY = drawX * Math.sin(rotationRadians) + drawY * Math.cos(rotationRadians);
+            // Apply rotation (pre-calculated)
+            const rotatedX = drawX * cosRot - drawY * sinRot;
+            const rotatedY = drawX * sinRot + drawY * cosRot;
 
-            const px = Math.floor((canvasWidth / 2) + rotatedX * render.scaleY + render.translateX);
-            const py = Math.floor((canvasHeight / 2) - (rotatedY * render.scaleY - render.translateY));
+            const px = centerX + rotatedX * render.scaleY + render.translateX;
+            const py = centerY - (rotatedY * render.scaleY - render.translateY);
 
-            if (px >= 0 && px < canvasWidth && py >= 0 && py < canvasHeight) {
-                // Use propagated color: primary, secondary, or tertiary
-                const currentColor = propagateColor === 2 ? colors.tertiary :
-                    (propagateColor === 1 ? colors.secondary : colors.primary);
-                ctx.fillStyle = currentColor;
-                ctx.fillRect(px, py, pointSize, pointSize);
+            // Use propagated color
+            if (propagateColor === 2) {
+                drawPixel(px, py, tertiaryR, tertiaryG, tertiaryB);
+            } else if (propagateColor === 1) {
+                drawPixel(px, py, secondaryR, secondaryG, secondaryB);
+            } else {
+                drawPixel(px, py, primaryR, primaryG, primaryB);
             }
         }
+
+        // Write ImageData to canvas in one operation
+        ctx.putImageData(imageData, 0, 0);
 
         // Convert canvas to data URL and cache it
         const dataUrl = canvas.toDataURL('image/png');
@@ -325,12 +360,18 @@ export async function generateFernPattern(
         
         console.log('Fern pattern generated and cached');
         
-        // Log successful completion
-        errorLogger.logCanvasOperation('Fern Pattern Generation Complete', {
-          generationTimeMs: generationTime.toFixed(2),
-          dataUrlSizeKB: (dataUrl.length / 1024).toFixed(2),
-          totalMemoryEstimateMB: ((dataUrl.length + (canvasWidth * canvasHeight * 4)) / (1024 * 1024)).toFixed(2),
-        });
+        // Defer logging to not block rendering
+        setTimeout(async () => {
+            try {
+                errorLogger.logCanvasOperation('Fern Pattern Generation Complete', {
+                  generationTimeMs: generationTime.toFixed(2),
+                  dataUrlSizeKB: (dataUrl.length / 1024).toFixed(2),
+                  totalMemoryEstimateMB: ((dataUrl.length + (canvasWidth * canvasHeight * 4)) / (1024 * 1024)).toFixed(2),
+                });
+            } catch (e) {
+                console.error('Logging error:', e);
+            }
+        }, 0);
         
         resolve(dataUrl);
     });
