@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
+import { getCachedTexture, setCachedTexture } from './textureCache';
 
 interface FernParameters {
     render: {
@@ -164,6 +165,14 @@ export async function generateFernPattern(
     
     // Create and cache the promise to prevent duplicate generations
     fernPatternPromise = (async () => {
+        // Check IndexedDB cache first for persistent storage
+        const cachedFromDB = await getCachedTexture('fern');
+        if (cachedFromDB) {
+            cachedFernPatternBlobUrl = cachedFromDB;
+            fernPatternPromise = null;
+            return cachedFromDB;
+        }
+        
         // Yield control immediately to let React render first
         await new Promise(resolve => setTimeout(resolve, 0));
         
@@ -384,6 +393,10 @@ export async function generateFernPattern(
             });
             
             cachedFernPatternBlobUrl = blobUrl;
+            
+            // Cache to IndexedDB for persistence across sessions
+            setCachedTexture('fern', blobUrl).catch(err => { });
+            
             fernPatternPromise = null;
             
             return blobUrl;

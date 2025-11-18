@@ -25,7 +25,7 @@ const CardsVisual = ({ player }: { player: PublicPlayer }) => {
             const style: React.CSSProperties = {
                 //display: 'block',
                 boxSizing: 'border-box',
-                backgroundColor: fernPattern ? '#000000' : '#e91a02', // Red while loading, black when pattern loaded
+                backgroundColor: fernPattern ? '#000000' : `rgb(180, 14, 9)`, // Dark red while loading, black when pattern loaded
                 width: cardWidth + 'px', // 5:7 ratio - width
                 height: cardHeight + 'px', // 5:7 ratio - height  
                 borderRadius: '3px',

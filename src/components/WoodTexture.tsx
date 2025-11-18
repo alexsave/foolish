@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
+import { getCachedTexture, setCachedTexture } from '../utils/textureCache';
 
 interface WoodTextureProps {
   width?: number;
@@ -320,12 +321,24 @@ export async function generateWoodTexture(): Promise<string> {
 
   // Create and cache the promise to prevent duplicate generations
   woodTexturePromise = (async () => {
+    // Check IndexedDB cache first for persistent storage
+    const cachedFromDB = await getCachedTexture('wood');
+    if (cachedFromDB) {
+      woodTextureBlobUrl = cachedFromDB;
+      woodTexturePromise = null;
+      return cachedFromDB;
+    }
+    
     // Yield control immediately to let React render first
     await new Promise(resolve => setTimeout(resolve, 0));
     
     // Use WebGL with CPU-generated data for best performance
     const blobUrl = await generateWoodTextureAsync(1920, 1080);
     woodTextureBlobUrl = blobUrl;
+    
+    // Cache to IndexedDB for persistence across sessions
+    setCachedTexture('wood', blobUrl).catch(err => {
+    });
     
     console.log('Wood texture generated (CPU generate + WebGL render, blob URL for lower memory)');
     
@@ -405,7 +418,7 @@ export const useWoodStyle = (seed?: number, willRotate: boolean = false): React.
   const style = useMemo(() => {
     // Always return the same structure - texture just "pops in" when loaded
     return {
-      backgroundColor: '#8B4513',
+      backgroundColor: '#c33f08',
       backgroundImage: textureUrl 
         ? `url(${textureUrl})`
         : `repeating-linear-gradient(90deg, transparent, transparent 1px, rgba(0,0,0,0.1) 1px, rgba(0,0,0,0.1) 2px)`,
@@ -427,7 +440,7 @@ export const getWoodTextureStyle = (randomSeed?: number, willRotate: boolean = f
 
   if (!woodTextureBlobUrl) {
     return {
-      backgroundColor: '#8B4513',
+      backgroundColor: '#c33f08',
       backgroundImage: `repeating-linear-gradient(
         90deg,
         transparent,

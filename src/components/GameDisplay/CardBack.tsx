@@ -36,7 +36,7 @@ export const CardBack = ({ deckSize = 36, enableRandomRotation = false }: { deck
                         left: enableRandomRotation ? '0' : `${-layerIndex * 1}px`,
                         width: '50px', // Updated to 5:7 ratio
                         height: '70px',
-                        backgroundColor: fernPattern ? '#000000' : '#e91a02', // Red while loading, black when pattern loaded
+                        backgroundColor: fernPattern ? '#000000' : `rgb(180, 14, 9)`, // Dark red while loading, black when pattern loaded
                         border: '1px solid #8B0000', // Dark red border
                         borderRadius: '5px',
                         zIndex: layerIndex + 2,

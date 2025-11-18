@@ -29,7 +29,7 @@ export const WoolBackgroundLayer = () => {
     <>
       <div style={{ 
         ...containerStyle,
-        backgroundColor: '#cac5af', // Fallback color
+        backgroundColor: '#ad826e', // Fallback color
         backgroundImage: textureUrl ? `url(${textureUrl})` : undefined,
         backgroundSize: 'cover',
         objectFit: 'cover',

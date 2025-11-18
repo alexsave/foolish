@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { getCachedTexture, setCachedTexture } from '../utils/textureCache';
 
 // Global cache for wool texture to prevent regeneration - using blob URL to reduce JS heap memory
 let woolTextureBlobUrl: string | null = null;
@@ -293,6 +294,14 @@ export async function generateWoolTexture(): Promise<string> {
 
   // Create and cache the promise to prevent duplicate generations
   woolTexturePromise = (async () => {
+    // Check IndexedDB cache first for persistent storage
+    const cachedFromDB = await getCachedTexture('wool');
+    if (cachedFromDB) {
+      woolTextureBlobUrl = cachedFromDB;
+      woolTexturePromise = null;
+      return cachedFromDB;
+    }
+    
     const startTime = performance.now();
     
     // Yield control immediately to let React render first
@@ -301,6 +310,10 @@ export async function generateWoolTexture(): Promise<string> {
     // Use WebGL with CPU-generated data for best performance
     const blobUrl = await generateWoolTextureAsync(3840, 2160);
     woolTextureBlobUrl = blobUrl;
+    
+    // Cache to IndexedDB for persistence across sessions
+    setCachedTexture('wool', blobUrl).catch(err => {
+    });
     
     const endTime = performance.now();
     const generationTime = endTime - startTime;
