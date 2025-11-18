@@ -126,8 +126,8 @@ function executeTransformStep(
     }
 }
 
-// Global cache for the fractal pattern
-let cachedFernPattern: string | null = null;
+// Global cache for the fractal pattern - using blob URL to reduce JS heap memory
+let cachedFernPatternBlobUrl: string | null = null;
 let fernPatternPromise: Promise<string> | null = null;
 
 // Create card-specific parameters for small sizes
@@ -147,51 +147,275 @@ function createCardParams(canvasWidth: number, canvasHeight: number): FernParame
     };
 }
 
+// OpenGL-based fern pattern generation (like C++ example: CPU computes IFS, GL renders)
 export async function generateFernPattern(
-    //canvasWidth: number,
-    //canvasHeight: number,
     params?: FernParameters
 ): Promise<string> {
     
     // Return cached pattern if available  
-    if (cachedFernPattern) {
-        return Promise.resolve(cachedFernPattern);
+    if (cachedFernPatternBlobUrl) {
+        return Promise.resolve(cachedFernPatternBlobUrl);
     }
     
     // Return existing promise if generation is already in progress
     if (fernPatternPromise) {
         return fernPatternPromise;
     }
-        
-    // Log the start of fern pattern generation
     
     // Create and cache the promise to prevent duplicate generations
     fernPatternPromise = (async () => {
-        
         // Yield control immediately to let React render first
         await new Promise(resolve => setTimeout(resolve, 0));
         
-        const canvas = document.createElement('canvas');
         const canvasWidth = 200 * 5;
-        const canvasHeight = 280 * 5
+        const canvasHeight = 280 * 5;
+        const finalParams = params || createCardParams(canvasWidth, canvasHeight);
+
+        try {
+            const { render, colors, probabilities } = finalParams;
+            const cumulative = normalizeProbabilities(probabilities);
+
+            const parseHex = (hex: string) => {
+                const r = parseInt(hex.slice(1, 3), 16);
+                const g = parseInt(hex.slice(3, 5), 16);
+                const b = parseInt(hex.slice(5, 7), 16);
+                return [r, g, b];
+            };
+            const [primaryR, primaryG, primaryB] = parseHex(colors.primary);
+            const [secondaryR, secondaryG, secondaryB] = parseHex(colors.secondary);
+            const [tertiaryR, tertiaryG, tertiaryB] = parseHex(colors.tertiary);
+
+            const rotationRadians = -67 * Math.PI / 180;
+            const cosRot = Math.cos(rotationRadians);
+            const sinRot = Math.sin(rotationRadians);
+            const centerX = canvasWidth / 2;
+            const centerY = canvasHeight / 2;
+
+            // Like C++: compute IFS sequence iteratively (each point depends on previous)
+            const points = new Float32Array(render.iterations * 2);
+            const colorData = new Uint8Array(render.iterations * 3);
+            
+            let x = 0, y = 0;
+            let propagateColor = 0;
+            let pointCount = 0;
+
+            // Warmup iterations (like C++ code)
+            for (let i = 0; i < 20; i++) {
+                const idx = pickTransformIndex(cumulative);
+                [x, y] = executeTransformStep(idx, x, y, finalParams);
+            }
+
+            // Main loop: compute and store each point (like C++ but batch render)
+            for (let i = 0; i < render.iterations; i++) {
+                // Yield occasionally to keep UI responsive
+                if (i > 0 && i % 100000 === 0) {
+                    await new Promise(resolve => setTimeout(resolve, 0));
+                }
+
+                const idx = pickTransformIndex(cumulative);
+                [x, y] = executeTransformStep(idx, x, y, finalParams);
+
+                if (idx === 4) {
+                    let [dx, dy] = randomPointInCircle(finalParams.circles.circle1.cx, finalParams.circles.circle1.cy, finalParams.circles.circle1.r);
+                    if (Math.random() < 0.5) { dx = -dx; dy = -dy; }
+                    const rotatedDx = dx * cosRot - dy * sinRot;
+                    const rotatedDy = dx * sinRot + dy * cosRot;
+                    const px = centerX + rotatedDx * render.scaleY + render.translateX;
+                    const py = centerY - (rotatedDy * render.scaleY - render.translateY);
+                    
+                    points[pointCount * 2] = px;
+                    points[pointCount * 2 + 1] = py;
+                    colorData[pointCount * 3] = secondaryR;
+                    colorData[pointCount * 3 + 1] = secondaryG;
+                    colorData[pointCount * 3 + 2] = secondaryB;
+                    pointCount++;
+                    propagateColor = 1;
+                    continue;
+                }
+
+                if (idx === 5) {
+                    let [dx, dy] = randomPointInCircle(finalParams.circles.circle2.cx, finalParams.circles.circle2.cy, finalParams.circles.circle2.r);
+                    if (Math.random() < 0.5) { dx = -dx; dy = -dy; }
+                    const rotatedDx = dx * cosRot - dy * sinRot;
+                    const rotatedDy = dx * sinRot + dy * cosRot;
+                    const px = centerX + rotatedDx * render.scaleY + render.translateX;
+                    const py = centerY - (rotatedDy * render.scaleY - render.translateY);
+                    
+                    points[pointCount * 2] = px;
+                    points[pointCount * 2 + 1] = py;
+                    colorData[pointCount * 3] = tertiaryR;
+                    colorData[pointCount * 3 + 1] = tertiaryG;
+                    colorData[pointCount * 3 + 2] = tertiaryB;
+                    pointCount++;
+                    propagateColor = 2;
+                    continue;
+                }
+
+                if (idx === 0) { propagateColor = 0; }
+
+                let drawX = x, drawY = y;
+                if (Math.random() < 0.5) { drawX = -x; drawY = -y; }
+
+                const rotatedX = drawX * cosRot - drawY * sinRot;
+                const rotatedY = drawX * sinRot + drawY * cosRot;
+                const px = centerX + rotatedX * render.scaleY + render.translateX;
+                const py = centerY - (rotatedY * render.scaleY - render.translateY);
+
+                points[pointCount * 2] = px;
+                points[pointCount * 2 + 1] = py;
+                
+                if (propagateColor === 2) {
+                    colorData[pointCount * 3] = tertiaryR;
+                    colorData[pointCount * 3 + 1] = tertiaryG;
+                    colorData[pointCount * 3 + 2] = tertiaryB;
+                } else if (propagateColor === 1) {
+                    colorData[pointCount * 3] = secondaryR;
+                    colorData[pointCount * 3 + 1] = secondaryG;
+                    colorData[pointCount * 3 + 2] = secondaryB;
+                } else {
+                    colorData[pointCount * 3] = primaryR;
+                    colorData[pointCount * 3 + 1] = primaryG;
+                    colorData[pointCount * 3 + 2] = primaryB;
+                }
+                pointCount++;
+            }
+
+            // Now use OpenGL/WebGL to render all points efficiently
+            const canvas = document.createElement('canvas');
+            canvas.width = canvasWidth;
+            canvas.height = canvasHeight;
+            const gl = canvas.getContext('webgl', { preserveDrawingBuffer: true });
+
+            if (!gl) {
+                throw new Error('WebGL not available');
+            }
+
+            // Simple vertex shader - just positions points
+            const vertexShaderSource = `
+                attribute vec2 position;
+                attribute vec3 color;
+                varying vec3 vColor;
+                uniform vec2 resolution;
+                uniform float pointSize;
+                
+                void main() {
+                    vec2 normalized = position / resolution * 2.0 - 1.0;
+                    normalized.y = -normalized.y;
+                    gl_Position = vec4(normalized, 0.0, 1.0);
+                    gl_PointSize = pointSize;
+                    vColor = color;
+                }
+            `;
+
+            const fragmentShaderSource = `
+                precision mediump float;
+                varying vec3 vColor;
+                
+                void main() {
+                    gl_FragColor = vec4(vColor, 1.0);
+                }
+            `;
+
+            // Compile shaders
+            const vertexShader = gl.createShader(gl.VERTEX_SHADER)!;
+            gl.shaderSource(vertexShader, vertexShaderSource);
+            gl.compileShader(vertexShader);
+
+            const fragmentShader = gl.createShader(gl.FRAGMENT_SHADER)!;
+            gl.shaderSource(fragmentShader, fragmentShaderSource);
+            gl.compileShader(fragmentShader);
+
+            const program = gl.createProgram()!;
+            gl.attachShader(program, vertexShader);
+            gl.attachShader(program, fragmentShader);
+            gl.linkProgram(program);
+            gl.useProgram(program);
+
+            // Upload position data
+            const trimmedPoints = points.slice(0, pointCount * 2);
+            const positionBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, trimmedPoints, gl.STATIC_DRAW);
+
+            const positionLocation = gl.getAttribLocation(program, 'position');
+            gl.enableVertexAttribArray(positionLocation);
+            gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+
+            // Upload color data (normalize to 0-1)
+            const trimmedColors = colorData.slice(0, pointCount * 3);
+            const normalizedColors = new Float32Array(trimmedColors.length);
+            for (let i = 0; i < trimmedColors.length; i++) {
+                normalizedColors[i] = trimmedColors[i] / 255;
+            }
+
+            const colorBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, normalizedColors, gl.STATIC_DRAW);
+
+            const colorLocation = gl.getAttribLocation(program, 'color');
+            gl.enableVertexAttribArray(colorLocation);
+            gl.vertexAttribPointer(colorLocation, 3, gl.FLOAT, false, 0, 0);
+
+            // Set uniforms
+            const resolutionLocation = gl.getUniformLocation(program, 'resolution');
+            gl.uniform2f(resolutionLocation, canvasWidth, canvasHeight);
+            
+            const pointSizeLocation = gl.getUniformLocation(program, 'pointSize');
+            const glPointSize = Math.max(1.0, Math.floor(render.dotSize));
+            gl.uniform1f(pointSizeLocation, glPointSize);
+
+            // Clear and draw all points (like glVertex2fv in C++ but batched)
+            gl.clearColor(0, 0, 0, 0);
+            gl.clear(gl.COLOR_BUFFER_BIT);
+            gl.drawArrays(gl.POINTS, 0, pointCount);
+
+            gl.flush();
+            await new Promise(resolve => setTimeout(resolve, 10));
+
+            // Convert to Blob URL
+            const blobUrl = await new Promise<string>((resolve) => {
+                canvas.toBlob((blob) => {
+                    if (blob) {
+                        resolve(URL.createObjectURL(blob));
+                    } else {
+                        resolve('');
+                    }
+                }, 'image/png', 1.0);
+            });
+            
+            cachedFernPatternBlobUrl = blobUrl;
+            fernPatternPromise = null;
+            
+            return blobUrl;
+        } catch (error) {
+            console.error('WebGL fern generation failed, using fallback:', error);
+            fernPatternPromise = null;
+            return generateFernPatternFallback(canvasWidth, canvasHeight, finalParams);
+        }
+    })();
+    
+    return fernPatternPromise;
+}
+
+// Fallback CPU implementation
+async function generateFernPatternFallback(
+    canvasWidth: number,
+    canvasHeight: number,
+    finalParams: FernParameters
+): Promise<string> {
+    const canvas = document.createElement('canvas');
         canvas.width = canvasWidth;
         canvas.height = canvasHeight;
         const ctx = canvas.getContext('2d');
 
-        if (!ctx) {
-            return '';
-        }
+    if (!ctx) return '';
 
-        // Use ImageData for direct pixel manipulation (much faster than fillRect)
         const imageData = ctx.createImageData(canvasWidth, canvasHeight);
         const data = new Uint8ClampedArray(imageData.data.buffer);
 
-        // Use provided params or auto-scale for card size
-        const finalParams = params || createCardParams(canvasWidth, canvasHeight);
         const { render, colors, probabilities } = finalParams;
         const cumulative = normalizeProbabilities(probabilities);
 
-        // Parse hex colors to RGB once (avoid repeated parsing)
         const parseHex = (hex: string) => {
             const r = parseInt(hex.slice(1, 3), 16);
             const g = parseInt(hex.slice(3, 5), 16);
@@ -202,21 +426,16 @@ export async function generateFernPattern(
         const [secondaryR, secondaryG, secondaryB] = parseHex(colors.secondary);
         const [tertiaryR, tertiaryG, tertiaryB] = parseHex(colors.tertiary);
 
-        // Pre-calculate rotation constants (used millions of times)
         const rotationRadians = -67 * Math.PI / 180;
         const cosRot = Math.cos(rotationRadians);
         const sinRot = Math.sin(rotationRadians);
-        
-        // Pre-calculate canvas center
         const centerX = canvasWidth / 2;
         const centerY = canvasHeight / 2;
 
         let x = 0, y = 0;
-        let propagateColor = 0; // 0=primary, 1=secondary (circle1), 2=tertiary (circle2)
-
+    let propagateColor = 0;
         const pointSize = Math.max(1, Math.floor(render.dotSize));
         
-        // Helper to draw pixel directly to ImageData
         const drawPixel = (px: number, py: number, r: number, g: number, b: number) => {
             const pxi = px | 0;
             const pyi = py | 0;
@@ -235,15 +454,12 @@ export async function generateFernPattern(
             }
         };
 
-        // Skip first 20 iterations to let the system settle
         for (let i = 0; i < 20; i++) {
             const idx = pickTransformIndex(cumulative);
             [x, y] = executeTransformStep(idx, x, y, finalParams);
         }
 
-        // Main iteration loop with yielding
         for (let i = 0; i < render.iterations; i++) {
-            // Yield every 100000 iterations to let React render
             if (i > 0 && i % 1000000 === 0) {
                 await new Promise(resolve => setTimeout(resolve, 0));
             }
@@ -251,75 +467,40 @@ export async function generateFernPattern(
             const idx = pickTransformIndex(cumulative);
             [x, y] = executeTransformStep(idx, x, y, finalParams);
 
-            // Handle circle splash points (f5/f6)
             if (idx === 4) {
-                // Circle 1 splash - draw directly and set color propagation
                 let [dx, dy] = randomPointInCircle(finalParams.circles.circle1.cx, finalParams.circles.circle1.cy, finalParams.circles.circle1.r);
-
-                // Random 180-degree rotation around origin
-                if (Math.random() < 0.5) {
-                    dx = -dx;
-                    dy = -dy;
-                }
-
-                // Apply rotation (pre-calculated)
+            if (Math.random() < 0.5) { dx = -dx; dy = -dy; }
                 const rotatedDx = dx * cosRot - dy * sinRot;
                 const rotatedDy = dx * sinRot + dy * cosRot;
-
                 const px = centerX + rotatedDx * render.scaleY + render.translateX;
                 const py = centerY - (rotatedDy * render.scaleY - render.translateY);
-
                 drawPixel(px, py, secondaryR, secondaryG, secondaryB);
-
                 propagateColor = 1;
                 continue;
             }
 
             if (idx === 5) {
-                // Circle 2 splash - draw directly and set color propagation  
                 let [dx, dy] = randomPointInCircle(finalParams.circles.circle2.cx, finalParams.circles.circle2.cy, finalParams.circles.circle2.r);
-
-                // Random 180-degree rotation around origin
-                if (Math.random() < 0.5) {
-                    dx = -dx;
-                    dy = -dy;
-                }
-
-                // Apply rotation (pre-calculated)
+            if (Math.random() < 0.5) { dx = -dx; dy = -dy; }
                 const rotatedDx = dx * cosRot - dy * sinRot;
                 const rotatedDy = dx * sinRot + dy * cosRot;
-
                 const px = centerX + rotatedDx * render.scaleY + render.translateX;
                 const py = centerY - (rotatedDy * render.scaleY - render.translateY);
-
                 drawPixel(px, py, tertiaryR, tertiaryG, tertiaryB);
-
                 propagateColor = 2;
                 continue;
             }
 
-            // Reset color propagation on f1 (stem)
-            if (idx === 0) {
-                propagateColor = 0;
-            }
+        if (idx === 0) { propagateColor = 0; }
 
-            // Draw regular fractal point with current color
             let drawX = x, drawY = y;
+        if (Math.random() < 0.5) { drawX = -x; drawY = -y; }
 
-            // Random 180-degree rotation around origin for visual variety
-            if (Math.random() < 0.5) {
-                drawX = -x;
-                drawY = -y;
-            }
-
-            // Apply rotation (pre-calculated)
             const rotatedX = drawX * cosRot - drawY * sinRot;
             const rotatedY = drawX * sinRot + drawY * cosRot;
-
             const px = centerX + rotatedX * render.scaleY + render.translateX;
             const py = centerY - (rotatedY * render.scaleY - render.translateY);
 
-            // Use propagated color
             if (propagateColor === 2) {
                 drawPixel(px, py, tertiaryR, tertiaryG, tertiaryB);
             } else if (propagateColor === 1) {
@@ -329,20 +510,18 @@ export async function generateFernPattern(
             }
         }
 
-        // Write ImageData to canvas in one operation
         ctx.putImageData(imageData, 0, 0);
-
-        // Convert canvas to data URL and cache it
-        const dataUrl = canvas.toDataURL('image/png');
-        cachedFernPattern = dataUrl;
-        
-        // Clear the promise so future calls can detect the cache is ready
-        fernPatternPromise = null;
-        
-        return dataUrl;
-    })();
     
-    return fernPatternPromise;
+    // Convert to Blob URL instead of data URL
+    return new Promise((resolve) => {
+        canvas.toBlob((blob) => {
+            if (blob) {
+                resolve(URL.createObjectURL(blob));
+            } else {
+                resolve('');
+            }
+        }, 'image/png', 1.0);
+    });
 }
 
 // React Context for sharing the fractal pattern
@@ -355,15 +534,15 @@ interface FernFractalContextType {
 const FernFractalContext = createContext<FernFractalContextType | undefined>(undefined);
 
 export const FernFractalProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [fernPattern, setFernPattern] = useState<string>(cachedFernPattern || '');
-  const [isLoading, setIsLoading] = useState<boolean>(!cachedFernPattern);
+  const [fernPattern, setFernPattern] = useState<string>(cachedFernPatternBlobUrl || '');
+  const [isLoading, setIsLoading] = useState<boolean>(!cachedFernPatternBlobUrl);
   const generationRequestedRef = useRef<boolean>(false);
 
   // Function to trigger generation (called by useFernFractal when component needs it)
   const triggerGeneration = useCallback(() => {
-    if (cachedFernPattern) {
+    if (cachedFernPatternBlobUrl) {
       // Already have cached pattern
-      setFernPattern(cachedFernPattern);
+      setFernPattern(cachedFernPatternBlobUrl);
       setIsLoading(false);
       return;
     }
