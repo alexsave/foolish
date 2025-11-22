@@ -113,6 +113,15 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             clearTimeout(botBumpTimerRef.current);
         }
         
+        // Check if there are any AI players in the game
+        const currentGame = url_game_id ? games[url_game_id] : null;
+        const hasAIPlayers = currentGame?.players?.some(player => player.is_ai) || false;
+        
+        // Only start timer if there are AI players
+        if (!hasAIPlayers) {
+            return;
+        }
+        
         // Start new 12-second timer
         botBumpTimerRef.current = setTimeout(() => {
             if (url_game_id) {
