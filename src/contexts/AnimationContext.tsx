@@ -125,7 +125,6 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         // Start new 12-second timer
         botBumpTimerRef.current = setTimeout(() => {
             if (url_game_id) {
-                console.log('No animations for 12s, calling bot bump for game:', url_game_id);
                 supabase.functions.invoke('bot_bump', { 
                     body: { game_id: url_game_id } 
                 }).catch(error => {
