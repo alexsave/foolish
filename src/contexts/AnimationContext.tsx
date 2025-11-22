@@ -97,7 +97,8 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     const currentGameIdRef = useRef<string | null>(null);
 
     // Track optimistically triggered animations to avoid server duplicates
-    const optimisticAnimations = useRef<Set<string>>(new Set());
+    // Map of animation hash -> timestamp when it was added
+    const optimisticAnimations = useRef<Map<string, number>>(new Map());
     
     // Store channel reference for proper cleanup
     const gameUserChannelRef = useRef<any>(null);
@@ -140,13 +141,25 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         };
     }, [url_game_id, startBotBumpTimer]);
 
-    // Clear optimistic animations every 10 seconds to prevent missing repeat events
+    // Clear OLD optimistic animations every 5 seconds (older than 30 seconds)
     useEffect(() => {
         const interval = setInterval(() => {
-            if (optimisticAnimations.current.size > 0) {
-                optimisticAnimations.current.clear();
-            }
-        }, 60000); // Clear every 60 seconds
+            const now = Date.now();
+            const threshold = 30000; // 30 seconds
+            
+            // Only clear animations older than 30 seconds
+            const toDelete: string[] = [];
+            optimisticAnimations.current.forEach((timestamp, hash) => {
+                if (now - timestamp > threshold) {
+                    toDelete.push(hash);
+                }
+            });
+            
+            toDelete.forEach(hash => {
+                optimisticAnimations.current.delete(hash);
+            });
+            
+        }, 5000); // Check every 5 seconds
 
         return () => clearInterval(interval);
     }, []);
@@ -247,41 +260,70 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             processedSequenceIds.current.add(sequenceId);
             processedEventContent.current.add(eventsString);
             
-            // Check if any of these events were triggered optimistically
+            // Check EACH event individually to see if it was optimistically animated
+            // Only skip the events that are optimistic, not the entire sequence
             const serverEvents = message.events;
             
-            const hasOptimisticEvent = serverEvents.some((serverEvent: any, index: number) => {
-                const serverEventString = JSON.stringify({
-                    type: serverEvent.type,
-                    cards: serverEvent.cards,
-                    from_location: serverEvent.from_location,
-                    to_location: serverEvent.to_location,
-                    player_id: serverEvent.player_id
-                });
-                const isOptimistic = optimisticAnimations.current.has(serverEventString);
-                return isOptimistic;
+            serverEvents.forEach((evt: any, idx: number) => {
             });
-
-            if (hasOptimisticEvent) {
-                // Clear the optimistic animations since server confirmed them
-                serverEvents.forEach((serverEvent: any, index: number) => {
-                    const serverEventString = JSON.stringify({
+            
+            // Filter out optimistic events, keeping only non-optimistic ones
+            const nonOptimisticEvents: AnimationEvent[] = [];
+            const optimisticEventIndices: number[] = [];
+            
+            serverEvents.forEach((serverEvent: any, eventIndex: number) => {
+                // Check if ALL cards in this server event were optimistically animated
+                if (!serverEvent.cards || serverEvent.cards.length === 0) {
+                    nonOptimisticEvents.push(serverEvent);
+                    return;
+                }
+                
+                const allCardsOptimistic = serverEvent.cards.every((card: Card) => {
+                    const cardEventString = JSON.stringify({
                         type: serverEvent.type,
-                        cards: serverEvent.cards,
+                        card: card, // Check individual card
                         from_location: serverEvent.from_location,
                         to_location: serverEvent.to_location,
                         player_id: serverEvent.player_id
                     });
-                    const wasDeleted = optimisticAnimations.current.delete(serverEventString);
+                    const timestamp = optimisticAnimations.current.get(cardEventString);
+                    const isOptimistic = timestamp !== undefined;
+                    const age = timestamp ? Date.now() - timestamp : null;
+                    return isOptimistic;
                 });
                 
-                // Still update game state from server, but skip animations
+                if (allCardsOptimistic) {
+                    optimisticEventIndices.push(eventIndex);
+                    // Clear the optimistic animations since server confirmed them
+                    serverEvent.cards.forEach((card: Card) => {
+                        const cardEventString = JSON.stringify({
+                            type: serverEvent.type,
+                            card: card,
+                            from_location: serverEvent.from_location,
+                            to_location: serverEvent.to_location,
+                            player_id: serverEvent.player_id
+                        });
+                        const timestamp = optimisticAnimations.current.get(cardEventString);
+                        const wasDeleted = optimisticAnimations.current.delete(cardEventString);
+                        if (wasDeleted && timestamp) {
+                            const age = Date.now() - timestamp;
+                        }
+                    });
+                } else {
+                    nonOptimisticEvents.push(serverEvent);
+                }
+            });
+
+            // If ALL events were optimistic, just update state and return
+            if (nonOptimisticEvents.length === 0) {
                 if (message.game) {
                     updateGameState(message.game.id, message.game);
                 }
                 return;
-            } else {
             }
+            
+            // Otherwise, continue with non-optimistic events
+            message.events = nonOptimisticEvents;
             
             // Log which events have intermediate game states
             message.events.forEach((animEvent: AnimationEvent, index: number) => {
@@ -470,23 +512,25 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             message: `Optimistic ${animationType} animation`
         };
         
-        // Track this animation to avoid duplicates from server
-        const eventString = JSON.stringify({
-            type: animationType,
-            cards: cards,
-            from_location: fromLocation,
-            to_location: toLocation,
-            player_id: playerId
+        // Track EACH CARD individually to avoid duplicates from server
+        // Server may split multi-card actions into separate events (one per card)
+        const timestamp = Date.now();
+        cards.forEach(card => {
+            const cardEventString = JSON.stringify({
+                type: animationType,
+                card: card, // Track individual card
+                from_location: fromLocation,
+                to_location: toLocation,
+                player_id: playerId
+            });
+            optimisticAnimations.current.set(cardEventString, timestamp);
         });
-        optimisticAnimations.current.add(eventString);
         
         // Reset bot bump timer when triggering optimistic animations
         startBotBumpTimer();
         
         // Queue the optimistic animation immediately
         queueAnimation(animationEvent);
-        
-        return eventString;
     };
 
     // TIMING FLOW:
