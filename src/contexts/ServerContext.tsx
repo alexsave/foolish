@@ -1,10 +1,10 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
-import { Card, PublicPlayer, PersonalGame, PublicGame, PRIVATE_EVENT_TYPE } from '../common/types';
+import { Card, PersonalGame, PublicGame, PRIVATE_EVENT_TYPE } from '../common/types';
 import supabase from '../backend/Connector';
 import { useParams } from 'react-router-dom';
 import { useAuth } from './AuthContext';
 import { MAX_PLAYERS } from '../common/constants';
-import { get_next_player_index, canCover, card_comp } from '../common/common_utils';
+import { get_next_player_index, card_comp } from '../common/common_utils';
 import { ANIMATION_TIME } from '../constants/constants';
 
 const ServerContext = createContext<ServerContextType | null>(null);

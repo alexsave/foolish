@@ -1,5 +1,5 @@
 import { Card, PersonalGame, PublicPlayer } from '../common/types';
-import { get_next_player_index, canCover } from '../common/common_utils';
+import { canCover } from '../common/common_utils';
 
 export const validateAttack = (game: PersonalGame, cards: Card[]): void => {
     const table_battles = game.table_battles;

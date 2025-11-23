@@ -24,16 +24,11 @@ interface PlayerCardProps {
 
 const PlayerCard: React.FC<PlayerCardProps> = ({
     player,
-    index,
     isDragging,
     isDropTarget,
-    isRearranging,
     pendingReady,
     onReadyClick,
 }) => {
-    const game_id = useParams().game_id!.toLowerCase();
-    const { startGame, game } = useServer();
-    const gameStatus = game?.status;
     const { user_id } = useAuth();
     
     // Generate unique wood texture seed and transform for each player card
@@ -172,8 +167,6 @@ export const Lobby = () => {
     const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
     const [localPlayerOrder, setLocalPlayerOrder] = useState<PublicPlayer[]>([]);
     const [isDragging, setIsDragging] = useState(false);
-    const [draggedElement, setDraggedElement] = useState<HTMLElement | null>(null);
-    const [touchStartY, setTouchStartY] = useState<number | null>(null);
     const [hasSwapped, setHasSwapped] = useState(false);
     const [isDirty, setIsDirty] = useState(false); // Track if there are ANY unsent changes to server
     const [isRearranging, setIsRearranging] = useState(false); // Track if network call is in progress
@@ -588,12 +581,8 @@ export const Lobby = () => {
             setHasPendingRearrange(false); // Clear pending flag when timer is cancelled
         }
 
-        const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
-        
         setIsDragging(true);
         setDraggedIndex(index);
-        setDraggedElement(e.currentTarget as HTMLElement);
-        setTouchStartY(clientY);
     };
 
     const handleDragEnd = () => {
@@ -616,8 +605,6 @@ export const Lobby = () => {
         // Reset drag state
         setDraggedIndex(null);
         setDragOverIndex(null);
-        setDraggedElement(null);
-        setTouchStartY(null);
         
         // Reset the swap flag after a short delay
         setTimeout(() => {
