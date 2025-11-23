@@ -278,6 +278,12 @@ function shouldBotActCore(game: Game, bot: PrivatePlayer, botIndex: number): boo
         return false;
     }
 
+    // Check if bot is out - they should never act
+    if (bot.status !== PLAYER_STATUS.IN) {
+        console.log(`Bot ${bot.name} should act: false (status is ${bot.status}, not IN)`);
+        return false;
+    }
+
     const isFirstAttack = game.table_battles.length === 0;
     const isDefender = botIndex === game.defender;
     const allAttacksCovered = game.table_battles.every(battle => battle.defense !== null);
