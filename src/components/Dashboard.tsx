@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import supabase from '../backend/Connector';
 import { useServer } from "../contexts/ServerContext";
 import { useNavigate } from "react-router-dom";
@@ -10,8 +10,13 @@ import { WoolBackgroundLayer } from "./WoolBackgroundLayer";
 export const Dashboard = () => {
     const [gameId, setGameId] = useState<string>('');
     const { username } = useAuth();
-    const { joinGame, games } = useServer();
+    const { joinGame, games, getUserGames } = useServer();
     const navigate = useNavigate();
+    
+    // Load all games when Dashboard mounts
+    useEffect(() => {
+        getUserGames();
+    }, []);
     
     // Get wood styles with different seeds for variety - memoized to prevent new object creation
     const woodBase1 = useWoodStyle(0.1);

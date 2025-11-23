@@ -17,13 +17,12 @@ interface PlayerCardProps {
     index: number;
     isDragging: boolean;
     isDropTarget: boolean;
-    onDragStart: (e: React.DragEvent, index: number) => void;
-    onDragOver: (e: React.DragEvent, index: number) => void;
-    onDragLeave: (e: React.DragEvent) => void;
-    onDrop: (e: React.DragEvent, index: number) => void;
-    onDragEnd: (e: React.DragEvent) => void;
+    onDragStart: (e: React.MouseEvent | React.TouchEvent, index: number) => void;
     onRemoveBot?: (botId: string) => void;
     onExitGame?: () => void;
+    isRearranging: boolean;
+    pendingReady: boolean;
+    onReadyClick: () => void;
 }
 
 const PlayerCard: React.FC<PlayerCardProps> = ({
@@ -32,12 +31,11 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
     isDragging,
     isDropTarget,
     onDragStart,
-    onDragOver,
-    onDragLeave,
-    onDrop,
-    onDragEnd,
     onRemoveBot,
     onExitGame,
+    isRearranging,
+    pendingReady,
+    onReadyClick,
 }) => {
     const game_id = useParams().game_id!.toLowerCase();
     const { startGame, game } = useServer();
@@ -85,12 +83,9 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
     return (
         <div
             key={player.player_id}
-            draggable={true}
-            onDragStart={(e) => onDragStart(e, index)}
-            onDragOver={(e) => onDragOver(e, index)}
-            onDragLeave={onDragLeave}
-            onDrop={(e) => onDrop(e, index)}
-            onDragEnd={onDragEnd}
+            data-player-index={index}
+            onMouseDown={(e) => onDragStart(e, index)}
+            onTouchStart={(e) => onDragStart(e, index)}
             style={style}
         >
             {/* Wood texture background layer - can be transformed independently */}
@@ -122,7 +117,7 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
                 {player.status !== 'idle' ? '🟢' : player.player_id === user_id ? (
                     <>
                         <button
-                            onClick={() => startGame(game_id)}
+                            onClick={onReadyClick}
                             style={{
                                 ...woodButtonStyle,
                                 padding: '4px 8px',
@@ -135,6 +130,8 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
                                 boxShadow: `inset 0 1px 0 rgba(255,255,255,0.2), inset 0 -1px 0 rgba(0,0,0,0.3), 0 2px 4px rgba(0,0,0,0.4)`,
                                 position: 'relative' as const,
                                 overflow: 'hidden' as const,
+                                opacity: pendingReady ? 0.7 : 1,
+                                zIndex: 1700, // Above drag overlay to prevent accidental drags
                             }}
                             onMouseEnter={(e) => {
                                 Object.assign(e.currentTarget.style, woodButtonHoverStyle);
@@ -147,7 +144,7 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
                                 color: 'rgba(70, 35, 20, 0.8)',
                                 mixBlendMode: 'color-burn',
                                 filter: 'contrast(1.2) brightness(0.9) blur(.3px)',
-                            }}>Ready</span>
+                            }}>{pendingReady ? '⏳ Ready' : 'Ready'}</span>
                         </button>
                         {gameStatus === 'waiting' && onExitGame && (
                             <button
@@ -162,7 +159,9 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
                                     border: 'none',
                                     borderRadius: '3px',
                                     cursor: 'pointer',
-                                    fontSize: '12px'
+                                    fontSize: '12px',
+                                    position: 'relative' as const,
+                                    zIndex: 1700, // Above drag overlay to prevent accidental drags
                                 }}
                                 title="Exit game"
                             >
@@ -184,7 +183,9 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
                             border: 'none',
                             borderRadius: '3px',
                             cursor: 'pointer',
-                            fontSize: '12px'
+                            fontSize: '12px',
+                            position: 'relative' as const,
+                            zIndex: 1700, // Above drag overlay to prevent accidental drags
                         }}
                         title="Remove bot"
                     >
@@ -198,7 +199,7 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
 
 export const Lobby = () => {
     const game_id = useParams().game_id?.toLowerCase();
-    const { game, updateGameName, rearrangePlayer, addBot, exitGame, joinGame } = useServer();
+    const { game, updateGameName, rearrangePlayer, addBot, exitGame, joinGame, startGame } = useServer();
     const navigate = useNavigate();
 
     // Get wood styles with seeds - memoized to prevent new object creation
@@ -231,47 +232,130 @@ export const Lobby = () => {
     const [localPlayerOrder, setLocalPlayerOrder] = useState<PublicPlayer[]>([]);
     const [isDragging, setIsDragging] = useState(false);
     const [draggedElement, setDraggedElement] = useState<HTMLElement | null>(null);
+    const [touchStartY, setTouchStartY] = useState<number | null>(null);
+    const [hasSwapped, setHasSwapped] = useState(false);
+    const [isDirty, setIsDirty] = useState(false); // Track if there are ANY unsent changes to server
+    const [isRearranging, setIsRearranging] = useState(false); // Track if network call is in progress
+    const [hasPendingRearrange, setHasPendingRearrange] = useState(false); // Track if timer is active
+    const [pendingReady, setPendingReady] = useState(false); // Track if user clicked ready while rearranging
 
     const rearrangeTimerRef = useRef<NodeJS.Timeout | null>(null);
+    const pendingReadyRef = useRef<boolean>(false);
     const inputRef = useRef<HTMLInputElement>(null);
 
-    // Update local player order when game changes
+    // Initialize local player order only when game first loads or when we have no local modifications
+    // This makes localPlayerOrder the source of truth on the client
     useEffect(() => {
         if (game?.players) {
-            setLocalPlayerOrder(game.players);
+            // Only update if we don't have a local order yet (first load)
+            if (localPlayerOrder.length === 0) {
+                setLocalPlayerOrder(game.players);
+                return;
+            }
+            
+            // Check if our local order differs from server order
+            const serverOrderIds = game.players.map(p => p.player_id).join(',');
+            const localOrderIds = localPlayerOrder.map(p => p.player_id).join(',');
+            const hasLocalChanges = serverOrderIds !== localOrderIds;
+            
+            // Or if we're completely idle (no local modifications in progress or pending)
+            // Also don't sync if we have a pending ready (waiting to start game with our local order)
+            // Most importantly: don't sync if we have ANY local changes at all
+            const isCompletelyIdle = !isDragging && !hasPendingRearrange && !isRearranging && !pendingReady && !hasLocalChanges;
+            
+            if (isCompletelyIdle) {
+                setLocalPlayerOrder(game.players);
+            }
         }
-    }, [game?.players]);
+    }, [game?.players, isDragging, hasPendingRearrange, isRearranging, pendingReady, localPlayerOrder.length]);
+
+    // Keep ref in sync with state
+    useEffect(() => {
+        pendingReadyRef.current = pendingReady;
+    }, [pendingReady]);
 
     // Cleanup timer on unmount
     useEffect(() => {
         return () => {
+            console.log('CLEANUP: Component unmounting, clearing timer');
             if (rearrangeTimerRef.current) {
                 clearTimeout(rearrangeTimerRef.current);
+                setHasPendingRearrange(false);
             }
         };
     }, []);
 
-    // Enhanced drag behavior with mouse following
+    // Enhanced drag behavior for mouse and touch
     useEffect(() => {
-        const handleMouseMove = (e: MouseEvent) => {
-            if (isDragging && draggedElement) {
-                const style = draggedElement.style;
-                style.position = 'fixed';
-                style.top = e.clientY - draggedElement.clientHeight / 2 + 'px';
-                style.left = e.clientX - draggedElement.clientWidth / 2 + 'px';
-                style.zIndex = '1500';
-                style.pointerEvents = 'none';
+        const handleMouseMove = (e: MouseEvent | Touch) => {
+            if (!(isDragging && draggedIndex !== null)) {
+                return;
+            }
+
+            // Find what player card we're hovering over
+            const elements = document.elementsFromPoint(e.clientX, e.clientY);
+            const playerCardElement = elements.find(el => el.getAttribute('data-player-index') !== null);
+            
+            if (!playerCardElement) {
+                return;
+            }
+            
+            const targetIndex = parseInt(playerCardElement.getAttribute('data-player-index')!);
+            if (targetIndex === draggedIndex) {
+                return;
+            }
+            
+            // Do immediate swap in the array
+            const newOrder = [...localPlayerOrder];
+            const draggedPlayer = newOrder[draggedIndex];
+            const targetPlayer = newOrder[targetIndex];
+
+            // Swap the players
+            newOrder[draggedIndex] = targetPlayer;
+            newOrder[targetIndex] = draggedPlayer;
+
+            setLocalPlayerOrder(newOrder);
+            setDraggedIndex(targetIndex); // Update dragged index to new position
+            setHasSwapped(true); // Mark that a swap occurred in this drag
+            setIsDirty(true); // Mark that we have unsent changes
+        };
+
+        const handleTouchMove = (e: TouchEvent) => {
+            if (!(isDragging && draggedIndex !== null && e.touches.length > 0)) {
+                return;
+            }
+
+            // Prevent scrolling on touch devices (only if cancelable)
+            if (e.cancelable) {
+                e.preventDefault();
+            }
+            const touch = e.touches[0];
+            handleMouseMove(touch);
+        };
+
+        const handleEnd = (e: MouseEvent | TouchEvent) => {
+            if (isDragging) {
+                if (e.cancelable) {
+                    e.preventDefault();
+                }
+                handleDragEnd();
             }
         };
 
         if (isDragging) {
             document.addEventListener('mousemove', handleMouseMove);
+            document.addEventListener('touchmove', handleTouchMove, { passive: false });
+            document.addEventListener('mouseup', handleEnd);
+            document.addEventListener('touchend', handleEnd);
         }
 
         return () => {
             document.removeEventListener('mousemove', handleMouseMove);
+            document.removeEventListener('touchmove', handleTouchMove);
+            document.removeEventListener('mouseup', handleEnd);
+            document.removeEventListener('touchend', handleEnd);
         };
-    }, [isDragging, draggedElement]);
+    }, [isDragging, draggedIndex, localPlayerOrder]);
 
     usePreventScroll();
 
@@ -325,8 +409,15 @@ export const Lobby = () => {
     };
 
     const scheduleRearrangeUpdate = (newOrder: PublicPlayer[]) => {
+        console.log('SCHEDULE REARRANGE: Called', {
+            hadExistingTimer: !!rearrangeTimerRef.current,
+            hasPendingRearrange,
+            isRearranging
+        });
+        
         // Cancel existing timer
         if (rearrangeTimerRef.current) {
+            console.log('SCHEDULE REARRANGE: Clearing existing timer');
             clearTimeout(rearrangeTimerRef.current);
         }
 
@@ -342,34 +433,139 @@ export const Lobby = () => {
             playerIds_length: playerIds.length
         });
 
-        // Set new 1.3-second timer
+        // Mark that we have a pending rearrange
+        console.log('SCHEDULE REARRANGE: Setting hasPendingRearrange = true');
+        setHasPendingRearrange(true);
+
+        // Set new 5-second timer (only fires after no dragging for 5 seconds)
+        console.log('SCHEDULE REARRANGE: Starting 5 second timer');
         rearrangeTimerRef.current = setTimeout(() => {
-            rearrangePlayer(game_id!, playerIds).catch(error => {
-                console.error('Failed to rearrange players:', error);
-                // Revert to original order on error
-                setLocalPlayerOrder(originalPlayers);
-            });
-        }, 400);
+            console.log('REARRANGE TIMER: Fired! Calling rearrangePlayer');
+            setHasPendingRearrange(false);
+            setIsRearranging(true);
+            rearrangePlayer(game_id!, playerIds)
+                .then(() => {
+                    console.log('REARRANGE: Success, clearing dirty flag', {
+                        pendingReadyRef: pendingReadyRef.current
+                    });
+                    setIsRearranging(false);
+                    setIsDirty(false); // Clear dirty flag on successful sync
+                    
+                    // If user clicked ready while rearranging, start the game now
+                    // Use ref to avoid closure issues with state
+                    if (pendingReadyRef.current) {
+                        console.log('REARRANGE: Starting game (pendingReady was true)');
+                        setPendingReady(false);
+                        pendingReadyRef.current = false;
+                        startGame(game_id!);
+                    }
+                })
+                .catch(error => {
+                    console.error('Failed to rearrange players:', error);
+                    setIsRearranging(false);
+                    setPendingReady(false); // Clear pending ready on error
+                    pendingReadyRef.current = false;
+                    // Revert to original order on error
+                    setLocalPlayerOrder(originalPlayers);
+                    // Note: Keep isDirty true on error so we can retry
+                });
+        }, 5000);
+        console.log('SCHEDULE REARRANGE: Timer created with ref:', !!rearrangeTimerRef.current);
     };
 
-    const handleDragStart = (e: React.DragEvent, index: number) => {
+    const handleReadyClick = () => {
+        // Check if our local order differs from server order
+        const serverOrderIds = game!.players.map(p => p.player_id).join(',');
+        const localOrderIds = localPlayerOrder.map(p => p.player_id).join(',');
+        const hasLocalChanges = serverOrderIds !== localOrderIds;
+        
+        console.log('READY CLICK:', {
+            hasLocalChanges,
+            hasPendingRearrange,
+            isRearranging,
+            timerExists: !!rearrangeTimerRef.current,
+            serverOrderIds,
+            localOrderIds
+        });
+        
+        // Always queue the ready action - this ensures we never call startGame before rearrange completes
+        setPendingReady(true);
+        pendingReadyRef.current = true; // Keep ref in sync
+        
+        // If we have local changes that haven't been scheduled yet, schedule them now
+        // BUT: if there's already a pending rearrange or one in progress, DON'T reschedule
+        // (this would reset the timer and cancel the existing request)
+        if (hasLocalChanges && !hasPendingRearrange && !isRearranging) {
+            console.log('READY: Scheduling rearrange because local changes detected');
+            scheduleRearrangeUpdate(localPlayerOrder);
+        } else if (!hasLocalChanges && !hasPendingRearrange && !isRearranging) {
+            console.log('READY: No changes, starting game immediately');
+            // No local changes and no pending operations - start immediately
+            // We use setTimeout to ensure setPendingReady has taken effect
+            setTimeout(() => {
+                startGame(game_id!);
+                setPendingReady(false);
+                pendingReadyRef.current = false;
+            }, 0);
+        } else {
+            console.log('READY: Waiting for existing rearrange to complete');
+        }
+        // Otherwise: hasPendingRearrange or isRearranging is true, just wait for it to complete
+    };
+
+    const handleDragStart = (e: React.MouseEvent | React.TouchEvent, index: number) => {
         if (game?.status !== 'waiting') return;
+
+        // Don't start drag if clicking on a button (Ready, Exit, Remove bot)
+        const target = e.target as HTMLElement;
+        if (target.tagName === 'BUTTON' || target.closest('button')) {
+            console.log('DRAG START: Clicked on button, ignoring drag');
+            return;
+        }
+
+        // For mouse events, we can safely prevent default
+        // For touch events, React registers them as passive, so we skip preventDefault here
+        // (it will be called in the document-level touchmove handler instead)
+        if ('button' in e) {
+            e.preventDefault();
+        }
+        e.stopPropagation();
+
+        console.log('DRAG START:', {
+            hadExistingTimer: !!rearrangeTimerRef.current,
+            hasPendingRearrange
+        });
 
         // Cancel any pending rearrange update since user is still actively dragging
         if (rearrangeTimerRef.current) {
+            console.log('DRAG START: Clearing timer (user started dragging again)');
             clearTimeout(rearrangeTimerRef.current);
             rearrangeTimerRef.current = null;
+            setHasPendingRearrange(false); // Clear pending flag when timer is cancelled
         }
 
-        e.dataTransfer.setData('text/plain', '');
+        const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+        
         setIsDragging(true);
         setDraggedIndex(index);
         setDraggedElement(e.currentTarget as HTMLElement);
-        e.dataTransfer.effectAllowed = 'move';
+        setTouchStartY(clientY);
     };
 
-    const handleDragEnd = (e: React.DragEvent) => {
+    const handleDragEnd = () => {
         if (!isDragging || draggedIndex === null) return;
+
+        console.log('DRAG END:', { hasSwapped, isDirty, hasPendingRearrange });
+
+        // Schedule the final update to the server if:
+        // 1. Swaps occurred in THIS drag, OR
+        // 2. We have dirty changes AND no rearrange is already pending
+        if (hasSwapped || (isDirty && !hasPendingRearrange && !isRearranging)) {
+            console.log('DRAG END: Scheduling rearrange', { 
+                reason: hasSwapped ? 'swaps in this drag' : 'dirty changes from previous drag'
+            });
+            scheduleRearrangeUpdate(localPlayerOrder);
+        }
 
         setIsDragging(false);
 
@@ -377,45 +573,14 @@ export const Lobby = () => {
         setDraggedIndex(null);
         setDragOverIndex(null);
         setDraggedElement(null);
-
-        // Reset element styles
-        const element = e.currentTarget as HTMLElement;
-        element.style.position = '';
-        element.style.top = '';
-        element.style.left = '';
-        element.style.zIndex = '';
+        setTouchStartY(null);
+        
+        // Reset the swap flag after a short delay
+        setTimeout(() => {
+            setHasSwapped(false);
+        }, 100);
     };
 
-    const handleDragOver = (e: React.DragEvent, index: number) => {
-        if (game?.status !== 'waiting' || !isDragging || draggedIndex === null) return;
-
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'move';
-
-        if (index !== draggedIndex) {
-            const newOrder = [...localPlayerOrder];
-            const draggedPlayer = newOrder[draggedIndex];
-
-            // Remove dragged player from current position
-            newOrder.splice(draggedIndex, 1);
-
-            // Insert at new position
-            newOrder.splice(index, 0, draggedPlayer);
-
-            setLocalPlayerOrder(newOrder);
-            setDraggedIndex(index);
-            scheduleRearrangeUpdate(newOrder);
-        }
-    };
-
-    const handleDragLeave = (e: React.DragEvent) => {
-        // Placeholder for compatibility
-    };
-
-    const handleDrop = (e: React.DragEvent, dropIndex: number) => {
-        e.preventDefault();
-        // Actual drop logic handled in handleDragEnd
-    };
 
     return <div style={{
         touchAction: 'manipulation',
@@ -543,12 +708,11 @@ export const Lobby = () => {
                     isDragging={draggedIndex === index}
                     isDropTarget={dragOverIndex === index}
                     onDragStart={handleDragStart}
-                    onDragOver={handleDragOver}
-                    onDragLeave={handleDragLeave}
-                    onDrop={handleDrop}
-                    onDragEnd={handleDragEnd}
                     onRemoveBot={(botId) => exitGame(game_id!, botId)}
                     onExitGame={() => exitGame(game_id!)}
+                    isRearranging={isRearranging}
+                    pendingReady={pendingReady}
+                    onReadyClick={handleReadyClick}
                 />
             ))
         }
