@@ -274,6 +274,24 @@ export const Lobby = () => {
         pendingReadyRef.current = pendingReady;
     }, [pendingReady]);
 
+    // Reset local state when game_id changes (navigating between lobbies)
+    useEffect(() => {
+        console.log('GAME ID CHANGED: Resetting local state for new lobby');
+        setLocalPlayerOrder([]);
+        setIsDirty(false);
+        setHasSwapped(false);
+        setPendingReady(false);
+        pendingReadyRef.current = false;
+        
+        // Clear any pending timers
+        if (rearrangeTimerRef.current) {
+            clearTimeout(rearrangeTimerRef.current);
+            rearrangeTimerRef.current = null;
+            setHasPendingRearrange(false);
+        }
+        setIsRearranging(false);
+    }, [game_id]);
+
     // Cleanup timer on unmount
     useEffect(() => {
         return () => {
