@@ -513,44 +513,44 @@ WITH CHECK (
 
 INSERT INTO bots (nickname, strategy_key) VALUES
 -- Handwritten strategy bots (rule-based)
-('0xDEADBEEF', 'handwritten'),
+('Handwritten 1', 'handwritten'),
 ('0x00C0FFEE', 'handwritten'),
-('0x00000001', 'handwritten'),
-('0x00BEADED', 'handwritten'),
+('Handwritten 3', 'handwritten'),
+('Handwritten 4', 'handwritten'),
 
 -- Random strategy bots (chaotic)
-('0xBABEFACE', 'random'),
-('0x000FADED', 'random'),
-('0xCAFEBABE', 'random'),
-('0xFEEDBEEF', 'random'),
-('0x0BADC0DE', 'random'),
-('0xFACEFEED', 'random'),
-('0x0C4EA7E9', 'random'),
+('Random 1', 'random'),
+('Random 2', 'random'),
+('Random 3', 'random'),
+('Random 4', 'random'),
+('Random 5', 'random'),
+('Random 6', 'random'),
+('Random 7', 'random'),
 
 -- One card strategy bots (minimalist efficiency)
-('0x0EE0CA5D', 'one_card'),
-('0x50105010', 'one_card'),
-('0x1A57C45D', 'one_card'),
+('One Card 1', 'one_card'),
+('One Card 2', 'one_card'),
+('One Card 3', 'one_card'),
 
 -- Simple heuristic strategy bots (logical rule-based)
-('0x10C1CA11', 'simple_heuristic'),
-('0x51A3E357', 'simple_heuristic'),
-('0xBA5ED0A5', 'simple_heuristic'),
+('Simple Heuristic 1', 'simple_heuristic'),
+('Simple Heuristic 2', 'simple_heuristic'),
+('Simple Heuristic 3', 'simple_heuristic'),
 
 -- Ultimate champion strategy bots (advanced AI)
-('0xCEA4E10E', 'ultimate_champion'),
-('0xE1179A7E', 'ultimate_champion'),
-('0x0EE51055', 'ultimate_champion'),
+('Ultimate Champion 1', 'ultimate_champion'),
+('Ultimate Champion 2', 'ultimate_champion'),
+('Ultimate Champion 3', 'ultimate_champion'),
 
 -- Champion strategy bots (tournament winners)
-('0x11C705E1', 'champion'),
-('0x751243A1', 'champion'),
-('0xE1179B07', 'champion'),
-('0xC0E4EE50', 'champion'),
+('Champion 1', 'champion'),
+('Champion 2', 'champion'),
+('Champion 3', 'champion'),
+('Champion 4', 'champion'),
 
 -- Hacker strategy bots (perfect information - UNFAIR ADVANTAGE)
-('0x00000000', 'hacker'),
-('0xFFFFFFFF', 'hacker');
+('Hacker 1', 'hacker'),
+('Hacker 2', 'hacker');
 
 -- =============================================================================
 -- SETUP COMPLETE!
