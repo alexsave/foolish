@@ -23,6 +23,7 @@ interface PlayerCardProps {
     onDrop: (e: React.DragEvent, index: number) => void;
     onDragEnd: (e: React.DragEvent) => void;
     onRemoveBot?: (botId: string) => void;
+    onExitGame?: () => void;
 }
 
 const PlayerCard: React.FC<PlayerCardProps> = ({
@@ -36,6 +37,7 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
     onDrop,
     onDragEnd,
     onRemoveBot,
+    onExitGame,
 }) => {
     const game_id = useParams().game_id!.toLowerCase();
     const { startGame, game } = useServer();
@@ -60,7 +62,10 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
             0 2px 4px rgba(0,0,0,0.4)`,
         position: 'relative' as const,
         overflow: 'hidden' as const,
-        width: '200px',
+        width: '260px',
+        boxSizing: 'border-box' as const,
+        //height: '60px',
+        minHeight: '50px',
         display: 'flex',
         flexDirection: 'row',
         justifyContent: 'space-between',
@@ -72,7 +77,7 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
         transition: isDragging ? 'none' : 'all 0.2s ease',
         transform: isDragging ? 'scale(1.05)' : 'scale(1)', // Don't flip the entire card
         userSelect: 'none',
-        marginBottom: '6px',
+        marginBottom: '4px',
         zIndex: 1500,
         pointerEvents: isDragging ? 'none' : 'auto'
     };
@@ -112,34 +117,60 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
                 pointerEvents: isDragging ? 'auto' : 'none',
                 userSelect: 'none'
             }} />
-            <p style={{ zIndex: 10 }}>{player.is_ai ? '🤖 ' : ''}{player.name}</p>
+            <p style={{ zIndex: 10, textAlign: 'center',  lineHeight: '30px', justifyContent: 'center', padding: '0 5px', margin: '0' }}>{player.is_ai ? '🤖 ' : ''}{player.name}</p>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                {player.status !== 'idle' ? '🟢' : player.player_id === user_id ? <button
-                    onClick={() => startGame(game_id)}
-                    style={{
-                        ...woodButtonStyle,
-                        padding: '4px 8px',
-                        fontSize: '12px',
-                        border: '3px solid #5D3A1A',
-                        borderRadius: '0',
-                        fontWeight: 'bold',
-                        cursor: 'pointer',
-                        transition: 'all 0.2s ease',
-                        boxShadow: `inset 0 1px 0 rgba(255,255,255,0.2), inset 0 -1px 0 rgba(0,0,0,0.3), 0 2px 4px rgba(0,0,0,0.4)`,
-                        position: 'relative' as const,
-                        overflow: 'hidden' as const,
-                    }}
-                    onMouseEnter={(e) => {
-                        Object.assign(e.currentTarget.style, woodButtonHoverStyle);
-                    }}
-                    onMouseLeave={(e) => {
-                        Object.assign(e.currentTarget.style, woodButtonStyle);
-                    }}
-                ><span style={{
-                    color: 'rgba(70, 35, 20, 0.8)',
-                    mixBlendMode: 'color-burn',
-                    filter: 'contrast(1.2) brightness(0.9) blur(.3px)',
-                }}>Ready</span></button> : '🔴'}
+                {player.status !== 'idle' ? '🟢' : player.player_id === user_id ? (
+                    <>
+                        <button
+                            onClick={() => startGame(game_id)}
+                            style={{
+                                ...woodButtonStyle,
+                                padding: '4px 8px',
+                                fontSize: '12px',
+                                border: '3px solid #5D3A1A',
+                                borderRadius: '0',
+                                fontWeight: 'bold',
+                                cursor: 'pointer',
+                                transition: 'all 0.2s ease',
+                                boxShadow: `inset 0 1px 0 rgba(255,255,255,0.2), inset 0 -1px 0 rgba(0,0,0,0.3), 0 2px 4px rgba(0,0,0,0.4)`,
+                                position: 'relative' as const,
+                                overflow: 'hidden' as const,
+                            }}
+                            onMouseEnter={(e) => {
+                                Object.assign(e.currentTarget.style, woodButtonHoverStyle);
+                            }}
+                            onMouseLeave={(e) => {
+                                Object.assign(e.currentTarget.style, woodButtonStyle);
+                            }}
+                        >
+                            <span style={{
+                                color: 'rgba(70, 35, 20, 0.8)',
+                                mixBlendMode: 'color-burn',
+                                filter: 'contrast(1.2) brightness(0.9) blur(.3px)',
+                            }}>Ready</span>
+                        </button>
+                        {gameStatus === 'waiting' && onExitGame && (
+                            <button
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    onExitGame();
+                                }}
+                                style={{
+                                    padding: '2px 6px',
+                                    backgroundColor: '#f44336',
+                                    color: 'white',
+                                    border: 'none',
+                                    borderRadius: '3px',
+                                    cursor: 'pointer',
+                                    fontSize: '12px'
+                                }}
+                                title="Exit game"
+                            >
+                                ✕
+                            </button>
+                        )}
+                    </>
+                ) : '🔴'}
                 {player.is_ai && gameStatus === 'waiting' && onRemoveBot && game?.self && (
                     <button
                         onClick={(e) => {
@@ -173,6 +204,7 @@ export const Lobby = () => {
     const woodButtonBaseStyle = useWoodStyle(0.2);
     const woodInputBaseStyle = useWoodStyle(0.8);
     const woodQRBaseStyle = useWoodStyle(0.3);
+    const woodAddBotCardStyle = useWoodStyle(0.5);
     
     const woodButtonStyle = useMemo(() => ({
         ...woodButtonBaseStyle,
@@ -187,6 +219,7 @@ export const Lobby = () => {
     }), [woodButtonBaseStyle]);
     const woodInputStyle = useMemo(() => woodInputBaseStyle, [woodInputBaseStyle]);
     const woodQRStyle = useMemo(() => woodQRBaseStyle, [woodQRBaseStyle]);
+    const woodAddBotStyle = useMemo(() => woodAddBotCardStyle, [woodAddBotCardStyle]);
 
     const [isEditingName, setIsEditingName] = useState(false);
     const [editingName, setEditingName] = useState('');
@@ -424,7 +457,7 @@ export const Lobby = () => {
                 textAlign: 'center',
                 color: 'white',
                 background: isEditingName ? undefined : 'transparent',
-                border: isEditingName ? undefined : 'none',
+                border: isEditingName ? 'none' : 'none',
                 padding: '0.75rem 1rem 0.5rem 1rem',
                 cursor: isEditingName ? 'text' : 'pointer',
                 transition: 'all 0.2s ease',
@@ -433,17 +466,17 @@ export const Lobby = () => {
             }}
             title={!isEditingName ? "Click to edit game name" : undefined}
         />
-        <h2 style={{ margin: '1rem' }}>Game ID: {game_id}</h2>
+        <h2 style={{ margin: '.25rem' }}>ID: {game_id}</h2>
         <div style={{ 
             marginBottom: '10px',
             position: 'relative',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            width: '228px',
-            height: '228px',
+            width: '120px',
+            height: '120px',
             ...woodQRStyle,  // Wood background
-            //padding: '3px',
+            padding: '5px',
             border: '2px solid #5D3A1A',
             boxSizing: 'border-box',
             boxShadow: `
@@ -451,15 +484,9 @@ export const Lobby = () => {
                 inset 0 -1px 0 rgba(0,0,0,0.3),
                 0 3px 6px rgba(0,0,0,0.4)`
         }}>
-            <div style={{
-                position: 'relative',
-                width: '204px',
-                height: '204px',
-                backgroundColor: 'rgba(139, 69, 19, 0.0)',  // Light wood tone for background
-            }}>
                 <QRCodeSVG 
                     value={qrUrl} 
-                    size={204} 
+                    size={120} 
                     fgColor="rgba(70, 35, 20, 0.7)"  // Dark wood tone for QR pattern
                     bgColor="transparent"
                     style={{
@@ -467,7 +494,6 @@ export const Lobby = () => {
                         filter: 'contrast(1.2) brightness(0.9) blur(.3px)'
                     }}
                 />
-            </div>
         </div>
         {
             localPlayerOrder.map((player: PublicPlayer, index: number) => (
@@ -483,102 +509,94 @@ export const Lobby = () => {
                     onDrop={handleDrop}
                     onDragEnd={handleDragEnd}
                     onRemoveBot={(botId) => exitGame(game_id!, botId)}
+                    onExitGame={() => exitGame(game_id!)}
                 />
             ))
         }
-        {game.status === 'waiting' && (
-            <div style={{ marginTop: '20px', display: 'flex', flexDirection: 'column', gap: '10px', alignItems: 'center' }}>
-                {game.self && game.players.length < MAX_PLAYERS && (
-                    <button 
-                        onClick={() => addBot(game_id!)}
-                        style={{
-                            ...woodButtonStyle,
-                            padding: '10px 20px',
-                            fontSize: '16px',
-                            border: '3px solid #5D3A1A',
-                            borderRadius: '0',
-                            fontWeight: 'bold',
-                            cursor: 'pointer',
-                            transition: 'all 0.2s ease',
-                            boxShadow: `inset 0 1px 0 rgba(255,255,255,0.2), inset 0 -1px 0 rgba(0,0,0,0.3), 0 2px 4px rgba(0,0,0,0.4)`,
-                            position: 'relative' as const,
-                            overflow: 'hidden' as const,
-                        }}
-                        onMouseEnter={(e) => {
-                            Object.assign(e.currentTarget.style, woodButtonHoverStyle);
-                        }}
-                        onMouseLeave={(e) => {
-                            Object.assign(e.currentTarget.style, woodButtonStyle);
-                        }}
-                    >
-                        <span style={{
-                            color: 'rgba(70, 35, 20, 0.8)',
-                            mixBlendMode: 'color-burn',
-                            filter: 'contrast(1.2) brightness(0.9) blur(.3px)',
-                        }}>Add Bot</span>
-                    </button>
-                )}
-                
-                {/* Exit/Join buttons */}
-                {game.self ? (
-                    <button 
-                        onClick={() => exitGame(game_id!)}
-                        style={{
-                            ...woodButtonStyle,
-                            padding: '10px 20px',
-                            fontSize: '16px',
-                            border: '3px solid #5D3A1A',
-                            borderRadius: '0',
-                            fontWeight: 'bold',
-                            cursor: 'pointer',
-                            transition: 'all 0.2s ease',
-                            boxShadow: `inset 0 1px 0 rgba(255,255,255,0.2), inset 0 -1px 0 rgba(0,0,0,0.3), 0 2px 4px rgba(0,0,0,0.4)`,
-                            position: 'relative' as const,
-                            overflow: 'hidden' as const,
-                        }}
-                        onMouseEnter={(e) => {
-                            Object.assign(e.currentTarget.style, woodButtonHoverStyle);
-                        }}
-                        onMouseLeave={(e) => {
-                            Object.assign(e.currentTarget.style, woodButtonStyle);
-                        }}
-                    >
-                        <span style={{
-                            color: 'rgba(70, 35, 20, 0.8)',
-                            mixBlendMode: 'color-burn',
-                            filter: 'contrast(1.2) brightness(0.9) blur(.3px)',
-                        }}>Exit Game</span>
-                    </button>
-                ) : game.players.length < MAX_PLAYERS && (
-                    <button 
-                        onClick={() => joinGame(game_id!)}
-                        style={{
-                            ...woodButtonStyle,
-                            padding: '10px 20px',
-                            fontSize: '16px',
-                            border: '3px solid #5D3A1A',
-                            borderRadius: '0',
-                            fontWeight: 'bold',
-                            cursor: 'pointer',
-                            transition: 'all 0.2s ease',
-                            boxShadow: `inset 0 1px 0 rgba(255,255,255,0.2), inset 0 -1px 0 rgba(0,0,0,0.3), 0 2px 4px rgba(0,0,0,0.4)`,
-                            position: 'relative' as const,
-                            overflow: 'hidden' as const,
-                        }}
-                        onMouseEnter={(e) => {
-                            Object.assign(e.currentTarget.style, woodButtonHoverStyle);
-                        }}
-                        onMouseLeave={(e) => {
-                            Object.assign(e.currentTarget.style, woodButtonStyle);
-                        }}
-                    >
-                        <span style={{
-                            color: 'rgba(70, 35, 20, 0.8)',
-                            mixBlendMode: 'color-burn',
-                            filter: 'contrast(1.2) brightness(0.9) blur(.3px)',
-                        }}>Join Game</span>
-                    </button>
-                )}
+        {game.status === 'waiting' && game.self && game.players.length < MAX_PLAYERS && (
+            <div 
+                onClick={() => addBot(game_id!)}
+                style={{
+                    border: '2px solid #5D3A1A',
+                    borderRadius: '0',
+                    boxShadow: `
+                        inset 0 1px 0 rgba(255,255,255,0.2),
+                        inset 0 -1px 0 rgba(0,0,0,0.3),
+                        0 2px 4px rgba(0,0,0,0.4)`,
+                    position: 'relative' as const,
+                    overflow: 'hidden' as const,
+                    width: '260px',
+                    boxSizing: 'border-box' as const,
+                    display: 'flex',
+                    flexDirection: 'row' as const,
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    gap: '10px',
+                    padding: '8px 12px',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease',
+                    userSelect: 'none' as const,
+                    marginBottom: '4px',
+                }}
+                onMouseEnter={(e) => {
+                    e.currentTarget.style.filter = 'brightness(1.1) contrast(1.1)';
+                    e.currentTarget.style.transform = 'translateY(-1px)';
+                }}
+                onMouseLeave={(e) => {
+                    e.currentTarget.style.filter = '';
+                    e.currentTarget.style.transform = '';
+                }}
+            >
+                {/* Wood texture background layer */}
+                <div style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    zIndex: -1,
+                    ...woodAddBotStyle,
+                }} />
+                <p style={{ 
+                    color: 'rgba(70, 35, 20, 0.8)',
+                    mixBlendMode: 'color-burn',
+                    filter: 'contrast(1.2) brightness(0.9) blur(.3px)',
+                    fontWeight: 'bold',
+                    zIndex: 1,
+                }}>Add Bot</p>
+            </div>
+        )}
+        {game.status === 'waiting' && !game.self && game.players.length < MAX_PLAYERS && (
+            <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '10px', alignItems: 'center' }}>
+                {/* Join button for non-members */}
+                <button 
+                    onClick={() => joinGame(game_id!)}
+                    style={{
+                        ...woodButtonStyle,
+                        padding: '10px 20px',
+                        fontSize: '16px',
+                        border: '3px solid #5D3A1A',
+                        borderRadius: '0',
+                        fontWeight: 'bold',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s ease',
+                        boxShadow: `inset 0 1px 0 rgba(255,255,255,0.2), inset 0 -1px 0 rgba(0,0,0,0.3), 0 2px 4px rgba(0,0,0,0.4)`,
+                        position: 'relative' as const,
+                        overflow: 'hidden' as const,
+                    }}
+                    onMouseEnter={(e) => {
+                        Object.assign(e.currentTarget.style, woodButtonHoverStyle);
+                    }}
+                    onMouseLeave={(e) => {
+                        Object.assign(e.currentTarget.style, woodButtonStyle);
+                    }}
+                >
+                    <span style={{
+                        color: 'rgba(70, 35, 20, 0.8)',
+                        mixBlendMode: 'color-burn',
+                        filter: 'contrast(1.2) brightness(0.9) blur(.3px)',
+                    }}>Join Game</span>
+                </button>
             </div>
         )}
     </div>;
