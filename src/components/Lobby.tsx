@@ -513,6 +513,11 @@ export const Lobby = () => {
     };
 
     const handleReadyClick = () => {
+        // Optimistically update the user's status to 'ready'
+        setLocalPlayerOrder(prev => prev.map(p => 
+            p.player_id === user_id ? { ...p, status: 'ready' as const } : p
+        ));
+        
         // Check if our local order differs from server order
         const serverOrderIds = game!.players.map(p => p.player_id).join(',');
         const localOrderIds = localPlayerOrder.map(p => p.player_id).join(',');
@@ -786,6 +791,12 @@ export const Lobby = () => {
                                 <button
                                     onClick={(e) => {
                                         e.stopPropagation();
+                                        
+                                        // If we're exiting and we're the only player, navigate immediately since game will be deleted
+                                        if (showExitButton && game.players.length === 1) {
+                                            navigate('/dashboard');
+                                        }
+                                        
                                         handleRemovePlayer(player.player_id, showRemoveBotButton);
                                     }}
                                     style={{
@@ -830,7 +841,7 @@ export const Lobby = () => {
                 })
             }
         </div>
-        {game.status === 'waiting' && game.self && game.players.length < MAX_PLAYERS && (
+        {game.status === 'waiting' && game.self && localPlayerOrder.length < MAX_PLAYERS && (
             <div 
                 onClick={handleAddBot}
                 style={{
