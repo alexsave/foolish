@@ -155,7 +155,7 @@ export const ActionButtons = () => {
                 <span style={{
                     color: 'rgba(70, 35, 20, 0.8)',
                     mixBlendMode: 'color-burn',
-                    filter: 'contrast(1.2) brightness(0.9) blur(.3px)',
+                    filter: 'contrast(1.2) brightness(0.9)',
                 }}>Pickup</span>
             </button>
             }
@@ -197,7 +197,7 @@ export const ActionButtons = () => {
                 <span style={{
                     color: 'rgba(70, 35, 20, 0.8)',
                     mixBlendMode: 'color-burn',
-                    filter: 'contrast(1.2) brightness(0.9) blur(.3px)',
+                    filter: 'contrast(1.2) brightness(0.9)',
                 }}>Good</span>
             </button>
             }

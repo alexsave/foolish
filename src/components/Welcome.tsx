@@ -169,7 +169,7 @@ export const Welcome = () => {
                         <span style={{
                             color: 'rgba(70, 35, 20, 0.8)',
                             mixBlendMode: 'color-burn',
-                            filter: 'contrast(1.2) brightness(0.9) blur(.3px)',
+                            filter: 'contrast(1.2) brightness(0.9)',
                         }}>Login</span>
                     </button>
                     <button 
@@ -186,7 +186,7 @@ export const Welcome = () => {
                         <span style={{
                             color: 'rgba(70, 35, 20, 0.8)',
                             mixBlendMode: 'color-burn',
-                            filter: 'contrast(1.2) brightness(0.9) blur(.3px)',
+                            filter: 'contrast(1.2) brightness(0.9)',
                         }}>Sign Up</span>
                     </button>
                 </div>

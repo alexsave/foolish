@@ -128,7 +128,7 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
                         <span style={{
                             color: 'rgba(70, 35, 20, 0.8)',
                             mixBlendMode: 'color-burn',
-                            filter: 'contrast(1.2) brightness(0.9) blur(.3px)',
+                            filter: 'contrast(1.2) brightness(0.9)',
                         }}>Ready</span>
                     </button>
                 ) : '🔴'}
@@ -585,7 +585,7 @@ export const Lobby = () => {
             <span style={{
                 color: 'rgba(70, 35, 20, 0.8)',
                 mixBlendMode: 'color-burn',
-                filter: 'contrast(1.2) brightness(0.9) blur(.3px)',
+                filter: 'contrast(1.2) brightness(0.9)',
                 fontSize: '28px',
                 fontWeight: 900,
                 lineHeight: 1,
@@ -658,7 +658,7 @@ export const Lobby = () => {
                     bgColor="transparent"
                     style={{
                         mixBlendMode: 'color-burn',  // Blend with wood background
-                        filter: 'contrast(1.2) brightness(0.9) blur(.3px)'
+                        filter: 'contrast(1.2) brightness(0.9)'
                     }}
                 />
         </div>
@@ -739,7 +739,7 @@ export const Lobby = () => {
                                     <span style={{
                                         color: 'rgba(70, 35, 20, 0.8)',
                                         mixBlendMode: 'color-burn',
-                                        filter: 'contrast(1.2) brightness(0.9) blur(.3px)',
+                                        filter: 'contrast(1.2) brightness(0.9)',
                                         fontSize: '24px',
                                         fontWeight: 900,
                                         lineHeight: 1,
@@ -800,7 +800,7 @@ export const Lobby = () => {
                 <p style={{ 
                     color: 'rgba(70, 35, 20, 0.8)',
                     mixBlendMode: 'color-burn',
-                    filter: 'contrast(1.2) brightness(0.9) blur(.3px)',
+                    filter: 'contrast(1.2) brightness(0.9)',
                     fontWeight: 'bold',
                     zIndex: 10,
                     margin: 0,
@@ -836,7 +836,7 @@ export const Lobby = () => {
                     <span style={{
                         color: 'rgba(70, 35, 20, 0.8)',
                         mixBlendMode: 'color-burn',
-                        filter: 'contrast(1.2) brightness(0.9) blur(.3px)',
+                        filter: 'contrast(1.2) brightness(0.9)',
                     }}>Join Game</span>
                 </button>
             </div>

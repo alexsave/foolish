@@ -171,7 +171,7 @@ export const Dashboard = () => {
                     <span style={{
                         color: 'rgba(70, 35, 20, 0.8)',
                         mixBlendMode: 'color-burn',
-                        filter: 'contrast(1.2) brightness(0.9) blur(.3px)',
+                        filter: 'contrast(1.2) brightness(0.9)',
                     }}>Join</span>
                 </button>
             </form>
@@ -205,7 +205,7 @@ export const Dashboard = () => {
                 <span style={{
                     color: 'rgba(70, 35, 20, 0.8)',
                     mixBlendMode: 'color-burn',
-                    filter: 'contrast(1.2) brightness(0.9) blur(.3px)',
+                    filter: 'contrast(1.2) brightness(0.9)',
                 }}>Create New Game</span>
             </button>
         </div>
