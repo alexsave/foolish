@@ -122,30 +122,38 @@ export const lockedBotLoop = async (game_id: string): Promise<void> => {
 // Uses one-bot-per-iteration approach to prevent race conditions
 const processBotActions = async (game_id: string, cycle: number = 0): Promise<void> => {
     if (cycle > 1000) {
+        console.log(`Bot processing stopped - max cycles reached for game ${game_id}`);
         return;
     }
 
-    await new Promise(resolve => setTimeout(resolve, currentBotDelay));
+    const cycleStartTime = Date.now();
+    console.log(`[CYCLE ${cycle}] Starting bot processing for game ${game_id}`);
 
     let botProcessed = false;
     let shouldAutoTransition = false;
 
     // Do everything within a single lock: find eligible bots, choose one, execute action
     try {
+        const lockStartTime = Date.now();
+        console.log(`[TIMING] Acquiring game lock...`);
         const { game } = await executeWithGameLock(game_id, async (game) => {
-            // Update global delay only if state has changed
-            if (currentBotDelay === BOT_PROCESSING_DELAY_WITH_HUMANS) {
-                const humanPlayersStillIn = game.players.filter(player =>
-                    !player.is_ai && player.status === PLAYER_STATUS.IN
-                ).length;
+            console.log(`[TIMING] Lock acquired in ${Date.now() - lockStartTime}ms`);
+            const lockWorkStartTime = Date.now();
+            // Update global delay based on whether humans are still playing
+            const humanPlayersStillIn = game.players.filter(player =>
+                !player.is_ai && player.status === PLAYER_STATUS.IN
+            ).length;
 
-                const newDelay = humanPlayersStillIn > 0 ? BOT_PROCESSING_DELAY_WITH_HUMANS : BOT_PROCESSING_DELAY_BOTS_ONLY;
+            const newDelay = humanPlayersStillIn > 0 ? BOT_PROCESSING_DELAY_WITH_HUMANS : BOT_PROCESSING_DELAY_BOTS_ONLY;
+            if (newDelay !== currentBotDelay) {
+                console.log(`Bot delay changed from ${currentBotDelay}ms to ${newDelay}ms (humans in game: ${humanPlayersStillIn})`);
                 currentBotDelay = newDelay;
             }
 
             // Capture game state for broadcasting later
             // Only process bot actions if game is in a state where bots can act
             if (game.status === GAME_STATUS.WAITING || game.status === GAME_STATUS.GAME_OVER) {
+                console.log(`Bot processing skipped - game status is ${game.status}`);
                 return { game, events: [] };
             }
 
@@ -158,9 +166,13 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
             }
 
             // Check if there are any bots
-            if (game.players.filter(p => p.is_ai).length === 0) {
+            const botCount = game.players.filter(p => p.is_ai).length;
+            if (botCount === 0) {
+                console.log(`Bot processing skipped - no bots in game`);
                 return { game, events: [] };
             }
+            console.log(`Found ${botCount} bots in game`);
+
 
             // Find all bots that can currently move
             const eligibleBots: { bot: PrivatePlayer; index: number }[] = [];
@@ -181,26 +193,30 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
 
             // If we have eligible bots, try them until one succeeds
             if (eligibleBots.length > 0) {
+                console.log(`Found ${eligibleBots.length} eligible bots: ${eligibleBots.map(b => b.bot.name).join(', ')}`);
+                
                 // Shuffle the eligible bots to try them in random order
                 const shuffledBots = [...eligibleBots].sort(() => Math.random() - 0.5);
 
                 for (const selectedBot of shuffledBots) {
-                    console.log(`Trying bot ${selectedBot.bot.name} from ${eligibleBots.length} eligible bots in game ${game_id}`);
+                    console.log(`[ACTION] Trying bot ${selectedBot.bot.name} from ${eligibleBots.length} eligible bots`);
+                    const actionStartTime = Date.now();
 
                     // Try to process this bot's action
                     const success = await processBotAction(game, selectedBot.bot);
 
+                    const actionDuration = Date.now() - actionStartTime;
                     if (success) {
                         botProcessed = true;
-                        console.log(`Bot ${selectedBot.bot.name} completed action`);
+                        console.log(`[ACTION] ✓ Bot ${selectedBot.bot.name} completed action in ${actionDuration}ms`);
                         break; // Exit the loop since we successfully processed a bot
                     } else {
-                        console.log(`Bot ${selectedBot.bot.name} move failed, trying next bot`);
+                        console.log(`[ACTION] ✗ Bot ${selectedBot.bot.name} move failed after ${actionDuration}ms, trying next bot`);
                     }
                 }
 
                 if (!botProcessed) {
-                    console.log(`No eligible bots could make valid moves in game ${game_id}`);
+                    console.log(`[ACTION] No eligible bots could make valid moves in game ${game_id}`);
                 }
             } else {
                 // No eligible bots - check for auto-transition
@@ -245,19 +261,22 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
                 }
             }
 
+            console.log(`[TIMING] Lock work completed in ${Date.now() - lockWorkStartTime}ms`);
             return { game, events: [] };
         });
+        
+        console.log(`[TIMING] Total time in executeWithGameLock: ${Date.now() - lockStartTime}ms`);
 
         // Broadcast animation events AFTER releasing the lock (no lock needed for broadcasting)
+        // Fire and forget - don't await, let it happen in parallel with next bot action
         const events = animationEvents.getEvents();
         if (events.length > 0 && game) {
-            try {
-                // Broadcasting doesn't require a lock since we're not mutating game state
-                // Use the captured game state from the main lock
-                await broadcastAnimationEvents(game, events);
-            } catch (error) {
+            console.log(`[TIMING] Firing broadcast for ${events.length} animation events (not awaiting)`);
+            // Broadcasting doesn't require a lock since we're not mutating game state
+            // Use the captured game state from the main lock
+            broadcastAnimationEvents(game, events).catch(error => {
                 console.error('Error broadcasting bot animation events:', error);
-            }
+            });
             animationEvents.clear();
         }
     } catch (error) {
@@ -265,9 +284,24 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
         return;
     }
 
+    const totalCycleTime = Date.now() - cycleStartTime;
+    console.log(`[TIMING] Total cycle ${cycle} time: ${totalCycleTime}ms`);
+
     // Continue the loop if a bot was processed or auto-transition occurred
     if (botProcessed || shouldAutoTransition) {
+        // Calculate remaining delay to ensure consistent timing between cycle starts
+        const remainingDelay = Math.max(0, currentBotDelay - totalCycleTime);
+        
+        if (remainingDelay > 0) {
+            console.log(`[CYCLE ${cycle}] Cycle took ${totalCycleTime}ms, waiting ${remainingDelay}ms to maintain ${currentBotDelay}ms interval`);
+            await new Promise(resolve => setTimeout(resolve, remainingDelay));
+        } else {
+            console.log(`[CYCLE ${cycle}] Cycle took ${totalCycleTime}ms (>= ${currentBotDelay}ms target), continuing immediately`);
+        }
+        
         return await processBotActions(game_id, cycle + 1);
+    } else {
+        console.log(`[CYCLE ${cycle}] No more bot actions needed, ending bot loop for game ${game_id}`);
     }
 }
 
@@ -316,8 +350,13 @@ function shouldBotActCore(game: Game, bot: PrivatePlayer, botIndex: number): boo
 // Process a single bot's action
 async function processBotAction(game: Game, bot: PrivatePlayer): Promise<boolean> {
     try {
+        const botActionStartTime = Date.now();
+        
         // Get bot's strategy
+        const getBotDataStart = Date.now();
         const botData = await getBotData(bot.player_id);
+        console.log(`[TIMING] getBotData took ${Date.now() - getBotDataStart}ms`);
+        
         if (!botData) {
             console.error(`Bot data not found for ${bot.player_id}`);
             return false;
@@ -327,7 +366,9 @@ async function processBotAction(game: Game, bot: PrivatePlayer): Promise<boolean
         const strategy = getBotStrategy(botData.strategy_key);
 
         // Calculate legal moves for this bot
+        const legalMovesStart = Date.now();
         const legalMoves = calculateLegalMoves(game, bot.player_id);
+        console.log(`[TIMING] calculateLegalMoves took ${Date.now() - legalMovesStart}ms (${legalMoves.length} moves)`);
 
         if (legalMoves.length === 0) {
             console.log(`No legal moves for bot ${bot.name}`);
@@ -335,16 +376,22 @@ async function processBotAction(game: Game, bot: PrivatePlayer): Promise<boolean
         }
 
         // Let the strategy choose a move
+        const chooseMoveStart = Date.now();
         const chosenMove = await strategy.chooseMove(game, bot.player_id, legalMoves);
+        console.log(`[TIMING] strategy.chooseMove took ${Date.now() - chooseMoveStart}ms`);
         console.log(`Chosen move: ${JSON.stringify(chosenMove)}`);
 
         // Execute the chosen move using shared actions (with validation to handle race conditions)
+        const executeMoveStart = Date.now();
         const success = await executeBotMove(game, bot, chosenMove);
+        console.log(`[TIMING] executeBotMove took ${Date.now() - executeMoveStart}ms`);
 
         if (!success) {
             return false;
         }
 
+        const totalBotActionTime = Date.now() - botActionStartTime;
+        console.log(`[TIMING] Total bot action time for ${bot.name}: ${totalBotActionTime}ms`);
         console.log(`Bot ${bot.name} completed ${chosenMove.type} action`);
         return true;
 
@@ -361,6 +408,9 @@ async function executeBotMove(game: Game, bot: PrivatePlayer, move: LegalMove): 
         let actionEvents: AnimationEvent[] = [];
 
         try {
+            const actionHandlerStart = Date.now();
+            console.log(`[TIMING] Executing ${move.type} action...`);
+            
             switch (move.type) {
                 case 'attack':
                     // Capture the game status before executing the attack
@@ -442,12 +492,15 @@ async function executeBotMove(game: Game, bot: PrivatePlayer, move: LegalMove): 
                     break;
             }
 
+            console.log(`[TIMING] Action handler (${move.type}) completed in ${Date.now() - actionHandlerStart}ms`);
             console.log(`Bot ${bot.name} performed ${move.type} action`);
 
             // Add all events from the action to the animation manager
+            const addEventsStart = Date.now();
             for (const event of actionEvents) {
                 animationEvents.addEvent(event);
             }
+            console.log(`[TIMING] Adding ${actionEvents.length} events took ${Date.now() - addEventsStart}ms`);
 
         } catch (error) {
             // Handle validation failures gracefully (e.g., due to race conditions)

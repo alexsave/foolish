@@ -234,13 +234,21 @@ export const broadcastAnimationEvents = async (game: Game, events: AnimationEven
         return;
     }
 
+    const broadcastTotalStart = Date.now();
     console.log(`[BROADCAST DEBUG] broadcastAnimationEvents called for game ${game.id} with ${events.length} events`);
 
     // Calculate base game state once (shared for all players) - removes private information
+    const baseGameStart = Date.now();
     const baseGameState = gameToPublicGame(game);
+    console.log(`[TIMING] gameToPublicGame took ${Date.now() - baseGameStart}ms`);
 
-    // Send personalized events to each player individually
-    for (const player of game.players) {
+    // Send personalized events to each player in parallel (excluding bots - they have no clients)
+    const playerBroadcastStart = Date.now();
+    const humanPlayers = game.players.filter(player => !player.is_ai);
+    console.log(`[TIMING] Broadcasting to ${humanPlayers.length} human players (skipping ${game.players.length - humanPlayers.length} bots)`);
+    
+    const playerBroadcastPromises = humanPlayers.map(async (player) => {
+        const playerStart = Date.now();
         const personalEvents = convertToPersonalAnimationEvents(events, player.player_id);
 
         const payload = {
@@ -266,10 +274,13 @@ export const broadcastAnimationEvents = async (game: Game, events: AnimationEven
         // Create personalized game state by adding player's self data
         const personalizedGame = gameToPersonalGame(game, player);
 
+        const channelCreateStart = Date.now();
         const channel = supabaseClient.channel(`gu-${game.id}-${player.player_id}`, {
             config: { private: true }
         });
+        console.log(`[TIMING] Channel create for ${player.name} took ${Date.now() - channelCreateStart}ms`);
 
+        const sendStart = Date.now();
         await channel.send({
             type: 'broadcast',
             event: 'animation_events',
@@ -278,11 +289,21 @@ export const broadcastAnimationEvents = async (game: Game, events: AnimationEven
                 game: personalizedGame
             }
         });
+        console.log(`[TIMING] Channel send for ${player.name} took ${Date.now() - sendStart}ms`);
 
+        const removeStart = Date.now();
         await supabaseClient.removeChannel(channel);
-    }
+        console.log(`[TIMING] Channel remove for ${player.name} took ${Date.now() - removeStart}ms`);
+        
+        console.log(`[TIMING] Total broadcast for ${player.name}: ${Date.now() - playerStart}ms`);
+    });
+    
+    // Wait for all player broadcasts to complete in parallel
+    await Promise.all(playerBroadcastPromises);
+    console.log(`[TIMING] All player broadcasts took ${Date.now() - playerBroadcastStart}ms`);
 
     // Send public events to spectator channel
+    const spectatorStart = Date.now();
     const publicEvents = convertToPublicAnimationEvents(events);
 
     const spectatorPayload = {
@@ -308,6 +329,9 @@ export const broadcastAnimationEvents = async (game: Game, events: AnimationEven
     });
 
     await supabaseClient.removeChannel(spectatorChannel);
+    console.log(`[TIMING] Spectator broadcast took ${Date.now() - spectatorStart}ms`);
+    
+    console.log(`[TIMING] Total broadcastAnimationEvents took ${Date.now() - broadcastTotalStart}ms`);
 };
 
 export interface ExecutionParams {
