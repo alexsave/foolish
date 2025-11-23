@@ -277,7 +277,8 @@ export const Lobby = () => {
     // Reset local state when game_id changes (navigating between lobbies)
     useEffect(() => {
         console.log('GAME ID CHANGED: Resetting local state for new lobby');
-        setLocalPlayerOrder([]);
+        // Initialize with current game's players if available, otherwise empty
+        setLocalPlayerOrder(game?.players ?? []);
         setIsDirty(false);
         setHasSwapped(false);
         setPendingReady(false);
@@ -290,7 +291,7 @@ export const Lobby = () => {
             setHasPendingRearrange(false);
         }
         setIsRearranging(false);
-    }, [game_id]);
+    }, [game_id, game?.players]);
 
     // Cleanup timer on unmount
     useEffect(() => {
