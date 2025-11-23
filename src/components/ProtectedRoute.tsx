@@ -33,7 +33,7 @@ export const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
 
     // Only allow access if user is authenticated
     if (!user_id) {
-        return <Navigate to="/login" />;
+        return <Navigate to="/" />;
     }
 
     return (
