@@ -88,6 +88,9 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
     // Bot bump timer ref
     const botBumpTimerRef = useRef<NodeJS.Timeout | null>(null);
+    
+    // Track if there have been bot moves in the last interval
+    const hasBotMovedRef = useRef<boolean>(false);
 
     // Keep track of processed sequence IDs and event content to avoid duplicates
     const processedSequenceIds = useRef<Set<string>>(new Set());
@@ -106,15 +109,14 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     // Simple retry interval for animation channel
     const animationChannelRetryInterval = useRef(1000);
 
-    // Bot bump timer management
-    const startBotBumpTimer = useCallback(() => {
-        // Clear existing timer
-        if (botBumpTimerRef.current) {
-            clearTimeout(botBumpTimerRef.current);
+    // Start bot bump timer when component mounts and game is loaded
+    useEffect(() => {
+        if (!url_game_id) {
+            return;
         }
         
         // Check if there are any AI players in the game
-        const currentGame = url_game_id ? games[url_game_id] : null;
+        const currentGame = games[url_game_id];
         const hasAIPlayers = currentGame?.players?.some(player => player.is_ai) || false;
         
         // Only start timer if there are AI players
@@ -122,32 +124,35 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             return;
         }
         
-        // Start new 12-second timer
-        botBumpTimerRef.current = setTimeout(() => {
-            if (url_game_id) {
+        // Start interval that checks every 15 seconds
+        const intervalId = setInterval(() => {
+            // Check if there have been bot moves in the last 15 seconds
+            if (!hasBotMovedRef.current) {
+                // No bot moves - call bot_bump to wake up the bot loop
+                console.log('No bot activity detected, calling bot_bump');
                 supabase.functions.invoke('bot_bump', { 
                     body: { game_id: url_game_id } 
                 }).catch(error => {
                     console.error('Bot bump failed:', error);
                 });
-                startBotBumpTimer();
+            } else {
+                console.log('Bot activity detected, skipping bot_bump');
             }
-        }, BOT_BUMP_TIMEOUT);
-    }, [url_game_id]);
-
-    // Start bot bump timer when component mounts and game is loaded
-    useEffect(() => {
-        if (url_game_id) {
-            startBotBumpTimer();
-        }
+            
+            // Reset the flag for the next interval
+            hasBotMovedRef.current = false;
+        }, 15000); // 15 seconds
+        
+        // Store the interval ID for cleanup
+        botBumpTimerRef.current = intervalId as any;
         
         // Cleanup on unmount
         return () => {
             if (botBumpTimerRef.current) {
-                clearTimeout(botBumpTimerRef.current);
+                clearInterval(botBumpTimerRef.current);
             }
         };
-    }, [url_game_id, startBotBumpTimer]);
+    }, [url_game_id, games]);
 
     // Clear OLD optimistic animations every 5 seconds (older than 30 seconds)
     useEffect(() => {
@@ -407,8 +412,15 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
         const nextAnimation = animationQueueRef.current[0];
         
-        // Reset bot bump timer when processing animations
-        startBotBumpTimer();
+        // Check if this animation is from a bot player
+        if (nextAnimation.player_id && url_game_id) {
+            const currentGame = games[url_game_id];
+            const player = currentGame?.players?.find(p => p.player_id === nextAnimation.player_id);
+            if (player?.is_ai) {
+                // This is a bot move - set the flag
+                hasBotMovedRef.current = true;
+            }
+        }
         
         setCurrentAnimation(nextAnimation);
         setAnimationQueue(prev => prev.slice(1));
@@ -461,7 +473,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             // Process next animation after a short delay
             setTimeout(processAnimationQueue, 100);
         }, ANIMATION_TIME);
-    }, [updateGameState, startBotBumpTimer]);
+    }, [updateGameState, url_game_id, games]);
 
     // Start processing queue when items are added and no animation is running
     useEffect(() => {
@@ -533,9 +545,6 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             });
             optimisticAnimations.current.set(cardEventString, timestamp);
         });
-        
-        // Reset bot bump timer when triggering optimistic animations
-        startBotBumpTimer();
         
         // Queue the optimistic animation immediately
         queueAnimation(animationEvent);
@@ -641,7 +650,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 clearTimeout(timeoutRef.current);
             }
             if (botBumpTimerRef.current) {
-                clearTimeout(botBumpTimerRef.current);
+                clearInterval(botBumpTimerRef.current);
             }
         };
     }, []);
