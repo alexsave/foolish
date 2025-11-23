@@ -51,34 +51,16 @@ wrap400(async ({body, game}: ExecutionParams) => {
         hand_length: 0
     });
 
-    // Update game in database
-    await supabaseClient
-        .from('games')
-        .update({ 
-            players: game.players.map(p => ({
-                player_id: p.player_id,
-                name: p.name,
-                status: p.status,
-                is_ai: p.is_ai,
-                hand_length: p.hand_length
-            }))
-        })
-        .eq('id', game_id);
-
-    // Initialize empty hand for bot
-    await supabaseClient.from('bot_hands').insert({
-        game_id: game_id,
-        bot_id: availableBot.id,
-        hand: [],
-        awaiting_attack: false,
-        done_attacking_this_round: false
-    } as BotHand);
-
     // Add animation event to notify players
     animationEvents.addMagicTransitionEvent(`Bot ${availableBot.nickname} joined the game`, game);
 
     const events = animationEvents.getEvents();
     animationEvents.clear();
+
+    // Note: saveCompleteGame (called by executeWithGameLock) will handle:
+    // - Updating games table with new players array
+    // - Upserting bot_hands for the new bot
+    // No additional DB operations needed here!
 
     return { game, events };
 

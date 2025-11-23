@@ -27,7 +27,7 @@ wrap400(async ({user, body, game}: ExecutionParams) => {
         // Remove bot from game
         game.players = game.players.filter(player => player.player_id !== bot_id);
 
-        // Remove bot's hand from database
+        // Remove bot's hand from database (must happen before saveCompleteGame tries to upsert)
         await supabaseClient
             .from('bot_hands')
             .delete()
@@ -46,7 +46,7 @@ wrap400(async ({user, body, game}: ExecutionParams) => {
         // Remove player from game
         game.players = game.players.filter(player => player.player_id !== user_id);
 
-        // Remove player's hand from database
+        // Remove player's hand from database (must happen before saveCompleteGame tries to upsert)
         await supabaseClient
             .from('player_hands')
             .delete()
@@ -63,19 +63,8 @@ wrap400(async ({user, body, game}: ExecutionParams) => {
         }
     }
 
-    // Update game in database
-    await supabaseClient
-        .from('games')
-        .update({ 
-            players: game.players.map(p => ({
-                player_id: p.player_id,
-                name: p.name,
-                status: p.status,
-                is_ai: p.is_ai,
-                hand_length: p.hand_length
-            }))
-        })
-        .eq('id', game.id);
+    // Note: saveCompleteGame (called by executeWithGameLock) will update the games table
+    // with the modified players array. No manual update needed here!
 
     // If no players left, clean up the game
     if (game.players.length === 0) {
