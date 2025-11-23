@@ -17,9 +17,6 @@ interface PlayerCardProps {
     index: number;
     isDragging: boolean;
     isDropTarget: boolean;
-    onDragStart: (e: React.MouseEvent | React.TouchEvent, index: number) => void;
-    onRemoveBot?: (botId: string) => void;
-    onExitGame?: () => void;
     isRearranging: boolean;
     pendingReady: boolean;
     onReadyClick: () => void;
@@ -30,9 +27,6 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
     index,
     isDragging,
     isDropTarget,
-    onDragStart,
-    onRemoveBot,
-    onExitGame,
     isRearranging,
     pendingReady,
     onReadyClick,
@@ -60,7 +54,7 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
             0 2px 4px rgba(0,0,0,0.4)`,
         position: 'relative' as const,
         overflow: 'hidden' as const,
-        width: '260px',
+        width: '250px',
         boxSizing: 'border-box' as const,
         //height: '60px',
         minHeight: '50px',
@@ -69,23 +63,16 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
         justifyContent: 'space-between',
         gap: '10px',
         padding: '8px 12px',
-        opacity: isDragging ? 0.3 : 1,
         backgroundColor: isDropTarget ? 'rgba(255, 255, 255, 0.1)' : undefined,
         cursor: 'move',
-        transition: isDragging ? 'none' : 'all 0.2s ease',
-        transform: isDragging ? 'scale(1.05)' : 'scale(1)', // Don't flip the entire card
+        transition: 'all 0.2s ease',
         userSelect: 'none',
-        marginBottom: '4px',
         zIndex: 1500,
-        pointerEvents: isDragging ? 'none' : 'auto'
     };
 
     return (
         <div
             key={player.player_id}
-            data-player-index={index}
-            onMouseDown={(e) => onDragStart(e, index)}
-            onTouchStart={(e) => onDragStart(e, index)}
             style={style}
         >
             {/* Wood texture background layer - can be transformed independently */}
@@ -114,84 +101,37 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
             }} />
             <p style={{ zIndex: 10, textAlign: 'center',  lineHeight: '30px', justifyContent: 'center', padding: '0 5px', margin: '0' }}>{player.is_ai ? '🤖 ' : ''}{player.name}</p>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                {player.status !== 'idle' ? '🟢' : player.player_id === user_id ? (
-                    <>
-                        <button
-                            onClick={onReadyClick}
-                            style={{
-                                ...woodButtonStyle,
-                                padding: '4px 8px',
-                                fontSize: '12px',
-                                border: '3px solid #5D3A1A',
-                                borderRadius: '0',
-                                fontWeight: 'bold',
-                                cursor: 'pointer',
-                                transition: 'all 0.2s ease',
-                                boxShadow: `inset 0 1px 0 rgba(255,255,255,0.2), inset 0 -1px 0 rgba(0,0,0,0.3), 0 2px 4px rgba(0,0,0,0.4)`,
-                                position: 'relative' as const,
-                                overflow: 'hidden' as const,
-                                opacity: pendingReady ? 0.7 : 1,
-                                zIndex: 1700, // Above drag overlay to prevent accidental drags
-                            }}
-                            onMouseEnter={(e) => {
-                                Object.assign(e.currentTarget.style, woodButtonHoverStyle);
-                            }}
-                            onMouseLeave={(e) => {
-                                Object.assign(e.currentTarget.style, woodButtonStyle);
-                            }}
-                        >
-                            <span style={{
-                                color: 'rgba(70, 35, 20, 0.8)',
-                                mixBlendMode: 'color-burn',
-                                filter: 'contrast(1.2) brightness(0.9) blur(.3px)',
-                            }}>{pendingReady ? '⏳ Ready' : 'Ready'}</span>
-                        </button>
-                        {gameStatus === 'waiting' && onExitGame && (
-                            <button
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    onExitGame();
-                                }}
-                                style={{
-                                    padding: '2px 6px',
-                                    backgroundColor: '#f44336',
-                                    color: 'white',
-                                    border: 'none',
-                                    borderRadius: '3px',
-                                    cursor: 'pointer',
-                                    fontSize: '12px',
-                                    position: 'relative' as const,
-                                    zIndex: 1700, // Above drag overlay to prevent accidental drags
-                                }}
-                                title="Exit game"
-                            >
-                                ✕
-                            </button>
-                        )}
-                    </>
-                ) : '🔴'}
-                {player.is_ai && gameStatus === 'waiting' && onRemoveBot && game?.self && (
+                {player.status !== 'idle' || (player.player_id === user_id && pendingReady) ? '🟢' : player.player_id === user_id ? (
                     <button
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            onRemoveBot(player.player_id);
-                        }}
+                        onClick={onReadyClick}
                         style={{
-                            padding: '2px 6px',
-                            backgroundColor: '#f44336',
-                            color: 'white',
-                            border: 'none',
-                            borderRadius: '3px',
-                            cursor: 'pointer',
+                            ...woodButtonStyle,
+                            padding: '4px 8px',
                             fontSize: '12px',
+                            border: '3px solid #5D3A1A',
+                            borderRadius: '0',
+                            fontWeight: 'bold',
+                            cursor: 'pointer',
+                            transition: 'all 0.2s ease',
+                            boxShadow: `inset 0 1px 0 rgba(255,255,255,0.2), inset 0 -1px 0 rgba(0,0,0,0.3), 0 2px 4px rgba(0,0,0,0.4)`,
                             position: 'relative' as const,
+                            overflow: 'hidden' as const,
                             zIndex: 1700, // Above drag overlay to prevent accidental drags
                         }}
-                        title="Remove bot"
+                        onMouseEnter={(e) => {
+                            Object.assign(e.currentTarget.style, woodButtonHoverStyle);
+                        }}
+                        onMouseLeave={(e) => {
+                            Object.assign(e.currentTarget.style, woodButtonStyle);
+                        }}
                     >
-                        ✕
+                        <span style={{
+                            color: 'rgba(70, 35, 20, 0.8)',
+                            mixBlendMode: 'color-burn',
+                            filter: 'contrast(1.2) brightness(0.9) blur(.3px)',
+                        }}>Ready</span>
                     </button>
-                )}
+                ) : '🔴'}
             </div>
         </div>
     );
@@ -201,6 +141,7 @@ export const Lobby = () => {
     const game_id = useParams().game_id?.toLowerCase();
     const { game, updateGameName, rearrangePlayer, addBot, exitGame, joinGame, startGame } = useServer();
     const navigate = useNavigate();
+    const { user_id } = useAuth();
 
     // Get wood styles with seeds - memoized to prevent new object creation
     const woodButtonBaseStyle = useWoodStyle(0.2);
@@ -718,23 +659,93 @@ export const Lobby = () => {
                     }}
                 />
         </div>
-        {
-            localPlayerOrder.map((player: PublicPlayer, index: number) => (
-                <PlayerCard
-                    key={player.player_id}
-                    player={player}
-                    index={index}
-                    isDragging={draggedIndex === index}
-                    isDropTarget={dragOverIndex === index}
-                    onDragStart={handleDragStart}
-                    onRemoveBot={(botId) => exitGame(game_id!, botId)}
-                    onExitGame={() => exitGame(game_id!)}
-                    isRearranging={isRearranging}
-                    pendingReady={pendingReady}
-                    onReadyClick={handleReadyClick}
-                />
-            ))
-        }
+        <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            width: '100%',
+        }}>
+            {
+                localPlayerOrder.map((player: PublicPlayer, index: number) => {
+                    const showExitButton = game.status === 'waiting' && player.player_id === user_id;
+                    const showRemoveBotButton = player.is_ai && game.status === 'waiting' && game.self;
+                    const showXButton = showExitButton || showRemoveBotButton;
+
+                    return (
+                        <div 
+                            key={player.player_id}
+                            data-player-index={index}
+                            onMouseDown={(e) => handleDragStart(e, index)}
+                            onTouchStart={(e) => handleDragStart(e, index)}
+                            style={{ 
+                                position: 'relative',
+                                width: '250px',
+                                marginBottom: '4px',
+                                opacity: draggedIndex === index ? 0.3 : 1,
+                                transform: draggedIndex === index ? 'scale(1.05)' : 'scale(1)',
+                                transition: draggedIndex === index ? 'none' : 'all 0.2s ease',
+                                userSelect: 'none',
+                                pointerEvents: draggedIndex === index ? 'none' : 'auto',
+                                cursor: 'move',
+                            }}
+                        >
+                            <PlayerCard
+                                player={player}
+                                index={index}
+                                isDragging={draggedIndex === index}
+                                isDropTarget={dragOverIndex === index}
+                                isRearranging={isRearranging}
+                                pendingReady={pendingReady}
+                                onReadyClick={handleReadyClick}
+                            />
+                            {showXButton && (
+                                <button
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        exitGame(game_id!, showRemoveBotButton ? player.player_id : undefined);
+                                    }}
+                                    style={{
+                                        ...woodButtonStyle,
+                                        width: '50px',
+                                        height: '50px',
+                                        padding: '0',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        border: '2px solid #5D3A1A',
+                                        borderRadius: '0',
+                                        cursor: 'pointer',
+                                        transition: 'all 0.2s ease',
+                                        boxShadow: `inset 0 1px 0 rgba(255,255,255,0.2), inset 0 -1px 0 rgba(0,0,0,0.3), 0 2px 4px rgba(0,0,0,0.4)`,
+                                        overflow: 'hidden',
+                                        position: 'absolute' as const,
+                                        right: '-55px',
+                                        top: '0',
+                                        zIndex: 1700,
+                                    }}
+                                    onMouseEnter={(e) => {
+                                        Object.assign(e.currentTarget.style, woodButtonHoverStyle);
+                                    }}
+                                    onMouseLeave={(e) => {
+                                        Object.assign(e.currentTarget.style, woodButtonStyle);
+                                    }}
+                                    title={showRemoveBotButton ? "Remove bot" : "Exit game"}
+                                >
+                                    <span style={{
+                                        color: 'rgba(70, 35, 20, 0.8)',
+                                        mixBlendMode: 'color-burn',
+                                        filter: 'contrast(1.2) brightness(0.9) blur(.3px)',
+                                        fontSize: '24px',
+                                        fontWeight: 900,
+                                        lineHeight: 1,
+                                    }}>✕</span>
+                                </button>
+                            )}
+                        </div>
+                    );
+                })
+            }
+        </div>
         {game.status === 'waiting' && game.self && game.players.length < MAX_PLAYERS && (
             <div 
                 onClick={() => addBot(game_id!)}
@@ -747,7 +758,8 @@ export const Lobby = () => {
                         0 2px 4px rgba(0,0,0,0.4)`,
                     position: 'relative' as const,
                     overflow: 'hidden' as const,
-                    width: '260px',
+                    width: '250px',
+                    height: '50px',
                     boxSizing: 'border-box' as const,
                     display: 'flex',
                     flexDirection: 'row' as const,
