@@ -179,6 +179,7 @@ export const Lobby = () => {
     const [isRearranging, setIsRearranging] = useState(false); // Track if network call is in progress
     const [hasPendingRearrange, setHasPendingRearrange] = useState(false); // Track if timer is active
     const [pendingReady, setPendingReady] = useState(false); // Track if user clicked ready while rearranging
+    const [optimisticBotIds, setOptimisticBotIds] = useState<Set<string>>(new Set()); // Track bots being added optimistically
 
     const rearrangeTimerRef = useRef<NodeJS.Timeout | null>(null);
     const pendingReadyRef = useRef<boolean>(false);
@@ -194,21 +195,52 @@ export const Lobby = () => {
                 return;
             }
             
-            // Check if our local order differs from server order
+            // Check if our local order differs from server order (excluding optimistic bots)
             const serverOrderIds = game.players.map(p => p.player_id).join(',');
-            const localOrderIds = localPlayerOrder.map(p => p.player_id).join(',');
-            const hasLocalChanges = serverOrderIds !== localOrderIds;
+            const localNonOptimisticIds = localPlayerOrder
+                .filter(p => !optimisticBotIds.has(p.player_id))
+                .map(p => p.player_id)
+                .join(',');
+            const hasLocalChanges = serverOrderIds !== localNonOptimisticIds;
+            
+            // Check if server added a real bot that should replace an optimistic one
+            const serverBotIds = new Set(game.players.filter(p => p.is_ai).map(p => p.player_id));
+            const localNonOptimisticBotIds = localPlayerOrder
+                .filter(p => p.is_ai && !optimisticBotIds.has(p.player_id))
+                .map(p => p.player_id);
+            
+            // If server has more bots than we have non-optimistic bots, replace optimistic bot(s)
+            if (serverBotIds.size > localNonOptimisticBotIds.length && optimisticBotIds.size > 0) {
+                const tempBotIds = Array.from(optimisticBotIds);
+                const numToReplace = Math.min(
+                    serverBotIds.size - localNonOptimisticBotIds.length,
+                    tempBotIds.length
+                );
+                
+                // Remove the optimistic bot(s) and sync with server
+                setOptimisticBotIds(prev => {
+                    const next = new Set(prev);
+                    for (let i = 0; i < numToReplace; i++) {
+                        next.delete(tempBotIds[i]);
+                    }
+                    return next;
+                });
+                
+                // Replace optimistic bots with real ones from server
+                setLocalPlayerOrder(game.players);
+                return;
+            }
             
             // Or if we're completely idle (no local modifications in progress or pending)
             // Also don't sync if we have a pending ready (waiting to start game with our local order)
-            // Most importantly: don't sync if we have ANY local changes at all
-            const isCompletelyIdle = !isDragging && !hasPendingRearrange && !isRearranging && !pendingReady && !hasLocalChanges;
+            // Most importantly: don't sync if we have ANY local changes at all or optimistic bots
+            const isCompletelyIdle = !isDragging && !hasPendingRearrange && !isRearranging && !pendingReady && !hasLocalChanges && optimisticBotIds.size === 0;
             
             if (isCompletelyIdle) {
                 setLocalPlayerOrder(game.players);
             }
         }
-    }, [game?.players, isDragging, hasPendingRearrange, isRearranging, pendingReady, localPlayerOrder.length]);
+    }, [game?.players, isDragging, hasPendingRearrange, isRearranging, pendingReady, localPlayerOrder.length, optimisticBotIds]);
 
     // Keep ref in sync with state
     useEffect(() => {
@@ -224,6 +256,7 @@ export const Lobby = () => {
         setHasSwapped(false);
         setPendingReady(false);
         pendingReadyRef.current = false;
+        setOptimisticBotIds(new Set());
         
         // Clear any pending timers
         if (rearrangeTimerRef.current) {
@@ -431,6 +464,52 @@ export const Lobby = () => {
                 });
         }, 5000);
         console.log('SCHEDULE REARRANGE: Timer created with ref:', !!rearrangeTimerRef.current);
+    };
+
+    const handleAddBot = () => {
+        if (!game_id) return;
+        
+        // Create optimistic bot with temporary ID
+        const tempBotId = `temp-bot-${Date.now()}`;
+        const optimisticBot: PublicPlayer = {
+            player_id: tempBotId,
+            name: '',
+            status: 'idle',
+            is_ai: true,
+            hand_length: 0
+        };
+        
+        // Add to optimistic tracking
+        setOptimisticBotIds(prev => new Set(prev).add(tempBotId));
+        
+        // Add to local player order immediately
+        setLocalPlayerOrder(prev => [...prev, optimisticBot]);
+        
+        // Make the network call
+        addBot(game_id).catch(error => {
+            console.error('Failed to add bot:', error);
+            // Revert optimistic update on error
+            setOptimisticBotIds(prev => {
+                const next = new Set(prev);
+                next.delete(tempBotId);
+                return next;
+            });
+            setLocalPlayerOrder(prev => prev.filter(p => p.player_id !== tempBotId));
+        });
+    };
+    
+    const handleRemovePlayer = (playerId: string, isBot: boolean) => {
+        if (!game_id) return;
+        
+        // Remove from local player order immediately
+        setLocalPlayerOrder(prev => prev.filter(p => p.player_id !== playerId));
+        
+        // Make the network call
+        exitGame(game_id, isBot ? playerId : undefined).catch(error => {
+            console.error('Failed to remove player:', error);
+            // On error, the realtime subscription should restore the correct state
+            // So we don't need to manually revert here
+        });
     };
 
     const handleReadyClick = () => {
@@ -673,7 +752,7 @@ export const Lobby = () => {
             {
                 localPlayerOrder.map((player: PublicPlayer, index: number) => {
                     const showExitButton = game.status === 'waiting' && player.player_id === user_id;
-                    const showRemoveBotButton = player.is_ai && game.status === 'waiting' && game.self;
+                    const showRemoveBotButton = !!(player.is_ai && game.status === 'waiting' && game.self);
                     const showXButton = showExitButton || showRemoveBotButton;
 
                     return (
@@ -707,7 +786,7 @@ export const Lobby = () => {
                                 <button
                                     onClick={(e) => {
                                         e.stopPropagation();
-                                        exitGame(game_id!, showRemoveBotButton ? player.player_id : undefined);
+                                        handleRemovePlayer(player.player_id, showRemoveBotButton);
                                     }}
                                     style={{
                                         ...woodButtonStyle,
@@ -753,7 +832,7 @@ export const Lobby = () => {
         </div>
         {game.status === 'waiting' && game.self && game.players.length < MAX_PLAYERS && (
             <div 
-                onClick={() => addBot(game_id!)}
+                onClick={handleAddBot}
                 style={{
                     border: '2px solid #5D3A1A',
                     borderRadius: '0',
