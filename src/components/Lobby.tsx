@@ -549,7 +549,9 @@ export const Lobby = () => {
         alignItems: 'center',
         height: '100%',
         width: '100%',
-        position: 'relative'
+        position: 'relative',
+        minHeight: '100vh',
+        backgroundColor: '#ad826e'
     }}>
         <WoolBackgroundLayer />
         <button
@@ -558,7 +560,7 @@ export const Lobby = () => {
                 position: 'absolute',
                 top: '10px',
                 left: '10px',
-                zIndex: 2000,
+                zIndex: 100,
                 ...woodButtonStyle,
                 width: '44px',
                 height: '44px',
@@ -626,11 +628,11 @@ export const Lobby = () => {
                 cursor: isEditingName ? 'text' : 'pointer',
                 transition: 'all 0.2s ease',
                 position: 'relative',
-                zIndex: 1000
+                zIndex: 10
             }}
             title={!isEditingName ? "Click to edit game name" : undefined}
         />
-        <h2 style={{ margin: '.25rem' }}>ID: {game_id}</h2>
+        <h2 style={{ margin: '.25rem', position: 'relative', zIndex: 10 }}>ID: {game_id}</h2>
         <div style={{ 
             marginBottom: '10px',
             position: 'relative',
@@ -646,7 +648,8 @@ export const Lobby = () => {
             boxShadow: `
                 inset 0 1px 0 rgba(255,255,255,0.2),
                 inset 0 -1px 0 rgba(0,0,0,0.3),
-                0 3px 6px rgba(0,0,0,0.4)`
+                0 3px 6px rgba(0,0,0,0.4)`,
+            zIndex: 10
         }}>
                 <QRCodeSVG 
                     value={qrUrl} 
@@ -664,6 +667,8 @@ export const Lobby = () => {
             flexDirection: 'column',
             alignItems: 'center',
             width: '100%',
+            position: 'relative',
+            zIndex: 10
         }}>
             {
                 localPlayerOrder.map((player: PublicPlayer, index: number) => {
@@ -771,6 +776,7 @@ export const Lobby = () => {
                     transition: 'all 0.2s ease',
                     userSelect: 'none' as const,
                     marginBottom: '4px',
+                    zIndex: 10,
                 }}
                 onMouseEnter={(e) => {
                     e.currentTarget.style.filter = 'brightness(1.1) contrast(1.1)';
@@ -796,12 +802,14 @@ export const Lobby = () => {
                     mixBlendMode: 'color-burn',
                     filter: 'contrast(1.2) brightness(0.9) blur(.3px)',
                     fontWeight: 'bold',
-                    zIndex: 1,
+                    zIndex: 10,
+                    margin: 0,
+                    position: 'relative',
                 }}>Add Bot</p>
             </div>
         )}
         {game.status === 'waiting' && !game.self && game.players.length < MAX_PLAYERS && (
-            <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '10px', alignItems: 'center' }}>
+            <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '10px', alignItems: 'center', position: 'relative', zIndex: 10 }}>
                 {/* Join button for non-members */}
                 <button 
                     onClick={() => joinGame(game_id!)}

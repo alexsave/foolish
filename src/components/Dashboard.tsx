@@ -83,7 +83,9 @@ export const Dashboard = () => {
         padding: '0.25rem',
         boxSizing: 'border-box',
         overflowY: 'auto',
-        overflowX: 'hidden'
+        overflowX: 'hidden',
+        position: 'relative',
+        backgroundColor: '#ad826e'
     }}>
         <WoolBackgroundLayer />
         <h1 style={{ 
@@ -91,7 +93,9 @@ export const Dashboard = () => {
             fontSize: '1.3rem', 
             fontWeight: 'bold', 
             marginBottom: '0.75rem',
-            textAlign: 'center'
+            textAlign: 'center',
+            position: 'relative',
+            zIndex: 10
         }}>
             {username}'s Dashboard
         </h1>
@@ -102,7 +106,9 @@ export const Dashboard = () => {
             gap: '0.5rem', 
             alignItems: 'center',
             marginBottom: '0.75rem',
-            width: '300px'
+            width: '300px',
+            position: 'relative',
+            zIndex: 10
         }}>
             {/* Join Game Row */}
             <form 
@@ -204,7 +210,7 @@ export const Dashboard = () => {
             </button>
         </div>
 
-        <div style={{ width: '100%', maxWidth: '95vw', flex: '1' }}>
+        <div style={{ width: '100%', maxWidth: '95vw', flex: '1', position: 'relative', zIndex: 10 }}>
             
             <div style={{ 
                 display: 'flex', 

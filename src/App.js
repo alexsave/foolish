@@ -6,7 +6,6 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { UnprotectedRoute } from './components/UnprotectedRoute';
 import { Welcome } from './components/Welcome';
-import { Login } from './components/Login';
 import { Tutorial } from './components/Tutorial';
 import { Dashboard } from './components/Dashboard';
 import { GameView } from './components/GameView';
@@ -25,13 +24,8 @@ function App() {
                   <Routes>
                     <Route path="/" element={
                       <ErrorBoundary context="Welcome Page">
-                        <Welcome />
-                      </ErrorBoundary>
-                    } />
-                    <Route path="/login" element={
-                      <ErrorBoundary context="Login Page">
                         <UnprotectedRoute>
-                          <Login />
+                          <Welcome />
                         </UnprotectedRoute>
                       </ErrorBoundary>
                     } />

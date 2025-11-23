@@ -26,15 +26,8 @@ export const UnprotectedRoute = ({ children }: { children: React.ReactNode }) =>
         }
     }, [loading, user_id, redirectAfterLogin, hasHandledRedirect, clearRedirectAfterLogin]);
     
-    if (loading) {
-        return (
-            <div className="auth-container">
-                <div className="auth-card">
-                    <h2>Loading...</h2>
-                </div>
-            </div>
-        );
-    }
+    // Don't show loading screen - just render the page
+    // The page itself (Welcome) can handle its own loading states
     
     // If user is authenticated, redirect to intended destination or dashboard
     if (user_id && shouldRedirect) {
