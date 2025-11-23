@@ -490,10 +490,12 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                         setGames(prev => ({ ...prev, [gameId]: mergeGameData(gameId, personalizedGame, prev) }));
                         joinOrSubscribe(personalizedGame);
                         
-                        // Trigger bot loop for this game (doesn't mutate state, just keeps bots active)
+                        // Trigger bot loop only if there are AI players in the game
                         // Fire and forget - don't block UI rendering
-                        supabase.functions.invoke('bot_bump', { body: { game_id: gameId } }).catch(botError => {
-                        });
+                        if (game.players.some(player => player.is_ai)) {
+                            supabase.functions.invoke('bot_bump', { body: { game_id: gameId } }).catch(botError => {
+                            });
+                        }
                         
                         return { game_id: gameId };
                     }

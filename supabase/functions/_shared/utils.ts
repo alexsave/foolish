@@ -229,23 +229,23 @@ export const convertToPersonalAnimationEvents = (events: AnimationEvent[], forPl
 export const animationEvents = new AnimationEventManager();
 
 // Broadcast animation events to all players and spectators
-export const broadcastAnimationEvents = async (game: Game, events: AnimationEvent[]): Promise<void> => {
+export const broadcastAnimationEvents = async (game: Game, events: AnimationEvent[], reqId: string = 'unknown'): Promise<void> => {
     if (events.length === 0) {
         return;
     }
 
     const broadcastTotalStart = Date.now();
-    console.log(`[BROADCAST DEBUG] broadcastAnimationEvents called for game ${game.id} with ${events.length} events`);
+    console.log(`[${reqId}][BROADCAST] broadcastAnimationEvents called for game ${game.id} with ${events.length} events`);
 
     // Calculate base game state once (shared for all players) - removes private information
     const baseGameStart = Date.now();
     const baseGameState = gameToPublicGame(game);
-    console.log(`[TIMING] gameToPublicGame took ${Date.now() - baseGameStart}ms`);
+    console.log(`[${reqId}][BROADCAST] gameToPublicGame took ${Date.now() - baseGameStart}ms`);
 
     // Send personalized events to each player in parallel (excluding bots - they have no clients)
     const playerBroadcastStart = Date.now();
     const humanPlayers = game.players.filter(player => !player.is_ai);
-    console.log(`[TIMING] Broadcasting to ${humanPlayers.length} human players (skipping ${game.players.length - humanPlayers.length} bots)`);
+    console.log(`[${reqId}][BROADCAST] Broadcasting to ${humanPlayers.length} human players (skipping ${game.players.length - humanPlayers.length} bots)`);
     
     const playerBroadcastPromises = humanPlayers.map(async (player) => {
         const playerStart = Date.now();
@@ -258,18 +258,7 @@ export const broadcastAnimationEvents = async (game: Game, events: AnimationEven
             timestamp: Date.now()
         };
 
-        console.log(`[SECURITY] Sending ${personalEvents.length} personal events to player ${player.name} (${player.player_id})`);
-
-        // Log any cards that were sanitized for this player
-        personalEvents.forEach((event, index) => {
-            if (event.cards && event.player_id && event.player_id !== player.player_id) {
-                const cardCount = event.cards.length;
-                const hasSanitizedCards = event.cards.some(card => card.suit === -1 && card.value === -1);
-                if (hasSanitizedCards) {
-                    console.log(`[SECURITY] Event ${index + 1} (${event.type}) for player ${player.name}: ${cardCount} cards from ${event.player_id} sanitized to card backs`);
-                }
-            }
-        });
+        console.log(`[${reqId}][BROADCAST] Sending ${personalEvents.length} events to ${player.name}`);
 
         // Create personalized game state by adding player's self data
         const personalizedGame = gameToPersonalGame(game, player);
@@ -278,7 +267,7 @@ export const broadcastAnimationEvents = async (game: Game, events: AnimationEven
         const channel = supabaseClient.channel(`gu-${game.id}-${player.player_id}`, {
             config: { private: true }
         });
-        console.log(`[TIMING] Channel create for ${player.name} took ${Date.now() - channelCreateStart}ms`);
+        console.log(`[${reqId}][BROADCAST] Channel create for ${player.name} took ${Date.now() - channelCreateStart}ms`);
 
         const sendStart = Date.now();
         await channel.send({
@@ -289,18 +278,18 @@ export const broadcastAnimationEvents = async (game: Game, events: AnimationEven
                 game: personalizedGame
             }
         });
-        console.log(`[TIMING] Channel send for ${player.name} took ${Date.now() - sendStart}ms`);
+        console.log(`[${reqId}][BROADCAST] Channel send for ${player.name} took ${Date.now() - sendStart}ms`);
 
         const removeStart = Date.now();
         await supabaseClient.removeChannel(channel);
-        console.log(`[TIMING] Channel remove for ${player.name} took ${Date.now() - removeStart}ms`);
+        console.log(`[${reqId}][BROADCAST] Channel remove for ${player.name} took ${Date.now() - removeStart}ms`);
         
-        console.log(`[TIMING] Total broadcast for ${player.name}: ${Date.now() - playerStart}ms`);
+        console.log(`[${reqId}][BROADCAST] Total for ${player.name}: ${Date.now() - playerStart}ms`);
     });
     
     // Wait for all player broadcasts to complete in parallel
     await Promise.all(playerBroadcastPromises);
-    console.log(`[TIMING] All player broadcasts took ${Date.now() - playerBroadcastStart}ms`);
+    console.log(`[${reqId}][BROADCAST] All player broadcasts took ${Date.now() - playerBroadcastStart}ms`);
 
     // Send public events to spectator channel
     const spectatorStart = Date.now();
@@ -313,7 +302,7 @@ export const broadcastAnimationEvents = async (game: Game, events: AnimationEven
         timestamp: Date.now()
     };
 
-    console.log(`[SECURITY] Sending ${publicEvents.length} public events to spectator channel`);
+    console.log(`[${reqId}][BROADCAST] Sending ${publicEvents.length} events to spectators`);
 
     const spectatorChannel = supabaseClient.channel(`game-${game.id}`, {
         config: { private: true }
@@ -329,9 +318,9 @@ export const broadcastAnimationEvents = async (game: Game, events: AnimationEven
     });
 
     await supabaseClient.removeChannel(spectatorChannel);
-    console.log(`[TIMING] Spectator broadcast took ${Date.now() - spectatorStart}ms`);
+    console.log(`[${reqId}][BROADCAST] Spectator broadcast took ${Date.now() - spectatorStart}ms`);
     
-    console.log(`[TIMING] Total broadcastAnimationEvents took ${Date.now() - broadcastTotalStart}ms`);
+    console.log(`[${reqId}][BROADCAST] Total broadcastAnimationEvents took ${Date.now() - broadcastTotalStart}ms`);
 };
 
 export interface ExecutionParams {
@@ -339,68 +328,100 @@ export interface ExecutionParams {
     user_name: string;
     body: any;
     game: Game;
+    reqId: string;
 }
 
 export const wrap400 = (execute: (params: ExecutionParams) => Promise<{ game: Game, events: AnimationEvent[] }>, run_bots: boolean = false) => {
     const handler = async (req: Request): Promise<Response> => {
+        // Generate unique request ID (short hash from crypto)
+        const reqId = crypto.randomUUID().split('-')[0];
+        const requestStartTime = Date.now();
+        console.log(`[${reqId}][WRAP400] ========== REQUEST START: ${req.method} ${req.url} ==========`);
+        
         try {
             // Handle CORS
-            const corsResponse = handleCors(req);
-            if (corsResponse) return corsResponse;
+            const corsStart = Date.now();
+            const corsResponse = handleCors(req, reqId);
+            console.log(`[${reqId}][WRAP400] CORS check took ${Date.now() - corsStart}ms`);
+            if (corsResponse) {
+                console.log(`[${reqId}][WRAP400] Returning CORS response (total: ${Date.now() - requestStartTime}ms)`);
+                return corsResponse;
+            }
 
             // Get authenticated user
+            const authStart = Date.now();
             const user: User = await getAuthenticatedUser(req);
+            console.log(`[${reqId}][WRAP400] Authentication took ${Date.now() - authStart}ms`);
 
             // Get user name from email
             const user_name = user.user_metadata.username;
 
             // Parse JSON body
+            const bodyParseStart = Date.now();
             let body = {};
             try {
                 body = await req.json();
             } catch (e) { }
+            console.log(`[${reqId}][WRAP400] Body parsing took ${Date.now() - bodyParseStart}ms`);
             // If JSON parsing fails, keep empty object
 
             // Extract game_id from body for lock management
             const game_id = (body as any).game_id;
+            console.log(`[${reqId}][WRAP400] game_id: ${game_id || 'none'}`);
 
             let result: any;
             let events: AnimationEvent[] = [];
 
             if (game_id) {
                 // Execute operation with database lock for this specific game
-                const { game, events: operationEvents } = await executeWithGameLock(game_id, (game) => execute({ user, user_name, body, game }));
+                const lockStart = Date.now();
+                console.log(`[${reqId}][WRAP400] Starting executeWithGameLock for game ${game_id}`);
+                const { game, events: operationEvents } = await executeWithGameLock(game_id, (game) => execute({ user, user_name, body, game, reqId }));
+                console.log(`[${reqId}][WRAP400] executeWithGameLock took ${Date.now() - lockStart}ms`);
                 result = game;
                 events = operationEvents;
-
-                // Broadcast animation events if any were collected
-                if (events.length > 0) {
-                    await broadcastAnimationEvents(result, events);
-                }
             } else {
                 // No game_id, execute immediately (for operations that don't involve games)
                 // pretty much only create
-                const operationResult = await execute({ user, user_name, body, game: {} as Game });
+                const executeStart = Date.now();
+                console.log(`[${reqId}][WRAP400] Starting direct execute (no game_id)`);
+                const operationResult = await execute({ user, user_name, body, game: {} as Game, reqId });
+                console.log(`[${reqId}][WRAP400] Direct execute took ${Date.now() - executeStart}ms`);
 
                 result = operationResult.game;
                 events = operationResult.events;
+            }
 
-                // Broadcast for game creation
-                if (result && result.id && events.length > 0) {
-                    await broadcastAnimationEvents(result, events);
+            // handle spectating here too 
+            const personalizeStart = Date.now();
+            const personalized_result = personalize_game(result, user.id);
+            console.log(`[${reqId}][WRAP400] personalize_game took ${Date.now() - personalizeStart}ms`);
+
+            // Fire-and-forget: Broadcast animation events AFTER preparing response (don't await)
+            if (events.length > 0) {
+                console.log(`[${reqId}][WRAP400] Starting fire-and-forget broadcast for ${events.length} events`);
+                if (game_id) {
+                    broadcastAnimationEvents(result, events, reqId).catch(err => 
+                        console.error(`[${reqId}] Background broadcast error:`, err)
+                    );
+                } else if (result && result.id) {
+                    // Broadcast for game creation
+                    broadcastAnimationEvents(result, events, reqId).catch(err => 
+                        console.error(`[${reqId}] Background broadcast error:`, err)
+                    );
                 }
             }
 
-            // Schedule bot actions if this was a game operation
+            // Fire-and-forget: Schedule bot actions AFTER preparing response (already non-blocking)
             if (game_id/* && run_bots*/) {
+                console.log(`[${reqId}][WRAP400] Starting fire-and-forget bot loop`);
                 // TODO: not quite. Only after start/attack/cover/pass/pickup/good 
                 lockedBotLoop(game_id);
             }
 
-            // handle spectating here too 
-            const personalized_result = personalize_game(result, user.id);
-
-            // Create standardized response
+            // Create standardized response and return immediately
+            const responseTime = Date.now() - requestStartTime;
+            console.log(`[${reqId}][WRAP400] ========== RETURNING RESPONSE (total: ${responseTime}ms) ==========`);
             return new Response(JSON.stringify(personalized_result), {
                 headers: {
                     ...corsHeaders,
@@ -408,7 +429,8 @@ export const wrap400 = (execute: (params: ExecutionParams) => Promise<{ game: Ga
                 }
             });
         } catch (e: any) {
-            console.error('Error processing request:', {
+            const errorTime = Date.now() - requestStartTime;
+            console.error(`[${reqId}][WRAP400] Error processing request (after ${errorTime}ms):`, {
                 name: e.name,
                 message: e.message,
                 stack: e.stack,
