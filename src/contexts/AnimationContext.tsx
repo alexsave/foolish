@@ -469,44 +469,42 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                     }
                     
                     // Handle optimistic pickup conflicts
-                    // If server shows cards on table that we optimistically picked up, revert the pickup
-                    if (myOptimisticPickups.length > 0 && serverTableCards.length > 0) {
+                    if (myOptimisticPickups.length > 0) {
                         console.log(`  🔍 Checking if optimistic pickup conflicts with server state...`);
                         
-                        const pickupCardsStillOnTable = myOptimisticPickups.filter(pickupCard => 
-                            serverTableCards.some((serverCard: Card) => 
-                                serverCard.suit === pickupCard.suit && serverCard.value === pickupCard.value
-                            )
+                        // Two scenarios:
+                        // 1. Server shows cards still on table (attack came in) - revert to table
+                        // 2. Server sends cards_to_trash/discard (good was played) - revert to table before trash
+                        
+                        const hasCardsToTrash = message.events.some((evt: any) => 
+                            evt.type === 'cards_to_trash' || evt.type === 'discard'
                         );
                         
-                        if (pickupCardsStillOnTable.length > 0) {
-                            console.log(`  🔴 PICKUP CONFLICT! Cards we picked up are back on server table:`, pickupCardsStillOnTable.map(c => `${c.suit}${c.value}`));
-                            console.log(`  🔴 Creating revert animations to put them back on table`);
+                        let pickupCardsToRevert: Card[] = [];
+                        
+                        if (hasCardsToTrash) {
+                            // Good was played - ALL optimistic pickups need to be reverted
+                            console.log(`  🔴 PICKUP vs GOOD CONFLICT! Server sent cards_to_trash, reverting all pickups`);
+                            pickupCardsToRevert = myOptimisticPickups;
+                        } else if (serverTableCards.length > 0) {
+                            // Attack came in - only revert cards that are still on table
+                            pickupCardsToRevert = myOptimisticPickups.filter(pickupCard => 
+                                serverTableCards.some((serverCard: Card) => 
+                                    serverCard.suit === pickupCard.suit && serverCard.value === pickupCard.value
+                                )
+                            );
+                            if (pickupCardsToRevert.length > 0) {
+                                console.log(`  🔴 PICKUP vs ATTACK CONFLICT! Cards still on server table:`, pickupCardsToRevert.map(c => `${c.suit}${c.value}`));
+                            }
+                        }
+                        
+                        if (pickupCardsToRevert.length > 0) {
+                            console.log(`  🔴 Creating single multi-card revert animation for ${pickupCardsToRevert.length} card(s)`);
                             
-                            pickupCardsStillOnTable.forEach(card => {
+                            // Mark all cards as reverting and clear tracking
+                            pickupCardsToRevert.forEach(card => {
                                 const cardKey = `${card.suit}-${card.value}`;
-                                
-                                if (revertingCards.current.has(cardKey)) {
-                                    console.log(`  Already reverting ${cardKey}, skipping`);
-                                    return;
-                                }
                                 revertingCards.current.add(cardKey);
-                                
-                                // Get visual position (should be 'hand')
-                                const visualPosition = optimisticCardPositions.current.get(cardKey);
-                                const fromLocation = visualPosition?.location || 'hand';
-                                
-                                console.log(`  Creating pickup revert: ${cardKey} from ${fromLocation} → table`);
-                                
-                                revertEvents.push({
-                                    type: 'revert',
-                                    cards: [card],
-                                    from_location: fromLocation as any,
-                                    to_location: 'table',
-                                    player_id: myPlayerId,
-                                    is_revert: true,
-                                    game_state: null as any // Will be set later
-                                });
                                 
                                 // Clear tracking
                                 const cardEventString = JSON.stringify({
@@ -517,6 +515,19 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                                     player_id: myPlayerId
                                 });
                                 optimisticAnimations.current.delete(cardEventString);
+                            });
+                            
+                            // Create SINGLE revert event with ALL cards
+                            console.log(`  Creating pickup revert: ${pickupCardsToRevert.map(c => `${c.suit}${c.value}`).join(', ')} from hand → table`);
+                            
+                            revertEvents.push({
+                                type: 'revert',
+                                cards: pickupCardsToRevert, // ALL cards in one event
+                                from_location: 'hand',
+                                to_location: 'table',
+                                player_id: myPlayerId,
+                                is_revert: true,
+                                game_state: null as any // Will be set later
                             });
                         }
                     }
@@ -794,21 +805,33 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 const firstEventWithState = message.events.find((evt: any) => evt.game_state);
                 const serverStateForRevert = firstEventWithState?.game_state;
                 
-                // For pickup events, reconstruct table state BEFORE pickup using pickup cards
+                // Check if we have pickup reverts (hand → table)
+                const hasPickupRevertsForState = revertEvents.some(rev => rev.to_location === 'table');
+                
+                // For pickup revert scenarios, reconstruct table state
                 const pickupEvent = message.events.find((evt: any) => evt.type === 'pickup' || evt.type === 'cards_to_trash');
-                const hasPickupEvent = !!pickupEvent;
+                const magicTransitionEvent = message.events.find((evt: any) => evt.type === 'magic_transition');
                 
                 let baseState;
-                if (hasPickupEvent && pickupEvent) {
-                    // Reconstruct state with cards on table (before pickup)
-                    baseState = serverStateForRevert ? JSON.parse(JSON.stringify(serverStateForRevert)) : null;
-                    if (baseState && pickupEvent.cards) {
-                        // Put the cards back on the table as uncovered attacks
-                        baseState.table_battles = pickupEvent.cards.map((card: Card) => ({
-                            attack: card,
-                            defense: null
-                        }));
-                        console.log(`  Reconstructed table for pickup:`, pickupEvent.cards.map((c: Card) => `${c.suit}${c.value}`));
+                if (hasPickupRevertsForState) {
+                    // For pickup reverts, we need state with cards on table
+                    if (magicTransitionEvent?.game_state) {
+                        // Use magic_transition state (has cards on table before good)
+                        baseState = magicTransitionEvent.game_state;
+                        console.log(`  Using magic_transition state for pickup reverts`);
+                    } else if (pickupEvent?.cards) {
+                        // Reconstruct state with cards on table (before pickup)
+                        baseState = serverStateForRevert ? JSON.parse(JSON.stringify(serverStateForRevert)) : null;
+                        if (baseState && pickupEvent.cards) {
+                            // Put the cards back on the table as uncovered attacks
+                            baseState.table_battles = pickupEvent.cards.map((card: Card) => ({
+                                attack: card,
+                                defense: null
+                            }));
+                            console.log(`  Reconstructed table for pickup reverts:`, pickupEvent.cards.map((c: Card) => `${c.suit}${c.value}`));
+                        }
+                    } else {
+                        baseState = currentGame || serverStateForRevert;
                     }
                 } else {
                     baseState = currentGame || serverStateForRevert;
@@ -816,7 +839,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 
                 const stateWithOptimistic = baseState ? JSON.parse(JSON.stringify(baseState)) : null;
                 
-                console.log(`  Base state for revert: ${hasPickupEvent ? 'reconstructed (pickup)' : 'currentGame (conflict)'}`);
+                console.log(`  Base state for revert: ${hasPickupRevertsForState ? 'pickup reverts' : 'attack conflict'}`);
                 if (stateWithOptimistic) {
                     const baseTableCards = stateWithOptimistic.table_battles?.flatMap((b: any) => 
                         b.defense ? [b.attack, b.defense] : [b.attack]
@@ -840,19 +863,19 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                     );
                     
                     // Check if we have pickup reverts (hand → table) vs attack reverts (table → hand)
-                    const hasPickupReverts = revertEvents.some(rev => rev.to_location === 'table');
+                    const hasPickupRevertsForClean = revertEvents.some(rev => rev.to_location === 'table');
                     const hasAttackReverts = revertEvents.some(rev => rev.to_location === 'hand');
-                    const hasPickupEvent = message.events.some((evt: any) => evt.type === 'pickup' || evt.type === 'cards_to_trash');
+                    const hasPickupEventForClean = message.events.some((evt: any) => evt.type === 'pickup' || evt.type === 'cards_to_trash');
                     
                     console.log(`  Removing from revert game_state:`, {
                         reverting: Array.from(revertCardKeys),
                         serverAttacks: Array.from(serverAttackCards),
-                        hasPickupReverts,
+                        hasPickupReverts: hasPickupRevertsForClean,
                         hasAttackReverts,
-                        hasPickupEvent
+                        hasPickupEvent: hasPickupEventForClean
                     });
                     
-                    if (hasPickupReverts) {
+                    if (hasPickupRevertsForClean) {
                         // PICKUP REVERT SCENARIO (hand → table): 
                         // State should show reverted cards on table, but NOT server attack cards that will animate
                         stateWithOptimistic.table_battles = (stateWithOptimistic.table_battles || []).filter((b: any) => {
@@ -866,7 +889,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                             return !removeAttack && !removeDefense;
                         });
                         console.log(`  Removed server attack cards from pickup revert state (will animate separately)`);
-                    } else if (hasPickupEvent && hasAttackReverts) {
+                    } else if (hasPickupEventForClean && hasAttackReverts) {
                         // ATTACK REVERT + PICKUP SCENARIO: Only remove reverting cards, keep everything else
                         // (Cards to be picked up need to stay on table for pickup animation)
                         stateWithOptimistic.table_battles = (stateWithOptimistic.table_battles || []).filter((b: any) => {
@@ -919,7 +942,34 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                     evt.type === 'pickup' || evt.type === 'cards_to_trash'
                 );
                 
-                if (firstAttackIndex >= 0) {
+                // Find magic_transition (for good scenario with pickup reverts)
+                const firstMagicTransitionIndex = message.events.findIndex((evt: any) => 
+                    evt.type === 'magic_transition'
+                );
+                
+                // Check if we have pickup reverts (hand → table)
+                const hasPickupReverts = revertEvents.some(rev => rev.to_location === 'table');
+                
+                if (hasPickupReverts && firstMagicTransitionIndex >= 0) {
+                    console.log(`  Found pickup reverts + magic_transition at index ${firstMagicTransitionIndex} - inserting reverts before it`);
+                    
+                    // For optimistic pickup + server good: revert ALL cards back to table first
+                    const eventsBeforeMagic = message.events.slice(0, firstMagicTransitionIndex);
+                    const restEvents = message.events.slice(firstMagicTransitionIndex);
+                    
+                    const queueOrder = [
+                        ...eventsBeforeMagic,
+                        ...revertEvents,    // Revert pickups back to table first
+                        ...restEvents       // Then magic_transition + cards_to_trash
+                    ];
+                    
+                    console.log(`  📋 Final queue order (${queueOrder.length} events):`);
+                    queueOrder.forEach((evt, idx) => {
+                        console.log(`    ${idx}: ${evt.type} ${evt.is_revert ? '🔴' : ''} - ${evt.cards?.map((c: Card) => `${c.suit}${c.value}`)?.join(',') || 'no cards'}`);
+                    });
+                    
+                    setAnimationQueue(prev => [...prev, ...queueOrder]);
+                } else if (firstAttackIndex >= 0) {
                     console.log(`  Found valid attack at index ${firstAttackIndex} - inserting reverts before it`);
                     
                     // Queue reverts IMMEDIATELY before the valid attack for parallel visual effect
@@ -1358,8 +1408,25 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         const result = await serverMethods.pickup();
         return result;
         } catch (error) {
-            // Server rejected the pickup - create revert animation
-            console.log('🔴 SERVER 400 ERROR - Pickup rejected, creating reverts');
+            // Server rejected the pickup
+            // Check if conflict detection already handled reverts
+            const stillTracking = allTableCards.filter(card => {
+                const cardEventString = JSON.stringify({
+                    type: 'pickup',
+                    card,
+                    from_location: 'table',
+                    to_location: 'hand',
+                    player_id: game.self?.player_id
+                });
+                return optimisticAnimations.current.has(cardEventString);
+            });
+            
+            if (stillTracking.length === 0) {
+                console.log('🔴 SERVER 400 ERROR - Pickup rejected, but conflict detection already handled reverts');
+                throw error;
+            }
+            
+            console.log('🔴 SERVER 400 ERROR - Pickup rejected, creating fallback reverts');
             allTableCards.forEach(card => {
                 const cardKey = `${card.suit}-${card.value}`;
                 if (revertingCards.current.has(cardKey)) return;
