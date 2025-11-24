@@ -78,8 +78,9 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     const getUserGamesPromise = useRef<Promise<void> | null>(null);
 
     // Simple reconnection state
-    const gameChannelRetryInterval = useRef(1000); // Start with 1 second
-    const chatChannelRetryInterval = useRef(1000); // Start with 1 second
+    const gameChannelRetryInterval = useRef(500); // Start with 0.5 seconds
+    const chatChannelRetryInterval = useRef(500); // Start with 0.5 seconds
+    const MAX_RETRY_INTERVAL = 5000; // Cap at 5 seconds
 
     useEffect(() => {
         if (url_game_id) {
@@ -151,12 +152,13 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 })
                 .subscribe((status, err) => {
                     if (status === 'SUBSCRIBED') {
-                        gameChannelRetryInterval.current = 1000; // Reset retry interval on success
+                        gameChannelRetryInterval.current = 500; // Reset retry interval on success
                     } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
                         console.error('Game-user channel error:', err);
                         setTimeout(() => {
                             subscribeToGame(gameId).catch(console.error);
-                            gameChannelRetryInterval.current *= 2; // Double the interval
+                            // Double the interval but cap at MAX_RETRY_INTERVAL
+                            gameChannelRetryInterval.current = Math.min(gameChannelRetryInterval.current * 2, MAX_RETRY_INTERVAL);
                         }, gameChannelRetryInterval.current);
                     }
                 });
@@ -164,7 +166,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             console.error('Error subscribing to game channel:', error);
             setTimeout(() => {
                 subscribeToGame(gameId).catch(console.error);
-                gameChannelRetryInterval.current *= 2; // Double the interval
+                // Double the interval but cap at MAX_RETRY_INTERVAL
+                gameChannelRetryInterval.current = Math.min(gameChannelRetryInterval.current * 2, MAX_RETRY_INTERVAL);
             }, gameChannelRetryInterval.current);
         }
     };
@@ -185,12 +188,13 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 })
                 .subscribe((status, err) => {
                     if (status === 'SUBSCRIBED') {
-                        chatChannelRetryInterval.current = 1000; // Reset retry interval on success
+                        chatChannelRetryInterval.current = 500; // Reset retry interval on success
                     } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
                         console.error('Chat channel error:', err);
                         setTimeout(() => {
                             subscribeToChatMessages(gameId).catch(console.error);
-                            chatChannelRetryInterval.current *= 2; // Double the interval
+                            // Double the interval but cap at MAX_RETRY_INTERVAL
+                            chatChannelRetryInterval.current = Math.min(chatChannelRetryInterval.current * 2, MAX_RETRY_INTERVAL);
                         }, chatChannelRetryInterval.current);
                     }
                 });
@@ -198,7 +202,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             console.error('Error subscribing to chat channel:', error);
             setTimeout(() => {
                 subscribeToChatMessages(gameId).catch(console.error);
-                chatChannelRetryInterval.current *= 2; // Double the interval
+                // Double the interval but cap at MAX_RETRY_INTERVAL
+                chatChannelRetryInterval.current = Math.min(chatChannelRetryInterval.current * 2, MAX_RETRY_INTERVAL);
             }, chatChannelRetryInterval.current);
         }
     };

@@ -120,7 +120,8 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     const gameUserChannelRef = useRef<any>(null);
     
     // Simple retry interval for animation channel
-    const animationChannelRetryInterval = useRef(1000);
+    const animationChannelRetryInterval = useRef(500); // Start with 0.5 seconds
+    const MAX_RETRY_INTERVAL = 5000; // Cap at 5 seconds
 
     // Start bot bump timer when component mounts and game is loaded
     useEffect(() => {
@@ -221,11 +222,12 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                     })
                     .subscribe((status, err) => {
                         if (status === 'SUBSCRIBED') {
-                            animationChannelRetryInterval.current = 1000; // Reset retry interval on success
+                            animationChannelRetryInterval.current = 500; // Reset retry interval on success
                         } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
                             setTimeout(() => {
                                 subscribeToGameAnimations().catch(console.error);
-                                animationChannelRetryInterval.current *= 2; // Double the interval
+                                // Double the interval but cap at MAX_RETRY_INTERVAL
+                                animationChannelRetryInterval.current = Math.min(animationChannelRetryInterval.current * 2, MAX_RETRY_INTERVAL);
                             }, animationChannelRetryInterval.current);
                         } else {
                         }
@@ -234,7 +236,8 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 console.error('Error setting up game animation subscription:', error);
                 setTimeout(() => {
                     subscribeToGameAnimations().catch(console.error);
-                    animationChannelRetryInterval.current *= 2; // Double the interval
+                    // Double the interval but cap at MAX_RETRY_INTERVAL
+                    animationChannelRetryInterval.current = Math.min(animationChannelRetryInterval.current * 2, MAX_RETRY_INTERVAL);
                 }, animationChannelRetryInterval.current);
             }
         };
