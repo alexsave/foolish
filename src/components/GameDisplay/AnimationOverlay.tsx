@@ -16,6 +16,7 @@ interface AnimatedCard {
     playerId?: string;
     isSanitizedRefill?: boolean;
     cardCount?: number;
+    isRevert?: boolean; // Flag for reverted optimistic animations
 }
 
 export const AnimationOverlay = () => {
@@ -170,7 +171,7 @@ export const AnimationOverlay = () => {
             return;
         }
 
-        const { type, cards, from_location, to_location, player_id, target_card, battle_index } = currentAnimation;
+        const { type, cards, from_location, to_location, player_id, target_card, battle_index, is_revert } = currentAnimation;
 
         // Handle magic_transition separately since it doesn't have cards
         if (type === 'magic_transition') {
@@ -211,7 +212,8 @@ export const AnimationOverlay = () => {
                     animationType: type,
                     playerId: player_id,
                     isSanitizedRefill: true,
-                    cardCount: cards.length
+                    cardCount: cards.length,
+                    isRevert: is_revert
                 };
 
                 setAnimatedCards([newAnimatedCard]);
@@ -363,7 +365,8 @@ export const AnimationOverlay = () => {
                         endPosition: endPos,
                         progress: 0,
                         animationType: type,
-                        playerId: player_id
+                        playerId: player_id,
+                        isRevert: is_revert
                     });
                 });
 
@@ -407,7 +410,7 @@ export const AnimationOverlay = () => {
             }}
         >
             {animatedCards.map(animatedCard => {
-                const { startPosition, endPosition, progress, card, id, isSanitizedRefill, cardCount } = animatedCard;
+                const { startPosition, endPosition, progress, card, id, isSanitizedRefill, cardCount, isRevert } = animatedCard;
                 
                 // Use actual position based on progress (CSS will animate the transition)
                 const currentX = progress === 0 
@@ -442,8 +445,13 @@ export const AnimationOverlay = () => {
                                 card={card}
                                 isAnimationOverlay={true}
                                 style={{
-                                    boxShadow: `0 ${progress * 10}px ${progress * 20}px rgba(0,0,0,0.4)`,
-                                    filter: `brightness(${1 + progress * 0.2})`
+                                    boxShadow: isRevert 
+                                        ? `0 ${progress * 10}px ${progress * 20}px rgba(255,0,0,0.6)` 
+                                        : `0 ${progress * 10}px ${progress * 20}px rgba(0,0,0,0.4)`,
+                                    filter: isRevert 
+                                        ? `brightness(${1 + progress * 0.2}) sepia(100%) saturate(300%) hue-rotate(-50deg)`
+                                        : `brightness(${1 + progress * 0.2})`,
+                                    border: isRevert ? '2px solid rgba(220, 38, 38, 0.8)' : undefined
                                 }}
                             />
                         )}

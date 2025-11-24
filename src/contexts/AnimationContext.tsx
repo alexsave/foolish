@@ -25,6 +25,12 @@ interface AnimationEvent {
     game_state?: Game; // intermediate game state after this event
 }
 
+// Client-side animation event with additional fields for UI logic
+interface ClientAnimationEvent extends Omit<AnimationEvent, 'type'> {
+    type: 'magic_transition' | 'deal' | 'flipped' | 'defender_move' | 'attack_pass' | 'cover' | 'pickup' | 'discard' | 'out' | 'refill' | 'cards_to_trash' | 'revert';
+    is_revert?: boolean; // CLIENT-ONLY: flag for reverted optimistic animations
+}
+
 interface AnimationSequence {
     type: 'animation_sequence';
     events: AnimationEvent[];
@@ -34,9 +40,9 @@ interface AnimationSequence {
 
 interface AnimationContextType {
     isAnimating: boolean;
-    currentAnimation: AnimationEvent | null;
-    animationQueue: AnimationEvent[];
-    queueAnimation: (event: AnimationEvent) => void;
+    currentAnimation: ClientAnimationEvent | null;
+    animationQueue: ClientAnimationEvent[];
+    queueAnimation: (event: ClientAnimationEvent) => void;
     queueAnimationSequence: (sequence: AnimationSequence) => void;
     getCardAnimationState: (card: Card, playerId?: string) => {
         isAnimating: boolean;
@@ -61,8 +67,8 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     const url_game_id = useParams().game_id?.toLowerCase();
     
     const [isAnimating, setIsAnimating] = useState(false);
-    const [currentAnimation, setCurrentAnimation] = useState<AnimationEvent | null>(null);
-    const [animationQueue, setAnimationQueue] = useState<AnimationEvent[]>([]);
+    const [currentAnimation, setCurrentAnimation] = useState<ClientAnimationEvent | null>(null);
+    const [animationQueue, setAnimationQueue] = useState<ClientAnimationEvent[]>([]);
     
     // Keep refs in sync with state
     useEffect(() => {
@@ -81,7 +87,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     }>>(new Map());
     
     const timeoutRef = useRef<NodeJS.Timeout | null>(null);
-    const animationQueueRef = useRef<AnimationEvent[]>([]);
+    const animationQueueRef = useRef<ClientAnimationEvent[]>([]);
     const isAnimatingRef = useRef<boolean>(false);
     const pendingCompletionCallbackRef = useRef<(() => void) | null>(null);
     const remainingSequenceEventsRef = useRef<number>(0);
@@ -102,6 +108,13 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     // Track optimistically triggered animations to avoid server duplicates
     // Map of animation hash -> timestamp when it was added
     const optimisticAnimations = useRef<Map<string, number>>(new Map());
+    
+    // Track cards that are currently being reverted to avoid duplicate revert animations
+    const revertingCards = useRef<Set<string>>(new Set());
+    
+    // Track visual positions of optimistically animated cards (for accurate revert animations)
+    // Map of cardKey -> { location: 'table' | 'hand', playerId: string }
+    const optimisticCardPositions = useRef<Map<string, { location: string, playerId: string }>>(new Map());
     
     // Store channel reference for proper cleanup
     const gameUserChannelRef = useRef<any>(null);
@@ -281,7 +294,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             });
             
             // Filter out optimistic events, keeping only non-optimistic ones
-            const nonOptimisticEvents: AnimationEvent[] = [];
+            const nonOptimisticEvents: ClientAnimationEvent[] = [];
             const optimisticEventIndices: number[] = [];
             
             serverEvents.forEach((serverEvent: any, eventIndex: number) => {
@@ -309,6 +322,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                     optimisticEventIndices.push(eventIndex);
                     // Clear the optimistic animations since server confirmed them
                     serverEvent.cards.forEach((card: Card) => {
+                        const cardKey = `${card.suit}-${card.value}`;
                         const cardEventString = JSON.stringify({
                             type: serverEvent.type,
                             card: card,
@@ -318,6 +332,10 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                         });
                         const timestamp = optimisticAnimations.current.get(cardEventString);
                         const wasDeleted = optimisticAnimations.current.delete(cardEventString);
+                        
+                        // Also clear position tracking since server confirmed the move
+                        optimisticCardPositions.current.delete(cardKey);
+                        
                         if (wasDeleted && timestamp) {
                             const age = Date.now() - timestamp;
                         }
@@ -339,7 +357,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             message.events = nonOptimisticEvents;
             
             // Log which events have intermediate game states
-            message.events.forEach((animEvent: AnimationEvent, index: number) => {
+            message.events.forEach((animEvent: ClientAnimationEvent, index: number) => {
                 const hasGameState = !!animEvent.game_state;
                 const stateInfo = hasGameState ? 
                     `table:${animEvent.game_state!.table_battles?.length || 0}, hands:${animEvent.game_state!.players?.map(p => p.hand?.length || 0).join(',')}` :
@@ -370,16 +388,221 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 processedSequenceIds.current = new Set(ids.slice(-25));
             }
             
+            // CONFLICT DETECTION: Check if server events invalidate our optimistic animations
+            const revertEvents: ClientAnimationEvent[] = [];
+            
+            // Get current displayed state (what the user sees with optimistic updates)
+            const currentGame = url_game_id ? games[url_game_id] : null;
+            
+            console.log('🔍 Conflict detection entry:', {
+                has_currentGame: !!currentGame,
+                has_events: message.events?.length > 0,
+                url_game_id,
+                optimistic_tracking_size: optimisticAnimations.current.size
+            });
+            
+            // Check for conflicts if we have ANY optimistic animations tracked
+            // (Don't require currentGame since we check optimisticAnimations directly)
+            if (message.events.length > 0 && optimisticAnimations.current.size > 0) {
+                console.log('🔍 Checking for optimistic conflicts...');
+                
+                // Get the latest server game state from the events
+                const lastEventWithState = [...message.events].reverse().find((evt: any) => evt.game_state);
+                
+                if (lastEventWithState && lastEventWithState.game_state) {
+                    const serverState = lastEventWithState.game_state;
+                    const myPlayerId = serverState.self?.player_id || user_id;
+                    
+                    // Find MY optimistic attack cards by checking the tracking map directly
+                    // (don't rely on currentGame.table_battles as it may not be updated yet)
+                    const myOptimisticCards: Card[] = [];
+                    optimisticAnimations.current.forEach((timestamp, cardEventString) => {
+                        try {
+                            const parsedEvent = JSON.parse(cardEventString);
+                            if (parsedEvent.type === 'attack_pass' && 
+                                parsedEvent.from_location === 'hand' && 
+                                parsedEvent.to_location === 'table' &&
+                                parsedEvent.player_id === myPlayerId) {
+                                myOptimisticCards.push(parsedEvent.card);
+                            }
+                        } catch (e) {
+                            // Skip invalid entries
+                        }
+                    });
+                    
+                    console.log('  My optimistic attacks (from tracking):', myOptimisticCards.map(c => `${c.suit}${c.value}`));
+                    
+                    const serverTableCards = serverState.table_battles?.flatMap((b: any) => 
+                        b.defense ? [b.attack, b.defense] : [b.attack]
+                    ) || [];
+                    
+                    console.log('  Server table:', serverTableCards.map((c: Card) => `${c.suit}${c.value}`));
+                    
+                    if (myOptimisticCards.length > 0) {
+                        // Check if defender can still handle my optimistic cards
+                        // Count uncovered attacks in server state
+                        const serverUncoveredAttacks = serverState.table_battles?.filter((b: any) => !b.defense).length || 0;
+                        const defenderHandSize = serverState.players?.[serverState.defender]?.hand?.length || 0;
+                        
+                        console.log(`  Server state: ${serverUncoveredAttacks} uncovered, defender has ${defenderHandSize} cards`);
+                        console.log(`  My optimistic attacks: ${myOptimisticCards.length}`);
+                        
+                        // If adding my optimistic cards would exceed defender's capacity, they're invalid
+                        const totalAttacksWithOptimistic = serverUncoveredAttacks + myOptimisticCards.length;
+                        
+                        if (totalAttacksWithOptimistic > defenderHandSize) {
+                            console.log(`🔴 CONFLICT DETECTED! ${totalAttacksWithOptimistic} total attacks > ${defenderHandSize} defender cards`);
+                            console.log('🔴 Creating revert animations for:', myOptimisticCards.map(c => `${c.suit}${c.value}`));
+                            
+                            // Create revert animation for my invalid optimistic cards
+                            myOptimisticCards.forEach((card: Card) => {
+                                const cardKey = `${card.suit}-${card.value}`;
+                                
+                                if (revertingCards.current.has(cardKey)) {
+                                    console.log(`  Skipping ${cardKey} - already reverting`);
+                                    return;
+                                }
+                                
+                                revertingCards.current.add(cardKey);
+                                
+                                // Get where this card currently is visually
+                                const visualPosition = optimisticCardPositions.current.get(cardKey);
+                                const fromLocation = visualPosition?.location || 'table';
+                                
+                                console.log(`  Creating revert: ${cardKey} from ${fromLocation} → hand`);
+                                
+                                revertEvents.push({
+                                    type: 'revert',
+                                    cards: [card],
+                                    from_location: fromLocation as any,
+                                    to_location: 'hand',
+                                    player_id: myPlayerId,
+                                    is_revert: true,
+                                    message: 'Attack invalidated by earlier attack'
+                                });
+                                
+                                // Clear from optimistic tracking
+                                const cardEventString = JSON.stringify({
+                                    type: 'attack_pass',
+                                    card: card,
+                                    from_location: 'hand',
+                                    to_location: 'table',
+                                    player_id: myPlayerId
+                                });
+                                optimisticAnimations.current.delete(cardEventString);
+                            });
+                        } else {
+                            console.log(`  ✅ Optimistic attacks still valid (${totalAttacksWithOptimistic} <= ${defenderHandSize})`);
+                        }
+                    }
+                }
+            }
+            
             // Store the completion callback to update final game state
             pendingCompletionCallbackRef.current = () => {
                 if (message.game) {
                     updateGameState(message.game.id, message.game);
                 }
             };
-            remainingSequenceEventsRef.current = message.events.length;
+            remainingSequenceEventsRef.current = message.events.length + revertEvents.length;
             
-            // Queue all events from the sequence
-            setAnimationQueue(prev => [...prev, ...message.events]);
+            // If there are revert events, we need to keep invalid cards on table until revert animates
+            if (revertEvents.length > 0) {
+                console.log(`\n🔴 ===== QUEUEING REVERT ANIMATIONS =====`);
+                console.log(`🔴 ${revertEvents.length} revert animation(s) to queue`);
+                
+                // Give revert events a game state that includes optimistic cards on table
+                // This prevents teleporting when server events update the state
+                
+                // Get server state from the first event with state
+                const firstEventWithState = message.events.find((evt: any) => evt.game_state);
+                const serverStateForRevert = firstEventWithState?.game_state;
+                
+                // Use currentGame if available, otherwise use serverState as base
+                const baseState = currentGame || serverStateForRevert;
+                const stateWithOptimistic = baseState ? JSON.parse(JSON.stringify(baseState)) : null;
+                
+                if (stateWithOptimistic) {
+                    // IMPORTANT: Remove BOTH optimistic cards AND cards that will be animated
+                    // This prevents the "transform" issue where invalid card becomes valid card
+                    
+                    const revertCardKeys = new Set(
+                        revertEvents.flatMap(evt => evt.cards?.map(c => `${c.suit}-${c.value}`) || [])
+                    );
+                    
+                    // Also remove cards from server events (valid attacks that will be animated)
+                    const serverEventCards = new Set(
+                        message.events
+                            .filter((evt: any) => evt.type === 'attack_pass' && evt.from_location === 'hand')
+                            .flatMap((evt: any) => evt.cards?.map((c: Card) => `${c.suit}-${c.value}`) || [])
+                    );
+                    
+                    console.log(`  Removing from revert game_state:`, {
+                        reverting: Array.from(revertCardKeys),
+                        will_animate: Array.from(serverEventCards)
+                    });
+                    
+                    stateWithOptimistic.table_battles = (stateWithOptimistic.table_battles || []).filter((b: any) => {
+                        const attackKey = `${b.attack.suit}-${b.attack.value}`;
+                        const defenseKey = b.defense ? `${b.defense.suit}-${b.defense.value}` : null;
+                        
+                        // Keep battles that don't include reverting cards OR cards that will animate
+                        const removeAttack = revertCardKeys.has(attackKey) || serverEventCards.has(attackKey);
+                        const removeDefense = defenseKey && (revertCardKeys.has(defenseKey) || serverEventCards.has(defenseKey));
+                        
+                        return !removeAttack && !removeDefense;
+                    });
+                    
+                    const finalTableCards = stateWithOptimistic.table_battles?.flatMap((b: any) => 
+                        b.defense ? [b.attack, b.defense] : [b.attack]
+                    ) || [];
+                    console.log(`  Revert game_state table (cleaned):`, finalTableCards.map((c: Card) => `${c.suit}${c.value}`));
+                }
+                
+                revertEvents.forEach((revertEvent, idx) => {
+                    revertEvent.game_state = stateWithOptimistic as any;
+                    console.log(`  Revert ${idx}: ${revertEvent.cards?.map(c => `${c.suit}${c.value}`)} from ${revertEvent.from_location} → ${revertEvent.to_location}`);
+                });
+                
+                // Find the first attack event from server (the valid attack)
+                const firstAttackIndex = message.events.findIndex((evt: any) => 
+                    evt.type === 'attack_pass' && evt.from_location === 'hand'
+                );
+                
+                console.log(`  Server events: ${message.events.length} total`);
+                message.events.forEach((evt: any, idx: number) => {
+                    console.log(`    Event ${idx}: ${evt.type} - ${evt.cards?.map((c: Card) => `${c.suit}${c.value}`)?.join(',') || 'no cards'}`);
+                });
+                
+                if (firstAttackIndex >= 0) {
+                    console.log(`  Found valid attack at index ${firstAttackIndex} - inserting reverts before it`);
+                    
+                    // Queue reverts IMMEDIATELY before the valid attack for parallel visual effect
+                    const eventsBeforeAttack = message.events.slice(0, firstAttackIndex);
+                    const restEvents = message.events.slice(firstAttackIndex);
+                    
+                    const queueOrder = [
+                        ...eventsBeforeAttack,
+                        ...revertEvents,    // Revert animates
+                        ...restEvents       // Valid attack animates right after (looks parallel)
+                    ];
+                    
+                    console.log(`  📋 Final queue order (${queueOrder.length} events):`);
+                    queueOrder.forEach((evt, idx) => {
+                        console.log(`    ${idx}: ${evt.type} ${evt.is_revert ? '🔴' : ''} - ${evt.cards?.map((c: Card) => `${c.suit}${c.value}`)?.join(',') || 'no cards'}`);
+                    });
+                    
+                    setAnimationQueue(prev => [...prev, ...queueOrder]);
+                } else {
+                    console.log(`  No attack event found - queueing reverts then all server events`);
+                    setAnimationQueue(prev => [...prev, ...revertEvents, ...message.events]);
+                }
+                console.log(`🔴 ===== END REVERT QUEUEING =====\n`);
+            } else {
+                console.log(`  No reverts needed - queueing ${message.events.length} server events normally`);
+                // Queue all events from the sequence
+                setAnimationQueue(prev => [...prev, ...message.events]);
+            }
         }
     };
 
@@ -391,6 +614,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     // Process the animation queue
     const processAnimationQueue = useCallback(() => {
         if (animationQueueRef.current.length === 0) {
+            console.log('📭 Animation queue empty');
             setIsAnimating(false);
             setCurrentAnimation(null);
             
@@ -401,6 +625,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             
             // Check if we have a pending completion callback and we've finished the sequence
             if (pendingCompletionCallbackRef.current && remainingSequenceEventsRef.current === 0) {
+                console.log('✅ Sequence complete - applying final game state');
                 const callback = pendingCompletionCallbackRef.current;
                 pendingCompletionCallbackRef.current = null;
                 remainingSequenceEventsRef.current = 0;
@@ -411,6 +636,15 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         }
 
         const nextAnimation = animationQueueRef.current[0];
+        console.log(`\n▶️  NEXT ANIMATION: ${nextAnimation.type}`, {
+            cards: nextAnimation.cards?.map(c => `${c.suit}${c.value}`),
+            from: nextAnimation.from_location,
+            to: nextAnimation.to_location,
+            player: nextAnimation.player_id?.substring(0, 8),
+            is_revert: nextAnimation.is_revert,
+            has_game_state: !!nextAnimation.game_state,
+            queue_remaining: animationQueueRef.current.length - 1
+        });
         
         // Check if this animation is from a bot player
         if (nextAnimation.player_id && url_game_id) {
@@ -450,7 +684,16 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         timeoutRef.current = setTimeout(() => {
             // UPDATE THE GAME STATE WITH THE INTERMEDIATE STATE AFTER ANIMATION COMPLETES
             if (nextAnimation.game_state && currentGameIdRef.current) {
+                const tableCards = nextAnimation.game_state.table_battles?.flatMap((b: any) => 
+                    b.defense ? [b.attack, b.defense] : [b.attack]
+                ) || [];
+                console.log(`🎮 APPLYING GAME STATE after ${nextAnimation.type}:`, {
+                    table_cards: tableCards.map((c: Card) => `${c.suit}${c.value}`),
+                    table_count: tableCards.length
+                });
                 updateGameState(currentGameIdRef.current, nextAnimation.game_state);
+            } else {
+                console.log(`⏭️  No game state to apply for ${nextAnimation.type}`);
             }
             
             // Remove cards from animating state
@@ -463,6 +706,21 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                     });
                     return updated;
                 });
+                
+                // If this was a revert animation, clear the reverting and position tracking
+                if (nextAnimation.type === 'revert') {
+                    nextAnimation.cards.forEach(card => {
+                        const cardKey = `${card.suit}-${card.value}`;
+                        revertingCards.current.delete(cardKey);
+                        optimisticCardPositions.current.delete(cardKey);
+                        console.log(`  ✅ Cleared reverting flag and position tracking for ${cardKey}`);
+                    });
+                }
+                
+                // Log current tracking state
+                if (optimisticCardPositions.current.size > 0) {
+                    console.log(`  📍 Still tracking positions:`, Array.from(optimisticCardPositions.current.entries()));
+                }
             }
 
             // Decrement remaining sequence events count if we're tracking a sequence
@@ -483,7 +741,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     }, [animationQueue, isAnimating, processAnimationQueue]);
 
     // Queue a single animation
-    const queueAnimation = (event: AnimationEvent) => {
+    const queueAnimation = (event: ClientAnimationEvent) => {
         setAnimationQueue(prev => {
             const newQueue = [...prev, event];
             return newQueue;
@@ -521,7 +779,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
     // Helper function to trigger optimistic animation and track it
     const triggerOptimisticAnimation = (animationType: string, cards: Card[], fromLocation: string, toLocation: string, playerId?: string, targetCard?: Card, battleIndex?: number) => {
-        const animationEvent: AnimationEvent = {
+        const animationEvent: ClientAnimationEvent = {
             type: animationType as any,
             cards: cards,
             from_location: fromLocation as any,
@@ -536,6 +794,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         // Server may split multi-card actions into separate events (one per card)
         const timestamp = Date.now();
         cards.forEach(card => {
+            const cardKey = `${card.suit}-${card.value}`;
             const cardEventString = JSON.stringify({
                 type: animationType,
                 card: card, // Track individual card
@@ -544,6 +803,14 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 player_id: playerId
             });
             optimisticAnimations.current.set(cardEventString, timestamp);
+            
+            // Track visual position for revert animations
+            // After animation completes, card will VISUALLY be at toLocation
+            optimisticCardPositions.current.set(cardKey, { 
+                location: toLocation, 
+                playerId: playerId || '' 
+            });
+            console.log(`📍 Tracking optimistic card ${cardKey} at ${toLocation}`);
         });
         
         // Queue the optimistic animation immediately
@@ -571,9 +838,81 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         triggerOptimisticAnimation('attack_pass', cards, 'hand', 'table', game.self?.player_id);
         
         // 3. Call server method (which will do optimistic game state updates)
+        try {
         const result = await serverMethods.attack(cards);
-        
         return result;
+        } catch (error) {
+            // Server rejected the attack - but check if we already reverted due to conflict detection
+            console.log('\n🔴 ===== SERVER 400 ERROR - Attack rejected =====');
+            console.log(`  Cards that were optimistically played:`, cards.map(c => `${c.suit}${c.value}`));
+            
+            let alreadyReverted = 0;
+            let newReverts = 0;
+            
+            cards.forEach(card => {
+                const cardKey = `${card.suit}-${card.value}`;
+                
+                // Check if this card is already being reverted OR tracking was cleared
+                const isCurrentlyReverting = revertingCards.current.has(cardKey);
+                const wasAlreadyReverted = !optimisticCardPositions.current.has(cardKey);
+                
+                // Also check if optimistic animation was cleared (conflict detection clears it)
+                const attackCardEventString = JSON.stringify({
+                    type: 'attack_pass',
+                    card: card,
+                    from_location: 'hand',
+                    to_location: 'table',
+                    player_id: game.self?.player_id
+                });
+                const optimisticAnimationCleared = !optimisticAnimations.current.has(attackCardEventString);
+                
+                if (isCurrentlyReverting || wasAlreadyReverted || optimisticAnimationCleared) {
+                    console.log(`  ✓ ${cardKey} - already handled by conflict detection (skipping)`, {
+                        reverting: isCurrentlyReverting,
+                        cleared_position: wasAlreadyReverted,
+                        cleared_tracking: optimisticAnimationCleared
+                    });
+                    alreadyReverted++;
+                    return;
+                }
+                
+                console.log(`  Creating fallback revert for ${cardKey}`);
+                revertingCards.current.add(cardKey);
+                
+                // Get where this card currently is visually
+                const visualPosition = optimisticCardPositions.current.get(cardKey);
+                const fromLocation = visualPosition?.location || 'table';
+                
+                console.log(`    Visual position: ${fromLocation} → hand (${visualPosition ? 'tracked' : 'defaulted'})`);
+                
+                const revertEvent: ClientAnimationEvent = {
+                    type: 'revert',
+                    cards: [card],
+                    from_location: fromLocation as any,
+                    to_location: 'hand',
+                    player_id: game.self?.player_id,
+                    is_revert: true,
+                    message: 'Attack rejected by server'
+                };
+                
+                queueAnimation(revertEvent);
+                newReverts++;
+                
+                // Clear from optimistic tracking
+                const fallbackCardEventString = JSON.stringify({
+                    type: 'attack_pass',
+                    card: card,
+                    from_location: 'hand',
+                    to_location: 'table',
+                    player_id: game.self?.player_id
+                });
+                optimisticAnimations.current.delete(fallbackCardEventString);
+            });
+            
+            console.log(`  📊 Summary: ${alreadyReverted} already reverted, ${newReverts} new reverts`);
+            console.log(`🔴 ===== END 400 ERROR HANDLING =====\n`);
+            throw error;
+        }
     };
 
     const pass = async (cards: Card[]): Promise<{ game_id: string }> => {
@@ -590,9 +929,40 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         triggerOptimisticAnimation('attack_pass', cards, 'hand', 'table', game.self?.player_id);
         
         // 3. Call server method (which will do optimistic game state updates)
+        try {
         const result = await serverMethods.pass(cards);
-        
         return result;
+        } catch (error) {
+            // Server rejected the pass - create revert animation
+            console.log('🔴 SERVER 400 ERROR - Pass rejected, creating reverts');
+            cards.forEach(card => {
+                const cardKey = `${card.suit}-${card.value}`;
+                if (revertingCards.current.has(cardKey)) return;
+                revertingCards.current.add(cardKey);
+                
+                const visualPosition = optimisticCardPositions.current.get(cardKey);
+                const fromLocation = visualPosition?.location || 'table';
+                
+                queueAnimation({
+                    type: 'revert',
+                    cards: [card],
+                    from_location: fromLocation as any,
+                    to_location: 'hand',
+                    player_id: game.self?.player_id,
+                    is_revert: true,
+                    message: 'Pass rejected by server'
+                });
+                
+                optimisticAnimations.current.delete(JSON.stringify({
+                    type: 'attack_pass',
+                    card,
+                    from_location: 'hand',
+                    to_location: 'table',
+                    player_id: game.self?.player_id
+                }));
+            });
+            throw error;
+        }
     };
 
     const pickup = async (): Promise<{ game_id: string }> => {
@@ -613,9 +983,41 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         triggerOptimisticAnimation('pickup', allTableCards, 'table', 'hand', game.self?.player_id);
         
         // 3. Call server method (which will do optimistic game state updates)
+        try {
         const result = await serverMethods.pickup();
-        
         return result;
+        } catch (error) {
+            // Server rejected the pickup - create revert animation
+            console.log('🔴 SERVER 400 ERROR - Pickup rejected, creating reverts');
+            allTableCards.forEach(card => {
+                const cardKey = `${card.suit}-${card.value}`;
+                if (revertingCards.current.has(cardKey)) return;
+                revertingCards.current.add(cardKey);
+                
+                const visualPosition = optimisticCardPositions.current.get(cardKey);
+                const fromLocation = visualPosition?.location || 'hand';
+                const toLocation = fromLocation === 'hand' ? 'table' : 'hand';
+                
+                queueAnimation({
+                    type: 'revert',
+                    cards: [card],
+                    from_location: fromLocation as any,
+                    to_location: toLocation as any,
+                    player_id: game.self?.player_id,
+                    is_revert: true,
+                    message: 'Pickup rejected by server'
+                });
+                
+                optimisticAnimations.current.delete(JSON.stringify({
+                    type: 'pickup',
+                    card,
+                    from_location: 'table',
+                    to_location: 'hand',
+                    player_id: game.self?.player_id
+                }));
+            });
+            throw error;
+        }
     };
 
     const cover = async (coverCards: Card[], attackCards: Card[]): Promise<{ game_id: string }> => {
@@ -632,9 +1034,40 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         triggerOptimisticAnimation('cover', coverCards, 'hand', 'table', game.self?.player_id);
         
         // 3. Call server method (which will do optimistic game state updates)
+        try {
         const result = await serverMethods.cover(coverCards, attackCards);
-        
         return result;
+        } catch (error) {
+            // Server rejected the cover - create revert animation
+            console.log('🔴 SERVER 400 ERROR - Cover rejected, creating reverts');
+            coverCards.forEach(card => {
+                const cardKey = `${card.suit}-${card.value}`;
+                if (revertingCards.current.has(cardKey)) return;
+                revertingCards.current.add(cardKey);
+                
+                const visualPosition = optimisticCardPositions.current.get(cardKey);
+                const fromLocation = visualPosition?.location || 'table';
+                
+                queueAnimation({
+                    type: 'revert',
+                    cards: [card],
+                    from_location: fromLocation as any,
+                    to_location: 'hand',
+                    player_id: game.self?.player_id,
+                    is_revert: true,
+                    message: 'Cover rejected by server'
+                });
+                
+                optimisticAnimations.current.delete(JSON.stringify({
+                    type: 'cover',
+                    card,
+                    from_location: 'hand',
+                    to_location: 'table',
+                    player_id: game.self?.player_id
+                }));
+            });
+            throw error;
+        }
     };
 
     const good = async (): Promise<{ game_id: string }> => {
