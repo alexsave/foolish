@@ -409,15 +409,22 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             if (message.events.length > 0 && optimisticAnimations.current.size > 0) {
                 console.log('🔍 Checking for optimistic conflicts...');
                 
-                // Get the latest server game state from the events
+                // Get the FINAL server game state (last event's state shows the end result)
                 const lastEventWithState = [...message.events].reverse().find((evt: any) => evt.game_state);
                 
                 if (lastEventWithState && lastEventWithState.game_state) {
                     const serverState = lastEventWithState.game_state;
                     const myPlayerId = serverState.self?.player_id || user_id;
                     
-                    // Find MY optimistic attack cards by checking the tracking map directly
-                    // (don't rely on currentGame.table_battles as it may not be updated yet)
+                    // Check if server's final state already includes my optimistic cards
+                    // If so, they were accepted! Don't revert.
+                    const serverTableCards = serverState.table_battles?.flatMap((b: any) => 
+                        b.defense ? [b.attack, b.defense] : [b.attack]
+                    ) || [];
+                    
+                    console.log('  Server table (final state):', serverTableCards.map((c: Card) => `${c.suit}${c.value}`));
+                    
+                    // Find MY optimistic attack cards
                     const myOptimisticCards: Card[] = [];
                     optimisticAnimations.current.forEach((timestamp, cardEventString) => {
                         try {
@@ -435,30 +442,75 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                     
                     console.log('  My optimistic attacks (from tracking):', myOptimisticCards.map(c => `${c.suit}${c.value}`));
                     
-                    const serverTableCards = serverState.table_battles?.flatMap((b: any) => 
-                        b.defense ? [b.attack, b.defense] : [b.attack]
-                    ) || [];
+                    // Check if server's final state already includes my optimistic cards
+                    // If so, server accepted them - don't revert!
+                    const myOptimisticCardsAccepted = myOptimisticCards.filter(optCard => 
+                        serverTableCards.some((serverCard: Card) => 
+                            serverCard.suit === optCard.suit && serverCard.value === optCard.value
+                        )
+                    );
                     
-                    console.log('  Server table:', serverTableCards.map((c: Card) => `${c.suit}${c.value}`));
-                    
-                    if (myOptimisticCards.length > 0) {
-                        // Check if defender can still handle my optimistic cards
-                        // Count uncovered attacks in server state
-                        const serverUncoveredAttacks = serverState.table_battles?.filter((b: any) => !b.defense).length || 0;
-                        const defenderHandSize = serverState.players?.[serverState.defender]?.hand?.length || 0;
+                    if (myOptimisticCardsAccepted.length > 0) {
+                        console.log(`  ✅ Server accepted optimistic cards:`, myOptimisticCardsAccepted.map(c => `${c.suit}${c.value}`));
+                        console.log(`  ✅ No revert needed - server confirmed attacks`);
+                        // Don't create revert events - server accepted them
+                        // Continue to queue server events normally
+                    } else if (myOptimisticCards.length > 0) {
+                        // Server didn't include our optimistic cards yet
+                        // Check if we should revert based on defender capacity
                         
-                        console.log(`  Server state: ${serverUncoveredAttacks} uncovered, defender has ${defenderHandSize} cards`);
+                        console.log('🔍 DEBUG: Finding defender hand size...');
+                        
+                        // Try multiple sources for defender hand size
+                        const currentGame = url_game_id ? games[url_game_id] : undefined;
+                        const finalGameState = message.game || serverState;
+                        const defenderId = finalGameState?.defender;
+                        
+                        console.log('  Sources available:', JSON.stringify({
+                            has_currentGame: !!currentGame,
+                            has_messageGame: !!message.game,
+                            has_serverState: !!serverState,
+                            defenderId
+                        }));
+                        
+                        // Check what's in each source
+                        if (currentGame && currentGame.defender !== undefined) {
+                            const clientDefenderHandSize = currentGame.players?.[currentGame.defender]?.hand_length ?? 0;
+                            console.log(`  Client game (games[${url_game_id}]): defender has ${clientDefenderHandSize} cards`);
+                        }
+                        
+                        if (message.game && message.game.defender !== undefined) {
+                            const msgDefenderHandSize = message.game.players?.[message.game.defender]?.hand_length ?? 0;
+                            console.log(`  message.game: defender has ${msgDefenderHandSize} cards`);
+                            console.log(`  message.game.players:`, JSON.stringify(message.game.players?.map((p: any) => ({ 
+                                id: p.player_id?.slice(0,8), 
+                                handSize: p.hand_length ?? 'NO_HAND_LENGTH',
+                                handCards: p.hand?.map((c: Card) => `${c.suit}${c.value}`) ?? 'NO_HAND',
+                                isDefender: message.game.defender === message.game.players.indexOf(p)
+                            }))));
+                        }
+                        
+                        // Use client game state if available (most accurate), otherwise fall back to message.game
+                        const defenderHandSize = (currentGame && currentGame.defender !== undefined)
+                            ? (currentGame.players?.[currentGame.defender]?.hand_length ?? 0)
+                            : (finalGameState?.defender !== undefined ? (finalGameState.players?.[finalGameState.defender]?.hand_length ?? 0) : 0);
+                        
+                        const finalUncoveredAttacks = finalGameState?.table_battles?.filter((b: any) => !b.defense).length ?? 0;
+                        
+                        console.log(`  ✅ USING: ${finalUncoveredAttacks} uncovered, defender has ${defenderHandSize} cards (from ${currentGame ? 'client game' : 'message.game'})`);
                         console.log(`  My optimistic attacks: ${myOptimisticCards.length}`);
                         
-                        // If adding my optimistic cards would exceed defender's capacity, they're invalid
-                        const totalAttacksWithOptimistic = serverUncoveredAttacks + myOptimisticCards.length;
+                        // Simple capacity check: Can defender handle all attacks?
+                        const totalAttacks = finalUncoveredAttacks + myOptimisticCards.length;
                         
-                        if (totalAttacksWithOptimistic > defenderHandSize) {
-                            console.log(`🔴 CONFLICT DETECTED! ${totalAttacksWithOptimistic} total attacks > ${defenderHandSize} defender cards`);
+                        console.log(`  Total attacks if all accepted: ${totalAttacks}`);
+                        
+                        if (totalAttacks > defenderHandSize) {
+                            console.log(`🔴 CONFLICT DETECTED! ${totalAttacks} total attacks > ${defenderHandSize} defender cards`);
                             console.log('🔴 Creating revert animations for:', myOptimisticCards.map(c => `${c.suit}${c.value}`));
-                            
-                            // Create revert animation for my invalid optimistic cards
-                            myOptimisticCards.forEach((card: Card) => {
+                                
+                                // Create revert animation for my invalid optimistic cards
+                                myOptimisticCards.forEach((card: Card) => {
                                 const cardKey = `${card.suit}-${card.value}`;
                                 
                                 if (revertingCards.current.has(cardKey)) {
@@ -492,10 +544,87 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                                     to_location: 'table',
                                     player_id: myPlayerId
                                 });
-                                optimisticAnimations.current.delete(cardEventString);
-                            });
+                                    optimisticAnimations.current.delete(cardEventString);
+                                });
                         } else {
-                            console.log(`  ✅ Optimistic attacks still valid (${totalAttacksWithOptimistic} <= ${defenderHandSize})`);
+                            console.log(`  ✅ Defender can handle all attacks (${totalAttacks} <= ${defenderHandSize})`);
+                            console.log(`  ✅ Merging optimistic cards into server events AND final state to maintain visual consistency`);
+                            
+                            // Get my player ID
+                            const myPlayerId = serverState.self?.player_id || user_id;
+                            
+                            // Merge optimistic cards into ALL game states (events + final)
+                            const statesToMerge = [
+                                ...message.events.map((evt: any) => evt.game_state).filter(Boolean),
+                                message.game
+                            ].filter(Boolean);
+                            
+                            statesToMerge.forEach((state: any, stateIdx: number) => {
+                                if (state && state.table_battles) {
+                                    console.log(`  🔄 Merging into state ${stateIdx}:`);
+                                    
+                                    // Log before state
+                                    const tableBefore = state.table_battles.map((b: any) => 
+                                        `${b.attack.suit}${b.attack.value}${b.defense ? `/${b.defense.suit}${b.defense.value}` : ''}`
+                                    );
+                                    const myPlayer = state.players?.find((p: any) => p.player_id === myPlayerId) || state.self;
+                                    const handBefore = myPlayer?.hand?.map((c: Card) => `${c.suit}${c.value}`) ?? [];
+                                    
+                                    console.log(`    Before: table=${JSON.stringify(tableBefore)}, myHand=${JSON.stringify(handBefore)}`);
+                                    
+                                    myOptimisticCards.forEach((optCard: Card) => {
+                                        const alreadyPresent = state.table_battles.some((b: any) => 
+                                            (b.attack.suit === optCard.suit && b.attack.value === optCard.value) ||
+                                            (b.defense && b.defense.suit === optCard.suit && b.defense.value === optCard.value)
+                                        );
+                                        if (!alreadyPresent) {
+                                            console.log(`    Adding optimistic ${optCard.suit}${optCard.value} to table_battles`);
+                                            state.table_battles.push({
+                                                attack: optCard,
+                                                defense: null
+                                            });
+                                        }
+                                        
+                                        // CRITICAL: Also remove this card from my hand in this state!
+                                        // Find my player in this state
+                                        if (state.self?.player_id === myPlayerId && state.self.hand) {
+                                            const handLengthBefore = state.self.hand.length;
+                                            state.self.hand = state.self.hand.filter((c: Card) => 
+                                                !(c.suit === optCard.suit && c.value === optCard.value)
+                                            );
+                                            if (state.self.hand.length < handLengthBefore) {
+                                                console.log(`    Removed optimistic ${optCard.suit}${optCard.value} from self.hand`);
+                                            }
+                                        }
+                                        
+                                        // Also check players array
+                                        if (state.players) {
+                                            state.players.forEach((p: any, idx: number) => {
+                                                if (p.player_id === myPlayerId && p.hand) {
+                                                    const handLengthBefore = p.hand.length;
+                                                    p.hand = p.hand.filter((c: Card) => 
+                                                        !(c.suit === optCard.suit && c.value === optCard.value)
+                                                    );
+                                                    if (p.hand.length < handLengthBefore) {
+                                                        console.log(`    Removed optimistic ${optCard.suit}${optCard.value} from players[${idx}].hand`);
+                                                    }
+                                                    // Update hand_length too
+                                                    p.hand_length = p.hand.length;
+                                                }
+                                            });
+                                        }
+                                    });
+                                    
+                                    // Log after state
+                                    const tableAfter = state.table_battles.map((b: any) => 
+                                        `${b.attack.suit}${b.attack.value}${b.defense ? `/${b.defense.suit}${b.defense.value}` : ''}`
+                                    );
+                                    const myPlayerAfter = state.players?.find((p: any) => p.player_id === myPlayerId) || state.self;
+                                    const handAfter = myPlayerAfter?.hand?.map((c: Card) => `${c.suit}${c.value}`) ?? [];
+                                    
+                                    console.log(`    After: table=${JSON.stringify(tableAfter)}, myHand=${JSON.stringify(handAfter)}`);
+                                }
+                            });
                         }
                     }
                 }
@@ -603,8 +732,8 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 console.log(`🔴 ===== END REVERT QUEUEING =====\n`);
             } else {
                 console.log(`  No reverts needed - queueing ${message.events.length} server events normally`);
-                // Queue all events from the sequence
-                setAnimationQueue(prev => [...prev, ...message.events]);
+            // Queue all events from the sequence
+            setAnimationQueue(prev => [...prev, ...message.events]);
             }
         }
     };
@@ -694,7 +823,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                     table_cards: tableCards.map((c: Card) => `${c.suit}${c.value}`),
                     table_count: tableCards.length
                 });
-                updateGameState(currentGameIdRef.current, nextAnimation.game_state);
+                    updateGameState(currentGameIdRef.current, nextAnimation.game_state);
             } else {
                 console.log(`⏭️  No game state to apply for ${nextAnimation.type}`);
             }
