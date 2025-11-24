@@ -116,6 +116,9 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     // Map of cardKey -> { location: 'table' | 'hand', playerId: string, target_card?: Card, battle_index?: number }
     const optimisticCardPositions = useRef<Map<string, { location: string, playerId: string, target_card?: Card, battle_index?: number }>>(new Map());
     
+    // Track optimistic pass state (defender and first_attacker changes)
+    const optimisticPassState = useRef<{ defender: number, first_attacker: number } | null>(null);
+    
     // Store channel reference for proper cleanup
     const gameUserChannelRef = useRef<any>(null);
     
@@ -397,12 +400,17 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             // Get current displayed state (what the user sees with optimistic updates)
             const currentGame = url_game_id ? games[url_game_id] : null;
             
+            console.log('\n🔍 ===== CONFLICT DETECTION ENTRY =====');
             console.log('🔍 Conflict detection entry:', {
                 has_currentGame: !!currentGame,
                 has_events: message.events?.length > 0,
                 url_game_id,
                 optimistic_tracking_size: optimisticAnimations.current.size
             });
+            console.log(`📊 Optimistic pass state at entry: ${optimisticPassState.current ? `defender=${optimisticPassState.current.defender}, first_attacker=${optimisticPassState.current.first_attacker}` : 'NONE'}`);
+            
+            // Declare passIsInvalid here so it's in scope for revert queueing logic later
+            let passIsInvalid = false;
             
             // Check for conflicts if we have ANY optimistic animations tracked
             // (Don't require currentGame since we check optimisticAnimations directly)
@@ -466,6 +474,119 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                         console.log(`  ✅ No revert needed - server confirmed attacks`);
                         // Don't create revert events - server accepted them
                         // Continue to queue server events normally
+                    }
+                    
+                    // ====== CHECK FOR OPTIMISTIC PASS CONFLICTS EARLY ======
+                    // Do this BEFORE merging, so invalid pass cards don't get baked into states
+                    if (optimisticPassState.current && message.events.length > 0) {
+                        console.log('\n🔍 ===== CHECKING OPTIMISTIC PASS VALIDITY (EARLY) =====');
+                        console.log(`📍 Current optimistic pass: defender → ${optimisticPassState.current.defender}`);
+                        
+                        const hasServerAttack = message.events.some((evt: any) => evt.type === 'attack_pass');
+                        
+                        if (hasServerAttack) {
+                            console.log('  📋 Server sent attack event(s) - checking if pass is still valid');
+                            
+                            const nextDefenderId = optimisticPassState.current.defender;
+                            const finalGameState = message.game || serverState;
+                            const nextDefenderHandSize = finalGameState?.players?.[nextDefenderId]?.hand_length ?? 0;
+                            
+                            console.log(`  📊 Next defender (index ${nextDefenderId}): ${nextDefenderHandSize} cards`);
+                            
+                            const serverTableBattles = serverState?.table_battles || [];
+                            const serverUncoveredAttacks = serverTableBattles.filter((b: any) => !b.defense).length;
+                            
+                            const serverAttackCards = message.events
+                                .filter((evt: any) => evt.type === 'attack_pass')
+                                .reduce((sum: number, evt: any) => sum + (evt.cards?.length || 0), 0);
+                            
+                            const optimisticPassCards = Array.from(optimisticAnimations.current.keys())
+                                .filter(key => {
+                                    try {
+                                        const parsed = JSON.parse(key);
+                                        return parsed.type === 'attack_pass' && 
+                                               parsed.player_id === myPlayerId &&
+                                               optimisticCardPositions.current.has(`${parsed.card.suit}-${parsed.card.value}`);
+                                    } catch {
+                                        return false;
+                                    }
+                                })
+                                .length;
+                            
+                            const totalAttacksIfPassSucceeds = serverUncoveredAttacks + serverAttackCards + optimisticPassCards;
+                            
+                            console.log(`  📊 Attack count: ${serverUncoveredAttacks} uncovered + ${serverAttackCards} server + ${optimisticPassCards} optimistic = ${totalAttacksIfPassSucceeds} total`);
+                            console.log(`  📊 Next defender can handle: ${nextDefenderHandSize} cards`);
+                            
+                            if (totalAttacksIfPassSucceeds > nextDefenderHandSize) {
+                                console.log(`  🔴 PASS CONFLICT! ${totalAttacksIfPassSucceeds} attacks > ${nextDefenderHandSize} defender cards`);
+                                console.log(`  🔴 Pass is now INVALID - will revert pass cards and defender change`);
+                                passIsInvalid = true;
+                                
+                                // Collect pass cards to revert
+                                const passCardsToRevert: Card[] = [];
+                                optimisticAnimations.current.forEach((timestamp, key) => {
+                                    try {
+                                        const parsed = JSON.parse(key);
+                                        if (parsed.type === 'attack_pass' && parsed.player_id === myPlayerId) {
+                                            const cardId = `${parsed.card.suit}-${parsed.card.value}`;
+                                            if (optimisticCardPositions.current.has(cardId)) {
+                                                passCardsToRevert.push(parsed.card);
+                                            }
+                                        }
+                                    } catch (e) {}
+                                });
+                                
+                                if (passCardsToRevert.length > 0) {
+                                    console.log(`  🔴 Creating revert for pass cards: ${passCardsToRevert.map(c => `${c.suit}${c.value}`).join(', ')}`);
+                                    
+                                    passCardsToRevert.forEach(card => {
+                                        const cardId = `${card.suit}-${card.value}`;
+                                        revertingCards.current.add(cardId);
+                                    });
+                                    
+                                    // Create revert event
+                                    revertEvents.push({
+                                        type: 'revert',
+                                        cards: passCardsToRevert,
+                                        from_location: 'table',
+                                        to_location: 'hand',
+                                        player_id: myPlayerId,
+                                        is_revert: true,
+                                        game_state: null as any // Will be set later
+                                    });
+                                    
+                                    // Clear optimistic pass state and card tracking
+                                    console.log(`  🔴 Clearing optimistic pass state: was defender=${optimisticPassState.current.defender}`);
+                                    optimisticPassState.current = null;
+                                    
+                                    passCardsToRevert.forEach(card => {
+                                        const cardEventString = JSON.stringify({
+                                            type: 'attack_pass',
+                                            card: card,
+                                            from_location: 'hand',
+                                            to_location: 'table',
+                                            player_id: myPlayerId
+                                        });
+                                        optimisticAnimations.current.delete(cardEventString);
+                                    });
+                                    
+                                    // Remove pass cards from myOptimisticAttackCovers so they don't get merged
+                                    passCardsToRevert.forEach(passCard => {
+                                        const idx = myOptimisticAttackCovers.findIndex(c => 
+                                            c.suit === passCard.suit && c.value === passCard.value
+                                        );
+                                        if (idx >= 0) {
+                                            myOptimisticAttackCovers.splice(idx, 1);
+                                        }
+                                    });
+                                }
+                            } else {
+                                console.log(`  ✅ Pass is still VALID - next defender can handle all attacks`);
+                            }
+                        }
+                        
+                        console.log('===== END PASS VALIDITY CHECK (EARLY) =====\n');
                     }
                     
                     // Handle optimistic pickup conflicts
@@ -697,6 +818,15 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                             statesToMerge.forEach((state: any, stateIdx: number) => {
                                 if (state && state.table_battles) {
                                     console.log(`  🔄 Merging into state ${stateIdx}:`);
+                                    console.log(`    📊 State BEFORE any changes: defender=${state.defender}, first_attacker=${state.first_attacker}`);
+                                    
+                                    // FIRST: Preserve optimistic pass state if present
+                                    if (optimisticPassState.current) {
+                                        console.log(`    🎯 PRESERVING optimistic pass: ${state.defender} → ${optimisticPassState.current.defender}, ${state.first_attacker} → ${optimisticPassState.current.first_attacker}`);
+                                        state.defender = optimisticPassState.current.defender;
+                                        state.first_attacker = optimisticPassState.current.first_attacker;
+                                        console.log(`    ✅ State AFTER preservation: defender=${state.defender}, first_attacker=${state.first_attacker}`);
+                                    }
                                     
                                     // Log before state
                                     const tableBefore = state.table_battles.map((b: any) => 
@@ -788,7 +918,34 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             // Store the completion callback to update final game state
             pendingCompletionCallbackRef.current = () => {
                 if (message.game) {
+                    console.log(`\n📊 ===== FINAL STATE UPDATE =====`);
+                    console.log(`📊 FINAL STATE BEFORE ANY CHANGES: defender=${message.game.defender}, first_attacker=${message.game.first_attacker}`);
+                    console.log(`📊 Optimistic pass state: ${optimisticPassState.current ? `defender=${optimisticPassState.current.defender}, first_attacker=${optimisticPassState.current.first_attacker}` : 'NONE'}`);
+                    
+                    // Check if server confirmed optimistic pass BEFORE modifying
+                    let serverConfirmedPass = false;
+                    if (optimisticPassState.current) {
+                        serverConfirmedPass = 
+                            message.game.defender === optimisticPassState.current.defender &&
+                            message.game.first_attacker === optimisticPassState.current.first_attacker;
+                        
+                        if (serverConfirmedPass) {
+                            console.log(`  ✅ Server CONFIRMED optimistic pass (defender: ${optimisticPassState.current.defender}, first_attacker: ${optimisticPassState.current.first_attacker})`);
+                            console.log(`  ✅ Clearing optimistic pass tracking`);
+                            optimisticPassState.current = null;
+                        } else {
+                            console.log(`🎯 Server NOT confirmed - PRESERVING optimistic pass: defender ${message.game.defender} → ${optimisticPassState.current.defender}, first_attacker ${message.game.first_attacker} → ${optimisticPassState.current.first_attacker}`);
+                            message.game.defender = optimisticPassState.current.defender;
+                            message.game.first_attacker = optimisticPassState.current.first_attacker;
+                            console.log(`✅ FINAL STATE AFTER PRESERVATION: defender=${message.game.defender}, first_attacker=${message.game.first_attacker}`);
+                        }
+                    } else {
+                        console.log(`⚠️ NO optimistic pass state to check`);
+                    }
+                    
+                    console.log(`🎮 Calling updateGameState with: defender=${message.game.defender}, first_attacker=${message.game.first_attacker}`);
                     updateGameState(message.game.id, message.game);
+                    console.log(`===== END FINAL STATE UPDATE =====\n`);
                 }
             };
             remainingSequenceEventsRef.current = message.events.length + revertEvents.length;
@@ -839,12 +996,26 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 
                 const stateWithOptimistic = baseState ? JSON.parse(JSON.stringify(baseState)) : null;
                 
-                console.log(`  Base state for revert: ${hasPickupRevertsForState ? 'pickup reverts' : 'attack conflict'}`);
+                // Check if we have pass reverts - they need original defender value
+                const hasPassReverts = revertEvents.some(rev => 
+                    rev.to_location === 'hand' && 
+                    passIsInvalid // We detected an invalid pass earlier
+                );
+                
+                if (hasPassReverts && stateWithOptimistic && serverStateForRevert) {
+                    // For pass reverts, use the SERVER's defender value (original before pass)
+                    console.log(`  📍 Pass revert detected - restoring original defender: ${stateWithOptimistic.defender} → ${serverStateForRevert.defender}`);
+                    stateWithOptimistic.defender = serverStateForRevert.defender;
+                    stateWithOptimistic.first_attacker = serverStateForRevert.first_attacker;
+                }
+                
+                console.log(`  Base state for revert: ${hasPickupRevertsForState ? 'pickup reverts' : hasPassReverts ? 'pass revert' : 'attack conflict'}`);
                 if (stateWithOptimistic) {
                     const baseTableCards = stateWithOptimistic.table_battles?.flatMap((b: any) => 
                         b.defense ? [b.attack, b.defense] : [b.attack]
                     ) || [];
                     console.log(`  Base table before cleaning:`, baseTableCards.map((c: Card) => `${c.suit}${c.value}`));
+                    console.log(`  Defender in revert state: ${stateWithOptimistic.defender}, first_attacker: ${stateWithOptimistic.first_attacker}`);
                 }
                 
                 if (stateWithOptimistic) {
@@ -916,10 +1087,36 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                         });
                     }
                     
+                    // For pass reverts (table → hand), add cards back to player's hand
+                    if (hasPassReverts && stateWithOptimistic.self) {
+                        const passRevertCards = revertEvents
+                            .filter(rev => rev.to_location === 'hand')
+                            .flatMap(rev => rev.cards || []);
+                        
+                        if (passRevertCards.length > 0) {
+                            // Add cards back to hand
+                            stateWithOptimistic.self.hand = stateWithOptimistic.self.hand || [];
+                            passRevertCards.forEach((card: Card) => {
+                                // Only add if not already in hand
+                                const alreadyInHand = stateWithOptimistic.self.hand.some((c: Card) => 
+                                    c.suit === card.suit && c.value === card.value
+                                );
+                                if (!alreadyInHand) {
+                                    stateWithOptimistic.self.hand.push(card);
+                                }
+                            });
+                            console.log(`  📍 Added ${passRevertCards.length} card(s) back to hand for pass revert`);
+                        }
+                    }
+                    
                     const finalTableCards = stateWithOptimistic.table_battles?.flatMap((b: any) => 
                         b.defense ? [b.attack, b.defense] : [b.attack]
                     ) || [];
                     console.log(`  Revert game_state table (cleaned):`, finalTableCards.map((c: Card) => `${c.suit}${c.value}`));
+                    if (hasPassReverts) {
+                        const handCards = stateWithOptimistic.self?.hand?.map((c: Card) => `${c.suit}${c.value}`) || [];
+                        console.log(`  Revert game_state hand:`, handCards);
+                    }
                 }
                 
                 revertEvents.forEach((revertEvent, idx) => {
@@ -1014,6 +1211,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 console.log(`🔴 ===== END REVERT QUEUEING =====\n`);
             } else {
                 console.log(`  No reverts needed - queueing ${message.events.length} server events normally`);
+                console.log(`📊 Optimistic pass state when queueing: ${optimisticPassState.current ? `defender=${optimisticPassState.current.defender}, first_attacker=${optimisticPassState.current.first_attacker}` : 'NONE'}`);
             // Queue all events from the sequence
             setAnimationQueue(prev => [...prev, ...message.events]);
             }
@@ -1050,7 +1248,8 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         }
 
         const nextAnimation = animationQueueRef.current[0];
-        console.log(`\n▶️  NEXT ANIMATION: ${nextAnimation.type}`, {
+        console.log(`\n▶️  ===== PROCESSING ANIMATION =====`);
+        console.log(`▶️  NEXT ANIMATION: ${nextAnimation.type}`, {
             cards: nextAnimation.cards?.map(c => `${c.suit}${c.value}`),
             from: nextAnimation.from_location,
             to: nextAnimation.to_location,
@@ -1059,6 +1258,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             has_game_state: !!nextAnimation.game_state,
             queue_remaining: animationQueueRef.current.length - 1
         });
+        console.log(`📊 Current optimistic pass state: ${optimisticPassState.current ? `defender=${optimisticPassState.current.defender}, first_attacker=${optimisticPassState.current.first_attacker}` : 'NONE'}`);
         
         // Check if this animation is from a bot player
         if (nextAnimation.player_id && url_game_id) {
@@ -1098,12 +1298,26 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         timeoutRef.current = setTimeout(() => {
             // UPDATE THE GAME STATE WITH THE INTERMEDIATE STATE AFTER ANIMATION COMPLETES
             if (nextAnimation.game_state && currentGameIdRef.current) {
+                console.log(`📊 STATE BEFORE ANY CHANGES: defender=${nextAnimation.game_state.defender}, first_attacker=${nextAnimation.game_state.first_attacker}`);
+                
+                // If we have an optimistic pass, preserve defender/first_attacker
+                if (optimisticPassState.current) {
+                    console.log(`🎯 PRESERVING optimistic pass before applying: ${nextAnimation.game_state.defender} → ${optimisticPassState.current.defender}, ${nextAnimation.game_state.first_attacker} → ${optimisticPassState.current.first_attacker}`);
+                    nextAnimation.game_state.defender = optimisticPassState.current.defender;
+                    nextAnimation.game_state.first_attacker = optimisticPassState.current.first_attacker;
+                    console.log(`✅ STATE AFTER PRESERVATION: defender=${nextAnimation.game_state.defender}, first_attacker=${nextAnimation.game_state.first_attacker}`);
+                } else {
+                    console.log(`⚠️ NO optimistic pass state to preserve`);
+                }
+                
                 const tableCards = nextAnimation.game_state.table_battles?.flatMap((b: any) => 
                     b.defense ? [b.attack, b.defense] : [b.attack]
                 ) || [];
                 console.log(`🎮 APPLYING GAME STATE after ${nextAnimation.type}:`, {
                     table_cards: tableCards.map((c: Card) => `${c.suit}${c.value}`),
-                    table_count: tableCards.length
+                    table_count: tableCards.length,
+                    defender: nextAnimation.game_state.defender,
+                    first_attacker: nextAnimation.game_state.first_attacker
                 });
                     updateGameState(currentGameIdRef.current, nextAnimation.game_state);
             } else {
@@ -1349,14 +1563,51 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         // 2. Trigger optimistic animation - single animation with all cards going to their spots
         triggerOptimisticAnimation('attack_pass', cards, 'hand', 'table', game.self?.player_id);
         
-        // 3. Call server method (which will do optimistic game state updates)
+        // 3. Track optimistic pass state (defender will change to next player)
+        // Pass moves defender to the next player in sequence
+        // first_attacker does NOT change during a pass (only changes on new round)
+        const nextDefenderIndex = (game.defender + 1) % game.players.length;
+        console.log(`\n🎯 ===== SETTING OPTIMISTIC PASS STATE =====`);
+        console.log(`📍 Current game state: defender=${game.defender}, first_attacker=${game.first_attacker}`);
+        console.log(`📍 NEW optimistic pass state: defender ${game.defender} → ${nextDefenderIndex}, first_attacker stays ${game.first_attacker}`);
+        optimisticPassState.current = {
+            defender: nextDefenderIndex,
+            first_attacker: game.first_attacker  // Unchanged
+        };
+        console.log(`✅ Optimistic pass state SET`);
+        console.log(`===== END SETTING OPTIMISTIC PASS =====\n`);
+        
+        // 4. Call server method (which will do optimistic game state updates)
         try {
         const result = await serverMethods.pass(cards);
         return result;
         } catch (error) {
-            // Server rejected the pass - create revert animation
-            console.log('🔴 SERVER 400 ERROR - Pass rejected, creating reverts');
-            cards.forEach(card => {
+            // Server rejected the pass - clear optimistic pass state and create revert animation (if not already handled)
+            console.log('\n🔴 ===== PASS REJECTED - CLEARING OPTIMISTIC STATE =====');
+            console.log('🔴 SERVER 400 ERROR - Pass rejected');
+            console.log(`🔴 Clearing optimistic pass state: was defender=${optimisticPassState.current?.defender}, first_attacker=${optimisticPassState.current?.first_attacker}`);
+            optimisticPassState.current = null;
+            console.log('✅ Optimistic pass state CLEARED');
+            
+            // Check if conflict detection already handled these cards
+            const cardsNeedingRevert = cards.filter(card => {
+                const cardEventString = JSON.stringify({
+                    type: 'attack_pass',
+                    card: card,
+                    from_location: 'hand',
+                    to_location: 'table',
+                    player_id: game.self?.player_id
+                });
+                return optimisticAnimations.current.has(cardEventString);
+            });
+            
+            if (cardsNeedingRevert.length === 0) {
+                console.log('✅ All pass cards already reverted by conflict detection - skipping fallback revert');
+                console.log('===== END PASS REJECTION =====\n');
+            } else {
+                console.log(`⚠️ Creating fallback revert for ${cardsNeedingRevert.length} card(s) not handled by conflict detection`);
+            
+            cardsNeedingRevert.forEach(card => {
                 const cardKey = `${card.suit}-${card.value}`;
                 if (revertingCards.current.has(cardKey)) return;
                 revertingCards.current.add(cardKey);
@@ -1382,6 +1633,8 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                     player_id: game.self?.player_id
                 }));
             });
+                console.log('===== END PASS REJECTION =====\n');
+            }
             throw error;
         }
     };

@@ -1037,10 +1037,36 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             sendMessage,
             getUserGames,
             updateGameState: (gameId: string, gameState: any) => {
-                setGames(prev => ({ 
-                    ...prev, 
-                    [gameId]: mergeGameData(gameId, gameState, prev) 
-                }));
+                console.log(`\n📡 ===== SERVER updateGameState CALLED =====`);
+                console.log(`📡 GameId: ${gameId}`);
+                console.log(`📡 Incoming state: defender=${gameState.defender}, first_attacker=${gameState.first_attacker}`);
+                
+                const incomingTableCards = gameState.table_battles?.flatMap((b: any) => 
+                    b.defense ? [b.attack, b.defense] : [b.attack]
+                ) || [];
+                console.log(`📡 Incoming table:`, incomingTableCards.map((c: Card) => `${c.suit}${c.value}`));
+                
+                setGames(prev => {
+                    const existingGame = prev[gameId];
+                    const existingTableCards = existingGame?.table_battles?.flatMap((b: any) => 
+                        b.defense ? [b.attack, b.defense] : [b.attack]
+                    ) || [];
+                    console.log(`📡 Existing game: ${existingGame ? `defender=${existingGame.defender}, first_attacker=${existingGame.first_attacker}` : 'NONE'}`);
+                    console.log(`📡 Existing table:`, existingTableCards.map((c: Card) => `${c.suit}${c.value}`));
+                    
+                    const merged = mergeGameData(gameId, gameState, prev);
+                    const mergedTableCards = merged.table_battles?.flatMap((b: any) => 
+                        b.defense ? [b.attack, b.defense] : [b.attack]
+                    ) || [];
+                    console.log(`📡 Merged result: defender=${merged.defender}, first_attacker=${merged.first_attacker}`);
+                    console.log(`📡 Merged table:`, mergedTableCards.map((c: Card) => `${c.suit}${c.value}`));
+                    console.log(`===== END SERVER updateGameState =====\n`);
+                    
+                    return { 
+                        ...prev, 
+                        [gameId]: merged 
+                    };
+                });
             },
             updateGameName,
             rearrangePlayer,
