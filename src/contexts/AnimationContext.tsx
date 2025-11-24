@@ -424,28 +424,38 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                     
                     console.log('  Server table (final state):', serverTableCards.map((c: Card) => `${c.suit}${c.value}`));
                     
-                    // Find MY optimistic cards (both attacks and covers)
-                    const myOptimisticCards: Card[] = [];
+                    // Find MY optimistic cards (attacks, covers, pickups)
+                    const myOptimisticAttackCovers: Card[] = [];
+                    const myOptimisticPickups: Card[] = [];
+                    
                     optimisticAnimations.current.forEach((timestamp, cardEventString) => {
                         try {
                             const parsedEvent = JSON.parse(cardEventString);
-                            // Include both attack_pass (attacks) and cover (defenses)
-                            if ((parsedEvent.type === 'attack_pass' || parsedEvent.type === 'cover') && 
-                                parsedEvent.from_location === 'hand' && 
-                                parsedEvent.to_location === 'table' &&
-                                parsedEvent.player_id === myPlayerId) {
-                                myOptimisticCards.push(parsedEvent.card);
+                            if (parsedEvent.player_id === myPlayerId) {
+                                // Attacks and covers (hand → table)
+                                if ((parsedEvent.type === 'attack_pass' || parsedEvent.type === 'cover') && 
+                                    parsedEvent.from_location === 'hand' && 
+                                    parsedEvent.to_location === 'table') {
+                                    myOptimisticAttackCovers.push(parsedEvent.card);
+                                }
+                                // Pickups (table → hand)
+                                else if (parsedEvent.type === 'pickup' && 
+                                    parsedEvent.from_location === 'table' && 
+                                    parsedEvent.to_location === 'hand') {
+                                    myOptimisticPickups.push(parsedEvent.card);
+                                }
                             }
                         } catch (e) {
                             // Skip invalid entries
                         }
                     });
                     
-                    console.log('  My optimistic cards (attacks & covers):', myOptimisticCards.map(c => `${c.suit}${c.value}`));
+                    console.log('  My optimistic attacks/covers:', myOptimisticAttackCovers.map(c => `${c.suit}${c.value}`));
+                    console.log('  My optimistic pickups:', myOptimisticPickups.map(c => `${c.suit}${c.value}`));
                     
-                    // Check if server's final state already includes my optimistic cards
+                    // Check if server's final state already includes my optimistic attack/cover cards
                     // If so, server accepted them - don't revert!
-                    const myOptimisticCardsAccepted = myOptimisticCards.filter(optCard => 
+                    const myOptimisticCardsAccepted = myOptimisticAttackCovers.filter(optCard => 
                         serverTableCards.some((serverCard: Card) => 
                             serverCard.suit === optCard.suit && serverCard.value === optCard.value
                         )
@@ -456,7 +466,62 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                         console.log(`  ✅ No revert needed - server confirmed attacks`);
                         // Don't create revert events - server accepted them
                         // Continue to queue server events normally
-                    } else if (myOptimisticCards.length > 0) {
+                    }
+                    
+                    // Handle optimistic pickup conflicts
+                    // If server shows cards on table that we optimistically picked up, revert the pickup
+                    if (myOptimisticPickups.length > 0 && serverTableCards.length > 0) {
+                        console.log(`  🔍 Checking if optimistic pickup conflicts with server state...`);
+                        
+                        const pickupCardsStillOnTable = myOptimisticPickups.filter(pickupCard => 
+                            serverTableCards.some((serverCard: Card) => 
+                                serverCard.suit === pickupCard.suit && serverCard.value === pickupCard.value
+                            )
+                        );
+                        
+                        if (pickupCardsStillOnTable.length > 0) {
+                            console.log(`  🔴 PICKUP CONFLICT! Cards we picked up are back on server table:`, pickupCardsStillOnTable.map(c => `${c.suit}${c.value}`));
+                            console.log(`  🔴 Creating revert animations to put them back on table`);
+                            
+                            pickupCardsStillOnTable.forEach(card => {
+                                const cardKey = `${card.suit}-${card.value}`;
+                                
+                                if (revertingCards.current.has(cardKey)) {
+                                    console.log(`  Already reverting ${cardKey}, skipping`);
+                                    return;
+                                }
+                                revertingCards.current.add(cardKey);
+                                
+                                // Get visual position (should be 'hand')
+                                const visualPosition = optimisticCardPositions.current.get(cardKey);
+                                const fromLocation = visualPosition?.location || 'hand';
+                                
+                                console.log(`  Creating pickup revert: ${cardKey} from ${fromLocation} → table`);
+                                
+                                revertEvents.push({
+                                    type: 'revert',
+                                    cards: [card],
+                                    from_location: fromLocation as any,
+                                    to_location: 'table',
+                                    player_id: myPlayerId,
+                                    is_revert: true,
+                                    game_state: null as any // Will be set later
+                                });
+                                
+                                // Clear tracking
+                                const cardEventString = JSON.stringify({
+                                    type: 'pickup',
+                                    card: card,
+                                    from_location: 'table',
+                                    to_location: 'hand',
+                                    player_id: myPlayerId
+                                });
+                                optimisticAnimations.current.delete(cardEventString);
+                            });
+                        }
+                    }
+                    
+                    if (myOptimisticAttackCovers.length > 0 && myOptimisticCardsAccepted.length === 0) {
                         // Server didn't include our optimistic cards yet
                         
                         // SPECIAL CASE: If server sent pickup/cards_to_trash, table is cleared
@@ -473,9 +538,9 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                         
                         if (hasTableClearEvent) {
                             console.log(`  🔴 Server sent table-clear event (pickup/cards_to_trash) - reverting optimistic cards`);
-                            console.log(`  🔴 Optimistic cards to revert:`, myOptimisticCards.map(c => `${c.suit}${c.value}`));
+                            console.log(`  🔴 Optimistic cards to revert:`, myOptimisticAttackCovers.map(c => `${c.suit}${c.value}`));
                             
-                            myOptimisticCards.forEach(optCard => {
+                            myOptimisticAttackCovers.forEach(optCard => {
                                 const cardKey = `${optCard.suit}-${optCard.value}`;
                                 
                                 // Check if already reverting
@@ -557,19 +622,19 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                         const finalUncoveredAttacks = finalGameState?.table_battles?.filter((b: any) => !b.defense).length ?? 0;
                         
                         console.log(`  ✅ USING: ${finalUncoveredAttacks} uncovered, defender has ${defenderHandSize} cards (from ${currentGame ? 'client game' : 'message.game'})`);
-                        console.log(`  My optimistic attacks: ${myOptimisticCards.length}`);
+                        console.log(`  My optimistic attacks: ${myOptimisticAttackCovers.length}`);
                         
                         // Simple capacity check: Can defender handle all attacks?
-                        const totalAttacks = finalUncoveredAttacks + myOptimisticCards.length;
+                        const totalAttacks = finalUncoveredAttacks + myOptimisticAttackCovers.length;
                         
                         console.log(`  Total attacks if all accepted: ${totalAttacks}`);
                         
                         if (totalAttacks > defenderHandSize) {
                             console.log(`🔴 CONFLICT DETECTED! ${totalAttacks} total attacks > ${defenderHandSize} defender cards`);
-                            console.log('🔴 Creating revert animations for:', myOptimisticCards.map(c => `${c.suit}${c.value}`));
+                            console.log('🔴 Creating revert animations for:', myOptimisticAttackCovers.map(c => `${c.suit}${c.value}`));
                                 
                                 // Create revert animation for my invalid optimistic cards
-                                myOptimisticCards.forEach((card: Card) => {
+                                myOptimisticAttackCovers.forEach((card: Card) => {
                                 const cardKey = `${card.suit}-${card.value}`;
                                 
                                 if (revertingCards.current.has(cardKey)) {
@@ -631,7 +696,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                                     
                                     console.log(`    Before: table=${JSON.stringify(tableBefore)}, myHand=${JSON.stringify(handBefore)}`);
                                     
-                                    myOptimisticCards.forEach((optCard: Card) => {
+                                    myOptimisticAttackCovers.forEach((optCard: Card) => {
                                         const alreadyPresent = state.table_battles.some((b: any) => 
                                             (b.attack.suit === optCard.suit && b.attack.value === optCard.value) ||
                                             (b.defense && b.defense.suit === optCard.suit && b.defense.value === optCard.value)
@@ -774,17 +839,35 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                             .flatMap((evt: any) => evt.cards?.map((c: Card) => `${c.suit}-${c.value}`) || [])
                     );
                     
-                    // For pickup conflicts: keep cards that will be picked up, only remove reverting cards
+                    // Check if we have pickup reverts (hand → table) vs attack reverts (table → hand)
+                    const hasPickupReverts = revertEvents.some(rev => rev.to_location === 'table');
+                    const hasAttackReverts = revertEvents.some(rev => rev.to_location === 'hand');
                     const hasPickupEvent = message.events.some((evt: any) => evt.type === 'pickup' || evt.type === 'cards_to_trash');
                     
                     console.log(`  Removing from revert game_state:`, {
                         reverting: Array.from(revertCardKeys),
                         serverAttacks: Array.from(serverAttackCards),
+                        hasPickupReverts,
+                        hasAttackReverts,
                         hasPickupEvent
                     });
                     
-                    if (hasPickupEvent) {
-                        // PICKUP SCENARIO: Only remove reverting cards, keep everything else
+                    if (hasPickupReverts) {
+                        // PICKUP REVERT SCENARIO (hand → table): 
+                        // State should show reverted cards on table, but NOT server attack cards that will animate
+                        stateWithOptimistic.table_battles = (stateWithOptimistic.table_battles || []).filter((b: any) => {
+                            const attackKey = `${b.attack.suit}-${b.attack.value}`;
+                            const defenseKey = b.defense ? `${b.defense.suit}-${b.defense.value}` : null;
+                            
+                            // Remove server attack cards that will animate (they shouldn't appear yet)
+                            const removeAttack = serverAttackCards.has(attackKey);
+                            const removeDefense = defenseKey && serverAttackCards.has(defenseKey);
+                            
+                            return !removeAttack && !removeDefense;
+                        });
+                        console.log(`  Removed server attack cards from pickup revert state (will animate separately)`);
+                    } else if (hasPickupEvent && hasAttackReverts) {
+                        // ATTACK REVERT + PICKUP SCENARIO: Only remove reverting cards, keep everything else
                         // (Cards to be picked up need to stay on table for pickup animation)
                         stateWithOptimistic.table_battles = (stateWithOptimistic.table_battles || []).filter((b: any) => {
                             const attackKey = `${b.attack.suit}-${b.attack.value}`;
