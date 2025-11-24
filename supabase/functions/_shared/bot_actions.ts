@@ -17,7 +17,7 @@ const supabaseClient = createClient(
 );
 
 // Bot timing constants
-const BOT_PROCESSING_DELAY_WITH_HUMANS = 3500; // Delay when humans are still playing (ms)
+const BOT_PROCESSING_DELAY_WITH_HUMANS = 4500; // Delay when humans are still playing (ms)
 const BOT_PROCESSING_DELAY_BOTS_ONLY = 800; // Delay when only bots remain (ms)
 
 // Global variable to track current bot processing delay

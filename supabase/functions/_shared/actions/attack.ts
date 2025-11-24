@@ -48,6 +48,19 @@ export function validateAttack(game: Game, player_id: string, cards: Card[]): vo
             throw new Error(`Some card values of ${cards.map(card => cardDisplay(card)).join(', ')} are not on the table`);
         }
     }
+    
+    // CRITICAL: Check if defender has enough cards to cover all uncovered attacks
+    // Count current uncovered attacks
+    const uncoveredAttacks = game.table_battles.filter(battle => battle.defense === null).length;
+    const defender = game.players[game.defender];
+    
+    // After this attack, total uncovered attacks
+    const totalUncoveredAfterAttack = uncoveredAttacks + cards.length;
+    
+    // Defender must have enough cards in hand to potentially cover all uncovered attacks
+    if (defender.hand.length < totalUncoveredAfterAttack) {
+        throw new Error(`Defender ${defender.name} only has ${defender.hand.length} card(s) but would need to cover ${totalUncoveredAfterAttack} attacks`);
+    }
 }
 
 // Execution function for attack moves
