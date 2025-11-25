@@ -589,6 +589,149 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                         console.log('===== END PASS VALIDITY CHECK (EARLY) =====\n');
                     }
                     
+                    // ====== CHECK FOR OPTIMISTIC ATTACK + SERVER PASS CONFLICTS ======
+                    // A pass is detected when the defender changes between states
+                    // Check if server events contain a pass that invalidates optimistic attacks
+                    const serverDefenderBefore = serverState?.defender;
+                    const serverDefenderAfter = (message.game || serverState)?.defender;
+                    const defenderChanged = serverDefenderBefore !== undefined && 
+                                           serverDefenderAfter !== undefined && 
+                                           serverDefenderBefore !== serverDefenderAfter;
+                    
+                    if (myOptimisticAttackCovers.length > 0 && defenderChanged) {
+                        console.log('\n🔍 ===== CHECKING OPTIMISTIC ATTACK vs SERVER PASS =====');
+                        console.log(`📍 My optimistic attacks: ${myOptimisticAttackCovers.map(c => `${c.suit}${c.value}`).join(', ')}`);
+                        console.log(`📍 Defender changed: ${serverDefenderBefore} → ${serverDefenderAfter} (PASS detected)`);
+                        
+                        // Get the pass event (the attack_pass event that caused defender to change)
+                        const serverPassEvent = message.events.find((evt: any) => evt.type === 'attack_pass');
+                        
+                        if (serverPassEvent) {
+                            console.log('  📋 Server sent pass event - checking if optimistic attacks are still valid');
+                            
+                            const finalGameState = message.game || serverState;
+                            const newDefenderId = serverDefenderAfter; // After pass
+                            
+                            console.log(`  📊 Pass changes defender: ${serverDefenderBefore} → ${newDefenderId}`);
+                            
+                            // Check 1: Did the pass make the attacker become the defender?
+                            if (newDefenderId !== undefined) {
+                                // Find my player index
+                                const myPlayerIndex = finalGameState?.players?.findIndex((p: any) => 
+                                    p.player_id === myPlayerId
+                                );
+                                
+                                if (myPlayerIndex === newDefenderId) {
+                                    console.log(`  🔴 ATTACK vs PASS CONFLICT! New defender is ME (index ${newDefenderId}) - can't attack myself!`);
+                                    console.log(`  🔴 Reverting optimistic attacks`);
+                                    
+                                    // Revert all optimistic attacks
+                                    myOptimisticAttackCovers.forEach(optCard => {
+                                        const cardKey = `${optCard.suit}-${optCard.value}`;
+                                        
+                                        if (revertingCards.current.has(cardKey)) {
+                                            console.log(`  Already reverting ${cardKey}, skipping`);
+                                            return;
+                                        }
+                                        revertingCards.current.add(cardKey);
+                                        
+                                        const visualPosition = optimisticCardPositions.current.get(cardKey);
+                                        const fromLocation = visualPosition?.location || 'table';
+                                        
+                                        console.log(`  Creating revert: ${cardKey} from ${fromLocation} → hand`);
+                                        
+                                        revertEvents.push({
+                                            type: 'revert',
+                                            cards: [optCard],
+                                            from_location: fromLocation as any,
+                                            to_location: 'hand',
+                                            player_id: myPlayerId,
+                                            is_revert: true,
+                                            game_state: null as any
+                                        });
+                                        
+                                        const cardEventString = JSON.stringify({
+                                            type: 'attack_pass',
+                                            card: optCard,
+                                            from_location: 'hand',
+                                            to_location: 'table',
+                                            player_id: myPlayerId
+                                        });
+                                        optimisticAnimations.current.delete(cardEventString);
+                                    });
+                                    
+                                    // Remove from merge list
+                                    myOptimisticAttackCovers.length = 0;
+                                }
+                            }
+                            
+                            // Check 2: Does the new defender have exactly enough cards for the table?
+                            if (myOptimisticAttackCovers.length > 0 && newDefenderId !== undefined) {
+                                const newDefenderHandSize = finalGameState?.players?.[newDefenderId]?.hand_length ?? 0;
+                                const serverPassCards = serverPassEvent.cards?.length || 0;
+                                
+                                // Count uncovered attacks on server's table (before pass)
+                                const serverTableBattles = serverState?.table_battles || [];
+                                const serverUncoveredAttacks = serverTableBattles.filter((b: any) => !b.defense).length;
+                                
+                                // Total attacks the new defender will face = uncovered + pass cards
+                                const totalAttacksAfterPass = serverUncoveredAttacks + serverPassCards;
+                                
+                                console.log(`  📊 New defender (index ${newDefenderId}): ${newDefenderHandSize} cards`);
+                                console.log(`  📊 Attacks after pass: ${serverUncoveredAttacks} uncovered + ${serverPassCards} pass = ${totalAttacksAfterPass} total`);
+                                console.log(`  📊 Optimistic attacks: ${myOptimisticAttackCovers.length}`);
+                                
+                                // If table is full (new defender has exactly enough cards), no more attacks allowed
+                                if (totalAttacksAfterPass >= newDefenderHandSize) {
+                                    console.log(`  🔴 ATTACK vs PASS CONFLICT! Table is FULL (${totalAttacksAfterPass} >= ${newDefenderHandSize}) - no room for optimistic attacks!`);
+                                    console.log(`  🔴 Reverting optimistic attacks`);
+                                    
+                                    // Revert all optimistic attacks
+                                    myOptimisticAttackCovers.forEach(optCard => {
+                                        const cardKey = `${optCard.suit}-${optCard.value}`;
+                                        
+                                        if (revertingCards.current.has(cardKey)) {
+                                            console.log(`  Already reverting ${cardKey}, skipping`);
+                                            return;
+                                        }
+                                        revertingCards.current.add(cardKey);
+                                        
+                                        const visualPosition = optimisticCardPositions.current.get(cardKey);
+                                        const fromLocation = visualPosition?.location || 'table';
+                                        
+                                        console.log(`  Creating revert: ${cardKey} from ${fromLocation} → hand`);
+                                        
+                                        revertEvents.push({
+                                            type: 'revert',
+                                            cards: [optCard],
+                                            from_location: fromLocation as any,
+                                            to_location: 'hand',
+                                            player_id: myPlayerId,
+                                            is_revert: true,
+                                            game_state: null as any
+                                        });
+                                        
+                                        const cardEventString = JSON.stringify({
+                                            type: 'attack_pass',
+                                            card: optCard,
+                                            from_location: 'hand',
+                                            to_location: 'table',
+                                            player_id: myPlayerId
+                                        });
+                                        optimisticAnimations.current.delete(cardEventString);
+                                    });
+                                    
+                                    // Remove from merge list
+                                    myOptimisticAttackCovers.length = 0;
+                                } else {
+                                    console.log(`  ✅ Optimistic attacks are still VALID - new defender can handle all attacks`);
+                                }
+                            }
+                        }
+                        
+                        console.log('===== END ATTACK vs PASS CHECK =====\n');
+                    }
+                    
                     // Handle optimistic pickup conflicts
                     if (myOptimisticPickups.length > 0) {
                         console.log(`  🔍 Checking if optimistic pickup conflicts with server state...`);
