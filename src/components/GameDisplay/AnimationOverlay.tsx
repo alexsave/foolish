@@ -171,7 +171,7 @@ export const AnimationOverlay = () => {
             return;
         }
 
-        const { type, cards, from_location, to_location, player_id, target_card, battle_index, is_revert } = currentAnimation;
+        const { type, cards, from_location, to_location, player_id, target_card, target_cards, battle_index, is_revert } = currentAnimation;
 
         // Handle magic_transition separately since it doesn't have cards
         if (type === 'magic_transition') {
@@ -266,10 +266,14 @@ export const AnimationOverlay = () => {
                         // Enhanced table targeting logic for multiple cards
                         if (type === 'cover') {
                             // For cover animations, find which attack card this cover card targets
-                            // Use the game state and cover logic to determine the target
                             let targetAttackCard = null;
                             
-                            if (game?.table_battles) {
+                            // If we have target_cards array (multi-card cover), use direct mapping
+                            if (target_cards && target_cards[index]) {
+                                targetAttackCard = target_cards[index];
+                            } 
+                            // Otherwise, use the game state and cover logic to determine the target
+                            else if (game?.table_battles) {
                                 // Find uncovered attack cards that this cover card can cover
                                 const uncoveredBattles = game.table_battles.filter(battle => !battle.defense);
                                 const powerSuit = game.power_suit;
@@ -445,13 +449,17 @@ export const AnimationOverlay = () => {
                                 card={card}
                                 isAnimationOverlay={true}
                                 style={{
+                                    borderRadius: '5px',
+                                    border: isRevert 
+                                        ? '2px solid rgb(220, 38, 38)' 
+                                        : '2px solid black',
                                     boxShadow: isRevert 
                                         ? `0 ${progress * 10}px ${progress * 20}px rgba(255,0,0,0.6)` 
                                         : `0 ${progress * 10}px ${progress * 20}px rgba(0,0,0,0.4)`,
                                     filter: isRevert 
-                                        ? `brightness(${1 + progress * 0.2}) sepia(100%) saturate(300%) hue-rotate(-50deg)`
+                                        ? 'brightness(1.3) contrast(1.2) sepia(0.3) saturate(1.8) hue-rotate(-10deg)'
                                         : `brightness(${1 + progress * 0.2})`,
-                                    border: isRevert ? '2px solid rgba(220, 38, 38, 0.8)' : undefined
+                                    backgroundColor: isRevert ? 'rgb(255, 150, 150)' : 'white'   
                                 }}
                             />
                         )}

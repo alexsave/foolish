@@ -20,6 +20,7 @@ interface AnimationEvent {
     from_location?: 'deck' | 'hand' | 'table' | 'discard';
     to_location?: 'deck' | 'hand' | 'table' | 'discard' | 'flipped';
     target_card?: Card;
+    target_cards?: Card[]; // For multi-card cover animations
     battle_index?: number;
     message?: string;
     game_state?: Game; // intermediate game state after this event
@@ -1864,16 +1865,52 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         // 1. Validate first - don't do anything if validation fails
         validateCover(game, coverCards, attackCards);
         
-        // 2. Trigger optimistic cover animation - single animation with all cards going to their targets
-        // Store cover cards with their target attack cards for proper merging later
+        // 2. Trigger optimistic cover animation - SINGLE animation with all cards going to their targets
+        // Track cover cards with their target attack cards for proper merging later
+        const animationEvent: ClientAnimationEvent = {
+            type: 'cover',
+            cards: coverCards,
+            target_cards: attackCards, // Pass the target attack cards for each cover card
+            from_location: 'hand',
+            to_location: 'table',
+            player_id: game.self?.player_id,
+            message: 'Optimistic cover animation'
+        };
+        
+        // Track EACH CARD individually with its target attack card
+        const timestamp = Date.now();
         coverCards.forEach((coverCard, idx) => {
             const attackCard = attackCards[idx];
+            const cardKey = `${coverCard.suit}-${coverCard.value}`;
+            
             // Find battle index for this attack
             const battleIndex = game.table_battles.findIndex(b => 
                 b.attack.suit === attackCard.suit && b.attack.value === attackCard.value
             );
-            triggerOptimisticAnimation('cover', [coverCard], 'hand', 'table', game.self?.player_id, attackCard, battleIndex);
+            
+            // Track for conflict detection
+            const cardEventString = JSON.stringify({
+                type: 'cover',
+                card: coverCard,
+                from_location: 'hand',
+                to_location: 'table',
+                player_id: game.self?.player_id
+            });
+            optimisticAnimations.current.set(cardEventString, timestamp);
+            
+            // Track visual position with target card info for animations
+            const positionInfo: any = { 
+                location: 'table', 
+                playerId: game.self?.player_id || '',
+                target_card: attackCard,
+                battle_index: battleIndex
+            };
+            optimisticCardPositions.current.set(cardKey, positionInfo);
+            console.log(`📍 Tracking optimistic card ${cardKey} at table (covering ${attackCard.suit}${attackCard.value})`);
         });
+        
+        // Queue the single animation with all cover cards
+        queueAnimation(animationEvent);
         
         // 3. Call server method (which will do optimistic game state updates)
         try {
