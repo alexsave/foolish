@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { Card } from '../../common/types';
 import { ANIMATION_TIME, useAnimation } from '../../contexts/AnimationContext';
 import { CardFace } from './CardFace';
@@ -24,7 +24,6 @@ export const AnimationOverlay = () => {
     const { currentAnimation, isAnimating } = useAnimation();
     const { game } = useServer();
     const overlayRef = useRef<HTMLDivElement>(null);
-    const [placeholderPositions, setPlaceholderPositions] = useState<Map<string, { x: number; y: number }>>(new Map());
 
     // Helper function to get element position relative to viewport
     const getElementPosition = (element: HTMLElement): { x: number; y: number } => {
