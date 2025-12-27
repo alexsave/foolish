@@ -699,10 +699,16 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                         message.game
                     ].filter(Boolean);
 
+                    // Check if any pass events in this message are from the current user
+                    const hasUserPass = message.events.some((evt: any) => 
+                        evt.type === 'attack_pass' && evt.player_id === user_id
+                    );
+
                     statesToMerge.forEach((state: any, stateIdx: number) => {
                         if (state && state.table_battles) {
-                            // FIRST: Preserve optimistic pass state if present
-                            if (optimisticPassState.current) {
+                            // FIRST: Preserve optimistic pass state if present AND this message contains our pass
+                            // Otherwise, trust the server's game state (which is correct for other players' passes)
+                            if (optimisticPassState.current && hasUserPass) {
                                 state.defender = optimisticPassState.current.defender;
                                 state.first_attacker = optimisticPassState.current.first_attacker;
                             }
@@ -863,19 +869,31 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             if (!message.game) {
                 return;
             }
-            // Check if server confirmed optimistic pass BEFORE modifying
-            let serverConfirmedPass = false;
-            if (optimisticPassState.current) {
-                serverConfirmedPass =
+            
+            // Check if any pass events in this message are from the current user
+            const hasUserPass = message.events.some((evt: any) => 
+                evt.type === 'attack_pass' && evt.player_id === user_id
+            );
+            
+            // Only apply optimistic pass state if this message contains a pass from the current user
+            // Otherwise, trust the server's game state (which is correct for other players' passes)
+            if (optimisticPassState.current && hasUserPass) {
+                // Check if server confirmed optimistic pass
+                const serverConfirmedPass =
                     message.game.defender === optimisticPassState.current.defender &&
                     message.game.first_attacker === optimisticPassState.current.first_attacker;
 
                 if (serverConfirmedPass) {
                     optimisticPassState.current = null;
                 } else {
+                    // Server didn't confirm - use optimistic state (our pass might have been rejected or modified)
                     message.game.defender = optimisticPassState.current.defender;
                     message.game.first_attacker = optimisticPassState.current.first_attacker;
                 }
+            } else if (optimisticPassState.current && !hasUserPass) {
+                // This message doesn't contain our pass, so clear stale optimistic state
+                // and trust the server (another player passed)
+                optimisticPassState.current = null;
             }
 
             updateGameState(message.game.id, message.game);
