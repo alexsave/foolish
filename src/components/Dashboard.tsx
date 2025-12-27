@@ -6,6 +6,7 @@ import { useAuth } from "../contexts/AuthContext";
 import { SUIT_MAP } from "../utils/cards";
 import { useWoodStyle, getWoodTextureStyle } from "./WoodTexture";
 import { WoolBackgroundLayer } from "./WoolBackgroundLayer";
+import { SignOutButton } from "./SignOutButton";
 
 export const Dashboard = () => {
     const [gameId, setGameId] = useState<string>('');
@@ -88,6 +89,7 @@ export const Dashboard = () => {
         backgroundColor: '#ad826e'
     }}>
         <WoolBackgroundLayer />
+        <SignOutButton />
         <h1 style={{ 
             color: 'white', 
             fontSize: '1.3rem', 
