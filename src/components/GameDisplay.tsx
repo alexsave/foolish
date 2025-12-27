@@ -13,6 +13,7 @@ import { AnimationOverlay } from './GameDisplay/AnimationOverlay';
 import { KeyboardInputHandler } from './KeyboardInputHandler';
 import { usePreventScroll } from '../hooks/usePreventScroll';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
+import { BackButton } from './BackButton';
 
 export const GameDisplay = () => {
     const game = useServer().game as PersonalGame;
@@ -36,6 +37,8 @@ export const GameDisplay = () => {
         <WoolBackgroundLayer />
         <KeyboardInputHandler />
         
+        <BackButton />
+
         <CoverArrows />
 
         <div style={{ display: 'flex', flex: 1, justifyContent: 'center', alignItems: 'center' }}>

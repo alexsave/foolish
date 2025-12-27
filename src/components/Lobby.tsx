@@ -11,6 +11,7 @@ import { usePreventScroll } from "../hooks/usePreventScroll";
 import { MAX_PLAYERS } from "../common/constants";
 import { useWoodStyle } from "./WoodTexture";
 import { WoolBackgroundLayer } from "./WoolBackgroundLayer";
+import { BackButton } from "./BackButton";
 
 interface PlayerCardProps {
     player: PublicPlayer;
@@ -625,43 +626,7 @@ export const Lobby = () => {
         backgroundColor: '#ad826e'
     }}>
         <WoolBackgroundLayer />
-        <button
-            onClick={() => navigate('/dashboard')}
-            style={{
-                position: 'absolute',
-                top: '10px',
-                left: '10px',
-                zIndex: 100,
-                ...woodButtonStyle,
-                width: '44px',
-                height: '44px',
-                padding: '0',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                border: '2px solid #5D3A1A',
-                borderRadius: '0',
-                cursor: 'pointer',
-                transition: 'all 0.2s ease',
-                boxShadow: `inset 0 1px 0 rgba(255,255,255,0.2), inset 0 -1px 0 rgba(0,0,0,0.3), 0 2px 4px rgba(0,0,0,0.4)`,
-                overflow: 'hidden',
-            }}
-            onMouseEnter={(e) => {
-                Object.assign(e.currentTarget.style, woodButtonHoverStyle);
-            }}
-            onMouseLeave={(e) => {
-                Object.assign(e.currentTarget.style, woodButtonStyle);
-            }}
-        >
-            <span style={{
-                color: 'rgba(70, 35, 20, 0.8)',
-                mixBlendMode: 'color-burn',
-                filter: 'contrast(1.2) brightness(0.9)',
-                fontSize: '28px',
-                fontWeight: 900,
-                lineHeight: 1,
-            }}>{'<'}</span>
-        </button>
+        <BackButton />
         <input
             ref={inputRef}
             type="text"
