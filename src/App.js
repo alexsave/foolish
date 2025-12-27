@@ -1,6 +1,7 @@
 import React from 'react';
 import './App.css';
 import { AuthProvider } from './contexts/AuthContext';
+import { LocalizationProvider } from './contexts/LocalizationContext';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ProtectedRoute } from './components/ProtectedRoute';
@@ -18,10 +19,11 @@ function App() {
       <div style={{ display: 'flex', height: '100vh', width: '100vw' }} >
         <BrowserRouter>
           <ErrorBoundary context="Router">
-            <AuthProvider>
-              <ErrorBoundary context="Auth Provider">
-                <ErrorBoundary context="Routes">
-                  <Routes>
+            <LocalizationProvider>
+              <AuthProvider>
+                <ErrorBoundary context="Auth Provider">
+                  <ErrorBoundary context="Routes">
+                    <Routes>
                     <Route path="/" element={
                       <ErrorBoundary context="Welcome Page">
                         <UnprotectedRoute>
@@ -50,10 +52,11 @@ function App() {
                     } />
                     {/* Catch-all route for unmatched paths - redirect to dashboard */}
                     <Route path="*" element={<Navigate to="/dashboard" replace />} />
-                  </Routes>
+                    </Routes>
+                  </ErrorBoundary>
                 </ErrorBoundary>
-              </ErrorBoundary>
-            </AuthProvider>
+              </AuthProvider>
+            </LocalizationProvider>
           </ErrorBoundary>
         </BrowserRouter>
       </div>

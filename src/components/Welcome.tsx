@@ -2,11 +2,15 @@ import { useState, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useWoodStyle } from './WoodTexture';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
+import { LanguageSwitcher } from './LanguageSwitcher';
+import { Text } from './Text';
+import { useLocalization } from '../contexts/LocalizationContext';
 
 export const Welcome = () => {
     const [name, setName] = useState('');
     const [password, setPassword] = useState('');
     const { signIn, signUp } = useAuth();
+    const { t } = useLocalization();
     
     const woodStyleBase = useWoodStyle(0.5);
     const woodStyleBase2 = useWoodStyle(0.9);
@@ -110,7 +114,7 @@ export const Welcome = () => {
                 marginBottom: '30px',
                 position: 'relative',
                 zIndex: 10
-            }}>FOOLISH</p>
+            }}><Text id="foolish" /></p>
             <form onSubmit={handleLogin} style={{ 
                 display: 'flex', 
                 flexDirection: 'column', 
@@ -120,7 +124,7 @@ export const Welcome = () => {
                 zIndex: 10
             }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                    <label htmlFor="username" style={{ color: '#333', fontWeight: 'bold' }}>Username:</label>
+                    <label htmlFor="username" style={{ color: '#333', fontWeight: 'bold' }}><Text id="username" />:</label>
                     <input
                         id="username"
                         type="text"
@@ -138,7 +142,7 @@ export const Welcome = () => {
                     />
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                    <label htmlFor="password" style={{ color: '#333', fontWeight: 'bold' }}>Password:</label>
+                    <label htmlFor="password" style={{ color: '#333', fontWeight: 'bold' }}><Text id="password" />:</label>
                     <input
                         id="password"
                         type="password"
@@ -170,7 +174,7 @@ export const Welcome = () => {
                             color: 'rgba(70, 35, 20, 0.8)',
                             mixBlendMode: 'color-burn',
                             filter: 'contrast(1.2) brightness(0.9)',
-                        }}>Login</span>
+                        }}><Text id="login" /></span>
                     </button>
                     <button 
                         type="button"
@@ -187,10 +191,11 @@ export const Welcome = () => {
                             color: 'rgba(70, 35, 20, 0.8)',
                             mixBlendMode: 'color-burn',
                             filter: 'contrast(1.2) brightness(0.9)',
-                        }}>Sign Up</span>
+                        }}><Text id="sign_up" /></span>
                     </button>
                 </div>
             </form>
+            <LanguageSwitcher />
         </div>
     );
 };

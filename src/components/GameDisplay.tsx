@@ -14,6 +14,7 @@ import { KeyboardInputHandler } from './KeyboardInputHandler';
 import { usePreventScroll } from '../hooks/usePreventScroll';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
 import { BackButton } from './BackButton';
+import { Text } from './Text';
 
 export const GameDisplay = () => {
     const game = useServer().game as PersonalGame;
@@ -22,7 +23,7 @@ export const GameDisplay = () => {
 
     // Handle missing game data (GameView handles loading and error states)
     if (!game || !game.players || !game.players.length) {
-        return <div>Loading GameDisplay...</div>;
+        return <div><Text id="loading" /></div>;
     }
 
     return <div

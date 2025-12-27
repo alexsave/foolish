@@ -7,6 +7,7 @@ import { useDrag } from "../../contexts/DragContext";
 import { CardFace} from "./CardFace";
 import { useWoodStyle } from "../WoodTexture";
 import { useState, useEffect, useRef } from "react";
+import { Text } from "../Text";
 
 const CardDiv = ({ user_id }: { user_id: string }) => {
     const { game, localHandOrder } = useServer() as { game: PersonalGame, localHandOrder: Card[] };
@@ -16,7 +17,7 @@ const CardDiv = ({ user_id }: { user_id: string }) => {
     const { draggedCardIndex, isDraggingForGameAction, startCardDrag, isActuallyDragging } = useDrag();
 
     if (!game || !game.self) {
-        return <p style={{ color: 'white', fontSize: '18px' }}>Spectating</p>
+        return <p style={{ color: 'white', fontSize: '18px' }}><Text id="spectating" /></p>
     }
 
     return <div 
@@ -181,7 +182,7 @@ export const ActionButtons = () => {
                     color: 'rgba(70, 35, 20, 0.8)',
                     mixBlendMode: 'color-burn',
                     filter: 'contrast(1.2) brightness(0.9)',
-                }}>Pickup</span>
+                }}><Text id="pickup" /></span>
             </button>
             }
 
@@ -227,7 +228,7 @@ export const ActionButtons = () => {
                     color: 'rgba(70, 35, 20, 0.8)',
                     mixBlendMode: 'color-burn',
                     filter: 'contrast(1.2) brightness(0.9)',
-                }}>Good</span>
+                }}><Text id="good" /></span>
             </button>
             }
         </div>

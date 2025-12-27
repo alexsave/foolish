@@ -7,12 +7,16 @@ import { SUIT_MAP } from "../utils/cards";
 import { useWoodStyle, getWoodTextureStyle } from "./WoodTexture";
 import { WoolBackgroundLayer } from "./WoolBackgroundLayer";
 import { SignOutButton } from "./SignOutButton";
+import { LanguageSwitcher } from "./LanguageSwitcher";
+import { Text } from "./Text";
+import { useLocalization } from "../contexts/LocalizationContext";
 
 export const Dashboard = () => {
     const [gameId, setGameId] = useState<string>('');
     const { username } = useAuth();
     const { joinGame, games, getUserGames } = useServer();
     const navigate = useNavigate();
+    const { t } = useLocalization();
     
     // Load all games when Dashboard mounts
     useEffect(() => {
@@ -99,7 +103,7 @@ export const Dashboard = () => {
             position: 'relative',
             zIndex: 10
         }}>
-            {username}'s Dashboard
+            {t('dashboard_title', { username: username || '' })}
         </h1>
         
         <div style={{ 
@@ -137,7 +141,7 @@ export const Dashboard = () => {
                     type="text" 
                     value={gameId} 
                     onChange={(e) => setGameId(e.target.value)}
-                    placeholder="Enter existing game ID"
+                    placeholder={t('enter_game_id')}
                     inputMode="text"
                     style={{
                         ...woodInputStyle,
@@ -174,7 +178,7 @@ export const Dashboard = () => {
                         color: 'rgba(70, 35, 20, 0.8)',
                         mixBlendMode: 'color-burn',
                         filter: 'contrast(1.2) brightness(0.9)',
-                    }}>Join</span>
+                    }}><Text id="join" /></span>
                 </button>
             </form>
             
@@ -208,7 +212,7 @@ export const Dashboard = () => {
                     color: 'rgba(70, 35, 20, 0.8)',
                     mixBlendMode: 'color-burn',
                     filter: 'contrast(1.2) brightness(0.9)',
-                }}>Create New Game</span>
+                }}><Text id="create_new_game" /></span>
             </button>
         </div>
 
@@ -314,7 +318,7 @@ export const Dashboard = () => {
                                             opacity: '0.6',
                                             marginLeft: '8px'
                                         }}>
-                                            Ready: {readyPlayers}/{totalPlayers}
+                                            <Text id="ready" />: {readyPlayers}/{totalPlayers}
                                         </span>
                                     )}
                                     
@@ -324,7 +328,7 @@ export const Dashboard = () => {
                                             opacity: '0.6',
                                             marginLeft: '8px'
                                         }}>
-                                            Deck cards: {games[game.id].deck_length + (games[game.id].flipped ? 1 : 0)} {SUIT_MAP[games[game.id].power_suit]}
+                                            <Text id="deck_cards" />: {games[game.id].deck_length + (games[game.id].flipped ? 1 : 0)} {SUIT_MAP[games[game.id].power_suit]}
                                         </span>
                                     )}
                                 </div>
@@ -337,7 +341,9 @@ export const Dashboard = () => {
                                                    isGameOver ? '#757575' : '#f44336',
                                     color: 'white'
                                 }}>
-                                    {game.status.replace('_', ' ')}
+                                    {isWaiting && <Text id="waiting" />}
+                                    {isPlaying && <Text id="playing" />}
+                                    {isGameOver && <Text id="game_over" />}
                                 </span>
                             </div>
                             
@@ -403,10 +409,11 @@ export const Dashboard = () => {
                         padding: '2rem',
                         fontSize: '1.1rem'
                     }}>
-                        No games available. Create a new game to get started!
+                        <Text id="no_games_available" />
                     </div>
                 )}
             </div>
         </div>
+        <LanguageSwitcher />
     </div>;
 };

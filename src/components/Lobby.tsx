@@ -12,6 +12,8 @@ import { MAX_PLAYERS } from "../common/constants";
 import { useWoodStyle } from "./WoodTexture";
 import { WoolBackgroundLayer } from "./WoolBackgroundLayer";
 import { BackButton } from "./BackButton";
+import { Text } from "./Text";
+import { useLocalization } from "../contexts/LocalizationContext";
 
 interface PlayerCardProps {
     player: PublicPlayer;
@@ -31,6 +33,7 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
     onReadyClick,
 }) => {
     const { user_id } = useAuth();
+    const { t } = useLocalization();
     
     // Generate unique wood texture seed and transform for each player card
     const playerSeed = (player.player_id.charCodeAt(0) + player.player_id.charCodeAt(1)) / 200;
@@ -125,7 +128,7 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
                             color: 'rgba(70, 35, 20, 0.8)',
                             mixBlendMode: 'color-burn',
                             filter: 'contrast(1.2) brightness(0.9)',
-                        }}>Ready</span>
+                        }}><Text id="ready" /></span>
                     </button>
                 ) : '🔴'}
             </div>
@@ -138,6 +141,7 @@ export const Lobby = () => {
     const { game, updateGameName, rearrangePlayer, addBot, exitGame, joinGame, startGame } = useServer();
     const navigate = useNavigate();
     const { user_id } = useAuth();
+    const { t } = useLocalization();
 
     // Get wood styles with seeds - memoized to prevent new object creation
     const woodButtonBaseStyle = useWoodStyle(0.2);
@@ -347,7 +351,7 @@ export const Lobby = () => {
     usePreventScroll();
 
     if (!game) {
-        return <div>Loading...</div>;
+        return <div><Text id="loading" /></div>;
     }
 
     const qrUrl = `www.${WEBSITE_DOMAIN}/${game_id}`.toUpperCase();
@@ -666,9 +670,9 @@ export const Lobby = () => {
                 position: 'relative',
                 zIndex: 10
             }}
-            title={!isEditingName ? "Click to edit game name" : undefined}
+            title={!isEditingName ? t('click_to_edit') : undefined}
         />
-        <h2 style={{ margin: '.25rem', position: 'relative', zIndex: 10 }}>ID: {game_id}</h2>
+        <h2 style={{ margin: '.25rem', position: 'relative', zIndex: 10 }}><Text id="id" />: {game_id}</h2>
         <div style={{ 
             marginBottom: '10px',
             position: 'relative',
@@ -776,7 +780,7 @@ export const Lobby = () => {
                                     onMouseLeave={(e) => {
                                         Object.assign(e.currentTarget.style, woodButtonStyle);
                                     }}
-                                    title={showRemoveBotButton ? "Remove bot" : "Exit game"}
+                                    title={showRemoveBotButton ? t('remove_bot') : t('exit_game')}
                                 >
                                     <span style={{
                                         color: 'rgba(70, 35, 20, 0.8)',
@@ -847,7 +851,7 @@ export const Lobby = () => {
                     zIndex: 10,
                     margin: 0,
                     position: 'relative',
-                }}>Add Bot</p>
+                }}><Text id="add_bot" /></p>
             </div>
         )}
         {game.status === 'waiting' && !game.self && game.players.length < MAX_PLAYERS && (
@@ -879,7 +883,7 @@ export const Lobby = () => {
                         color: 'rgba(70, 35, 20, 0.8)',
                         mixBlendMode: 'color-burn',
                         filter: 'contrast(1.2) brightness(0.9)',
-                    }}>Join Game</span>
+                    }}><Text id="join_game" /></span>
                 </button>
             </div>
         )}
