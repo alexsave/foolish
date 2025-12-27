@@ -6,6 +6,7 @@ import { useGame } from "../../contexts/GameContext";
 import { useDrag } from "../../contexts/DragContext";
 import { CardFace} from "./CardFace";
 import { useWoodStyle } from "../WoodTexture";
+import { useState, useEffect, useRef } from "react";
 
 const CardDiv = ({ user_id }: { user_id: string }) => {
     const { game, localHandOrder } = useServer() as { game: PersonalGame, localHandOrder: Card[] };
@@ -79,11 +80,40 @@ export const ActionButtons = () => {
     const { game } = useServer() as { game: PersonalGame };
     const { pickup, good } = useAnimation();
 
-    const { selectedCards, setSelectedCards } = useGame();
+    
+    // Track if "good" button was just clicked to hide it immediately
+    const [goodButtonClicked, setGoodButtonClicked] = useState(false);
+    
+    // Track previous state of shouldShowGoodButton to detect transitions
+    const prevShouldShowGoodButtonRef = useRef(false);
     
     // Use wood texture hooks at the top level
     const woodStylePickup = useWoodStyle(0.15);
     const woodStyleGood = useWoodStyle(0.85);
+
+    // Calculate values needed for the effect (safe even if game is null)
+    const self_index = game?.players.findIndex((player) => player.player_id === user_id) ?? -1;
+    const isDefending = game && self_index !== -1 ? game.defender === self_index : false;
+    const canPlay = game?.self?.hand.some(card => 
+        game?.table_battles.some(battle => battle.attack.value === card.value || battle.defense?.value === card.value)
+    ) ?? false;
+    const shouldShowGoodButton = !isDefending && 
+        (game?.table_battles.length ?? 0) > 0 && 
+        (game?.table_battles.every(battle => battle.defense) ?? false) && 
+        canPlay;
+
+    // Reset the clicked flag only when transitioning from NOT possible to possible
+    useEffect(() => {
+        const prevShouldShow = prevShouldShowGoodButtonRef.current;
+        
+        // If it wasn't possible before but is now possible, reset the flag
+        if (!prevShouldShow && shouldShowGoodButton && goodButtonClicked) {
+            setGoodButtonClicked(false);
+        }
+        
+        // Update the ref for next render
+        prevShouldShowGoodButtonRef.current = shouldShowGoodButton;
+    }, [shouldShowGoodButton, goodButtonClicked]);
 
     // Handle case where game is not loaded yet
     if (!game || !game.self) {
@@ -91,8 +121,6 @@ export const ActionButtons = () => {
         </div>
     }
 
-    const self_index = game.players.findIndex((player) => player.player_id === user_id);
-    const isDefending = game.defender === self_index;
 
     const isOut = game.self.status === 'out';
     if (isOut) {
@@ -100,8 +128,6 @@ export const ActionButtons = () => {
         </div>
     }
 
-    // can play if you have any value on the table
-    const canPlay = game.self.hand.some(card => game.table_battles.some(battle => battle.attack.value === card.value || battle.defense?.value === card.value));
 
     return <div 
         data-touch-interactive
@@ -147,7 +173,6 @@ export const ActionButtons = () => {
                     e.currentTarget.style.transform = '';
                 }}
                 onClick={() => pickup().then(() => {
-                    setSelectedCards([]);
                 }).catch((e) => {
                     console.error(e.message);
                 })}
@@ -161,7 +186,7 @@ export const ActionButtons = () => {
             }
 
             {/* Good button for attackers when all attacks are covered */}
-            {!isDefending && game.table_battles.length > 0 && game.table_battles.every(battle => battle.defense) && canPlay && <button
+            {shouldShowGoodButton && !goodButtonClicked && <button
                 style={{
                     ...woodStyleGood, // Wood texture for good button
                     width: '60px',
@@ -188,11 +213,15 @@ export const ActionButtons = () => {
                     e.currentTarget.style.filter = '';
                     e.currentTarget.style.transform = '';
                 }}
-                onClick={() => good().then(() => {
-                    setSelectedCards([]);
-                }).catch((e) => {
-                    console.error(e.message);
-                })}
+                onClick={() => {
+                    setGoodButtonClicked(true);
+                    good().then(() => {
+                    }).catch((e) => {
+                        console.error(e.message);
+                        // Reset the flag on error so button can be clicked again
+                        setGoodButtonClicked(false);
+                    });
+                }}
             >
                 <span style={{
                     color: 'rgba(70, 35, 20, 0.8)',
