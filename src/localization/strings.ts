@@ -28,7 +28,13 @@ export type StringId =
   | 'first_attacker'
   | 'winner'
   | 'spectating'
-  | 'loading';
+  | 'loading'
+  | 'about'
+  | 'about_foolish'
+  | 'about_paragraph_1'
+  | 'about_paragraph_2'
+  | 'about_paragraph_3'
+  | 'back_to_home';
 
 // English strings
 export const strings_en: Record<StringId, string> = {
@@ -61,6 +67,12 @@ export const strings_en: Record<StringId, string> = {
   winner: 'Winner',
   spectating: 'Spectating',
   loading: 'Loading...',
+  about: 'About',
+  about_foolish: 'About FOOLISH',
+  about_paragraph_1: 'This is a classic Russian card game known as дурак. I brought this game to school years ago. My parents taught me one version. But what I taught to my classmates got a bit muddled up. The game evolved a bit as we played at lunch, usually with 8 players at a time. As a result, the core rules still stand but with a few chaotic changes.',
+  about_paragraph_2: 'Passing (Переводная) is always enabled. When throwing in attacks, it\'s first come first serve as to who gets the card in. And when attacking, you can put down as many cards as the defender has even if it\'s more than 6. You can imagine this gets very crazy and very fun with 8 players. It adds an element of fast decision making. Go big or go home. I call this American Fool. Hence the website name Foolish.',
+  about_paragraph_3: 'What started as a simple project to play the game with friends across the world turned into a lot of learning for me. This has game AIs, optimistic animations with reverts, and workarounds for the limits of Supabase\'s free tier.',
+  back_to_home: 'Back to Home',
 };
 
 // Russian strings
@@ -94,6 +106,12 @@ export const strings_ru: Record<StringId, string> = {
   winner: 'Победитель',
   spectating: 'Наблюдение',
   loading: 'Загрузка...',
+  about: 'О нас',
+  about_foolish: 'О ДУРАЦКИЙ',
+  about_paragraph_1: strings_en.about_paragraph_1,
+  about_paragraph_2: strings_en.about_paragraph_2,
+  about_paragraph_3: strings_en.about_paragraph_3,
+  back_to_home: 'Вернуться на главную',
 };
 
 // Korean strings
@@ -127,6 +145,12 @@ export const strings_ko: Record<StringId, string> = {
   winner: '승자',
   spectating: '관전 중',
   loading: '로딩 중...',
+  about: '소개',
+  about_foolish: 'FOOLISH 소개',
+  about_paragraph_1: strings_en.about_paragraph_1,
+  about_paragraph_2: strings_en.about_paragraph_2,
+  about_paragraph_3: strings_en.about_paragraph_3,
+  back_to_home: '홈으로 돌아가기',
 };
 
 // Combined strings object for easy access

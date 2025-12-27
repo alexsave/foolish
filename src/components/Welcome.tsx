@@ -5,6 +5,7 @@ import { WoolBackgroundLayer } from './WoolBackgroundLayer';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { Text } from './Text';
 import { useLocalization } from '../contexts/LocalizationContext';
+import { Link } from 'react-router-dom';
 
 export const Welcome = () => {
     const [name, setName] = useState('');
@@ -196,6 +197,23 @@ export const Welcome = () => {
                 </div>
             </form>
             <LanguageSwitcher />
+            <Link 
+                to="/about"
+                style={{
+                    position: 'absolute',
+                    bottom: '20px',
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    color: '#5D3A1A',
+                    textDecoration: 'underline',
+                    fontSize: '14px',
+                    cursor: 'pointer',
+                    zIndex: 10,
+                    textShadow: '0 1px 2px rgba(255, 255, 255, 0.5)'
+                }}
+            >
+                <Text id="about" />
+            </Link>
         </div>
     );
 };
