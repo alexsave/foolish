@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useServer } from '../../contexts/ServerContext';
 import { useAuth } from '../../contexts/AuthContext';
+import { useLocalization } from '../../contexts/LocalizationContext';
 
 // Function to generate color from name hash
 const getNameColor = (name: string): string => {
@@ -16,6 +17,7 @@ export const Chat = () => {
     const server = useServer();
     const { game, sendMessage, chatMessages } = server;
     const { user_id } = useAuth();
+    const { t } = useLocalization();
     const [message, setMessage] = useState('');
     const [isExpanded, setIsExpanded] = useState(false);
     const [isInputFocused, setIsInputFocused] = useState(false);
@@ -202,7 +204,7 @@ export const Chat = () => {
                             flexShrink: 0
                         }}
                     >
-                        <span>Chat</span>
+                        <span>{t('chat')}</span>
                         <button
                             onClick={handleToggle}
                             style={{
@@ -276,7 +278,7 @@ export const Chat = () => {
                             onKeyPress={handleKeyPress}
                             onFocus={() => setIsInputFocused(true)}
                             onBlur={() => setIsInputFocused(false)}
-                            placeholder="Type message..."
+                            placeholder={t('type_message')}
                             inputMode={isInputFocused ? 'text' : 'none'}
                             style={{
                                 flex: 1,
@@ -300,7 +302,7 @@ export const Chat = () => {
                             }}
                             disabled={!message.trim()}
                         >
-                            Send
+                            {t('send')}
                         </button>
                     </form>
                 </div>
@@ -380,7 +382,7 @@ export const Chat = () => {
                 }}
                 onClick={handleToggle}
             >
-                Chat ▼
+                {t('chat')} ▼
             </div>
 
             {/* Chat Messages */}
@@ -465,7 +467,7 @@ export const Chat = () => {
                             }}
                             disabled={!message.trim()}
                         >
-                            Send
+                            {t('send')}
                         </button>
                     </form>
                 </>

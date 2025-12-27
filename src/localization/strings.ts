@@ -34,7 +34,10 @@ export type StringId =
   | 'about_paragraph_1'
   | 'about_paragraph_2'
   | 'about_paragraph_3'
-  | 'back_to_home';
+  | 'back_to_home'
+  | 'chat'
+  | 'send'
+  | 'type_message';
 
 // English strings
 export const strings_en: Record<StringId, string> = {
@@ -73,6 +76,9 @@ export const strings_en: Record<StringId, string> = {
   about_paragraph_2: 'Passing (Переводная) is always enabled. When throwing in attacks, it\'s first come first serve as to who gets the card in. And when attacking, you can put down as many cards as the defender has even if it\'s more than 6. You can imagine this gets very crazy and very fun with 8 players. It adds an element of fast decision making. Go big or go home. I call this American Fool. Hence the website name Foolish.',
   about_paragraph_3: 'What started as a simple project to play the game with friends across the world turned into a lot of learning for me. This has game AIs, optimistic animations with reverts, and workarounds for the limits of Supabase\'s free tier.',
   back_to_home: 'Back to Home',
+  chat: 'Chat',
+  send: 'Send',
+  type_message: 'Type message...',
 };
 
 // Russian strings
@@ -112,6 +118,9 @@ export const strings_ru: Record<StringId, string> = {
   about_paragraph_2: strings_en.about_paragraph_2,
   about_paragraph_3: strings_en.about_paragraph_3,
   back_to_home: 'Вернуться на главную',
+  chat: 'Чат',
+  send: 'Отправить',
+  type_message: 'Введите сообщение...',
 };
 
 // Korean strings
@@ -151,6 +160,9 @@ export const strings_ko: Record<StringId, string> = {
   about_paragraph_2: strings_en.about_paragraph_2,
   about_paragraph_3: strings_en.about_paragraph_3,
   back_to_home: '홈으로 돌아가기',
+  chat: '채팅',
+  send: '전송',
+  type_message: '메시지 입력...',
 };
 
 // Combined strings object for easy access
