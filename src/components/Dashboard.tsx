@@ -148,7 +148,7 @@ export const Dashboard = () => {
                         padding: '8px 12px',
                         fontSize: '16px',
                         textAlign: 'center',
-                        flex: 1,
+                        width: '50%',
                     }}
                 />
                 <button 
@@ -158,7 +158,7 @@ export const Dashboard = () => {
                         ...woodButtonStyle,
                         padding: '8px 16px',
                         fontSize: '14px',
-                        flex: '1',
+                        width: '50%',
                         marginLeft: '0.5rem',
                         opacity: gameId.trim() ? 1 : 0.6,
                         cursor: gameId.trim() ? 'pointer' : 'not-allowed',
