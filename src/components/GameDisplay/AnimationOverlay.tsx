@@ -409,8 +409,11 @@ export const AnimationOverlay = () => {
                 width: '100%',
                 height: '100%',
                 pointerEvents: 'none',
-                zIndex: 10000
-            }}
+                zIndex: 10000,
+                userSelect: 'none',
+                WebkitUserSelect: 'none',
+                WebkitTouchCallout: 'none',
+            } as React.CSSProperties}
         >
             {animatedCards.map(animatedCard => {
                 const { startPosition, endPosition, progress, card, id, isSanitizedRefill, cardCount, isRevert } = animatedCard;
@@ -432,11 +435,14 @@ export const AnimationOverlay = () => {
                             top: currentY - 45,  // Half card height
                             transform: `scale(${1.5 + progress * 0.3})`, // Scale up during animation
                             opacity: 1,
+                            userSelect: 'none',
+                            WebkitUserSelect: 'none',
+                            WebkitTouchCallout: 'none',
                             // CSS transitions for smooth animation
                             transition: progress === 0 
                                 ? 'none' // No transition for initial position
                                 : `left ${ANIMATION_TIME}ms cubic-bezier(0.25, 0.46, 0.45, 0.94), top ${ANIMATION_TIME}ms cubic-bezier(0.25, 0.46, 0.45, 0.94), transform ${ANIMATION_TIME}ms ease-out`
-                        }}
+                        } as React.CSSProperties}
                     >
                         {isSanitizedRefill ? (
                             <CardBack 
