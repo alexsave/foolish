@@ -67,6 +67,8 @@ export const CardFace = ({ card, onClick, style = {}, playerId, isAnimationOverl
         border: '2px solid black',
         cursor: onClick ? 'pointer' : 'default',
         userSelect: 'none',
+        WebkitUserSelect: 'none',
+        WebkitTouchCallout: 'none',
         pointerEvents: onClick ? 'auto' : 'none',
         transition: 'transform 0.2s ease-in-out, opacity 0.2s ease-in-out, box-shadow 0.2s ease-in-out',
         position: 'relative',
@@ -77,7 +79,7 @@ export const CardFace = ({ card, onClick, style = {}, playerId, isAnimationOverl
         flexDirection: 'column',
         fontSize: '20px',
         lineHeight: '15px',
-    }
+    } as React.CSSProperties
 
     // Apply animation styles based on animation state
     const animationStyle: React.CSSProperties = {};
@@ -99,7 +101,10 @@ export const CardFace = ({ card, onClick, style = {}, playerId, isAnimationOverl
         alignItems: 'center',
         justifyContent: 'center',
         textAlign: 'center',
-    };
+        userSelect: 'none',
+        WebkitUserSelect: 'none',
+        WebkitTouchCallout: 'none',
+    } as React.CSSProperties;
 
     if (isThinCard) {
         return <div
@@ -149,6 +154,8 @@ export const CardFace = ({ card, onClick, style = {}, playerId, isAnimationOverl
                 fontSize: '36px',
                 pointerEvents: 'none',
                 userSelect: 'none',
+                WebkitUserSelect: 'none',
+                WebkitTouchCallout: 'none',
                 textAlign: 'center',
                 lineHeight: '1',
             }}>
