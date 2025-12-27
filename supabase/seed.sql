@@ -23,6 +23,7 @@ DROP TABLE IF EXISTS user_elo_ratings CASCADE;
 DROP TABLE IF EXISTS bots CASCADE;
 DROP TABLE IF EXISTS game_locks CASCADE;
 DROP TABLE IF EXISTS bot_locks CASCADE;
+DROP TABLE IF EXISTS auto_discard_locks CASCADE;
 
 -- Drop custom types
 DROP TYPE IF EXISTS game_status CASCADE;
@@ -63,6 +64,8 @@ CREATE TABLE games (
   defender INTEGER,
   table_battles JSONB NOT NULL DEFAULT '[]'::jsonb, -- Battle[] - public info
   elimination_order JSONB NOT NULL DEFAULT '[]'::jsonb, -- Array of player_ids in order they were eliminated
+  good_timestamp BIGINT, -- Timestamp in milliseconds when all attacks were covered, null if not all covered
+  good_players JSONB NOT NULL DEFAULT '[]'::jsonb, -- Array of player_ids who have pressed 'good'
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW()
 );
@@ -147,6 +150,13 @@ CREATE TABLE game_locks (
   acquired_at TIMESTAMP DEFAULT NOW()
 );
 
+-- Auto discard locks table - Simple table-based locking for auto-discard monitoring
+CREATE TABLE auto_discard_locks (
+  game_id TEXT PRIMARY KEY REFERENCES games(id) ON DELETE CASCADE,
+  lock_id TEXT NOT NULL, -- Random ID to verify lock ownership
+  acquired_at TIMESTAMP DEFAULT NOW()
+);
+
 -- =============================================================================
 -- INDEXES: Create indexes for better performance
 -- =============================================================================
@@ -170,6 +180,8 @@ CREATE INDEX idx_bot_locks_game_id ON bot_locks(game_id);
 CREATE INDEX idx_bot_locks_acquired_at ON bot_locks(acquired_at);
 CREATE INDEX idx_game_locks_game_id ON game_locks(game_id);
 CREATE INDEX idx_game_locks_acquired_at ON game_locks(acquired_at);
+CREATE INDEX idx_auto_discard_locks_game_id ON auto_discard_locks(game_id);
+CREATE INDEX idx_auto_discard_locks_acquired_at ON auto_discard_locks(acquired_at);
 
 -- =============================================================================
 -- ROW LEVEL SECURITY: Enable RLS on all tables
@@ -184,6 +196,7 @@ ALTER TABLE bots ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bot_hands ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bot_locks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE game_locks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE auto_discard_locks ENABLE ROW LEVEL SECURITY;
 
 -- =============================================================================
 -- RLS POLICIES: Security-first approach
@@ -276,6 +289,10 @@ CREATE POLICY "Only service role can access bot locks" ON bot_locks
 
 -- Game locks: ONLY service role can access (edge functions only)
 CREATE POLICY "Only service role can access game locks" ON game_locks
+  FOR ALL USING ((select auth.role()) = 'service_role');
+
+-- Auto discard locks: ONLY service role can access (edge functions only)
+CREATE POLICY "Only service role can access auto discard locks" ON auto_discard_locks
   FOR ALL USING ((select auth.role()) = 'service_role');
 
 -- =============================================================================

@@ -183,6 +183,8 @@ export interface PublicGame {
     defender: number;
     table_battles: Battle[];
     elimination_order: string[]; // Array of player_ids in order they were eliminated
+    good_timestamp: number | null; // Timestamp when all attacks were covered, null if not all covered
+    good_players: string[]; // Array of player_ids who have pressed 'good'
 }
 
 // Personal game is what gets sent to clients. they do not see other players hands, only length

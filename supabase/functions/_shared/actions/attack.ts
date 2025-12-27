@@ -85,6 +85,10 @@ export async function executeAttack(game: Game, player_id: string, cards: Card[]
         });
     }
 
+    // Reset good_timestamp since we now have uncovered attacks
+    // (good_players stays - they can still say good once all attacks are covered again)
+    game.good_timestamp = null;
+
     // Capture game state after attack
     const gameStateAfterAttack = JSON.parse(JSON.stringify(game));
 

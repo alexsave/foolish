@@ -79,8 +79,9 @@ export function calculateLegalMoves(game: Game, botPlayerId: string): LegalMove[
             const attackMoves = calculateRegularAttackMoves(game, botPlayer);
             moves.push(...attackMoves);
             
-            // Can only say "good" if awaiting_attack is true and all attacks are covered
-            if (botPlayer.awaiting_attack && allAttacksCovered) {
+            // Can say "good" if all attacks are covered (regardless of whether bot has playable cards)
+            // This matches the new validation logic where any attacker can say good
+            if (allAttacksCovered && !game.good_players?.includes(botPlayerId)) {
                 moves.push({ type: 'good' });
             }
         }

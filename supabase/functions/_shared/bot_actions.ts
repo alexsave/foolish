@@ -219,46 +219,7 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
                     console.log(`[ACTION] No eligible bots could make valid moves in game ${game_id}`);
                 }
             } else {
-                // No eligible bots - check for auto-transition
-                if (game.status === GAME_STATUS.PLAYING &&
-                    game.table_battles.length > 0 && game.table_battles.every(battle => battle.defense !== null)) {
-                    console.log('Checking if game should auto-transition from WAIT_FOR_ATTACKERS');
-
-                    // Use the same logic as good.ts to check if all attackers are done
-                    const playable_players = game.players.filter(player =>
-                        player.player_id !== game.players[game.defender].player_id &&
-                        player.status !== PLAYER_STATUS.OUT &&
-                        player.hand.some(card => game.table_battles.some(battle => battle.attack.value === card.value || (battle.defense && battle.defense.value === card.value))) &&
-                        player.awaiting_attack &&
-                        !player.done_attacking_this_round);
-
-                    if (playable_players.length === 0) {
-                        console.log(`Auto-transitioning game ${game_id} from WAIT_FOR_ATTACKERS - all attackers done`);
-
-                        // Execute the same logic as good.ts
-                        // Find any non-defender player to trigger the good logic
-                        const anyNonDefender = game.players.find((p, index) => index !== game.defender);
-                        if (anyNonDefender) {
-                            const goodEvents = await handleGood(game, anyNonDefender.player_id);
-                            // Add the good events to the animation manager
-                            for (const event of goodEvents) {
-                                animationEvents.addEvent(event);
-                            }
-
-                            // Add animation event for auto-transition
-                            animationEvents.addMagicTransitionEvent('All attackers finished - automatically proceeding to next round', game);
-
-                            // Check if we should continue after auto-transition
-                            if (game.status === GAME_STATUS.PLAYING && game.players[game.first_attacker].is_ai) {
-                                shouldAutoTransition = true;
-                            }
-                        }
-                    } else {
-                        console.log(`${playable_players.length} players still have moves available, not auto-transitioning`);
-                    }
-                } else {
-                    console.log(`No eligible bots found for game ${game_id}, ending bot processing cycle`);
-                }
+                console.log(`No eligible bots found for game ${game_id}, ending bot processing cycle`);
             }
 
             console.log(`[TIMING] Lock work completed in ${Date.now() - lockWorkStartTime}ms`);

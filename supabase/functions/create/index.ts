@@ -33,7 +33,9 @@ wrap400(async ({user, user_name }: ExecutionParams) => {
         first_attacker: 0,
         defender: 0,
         table_battles: [],
-        elimination_order: []
+        elimination_order: [],
+        good_timestamp: null,
+        good_players: []
     };
 
     await supabaseClient.from('games').insert(gameData);
@@ -75,7 +77,9 @@ wrap400(async ({user, user_name }: ExecutionParams) => {
         first_attacker: 0,
         defender: 0,
         table_battles: [],
-        elimination_order: []
+        elimination_order: [],
+        good_timestamp: null,
+        good_players: []
     };
 
     // Create game creation event

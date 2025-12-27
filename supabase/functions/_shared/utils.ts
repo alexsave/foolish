@@ -154,6 +154,8 @@ const gameToPublicGame = (game: Game): PublicGame => {
         defender: game.defender,
         table_battles: game.table_battles,
         elimination_order: game.elimination_order,
+        good_timestamp: game.good_timestamp,
+        good_players: game.good_players,
     };
 };
 
@@ -523,6 +525,8 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
         defender: data.defender,
         table_battles: data.table_battles,
         elimination_order: data.elimination_order,
+        good_timestamp: data.good_timestamp || null,
+        good_players: data.good_players || [],
     }
 
     return game;
@@ -715,6 +719,8 @@ export const start_game = async (game: Game) => {
 
     game.deck = refill_deck(game.players.length);
     game.elimination_order = []; // Initialize elimination order tracking
+    game.good_timestamp = null; // Initialize good timestamp
+    game.good_players = []; // Initialize good players list
 
     const hands: Card[][] = initialize_hands(game);
     for (let i = 0; i < game.players.length; i++) {

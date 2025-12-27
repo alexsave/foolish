@@ -78,6 +78,10 @@ export async function executePickup(game: Game, player_id: string): Promise<Anim
         player.done_attacking_this_round = false;
     });
     
+    // Reset good fields when round ends
+    game.good_players = [];
+    game.good_timestamp = null;
+    
     // Check if game should end after refilling - at the very end
     await check_win(game);
     // Game continues in playing state (no status change needed unless game is over)

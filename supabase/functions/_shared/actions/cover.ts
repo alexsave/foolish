@@ -1,6 +1,7 @@
 import { Card, Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, AnimationEvent, ANIMATION_EVENT_TYPE } from '../types.ts';
 import { check_win} from '../utils.ts';
 import { canCover, get_next_player_index, validate_defender_status, verify_cards_in_players_hand, card_comp, cardDisplay, refillPlayerHandsWithEvents } from '../common_utils.ts';
+import { lockedAutoDiscardLoop } from '../auto_discard_loop.ts';
 
 // Validation function for cover moves
 export function validateCover(game: Game, player_id: string, cover_cards: Card[], attack_cards: Card[]): void {
@@ -136,6 +137,10 @@ export async function executeCover(game: Game, player_id: string, cover_cards: C
             player.done_attacking_this_round = false;
         });
         
+        // Reset good fields when round ends
+        game.good_players = [];
+        game.good_timestamp = null;
+        
         if (defender.hand.length === 0) {
             // Defender still has no cards after refilling - they win this round
             game.players[game.first_attacker].status = PLAYER_STATUS.OUT;
@@ -177,90 +182,27 @@ export async function executeCover(game: Game, player_id: string, cover_cards: C
     // Check if all attacks are covered
     const all_attacks_covered = game.table_battles.every(battle => battle.defense !== null);
     if (all_attacks_covered) {
+        // All attacks are covered - set timestamp if not already set
+        if (!game.good_timestamp) {
+            game.good_timestamp = Date.now();
+            game.good_players = []; // Reset good_players when all attacks first get covered
+            console.log(`All attacks covered at ${game.good_timestamp}. Starting 60-second countdown.`);
+            
+            // Start auto-discard monitoring loop (fire-and-forget)
+            lockedAutoDiscardLoop(game.id).catch(error => {
+                console.error(`Error starting auto-discard loop for game ${game.id}:`, error);
+            });
+        }
+
         // All attacks are covered - no status change needed, game continues in playing state
+        // Attackers must now press 'good' to proceed
 
-        // Check who can still play cards
-        const playable_values = new Set<number>();
-        for (const battle of game.table_battles) {
-            playable_values.add(battle.attack.value)
-            if (battle.defense !== null) {
-                playable_values.add(battle.defense.value);
+        // Set awaiting_attack to true for all non-defender, non-out players
+        game.players.forEach((p, index) => {
+            if (index !== game.defender && p.status === PLAYER_STATUS.IN) {
+                p.awaiting_attack = true;
             }
-        }
-
-        const playable_players = game.players.filter(player => 
-            player.player_id !== player_id && 
-            player.hand.some(card => playable_values.has(card.value)) &&
-            !player.done_attacking_this_round
-        ).map(player => player.player_id);
-
-        if (playable_players.length === 0) {
-            // This whole part used to be async but it's too fucking complicated so here we are
-            // No one can play, end the round immediately (synchronously like good.ts)
-            
-            // Add animation event for magic transition
-            const gameStateForTransition = JSON.parse(JSON.stringify(game));
-            events.push({
-                type: ANIMATION_EVENT_TYPE.MAGIC_TRANSITION,
-                message: `All attacks covered and no more cards can be played - proceeding to next round`,
-                game_state: gameStateForTransition
-            });
-            
-            // Count cards being discarded before clearing table_battles
-            const discardedCards = game.table_battles.length * 2; // Each battle has attack + defense
-            game.discard_pile_length += discardedCards;
-            
-            // Add discard event
-            const allTableCards = game.table_battles.flatMap(battle => 
-                battle.defense ? [battle.attack, battle.defense] : [battle.attack]
-            );
-            
-            // Clear table battles
-            game.table_battles = [];
-            
-            if (allTableCards.length > 0) {
-                const gameStateAfterDiscard = JSON.parse(JSON.stringify(game));
-                events.push({
-                    type: ANIMATION_EVENT_TYPE.CARDS_TO_TRASH,
-                    cards: allTableCards,
-                    from_location: 'table',
-                    to_location: 'discard',
-                    message: `${allTableCards.length} cards discarded`,
-                    game_state: gameStateAfterDiscard
-                });
-            }
-            
-            // Refill player hands and capture states for each refill event
-            const { refillEvents } = refillPlayerHandsWithEvents(game);
-            for (const refillEvent of refillEvents) {
-                // The refillPlayerHandsWithEvents already modified the game state
-                const gameStateAfterRefill = JSON.parse(JSON.stringify(game));
-                events.push({
-                    ...refillEvent,
-                    game_state: gameStateAfterRefill
-                });
-            }
-            
-            game.first_attacker = game.defender;
-            game.defender = get_next_player_index(game, game.first_attacker);
-            
-            // Reset done_attacking_this_round flag for all players when attacking shifts
-            game.players.forEach(player => {
-                player.done_attacking_this_round = false;
-            });
-            
-            // Check if game should end after refilling - at the very end
-            await check_win(game);
-            
-            // Game continues in playing state (no status change needed unless game is over)
-        } else {
-            // Someone can play cards
-            game.players.forEach(player => {
-                if (playable_players.includes(player.player_id)) {
-                    player.awaiting_attack = true;
-                }
-            });
-        }
+        });
     }
     
     return events;

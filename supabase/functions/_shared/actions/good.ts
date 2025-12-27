@@ -2,6 +2,7 @@ import { Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, AnimationEvent, ANIMAT
 import { refillPlayerHandsWithEvents } from '../common_utils.ts';
 import { get_next_player_index } from '../common_utils.ts';
 import { check_win } from '../utils.ts';
+import { lockedAutoDiscardLoop } from '../auto_discard_loop.ts';
 
 // Validation function for good moves
 export function validateGood(game: Game, player_id: string): void {
@@ -25,9 +26,9 @@ export function validateGood(game: Game, player_id: string): void {
         throw new Error(`Cannot say good - not all attacks are covered`);
     }
 
-    // Must be awaiting attack to say good
-    if (!player.awaiting_attack) {
-        throw new Error(`Player is not awaiting attack`);
+    // Player must not have already said good
+    if (game.good_players && game.good_players.includes(player_id)) {
+        throw new Error(`Player has already said good`);
     }
 }
 
@@ -42,29 +43,65 @@ export async function executeGood(game: Game, player_id: string): Promise<Animat
     
     const player: PrivatePlayer = game.players.find(player => player.player_id === player_id)!;
 
-    // set them to done attacking
+    // Initialize good_players array if it doesn't exist
+    if (!game.good_players) {
+        game.good_players = [];
+    }
+
+    // Add this player to the list of players who have said good
+    if (!game.good_players.includes(player_id)) {
+        game.good_players.push(player_id);
+    }
+
+    // Set them to done attacking
     player.awaiting_attack = false;
 
-    // check if all players are done attacking
-    const playable_players = game.players.filter(player => 
-        player.player_id !== game.players[game.defender].player_id && 
-        player.hand.some(card => game.table_battles.some(battle => battle.attack.value === card.value || (battle.defense && battle.defense.value === card.value))) &&
-        player.awaiting_attack &&
-        !player.done_attacking_this_round);
+    // Get all attackers (non-defender, non-out players)
+    const allAttackers = game.players.filter((p, index) => 
+        index !== game.defender && 
+        p.status === PLAYER_STATUS.IN
+    );
 
-    if (playable_players.length !== 0) {
+    // Check if all attackers have pressed good
+    const allAttackersGood = allAttackers.every(attacker => 
+        game.good_players.includes(attacker.player_id)
+    );
+
+    // Check if 1 minute has passed since good_timestamp was set
+    const oneMinutePassed = game.good_timestamp !== null && game.good_timestamp !== undefined
+        ? (Date.now() - game.good_timestamp >= 60000) 
+        : false;
+
+    // Only proceed to next round if all attackers have pressed good OR 1 minute has passed
+    if (!allAttackersGood && !oneMinutePassed) {
+        console.log(`Good pressed by ${player.name}. Waiting for other attackers or timeout. ` +
+            `${game.good_players.length}/${allAttackers.length} attackers ready. ` +
+            `Time remaining: ${game.good_timestamp ? Math.max(0, 60000 - (Date.now() - game.good_timestamp)) : 60000}ms`);
+        
+        // Trigger auto-discard loop to monitor timeout (fire-and-forget)
+        // Only call if we're not advancing yet - performance optimization
+        lockedAutoDiscardLoop(game.id).catch(error => {
+            console.error(`Error starting auto-discard loop for game ${game.id}:`, error);
+        });
+        
         return events;
     }
+
+    // All attackers said good OR timeout reached - proceed to next round
+    const transitionReason = allAttackersGood 
+        ? `All ${allAttackers.length} attackers said good`
+        : `1 minute timeout reached (${game.good_players.length}/${allAttackers.length} attackers ready)`;
+
+    console.log(`${transitionReason} - proceeding to next round`);
 
     // Add animation event for magic transition
     const gameStateForTransition = JSON.parse(JSON.stringify(game));
     events.push({
         type: ANIMATION_EVENT_TYPE.MAGIC_TRANSITION,
-        message: `${player.name} said good - proceeding to next round`,
+        message: `${transitionReason} - proceeding to next round`,
         game_state: gameStateForTransition
     });
 
-    // we are done attacking, shift positions
     // Count cards being discarded before clearing table_battles
     const discardedCards = game.table_battles.length * 2; // Each battle has attack + defense
     game.discard_pile_length += discardedCards;
@@ -108,6 +145,10 @@ export async function executeGood(game: Game, player_id: string): Promise<Animat
     game.players.forEach(player => {
         player.done_attacking_this_round = false;
     });
+    
+    // Reset good_players and good_timestamp for the next round
+    game.good_players = [];
+    game.good_timestamp = null;
     
     // Check if game should end after refilling - at the very end
     await check_win(game);

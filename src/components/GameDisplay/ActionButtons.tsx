@@ -95,13 +95,9 @@ export const ActionButtons = () => {
     // Calculate values needed for the effect (safe even if game is null)
     const self_index = game?.players.findIndex((player) => player.player_id === user_id) ?? -1;
     const isDefending = game && self_index !== -1 ? game.defender === self_index : false;
-    const canPlay = game?.self?.hand.some(card => 
-        game?.table_battles.some(battle => battle.attack.value === card.value || battle.defense?.value === card.value)
-    ) ?? false;
     const shouldShowGoodButton = !isDefending && 
         (game?.table_battles.length ?? 0) > 0 && 
-        (game?.table_battles.every(battle => battle.defense) ?? false) && 
-        canPlay;
+        (game?.table_battles.every(battle => battle.defense) ?? false);
 
     // Reset the clicked flag only when transitioning from NOT possible to possible
     useEffect(() => {

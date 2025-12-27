@@ -70,6 +70,10 @@ export async function executePass(game: Game, player_id: string, cards: Card[]):
     }
     defender.hand = defender.hand.filter(card => !cards.some(mCard => card_comp(card, mCard)));
 
+    // Reset good_timestamp since we now have uncovered attacks
+    // (good_players stays - they can still say good once all attacks are covered again)
+    game.good_timestamp = null;
+
     // Capture game state after pass
     const gameStateAfterPass = JSON.parse(JSON.stringify(game));
 
