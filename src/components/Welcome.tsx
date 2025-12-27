@@ -130,7 +130,7 @@ export const Welcome = () => {
                         required
                         style={{
                             padding: '8px 12px',
-                            fontSize: '14px',
+                            fontSize: '16px',
                             border: '2px solid #5D3A1A',
                             borderRadius: '0',
                             minWidth: '250px'
@@ -148,7 +148,7 @@ export const Welcome = () => {
                         required
                         style={{
                             padding: '8px 12px',
-                            fontSize: '14px',
+                            fontSize: '16px',
                             border: '2px solid #5D3A1A',
                             borderRadius: '0',
                             minWidth: '250px'
