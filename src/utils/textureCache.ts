@@ -8,7 +8,7 @@ const STORE_NAME = 'textures';
 // Version keys - increment these to invalidate old cached textures
 const TEXTURE_VERSIONS = {
   fern: 'v1',
-  wood: 'v1',
+  wood: 'v2',
   wool: 'v1',
 };
 

@@ -11,12 +11,26 @@ interface WoodTextureProps {
 let woodTextureBlobUrl: string | null = null;
 let woodTexturePromise: Promise<string> | null = null;
 
+// Generate random offsets once per page load for unique patterns per user
+let globalRandomOffsetX: number | null = null;
+let globalRandomOffsetY: number | null = null;
+
+const getRandomOffsets = () => {
+  if (globalRandomOffsetX === null || globalRandomOffsetY === null) {
+    globalRandomOffsetX = Math.random() * 1000 - 500;
+    globalRandomOffsetY = Math.random() * 1000 - 500;
+  }
+  return { offsetX: globalRandomOffsetX, offsetY: globalRandomOffsetY };
+};
+
 // Generate wood pixel data in JavaScript (like fernFractal generates points/colors)
 async function generateWoodPixelData(width: number, height: number): Promise<{
   positions: Float32Array;
   colors: Float32Array;
   pointCount: number;
 }> {
+  const { offsetX, offsetY } = getRandomOffsets();
+  
   const C = Math.cos;
   const BASE_R = 70 / 255;
   const BASE_G = 14 / 255;
@@ -34,11 +48,11 @@ async function generateWoodPixelData(width: number, height: number): Promise<{
   
   const I_factors = new Float32Array(height);
   for (let I = 0; I < height; I++) {
-    I_factors[I] = I * 0.001;
+    I_factors[I] = (I + offsetY) * 0.001;
   }
   
   const D = (T: number) => {
-    const xPosFloat = (T * 200) % width;
+    const xPosFloat = ((T + offsetX / 200) * 200) % width;
     const xPos = xPosFloat | 0;
     const RECT_WIDTH = 40;
     const xEnd = Math.min(xPos + RECT_WIDTH, width);
@@ -47,10 +61,10 @@ async function generateWoodPixelData(width: number, height: number): Promise<{
     for (let I = height - 1; I >= 0; I--) {
       const I_factor = I_factors[I];
       
-      let b = T / 24;
+      let b = (T + offsetX * 0.01) / 24;
       for (let k = 24; k >= 0; k--) {
         const b_sq_half = (b * b) * 0.5;
-        b = C(I_factor + C(b_sq_half) * b + 4) * b - 2.8;
+        b = C(I_factor + C(b_sq_half) * b + 4 + offsetY * 0.001) * b - 2.8;
         
         if (b > 0) {
           const red = (b * 120) / 255;
@@ -225,6 +239,8 @@ const generateWoodTextureFallback = async (width: number = 1920, height: number 
     return '';
   }
 
+  const { offsetX, offsetY } = getRandomOffsets();
+
   const imageData = ctx.createImageData(width, height);
   const data = new Uint8ClampedArray(imageData.data.buffer);
   
@@ -243,11 +259,11 @@ const generateWoodTextureFallback = async (width: number = 1920, height: number 
   
   const I_factors = new Float32Array(height);
   for (let I = 0; I < height; I++) {
-    I_factors[I] = I * 0.001;
+    I_factors[I] = (I + offsetY) * 0.001;
   }
   
   const D = (T: number) => {
-    const xPosFloat = (T * 200) % width;
+    const xPosFloat = ((T + offsetX / 200) * 200) % width;
     const xPos = xPosFloat | 0;
     const RECT_WIDTH = 40;
     const xEnd = Math.min(xPos + RECT_WIDTH, width);
@@ -257,10 +273,10 @@ const generateWoodTextureFallback = async (width: number = 1920, height: number 
       const I_factor = I_factors[I];
       const rowOffset = I * width;
       
-      let b = T / 24;
+      let b = (T + offsetX * 0.01) / 24;
       for (let k = 24; k >= 0; k--) {
         const b_sq_half = (b * b) * 0.5;
-        b = C(I_factor+C(b_sq_half)*b + 4) * b - 2.8;
+        b = C(I_factor+C(b_sq_half)*b + 4 + offsetY * 0.001) * b - 2.8;
         
         if (b > 0) {
           const red = (b * 120) | 0;
