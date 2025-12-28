@@ -14,7 +14,7 @@ import {
     game_done,
     other_player,
 } from './common_utils.ts';
-import { Card, Game, GAME_STATUS, PLAYER_STATUS, PersonalGame, SERVER_EVENT_TYPE, PRIVATE_EVENT_TYPE, PrivatePlayer, PublicGame, PublicPlayer, PlayerHand, UserEloRating, BotHand, AnimationEvent, PublicAnimationEvent, PersonalAnimationEvent, ANIMATION_EVENT_TYPE } from './types.ts';
+import { Card, Game, GAME_STATUS, PLAYER_STATUS, PersonalGame, SERVER_EVENT_TYPE, PRIVATE_EVENT_TYPE, PrivatePlayer, PublicGame, PublicPlayer, PlayerHand, UserEloRating, BotHand, AnimationEvent, PublicAnimationEvent, PersonalAnimationEvent, ANIMATION_EVENT_TYPE, GameLog, LOG_TYPE } from './types.ts';
 import { ACE_VALUE, CARDS_PER_PLAYER } from './constants.ts';
 import { createClient, User } from 'jsr:@supabase/supabase-js';
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
@@ -22,6 +22,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { getAuthenticatedUser } from './auth.ts';
 import { lockedBotLoop } from './bot_actions.ts';
 import { AnimationEventManager } from './animation_event_manager.ts';
+import { loadCurrentSessionLogs, saveGameLogs, cleanupOldGameLogs, addLog } from './log_utils.ts';
 
 const supabaseClient = createClient(
     Deno.env.get('SUPABASE_URL') || '',
@@ -343,7 +344,7 @@ export const wrap400 = (execute: (params: ExecutionParams) => Promise<{ game: Ga
         try {
             // Handle CORS
             const corsStart = Date.now();
-            const corsResponse = handleCors(req, reqId);
+            const corsResponse = handleCors(req);
             console.log(`[${reqId}][WRAP400] CORS check took ${Date.now() - corsStart}ms`);
             if (corsResponse) {
                 console.log(`[${reqId}][WRAP400] Returning CORS response (total: ${Date.now() - requestStartTime}ms)`);
@@ -510,6 +511,9 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
         } as PrivatePlayer;
     });
 
+    // Load logs for the current game session
+    const logs = await loadCurrentSessionLogs(supabaseClient, game_id);
+
     const game: Game = {
         id: data.id,
         name: data.name,
@@ -527,6 +531,7 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
         elimination_order: data.elimination_order,
         good_timestamp: data.good_timestamp || null,
         good_players: data.good_players || [],
+        logs: logs, // Loaded from database
     }
 
     return game;
@@ -615,6 +620,15 @@ export const saveCompleteGame = async (game: Game): Promise<any> => {
         await supabaseClient
             .from('bot_hands')
             .upsert(botHandUpdates);
+    }
+
+    // Save pending logs atomically with game state
+    if (game.logs.length > 0) {
+        await saveGameLogs(supabaseClient, game.id, game.logs);
+        // Note: We don't clear game.logs here because:
+        // 1. The game object is returned and may be used after saving
+        // 2. Logs are valuable state that should remain part of the game object
+        // 3. saveCompleteGame is only called once per operation in executeWithGameLock anyway
     }
 
     // dumb? maybe
@@ -711,6 +725,15 @@ export const start_game = async (game: Game) => {
         return game;
     }
 
+    // Log game start - marks the beginning of this play session
+    addLog(game, {
+        game_id: game.id,
+        log_type: LOG_TYPE.GAME_START,
+        player_id: null, // System event
+        card_pairs: [],
+        defender_index: null
+    });
+
     // This is the game entry
     game.status = 'playing';
     game.players.forEach(player => {
@@ -779,6 +802,12 @@ export const check_win = async (game: Game) => {
 
         // Update ELO ratings before changing game state
         await updateEloRatings(game);
+
+        // Clean up old game logs (older than 2 weeks, excluding current session)
+        // Fire-and-forget to avoid blocking game completion
+        cleanupOldGameLogs(supabaseClient, game.id).catch(error => {
+            console.error(`Error cleaning up old logs for game ${game.id}:`, error);
+        });
 
         // Set game status to GAME_OVER to show win screen
         game.status = GAME_STATUS.GAME_OVER;

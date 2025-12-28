@@ -1,7 +1,8 @@
-import { Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, AnimationEvent, ANIMATION_EVENT_TYPE } from '../types.ts';
+import { Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, AnimationEvent, ANIMATION_EVENT_TYPE, LOG_TYPE, Card } from '../types.ts';
 import { refillPlayerHandsWithEvents } from '../common_utils.ts';
 import { get_next_player_index } from '../common_utils.ts';
 import { check_win } from '../utils.ts';
+import { addLog } from '../log_utils.ts';
 import { lockedAutoDiscardLoop } from '../auto_discard_loop.ts';
 
 // Shared logic for discarding cards and transitioning to next round
@@ -36,6 +37,15 @@ export async function executeRoundTransition(game: Game, reason: string): Promis
     // Clear table battles
     game.table_battles = [];
     
+    // Log discard event
+    addLog(game, {
+        game_id: game.id,
+        log_type: LOG_TYPE.DISCARD,
+        player_id: null, // System event
+        card_pairs: allTableCards.map(card => ({ primary: card, target: null })),
+        defender_index: null
+    });
+    
     if (allTableCards.length > 0) {
         const gameStateAfterDiscard = JSON.parse(JSON.stringify(game));
         const discardEvent: AnimationEvent = {
@@ -50,7 +60,7 @@ export async function executeRoundTransition(game: Game, reason: string): Promis
     }
     
     // Refill player hands and capture states for each refill event
-    const { refillEvents } = refillPlayerHandsWithEvents(game);
+    const { refillEvents, drawLogs } = refillPlayerHandsWithEvents(game);
     for (const refillEvent of refillEvents) {
         // The refillPlayerHandsWithEvents already modified the game state
         const gameStateAfterRefill = JSON.parse(JSON.stringify(game));
@@ -60,8 +70,28 @@ export async function executeRoundTransition(game: Game, reason: string): Promis
         });
     }
     
+    // Add draw logs to game logs
+    for (const drawLog of drawLogs) {
+        addLog(game, {
+            game_id: game.id,
+            log_type: LOG_TYPE.DRAW,
+            player_id: drawLog.player_id,
+            card_pairs: drawLog.cards.map((card: Card) => ({ primary: card, target: null })),
+            defender_index: null
+        });
+    }
+    
     game.first_attacker = game.defender;
     game.defender = get_next_player_index(game, game.first_attacker);
+    
+    // Log defender change
+    addLog(game, {
+        game_id: game.id,
+        log_type: LOG_TYPE.DEFENDER_CHANGE,
+        player_id: null,
+        card_pairs: [],
+        defender_index: game.defender
+    });
     
     // Reset done_attacking_this_round flag for all players when attacking shifts
     game.players.forEach(player => {
@@ -126,6 +156,15 @@ export async function executeGood(game: Game, player_id: string): Promise<Animat
     // Add this player to the list of players who have said good
     if (!game.good_players.includes(player_id)) {
         game.good_players.push(player_id);
+        
+        // Log good event
+        addLog(game, {
+            game_id: game.id,
+            log_type: LOG_TYPE.GOOD,
+            player_id: player_id,
+            card_pairs: [],
+            defender_index: null
+        });
     }
 
     // Set them to done attacking

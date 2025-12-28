@@ -14,6 +14,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 DROP FUNCTION IF EXISTS update_updated_at_column() CASCADE;
 
 -- Drop tables in reverse dependency order (this will automatically drop all policies and triggers)
+DROP TABLE IF EXISTS game_logs CASCADE;
 DROP TABLE IF EXISTS chat_messages CASCADE;
 DROP TABLE IF EXISTS bot_hands CASCADE;
 DROP TABLE IF EXISTS player_hands CASCADE;
@@ -26,6 +27,7 @@ DROP TABLE IF EXISTS bot_locks CASCADE;
 DROP TABLE IF EXISTS auto_discard_locks CASCADE;
 
 -- Drop custom types
+DROP TYPE IF EXISTS log_type CASCADE;
 DROP TYPE IF EXISTS game_status CASCADE;
 DROP TYPE IF EXISTS player_status CASCADE;
 
@@ -44,6 +46,19 @@ CREATE TYPE game_status AS ENUM (
   'waiting',
   'playing',
   'game_over'
+);
+
+CREATE TYPE log_type AS ENUM (
+  'game_start',
+  'attack',
+  'cover',
+  'pass',
+  'pickup',
+  'good',
+  'discard',
+  'defender_change',
+  'player_out',
+  'draw'
 );
 
 -- =============================================================================
@@ -157,6 +172,18 @@ CREATE TABLE auto_discard_locks (
   acquired_at TIMESTAMP DEFAULT NOW()
 );
 
+-- Game logs table - Log all game actions for bot memory and game history
+-- This allows bots to track which cards have been played and infer information about opponent hands
+CREATE TABLE game_logs (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  game_id TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+  log_type log_type NOT NULL,
+  player_id TEXT, -- Player who performed the action (null for system events like discard/defender_change)
+  card_pairs JSONB NOT NULL DEFAULT '[]'::jsonb, -- Array of {primary: Card, target?: Card} - target only used for COVER
+  defender_index INTEGER, -- For defender_change events, the new defender index
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
 -- =============================================================================
 -- INDEXES: Create indexes for better performance
 -- =============================================================================
@@ -182,6 +209,10 @@ CREATE INDEX idx_game_locks_game_id ON game_locks(game_id);
 CREATE INDEX idx_game_locks_acquired_at ON game_locks(acquired_at);
 CREATE INDEX idx_auto_discard_locks_game_id ON auto_discard_locks(game_id);
 CREATE INDEX idx_auto_discard_locks_acquired_at ON auto_discard_locks(acquired_at);
+CREATE INDEX idx_game_logs_game_id ON game_logs(game_id);
+CREATE INDEX idx_game_logs_log_type ON game_logs(log_type);
+CREATE INDEX idx_game_logs_player_id ON game_logs(player_id);
+CREATE INDEX idx_game_logs_created_at ON game_logs(created_at);
 
 -- =============================================================================
 -- ROW LEVEL SECURITY: Enable RLS on all tables
@@ -197,6 +228,7 @@ ALTER TABLE bot_hands ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bot_locks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE game_locks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auto_discard_locks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE game_logs ENABLE ROW LEVEL SECURITY;
 
 -- =============================================================================
 -- RLS POLICIES: Security-first approach
@@ -294,6 +326,14 @@ CREATE POLICY "Only service role can access game locks" ON game_locks
 -- Auto discard locks: ONLY service role can access (edge functions only)
 CREATE POLICY "Only service role can access auto discard locks" ON auto_discard_locks
   FOR ALL USING ((select auth.role()) = 'service_role');
+
+-- Game logs: ONLY service role can write, but can be read for analysis
+-- Bots and advanced strategies can read these logs to make better decisions
+CREATE POLICY "Service role can insert logs" ON game_logs
+  FOR INSERT WITH CHECK ((select auth.role()) = 'service_role');
+
+CREATE POLICY "Service role can read logs" ON game_logs
+  FOR SELECT USING ((select auth.role()) = 'service_role');
 
 -- =============================================================================
 -- FUNCTIONS: Helper functions and triggers

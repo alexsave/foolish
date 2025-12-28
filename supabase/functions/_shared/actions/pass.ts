@@ -1,5 +1,6 @@
-import { Card, Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, AnimationEvent, ANIMATION_EVENT_TYPE } from '../types.ts';
+import { Card, Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, AnimationEvent, ANIMATION_EVENT_TYPE, LOG_TYPE } from '../types.ts';
 import { check_win } from '../utils.ts';
+import { addLog } from '../log_utils.ts';
 import { get_next_player_index, validate_defender_status, verify_cards_in_players_hand, no_cards_left, card_comp, cardDisplay } from '../common_utils.ts';
 
 // Validation function for pass moves
@@ -70,6 +71,16 @@ export async function executePass(game: Game, player_id: string, cards: Card[]):
     }
     defender.hand = defender.hand.filter(card => !cards.some(mCard => card_comp(card, mCard)));
 
+
+    // Log the pass event
+    addLog(game, {
+        game_id: game.id,
+        log_type: LOG_TYPE.PASS,
+        player_id: player_id,
+        card_pairs: cards.map(card => ({ primary: card, target: null })),
+        defender_index: null
+    });
+
     // Reset good_timestamp since we now have uncovered attacks
     // (good_players stays - they can still say good once all attacks are covered again)
     game.good_timestamp = null;
@@ -96,6 +107,15 @@ export async function executePass(game: Game, player_id: string, cards: Card[]):
         defender.awaiting_attack = false;
         game.elimination_order.push(defender.player_id);
         
+        // Log player going out
+        addLog(game, {
+            game_id: game.id,
+            log_type: LOG_TYPE.PLAYER_OUT,
+            player_id: player_id,
+            card_pairs: [],
+            defender_index: null
+        });
+        
         // Capture game state after player goes out
         const gameStateAfterOut = JSON.parse(JSON.stringify(game));
         
@@ -109,8 +129,26 @@ export async function executePass(game: Game, player_id: string, cards: Card[]):
         
         await check_win(game);
         game.defender = next_player_index;
+        
+        // Log defender change
+        addLog(game, {
+            game_id: game.id,
+            log_type: LOG_TYPE.DEFENDER_CHANGE,
+            player_id: null,
+            card_pairs: [],
+            defender_index: game.defender
+        });
     } else {
         game.defender = next_player_index;
+        
+        // Log defender change
+        addLog(game, {
+            game_id: game.id,
+            log_type: LOG_TYPE.DEFENDER_CHANGE,
+            player_id: null,
+            card_pairs: [],
+            defender_index: game.defender
+        });
     }
 
     const uncovered_cards = game.table_battles.filter(battle => battle.defense === null).length;

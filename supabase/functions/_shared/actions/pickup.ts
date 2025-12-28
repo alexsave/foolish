@@ -1,6 +1,7 @@
-import { Game, PrivatePlayer, GAME_STATUS, AnimationEvent, ANIMATION_EVENT_TYPE } from '../types.ts';
+import { Game, PrivatePlayer, GAME_STATUS, AnimationEvent, ANIMATION_EVENT_TYPE, LOG_TYPE, Card } from '../types.ts';
 import { get_next_player_index, validate_defender_status, refillPlayerHandsWithEvents } from '../common_utils.ts';
 import { check_win } from '../utils.ts';
+import { addLog } from '../log_utils.ts';
 
 // Validation function for pickup moves
 export function validatePickup(game: Game, player_id: string): void {
@@ -45,6 +46,15 @@ export async function executePickup(game: Game, player_id: string): Promise<Anim
     // clear table
     game.table_battles = [];
 
+    // Log the pickup event (this is critical for bots to know which cards a player has)
+    addLog(game, {
+        game_id: game.id,
+        log_type: LOG_TYPE.PICKUP,
+        player_id: player_id,
+        card_pairs: allTableCards.map(card => ({ primary: card, target: null })),
+        defender_index: null
+    });
+
     // Capture game state after pickup
     const gameStateAfterPickup = JSON.parse(JSON.stringify(game));
 
@@ -60,7 +70,7 @@ export async function executePickup(game: Game, player_id: string): Promise<Anim
     });
 
     // Draw cards and capture states for each refill event
-    const { refillEvents } = refillPlayerHandsWithEvents(game);
+    const { refillEvents, drawLogs } = refillPlayerHandsWithEvents(game);
     for (const refillEvent of refillEvents) {
         // The refillPlayerHandsWithEvents already modified the game state
         const gameStateAfterRefill = JSON.parse(JSON.stringify(game));
@@ -70,8 +80,28 @@ export async function executePickup(game: Game, player_id: string): Promise<Anim
         });
     }
     
+    // Add draw logs to game logs
+    for (const drawLog of drawLogs) {
+        addLog(game, {
+            game_id: game.id,
+            log_type: LOG_TYPE.DRAW,
+            player_id: drawLog.player_id,
+            card_pairs: drawLog.cards.map((card: Card) => ({ primary: card, target: null })),
+            defender_index: null
+        });
+    }
+    
     game.first_attacker = get_next_player_index(game, game.defender);
     game.defender = get_next_player_index(game, game.first_attacker);
+    
+    // Log defender change
+    addLog(game, {
+        game_id: game.id,
+        log_type: LOG_TYPE.DEFENDER_CHANGE,
+        player_id: null,
+        card_pairs: [],
+        defender_index: game.defender
+    });
     
     // Reset done_attacking_this_round flag for all players when attacking shifts
     game.players.forEach(player => {

@@ -1,5 +1,6 @@
-import { Card, Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, AnimationEvent, ANIMATION_EVENT_TYPE } from '../types.ts';
+import { Card, Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, AnimationEvent, ANIMATION_EVENT_TYPE, LOG_TYPE } from '../types.ts';
 import { check_win } from '../utils.ts';
+import { addLog } from '../log_utils.ts';
 import { validate_defender_status, verify_cards_in_players_hand, cardDisplay, card_comp } from '../common_utils.ts';
 
 // Validation function for attack moves
@@ -85,6 +86,15 @@ export async function executeAttack(game: Game, player_id: string, cards: Card[]
         });
     }
 
+    // Log the attack event
+    addLog(game, {
+        game_id: game.id,
+        log_type: LOG_TYPE.ATTACK,
+        player_id: player_id,
+        card_pairs: cards.map(card => ({ primary: card, target: null })),
+        defender_index: null
+    });
+
     // Reset good_timestamp since we now have uncovered attacks
     // (good_players stays - they can still say good once all attacks are covered again)
     game.good_timestamp = null;
@@ -109,6 +119,15 @@ export async function executeAttack(game: Game, player_id: string, cards: Card[]
         attacker.status = PLAYER_STATUS.OUT;
         attacker.awaiting_attack = false;
         game.elimination_order.push(attacker.player_id);
+        
+        // Log player going out
+        addLog(game, {
+            game_id: game.id,
+            log_type: LOG_TYPE.PLAYER_OUT,
+            player_id: player_id,
+            card_pairs: [],
+            defender_index: null
+        });
         
         // Capture game state after player goes out
         const gameStateAfterOut = JSON.parse(JSON.stringify(game));

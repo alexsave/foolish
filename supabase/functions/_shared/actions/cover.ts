@@ -1,5 +1,6 @@
-import { Card, Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, AnimationEvent, ANIMATION_EVENT_TYPE } from '../types.ts';
-import { check_win} from '../utils.ts';
+import { Card, Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, AnimationEvent, ANIMATION_EVENT_TYPE, LOG_TYPE } from '../types.ts';
+import { check_win } from '../utils.ts';
+import { addLog } from '../log_utils.ts';
 import { canCover, get_next_player_index, validate_defender_status, verify_cards_in_players_hand, card_comp, cardDisplay, refillPlayerHandsWithEvents } from '../common_utils.ts';
 import { lockedAutoDiscardLoop } from '../auto_discard_loop.ts';
 
@@ -79,6 +80,15 @@ export async function executeCover(game: Game, player_id: string, cover_cards: C
         // Remove the card from the hand immediately
         defender.hand = defender.hand.filter(card => !card_comp(card, cover_card));
         
+        // Log the cover event with primary (cover card) and target (attack card)
+        addLog(game, {
+            game_id: game.id,
+            log_type: LOG_TYPE.COVER,
+            player_id: player_id,
+            card_pairs: [{ primary: cover_card, target: attack_card }],
+            defender_index: null
+        });
+        
         // Capture game state after this specific cover
         const gameStateAfterCover = JSON.parse(JSON.stringify(game));
         
@@ -111,6 +121,15 @@ export async function executeCover(game: Game, player_id: string, cover_cards: C
         game.table_battles = [];
         const gameStateAfterDiscard = JSON.parse(JSON.stringify(game));
         
+        // Log discard event
+        addLog(game, {
+            game_id: game.id,
+            log_type: LOG_TYPE.DISCARD,
+            player_id: null, // System event
+            card_pairs: allTableCards.map(card => ({ primary: card, target: null })),
+            defender_index: null
+        });
+        
         events.push({
             type: ANIMATION_EVENT_TYPE.DISCARD,
             cards: allTableCards,
@@ -121,13 +140,24 @@ export async function executeCover(game: Game, player_id: string, cover_cards: C
         });
         
         // Refill hands and capture states for each refill event
-        const { refillEvents } = refillPlayerHandsWithEvents(game);
+        const { refillEvents, drawLogs } = refillPlayerHandsWithEvents(game);
         for (const refillEvent of refillEvents) {
             // Apply the refill to get the intermediate state
             const gameStateAfterRefill = JSON.parse(JSON.stringify(game));
             events.push({
                 ...refillEvent,
                 game_state: gameStateAfterRefill
+            });
+        }
+        
+        // Add draw logs to game logs
+        for (const drawLog of drawLogs) {
+            addLog(game, {
+                game_id: game.id,
+                log_type: LOG_TYPE.DRAW,
+                player_id: drawLog.player_id,
+                card_pairs: drawLog.cards.map((card: Card) => ({ primary: card, target: null })),
+                defender_index: null
             });
         }
         
@@ -147,6 +177,15 @@ export async function executeCover(game: Game, player_id: string, cover_cards: C
             game.players[game.first_attacker].awaiting_attack = false;
             game.elimination_order.push(game.players[game.first_attacker].player_id);
             
+            // Log player going out
+            addLog(game, {
+                game_id: game.id,
+                log_type: LOG_TYPE.PLAYER_OUT,
+                player_id: game.players[game.first_attacker].player_id,
+                card_pairs: [],
+                defender_index: null
+            });
+            
             // Capture state after player goes out
             const gameStateAfterOut = JSON.parse(JSON.stringify(game));
             
@@ -163,6 +202,15 @@ export async function executeCover(game: Game, player_id: string, cover_cards: C
         }
         
         game.defender = get_next_player_index(game, game.first_attacker);
+        
+        // Log defender change
+        addLog(game, {
+            game_id: game.id,
+            log_type: LOG_TYPE.DEFENDER_CHANGE,
+            player_id: null, // System event
+            card_pairs: [],
+            defender_index: game.defender
+        });
         
         // Capture state after defender move
         const gameStateAfterDefenderMove = JSON.parse(JSON.stringify(game));

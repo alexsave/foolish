@@ -226,8 +226,9 @@ export const calculateGameRankings = (game: Game): string[] => {
 // Pure refill logic without side effects (no broadcasting, no async check_win)
 
 // Refill logic that creates animation events for cards drawn
-export const refillPlayerHandsWithEvents = (game: Game): { refillEvents: any[] } => {
+export const refillPlayerHandsWithEvents = (game: Game): { refillEvents: any[], drawLogs: any[] } => {
     const refillEvents: any[] = [];
+    const drawLogs: any[] = []; // Track draw events for game logs
 
     // If no cards left in deck, still need to mark players with 0 cards as OUT
     if (no_cards_left(game)) {
@@ -240,7 +241,7 @@ export const refillPlayerHandsWithEvents = (game: Game): { refillEvents: any[] }
                 game.elimination_order.push(player.player_id);
             }
         }
-        return { refillEvents };
+        return { refillEvents, drawLogs };
     }
 
     // If the deck was already empty, defending should've gotten them a win
@@ -249,25 +250,37 @@ export const refillPlayerHandsWithEvents = (game: Game): { refillEvents: any[] }
     if (defenseHand.length === 0) {
         // they draw first
         const defenderInitialHandSize = defenseHand.length;
+        const drawnCards: Card[] = [];
+        
         while (defenseHand.length < CARDS_PER_PLAYER) {
+            const isFlippedNext = game.deck.length === 0 && game.flipped !== null;
             const c = draw(game);
             if (c === null) {
                 break;
             }
             defenseHand.push(c);
+            
+            // Track drawn cards: known if it was the flipped card, unknown otherwise
+            drawnCards.push(isFlippedNext ? c : { suit: -1, value: -1 });
         }
         
         // Add refill event for defender if they drew cards
         const defenderCardsDrawn = defenseHand.length - defenderInitialHandSize;
         if (defenderCardsDrawn > 0) {
-            const cardsDrawn = defenseHand.slice(-defenderCardsDrawn);
+            const actualCardsDrawn = defenseHand.slice(-defenderCardsDrawn);
             refillEvents.push({
                 type: 'refill',
                 player_id: game.players[game.defender].player_id,
-                cards: cardsDrawn,
+                cards: actualCardsDrawn,
                 from_location: 'deck',
                 to_location: 'hand',
                 message: `${game.players[game.defender].name} drew ${defenderCardsDrawn} cards`
+            });
+            
+            // Add draw log
+            drawLogs.push({
+                player_id: game.players[game.defender].player_id,
+                cards: drawnCards
             });
         }
     }
@@ -277,26 +290,37 @@ export const refillPlayerHandsWithEvents = (game: Game): { refillEvents: any[] }
     do {
         const hand = game.players[pIndex].hand;
         const initialHandSize = hand.length;
+        const drawnCards: Card[] = [];
 
         while (hand.length < CARDS_PER_PLAYER) {
+            const isFlippedNext = game.deck.length === 0 && game.flipped !== null;
             const c = draw(game);
             if (c === null) {
                 break;
             }
             hand.push(c);
+            
+            // Track drawn cards: known if it was the flipped card, unknown otherwise
+            drawnCards.push(isFlippedNext ? c : { suit: -1, value: -1 });
         }
         
         // Add refill event for this player if they drew cards
         const cardsDrawn = hand.length - initialHandSize;
         if (cardsDrawn > 0) {
-            const drawnCards = hand.slice(-cardsDrawn);
+            const actualCardsDrawn = hand.slice(-cardsDrawn);
             refillEvents.push({
                 type: 'refill',
                 player_id: game.players[pIndex].player_id,
-                cards: drawnCards,
+                cards: actualCardsDrawn,
                 from_location: 'deck',
                 to_location: 'hand',
                 message: `${game.players[pIndex].name} drew ${cardsDrawn} cards`
+            });
+            
+            // Add draw log
+            drawLogs.push({
+                player_id: game.players[pIndex].player_id,
+                cards: drawnCards
             });
         }
         
@@ -310,7 +334,7 @@ export const refillPlayerHandsWithEvents = (game: Game): { refillEvents: any[] }
         pIndex = get_next_player_index(game, pIndex);
     } while (pIndex !== game.first_attacker);
     
-    return { refillEvents };
+    return { refillEvents, drawLogs };
 };
 
 // Pure win check logic without side effects (no ELO updates, no broadcasting)
