@@ -8,9 +8,10 @@ export const canAttack = (game: PersonalGame, cards: Card[]): boolean => {
     // Get the defender's hand size
     const defenderHandSize = game.players[game.defender]?.hand_length || 0;
     
-    // Calculate total cards that would be on the table after this attack
-    const currentTableCards = game.table_battles.length;
-    const totalAfterAttack = currentTableCards + cards.length;
+    // Calculate total UNCOVERED cards that would be on the table after this attack
+    // Only count uncovered battles because covered battles are waiting for "good"
+    const uncoveredBattles = game.table_battles.filter(battle => !battle.defense).length;
+    const totalAfterAttack = uncoveredBattles + cards.length;
     
     // Cannot attack with more cards than defender can handle
     if (totalAfterAttack > defenderHandSize) {
@@ -51,8 +52,11 @@ export const canPass = (game: PersonalGame, cards: Card[]): boolean => {
     const nextPlayerIndex = (game.defender + 1) % game.players.length;
     const nextPlayerHandSize = game.players[nextPlayerIndex]?.hand_length || 0;
     
-    // Calculate total cards that would be passed
-    const totalCardsAfterPass = game.table_battles.length + cards.length;
+    // Calculate total cards that would be passed (only uncovered battles get passed)
+    // Note: The check above already ensures all battles are uncovered for passing,
+    // but we count explicitly for clarity and future-proofing
+    const uncoveredBattles = game.table_battles.filter(battle => !battle.defense).length;
+    const totalCardsAfterPass = uncoveredBattles + cards.length;
     
     // Cannot pass if next player doesn't have enough cards to defend
     return totalCardsAfterPass <= nextPlayerHandSize;
