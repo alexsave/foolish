@@ -1,6 +1,6 @@
 import { Game, GAME_STATUS, PLAYER_STATUS, AnimationEvent } from './types.ts';
 import { executeWithGameLock, animationEvents, broadcastAnimationEvents } from './utils.ts';
-import { handleGood } from './actions/good.ts';
+import { executeRoundTransition } from './actions/good.ts';
 import { createClient } from 'jsr:@supabase/supabase-js';
 
 const supabaseClient = createClient(
@@ -142,13 +142,13 @@ async function monitorAutoDiscard(game_id: string, iteration: number = 0): Promi
             }
 
             // Get all attackers
-            const allAttackers = game.players.filter((p, index) => 
-                index !== game.defender && 
+            const allAttackers = game.players.filter((p, index) =>
+                index !== game.defender &&
                 p.status === PLAYER_STATUS.IN
             );
 
             // Check if all attackers have pressed good
-            const allAttackersGood = allAttackers.every(attacker => 
+            const allAttackersGood = allAttackers.every(attacker =>
                 game.good_players && game.good_players.includes(attacker.player_id)
             );
 
@@ -171,32 +171,27 @@ async function monitorAutoDiscard(game_id: string, iteration: number = 0): Promi
 
             // Execute auto-discard if conditions are met
             if (shouldAutoDiscard) {
-                const transitionReason = allAttackersGood 
+                const transitionReason = allAttackersGood
                     ? `All ${allAttackers.length} attackers said good`
                     : `60-second timeout reached`;
 
-                // Find any non-defender player to trigger the good logic
-                const anyNonDefender = game.players.find((p, index) => index !== game.defender);
-                if (anyNonDefender) {
-                    console.log(`[AUTO-DISCARD][${iteration}] Executing auto-discard: ${transitionReason}`);
-                    const goodEvents = await handleGood(game, anyNonDefender.player_id);
-                    
-                    // Add all events to animation manager
-                    for (const event of goodEvents) {
-                        animationEvents.addEvent(event);
-                    }
+                console.log(`[AUTO-DISCARD][${iteration}] Executing auto-discard: ${transitionReason}`);
 
-                    // Add transition message
-                    animationEvents.addMagicTransitionEvent(`${transitionReason} - automatically proceeding to next round`, game);
+                // Use shared round transition logic instead of faking a player action
+                const transitionEvents = await executeRoundTransition(game, transitionReason);
 
-                    // Get and broadcast events
-                    const events = animationEvents.getEvents();
-                    if (events.length > 0) {
-                        broadcastAnimationEvents(game, events).catch(error => {
-                            console.error('[AUTO-DISCARD] Error broadcasting events:', error);
-                        });
-                        animationEvents.clear();
-                    }
+                // Add all events to animation manager
+                for (const event of transitionEvents) {
+                    animationEvents.addEvent(event);
+                }
+
+                // Get and broadcast events
+                const events = animationEvents.getEvents();
+                if (events.length > 0) {
+                    broadcastAnimationEvents(game, events).catch(error => {
+                        console.error('[AUTO-DISCARD] Error broadcasting events:', error);
+                    });
+                    animationEvents.clear();
                 }
             }
 

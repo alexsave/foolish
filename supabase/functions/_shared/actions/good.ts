@@ -4,6 +4,81 @@ import { get_next_player_index } from '../common_utils.ts';
 import { check_win } from '../utils.ts';
 import { lockedAutoDiscardLoop } from '../auto_discard_loop.ts';
 
+// Shared logic for discarding cards and transitioning to next round
+// Used by both player "good" actions and auto-discard timeout
+export async function executeRoundTransition(game: Game, reason: string): Promise<AnimationEvent[]> {
+    const events: AnimationEvent[] = [];
+    
+    // Guard against modifying game state if game is already over
+    if (game.status === GAME_STATUS.GAME_OVER) {
+        return events;
+    }
+
+    console.log(`${reason} - proceeding to next round`);
+
+    // Add animation event for magic transition
+    const gameStateForTransition = JSON.parse(JSON.stringify(game));
+    events.push({
+        type: ANIMATION_EVENT_TYPE.MAGIC_TRANSITION,
+        message: `${reason} - proceeding to next round`,
+        game_state: gameStateForTransition
+    });
+
+    // Count cards being discarded before clearing table_battles
+    const discardedCards = game.table_battles.length * 2; // Each battle has attack + defense
+    game.discard_pile_length += discardedCards;
+    
+    // Add animation event for cards going to discard pile
+    const allTableCards = game.table_battles.flatMap(battle => 
+        battle.defense ? [battle.attack, battle.defense] : [battle.attack]
+    );
+    
+    // Clear table battles
+    game.table_battles = [];
+    
+    if (allTableCards.length > 0) {
+        const gameStateAfterDiscard = JSON.parse(JSON.stringify(game));
+        const discardEvent: AnimationEvent = {
+            type: ANIMATION_EVENT_TYPE.CARDS_TO_TRASH,
+            cards: allTableCards,
+            from_location: 'table',
+            to_location: 'discard',
+            message: `${allTableCards.length} cards discarded`,
+            game_state: gameStateAfterDiscard
+        };
+        events.push(discardEvent);
+    }
+    
+    // Refill player hands and capture states for each refill event
+    const { refillEvents } = refillPlayerHandsWithEvents(game);
+    for (const refillEvent of refillEvents) {
+        // The refillPlayerHandsWithEvents already modified the game state
+        const gameStateAfterRefill = JSON.parse(JSON.stringify(game));
+        events.push({
+            ...refillEvent,
+            game_state: gameStateAfterRefill
+        });
+    }
+    
+    game.first_attacker = game.defender;
+    game.defender = get_next_player_index(game, game.first_attacker);
+    
+    // Reset done_attacking_this_round flag for all players when attacking shifts
+    game.players.forEach(player => {
+        player.done_attacking_this_round = false;
+    });
+    
+    // Reset good fields when round ends
+    game.good_players = [];
+    game.good_timestamp = null;
+    
+    // Check if game should end after refilling - at the very end
+    await check_win(game);
+    
+    // Game continues in playing state (no status change needed unless game is over)
+    return events;
+}
+
 // Validation function for good moves
 export function validateGood(game: Game, player_id: string): void {
     // Can only say good during playing state
@@ -92,69 +167,8 @@ export async function executeGood(game: Game, player_id: string): Promise<Animat
         ? `All ${allAttackers.length} attackers said good`
         : `1 minute timeout reached (${game.good_players.length}/${allAttackers.length} attackers ready)`;
 
-    console.log(`${transitionReason} - proceeding to next round`);
-
-    // Add animation event for magic transition
-    const gameStateForTransition = JSON.parse(JSON.stringify(game));
-    events.push({
-        type: ANIMATION_EVENT_TYPE.MAGIC_TRANSITION,
-        message: `${transitionReason} - proceeding to next round`,
-        game_state: gameStateForTransition
-    });
-
-    // Count cards being discarded before clearing table_battles
-    const discardedCards = game.table_battles.length * 2; // Each battle has attack + defense
-    game.discard_pile_length += discardedCards;
-    
-    // Add animation event for cards going to discard pile
-    const allTableCards = game.table_battles.flatMap(battle => 
-        battle.defense ? [battle.attack, battle.defense] : [battle.attack]
-    );
-    
-    // Clear table battles
-    game.table_battles = [];
-    
-    if (allTableCards.length > 0) {
-        const gameStateAfterDiscard = JSON.parse(JSON.stringify(game));
-        const discardEvent: AnimationEvent = {
-            type: ANIMATION_EVENT_TYPE.CARDS_TO_TRASH,
-            cards: allTableCards,
-            from_location: 'table',
-            to_location: 'discard',
-            message: `${allTableCards.length} cards discarded`,
-            game_state: gameStateAfterDiscard
-        };
-        events.push(discardEvent);
-    }
-    
-    // Refill player hands and capture states for each refill event
-    const { refillEvents } = refillPlayerHandsWithEvents(game);
-    for (const refillEvent of refillEvents) {
-        // The refillPlayerHandsWithEvents already modified the game state
-        const gameStateAfterRefill = JSON.parse(JSON.stringify(game));
-        events.push({
-            ...refillEvent,
-            game_state: gameStateAfterRefill
-        });
-    }
-    
-    game.first_attacker = game.defender;
-    game.defender = get_next_player_index(game, game.first_attacker);
-    
-    // Reset done_attacking_this_round flag for all players when attacking shifts
-    game.players.forEach(player => {
-        player.done_attacking_this_round = false;
-    });
-    
-    // Reset good_players and good_timestamp for the next round
-    game.good_players = [];
-    game.good_timestamp = null;
-    
-    // Check if game should end after refilling - at the very end
-    await check_win(game);
-    
-    // Game continues in playing state (no status change needed unless game is over)
-    return events;
+    // Use shared round transition logic
+    return await executeRoundTransition(game, transitionReason);
 }
 
 // Combined function with validation
