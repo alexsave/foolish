@@ -17,25 +17,25 @@ export const CardFace = ({ card, onClick, style = {}, playerId, isAnimationOverl
     const [actualWidth, setActualWidth] = useState<number>(50);
     const [actualHeight, setActualHeight] = useState<number>(70);
 
-    // Measure actual rendered dimensions
+    // Measure actual rendered dimensions using ResizeObserver
+    // This ensures cards update when they're squished/unsquished due to layout changes
     useEffect(() => {
-        const measureCard = () => {
-            if (cardRef.current) {
-                const rect = cardRef.current.getBoundingClientRect();
-                setActualWidth(rect.width);
-                setActualHeight(rect.height);
+        if (!cardRef.current) return;
+
+        const resizeObserver = new ResizeObserver((entries) => {
+            for (const entry of entries) {
+                const { width, height } = entry.contentRect;
+                setActualWidth(width);
+                setActualHeight(height);
             }
-        };
+        });
 
-        measureCard(); // Initial measurement
-
-        // Listen for window resize
-        window.addEventListener('resize', measureCard);
+        resizeObserver.observe(cardRef.current);
 
         return () => {
-            window.removeEventListener('resize', measureCard);
+            resizeObserver.disconnect();
         };
-    }, [style.width, style.height, style.minWidth, style.maxWidth, style.flex]);
+    }, []); // Empty dependency array - ResizeObserver handles all size changes
 
     // Check if this is a sanitized card (used for other players' cards in animations)
     const isSanitizedCard = card.suit === -1 && card.value === -1;
