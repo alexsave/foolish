@@ -5,6 +5,7 @@ import { useAnimation } from './AnimationContext';
 import { useAuth } from './AuthContext';
 import { useGame } from './GameContext';
 import { canCover } from '../common/common_utils';
+import { canAttack, canPass as canPassValidation } from '../utils/gameValidation';
 
 const DragContext = createContext<DragContextType | null>(null);
 
@@ -190,27 +191,11 @@ export const DragProvider = ({ children }: { children: React.ReactNode }) => {
             // Use all selected cards if the dragged card is selected, otherwise just the dragged card
             const cardsToUse = isDraggedCardSelected && selectedCards.length > 0 ? selectedCards : [draggedCard];
 
-            // Check if attack is valid
-            if (game.table_battles.length === 0) {
-                // First attack: all cards must have the same value
-                const allSameValue = cardsToUse.every(card => card.value === cardsToUse[0].value);
-                if (allSameValue) {
-                    return { type: 'attack' as const };
-                } else {
-                    return { type: 'invalid' as const };
-                }
+            // Use shared validation function
+            if (canAttack(game, cardsToUse)) {
+                return { type: 'attack' as const };
             } else {
-                // Subsequent attack: all card values must already be on the table
-                const tableValues = new Set(game.table_battles.flatMap(battle => 
-                    [battle.attack.value, ...(battle.defense ? [battle.defense.value] : [])]
-                ));
-                
-                const allValuesOnTable = cardsToUse.every(card => tableValues.has(card.value));
-                if (allValuesOnTable) {
-                    return { type: 'attack' as const };
-                } else {
-                    return { type: 'invalid' as const };
-                }
+                return { type: 'invalid' as const };
             }
         }
     };
@@ -228,9 +213,6 @@ export const DragProvider = ({ children }: { children: React.ReactNode }) => {
 
     // Helper function to check if passing is possible
     const canPass = (draggedCard: Card) => {
-        const table_battles = game.table_battles;
-        if (table_battles.length === 0) return false;
-
         // Check if the dragged card is part of selected cards
         const isDraggedCardSelected = selectedCards.some(selectedCard =>
             selectedCard.value === draggedCard.value && selectedCard.suit === draggedCard.suit
@@ -239,16 +221,8 @@ export const DragProvider = ({ children }: { children: React.ReactNode }) => {
         // Use all selected cards if the dragged card is selected, otherwise just the dragged card
         const cardsToCheck = isDraggedCardSelected && selectedCards.length > 0 ? selectedCards : [draggedCard];
 
-        // All cards must have the same value
-        if (!cardsToCheck.every(card => card.value === cardsToCheck[0].value)) {
-            return false;
-        }
-
-        // All table battles must be uncovered (defense === null)
-        // All uncovered attacks must have the same value as the cards to check
-        return table_battles.every(battle =>
-            battle.defense === null && battle.attack.value === cardsToCheck[0].value
-        );
+        // Use shared validation function
+        return canPassValidation(game, cardsToCheck);
     };
 
     const startCardDrag = (e: React.MouseEvent | React.TouchEvent, index: number) => {

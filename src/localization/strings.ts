@@ -16,6 +16,9 @@ export type StringId =
   | 'foolish'
   | 'pickup'
   | 'good'
+  | 'pass'
+  | 'cover'
+  | 'attack'
   | 'game_over'
   | 'join_game'
   | 'add_bot'
@@ -57,6 +60,9 @@ export const strings_en: Record<StringId, string> = {
   foolish: 'FOOLISH',
   pickup: 'Pickup',
   good: 'Good',
+  pass: 'Pass',
+  cover: 'Cover',
+  attack: 'Attack',
   game_over: 'Game Over',
   join_game: 'Join Game',
   add_bot: 'Add Bot',
@@ -99,6 +105,9 @@ export const strings_ru: Record<StringId, string> = {
   foolish: 'ДУРАЦКИЙ',
   pickup: 'Беру',
   good: 'Бито',
+  pass: 'Перевожу',
+  cover: 'Крою',
+  attack: 'Подкидываю',
   game_over: 'Игра окончена',
   join_game: 'Присоединиться к игре',
   add_bot: 'Добавить бота',
@@ -141,6 +150,9 @@ export const strings_ko: Record<StringId, string> = {
   foolish: '바보같은',
   pickup: '가져가기',
   good: '방어 완료',
+  pass: '패스',
+  cover: '방어',
+  attack: '공격',
   game_over: '게임 종료',
   join_game: '게임 참가',
   add_bot: '봇 추가',
