@@ -97,7 +97,8 @@ export const ActionButtons = () => {
     const isDefending = game && self_index !== -1 ? game.defender === self_index : false;
     const shouldShowGoodButton = !isDefending && 
         (game?.table_battles.length ?? 0) > 0 && 
-        (game?.table_battles.every(battle => battle.defense) ?? false);
+        (game?.table_battles.every(battle => battle.defense) ?? false) &&
+        !(game?.good_players?.includes(user_id ?? '') ?? false); // Don't show if already said good
 
     // Reset the clicked flag only when transitioning from NOT possible to possible
     useEffect(() => {

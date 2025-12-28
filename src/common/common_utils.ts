@@ -163,9 +163,11 @@ export const personalize_game = (game: Game, player_id: string): PersonalGame | 
             first_attacker: game.first_attacker,
             defender: game.defender,
             table_battles: game.table_battles,
-                elimination_order: game.elimination_order,
-                self: self
-            }
+            elimination_order: game.elimination_order,
+            good_timestamp: game.good_timestamp,
+            good_players: game.good_players,
+            self: self
+        }
         return personalGame;
     } else {
         const publicGame: PublicGame = {
@@ -181,6 +183,8 @@ export const personalize_game = (game: Game, player_id: string): PersonalGame | 
             defender: game.defender,
             table_battles: game.table_battles,
             elimination_order: game.elimination_order,
+            good_timestamp: game.good_timestamp,
+            good_players: game.good_players,
         }
         return publicGame;
     }

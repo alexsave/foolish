@@ -25,7 +25,10 @@ games!inner (
     status,
     table_battles,
     discard_pile_length,
-    updated_at
+    updated_at,
+    elimination_order,
+    good_timestamp,
+    good_players
 )`;
 
 // for now we'll just use a fake auth impl
