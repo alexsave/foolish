@@ -36,9 +36,7 @@ export const useIconButtonStyle = () => {
     }), [woodButtonStyle]);
 
     const iconStyle = useMemo(() => ({
-        color: 'rgba(70, 35, 20, 0.8)',
-        mixBlendMode: 'color-burn' as const,
-        filter: 'contrast(1.2) brightness(0.9)',
+        color: '#000',
         fontSize: '28px',
         fontWeight: 900,
         lineHeight: 1,

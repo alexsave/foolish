@@ -51,7 +51,6 @@ export const SignOutButton = () => {
                     border: `3px solid ${iconStyle.color}`,
                     borderRight: 'none',
                     left: '0',
-                    mixBlendMode: iconStyle.mixBlendMode,
                 }} />
                 
                 {/* Arrow shaft */}
@@ -61,7 +60,6 @@ export const SignOutButton = () => {
                     height: '3px',
                     backgroundColor: iconStyle.color,
                     right: '0',
-                    mixBlendMode: iconStyle.mixBlendMode,
                 }} />
                 
                 {/* Arrow head - top part */}
@@ -73,7 +71,6 @@ export const SignOutButton = () => {
                     borderTop: '4px solid transparent',
                     borderBottom: '4px solid transparent',
                     right: '-2px',
-                    mixBlendMode: iconStyle.mixBlendMode,
                 }} />
             </div>
         </button>

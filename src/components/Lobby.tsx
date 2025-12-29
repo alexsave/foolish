@@ -125,9 +125,7 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
                         }}
                     >
                         <span style={{
-                            color: 'rgba(70, 35, 20, 0.8)',
-                            mixBlendMode: 'color-burn',
-                            filter: 'contrast(1.2) brightness(0.9)',
+                            color: '#000',
                         }}><Text id="ready" /></span>
                     </button>
                 ) : '🔴'}
@@ -694,12 +692,8 @@ export const Lobby = () => {
                 <QRCodeSVG 
                     value={qrUrl} 
                     size={120} 
-                    fgColor="rgba(70, 35, 20, 0.7)"  // Dark wood tone for QR pattern
+                    fgColor="#000"
                     bgColor="transparent"
-                    style={{
-                        mixBlendMode: 'color-burn',  // Blend with wood background
-                        filter: 'contrast(1.2) brightness(0.9)'
-                    }}
                 />
         </div>
         <div style={{
@@ -783,9 +777,7 @@ export const Lobby = () => {
                                     title={showRemoveBotButton ? t('remove_bot') : t('exit_game')}
                                 >
                                     <span style={{
-                                        color: 'rgba(70, 35, 20, 0.8)',
-                                        mixBlendMode: 'color-burn',
-                                        filter: 'contrast(1.2) brightness(0.9)',
+                                        color: '#000',
                                         fontSize: '24px',
                                         fontWeight: 900,
                                         lineHeight: 1,
@@ -844,9 +836,7 @@ export const Lobby = () => {
                     ...woodAddBotStyle,
                 }} />
                 <p style={{ 
-                    color: 'rgba(70, 35, 20, 0.8)',
-                    mixBlendMode: 'color-burn',
-                    filter: 'contrast(1.2) brightness(0.9)',
+                    color: '#000',
                     fontWeight: 'bold',
                     zIndex: 10,
                     margin: 0,
@@ -880,9 +870,7 @@ export const Lobby = () => {
                     }}
                 >
                     <span style={{
-                        color: 'rgba(70, 35, 20, 0.8)',
-                        mixBlendMode: 'color-burn',
-                        filter: 'contrast(1.2) brightness(0.9)',
+                        color: '#000',
                     }}><Text id="join_game" /></span>
                 </button>
             </div>

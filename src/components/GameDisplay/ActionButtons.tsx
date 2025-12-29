@@ -261,9 +261,7 @@ export const ActionButtons = () => {
     };
 
     const buttonTextStyle = {
-        color: 'rgba(70, 35, 20, 0.8)',
-        mixBlendMode: 'color-burn' as const,
-        filter: 'contrast(1.2) brightness(0.9)',
+        color: '#000',
     };
 
     const spacerStyle = {
