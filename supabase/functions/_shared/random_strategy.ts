@@ -1,6 +1,23 @@
 import { Game } from './types.ts';
 import { BotStrategy, LegalMove } from './bot_interfaces.ts';
 
+/**
+ * Random bot strategy - picks a random legal move
+ * Can be seeded for reproducible testing
+ */
+
+let seed = Date.now();
+
+export function setRandomSeed(newSeed: number) {
+    seed = newSeed;
+}
+
+// Seeded random number generator (LCG algorithm)
+function seededRandom(): number {
+    seed = (seed * 1664525 + 1013904223) % 4294967296;
+    return seed / 4294967296;
+}
+
 // Random strategy implementation
 export class RandomBotStrategy implements BotStrategy {
     readonly name = 'random';
@@ -31,8 +48,8 @@ export class RandomBotStrategy implements BotStrategy {
         
         console.log(`Bot ${botName} has ${legalMoves.length} moves: ${moveSummary}`);
         
-        // Choose a random legal move
-        const randomIndex = Math.floor(Math.random() * legalMoves.length);
+        // Choose a random legal move using seeded random
+        const randomIndex = Math.floor(seededRandom() * legalMoves.length);
         const chosenMove = legalMoves[randomIndex];
         
         // Log the chosen move concisely

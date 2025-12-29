@@ -76,12 +76,17 @@ export function calculateLegalMoves(game: Game, botPlayerId: string): LegalMove[
             moves.push(...passMoves);
         } else if (!isDefender && game.table_battles.length > 0) {
             // Bot is attacker - can attack with cards on table or say "good"
-            const attackMoves = calculateRegularAttackMoves(game, botPlayer);
-            moves.push(...attackMoves);
+            const hasPlayerSaidGood = game.good_players?.includes(botPlayerId) || false;
             
-            // Can say "good" if all attacks are covered (regardless of whether bot has playable cards)
-            // This matches the new validation logic where any attacker can say good
-            if (allAttacksCovered && !game.good_players?.includes(botPlayerId)) {
+            // Can only attack if haven't said "good" yet
+            if (true || !hasPlayerSaidGood) {
+                const attackMoves = calculateRegularAttackMoves(game, botPlayer);
+                moves.push(...attackMoves);
+            }
+            
+            // Can ALWAYS say "good" if all attacks are covered (even if no cards to attack with)
+            // This allows all attackers to signal they're done
+            if (allAttacksCovered && !hasPlayerSaidGood) {
                 moves.push({ type: 'good' });
             }
         }
