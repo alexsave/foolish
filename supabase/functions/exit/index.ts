@@ -1,5 +1,5 @@
-import { ExecutionParams, wrap400, animationEvents } from "../_shared/utils.ts";
-import { GAME_STATUS } from "../_shared/types.ts";
+import { ExecutionParams, wrap400 } from "../_shared/utils.ts";
+import { ANIMATION_EVENT_TYPE, GAME_STATUS } from "../_shared/types.ts";
 import { verify_player_in_game } from "../_shared/common_utils.ts";
 import { createClient } from 'jsr:@supabase/supabase-js';
 
@@ -84,11 +84,10 @@ wrap400(async ({user, body, game}: ExecutionParams) => {
 
     // Add animation event to notify remaining players
     const playerType = bot_id ? 'Bot' : 'Player';
-    animationEvents.addMagicTransitionEvent(`${playerType} ${exitedPlayerName} left the game`, game);
-
-    const events = animationEvents.getEvents();
-    animationEvents.clear();
-
-    return { game, events };
+    return { game, events: [{
+        type: ANIMATION_EVENT_TYPE.MAGIC_TRANSITION,
+        message: `${playerType} ${exitedPlayerName} left the game`,
+        game_state: game
+    }] };
 
 }, false); 

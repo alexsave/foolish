@@ -167,6 +167,7 @@ export interface PrivatePlayer extends PublicPlayer {
     hand: Card[];
     awaiting_attack: boolean; // private info stored in player_hands table
     done_attacking_this_round: boolean; // Flag to indicate bot is done attacking this round
+    strategy_key: string; // strategy key for bots so we don't need to load the bot table too. just "human" for players
 }
 
 // base game type

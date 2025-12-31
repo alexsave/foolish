@@ -1,5 +1,5 @@
-import { wrap400, ExecutionParams, animationEvents } from "../_shared/utils.ts";
-import { BotHand, PLAYER_STATUS } from "../_shared/types.ts";
+import { wrap400, ExecutionParams } from "../_shared/utils.ts";
+import { ANIMATION_EVENT_TYPE, BotHand, PLAYER_STATUS } from "../_shared/types.ts";
 import { createClient } from 'jsr:@supabase/supabase-js';
 
 const supabaseClient = createClient(
@@ -48,20 +48,20 @@ wrap400(async ({body, game}: ExecutionParams) => {
         hand: [],
         awaiting_attack: false,
         done_attacking_this_round: false,
-        hand_length: 0
+        hand_length: 0,
+        strategy_key: availableBot.strategy_key
     });
 
     // Add animation event to notify players
-    animationEvents.addMagicTransitionEvent(`Bot ${availableBot.nickname} joined the game`, game);
-
-    const events = animationEvents.getEvents();
-    animationEvents.clear();
+    return { game, events: [{
+        type: ANIMATION_EVENT_TYPE.MAGIC_TRANSITION,
+        message: `Bot ${availableBot.nickname} joined the game`,
+        game_state: game
+    }] };
 
     // Note: saveCompleteGame (called by executeWithGameLock) will handle:
     // - Updating games table with new players array
     // - Upserting bot_hands for the new bot
     // No additional DB operations needed here!
-
-    return { game, events };
 
 }, false); 

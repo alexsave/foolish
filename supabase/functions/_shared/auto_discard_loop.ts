@@ -1,5 +1,5 @@
 import { Game, GAME_STATUS, PLAYER_STATUS, AnimationEvent } from './types.ts';
-import { executeWithGameLock, animationEvents, broadcastAnimationEvents } from './utils.ts';
+import { executeWithGameLock } from './utils.ts';
 import { executeRoundTransition } from './actions/good.ts';
 import { createClient } from 'jsr:@supabase/supabase-js';
 
@@ -180,19 +180,7 @@ async function monitorAutoDiscard(game_id: string, iteration: number = 0): Promi
                 // Use shared round transition logic instead of faking a player action
                 const transitionEvents = await executeRoundTransition(game, transitionReason);
 
-                // Add all events to animation manager
-                for (const event of transitionEvents) {
-                    animationEvents.addEvent(event);
-                }
-
-                // Get and broadcast events
-                const events = animationEvents.getEvents();
-                if (events.length > 0) {
-                    broadcastAnimationEvents(game, events).catch(error => {
-                        console.error('[AUTO-DISCARD] Error broadcasting events:', error);
-                    });
-                    animationEvents.clear();
-                }
+                return { game, events: transitionEvents };
             }
 
             return { game, events: [] };

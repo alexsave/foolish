@@ -1,5 +1,5 @@
-import { wrap400, ExecutionParams, animationEvents } from "../_shared/utils.ts";
-import { GAME_STATUS, PLAYER_STATUS } from "../_shared/types.ts";
+import { wrap400, ExecutionParams } from "../_shared/utils.ts";
+import { ANIMATION_EVENT_TYPE, GAME_STATUS, PLAYER_STATUS } from "../_shared/types.ts";
 import { verify_player_in_game } from "../_shared/common_utils.ts";
 
 wrap400(async ({user, game}: ExecutionParams) => {
@@ -49,11 +49,10 @@ wrap400(async ({user, game}: ExecutionParams) => {
     }
 
     // Add animation event to notify all players about the game reset
-    animationEvents.addMagicTransitionEvent(message, game);
-
-    const events = animationEvents.getEvents();
-    animationEvents.clear();
-
-    return { game, events };
+    return { game, events: [{
+        type: ANIMATION_EVENT_TYPE.MAGIC_TRANSITION,
+        message: message,
+        game_state: game
+    }] };
 
 }, false); 

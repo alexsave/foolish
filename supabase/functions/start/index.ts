@@ -1,6 +1,8 @@
-import { wrap400, animationEvents, start_game, ExecutionParams } from "../_shared/utils.ts";
-import { PLAYER_STATUS } from "../_shared/types.ts";
+import { wrap400, ExecutionParams } from "../_shared/utils.ts";
+import { start_game } from "../_shared/common_utils.ts";
+import { ANIMATION_EVENT_TYPE, PLAYER_STATUS } from "../_shared/types.ts";
 import { verify_player_in_game } from "../_shared/common_utils.ts";
+import { AnimationEvent } from "../_shared/types.ts";
 
 wrap400(async ({ user, game }: ExecutionParams) => {
     const user_id = user.id;
@@ -22,19 +24,19 @@ wrap400(async ({ user, game }: ExecutionParams) => {
     // Check if ALL players are ready AND we have at least 2 players
     const allPlayersReady = game.players.every(p => p.status === PLAYER_STATUS.READY) && game.players.length >= 2;
 
+    let start_events: AnimationEvent[] = [];
     if (allPlayersReady) {
         // All players are ready - start the game!
-        animationEvents.addMagicTransitionEvent(`All players ready - starting game!`, game);
         
-        await start_game(game);
+        start_events = start_game(game);
     } else {
         // Notify other players that this player is ready
-        animationEvents.addMagicTransitionEvent(`${player?.name} is ready`, game);
     }
 
-    const events = animationEvents.getEvents();
-    animationEvents.clear();
-
-    return { game, events };
+    return { game, events: [{
+        type: ANIMATION_EVENT_TYPE.MAGIC_TRANSITION,
+        message: allPlayersReady ? `All players ready - starting game!` : `${player?.name} is ready`,
+        game_state: game
+    }, ...start_events] };
 
 }, true);

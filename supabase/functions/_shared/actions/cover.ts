@@ -1,8 +1,6 @@
 import { Card, Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, AnimationEvent, ANIMATION_EVENT_TYPE, LOG_TYPE } from '../types.ts';
-import { check_win } from '../utils.ts';
-import { addLog } from '../log_utils.ts';
+import { addLog } from '../common_utils.ts';
 import { canCover, get_next_player_index, validate_defender_status, verify_cards_in_players_hand, card_comp, cardDisplay, refillPlayerHandsWithEvents } from '../common_utils.ts';
-import { lockedAutoDiscardLoop } from '../auto_discard_loop.ts';
 
 // Validation function for cover moves
 export function validateCover(game: Game, player_id: string, cover_cards: Card[], attack_cards: Card[]): void {
@@ -57,7 +55,7 @@ export function validateCover(game: Game, player_id: string, cover_cards: Card[]
 }
 
 // Execution function for cover moves
-export async function executeCover(game: Game, player_id: string, cover_cards: Card[], attack_cards: Card[], skipBroadcast: boolean = false): Promise<AnimationEvent[]> {
+export function executeCover(game: Game, player_id: string, cover_cards: Card[], attack_cards: Card[], skipBroadcast: boolean = false): AnimationEvent[] {
     const events: AnimationEvent[] = [];
     
     // Guard against modifying game state if game is already over
@@ -197,7 +195,6 @@ export async function executeCover(game: Game, player_id: string, cover_cards: C
                 game_state: gameStateAfterOut
             });
             
-            await check_win(game);
             game.first_attacker = get_next_player_index(game, game.first_attacker);
         }
         
@@ -234,12 +231,10 @@ export async function executeCover(game: Game, player_id: string, cover_cards: C
         if (!game.good_timestamp) {
             game.good_timestamp = Date.now();
             game.good_players = []; // Reset good_players when all attacks first get covered
-            console.log(`All attacks covered at ${game.good_timestamp}. Starting 60-second countdown.`);
+            //console.log(`All attacks covered at ${game.good_timestamp}. Starting 60-second countdown.`);
             
             // Start auto-discard monitoring loop (fire-and-forget)
-            lockedAutoDiscardLoop(game.id).catch(error => {
-                console.error(`Error starting auto-discard loop for game ${game.id}:`, error);
-            });
+            // The state we get into will trigger the auto-discard loop automatically in utils.ts
         }
 
         // All attacks are covered - no status change needed, game continues in playing state
@@ -257,7 +252,7 @@ export async function executeCover(game: Game, player_id: string, cover_cards: C
 }
 
 // Combined function with validation
-export async function handleCover(game: Game, player_id: string, cover_cards: Card[], attack_cards: Card[]): Promise<AnimationEvent[]> {
+export function handleCover(game: Game, player_id: string, cover_cards: Card[], attack_cards: Card[]): AnimationEvent[] {
     validateCover(game, player_id, cover_cards, attack_cards);
-    return await executeCover(game, player_id, cover_cards, attack_cards, true);
+    return executeCover(game, player_id, cover_cards, attack_cards, true);
 } 

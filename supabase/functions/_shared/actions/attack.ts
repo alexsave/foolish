@@ -1,6 +1,5 @@
 import { Card, Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, AnimationEvent, ANIMATION_EVENT_TYPE, LOG_TYPE } from '../types.ts';
-import { check_win } from '../utils.ts';
-import { addLog } from '../log_utils.ts';
+import { addLog } from '../common_utils.ts';
 import { validate_defender_status, verify_cards_in_players_hand, cardDisplay, card_comp } from '../common_utils.ts';
 
 // Validation function for attack moves
@@ -65,7 +64,7 @@ export function validateAttack(game: Game, player_id: string, cards: Card[]): vo
 }
 
 // Execution function for attack moves
-export async function executeAttack(game: Game, player_id: string, cards: Card[]): Promise<AnimationEvent[]> {
+export function executeAttack(game: Game, player_id: string, cards: Card[]): AnimationEvent[] {
     const events: AnimationEvent[] = [];
     
     // Guard against modifying game state if game is already over
@@ -140,7 +139,6 @@ export async function executeAttack(game: Game, player_id: string, cards: Card[]
             game_state: gameStateAfterOut
         });
         
-        await check_win(game);
         return events;
     }
 
@@ -163,7 +161,7 @@ export async function executeAttack(game: Game, player_id: string, cards: Card[]
 }
 
 // Combined function with validation
-export async function handleAttack(game: Game, player_id: string, cards: Card[]): Promise<AnimationEvent[]> {
+export function handleAttack(game: Game, player_id: string, cards: Card[]): AnimationEvent[] {
     validateAttack(game, player_id, cards);
-    return await executeAttack(game, player_id, cards);
+    return executeAttack(game, player_id, cards);
 } 

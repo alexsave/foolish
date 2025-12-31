@@ -21,8 +21,8 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { getAuthenticatedUser } from './auth.ts';
 import { lockedBotLoop } from './bot_actions.ts';
-import { AnimationEventManager } from './animation_event_manager.ts';
 import { loadCurrentSessionLogs, saveGameLogs, cleanupOldGameLogs, addLog } from './log_utils.ts';
+import { lockedAutoDiscardLoop } from './auto_discard_loop.ts';
 
 const supabaseClient = createClient(
     Deno.env.get('SUPABASE_URL') || '',
@@ -120,7 +120,7 @@ export const executeWithGameLock = async (game_id: string, operation: (game: Gam
         lockAcquired = await acquireGameLock(game_id);
         if (lockAcquired) break;
 
-        await new Promise(resolve => setTimeout(resolve, 100 * attempt)); // Exponential backoff
+        await new Promise(resolve => setTimeout(resolve, 100 * attempt)); // Linear backoff
     }
 
     if (!lockAcquired) {
@@ -131,9 +131,25 @@ export const executeWithGameLock = async (game_id: string, operation: (game: Gam
         const loadedGame: Game = await loadCompleteGame(game_id);
         const result = await operation(loadedGame);
 
+        // This path is common to bots and real player attacks
+        // So we can put something like check_win here and not worry about it anywhere else
+        // The sync part is very quick, so it's ok if moves that couldn't possibly cause win call it
+        // Needs to be done BEFORE saving so that save it as DONE
+        const game_ended = await check_win_async(result.game);
+
+        // TODO add validation before kicking this off
+        // there are attacks on table and all are covered
+        if (result.game.table_battles.length > 0 && result.game.table_battles.every(battle => battle.defense !== null)) {
+            lockedAutoDiscardLoop(game_id);
+        }
+
         // Always save the game state
         await saveCompleteGame(result.game);
 
+        if (game_ended) {
+            result.events.push({type: ANIMATION_EVENT_TYPE.MAGIC_TRANSITION, game_state: result.game })
+        }
+        
         return { game: result.game, events: result.events };
     } finally {
         await releaseGameLock(game_id);
@@ -228,8 +244,6 @@ export const convertToPersonalAnimationEvents = (events: AnimationEvent[], forPl
     });
 };
 
-// Export a global instance for use across the application
-export const animationEvents = new AnimationEventManager();
 
 // Broadcast animation events to all players and spectators
 export const broadcastAnimationEvents = async (game: Game, events: AnimationEvent[], reqId: string = 'unknown'): Promise<void> => {
@@ -419,6 +433,7 @@ export const wrap400 = (execute: (params: ExecutionParams) => Promise<{ game: Ga
             if (game_id/* && run_bots*/) {
                 console.log(`[${reqId}][WRAP400] Starting fire-and-forget bot loop`);
                 // TODO: not quite. Only after start/attack/cover/pass/pickup/good 
+                // todo add validation before kicking this off
                 lockedBotLoop(game_id);
             }
 
@@ -468,7 +483,7 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
             *,
             game_decks(deck),
             player_hands(player_id, hand, awaiting_attack),
-            bot_hands(bot_id, hand, awaiting_attack, done_attacking_this_round)
+            bot_hands(bot_id, hand, awaiting_attack, done_attacking_this_round, bots(strategy_key))
         `)
         .eq('id', game_id)
         .single();
@@ -481,7 +496,7 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
     console.log(JSON.stringify(data));
 
     const players: PrivatePlayer[] = data.players.map((player: any) => {
-        let hand, awaiting_attack, done_attacking_this_round;
+        let hand, awaiting_attack, done_attacking_this_round, strategy_key;
 
         if (player.is_ai) {
             // Look up in bot_hands table
@@ -490,6 +505,7 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
                 hand = botHand.hand;
                 awaiting_attack = botHand.awaiting_attack;
                 done_attacking_this_round = botHand.done_attacking_this_round;
+                strategy_key = botHand.bots.strategy_key;
             }
         } else {
             // Look up in player_hands table
@@ -497,6 +513,7 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
             hand = playerHand.hand;
             awaiting_attack = playerHand.awaiting_attack;
             done_attacking_this_round = false; // Human players don't use this flag, just set it to false for type simplicity
+            strategy_key = 'human';
         }
 
         return {
@@ -508,6 +525,7 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
             awaiting_attack: awaiting_attack,
             done_attacking_this_round: done_attacking_this_round,
             hand_length: hand.length,
+            strategy_key: strategy_key,
         } as PrivatePlayer;
     });
 
@@ -719,175 +737,45 @@ export const broadcastToGameUser = async (game: Game, messageType: string, baseM
     await supabaseClient.removeChannel(channel);
 }
 
-export const start_game = async (game: Game) => {
-    // Guard against starting game if it's already over
-    if (game.status === GAME_STATUS.GAME_OVER) {
-        return game;
-    }
-
-    // Log game start - marks the beginning of this play session
-    addLog(game, {
-        game_id: game.id,
-        log_type: LOG_TYPE.GAME_START,
-        player_id: null, // System event
-        card_pairs: [],
-        defender_index: null
-    });
-
-    // This is the game entry
-    game.status = 'playing';
-    game.players.forEach(player => {
-        player.status = PLAYER_STATUS.IN;
-    });
-
-    game.deck = refill_deck(game.players.length);
-    game.elimination_order = []; // Initialize elimination order tracking
-    game.good_timestamp = null; // Initialize good timestamp
-    game.good_players = []; // Initialize good players list
-
-    const hands: Card[][] = initialize_hands(game);
-    for (let i = 0; i < game.players.length; i++) {
-        game.players[i].hand = hands[i];
-        animationEvents.addDealEvent(game.players[i].player_id, hands[i], game);
-    }
-
-    let flipped_card = draw(game);
-    while (flipped_card!.value === ACE_VALUE) {
-        // move back to deck
-        game.deck.push(flipped_card!);
-        flipped_card = draw(game);
-    }
-    game.flipped = flipped_card;
-    game.power_suit = game.flipped!.suit;
-
-    // Add flipped card animation AFTER deal animations
-    animationEvents.addFlippedEvent(game.flipped!, game);
-
-    const lowest_power_index = determine_lowest_power_index(game);
-    game.first_attacker = lowest_power_index;
-    set_positions(game);
-
-    // Add animation event for defender position
-    if (game.players[game.defender]) {
-        animationEvents.addDefenderMoveEvent(game.players[game.defender].player_id, game);
-    }
-
-    // First attacker notification will be included in the start game animation sequence
-    animationEvents.addMagicTransitionEvent(`Player ${game.players[lowest_power_index].name} is the first attacker, wait for them to attack`, game);
-
-    // Send private messages to players (these don't go through animation events)
-    for (let i = 0; i < game.players.length; i++) {
-        const hand = game.players[i].hand;
-        if (i === game.first_attacker) {
-            await broadcastToGameUser(game, 'private_message', {
-                type: PRIVATE_EVENT_TYPE.REQUEST_FIRST_ATTACK,
-                message: `Please choose an attack. Options are ${hand.map(card => cardDisplay(card)).join(', ')}`
-            }, game.players[i].player_id);
-        } else {
-            await broadcastToGameUser(game, 'private_message', {
-                type: PRIVATE_EVENT_TYPE.PLAYER_HAND,
-                message: `Player ${game.players[i].name} hand ${hand.map(card => cardDisplay(card)).join(', ')}`
-            }, game.players[i].player_id);
-        }
-    }
-
-    return game;
-}
 
 // Functions moved to common_utils.ts
 
-export const check_win = async (game: Game) => {
+// true if game is over
+const check_win_sync = (game: Game): boolean => {
     const the_fool = game_done(game);
-    if (the_fool !== null) {
-
-        // Update ELO ratings before changing game state
-        await updateEloRatings(game);
-
-        // Clean up old game logs (older than 2 weeks, excluding current session)
-        // Fire-and-forget to avoid blocking game completion
-        cleanupOldGameLogs(supabaseClient, game.id).catch(error => {
-            console.error(`Error cleaning up old logs for game ${game.id}:`, error);
-        });
-
-        // Set game status to GAME_OVER to show win screen
-        game.status = GAME_STATUS.GAME_OVER;
-
-        // set all players to idle but keep their hands for display
-        game.players.forEach((player: PrivatePlayer) => {
-            if (player.is_ai) {
-                player.status = PLAYER_STATUS.READY;
-            } else {
-                player.status = PLAYER_STATUS.IDLE;
-            }
-        });
-
-        // Keep table_battles, deck, and elimination_order for win screen display
-        // These will be cleared when someone hits continue
-
-        // Game done notification will be sent through animation events
-        animationEvents.addMagicTransitionEvent(`Game done. Player ${the_fool} ends up the fool`, game);
+    if (the_fool === null) {
+        return false
     }
+    // Set game status to GAME_OVER to show win screen
+    game.status = GAME_STATUS.GAME_OVER;
+
+    // set all players to idle but keep their hands for display
+    game.players.forEach((player: PrivatePlayer) => {
+        if (player.is_ai) {
+            player.status = PLAYER_STATUS.READY;
+        } else {
+            player.status = PLAYER_STATUS.IDLE;
+        }
+    });
+
+    return true;
 }
 
-// Functions moved to common_utils.ts
+const check_win_async = async (game: Game): Promise<boolean> => {
+    const game_ended = check_win_sync(game)
+    if (!game_ended)
+        return false;
 
-// TODO: find a better way to communicate refill without interfering with other broadcasts
-// timestamps???
-export const refill = async (game: Game) => {
 
-    if (no_cards_left(game)) {
-        return;
-    }
+    // Update ELO ratings before changing game state
+    // DOes this NEED to happen before updates to game and player status?
+    await updateEloRatings(game);
+    cleanupOldGameLogs(supabaseClient, game.id).catch(error => {
+        console.error(`Error cleaning up old logs for game ${game.id}:`, error);
+    });
+    return true;
+}
 
-    // If the deck was already empty, defending should've gotten them a win
-    // most importantly, check if defender cleared their hand
-    const defenseHand = game.players[game.defender].hand;
-    if (defenseHand.length === 0) {
-        // they draw first
-        let cards_drawn = 0;
-        while (defenseHand.length < CARDS_PER_PLAYER) {
-            const c = draw(game);
-            if (c === null) {
-                // Deck ran out - no special notification needed
-                break;
-            }
-            defenseHand.push(c);
-            cards_drawn++;
-        }
-        // Player refill handled through animation events
-    }
-
-    // Then go around starting from firstAttacker
-    let pIndex = game.first_attacker;
-    do {
-        const hand = game.players[pIndex].hand;
-        let cards_drawn = 0;
-
-        while (hand.length < CARDS_PER_PLAYER) {
-            const c = draw(game);
-            if (c === null) {
-                // Deck ran out - no special notification needed
-                break;
-            }
-            hand.push(c);
-            cards_drawn++;
-        }
-        if (cards_drawn > 0) {
-            // Player refill handled through animation events
-        } else if (cards_drawn === 0 && hand.length === 0) {
-            // no cards were drawn, but if they were still "in", this is where they win
-            if (game.players[pIndex].status === PLAYER_STATUS.IN) {
-                // Player win handled through animation events in check_win
-                game.players[pIndex].status = PLAYER_STATUS.OUT;
-                game.players[pIndex].awaiting_attack = false;
-                game.elimination_order.push(game.players[pIndex].player_id); // Track elimination order
-                await check_win(game);
-            }
-        }
-        pIndex = get_next_player_index(game, pIndex);
-        //pIndex = (pIndex + 1) % game.players.length;
-    } while (pIndex !== game.first_attacker/* && !no_cards_left(game)*/);
-};
 
 // =============================================================================
 // ELO RATING SYSTEM

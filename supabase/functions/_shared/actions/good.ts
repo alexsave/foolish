@@ -1,13 +1,11 @@
 import { Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, AnimationEvent, ANIMATION_EVENT_TYPE, LOG_TYPE, Card } from '../types.ts';
 import { refillPlayerHandsWithEvents } from '../common_utils.ts';
 import { get_next_player_index } from '../common_utils.ts';
-import { check_win } from '../utils.ts';
-import { addLog } from '../log_utils.ts';
-import { lockedAutoDiscardLoop } from '../auto_discard_loop.ts';
+import { addLog } from '../common_utils.ts';
 
 // Shared logic for discarding cards and transitioning to next round
 // Used by both player "good" actions and auto-discard timeout
-export async function executeRoundTransition(game: Game, reason: string): Promise<AnimationEvent[]> {
+export function executeRoundTransition(game: Game, reason: string): AnimationEvent[] {
     const events: AnimationEvent[] = [];
     
     // Guard against modifying game state if game is already over
@@ -102,9 +100,6 @@ export async function executeRoundTransition(game: Game, reason: string): Promis
     game.good_players = [];
     game.good_timestamp = null;
     
-    // Check if game should end after refilling - at the very end
-    await check_win(game);
-    
     // Game continues in playing state (no status change needed unless game is over)
     return events;
 }
@@ -138,7 +133,7 @@ export function validateGood(game: Game, player_id: string): void {
 }
 
 // Execution function for good moves
-export async function executeGood(game: Game, player_id: string): Promise<AnimationEvent[]> {
+export function executeGood(game: Game, player_id: string): AnimationEvent[] {
     const events: AnimationEvent[] = [];
     
     // Guard against modifying game state if game is already over
@@ -193,10 +188,7 @@ export async function executeGood(game: Game, player_id: string): Promise<Animat
             `Time remaining: ${game.good_timestamp ? Math.max(0, 60000 - (Date.now() - game.good_timestamp)) : 60000}ms`);
         
         // Trigger auto-discard loop to monitor timeout (fire-and-forget)
-        // Only call if we're not advancing yet - performance optimization
-        lockedAutoDiscardLoop(game.id).catch(error => {
-            console.error(`Error starting auto-discard loop for game ${game.id}:`, error);
-        });
+        // The state we get into will trigger the auto-discard loop automatically in utils.ts
         
         return events;
     }
@@ -207,11 +199,11 @@ export async function executeGood(game: Game, player_id: string): Promise<Animat
         : `1 minute timeout reached (${game.good_players.length}/${allAttackers.length} attackers ready)`;
 
     // Use shared round transition logic
-    return await executeRoundTransition(game, transitionReason);
+    return executeRoundTransition(game, transitionReason);
 }
 
 // Combined function with validation
-export async function handleGood(game: Game, player_id: string): Promise<AnimationEvent[]> {
+export function handleGood(game: Game, player_id: string): AnimationEvent[] {
     validateGood(game, player_id);
-    return await executeGood(game, player_id);
+    return executeGood(game, player_id);
 } 

@@ -1,4 +1,5 @@
-import { Card, Game, PersonalGame, PLAYER_STATUS, PrivatePlayer, PublicPlayer, GAME_STATUS, PublicGame } from "./types.ts";
+import { Card, Game, PersonalGame, PLAYER_STATUS, PrivatePlayer, PublicPlayer, GAME_STATUS, PublicGame, LOG_TYPE, AnimationEvent, ANIMATION_EVENT_TYPE } from "./types.ts";
+import { GameLog, UnsavedGameLog } from './types.ts';
 import { ACE_VALUE, CARDS_PER_PLAYER, SUITS, VALUE_MAP, SUIT_MAP } from './constants.ts';
 
 export const get_next_player_index = (game: Game | PersonalGame, current_player: number): number => {
@@ -364,3 +365,113 @@ export const checkWinAndResetGame = (game: Game): string | null => {
 };
 
 
+// Stats the game with all the animations
+export const start_game = (game: Game): AnimationEvent[] => {
+    // Guard against starting game if it's already over
+    if (game.status === GAME_STATUS.GAME_OVER) {
+        return [];
+    }
+
+    const events: AnimationEvent[] = [];
+
+    // Log game start - marks the beginning of this play session
+    addLog(game, {
+        game_id: game.id,
+        log_type: LOG_TYPE.GAME_START,
+        player_id: null, // System event
+        card_pairs: [],
+        defender_index: null
+    });
+
+    // This is the game entry
+    game.status = 'playing';
+    game.players.forEach(player => {
+        player.status = PLAYER_STATUS.IN;
+    });
+
+    game.deck = refill_deck(game.players.length);
+    game.elimination_order = []; // Initialize elimination order tracking
+    game.good_timestamp = null; // Initialize good timestamp
+    game.good_players = []; // Initialize good players list
+
+    const hands: Card[][] = initialize_hands(game);
+    for (let i = 0; i < game.players.length; i++) {
+        game.players[i].hand = hands[i];
+        events.push({
+            type: ANIMATION_EVENT_TYPE.DEAL,
+            player_id: game.players[i].player_id,
+            cards: hands[i],
+            from_location: 'deck',
+            to_location: 'hand',
+            game_state: game
+        });
+    }
+
+    let flipped_card = draw(game);
+    while (flipped_card!.value === ACE_VALUE) {
+        // move back to deck
+        game.deck.push(flipped_card!);
+        flipped_card = draw(game);
+    }
+    game.flipped = flipped_card;
+    game.power_suit = game.flipped!.suit;
+
+    // Add flipped card animation AFTER deal animations
+    events.push({
+        type: ANIMATION_EVENT_TYPE.FLIPPED,
+        cards: [game.flipped!],
+        from_location: 'deck',
+        to_location: 'flipped',
+        game_state: game
+    });
+
+    const lowest_power_index = determine_lowest_power_index(game);
+    game.first_attacker = lowest_power_index;
+    set_positions(game);
+
+    // Add animation event for defender position
+    if (game.players[game.defender]) {
+        events.push({
+            type: ANIMATION_EVENT_TYPE.DEFENDER_MOVE,
+            player_id: game.players[game.defender].player_id,
+            game_state: game
+        });
+    }
+
+    // First attacker notification will be included in the start game animation sequence
+    events.push({
+        type: ANIMATION_EVENT_TYPE.MAGIC_TRANSITION,
+        message: `Player ${game.players[lowest_power_index].name} is the first attacker, wait for them to attack`,
+        game_state: game
+    });
+
+    // Send private messages to players (these don't go through animation events)
+    // I have not once actually seen this so I'm removing it
+    /*for (let i = 0; i < game.players.length; i++) {
+        const hand = game.players[i].hand;
+        if (i === game.first_attacker) {
+            await broadcastToGameUser(game, 'private_message', {
+                type: PRIVATE_EVENT_TYPE.REQUEST_FIRST_ATTACK,
+                message: `Please choose an attack. Options are ${hand.map(card => cardDisplay(card)).join(', ')}`
+            }, game.players[i].player_id);
+        } else {
+            await broadcastToGameUser(game, 'private_message', {
+                type: PRIVATE_EVENT_TYPE.PLAYER_HAND,
+                message: `Player ${game.players[i].name} hand ${hand.map(card => cardDisplay(card)).join(', ')}`
+            }, game.players[i].player_id);
+        }
+    }*/
+
+    return events;
+}
+
+// Helper function to add a log to the game's pending logs
+// This is what action handlers should call instead of saving directly to DB
+export const addLog = (game: Game, log: UnsavedGameLog): void => {
+    const savedLog: GameLog = {
+        ...log,
+        id: crypto.randomUUID(),
+        created_at: new Date().toISOString()
+    };
+    game.logs.push(savedLog);
+};

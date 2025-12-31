@@ -171,15 +171,3 @@ export const cleanupOldGameLogs = async (supabaseClient: SupabaseClient, game_id
         // Don't throw to prevent breaking game flow
     }
 };
-
-// Helper function to add a log to the game's pending logs
-// This is what action handlers should call instead of saving directly to DB
-export const addLog = (game: Game, log: UnsavedGameLog): void => {
-    const savedLog: GameLog = {
-        ...log,
-        id: crypto.randomUUID(),
-        created_at: new Date().toISOString()
-    };
-    game.logs.push(savedLog);
-};
-

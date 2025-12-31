@@ -1,6 +1,5 @@
 import { Card, Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, AnimationEvent, ANIMATION_EVENT_TYPE, LOG_TYPE } from '../types.ts';
-import { check_win } from '../utils.ts';
-import { addLog } from '../log_utils.ts';
+import { addLog } from '../common_utils.ts';
 import { get_next_player_index, validate_defender_status, verify_cards_in_players_hand, no_cards_left, card_comp, cardDisplay } from '../common_utils.ts';
 
 // Validation function for pass moves
@@ -52,7 +51,7 @@ export function validatePass(game: Game, player_id: string, cards: Card[]): void
 }
 
 // Execution function for pass moves
-export async function executePass(game: Game, player_id: string, cards: Card[]): Promise<AnimationEvent[]> {
+export function executePass(game: Game, player_id: string, cards: Card[]): AnimationEvent[] {
     const events: AnimationEvent[] = [];
     
     // Guard against modifying game state if game is already over
@@ -127,7 +126,6 @@ export async function executePass(game: Game, player_id: string, cards: Card[]):
             game_state: gameStateAfterOut
         });
         
-        await check_win(game);
         game.defender = next_player_index;
         
         // Log defender change
@@ -169,7 +167,7 @@ export async function executePass(game: Game, player_id: string, cards: Card[]):
 }
 
 // Combined function with validation
-export async function handlePass(game: Game, player_id: string, cards: Card[]): Promise<AnimationEvent[]> {
+export function handlePass(game: Game, player_id: string, cards: Card[]): AnimationEvent[] {
     validatePass(game, player_id, cards);
-    return await executePass(game, player_id, cards);
+    return executePass(game, player_id, cards);
 } 

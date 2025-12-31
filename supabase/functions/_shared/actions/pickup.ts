@@ -1,7 +1,6 @@
 import { Game, PrivatePlayer, GAME_STATUS, AnimationEvent, ANIMATION_EVENT_TYPE, LOG_TYPE, Card } from '../types.ts';
 import { get_next_player_index, validate_defender_status, refillPlayerHandsWithEvents } from '../common_utils.ts';
-import { check_win } from '../utils.ts';
-import { addLog } from '../log_utils.ts';
+import { addLog } from '../common_utils.ts';
 
 // Validation function for pickup moves
 export function validatePickup(game: Game, player_id: string): void {
@@ -20,7 +19,7 @@ export function validatePickup(game: Game, player_id: string): void {
 }
 
 // Execution function for pickup moves
-export async function executePickup(game: Game, player_id: string): Promise<AnimationEvent[]> {
+export function executePickup(game: Game, player_id: string): AnimationEvent[] {
     const events: AnimationEvent[] = [];
     
     // Guard against modifying game state if game is already over
@@ -112,15 +111,13 @@ export async function executePickup(game: Game, player_id: string): Promise<Anim
     game.good_players = [];
     game.good_timestamp = null;
     
-    // Check if game should end after refilling - at the very end
-    await check_win(game);
     // Game continues in playing state (no status change needed unless game is over)
     
     return events;
 }
 
 // Combined function with validation
-export async function handlePickup(game: Game, player_id: string): Promise<AnimationEvent[]> {
+export function handlePickup(game: Game, player_id: string): AnimationEvent[] {
     validatePickup(game, player_id);
-    return await executePickup(game, player_id);
+    return executePickup(game, player_id);
 } 
