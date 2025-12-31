@@ -21,7 +21,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { getAuthenticatedUser } from './auth.ts';
 import { lockedBotLoop } from './bot_actions.ts';
-import { loadCurrentSessionLogs, saveGameLogs, cleanupOldGameLogs, addLog } from './log_utils.ts';
+import { loadCurrentSessionLogs, saveGameLogs, cleanupOldGameLogs } from './log_utils.ts';
 import { lockedAutoDiscardLoop } from './auto_discard_loop.ts';
 
 const supabaseClient = createClient(

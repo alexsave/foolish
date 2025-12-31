@@ -35,8 +35,7 @@ wrap400(async ({ user, user_name }: ExecutionParams) => {
         table_battles: [],
         elimination_order: [],
         good_timestamp: null,
-        good_players: [],
-        logs: []
+        good_players: []
     };
 
     await supabaseClient.from('games').insert(gameData);
