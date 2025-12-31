@@ -8,7 +8,7 @@ const supabaseClient = createClient(
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
 );
 
-wrap400(async ({user, user_name }: ExecutionParams) => {
+wrap400(async ({ user, user_name }: ExecutionParams) => {
     const user_id = user.id;
     
     // Generate unique game ID
@@ -35,7 +35,8 @@ wrap400(async ({user, user_name }: ExecutionParams) => {
         table_battles: [],
         elimination_order: [],
         good_timestamp: null,
-        good_players: []
+        good_players: [],
+        logs: []
     };
 
     await supabaseClient.from('games').insert(gameData);
@@ -79,7 +80,8 @@ wrap400(async ({user, user_name }: ExecutionParams) => {
         table_battles: [],
         elimination_order: [],
         good_timestamp: null,
-        good_players: []
+        good_players: [],
+        logs: []
     };
 
     // Create game creation event

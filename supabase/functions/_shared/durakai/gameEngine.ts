@@ -317,7 +317,7 @@ export function getLegalMoves(game: Game, playerIndex: number): SimpleMove[] {
     const moves: SimpleMove[] = [];
     const player = game.players[playerIndex];
     
-    if (game.status !== GAME_STATUS.PLAYING) {
+    if (game.status !== "playing") {
         return moves;
     }
     
@@ -692,7 +692,7 @@ export function initializeGame(playerCount: number, seed?: string): Game {
         flipped: deck.length > 0 ? deck[deck.length - 1] : null,
         power_suit: trumpSuit,
         players,
-        status: GAME_STATUS.PLAYING,
+        status: "playing",
         first_attacker: firstAttacker,
         defender,
         table_battles: [],
@@ -731,6 +731,13 @@ export function isTerminal(game: Game): boolean {
         for (const player of game.players) {
             if (player.status === PLAYER_STATUS.IN && player.hand.length === 0) {
                 player.status = PLAYER_STATUS.OUT;
+                // IMPORTANT: emit PLAYER_OUT so finishing order and benchmarks don't misclassify.
+                addLog(game, {
+                    log_type: LOG_TYPE.PLAYER_OUT,
+                    player_id: player.player_id,
+                    card_pairs: [],
+                    defender_index: null
+                });
                 // Check again if only 1 player left
                 const remaining = game.players.filter(p => p.status === PLAYER_STATUS.IN);
                 if (remaining.length === 1) {

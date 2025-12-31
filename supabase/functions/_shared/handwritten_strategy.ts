@@ -122,7 +122,7 @@ export class HandwrittenBotStrategy implements BotStrategy {
                     candidateMoves = trumpAttacks;
                 } else {
                     const p = this.getTrumpAttackProbability(game).toFixed(2);
-                    console.log(`Bot ${botName} (handwritten) declines trump attack (p=${p}) to conserve power early`);
+                    //console.log(`Bot ${botName} (handwritten) declines trump attack (p=${p}) to conserve power early`);
                     // Prefer saying good (end round) or waiting if available
                     const goodMoves = legalMoves.filter(move => move.type === 'good');
                     if (goodMoves.length > 0) {
@@ -168,7 +168,7 @@ export class HandwrittenBotStrategy implements BotStrategy {
                     }
                 });
 
-                console.log(`Bot ${botName} (handwritten) chose attack with ${bestAttackMove.cards?.length || 0} lowest value cards`);
+                //console.log(`Bot ${botName} (handwritten) chose attack with ${bestAttackMove.cards?.length || 0} lowest value cards`);
                 return bestAttackMove;
             }
         }
@@ -194,7 +194,7 @@ export class HandwrittenBotStrategy implements BotStrategy {
                 }
             });
             
-            console.log(`Bot ${botName} (handwritten) chose pass with lowest value cards`);
+            //console.log(`Bot ${botName} (handwritten) chose pass with lowest value cards`);
             return bestPass;
         }
         
@@ -212,18 +212,18 @@ export class HandwrittenBotStrategy implements BotStrategy {
             if (fullCoverMoves.length > 0) {
                 const bestCover = this.findBestCoverCombination(game, bot as PrivatePlayer, fullCoverMoves);
                 if (bestCover) {
-                    console.log(`Bot ${botName} (handwritten) chose to cover all ${uncoveredAttacks.length} attacks`);
+                    //console.log(`Bot ${botName} (handwritten) chose to cover all ${uncoveredAttacks.length} attacks`);
                     return bestCover;
                 }
             } else {
-                console.log(`Bot ${botName} (handwritten) cannot cover all ${uncoveredAttacks.length} attacks - will not cover partially`);
+                ////console.log(`Bot ${botName} (handwritten) cannot cover all ${uncoveredAttacks.length} attacks - will not cover partially`);
             }
         }
         
         // Prefer wait over other moves when available
         const waitMoves = legalMoves.filter(move => move.type === 'wait');
         if (waitMoves.length > 0) {
-            console.log(`Bot ${botName} (handwritten) chose to wait - other players still attacking`);
+            //console.log(`Bot ${botName} (handwritten) chose to wait - other players still attacking`);
             return waitMoves[0];
         }
 
@@ -234,7 +234,7 @@ export class HandwrittenBotStrategy implements BotStrategy {
         if (nonAttackNonPickupMoves.length > 0) {
             const randomIndex = Math.floor(Math.random() * nonAttackNonPickupMoves.length);
             const chosenMove = nonAttackNonPickupMoves[randomIndex];
-            console.log(`Bot ${botName} (handwritten) chose non-attack: ${chosenMove.type}`);
+            //console.log(`Bot ${botName} (handwritten) chose non-attack: ${chosenMove.type}`);
             return chosenMove;
         }
         
@@ -269,21 +269,21 @@ export class HandwrittenBotStrategy implements BotStrategy {
             });
             
             const chosenMove = doneAttackMoves[0];
-            console.log(`Bot ${botName} (handwritten) forced to choose done attack with ${chosenMove.cards?.length || 0} lowest value cards`);
+            //console.log(`Bot ${botName} (handwritten) forced to choose done attack with ${chosenMove.cards?.length || 0} lowest value cards`);
             return chosenMove;
         }
         
         // Pickup as absolute last resort
         const pickupMoves = legalMoves.filter(move => move.type === 'pickup');
         if (pickupMoves.length > 0) {
-            console.log(`Bot ${botName} (handwritten) forced to pickup - no other options`);
+            //console.log(`Bot ${botName} (handwritten) forced to pickup - no other options`);
             return pickupMoves[0];
         }
         
         // Fallback to random move (should never reach here)
         const randomIndex = Math.floor(Math.random() * legalMoves.length);
         const chosenMove = legalMoves[randomIndex];
-        console.log(`Bot ${botName} (handwritten) fallback to random: ${chosenMove.type}`);
+        //console.log(`Bot ${botName} (handwritten) fallback to random: ${chosenMove.type}`);
         return chosenMove;
     }
 } 

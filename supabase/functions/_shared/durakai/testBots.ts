@@ -20,7 +20,6 @@ import { Game, PLAYER_STATUS } from '../types';
 import { BotStrategy } from '../bot_interfaces';
 import { BOT_STRATEGIES } from '../bot_strategy';
 import { calculateLegalMoves } from '../bot_strategy';
-import { LogAwareHandwrittenBot } from './logAwareHandwrittenBot';
 import { setRandomSeed } from '../random_strategy';
 import { 
     initializeGame, 
@@ -45,13 +44,6 @@ const ALL_STRATEGIES = new Map<string, BotStrategy | { name: string; selectMove:
 // Add all strategies from BOT_STRATEGIES
 BOT_STRATEGIES.forEach((strategy, key) => {
     ALL_STRATEGIES.set(key, strategy);
-});
-
-// Add log-aware strategy (uses game engine interface directly)
-const logAwareStrategy = new LogAwareHandwrittenBot();
-ALL_STRATEGIES.set('log-aware', {
-    name: logAwareStrategy.name,
-    selectMove: (game: Game, playerIndex: number) => logAwareStrategy.selectMove(game, playerIndex)
 });
 
 // -------------------------------------------------------------------------
