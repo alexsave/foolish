@@ -128,7 +128,8 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
     // Do everything within a single lock: find eligible bots, choose one, execute action
     try {
         const lockStartTime = Date.now();
-        console.log(`[TIMING] Acquiring game lock...`);
+        const reqId = `bot-${cycle}-${game_id.substring(0, 6)}`;
+        console.log(`[${reqId}][TIMING] Acquiring game lock...`);
         const { game } = await executeWithGameLock(game_id, async (game) => {
             console.log(`[TIMING] Lock acquired in ${Date.now() - lockStartTime}ms`);
             const lockWorkStartTime = Date.now();
@@ -217,19 +218,12 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
 
             console.log(`[TIMING] Lock work completed in ${Date.now() - lockWorkStartTime}ms`);
             return { game, events: actionEvents };
-        });
+        }, reqId);
 
 
-        // This can be where we call postActionAsyncWork()
+        // Note: Animation events are now automatically broadcasted by executeWithGameLock
         
         console.log(`[TIMING] Total time in executeWithGameLock: ${Date.now() - lockStartTime}ms`);
-
-        // Broadcast animation events AFTER releasing the lock (no lock needed for broadcasting)
-        // Fire and forget - don't await, let it happen in parallel with next bot action
-        // They are already broadcasted as part of executeWithGameLock
-        //broadcastAnimationEvents(game, actionEvents).catch(error => {
-            //console.error('Error broadcasting bot animation events:', error);
-        //});
     } catch (error) {
         console.error('Error in bot processing:', error);
         return;

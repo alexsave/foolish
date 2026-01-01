@@ -1,21 +1,12 @@
 import { corsHeaders, handleCors } from './cors.ts';
 import {
-    cardDisplay,
-    refill_deck,
-    draw,
     personalize_game,
     calculateEloChange,
     calculateGameRankings,
-    determine_lowest_power_index,
-    set_positions,
-    initialize_hands,
-    get_next_player_index,
-    no_cards_left,
     game_done,
     other_player,
 } from './common_utils.ts';
-import { Card, Game, GAME_STATUS, PLAYER_STATUS, PersonalGame, SERVER_EVENT_TYPE, PRIVATE_EVENT_TYPE, PrivatePlayer, PublicGame, PublicPlayer, PlayerHand, UserEloRating, BotHand, AnimationEvent, PublicAnimationEvent, PersonalAnimationEvent, ANIMATION_EVENT_TYPE, GameLog, LOG_TYPE } from './types.ts';
-import { ACE_VALUE, CARDS_PER_PLAYER } from './constants.ts';
+import { Card, Game, GAME_STATUS, PLAYER_STATUS, PersonalGame, PrivatePlayer, PublicGame, PlayerHand, UserEloRating, BotHand, AnimationEvent, PublicAnimationEvent, PersonalAnimationEvent, ANIMATION_EVENT_TYPE } from './types.ts';
 import { createClient, User } from 'jsr:@supabase/supabase-js';
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
@@ -111,7 +102,7 @@ export const releaseGameLock = async (game_id: string): Promise<void> => {
 };
 
 // Sequential operation execution with database-level locking
-export const executeWithGameLock = async (game_id: string, operation: (game: Game) => Promise<{ game: Game, events: AnimationEvent[] }>): Promise<{ game: Game, events: AnimationEvent[] }> => {
+export const executeWithGameLock = async (game_id: string, operation: (game: Game) => Promise<{ game: Game, events: AnimationEvent[] }>, reqId: string = 'unknown'): Promise<{ game: Game, events: AnimationEvent[] }> => {
     // Try to acquire database lock with retry logic
     const maxRetries = 9;
     let lockAcquired = false;
@@ -127,9 +118,11 @@ export const executeWithGameLock = async (game_id: string, operation: (game: Gam
         throw new Error(`Could not acquire lock for game ${game_id} - too many concurrent operations`);
     }
 
+    let result: { game: Game, events: AnimationEvent[] };
+    
     try {
         const loadedGame: Game = await loadCompleteGame(game_id);
-        const result = await operation(loadedGame);
+        result = await operation(loadedGame);
 
         // This path is common to bots and real player attacks
         // So we can put something like check_win here and not worry about it anywhere else
@@ -149,11 +142,20 @@ export const executeWithGameLock = async (game_id: string, operation: (game: Gam
         if (game_ended) {
             result.events.push({type: ANIMATION_EVENT_TYPE.MAGIC_TRANSITION, game_state: result.game })
         }
-        
-        return { game: result.game, events: result.events };
     } finally {
         await releaseGameLock(game_id);
     }
+
+    // Broadcast animation events AFTER releasing the lock (fire-and-forget)
+    // This happens for all operations: human actions, bot actions, and auto-discard
+    if (result.events.length > 0) {
+        console.log(`[${reqId}][LOCK] Broadcasting ${result.events.length} events after executeWithGameLock`);
+        broadcastAnimationEvents(result.game, result.events, reqId).catch(err => 
+            console.error(`[${reqId}] Error broadcasting events from executeWithGameLock:`, err)
+        );
+    }
+    
+    return result;
 };
 
 // Helper function to convert full Game to PublicGame (removes private data)
@@ -393,7 +395,7 @@ export const wrap400 = (execute: (params: ExecutionParams) => Promise<{ game: Ga
                 // Execute operation with database lock for this specific game
                 const lockStart = Date.now();
                 console.log(`[${reqId}][WRAP400] Starting executeWithGameLock for game ${game_id}`);
-                const { game, events: operationEvents } = await executeWithGameLock(game_id, (game) => execute({ user, user_name, body, game, reqId }));
+                const { game, events: operationEvents } = await executeWithGameLock(game_id, (game) => execute({ user, user_name, body, game, reqId }), reqId);
                 console.log(`[${reqId}][WRAP400] executeWithGameLock took ${Date.now() - lockStart}ms`);
                 result = game;
                 events = operationEvents;
@@ -414,19 +416,13 @@ export const wrap400 = (execute: (params: ExecutionParams) => Promise<{ game: Ga
             const personalized_result = personalize_game(result, user.id);
             console.log(`[${reqId}][WRAP400] personalize_game took ${Date.now() - personalizeStart}ms`);
 
-            // Fire-and-forget: Broadcast animation events AFTER preparing response (don't await)
-            if (events.length > 0) {
-                console.log(`[${reqId}][WRAP400] Starting fire-and-forget broadcast for ${events.length} events`);
-                if (game_id) {
-                    broadcastAnimationEvents(result, events, reqId).catch(err => 
-                        console.error(`[${reqId}] Background broadcast error:`, err)
-                    );
-                } else if (result && result.id) {
-                    // Broadcast for game creation
-                    broadcastAnimationEvents(result, events, reqId).catch(err => 
-                        console.error(`[${reqId}] Background broadcast error:`, err)
-                    );
-                }
+            // Note: Animation events are now broadcasted automatically by executeWithGameLock
+            // for game_id operations. For game creation (no game_id), we still need to broadcast here.
+            if (!game_id && events.length > 0 && result && result.id) {
+                console.log(`[${reqId}][WRAP400] Starting fire-and-forget broadcast for game creation (${events.length} events)`);
+                broadcastAnimationEvents(result, events, reqId).catch(err => 
+                    console.error(`[${reqId}] Background broadcast error:`, err)
+                );
             }
 
             // Fire-and-forget: Schedule bot actions AFTER preparing response (already non-blocking)

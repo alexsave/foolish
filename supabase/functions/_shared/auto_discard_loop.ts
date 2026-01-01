@@ -115,7 +115,8 @@ async function monitorAutoDiscard(game_id: string, iteration: number = 0): Promi
     let shouldAutoDiscard = false;
 
     try {
-        const { game } = await executeWithGameLock(game_id, async (game) => {
+        const reqId = `auto-discard-${iteration}-${game_id.substring(0, 6)}`;
+        const { game, events } = await executeWithGameLock(game_id, async (game) => {
             // Check if we should still be monitoring
             if (game.status !== GAME_STATUS.PLAYING) {
                 console.log(`[AUTO-DISCARD][${iteration}] Game ${game_id} is not playing, stopping`);
@@ -184,7 +185,9 @@ async function monitorAutoDiscard(game_id: string, iteration: number = 0): Promi
             }
 
             return { game, events: [] };
-        });
+        }, reqId);
+
+        // Note: Animation events are now automatically broadcasted by executeWithGameLock
 
         // Continue monitoring if needed
         if (shouldContinue) {
