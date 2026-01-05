@@ -74,7 +74,9 @@ export const executeBotMove = (game: Game, bot: PrivatePlayer, move: LegalMove):
                 case 'cover':
                     actionEvents = handleCover(game, bot.player_id, move.cards!, move.attack_cards!);
                     // Check if this cover completed the round (all attacks covered)
-                    const all_attacks_covered = game.table_battles.every(battle => battle.defense !== null);
+                    // Note: every() returns true for empty arrays, but we should have battles after covering
+                    const all_attacks_covered = game.table_battles.length > 0 && 
+                        game.table_battles.every(battle => battle.defense !== null);
                     if (all_attacks_covered) {
                         // Add special message for successful cover that ends the round
                         specialMessage = `Bot ${bot.name} successfully covered and ended the round`;
@@ -139,7 +141,9 @@ export const shouldBotActCore = (game: Game, bot: PrivatePlayer, botIndex: numbe
 
     const isFirstAttack = game.table_battles.length === 0;
     const isDefender = botIndex === game.defender;
-    const allAttacksCovered = game.table_battles.every(battle => battle.defense !== null);
+    // Note: every() returns true for empty arrays, so check length first
+    const allAttacksCovered = game.table_battles.length > 0 && 
+        game.table_battles.every(battle => battle.defense !== null);
 
     let shouldAct = false;
     let reason = '';
@@ -156,11 +160,12 @@ export const shouldBotActCore = (game: Game, bot: PrivatePlayer, botIndex: numbe
             const allAttackers = game.players.filter((p, index) => 
                 index !== game.defender && p.status === PLAYER_STATUS.IN
             );
-            const allAttackersSaidGood = allAttackers.every(attacker => 
+            // Note: every() returns true for empty arrays, so check length first
+            const allAttackersSaidGood = allAttackers.length > 0 && allAttackers.every(attacker => 
                 game.good_players?.includes(attacker.player_id)
             );
             
-            if (allAttackersSaidGood && allAttackers.length > 0) {
+            if (allAttackersSaidGood) {
                 // All attackers said good and all attacks covered - auto_discard_loop will handle this
                 shouldAct = false;
                 reason = 'all attackers said good and attacks covered - waiting for auto-discard';

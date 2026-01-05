@@ -50,7 +50,9 @@ export function calculateLegalMoves(game: Game, botPlayerId: string): LegalMove[
     // Game state specific moves based on logical conditions
     if (game.status === GAME_STATUS.PLAYING) {
         const isFirstAttack = game.table_battles.length === 0;
-        const allAttacksCovered = game.table_battles.every(battle => battle.defense !== null);
+        // Note: every() returns true for empty arrays, so check length first
+        const allAttacksCovered = game.table_battles.length > 0 && 
+            game.table_battles.every(battle => battle.defense !== null);
         
         if (isFirstAttack && isFirstAttacker) {
             // Bot is first attacker - MUST attack, cannot say "good" with empty table

@@ -149,7 +149,8 @@ async function monitorAutoDiscard(game_id: string, iteration: number = 0): Promi
             );
 
             // Check if all attackers have pressed good
-            const allAttackersGood = allAttackers.every(attacker =>
+            // Note: every() returns true for empty arrays, so check length first
+            const allAttackersGood = allAttackers.length > 0 && allAttackers.every(attacker =>
                 game.good_players && game.good_players.includes(attacker.player_id)
             );
 

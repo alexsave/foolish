@@ -220,14 +220,18 @@ export function executeCover(game: Game, player_id: string, cover_cards: Card[],
         return events;
     }
 
+    // Reset good fields since board state changed
+    // Defense cards introduce new values to the table, so attackers should be able to reconsider
+    // This happens on EVERY cover, not just when all attacks are covered
+    game.good_players = [];
+    game.good_timestamp = null;
+    
     // Check if all attacks are covered
-    const all_attacks_covered = game.table_battles.every(battle => battle.defense !== null);
+    // Note: every() returns true for empty arrays, but we should have battles after covering
+    const all_attacks_covered = game.table_battles.length > 0 && 
+        game.table_battles.every(battle => battle.defense !== null);
     if (all_attacks_covered) {
-        // All attacks are covered - reset good_players since board state changed
-        // Defense cards introduce new values to the table, so attackers should be able to reconsider
-        game.good_players = [];
-        
-        // Reset timestamp to restart the 60-second countdown for this new board state
+        // All attacks are covered - set timestamp to start the 60-second countdown
         game.good_timestamp = Date.now();
         //console.log(`All attacks covered at ${game.good_timestamp}. Starting 60-second countdown.`);
         

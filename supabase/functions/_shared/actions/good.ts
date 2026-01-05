@@ -168,19 +168,28 @@ export function executeGood(game: Game, player_id: string): AnimationEvent[] {
     );
 
     // Check if all attackers have pressed good
-    const allAttackersGood = allAttackers.every(attacker => 
+    // Note: every() returns true for empty arrays, so check length first
+    const allAttackersGood = allAttackers.length > 0 && allAttackers.every(attacker => 
         game.good_players.includes(attacker.player_id)
     );
 
+    // Check if all attacks are covered
+    // Note: every() returns true for empty arrays, so check length first
+    const allAttacksCovered = game.table_battles.length > 0 && 
+        game.table_battles.every(battle => battle.defense !== null);
+    
     // Check if 1 minute has passed since good_timestamp was set
     const oneMinutePassed = game.good_timestamp !== null && game.good_timestamp !== undefined
         ? (Date.now() - game.good_timestamp >= 60000) 
         : false;
 
-    // Only proceed to next round if all attackers have pressed good OR 1 minute has passed
-    if (!allAttackersGood && !oneMinutePassed) {
-        console.log(`Good pressed by ${player.name}. Waiting for other attackers or timeout. ` +
-            `${game.good_players.length}/${allAttackers.length} attackers ready. ` +
+    // Only proceed to next round if (all attackers said good OR timeout) AND all attacks are covered
+    const canTransition = (allAttackersGood || oneMinutePassed) && allAttacksCovered;
+    
+    if (!canTransition) {
+        console.log(`Good pressed by ${player.name}. Waiting for conditions: ` +
+            `Attackers: ${game.good_players.length}/${allAttackers.length} ready, ` +
+            `Attacks covered: ${allAttacksCovered}, ` +
             `Time remaining: ${game.good_timestamp ? Math.max(0, 60000 - (Date.now() - game.good_timestamp)) : 60000}ms`);
         
         // Trigger auto-discard loop to monitor timeout (fire-and-forget)
@@ -189,10 +198,10 @@ export function executeGood(game: Game, player_id: string): AnimationEvent[] {
         return events;
     }
 
-    // All attackers said good OR timeout reached - proceed to next round
+    // All conditions met - proceed to next round
     const transitionReason = allAttackersGood 
-        ? `All ${allAttackers.length} attackers said good`
-        : `1 minute timeout reached (${game.good_players.length}/${allAttackers.length} attackers ready)`;
+        ? `All ${allAttackers.length} attackers said good and all attacks covered`
+        : `60-second timeout reached and all attacks covered (${game.good_players.length}/${allAttackers.length} attackers ready)`;
 
     // Use shared round transition logic
     return executeRoundTransition(game, transitionReason);
