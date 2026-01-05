@@ -102,11 +102,6 @@ export function executePickup(game: Game, player_id: string): AnimationEvent[] {
         defender_index: game.defender
     });
     
-    // Reset done_attacking_this_round flag for all players when attacking shifts
-    game.players.forEach(player => {
-        player.done_attacking_this_round = false;
-    });
-    
     // Reset good fields when round ends
     game.good_players = [];
     game.good_timestamp = null;

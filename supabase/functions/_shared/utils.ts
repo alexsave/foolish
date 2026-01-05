@@ -6,13 +6,13 @@ import {
     game_done,
     other_player,
 } from './common_utils.ts';
-import { Card, Game, GAME_STATUS, PLAYER_STATUS, PersonalGame, PrivatePlayer, PublicGame, PlayerHand, UserEloRating, BotHand, AnimationEvent, PublicAnimationEvent, PersonalAnimationEvent, ANIMATION_EVENT_TYPE } from './types.ts';
+import { Card, Game, GAME_STATUS, PLAYER_STATUS, PersonalGame, PrivatePlayer, PublicGame, PlayerHand, UserEloRating, BotHand, AnimationEvent, PublicAnimationEvent, PersonalAnimationEvent, ANIMATION_EVENT_TYPE, GameLog } from './types.ts';
 import { createClient, User } from 'jsr:@supabase/supabase-js';
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { getAuthenticatedUser } from './auth.ts';
 import { lockedBotLoop } from './bot_actions.ts';
-import { loadCurrentSessionLogs, saveGameLogs, cleanupOldGameLogs } from './log_utils.ts';
+import { saveGameLogs, cleanupOldGameLogs } from './log_utils.ts';
 import { lockedAutoDiscardLoop } from './auto_discard_loop.ts';
 
 const supabaseClient = createClient(
@@ -479,7 +479,8 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
             *,
             game_decks(deck),
             player_hands(player_id, hand, awaiting_attack),
-            bot_hands(bot_id, hand, awaiting_attack, done_attacking_this_round, bots(strategy_key))
+            bot_hands(bot_id, hand, awaiting_attack, bots(strategy_key)),
+            game_logs(id, game_id, log_type, player_id, card_pairs, defender_index, created_at)
         `)
         .eq('id', game_id)
         .single();
@@ -492,7 +493,7 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
     console.log(JSON.stringify(data));
 
     const players: PrivatePlayer[] = data.players.map((player: any) => {
-        let hand, awaiting_attack, done_attacking_this_round, strategy_key;
+        let hand, awaiting_attack, strategy_key;
 
         if (player.is_ai) {
             // Look up in bot_hands table
@@ -500,7 +501,6 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
             if (botHand) {
                 hand = botHand.hand;
                 awaiting_attack = botHand.awaiting_attack;
-                done_attacking_this_round = botHand.done_attacking_this_round;
                 strategy_key = botHand.bots.strategy_key;
             }
         } else {
@@ -508,7 +508,6 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
             const playerHand = data.player_hands.find(hand => hand.player_id === player.player_id)!;
             hand = playerHand.hand;
             awaiting_attack = playerHand.awaiting_attack;
-            done_attacking_this_round = false; // Human players don't use this flag, just set it to false for type simplicity
             strategy_key = 'human';
         }
 
@@ -519,14 +518,33 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
             is_ai: player.is_ai,
             hand: hand,
             awaiting_attack: awaiting_attack,
-            done_attacking_this_round: done_attacking_this_round,
             hand_length: hand.length,
             strategy_key: strategy_key,
         } as PrivatePlayer;
     });
 
-    // Load logs for the current game session
-    const logs = await loadCurrentSessionLogs(supabaseClient, game_id);
+    // Filter logs to get only the current game session
+    // Find the most recent GAME_START and return all logs after it
+    let logs: GameLog[] = [];
+    if (data.game_logs && data.game_logs.length > 0) {
+        const allLogs = data.game_logs.sort((a: any, b: any) => 
+            new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+        );
+        
+        // Find the index of the most recent GAME_START
+        let gameStartIndex = -1;
+        for (let i = allLogs.length - 1; i >= 0; i--) {
+            if (allLogs[i].log_type === 'game_start') {
+                gameStartIndex = i;
+                break;
+            }
+        }
+        
+        // If GAME_START found, return logs from that point onwards
+        if (gameStartIndex !== -1) {
+            logs = allLogs.slice(gameStartIndex);
+        }
+    }
 
     const game: Game = {
         id: data.id,
@@ -627,7 +645,6 @@ export const saveCompleteGame = async (game: Game): Promise<any> => {
         bot_id: player.player_id,
         hand: player.hand,
         awaiting_attack: player.awaiting_attack,
-        done_attacking_this_round: player.done_attacking_this_round,
     }));
 
     if (botHandUpdates.length > 0) {

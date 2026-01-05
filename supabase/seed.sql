@@ -144,7 +144,6 @@ CREATE TABLE bot_hands (
   bot_id UUID NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
   hand JSONB NOT NULL DEFAULT '[]'::jsonb, -- Card[] - bot's cards
   awaiting_attack BOOLEAN NOT NULL DEFAULT false, -- Private status for attack confirmation
-  done_attacking_this_round BOOLEAN NOT NULL DEFAULT false, -- Flag to indicate bot is done attacking this round
   joined_at TIMESTAMP DEFAULT NOW(),
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW(),
@@ -583,11 +582,6 @@ INSERT INTO bots (nickname, strategy_key) VALUES
 ('Random 5', 'random'),
 ('Random 6', 'random'),
 ('Random 7', 'random'),
-
--- One card strategy bots (minimalist efficiency)
-('One Card 1', 'one_card'),
-('One Card 2', 'one_card'),
-('One Card 3', 'one_card'),
 
 -- Simple heuristic strategy bots (logical rule-based)
 ('Simple Heuristic 1', 'simple_heuristic'),

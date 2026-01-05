@@ -21,7 +21,7 @@ export const createMockPlayer = (
   hand_length: hand.length,
   is_ai,
   awaiting_attack: false,
-  done_attacking_this_round: false,
+  strategy_key: is_ai ? 'random' : 'human'
 });
 
 // Helper to create a mock battle

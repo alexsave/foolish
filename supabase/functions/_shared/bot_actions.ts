@@ -1,4 +1,4 @@
-import { Game, PrivatePlayer, AnimationEvent, GAME_STATUS, PLAYER_STATUS } from './types.ts';
+import { Game, PrivatePlayer, AnimationEvent, GAME_STATUS, PLAYER_STATUS, GAME_MOVE_TYPE } from './types.ts';
 import { executeWithGameLock } from './utils.ts';
 import { calculateLegalMoves, getBotStrategy, LegalMove } from './bot_strategy.ts';
 import { createClient } from 'jsr:@supabase/supabase-js';
@@ -123,6 +123,7 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
     console.log(`[CYCLE ${cycle}] Starting bot processing for game ${game_id}`);
 
     let botProcessed = false;
+    let shouldSkipDelay = false;
     let actionEvents: AnimationEvent[] = [];
 
     // Do everything within a single lock: find eligible bots, choose one, execute action
@@ -196,13 +197,15 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
                     const actionStartTime = Date.now();
 
                     // Try to process this bot's action
-                    const botActionEvents = await processBotAction(game, selectedBot.bot);
+                    const botActionResult = await processBotAction(game, selectedBot.bot);
 
                     const actionDuration = Date.now() - actionStartTime;
-                    if (botActionEvents) {
-                        actionEvents.push(...(botActionEvents as unknown as AnimationEvent[]));
+                    if (botActionResult) {
+                        actionEvents.push(...(botActionResult.events as unknown as AnimationEvent[]));
                         botProcessed = true;
-                        console.log(`[ACTION] ✓ Bot ${selectedBot.bot.name} completed action in ${actionDuration}ms`);
+                        // Skip delay for passive actions (good, wait) - continue immediately
+                        shouldSkipDelay = botActionResult.moveType === GAME_MOVE_TYPE.GOOD || botActionResult.moveType === GAME_MOVE_TYPE.WAIT;
+                        console.log(`[ACTION] ✓ Bot ${selectedBot.bot.name} completed ${botActionResult.moveType} action in ${actionDuration}ms`);
                         break; // Exit the loop since we successfully processed a bot
                     } else {
                         console.log(`[ACTION] ✗ Bot ${selectedBot.bot.name} move failed after ${actionDuration}ms, trying next bot`);
@@ -234,6 +237,12 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
 
     // Continue the loop if a bot was processed or auto-transition occurred
     if (botProcessed) {
+        // Skip delay for passive actions (good, wait) - continue immediately to next bot
+        if (shouldSkipDelay) {
+            console.log(`[CYCLE ${cycle}] Passive action completed in ${totalCycleTime}ms, continuing immediately to next bot`);
+            return await processBotActions(game_id, cycle + 1);
+        }
+        
         // Calculate remaining delay to ensure consistent timing between cycle starts
         const remainingDelay = Math.max(0, currentBotDelay - totalCycleTime);
         

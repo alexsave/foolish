@@ -663,7 +663,7 @@ export function initializeGame(playerCount: number, seed?: string): Game {
             hand_length: hand.length,
             is_ai: true,
             awaiting_attack: true,
-            done_attacking_this_round: false
+            strategy_key: 'random'
         });
     }
     

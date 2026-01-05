@@ -80,9 +80,10 @@ export function executePass(game: Game, player_id: string, cards: Card[]): Anima
         defender_index: null
     });
 
-    // Reset good_timestamp since we now have uncovered attacks
-    // (good_players stays - they can still say good once all attacks are covered again)
+    // Reset good fields since game state has changed (new attacks added via pass)
+    // Players who said "good" to the previous state may want to reconsider
     game.good_timestamp = null;
+    game.good_players = [];
 
     // Capture game state after pass
     const gameStateAfterPass = JSON.parse(JSON.stringify(game));

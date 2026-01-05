@@ -40,9 +40,6 @@ export class RandomBotStrategy implements BotStrategy {
             if (move.attack_cards) {
                 description += ` covering [${move.attack_cards.map(c => `${c.value}${['♠','♥','♦','♣'][c.suit]}`).join(', ')}]`;
             }
-            if (move.type === 'attack' && move.done_attacking_this_round !== undefined) {
-                description += move.done_attacking_this_round ? ' (done)' : ' (continue)';
-            }
             return description;
         }).join(', ');
         
@@ -59,9 +56,6 @@ export class RandomBotStrategy implements BotStrategy {
         }
         if (chosenMove.attack_cards) {
             chosenDescription += ` covering [${chosenMove.attack_cards.map(c => `${c.value}${['♠','♥','♦','♣'][c.suit]}`).join(', ')}]`;
-        }
-        if (chosenMove.type === 'attack' && chosenMove.done_attacking_this_round !== undefined) {
-            chosenDescription += chosenMove.done_attacking_this_round ? ' (done)' : ' (continue)';
         }
         console.log(`Bot ${botName} chose: ${chosenDescription}`);
         

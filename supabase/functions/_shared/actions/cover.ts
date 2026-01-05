@@ -160,10 +160,6 @@ export function executeCover(game: Game, player_id: string, cover_cards: Card[],
         }
         
         game.first_attacker = game.defender;
-        // Reset done_attacking_this_round flag for all players when attacking shifts
-        game.players.forEach(player => {
-            player.done_attacking_this_round = false;
-        });
         
         // Reset good fields when round ends
         game.good_players = [];
@@ -227,15 +223,16 @@ export function executeCover(game: Game, player_id: string, cover_cards: Card[],
     // Check if all attacks are covered
     const all_attacks_covered = game.table_battles.every(battle => battle.defense !== null);
     if (all_attacks_covered) {
-        // All attacks are covered - set timestamp if not already set
-        if (!game.good_timestamp) {
-            game.good_timestamp = Date.now();
-            game.good_players = []; // Reset good_players when all attacks first get covered
-            //console.log(`All attacks covered at ${game.good_timestamp}. Starting 60-second countdown.`);
-            
-            // Start auto-discard monitoring loop (fire-and-forget)
-            // The state we get into will trigger the auto-discard loop automatically in utils.ts
-        }
+        // All attacks are covered - reset good_players since board state changed
+        // Defense cards introduce new values to the table, so attackers should be able to reconsider
+        game.good_players = [];
+        
+        // Reset timestamp to restart the 60-second countdown for this new board state
+        game.good_timestamp = Date.now();
+        //console.log(`All attacks covered at ${game.good_timestamp}. Starting 60-second countdown.`);
+        
+        // Start auto-discard monitoring loop (fire-and-forget)
+        // The state we get into will trigger the auto-discard loop automatically in utils.ts
 
         // All attacks are covered - no status change needed, game continues in playing state
         // Attackers must now press 'good' to proceed

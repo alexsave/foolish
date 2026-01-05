@@ -91,11 +91,6 @@ export function executeRoundTransition(game: Game, reason: string): AnimationEve
         defender_index: game.defender
     });
     
-    // Reset done_attacking_this_round flag for all players when attacking shifts
-    game.players.forEach(player => {
-        player.done_attacking_this_round = false;
-    });
-    
     // Reset good fields when round ends
     game.good_players = [];
     game.good_timestamp = null;
@@ -116,14 +111,15 @@ export function validateGood(game: Game, player_id: string): void {
         throw new Error(`Player ${player_id} is not ready to attack`);
     }
 
-    // Can only say good when all attacks are covered and player is not defender
+    // Defender cannot say good
     if (game.players[game.defender].player_id === player_id) {
         throw new Error(`Defender cannot say good`);
     }
 
-    // Can only say good when all attacks are covered
-    if (!game.table_battles.every(battle => battle.defense !== null)) {
-        throw new Error(`Cannot say good - not all attacks are covered`);
+    // First attacker cannot say good if table is empty (must make initial attack)
+    const playerIndex = game.players.findIndex(p => p.player_id === player_id);
+    if (game.table_battles.length === 0 && playerIndex === game.first_attacker) {
+        throw new Error(`First attacker must attack - cannot say good with empty table`);
     }
 
     // Player must not have already said good

@@ -215,9 +215,8 @@ async function playGame(
                             // For attacks with cards, pass ALL cards (multi-card attack)
                             if (chosenMove.cards && chosenMove.cards.length > 0) {
                                 simpleMove = { type: 'attack', cards: chosenMove.cards };
-                            } else if (chosenMove.done_attacking_this_round && game.table_battles.length > 0) {
+                            } else if (game.table_battles.length > 0) {
                                 // Only convert to 'good' if we're in the middle of a round with battles on table
-                                // and the bot explicitly chose to be done (with no cards specified)
                                 const allCovered = game.table_battles.every(b => b.defense !== null);
                                 if (allCovered) {
                                     simpleMove = { type: 'good' };

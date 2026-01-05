@@ -50,6 +50,30 @@ export class UltimateChampionStrategy implements BotStrategy {
         const isDefender = botIndex === game.defender;
         const isAttacker = botIndex === game.first_attacker || !isDefender;
         
+        // ADVANCED FEATURE: Attack Continuation Probability via "good"
+        // Probabilistically choose to end attacks early
+        const goodMoves = legalMoves.filter(move => move.type === 'good');
+        if (goodMoves.length > 0 && game.table_battles.length >= 1) {
+            let continueProb = this.attack_continuation_prob;
+            
+            const defenderIndex = game.defender;
+            const defender = game.players[defenderIndex];
+            const defenderHandSize = defender.hand.length;
+            
+            // ADVANCED FEATURE: Opponent Hand Size Weight
+            if (this.opponent_hand_weight > 0.5) {
+                if (defenderHandSize <= 2) {
+                    continueProb *= 1.5;  // More pressure against weak opponents
+                } else if (defenderHandSize >= 5) {
+                    continueProb *= 0.7;  // Less pressure against strong opponents
+                }
+            }
+            
+            if (Math.random() > continueProb) {
+                return goodMoves[0];
+            }
+        }
+        
         // Attack strategy
         const attackMoves = legalMoves.filter(move => move.type === 'attack');
         if (attackMoves.length > 0 && isAttacker) {
@@ -78,8 +102,7 @@ export class UltimateChampionStrategy implements BotStrategy {
             }
         }
         
-        // Good moves
-        const goodMoves = legalMoves.filter(move => move.type === 'good');
+        // Good moves (if not chosen earlier probabilistically)
         if (goodMoves.length > 0) {
             return goodMoves[0];
         }
@@ -107,25 +130,8 @@ export class UltimateChampionStrategy implements BotStrategy {
         const defenderHandSize = defender.hand.length;
         
         // ADVANCED FEATURE: Attack Continuation Probability
-        if (game.table_battles.length >= 1) {
-            let continueProb = this.attack_continuation_prob;
-            
-            // ADVANCED FEATURE: Opponent Hand Size Weight
-            if (this.opponent_hand_weight > 0.5) {
-                if (defenderHandSize <= 2) {
-                    continueProb *= 1.5;  // More pressure against weak opponents
-                } else if (defenderHandSize >= 5) {
-                    continueProb *= 0.7;  // Less pressure against strong opponents
-                }
-            }
-            
-            if (Math.random() > continueProb) {
-                const doneAttackMoves = attackMoves.filter(move => move.done_attacking_this_round === true);
-                if (doneAttackMoves.length > 0) {
-                    return doneAttackMoves[0];
-                }
-            }
-        }
+        // Note: This is now handled by choosing "good" probabilistically in the main strategy
+        // This method only processes attack moves
         
         // ADVANCED FEATURE: Bluff Attack Probability
         if (Math.random() < this.bluff_attack_prob) {

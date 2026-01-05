@@ -47,7 +47,6 @@ wrap400(async ({body, game}: ExecutionParams) => {
         is_ai: true,
         hand: [],
         awaiting_attack: false,
-        done_attacking_this_round: false,
         hand_length: 0,
         strategy_key: availableBot.strategy_key
     });

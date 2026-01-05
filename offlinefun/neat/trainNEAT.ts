@@ -89,11 +89,6 @@ function maxWinningPlace(playerCount: number): number {
 type SimpleMove = ReturnType<typeof getLegalMoves>[number];
 
 function legalMoveToEngineMove(move: LegalMove): SimpleMove {
-    // Some strategies encode "done attacking" as attack+done_attacking_this_round with no cards.
-    if (move.type === 'attack' && move.done_attacking_this_round && (!move.cards || move.cards.length === 0)) {
-        return { type: 'good' } as any;
-    }
-
     if (move.type === 'attack') {
         const cards = move.cards ?? [];
         if (cards.length > 0) return { type: 'attack', cards } as any;

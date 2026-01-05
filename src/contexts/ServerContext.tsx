@@ -490,8 +490,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                                 ...selfPlayer, 
                                 player_id: user_id, 
                                 hand: playerData.hand, 
-                                awaiting_attack: playerData.awaiting_attack, 
-                                done_attacking_this_round: false,
+                                awaiting_attack: playerData.awaiting_attack,
                                 strategy_key: 'human'
                             }
                         };
@@ -966,7 +965,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                     }
                     games[game.id] = {
                         ...game,
-                        self: {...selfPlayer, player_id: user_id, hand: playerHand.hand, awaiting_attack: playerHand.awaiting_attack, done_attacking_this_round: false, strategy_key: 'human'}// as unknown as PrivatePlayer
+                        self: {...selfPlayer, player_id: user_id, hand: playerHand.hand, awaiting_attack: playerHand.awaiting_attack, strategy_key: 'human'}// as unknown as PrivatePlayer
                     };
                     processedGames++;
                 } catch (gameError) {

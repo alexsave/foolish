@@ -56,7 +56,8 @@ export const GAME_MOVE_TYPE = {
     SUCCESS: 'success',
     STATUS: 'status',
     GOOD: 'good',
-    ATTACK: 'attack'
+    ATTACK: 'attack',
+    WAIT: 'wait'
 } as const;
 
 export type GameMoveType = typeof GAME_MOVE_TYPE[keyof typeof GAME_MOVE_TYPE];
@@ -166,7 +167,6 @@ export interface PublicPlayer {
 export interface PrivatePlayer extends PublicPlayer {
     hand: Card[];
     awaiting_attack: boolean; // private info stored in player_hands table
-    done_attacking_this_round: boolean; // Flag to indicate bot is done attacking this round
     strategy_key: string; // strategy key for bots so we don't need to load the bot table too. just "human" for players
 }
 
@@ -244,7 +244,6 @@ export interface BotHand {
     bot_id: string;
     hand: Card[];
     awaiting_attack: boolean;
-    done_attacking_this_round: boolean;
 }
 
 // Log types for bot memory and game history

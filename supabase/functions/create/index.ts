@@ -70,7 +70,6 @@ wrap400(async ({ user, user_name }: ExecutionParams) => {
             hand: [],
             hand_length: 0,
             awaiting_attack: false,
-            done_attacking_this_round: false,
             strategy_key: 'human'
         }],
         status: 'waiting',

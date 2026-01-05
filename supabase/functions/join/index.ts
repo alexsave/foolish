@@ -22,7 +22,6 @@ wrap400(async ({user, user_name, body, game}: ExecutionParams) => {
         is_ai: false,
         hand: [],
         awaiting_attack: false,
-        done_attacking_this_round: false,
         hand_length: 0,
         strategy_key: 'human'
     });

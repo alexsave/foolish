@@ -51,8 +51,8 @@ export const createOfflineGame = (playerName: string, gameName: string, botCount
             hand: playerHand,
             hand_length: 6,
             awaiting_attack: true,
-            done_attacking_this_round: false,
-            is_ai: false
+            is_ai: false,
+            strategy_key: 'human'
         },
         deck_length: 20,
         discard_pile_length: 0,

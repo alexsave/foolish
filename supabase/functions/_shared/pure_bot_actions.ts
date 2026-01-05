@@ -11,7 +11,7 @@ import { handleGood } from './actions/good.ts';
 import { AnimationEvent } from './types.ts';
 
 // Process a single bot's action
-export const processBotAction = async (game: Game, bot: PrivatePlayer): Promise<false | AnimationEvent[]> => {
+export const processBotAction = async (game: Game, bot: PrivatePlayer): Promise<false | { events: AnimationEvent[], moveType: string }> => {
     try {
         const botActionStartTime = Date.now();
         
@@ -48,7 +48,7 @@ export const processBotAction = async (game: Game, bot: PrivatePlayer): Promise<
         const totalBotActionTime = Date.now() - botActionStartTime;
         //console.log(`[TIMING] Total bot action time for ${bot.name}: ${totalBotActionTime}ms`);
         console.log(`Bot ${bot.name} completed ${chosenMove.type} action`);
-        return actionEvents;
+        return { events: actionEvents, moveType: chosenMove.type };
 
     } catch (error) {
         console.error(`Error processing bot action for ${bot.name}:`, error);
@@ -68,32 +68,7 @@ export const executeBotMove = (game: Game, bot: PrivatePlayer, move: LegalMove):
             
             switch (move.type) {
                 case 'attack':
-                    // Capture the game status before executing the attack
-                    const statusBeforeAttack = game.status;
                     actionEvents = handleAttack(game, bot.player_id, move.cards!);
-                    // Set done_attacking_this_round flag based on the move's choice
-                    if (move.done_attacking_this_round !== undefined) {
-                        bot.done_attacking_this_round = move.done_attacking_this_round;
-                        // If bot is done attacking this round, set awaiting_attack = false
-                        if (move.done_attacking_this_round) {
-                            bot.awaiting_attack = false;
-                            console.log(`Bot ${bot.name} is done attacking this round`);
-
-                            // Only try to execute "good" logic if all attacks are covered
-                            // Use handleGood for proper validation
-                            if (game.table_battles.length > 0 && game.table_battles.every(battle => battle.defense !== null)) {
-                                try {
-                                    console.log(`Bot ${bot.name} attempting good logic`);
-                                    const goodEvents = handleGood(game, bot.player_id);
-                                    actionEvents.push(...goodEvents);
-                                    console.log(`Bot ${bot.name} successfully executed good logic`);
-                                } catch (error) {
-                                    console.log(`Bot ${bot.name} good logic failed validation: ${error.message}`);
-                                    // Bot is still marked as done attacking this round, which is correct
-                                }
-                            }
-                        }
-                    }
                     break;
 
                 case 'cover':
@@ -108,29 +83,6 @@ export const executeBotMove = (game: Game, bot: PrivatePlayer, move: LegalMove):
 
                 case 'pass':
                     actionEvents = handlePass(game, bot.player_id, move.cards!);
-                    // Set done_attacking_this_round flag based on the move's choice
-                    if (move.done_attacking_this_round !== undefined) {
-                        bot.done_attacking_this_round = move.done_attacking_this_round;
-                        // If bot is done attacking this round, set awaiting_attack = false
-                        if (move.done_attacking_this_round) {
-                            bot.awaiting_attack = false;
-                            console.log(`Bot ${bot.name} is done attacking this round after pass`);
-
-                            // Only try to execute "good" logic if all attacks are covered
-                            // Use handleGood for proper validation
-                            if (game.table_battles.length > 0 && game.table_battles.every(battle => battle.defense !== null)) {
-                                try {
-                                    console.log(`Bot ${bot.name} attempting good logic after pass`);
-                                    const goodEvents = handleGood(game, bot.player_id);
-                                    actionEvents.push(...goodEvents);
-                                    console.log(`Bot ${bot.name} successfully executed good logic after pass`);
-                                } catch (error) {
-                                    console.log(`Bot ${bot.name} good logic failed validation after pass: ${error.message}`);
-                                    // Bot is still marked as done attacking this round, which is correct
-                                }
-                            }
-                        }
-                    }
                     break;
 
                 case 'pickup':
@@ -197,17 +149,47 @@ export const shouldBotActCore = (game: Game, bot: PrivatePlayer, botIndex: numbe
         shouldAct = botIndex === game.first_attacker;
         reason = shouldAct ? 'is first attacker' : 'not first attacker';
     } else if (isDefender) {
-        // Defender can always act when there are attacks
-        shouldAct = true;
-        reason = 'is defender';
-    } else if (allAttacksCovered) {
-        // All attacks covered: attackers can attack or say good
-        shouldAct = bot.awaiting_attack && !bot.done_attacking_this_round;
-        reason = shouldAct ? 'awaiting attack and not done' : `awaiting_attack=${bot.awaiting_attack}, done_attacking=${bot.done_attacking_this_round}`;
+        // Defender can act when there are attacks
+        // EXCEPT: if all attacks are covered AND all attackers have said "good"
+        // In that case, auto_discard_loop will handle round transition
+        if (allAttacksCovered) {
+            const allAttackers = game.players.filter((p, index) => 
+                index !== game.defender && p.status === PLAYER_STATUS.IN
+            );
+            const allAttackersSaidGood = allAttackers.every(attacker => 
+                game.good_players?.includes(attacker.player_id)
+            );
+            
+            if (allAttackersSaidGood && allAttackers.length > 0) {
+                // All attackers said good and all attacks covered - auto_discard_loop will handle this
+                shouldAct = false;
+                reason = 'all attackers said good and attacks covered - waiting for auto-discard';
+            } else {
+                // Some attackers haven't said good yet, or attacks not all covered
+                shouldAct = true;
+                reason = 'is defender';
+            }
+        } else {
+            // Not all attacks covered - defender can act
+            shouldAct = true;
+            reason = 'is defender with uncovered attacks';
+        }
     } else {
-        // Some attacks uncovered: attackers can still attack
-        shouldAct = bot.awaiting_attack && !bot.done_attacking_this_round;
-        reason = shouldAct ? 'awaiting attack and not done' : `awaiting_attack=${bot.awaiting_attack}, done_attacking=${bot.done_attacking_this_round}`;
+        // Attacker: check if they've already said "good"
+        const hasPlayerSaidGood = game.good_players?.includes(bot.player_id) || false;
+        
+        if (hasPlayerSaidGood) {
+            shouldAct = false;
+            reason = 'already said good';
+        } else if (allAttacksCovered) {
+            // All attacks covered: attackers can attack or say good
+            shouldAct = bot.awaiting_attack;
+            reason = shouldAct ? 'awaiting attack' : `awaiting_attack=${bot.awaiting_attack}`;
+        } else {
+            // Some attacks uncovered: attackers can still attack
+            shouldAct = bot.awaiting_attack;
+            reason = shouldAct ? 'awaiting attack' : `awaiting_attack=${bot.awaiting_attack}`;
+        }
     }
 
     console.log(`Bot ${bot.name} should act: ${shouldAct} (${reason})`);

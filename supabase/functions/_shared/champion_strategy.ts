@@ -42,6 +42,14 @@ export class ChampionStrategy implements BotStrategy {
         const isDefender = botIndex === game.defender;
         const isAttacker = botIndex === game.first_attacker || !isDefender;
         
+        // CHAMPION FEATURE: Early Attack Ending
+        // 30% chance to end attacks early by choosing "good" (avoid overextension)
+        const goodMoves = legalMoves.filter(move => move.type === 'good');
+        if (goodMoves.length > 0 && game.table_battles.length >= 1 && Math.random() < this.EARLY_ATTACK_END_CHANCE) {
+            console.log(`Bot ${bot.name} (champion) chooses early attack ending via good`);
+            return goodMoves[0];
+        }
+        
         // Attack strategy
         const attackMoves = legalMoves.filter(move => move.type === 'attack');
         if (attackMoves.length > 0 && isAttacker) {
@@ -59,8 +67,7 @@ export class ChampionStrategy implements BotStrategy {
             return this.selectPassMove(passMoves, game, bot);
         }
         
-        // Good moves
-        const goodMoves = legalMoves.filter(move => move.type === 'good');
+        // Good moves (if not chosen earlier)
         if (goodMoves.length > 0) {
             return goodMoves[0];
         }
@@ -84,14 +91,8 @@ export class ChampionStrategy implements BotStrategy {
     
     private selectAttackMove(attackMoves: LegalMove[], game: Game, bot: PrivatePlayer): LegalMove {
         // CHAMPION FEATURE: Early Attack Ending
-        // 30% chance to end attacks early (avoid overextension)
-        if (game.table_battles.length >= 1 && Math.random() < this.EARLY_ATTACK_END_CHANCE) {
-            const attackDoneMoves = attackMoves.filter(move => move.done_attacking_this_round === true);
-            if (attackDoneMoves.length > 0) {
-                console.log(`Bot ${bot.name} (champion) chooses early attack ending`);
-                return attackDoneMoves[0];
-            }
-        }
+        // Note: Early ending is now handled by choosing "good" in the main strategy
+        // This method only processes attack moves
         
         // CHAMPION FEATURE: Opponent Strength Assessment
         // Adjust aggression based on defender's hand size

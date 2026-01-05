@@ -24,7 +24,6 @@ wrap400(async ({user, game}: ExecutionParams) => {
         player.hand = [];
         player.hand_length = 0;
         player.awaiting_attack = false;
-        player.done_attacking_this_round = false;
     });
     
     // Clear game state

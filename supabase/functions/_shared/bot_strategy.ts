@@ -2,12 +2,12 @@ import { Card, Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS } from './types.t
 import { canCover, card_comp, get_next_player_index } from './common_utils.ts';
 import { BotStrategy, LegalMove } from './bot_interfaces.ts';
 import { RandomBotStrategy } from './random_strategy.ts';
-import { OneCardBotStrategy } from './one_card_strategy.ts';
 import { HandwrittenBotStrategy } from './handwritten_strategy.ts';
 import { SimpleHeuristicStrategy } from './simple_heuristic_strategy.ts';
 import { UltimateChampionStrategy } from './ultimate_champion_strategy.ts';
 import { ChampionStrategy } from './champion_strategy.ts';
 import { HackerStrategy } from './hacker_strategy.ts';
+import { ConsoleStrategy } from './console_strategy.ts';
 
 // Re-export interfaces for backwards compatibility
 export type { BotStrategy, LegalMove };
@@ -15,12 +15,12 @@ export type { BotStrategy, LegalMove };
 // Strategy registry
 export const BOT_STRATEGIES: Map<string, BotStrategy> = new Map<string, BotStrategy>([
     ['random', new RandomBotStrategy()],
-    ['one_card', new OneCardBotStrategy()],
     ['handwritten', new HandwrittenBotStrategy()],
     ['simple_heuristic', new SimpleHeuristicStrategy()],
     ['ultimate_champion', new UltimateChampionStrategy()],
     ['champion', new ChampionStrategy()],
     ['hacker', new HackerStrategy()],
+    ['console', new ConsoleStrategy()],
 ]);
 
 // Get strategy by key
@@ -53,8 +53,7 @@ export function calculateLegalMoves(game: Game, botPlayerId: string): LegalMove[
         const allAttacksCovered = game.table_battles.every(battle => battle.defense !== null);
         
         if (isFirstAttack && isFirstAttacker) {
-            // Bot is first attacker - can attack with same value cards
-            // CANNOT just say "good" - must make a move
+            // Bot is first attacker - MUST attack, cannot say "good" with empty table
             const attackMoves = calculateFirstAttackMoves(game, botPlayer);
             moves.push(...attackMoves);
         } else if (isDefender && game.table_battles.length > 0) {
@@ -65,8 +64,14 @@ export function calculateLegalMoves(game: Game, botPlayerId: string): LegalMove[
             // Can always pickup
             moves.push({ type: 'pickup' });
             
-            // Can wait if all attacks are covered and there are players still attacking
-            const canWait = allAttacksCovered && hasPlayersStillAttacking(game);
+            // Can wait if all attacks are covered and there are attackers who haven't said "good"
+            // Defender should NOT be able to wait if all attackers have said "good" (would cause deadlock)
+            const hasAttackersWhoCanSayGood = game.players.some((p, index) => 
+                index !== game.defender &&
+                p.status === PLAYER_STATUS.IN &&
+                !(game.good_players?.includes(p.player_id))
+            );
+            const canWait = allAttacksCovered && hasAttackersWhoCanSayGood;
             if (canWait) {
                 moves.push({ type: 'wait' });
             }
@@ -79,14 +84,14 @@ export function calculateLegalMoves(game: Game, botPlayerId: string): LegalMove[
             const hasPlayerSaidGood = game.good_players?.includes(botPlayerId) || false;
             
             // Can only attack if haven't said "good" yet
-            if (true || !hasPlayerSaidGood) {
+            if (!hasPlayerSaidGood) {
                 const attackMoves = calculateRegularAttackMoves(game, botPlayer);
                 moves.push(...attackMoves);
             }
             
-            // Can ALWAYS say "good" if all attacks are covered (even if no cards to attack with)
-            // This allows all attackers to signal they're done
-            if (allAttacksCovered && !hasPlayerSaidGood) {
+            // Can say "good" to signal they're done attacking (even if attacks aren't all covered)
+            // This allows attackers to voluntarily stop attacking
+            if (!hasPlayerSaidGood) {
                 moves.push({ type: 'good' });
             }
         }
@@ -120,9 +125,7 @@ function calculateFirstAttackMoves(game: Game, botPlayer: PrivatePlayer): LegalM
                 const uncoveredCards = game.table_battles.filter(b => b.defense === null).length;
                 
                 if (uncoveredCards + combo.length <= defenderCards) {
-                    // Add both versions: continue attacking and done attacking this round
-                    moves.push({ type: 'attack', cards: combo, done_attacking_this_round: false });
-                    moves.push({ type: 'attack', cards: combo, done_attacking_this_round: true });
+                    moves.push({ type: 'attack', cards: combo });
                 }
             });
         }
@@ -162,9 +165,7 @@ function calculateRegularAttackMoves(game: Game, botPlayer: PrivatePlayer): Lega
             const uncoveredCards = game.table_battles.filter(b => b.defense === null).length;
             
             if (uncoveredCards + combo.length <= defenderCards) {
-                // Add both versions: continue attacking and done attacking this round
-                moves.push({ type: 'attack', cards: combo, done_attacking_this_round: false });
-                moves.push({ type: 'attack', cards: combo, done_attacking_this_round: true });
+                moves.push({ type: 'attack', cards: combo });
             }
         });
     }
@@ -300,16 +301,9 @@ function calculatePassMoves(game: Game, botPlayer: PrivatePlayer): LegalMove[] {
                     const totalCardsAfterPass = combo.length + game.table_battles.length;
                     
                     if (nextPlayer.hand.length >= totalCardsAfterPass) {
-                        // Add both versions: continue attacking and done attacking this round
                         moves.push({
                             type: 'pass',
-                            cards: combo,
-                            done_attacking_this_round: false
-                        });
-                        moves.push({
-                            type: 'pass',
-                            cards: combo,
-                            done_attacking_this_round: true
+                            cards: combo
                         });
                     }
                 });
@@ -328,7 +322,7 @@ function hasPlayersStillAttacking(game: Game): boolean {
         player.status !== PLAYER_STATUS.OUT &&
         player.hand.some(card => game.table_battles.some(battle => battle.attack.value === card.value || (battle.defense && battle.defense.value === card.value))) &&
         player.awaiting_attack &&
-        !player.done_attacking_this_round);
+        !(game.good_players?.includes(player.player_id))); // Exclude players who have said "good"
     
     return playable_players.length > 0;
 }

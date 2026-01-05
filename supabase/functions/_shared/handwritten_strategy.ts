@@ -103,9 +103,9 @@ export class HandwrittenBotStrategy implements BotStrategy {
         const bot = game.players.find(p => p.player_id === botPlayerId);
         const botName = bot ? bot.name : 'Unknown Bot';
         
-        // Filter attack moves to only those with done_attacking_this_round = false
+        // Filter for attack moves
         const continueAttackMoves = legalMoves.filter(move => 
-            move.type === 'attack' && move.done_attacking_this_round === false
+            move.type === 'attack'
         );
         
         // If we have continue attack moves, prefer non-trump attacks; gate trump attacks by probability
@@ -131,11 +131,6 @@ export class HandwrittenBotStrategy implements BotStrategy {
                     const waitMovesDirect = legalMoves.filter(move => move.type === 'wait');
                     if (waitMovesDirect.length > 0) {
                         return waitMovesDirect[0];
-                    }
-                    // Optionally end attacking this round if that move exists
-                    const endAttackMoves = legalMoves.filter(move => move.type === 'attack' && move.done_attacking_this_round === true);
-                    if (endAttackMoves.length > 0) {
-                        return endAttackMoves[0];
                     }
                     // Otherwise, fall through to consider pass/cover logic
                 }
@@ -253,9 +248,6 @@ export class HandwrittenBotStrategy implements BotStrategy {
                 if (goodMoves.length > 0) return goodMoves[0];
                 const waitMovesLate = legalMoves.filter(move => move.type === 'wait');
                 if (waitMovesLate.length > 0) return waitMovesLate[0];
-                // If nothing else, try to end attack if possible
-                const endAttackMoves = legalMoves.filter(move => move.type === 'attack' && move.done_attacking_this_round === true);
-                if (endAttackMoves.length > 0) return endAttackMoves[0];
             }
             // Sort by number of cards descending, then by card value ascending
             doneAttackMoves.sort((a, b) => {
