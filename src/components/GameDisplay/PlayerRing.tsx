@@ -4,11 +4,14 @@ import { useServer } from "../../contexts/ServerContext";
 import { useFernFractal } from "../../utils/fernFractal";
 import { useState, useEffect, useRef } from "react";
 
-const CardsVisual = ({ player }: { player: PublicPlayer }) => {
+const CardsVisual = ({ player, selfHandLength }: { player: PublicPlayer, selfHandLength?: number }) => {
     const { fernPattern } = useFernFractal();
 
     const cardWidth = 25;
     const cardHeight = cardWidth * 1.4;
+
+    // Use selfHandLength for current user (optimistic), otherwise use server's hand_length
+    const displayHandLength = selfHandLength !== undefined ? selfHandLength : player.hand_length;
 
     return <div style={{
         display: 'flex',
@@ -19,8 +22,8 @@ const CardsVisual = ({ player }: { player: PublicPlayer }) => {
         height: '20px',
         width: '100px',
     }} data-location="hand" data-player-id={player.player_id}>
-        {Array.from({ length: player.hand_length }).map((_, cardIndex) => {
-            const mid = (player.hand_length -1) / 2;
+        {Array.from({ length: displayHandLength }).map((_, cardIndex) => {
+            const mid = (displayHandLength - 1) / 2;
             const halfCardWidth = cardWidth / 2; // Updated for 5:7 ratio
             const halfDivWidth = 100 / 2;
             const style: React.CSSProperties = {
@@ -63,7 +66,7 @@ const CardsVisual = ({ player }: { player: PublicPlayer }) => {
             pointerEvents: 'none',
             textShadow: '1px 1px 2px rgba(0,0,0,0.8)'
         }}>
-            {player.hand_length}
+            {displayHandLength}
         </div>
     </div>
 }
@@ -73,26 +76,26 @@ export const PlayerRing = () => {
     const { chatMessages } = useServer();
     const { user_id } = useAuth();
     const self_index = game.players.findIndex(p => p.player_id === user_id);
-    
+
     // Track active chat bubbles: player_id -> {message, timestamp}
     const [chatBubbles, setChatBubbles] = useState<{ [playerId: string]: { message: string; timestamp: number } }>({});
     const lastMessageIdRef = useRef<number | null>(null);
-    
+
     // Listen for new chat messages and create bubbles
     useEffect(() => {
         if (!chatMessages || chatMessages.length === 0) {
             return;
         }
-        
+
         const latestMessage = chatMessages[chatMessages.length - 1];
-        
+
         // Check if this is a new message we haven't processed yet
         if (latestMessage.id && latestMessage.id !== lastMessageIdRef.current) {
             lastMessageIdRef.current = latestMessage.id;
-            
+
             const senderId = latestMessage.user_id;
             const message = latestMessage.message;
-            
+
             // Add the bubble
             setChatBubbles(prev => ({
                 ...prev,
@@ -101,7 +104,7 @@ export const PlayerRing = () => {
                     timestamp: Date.now()
                 }
             }));
-            
+
             // Remove it after 8 seconds
             setTimeout(() => {
                 setChatBubbles(prev => {
@@ -115,7 +118,7 @@ export const PlayerRing = () => {
             }, 8000);
         }
     }, [chatMessages]);
-    
+
     return <> {
         game.players.map((player, index) => {
 
@@ -123,7 +126,7 @@ export const PlayerRing = () => {
             const radians = (2) * Math.PI * visual_index / (game.players.length);
             const x = ((-1 * Math.sin(radians) * 35) + 50) + '%';
             const y = ((Math.cos(radians) * 35) + 50) + '%';
-            
+
             // Check if this player has an active chat bubble
             const bubble = chatBubbles[player.player_id];
 
@@ -141,15 +144,15 @@ export const PlayerRing = () => {
 
 
                 {/* Sword area (top) - either sword or empty space */}
-                {index === game.first_attacker && 
-                 game.table_battles.length === 0 && 
-                 !(game.deck_length > 0 && game.flipped === null) ? <div style={{
-                    fontSize: '16px',
-                    height: '20px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center'
-                }}>
+                {index === game.first_attacker &&
+                    game.table_battles.length === 0 &&
+                    !(game.deck_length > 0 && game.flipped === null) ? <div style={{
+                        fontSize: '16px',
+                        height: '20px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center'
+                    }}>
                     ⚔️
                 </div>
                     : <div style={{ height: '20px' }} />
@@ -168,7 +171,7 @@ export const PlayerRing = () => {
                     position: 'relative'
                 }}>
                     {player.name}
-                    
+
                     {/* Chat bubble */}
                     {bubble && (
                         <div style={{
@@ -211,7 +214,10 @@ export const PlayerRing = () => {
                 {/* Cards area (bottom) */}
                 {player.hand_length && player.hand_length > 0 ?
 
-                    <CardsVisual player={player} />
+                    <CardsVisual
+                        player={player}
+                        selfHandLength={player.player_id === user_id ? game.self?.hand.length : undefined}
+                    />
                     : <div style={{ height: '20px' }} />
                 }
             </div>
