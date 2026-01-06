@@ -1,5 +1,5 @@
 import { wrap400, ExecutionParams } from "../_shared/utils.ts";
-import { ANIMATION_EVENT_TYPE, PLAYER_STATUS, AnimationEvent } from "../_shared/types.ts";
+import { ANIMATION_EVENT_TYPE, PLAYER_STATUS, AnimationEvent, GAME_STATUS } from "../_shared/types.ts";
 import { start_game } from "../_shared/common_utils.ts";
 import { createClient } from 'jsr:@supabase/supabase-js';
 
@@ -11,7 +11,7 @@ const supabaseClient = createClient(
 wrap400(async ({body, game}: ExecutionParams) => {
     const { game_id } = body;
 
-    if (game.status !== 'waiting') {
+    if (game.status !== GAME_STATUS.WAITING) {
         throw new Error(`Game ${game_id} is not waiting for players`);
     }
 

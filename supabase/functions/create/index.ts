@@ -1,5 +1,5 @@
 import { wrap400, ExecutionParams } from "../_shared/utils.ts";
-import { Game, PlayerHand, AnimationEvent, ANIMATION_EVENT_TYPE } from "../_shared/types.ts";
+import { Game, PlayerHand, AnimationEvent, ANIMATION_EVENT_TYPE, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY } from "../_shared/types.ts";
 import { createId } from "../_shared/common_utils.ts";
 import { createClient } from 'jsr:@supabase/supabase-js';
 
@@ -22,10 +22,10 @@ wrap400(async ({ user, user_name }: ExecutionParams) => {
         players: [{
             player_id: user_id,
             name: user_name,
-            status: 'idle',
+            status: PLAYER_STATUS.IDLE,
             is_ai: false
         }],
-        status: 'waiting',
+        status: GAME_STATUS.WAITING,
         deck_length: 0,
         discard_pile_length: 0,
         flipped: null,
@@ -65,14 +65,14 @@ wrap400(async ({ user, user_name }: ExecutionParams) => {
         players: [{
             player_id: user_id,
             name: user_name,
-            status: 'idle',
+            status: PLAYER_STATUS.IDLE,
             is_ai: false,
             hand: [],
             hand_length: 0,
             awaiting_attack: false,
-            strategy_key: 'human'
+            strategy_key: STRATEGY_KEY.HUMAN
         }],
-        status: 'waiting',
+        status: GAME_STATUS.WAITING,
         power_suit: 0,
         first_attacker: 0,
         defender: 0,

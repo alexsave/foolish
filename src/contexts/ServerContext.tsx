@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
-import { Card, PersonalGame, PublicGame, PRIVATE_EVENT_TYPE } from '../common/types';
+import { Card, PersonalGame, PublicGame, PRIVATE_EVENT_TYPE, GAME_STATUS, STRATEGY_KEY } from '../common/types';
 import supabase from '../backend/Connector';
 import { useParams } from 'react-router-dom';
 import { useAuth } from './AuthContext';
@@ -491,7 +491,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                                 player_id: user_id, 
                                 hand: playerData.hand, 
                                 awaiting_attack: playerData.awaiting_attack,
-                                strategy_key: 'human'
+                                strategy_key: STRATEGY_KEY.HUMAN
                             }
                         };
                         
@@ -565,7 +565,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         
         // no game self + waiting + not spectating + room available -> join
         // no game self + (not waiting OR spectating OR no room) -> subscribe to game
-        if (!isSpectating && game.status === 'waiting' && game.players.length < MAX_PLAYERS) {
+        if (!isSpectating && game.status === GAME_STATUS.WAITING && game.players.length < MAX_PLAYERS) {
             // Auto-join only if not intentionally spectating
             joinGame(gameId).catch(console.error);
         } else {
@@ -965,7 +965,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                     }
                     games[game.id] = {
                         ...game,
-                        self: {...selfPlayer, player_id: user_id, hand: playerHand.hand, awaiting_attack: playerHand.awaiting_attack, strategy_key: 'human'}// as unknown as PrivatePlayer
+                        self: {...selfPlayer, player_id: user_id, hand: playerHand.hand, awaiting_attack: playerHand.awaiting_attack, strategy_key: STRATEGY_KEY.HUMAN}// as unknown as PrivatePlayer
                     };
                     processedGames++;
                 } catch (gameError) {

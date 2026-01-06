@@ -1,6 +1,6 @@
 import { wrap400, ExecutionParams } from "../_shared/utils.ts";
 import { start_game } from "../_shared/common_utils.ts";
-import { ANIMATION_EVENT_TYPE, PLAYER_STATUS } from "../_shared/types.ts";
+import { ANIMATION_EVENT_TYPE, PLAYER_STATUS, GAME_STATUS } from "../_shared/types.ts";
 import { verify_player_in_game } from "../_shared/common_utils.ts";
 import { AnimationEvent } from "../_shared/types.ts";
 
@@ -11,7 +11,7 @@ wrap400(async ({ user, game }: ExecutionParams) => {
     verify_player_in_game(game, user_id);
 
     // Handle player ready logic
-    if (game.status !== 'waiting') {
+    if (game.status !== GAME_STATUS.WAITING) {
         return { game, events: [] };
     }
 

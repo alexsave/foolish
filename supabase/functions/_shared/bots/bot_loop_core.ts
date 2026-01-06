@@ -1,4 +1,4 @@
-import { Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS } from '../types.ts';
+import { Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, STRATEGY_KEY } from '../types.ts';
 import { calculateLegalMoves } from '../bot_strategy.ts';
 import { shouldBotActCore, processBotAction } from '../pure_bot_actions.ts';
 import { start_game, game_done } from '../common_utils.ts';
@@ -30,7 +30,7 @@ game.players.push({
     hand: [],
     awaiting_attack: false,
     hand_length: 0,
-    strategy_key: 'console' // Use console strategy for human input
+    strategy_key: STRATEGY_KEY.CONSOLE // Use console strategy for human input
 });
 
 game.players.push({
@@ -41,7 +41,7 @@ game.players.push({
     hand: [],
     awaiting_attack: false,
     hand_length: 0,
-    strategy_key: 'random'
+    strategy_key: STRATEGY_KEY.RANDOM
 });
 
 start_game(game);

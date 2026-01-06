@@ -6,7 +6,7 @@ import {
     game_done,
     other_player,
 } from './common_utils.ts';
-import { Card, Game, GAME_STATUS, PLAYER_STATUS, PersonalGame, PrivatePlayer, PublicGame, PlayerHand, UserEloRating, BotHand, AnimationEvent, PublicAnimationEvent, PersonalAnimationEvent, ANIMATION_EVENT_TYPE, GameLog } from './types.ts';
+import { Card, Game, GAME_STATUS, PLAYER_STATUS, PersonalGame, PrivatePlayer, PublicGame, PlayerHand, UserEloRating, BotHand, AnimationEvent, PublicAnimationEvent, PersonalAnimationEvent, ANIMATION_EVENT_TYPE, GameLog, STRATEGY_KEY } from './types.ts';
 import { createClient, User } from 'jsr:@supabase/supabase-js';
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
@@ -508,7 +508,7 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
             const playerHand = data.player_hands.find(hand => hand.player_id === player.player_id)!;
             hand = playerHand.hand;
             awaiting_attack = playerHand.awaiting_attack;
-            strategy_key = 'human';
+            strategy_key = STRATEGY_KEY.HUMAN;
         }
 
         return {

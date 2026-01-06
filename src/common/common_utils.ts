@@ -388,7 +388,7 @@ export const start_game = (game: Game): AnimationEvent[] => {
     });
 
     // This is the game entry
-    game.status = 'playing';
+    game.status = GAME_STATUS.PLAYING;
     game.players.forEach(player => {
         player.status = PLAYER_STATUS.IN;
     });

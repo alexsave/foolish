@@ -1,11 +1,11 @@
 import { wrap400, ExecutionParams } from "../_shared/utils.ts";
-import { ANIMATION_EVENT_TYPE } from "../_shared/types.ts";
+import { ANIMATION_EVENT_TYPE, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY } from "../_shared/types.ts";
 
 wrap400(async ({user, user_name, body, game}: ExecutionParams) => {
     const user_id = user.id;
     const { game_id } = body;
 
-    if (game.status !== 'waiting') {
+    if (game.status !== GAME_STATUS.WAITING) {
         throw new Error(`Game ${game_id} is not waiting for players`);
     }
 
@@ -18,12 +18,12 @@ wrap400(async ({user, user_name, body, game}: ExecutionParams) => {
     game.players.push({
         player_id: user_id,
         name: user_name,
-        status: 'idle',
+        status: PLAYER_STATUS.IDLE,
         is_ai: false,
         hand: [],
         awaiting_attack: false,
         hand_length: 0,
-        strategy_key: 'human'
+        strategy_key: STRATEGY_KEY.HUMAN
     });
 
     // Add animation event to notify other players

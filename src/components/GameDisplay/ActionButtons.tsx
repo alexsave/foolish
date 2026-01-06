@@ -1,4 +1,4 @@
-import { Card, PersonalGame } from "../../common/types";
+import { Card, PersonalGame, PLAYER_STATUS } from "../../common/types";
 import { useAuth } from "../../contexts/AuthContext";
 import { useServer } from "../../contexts/ServerContext";
 import { useAnimation } from "../../contexts/AnimationContext";
@@ -142,7 +142,7 @@ export const ActionButtons = () => {
     }
 
 
-    const isOut = game.self.status === 'out';
+    const isOut = game.self.status === PLAYER_STATUS.OUT;
     if (isOut) {
         return <div>
         </div>

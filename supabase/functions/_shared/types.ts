@@ -247,6 +247,19 @@ export interface BotHand {
 }
 
 // Log types for bot memory and game history
+export const STRATEGY_KEY = {
+    HUMAN: 'human',
+    RANDOM: 'random',
+    HANDWRITTEN: 'handwritten',
+    SIMPLE_HEURISTIC: 'simple_heuristic',
+    ULTIMATE_CHAMPION: 'ultimate_champion',
+    CHAMPION: 'champion',
+    HACKER: 'hacker',
+    CONSOLE: 'console'
+} as const;
+
+export type StrategyKey = typeof STRATEGY_KEY[keyof typeof STRATEGY_KEY];
+
 export const LOG_TYPE = {
     GAME_START: 'game_start',
     ATTACK: 'attack',

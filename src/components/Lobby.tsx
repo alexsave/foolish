@@ -6,7 +6,7 @@ import { useEffect, useState, useRef, useMemo } from "react";
 import { WEBSITE_DOMAIN } from "../constants/constants";
 import { useAuth } from "../contexts/AuthContext";
 import { QRCodeSVG } from "qrcode.react";
-import { PublicPlayer } from "../common/types";
+import { PLAYER_STATUS, PublicPlayer, GAME_STATUS } from "../common/types";
 import { usePreventScroll } from "../hooks/usePreventScroll";
 import { MAX_PLAYERS } from "../common/constants";
 import { useWoodStyle } from "./WoodTexture";
@@ -100,7 +100,7 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
             }} />
             <p style={{ zIndex: 10, textAlign: 'center',  lineHeight: '30px', justifyContent: 'center', padding: '0 5px', margin: '0' }}>{player.is_ai ? '🤖 ' : ''}{player.name}</p>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                {player.status !== 'idle' || (player.player_id === user_id && pendingReady) ? '🟢' : player.player_id === user_id ? (
+                {player.status !== PLAYER_STATUS.IDLE || (player.player_id === user_id && pendingReady) ? '🟢' : player.player_id === user_id ? (
                     <button
                         onClick={onReadyClick}
                         style={{
@@ -470,7 +470,7 @@ export const Lobby = () => {
         const optimisticBot: PublicPlayer = {
             player_id: tempBotId,
             name: '',
-            status: 'idle',
+            status: PLAYER_STATUS.IDLE,
             is_ai: true,
             hand_length: 0
         };
@@ -511,7 +511,7 @@ export const Lobby = () => {
     const handleReadyClick = () => {
         // Optimistically update the user's status to 'ready'
         setLocalPlayerOrder(prev => prev.map(p => 
-            p.player_id === user_id ? { ...p, status: 'ready' as const } : p
+            p.player_id === user_id ? { ...p, status: PLAYER_STATUS.READY } : p
         ));
         
         // Check if our local order differs from server order
@@ -554,7 +554,7 @@ export const Lobby = () => {
     };
 
     const handleDragStart = (e: React.MouseEvent | React.TouchEvent, index: number) => {
-        if (game?.status !== 'waiting') return;
+        if (game?.status !== GAME_STATUS.WAITING) return;
 
         // Don't start drag if clicking on a button (Ready, Exit, Remove bot)
         const target = e.target as HTMLElement;
@@ -706,8 +706,8 @@ export const Lobby = () => {
         }}>
             {
                 localPlayerOrder.map((player: PublicPlayer, index: number) => {
-                    const showExitButton = game.status === 'waiting' && player.player_id === user_id;
-                    const showRemoveBotButton = !!(player.is_ai && game.status === 'waiting' && game.self);
+                    const showExitButton = game.status === GAME_STATUS.WAITING && player.player_id === user_id;
+                    const showRemoveBotButton = !!(player.is_ai && game.status === GAME_STATUS.WAITING && game.self);
                     const showXButton = showExitButton || showRemoveBotButton;
 
                     return (
@@ -789,7 +789,7 @@ export const Lobby = () => {
                 })
             }
         </div>
-        {game.status === 'waiting' && game.self && localPlayerOrder.length < MAX_PLAYERS && (
+        {game.status === GAME_STATUS.WAITING && game.self && localPlayerOrder.length < MAX_PLAYERS && (
             <div 
                 onClick={handleAddBot}
                 style={{
@@ -844,7 +844,7 @@ export const Lobby = () => {
                 }}><Text id="add_bot" /></p>
             </div>
         )}
-        {game.status === 'waiting' && !game.self && game.players.length < MAX_PLAYERS && (
+        {game.status === GAME_STATUS.WAITING && !game.self && game.players.length < MAX_PLAYERS && (
             <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '10px', alignItems: 'center', position: 'relative', zIndex: 10 }}>
                 {/* Join button for non-members */}
                 <button 

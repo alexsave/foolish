@@ -2,7 +2,7 @@ import { Card, Game, PersonalGame, PLAYER_STATUS, PrivatePlayer, PublicPlayer, G
 import { GameLog, UnsavedGameLog } from './types.ts';
 import { ACE_VALUE, CARDS_PER_PLAYER, SUITS, VALUE_MAP, SUIT_MAP } from './constants.ts';
 
-export const get_next_player_index = (game: Game | PersonalGame, current_player: number): number => {
+export const get_next_player_index = (game: PublicGame, current_player: number): number => {
     // Check if there's only one player left in the game
     const in_players = game.players.filter(player => player.status === PLAYER_STATUS.IN);
     if (in_players.length <= 1) {
@@ -388,7 +388,7 @@ export const start_game = (game: Game): AnimationEvent[] => {
     });
 
     // This is the game entry
-    game.status = 'playing';
+    game.status = GAME_STATUS.PLAYING;
     game.players.forEach(player => {
         player.status = PLAYER_STATUS.IN;
     });

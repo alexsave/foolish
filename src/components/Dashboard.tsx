@@ -10,6 +10,7 @@ import { SignOutButton } from "./SignOutButton";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { Text } from "./Text";
 import { useLocalization } from "../contexts/LocalizationContext";
+import { PLAYER_STATUS, GAME_STATUS } from "../common/types";
 
 export const Dashboard = () => {
     const [gameId, setGameId] = useState<string>('');
@@ -17,17 +18,17 @@ export const Dashboard = () => {
     const { joinGame, games, getUserGames } = useServer();
     const navigate = useNavigate();
     const { t } = useLocalization();
-    
+
     // Load all games when Dashboard mounts
     useEffect(() => {
         getUserGames();
     }, []);
-    
+
     // Get wood styles with different seeds for variety - memoized to prevent new object creation
     const woodBase1 = useWoodStyle(0.1);
     const woodBase2 = useWoodStyle(0.7);
     const woodBase3 = useWoodStyle(0.3);
-    
+
     const woodButtonStyle = useMemo(() => ({
         ...woodBase1,
         border: '3px solid #5D3A1A',
@@ -40,7 +41,7 @@ export const Dashboard = () => {
         overflow: 'hidden' as const,
         mixBlendMode: 'normal' as const,
     }), [woodBase1]);
-    
+
     const woodButtonHoverStyle = useMemo(() => ({
         ...woodButtonStyle,
         filter: 'brightness(1.1) contrast(1.1)',
@@ -48,7 +49,7 @@ export const Dashboard = () => {
         boxShadow: `inset 0 2px 0 rgba(255,255,255,0.3), inset 0 -2px 0 rgba(0,0,0,0.4), 0 4px 8px rgba(0,0,0,0.5)`,
         mixBlendMode: 'normal' as const,
     }), [woodButtonStyle]);
-    
+
     const woodButtonStyle2 = useMemo(() => ({
         ...woodBase2,
         border: '3px solid #5D3A1A',
@@ -61,7 +62,7 @@ export const Dashboard = () => {
         overflow: 'hidden' as const,
         mixBlendMode: 'normal' as const,
     }), [woodBase2]);
-    
+
     const woodButtonHoverStyle2 = useMemo(() => ({
         ...woodButtonStyle2,
         filter: 'brightness(1.1) contrast(1.1)',
@@ -69,7 +70,7 @@ export const Dashboard = () => {
         boxShadow: `inset 0 2px 0 rgba(255,255,255,0.3), inset 0 -2px 0 rgba(0,0,0,0.4), 0 4px 8px rgba(0,0,0,0.5)`,
         mixBlendMode: 'normal' as const,
     }), [woodButtonStyle2]);
-    
+
     const woodInputStyle = useMemo(() => ({
         ...woodBase3,
         border: '2px solid #5D3A1A',
@@ -94,10 +95,10 @@ export const Dashboard = () => {
     }}>
         <WoolBackgroundLayer />
         <SignOutButton />
-        <h1 style={{ 
-            color: 'white', 
-            fontSize: '1.3rem', 
-            fontWeight: 'bold', 
+        <h1 style={{
+            color: 'white',
+            fontSize: '1.3rem',
+            fontWeight: 'bold',
             marginBottom: '0.75rem',
             textAlign: 'center',
             position: 'relative',
@@ -105,11 +106,11 @@ export const Dashboard = () => {
         }}>
             {t('dashboard_title', { username: username || '' })}
         </h1>
-        
-        <div style={{ 
-            display: 'flex', 
-            flexDirection: 'column', 
-            gap: '0.5rem', 
+
+        <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '0.5rem',
             alignItems: 'center',
             marginBottom: '0.75rem',
             width: '300px',
@@ -117,7 +118,7 @@ export const Dashboard = () => {
             zIndex: 10
         }}>
             {/* Join Game Row */}
-            <form 
+            <form
                 onSubmit={(e) => {
                     e.preventDefault();
                     if (gameId.trim()) {
@@ -137,9 +138,9 @@ export const Dashboard = () => {
                     justifyContent: 'space-between'
                 }}
             >
-                <input 
-                    type="text" 
-                    value={gameId} 
+                <input
+                    type="text"
+                    value={gameId}
                     onChange={(e) => setGameId(e.target.value)}
                     placeholder={t('enter_game_id')}
                     inputMode="text"
@@ -151,7 +152,7 @@ export const Dashboard = () => {
                         width: '50%',
                     }}
                 />
-                <button 
+                <button
                     type="submit"
                     disabled={!gameId.trim()}
                     style={{
@@ -179,9 +180,9 @@ export const Dashboard = () => {
                     }}><Text id="join" /></span>
                 </button>
             </form>
-            
+
             {/* Create Game Button */}
-            <button 
+            <button
                 onClick={() => {
                     // Just call it directly for now, i dont care
                     supabase.functions.invoke('create')
@@ -213,71 +214,71 @@ export const Dashboard = () => {
         </div>
 
         <div style={{ width: '100%', maxWidth: '95vw', flex: '1', position: 'relative', zIndex: 10 }}>
-            
-            <div style={{ 
-                display: 'flex', 
-                flexDirection: 'column', 
-                gap: '6px', 
-                alignItems: 'center' 
+
+            <div style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '6px',
+                alignItems: 'center'
             }}>
                 {Object.values(games).map((game) => {
-                    const isGameOver = game.status === 'game_over';
-                    const isWaiting = game.status === 'waiting';
-                    const isPlaying = game.status === 'playing';
-                    
+                    const isGameOver = game.status === GAME_STATUS.GAME_OVER;
+                    const isWaiting = game.status === GAME_STATUS.WAITING;
+                    const isPlaying = game.status === GAME_STATUS.PLAYING;
+
                     // Find current user in the game
                     const currentUser = game.players.find(p => p.name === username);
-                    
+
                     // Calculate readiness for waiting games
-                    const readyPlayers = game.players.filter(p => p.status === 'ready').length;
+                    const readyPlayers = game.players.filter(p => p.status === PLAYER_STATUS.READY).length;
                     const totalPlayers = game.players.length;
-                    
+
                     return (
-                        <div 
-                            key={game.id} 
-                            style={{ 
-                            border: '2px solid #5D3A1A',
-                            borderRadius: '0',
-                            boxShadow: `
+                        <div
+                            key={game.id}
+                            style={{
+                                border: '2px solid #5D3A1A',
+                                borderRadius: '0',
+                                boxShadow: `
                                 inset 0 1px 0 rgba(255,255,255,0.2),
                                 inset 0 -1px 0 rgba(0,0,0,0.3),
                                 0 3px 6px rgba(0,0,0,0.4)`,
-                            position: 'relative' as const,
-                            overflow: 'hidden' as const,
-                            cursor: 'pointer',
-                            padding: '12px 16px',
-                            color: isGameOver ? 'rgba(255, 255, 255, 0.7)' : 'white',
-                            width: '100%',
-                            maxWidth: '95vw',
-                            height: '90px',
-                            display: 'flex',
-                            flexDirection: 'column',
-                            justifyContent: 'space-between',
-                            boxSizing: 'border-box',
-                            transition: 'all 0.2s ease',
-                            opacity: isGameOver ? 0.7 : 1
-                        }} 
+                                position: 'relative' as const,
+                                overflow: 'hidden' as const,
+                                cursor: 'pointer',
+                                padding: '12px 16px',
+                                color: isGameOver ? 'rgba(255, 255, 255, 0.7)' : 'white',
+                                width: '100%',
+                                maxWidth: '95vw',
+                                height: '90px',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                justifyContent: 'space-between',
+                                boxSizing: 'border-box',
+                                transition: 'all 0.2s ease',
+                                opacity: isGameOver ? 0.7 : 1
+                            }}
                             onClick={() => {
                                 navigate(`/${game.id}`);
                             }}
                             onMouseEnter={(e) => {
-                            if (!isGameOver) {
-                                e.currentTarget.style.transform = 'translateY(-2px)';
-                                e.currentTarget.style.boxShadow = `
+                                if (!isGameOver) {
+                                    e.currentTarget.style.transform = 'translateY(-2px)';
+                                    e.currentTarget.style.boxShadow = `
                                     inset 0 1px 0 rgba(255,255,255,0.15),
                                     inset 0 -1px 0 rgba(0,0,0,0.25),
                                     0 5px 10px rgba(0,0,0,0.4)`;
-                            }
-                        }}
-                        onMouseLeave={(e) => {
-                            if (!isGameOver) {
-                                e.currentTarget.style.transform = 'translateY(0)';
-                                e.currentTarget.style.boxShadow = `
+                                }
+                            }}
+                            onMouseLeave={(e) => {
+                                if (!isGameOver) {
+                                    e.currentTarget.style.transform = 'translateY(0)';
+                                    e.currentTarget.style.boxShadow = `
                                     inset 0 1px 0 rgba(255,255,255,0.1),
                                     inset 0 -1px 0 rgba(0,0,0,0.2),
                                     0 3px 6px rgba(0,0,0,0.3)`;
-                            }
-                        }}
+                                }
+                            }}
                         >
                             {/* Wood texture background layer - can be transformed independently */}
                             <div style={{
@@ -291,36 +292,36 @@ export const Dashboard = () => {
                                 transform: `scaleX(${(game.id.charCodeAt(3) || 0) % 2 === 0 ? 1 : -1})`,
                                 transformOrigin: 'center center'
                             }} />
-                            
-                                                        <div style={{ 
-                                display: 'flex', 
-                                justifyContent: 'space-between', 
+
+                            <div style={{
+                                display: 'flex',
+                                justifyContent: 'space-between',
                                 alignItems: 'center',
-                                marginBottom: '4px' 
+                                marginBottom: '4px'
                             }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: '1' }}>
-                                    <h3 style={{ 
-                                        margin: '0', 
-                                        fontSize: '1.1rem', 
-                                        fontWeight: 'bold' 
+                                    <h3 style={{
+                                        margin: '0',
+                                        fontSize: '1.1rem',
+                                        fontWeight: 'bold'
                                     }}>
                                         {game.name}
                                     </h3>
-                                    
+
                                     {/* Game-specific info inline */}
                                     {isWaiting && (
-                                        <span style={{ 
-                                            fontSize: '0.75rem', 
+                                        <span style={{
+                                            fontSize: '0.75rem',
                                             opacity: '0.6',
                                             marginLeft: '8px'
                                         }}>
                                             <Text id="ready" />: {readyPlayers}/{totalPlayers}
                                         </span>
                                     )}
-                                    
+
                                     {isPlaying && games[game.id] && (
-                                        <span style={{ 
-                                            fontSize: '0.75rem', 
+                                        <span style={{
+                                            fontSize: '0.75rem',
                                             opacity: '0.6',
                                             marginLeft: '8px'
                                         }}>
@@ -328,13 +329,13 @@ export const Dashboard = () => {
                                         </span>
                                     )}
                                 </div>
-                                <span style={{ 
-                                    padding: '4px 8px', 
-                                    borderRadius: '12px', 
+                                <span style={{
+                                    padding: '4px 8px',
+                                    borderRadius: '12px',
                                     fontSize: '0.8rem',
-                                    backgroundColor: isWaiting ? '#FFC107' : 
-                                                   isPlaying ? '#4CAF50' : 
-                                                   isGameOver ? '#757575' : '#f44336',
+                                    backgroundColor: isWaiting ? '#FFC107' :
+                                        isPlaying ? '#4CAF50' :
+                                            isGameOver ? '#757575' : '#f44336',
                                     color: 'white'
                                 }}>
                                     {isWaiting && <Text id="waiting" />}
@@ -342,35 +343,35 @@ export const Dashboard = () => {
                                     {isGameOver && <Text id="game_over" />}
                                 </span>
                             </div>
-                            
+
                             {/* Players with status indicators */}
-                            <div style={{ 
-                                margin: '4px 0', 
-                                fontSize: '0.85rem', 
-                                opacity: '0.8' 
+                            <div style={{
+                                margin: '4px 0',
+                                fontSize: '0.85rem',
+                                opacity: '0.8'
                             }}>
                                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
                                     {game.players.map((player, idx) => {
                                         const isDefender = isPlaying && game.defender === idx;
                                         const isFirstAttacker = isPlaying && game.first_attacker === idx;
-                                        
+
                                         return (
                                             <span key={idx} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                                                 {player.is_ai ? '🤖' : '👤'}
-                                                <span style={{ 
+                                                <span style={{
                                                     color: player.name === username ? '#4CAF50' : 'inherit',
                                                     fontWeight: player.name === username ? 'bold' : 'normal'
                                                 }}>
                                                     {player.name}
                                                 </span>
-                                                
+
                                                 {/* Status icons based on game state */}
                                                 {isWaiting && (
                                                     <span style={{ fontSize: '0.8rem' }}>
-                                                        {player.status === 'ready' ? '🟢' : '🔴'}
+                                                        {player.status === PLAYER_STATUS.READY ? '🟢' : '🔴'}
                                                     </span>
                                                 )}
-                                                
+
                                                 {isPlaying && (
                                                     <span style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
                                                         {isDefender && <span title="Defender">🛡️</span>}
@@ -382,7 +383,7 @@ export const Dashboard = () => {
                                                         )}
                                                     </span>
                                                 )}
-                                                
+
                                                 {isGameOver && player.hand_length === 0 && (
                                                     <span style={{ fontSize: '0.8rem' }} title="Winner">👑</span>
                                                 )}
@@ -396,7 +397,7 @@ export const Dashboard = () => {
                         </div>
                     );
                 })}
-                
+
                 {Object.keys(games).length === 0 && (
                     <div style={{
                         color: 'white',

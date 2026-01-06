@@ -1,5 +1,5 @@
 // Minimal offline game - just enough to display the UI
-import { PersonalGame, Card } from './types.ts';
+import { PersonalGame, Card, GAME_STATUS, PLAYER_STATUS, STRATEGY_KEY } from './types.ts';
 
 export const createOfflineGame = (playerName: string, gameName: string, botCount: number): PersonalGame => {
     // Simple IDs
@@ -27,19 +27,19 @@ export const createOfflineGame = (playerName: string, gameName: string, botCount
     return {
         id: gameId,
         name: gameName,
-        status: 'playing' as any,
+        status: GAME_STATUS.PLAYING,
         players: [
             {
                 player_id: playerId,
                 name: playerName,
-                status: 'in' as any,
+                status: PLAYER_STATUS.IN,
                 hand_length: 6,
                 is_ai: false
             },
             ...Array.from({ length: botCount }, (_, i) => ({
                 player_id: `bot_${i + 1}`,
                 name: `Bot ${i + 1}`,
-                status: 'in' as any,
+                status: PLAYER_STATUS.IN,
                 hand_length: 6,
                 is_ai: true
             }))
@@ -47,12 +47,12 @@ export const createOfflineGame = (playerName: string, gameName: string, botCount
         self: {
             player_id: playerId,
             name: playerName,
-            status: 'in' as any,
+            status: PLAYER_STATUS.IN,
             hand: playerHand,
             hand_length: 6,
             awaiting_attack: true,
             is_ai: false,
-            strategy_key: 'human'
+            strategy_key: STRATEGY_KEY.HUMAN
         },
         deck_length: 20,
         discard_pile_length: 0,
