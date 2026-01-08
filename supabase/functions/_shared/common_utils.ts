@@ -34,6 +34,14 @@ export const card_comp = (card1: Card, card2: Card): boolean => {
     return card1.suit === card2.suit && card1.value === card2.value;
 };
 
+export const getCardValue = (card: Card, powerSuit: number): number => {
+    let baseValue = card.value;
+    if (card.suit === powerSuit) {
+        baseValue += 20; // Trump bonus
+    }
+    return baseValue;
+};
+
 export const validate_defender_status = (game: Game, player_id: string, should_be_defender: boolean) => {
     const isDefender = game.players[game.defender].player_id === player_id;
     if (isDefender !== should_be_defender) {
@@ -65,6 +73,14 @@ export const refill_deck = (players: number): Card[] => {
     return deck;
 }
 
+// Temporary: Seeded RNG for deterministic testing
+// check these
+let seed = 12344;
+function seededRandom() {
+    seed = (seed * 1664525 + 1013904223) % 4294967296;
+    return seed / 4294967296;
+}
+
 export const draw = (game: Game): Card | null => {
     if (game.deck.length === 0) {
         if (game.flipped === null) {
@@ -74,7 +90,9 @@ export const draw = (game: Game): Card | null => {
         game.flipped = null;
         return copy;
     }
-    const index = Math.floor(Math.random() * game.deck.length);
+    // TEMP: Use seeded random for deterministic testing
+    const index = Math.floor(seededRandom() * game.deck.length);
+    // const index = Math.floor(Math.random() * game.deck.length);
     const card = game.deck.splice(index, 1)[0];
     return card;
 };

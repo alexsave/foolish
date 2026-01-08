@@ -11,19 +11,24 @@ export class CardTracker {
     public knownCardsByPlayer: Map<string, Set<string>>; // Cards we know each player has
     private discardedCards: Set<string>; // Cards in discard pile
     private myCards: Set<string>; // My current hand
+    private flippedCard: string | null; // The visible trump card under the deck
     private deckSize: number;
-    private totalCards: number;
     private opponentIds: string[];
     
     constructor(private game: Game, private myPlayerId: string) {
         this.knownCardsByPlayer = new Map();
         this.discardedCards = new Set();
         this.myCards = new Set();
-        this.totalCards = 52; // Standard deck for 2-8 players
+        this.flippedCard = null;
         this.deckSize = game.deck.length;
         this.opponentIds = game.players
             .filter(p => p.player_id !== myPlayerId)
             .map(p => p.player_id);
+        
+        // Track the flipped card (visible trump card under the deck)
+        if (game.flipped) {
+            this.flippedCard = this.cardKey(game.flipped);
+        }
         
         // Initialize my cards from my hand
         const myPlayer = game.players.find(p => p.player_id === myPlayerId);
@@ -165,6 +170,7 @@ export class CardTracker {
     private isCardAccountedFor(cardKey: string): boolean {
         if (this.myCards.has(cardKey)) return true;
         if (this.discardedCards.has(cardKey)) return true;
+        if (this.flippedCard === cardKey) return true; // Flipped card is visible/known
         
         for (const knownCards of this.knownCardsByPlayer.values()) {
             if (knownCards.has(cardKey)) return true;
@@ -241,11 +247,21 @@ export class CardTracker {
     }
     
     getUnknownCardCount(): number {
+        // Unknown cards = cards in opponent hands that we don't know about
+        // = sum of opponent hand sizes - known cards in opponent hands
+        let opponentHandSizes = 0;
+        for (const player of this.game.players) {
+            if (player.player_id !== this.myPlayerId) {
+                opponentHandSizes += player.hand.length;
+            }
+        }
+        
         let knownOpponentCardCount = 0;
         for (const knownCards of this.knownCardsByPlayer.values()) {
             knownOpponentCardCount += knownCards.size;
         }
-        return this.totalCards - this.myCards.size - this.discardedCards.size - knownOpponentCardCount - this.deckSize;
+        
+        return opponentHandSizes - knownOpponentCardCount;
     }
     
     getKnownOpponentCardCount(): number {
@@ -289,8 +305,8 @@ export class CardTracker {
         for (let suit = 0; suit < 4; suit++) {
             for (let value = 2; value <= 14; value++) {
                 const key = this.cardKey({ suit, value });
-                // Check if card is not in my hand, discard, or any opponent's known cards
-                let isKnown = this.myCards.has(key) || this.discardedCards.has(key);
+                // Check if card is not in my hand, discard, flipped, or any opponent's known cards
+                let isKnown = this.myCards.has(key) || this.discardedCards.has(key) || this.flippedCard === key;
                 if (!isKnown) {
                     for (const knownCards of this.knownCardsByPlayer.values()) {
                         if (knownCards.has(key)) {
@@ -307,6 +323,22 @@ export class CardTracker {
         }
         
         return count > 0 ? totalValue / count : 8; // Default to middle value
+    }
+    
+    /**
+     * Get the flipped card if visible
+     */
+    getFlippedCard(): Card | null {
+        if (!this.flippedCard) return null;
+        const [suit, value] = this.flippedCard.split('-').map(Number);
+        return { suit, value };
+    }
+    
+    /**
+     * Check if flipped card is still available
+     */
+    hasFlippedCard(): boolean {
+        return this.flippedCard !== null;
     }
 }
 

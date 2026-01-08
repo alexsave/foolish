@@ -1,6 +1,6 @@
-import { Card, Game, PrivatePlayer } from './types.ts';
-import { BotStrategy, LegalMove } from './bot_interfaces.ts';
-import { canCover, cardDisplay } from './common_utils.ts';
+import { Card, Game, PrivatePlayer } from '../types.ts';
+import { BotStrategy, LegalMove } from '../bot_interfaces.ts';
+import { canCover, cardDisplay } from '../common_utils.ts';
 
 /**
  * Hacker Durak Strategy - Perfect Information AI

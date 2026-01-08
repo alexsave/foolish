@@ -35,20 +35,31 @@ game.players.push({
 
 game.players.push({
     player_id: 'bot_2',
-    name: 'Random Bot',
+    name: 'Handwritten Bot 1',
     status: PLAYER_STATUS.READY,
     is_ai: true,
     hand: [],
     awaiting_attack: false,
     hand_length: 0,
-    strategy_key: STRATEGY_KEY.RANDOM
+    strategy_key: STRATEGY_KEY.HANDWRITTEN
+});
+
+game.players.push({
+    player_id: 'bot_3',
+    name: 'Handwritten Bot 2',
+    status: PLAYER_STATUS.READY,
+    is_ai: true,
+    hand: [],
+    awaiting_attack: false,
+    hand_length: 0,
+    strategy_key: STRATEGY_KEY.HANDWRITTEN
 });
 
 start_game(game);
 
 (async () => {
     console.log('\n🎴 Welcome to Durak! 🎴');
-    console.log('You are playing against a Random Bot\n');
+    console.log('You are playing against 2 Handwritten Bots (3 players total)\n');
     
     while (game_done(game) === null) {
         console.log(game.table_battles);
@@ -96,7 +107,7 @@ start_game(game);
     if (winner === 'human_player') {
         console.log('🎉 CONGRATULATIONS! YOU WIN! 🎉');
     } else {
-        console.log('😢 GAME OVER - Random Bot wins! Better luck next time!');
+        console.log('😢 GAME OVER - Bot wins! Better luck next time!');
     }
     console.log('🏆'.repeat(40) + '\n');
 })();

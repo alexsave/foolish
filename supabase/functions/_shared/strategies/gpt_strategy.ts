@@ -1,7 +1,7 @@
-import { BotStrategy } from '../bot_interfaces';
-import { Game, Card, LOG_TYPE } from '../types';
-import { LegalMove } from '../bot_interfaces';
-import { CardTracker } from './cardTracker';
+import { BotStrategy } from '../bot_interfaces.ts';
+import { Game, Card, LOG_TYPE } from '../types.ts';
+import { LegalMove } from '../bot_interfaces.ts';
+import { CardTracker } from '../durakai/cardTracker.ts';
 
 type JsonCard = { suit: number; value: number };
 type JsonMovePair = { primary: JsonCard; target?: JsonCard | null };
@@ -9,11 +9,63 @@ type JsonMove = {
     type: LegalMove['type'];
     pairs?: JsonMovePair[];
     reasoning?: string;
+    chat_message?: string;
+    move_justification?: string;
 };
+
+/**
+ * Helper to get environment variable, works with both Deno and Node.js
+ * For Node.js, will try to load from .env file
+ */
+function getEnv(key: string): string | undefined {
+    // Check if we're in Deno
+    // @ts-ignore - Deno is not available in Node.js
+    if (typeof Deno !== 'undefined' && typeof Deno.env !== 'undefined') {
+        // @ts-ignore - Deno is not available in Node.js
+        return Deno.env.get(key);
+    }
+    
+    // We're in Node.js
+    if (typeof process !== 'undefined' && process.env) {
+        // Try to load dotenv if not already loaded
+        if (!process.env[key]) {
+            try {
+                // Try to require dotenv (might not be installed)
+                const dotenv = require('dotenv');
+                dotenv.config();
+            } catch (e) {
+                // dotenv not available, try manual .env parsing
+                try {
+                    const fs = require('fs');
+                    const path = require('path');
+                    const envPath = path.resolve(process.cwd(), '.env');
+                    
+                    if (fs.existsSync(envPath)) {
+                        const envContent = fs.readFileSync(envPath, 'utf8');
+                        envContent.split('\n').forEach((line: string) => {
+                            const match = line.match(/^([^=:#]+)\s*=\s*(.*)$/);
+                            if (match) {
+                                const key = match[1].trim();
+                                const value = match[2].trim().replace(/^["']|["']$/g, '');
+                                process.env[key] = value;
+                            }
+                        });
+                    }
+                } catch (fsError) {
+                    // Ignore file read errors
+                }
+            }
+        }
+        return process.env[key];
+    }
+    
+    return undefined;
+}
 
 /**
  * Bot strategy that uses an OpenAI model to make decisions.
  * Uses the Responses API with strict JSON schema output for reliable parsing.
+ * Works with both Deno and Node.js (with .env file support).
  */
 export class GPTBotStrategy implements BotStrategy {
     public readonly name: string = 'gpt';
@@ -22,14 +74,14 @@ export class GPTBotStrategy implements BotStrategy {
     private verbose: boolean;
     private baseUrl: string;
     
-    constructor(apiKey?: string, model: string = 'gpt-5.2', verbose: boolean = false) {
-        this.apiKey = apiKey || process.env.OPENAI_API_KEY || '';
+    constructor(apiKey?: string, model: string = 'gpt-4o-2024-08-06', verbose: boolean = false) {
+        this.apiKey = apiKey || getEnv('OPENAI_API_KEY') || '';
         this.model = model;
-        this.verbose = verbose || process.env.OPENAI_VERBOSE === 'true';
-        this.baseUrl = (process.env.OPENAI_BASE_URL || 'https://api.openai.com').replace(/\/+$/, '');
+        this.verbose = verbose || getEnv('OPENAI_VERBOSE') === 'true';
+        this.baseUrl = (getEnv('OPENAI_BASE_URL') || 'https://api.openai.com').replace(/\/+$/, '');
         
         if (!this.apiKey) {
-            throw new Error('OpenAI API key required. Set OPENAI_API_KEY environment variable.');
+            throw new Error('OpenAI API key required. Set OPENAI_API_KEY environment variable or add to .env file.');
         }
     }
     
@@ -48,7 +100,7 @@ export class GPTBotStrategy implements BotStrategy {
         try {
             // Call OpenAI Responses API with strict JSON schema output
             const controller = new AbortController();
-            const timeoutMs = Number(process.env.OPENAI_TIMEOUT_MS || 30_000);
+            const timeoutMs = Number(getEnv('OPENAI_TIMEOUT_MS') || 30_000);
             const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
             const response = await fetch(`${this.baseUrl}/v1/responses`, {
@@ -62,24 +114,20 @@ export class GPTBotStrategy implements BotStrategy {
                     input: [
                         {
                             role: 'system',
-                            content: [
-                                {
-                                    type: 'text',
-                                    text:
-                                        'You are an expert Durak (Russian card game) player. ' +
-                                        'Choose the best move from the provided legal moves. ' +
-                                        'Return ONLY a JSON object that matches the provided schema.'
-                                }
-                            ]
+                            content: 'You are an expert Durak (Russian card game) player with personality. ' +
+                                'Choose the best move from the provided legal moves. ' +
+                                'Include a short, witty chat message to other players (max 1-2 sentences). ' +
+                                'Include a brief move justification (max 2-3 sentences). ' +
+                                'Return ONLY a JSON object that matches the provided schema.'
                         },
                         {
                             role: 'user',
-                            content: [{ type: 'text', text: prompt }]
+                            content: prompt
                         }
                     ],
-                    response_format: {
-                        type: 'json_schema',
-                        json_schema: {
+                    text: {
+                        format: {
+                            type: 'json_schema',
                             name: 'durak_move',
                             schema: {
                                 type: 'object',
@@ -91,26 +139,16 @@ export class GPTBotStrategy implements BotStrategy {
                                         enum: ['attack', 'cover', 'pass', 'pickup', 'good', 'wait']
                                     },
                                     pairs: {
-                                        type: 'array',
-                                        description:
-                                            'Array of card pairs. For attack/pass: target can be null/omitted. For cover: target is the attacked card being covered.',
-                                        items: {
-                                            type: 'object',
-                                            additionalProperties: false,
-                                            properties: {
-                                                primary: {
+                                        anyOf: [
+                                            { type: 'null' },
+                                            {
+                                                type: 'array',
+                                                description: 'Array of card pairs. For attack/pass: target should be null. For cover: target is the attacked card being covered.',
+                                                items: {
                                                     type: 'object',
                                                     additionalProperties: false,
                                                     properties: {
-                                                        suit: { type: 'integer', minimum: 0, maximum: 3 },
-                                                        value: { type: 'integer', minimum: 2, maximum: 14 }
-                                                    },
-                                                    required: ['suit', 'value']
-                                                },
-                                                target: {
-                                                    anyOf: [
-                                                        { type: 'null' },
-                                                        {
+                                                        primary: {
                                                             type: 'object',
                                                             additionalProperties: false,
                                                             properties: {
@@ -118,24 +156,41 @@ export class GPTBotStrategy implements BotStrategy {
                                                                 value: { type: 'integer', minimum: 2, maximum: 14 }
                                                             },
                                                             required: ['suit', 'value']
+                                                        },
+                                                        target: {
+                                                            anyOf: [
+                                                                { type: 'null' },
+                                                                {
+                                                                    type: 'object',
+                                                                    additionalProperties: false,
+                                                                    properties: {
+                                                                        suit: { type: 'integer', minimum: 0, maximum: 3 },
+                                                                        value: { type: 'integer', minimum: 2, maximum: 14 }
+                                                                    },
+                                                                    required: ['suit', 'value']
+                                                                }
+                                                            ]
                                                         }
-                                                    ]
+                                                    },
+                                                    required: ['primary', 'target']
                                                 }
-                                            },
-                                            required: ['primary']
-                                        }
+                                            }
+                                        ]
                                     },
-                                    reasoning: {
+                                    chat_message: {
                                         type: 'string',
-                                        description: 'Brief explanation (optional but helpful).'
+                                        description: 'A short, witty message to other players (1-2 sentences max).'
+                                    },
+                                    move_justification: {
+                                        type: 'string',
+                                        description: 'Brief explanation of move strategy (2-3 sentences max).'
                                     }
                                 },
-                                required: ['type']
-                            }
+                                required: ['type', 'pairs', 'chat_message', 'move_justification']
+                            },
+                            strict: true
                         }
-                    },
-                    temperature: 0.4,
-                    max_output_tokens: 200
+                    }
                 }),
                 signal: controller.signal
             });
@@ -147,6 +202,17 @@ export class GPTBotStrategy implements BotStrategy {
             }
             
             const data = await response.json();
+            
+            // Handle the response based on status
+            if (data.status === 'incomplete') {
+                throw new Error(`Incomplete response: ${data.incomplete_details?.reason}`);
+            }
+            
+            // Check for refusal
+            if (data.output && data.output[0]?.content?.[0]?.type === 'refusal') {
+                throw new Error(`Model refused: ${data.output[0].content[0].refusal}`);
+            }
+            
             const content = this.extractResponseText(data)?.trim();
             
             if (!content) {
@@ -164,8 +230,12 @@ export class GPTBotStrategy implements BotStrategy {
             
             const jsonMove = this.coerceJsonMove(result);
 
-            if (this.verbose && jsonMove.reasoning) {
-                console.log(`GPT reasoning: ${jsonMove.reasoning}`);
+            // Display chat message and justification
+            if (jsonMove.chat_message) {
+                console.log(`\n💬 GPT says: "${jsonMove.chat_message}"\n`);
+            }
+            if (jsonMove.move_justification) {
+                console.log(`🧠 GPT reasoning: ${jsonMove.move_justification}\n`);
             }
 
             const matched = this.matchJsonMoveToLegalMove(jsonMove, legalMoves);
@@ -175,7 +245,7 @@ export class GPTBotStrategy implements BotStrategy {
             }
 
             if (this.verbose) {
-                console.log(`GPT chose: ${this.formatMove(matched)}`);
+                console.log(`✅ GPT chose: ${this.formatMove(matched)}`);
             }
 
             return matched;
@@ -189,7 +259,7 @@ export class GPTBotStrategy implements BotStrategy {
     }
 
     private extractResponseText(data: any): string | null {
-        // Some environments/SDKs provide `output_text`
+        // Check for output_text field (some SDKs provide this)
         if (typeof data?.output_text === 'string' && data.output_text.length > 0) {
             return data.output_text;
         }
@@ -203,7 +273,8 @@ export class GPTBotStrategy implements BotStrategy {
             const content = item?.content;
             if (!Array.isArray(content)) continue;
             for (const part of content) {
-                const text = part?.text;
+                // Handle both output_text and text fields
+                const text = part?.output_text || part?.text;
                 if (typeof text === 'string') chunks.push(text);
             }
         }
@@ -225,9 +296,10 @@ export class GPTBotStrategy implements BotStrategy {
         }
 
         const pairs = Array.isArray(raw?.pairs) ? raw.pairs : undefined;
-        const reasoning = typeof raw?.reasoning === 'string' ? raw.reasoning : undefined;
+        const chat_message = typeof raw?.chat_message === 'string' ? raw.chat_message : undefined;
+        const move_justification = typeof raw?.move_justification === 'string' ? raw.move_justification : undefined;
 
-        return { type, pairs, reasoning };
+        return { type, pairs, chat_message, move_justification };
     }
 
     private legalMoveToJsonMove(move: LegalMove): JsonMove {
@@ -309,7 +381,7 @@ export class GPTBotStrategy implements BotStrategy {
         // Opponents
         for (const oppId of opponentIds) {
             const opp = game.players.find(p => p.player_id === oppId)!;
-            prompt += `OPPONENT: ${opp.hand.length} cards in hand\n`;
+            prompt += `OPPONENT: ${opp.name} - ${opp.hand.length} cards in hand\n`;
         }
         prompt += '\n';
         
@@ -345,7 +417,7 @@ export class GPTBotStrategy implements BotStrategy {
         prompt += '\n';
 
         prompt += 'Analyze the situation and choose the best move.\n';
-        prompt += 'Return JSON describing the move (type + pairs). Use the provided JSON lines exactly.\n';
+        prompt += 'Return JSON with: type, pairs (if needed), chat_message (witty 1-2 sentences), move_justification (brief 2-3 sentences).\n';
         
         return prompt;
     }

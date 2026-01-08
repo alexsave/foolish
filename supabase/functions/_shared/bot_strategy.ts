@@ -1,13 +1,14 @@
 import { Card, Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS } from './types.ts';
 import { canCover, card_comp, get_next_player_index } from './common_utils.ts';
 import { BotStrategy, LegalMove } from './bot_interfaces.ts';
-import { RandomBotStrategy } from './random_strategy.ts';
-import { HandwrittenBotStrategy } from './handwritten_strategy.ts';
-import { SimpleHeuristicStrategy } from './simple_heuristic_strategy.ts';
-import { UltimateChampionStrategy } from './ultimate_champion_strategy.ts';
-import { ChampionStrategy } from './champion_strategy.ts';
-import { HackerStrategy } from './hacker_strategy.ts';
-import { ConsoleStrategy } from './console_strategy.ts';
+import { RandomBotStrategy } from './strategies/random_strategy.ts';
+import { HandwrittenBotStrategy } from './strategies/handwritten_strategy.ts';
+import { SimpleHeuristicStrategy } from './strategies/simple_heuristic_strategy.ts';
+import { UltimateChampionStrategy } from './strategies/ultimate_champion_strategy.ts';
+import { ChampionStrategy } from './strategies/champion_strategy.ts';
+import { HackerStrategy } from './strategies/hacker_strategy.ts';
+import { ConsoleStrategy } from './strategies/console_strategy.ts';
+import { GPTBotStrategy } from './strategies/gpt_strategy.ts';
 
 // Re-export interfaces for backwards compatibility
 export type { BotStrategy, LegalMove };
@@ -23,8 +24,26 @@ export const BOT_STRATEGIES: Map<string, BotStrategy> = new Map<string, BotStrat
     ['console', new ConsoleStrategy()],
 ]);
 
+// Lazy-load GPT strategy to avoid requiring API key at module load time
+let gptStrategyInstance: GPTBotStrategy | null = null;
+
 // Get strategy by key
 export function getBotStrategy(strategyKey: string): BotStrategy {
+    // Handle GPT strategy separately with lazy loading
+    if (strategyKey === 'gpt') {
+        if (!gptStrategyInstance) {
+            try {
+                gptStrategyInstance = new GPTBotStrategy();
+                BOT_STRATEGIES.set('gpt', gptStrategyInstance);
+            } catch (error) {
+                console.error('Failed to initialize GPT strategy:', error);
+                console.log('Falling back to random strategy');
+                return BOT_STRATEGIES.get('random')!;
+            }
+        }
+        return gptStrategyInstance;
+    }
+    
     const strategy = BOT_STRATEGIES.get(strategyKey);
     if (!strategy) {
         // Fall back to random strategy if unknown
