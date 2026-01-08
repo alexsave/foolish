@@ -1,7 +1,7 @@
 import { Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, STRATEGY_KEY } from '../types.ts';
 import { calculateLegalMoves } from '../bot_strategy.ts';
 import { shouldBotActCore, processBotAction } from '../pure_bot_actions.ts';
-import { start_game, game_done } from '../common_utils.ts';
+import { start_game, game_done, seededRandom } from '../common_utils.ts';
 
 const game: Game = {
     players: [],
@@ -62,8 +62,6 @@ start_game(game);
     console.log('You are playing against 2 Handwritten Bots (3 players total)\n');
     
     while (game_done(game) === null) {
-        console.log(game.table_battles);
-
         // Find all bots that can currently move
         const eligibleBots: { bot: PrivatePlayer; index: number }[] = [];
         for (let index = 0; index < game.players.length; index++) {
@@ -86,10 +84,8 @@ start_game(game);
             continue;
         }
 
-        console.log(`Found ${eligibleBots.length} eligible players: ${eligibleBots.map(b => b.bot.name).join(', ')}`);
-
-        // Shuffle the eligible bots to try them in random order
-        const shuffledBots = [...eligibleBots].sort(() => Math.random() - 0.5);
+        // Shuffle the eligible bots to try them in random order (seeded for determinism)
+        const shuffledBots = [...eligibleBots].sort(() => seededRandom() - 0.5);
 
         for (const selectedBot of shuffledBots) {
             // Try to process this player's action

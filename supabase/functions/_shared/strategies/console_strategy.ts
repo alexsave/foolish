@@ -68,6 +68,9 @@ export class ConsoleStrategy implements BotStrategy {
         const flippedDisplay = game.flipped ? ` (flipped: ${cardDisplay(game.flipped)})` : '';
         console.log(`📚 Deck: ${game.deck.length} cards remaining${flippedDisplay}`);
         
+        // Display card tracking information
+        this.displayCardTracking(game, botPlayerId, tracker);
+        
         // Display legal moves (sorted from best to worst) with stats
         console.log('\n✨ Available moves:');
         sortedMoves.forEach((move, index) => {
@@ -103,6 +106,106 @@ export class ConsoleStrategy implements BotStrategy {
         console.log('='.repeat(80) + '\n');
         
         return chosenMove;
+    }
+    
+    private displayCardTracking(game: Game, botPlayerId: string, tracker: CardTracker): void {
+        console.log('\n📊 Card Tracking:');
+        
+        // Table cards
+        if (game.table_battles.length > 0) {
+            const tableCards: string[] = [];
+            for (const battle of game.table_battles) {
+                tableCards.push(cardDisplay(battle.attack));
+                if (battle.defense) {
+                    tableCards.push(cardDisplay(battle.defense));
+                }
+            }
+            console.log(`   🎴 Table (${tableCards.length}): ${tableCards.join(', ')}`);
+        } else {
+            console.log(`   🎴 Table: empty`);
+        }
+        
+        // Discard pile
+        const discardedCards = tracker.getCardsInDiscard();
+        if (discardedCards.length > 0) {
+            console.log(`   🗑️  Discard (${discardedCards.length}): ${discardedCards.map(c => cardDisplay(c)).join(', ')}`);
+        } else {
+            console.log(`   🗑️  Discard: empty`);
+        }
+        
+        // Known cards per player and unknown count
+        console.log('\n   👁️  Known opponent cards:');
+        for (const p of game.players) {
+            if (p.player_id === botPlayerId) continue;
+            
+            const knownCards = tracker.knownCardsByPlayer.get(p.player_id);
+            const knownCount = knownCards?.size || 0;
+            const unknownCount = p.hand.length - knownCount;
+            
+            if (knownCount > 0) {
+                const knownCardsList: string[] = [];
+                for (const cardKey of knownCards!) {
+                    const [suit, value] = cardKey.split('-').map(Number);
+                    knownCardsList.push(cardDisplay({ suit, value }));
+                }
+                console.log(`      ${p.name}: ${knownCardsList.join(', ')} (${unknownCount} unknown)`);
+            } else {
+                console.log(`      ${p.name}: none known (${unknownCount} unknown)`);
+            }
+        }
+        
+        // Calculate unknown cards (cards not in my hand, discard, flipped, table, or known to opponents)
+        const unknownCards: { suit: number; value: number }[] = [];
+        const me = game.players.find(p => p.player_id === botPlayerId);
+        const myHandKeys = new Set(me?.hand.map(c => `${c.suit}-${c.value}`) || []);
+        const discardKeys = new Set(discardedCards.map(c => `${c.suit}-${c.value}`));
+        const flippedKey = game.flipped ? `${game.flipped.suit}-${game.flipped.value}` : null;
+        
+        // Cards currently on the table
+        const tableKeys = new Set<string>();
+        for (const battle of game.table_battles) {
+            tableKeys.add(`${battle.attack.suit}-${battle.attack.value}`);
+            if (battle.defense) {
+                tableKeys.add(`${battle.defense.suit}-${battle.defense.value}`);
+            }
+        }
+        
+        const allKnownOpponentKeys = new Set<string>();
+        for (const knownCards of tracker.knownCardsByPlayer.values()) {
+            for (const key of knownCards) {
+                allKnownOpponentKeys.add(key);
+            }
+        }
+        
+        // Determine start value based on total cards in game
+        // 36 cards = values 5-13 (6-A), 52 cards = values 1-13 (2-A)
+        const totalCards = game.discard_pile_length + game.deck.length + 
+            (game.flipped ? 1 : 0) + 
+            game.players.reduce((sum, p) => sum + p.hand.length, 0);
+        const startValue = totalCards <= 36 ? 5 : 1;
+        const ACE_VALUE = 13;
+        
+        for (let suit = 0; suit < 4; suit++) {
+            for (let value = startValue; value <= ACE_VALUE; value++) {
+                const key = `${suit}-${value}`;
+                if (!myHandKeys.has(key) && !discardKeys.has(key) && key !== flippedKey && 
+                    !tableKeys.has(key) && !allKnownOpponentKeys.has(key)) {
+                    unknownCards.push({ suit, value });
+                }
+            }
+        }
+        
+        // Group unknown cards by suit for display
+        console.log(`\n   ❓ Unknown cards (${unknownCards.length}):`);
+        const bySuit: Map<number, { suit: number; value: number }[]> = new Map();
+        for (const card of unknownCards) {
+            if (!bySuit.has(card.suit)) bySuit.set(card.suit, []);
+            bySuit.get(card.suit)!.push(card);
+        }
+        for (const [suit, cards] of bySuit) {
+            const suitName = SUIT_MAP[suit];
+            console.log(`      ${suitName}: ${cards.map(c => cardDisplay(c)).join(', ')}`);
+        }
     }
     
     private sortMoves(moves: LegalMove[], powerSuit: number): LegalMove[] {

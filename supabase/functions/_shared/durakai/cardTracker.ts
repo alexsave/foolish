@@ -11,6 +11,7 @@ export class CardTracker {
     public knownCardsByPlayer: Map<string, Set<string>>; // Cards we know each player has
     private discardedCards: Set<string>; // Cards in discard pile
     private myCards: Set<string>; // My current hand
+    private tableCards: Set<string>; // Cards currently on the table
     private flippedCard: string | null; // The visible trump card under the deck
     private deckSize: number;
     private opponentIds: string[];
@@ -19,6 +20,7 @@ export class CardTracker {
         this.knownCardsByPlayer = new Map();
         this.discardedCards = new Set();
         this.myCards = new Set();
+        this.tableCards = new Set();
         this.flippedCard = null;
         this.deckSize = game.deck.length;
         this.opponentIds = game.players
@@ -38,6 +40,14 @@ export class CardTracker {
             }
         }
         
+        // Track cards currently on the table
+        for (const battle of game.table_battles) {
+            this.tableCards.add(this.cardKey(battle.attack));
+            if (battle.defense) {
+                this.tableCards.add(this.cardKey(battle.defense));
+            }
+        }
+        
         // Initialize known cards for each opponent
         for (const opponentId of this.opponentIds) {
             this.knownCardsByPlayer.set(opponentId, new Set());
@@ -49,6 +59,18 @@ export class CardTracker {
     private cardKey(card: Card): string {
         return `${card.suit}-${card.value}`;
     }
+    
+    /** Get the minimum card value based on total cards in game */
+    public getMinCardValue(): number {
+        // Calculate total cards from public info
+        // 36 cards = values 5-13 (6-A), 52 cards = values 1-13 (2-A)
+        const totalCards = this.game.discard_pile_length + this.game.deck.length + 
+            (this.game.flipped ? 1 : 0) + 
+            this.game.players.reduce((sum, p) => sum + p.hand.length, 0);
+        return totalCards <= 36 ? 5 : 1;
+    }
+    
+    private readonly ACE_VALUE = 13;
     
     private analyzeLogs(): void {
         // Track cards picked up by each opponent that haven't been played
@@ -167,9 +189,10 @@ export class CardTracker {
         return Math.min(1, possibleCards * playerHandSize / unknownCards);
     }
     
-    private isCardAccountedFor(cardKey: string): boolean {
+    public isCardAccountedFor(cardKey: string): boolean {
         if (this.myCards.has(cardKey)) return true;
         if (this.discardedCards.has(cardKey)) return true;
+        if (this.tableCards.has(cardKey)) return true; // Cards on the table
         if (this.flippedCard === cardKey) return true; // Flipped card is visible/known
         
         for (const knownCards of this.knownCardsByPlayer.values()) {
@@ -212,7 +235,7 @@ export class CardTracker {
         
         // Count unknown cards that could cover this attack
         for (let suit = 0; suit < 4; suit++) {
-            for (let value = 2; value <= 14; value++) {
+            for (let value = this.getMinCardValue(); value <= this.ACE_VALUE; value++) {
                 const key = this.cardKey({ suit, value });
                 if (!this.isCardAccountedFor(key)) {
                     if (this.canCover(attackCard, { suit, value })) {
@@ -303,7 +326,7 @@ export class CardTracker {
         let count = 0;
         
         for (let suit = 0; suit < 4; suit++) {
-            for (let value = 2; value <= 14; value++) {
+            for (let value = this.getMinCardValue(); value <= this.ACE_VALUE; value++) {
                 const key = this.cardKey({ suit, value });
                 // Check if card is not in my hand, discard, flipped, or any opponent's known cards
                 let isKnown = this.myCards.has(key) || this.discardedCards.has(key) || this.flippedCard === key;

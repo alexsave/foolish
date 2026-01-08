@@ -74,9 +74,9 @@ export const refill_deck = (players: number): Card[] => {
 }
 
 // Temporary: Seeded RNG for deterministic testing
-// check these
-let seed = 12344;
-function seededRandom() {
+
+let seed = 1237;
+export function seededRandom() {
     seed = (seed * 1664525 + 1013904223) % 4294967296;
     return seed / 4294967296;
 }

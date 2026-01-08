@@ -186,12 +186,13 @@ export function executeGood(game: Game, player_id: string): AnimationEvent[] {
     // Only proceed to next round if (all attackers said good OR timeout) AND all attacks are covered
     const canTransition = (allAttackersGood || oneMinutePassed) && allAttacksCovered;
     
+    // Always log when someone says good
+    console.log(`✅ ${player.name} said good` + (canTransition ? '' : `. Waiting: ` +
+        `Attackers ${game.good_players.length}/${allAttackers.length}, ` +
+        `Covered: ${allAttacksCovered}, ` +
+        `${game.good_timestamp ? Math.max(0, Math.round((60000 - (Date.now() - game.good_timestamp)) / 1000)) : 60}s left`));
+    
     if (!canTransition) {
-        console.log(`Good pressed by ${player.name}. Waiting for conditions: ` +
-            `Attackers: ${game.good_players.length}/${allAttackers.length} ready, ` +
-            `Attacks covered: ${allAttacksCovered}, ` +
-            `Time remaining: ${game.good_timestamp ? Math.max(0, 60000 - (Date.now() - game.good_timestamp)) : 60000}ms`);
-        
         // Trigger auto-discard loop to monitor timeout (fire-and-forget)
         // The state we get into will trigger the auto-discard loop automatically in utils.ts
         

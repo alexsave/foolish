@@ -27,7 +27,6 @@ export interface AttackStats {
 
 export interface CoverStats {
     probAllowsAdditionalAttack: number;
-    probAllowsUncoverableAttack: number;
     probDrawBetterCard: number;
 }
 
@@ -83,20 +82,20 @@ export function formatMoveStats(stats: MoveStats | null, _debugInfo?: DebugInfo)
     
     if (stats.attack) {
         const a = stats.attack;
-        // Attack: P(Cover), P(CoverAllowsAtk), P(PassBack)
-        return `      P(Cover): ${pctDef(a.probCover, a.canDefinitelyCover, a.definitelyCannotCover)} | P(CoverAllowsAtk): ${pct(a.probCoverAllowsAttack)} | P(PassBack): ${pctDef(a.probPass, a.canDefinitelyPassBack, a.definitelyCannotPassBack)}`;
+        // Attack: P(Cover), P(CoveringWillAllowAttack), P(PassBackPossible)
+        return `      P(Cover): ${pctDef(a.probCover, a.canDefinitelyCover, a.definitelyCannotCover)} | P(CoveringWillAllowAttack): ${pct(a.probCoverAllowsAttack)} | P(PassBackPossible): ${pctDef(a.probPass, a.canDefinitelyPassBack, a.definitelyCannotPassBack)}`;
     }
     
     if (stats.cover) {
         const c = stats.cover;
         // Cover: P(AllowsAtk), P(ForcesPickup), P(DrawBetter)
-        return `      P(AllowsAtk): ${pct(c.probAllowsAdditionalAttack)} | P(ForcesPickup): ${pct(c.probAllowsUncoverableAttack)} | P(DrawBetter): ${pct(c.probDrawBetterCard)}`;
+        return `      P(AllowsAtk): ${pct(c.probAllowsAdditionalAttack)} | P(DrawBetter): ${pct(c.probDrawBetterCard)}`;
     }
     
     if (stats.pass) {
         const p = stats.pass;
-        // Pass: P(Cover) for new defender, P(CoverAllowsAtk), P(PassBack) to us
-        return `      P(Cover): ${pctDef(p.probCover, p.canDefinitelyCover, p.definitelyCannotCover)} | P(CoverAllowsAtk): ${pct(p.probCoverAllowsAttack)} | P(PassBack): ${pctDef(p.probPass, p.canDefinitelyPassBack, p.definitelyCannotPassBack)}`;
+        // Pass: P(Cover) for new defender, P(CoveringWillAllowAttack), P(PassBackPossible) to us
+        return `      P(Cover): ${pctDef(p.probCover, p.canDefinitelyCover, p.definitelyCannotCover)} | P(CoveringWillAllowAttack): ${pct(p.probCoverAllowsAttack)} | P(PassBackPossible): ${pctDef(p.probPass, p.canDefinitelyPassBack, p.definitelyCannotPassBack)}`;
     }
     
     return '';
@@ -347,6 +346,7 @@ function initializeDPWithKnownCards(
  * @param trumpSuit - The trump suit
  * @param defenderHandSize - Number of cards in defender's hand
  * @param totalUnknownCards - Total unknown cards (deck + unknown opponent hands)
+ * @param minCardValue - Minimum card value in the deck (5 for 36-card deck, 1 for 52-card deck)
  * @param knownDefenderCards - Optional array of cards we KNOW the defender has (from pickups they haven't played)
  * @returns Probability between 0 and 1
  */
@@ -356,6 +356,7 @@ function calculateCoverProbabilityDP(
     trumpSuit: number,
     defenderHandSize: number,
     totalUnknownCards: number,
+    minCardValue: number,
     knownDefenderCards: Card[] = []
 ): number {
     // Debug mode for tests with known cards
@@ -366,7 +367,7 @@ function calculateCoverProbabilityDP(
     const bucketCards: Record<string, string[]> = {}; // For debugging
     
     SUITS.forEach(suit => {
-        for (let value = 6 - 1; value <= 14 - 1; value++) {
+        for (let value = minCardValue; value <= ACE_VALUE; value++) {
             const defenseCard = { suit, value };
             const defenseKey = cardDisplay(defenseCard);
             
@@ -451,7 +452,7 @@ function calculateCoverProbabilityDP(
             let canCoverCount = 0;
             const canCoverList: string[] = [];
             SUITS.forEach(suit => {
-                for (let value = 6 - 1; value <= 14 - 1; value++) {
+                for (let value = minCardValue; value <= ACE_VALUE; value++) {
                     const defenseCard = { suit, value };
                     const defenseKey = cardDisplay(defenseCard);
                     if (!excludedCards.has(defenseKey) && canCover(attack, defenseCard, trumpSuit)) {
@@ -839,6 +840,7 @@ export interface CoverWithGoodRankResult {
  * @param trumpSuit - Trump suit
  * @param defenderHandSize - Defender's hand size
  * @param attackerRemainingHand - Attacker's remaining cards (after leading attacks)
+ * @param minCardValue - Minimum card value in the deck (5 for 36-card deck, 1 for 52-card deck)
  * @param knownDefenderCards - Known defender cards
  * @param debugMode - Enable debug output
  */
@@ -848,6 +850,7 @@ function calculateCoverProbabilityDPWithGoodRanks(
     trumpSuit: number,
     defenderHandSize: number,
     attackerRemainingHand: Card[],
+    minCardValue: number,
     knownDefenderCards: Card[] = [],
     debugMode = false
 ): CoverWithGoodRankResult {
@@ -860,7 +863,7 @@ function calculateCoverProbabilityDPWithGoodRanks(
     const bucketCards: Record<string, string[]> = {}; // For debugging
     
     SUITS.forEach(suit => {
-        for (let value = 6 - 1; value <= 14 - 1; value++) {
+        for (let value = minCardValue; value <= ACE_VALUE; value++) {
             const defenseCard = { suit, value };
             const defenseKey = cardDisplay(defenseCard);
             
@@ -1149,9 +1152,9 @@ function calculateAttackStatsWithDebug(
     if (cards[0]) {
         // Durak uses cards 6-Ace, which are values 5-13 in internal representation
         for (let suit = 0; suit < 4; suit++) {
-            for (let value = 5; value <= 13; value++) {
+            for (let value = tracker.getMinCardValue(); value <= ACE_VALUE; value++) {
                 if (canCover(cards[0], { suit, value }, game.power_suit)) {
-                    if (!isCardFullyAccountedFor(`${suit}-${value}`, tracker)) {
+                    if (!tracker.isCardAccountedFor(`${suit}-${value}`)) {
                         coverCardsCount++;
                     }
                 }
@@ -1162,7 +1165,7 @@ function calculateAttackStatsWithDebug(
     // Count value cards remaining for pass
     let valueCardsRemaining = 0;
     for (let suit = 0; suit < 4; suit++) {
-        if (!isCardFullyAccountedFor(`${suit}-${attackValue}`, tracker)) {
+        if (!tracker.isCardAccountedFor(`${suit}-${attackValue}`)) {
             valueCardsRemaining++;
         }
     }
@@ -1180,8 +1183,8 @@ function calculateAttackStatsWithDebug(
     // Build excluded cards set
     const excludedCards = new Set<string>();
     for (let suit = 0; suit < 4; suit++) {
-        for (let value = 5; value <= 13; value++) {
-            if (isCardFullyAccountedFor(`${suit}-${value}`, tracker)) {
+        for (let value = tracker.getMinCardValue(); value <= ACE_VALUE; value++) {
+            if (tracker.isCardAccountedFor(`${suit}-${value}`)) {
                 excludedCards.add(cardDisplay({ suit, value }));
             }
         }
@@ -1201,6 +1204,7 @@ function calculateAttackStatsWithDebug(
         game.power_suit,           // trump suit
         defender.hand.length,       // defender hand size
         attackerRemainingHand,      // attacker's remaining cards (determines "good ranks")
+        tracker.getMinCardValue(),  // min card value
         knownDefenderCardsArray,    // known defender cards
         false                       // debug mode off
     );
@@ -1281,7 +1285,7 @@ function definitelyCannotCoverAttacks(
         
         // Check all cards that could cover this attack
         for (let suit = 0; suit < 4; suit++) {
-            for (let value = 5; value <= 13; value++) {
+            for (let value = tracker.getMinCardValue(); value <= ACE_VALUE; value++) {
                 const card = { suit, value };
                 if (canCover(attack, card, game.power_suit)) {
                     // Is this card possibly with the defender?
@@ -1374,7 +1378,7 @@ function areAllValueCardsAccountedFor(
     }
     for (let suit = 0; suit < 4; suit++) {
         const key = `${suit}-${value}`;
-        const isAccounted = isCardFullyAccountedFor(key, tracker);
+        const isAccounted = tracker.isCardAccountedFor(key);
         if (DEBUG_PASSBACK) {
             console.log(`  suit=${suit}, key=${key}, isAccountedFor=${isAccounted}`);
         }
@@ -1417,28 +1421,8 @@ function isCardAccountedForElsewhere(
     return false;
 }
 
-function isCardFullyAccountedFor(cardKey: string, tracker: CardTracker): boolean {
-    // Check my hand
-    const myPlayer = tracker['game'].players.find(p => p.player_id === tracker['myPlayerId']);
-    if (myPlayer) {
-        for (const card of myPlayer.hand) {
-            if (`${card.suit}-${card.value}` === cardKey) return true;
-        }
-    }
-    
-    // Check discarded
-    if (tracker['discardedCards'].has(cardKey)) return true;
-    
-    // Check flipped card (visible to everyone)
-    if (tracker['flippedCard'] === cardKey) return true;
-    
-    // Check all known cards
-    for (const knownCards of tracker.knownCardsByPlayer.values()) {
-        if (knownCards.has(cardKey)) return true;
-    }
-    
-    return false;
-}
+// Use CardTracker.isCardAccountedFor() instead of this duplicate function
+const ACE_VALUE = 13;
 
 function calculateCoverProbability(
     game: Game,
@@ -1467,8 +1451,8 @@ function calculateCoverProbability(
     
     // Add all cards from the tracker that are accounted for
     for (let suit = 0; suit < 4; suit++) {
-        for (let value = 5; value <= 13; value++) {
-            if (isCardFullyAccountedFor(`${suit}-${value}`, tracker)) {
+        for (let value = tracker.getMinCardValue(); value <= ACE_VALUE; value++) {
+            if (tracker.isCardAccountedFor(`${suit}-${value}`)) {
                 excludedCards.add(cardDisplay({ suit, value }));
             }
         }
@@ -1498,6 +1482,7 @@ function calculateCoverProbability(
         game.power_suit,
         defenderHandSize, // Pass full hand size
         unknownTotal,
+        tracker.getMinCardValue(),
         knownDefenderCardsArray // Pass known cards
     );
 }
@@ -1612,7 +1597,7 @@ function calculateProbHasValue(
     let unknownValueCards = 0;
     for (let suit = 0; suit < 4; suit++) {
         const key = `${suit}-${value}`;
-        if (!isCardFullyAccountedFor(key, tracker)) {
+        if (!tracker.isCardAccountedFor(key)) {
             unknownValueCards++;
         }
     }
@@ -1662,9 +1647,9 @@ function calculateProbCoverAllowsAttackWithDebug(
     for (const attack of attackCards) {
         const possibleCovers: Card[] = [];
         for (let suit = 0; suit < 4; suit++) {
-            for (let value = 5; value <= 13; value++) {
+            for (let value = tracker.getMinCardValue(); value <= ACE_VALUE; value++) {
                 const cardKey = `${suit}-${value}`;
-                if (canCover(attack, { suit, value }, game.power_suit) && !isCardFullyAccountedFor(cardKey, tracker)) {
+                if (canCover(attack, { suit, value }, game.power_suit) && !tracker.isCardAccountedFor(cardKey)) {
                     possibleCovers.push({ suit, value });
                 }
             }
@@ -1705,38 +1690,44 @@ function calculateCoverStatsWithDebug(
     tracker: CardTracker
 ): { stats: CoverStats; debug: CoverDebugInfo } {
     const coverCards = move.cards || [];
+    const defender = game.players.find(p => p.player_id === playerId);
     
-    // Values that will be on table after this cover
-    const tableValues = new Set<number>();
+    // Values currently on table BEFORE this cover
+    const existingTableValues = new Set<number>();
     for (const battle of game.table_battles) {
-        tableValues.add(battle.attack.value);
-        if (battle.defense) tableValues.add(battle.defense.value);
+        existingTableValues.add(battle.attack.value);
+        if (battle.defense) existingTableValues.add(battle.defense.value);
     }
+    
+    // NEW values introduced by this cover (not already on table)
+    const newValues = new Set<number>();
     for (const card of coverCards) {
-        tableValues.add(card.value);
+        if (!existingTableValues.has(card.value)) {
+            newValues.add(card.value);
+        }
     }
     
-    // Probability that cover allows additional attack
-    const { prob: probAllowsAdditionalAttack, debugInfo: attackDebug } = calculateProbOpponentHasTableValueWithDebug(game, playerId, coverCards, tableValues, tracker);
+    // Calculate P(AllowsAtk) - probability that cover unlocks at least one new throw-in
+    const { prob: probAllowsAdditionalAttack, debugInfo: attackDebug } = calculateProbCoverAllowsAttack(
+        game, playerId, coverCards, newValues, tracker
+    );
     
-    // Probability that allows uncoverable attack
-    const { prob: probAllowsUncoverableAttack, canCoverValues } = calculateProbUncoverableAttackWithDebug(game, playerId, coverCards, tableValues, tracker);
-    
-    // Probability of drawing better card
-    const { prob: probDrawBetterCard, avgUnknownValue, cardValue } = calculateProbDrawBetterWithDebug(game, coverCards, tracker);
+    // Calculate P(DrawBetter) - probability we draw better cards by value
+    const { prob: probDrawBetterCard, avgUnknownValue, cardValue } = calculateProbDrawBetter(
+        game, playerId, coverCards, tracker
+    );
     
     const stats: CoverStats = {
         probAllowsAdditionalAttack,
-        probAllowsUncoverableAttack,
         probDrawBetterCard
     };
     
     const debug: CoverDebugInfo = {
         unknownTotal: game.deck.length + tracker.getUnknownCardCount(),
         coverValue: coverCards[0]?.value || 0,
-        valueCardsRemaining: attackDebug.valueCardsRemaining,
-        attackerUnknownHand: attackDebug.attackerUnknownHand,
-        canCoverValues,
+        valueCardsRemaining: attackDebug.newValueCardsUnknown,
+        attackerUnknownHand: attackDebug.totalAttackerHands,
+        canCoverValues: '',
         avgUnknownValue,
         cardValue
     };
@@ -1744,155 +1735,175 @@ function calculateCoverStatsWithDebug(
     return { stats, debug };
 }
 
-function calculateProbOpponentHasTableValueWithDebug(
+/**
+ * Calculate probability that covering unlocks at least one new throw-in for attackers.
+ * 
+ * P(AllowsAtk) = 0 if:
+ *   - Cover introduces no new values (Δ = ∅)
+ *   - Defender will be out of cards after covering (no more attacks possible)
+ *   - Max attacks already reached
+ * 
+ * P(AllowsAtk) = 1 if:
+ *   - Any attacker is KNOWN to have a card matching a newly introduced value
+ * 
+ * Otherwise, uses hypergeometric formula:
+ *   P = 1 - C(N-M, H) / C(N, H)
+ * where:
+ *   N = total unknown cards
+ *   M = number of unknown cards with newly introduced values  
+ *   H = total hand size of eligible attackers
+ */
+function calculateProbCoverAllowsAttack(
     game: Game,
     defenderId: string,
     coverCards: Card[],
-    tableValues: Set<number>,
+    newValues: Set<number>,
     tracker: CardTracker
-): { prob: number; debugInfo: { valueCardsRemaining: number; attackerUnknownHand: number } } {
-    // Check each attacker for probability they have a matching value
-    let maxProb = 0;
-    let maxAttackerUnknownHand = 0;
-    let valueCardsRemaining = 0;
+): { prob: number; debugInfo: { newValueCardsUnknown: number; totalAttackerHands: number } } {
+    const defender = game.players.find(p => p.player_id === defenderId);
     
+    // If no new values introduced, probability is 0
+    if (newValues.size === 0) {
+        return { prob: 0, debugInfo: { newValueCardsUnknown: 0, totalAttackerHands: 0 } };
+    }
+    
+    // If defender will have no cards left after covering, no more attacks possible
+    const remainingDefenderCards = defender ? defender.hand.length - coverCards.length : 0;
+    if (remainingDefenderCards <= 0) {
+        return { prob: 0, debugInfo: { newValueCardsUnknown: 0, totalAttackerHands: 0 } };
+    }
+    
+    // Count current attacks on table + this cover
+    const currentAttacks = game.table_battles.length;
+    const maxAttacks = Math.min(6, remainingDefenderCards); // Max 6 or defender's remaining cards
+    if (currentAttacks >= maxAttacks) {
+        return { prob: 0, debugInfo: { newValueCardsUnknown: 0, totalAttackerHands: 0 } };
+    }
+    
+    // Check if any attacker is KNOWN to have a card of a new value
+    let totalAttackerHands = 0;
+    for (let i = 0; i < game.players.length; i++) {
+        if (i === game.defender) continue;
+        const player = game.players[i];
+        if (player.status !== PLAYER_STATUS.IN) continue;
+        
+        totalAttackerHands += player.hand.length;
+        
+        const knownCards = tracker.knownCardsByPlayer.get(player.player_id) || new Set<string>();
+        for (const key of knownCards) {
+            const [, value] = key.split('-').map(Number);
+            if (newValues.has(value)) {
+                // Definitely can attack with this value
+                return { prob: 1.0, debugInfo: { newValueCardsUnknown: 4, totalAttackerHands } };
+            }
+        }
+    }
+    
+    // Count M = unknown cards with newly introduced values
+    let M = 0;
+    for (const value of newValues) {
+        for (let suit = 0; suit < 4; suit++) {
+            if (!tracker.isCardAccountedFor(`${suit}-${value}`)) {
+                M++;
+            }
+        }
+    }
+    
+    if (M === 0) {
+        // All cards of new values are accounted for (in hands we know, discard, etc.)
+        return { prob: 0, debugInfo: { newValueCardsUnknown: 0, totalAttackerHands } };
+    }
+    
+    // N = total unknown cards (deck + unknown cards in opponent hands)
+    const N = game.deck.length + tracker.getUnknownCardCount();
+    
+    // H = total cards in attacker hands (subtract known cards since we already checked those)
+    let H = 0;
     for (let i = 0; i < game.players.length; i++) {
         if (i === game.defender) continue;
         const player = game.players[i];
         if (player.status !== PLAYER_STATUS.IN) continue;
         
         const knownCards = tracker.knownCardsByPlayer.get(player.player_id) || new Set<string>();
-        const unknownHand = Math.max(0, player.hand.length - knownCards.size);
-        
-        // Check if they definitely have a matching value
-        for (const key of knownCards) {
-            const [, value] = key.split('-').map(Number);
-            // Check if this is a NEW value being added by our cover
-            for (const coverCard of coverCards) {
-                if (coverCard.value === value) {
-                    return { prob: 1.0, debugInfo: { valueCardsRemaining: 4, attackerUnknownHand: unknownHand } };
-                }
-            }
-        }
-        
-        // Calculate probability for new values being added
-        for (const coverCard of coverCards) {
-            const prob = calculateProbHasValue(player, coverCard.value, knownCards, tracker);
-            if (prob > maxProb) {
-                maxProb = prob;
-                maxAttackerUnknownHand = unknownHand;
-                // Count value cards remaining for this value
-                let count = 0;
-                for (let suit = 0; suit < 4; suit++) {
-                    if (!isCardFullyAccountedFor(`${suit}-${coverCard.value}`, tracker)) {
-                        count++;
-                    }
-                }
-                valueCardsRemaining = count;
-            }
-        }
+        H += Math.max(0, player.hand.length - knownCards.size);
     }
     
-    return { prob: maxProb, debugInfo: { valueCardsRemaining, attackerUnknownHand: maxAttackerUnknownHand } };
+    if (H === 0 || N === 0) {
+        return { prob: 0, debugInfo: { newValueCardsUnknown: M, totalAttackerHands } };
+    }
+    
+    // P = 1 - C(N-M, H) / C(N, H)
+    // = probability at least one of H cards is among the M cards with new values
+    const prob = 1 - hypergeometricProbZero(N, M, H);
+    
+    return { prob: Math.max(0, Math.min(1, prob)), debugInfo: { newValueCardsUnknown: M, totalAttackerHands } };
 }
 
-function calculateProbUncoverableAttackWithDebug(
+/**
+ * Calculate probability that discarding these cover cards and drawing will result in better cards.
+ * "Better" means higher value (treating trump as +100 value).
+ * 
+ * Uses actual count of cards better than each cover card in the deck.
+ */
+function calculateProbDrawBetter(
     game: Game,
     defenderId: string,
     coverCards: Card[],
-    tableValues: Set<number>,
-    tracker: CardTracker
-): { prob: number; canCoverValues: string } {
-    const defender = game.players.find(p => p.player_id === defenderId);
-    if (!defender) return { prob: 0, canCoverValues: '(none)' };
-    
-    // Cards remaining in defender's hand after this cover
-    const remainingHand = defender.hand.filter(c => 
-        !coverCards.some(cc => cc.suit === c.suit && cc.value === c.value)
-    );
-    
-    // Track which values remaining hand can cover
-    const coverableValues = new Set<number>();
-    for (const card of remainingHand) {
-        // This card can cover attacks of lower values (same suit or trump over non-trump)
-        coverableValues.add(card.value); // Can always cover same suit lower values
-    }
-    
-    // For each new value being added, check if defender can cover attacks of that value
-    let probUncoverable = 0;
-    
-    for (const coverCard of coverCards) {
-        const newValue = coverCard.value;
-        
-        // Find the weakest possible attack with this value
-        // (lowest suit that's not trump)
-        let worstAttack: Card | null = null;
-        for (let suit = 0; suit < 4; suit++) {
-            if (suit !== game.power_suit) {
-                worstAttack = { suit, value: newValue };
-                break;
-            }
-        }
-        if (!worstAttack) worstAttack = { suit: game.power_suit, value: newValue };
-        
-        // Can defender cover this?
-        let canCoverIt = false;
-        for (const card of remainingHand) {
-            if (canCover(worstAttack, card, game.power_suit)) {
-                canCoverIt = true;
-                break;
-            }
-        }
-        
-        if (!canCoverIt) {
-            // Defender definitely can't cover attacks of this value
-            // Probability attacker has this value
-            for (let i = 0; i < game.players.length; i++) {
-                if (i === game.defender) continue;
-                const player = game.players[i];
-                if (player.status !== PLAYER_STATUS.IN) continue;
-                
-                const knownCards = tracker.knownCardsByPlayer.get(player.player_id) || new Set<string>();
-                const prob = calculateProbHasValue(player, newValue, knownCards, tracker);
-                probUncoverable = Math.max(probUncoverable, prob);
-            }
-        }
-    }
-    
-    const canCoverValues = remainingHand.length > 0 
-        ? [...new Set(remainingHand.map(c => c.value))].sort((a,b) => a-b).join(',')
-        : '(empty hand)';
-    
-    return { prob: probUncoverable, canCoverValues };
-}
-
-function calculateProbDrawBetterWithDebug(
-    game: Game,
-    coverCards: Card[],
     tracker: CardTracker
 ): { prob: number; avgUnknownValue: number; cardValue: number } {
+    // No deck = no drawing
     if (game.deck.length === 0 && !game.flipped) {
         return { prob: 0, avgUnknownValue: 0, cardValue: coverCards[0]?.value || 0 };
     }
     
-    const avgUnknownValue = tracker.getAverageUnknownCardValue();
+    if (coverCards.length === 0) {
+        return { prob: 0, avgUnknownValue: 0, cardValue: 0 };
+    }
     
-    // For each cover card, probability of drawing something better
-    let totalProb = 0;
+    const avgUnknownValue = tracker.getAverageUnknownCardValue();
+    const powerSuit = game.power_suit;
+    
+    // For each cover card, calculate probability of drawing a better card
+    let totalProbSum = 0;
     let firstCardValue = 0;
-    for (const card of coverCards) {
-        const cardValue = getCardValue(card, game.power_suit);
-        if (!firstCardValue) firstCardValue = cardValue;
-        // Rough approximation: if avg unknown > our card value, good chance of drawing better
-        // More sophisticated: count cards better than ours
-        const probBetter = avgUnknownValue > card.value ? 
-            Math.min(0.9, (avgUnknownValue - card.value) / 10) : 
-            Math.max(0.1, 1 - (card.value - avgUnknownValue) / 10);
-        totalProb += probBetter;
+    
+    for (const coverCard of coverCards) {
+        const coverValue = getCardValue(coverCard, powerSuit);
+        if (!firstCardValue) firstCardValue = coverValue;
+        
+        // Count how many unknown cards in deck are better than this cover card
+        let betterCardsInDeck = 0;
+        let totalCardsInDeck = game.deck.length + (game.flipped ? 1 : 0);
+        
+        // We need to count unknown cards that are "better" by value
+        // Better = higher value, or trump beats non-trump
+        for (let suit = 0; suit < 4; suit++) {
+            for (let value = tracker.getMinCardValue(); value <= ACE_VALUE; value++) {
+                const cardKey = `${suit}-${value}`;
+                // Only count cards in the deck (not accounted for = could be in deck or opponent hands)
+                // We approximate by considering all unaccounted cards and scaling by deck proportion
+                if (!tracker.isCardAccountedFor(cardKey)) {
+                    const candidateValue = getCardValue({ suit, value }, powerSuit);
+                    if (candidateValue > coverValue) {
+                        betterCardsInDeck++;
+                    }
+                }
+            }
+        }
+        
+        // Scale by proportion that's in deck vs opponent hands
+        const totalUnknown = game.deck.length + tracker.getUnknownCardCount();
+        const deckProportion = totalUnknown > 0 ? (game.deck.length + (game.flipped ? 1 : 0)) / totalUnknown : 0;
+        const effectiveBetterInDeck = betterCardsInDeck * deckProportion;
+        
+        // Probability of drawing at least one better card when we draw to refill
+        // Simplified: if we draw 1 card, P(better) = betterInDeck / deckSize
+        const prob = totalCardsInDeck > 0 ? effectiveBetterInDeck / totalCardsInDeck : 0;
+        totalProbSum += Math.max(0, Math.min(1, prob));
     }
     
     return { 
-        prob: coverCards.length > 0 ? totalProb / coverCards.length : 0,
+        prob: coverCards.length > 0 ? totalProbSum / coverCards.length : 0,
         avgUnknownValue,
         cardValue: firstCardValue
     };
@@ -1950,8 +1961,8 @@ function calculatePassStatsWithDebug(
     // Build excluded cards set
     const excludedCards = new Set<string>();
     for (let suit = 0; suit < 4; suit++) {
-        for (let value = 5; value <= 13; value++) {
-            if (isCardFullyAccountedFor(`${suit}-${value}`, tracker)) {
+        for (let value = tracker.getMinCardValue(); value <= ACE_VALUE; value++) {
+            if (tracker.isCardAccountedFor(`${suit}-${value}`)) {
                 excludedCards.add(cardDisplay({ suit, value }));
             }
         }
@@ -1971,6 +1982,7 @@ function calculatePassStatsWithDebug(
         game.power_suit,           // trump suit
         newDefender.hand.length,    // new defender hand size
         passerRemainingHand,        // passer's remaining cards (determines "good ranks")
+        tracker.getMinCardValue(),  // min card value
         knownDefenderCardsArray,    // known defender cards
         false                       // debug mode off
     );
@@ -1990,9 +2002,9 @@ function calculatePassStatsWithDebug(
     let coverCardsCount = 0;
     if (virtualAttacks[0]) {
         for (let suit = 0; suit < 4; suit++) {
-            for (let value = 5; value <= 13; value++) {
+            for (let value = tracker.getMinCardValue(); value <= ACE_VALUE; value++) {
                 if (canCover(virtualAttacks[0], { suit, value }, game.power_suit)) {
-                    if (!isCardFullyAccountedFor(`${suit}-${value}`, tracker)) {
+                    if (!tracker.isCardAccountedFor(`${suit}-${value}`)) {
                         coverCardsCount++;
                     }
                 }
@@ -2034,7 +2046,7 @@ function definitelyCannotCoverAttacksForPlayer(
         let possibleCoverCount = 0;
         
         for (let suit = 0; suit < 4; suit++) {
-            for (let value = 5; value <= 13; value++) {
+            for (let value = tracker.getMinCardValue(); value <= ACE_VALUE; value++) {
                 const card = { suit, value };
                 if (canCover(attack, card, game.power_suit)) {
                     const key = `${suit}-${value}`;
@@ -2134,8 +2146,8 @@ function calculateCoverProbabilityForPlayer(
     
     // Add all cards from the tracker that are accounted for
     for (let suit = 0; suit < 4; suit++) {
-        for (let value = 5; value <= 13; value++) {
-            if (isCardFullyAccountedFor(`${suit}-${value}`, tracker)) {
+        for (let value = tracker.getMinCardValue(); value <= ACE_VALUE; value++) {
+            if (tracker.isCardAccountedFor(`${suit}-${value}`)) {
                 excludedCards.add(cardDisplay({ suit, value }));
             }
         }
@@ -2163,6 +2175,7 @@ function calculateCoverProbabilityForPlayer(
         game.power_suit,
         defenderHandSize, // Pass full hand size
         unknownTotal,
+        tracker.getMinCardValue(),
         knownDefenderCardsArray // Pass known cards
     );
 }
@@ -2266,9 +2279,9 @@ function calculateProbCoverAllowsAttackFromPasserWithDebug(
     for (const attack of attackCards) {
         const possibleCovers: Card[] = [];
         for (let suit = 0; suit < 4; suit++) {
-            for (let value = 5; value <= 13; value++) {
+            for (let value = tracker.getMinCardValue(); value <= ACE_VALUE; value++) {
                 const cardKey = `${suit}-${value}`;
-                if (canCover(attack, { suit, value }, game.power_suit) && !isCardFullyAccountedFor(cardKey, tracker)) {
+                if (canCover(attack, { suit, value }, game.power_suit) && !tracker.isCardAccountedFor(cardKey)) {
                     possibleCovers.push({ suit, value });
                 }
             }
@@ -2382,6 +2395,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     console.log('Total unknown cards in pool:', totalUnknownCards);
     console.log('');
     
+    // Min card value for 36-card deck (test uses standard deck)
+    const testMinCardValue = 5;
+    
     // Test WITHOUT known cards
     console.log('--- Test 1: WITHOUT known cards (baseline) ---');
     const probWithout = calculateCoverProbabilityDP(
@@ -2390,6 +2406,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
         trumpSuit,
         defenderHandSize,
         totalUnknownCards + knownDefenderCards.length, // Add known cards back to pool
+        testMinCardValue,
         [] // No known cards
     );
     console.log(`P(Cover) = ${(probWithout * 100).toFixed(2)}%`);
@@ -2408,6 +2425,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
         trumpSuit,
         defenderHandSize,
         totalUnknownCards,
+        testMinCardValue,
         knownDefenderCards
     );
     console.log(`P(Cover) = ${(probWith * 100).toFixed(2)}%`);
@@ -2434,6 +2452,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
         trumpSuit,
         defenderHandSize,
         totalUnknownCards,
+        testMinCardValue,
         uselessKnownCards
     );
     console.log('Known cards:', uselessKnownCards.map(c => cardDisplay(c)).join(', '), '(all useless)');
@@ -2485,6 +2504,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
         1, // Hearts
         6, // Defender hand size
         attackerRemainingHand,
+        5, // Min card value for 36-card deck
         [], // No known defender cards
         true // Debug mode
     );
@@ -2616,6 +2636,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
         1, // Hearts trump
         7, // Defender has 7 cards total
         validationAttackerRemaining,
+        5, // Min card value for 36-card deck
         validationKnownDefender,
         true // Debug mode
     );
@@ -2688,6 +2709,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
         1, // Hearts trump
         6, // Defender hand size
         highTrumpAttackerRemaining,
+        5, // Min card value for 36-card deck
         [], // No known defender cards
         true // Debug mode
     );
@@ -2800,6 +2822,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
         1, // Hearts trump
         6, // Defender hand size
         highTrumpAttackerRemaining,
+        5, // Min card value for 36-card deck
         highTrumpKnownDefender,
         true // Debug mode
     );
@@ -2866,6 +2889,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
         1, // Hearts trump
         6, // Defender hand size
         highTrumpAttackerRemaining,
+        5, // Min card value for 36-card deck
         highTrumpKnownDefender3,
         true // Debug mode
     );
@@ -2933,6 +2957,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
         1, // Hearts trump
         6, // Defender hand size
         lowAttackerRemaining,
+        5, // Min card value for 36-card deck
         [], // No known defender cards
         true // Debug mode
     );
