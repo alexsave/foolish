@@ -82,20 +82,13 @@ export function calculateLegalMoves(game: Game, botPlayerId: string): LegalMove[
             const coverMoves = calculateCoverMoves(game, botPlayer);
             moves.push(...coverMoves);
             
-            // Can always pickup
-            moves.push({ type: 'pickup' });
-            
-            // Can wait if all attacks are covered and there are attackers who haven't said "good"
-            // Defender should NOT be able to wait if all attackers have said "good" (would cause deadlock)
-            const hasAttackersWhoCanSayGood = game.players.some((p, index) => 
-                index !== game.defender &&
-                p.status === PLAYER_STATUS.IN &&
-                !(game.good_players?.includes(p.player_id))
-            );
-            const canWait = allAttacksCovered && hasAttackersWhoCanSayGood;
-            if (canWait) {
-                moves.push({ type: 'wait' });
+            // Can only pickup if there are uncovered attacks (don't allow pickup when all covered!)
+            if (!allAttacksCovered) {
+                moves.push({ type: 'pickup' });
             }
+            
+            // Note: No "wait" move needed - if all attacks are covered, shouldBotActCore returns false
+            // and the defender won't be asked to act at all
             
             // Can pass if all attacks are same value and bot has that value
             const passMoves = calculatePassMoves(game, botPlayer);

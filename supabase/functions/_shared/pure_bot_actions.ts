@@ -151,22 +151,9 @@ export const shouldBotActCore = (game: Game, bot: PrivatePlayer, botIndex: numbe
     }
     
     if (isDefender) {
-        // Defender can act when there are attacks
-        // EXCEPT: if all attacks are covered AND all attackers have said "good"
-        // In that case, auto_discard_loop will handle round transition
-        if (allAttacksCovered) {
-            const allAttackers = game.players.filter((p, index) => 
-                index !== game.defender && p.status === PLAYER_STATUS.IN
-            );
-            // Note: every() returns true for empty arrays, so check length first
-            const allAttackersSaidGood = allAttackers.length > 0 && allAttackers.every(attacker => 
-                game.good_players?.includes(attacker.player_id)
-            );
-            // All attackers said good and all attacks covered - auto_discard_loop will handle this
-            return !allAttackersSaidGood;
-        }
-        // Not all attacks covered - defender can act
-        return true;
+        // Defender can only act when there are uncovered attacks
+        // If all attacks are covered, defender just waits for attackers to add more or say "good"
+        return !allAttacksCovered;
     }
     
     // Attacker: check if they've already said "good"
