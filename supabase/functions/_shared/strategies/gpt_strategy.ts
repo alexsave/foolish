@@ -131,9 +131,8 @@ export class GPTBotStrategy implements BotStrategy {
                             content: prompt
                         }
                     ],
-                    // GPT-5.2 reasoning settings: none for fastest responses
                     reasoning: {
-                        effort: 'none'
+                        effort: 'medium'
                     },
                     text: {
                         // Low verbosity for concise JSON output
