@@ -2,6 +2,8 @@ import { BotStrategy } from '../bot_interfaces.ts';
 import { Game, Card, LOG_TYPE } from '../types.ts';
 import { LegalMove } from '../bot_interfaces.ts';
 import { CardTracker } from '../durakai/cardTracker.ts';
+import { calculateMoveStats, formatMoveStats } from './move_stats.ts';
+import { cardDisplay } from '../common_utils.ts';
 
 type JsonCard = { suit: number; value: number };
 type JsonMovePair = { primary: JsonCard; target?: JsonCard | null };
@@ -74,7 +76,7 @@ export class GPTBotStrategy implements BotStrategy {
     private verbose: boolean;
     private baseUrl: string;
     
-    constructor(apiKey?: string, model: string = 'gpt-4o-2024-08-06', verbose: boolean = false) {
+    constructor(apiKey?: string, model: string = 'gpt-5.2', verbose: boolean = false) {
         this.apiKey = apiKey || getEnv('OPENAI_API_KEY') || '';
         this.model = model;
         this.verbose = verbose || getEnv('OPENAI_VERBOSE') === 'true';
@@ -115,6 +117,10 @@ export class GPTBotStrategy implements BotStrategy {
                         {
                             role: 'system',
                             content: 'You are an expert Durak (Russian card game) player with personality. ' +
+                                'Rule variations: Passing is enabled. Players can attack with as many cards as the defender has, even if more than 6. ' +
+                                'CRITICAL RULES: ' +
+                                '1) "wait" is ALWAYS better than "pickup" - wait lets you see if more attacks come before deciding. You can still pickup later after waiting, but you cannot undo a pickup. NEVER choose pickup if wait is available. ' +
+                                '2) "good" means an attacker signals they are done attacking - once all attackers say good and all attacks are covered, the round ends successfully. ' +
                                 'Choose the best move from the provided legal moves. ' +
                                 'Include a short, witty chat message to other players (max 1-2 sentences). ' +
                                 'Include a brief move justification (max 2-3 sentences). ' +
@@ -125,7 +131,13 @@ export class GPTBotStrategy implements BotStrategy {
                             content: prompt
                         }
                     ],
+                    // GPT-5.2 reasoning settings: none for fastest responses
+                    reasoning: {
+                        effort: 'none'
+                    },
                     text: {
+                        // Low verbosity for concise JSON output
+                        verbosity: 'low',
                         format: {
                             type: 'json_schema',
                             name: 'durak_move',
@@ -245,7 +257,8 @@ export class GPTBotStrategy implements BotStrategy {
             }
 
             if (this.verbose) {
-                console.log(`✅ GPT chose: ${this.formatMove(matched)}`);
+                const cards = matched.cards?.map(c => cardDisplay(c)).join(', ') || '';
+                console.log(`✅ GPT chose: ${matched.type.toUpperCase()}${cards ? ` [${cards}]` : ''}`);
             }
 
             return matched;
@@ -358,181 +371,164 @@ export class GPTBotStrategy implements BotStrategy {
     
     private formatGameState(game: Game, myPlayerId: string, legalMoves: LegalMove[]): string {
         const myPlayer = game.players.find(p => p.player_id === myPlayerId)!;
-        const opponentIds = game.players.filter(p => p.player_id !== myPlayerId).map(p => p.player_id);
         const tracker = new CardTracker(game, myPlayerId);
-        
-        let prompt = '=== DURAK GAME STATE ===\n\n';
-        
-        // Game info
-        prompt += `Trump suit: ${this.suitName(game.power_suit)}\n`;
-        prompt += `Deck cards remaining: ${game.deck.length}\n`;
-        if (game.flipped) {
-            prompt += `Flipped card: ${this.cardName(game.flipped)}\n`;
-        }
-        prompt += `Discard pile: ${game.discard_pile_length} cards\n\n`;
-        
-        // My hand
-        prompt += `YOUR HAND (${myPlayer.hand.length} cards):\n`;
-        for (const card of myPlayer.hand) {
-            prompt += `  ${this.cardName(card)}\n`;
-        }
-        prompt += '\n';
-        
-        // Opponents
-        for (const oppId of opponentIds) {
-            const opp = game.players.find(p => p.player_id === oppId)!;
-            prompt += `OPPONENT: ${opp.name} - ${opp.hand.length} cards in hand\n`;
-        }
-        prompt += '\n';
-        
-        // Current player roles
         const defenderIdx = game.defender;
-        const defenderId = game.players[defenderIdx]?.player_id;
+        const isDefender = game.players[defenderIdx]?.player_id === myPlayerId;
         
-        prompt += `Defender: ${defenderId === myPlayerId ? 'YOU' : 'Opponent'}\n`;
-        prompt += `You are ${defenderId === myPlayerId ? 'defending' : 'attacking or passing'}\n\n`;
-        
-        // Table battles
-        if (game.table_battles.length > 0) {
-            prompt += `CURRENT ATTACKS ON TABLE:\n`;
-            for (const battle of game.table_battles) {
-                if (battle.defense) {
-                    prompt += `  ${this.cardName(battle.attack)} → COVERED BY ${this.cardName(battle.defense)}\n`;
-                } else {
-                    prompt += `  ${this.cardName(battle.attack)} → UNCOVERED\n`;
-                }
+        // Build entire game state as JSON
+        const gameStateJson = {
+            rules: "Passing is enabled. Players can attack with as many cards as the defender has, even if more than 6.",
+            game: {
+                trump_suit: game.power_suit,
+                trump_symbol: ['♣', '♦', '♥', '♠'][game.power_suit],
+                deck_size: game.deck.length,
+                flipped_card: game.flipped ? this.cardToJson(game.flipped) : null,
+                your_role: isDefender ? 'DEFENDER' : 'ATTACKER'
+            },
+            your_hand: myPlayer.hand.map(c => this.cardToJson(c)),
+            table: game.table_battles.map(b => ({
+                attack: this.cardToJson(b.attack),
+                defense: b.defense ? this.cardToJson(b.defense) : null
+            })),
+            opponents: game.players
+                .filter(p => p.player_id !== myPlayerId)
+                .map((p, idx) => ({
+                    name: p.name,
+                    hand_size: p.hand.length,
+                    is_defender: game.players.indexOf(p) === defenderIdx
+                })),
+            card_knowledge: this.buildCardKnowledge(game, myPlayerId, tracker),
+            legal_moves: legalMoves.map((move, i) => {
+                const { stats } = calculateMoveStats(game, myPlayerId, move, tracker);
+                return {
+                    index: i + 1,
+                    type: move.type,
+                    cards: move.cards?.map(c => this.cardToJson(c)) || [],
+                    attack_cards: move.attack_cards?.map(c => this.cardToJson(c)) || [],
+                    probabilities: this.statsToJson(stats),
+                    move_json: this.legalMoveToJsonMove(move)
+                };
+            }),
+            instructions: {
+                choose: "Select the best move index based on probabilities and strategy",
+                probabilities_guide: {
+                    "P_Cover": "Higher = opponent more likely to cover your attack",
+                    "P_AllowsAtk": "Lower = better for covers, less chance opponents can throw in",
+                    "P_DrawBetter": "Higher = better cards likely after discarding these",
+                    "P_PassBackPossible": "Higher = next player can pass back to you"
+                },
+                response_format: "Return JSON with: type, pairs (from move_json), chat_message (witty 1-2 sentences), move_justification (2-3 sentences)"
             }
-            prompt += '\n';
-        }
-
-        // Card knowledge summary (derived from event logs)
-        prompt += this.formatCardKnowledgeSummary(game, myPlayerId, tracker);
+        };
         
-        // Legal moves
-        prompt += `YOUR LEGAL MOVES:\n`;
-        for (const move of legalMoves) {
-            prompt += `  - ${this.formatMove(move)}\n`;
-            prompt += `    JSON: ${JSON.stringify(this.legalMoveToJsonMove(move))}\n`;
-        }
-        prompt += '\n';
-
-        prompt += 'Analyze the situation and choose the best move.\n';
-        prompt += 'Return JSON with: type, pairs (if needed), chat_message (witty 1-2 sentences), move_justification (brief 2-3 sentences).\n';
-        
-        return prompt;
+        return JSON.stringify(gameStateJson, null, 2);
     }
 
-    private formatCardKnowledgeSummary(game: Game, myPlayerId: string, tracker: CardTracker): string {
-        let s = '';
-        s += `CARD KNOWLEDGE (from logs; partial information):\n`;
+    private cardToJson(card: Card): { suit: number; value: number; display: string } {
+        return {
+            suit: card.suit,
+            value: card.value,
+            display: cardDisplay(card)
+        };
+    }
 
-        // Discard info
-        const discarded = tracker.getCardsInDiscard();
-        s += `  Known discarded cards: ${discarded.length}\n`;
-        if (discarded.length > 0) {
-            const shown = discarded.slice(0, 16).map(c => this.cardName(c)).join(', ');
-            s += `    ${shown}${discarded.length > 16 ? ' ...' : ''}\n`;
+    private statsToJson(stats: any): Record<string, number> {
+        const result: Record<string, number> = {};
+        if (!stats) return result;
+        
+        // Handle attack stats (nested under stats.attack)
+        if (stats.attack) {
+            const a = stats.attack;
+            if (typeof a.probCover === 'number') result.P_Cover = Math.round(a.probCover * 10000) / 100;
+            if (typeof a.probCoverAllowsAttack === 'number') result.P_CoveringWillAllowAttack = Math.round(a.probCoverAllowsAttack * 10000) / 100;
+            if (typeof a.probPass === 'number') result.P_PassBackPossible = Math.round(a.probPass * 10000) / 100;
         }
+        
+        // Handle cover stats (nested under stats.cover)
+        if (stats.cover) {
+            const c = stats.cover;
+            if (typeof c.probAllowsAdditionalAttack === 'number') result.P_AllowsAtk = Math.round(c.probAllowsAdditionalAttack * 10000) / 100;
+            if (typeof c.probDrawBetterCard === 'number') result.P_DrawBetter = Math.round(c.probDrawBetterCard * 10000) / 100;
+        }
+        
+        // Handle pass stats (nested under stats.pass)
+        if (stats.pass) {
+            const p = stats.pass;
+            if (typeof p.probCover === 'number') result.P_Cover = Math.round(p.probCover * 10000) / 100;
+            if (typeof p.probCoverAllowsAttack === 'number') result.P_CoveringWillAllowAttack = Math.round(p.probCoverAllowsAttack * 10000) / 100;
+            if (typeof p.probPass === 'number') result.P_PassBackPossible = Math.round(p.probPass * 10000) / 100;
+        }
+        
+        return result;
+    }
+
+    private buildCardKnowledge(game: Game, myPlayerId: string, tracker: CardTracker): any {
+        // Table cards
+        const tableCards = game.table_battles.flatMap(b => 
+            b.defense ? [this.cardToJson(b.attack), this.cardToJson(b.defense)] : [this.cardToJson(b.attack)]
+        );
+        
+        // Discard
+        const discardCards = tracker.getCardsInDiscard().map(c => this.cardToJson(c));
 
         // Known opponent cards
-        s += `  Known opponent cards (total): ${tracker.getKnownOpponentCardCount()}\n`;
+        const knownOpponentCards: Record<string, any[]> = {};
         for (const p of game.players) {
             if (p.player_id === myPlayerId) continue;
             const knownSet = tracker.knownCardsByPlayer.get(p.player_id);
-            const knownKeys = knownSet ? Array.from(knownSet) : [];
-            s += `    Opponent (${p.hand.length} cards): known ${knownKeys.length}\n`;
-            if (knownKeys.length > 0) {
-                const cards = knownKeys
-                    .slice(0, 12)
-                    .map((k) => {
-                        const [suitStr, valueStr] = k.split('-');
-                        const suit = Number(suitStr);
-                        const value = Number(valueStr);
-                        return this.cardName({ suit, value } as Card);
-                    })
-                    .join(', ');
-                s += `      ${cards}${knownKeys.length > 12 ? ' ...' : ''}\n`;
+            if (knownSet && knownSet.size > 0) {
+                const cards = Array.from(knownSet).map(k => {
+                    const [suit, value] = k.split('-').map(Number);
+                    return this.cardToJson({ suit, value } as Card);
+                });
+                knownOpponentCards[p.name] = cards;
             }
         }
-
-        // Unknown pool
-        const unknownCount = tracker.getUnknownCardCount();
-        s += `  Unknown cards remaining (not accounted for): ${unknownCount}\n`;
-        s += `  Avg unknown card value: ${tracker.getAverageUnknownCardValue().toFixed(2)}\n`;
-
-        // Table-aware probabilities
-        if (game.table_battles.length > 0) {
-            const uncovered = game.table_battles.filter(b => !b.defense).map(b => b.attack);
-            if (uncovered.length > 0) {
-                s += `  Defender cover probability (for uncovered attacks):\n`;
-                for (const attack of uncovered.slice(0, 6)) {
-                    const p = tracker.getProbabilityCanCover(attack);
-                    s += `    ${this.cardName(attack)}: ${(p * 100).toFixed(0)}%\n`;
-                }
-                if (uncovered.length > 6) s += `    ...\n`;
-            }
-
-            const valuesOnTable = Array.from(new Set(game.table_battles.map(b => b.attack.value)));
-            if (valuesOnTable.length > 0) {
-                s += `  Opponent pass-back probability (by value on table):\n`;
-                for (const v of valuesOnTable.slice(0, 6)) {
-                    const p = tracker.getProbabilityCanPass(v);
-                    s += `    value ${v}: ${(p * 100).toFixed(0)}%\n`;
-                }
-                if (valuesOnTable.length > 6) s += `    ...\n`;
-            }
-        }
-
-        s += `\n`;
-        return s;
-    }
-    
-    private formatMove(move: LegalMove): string {
-        switch (move.type) {
-            case 'attack':
-                if (move.cards && move.cards.length > 0) {
-                    return `ATTACK with ${move.cards.map(c => this.cardName(c)).join(', ')}`;
-                }
-                return 'ATTACK (no cards specified)';
-                
-            case 'cover':
-                if (move.cards && move.cards.length > 0) {
-                    return `COVER attacks with ${move.cards.map(c => this.cardName(c)).join(', ')}`;
-                }
-                return 'COVER';
-                
-            case 'pass':
-                if (move.cards && move.cards.length > 0) {
-                    return `PASS and add ${move.cards.map(c => this.cardName(c)).join(', ')}`;
-                }
-                return 'PASS';
-                
-            case 'pickup':
-                return 'PICKUP all cards from table';
-                
-            case 'good':
-                return 'SAY GOOD (end your turn)';
-                
-            case 'wait':
-                return 'WAIT';
-                
-            default:
-                return `Unknown move type: ${move.type}`;
-        }
-    }
-    
-    private cardName(card: Card): string {
-        const suits = ['♣', '♦', '♥', '♠'];
-        const values: Record<number, string> = {
-            2: '2', 3: '3', 4: '4', 5: '5', 6: '6', 7: '7', 8: '8', 9: '9', 10: '10',
-            11: 'J', 12: 'Q', 13: 'K', 14: 'A'
+        
+        // Unknown cards
+        const unknownCards = this.getUnknownCards(game, myPlayerId, tracker).map(c => this.cardToJson(c));
+        
+        return {
+            table_cards: tableCards,
+            discard_pile: discardCards,
+            discard_count: discardCards.length,
+            known_opponent_cards: knownOpponentCards,
+            unknown_cards: unknownCards,
+            unknown_count: unknownCards.length
         };
-        return `${values[card.value] || card.value}${suits[card.suit]}`;
     }
     
-    private suitName(suit: number): string {
-        const suits = ['Clubs♣', 'Diamonds♦', 'Hearts♥', 'Spades♠'];
-        return suits[suit] || `Suit${suit}`;
+    private getUnknownCards(game: Game, myPlayerId: string, tracker: CardTracker): Card[] {
+        const unknownCards: Card[] = [];
+        const me = game.players.find(p => p.player_id === myPlayerId);
+        const myHandKeys = new Set(me?.hand.map(c => `${c.suit}-${c.value}`) || []);
+        const discardKeys = new Set(tracker.getCardsInDiscard().map(c => `${c.suit}-${c.value}`));
+        const flippedKey = game.flipped ? `${game.flipped.suit}-${game.flipped.value}` : null;
+        
+        const tableKeys = new Set<string>();
+        for (const battle of game.table_battles) {
+            tableKeys.add(`${battle.attack.suit}-${battle.attack.value}`);
+            if (battle.defense) tableKeys.add(`${battle.defense.suit}-${battle.defense.value}`);
+        }
+        
+        const allKnownOpponentKeys = new Set<string>();
+        for (const knownCards of tracker.knownCardsByPlayer.values()) {
+            for (const key of knownCards) allKnownOpponentKeys.add(key);
+        }
+        
+        const startValue = tracker.getMinCardValue();
+        const ACE_VALUE = 13;
+        
+        for (let suit = 0; suit < 4; suit++) {
+            for (let value = startValue; value <= ACE_VALUE; value++) {
+                const key = `${suit}-${value}`;
+                if (!myHandKeys.has(key) && !discardKeys.has(key) && key !== flippedKey && 
+                    !tableKeys.has(key) && !allKnownOpponentKeys.has(key)) {
+                    unknownCards.push({ suit, value });
+                }
+            }
+        }
+        return unknownCards;
     }
 }
 

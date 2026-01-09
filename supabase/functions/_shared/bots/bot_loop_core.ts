@@ -23,19 +23,8 @@ const game: Game = {
 };
 
 game.players.push({
-    player_id: 'human_player',
-    name: 'You',
-    status: PLAYER_STATUS.READY,
-    is_ai: true, // Keep as true so bot loop processes it
-    hand: [],
-    awaiting_attack: false,
-    hand_length: 0,
-    strategy_key: STRATEGY_KEY.CONSOLE // Use console strategy for human input
-});
-
-game.players.push({
-    player_id: 'bot_2',
-    name: 'Handwritten Bot 1',
+    player_id: 'bot_handwritten',
+    name: 'Handwritten Bot',
     status: PLAYER_STATUS.READY,
     is_ai: true,
     hand: [],
@@ -45,21 +34,32 @@ game.players.push({
 });
 
 game.players.push({
-    player_id: 'bot_3',
-    name: 'Handwritten Bot 2',
+    player_id: 'bot_random',
+    name: 'Random Bot',
     status: PLAYER_STATUS.READY,
     is_ai: true,
     hand: [],
     awaiting_attack: false,
     hand_length: 0,
-    strategy_key: STRATEGY_KEY.HANDWRITTEN
+    strategy_key: STRATEGY_KEY.RANDOM
+});
+
+game.players.push({
+    player_id: 'bot_gpt',
+    name: 'GPT Bot',
+    status: PLAYER_STATUS.READY,
+    is_ai: true,
+    hand: [],
+    awaiting_attack: false,
+    hand_length: 0,
+    strategy_key: STRATEGY_KEY.GPT
 });
 
 start_game(game);
 
 (async () => {
-    console.log('\n🎴 Welcome to Durak! 🎴');
-    console.log('You are playing against 2 Handwritten Bots (3 players total)\n');
+    console.log('\n🎴 Durak Bot Battle! 🎴');
+    console.log('🤖 Handwritten Bot vs 🎲 Random Bot vs 🧠 GPT Bot\n');
     
     while (game_done(game) === null) {
         // Find all bots that can currently move
@@ -97,13 +97,10 @@ start_game(game);
         }
     }
     
-    // Game over
-    const winner = game_done(game);
+    // Game over - find the loser (durak)
+    const loser = game_done(game);
+    const loserPlayer = game.players.find(p => p.player_id === loser);
     console.log('\n' + '🏆'.repeat(40));
-    if (winner === 'human_player') {
-        console.log('🎉 CONGRATULATIONS! YOU WIN! 🎉');
-    } else {
-        console.log('😢 GAME OVER - Bot wins! Better luck next time!');
-    }
+    console.log(`🃏 GAME OVER! The DURAK (fool) is: ${loserPlayer?.name || loser} 🃏`);
     console.log('🏆'.repeat(40) + '\n');
 })();

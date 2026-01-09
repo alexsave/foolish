@@ -1,4 +1,4 @@
-import { Game, GameLog, LOG_TYPE, Card } from '../types';
+import { Game, GameLog, LOG_TYPE, Card } from '../types.ts';
 
 /**
  * Tracks card locations and probabilities based on game logs

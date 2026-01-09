@@ -1,5 +1,5 @@
 import { wrap400, ExecutionParams } from "../_shared/utils.ts";
-import { ANIMATION_EVENT_TYPE, PLAYER_STATUS, AnimationEvent, GAME_STATUS } from "../_shared/types.ts";
+import { ANIMATION_EVENT_TYPE, PLAYER_STATUS, AnimationEvent, GAME_STATUS, STRATEGY_KEY } from "../_shared/types.ts";
 import { start_game } from "../_shared/common_utils.ts";
 import { createClient } from 'jsr:@supabase/supabase-js';
 
@@ -8,7 +8,10 @@ const supabaseClient = createClient(
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
 );
 
-wrap400(async ({body, game}: ExecutionParams) => {
+// Only this user can add GPT bots (to control API costs)
+const GPT_ALLOWED_USER_ID = '60a5c562-0922-40a6-b416-77e3285d87b2';
+
+wrap400(async ({body, game, user}: ExecutionParams) => {
     const { game_id } = body;
 
     if (game.status !== GAME_STATUS.WAITING) {
@@ -30,7 +33,12 @@ wrap400(async ({body, game}: ExecutionParams) => {
         .map(p => p.player_id);
 
     // Filter out bots already in the game
-    const availableBots = allBots.filter(bot => !existingBotIds.includes(bot.id));
+    // Also filter out GPT bots unless the user is allowed to add them
+    const availableBots = allBots.filter(bot => {
+        if (existingBotIds.includes(bot.id)) return false;
+        if (bot.strategy_key === STRATEGY_KEY.GPT && user.id !== GPT_ALLOWED_USER_ID) return false;
+        return true;
+    });
 
     if (availableBots.length === 0) {
         throw new Error(`No available bots to add to the game`);
