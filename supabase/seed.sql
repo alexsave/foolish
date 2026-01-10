@@ -603,8 +603,6 @@ INSERT INTO bots (nickname, strategy_key) VALUES
 ('Hacker 1', 'hacker'),
 ('Hacker 2', 'hacker'),
 
--- GPT strategy bot (uses OpenAI API - restricted to specific users)
-('GPT Bot', 'gpt');
 
 -- =============================================================================
 -- SETUP COMPLETE!

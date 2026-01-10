@@ -21,7 +21,7 @@
     "test:actions:watch": "jest --config tests/jest.config.js --watch",
     "test:actions:coverage": "jest --config tests/jest.config.js --coverage",
     "eject": "react-scripts eject",
-    "bot:game": "tsx supabase/functions/_shared/bots/bot_loop_core.ts"
+    "bot:game": "tsx offlinefun/localtest/bot_loop_core.ts"
   },
   "eslintConfig": {
     "extends": [

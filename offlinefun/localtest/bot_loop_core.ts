@@ -1,7 +1,8 @@
-import { Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, STRATEGY_KEY } from '../types.ts';
-import { calculateLegalMoves } from '../bot_strategy.ts';
-import { shouldBotActCore, processBotAction } from '../pure_bot_actions.ts';
-import { start_game, game_done, seededRandom } from '../common_utils.ts';
+import { calculateLegalMoves, registerBotStrategy } from '../../supabase/functions/_shared/bot_strategy.ts';
+import { shouldBotActCore, processBotAction } from '../../supabase/functions/_shared/pure_bot_actions.ts';
+import { start_game, game_done, seededRandom } from '../../supabase/functions/_shared/common_utils.ts';
+import { Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, STRATEGY_KEY } from '../../supabase/functions/_shared/types.ts';
+import { ConsoleStrategy } from './console_strategy.ts';
 
 const game: Game = {
     players: [],
@@ -45,21 +46,24 @@ game.players.push({
 });
 
 game.players.push({
-    player_id: 'bot_gpt',
-    name: 'GPT Bot',
+    player_id: 'you',
+    name: 'You',
     status: PLAYER_STATUS.READY,
     is_ai: true,
     hand: [],
     awaiting_attack: false,
     hand_length: 0,
-    strategy_key: STRATEGY_KEY.GPT
+    strategy_key: STRATEGY_KEY.CONSOLE
 });
+
+
+registerBotStrategy(STRATEGY_KEY.CONSOLE, new ConsoleStrategy());
 
 start_game(game);
 
 (async () => {
     console.log('\n🎴 Durak Bot Battle! 🎴');
-    console.log('🤖 Handwritten Bot vs 🎲 Random Bot vs 🧠 GPT Bot\n');
+    console.log('🤖 Handwritten Bot vs 🎲 Random Bot vs 🧠 You\n');
     
     while (game_done(game) === null) {
         // Find all bots that can currently move

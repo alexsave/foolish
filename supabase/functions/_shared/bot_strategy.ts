@@ -7,7 +7,6 @@ import { SimpleHeuristicStrategy } from './strategies/simple_heuristic_strategy.
 import { UltimateChampionStrategy } from './strategies/ultimate_champion_strategy.ts';
 import { ChampionStrategy } from './strategies/champion_strategy.ts';
 import { HackerStrategy } from './strategies/hacker_strategy.ts';
-import { ConsoleStrategy } from './strategies/console_strategy.ts';
 import { GPTBotStrategy } from './strategies/gpt_strategy.ts';
 
 // Re-export interfaces for backwards compatibility
@@ -21,11 +20,15 @@ export const BOT_STRATEGIES: Map<string, BotStrategy> = new Map<string, BotStrat
     ['ultimate_champion', new UltimateChampionStrategy()],
     ['champion', new ChampionStrategy()],
     ['hacker', new HackerStrategy()],
-    ['console', new ConsoleStrategy()],
 ]);
 
 // Lazy-load GPT strategy to avoid requiring API key at module load time
 let gptStrategyInstance: GPTBotStrategy | null = null;
+
+// So we can manuall include console or gpt strategy
+export const registerBotStrategy = (strategyKey: string, strategy: BotStrategy) => {
+    BOT_STRATEGIES.set(strategyKey, strategy);
+}
 
 // Get strategy by key
 export function getBotStrategy(strategyKey: string): BotStrategy {
