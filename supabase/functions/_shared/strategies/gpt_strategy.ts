@@ -15,6 +15,66 @@ type JsonMove = {
     move_justification?: string;
 };
 
+const RESPONSE_SCHEMA = {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+        type: {
+            type: 'string',
+            description: 'Move type',
+            enum: ['attack', 'cover', 'pass', 'pickup', 'good', 'wait']
+        },
+        pairs: {
+            anyOf: [
+                { type: 'null' },
+                {
+                    type: 'array',
+                    description: 'Array of card pairs. For attack/pass: target should be null. For cover: target is the attacked card being covered.',
+                    items: {
+                        type: 'object',
+                        additionalProperties: false,
+                        properties: {
+                            primary: {
+                                type: 'object',
+                                additionalProperties: false,
+                                properties: {
+                                    suit: { type: 'integer', minimum: 0, maximum: 3 },
+                                    value: { type: 'integer', minimum: 2, maximum: 14 }
+                                },
+                                required: ['suit', 'value']
+                            },
+                            target: {
+                                anyOf: [
+                                    { type: 'null' },
+                                    {
+                                        type: 'object',
+                                        additionalProperties: false,
+                                        properties: {
+                                            suit: { type: 'integer', minimum: 0, maximum: 3 },
+                                            value: { type: 'integer', minimum: 2, maximum: 14 }
+                                        },
+                                        required: ['suit', 'value']
+                                    }
+                                ]
+                            }
+                        },
+                        required: ['primary', 'target']
+                    }
+                }
+            ]
+        },
+        chat_message: {
+            type: 'string',
+            description: 'A short, witty message to other players (1-2 sentences max).'
+        },
+        move_justification: {
+            type: 'string',
+            description: 'Brief explanation of move strategy (2-3 sentences max).'
+        }
+    },
+    required: ['type', 'pairs', 'chat_message', 'move_justification']
+}
+
 /**
  * Helper to get environment variable, works with both Deno and Node.js
  * For Node.js, will try to load from .env file
@@ -26,7 +86,7 @@ function getEnv(key: string): string | undefined {
         // @ts-ignore - Deno is not available in Node.js
         return Deno.env.get(key);
     }
-    
+
     // We're in Node.js
     if (typeof process !== 'undefined' && process.env) {
         // Try to load dotenv if not already loaded
@@ -41,7 +101,7 @@ function getEnv(key: string): string | undefined {
                     const fs = require('fs');
                     const path = require('path');
                     const envPath = path.resolve(process.cwd(), '.env');
-                    
+
                     if (fs.existsSync(envPath)) {
                         const envContent = fs.readFileSync(envPath, 'utf8');
                         envContent.split('\n').forEach((line: string) => {
@@ -60,7 +120,7 @@ function getEnv(key: string): string | undefined {
         }
         return process.env[key];
     }
-    
+
     return undefined;
 }
 
@@ -75,30 +135,30 @@ export class GPTBotStrategy implements BotStrategy {
     private model: string;
     private verbose: boolean;
     private baseUrl: string;
-    
+
     constructor(apiKey?: string, model: string = 'gpt-5.2', verbose: boolean = false) {
         this.apiKey = apiKey || getEnv('OPENAI_API_KEY') || '';
         this.model = model;
         this.verbose = verbose || getEnv('OPENAI_VERBOSE') === 'true';
         this.baseUrl = (getEnv('OPENAI_BASE_URL') || 'https://api.openai.com').replace(/\/+$/, '');
-        
+
         if (!this.apiKey) {
             throw new Error('OpenAI API key required. Set OPENAI_API_KEY environment variable or add to .env file.');
         }
     }
-    
+
     async chooseMove(game: Game, playerId: string, legalMoves: LegalMove[]): Promise<LegalMove> {
         if (legalMoves.length === 0) {
             throw new Error('No legal moves available');
         }
-        
+
         if (legalMoves.length === 1) {
             return legalMoves[0];
         }
-        
+
         // Format game state for GPT
         const prompt = this.formatGameState(game, playerId, legalMoves);
-        
+
         try {
             // Call OpenAI Responses API with strict JSON schema output
             const controller = new AbortController();
@@ -140,65 +200,7 @@ export class GPTBotStrategy implements BotStrategy {
                         format: {
                             type: 'json_schema',
                             name: 'durak_move',
-                            schema: {
-                                type: 'object',
-                                additionalProperties: false,
-                                properties: {
-                                    type: {
-                                        type: 'string',
-                                        description: 'Move type',
-                                        enum: ['attack', 'cover', 'pass', 'pickup', 'good', 'wait']
-                                    },
-                                    pairs: {
-                                        anyOf: [
-                                            { type: 'null' },
-                                            {
-                                                type: 'array',
-                                                description: 'Array of card pairs. For attack/pass: target should be null. For cover: target is the attacked card being covered.',
-                                                items: {
-                                                    type: 'object',
-                                                    additionalProperties: false,
-                                                    properties: {
-                                                        primary: {
-                                                            type: 'object',
-                                                            additionalProperties: false,
-                                                            properties: {
-                                                                suit: { type: 'integer', minimum: 0, maximum: 3 },
-                                                                value: { type: 'integer', minimum: 2, maximum: 14 }
-                                                            },
-                                                            required: ['suit', 'value']
-                                                        },
-                                                        target: {
-                                                            anyOf: [
-                                                                { type: 'null' },
-                                                                {
-                                                                    type: 'object',
-                                                                    additionalProperties: false,
-                                                                    properties: {
-                                                                        suit: { type: 'integer', minimum: 0, maximum: 3 },
-                                                                        value: { type: 'integer', minimum: 2, maximum: 14 }
-                                                                    },
-                                                                    required: ['suit', 'value']
-                                                                }
-                                                            ]
-                                                        }
-                                                    },
-                                                    required: ['primary', 'target']
-                                                }
-                                            }
-                                        ]
-                                    },
-                                    chat_message: {
-                                        type: 'string',
-                                        description: 'A short, witty message to other players (1-2 sentences max).'
-                                    },
-                                    move_justification: {
-                                        type: 'string',
-                                        description: 'Brief explanation of move strategy (2-3 sentences max).'
-                                    }
-                                },
-                                required: ['type', 'pairs', 'chat_message', 'move_justification']
-                            },
+                            schema: RESPONSE_SCHEMA,
                             strict: true
                         }
                     }
@@ -206,30 +208,30 @@ export class GPTBotStrategy implements BotStrategy {
                 signal: controller.signal
             });
             clearTimeout(timeout);
-            
+
             if (!response.ok) {
                 const errorText = await response.text();
                 throw new Error(`OpenAI API error: ${response.statusText} - ${errorText}`);
             }
-            
+
             const data = await response.json();
-            
+
             // Handle the response based on status
             if (data.status === 'incomplete') {
                 throw new Error(`Incomplete response: ${data.incomplete_details?.reason}`);
             }
-            
+
             // Check for refusal
             if (data.output && data.output[0]?.content?.[0]?.type === 'refusal') {
                 throw new Error(`Model refused: ${data.output[0].content[0].refusal}`);
             }
-            
+
             const content = this.extractResponseText(data)?.trim();
-            
+
             if (!content) {
                 throw new Error('No content in GPT response');
             }
-            
+
             // Parse JSON response
             let result: any;
             try {
@@ -238,7 +240,7 @@ export class GPTBotStrategy implements BotStrategy {
                 console.warn(`Failed to parse GPT JSON response: ${content}`);
                 throw new Error(`Invalid JSON from GPT: ${parseError}`);
             }
-            
+
             const jsonMove = this.coerceJsonMove(result);
 
             // Display chat message and justification
@@ -261,7 +263,7 @@ export class GPTBotStrategy implements BotStrategy {
             }
 
             return matched;
-            
+
         } catch (error) {
             console.error('Error calling GPT:', error);
             console.error('Falling back to first legal move');
@@ -367,13 +369,13 @@ export class GPTBotStrategy implements BotStrategy {
             .sort()
             .join('|');
     }
-    
+
     private formatGameState(game: Game, myPlayerId: string, legalMoves: LegalMove[]): string {
         const myPlayer = game.players.find(p => p.player_id === myPlayerId)!;
         const tracker = new CardTracker(game, myPlayerId);
         const defenderIdx = game.defender;
         const isDefender = game.players[defenderIdx]?.player_id === myPlayerId;
-        
+
         // Build entire game state as JSON
         const gameStateJson = {
             rules: "Passing is enabled. Players can attack with as many cards as the defender has, even if more than 6.",
@@ -419,7 +421,7 @@ export class GPTBotStrategy implements BotStrategy {
                 response_format: "Return JSON with: type, pairs (from move_json), chat_message (witty 1-2 sentences), move_justification (2-3 sentences)"
             }
         };
-        
+
         return JSON.stringify(gameStateJson, null, 2);
     }
 
@@ -434,7 +436,7 @@ export class GPTBotStrategy implements BotStrategy {
     private statsToJson(stats: any): Record<string, number> {
         const result: Record<string, number> = {};
         if (!stats) return result;
-        
+
         // Handle attack stats (nested under stats.attack)
         if (stats.attack) {
             const a = stats.attack;
@@ -442,14 +444,14 @@ export class GPTBotStrategy implements BotStrategy {
             if (typeof a.probCoverAllowsAttack === 'number') result.P_CoveringWillAllowAttack = Math.round(a.probCoverAllowsAttack * 10000) / 100;
             if (typeof a.probPass === 'number') result.P_PassBackPossible = Math.round(a.probPass * 10000) / 100;
         }
-        
+
         // Handle cover stats (nested under stats.cover)
         if (stats.cover) {
             const c = stats.cover;
             if (typeof c.probAllowsAdditionalAttack === 'number') result.P_AllowsAtk = Math.round(c.probAllowsAdditionalAttack * 10000) / 100;
             if (typeof c.probDrawBetterCard === 'number') result.P_DrawBetter = Math.round(c.probDrawBetterCard * 10000) / 100;
         }
-        
+
         // Handle pass stats (nested under stats.pass)
         if (stats.pass) {
             const p = stats.pass;
@@ -457,16 +459,16 @@ export class GPTBotStrategy implements BotStrategy {
             if (typeof p.probCoverAllowsAttack === 'number') result.P_CoveringWillAllowAttack = Math.round(p.probCoverAllowsAttack * 10000) / 100;
             if (typeof p.probPass === 'number') result.P_PassBackPossible = Math.round(p.probPass * 10000) / 100;
         }
-        
+
         return result;
     }
 
     private buildCardKnowledge(game: Game, myPlayerId: string, tracker: CardTracker): any {
         // Table cards
-        const tableCards = game.table_battles.flatMap(b => 
+        const tableCards = game.table_battles.flatMap(b =>
             b.defense ? [this.cardToJson(b.attack), this.cardToJson(b.defense)] : [this.cardToJson(b.attack)]
         );
-        
+
         // Discard
         const discardCards = tracker.getCardsInDiscard().map(c => this.cardToJson(c));
 
@@ -483,10 +485,10 @@ export class GPTBotStrategy implements BotStrategy {
                 knownOpponentCards[p.name] = cards;
             }
         }
-        
+
         // Unknown cards
         const unknownCards = this.getUnknownCards(game, myPlayerId, tracker).map(c => this.cardToJson(c));
-        
+
         return {
             table_cards: tableCards,
             discard_pile: discardCards,
@@ -496,32 +498,32 @@ export class GPTBotStrategy implements BotStrategy {
             unknown_count: unknownCards.length
         };
     }
-    
+
     private getUnknownCards(game: Game, myPlayerId: string, tracker: CardTracker): Card[] {
         const unknownCards: Card[] = [];
         const me = game.players.find(p => p.player_id === myPlayerId);
         const myHandKeys = new Set(me?.hand.map(c => `${c.suit}-${c.value}`) || []);
         const discardKeys = new Set(tracker.getCardsInDiscard().map(c => `${c.suit}-${c.value}`));
         const flippedKey = game.flipped ? `${game.flipped.suit}-${game.flipped.value}` : null;
-        
+
         const tableKeys = new Set<string>();
         for (const battle of game.table_battles) {
             tableKeys.add(`${battle.attack.suit}-${battle.attack.value}`);
             if (battle.defense) tableKeys.add(`${battle.defense.suit}-${battle.defense.value}`);
         }
-        
+
         const allKnownOpponentKeys = new Set<string>();
         for (const knownCards of tracker.knownCardsByPlayer.values()) {
             for (const key of knownCards) allKnownOpponentKeys.add(key);
         }
-        
+
         const startValue = tracker.getMinCardValue();
         const ACE_VALUE = 13;
-        
+
         for (let suit = 0; suit < 4; suit++) {
             for (let value = startValue; value <= ACE_VALUE; value++) {
                 const key = `${suit}-${value}`;
-                if (!myHandKeys.has(key) && !discardKeys.has(key) && key !== flippedKey && 
+                if (!myHandKeys.has(key) && !discardKeys.has(key) && key !== flippedKey &&
                     !tableKeys.has(key) && !allKnownOpponentKeys.has(key)) {
                     unknownCards.push({ suit, value });
                 }

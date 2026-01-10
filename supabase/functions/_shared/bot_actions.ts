@@ -1,6 +1,6 @@
-import { Game, PrivatePlayer, AnimationEvent, GAME_STATUS, PLAYER_STATUS, GAME_MOVE_TYPE } from './types.ts';
+import { PrivatePlayer, AnimationEvent, GAME_STATUS, PLAYER_STATUS, GAME_MOVE_TYPE } from './types.ts';
 import { executeWithGameLock } from './utils.ts';
-import { calculateLegalMoves, getBotStrategy, LegalMove } from './bot_strategy.ts';
+import { calculateLegalMoves } from './bot_strategy.ts';
 import { createClient } from 'jsr:@supabase/supabase-js';
 import { processBotAction, shouldBotActCore } from './pure_bot_actions.ts';
 
@@ -188,7 +188,7 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
             // If we have eligible bots, try them until one succeeds
             if (eligibleBots.length > 0) {
                 console.log(`Found ${eligibleBots.length} eligible bots: ${eligibleBots.map(b => b.bot.name).join(', ')}`);
-                
+
                 // Shuffle the eligible bots to try them in random order
                 const shuffledBots = [...eligibleBots].sort(() => Math.random() - 0.5);
 
@@ -225,7 +225,7 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
 
 
         // Note: Animation events are now automatically broadcasted by executeWithGameLock
-        
+
         console.log(`[TIMING] Total time in executeWithGameLock: ${Date.now() - lockStartTime}ms`);
     } catch (error) {
         console.error('Error in bot processing:', error);
@@ -242,55 +242,20 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
             console.log(`[CYCLE ${cycle}] Passive action completed in ${totalCycleTime}ms, continuing immediately to next bot`);
             return await processBotActions(game_id, cycle + 1);
         }
-        
-        // Calculate remaining delay to ensure consistent timing between cycle starts
-        const remainingDelay = Math.max(0, currentBotDelay - totalCycleTime);
-        
+
+        // if a strategy takes forever to come up with a move, calculating currentBotDelay-totalCycleTime will allow no gap between bot moves
+        // So this instead
+        const remainingDelay = currentBotDelay;
+
         if (remainingDelay > 0) {
             console.log(`[CYCLE ${cycle}] Cycle took ${totalCycleTime}ms, waiting ${remainingDelay}ms to maintain ${currentBotDelay}ms interval`);
             await new Promise(resolve => setTimeout(resolve, remainingDelay));
         } else {
             console.log(`[CYCLE ${cycle}] Cycle took ${totalCycleTime}ms (>= ${currentBotDelay}ms target), continuing immediately`);
         }
-        
+
         return await processBotActions(game_id, cycle + 1);
     } else {
         console.log(`[CYCLE ${cycle}] No more bot actions needed, ending bot loop for game ${game_id}`);
     }
 }
-
-
-// Check if any bots in the game have legal moves available
-function checkIfAnyBotHasLegalMoves(game: Game): boolean {
-    // Don't process bots if game is not in a playable state
-    if (game.status === GAME_STATUS.WAITING || game.status === GAME_STATUS.GAME_OVER) {
-        return false;
-    }
-
-    // Find all bots in the game
-    const bots = game.players.filter(player => player.is_ai);
-
-    if (bots.length === 0) {
-        return false; // No bots to check
-    }
-
-    // Check each bot to see if they should act and have legal moves
-    for (const bot of bots) {
-        const botIndex = game.players.indexOf(bot);
-        let shouldAct = false;
-
-        // Determine if this bot should act in current game state using logical checks
-        shouldAct = shouldBotActCore(game, bot, botIndex);
-
-        if (shouldAct) {
-            // Check if this bot has any legal moves
-            const legalMoves = calculateLegalMoves(game, bot.player_id);
-            if (legalMoves.length > 0) {
-                return true; // Found a bot with legal moves
-            }
-        }
-    }
-
-    return false; // No bots have legal moves
-}
-
