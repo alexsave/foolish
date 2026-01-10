@@ -408,10 +408,11 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         })
     };
 
-    const exitGame = (gameId: string, botId?: string): Promise<{ game_id: string }> => {
+    const exitGame = (gameId: string, botId?: string, playerId?: string): Promise<{ game_id: string }> => {
         return invokeGameFunctions('exit', {
             game_id: gameId,
             bot_id: botId,
+            player_id: playerId
         }, {
             onSuccess: (data) => {
                 // If user removed themselves (not a bot), mark as spectating and switch channels
@@ -1094,7 +1095,7 @@ interface ServerContextType {
     joinGame: (gameId: string) => Promise<{ game_id: string }>;
     startGame: (gameId: string) => Promise<{ game_id: string }>;
     addBot: (gameId: string) => Promise<{ game_id: string }>;
-    exitGame: (gameId: string, botId?: string) => Promise<{ game_id: string }>;
+    exitGame: (gameId: string, botId?: string, playerId?: string) => Promise<{ game_id: string }>;
     game_id: string | null;
     game: PersonalGame | null;
     games: { [key: string]: PersonalGame };

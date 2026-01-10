@@ -501,7 +501,7 @@ export const Lobby = () => {
         setLocalPlayerOrder(prev => prev.filter(p => p.player_id !== playerId));
         
         // Make the network call
-        exitGame(game_id, isBot ? playerId : undefined).catch(error => {
+        exitGame(game_id, isBot ? playerId : undefined, isBot ? undefined : playerId).catch(error => {
             console.error('Failed to remove player:', error);
             // On error, the realtime subscription should restore the correct state
             // So we don't need to manually revert here
@@ -706,7 +706,7 @@ export const Lobby = () => {
         }}>
             {
                 localPlayerOrder.map((player: PublicPlayer, index: number) => {
-                    const showExitButton = game.status === GAME_STATUS.WAITING && player.player_id === user_id;
+                    const showExitButton = game.status === GAME_STATUS.WAITING;
                     const showRemoveBotButton = !!(player.is_ai && game.status === GAME_STATUS.WAITING && game.self);
                     const showXButton = showExitButton || showRemoveBotButton;
 
