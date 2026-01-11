@@ -20,9 +20,7 @@ interface PlayerCardProps {
     index: number;
     isDragging: boolean;
     isDropTarget: boolean;
-    isRearranging: boolean;
     pendingReady: boolean;
-    onReadyClick: () => void;
 }
 
 const PlayerCard: React.FC<PlayerCardProps> = ({
@@ -30,18 +28,14 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
     isDragging,
     isDropTarget,
     pendingReady,
-    onReadyClick,
 }) => {
     const { user_id } = useAuth();
-    const { t } = useLocalization();
     
     // Generate unique wood texture seed and transform for each player card
     const playerSeed = (player.player_id.charCodeAt(0) + player.player_id.charCodeAt(1)) / 200;
     const flip = (player.player_id.charCodeAt(3) || 0) % 2 === 0 ? 1 : -1;
     
     // Get wood styles with seeds
-    const woodButtonStyle = useWoodStyle(0.2);
-    const woodButtonHoverStyle = { ...woodButtonStyle, filter: 'brightness(1.1) contrast(1.1)', transform: 'translateY(-1px)' };
     const playerCardWoodStyle = useWoodStyle(playerSeed);
     
     const style: React.CSSProperties = {
@@ -68,6 +62,9 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
         userSelect: 'none',
         zIndex: 1500,
     };
+
+    // Determine ready status
+    const isReady = player.status !== PLAYER_STATUS.IDLE || (player.player_id === user_id && pendingReady);
 
     return (
         <div
@@ -100,35 +97,7 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
             }} />
             <p style={{ zIndex: 10, textAlign: 'center',  lineHeight: '30px', justifyContent: 'center', padding: '0 5px', margin: '0' }}>{player.is_ai ? '🤖 ' : ''}{player.name}</p>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                {player.status !== PLAYER_STATUS.IDLE || (player.player_id === user_id && pendingReady) ? '🟢' : player.player_id === user_id ? (
-                    <button
-                        onClick={onReadyClick}
-                        style={{
-                            ...woodButtonStyle,
-                            padding: '4px 8px',
-                            fontSize: '12px',
-                            border: '3px solid #5D3A1A',
-                            borderRadius: '0',
-                            fontWeight: 'bold',
-                            cursor: 'pointer',
-                            transition: 'all 0.2s ease',
-                            boxShadow: `inset 0 1px 0 rgba(255,255,255,0.2), inset 0 -1px 0 rgba(0,0,0,0.3), 0 2px 4px rgba(0,0,0,0.4)`,
-                            position: 'relative' as const,
-                            overflow: 'hidden' as const,
-                            zIndex: 1700, // Above drag overlay to prevent accidental drags
-                        }}
-                        onMouseEnter={(e) => {
-                            Object.assign(e.currentTarget.style, woodButtonHoverStyle);
-                        }}
-                        onMouseLeave={(e) => {
-                            Object.assign(e.currentTarget.style, woodButtonStyle);
-                        }}
-                    >
-                        <span style={{
-                            color: '#000',
-                        }}><Text id="ready" /></span>
-                    </button>
-                ) : '🔴'}
+                {isReady ? '🟢' : '🔴'}
             </div>
         </div>
     );
@@ -441,11 +410,9 @@ export const Lobby = () => {
                     setIsDirty(false); // Clear dirty flag on successful sync
                     
                     // If user clicked ready while rearranging, start the game now
-                    // Use ref to avoid closure issues with state
+                    // Keep pendingReady=true - component will unmount when game starts
                     if (pendingReadyRef.current) {
                         console.log('REARRANGE: Starting game (pendingReady was true)');
-                        setPendingReady(false);
-                        pendingReadyRef.current = false;
                         startGame(game_id!);
                     }
                 })
@@ -541,12 +508,8 @@ export const Lobby = () => {
         } else if (!hasLocalChanges && !hasPendingRearrange && !isRearranging) {
             console.log('READY: No changes, starting game immediately');
             // No local changes and no pending operations - start immediately
-            // We use setTimeout to ensure setPendingReady has taken effect
-            setTimeout(() => {
-                startGame(game_id!);
-                setPendingReady(false);
-                pendingReadyRef.current = false;
-            }, 0);
+            // Keep pendingReady=true - component will unmount when game starts
+            startGame(game_id!);
         } else {
             console.log('READY: Waiting for existing rearrange to complete');
         }
@@ -733,9 +696,7 @@ export const Lobby = () => {
                                 index={index}
                                 isDragging={draggedIndex === index}
                                 isDropTarget={dragOverIndex === index}
-                                isRearranging={isRearranging}
                                 pendingReady={pendingReady}
-                                onReadyClick={handleReadyClick}
                             />
                             {showXButton && (
                                 <button
@@ -873,6 +834,64 @@ export const Lobby = () => {
                         color: '#000',
                     }}><Text id="join_game" /></span>
                 </button>
+            </div>
+        )}
+        {/* Fixed Ready button at bottom of screen */}
+        {game.status === GAME_STATUS.WAITING && game.self && !pendingReady && (
+            <div
+                onClick={handleReadyClick}
+                style={{
+                    position: 'fixed',
+                    bottom: '20px',
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    border: '2px solid #5D3A1A',
+                    borderRadius: '0',
+                    boxShadow: `
+                        inset 0 1px 0 rgba(255,255,255,0.2),
+                        inset 0 -1px 0 rgba(0,0,0,0.3),
+                        0 2px 4px rgba(0,0,0,0.4)`,
+                    overflow: 'hidden' as const,
+                    width: '250px',
+                    height: '50px',
+                    boxSizing: 'border-box' as const,
+                    display: 'flex',
+                    flexDirection: 'row' as const,
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    gap: '10px',
+                    padding: '8px 12px',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease',
+                    userSelect: 'none' as const,
+                    zIndex: 2000,
+                }}
+                onMouseEnter={(e) => {
+                    e.currentTarget.style.filter = 'brightness(1.1) contrast(1.1)';
+                    e.currentTarget.style.transform = 'translateX(-50%) translateY(-1px)';
+                }}
+                onMouseLeave={(e) => {
+                    e.currentTarget.style.filter = '';
+                    e.currentTarget.style.transform = 'translateX(-50%)';
+                }}
+            >
+                {/* Wood texture background layer */}
+                <div style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    zIndex: -1,
+                    ...woodAddBotStyle,
+                }} />
+                <p style={{ 
+                    color: '#000',
+                    fontWeight: 'bold',
+                    zIndex: 10,
+                    margin: 0,
+                    position: 'relative',
+                }}><Text id="ready" /></p>
             </div>
         )}
     </div>;
