@@ -1,5 +1,5 @@
 import { Game, PrivatePlayer, GAME_STATUS, AnimationEvent, ANIMATION_EVENT_TYPE, LOG_TYPE, Card } from '../types.ts';
-import { get_next_player_index, validate_defender_status, refillPlayerHandsWithEvents } from '../common_utils.ts';
+import { get_next_player_index, validate_defender_status, refillPlayerHandsWithEvents, cloneGame } from '../common_utils.ts';
 import { addLog } from '../common_utils.ts';
 
 // Validation function for pickup moves
@@ -55,7 +55,7 @@ export function executePickup(game: Game, player_id: string): AnimationEvent[] {
     });
 
     // Capture game state after pickup
-    const gameStateAfterPickup = JSON.parse(JSON.stringify(game));
+    const gameStateAfterPickup = cloneGame(game);
 
     // Add animation event for the pickup with intermediate game state
     events.push({
@@ -72,7 +72,7 @@ export function executePickup(game: Game, player_id: string): AnimationEvent[] {
     const { refillEvents, drawLogs } = refillPlayerHandsWithEvents(game);
     for (const refillEvent of refillEvents) {
         // The refillPlayerHandsWithEvents already modified the game state
-        const gameStateAfterRefill = JSON.parse(JSON.stringify(game));
+        const gameStateAfterRefill = cloneGame(game);
         events.push({
             ...refillEvent,
             game_state: gameStateAfterRefill

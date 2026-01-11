@@ -1,8 +1,9 @@
 import { Card, AnimationEvent, ANIMATION_EVENT_TYPE, Game } from './types.ts';
+import { cloneGame } from './common_utils.ts';
 
 // Helper function to create a deep copy of the game state for animation events
 const cloneGameState = (game: Game): Game => {
-    return JSON.parse(JSON.stringify(game));
+    return cloneGame(game);
 }
 
 // Animation event manager for collecting events during operations

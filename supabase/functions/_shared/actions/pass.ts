@@ -1,5 +1,5 @@
 import { Card, Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, AnimationEvent, ANIMATION_EVENT_TYPE, LOG_TYPE } from '../types.ts';
-import { addLog } from '../common_utils.ts';
+import { addLog, cloneGame } from '../common_utils.ts';
 import { get_next_player_index, validate_defender_status, verify_cards_in_players_hand, no_cards_left, card_comp, cardDisplay } from '../common_utils.ts';
 
 // Validation function for pass moves
@@ -86,7 +86,7 @@ export function executePass(game: Game, player_id: string, cards: Card[]): Anima
     game.good_players = [];
 
     // Capture game state after pass
-    const gameStateAfterPass = JSON.parse(JSON.stringify(game));
+    const gameStateAfterPass = cloneGame(game);
 
     // Add animation event for the pass with intermediate game state
     events.push({
@@ -117,7 +117,7 @@ export function executePass(game: Game, player_id: string, cards: Card[]): Anima
         });
         
         // Capture game state after player goes out
-        const gameStateAfterOut = JSON.parse(JSON.stringify(game));
+        const gameStateAfterOut = cloneGame(game);
         
         // Add animation event for player going out
         events.push({

@@ -1,5 +1,5 @@
 import { Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, AnimationEvent, ANIMATION_EVENT_TYPE, LOG_TYPE, Card } from '../types.ts';
-import { refillPlayerHandsWithEvents } from '../common_utils.ts';
+import { refillPlayerHandsWithEvents, cloneGame } from '../common_utils.ts';
 import { get_next_player_index } from '../common_utils.ts';
 import { addLog } from '../common_utils.ts';
 
@@ -16,7 +16,7 @@ export function executeRoundTransition(game: Game, reason: string): AnimationEve
     console.log(`${reason} - proceeding to next round`);
 
     // Add animation event for magic transition
-    const gameStateForTransition = JSON.parse(JSON.stringify(game));
+    const gameStateForTransition = cloneGame(game);
     events.push({
         type: ANIMATION_EVENT_TYPE.MAGIC_TRANSITION,
         message: `${reason} - proceeding to next round`,
@@ -45,7 +45,7 @@ export function executeRoundTransition(game: Game, reason: string): AnimationEve
     });
     
     if (allTableCards.length > 0) {
-        const gameStateAfterDiscard = JSON.parse(JSON.stringify(game));
+        const gameStateAfterDiscard = cloneGame(game);
         const discardEvent: AnimationEvent = {
             type: ANIMATION_EVENT_TYPE.CARDS_TO_TRASH,
             cards: allTableCards,
@@ -61,7 +61,7 @@ export function executeRoundTransition(game: Game, reason: string): AnimationEve
     const { refillEvents, drawLogs } = refillPlayerHandsWithEvents(game);
     for (const refillEvent of refillEvents) {
         // The refillPlayerHandsWithEvents already modified the game state
-        const gameStateAfterRefill = JSON.parse(JSON.stringify(game));
+        const gameStateAfterRefill = cloneGame(game);
         events.push({
             ...refillEvent,
             game_state: gameStateAfterRefill

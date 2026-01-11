@@ -20,9 +20,7 @@ export const processBotAction = async (game: Game, bot: PrivatePlayer): Promise<
         const strategy = getBotStrategy(bot.strategy_key);
 
         // Calculate legal moves for this bot
-        const legalMovesStart = Date.now();
         const legalMoves = calculateLegalMoves(game, bot.player_id);
-        //console.log(`[TIMING] calculateLegalMoves took ${Date.now() - legalMovesStart}ms (${legalMoves.length} moves)`);
 
         if (legalMoves.length === 0) {
             console.log(`No legal moves for bot ${bot.name}`);
@@ -30,15 +28,11 @@ export const processBotAction = async (game: Game, bot: PrivatePlayer): Promise<
         }
 
         // Let the strategy choose a move
-        const chooseMoveStart = Date.now();
         // This is ok to keep async, we might be calling LLMs later
         const chosenMove = await strategy.chooseMove(game, bot.player_id, legalMoves);
-        //console.log(`[TIMING] strategy.chooseMove took ${Date.now() - chooseMoveStart}ms`);
 
         // Execute the chosen move using shared actions (with validation to handle race conditions)
-        const executeMoveStart = Date.now();
         const actionEvents = executeBotMove(game, bot, chosenMove);
-        //console.log(`[TIMING] executeBotMove took ${Date.now() - executeMoveStart}ms`);
 
         if (!actionEvents) {
             return false;

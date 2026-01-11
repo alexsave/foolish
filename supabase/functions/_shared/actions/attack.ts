@@ -1,5 +1,5 @@
 import { Card, Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, AnimationEvent, ANIMATION_EVENT_TYPE, LOG_TYPE } from '../types.ts';
-import { addLog } from '../common_utils.ts';
+import { addLog, cloneGame } from '../common_utils.ts';
 import { validate_defender_status, verify_cards_in_players_hand, cardDisplay, card_comp } from '../common_utils.ts';
 
 // Validation function for attack moves
@@ -100,7 +100,7 @@ export function executeAttack(game: Game, player_id: string, cards: Card[]): Ani
     game.good_players = [];
 
     // Capture game state after attack
-    const gameStateAfterAttack = JSON.parse(JSON.stringify(game));
+    const gameStateAfterAttack = cloneGame(game);
 
     // Add animation event for the attack with intermediate game state
     events.push({
@@ -130,7 +130,7 @@ export function executeAttack(game: Game, player_id: string, cards: Card[]): Ani
         });
         
         // Capture game state after player goes out
-        const gameStateAfterOut = JSON.parse(JSON.stringify(game));
+        const gameStateAfterOut = cloneGame(game);
         
         // Add animation event for player going out
         events.push({

@@ -1,6 +1,59 @@
-import { Card, Game, PersonalGame, PLAYER_STATUS, PrivatePlayer, PublicPlayer, GAME_STATUS, PublicGame, LOG_TYPE, AnimationEvent, ANIMATION_EVENT_TYPE } from "./types.ts";
+import { Card, Game, PersonalGame, PLAYER_STATUS, PrivatePlayer, PublicPlayer, GAME_STATUS, PublicGame, LOG_TYPE, AnimationEvent, ANIMATION_EVENT_TYPE, Battle, LogCardPair } from "./types.ts";
 import { GameLog, UnsavedGameLog } from './types.ts';
 import { ACE_VALUE, CARDS_PER_PLAYER, SUITS, VALUE_MAP, SUIT_MAP } from './constants.ts';
+
+// Fast deep clone for Game objects - avoids expensive JSON.parse(JSON.stringify())
+export const cloneCard = (card: Card): Card => ({ suit: card.suit, value: card.value });
+
+export const cloneBattle = (battle: Battle): Battle => ({
+    attack: cloneCard(battle.attack),
+    defense: battle.defense ? cloneCard(battle.defense) : null
+});
+
+export const cloneCardPair = (pair: LogCardPair): LogCardPair => ({
+    primary: cloneCard(pair.primary),
+    target: pair.target ? cloneCard(pair.target) : pair.target
+});
+
+export const cloneGameLog = (log: GameLog): GameLog => ({
+    id: log.id,
+    created_at: log.created_at,
+    game_id: log.game_id,
+    log_type: log.log_type,
+    player_id: log.player_id,
+    card_pairs: log.card_pairs.map(cloneCardPair),
+    defender_index: log.defender_index
+});
+
+export const clonePlayer = (player: PrivatePlayer): PrivatePlayer => ({
+    player_id: player.player_id,
+    status: player.status,
+    name: player.name,
+    hand_length: player.hand_length,
+    is_ai: player.is_ai,
+    hand: player.hand.map(cloneCard),
+    awaiting_attack: player.awaiting_attack,
+    strategy_key: player.strategy_key
+});
+
+export const cloneGame = (game: Game): Game => ({
+    id: game.id,
+    name: game.name,
+    deck_length: game.deck_length,
+    discard_pile_length: game.discard_pile_length,
+    flipped: game.flipped ? cloneCard(game.flipped) : null,
+    players: game.players.map(clonePlayer),
+    status: game.status,
+    power_suit: game.power_suit,
+    first_attacker: game.first_attacker,
+    defender: game.defender,
+    table_battles: game.table_battles.map(cloneBattle),
+    elimination_order: [...game.elimination_order],
+    good_timestamp: game.good_timestamp,
+    good_players: [...game.good_players],
+    deck: game.deck.map(cloneCard),
+    logs: game.logs.map(cloneGameLog)
+});
 
 export const get_next_player_index = (game: PublicGame, current_player: number): number => {
     // Check if there's only one player left in the game

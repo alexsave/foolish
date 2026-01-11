@@ -1,11 +1,40 @@
 import { calculateLegalMoves, registerBotStrategy } from '../../supabase/functions/_shared/bot_strategy.ts';
 import { shouldBotActCore, processBotAction } from '../../supabase/functions/_shared/pure_bot_actions.ts';
 import { start_game, game_done, seededRandom } from '../../supabase/functions/_shared/common_utils.ts';
-import { Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, STRATEGY_KEY } from '../../supabase/functions/_shared/types.ts';
-import { ConsoleStrategy } from './console_strategy.ts';
+import { Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, STRATEGY_KEY, StrategyKey } from '../../supabase/functions/_shared/types.ts';
+import { EspressoStrategy } from './espresso_strategy.ts';
 
-const game: Game = {
-    players: [],
+// Register custom strategies
+const ESPRESSO = 'espresso' as StrategyKey;
+registerBotStrategy(ESPRESSO, new EspressoStrategy());
+
+// Configuration
+const NUM_GAMES = 10000;
+const STRATEGY_1: StrategyKey = STRATEGY_KEY.HANDWRITTEN;
+const STRATEGY_2: StrategyKey = STRATEGY_KEY.RANDOM;
+
+// Silence all console output during batch run
+const noop = () => { };
+const saved = { log: console.log, warn: console.warn, error: console.error, info: console.info };
+console.log = noop;
+console.warn = noop;
+console.error = noop;
+console.info = noop;
+const print = saved.log.bind(console);
+
+const createPlayer = (strategy: StrategyKey, index: number): PrivatePlayer => ({
+    player_id: `bot_${index}_${strategy}`,
+    name: `${strategy} Bot ${index}`,
+    status: PLAYER_STATUS.READY,
+    is_ai: true,
+    hand: [],
+    awaiting_attack: false,
+    hand_length: 0,
+    strategy_key: strategy
+});
+
+const createFreshGame = (strat1: StrategyKey, strat2: StrategyKey): Game => ({
+    players: [createPlayer(strat1, 1), createPlayer(strat2, 2)],
     deck: [],
     logs: [],
     id: 'game_1',
@@ -21,60 +50,18 @@ const game: Game = {
     elimination_order: [],
     good_timestamp: null,
     good_players: [],
-};
-
-game.players.push({
-    player_id: 'bot_handwritten',
-    name: 'Handwritten Bot',
-    status: PLAYER_STATUS.READY,
-    is_ai: true,
-    hand: [],
-    awaiting_attack: false,
-    hand_length: 0,
-    strategy_key: STRATEGY_KEY.HANDWRITTEN
 });
 
-game.players.push({
-    player_id: 'bot_random',
-    name: 'Random Bot',
-    status: PLAYER_STATUS.READY,
-    is_ai: true,
-    hand: [],
-    awaiting_attack: false,
-    hand_length: 0,
-    strategy_key: STRATEGY_KEY.RANDOM
-});
+async function runSingleGame(strat1: StrategyKey, strat2: StrategyKey): Promise<StrategyKey | null> {
+    const game = createFreshGame(strat1, strat2);
+    start_game(game);
 
-game.players.push({
-    player_id: 'you',
-    name: 'You',
-    status: PLAYER_STATUS.READY,
-    is_ai: true,
-    hand: [],
-    awaiting_attack: false,
-    hand_length: 0,
-    strategy_key: STRATEGY_KEY.CONSOLE
-});
-
-
-registerBotStrategy(STRATEGY_KEY.CONSOLE, new ConsoleStrategy());
-
-start_game(game);
-
-(async () => {
-    console.log('\n🎴 Durak Bot Battle! 🎴');
-    console.log('🤖 Handwritten Bot vs 🎲 Random Bot vs 🧠 You\n');
-    
     while (game_done(game) === null) {
-        // Find all bots that can currently move
         const eligibleBots: { bot: PrivatePlayer; index: number }[] = [];
         for (let index = 0; index < game.players.length; index++) {
             const player = game.players[index];
-
-            // Check if this bot should act based on current game state
             const shouldAct = shouldBotActCore(game, player, index);
             if (shouldAct) {
-                // Double-check that they have legal moves
                 const legalMoves = calculateLegalMoves(game, player.player_id);
                 if (legalMoves.length > 0) {
                     eligibleBots.push({ bot: player, index });
@@ -82,29 +69,48 @@ start_game(game);
             }
         }
 
-        // If we have eligible bots, try them until one succeeds
-        if (eligibleBots.length === 0) {
-            console.log(`No eligible players found for game, ending processing cycle`);
-            continue;
-        }
-
-        // Shuffle the eligible bots to try them in random order (seeded for determinism)
         const shuffledBots = [...eligibleBots].sort(() => seededRandom() - 0.5);
-
         for (const selectedBot of shuffledBots) {
-            // Try to process this player's action
             const botActionEvents = await processBotAction(game, selectedBot.bot);
-
-            if (botActionEvents) {
-                break; // Exit the loop since we successfully processed a bot
-            }
+            if (botActionEvents) break;
         }
     }
+
+    // Return the strategy of the loser
+    const loserId = game_done(game);
+    const loser = game.players.find(p => p.player_id === loserId);
+    return loser?.strategy_key as StrategyKey || null;
+}
+
+(async () => {
+    print(`\n🎴 Running ${NUM_GAMES} games: ${STRATEGY_1} vs ${STRATEGY_2} 🎴\n`);
+
+    const losses: Record<string, number> = {};
+    losses[STRATEGY_1] = 0;
+    losses[STRATEGY_2] = 0;
     
-    // Game over - find the loser (durak)
-    const loser = game_done(game);
-    const loserPlayer = game.players.find(p => p.player_id === loser);
-    console.log('\n' + '🏆'.repeat(40));
-    console.log(`🃏 GAME OVER! The DURAK (fool) is: ${loserPlayer?.name || loser} 🃏`);
-    console.log('🏆'.repeat(40) + '\n');
+    const startTime = Date.now();
+
+    for (let i = 0; i < NUM_GAMES; i++) {
+        const loserStrategy = await runSingleGame(STRATEGY_1, STRATEGY_2);
+        if (loserStrategy) {
+            losses[loserStrategy]++;
+        }
+        
+        if ((i + 1) % 1000 === 0) {
+            print(`Progress: ${i + 1}/${NUM_GAMES}`);
+        }
+    }
+
+    const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
+    const wins1 = NUM_GAMES - losses[STRATEGY_1];
+    const wins2 = NUM_GAMES - losses[STRATEGY_2];
+
+    print('\n' + '='.repeat(60));
+    print('📊 RESULTS');
+    print('='.repeat(60));
+    print(`Total games: ${NUM_GAMES} in ${totalTime}s`);
+    print(`${STRATEGY_1} WIN RATE: ${((wins1 / NUM_GAMES) * 100).toFixed(2)}% (${wins1} wins, ${losses[STRATEGY_1]} losses)`);
+    print(`${STRATEGY_2} WIN RATE: ${((wins2 / NUM_GAMES) * 100).toFixed(2)}% (${wins2} wins, ${losses[STRATEGY_2]} losses)`);
+    print('='.repeat(60) + '\n');
 })();

@@ -1,5 +1,5 @@
 import { Card, Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, AnimationEvent, ANIMATION_EVENT_TYPE, LOG_TYPE } from '../types.ts';
-import { addLog } from '../common_utils.ts';
+import { addLog, cloneGame } from '../common_utils.ts';
 import { canCover, get_next_player_index, validate_defender_status, verify_cards_in_players_hand, card_comp, cardDisplay, refillPlayerHandsWithEvents } from '../common_utils.ts';
 
 // Validation function for cover moves
@@ -88,7 +88,7 @@ export function executeCover(game: Game, player_id: string, cover_cards: Card[],
         });
         
         // Capture game state after this specific cover
-        const gameStateAfterCover = JSON.parse(JSON.stringify(game));
+        const gameStateAfterCover = cloneGame(game);
         
         // Add animation event for this cover with the intermediate game state
         events.push({
@@ -117,7 +117,7 @@ export function executeCover(game: Game, player_id: string, cover_cards: Card[],
         
         // Clear table battles
         game.table_battles = [];
-        const gameStateAfterDiscard = JSON.parse(JSON.stringify(game));
+        const gameStateAfterDiscard = cloneGame(game);
         
         // Log discard event
         addLog(game, {
@@ -141,7 +141,7 @@ export function executeCover(game: Game, player_id: string, cover_cards: Card[],
         const { refillEvents, drawLogs } = refillPlayerHandsWithEvents(game);
         for (const refillEvent of refillEvents) {
             // Apply the refill to get the intermediate state
-            const gameStateAfterRefill = JSON.parse(JSON.stringify(game));
+            const gameStateAfterRefill = cloneGame(game);
             events.push({
                 ...refillEvent,
                 game_state: gameStateAfterRefill
@@ -181,7 +181,7 @@ export function executeCover(game: Game, player_id: string, cover_cards: Card[],
             });
             
             // Capture state after player goes out
-            const gameStateAfterOut = JSON.parse(JSON.stringify(game));
+            const gameStateAfterOut = cloneGame(game);
             
             // Add out event
             events.push({
@@ -206,7 +206,7 @@ export function executeCover(game: Game, player_id: string, cover_cards: Card[],
         });
         
         // Capture state after defender move
-        const gameStateAfterDefenderMove = JSON.parse(JSON.stringify(game));
+        const gameStateAfterDefenderMove = cloneGame(game);
         
         // Add defender move event
         events.push({
