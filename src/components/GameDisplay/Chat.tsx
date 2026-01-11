@@ -1,13 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useServer } from '../../contexts/ServerContext';
-import { useAuth } from '../../contexts/AuthContext';
 import { useLocalization } from '../../contexts/LocalizationContext';
 import { SovietIcon } from '../SovietIcon';
 
 export const Chat = () => {
     const server = useServer();
     const { game, sendMessage, chatMessages } = server;
-    const { user_id } = useAuth();
     const { t } = useLocalization();
     const [message, setMessage] = useState('');
     const [isExpanded, setIsExpanded] = useState(false);
@@ -15,14 +13,19 @@ export const Chat = () => {
     const [isMobile, setIsMobile] = useState(false);
     const [viewportHeight, setViewportHeight] = useState(window.innerHeight);
     const [isKeyboardOpen, setIsKeyboardOpen] = useState(false);
-    const messagesEndRef = useRef<HTMLDivElement>(null);
+    const messagesContainerRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLInputElement>(null);
 
     const scrollToBottom = (smooth = false) => {
+        if (!messagesContainerRef.current) return;
+        
+        const container = messagesContainerRef.current;
+        const scrollTarget = container.scrollHeight - container.clientHeight;
+        
         if (smooth) {
-            messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+            container.scrollTo({ top: scrollTarget, behavior: 'smooth' });
         } else {
-            messagesEndRef.current?.scrollIntoView({ behavior: 'instant' as ScrollBehavior });
+            container.scrollTop = scrollTarget;
         }
     };
 
@@ -133,7 +136,7 @@ export const Chat = () => {
                     <button className="chat__close-btn" onClick={handleToggle}>✕</button>
                 </div>
 
-                <div className="chat__messages chat__messages--mobile" data-chat-scrollable>
+                <div ref={messagesContainerRef} className="chat__messages chat__messages--mobile" data-chat-scrollable>
                     {chatMessages.map((msg, index) => (
                         <div key={index} className="chat__message chat__message--mobile">
                             <span className="chat__message-sender">{msg.sender_name || 'Unknown'}:</span>
@@ -145,7 +148,6 @@ export const Chat = () => {
                             </span>
                         </div>
                     ))}
-                    <div ref={messagesEndRef} />
                 </div>
 
                 <form className="chat__form chat__form--mobile" onSubmit={handleSubmit} data-touch-interactive>
@@ -177,7 +179,7 @@ export const Chat = () => {
                 {t('chat')} ▼
             </div>
 
-            <div className="chat__messages" data-chat-scrollable>
+            <div ref={messagesContainerRef} className="chat__messages" data-chat-scrollable>
                 {chatMessages.map((msg, index) => (
                     <div key={index} className="chat__message">
                         <span className="chat__message-sender">{msg.sender_name || 'Unknown'}:</span>
@@ -189,7 +191,6 @@ export const Chat = () => {
                         </span>
                     </div>
                 ))}
-                <div ref={messagesEndRef} />
             </div>
 
             <form className="chat__form" onSubmit={handleSubmit} data-touch-interactive>
