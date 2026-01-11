@@ -182,10 +182,10 @@ export const WinScreen: React.FC = () => {
     };
 
     const getRankEmoji = (rank: number, totalPlayers: number) => {
+        if (rank === totalPlayers) return '🃏'; // The fool takes precedence
         if (rank === 1) return '🥇';
         if (rank === 2) return '🥈';
         if (rank === 3) return '🥉';
-        if (rank === totalPlayers) return '🃏'; // The fool
         return `#${rank}`;
     };
 
