@@ -169,7 +169,7 @@ export const PlayerRing = () => {
                             <div style={{ height: '20px' }} />
                         )}
 
-                        <p style={{
+                        <div style={{
                             margin: 0,
                             fontSize: '12px',
                             color: 'var(--color-text-primary)',
@@ -188,7 +188,7 @@ export const PlayerRing = () => {
                                     <div className="chat-bubble__pointer" />
                                 </div>
                             )}
-                        </p>
+                        </div>
 
                         {player.hand_length && player.hand_length > 0 ? (
                             <CardsVisual
