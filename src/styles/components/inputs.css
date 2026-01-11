@@ -1,0 +1,119 @@
+/* =================================================================
+   Input & Form Styles
+   ================================================================= */
+
+/* ===== Base Input ===== */
+.input {
+  font-family: inherit;
+  font-size: var(--font-size-md);
+  transition: var(--transition-base);
+}
+
+.input:focus {
+  outline: none;
+}
+
+/* ===== Wood Input ===== */
+.input-wood {
+  border: var(--border-wood);
+  border-radius: var(--radius-none);
+  color: var(--color-text-primary);
+  text-shadow: var(--text-shadow-darker);
+  box-shadow: var(--shadow-input-inset);
+  padding: var(--spacing-sm) var(--spacing-md);
+  font-size: var(--font-size-md);
+}
+
+.input-wood::placeholder {
+  color: rgba(255, 255, 255, 0.6);
+}
+
+/* ===== Standard Input ===== */
+.input-standard {
+  padding: var(--spacing-sm) var(--spacing-md);
+  font-size: var(--font-size-md);
+  border: var(--border-wood);
+  border-radius: var(--radius-none);
+  min-width: 250px;
+}
+
+/* ===== Game Name Input (Lobby) ===== */
+.input-game-name {
+  width: 100%;
+  font-size: 2rem;
+  font-weight: var(--font-weight-bold);
+  text-align: center;
+  color: var(--color-text-primary);
+  background: transparent;
+  border: none;
+  padding: 0.75rem 1rem 0.5rem 1rem;
+  cursor: pointer;
+  transition: var(--transition-base);
+  position: relative;
+  z-index: var(--z-content);
+}
+
+.input-game-name--editing {
+  border: var(--border-wood);
+  border-radius: var(--radius-none);
+  text-shadow: var(--text-shadow-darker);
+  box-shadow: var(--shadow-input-inset);
+  cursor: text;
+}
+
+/* ===== Chat Input ===== */
+.input-chat {
+  flex: 1;
+  padding: 10px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-chat-border);
+  font-size: var(--font-size-md);
+}
+
+.input-chat--desktop {
+  padding: 5px;
+  border-radius: var(--radius-md);
+}
+
+/* ===== Form Group ===== */
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.form-label {
+  color: var(--color-text-label);
+  font-weight: var(--font-weight-bold);
+}
+
+/* ===== Form Row ===== */
+.form-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.form-row--actions {
+  margin-top: 10px;
+}
+
+/* =================================================================
+   SOVIET THEME Input Overrides - Clean poster style
+   ================================================================= */
+
+[data-theme="soviet"] .input,
+[data-theme="soviet"] .input-wood,
+[data-theme="soviet"] .input-standard,
+[data-theme="soviet"] .input-game-name,
+[data-theme="soviet"] .input-chat {
+  font-family: var(--font-family-primary) !important;
+  text-shadow: none;
+  font-weight: bold;
+}
+
+[data-theme="soviet"] .form-label {
+  font-family: var(--font-family-primary) !important;
+  text-shadow: none;
+  font-weight: bold;
+}

@@ -1,78 +1,67 @@
-import { useState, useMemo } from 'react';
+import { useState, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { useWoodStyle } from './WoodTexture';
+import { TexturedSurface } from './TexturedSurface';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { Text } from './Text';
-import { useLocalization } from '../contexts/LocalizationContext';
 import { Link } from 'react-router-dom';
+import { useStyles } from '../contexts/StyleContext';
 
 export const Welcome = () => {
     const [name, setName] = useState('');
     const [password, setPassword] = useState('');
     const { signIn, signUp } = useAuth();
-    const { t } = useLocalization();
+    const styles = useStyles();
+    const passwordRef = useRef<HTMLInputElement>(null);
+
+    const useCustomMasking = styles.behavior.useCustomPasswordMasking;
+    const maskedPassword = '#'.repeat(password.length);
     
-    const woodStyleBase = useWoodStyle(0.5);
-    const woodStyleBase2 = useWoodStyle(0.9);
-
-    const woodButtonStyle: React.CSSProperties = useMemo(() => ({
-        ...woodStyleBase,
-        border: '3px solid #5D3A1A',
-        borderRadius: '0',
-        fontWeight: 'bold',
-        cursor: 'pointer',
-        transition: 'all 0.2s ease',
-        boxShadow: `
-            inset 0 1px 0 rgba(255,255,255,0.2),
-            inset 0 -1px 0 rgba(0,0,0,0.3),
-            0 2px 4px rgba(0,0,0,0.4)`,
-        position: 'relative' as const,
-        overflow: 'hidden' as const,
-        padding: '10px 20px',
-        fontSize: '16px',
-        mixBlendMode: 'normal' as const,
-    }), [woodStyleBase]);
-
-    const woodButtonHoverStyle: React.CSSProperties = useMemo(() => ({
-        ...woodStyleBase,
-        filter: 'brightness(1.1) contrast(1.1)',
-        transform: 'translateY(-1px)',
-        boxShadow: `
-            inset 0 2px 0 rgba(255,255,255,0.3),
-            inset 0 -2px 0 rgba(0,0,0,0.4),
-            0 4px 8px rgba(0,0,0,0.5)`,
-        mixBlendMode: 'normal' as const,
-    }), [woodStyleBase]);
-
-    const woodButtonStyle2: React.CSSProperties = useMemo(() => ({
-        ...woodStyleBase2,
-        border: '3px solid #5D3A1A',
-        borderRadius: '0',
-        fontWeight: 'bold',
-        cursor: 'pointer',
-        transition: 'all 0.2s ease',
-        boxShadow: `
-            inset 0 1px 0 rgba(255,255,255,0.2),
-            inset 0 -1px 0 rgba(0,0,0,0.3),
-            0 2px 4px rgba(0,0,0,0.4)`,
-        position: 'relative' as const,
-        overflow: 'hidden' as const,
-        padding: '10px 20px',
-        fontSize: '16px',
-        mixBlendMode: 'normal' as const,
-    }), [woodStyleBase2]);
-
-    const woodButtonHoverStyle2: React.CSSProperties = useMemo(() => ({
-        ...woodStyleBase2,
-        filter: 'brightness(1.1) contrast(1.1)',
-        transform: 'translateY(-1px)',
-        boxShadow: `
-            inset 0 2px 0 rgba(255,255,255,0.3),
-            inset 0 -2px 0 rgba(0,0,0,0.4),
-            0 4px 8px rgba(0,0,0,0.5)`,
-        mixBlendMode: 'normal' as const,
-    }), [woodStyleBase2]);
+    const handlePasswordKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+        if (!useCustomMasking) return;
+        
+        const input = e.currentTarget;
+        const start = input.selectionStart ?? 0;
+        const end = input.selectionEnd ?? 0;
+        
+        if (e.key === 'Backspace') {
+            e.preventDefault();
+            if (start !== end) {
+                setPassword(password.slice(0, start) + password.slice(end));
+                setTimeout(() => input.setSelectionRange(start, start), 0);
+            } else if (start > 0) {
+                setPassword(password.slice(0, start - 1) + password.slice(start));
+                setTimeout(() => input.setSelectionRange(start - 1, start - 1), 0);
+            }
+        } else if (e.key === 'Delete') {
+            e.preventDefault();
+            if (start !== end) {
+                setPassword(password.slice(0, start) + password.slice(end));
+            } else if (start < password.length) {
+                setPassword(password.slice(0, start) + password.slice(start + 1));
+            }
+            setTimeout(() => input.setSelectionRange(start, start), 0);
+        } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
+            e.preventDefault();
+            const newPassword = password.slice(0, start) + e.key + password.slice(end);
+            setPassword(newPassword);
+            setTimeout(() => input.setSelectionRange(start + 1, start + 1), 0);
+        }
+    };
+    
+    const handlePasswordPaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+        if (!useCustomMasking) return;
+        
+        e.preventDefault();
+        const input = e.currentTarget;
+        const start = input.selectionStart ?? 0;
+        const end = input.selectionEnd ?? 0;
+        const pastedText = e.clipboardData.getData('text');
+        
+        const newPassword = password.slice(0, start) + pastedText + password.slice(end);
+        setPassword(newPassword);
+        setTimeout(() => input.setSelectionRange(start + pastedText.length, start + pastedText.length), 0);
+    };
 
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -96,36 +85,16 @@ export const Welcome = () => {
     };
 
     return (
-        <div style={{ 
-            display: 'flex', 
-            flexDirection: 'column', 
-            alignItems: 'center', 
-            justifyContent: 'center', 
-            height: '100vh', 
-            width: '100vw', 
-            position: 'relative',
-            backgroundColor: '#ad826e' 
-        }}>
+        <div className="page page--centered page--full-viewport">
             <WoolBackgroundLayer />
-            <p style={{ 
-                fontSize: '72px', 
-                fontWeight: 'bold', 
-                color: '#B22222',
-                textShadow: '0 4px 8px rgba(0, 0, 0, 0.4), 0 2px 4px rgba(0, 0, 0, 0.3)',
-                marginBottom: '30px',
-                position: 'relative',
-                zIndex: 10
-            }}><Text id="foolish" /></p>
-            <form onSubmit={handleLogin} style={{ 
-                display: 'flex', 
-                flexDirection: 'column', 
-                alignItems: 'center', 
-                gap: '15px',
-                position: 'relative',
-                zIndex: 10
-            }}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                    <label htmlFor="username" style={{ color: '#333', fontWeight: 'bold' }}><Text id="username" />:</label>
+            
+            <p className="title title--brand z-content">
+                <Text id="foolish" />
+            </p>
+            
+            <form onSubmit={handleLogin} className="flex flex-col items-center z-content" style={{ gap: '15px' }}>
+                <div className="form-group">
+                    <label htmlFor="username" className="form-label"><Text id="username" />:</label>
                     <input
                         id="username"
                         type="text"
@@ -133,81 +102,37 @@ export const Welcome = () => {
                         onChange={(e) => setName(e.target.value)}
                         autoComplete="username"
                         required
-                        style={{
-                            padding: '8px 12px',
-                            fontSize: '16px',
-                            border: '2px solid #5D3A1A',
-                            borderRadius: '0',
-                            minWidth: '250px'
-                        }}
+                        className="input-standard"
                     />
                 </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                    <label htmlFor="password" style={{ color: '#333', fontWeight: 'bold' }}><Text id="password" />:</label>
+                <div className="form-group">
+                    <label htmlFor="password" className="form-label"><Text id="password" />:</label>
                     <input
+                        ref={passwordRef}
                         id="password"
-                        type="password"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        autoComplete="current-password"
+                        type={useCustomMasking ? "text" : "password"}
+                        value={useCustomMasking ? maskedPassword : password}
+                        onChange={useCustomMasking ? undefined : (e) => setPassword(e.target.value)}
+                        onKeyDown={handlePasswordKeyDown}
+                        onPaste={handlePasswordPaste}
+                        autoComplete={useCustomMasking ? "off" : "current-password"}
                         required
-                        style={{
-                            padding: '8px 12px',
-                            fontSize: '16px',
-                            border: '2px solid #5D3A1A',
-                            borderRadius: '0',
-                            minWidth: '250px'
-                        }}
+                        className="input-standard"
                     />
                 </div>
-                <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
-                    <button 
-                        type="submit"
-                        style={woodButtonStyle}
-                        onMouseEnter={(e) => {
-                            Object.assign(e.currentTarget.style, woodButtonHoverStyle);
-                        }}
-                        onMouseLeave={(e) => {
-                            Object.assign(e.currentTarget.style, woodButtonStyle);
-                        }}
-                    >
-                        <span style={{
-                            color: '#000',
-                        }}><Text id="login" /></span>
-                    </button>
-                    <button 
-                        type="button"
-                        onClick={handleSignUp}
-                        style={woodButtonStyle2}
-                        onMouseEnter={(e) => {
-                            Object.assign(e.currentTarget.style, woodButtonHoverStyle2);
-                        }}
-                        onMouseLeave={(e) => {
-                            Object.assign(e.currentTarget.style, woodButtonStyle2);
-                        }}
-                    >
-                        <span style={{
-                            color: '#000',
-                        }}><Text id="sign_up" /></span>
-                    </button>
+                <div className="form-row form-row--actions">
+                    <TexturedSurface as="button" seed={0.5} type="submit" className="btn-wood btn-wood--md">
+                        <span className="btn-wood-text"><Text id="login" /></span>
+                    </TexturedSurface>
+                    <TexturedSurface as="button" seed={0.9} type="button" onClick={handleSignUp} className="btn-wood btn-wood--md">
+                        <span className="btn-wood-text"><Text id="sign_up" /></span>
+                    </TexturedSurface>
                 </div>
             </form>
+            
             <LanguageSwitcher />
-            <Link 
-                to="/about"
-                style={{
-                    position: 'absolute',
-                    bottom: '20px',
-                    left: '50%',
-                    transform: 'translateX(-50%)',
-                    color: '#5D3A1A',
-                    textDecoration: 'underline',
-                    fontSize: '14px',
-                    cursor: 'pointer',
-                    zIndex: 10,
-                    textShadow: '0 1px 2px rgba(255, 255, 255, 0.5)'
-                }}
-            >
+            
+            <Link to="/about" className="link link--bottom">
                 <Text id="about" />
             </Link>
         </div>

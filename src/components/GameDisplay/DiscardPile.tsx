@@ -28,7 +28,7 @@ export const DiscardPile = () => {
                             left: '50%',
                             transform: 'translate(-50%, -50%)',
                             margin: 0,
-                            color: 'white',
+                            color: 'var(--color-text-primary)',
                             fontSize: '16px',
                             fontWeight: 'bold',
                             textShadow: '1px 1px 2px rgba(0,0,0,0.8)',

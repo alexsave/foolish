@@ -1,0 +1,331 @@
+/* =================================================================
+   Chat Styles - Complete CSS-based theming
+   ================================================================= */
+
+/* ===== Chat Toggle Button ===== */
+.chat-toggle {
+  position: fixed;
+  top: 70%;
+  left: 0;
+  transform: translateY(-50%);
+  width: 60px;
+  height: 60px;
+  background-color: rgba(0, 0, 0, 0.8);
+  border: 2px solid #ccc;
+  border-left: none;
+  border-radius: 0 8px 8px 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 100000;
+  transition: all 0.3s ease;
+  touch-action: manipulation;
+}
+
+.chat-toggle__icon {
+  color: var(--color-text-primary);
+  font-size: 24px;
+  font-weight: bold;
+}
+
+/* ===== Chat Container (Desktop) ===== */
+.chat {
+  position: absolute;
+  bottom: 220px;
+  left: 20px;
+  width: 300px;
+  height: 400px;
+  background-color: rgba(0, 0, 0, 0.7);
+  border: 2px solid #ccc;
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: all 0.3s ease;
+  z-index: 100000;
+  touch-action: none;
+}
+
+/* ===== Chat Container (Mobile) ===== */
+.chat--mobile {
+  position: fixed;
+  top: max(10px, env(safe-area-inset-top, 0px));
+  left: max(10px, env(safe-area-inset-left, 0px));
+  right: max(10px, env(safe-area-inset-right, 0px));
+  bottom: max(10px, env(safe-area-inset-bottom, 0px));
+  width: auto;
+  height: auto;
+  background-color: rgba(0, 0, 0, 0.9);
+}
+
+/* ===== Chat Header ===== */
+.chat__header {
+  padding: 10px;
+  background-color: rgba(0, 0, 0, 0.9);
+  color: var(--color-text-primary);
+  font-size: 14px;
+  font-weight: bold;
+  cursor: pointer;
+  border-bottom: 1px solid #ccc;
+}
+
+.chat__header--mobile {
+  padding: 15px;
+  font-size: 18px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-shrink: 0;
+  background-color: rgba(0, 0, 0, 1);
+}
+
+.chat__close-btn {
+  background-color: transparent;
+  border: none;
+  color: var(--color-text-primary);
+  font-size: 24px;
+  cursor: pointer;
+  padding: 0;
+}
+
+/* ===== Chat Messages ===== */
+.chat__messages {
+  flex: 1;
+  padding: 10px;
+  overflow-y: auto;
+  max-height: 280px;
+  touch-action: pan-y;
+}
+
+.chat__messages--mobile {
+  padding: 15px;
+  max-height: none;
+  min-height: 0;
+}
+
+/* ===== Chat Message ===== */
+.chat__message {
+  margin-bottom: 8px;
+  padding: 5px;
+  color: var(--color-text-primary);
+  font-size: 12px;
+  word-wrap: break-word;
+}
+
+.chat__message--mobile {
+  margin-bottom: 12px;
+  padding: 8px;
+  font-size: 14px;
+}
+
+.chat__message-sender {
+  font-weight: bold;
+}
+
+.chat__message-text {
+  color: inherit;
+}
+
+.chat__message-time {
+  font-size: 10px;
+  color: #ccc;
+}
+
+.chat__message-time--mobile {
+  font-size: 12px;
+}
+
+/* ===== Chat Input Form ===== */
+.chat__form {
+  padding: 10px;
+  border-top: 1px solid #ccc;
+  display: flex;
+  gap: 5px;
+}
+
+.chat__form--mobile {
+  padding: 15px;
+  background-color: rgba(0, 0, 0, 0.95);
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.chat__input {
+  flex: 1;
+  padding: 5px;
+  border-radius: 5px;
+  border: 1px solid #ccc;
+  font-size: 16px;
+}
+
+.chat__input--mobile {
+  padding: 10px;
+  border-radius: 8px;
+}
+
+.chat__submit {
+  padding: 5px 10px;
+  background-color: #007bff;
+  color: var(--color-text-primary);
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.chat__submit--mobile {
+  padding: 10px 15px;
+  border-radius: 8px;
+  font-size: 14px;
+}
+
+.chat__submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ===== Chat Bubble (Player Ring) ===== */
+.chat-bubble {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: rgba(0, 0, 0, 0.85);
+  color: var(--color-text-primary);
+  padding: 6px 10px;
+  border-radius: 12px;
+  font-size: 11px;
+  white-space: nowrap;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  z-index: var(--z-card);
+  animation: fadeInSimple 0.3s ease-in;
+}
+
+.chat-bubble__pointer {
+  position: absolute;
+  bottom: -6px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-top: 6px solid rgba(0, 0, 0, 0.85);
+}
+
+/* =================================================================
+   SOVIET THEME - All Chat Overrides
+   ================================================================= */
+
+[data-theme="soviet"] .chat-toggle {
+  background-color: #E79743;
+  border: 3px solid #0A0A0A;
+  border-left: none;
+  border-radius: 0;
+  box-shadow: 3px 3px 0 #0A0A0A;
+}
+
+[data-theme="soviet"] .chat-toggle__icon {
+  color: #B32929;
+}
+
+[data-theme="soviet"] .chat {
+  background-color: #F5E6C8;
+  border: 3px solid #0A0A0A;
+  border-radius: 0;
+  box-shadow: 4px 4px 0 #0A0A0A;
+}
+
+[data-theme="soviet"] .chat--mobile {
+  background-color: #F5E6C8;
+}
+
+[data-theme="soviet"] .chat__header {
+  background-color: #E79743;
+  color: #B32929;
+  border-bottom: 3px solid #0A0A0A;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+}
+
+[data-theme="soviet"] .chat__header--mobile {
+  background-color: #E79743;
+}
+
+[data-theme="soviet"] .chat__close-btn {
+  background-color: #E79743;
+  border: 2px solid #0A0A0A;
+  color: #B32929;
+  padding: 4px 8px;
+}
+
+[data-theme="soviet"] .chat__messages {
+  background-color: #F5E6C8;
+}
+
+[data-theme="soviet"] .chat__message {
+  color: #0A0A0A;
+}
+
+[data-theme="soviet"] .chat__message-sender {
+  color: #B32929;
+  text-transform: uppercase;
+}
+
+[data-theme="soviet"] .chat__message-text {
+  color: #0A0A0A;
+}
+
+[data-theme="soviet"] .chat__message-time {
+  color: #666;
+}
+
+[data-theme="soviet"] .chat__form {
+  background-color: #F5E6C8;
+  border-top: 3px solid #0A0A0A;
+}
+
+[data-theme="soviet"] .chat__form--mobile {
+  background-color: #F5E6C8;
+}
+
+[data-theme="soviet"] .chat__input {
+  background-color: #F5E6C8;
+  color: #0A0A0A;
+  border: 2px solid #0A0A0A;
+  border-radius: 0;
+}
+
+[data-theme="soviet"] .chat__submit {
+  background-color: #E79743;
+  color: #B32929;
+  border: 2px solid #0A0A0A;
+  border-radius: 0;
+  box-shadow: 2px 2px 0 #0A0A0A;
+  font-weight: bold;
+  text-transform: uppercase;
+}
+
+[data-theme="soviet"] .chat,
+[data-theme="soviet"] .chat * {
+  font-family: var(--font-family-primary) !important;
+}
+
+/* Soviet chat bubble */
+[data-theme="soviet"] .chat-bubble {
+  background-color: #0A0A0A;
+  border: 2px solid #B32929;
+  border-radius: 0;
+  box-shadow: 2px 2px 0 #B32929;
+}
+
+[data-theme="soviet"] .chat-bubble__pointer {
+  border-top-color: #0A0A0A;
+  bottom: -8px;
+}

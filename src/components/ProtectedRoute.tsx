@@ -39,13 +39,13 @@ export const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
     return (
         <ServerProvider>
             <FernFractalProvider>
-                <AnimationProvider>
-                    <GameProvider>
-                        <DragProvider>
-                            {children}
-                        </DragProvider>
-                    </GameProvider>
-                </AnimationProvider>
+                    <AnimationProvider>
+                        <GameProvider>
+                            <DragProvider>
+                                {children}
+                            </DragProvider>
+                        </GameProvider>
+                    </AnimationProvider>
             </FernFractalProvider>
         </ServerProvider>
     );

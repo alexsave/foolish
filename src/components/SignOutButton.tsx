@@ -1,11 +1,10 @@
 import { useNavigate } from 'react-router-dom';
-import { useIconButtonStyle } from '../hooks/useIconButtonStyle';
 import { useAuth } from '../contexts/AuthContext';
+import { TexturedSurface } from './TexturedSurface';
 
 export const SignOutButton = () => {
     const navigate = useNavigate();
     const { signOut } = useAuth();
-    const { buttonBaseStyle, woodButtonStyle, woodButtonHoverStyle, iconStyle } = useIconButtonStyle();
 
     const handleSignOut = async () => {
         try {
@@ -13,67 +12,42 @@ export const SignOutButton = () => {
             navigate('/');
         } catch (error) {
             console.error('Sign out failed:', error);
-            // Navigate anyway since local state is cleared
             navigate('/');
         }
     };
 
     return (
-        <button
+        <TexturedSurface
+            as="button"
+            seed={0.2}
+            className="btn-icon btn-icon--right"
             onClick={handleSignOut}
-            style={{
-                ...buttonBaseStyle,
-                right: '10px',
-                overflow: 'visible',
-            }}
-            onMouseEnter={(e) => {
-                Object.assign(e.currentTarget.style, woodButtonHoverStyle);
-            }}
-            onMouseLeave={(e) => {
-                Object.assign(e.currentTarget.style, woodButtonStyle);
-            }}
+            style={{ overflow: 'visible' }}
             title="Sign Out"
         >
-            {/* Arrow pointing out of box icon - using positioned elements for cross-browser consistency */}
-            <div style={{
-                position: 'relative',
-                width: '24px',
-                height: '24px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-            }}>
-                {/* Box/Door frame */}
-                <div style={{
-                    position: 'absolute',
+            <div className="flex flex-center relative" style={{ width: '24px', height: '24px' }}>
+                <div className="absolute" style={{
                     width: '14px',
                     height: '18px',
-                    border: `3px solid ${iconStyle.color}`,
+                    border: '3px solid var(--color-text-dark)',
                     borderRight: 'none',
                     left: '0',
                 }} />
-                
-                {/* Arrow shaft */}
-                <div style={{
-                    position: 'absolute',
+                <div className="absolute" style={{
                     width: '14px',
                     height: '3px',
-                    backgroundColor: iconStyle.color,
+                    backgroundColor: 'var(--color-text-dark)',
                     right: '0',
                 }} />
-                
-                {/* Arrow head - top part */}
-                <div style={{
-                    position: 'absolute',
+                <div className="absolute" style={{
                     width: '0',
                     height: '0',
-                    borderLeft: `6px solid ${iconStyle.color}`,
+                    borderLeft: '6px solid var(--color-text-dark)',
                     borderTop: '4px solid transparent',
                     borderBottom: '4px solid transparent',
                     right: '-2px',
                 }} />
             </div>
-        </button>
+        </TexturedSurface>
     );
 };
-

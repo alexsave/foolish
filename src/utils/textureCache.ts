@@ -6,13 +6,15 @@ const DB_VERSION = 1;
 const STORE_NAME = 'textures';
 
 // Version keys - increment these to invalidate old cached textures
-const TEXTURE_VERSIONS = {
+const TEXTURE_VERSIONS: Record<TextureType, string> = {
   fern: 'v1',
   wood: 'v2',
   wool: 'v1',
+  soviet: 'v1',
+  concrete: 'v1',
 };
 
-type TextureType = 'fern' | 'wood' | 'wool';
+type TextureType = 'fern' | 'wood' | 'wool' | 'soviet' | 'concrete';
 
 // Initialize IndexedDB
 function openDB(): Promise<IDBDatabase> {

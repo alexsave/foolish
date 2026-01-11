@@ -1,0 +1,359 @@
+/* =================================================================
+   Card Styles (Playing Cards)
+   ================================================================= */
+
+/* ===== Card Face ===== */
+.card {
+  background-color: var(--color-card-face);
+  width: var(--card-width);
+  height: var(--card-height);
+  border-radius: var(--radius-md);
+  border: var(--border-card);
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  transition: transform 0.2s ease-in-out, opacity 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+  position: relative;
+  font-family: var(--font-family-serif);
+  font-weight: var(--font-weight-bold);
+  display: flex;
+  flex-direction: column;
+  font-size: 20px;
+  line-height: 15px;
+}
+
+.card--clickable {
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.card--non-interactive {
+  cursor: default;
+  pointer-events: none;
+}
+
+.card--animating {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.card--red {
+  color: var(--color-card-red);
+}
+
+.card--black {
+  color: var(--color-card-black);
+}
+
+/* ===== Card Index (Corner values) ===== */
+.card__index {
+  width: 12px;
+  position: absolute;
+  font-size: 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.card__index--top-left {
+  left: 4px;
+  top: 4px;
+}
+
+.card__index--bottom-right {
+  bottom: 4px;
+  right: 4px;
+  transform: rotate(180deg);
+}
+
+/* ===== Card Center Symbol ===== */
+.card__center {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 36px;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  text-align: center;
+  line-height: 1;
+}
+
+/* ===== Card Back ===== */
+.card-back {
+  background-color: var(--color-card-back);
+  width: var(--card-width);
+  height: var(--card-height);
+  border-radius: 3px;
+  border: 1px solid #8B0000;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  background-size: 100% 100%;
+  background-repeat: no-repeat;
+}
+
+.card-back--loaded {
+  background-color: var(--color-card-back-loaded);
+}
+
+/* ===== Card Hand Display (Other players) ===== */
+.card-hand {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  height: 20px;
+  width: 100px;
+}
+
+.card-hand__card {
+  box-sizing: border-box;
+  background-color: var(--color-card-back);
+  width: var(--card-width-sm);
+  height: var(--card-height-sm);
+  border-radius: 3px;
+  border: 1px solid #8B0000;
+  position: absolute;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  background-size: 100% 100%;
+  background-repeat: no-repeat;
+}
+
+.card-hand__card--loaded {
+  background-color: var(--color-card-back-loaded);
+}
+
+.card-hand__count {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-bold);
+  z-index: 15;
+  pointer-events: none;
+  text-shadow: var(--text-shadow-dark);
+}
+
+/* ===== Player's Hand Cards ===== */
+.card-in-hand {
+  flex: 1 1 0;
+  min-width: 20px;
+  max-width: 50px;
+  z-index: var(--z-card);
+  height: 70px;
+  border-radius: var(--radius-md);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  transition: var(--transition-fast);
+  cursor: move;
+  user-select: none;
+  margin: 0 1px;
+  border: var(--border-card);
+  background-color: var(--color-card-face);
+}
+
+.card-in-hand--selected {
+  border-color: red;
+}
+
+.card-in-hand--dragging {
+  opacity: 0.3;
+}
+
+.card-in-hand--drag-action {
+  border-color: red;
+}
+
+/* ===== Table Battle Cards ===== */
+.card-battle {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+  width: 60px;
+  height: 80px;
+  margin: 5px;
+  justify-content: center;
+}
+
+.card-battle--targeted {
+  border: 3px solid var(--color-warning);
+  background-color: rgba(210, 144, 2, 0.1);
+}
+
+.card-battle--cover-selected {
+  border: 3px solid red;
+}
+
+.card-battle__attack {
+  position: absolute;
+  bottom: 5px;
+  left: 50%;
+  transform: translateX(-50%);
+  transform-origin: center bottom;
+  z-index: 2;
+}
+
+.card-battle__attack--covered {
+  transform: translateX(-50%) rotate(-0.196rad);
+  z-index: 1;
+}
+
+.card-battle__defense {
+  position: absolute;
+  bottom: 5px;
+  left: 50%;
+  transform: translateX(-50%) rotate(0.196rad);
+  transform-origin: center bottom;
+  z-index: 2;
+}
+
+/* ===== Empty Drop Zone ===== */
+.card-dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+  width: 60px;
+  height: 80px;
+  margin: 5px;
+  justify-content: center;
+  border: 3px dashed var(--color-warning);
+  background-color: rgba(210, 144, 2, 0.1);
+  border-radius: var(--radius-lg);
+}
+
+.card-dropzone__placeholder {
+  width: 40px;
+  height: 60px;
+  border: 2px dashed var(--color-warning);
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--font-size-xl);
+  color: var(--color-warning);
+  opacity: 0.7;
+}
+
+/* =================================================================
+   SOVIET THEME Card Overrides
+   ================================================================= */
+
+/* Card face - stark contrast */
+[data-theme="soviet"] .card {
+  border-radius: 0;
+  border: 3px solid #0A0A0A;
+  box-shadow: 3px 3px 0 #0A0A0A;
+  background-color: var(--color-card-face);
+}
+
+/* Card text colors - bold Soviet red */
+[data-theme="soviet"] .card--red,
+[data-theme="soviet"] .card--red * {
+  color: var(--color-soviet-red) !important;
+}
+
+[data-theme="soviet"] .card--black,
+[data-theme="soviet"] .card--black * {
+  color: #0A0A0A !important;
+}
+
+/* Card back - Soviet red with star pattern feel */
+[data-theme="soviet"] .card-back {
+  border-radius: 0;
+  border: 3px solid #0A0A0A;
+  box-shadow: 3px 3px 0 #0A0A0A;
+  background-color: var(--color-soviet-red);
+}
+
+/* Mini cards in hand display */
+[data-theme="soviet"] .card-hand__card {
+  border-radius: 0;
+  border: 2px solid #0A0A0A;
+  box-shadow: 2px 2px 0 #0A0A0A;
+  background-color: var(--color-soviet-red);
+}
+
+/* Cards in player's hand */
+[data-theme="soviet"] .card-in-hand {
+  border-radius: 0;
+  border: 3px solid #0A0A0A;
+  background-color: var(--color-card-face);
+  box-shadow: 3px 3px 0 #0A0A0A;
+}
+
+[data-theme="soviet"] .card-in-hand--selected {
+  border-color: var(--color-soviet-gold);
+  box-shadow: 0 0 0 3px var(--color-soviet-gold), 4px 4px 0 #0A0A0A;
+}
+
+/* Drop zone - gold accent */
+[data-theme="soviet"] .card-dropzone {
+  border-radius: 0;
+  border: 4px dashed var(--color-soviet-gold);
+  background-color: rgba(179, 41, 41, 0.15);
+}
+
+[data-theme="soviet"] .card-dropzone__placeholder {
+  border-radius: 0;
+  border: 3px dashed var(--color-soviet-gold);
+  color: var(--color-soviet-gold);
+}
+
+/* =================================================================
+   Drag Shadow Styles
+   ================================================================= */
+
+.drag-shadow {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  z-index: 2001;
+  pointer-events: none;
+}
+
+.drag-shadow__indicator {
+  min-width: 100px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background-color: rgba(0, 0, 0, 0.8);
+  color: var(--color-text-primary);
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 14px;
+  text-align: center;
+}
+
+.drag-shadow__cards {
+  display: flex;
+  flex-direction: row;
+}
+
+/* Soviet drag shadow */
+[data-theme="soviet"] .drag-shadow__indicator {
+  background-color: #F5E6C8;
+  color: #B32929;
+  padding: 6px 12px;
+  border-radius: 0;
+  border: 2px solid #E79743;
+  box-shadow: 2px 2px 0 #0A0A0A;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}

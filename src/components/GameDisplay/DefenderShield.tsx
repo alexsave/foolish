@@ -1,6 +1,7 @@
 import { PersonalGame } from "../../common/types";
 import { useAuth } from "../../contexts/AuthContext";
 import { useServer } from "../../contexts/ServerContext";
+import { SovietIcon } from "../SovietIcon";
 
 export const DefenderShield = () => {
     const game: PersonalGame = useServer().game as PersonalGame;
@@ -94,10 +95,9 @@ export const DefenderShield = () => {
             {/* Shield */}
             <div style={{
                 position: 'absolute',
-                fontSize: '24px',
                 zIndex: 400
             }}>
-                🛡️
+                <SovietIcon name="shield" size={28} />
             </div>
         </div>
     </>

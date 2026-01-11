@@ -8,7 +8,9 @@ import { WeakPassword } from '@supabase/supabase-js';
 const AuthContext = createContext<AuthContextType | null>(null);
 
 const nameToEmail = async (name: string): Promise<string> => {
-  const buf = new TextEncoder().encode(name);
+  // Convert to uppercase for consistent hashing
+  const normalizedName = name.toUpperCase();
+  const buf = new TextEncoder().encode(normalizedName);
   let digestArray: Uint8Array;
   // TODO remove this along with the aws lib
   if (window.location.hostname.startsWith('10.0.0')) {
@@ -100,11 +102,13 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
   const signUp = async (username: string, password: string) => {
     // this is a hack to get around the fact that supabase doesn't support username/password auth
+    // Convert to uppercase for consistency
+    const normalizedUsername = username.toUpperCase();
     const email = await nameToEmail(username);
 
     // Proceed with signup - Supabase handles duplicate email prevention
-    // add name as a metadata field
-    const { data, error } = await supabase.auth.signUp({ email, password, options: { data: { username: username } } });
+    // add name as a metadata field (stored as uppercase)
+    const { data, error } = await supabase.auth.signUp({ email, password, options: { data: { username: normalizedUsername } } });
 
     if (error) {
       throw error;

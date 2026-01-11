@@ -15,80 +15,32 @@ export const Dashboard = () => {
     const { games, getUserGames } = useServer();
     const { t } = useLocalization();
 
-    // Load all games when Dashboard mounts
     useEffect(() => {
         getUserGames();
     }, []);
 
     return (
-        <div style={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            height: '100%',
-            width: '100%',
-            minHeight: '100vh',
-            position: 'relative',
-            backgroundColor: '#ad826e'
-        }}>
+        <div className="page page--full-height">
         <WoolBackgroundLayer />
         <SignOutButton />
 
-            {/* Title */}
-        <h1 style={{
-            color: 'white',
-            fontSize: '1.3rem',
-            fontWeight: 'bold',
-            marginBottom: '0.75rem',
-            textAlign: 'center',
-            position: 'relative',
-                zIndex: 10,
-                textShadow: '1px 1px 2px rgba(0,0,0,0.8)'
-        }}>
+            <h1 className="title title--section">
             {t('dashboard_title', { username: username || '' })}
         </h1>
 
-            {/* Action buttons section */}
-        <div style={{
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '0.5rem',
-            alignItems: 'center',
-            marginBottom: '0.75rem',
-            width: '300px',
-            position: 'relative',
-            zIndex: 10
-        }}>
+            <div className="flex flex-col items-center gap-sm mb-md z-content" style={{ width: '300px' }}>
                 <JoinGameForm />
                 <CreateGameButton />
         </div>
 
-            {/* Games list */}
-            <div style={{
-                width: '100%',
-                maxWidth: '95vw',
-                flex: '1',
-                position: 'relative',
-                zIndex: 10
-            }}>
-            <div style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '6px',
-                alignItems: 'center'
-            }}>
+            <div className="w-full flex-1 z-content" style={{ maxWidth: '95vw' }}>
+                <div className="flex flex-col items-center" style={{ gap: '6px' }}>
                     {Object.values(games).map((game) => (
                         <GameCard key={game.id} game={game} />
                     ))}
 
                 {Object.keys(games).length === 0 && (
-                    <div style={{
-                        color: 'white',
-                        textAlign: 'center',
-                        padding: '2rem',
-                            fontSize: '1.1rem',
-                            textShadow: '1px 1px 2px rgba(0,0,0,0.8)'
-                    }}>
+                        <div className="empty-state">
                         <Text id="no_games_available" />
                     </div>
                 )}

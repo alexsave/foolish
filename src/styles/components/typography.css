@@ -1,0 +1,228 @@
+/* =================================================================
+   Typography Styles
+   ================================================================= */
+
+/* ===== Page Titles ===== */
+.title {
+  color: var(--color-text-primary);
+  font-weight: var(--font-weight-bold);
+  text-align: center;
+  position: relative;
+  z-index: var(--z-content);
+}
+
+.title--brand {
+  font-size: var(--font-size-title);
+  color: var(--color-accent-red);
+  text-shadow: var(--text-shadow-title);
+  margin-bottom: 30px;
+}
+
+.title--page {
+  font-size: var(--font-size-xxl);
+  color: var(--color-accent-red);
+  text-shadow: var(--text-shadow-title);
+  margin: 0;
+}
+
+.title--section {
+  font-size: 1.3rem;
+  margin-bottom: 0.75rem;
+  text-shadow: var(--text-shadow-dark);
+}
+
+.title--game-name {
+  font-size: 2rem;
+  margin: 0.25rem;
+  position: relative;
+  z-index: var(--z-content);
+}
+
+.title--game-display {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-bold);
+}
+
+/* ===== Subtitles ===== */
+.subtitle {
+  color: var(--color-text-primary);
+  position: relative;
+  z-index: var(--z-content);
+}
+
+.subtitle--game-id {
+  margin: 0.25rem;
+}
+
+/* ===== Body Text ===== */
+.text {
+  color: var(--color-text-primary);
+}
+
+.text--muted {
+  color: var(--color-text-muted);
+}
+
+.text--dark {
+  color: var(--color-text-dark);
+}
+
+.text--label {
+  color: var(--color-text-label);
+  font-weight: var(--font-weight-bold);
+}
+
+.text--shadow {
+  text-shadow: var(--text-shadow-dark);
+}
+
+.text--shadow-dark {
+  text-shadow: var(--text-shadow-darker);
+}
+
+.text--center {
+  text-align: center;
+}
+
+/* ===== About Page Content ===== */
+.about-content {
+  background-color: rgba(255, 255, 255, 0.9);
+  padding: 20px;
+  border: var(--border-wood-thick);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  line-height: 1.5;
+  font-size: var(--font-size-md);
+  color: var(--color-text-label);
+}
+
+.about-content p:first-child {
+  margin-top: 0;
+}
+
+.about-content p:last-child {
+  margin-bottom: 0;
+}
+
+/* ===== Links ===== */
+.link {
+  color: var(--color-wood-dark);
+  text-decoration: underline;
+  font-size: var(--font-size-base);
+  cursor: pointer;
+  z-index: var(--z-content);
+  text-shadow: 0 1px 2px rgba(255, 255, 255, 0.5);
+}
+
+.link--bottom {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+/* ===== Loading Text ===== */
+.loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  background-color: var(--color-background);
+  color: var(--color-text-primary);
+}
+
+/* ===== No Games Message ===== */
+.empty-state {
+  color: var(--color-text-primary);
+  text-align: center;
+  padding: 2rem;
+  font-size: 1.1rem;
+  text-shadow: var(--text-shadow-dark);
+}
+
+/* ===== Spectating Text ===== */
+.spectating {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-lg);
+}
+
+/* =================================================================
+   SOVIET THEME Typography Overrides - Clean poster style, no shadows
+   ================================================================= */
+
+/* Big titles - red on gold banner */
+[data-theme="soviet"] .title--brand,
+[data-theme="soviet"] p.title--brand {
+  color: var(--color-soviet-red) !important;
+  text-shadow: none;
+  text-transform: uppercase;
+  letter-spacing: 3px;
+  font-weight: 900;
+  background-color: #E79743;
+  padding: 15px 80px;
+  display: inline-block;
+  transform: translateY(-50px) rotate(-20deg);
+}
+
+[data-theme="soviet"] .title--page,
+[data-theme="soviet"] p.title--page {
+  color: var(--color-soviet-red) !important;
+  text-shadow: none;
+  text-transform: uppercase;
+  letter-spacing: 3px;
+  font-weight: 900;
+  background-color: #F5E6C8;
+  padding: 15px 40px;
+  display: inline-block;
+}
+
+/* Section titles - cream on red */
+[data-theme="soviet"] .title--section {
+  color: var(--color-soviet-red) !important;
+  text-shadow: none;
+  text-transform: uppercase;
+  font-weight: bold;
+  background-color: #F5E6C8;
+  padding: 12px 0;
+  display: block;
+  width: 100vw;
+  margin-left: calc(-50vw + 50%);
+  text-align: center;
+  position: relative;
+  z-index: 10;
+}
+
+/* About content - red on cream */
+[data-theme="soviet"] .about-content {
+  background-color: #F5E6C8;
+  border: 3px solid #0A0A0A;
+  box-shadow: 4px 4px 0 #0A0A0A;
+  color: #B32929;
+  font-family: var(--font-family-primary) !important;
+}
+
+[data-theme="soviet"] .about-content p {
+  font-family: var(--font-family-primary) !important;
+  font-weight: 500;
+  color: #0A0A0A;
+}
+
+/* Links - cream on red */
+[data-theme="soviet"] .link {
+  color: #F5E6C8;
+  text-shadow: none;
+  font-family: var(--font-family-primary) !important;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-weight: bold;
+}
+
+/* Form labels - cream on red */
+[data-theme="soviet"] .form-label {
+  color: #F5E6C8;
+  text-shadow: none;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-family: var(--font-family-primary) !important;
+  font-weight: bold;
+}

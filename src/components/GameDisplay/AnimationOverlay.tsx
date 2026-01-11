@@ -454,7 +454,6 @@ export const AnimationOverlay = () => {
                                 card={card}
                                 isAnimationOverlay={true}
                                 style={{
-                                    borderRadius: '5px',
                                     border: isRevert 
                                         ? '2px solid rgb(220, 38, 38)' 
                                         : '2px solid black',
@@ -463,8 +462,8 @@ export const AnimationOverlay = () => {
                                         : `0 ${progress * 10}px ${progress * 20}px rgba(0,0,0,0.4)`,
                                     filter: isRevert 
                                         ? 'brightness(1.3) contrast(1.2) sepia(0.3) saturate(1.8) hue-rotate(-10deg)'
-                                        : `brightness(${1 + progress * 0.2})`,
-                                    backgroundColor: isRevert ? 'rgb(255, 150, 150)' : 'white'   
+                                        : 'none',
+                                    backgroundColor: isRevert ? 'rgb(255, 150, 150)' : 'var(--color-card-face)'
                                 }}
                             />
                         )}

@@ -1,0 +1,294 @@
+/* =================================================================
+   Base Styles - Reset and Foundation
+   ================================================================= */
+
+/* ===== Reset ===== */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html {
+  height: 100%;
+  overflow: hidden;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overscroll-behavior: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+}
+
+#root {
+  height: 100%;
+  overflow: hidden;
+  position: relative;
+}
+
+/* ===== Touch Action Strategy ===== */
+
+/* Allow dragging only on draggable elements */
+[draggable="true"] {
+  touch-action: auto !important;
+}
+
+/* Allow vertical scrolling only in chat areas */
+[data-chat-scrollable] {
+  touch-action: pan-y !important;
+  overscroll-behavior: contain !important;
+}
+
+/* Allow taps but prevent zoom/pan on interactive elements */
+[data-touch-interactive] {
+  touch-action: manipulation !important;
+}
+
+/* Completely prevent all touch gestures on non-interactive areas */
+[data-touch-none] {
+  touch-action: none !important;
+}
+
+/* Allow taps and prevent double-tap zoom on buttons */
+button {
+  touch-action: manipulation !important;
+}
+
+/* Allow typing but prevent zoom/pan on inputs */
+input, textarea {
+  touch-action: manipulation !important;
+}
+
+/* ===== iOS Safari Fixes ===== */
+@supports (-webkit-touch-callout: none) {
+  body {
+    height: 100dvh;
+  }
+  
+  .ios-keyboard-fix {
+    height: 100vh;
+    height: 100dvh;
+  }
+}
+
+/* ===== Code/Monospace ===== */
+code {
+  font-family: var(--font-family-mono);
+}
+
+/* ===== Typography Base ===== */
+h1 {
+  margin: 0px;
+  padding: 12px;
+
+}
+
+h2, h3, h4, h5, h6 {
+  margin: 0px;
+  color: var(--color-text-primary);
+}
+
+p {
+  margin: 0;
+}
+
+/* ===== Links ===== */
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* ===== User Select Prevention ===== */
+.no-select {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* ===== Animations ===== */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+@keyframes fadeInSimple {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
+/* =================================================================
+   SOVIET THEME Base Overrides - Propaganda Poster Aesthetic
+   ================================================================= */
+
+/* Global Soviet font */
+[data-theme="soviet"] body,
+[data-theme="soviet"] body *,
+[data-theme="soviet"] input,
+[data-theme="soviet"] button,
+[data-theme="soviet"] select,
+[data-theme="soviet"] textarea {
+  font-family: var(--font-family-primary) !important;
+  letter-spacing: 0.5px;
+}
+
+/* Display font for headings */
+[data-theme="soviet"] h1,
+[data-theme="soviet"] h2,
+[data-theme="soviet"] h3,
+[data-theme="soviet"] h4,
+[data-theme="soviet"] h5,
+[data-theme="soviet"] h6,
+[data-theme="soviet"] .title,
+[data-theme="soviet"] .title--brand,
+[data-theme="soviet"] .title--page {
+  font-family: var(--font-family-display) !important;
+  text-transform: uppercase;
+  letter-spacing: 3px;
+  font-weight: normal;
+}
+
+/* Big titles - Red on gold banner */
+[data-theme="soviet"] .title--brand,
+[data-theme="soviet"] p.title--brand {
+  color: var(--color-soviet-red) !important;
+  text-shadow: none;
+  letter-spacing: 4px;
+  font-weight: bold;
+  background-color: #E79743;
+  padding: 15px 80px;
+  display: inline-block;
+  transform: translateY(-50px) rotate(-20deg);
+}
+
+[data-theme="soviet"] .title--page,
+[data-theme="soviet"] p.title--page {
+  color: var(--color-soviet-red) !important;
+  text-shadow: none;
+  letter-spacing: 4px;
+  font-weight: bold;
+  background-color: #F5E6C8;
+  padding: 15px 40px;
+  display: inline-block;
+}
+
+/* Secondary elements - Bold black text */
+[data-theme="soviet"] .title--section,
+[data-theme="soviet"] .subtitle {
+  color: #0A0A0A;
+  text-shadow: none;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  font-weight: bold;
+}
+
+/* Button text styling - red on cream */
+[data-theme="soviet"] .btn-wood-text,
+[data-theme="soviet"] .btn-action-text {
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  font-weight: bold;
+  color: #B32929 !important;
+  text-shadow: none;
+}
+
+/* General text - cream on dark */
+[data-theme="soviet"] p:not(.title--brand):not(.title--page),
+[data-theme="soviet"] span:not(.title--brand span):not(.title--page span),
+[data-theme="soviet"] label {
+  color: var(--color-text-primary);
+}
+
+/* Title spans inherit red */
+[data-theme="soviet"] .title--brand span,
+[data-theme="soviet"] .title--page span {
+  color: inherit !important;
+}
+
+/* Input styling - black on cream */
+[data-theme="soviet"] input,
+[data-theme="soviet"] textarea {
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #0A0A0A;
+  background-color: #F5E6C8;
+  border: 3px solid #0A0A0A;
+}
+
+/* Password input - use stars instead of circles */
+[data-theme="soviet"] input[type="password"] {
+  -webkit-text-security: square;
+  font-family: monospace;
+}
+
+[data-theme="soviet"] input:focus,
+[data-theme="soviet"] textarea:focus {
+  outline: none;
+  border-color: var(--color-soviet-gold);
+  box-shadow: 0 0 0 2px var(--color-soviet-gold);
+}
+
+/* Subtle aged paper texture */
+[data-theme="soviet"] .page::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+  z-index: 0;
+  background: none;
+}
+
+/* Light vignette for aged poster effect */
+[data-theme="soviet"] .page::after {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+  z-index: 1;
+  background: radial-gradient(ellipse at center, transparent 50%, rgba(0, 0, 0, 0.15) 100%);
+}

@@ -21,51 +21,35 @@ export const GameDisplay = () => {
 
     usePreventScroll();
 
-    // Handle missing game data (GameView handles loading and error states)
     if (!game || !game.players || !game.players.length) {
         return <div><Text id="loading" /></div>;
     }
 
-    return <div
-        data-game-container
-        style={{
-            //backgroundColor: 'transparent',
-            width: '100%',
-            height: '100vh',
-            touchAction: 'none', 
-        }}
-    >
-        <WoolBackgroundLayer />
-        <KeyboardInputHandler />
-        
-        <BackButton />
+    return (
+        <div data-game-container className="game-container">
+            <WoolBackgroundLayer />
+            <KeyboardInputHandler />
+            <BackButton />
+            <CoverArrows />
 
-        <CoverArrows />
+            <div className="flex flex-1 flex-center">
+                <p className="title--game-display">{game.name}</p>
 
-        <div style={{ display: 'flex', flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-            <p style={{ color: 'white', fontSize: '24px', fontWeight: 'bold' }}>{game.name}</p>
+                <DragShadow />
+                <DeckAndFlipped />
+                <DiscardPile />
+                <ActionButtons />
 
-            <DragShadow />
+                <div className="absolute flex flex-col items-center justify-center w-full" style={{ top: 0, bottom: 0 }}>
+                    <DefenderShield />
+                    <TableBattles />
+                </div>
 
-            <DeckAndFlipped />
-
-            <DiscardPile />
-
-            <ActionButtons />
-
-            <div style={{ position: 'absolute', display: 'flex', flexDirection: 'column', top: 0, width: '100%', bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
-                <DefenderShield />
-
-                <TableBattles />
+                <PlayerRing />
+                <Chat />
             </div>
 
-            <PlayerRing />
-
-            <Chat />
-
+            <AnimationOverlay />
         </div>
-
-        <AnimationOverlay />
-
-    </div>
+    );
 };

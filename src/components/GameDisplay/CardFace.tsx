@@ -1,9 +1,11 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { Card } from '../../common/types';
 import { CardBack } from './CardBack';
-import { SUIT_MAP, VALUE_MAP } from '../../utils/cards';
+import { VALUE_MAP } from '../../utils/cards';
 import { HEARTS, DIAMONDS } from '../../common/constants';
 import { useAnimation } from '../../contexts/AnimationContext';
+import { useStyles } from '../../contexts/StyleContext';
+import { SuitIcon } from '../SovietIcon';
 
 export const CardFace = ({ card, onClick, style = {}, playerId, isAnimationOverlay = false, ...props }: {
     card: Card,
@@ -13,6 +15,7 @@ export const CardFace = ({ card, onClick, style = {}, playerId, isAnimationOverl
     isAnimationOverlay?: boolean
 } & React.HTMLAttributes<HTMLDivElement>) => {
     const { getCardAnimationState } = useAnimation();
+    const styles = useStyles();
     const cardRef = useRef<HTMLDivElement>(null);
     const [actualWidth, setActualWidth] = useState<number>(50);
     const [actualHeight, setActualHeight] = useState<number>(70);
@@ -51,20 +54,27 @@ export const CardFace = ({ card, onClick, style = {}, playerId, isAnimationOverl
     const isRed = card.suit === HEARTS || card.suit === DIAMONDS; // hearts or diamonds
     const suitColor = isRed ? '#dc2626' : '#000000'; // red or black
 
-    // Get clean suit symbols (without emoji modifiers for better display)
-    // Voodoo here
-    const suitSymbol = SUIT_MAP[card.suit]?.replace('️', '') || '?';
     const valueSymbol = VALUE_MAP[card.value] || '?';
+    
+    // Render suit symbol - SVG icon for Soviet theme, emoji for default
+    const suitEmoji = ['♠', '♥', '♣', '♦'][card.suit] || '?';
+    const renderSuit = (size: number) => {
+        if (!styles.icons.useEmojiIcons) {
+            return <SuitIcon suit={card.suit} size={size} />;
+        }
+        return <span style={{ fontSize: size }}>{suitEmoji}</span>;
+    };
 
     // Determine if this is a small card that needs simplified layout based on ACTUAL rendered size
     const isThinCard = actualWidth < 40 && actualHeight > 60;
 
     const defaultStyle: React.CSSProperties = {
-        backgroundColor: 'white',
+        backgroundColor: 'var(--color-card-face)',
         width: '50px',
         height: '70px',
-        borderRadius: '5px',
-        border: '2px solid black',
+        borderRadius: styles.cardInHand.borderRadius,
+        border: `2px solid ${styles.cardInHand.borderColor}`,
+        boxShadow: styles.cardInHand.boxShadow,
         cursor: onClick ? 'pointer' : 'default',
         userSelect: 'none',
         WebkitUserSelect: 'none',
@@ -106,14 +116,16 @@ export const CardFace = ({ card, onClick, style = {}, playerId, isAnimationOverl
         WebkitTouchCallout: 'none',
     } as React.CSSProperties;
 
+    const mergedStyle = { ...defaultStyle, ...animationStyle, ...style };
+
     if (isThinCard) {
         return <div
             ref={cardRef}
             onClick={onClick}
-            style={{ ...defaultStyle, ...animationStyle, ...style }}
+            style={mergedStyle}
             {...props}>
             <div style={{ fontSize: '20px' }}>{valueSymbol}</div>
-            <div style={{ fontSize: '24px' }}>{suitSymbol}</div>
+            <div>{renderSuit(20)}</div>
         </div>
     }
 
@@ -121,7 +133,7 @@ export const CardFace = ({ card, onClick, style = {}, playerId, isAnimationOverl
         <div
             ref={cardRef}
             onClick={onClick}
-            style={{ ...defaultStyle, ...animationStyle, ...style }}
+            style={mergedStyle}
             {...props}
         >
             {/* Top-left corner index */}
@@ -131,7 +143,7 @@ export const CardFace = ({ card, onClick, style = {}, playerId, isAnimationOverl
                 top: '4px',
             }}>
                 <div>{valueSymbol}</div>
-                <div>{suitSymbol}</div>
+                <div>{renderSuit(14)}</div>
             </div>
 
             {/* Bottom-right corner index (rotated) */}
@@ -142,7 +154,7 @@ export const CardFace = ({ card, onClick, style = {}, playerId, isAnimationOverl
                 transform: 'rotate(180deg)',
             }}>
                 <div>{valueSymbol}</div>
-                <div>{suitSymbol}</div>
+                <div>{renderSuit(14)}</div>
             </div>
 
             {/* Center suit symbol */}
@@ -151,7 +163,6 @@ export const CardFace = ({ card, onClick, style = {}, playerId, isAnimationOverl
                 top: '50%',
                 left: '50%',
                 transform: 'translate(-50%, -50%)',
-                fontSize: '36px',
                 pointerEvents: 'none',
                 userSelect: 'none',
                 WebkitUserSelect: 'none',
@@ -159,7 +170,7 @@ export const CardFace = ({ card, onClick, style = {}, playerId, isAnimationOverl
                 textAlign: 'center',
                 lineHeight: '1',
             }}>
-                <div>{suitSymbol}</div>
+                <div>{renderSuit(32)}</div>
             </div>
         </div>
     );

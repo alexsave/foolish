@@ -1,7 +1,9 @@
 import React from 'react';
-import './App.css';
 import { AuthProvider } from './contexts/AuthContext';
 import { LocalizationProvider } from './contexts/LocalizationContext';
+import { ThemeProvider } from './contexts/ThemeContext';
+import { StyleProvider } from './contexts/StyleContext';
+import { TextureProvider } from './components/TexturedSurface';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ProtectedRoute } from './components/ProtectedRoute';
@@ -21,6 +23,9 @@ function App() {
         <BrowserRouter>
           <ErrorBoundary context="Router">
             <LocalizationProvider>
+              <ThemeProvider>
+              <StyleProvider>
+              <TextureProvider>
               <AuthProvider>
                 <ErrorBoundary context="Auth Provider">
                   <ErrorBoundary context="Routes">
@@ -62,6 +67,9 @@ function App() {
                   </ErrorBoundary>
                 </ErrorBoundary>
               </AuthProvider>
+              </TextureProvider>
+              </StyleProvider>
+              </ThemeProvider>
             </LocalizationProvider>
           </ErrorBoundary>
         </BrowserRouter>

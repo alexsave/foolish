@@ -154,36 +154,18 @@ export class ErrorBoundary extends Component<Props, State> {
       }
 
       return (
-        <div style={{
-          padding: '20px',
-          margin: '20px',
-          border: '2px solid #ff6b6b',
-          borderRadius: '8px',
-          backgroundColor: '#fff5f5',
-          color: '#c92a2a',
-          fontFamily: 'monospace',
-          maxWidth: '800px',
-          marginLeft: 'auto',
-          marginRight: 'auto',
-        }}>
-          <h2>🚨 Something went wrong</h2>
-          <p><strong>Error ID:</strong> {this.state.errorId}</p>
-          <p><strong>Context:</strong> {this.props.context || 'Unknown'}</p>
-          <p><strong>Time:</strong> {new Date().toLocaleString()}</p>
+        <div className="error-boundary">
+          <h2 className="error-boundary__title">🚨 Something went wrong</h2>
+          <p className="error-boundary__info"><strong>Error ID:</strong> {this.state.errorId}</p>
+          <p className="error-boundary__info"><strong>Context:</strong> {this.props.context || 'Unknown'}</p>
+          <p className="error-boundary__info"><strong>Time:</strong> {new Date().toLocaleString()}</p>
           
           {this.state.error && (
-            <details style={{ marginTop: '10px' }}>
-              <summary style={{ cursor: 'pointer', fontWeight: 'bold' }}>
+            <details className="error-boundary__details">
+              <summary className="error-boundary__summary">
                 Error Details (click to expand)
               </summary>
-              <pre style={{
-                backgroundColor: '#f8f8f8',
-                padding: '10px',
-                borderRadius: '4px',
-                overflow: 'auto',
-                maxHeight: '200px',
-                fontSize: '12px',
-              }}>
+              <pre className="error-boundary__stack">
                 {this.state.error.message}
                 {'\n\n'}
                 {this.state.error.stack}
@@ -191,37 +173,16 @@ export class ErrorBoundary extends Component<Props, State> {
             </details>
           )}
           
-          <div style={{ marginTop: '20px' }}>
-            <button
-              onClick={this.handleRetry}
-              style={{
-                marginRight: '10px',
-                padding: '8px 16px',
-                backgroundColor: '#4dabf7',
-                color: 'white',
-                border: 'none',
-                borderRadius: '4px',
-                cursor: 'pointer',
-              }}
-            >
+          <div className="error-boundary__actions">
+            <button onClick={this.handleRetry} className="btn-error btn-error--retry">
               Try Again
             </button>
-            <button
-              onClick={this.handleReload}
-              style={{
-                padding: '8px 16px',
-                backgroundColor: '#ff6b6b',
-                color: 'white',
-                border: 'none',
-                borderRadius: '4px',
-                cursor: 'pointer',
-              }}
-            >
+            <button onClick={this.handleReload} className="btn-error btn-error--reload">
               Reload Page
             </button>
           </div>
           
-          <div style={{ marginTop: '15px', fontSize: '12px', opacity: 0.7 }}>
+          <div className="error-boundary__footer">
             <p>This error has been logged for debugging. Error ID: {this.state.errorId}</p>
             <p>If this keeps happening, please contact support with the Error ID.</p>
           </div>

@@ -1,8 +1,8 @@
 import { PersonalGame } from "../../common/types";
 import { CardBack } from "./CardBack";
 import { CardFace } from "./CardFace";
-import { SUIT_MAP } from "../../utils/cards";
 import { useServer } from "../../contexts/ServerContext";
+import { SuitIcon } from "../SovietIcon";
 
 export const DeckAndFlipped = () => {
     const game: PersonalGame = useServer().game as PersonalGame;
@@ -16,7 +16,7 @@ export const DeckAndFlipped = () => {
                     left: '50%',
                     transform: 'translate(-50%, -50%)',
                     margin: 0,
-                    color: 'white',
+                    color: 'var(--color-text-primary)',
                     fontSize: '16px',
                     fontWeight: 'bold',
                     textShadow: '1px 1px 2px rgba(0,0,0,0.8)',
@@ -35,12 +35,11 @@ export const DeckAndFlipped = () => {
         {/* Trump indicator appears when deck and flipped card are gone */}
         {game.deck_length === 0 && !game.flipped && (
             <div style={{
-                fontSize: '64px',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center'
             }}>
-                <span>{SUIT_MAP[game.power_suit]}</span>
+                <SuitIcon suit={game.power_suit} size={64} />
             </div>
         )}
     </div>

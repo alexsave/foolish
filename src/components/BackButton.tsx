@@ -1,27 +1,17 @@
 import { useNavigate } from 'react-router-dom';
-import { useIconButtonStyle } from '../hooks/useIconButtonStyle';
+import { TexturedSurface } from './TexturedSurface';
 
 export const BackButton = () => {
     const navigate = useNavigate();
-    const { buttonBaseStyle, woodButtonStyle, woodButtonHoverStyle, iconStyle } = useIconButtonStyle();
 
     return (
-        <button
+        <TexturedSurface
+            as="button"
+            seed={0.2}
+            className="btn-icon btn-icon--left"
             onClick={() => navigate('/dashboard')}
-            style={{
-                ...buttonBaseStyle,
-                left: '10px',
-                overflow: 'hidden',
-            }}
-            onMouseEnter={(e) => {
-                Object.assign(e.currentTarget.style, woodButtonHoverStyle);
-            }}
-            onMouseLeave={(e) => {
-                Object.assign(e.currentTarget.style, woodButtonStyle);
-            }}
         >
-            <span style={iconStyle}>{'<'}</span>
-        </button>
+            <span className="btn-icon__symbol">{'<'}</span>
+        </TexturedSurface>
     );
 };
-

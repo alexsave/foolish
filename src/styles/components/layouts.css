@@ -1,0 +1,907 @@
+/* =================================================================
+   Layout Styles
+   ================================================================= */
+
+/* ===== Page Container ===== */
+.page {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-height: 100vh;
+  width: 100%;
+  position: relative;
+  background-color: var(--color-background);
+}
+
+/* ===== Lobby Container ===== */
+.lobby {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-height: 100vh;
+  width: 100%;
+  position: relative;
+  background-color: var(--color-background);
+  touch-action: manipulation;
+}
+
+.lobby__name-input {
+  font-size: 2rem;
+  font-weight: bold;
+  text-align: center;
+  color: var(--color-text-primary);
+  background: transparent;
+  border: none;
+  padding: 0.75rem 1rem 0.5rem 1rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+  z-index: 10;
+}
+
+.lobby__name-input--editing {
+  border: 2px solid #5D3A1A;
+  border-radius: 0;
+  text-shadow: 2px 2px 4px rgba(0,0,0,0.9);
+  box-shadow: inset 2px 2px 4px rgba(0,0,0,0.4), inset -1px -1px 2px rgba(255,255,255,0.2);
+  width: 100%;
+  cursor: text;
+}
+
+.lobby__game-id {
+  margin: 0.25rem;
+  position: relative;
+  z-index: 10;
+}
+
+.lobby__qr-container {
+  margin-bottom: 10px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 120px;
+  height: 120px;
+  padding: 5px;
+  border: 2px solid #5D3A1A;
+  box-sizing: border-box;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.2), inset 0 -1px 0 rgba(0,0,0,0.3), 0 3px 6px rgba(0,0,0,0.4);
+  z-index: 10;
+}
+
+.lobby__players {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  position: relative;
+  z-index: 10;
+}
+
+.lobby__player-wrapper {
+  position: relative;
+  width: 250px;
+  margin-bottom: 4px;
+  user-select: none;
+  cursor: move;
+  transition: all 0.2s ease;
+}
+
+.lobby__player-wrapper--dragging {
+  opacity: 0.3;
+  transform: scale(1.05);
+  transition: none;
+  pointer-events: none;
+}
+
+.lobby__join-section {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: center;
+  position: relative;
+  z-index: 10;
+}
+
+/* Player Card */
+.player-card {
+  border: 2px solid #5D3A1A;
+  border-radius: 0;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.2), inset 0 -1px 0 rgba(0,0,0,0.3), 0 2px 4px rgba(0,0,0,0.4);
+  position: relative;
+  overflow: hidden;
+  width: 250px;
+  box-sizing: border-box;
+  min-height: 50px;
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  cursor: move;
+  transition: all 0.2s ease;
+  user-select: none;
+  z-index: 1500;
+}
+
+.player-card__texture {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: -1;
+  transform-origin: center center;
+}
+
+.player-card__overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1600;
+  user-select: none;
+}
+
+.player-card__name {
+  z-index: 10;
+  text-align: center;
+  line-height: 30px;
+  justify-content: center;
+  padding: 0 5px;
+  margin: 0;
+}
+
+.player-card__status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.page--centered {
+  justify-content: center;
+}
+
+.page--full-height {
+  height: 100%;
+}
+
+.page--full-viewport {
+  height: 100vh;
+  width: 100vw;
+}
+
+.page--with-padding {
+  padding: 40px 20px;
+}
+
+/* ===== Content Container ===== */
+.content {
+  position: relative;
+  z-index: var(--z-content);
+}
+
+.content--max-width {
+  max-width: 800px;
+  width: 100%;
+}
+
+.content--centered {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.content--gap-sm {
+  gap: var(--spacing-sm);
+}
+
+.content--gap-md {
+  gap: var(--spacing-lg);
+}
+
+.content--gap-lg {
+  gap: 20px;
+}
+
+/* ===== Wool Background Layer ===== */
+.bg-wool {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: var(--z-background);
+  background-color: var(--color-background);
+  background-size: cover;
+  object-fit: cover;
+  transform: scale(2);
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+.bg-vignette {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: var(--z-vignette);
+  background: radial-gradient(ellipse at center, 
+    rgba(101, 67, 33, 0) 0%, 
+    rgba(101, 67, 33, 0) 40%, 
+    rgba(101, 67, 33, 0.2) 70%, 
+    rgba(101, 67, 33, 0.6) 100%);
+  pointer-events: none;
+}
+
+/* ===== Soviet Theme Background - Bold red like propaganda posters ===== */
+.bg-soviet {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: var(--z-background);
+  background-color: #B32929;
+  display: none; /* Hidden by default */
+}
+
+.bg-vignette--soviet {
+  display: none;
+}
+
+/* Soviet mode: show Soviet background, hide wool background */
+[data-theme="soviet"] .bg-soviet {
+  display: block;
+}
+
+[data-theme="soviet"] .bg-wool,
+[data-theme="soviet"] .bg-vignette--default {
+  display: none;
+}
+
+/* ===== Wood Background Layer ===== */
+.bg-wood {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: -1;
+  transform-origin: center center;
+}
+
+/* Soviet mode: hide wood texture backgrounds */
+[data-theme="soviet"] .bg-wood {
+  display: none;
+}
+
+/* ===== Game Container ===== */
+.game-container {
+  width: 100%;
+  height: 100vh;
+  touch-action: none;
+}
+
+/* ===== Flex Utilities ===== */
+.flex {
+  display: flex;
+}
+
+.flex-col {
+  flex-direction: column;
+}
+
+.flex-row {
+  flex-direction: row;
+}
+
+.flex-wrap {
+  flex-wrap: wrap;
+}
+
+.flex-center {
+  align-items: center;
+  justify-content: center;
+}
+
+.flex-between {
+  justify-content: space-between;
+}
+
+.flex-end {
+  justify-content: flex-end;
+}
+
+.items-center {
+  align-items: center;
+}
+
+.items-start {
+  align-items: flex-start;
+}
+
+.items-end {
+  align-items: flex-end;
+}
+
+.justify-center {
+  justify-content: center;
+}
+
+.justify-between {
+  justify-content: space-between;
+}
+
+.gap-xs {
+  gap: var(--spacing-xs);
+}
+
+.gap-sm {
+  gap: var(--spacing-sm);
+}
+
+.gap-md {
+  gap: var(--spacing-md);
+}
+
+.gap-lg {
+  gap: var(--spacing-lg);
+}
+
+/* ===== Player List (Lobby) ===== */
+.player-list {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  position: relative;
+  z-index: var(--z-content);
+}
+
+/* ===== Player Card (Lobby) ===== */
+.player-card {
+  border: var(--border-wood);
+  border-radius: var(--radius-none);
+  box-shadow: var(--shadow-wood-card);
+  position: relative;
+  overflow: hidden;
+  width: 250px;
+  min-height: 50px;
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  gap: 10px;
+  padding: var(--spacing-sm) var(--spacing-md);
+  cursor: move;
+  transition: var(--transition-base);
+  user-select: none;
+  z-index: var(--z-drag-overlay);
+}
+
+.player-card--drop-target {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+.player-card__name {
+  z-index: var(--z-content);
+  text-align: center;
+  line-height: 30px;
+  justify-content: center;
+  padding: 0 5px;
+  margin: 0;
+}
+
+.player-card__status {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+/* Player card wrapper (for drag operations) */
+.player-card-wrapper {
+  position: relative;
+  width: 250px;
+  margin-bottom: var(--spacing-xs);
+  user-select: none;
+  cursor: move;
+  transition: var(--transition-base);
+}
+
+.player-card-wrapper--dragging {
+  opacity: 0.3;
+  transform: scale(1.05);
+  transition: none;
+  pointer-events: none;
+}
+
+/* ===== Game Card (Dashboard) ===== */
+.game-card {
+  border: var(--border-wood);
+  border-radius: var(--radius-none);
+  box-shadow: var(--shadow-wood-card);
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+  padding: var(--spacing-sm) var(--spacing-lg);
+  color: var(--color-text-primary);
+  width: 100%;
+  max-width: 95vw;
+  min-height: 70px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  box-sizing: border-box;
+  transition: var(--transition-base);
+}
+
+.game-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 
+    inset 0 1px 0 rgba(255, 255, 255, 0.15),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.25),
+    0 5px 10px rgba(0, 0, 0, 0.4);
+}
+
+.game-card__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--spacing-xs);
+}
+
+.game-card__title {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: var(--font-weight-bold);
+  text-shadow: var(--text-shadow-dark);
+}
+
+.game-card__info {
+  font-size: 0.8rem;
+  text-shadow: var(--text-shadow-dark);
+}
+
+.game-card__players {
+  margin: var(--spacing-xs) 0;
+  font-size: 0.85rem;
+}
+
+.game-card__player {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  text-shadow: var(--text-shadow-dark);
+}
+
+.game-card__player-name {
+  color: var(--color-text-primary);
+}
+
+.game-card__player-name--current {
+  color: var(--color-success);
+  font-weight: bold;
+}
+
+.game-card__player-status {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.game-card__hand-count {
+  font-size: 0.75rem;
+}
+
+/* ===== Status Badge ===== */
+.badge {
+  padding: var(--spacing-xs) 10px;
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  font-weight: var(--font-weight-bold);
+  border: 1px solid rgba(0, 0, 0, 0.3);
+  text-shadow: 1px 1px 1px rgba(0, 0, 0, 0.5);
+}
+
+.badge--waiting {
+  background-color: var(--color-status-waiting);
+  color: var(--color-text-primary);
+}
+
+.badge--playing {
+  background-color: var(--color-status-playing);
+  color: var(--color-text-primary);
+}
+
+.badge--gameover {
+  background-color: var(--color-status-gameover);
+  color: var(--color-text-muted);
+}
+
+/* ===== Player Ring (Game Display) ===== */
+.player-ring__item {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 80px;
+  height: 80px;
+  transform: translate(-50%, -50%);
+}
+
+.player-ring__name {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+  text-align: center;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.player-ring__sword {
+  font-size: var(--font-size-md);
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ===== QR Code Container ===== */
+.qr-container {
+  margin-bottom: 10px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 120px;
+  height: 120px;
+  padding: 5px;
+  border: var(--border-wood);
+  box-sizing: border-box;
+  box-shadow: var(--shadow-wood-card);
+  z-index: var(--z-content);
+}
+
+/* ===== Action Buttons Container ===== */
+.action-buttons {
+  display: flex;
+  flex-direction: column;
+  position: absolute;
+  bottom: 10px;
+  left: 0;
+  right: 0;
+  justify-content: flex-end;
+  align-items: center;
+  height: 200px;
+}
+
+.action-buttons__sidebar {
+  position: absolute;
+  bottom: 90px;
+  right: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  z-index: 999;
+}
+
+/* ===== Deck Area ===== */
+.deck-area {
+  display: flex;
+  position: absolute;
+  top: 0;
+  left: 0;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  height: 240px;
+  width: 100px;
+}
+
+.deck-area__count {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-bold);
+  text-shadow: var(--text-shadow-dark);
+  pointer-events: none;
+  z-index: 1003;
+}
+
+.deck-area__trump {
+  font-size: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ===== Table Battles Container ===== */
+.table-battles {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  max-width: 300px;
+  margin: 0 auto;
+}
+
+/* ===== Win Screen ===== */
+.win-screen__title {
+  color: var(--color-text-primary);
+  font-size: 2rem;
+  font-weight: var(--font-weight-bold);
+  margin-bottom: 0.5rem;
+  text-align: center;
+  position: relative;
+  z-index: var(--z-content);
+}
+
+.win-screen__subtitle {
+  color: var(--color-text-primary);
+  font-size: 1.2rem;
+  font-weight: normal;
+  margin-bottom: 1.5rem;
+  text-align: center;
+  position: relative;
+  z-index: var(--z-content);
+  opacity: 0.8;
+}
+
+.win-screen__results {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-sm);
+  width: 100%;
+  max-width: 350px;
+  position: relative;
+  z-index: var(--z-content);
+  margin-bottom: 1.5rem;
+}
+
+/* ===== Player Result Card ===== */
+.result-card {
+  border: var(--border-wood);
+  border-radius: var(--radius-none);
+  box-shadow: var(--shadow-wood-card);
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+  padding: var(--spacing-md) var(--spacing-lg);
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--spacing-md);
+}
+
+.result-card--current-user {
+  border: 3px solid var(--color-success);
+}
+
+.result-card__rank {
+  font-size: 1.5rem;
+  min-width: 36px;
+  text-align: center;
+}
+
+.result-card__name {
+  font-weight: var(--font-weight-bold);
+  font-size: 1rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-shadow: var(--text-shadow-dark);
+}
+
+.result-card__name--current {
+  color: var(--color-success);
+}
+
+.result-card__you {
+  color: var(--color-success);
+  font-size: 0.75rem;
+  font-weight: normal;
+  text-shadow: var(--text-shadow-dark);
+}
+
+.result-card__elo {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  flex-shrink: 0;
+}
+
+.result-card__elo-change {
+  font-weight: var(--font-weight-bold);
+  font-size: 0.9rem;
+  text-shadow: var(--text-shadow-dark);
+}
+
+.result-card__elo-change--positive {
+  color: var(--color-success);
+}
+
+.result-card__elo-change--negative {
+  color: var(--color-error);
+}
+
+.result-card__elo-change--neutral {
+  color: var(--color-text-muted);
+}
+
+/* =================================================================
+   SOVIET THEME Layout Overrides
+   ================================================================= */
+
+[data-theme="soviet"] .player-card,
+[data-theme="soviet"] .game-card,
+[data-theme="soviet"] .result-card {
+  border-color: #0A0A0A;
+}
+
+/* Dashboard card fonts and colors - black text on cream background */
+[data-theme="soviet"] .game-card,
+[data-theme="soviet"] .game-card *,
+[data-theme="soviet"] .player-card,
+[data-theme="soviet"] .player-card *,
+[data-theme="soviet"] .result-card,
+[data-theme="soviet"] .result-card * {
+  font-family: var(--font-family-primary) !important;
+  color: #0A0A0A !important;
+  text-shadow: none !important;
+}
+
+[data-theme="soviet"] .player-card__name,
+[data-theme="soviet"] .game-card__title,
+[data-theme="soviet"] .game-card__info,
+[data-theme="soviet"] .game-card__players,
+[data-theme="soviet"] .result-card__name {
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+[data-theme="soviet"] .game-card__player {
+  text-shadow: none;
+}
+
+[data-theme="soviet"] .game-card__player-name,
+[data-theme="soviet"] .game-card__player-name--current {
+  color: #0A0A0A;
+}
+
+[data-theme="soviet"] .badge {
+  font-family: var(--font-family-primary) !important;
+  border-radius: 0;
+  border: 3px solid #0A0A0A;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  text-shadow: none;
+  box-shadow: 3px 3px 0 #0A0A0A;
+  font-weight: bold;
+  color: #0A0A0A !important;
+}
+
+[data-theme="soviet"] .badge * {
+  font-family: var(--font-family-primary) !important;
+  border: none !important;
+}
+
+[data-theme="soviet"] .qr-container {
+  border-color: #CC0000;
+  box-shadow: 3px 3px 0 #0A0A0A;
+}
+
+[data-theme="soviet"] .win-screen__title {
+  color: var(--color-soviet-red);
+  text-transform: uppercase;
+  letter-spacing: 3px;
+  text-shadow: none;
+  font-weight: 900;
+}
+
+[data-theme="soviet"] .win-screen__subtitle {
+  color: #0A0A0A;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  text-shadow: none;
+  font-weight: bold;
+}
+
+/* Game display fonts */
+[data-theme="soviet"] .game-container,
+[data-theme="soviet"] .game-container *,
+[data-theme="soviet"] .title--game-display,
+[data-theme="soviet"] .player-ring__name,
+[data-theme="soviet"] .deck-area__count,
+[data-theme="soviet"] .action-buttons,
+[data-theme="soviet"] .action-buttons * {
+  font-family: var(--font-family-primary) !important;
+}
+
+[data-theme="soviet"] .title--game-display {
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  text-shadow: none;
+  font-weight: bold;
+  color: var(--color-soviet-red) !important;
+  background-color: #F5E6C8;
+  padding: 12px 0;
+  display: block;
+  width: 100vw;
+  margin-left: calc(-50vw + 50%);
+  text-align: center;
+  position: relative;
+  z-index: 10;
+}
+
+/* Lobby fonts - covers all inline-styled elements */
+[data-theme="soviet"] .lobby,
+[data-theme="soviet"] .lobby * {
+  font-family: var(--font-family-primary) !important;
+}
+
+[data-theme="soviet"] .lobby h1,
+[data-theme="soviet"] .lobby h2,
+[data-theme="soviet"] .lobby h3 {
+  font-family: var(--font-family-display) !important;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+}
+
+[data-theme="soviet"] .lobby input {
+  font-family: var(--font-family-display) !important;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+}
+
+[data-theme="soviet"] .lobby p,
+[data-theme="soviet"] .lobby span,
+[data-theme="soviet"] .lobby button {
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+/* Lobby - Soviet name input */
+[data-theme="soviet"] .lobby__name-input {
+  background-color: #F5E6C8;
+  color: #B32929;
+  width: 100vw;
+  margin-left: calc(-50vw + 50%);
+  padding: 12px 0;
+}
+
+[data-theme="soviet"] .lobby__name-input--editing {
+  border: 3px solid #0A0A0A;
+  box-shadow: 4px 4px 0 #0A0A0A;
+  text-shadow: none;
+}
+
+/* Lobby - Soviet QR container */
+[data-theme="soviet"] .lobby__qr-container {
+  background-color: #F5E6C8;
+  border: 3px solid #0A0A0A;
+  box-shadow: 4px 4px 0 #0A0A0A;
+}
+
+/* Lobby - Soviet player card */
+[data-theme="soviet"] .player-card {
+  background-color: #F5E6C8;
+  border: 3px solid #0A0A0A;
+  box-shadow: 4px 4px 0 #0A0A0A;
+}
+
+[data-theme="soviet"] .player-card__name {
+  color: #0A0A0A;
+}

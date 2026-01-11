@@ -1,0 +1,290 @@
+/* =================================================================
+   Utility Classes
+   ================================================================= */
+
+/* ===== Position ===== */
+.relative {
+  position: relative;
+}
+
+.absolute {
+  position: absolute;
+}
+
+.fixed {
+  position: fixed;
+}
+
+/* ===== Centering ===== */
+.center-absolute {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.center-x {
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.center-y {
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+/* ===== Z-Index ===== */
+.z-background { z-index: var(--z-background); }
+.z-vignette { z-index: var(--z-vignette); }
+.z-content { z-index: var(--z-content); }
+.z-header { z-index: var(--z-header); }
+.z-dropdown { z-index: var(--z-dropdown); }
+.z-card { z-index: var(--z-card); }
+.z-drag { z-index: var(--z-drag-overlay); }
+.z-modal { z-index: var(--z-modal); }
+.z-chat { z-index: var(--z-chat); }
+
+/* ===== Display ===== */
+.hidden {
+  display: none !important;
+}
+
+.invisible {
+  visibility: hidden;
+}
+
+.block {
+  display: block;
+}
+
+.inline-block {
+  display: inline-block;
+}
+
+/* ===== Overflow ===== */
+.overflow-hidden {
+  overflow: hidden;
+}
+
+.overflow-auto {
+  overflow: auto;
+}
+
+.overflow-y-auto {
+  overflow-y: auto;
+}
+
+/* ===== Sizing ===== */
+.w-full {
+  width: 100%;
+}
+
+.h-full {
+  height: 100%;
+}
+
+.min-h-screen {
+  min-height: 100vh;
+}
+
+/* ===== Spacing (Margin) ===== */
+.m-0 { margin: 0; }
+.mt-0 { margin-top: 0; }
+.mb-0 { margin-bottom: 0; }
+.ml-0 { margin-left: 0; }
+.mr-0 { margin-right: 0; }
+
+.mb-xs { margin-bottom: var(--spacing-xs); }
+.mb-sm { margin-bottom: var(--spacing-sm); }
+.mb-md { margin-bottom: var(--spacing-md); }
+.mb-lg { margin-bottom: var(--spacing-lg); }
+.mb-xl { margin-bottom: var(--spacing-xl); }
+
+.mt-sm { margin-top: var(--spacing-sm); }
+.mt-md { margin-top: var(--spacing-md); }
+.mt-lg { margin-top: var(--spacing-lg); }
+
+/* ===== Spacing (Padding) ===== */
+.p-0 { padding: 0; }
+.p-sm { padding: var(--spacing-sm); }
+.p-md { padding: var(--spacing-md); }
+.p-lg { padding: var(--spacing-lg); }
+
+.px-sm { padding-left: var(--spacing-sm); padding-right: var(--spacing-sm); }
+.px-md { padding-left: var(--spacing-md); padding-right: var(--spacing-md); }
+.px-lg { padding-left: var(--spacing-lg); padding-right: var(--spacing-lg); }
+
+.py-sm { padding-top: var(--spacing-sm); padding-bottom: var(--spacing-sm); }
+.py-md { padding-top: var(--spacing-md); padding-bottom: var(--spacing-md); }
+.py-lg { padding-top: var(--spacing-lg); padding-bottom: var(--spacing-lg); }
+
+/* ===== Borders ===== */
+.border-wood {
+  border: var(--border-wood);
+}
+
+.border-wood-thick {
+  border: var(--border-wood-thick);
+}
+
+.border-none {
+  border: none;
+}
+
+.rounded-none { border-radius: var(--radius-none); }
+.rounded-sm { border-radius: var(--radius-sm); }
+.rounded-md { border-radius: var(--radius-md); }
+.rounded-lg { border-radius: var(--radius-lg); }
+.rounded-xl { border-radius: var(--radius-xl); }
+
+/* ===== Cursor ===== */
+.cursor-pointer {
+  cursor: pointer;
+}
+
+.cursor-move {
+  cursor: move;
+}
+
+.cursor-default {
+  cursor: default;
+}
+
+.cursor-text {
+  cursor: text;
+}
+
+.cursor-not-allowed {
+  cursor: not-allowed;
+}
+
+/* ===== Pointer Events ===== */
+.pointer-events-none {
+  pointer-events: none;
+}
+
+.pointer-events-auto {
+  pointer-events: auto;
+}
+
+/* ===== Transitions ===== */
+.transition-fast {
+  transition: var(--transition-fast);
+}
+
+.transition-base {
+  transition: var(--transition-base);
+}
+
+.transition-slow {
+  transition: var(--transition-slow);
+}
+
+.transition-none {
+  transition: none;
+}
+
+/* ===== Opacity ===== */
+.opacity-0 { opacity: 0; }
+.opacity-30 { opacity: 0.3; }
+.opacity-50 { opacity: 0.5; }
+.opacity-60 { opacity: 0.6; }
+.opacity-70 { opacity: 0.7; }
+.opacity-80 { opacity: 0.8; }
+.opacity-100 { opacity: 1; }
+
+/* ===== Box Shadow ===== */
+.shadow-wood {
+  box-shadow: var(--shadow-wood-inset);
+}
+
+.shadow-wood-hover {
+  box-shadow: var(--shadow-wood-hover);
+}
+
+.shadow-card {
+  box-shadow: var(--shadow-wood-card);
+}
+
+.shadow-input {
+  box-shadow: var(--shadow-input-inset);
+}
+
+/* ===== Text Shadow ===== */
+.text-shadow {
+  text-shadow: var(--text-shadow-dark);
+}
+
+.text-shadow-dark {
+  text-shadow: var(--text-shadow-darker);
+}
+
+.text-shadow-title {
+  text-shadow: var(--text-shadow-title);
+}
+
+/* ===== Touch Action ===== */
+.touch-none {
+  touch-action: none;
+}
+
+.touch-manipulation {
+  touch-action: manipulation;
+}
+
+.touch-pan-y {
+  touch-action: pan-y;
+}
+
+/* ===== Safe Area Insets ===== */
+.safe-left {
+  left: env(safe-area-inset-left, 0);
+}
+
+.safe-right {
+  right: env(safe-area-inset-right, 0);
+}
+
+.safe-top {
+  top: env(safe-area-inset-top, 0);
+}
+
+.safe-bottom {
+  bottom: env(safe-area-inset-bottom, 0);
+}
+
+/* ===== Drag Overlay Protection ===== */
+.drag-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+  user-select: none;
+}
+
+.drag-overlay--active {
+  pointer-events: auto;
+}
+
+/* ===== Flex Shrink/Grow ===== */
+.flex-1 {
+  flex: 1;
+}
+
+.flex-shrink-0 {
+  flex-shrink: 0;
+}
+
+.flex-grow-0 {
+  flex-grow: 0;
+}
+
+.min-w-0 {
+  min-width: 0;
+}
+
+.min-h-0 {
+  min-height: 0;
+}
