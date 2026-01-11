@@ -13,6 +13,9 @@ const supabaseClient = createClient(
 const BOT_PROCESSING_DELAY_WITH_HUMANS = 4500; // Delay when humans are still playing (ms)
 const BOT_PROCESSING_DELAY_BOTS_ONLY = 800; // Delay when only bots remain (ms)
 
+// Docs say max is 150, but it's really more like 70s
+const MAX_LOOP_RUNTIME = 65_000;
+
 // Global variable to track current bot processing delay
 let currentBotDelay = BOT_PROCESSING_DELAY_WITH_HUMANS;
 
@@ -100,23 +103,40 @@ const releaseBotLoopLock = async (game_id: string): Promise<void> => {
 
 export const lockedBotLoop = async (game_id: string): Promise<void> => {
     if (!(await acquireBotLoopLock(game_id))) {
+        console.log('unable to acquire bot loop lock')
         return;         // another cycle has the baton
     }
 
     try {
+        console.log('bot loop lock acquired, processing bot actions')
         await processBotActions(game_id);
+        console.log('done processing bot actions')
     } finally {
+        console.log('releasing bot loop lock')
         await releaseBotLoopLock(game_id);
+        console.log('released bot loop lock')
     }
 }
 
 
 // New improved bot processing that fixes eligibility drift
 // Uses one-bot-per-iteration approach to prevent race conditions
-const processBotActions = async (game_id: string, cycle: number = 0): Promise<void> => {
-    if (cycle > 1000) {
-        console.log(`Bot processing stopped - max cycles reached for game ${game_id}`);
-        return;
+const processBotActions = async (game_id: string, cycle: number = 0, loopStartTime?: number): Promise<void> => {
+
+    if(loopStartTime === undefined) {
+        loopStartTime = Date.now();
+    } else {
+        const now = Date.now();
+        if (now - loopStartTime > MAX_LOOP_RUNTIME) {
+            // Stop the loop, even if there are more moves
+            // It's better to release the lock and wait 5 seconds 
+            // vs have the server kill the process without releasing lock
+            // If another bot_bump call comes in and the lock is still held, 
+            // how are we supposed to know if it's because the loop is still running or it got killed?
+            // only safe bet there is to wait ANOTHER 150s to be clear
+            return;
+
+        }
     }
 
     const cycleStartTime = Date.now();
@@ -240,7 +260,7 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
         // Skip delay for passive actions (good, wait) - continue immediately to next bot
         if (shouldSkipDelay) {
             console.log(`[CYCLE ${cycle}] Passive action completed in ${totalCycleTime}ms, continuing immediately to next bot`);
-            return await processBotActions(game_id, cycle + 1);
+            return await processBotActions(game_id, cycle + 1, loopStartTime);
         }
 
         // if a strategy takes forever to come up with a move, calculating currentBotDelay-totalCycleTime will allow no gap between bot moves
@@ -254,7 +274,7 @@ const processBotActions = async (game_id: string, cycle: number = 0): Promise<vo
             console.log(`[CYCLE ${cycle}] Cycle took ${totalCycleTime}ms (>= ${currentBotDelay}ms target), continuing immediately`);
         }
 
-        return await processBotActions(game_id, cycle + 1);
+        return await processBotActions(game_id, cycle + 1, loopStartTime);
     } else {
         console.log(`[CYCLE ${cycle}] No more bot actions needed, ending bot loop for game ${game_id}`);
     }

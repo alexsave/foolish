@@ -91,7 +91,7 @@ export const draw = (game: Game): Card | null => {
         return copy;
     }
     // TEMP: Use seeded random for deterministic testing
-    const index = Math.floor(seededRandom() * game.deck.length);
+    const index = Math.floor(Math.random() * game.deck.length);
     // const index = Math.floor(Math.random() * game.deck.length);
     const card = game.deck.splice(index, 1)[0];
     return card;

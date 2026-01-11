@@ -12,5 +12,5 @@ wrap400(async ({user, game}: ExecutionParams) => {
     const events = await handleGood(game, user_id);
 
     return { game, events };
-}, true);
+}, false);
 

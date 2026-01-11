@@ -14,5 +14,5 @@ wrap400(async ({user, body, game}: ExecutionParams) => {
 
     return { game, events };
 
-}, true);
+}, false);
 

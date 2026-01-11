@@ -39,4 +39,4 @@ wrap400(async ({ user, game }: ExecutionParams) => {
         game_state: game
     }, ...start_events] };
 
-}, true);
+}, false);

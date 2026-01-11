@@ -426,7 +426,7 @@ export const wrap400 = (execute: (params: ExecutionParams) => Promise<{ game: Ga
             }
 
             // Fire-and-forget: Schedule bot actions AFTER preparing response (already non-blocking)
-            if (game_id/* && run_bots*/) {
+            if (game_id && run_bots) {
                 console.log(`[${reqId}][WRAP400] Starting fire-and-forget bot loop`);
                 // TODO: not quite. Only after start/attack/cover/pass/pickup/good 
                 // todo add validation before kicking this off

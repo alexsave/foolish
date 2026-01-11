@@ -91,4 +91,4 @@ wrap400(async ({ user, user_name }: ExecutionParams) => {
     };
 
     return { game: dbGameData, events: [creationEvent] };
-});
+}, false);

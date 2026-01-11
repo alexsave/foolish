@@ -35,4 +35,4 @@ wrap400(async ({user, user_name, body, game}: ExecutionParams) => {
     }, user_id);
 
     return { game, events: [] };
-}); 
+}, false); 

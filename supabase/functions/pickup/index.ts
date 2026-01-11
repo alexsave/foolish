@@ -12,5 +12,5 @@ wrap400(async ({user, game}: ExecutionParams) => {
     const events = await handlePickup(game, user_id);
 
     return { game, events };
-}, true);
+}, false);
 

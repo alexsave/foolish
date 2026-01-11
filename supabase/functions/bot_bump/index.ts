@@ -5,4 +5,4 @@ wrap400(async (params: ExecutionParams) => {
     // Also trigger auto-discard loop check (fire-and-forget)
     // The state we get into will trigger the auto-discard loop automatically in utils.ts
     return { game: params.game, events: [] };
-});
+}, true);

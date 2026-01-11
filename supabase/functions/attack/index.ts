@@ -15,5 +15,5 @@ wrap400(async ({user, body, game}: ExecutionParams) => {
     const events = await handleAttack(game, user_id, cards);
 
     return { game, events };
-}, true);
+}, false);
 

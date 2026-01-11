@@ -150,7 +150,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
             // Reset the flag for the next interval
             hasBotMovedRef.current = false;
-        }, 15000); // 15 seconds
+        }, 5000); // 15 seconds
 
         // Store the interval ID for cleanup
         botBumpTimerRef.current = intervalId as any;
