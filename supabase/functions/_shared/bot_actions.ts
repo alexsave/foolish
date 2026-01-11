@@ -143,7 +143,6 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
     console.log(`[CYCLE ${cycle}] Starting bot processing for game ${game_id}`);
 
     let botProcessed = false;
-    let shouldSkipDelay = false;
     let actionEvents: AnimationEvent[] = [];
 
     // Do everything within a single lock: find eligible bots, choose one, execute action
@@ -211,6 +210,9 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
 
                 // Shuffle the eligible bots to try them in random order
                 const shuffledBots = [...eligibleBots].sort(() => Math.random() - 0.5);
+                
+                // Track if we processed any passive actions without animations
+                let anyPassiveProcessed = false;
 
                 for (const selectedBot of shuffledBots) {
                     console.log(`[ACTION] Trying bot ${selectedBot.bot.name} from ${eligibleBots.length} eligible bots`);
@@ -222,14 +224,35 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
                     const actionDuration = Date.now() - actionStartTime;
                     if (botActionResult) {
                         actionEvents.push(...(botActionResult.events as unknown as AnimationEvent[]));
-                        botProcessed = true;
-                        // Skip delay for passive actions (good, wait) - continue immediately
-                        shouldSkipDelay = botActionResult.moveType === GAME_MOVE_TYPE.GOOD || botActionResult.moveType === GAME_MOVE_TYPE.WAIT;
+                        
+                        const isPassiveAction = botActionResult.moveType === GAME_MOVE_TYPE.GOOD || botActionResult.moveType === GAME_MOVE_TYPE.WAIT;
+                        
                         console.log(`[ACTION] ✓ Bot ${selectedBot.bot.name} completed ${botActionResult.moveType} action in ${actionDuration}ms`);
-                        break; // Exit the loop since we successfully processed a bot
+                        
+                        // For passive actions (good/wait) without animations, continue to try more bots
+                        // This bundles multiple passive actions together for snappier feel
+                        // Exception: if good causes round transition, it will have events (animations)
+                        if (isPassiveAction && botActionResult.events.length === 0) {
+                            console.log(`[ACTION] Passive action without animations, bundling with next bot action`);
+                            anyPassiveProcessed = true;
+                            continue;
+                        }
+                        
+                        botProcessed = true;
+                        // If we break here, we have either:
+                        // - A non-passive action (attack, cover, etc.) that needs delay for humans to see
+                        // - A passive action WITH animations (round transition) that also needs delay
+                        // So we never skip delay when breaking
+                        break;
                     } else {
                         console.log(`[ACTION] ✗ Bot ${selectedBot.bot.name} move failed after ${actionDuration}ms, trying next bot`);
                     }
+                }
+
+                // Handle case where we only processed passive actions without animations
+                if (!botProcessed && anyPassiveProcessed) {
+                    botProcessed = true;
+                    console.log(`[ACTION] Only passive actions processed this cycle`);
                 }
 
                 if (!botProcessed) {
@@ -257,14 +280,6 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
 
     // Continue the loop if a bot was processed or auto-transition occurred
     if (botProcessed) {
-        // Skip delay for passive actions (good, wait) - continue immediately to next bot
-        if (shouldSkipDelay) {
-            console.log(`[CYCLE ${cycle}] Passive action completed in ${totalCycleTime}ms, continuing immediately to next bot`);
-            return await processBotActions(game_id, cycle + 1, loopStartTime);
-        }
-
-        // if a strategy takes forever to come up with a move, calculating currentBotDelay-totalCycleTime will allow no gap between bot moves
-        // So this instead
         const remainingDelay = currentBotDelay;
 
         if (remainingDelay > 0) {
