@@ -313,7 +313,6 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                     })
                     .subscribe((status, err) => {
                         if (status === 'SUBSCRIBED') {
-                            console.log('connected to animation channel');
                             animationChannelRetryInterval.current = 500; // Reset retry interval on success
                             isSubscribing = false;
                             hasEverConnected = true;
@@ -334,7 +333,6 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                         } else if (status === 'CLOSED') {
                             // Channel closed - only log if we had a successful connection
                             if (hasEverConnected) {
-                                console.log('channel closed after successful connection');
                             } else {
                                 console.log('channel closed before connecting, retrying in', animationChannelRetryInterval.current, 'ms');
                                 isSubscribing = false;

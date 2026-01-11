@@ -9,8 +9,8 @@ import { ANIMATION_TIME } from '../constants/constants';
 
 const ServerContext = createContext<ServerContextType | null>(null);
 
-const handsQuery = 
-`game_id,
+const handsQuery =
+    `game_id,
 hand,
 awaiting_attack,
 games!inner (
@@ -39,7 +39,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     // keep a state of games
     // maybe ref idk
     const [games, setGames] = useState<{ [key: string]: (PersonalGame) }>({});
-    
+
     // Update user names ref when games change
     useEffect(() => {
         Object.values(games).forEach(game => {
@@ -50,7 +50,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             }
         });
     }, [games]);
-    
+
     // Chat messages state - keyed by game_id
     const [chatMessages, setChatMessages] = useState<{ [key: string]: any[] }>({});
 
@@ -73,10 +73,10 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
     // Use ref to prevent duplicate user effect executions
     const prevUserRef = useRef<string | null>(null);
-    
+
     // Track ongoing loadGame calls to prevent duplicates
     const loadGamePromises = useRef<Map<string, Promise<{ game_id: string }>>>(new Map());
-    
+
     // Track ongoing getUserGames call to prevent duplicates
     const getUserGamesPromise = useRef<Promise<void> | null>(null);
 
@@ -90,12 +90,12 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             gameIdRef.current = url_game_id;
             setGameId(url_game_id);
             setGameLoadError(null); // Clear any previous errors
-            
+
             // Set local hand order if we already have the game data
             if (games[url_game_id]?.self) {
                 setLocalHandOrders(prev => ({ ...prev, [url_game_id]: games[url_game_id].self.hand }));
             }
-            
+
             // Only load if we don't have this game data yet
             if (!games[url_game_id]) {
                 loadGame(url_game_id).catch(error => {
@@ -230,7 +230,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         const gameData = actualMessage.game || message.game;
 
         // Handle non-animation messages (private messages, direct responses, etc.)
-        if (actualMessage.type === PRIVATE_EVENT_TYPE.REQUEST_FIRST_ATTACK || 
+        if (actualMessage.type === PRIVATE_EVENT_TYPE.REQUEST_FIRST_ATTACK ||
             actualMessage.type === PRIVATE_EVENT_TYPE.PLAYER_HAND) {
             // These are private messages that don't need game state updates
         } else if (gameData) {
@@ -243,21 +243,21 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     // Helper method to merge hands while preserving local card order
     const mergeHandOrder = (oldHand: Card[], newHand: Card[]): Card[] => {
         if (!oldHand || !newHand) return newHand || [];
-        
+
         // Create a map of card positions in the old hand for quick lookup
         const oldCardPositions = new Map<string, number>();
         oldHand.forEach((card, index) => {
             const key = `${card.suit}-${card.value}`;
             oldCardPositions.set(key, index);
         });
-        
+
         // Create a set of new cards for quick lookup
         const newCardSet = new Set(newHand.map(card => `${card.suit}-${card.value}`));
-        
+
         // Keep existing cards in their current positions
         const preservedCards: Card[] = [];
         const preservedPositions = new Set<number>();
-        
+
         oldHand.forEach((card, oldIndex) => {
             const key = `${card.suit}-${card.value}`;
             if (newCardSet.has(key)) {
@@ -265,13 +265,13 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 preservedPositions.add(oldIndex);
             }
         });
-        
+
         // Find new cards (cards in newHand but not in oldHand)
         const newCards = newHand.filter(card => {
             const key = `${card.suit}-${card.value}`;
             return !oldCardPositions.has(key);
         });
-        
+
         // Combine preserved cards with new cards (new cards go to the end)
         return [...preservedCards, ...newCards];
     };
@@ -280,12 +280,12 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     const updateLocalHandOrder = (gameId: string, newHand: Card[]) => {
         setLocalHandOrders(prev => {
             const currentOrder = prev[gameId] || [];
-            
+
             // If we don't have a previous order, just use the new hand
             if (currentOrder.length === 0) {
                 return { ...prev, [gameId]: newHand };
             }
-            
+
             // Otherwise, preserve existing order and add new cards to the end
             const mergedOrder = mergeHandOrder(currentOrder, newHand);
             return { ...prev, [gameId]: mergedOrder };
@@ -297,18 +297,18 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     const mergeTableBattles = (existingBattles: any[], incomingBattles: any[]): any[] => {
         if (!existingBattles || existingBattles.length === 0) return incomingBattles || [];
         if (!incomingBattles) return existingBattles;
-        
+
         // If incoming is empty, it's a table clear (pickup/good) - trust server completely
         if (incomingBattles.length === 0) return [];
-        
+
         // Create a map of incoming battles by attack card key
         const incomingByKey = new Map(
             incomingBattles.map(b => [`${b.attack.suit}-${b.attack.value}`, b])
         );
-        
+
         // Start with incoming battles (these have the latest defense states from server)
         const result = [...incomingBattles];
-        
+
         // Add any existing battles whose attack cards aren't in incoming (these are optimistic attacks)
         for (const battle of existingBattles) {
             const key = `${battle.attack.suit}-${battle.attack.value}`;
@@ -316,7 +316,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 result.push(battle);
             }
         }
-        
+
         return result;
     };
 
@@ -327,39 +327,39 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             // If self is explicitly provided (including null), use it; otherwise preserve previous self
             self: newGameData.hasOwnProperty('self') ? newGameData.self : prevGames[gameId]?.self
         };
-        
+
         // Merge table_battles to preserve optimistic attacks during out-of-order server responses
         if (newGameData.table_battles && prevGames[gameId]?.table_battles) {
             result.table_battles = mergeTableBattles(prevGames[gameId].table_battles, newGameData.table_battles);
         }
-        
+
         // If we have both old and new self data with hands, preserve the hand order
-        if (newGameData.self && prevGames[gameId]?.self && 
+        if (newGameData.self && prevGames[gameId]?.self &&
             newGameData.self.hand && prevGames[gameId].self.hand) {
             result.self = {
                 ...newGameData.self,
                 hand: mergeHandOrder(prevGames[gameId].self.hand, newGameData.self.hand)
             };
         }
-        
+
         // Update local hand order when game data changes
         if (result.self?.hand) {
             updateLocalHandOrder(gameId, result.self.hand);
         }
-        
+
         return result;
     };
 
     const handleChatMessage = (message: any) => {
         // Handle database changes for chat messages
         const { record: newRecord, old_record: oldRecord, table, operation } = message;
-        
+
         if (table !== 'chat_messages') {
             return;
         }
 
         const gameId = newRecord?.game_id || oldRecord?.game_id;
-        
+
         if (!gameId) {
             return;
         }
@@ -384,7 +384,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 }
                 return prev;
             });
-        } 
+        }
     };
 
     const createGame = (): Promise<{ game_id: string }> => {
@@ -411,7 +411,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                     newSet.delete(gameId);
                     return newSet;
                 });
-                
+
                 // Clean up old game channel (for spectators) and switch to game-user channel
                 const oldChannelName = `game-${gameId}`;
                 const channels = supabase.getChannels();
@@ -419,7 +419,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 if (oldChannel) {
                     supabase.removeChannel(oldChannel);
                 }
-                
+
                 // Subscribe to the game's channel and chat messages
                 subscribeToGame(data.data.id).catch(console.error);
                 subscribeToChatMessages(data.data.id).catch(console.error);
@@ -451,7 +451,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 // If user removed themselves (not a bot), mark as spectating and switch channels
                 if (!botId) {
                     setSpectatorGames(prev => new Set(prev).add(gameId));
-                    
+
                     // Clean up old game-user channel and switch to game channel for spectators
                     const oldChannelName = `gu-${gameId}-${user_id}`;
                     const channels = supabase.getChannels();
@@ -459,7 +459,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                     if (oldChannel) {
                         supabase.removeChannel(oldChannel);
                     }
-                    
+
                     // Subscribe to game channel for spectators
                     supabase.realtime.setAuth().then(() => {
                         const gameChannel = supabase.channel(`game-${gameId}`, {
@@ -514,31 +514,31 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 if (playerData && !playerError) {
                     // User is in the game - return personalized data
                     const game = playerData.games as unknown as PublicGame;
-                    
+
                     const selfPlayer = game.players.find((player) => player.player_id === user_id);
-                    
+
                     if (selfPlayer) {
                         const personalizedGame: PersonalGame = {
                             ...game,
                             self: {
-                                ...selfPlayer, 
-                                player_id: user_id, 
-                                hand: playerData.hand, 
+                                ...selfPlayer,
+                                player_id: user_id,
+                                hand: playerData.hand,
                                 awaiting_attack: playerData.awaiting_attack,
                                 strategy_key: STRATEGY_KEY.HUMAN
                             }
                         };
-                        
+
                         setGames(prev => ({ ...prev, [gameId]: mergeGameData(gameId, personalizedGame, prev) }));
                         joinOrSubscribe(personalizedGame);
-                        
+
                         // Trigger bot loop only if there are AI players in the game
                         // Fire and forget - don't block UI rendering
                         if (game.players.some(player => player.is_ai)) {
                             supabase.functions.invoke('bot_bump', { body: { game_id: gameId } }).catch(botError => {
                             });
                         }
-                        
+
                         return { game_id: gameId };
                     }
                 }
@@ -564,7 +564,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             setGames(prev => ({ ...prev, [gameId]: mergeGameData(gameId, publicGame, prev) }));
             joinOrSubscribe(publicGame);
             return { game_id: gameId };
-            
+
         } catch (error) {
             throw error;
         }
@@ -572,11 +572,11 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
     const joinOrSubscribe = (game: PersonalGame) => {
         const gameId = game.id;
-        
+
         // Set game_id state and game data first, then load chat history
         setGameId(gameId);
         //setGames(prev => ({ ...prev, [gameId]: mergeGameData(gameId, game, prev) }));
-        
+
         // Load chat history with game data
         loadChatHistory(gameId, game).catch(console.error);
 
@@ -593,10 +593,10 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             subscribeToChatMessages(gameId).catch(console.error);
             return;
         }
-        
+
         // Check if user is intentionally spectating this game
         const isSpectating = spectatorGames.has(gameId);
-        
+
         // no game self + waiting + not spectating + room available -> join
         // no game self + (not waiting OR spectating OR no room) -> subscribe to game
         if (!isSpectating && game.status === GAME_STATUS.WAITING && game.players.length < MAX_PLAYERS) {
@@ -613,7 +613,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 gameChannel.subscribe((status, err) => status === 'SUBSCRIBED'
                     ? console.log('Connected to game channel:', `game-${gameId}`)
                     : console.error('Game channel error:', err));
-                
+
                 // Subscribe to chat messages for spectators too
                 subscribeToChatMessages(gameId).catch(console.error);
             });
@@ -654,25 +654,25 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         setTimeout(() => {
             const g: PersonalGame = games[game_id!];
             if (!g) return;
-            
+
             const table_battles = g.table_battles;
             const newHand = g.self.hand.filter(card => !cards.some(c => card_comp(c, card)));
-            
-            setGames(prev => ({ 
-                ...prev, 
-                [game_id!]: { 
-                    ...prev[game_id!], 
-                    table_battles: [...table_battles, ...cards.map(card => ({ attack: card, defense: null }))], 
-                    self: { ...prev[game_id!].self, hand: newHand } 
-                } 
+
+            setGames(prev => ({
+                ...prev,
+                [game_id!]: {
+                    ...prev[game_id!],
+                    table_battles: [...table_battles, ...cards.map(card => ({ attack: card, defense: null }))],
+                    self: { ...prev[game_id!].self, hand: newHand }
+                }
             }));
-            
+
             // Update local hand order
             setLocalHandOrders(prev => ({
                 ...prev,
                 [game_id!]: (prev[game_id!] || []).filter(card => !cards.some(c => c.suit === card.suit && c.value === card.value))
             }));
-            
+
         }, ANIMATION_TIME);
 
         // Server API call
@@ -687,27 +687,27 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         setTimeout(() => {
             const g: PersonalGame = games[game_id!];
             if (!g) return;
-            
+
             const table_battles = g.table_battles;
             const next_defender = get_next_player_index(g, g.defender);
             const newHand = g.self.hand.filter(card => !cards.some(c => card_comp(c, card)));
-            
-            setGames(prev => ({ 
-                ...prev, 
-                [game_id!]: { 
-                    ...prev[game_id!], 
-                    table_battles: [...table_battles, ...cards.map(card => ({ attack: card, defense: null }))], 
-                    self: { ...prev[game_id!].self, hand: newHand }, 
-                    defender: next_defender 
-                } 
+
+            setGames(prev => ({
+                ...prev,
+                [game_id!]: {
+                    ...prev[game_id!],
+                    table_battles: [...table_battles, ...cards.map(card => ({ attack: card, defense: null }))],
+                    self: { ...prev[game_id!].self, hand: newHand },
+                    defender: next_defender
+                }
             }));
-            
+
             // Update local hand order
             setLocalHandOrders(prev => ({
                 ...prev,
                 [game_id!]: (prev[game_id!] || []).filter(card => !cards.some(c => c.suit === card.suit && c.value === card.value))
             }));
-            
+
         }, ANIMATION_TIME);
 
         // Server API call
@@ -722,17 +722,17 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         setTimeout(() => {
             const g: PersonalGame = games[game_id!];
             if (!g) return;
-            
+
             const table_battles = g.table_battles;
             const next_first_attacker = get_next_player_index(g, g.defender);
             const next_defender = get_next_player_index(g, next_first_attacker);
-            
+
             // Collect all cards from the table (both attacks and defenses)
-            const allTableCards = table_battles.flatMap(battle => 
+            const allTableCards = table_battles.flatMap(battle =>
                 battle.defense ? [battle.attack, battle.defense] : [battle.attack]
             );
             const newHand = [...g.self.hand, ...allTableCards];
-            
+
             setGames(prev => ({
                 ...prev,
                 [game_id!]: {
@@ -746,13 +746,13 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                     defender: next_defender
                 }
             }));
-            
+
             // Update local hand order (add new cards to the end)
             setLocalHandOrders(prev => ({
                 ...prev,
                 [game_id!]: [...(prev[game_id!] || []), ...allTableCards]
             }));
-            
+
         }, ANIMATION_TIME);
 
         // Server API call
@@ -766,10 +766,10 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         setTimeout(() => {
             const g: PersonalGame = games[game_id!];
             if (!g) return;
-            
+
             const newHand = g.self.hand.filter(card => !coverCards.some(c => card_comp(c, card)));
             const updatedTableBattles = g.table_battles.map(battle => {
-                const attackIndex = attackCards.findIndex(card => 
+                const attackIndex = attackCards.findIndex(card =>
                     card_comp(card, battle.attack)
                 );
                 if (attackIndex !== -1) {
@@ -777,22 +777,22 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 }
                 return battle;
             });
-            
+
             setGames(prev => ({
-                ...prev, 
+                ...prev,
                 [game_id!]: {
                     ...prev[game_id!],
                     table_battles: updatedTableBattles,
                     self: { ...prev[game_id!].self, hand: newHand }
                 }
             }));
-            
+
             // Update local hand order
             setLocalHandOrders(prev => ({
                 ...prev,
                 [game_id!]: (prev[game_id!] || []).filter(card => !coverCards.some(c => card_comp(c, card)))
             }));
-            
+
         }, ANIMATION_TIME);
 
         // Server API call
@@ -884,7 +884,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         if (previousPlayers.length === 0) {
             return Promise.reject(new Error(`Cannot rearrange players`));
         }
-        const rearrangedPlayers = playerIds.map(playerId => 
+        const rearrangedPlayers = playerIds.map(playerId =>
             previousPlayers.find(p => p.player_id === playerId)!
         );
         setGames(prev => ({ ...prev, [gameId]: { ...prev[gameId], players: rearrangedPlayers } }));
@@ -999,7 +999,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                     }
                     games[game.id] = {
                         ...game,
-                        self: {...selfPlayer, player_id: user_id, hand: playerHand.hand, awaiting_attack: playerHand.awaiting_attack, strategy_key: STRATEGY_KEY.HUMAN}// as unknown as PrivatePlayer
+                        self: { ...selfPlayer, player_id: user_id, hand: playerHand.hand, awaiting_attack: playerHand.awaiting_attack, strategy_key: STRATEGY_KEY.HUMAN }// as unknown as PrivatePlayer
                     };
                     processedGames++;
                 } catch (gameError) {
@@ -1028,11 +1028,11 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     ): Promise<{ game_id: string }> => {
         try {
             const data = await supabase.functions.invoke(functionName, { body })
-            
+
             if (!data.data || !data.data.id) {
                 throw new Error(`Invalid response from ${functionName}: missing game ID`);
             }
-            
+
             const game_id = data.data.id;
 
             // TEMPORARILY DISABLED: Let animations handle game state updates instead of immediately jumping to final state
@@ -1047,7 +1047,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
         } catch (error) {
             const err = error as Error;
-            
+
             options.onError?.(error);
             throw error;
         }
@@ -1074,34 +1074,15 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             sendMessage,
             getUserGames,
             updateGameState: (gameId: string, gameState: any) => {
-                console.log(`\n📡 ===== SERVER updateGameState CALLED =====`);
-                console.log(`📡 GameId: ${gameId}`);
-                console.log(`📡 Incoming state: defender=${gameState.defender}, first_attacker=${gameState.first_attacker}`);
-                
-                const incomingTableCards = gameState.table_battles?.flatMap((b: any) => 
-                    b.defense ? [b.attack, b.defense] : [b.attack]
-                ) || [];
-                console.log(`📡 Incoming table:`, incomingTableCards.map((c: Card) => `${c.suit}${c.value}`));
-                
+
+
                 setGames(prev => {
-                    const existingGame = prev[gameId];
-                    const existingTableCards = existingGame?.table_battles?.flatMap((b: any) => 
-                        b.defense ? [b.attack, b.defense] : [b.attack]
-                    ) || [];
-                    console.log(`📡 Existing game: ${existingGame ? `defender=${existingGame.defender}, first_attacker=${existingGame.first_attacker}` : 'NONE'}`);
-                    console.log(`📡 Existing table:`, existingTableCards.map((c: Card) => `${c.suit}${c.value}`));
-                    
+
                     const merged = mergeGameData(gameId, gameState, prev);
-                    const mergedTableCards = merged.table_battles?.flatMap((b: any) => 
-                        b.defense ? [b.attack, b.defense] : [b.attack]
-                    ) || [];
-                    console.log(`📡 Merged result: defender=${merged.defender}, first_attacker=${merged.first_attacker}`);
-                    console.log(`📡 Merged table:`, mergedTableCards.map((c: Card) => `${c.suit}${c.value}`));
-                    console.log(`===== END SERVER updateGameState =====\n`);
-                    
-                    return { 
-                        ...prev, 
-                        [gameId]: merged 
+
+                    return {
+                        ...prev,
+                        [gameId]: merged
                     };
                 });
             },
