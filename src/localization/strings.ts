@@ -40,7 +40,10 @@ export type StringId =
   | 'back_to_home'
   | 'chat'
   | 'send'
-  | 'type_message';
+  | 'type_message'
+  | 'final_rankings'
+  | 'you'
+  | 'continue_to_lobby';
 
 // English strings
 export const strings_en: Record<StringId, string> = {
@@ -85,6 +88,9 @@ export const strings_en: Record<StringId, string> = {
   chat: 'Chat',
   send: 'Send',
   type_message: 'Type message...',
+  final_rankings: 'Final Rankings',
+  you: 'You',
+  continue_to_lobby: 'Continue to Lobby',
 };
 
 // Russian strings
@@ -130,6 +136,9 @@ export const strings_ru: Record<StringId, string> = {
   chat: 'Чат',
   send: 'Отправить',
   type_message: 'Введите сообщение...',
+  final_rankings: 'Итоговые результаты',
+  you: 'Вы',
+  continue_to_lobby: 'Продолжить в лобби',
 };
 
 // Korean strings
@@ -175,6 +184,9 @@ export const strings_ko: Record<StringId, string> = {
   chat: '채팅',
   send: '전송',
   type_message: '메시지 입력...',
+  final_rankings: '최종 순위',
+  you: '나',
+  continue_to_lobby: '로비로 이동',
 };
 
 // Combined strings object for easy access
