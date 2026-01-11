@@ -292,6 +292,34 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         });
     };
 
+    // Helper method to merge table_battles, preserving optimistic attacks
+    // This handles the race condition where server responses arrive out-of-order
+    const mergeTableBattles = (existingBattles: any[], incomingBattles: any[]): any[] => {
+        if (!existingBattles || existingBattles.length === 0) return incomingBattles || [];
+        if (!incomingBattles) return existingBattles;
+        
+        // If incoming is empty, it's a table clear (pickup/good) - trust server completely
+        if (incomingBattles.length === 0) return [];
+        
+        // Create a map of incoming battles by attack card key
+        const incomingByKey = new Map(
+            incomingBattles.map(b => [`${b.attack.suit}-${b.attack.value}`, b])
+        );
+        
+        // Start with incoming battles (these have the latest defense states from server)
+        const result = [...incomingBattles];
+        
+        // Add any existing battles whose attack cards aren't in incoming (these are optimistic attacks)
+        for (const battle of existingBattles) {
+            const key = `${battle.attack.suit}-${battle.attack.value}`;
+            if (!incomingByKey.has(key)) {
+                result.push(battle);
+            }
+        }
+        
+        return result;
+    };
+
     // Helper method to merge game data while preserving self when not present in new data
     const mergeGameData = (gameId: string, newGameData: any, prevGames: any) => {
         const result = {
@@ -299,6 +327,11 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             // If self is explicitly provided (including null), use it; otherwise preserve previous self
             self: newGameData.hasOwnProperty('self') ? newGameData.self : prevGames[gameId]?.self
         };
+        
+        // Merge table_battles to preserve optimistic attacks during out-of-order server responses
+        if (newGameData.table_battles && prevGames[gameId]?.table_battles) {
+            result.table_battles = mergeTableBattles(prevGames[gameId].table_battles, newGameData.table_battles);
+        }
         
         // If we have both old and new self data with hands, preserve the hand order
         if (newGameData.self && prevGames[gameId]?.self && 
