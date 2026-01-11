@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
-import { Card, Game, PublicAnimationEvent, PublicGame } from '../common/types';
+import { Card, Game, GAME_STATUS, PLAYER_STATUS, PublicAnimationEvent, PublicGame } from '../common/types';
 import { useServer } from './ServerContext';
 import { useAuth } from './AuthContext';
 import { useParams } from 'react-router-dom';
@@ -57,6 +57,63 @@ interface AnimationContextType {
 
 const AnimationContext = createContext<AnimationContextType | null>(null);
 
+// Check if any bot can possibly move in the current game state
+const canBotMove = (game: PublicGame | undefined): boolean => {
+    if (!game || game.status !== GAME_STATUS.PLAYING) {
+        return false;
+    }
+
+    const players = game.players;
+    if (!players || players.length === 0) {
+        return false;
+    }
+
+    const tableBattles = game.table_battles || [];
+    const tableIsEmpty = tableBattles.length === 0;
+    const hasUncoveredAttacks = tableBattles.some(b => !b.defense);
+    const allCovered = tableBattles.length > 0 && !hasUncoveredAttacks;
+    const goodPlayers = new Set(game.good_players || []);
+
+
+    // Case 1: Table is empty - only first_attacker can move
+    if (tableIsEmpty) {
+        const firstAttacker = players[game.first_attacker];
+        const result = firstAttacker?.is_ai === true;
+        return result;
+    }
+
+    // Case 2: Table has cards
+    const defender = players[game.defender];
+    const defenderIsBot = defender?.is_ai === true;
+
+    // Defender can move if there are uncovered attacks
+    if (defenderIsBot && hasUncoveredAttacks) {
+        return true;
+    }
+
+    // Attackers (non-defenders) can move if:
+    // 1. There are uncovered attacks they can add to, OR
+    // 2. All cards are covered but they haven't said "good" yet
+
+    // Check if any bot attacker hasn't said good yet
+    for (let i = 0; i < players.length; i++) {
+        if (i === game.defender) continue; // Skip defender
+        const player = players[i];
+        if (player.is_ai && player.status === PLAYER_STATUS.IN) {
+            // Bot attacker - check if they can still act
+            if (!allCovered) {
+                return true;
+            }
+            // All covered - can they say good?
+            if (!goodPlayers.has(player.player_id)) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+};
+
 export const AnimationProvider = ({ children }: { children: React.ReactNode }) => {
     const { updateGameState, games, game_id, ...serverMethods } = useServer();
     const { user_id } = useAuth();
@@ -90,6 +147,9 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     // Track if there have been bot moves in the last interval
     const hasBotMovedRef = useRef<boolean>(false);
 
+    // Ref to track current game state (avoids stale closure in interval)
+    const currentGameRef = useRef<typeof games[string] | undefined>(undefined);
+
     // Keep track of processed sequence IDs and event content to avoid duplicates
     const processedSequenceIds = useRef<Set<string>>(new Set());
     const processedEventContent = useRef<Set<string>>(new Set());
@@ -118,6 +178,11 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     const animationChannelRetryInterval = useRef(500); // Start with 0.5 seconds
     const MAX_RETRY_INTERVAL = 5000; // Cap at 5 seconds
 
+    // Keep currentGameRef in sync with latest game state
+    useEffect(() => {
+        currentGameRef.current = url_game_id ? games[url_game_id] : undefined;
+    }, [url_game_id, games]);
+
     // Start bot bump timer when component mounts and game is loaded
     useEffect(() => {
         if (!url_game_id) {
@@ -133,24 +198,28 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             return;
         }
 
-        // Start interval that checks every 15 seconds
+        // Start interval that checks every 5 seconds
         const intervalId = setInterval(() => {
-            // Check if there have been bot moves in the last 15 seconds
+            // Check if there have been bot moves in the last interval
             if (!hasBotMovedRef.current) {
-                // No bot moves - call bot_bump to wake up the bot loop
-                console.log('No bot activity detected, calling bot_bump');
+                // Check if any bot can actually move in current state (use ref for fresh data)
+                const botCanMove = canBotMove(currentGameRef.current);
+                if (!botCanMove) {
+                    // No bot can move - we're waiting for a human player, skip bump
+                    return;
+                }
+
+                // No bot moves but a bot could move - call bot_bump to wake up the bot loop
                 supabase.functions.invoke('bot_bump', {
                     body: { game_id: url_game_id }
                 }).catch(error => {
                     console.error('Bot bump failed:', error);
                 });
-            } else {
-                console.log('Bot activity detected, skipping bot_bump');
             }
 
             // Reset the flag for the next interval
             hasBotMovedRef.current = false;
-        }, 5000); // 15 seconds
+        }, 5000); // 5 seconds
 
         // Store the interval ID for cleanup
         botBumpTimerRef.current = intervalId as any;
@@ -159,9 +228,12 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         return () => {
             if (botBumpTimerRef.current) {
                 clearInterval(botBumpTimerRef.current);
+                botBumpTimerRef.current = null;
             }
         };
-    }, [url_game_id, games]);
+    // Re-run when game data loads or players change (bot might be added)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [url_game_id, url_game_id ? games[url_game_id]?.players?.length : 0]);
 
     // Clear OLD optimistic animations every 5 seconds (older than 30 seconds)
     useEffect(() => {
