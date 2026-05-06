@@ -280,11 +280,15 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
 
     // Continue the loop if a bot was processed or auto-transition occurred
     if (botProcessed) {
-        const remainingDelay = currentBotDelay;
+        // Skip pacing when there are no humans watching AND this cycle produced no
+        // animations — bots churning through silent goods shouldn't feel padded.
+        const skipDelay = actionEvents.length === 0 && currentBotDelay === BOT_PROCESSING_DELAY_BOTS_ONLY;
 
-        if (remainingDelay > 0) {
-            console.log(`[CYCLE ${cycle}] Cycle took ${totalCycleTime}ms, waiting ${remainingDelay}ms to maintain ${currentBotDelay}ms interval`);
-            await new Promise(resolve => setTimeout(resolve, remainingDelay));
+        if (skipDelay) {
+            console.log(`[CYCLE ${cycle}] Cycle took ${totalCycleTime}ms, skipping ${currentBotDelay}ms delay (no events, no humans)`);
+        } else if (currentBotDelay > 0) {
+            console.log(`[CYCLE ${cycle}] Cycle took ${totalCycleTime}ms, waiting ${currentBotDelay}ms to maintain ${currentBotDelay}ms interval`);
+            await new Promise(resolve => setTimeout(resolve, currentBotDelay));
         } else {
             console.log(`[CYCLE ${cycle}] Cycle took ${totalCycleTime}ms (>= ${currentBotDelay}ms target), continuing immediately`);
         }

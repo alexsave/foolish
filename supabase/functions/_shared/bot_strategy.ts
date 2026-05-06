@@ -338,7 +338,6 @@ function hasPlayersStillAttacking(game: Game): boolean {
         player.player_id !== game.players[game.defender].player_id &&
         player.status !== PLAYER_STATUS.OUT &&
         player.hand.some(card => game.table_battles.some(battle => battle.attack.value === card.value || (battle.defense && battle.defense.value === card.value))) &&
-        player.awaiting_attack &&
         !(game.good_players?.includes(player.player_id))); // Exclude players who have said "good"
     
     return playable_players.length > 0;

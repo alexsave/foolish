@@ -150,11 +150,8 @@ export const shouldBotActCore = (game: Game, bot: PrivatePlayer, botIndex: numbe
         return !allAttacksCovered;
     }
     
-    // Attacker: check if they've already said "good"
-    const hasPlayerSaidGood = game.good_players?.includes(bot.player_id) || false;
-    if (hasPlayerSaidGood) {
-        return false;
-    }
-    // Attacker can act if awaiting attack
-    return bot.awaiting_attack;
+    // Attacker is eligible iff they haven't said "good" yet. good_players is the single
+    // source of truth — awaiting_attack used to gate this too, but the two could drift out
+    // of sync and deadlock the round.
+    return !game.good_players?.includes(bot.player_id);
 }
