@@ -183,8 +183,10 @@ export function executeGood(game: Game, player_id: string): AnimationEvent[] {
         ? (Date.now() - game.good_timestamp >= 60000) 
         : false;
 
-    // Only proceed to next round if (all attackers said good OR timeout) AND all attacks are covered
-    const canTransition = (allAttackersGood || oneMinutePassed) && allAttacksCovered;
+    // Only proceed to next round if all attackers said good AND all attacks are covered.
+    // Timeout fallback disabled (was: allAttackersGood || /*oneMinutePassed*/) — long-game
+    // sessions no longer auto-discard out from under absent attackers.
+    const canTransition = (allAttackersGood /* || oneMinutePassed */) && allAttacksCovered;
     
     // Always log when someone says good
     console.log(`✅ ${player.name} said good` + (canTransition ? '' : `. Waiting: ` +

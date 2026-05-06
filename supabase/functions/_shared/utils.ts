@@ -13,7 +13,6 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { getAuthenticatedUser } from './auth.ts';
 import { lockedBotLoop } from './bot_actions.ts';
 import { saveGameLogs, cleanupOldGameLogs } from './log_utils.ts';
-import { lockedAutoDiscardLoop } from './auto_discard_loop.ts';
 
 const supabaseClient = createClient(
     Deno.env.get('SUPABASE_URL') || '',
@@ -130,11 +129,34 @@ export const executeWithGameLock = async (game_id: string, operation: (game: Gam
         // Needs to be done BEFORE saving so that save it as DONE
         const game_ended = await check_win_async(result.game);
 
-        // TODO add validation before kicking this off
-        // there are attacks on table and all are covered
-        if (result.game.table_battles.length > 0 && result.game.table_battles.every(battle => battle.defense !== null)) {
-            lockedAutoDiscardLoop(game_id);
-        }
+        // Auto-discard disabled: discard now requires all in-players to press "good".
+        // Before re-enabling, fix the following (the original TODO was "add validation before
+        // kicking this off" — concrete items below):
+        //   1. Add `.catch(err => console.error(...))` to the fire-and-forget call. Every other
+        //      fire-and-forget in this file (broadcastAnimationEvents, cleanupOldGameLogs) does
+        //      this; lockedAutoDiscardLoop and lockedBotLoop are the outliers. An unhandled
+        //      rejection from acquireAutoDiscardLock or the DB client can terminate the Deno
+        //      edge worker.
+        //   2. Move the spawn to AFTER `releaseGameLock` (i.e. outside the try/finally), or have
+        //      monitorAutoDiscard retry on initial executeWithGameLock failure. As written, the
+        //      loop is spawned while the parent still holds the per-game lock, so its first
+        //      iteration races to re-acquire the same lock (9 retries × 100ms linear backoff,
+        //      ~4.5s budget). Under contention the first acquire can fail and the watchdog dies
+        //      silently — the catch in monitorAutoDiscard swallows the error and does not
+        //      reschedule.
+        //   3. Tighten the trigger condition. Today it fires after every action whose end state
+        //      has any covered table — including actions that don't change the discard window
+        //      (update-name, rearrange-hand, join, exit). Each spawns a loop that bails after
+        //      one DB roundtrip. Add `result.game.status === GAME_STATUS.PLAYING &&
+        //      result.game.good_timestamp` — `good_timestamp` is only set in cover.ts when all
+        //      attacks just became covered, which is the actual condition that opens the
+        //      discard window.
+        //   4. (Not blocking, just noted) The auto_discard_locks table dedupes concurrent loops
+        //      per game, and the 100-iteration cap × 5s interval gives ~8min of watchdog life
+        //      vs the 60s timeout — plenty of headroom. Both fine as-is.
+        // if (result.game.table_battles.length > 0 && result.game.table_battles.every(battle => battle.defense !== null)) {
+        //     lockedAutoDiscardLoop(game_id);
+        // }
 
         // Always save the game state
         await saveCompleteGame(result.game);
