@@ -2,16 +2,16 @@ import { calculateLegalMoves, registerBotStrategy } from '../../supabase/functio
 import { shouldBotActCore, processBotAction } from '../../supabase/functions/_shared/pure_bot_actions.ts';
 import { start_game, game_done, seededRandom } from '../../supabase/functions/_shared/common_utils.ts';
 import { Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, STRATEGY_KEY, StrategyKey } from '../../supabase/functions/_shared/types.ts';
-import { EspressoStrategy } from './espresso_strategy.ts';
+import { EspressoStrategy } from '../../supabase/functions/_shared/strategies/espresso_strategy.ts';
 
 // Register custom strategies
 const ESPRESSO = 'espresso' as StrategyKey;
 registerBotStrategy(ESPRESSO, new EspressoStrategy());
 
 // Configuration
-const NUM_GAMES = 10000;
+const NUM_GAMES = 30000;
 const STRATEGY_1: StrategyKey = STRATEGY_KEY.HANDWRITTEN;
-const STRATEGY_2: StrategyKey = STRATEGY_KEY.RANDOM;
+const STRATEGY_2: StrategyKey = ESPRESSO;
 
 // Silence all console output during batch run
 const noop = () => { };
@@ -69,7 +69,12 @@ async function runSingleGame(strat1: StrategyKey, strat2: StrategyKey): Promise<
             }
         }
 
-        const shuffledBots = [...eligibleBots].sort(() => seededRandom() - 0.5);
+        // Fisher-Yates: comparator-based shuffles can livelock V8 TimSort.
+        const shuffledBots = [...eligibleBots];
+        for (let i = shuffledBots.length - 1; i > 0; i--) {
+            const j = Math.floor(seededRandom() * (i + 1));
+            [shuffledBots[i], shuffledBots[j]] = [shuffledBots[j], shuffledBots[i]];
+        }
         for (const selectedBot of shuffledBots) {
             const botActionEvents = await processBotAction(game, selectedBot.bot);
             if (botActionEvents) break;
