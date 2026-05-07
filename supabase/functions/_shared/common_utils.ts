@@ -363,7 +363,12 @@ export const refillPlayerHandsWithEvents = (game: Game): { refillEvents: any[], 
 
     // Then go around starting from firstAttacker
     let pIndex = game.first_attacker;
+    const visited = new Set<number>();
     do {
+        // Bail when we'd revisit — first_attacker may be marked OUT inside
+        // the body, in which case get_next_player_index never returns it.
+        if (visited.has(pIndex)) break;
+        visited.add(pIndex);
         const hand = game.players[pIndex].hand;
         const initialHandSize = hand.length;
         const drawnCards: Card[] = [];
