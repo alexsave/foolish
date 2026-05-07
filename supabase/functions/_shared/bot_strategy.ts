@@ -8,6 +8,7 @@ import { UltimateChampionStrategy } from './strategies/ultimate_champion_strateg
 import { ChampionStrategy } from './strategies/champion_strategy.ts';
 import { HackerStrategy } from './strategies/hacker_strategy.ts';
 import { GPTBotStrategy } from './strategies/gpt_strategy.ts';
+import { EspressoStrategy } from './strategies/espresso_strategy.ts';
 
 // Re-export interfaces for backwards compatibility
 export type { BotStrategy, LegalMove };
@@ -20,6 +21,7 @@ export const BOT_STRATEGIES: Map<string, BotStrategy> = new Map<string, BotStrat
     ['ultimate_champion', new UltimateChampionStrategy()],
     ['champion', new ChampionStrategy()],
     ['hacker', new HackerStrategy()],
+    ['espresso', new EspressoStrategy()],
 ]);
 
 // Lazy-load GPT strategy to avoid requiring API key at module load time

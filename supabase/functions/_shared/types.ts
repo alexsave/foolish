@@ -256,7 +256,8 @@ export const STRATEGY_KEY = {
     CHAMPION: 'champion',
     HACKER: 'hacker',
     CONSOLE: 'console',
-    GPT: 'gpt'
+    GPT: 'gpt',
+    ESPRESSO: 'espresso'
 } as const;
 
 export type StrategyKey = typeof STRATEGY_KEY[keyof typeof STRATEGY_KEY];

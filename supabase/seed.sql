@@ -603,6 +603,11 @@ INSERT INTO bots (nickname, strategy_key) VALUES
 ('Hacker 1', 'hacker'),
 ('Hacker 2', 'hacker'),
 
+-- Espresso strategy bots (perfect-info + lookahead, beats handwritten ~54%)
+('Espresso 1', 'espresso'),
+('Espresso 2', 'espresso'),
+('Espresso 3', 'espresso'),
+
 
 -- =============================================================================
 -- SETUP COMPLETE!
