@@ -79,11 +79,12 @@ export function calculateLegalMoves(game: Game, botPlayerId: string): LegalMove[
         if (isFirstAttack && isFirstAttacker) {
             // Bot is first attacker - MUST attack, cannot say "good" with empty table
             const attackMoves = calculateFirstAttackMoves(game, botPlayer);
-            moves.push(...attackMoves);
+            // moves.push(...arr) hits V8's max-args limit when arr is millions long (combinatorial explosion).
+            for (const m of attackMoves) moves.push(m);
         } else if (isDefender && game.table_battles.length > 0) {
             // Bot is defender - can cover, pickup, pass, and optionally wait
             const coverMoves = calculateCoverMoves(game, botPlayer);
-            moves.push(...coverMoves);
+            for (const m of coverMoves) moves.push(m);
             
             // Can only pickup if there are uncovered attacks (don't allow pickup when all covered!)
             if (!allAttacksCovered) {
@@ -95,7 +96,7 @@ export function calculateLegalMoves(game: Game, botPlayerId: string): LegalMove[
             
             // Can pass if all attacks are same value and bot has that value
             const passMoves = calculatePassMoves(game, botPlayer);
-            moves.push(...passMoves);
+            for (const m of passMoves) moves.push(m);
         } else if (!isDefender && game.table_battles.length > 0) {
             // Bot is attacker - can attack with cards on table or say "good"
             const hasPlayerSaidGood = game.good_players?.includes(botPlayerId) || false;
@@ -103,7 +104,7 @@ export function calculateLegalMoves(game: Game, botPlayerId: string): LegalMove[
             // Can only attack if haven't said "good" yet
             if (!hasPlayerSaidGood) {
                 const attackMoves = calculateRegularAttackMoves(game, botPlayer);
-                moves.push(...attackMoves);
+                for (const m of attackMoves) moves.push(m);
             }
             
             // Can say "good" to signal they're done attacking (even if attacks aren't all covered)
@@ -361,3 +362,4 @@ function getCombinations<T>(array: T[], size: number): T[][] {
     
     return result;
 } 
+
