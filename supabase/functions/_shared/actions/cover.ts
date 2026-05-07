@@ -166,10 +166,13 @@ export function executeCover(game: Game, player_id: string, cover_cards: Card[],
         game.good_timestamp = null;
         
         if (defender.hand.length === 0) {
-            // Defender still has no cards after refilling - they win this round
+            // Defender still has no cards after refilling - they win this round.
+            // Guard: refill's no_cards_left branch may have already marked
+            // them OUT and pushed to elimination_order. Skip if already done.
+            const wasIn = game.players[game.first_attacker].status === PLAYER_STATUS.IN;
             game.players[game.first_attacker].status = PLAYER_STATUS.OUT;
             game.players[game.first_attacker].awaiting_attack = false;
-            game.elimination_order.push(game.players[game.first_attacker].player_id);
+            if (wasIn) game.elimination_order.push(game.players[game.first_attacker].player_id);
             
             // Log player going out
             addLog(game, {
