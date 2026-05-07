@@ -208,8 +208,15 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
             if (eligibleBots.length > 0) {
                 console.log(`Found ${eligibleBots.length} eligible bots: ${eligibleBots.map(b => b.bot.name).join(', ')}`);
 
-                // Shuffle the eligible bots to try them in random order
-                const shuffledBots = [...eligibleBots].sort(() => Math.random() - 0.5);
+                // Fisher-Yates shuffle. A comparator-based shuffle
+                // (sort(() => Math.random() - 0.5)) violates V8 TimSort's
+                // transitivity contract and can livelock the sort on certain
+                // arrays — confirmed via offline stress tests at 3+ players.
+                const shuffledBots = [...eligibleBots];
+                for (let i = shuffledBots.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [shuffledBots[i], shuffledBots[j]] = [shuffledBots[j], shuffledBots[i]];
+                }
                 
                 // Track if we processed any passive actions without animations
                 let anyPassiveProcessed = false;
