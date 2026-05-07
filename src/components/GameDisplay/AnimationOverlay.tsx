@@ -125,8 +125,9 @@ export const AnimationOverlay = () => {
                 placeholders.push(placeholder);
             });
             
-            // Force layout and measure positions
-            const _ = tableBattlesElement.offsetHeight; // Force reflow
+            // Force layout and measure positions (intentional unused read).
+            // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+            tableBattlesElement.offsetHeight;
             
             placeholders.forEach((placeholder, index) => {
                 const rect = placeholder.getBoundingClientRect();
@@ -170,6 +171,9 @@ export const AnimationOverlay = () => {
             return;
         }
 
+        // target_card and battle_index are kept in the destructure for future
+        // multi-card cover handling; currently unused.
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const { type, cards, from_location, to_location, player_id, target_card, target_cards, battle_index, is_revert } = currentAnimation;
 
         // Handle magic_transition separately since it doesn't have cards
@@ -393,6 +397,7 @@ export const AnimationOverlay = () => {
             }, ANIMATION_TIME + 50); // 500ms animation + 50ms buffer
         }, 50); // Small delay to ensure DOM is ready
 
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [currentAnimation, isAnimating]);
 
     if (animatedCards.length === 0) {

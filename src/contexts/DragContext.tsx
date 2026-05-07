@@ -338,6 +338,7 @@ export const DragProvider = ({ children }: { children: React.ReactNode }) => {
             document.removeEventListener('mouseup', handleEnd);
             document.removeEventListener('touchend', handleEnd);
         };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isDraggingCard, draggedCardIndex, localHandOrder, hasSwapped, isActuallyDragging, touchStartTime, isDraggingForGameAction, draggedCard, currentCursorPos]);
 
     const endCardDrag = () => {

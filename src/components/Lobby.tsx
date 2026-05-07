@@ -140,6 +140,7 @@ export const Lobby = () => {
                 setLocalPlayerOrder(game.players);
             }
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [game?.players, isDragging, hasPendingRearrange, isRearranging, pendingReady, localPlayerOrder.length, optimisticBotIds]);
 
     useEffect(() => {
@@ -222,6 +223,7 @@ export const Lobby = () => {
             document.removeEventListener('mouseup', handleEnd);
             document.removeEventListener('touchend', handleEnd);
         };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isDragging, draggedIndex, localPlayerOrder]);
 
     usePreventScroll();

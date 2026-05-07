@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
-import { Card, Game, GAME_STATUS, PLAYER_STATUS, PublicAnimationEvent, PublicGame } from '../common/types';
+import { Card, Game, GAME_STATUS, PLAYER_STATUS, PublicGame } from '../common/types';
 import { useServer } from './ServerContext';
 import { useAuth } from './AuthContext';
 import { useParams } from 'react-router-dom';
@@ -11,17 +11,17 @@ import { getTableCards, cardsIntersection, getCardKeyPlayerId, createCardEventSt
 // Animation timing constant
 export { ANIMATION_TIME } from '../constants/constants';
 
-// Bot bump timeout - 20 seconds of no animations
-const BOT_BUMP_TIMEOUT = 20000;
+// Bot bump timeout - 20 seconds of no animations (currently unused)
+// const BOT_BUMP_TIMEOUT = 20000;
 
-//message type
-interface PayLoad {
-    type: 'animation_sequence';
-    sequence_id: string;
-    timestamp: number;
-    events: PublicAnimationEvent;
-    game: PublicGame;
-}
+//message type (currently unused)
+// interface PayLoad {
+//     type: 'animation_sequence';
+//     sequence_id: string;
+//     timestamp: number;
+//     events: PublicAnimationEvent;
+//     game: PublicGame;
+// }
 
 interface ClientAnimationEvent  {
     type: 'magic_transition' | 'deal' | 'flipped' | 'defender_move' | 'attack_pass' | 'cover' | 'pickup' | 'discard' | 'out' | 'refill' | 'cards_to_trash' | 'revert';
@@ -389,6 +389,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 });
             }
         };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [user_id, url_game_id]);
 
     const resolveOptimisticConflicts = (message: any) => {

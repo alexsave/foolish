@@ -9,6 +9,7 @@ const COVER_ROTATION: string = (Math.PI/ 16) + 'rad';
 
 export const TableBattles = () => {
     const game: PersonalGame = useServer().game as PersonalGame;
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { user_id } = useAuth();
     const { coverMap, setCoverMap, isSelectingCover, selectedCards } = useGame();
     const { isDraggingForGameAction, draggedCard, currentCursorPos, determineGameAction } = useDrag();
@@ -18,7 +19,7 @@ export const TableBattles = () => {
         return <div></div>;
     }
     
-    const self_index = game.players.findIndex(p => p.player_id === user_id);
+    // const self_index = game.players.findIndex(p => p.player_id === user_id);
 
     // Determine what action would happen if we dropped right now
     let currentAction: 

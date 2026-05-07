@@ -172,7 +172,6 @@ export const determine_lowest_power_index = (game: Game): number => {
 }
 
 export const set_positions = (game: Game) => {
-    game.first_attacker = game.first_attacker;
     game.defender = (game.first_attacker + 1) % game.players.length;
 }
 

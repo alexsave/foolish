@@ -53,8 +53,10 @@ async function generateConcreteTexture(width: number = 512, height: number = 512
 
     // Fill with base color and add specks
     for (let i = 0; i < data.length; i += 4) {
-      const x = (i / 4) % width;
-      const y = Math.floor((i / 4) / width);
+      // x/y were precomputed for spatially-varying noise, but the current
+      // implementation uses uniform noise — keep computed-out for future use.
+      // const x = (i / 4) % width;
+      // const y = Math.floor((i / 4) / width);
       
       // Start with base gray
       let gray = BASE_GRAY;

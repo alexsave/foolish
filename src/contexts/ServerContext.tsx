@@ -65,6 +65,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     // Thinking we just need one tbh
     const [localHandOrders, setLocalHandOrders] = useState<{ [key: string]: Card[] }>({});
 
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const [localHand, setLocalHand] = useState<Card[]>([]);
 
     // Use ref to avoid closure issues in WebSocket handler
@@ -104,6 +105,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             } else {
             }
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [url_game_id]);
 
 
@@ -133,6 +135,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             // Remove all realtime subscriptions
             supabase.removeAllChannels();
         };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [user_id, url_game_id]);
 
 
@@ -985,8 +988,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             }
 
             const games: { [key: string]: PersonalGame } = {};
-            let processedGames = 0;
-            let skippedGames = 0;
 
             for (const playerHand of data) {
                 try {
@@ -994,16 +995,14 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                     const game = playerHand.games as unknown as PublicGame;
                     const selfPlayer = game.players.find((player) => player.player_id === user_id);
                     if (!selfPlayer) {
-                        skippedGames++;
                         continue;
                     }
                     games[game.id] = {
                         ...game,
                         self: { ...selfPlayer, player_id: user_id, hand: playerHand.hand, awaiting_attack: playerHand.awaiting_attack, strategy_key: STRATEGY_KEY.HUMAN }// as unknown as PrivatePlayer
                     };
-                    processedGames++;
                 } catch (gameError) {
-                    skippedGames++;
+                    // ignore individual game errors
                 }
             }
 
@@ -1046,8 +1045,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             return { game_id };
 
         } catch (error) {
-            const err = error as Error;
-
             options.onError?.(error);
             throw error;
         }

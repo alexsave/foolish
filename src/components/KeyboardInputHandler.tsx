@@ -36,6 +36,7 @@ export const KeyboardInputHandler = () => {
     };
 
     // Helper function to find unambiguous cover combinations (similar to DragContext)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     const findUnambiguousCover = (cardsToUse: Card[]): { coverCards: Card[], attackCards: Card[] } | null => {
         if (!game) return null;
         
@@ -112,6 +113,7 @@ export const KeyboardInputHandler = () => {
     };
 
     // Check if passing is possible
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     const canPass = (cardsToCheck: Card[]): boolean => {
         if (!game) return false;
         
@@ -173,6 +175,7 @@ export const KeyboardInputHandler = () => {
         } catch (error) {
             console.error('Cover failed:', error);
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [game, selectedCards, cover, setSelectedCards, findUnambiguousCover]);
 
     const handlePass = useCallback(async () => {
@@ -188,6 +191,7 @@ export const KeyboardInputHandler = () => {
         } catch (error) {
             console.error('Pass failed:', error);
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [game, selectedCards, pass, setSelectedCards, canPass]);
 
     const handlePickup = useCallback(async () => {
@@ -293,6 +297,7 @@ export const KeyboardInputHandler = () => {
         return () => {
             document.removeEventListener('keydown', handleKeyDown);
         };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [game, selectedCards, localHandOrder, user_id, handleCardSelection, handleAttack, handleCover, handlePass, handlePickup, handleGood]);
 
     // This component doesn't render anything - it's just for handling keyboard events
