@@ -104,6 +104,22 @@ export class NitroStrategy implements BotStrategy {
         const oppHandSize = opp ? opp.hand.length : 0;
 
         // ---------- DEFENDER ----------
+        // Principle 11 (defender, ENDGAME): in deck=0, prefer pass over
+        // cover when both are legal.
+        //   Why: with the deck dead, every card transferred is permanent.
+        //   Pass transfers our card AND the burden. Even if the new
+        //   defender (opp in 1v1) covers cleanly, they spent a card on
+        //   it. If they pickup, they pick up our pass card too.
+        //   Counter (deck still has cards): refill smooths things; pass
+        //   beat-cover here was tested and lost ground earlier in mid-
+        //   game. Restrict to closing phase.
+        if (deckEmpty) {
+            const passInEndgame = legalMoves.filter(m => m.type === 'pass');
+            if (passInEndgame.length > 0) {
+                return cheapest(passInEndgame, m => offensiveMoveCost(m, trump));
+            }
+        }
+
         const coverMoves = legalMoves.filter(m => m.type === 'cover');
         if (coverMoves.length > 0) {
             // Principle 1: cover beats pickup.
