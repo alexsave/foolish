@@ -113,16 +113,14 @@ export class NitroStrategy implements BotStrategy {
             // covers, prefer cards whose VALUE the opponent does NOT hold.
             //   Why: covering with a card adds that value to the table.
             //   The attacker can immediately follow up with any matching-
-            //   value card from their hand. If their followups include a
+            //   value card from their hand. If those followups include a
             //   trump or another card we can't cover, our defense
-            //   collapses on the next turn. Using a value the opponent
-            //   doesn't hold defuses that vector.
-            //   Counter (no opponent visible — N>2 / not 1v1): the
-            //   findOpponent helper returns the first IN opponent. In
-            //   1v1 that's the unique opponent. In 3+ player games it's
-            //   one of several — the penalty still gives a noisy but
-            //   useful signal, but more sophisticated multi-opponent
-            //   reasoning is out of scope for this iteration.
+            //   collapses next turn. Using a value the opponent doesn't
+            //   hold defuses that vector.
+            //   Counter (N>2 player games): findOpponent returns the
+            //   first IN opponent — for 1v1 that's the unique opponent;
+            //   for multi-opp games this is a noisy but still-useful
+            //   signal. Multi-opponent-aware reasoning is future work.
             const oppMatchPenalty = (move: LegalMove): number => {
                 if (!opp || !move.cards) return 0;
                 let p = 0;
@@ -133,10 +131,79 @@ export class NitroStrategy implements BotStrategy {
                 }
                 return 30 * p;
             };
-            return cheapest(
+            const bestCover = cheapest(
                 coverMoves,
                 m => coverMoveCost(m, trump) + oppMatchPenalty(m),
             );
+
+            // Principle 10 (defender, perfect info): if the best cover
+            // burns a trump AND the opponent holds enough same-value
+            // cards to launch a follow-up attack we can't cover,
+            // pickup instead.
+            //   Why: covering with T♥ (trump) on J♣ teaches the table
+            //   the value 10. If opp has T♦ and T♣, they pile both
+            //   onto the next attack — and if our remaining hand has
+            //   no trump, T♣ becomes uncoverable. Pickup now is
+            //   smaller (just current table cards) than the disaster
+            //   we'd face two moves later.
+            //   Counter (deck still has cards): refill softens early
+            //   pickups; the trade is worse before deck=0. Restrict
+            //   to deck.length small.
+            //   Counter (no pickup option): only triggers when pickup
+            //   is legal.
+            //   Counter (cover doesn't burn trump): we only act when
+            //   the cover commits a trump that would be otherwise
+            //   useful for future defenses.
+            const pickupMove = legalMoves.find(m => m.type === 'pickup');
+            if (pickupMove && opp) {
+                const cards = bestCover.cards ?? [];
+                const trumpInCover = cards.find(c => c.suit === trump);
+                if (trumpInCover) {
+                    // Predict follow-up: after cover, table values include
+                    // attacks + cover cards. Opp can attack any matching
+                    // value. If any such attack has no cover left in hand,
+                    // we'd be forced to pickup later anyway — and it'd
+                    // be a bigger pickup.
+                    const tableValues = new Set<number>();
+                    for (const b of game.table_battles) {
+                        tableValues.add(b.attack.value);
+                        if (b.defense) tableValues.add(b.defense.value);
+                    }
+                    for (const c of cards) tableValues.add(c.value);
+                    const trumpsLeft = myTrumps - cards.filter(c => c.suit === trump).length;
+                    const handAfter = me.hand.filter(h => !cards.some(c => c.value === h.value && c.suit === h.suit));
+
+                    // A "savable" threat: an opp followup we can't cover
+                    // AFTER spending the trump, but COULD have covered if
+                    // we kept it. If the threat survives even with the
+                    // trump in hand, pickup doesn't help us — cover.
+                    let savableThreat = false;
+                    for (const oc of opp.hand) {
+                        if (!tableValues.has(oc.value)) continue;
+                        const canDefendAfter = handAfter.some(h => canCover(oc, h, trump));
+                        if (canDefendAfter) continue;
+                        const canDefendNow = me.hand.some(h => canCover(oc, h, trump));
+                        if (canDefendNow) {
+                            savableThreat = true;
+                            break;
+                        }
+                    }
+
+                    // Only swap to pickup when:
+                    //   (a) the threat is savable by keeping the trump,
+                    //   (b) the current pickup is small (≤ 3 table cards),
+                    //   (c) we're not already trump-rich vs the opponent.
+                    const tableCardCount = game.table_battles.reduce(
+                        (s, b) => s + 1 + (b.defense ? 1 : 0),
+                        0,
+                    );
+                    if (savableThreat && tableCardCount <= 3 && trumpsLeft <= oppTrumps) {
+                        return pickupMove;
+                    }
+                }
+            }
+
+            return bestCover;
         }
 
         // ---------- ATTACKER ----------
@@ -156,9 +223,21 @@ export class NitroStrategy implements BotStrategy {
             if (deckEmpty && opp) {
                 const uncoveredOnTable = game.table_battles
                     .filter(b => b.defense === null).map(b => b.attack);
+                // Forcing attacks must use only NON-TRUMP, MID-TO-LOW value
+                // cards. Reasons:
+                //   - Trumps in our forcing attack go to opponent's hand on
+                //     pickup, arming them with cards we can't beat.
+                //   - HIGH cards (Q/K/A) on pickup boomerang back at us in
+                //     the next round — opponent attacks with them and we
+                //     can't cover. Tested numerically: capping forcing-
+                //     attack cards at ≤ J (11) avoids the boomerang while
+                //     still triggering on attacks the opponent really
+                //     can't cover.
+                const FORCING_VALUE_CAP = 11;
                 const forcing = attackMoves.filter(m => {
                     const cards = m.cards ?? [];
                     if (cards.some(c => c.suit === trump)) return false;
+                    if (cards.some(c => c.value > FORCING_VALUE_CAP)) return false;
                     const all = [...uncoveredOnTable, ...cards];
                     return !canFullyCover(all, opp.hand, trump);
                 });
