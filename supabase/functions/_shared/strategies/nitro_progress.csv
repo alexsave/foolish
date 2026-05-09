@@ -1,0 +1,2 @@
+row,training_range_size,win_rate_eval_random_10k,win_rate_eval_espresso_10k,principles_added,tactical_added,note
+1,1,0.2073,0.0005,0,0,baseline last-move strategy
