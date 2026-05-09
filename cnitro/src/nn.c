@@ -143,21 +143,30 @@ void nn_forward(const NNParams *p, const int *tokens, int L, ForwardCache *cache
                         lc->K + h * D_HEAD, D_MODEL,
                         0.0f, scores_h, L);
         }
-        // Softmax row-wise for each head.
+        // Softmax row-wise per head. To amortize vvexpf's per-call overhead,
+        // we build the entire shifted matrix in attn_h, then do ONE vvexpf
+        // call over L*L elements per head, then sum/scale row-wise.
         for (int h = 0; h < N_HEADS; h++) {
             float *scores_h = lc->scores + (size_t)h * L * L;
             float *attn_h   = lc->attn   + (size_t)h * L * L;
+            // Per-row: shift = scores_row - row_max → into attn_h.
             for (int i = 0; i < L; i++) {
-                float mx = -1e30f;
-                for (int j = 0; j < L; j++) if (scores_h[i * L + j] > mx) mx = scores_h[i * L + j];
+                const float *row_in  = scores_h + i * L;
+                float *row_out = attn_h + i * L;
+                float mx = row_in[0];
+                for (int j = 1; j < L; j++) if (row_in[j] > mx) mx = row_in[j];
+                for (int j = 0; j < L; j++) row_out[j] = row_in[j] - mx;
+            }
+            // One big vvexpf on the entire L*L block.
+            int n_total = L * L;
+            vvexpf(attn_h, attn_h, &n_total);
+            // Per-row sum + scale.
+            for (int i = 0; i < L; i++) {
+                float *row = attn_h + i * L;
                 float sum = 0;
-                for (int j = 0; j < L; j++) {
-                    float e = expf(scores_h[i * L + j] - mx);
-                    attn_h[i * L + j] = e;
-                    sum += e;
-                }
+                for (int j = 0; j < L; j++) sum += row[j];
                 float inv = 1.f / sum;
-                for (int j = 0; j < L; j++) attn_h[i * L + j] *= inv;
+                for (int j = 0; j < L; j++) row[j] *= inv;
             }
         }
         // attnOut_h = attn_h @ V_h. Each head writes into its own slice.
@@ -173,7 +182,7 @@ void nn_forward(const NNParams *p, const int *tokens, int L, ForwardCache *cache
                     L, D_MODEL, D_MODEL, 1.0f,
                     lc->attnOut, D_MODEL, lp->Wo, D_MODEL, 0.0f, lc->proj, D_MODEL);
         // afterAttn = xIn + proj (residual).
-        for (int i = 0; i < L * D_MODEL; i++) lc->afterAttn[i] = lc->xIn[i] + lc->proj[i];
+        vDSP_vadd(lc->xIn, 1, lc->proj, 1, lc->afterAttn, 1, L * D_MODEL);
 
         // LN2.
         for (int i = 0; i < L; i++) {
@@ -188,20 +197,25 @@ void nn_forward(const NNParams *p, const int *tokens, int L, ForwardCache *cache
                     L, FF_DIM, D_MODEL, 1.0f,
                     lc->xLn2, D_MODEL, lp->Wff1, D_MODEL, 0.0f, lc->ff1pre, FF_DIM);
         for (int i = 0; i < L; i++) {
-            for (int h = 0; h < FF_DIM; h++) {
-                float s = lc->ff1pre[i * FF_DIM + h] + lp->bff1[h];
-                lc->ff1pre[i * FF_DIM + h] = s;
-                lc->ff1[i * FF_DIM + h] = s > 0 ? s : 0;
-            }
+            // Add bias as a contiguous vector op.
+            vDSP_vadd(lc->ff1pre + i * FF_DIM, 1, lp->bff1, 1,
+                      lc->ff1pre + i * FF_DIM, 1, FF_DIM);
+        }
+        // Branchless ReLU on the whole [L, FF_DIM] block.
+        for (int i = 0, n = L * FF_DIM; i < n; i++) {
+            float s = lc->ff1pre[i];
+            lc->ff1[i] = s > 0.f ? s : 0.f;
         }
         // FFN2: ff2 = ff1 @ Wff2^T + bff2.
         cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
                     L, D_MODEL, FF_DIM, 1.0f,
                     lc->ff1, FF_DIM, lp->Wff2, FF_DIM, 0.0f, lc->ff2, D_MODEL);
         for (int i = 0; i < L; i++) {
-            for (int d = 0; d < D_MODEL; d++) lc->ff2[i * D_MODEL + d] += lp->bff2[d];
+            vDSP_vadd(lc->ff2 + i * D_MODEL, 1, lp->bff2, 1,
+                      lc->ff2 + i * D_MODEL, 1, D_MODEL);
         }
-        for (int i = 0; i < L * D_MODEL; i++) lc->out[i] = lc->afterAttn[i] + lc->ff2[i];
+        // out = afterAttn + ff2 (residual).
+        vDSP_vadd(lc->afterAttn, 1, lc->ff2, 1, lc->out, 1, L * D_MODEL);
 
         cur = lc->out;
     }
@@ -224,18 +238,142 @@ void nn_forward(const NNParams *p, const int *tokens, int L, ForwardCache *cache
 // ---------- Masked softmax ------------------------------------------
 
 void nn_softmax_masked(const float *logits, const bool *legal, float *out) {
+    // Find max over legal entries.
     float mx = -1e30f;
     for (int i = 0; i < NUM_ACTIONS; i++) if (legal[i] && logits[i] > mx) mx = logits[i];
-    float sum = 0;
+    // Stage shifted logits with -inf-ish for masked-out entries so exp goes to 0.
+    float shifted[NUM_ACTIONS];
     for (int i = 0; i < NUM_ACTIONS; i++) {
-        if (!legal[i]) { out[i] = 0; continue; }
-        float e = expf(logits[i] - mx);
-        out[i] = e; sum += e;
+        shifted[i] = legal[i] ? (logits[i] - mx) : -80.0f;  // expf(-80) ≈ 0
     }
-    if (sum > 0) for (int i = 0; i < NUM_ACTIONS; i++) out[i] /= sum;
+    int n = NUM_ACTIONS;
+    vvexpf(out, shifted, &n);
+    // Force masked-out entries to exact 0 (vvexpf(-80) is just very small).
+    for (int i = 0; i < NUM_ACTIONS; i++) if (!legal[i]) out[i] = 0;
+    float sum = 0;
+    vDSP_sve(out, 1, &sum, NUM_ACTIONS);
+    if (sum > 0) {
+        float inv = 1.f / sum;
+        vDSP_vsmul(out, 1, &inv, out, 1, NUM_ACTIONS);
+    }
 }
 
 // ---------- Backward --------------------------------------------------
+//
+// Each named bwd_* stage is __attribute__((noinline)) so the macOS sampler
+// attributes its time to a distinct frame instead of one giant
+// nn_accumulate_grads bucket.
+
+#define NOINLINE __attribute__((noinline))
+
+// Stage 1: cross-entropy → dCls. Tiny (NUM_ACTIONS × D_MODEL).
+static NOINLINE void bwd_output_head(
+    const NNParams *p, const ForwardCache *cache, NNGrads *g,
+    const float *dlogits, float *dCls)
+{
+    for (int d = 0; d < D_MODEL; d++) dCls[d] = 0.f;
+    for (int a = 0; a < NUM_ACTIONS; a++) {
+        float dl = dlogits[a];
+        if (dl == 0.f) continue;
+        int off = a * D_MODEL;
+        for (int d = 0; d < D_MODEL; d++) {
+            g->Wout[off + d] += dl * cache->cls[d];
+            dCls[d] += p->Wout[off + d] * dl;
+        }
+        g->bout[a] += dl;
+    }
+}
+
+// Stage 2: residual split — out = afterAttn + ff2. Pure copy.
+static NOINLINE void bwd_split_ffn_residual(
+    int L, const float *dOutNext, float *dAfterAttn, float *dFf2_buf)
+{
+    memcpy(dAfterAttn, dOutNext, sizeof(float) * L * D_MODEL);
+    memcpy(dFf2_buf,   dOutNext, sizeof(float) * L * D_MODEL);
+}
+
+// Stage 3: bias gradient — sum the rows of a (L × D) matrix into (D,).
+// Uses cblas_sgemv(no-trans, all-ones) so AMX handles the reduction.
+static NOINLINE void bwd_bias_grad(int L, int D, const float *dY_LxD, float *bias_grad) {
+    static float ones[MAX_SEQ_LEN];
+    static int ones_init = 0;
+    if (!ones_init) { for (int i = 0; i < MAX_SEQ_LEN; i++) ones[i] = 1.f; ones_init = 1; }
+    cblas_sgemv(CblasRowMajor, CblasTrans, L, D, 1.0f,
+                dY_LxD, D, ones, 1, 1.0f, bias_grad, 1);
+}
+
+// Stage 4: ReLU back — dFf1pre[i] = (ff1pre[i] > 0) * dFf1_buf[i].
+// Branchless + restrict so the compiler can fuse the load/compare/select/store
+// into pure SIMD with no scalar fallback path.
+static NOINLINE void bwd_relu(int n,
+                              const float * __restrict ff1pre,
+                              const float * __restrict dFf1_buf,
+                              float * __restrict dFf1pre) {
+    for (int i = 0; i < n; i++) {
+        float mask = ff1pre[i] > 0.f ? 1.f : 0.f;
+        dFf1pre[i] = dFf1_buf[i] * mask;
+    }
+}
+
+// Stage 5: per-token LN backward (L iterations). Adds the gradient to dXOut.
+static NOINLINE void bwd_layer_norm_per_token(
+    int L, const float *xIn, const float *means, const float *vars,
+    const float *g_param, const float *dXIn_per_token, float *dG, float *dB,
+    float *dXOut /* += */)
+{
+    for (int i = 0; i < L; i++) {
+        float dy[D_MODEL];
+        for (int d = 0; d < D_MODEL; d++) dy[d] = dXIn_per_token[i * D_MODEL + d];
+        float dx[D_MODEL];
+        layer_norm_backward(xIn, i * D_MODEL, means[i], vars[i],
+                            g_param, dy, dG, dB, D_MODEL, dx);
+        for (int d = 0; d < D_MODEL; d++) dXOut[i * D_MODEL + d] += dx[d];
+    }
+}
+
+// Stage 6: residual split — afterAttn = xIn + proj. Initializes dXIn_b
+// directly (no memset+= dance).
+static NOINLINE void bwd_split_attn_residual(
+    int L, const float *dAfterAttn, float *dProj_b, float *dXIn_b)
+{
+    memcpy(dProj_b, dAfterAttn, sizeof(float) * L * D_MODEL);
+    memcpy(dXIn_b,  dAfterAttn, sizeof(float) * L * D_MODEL);
+}
+
+// Stage 7: per-head softmax backward.
+//   dScores[i][k] = attn[i][k] * (dAttn[i][k] - dot_i)
+// __restrict + manual loops let the auto-vectorizer fuse the multiply-subtract
+// into a single SIMD pass. vDSP per-row calls were tried and lost — the
+// per-call overhead dominates at L=100.
+static NOINLINE void bwd_softmax_attention(
+    int L, const float * __restrict attn_h,
+    const float * __restrict dAttn_h, float * __restrict dScores_h)
+{
+    for (int i = 0; i < L; i++) {
+        const float *attn_row  = attn_h  + i * L;
+        const float *dAttn_row = dAttn_h + i * L;
+        float *dScores_row     = dScores_h + i * L;
+        float dot = 0;
+        for (int j = 0; j < L; j++) dot += attn_row[j] * dAttn_row[j];
+        for (int k = 0; k < L; k++) dScores_row[k] = attn_row[k] * (dAttn_row[k] - dot);
+    }
+}
+
+// Stage 8: embedding gradient. Per token, += dy into embed[tok] and pos[i].
+static NOINLINE void bwd_embed_grad(
+    int L, const int *tokens, const float *dOutNext,
+    float *embed_grad, float *pos_grad)
+{
+    for (int i = 0; i < L; i++) {
+        int tok = tokens[i];
+        float *e = embed_grad + tok * D_MODEL;
+        float *po = pos_grad + i * D_MODEL;
+        const float *dy = dOutNext + i * D_MODEL;
+        // vDSP_vadd avoids an explicit loop and lets Accelerate vectorize.
+        vDSP_vadd(e, 1, dy, 1, e, 1, D_MODEL);
+        vDSP_vadd(po, 1, dy, 1, po, 1, D_MODEL);
+    }
+}
 
 float nn_accumulate_grads(const NNParams *p, const ForwardCache *cache,
                           const bool *legal, int target, NNGrads *g) {
@@ -247,24 +385,13 @@ float nn_accumulate_grads(const NNParams *p, const ForwardCache *cache,
     for (int i = 0; i < NUM_ACTIONS; i++) dlogits[i] = probs[i];
     dlogits[target] -= 1.0f;
 
-    // Wout, bout, dCls.
-    float dCls[D_MODEL] = {0};
-    for (int a = 0; a < NUM_ACTIONS; a++) {
-        float dl = dlogits[a];
-        if (dl == 0.f) continue;
-        int off = a * D_MODEL;
-        for (int d = 0; d < D_MODEL; d++) {
-            g->Wout[off + d] += dl * cache->cls[d];
-            dCls[d] += p->Wout[off + d] * dl;
-        }
-        g->bout[a] += dl;
-    }
+    float dCls[D_MODEL];
+    bwd_output_head(p, cache, g, dlogits, dCls);
 
     float dFinalLnIn[D_MODEL];
     layer_norm_backward(cache->finalLnIn, 0, cache->finalLnMean, cache->finalLnVar,
                         p->lnFg, dCls, g->lnFg, g->lnFb, D_MODEL, dFinalLnIn);
 
-    // Backward scratch — single-threaded trainer, so file-static is fine.
     static float dOutNext[MAX_SEQ_LEN * D_MODEL];
     static float dAfterAttn[MAX_SEQ_LEN * D_MODEL];
     static float dFf2_buf[MAX_SEQ_LEN * D_MODEL];
@@ -289,112 +416,73 @@ float nn_accumulate_grads(const NNParams *p, const ForwardCache *cache,
         const LayerCache  *lc = &cache->layers[li];
         LayerParams       *lg = &g->layers[li];
 
-        // out = afterAttn + ff2 → split.
-        for (int i = 0; i < L * D_MODEL; i++) {
-            dAfterAttn[i] = dOutNext[i];
-            dFf2_buf[i]   = dOutNext[i];
-        }
+        bwd_split_ffn_residual(L, dOutNext, dAfterAttn, dFf2_buf);
 
-        // dWff2[d][h] += Σ_i dFf2_buf[i][d] * ff1[i][h]   = (dFf2_buf^T @ ff1)
+        // dWff2 += dFf2_buf^T @ ff1.
         cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
                     D_MODEL, FF_DIM, L, 1.0f,
                     dFf2_buf, D_MODEL, lc->ff1, FF_DIM, 1.0f, lg->Wff2, FF_DIM);
-        // dFf1_buf[i][h] = Σ_d Wff2[d][h] * dFf2_buf[i][d]   = dFf2_buf @ Wff2
+        // dFf1_buf = dFf2_buf @ Wff2.
         cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
                     L, FF_DIM, D_MODEL, 1.0f,
                     dFf2_buf, D_MODEL, lp->Wff2, FF_DIM, 0.0f, dFf1_buf, FF_DIM);
-        // bff2 grad: sum across L.
-        for (int i = 0; i < L; i++) {
-            for (int d = 0; d < D_MODEL; d++) lg->bff2[d] += dFf2_buf[i * D_MODEL + d];
-        }
-        // ReLU back.
-        for (int i = 0; i < L * FF_DIM; i++) {
-            dFf1pre[i] = lc->ff1pre[i] > 0 ? dFf1_buf[i] : 0;
-        }
-        // dWff1[h][d] += Σ_i dFf1pre[i][h] * xLn2[i][d]   = (dFf1pre^T @ xLn2)
+        bwd_bias_grad(L, D_MODEL, dFf2_buf, lg->bff2);
+        bwd_relu(L * FF_DIM, lc->ff1pre, dFf1_buf, dFf1pre);
+        // dWff1 += dFf1pre^T @ xLn2.
         cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
                     FF_DIM, D_MODEL, L, 1.0f,
                     dFf1pre, FF_DIM, lc->xLn2, D_MODEL, 1.0f, lg->Wff1, D_MODEL);
-        // dXLn2[i][d] = Σ_h dFf1pre[i][h] * Wff1[h][d]   = dFf1pre @ Wff1
+        // dXLn2 = dFf1pre @ Wff1.
         cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
                     L, D_MODEL, FF_DIM, 1.0f,
                     dFf1pre, FF_DIM, lp->Wff1, D_MODEL, 0.0f, dXLn2, D_MODEL);
-        // bff1 grad: sum across L.
-        for (int i = 0; i < L; i++) {
-            for (int h = 0; h < FF_DIM; h++) lg->bff1[h] += dFf1pre[i * FF_DIM + h];
-        }
-        // Back through LN2 (per token) → adds to dAfterAttn.
-        for (int i = 0; i < L; i++) {
-            float dy[D_MODEL];
-            for (int d = 0; d < D_MODEL; d++) dy[d] = dXLn2[i * D_MODEL + d];
-            float dx[D_MODEL];
-            layer_norm_backward(lc->afterAttn, i * D_MODEL, lc->ln2Mean[i], lc->ln2Var[i],
-                                lp->ln2g, dy, lg->ln2g, lg->ln2b, D_MODEL, dx);
-            for (int d = 0; d < D_MODEL; d++) dAfterAttn[i * D_MODEL + d] += dx[d];
-        }
+        bwd_bias_grad(L, FF_DIM, dFf1pre, lg->bff1);
+        bwd_layer_norm_per_token(L, lc->afterAttn, lc->ln2Mean, lc->ln2Var,
+                                 lp->ln2g, dXLn2, lg->ln2g, lg->ln2b, dAfterAttn);
 
-        // afterAttn = xIn + proj → split.
-        memset(dXIn_b, 0, sizeof(float) * L * D_MODEL);
-        for (int i = 0; i < L * D_MODEL; i++) {
-            dProj_b[i] = dAfterAttn[i];
-            dXIn_b[i] += dAfterAttn[i];
-        }
+        bwd_split_attn_residual(L, dAfterAttn, dProj_b, dXIn_b);
 
-        // dWo[d][dd] += Σ_i dProj_b[i][d] * attnOut[i][dd]   = (dProj_b^T @ attnOut)
+        // dWo += dProj_b^T @ attnOut.
         cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
                     D_MODEL, D_MODEL, L, 1.0f,
                     dProj_b, D_MODEL, lc->attnOut, D_MODEL, 1.0f, lg->Wo, D_MODEL);
-        // dAttnOut[i][dd] = Σ_d dProj_b[i][d] * Wo[d][dd]   = dProj_b @ Wo
+        // dAttnOut = dProj_b @ Wo.
         cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
                     L, D_MODEL, D_MODEL, 1.0f,
                     dProj_b, D_MODEL, lp->Wo, D_MODEL, 0.0f, dAttnOut, D_MODEL);
 
-        // Per-head backward through attention. dAttnOut is sliced per head.
-        memset(dQ_b, 0, sizeof(float) * L * D_MODEL);
-        memset(dK_b, 0, sizeof(float) * L * D_MODEL);
-        memset(dV_b, 0, sizeof(float) * L * D_MODEL);
+        // Per-head: dAttn, dV; softmax-back; dQ, dK. Each head writes its own
+        // non-overlapping slice with beta=0.0 — no zeroing needed.
         float scale = 1.f / sqrtf((float)D_HEAD);
         for (int h = 0; h < N_HEADS; h++) {
             const float *attn_h = lc->attn + (size_t)h * L * L;
             float *dAttn_h = dAttn + (size_t)h * L * L;
             float *dScores_h = dScores + (size_t)h * L * L;
 
-            // dAttn_h = dAttnOut_h @ V_h^T
             cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
                         L, L, D_HEAD, 1.0f,
                         dAttnOut + h * D_HEAD, D_MODEL,
                         lc->V + h * D_HEAD, D_MODEL,
                         0.0f, dAttn_h, L);
-            // dV_h += attn_h^T @ dAttnOut_h  (write into V slice)
             cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
                         L, D_HEAD, L, 1.0f,
                         attn_h, L,
                         dAttnOut + h * D_HEAD, D_MODEL,
-                        1.0f, dV_b + h * D_HEAD, D_MODEL);
-
-            // Softmax back row-wise per head.
-            for (int i = 0; i < L; i++) {
-                float dot = 0;
-                for (int j = 0; j < L; j++) dot += attn_h[i * L + j] * dAttn_h[i * L + j];
-                for (int k = 0; k < L; k++) {
-                    dScores_h[i * L + k] = attn_h[i * L + k] * (dAttn_h[i * L + k] - dot);
-                }
-            }
-            // dQ_h += scaled dScores_h @ K_h
+                        0.0f, dV_b + h * D_HEAD, D_MODEL);
+            bwd_softmax_attention(L, attn_h, dAttn_h, dScores_h);
             cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
                         L, D_HEAD, L, scale,
                         dScores_h, L,
                         lc->K + h * D_HEAD, D_MODEL,
-                        1.0f, dQ_b + h * D_HEAD, D_MODEL);
-            // dK_h += scaled dScores_h^T @ Q_h
+                        0.0f, dQ_b + h * D_HEAD, D_MODEL);
             cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
                         L, D_HEAD, L, scale,
                         dScores_h, L,
                         lc->Q + h * D_HEAD, D_MODEL,
-                        1.0f, dK_b + h * D_HEAD, D_MODEL);
+                        0.0f, dK_b + h * D_HEAD, D_MODEL);
         }
 
-        // Wq/Wk/Wv backward (each: dW[d][dd] += dY^T @ xLn1, dXLn1 += dY @ W).
+        // dWq/dWk/dWv accumulation.
         cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
                     D_MODEL, D_MODEL, L, 1.0f,
                     dQ_b, D_MODEL, lc->xLn1, D_MODEL, 1.0f, lg->Wq, D_MODEL);
@@ -414,30 +502,14 @@ float nn_accumulate_grads(const NNParams *p, const ForwardCache *cache,
         cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
                     L, D_MODEL, D_MODEL, 1.0f,
                     dV_b, D_MODEL, lp->Wv, D_MODEL, 1.0f, dXLn1, D_MODEL);
-        // Back through LN1, adds to dXIn.
-        for (int i = 0; i < L; i++) {
-            float dy[D_MODEL];
-            for (int d = 0; d < D_MODEL; d++) dy[d] = dXLn1[i * D_MODEL + d];
-            float dx[D_MODEL];
-            layer_norm_backward(lc->xIn, i * D_MODEL, lc->ln1Mean[i], lc->ln1Var[i],
-                                lp->ln1g, dy, lg->ln1g, lg->ln1b, D_MODEL, dx);
-            for (int d = 0; d < D_MODEL; d++) dXIn_b[i * D_MODEL + d] += dx[d];
-        }
+
+        bwd_layer_norm_per_token(L, lc->xIn, lc->ln1Mean, lc->ln1Var,
+                                 lp->ln1g, dXLn1, lg->ln1g, lg->ln1b, dXIn_b);
 
         memcpy(dOutNext, dXIn_b, sizeof(float) * L * D_MODEL);
     }
 
-    // Embedding gradient: each position routes its dOutNext to embed[tok] + pos[i].
-    for (int i = 0; i < L; i++) {
-        int tok = cache->tokens[i];
-        int tokOff = tok * D_MODEL;
-        int posOff = i * D_MODEL;
-        for (int d = 0; d < D_MODEL; d++) {
-            float dy = dOutNext[i * D_MODEL + d];
-            g->embed[tokOff + d] += dy;
-            g->pos_embed[posOff + d] += dy;
-        }
-    }
+    bwd_embed_grad(L, cache->tokens, dOutNext, g->embed, g->pos_embed);
 
     float pt = probs[target];
     if (pt < 1e-9f) pt = 1e-9f;
