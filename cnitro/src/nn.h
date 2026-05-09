@@ -10,9 +10,11 @@
 #include <stddef.h>
 #include <stdbool.h>
 
-#define D_MODEL   32
-#define FF_DIM    64
+#define D_MODEL   64
+#define FF_DIM    128
 #define N_LAYERS  2
+#define N_HEADS   2
+#define D_HEAD    (D_MODEL / N_HEADS)   // 32
 
 typedef struct {
     float Wq[D_MODEL * D_MODEL];
@@ -45,8 +47,9 @@ typedef struct {
     float Q[MAX_SEQ_LEN * D_MODEL];
     float K[MAX_SEQ_LEN * D_MODEL];
     float V[MAX_SEQ_LEN * D_MODEL];
-    float scores[MAX_SEQ_LEN * MAX_SEQ_LEN];
-    float attn[MAX_SEQ_LEN * MAX_SEQ_LEN];
+    // Per-head: [N_HEADS][L][L] flat. Index as scores[h*L*L + i*L + j].
+    float scores[N_HEADS * MAX_SEQ_LEN * MAX_SEQ_LEN];
+    float attn[N_HEADS * MAX_SEQ_LEN * MAX_SEQ_LEN];
     float attnOut[MAX_SEQ_LEN * D_MODEL];
     float proj[MAX_SEQ_LEN * D_MODEL];
     float afterAttn[MAX_SEQ_LEN * D_MODEL];

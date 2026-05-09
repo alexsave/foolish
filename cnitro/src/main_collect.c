@@ -88,9 +88,35 @@ static void decompose_move(const Game *g, int bot_idx,
     int role = chosen->type == MOVE_ATTACK ? INPROG_ATTACK
              : chosen->type == MOVE_COVER  ? INPROG_COVER
              : chosen->type == MOVE_PASS   ? INPROG_PASS : INPROG_IDLE;
+
+    // Canonical card order: sort by (rotated suit, value) so the same final
+    // move always emits the same target sequence. Removes label noise from
+    // arbitrary hand-order tie-breaks. Cover keeps cards bound to attacks
+    // by suit-rotation since the attack value is what determines coverage.
+    Card ordered_cards[MAX_MOVE_CARDS];
+    Card ordered_attacks[MAX_MOVE_CARDS];
+    int n_ord = chosen->n_cards;
+    for (int i = 0; i < n_ord; i++) {
+        ordered_cards[i] = chosen->cards[i];
+        if (chosen->type == MOVE_COVER) ordered_attacks[i] = chosen->attack_cards[i];
+    }
+    for (int i = 0; i < n_ord; i++) {
+        for (int j = i + 1; j < n_ord; j++) {
+            int ai = (ordered_cards[i].suit - trump + 4) % 4;
+            int aj = (ordered_cards[j].suit - trump + 4) % 4;
+            bool swap = (aj < ai) || (aj == ai && ordered_cards[j].value < ordered_cards[i].value);
+            if (swap) {
+                Card t = ordered_cards[i]; ordered_cards[i] = ordered_cards[j]; ordered_cards[j] = t;
+                if (chosen->type == MOVE_COVER) {
+                    Card ta = ordered_attacks[i]; ordered_attacks[i] = ordered_attacks[j]; ordered_attacks[j] = ta;
+                }
+            }
+        }
+    }
+
     Card chosen_so_far[MAX_MOVE_CARDS]; int n_chosen = 0;
-    for (int i = 0; i < chosen->n_cards; i++) {
-        Card c = chosen->cards[i];
+    for (int i = 0; i < n_ord; i++) {
+        Card c = ordered_cards[i];
         int target = card_action_id(c.suit, c.value, trump);
         EMIT_SAMPLE(role, n_chosen, chosen_so_far, target);
         chosen_so_far[n_chosen++] = c;
@@ -114,8 +140,11 @@ static int run_strategy(int strat, const Game *g, int bot_idx, const LegalMoves 
 
 // Returns winner index (0/1) or -1 if no winner. Captures every move the
 // winner made; the caller writes them out only for winning games.
+// Also returns the loser's hand size at game end via *loser_hand_size — the
+// margin filter uses this to drop close wins that are mostly luck.
 static int play_and_capture(uint32_t seed, int strat0, int strat1,
-                            SampleBuf *winner_buf, int *out_winner_idx) {
+                            SampleBuf *winner_buf, int *out_winner_idx,
+                            int *loser_hand_size) {
     game_set_seed(seed ? seed : 1);
     random_strategy_set_seed(seed ? seed : 1);
     Game g; memset(&g, 0, sizeof(g));
@@ -175,6 +204,7 @@ static int play_and_capture(uint32_t seed, int strat0, int strat1,
     if (loser < 0) return -1;
     int winner = loser == 0 ? 1 : 0;
     *out_winner_idx = winner;
+    *loser_hand_size = g.players[loser].hand_count;
     *winner_buf = per_player[winner];
     return winner;
 }
@@ -202,6 +232,9 @@ int main(int argc, char **argv) {
     const char *pairs_str = get_arg(argc, argv, "pairs", "esp-rand");
     const char *out_path  = get_arg(argc, argv, "out", "/tmp/cnitro_corpus.bin");
     int  log_every = parse_int(get_arg(argc, argv, "log_every", "100"), 100);
+    // Quality filter: drop wins where the loser still had < min_margin cards
+    // (close finishes are mostly luck — winner ≠ good move). Default 3.
+    int  min_margin = parse_int(get_arg(argc, argv, "min_margin", "3"), 3);
     setvbuf(stderr, NULL, _IOLBF, 0);
 
     FILE *f = fopen(out_path, "wb");
@@ -211,7 +244,7 @@ int main(int argc, char **argv) {
     uint32_t version = 1;
     fwrite(&version, sizeof(version), 1, f);
 
-    int n_games = 0, n_wins = 0, n_samples = 0;
+    int n_games = 0, n_wins = 0, n_samples = 0, n_dropped_margin = 0;
 
     // Tokenize the pairs string into individual "a-b" entries.
     char buf[256];
@@ -229,20 +262,25 @@ int main(int argc, char **argv) {
         int s1 = strat_id_from_name(b);
 
         for (int s = seed_lo; s <= seed_hi; s++) {
-            SampleBuf sb; int winner = -1;
-            int w = play_and_capture((uint32_t)s, s0, s1, &sb, &winner);
+            SampleBuf sb; int winner = -1, loser_hand = 0;
+            int w = play_and_capture((uint32_t)s, s0, s1, &sb, &winner, &loser_hand);
             n_games++;
             if (w >= 0 && sb.n > 0) {
                 n_wins++;
-                for (int i = 0; i < sb.n; i++) { write_sample(f, &sb.samples[i]); n_samples++; }
+                if (loser_hand < min_margin) {
+                    n_dropped_margin++;
+                } else {
+                    for (int i = 0; i < sb.n; i++) { write_sample(f, &sb.samples[i]); n_samples++; }
+                }
             }
             if (n_games % log_every == 0) {
-                fprintf(stderr, "# %d games, %d wins, %d samples\n", n_games, n_wins, n_samples);
+                fprintf(stderr, "# %d games, %d wins, %d kept, %d dropped<%d, %d samples\n",
+                        n_games, n_wins, n_wins - n_dropped_margin, n_dropped_margin, min_margin, n_samples);
             }
         }
     }
     fclose(f);
-    fprintf(stderr, "# done: %d games, %d wins, %d samples in %s\n",
-            n_games, n_wins, n_samples, out_path);
+    fprintf(stderr, "# done: %d games, %d wins, %d dropped<%d, %d samples in %s\n",
+            n_games, n_wins, n_dropped_margin, min_margin, n_samples, out_path);
     return 0;
 }

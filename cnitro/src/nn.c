@@ -132,28 +132,42 @@ void nn_forward(const NNParams *p, const int *tokens, int L, ForwardCache *cache
                     L, D_MODEL, D_MODEL, 1.0f,
                     lc->xLn1, D_MODEL, lp->Wv, D_MODEL, 0.0f, lc->V, D_MODEL);
 
-        // Scores = Q @ K^T * scale, then softmax row-wise.
-        float scale = 1.f / sqrtf((float)D_MODEL);
-        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
-                    L, L, D_MODEL, scale,
-                    lc->Q, D_MODEL, lc->K, D_MODEL, 0.0f, lc->scores, L);
-        for (int i = 0; i < L; i++) {
-            float mx = -1e30f;
-            for (int j = 0; j < L; j++) if (lc->scores[i * L + j] > mx) mx = lc->scores[i * L + j];
-            float sum = 0;
-            for (int j = 0; j < L; j++) {
-                float e = expf(lc->scores[i * L + j] - mx);
-                lc->attn[i * L + j] = e;
-                sum += e;
-            }
-            float inv = 1.f / sum;
-            for (int j = 0; j < L; j++) lc->attn[i * L + j] *= inv;
+        // Per-head: scores_h = Q_h @ K_h^T * scale, where Q_h is L×D_HEAD slice
+        // (offset h*D_HEAD, row stride D_MODEL). Softmax row-wise per head.
+        float scale = 1.f / sqrtf((float)D_HEAD);
+        for (int h = 0; h < N_HEADS; h++) {
+            float *scores_h = lc->scores + (size_t)h * L * L;
+            cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                        L, L, D_HEAD, scale,
+                        lc->Q + h * D_HEAD, D_MODEL,
+                        lc->K + h * D_HEAD, D_MODEL,
+                        0.0f, scores_h, L);
         }
-
-        // attnOut = attn @ V.
-        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
-                    L, D_MODEL, L, 1.0f,
-                    lc->attn, L, lc->V, D_MODEL, 0.0f, lc->attnOut, D_MODEL);
+        // Softmax row-wise for each head.
+        for (int h = 0; h < N_HEADS; h++) {
+            float *scores_h = lc->scores + (size_t)h * L * L;
+            float *attn_h   = lc->attn   + (size_t)h * L * L;
+            for (int i = 0; i < L; i++) {
+                float mx = -1e30f;
+                for (int j = 0; j < L; j++) if (scores_h[i * L + j] > mx) mx = scores_h[i * L + j];
+                float sum = 0;
+                for (int j = 0; j < L; j++) {
+                    float e = expf(scores_h[i * L + j] - mx);
+                    attn_h[i * L + j] = e;
+                    sum += e;
+                }
+                float inv = 1.f / sum;
+                for (int j = 0; j < L; j++) attn_h[i * L + j] *= inv;
+            }
+        }
+        // attnOut_h = attn_h @ V_h. Each head writes into its own slice.
+        for (int h = 0; h < N_HEADS; h++) {
+            cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                        L, D_HEAD, L, 1.0f,
+                        lc->attn + (size_t)h * L * L, L,
+                        lc->V + h * D_HEAD, D_MODEL,
+                        0.0f, lc->attnOut + h * D_HEAD, D_MODEL);
+        }
         // proj = attnOut @ Wo^T.
         cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
                     L, D_MODEL, D_MODEL, 1.0f,
@@ -260,9 +274,9 @@ float nn_accumulate_grads(const NNParams *p, const ForwardCache *cache,
     static float dProj_b [MAX_SEQ_LEN * D_MODEL];
     static float dXIn_b  [MAX_SEQ_LEN * D_MODEL];
     static float dAttnOut[MAX_SEQ_LEN * D_MODEL];
-    static float dAttn   [MAX_SEQ_LEN * MAX_SEQ_LEN];
+    static float dAttn   [N_HEADS * MAX_SEQ_LEN * MAX_SEQ_LEN];
     static float dV_b    [MAX_SEQ_LEN * D_MODEL];
-    static float dScores [MAX_SEQ_LEN * MAX_SEQ_LEN];
+    static float dScores [N_HEADS * MAX_SEQ_LEN * MAX_SEQ_LEN];
     static float dQ_b    [MAX_SEQ_LEN * D_MODEL];
     static float dK_b    [MAX_SEQ_LEN * D_MODEL];
     static float dXLn1   [MAX_SEQ_LEN * D_MODEL];
@@ -335,34 +349,50 @@ float nn_accumulate_grads(const NNParams *p, const ForwardCache *cache,
                     L, D_MODEL, D_MODEL, 1.0f,
                     dProj_b, D_MODEL, lp->Wo, D_MODEL, 0.0f, dAttnOut, D_MODEL);
 
-        // dAttn[i][j] = Σ_d dAttnOut[i][d] * V[j][d]   = dAttnOut @ V^T
-        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
-                    L, L, D_MODEL, 1.0f,
-                    dAttnOut, D_MODEL, lc->V, D_MODEL, 0.0f, dAttn, L);
-        // dV[j][d] = Σ_i attn[i][j] * dAttnOut[i][d]   = attn^T @ dAttnOut
-        cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
-                    L, D_MODEL, L, 1.0f,
-                    lc->attn, L, dAttnOut, D_MODEL, 0.0f, dV_b, D_MODEL);
+        // Per-head backward through attention. dAttnOut is sliced per head.
+        memset(dQ_b, 0, sizeof(float) * L * D_MODEL);
+        memset(dK_b, 0, sizeof(float) * L * D_MODEL);
+        memset(dV_b, 0, sizeof(float) * L * D_MODEL);
+        float scale = 1.f / sqrtf((float)D_HEAD);
+        for (int h = 0; h < N_HEADS; h++) {
+            const float *attn_h = lc->attn + (size_t)h * L * L;
+            float *dAttn_h = dAttn + (size_t)h * L * L;
+            float *dScores_h = dScores + (size_t)h * L * L;
 
-        // Softmax back row-wise.
-        for (int i = 0; i < L; i++) {
-            float dot = 0;
-            for (int j = 0; j < L; j++) dot += lc->attn[i * L + j] * dAttn[i * L + j];
-            for (int k = 0; k < L; k++) {
-                dScores[i * L + k] = lc->attn[i * L + k] * (dAttn[i * L + k] - dot);
+            // dAttn_h = dAttnOut_h @ V_h^T
+            cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                        L, L, D_HEAD, 1.0f,
+                        dAttnOut + h * D_HEAD, D_MODEL,
+                        lc->V + h * D_HEAD, D_MODEL,
+                        0.0f, dAttn_h, L);
+            // dV_h += attn_h^T @ dAttnOut_h  (write into V slice)
+            cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                        L, D_HEAD, L, 1.0f,
+                        attn_h, L,
+                        dAttnOut + h * D_HEAD, D_MODEL,
+                        1.0f, dV_b + h * D_HEAD, D_MODEL);
+
+            // Softmax back row-wise per head.
+            for (int i = 0; i < L; i++) {
+                float dot = 0;
+                for (int j = 0; j < L; j++) dot += attn_h[i * L + j] * dAttn_h[i * L + j];
+                for (int k = 0; k < L; k++) {
+                    dScores_h[i * L + k] = attn_h[i * L + k] * (dAttn_h[i * L + k] - dot);
+                }
             }
+            // dQ_h += scaled dScores_h @ K_h
+            cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                        L, D_HEAD, L, scale,
+                        dScores_h, L,
+                        lc->K + h * D_HEAD, D_MODEL,
+                        1.0f, dQ_b + h * D_HEAD, D_MODEL);
+            // dK_h += scaled dScores_h^T @ Q_h
+            cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                        L, D_HEAD, L, scale,
+                        dScores_h, L,
+                        lc->Q + h * D_HEAD, D_MODEL,
+                        1.0f, dK_b + h * D_HEAD, D_MODEL);
         }
-
-        // scores[i][j] = (Q[i]·K[j]) / sqrt(d).
-        // dQ[i][d] = Σ_j (dScores[i][j]*scale) * K[j][d]   = (scaled dScores) @ K
-        // dK[j][d] = Σ_i (dScores[i][j]*scale) * Q[i][d]   = (scaled dScores)^T @ Q
-        float scale = 1.f / sqrtf((float)D_MODEL);
-        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
-                    L, D_MODEL, L, scale,
-                    dScores, L, lc->K, D_MODEL, 0.0f, dQ_b, D_MODEL);
-        cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
-                    L, D_MODEL, L, scale,
-                    dScores, L, lc->Q, D_MODEL, 0.0f, dK_b, D_MODEL);
 
         // Wq/Wk/Wv backward (each: dW[d][dd] += dY^T @ xLn1, dXLn1 += dY @ W).
         cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans,

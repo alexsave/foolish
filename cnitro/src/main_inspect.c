@@ -118,7 +118,6 @@ static void score_moves(const NNParams *p, const Game *g, int bot_idx,
                         const LegalMoves *moves, double *out_prob) {
     static ForwardCache fc;
     int trump = g->power_suit;
-    bool is_def = bot_idx == g->defender;
 
     // Step 1 — collect first-step legal actions, like nitro_strategy.
     int first_legal[NUM_ACTIONS]; int n_first = 0;
@@ -275,6 +274,36 @@ static int play_with_inspect(const NNParams *params, uint32_t seed, int opp_stra
                 print_state_summary(&g, pi);
 
                 idx = nitro_strategy_choose(&g, pi, &moves, NULL);
+
+                // Raw next-action softmax — across ALL 42 actions, no mask.
+                {
+                    InProgress ip0 = { .role = INPROG_IDLE, .n_cards_chosen = 0 };
+                    Tokenized tk; tokenize(&g, pi, &ip0, &tk);
+                    static ForwardCache fc_raw;
+                    nn_forward(params, tk.tokens, tk.n_tokens, &fc_raw);
+                    bool full[NUM_ACTIONS]; for (int i = 0; i < NUM_ACTIONS; i++) full[i] = true;
+                    float raw[NUM_ACTIONS];
+                    nn_softmax_masked(fc_raw.logits, full, raw);
+                    int order_a[NUM_ACTIONS];
+                    for (int i = 0; i < NUM_ACTIONS; i++) order_a[i] = i;
+                    for (int i = 0; i < NUM_ACTIONS; i++) {
+                        for (int j = i + 1; j < NUM_ACTIONS; j++) {
+                            if (raw[order_a[j]] > raw[order_a[i]]) {
+                                int t = order_a[i]; order_a[i] = order_a[j]; order_a[j] = t;
+                            }
+                        }
+                    }
+                    printf("  raw next-action top-3 (any, no legal mask):\n");
+                    int trump = g.power_suit;
+                    for (int k = 0; k < 3; k++) {
+                        int a = order_a[k];
+                        printf("    [%5.1f%%]  ", raw[a] * 100.0);
+                        if (a == ACTION_PICKUP) printf("PICKUP");
+                        else if (a == ACTION_STOP) printf("STOP");
+                        else { Card c; action_id_to_card(a, trump, &c); print_card_with_trump(c, trump); }
+                        printf("\n");
+                    }
+                }
 
                 double *probs = malloc(moves.n * sizeof(double));
                 score_moves(params, &g, pi, &moves, probs);
