@@ -88,6 +88,7 @@ int main(int argc, char **argv) {
     float lr     = parse_float(get_arg(argc, argv, "lr", "0.05"), 0.05f);
     uint32_t seed = (uint32_t)parse_int(get_arg(argc, argv, "seed", "42"), 42);
     shuf_seed = seed ? seed : 1;
+    setvbuf(stderr, NULL, _IOLBF, 0);
 
     fprintf(stderr, "# loading corpus from %s\n", corpus);
     size_t n_samples = 0;
@@ -120,6 +121,8 @@ int main(int argc, char **argv) {
 
         double total_loss = 0;
         size_t correct = 0, processed = 0;
+        double epoch_loss_for_log = 0;
+        size_t since_log = 0;
         for (size_t b_start = 0; b_start < n_samples; b_start += batch) {
             size_t b_end = b_start + batch;
             if (b_end > n_samples) b_end = n_samples;
@@ -135,9 +138,20 @@ int main(int argc, char **argv) {
                 if (best == s->target) correct++;
                 float loss = nn_accumulate_grads(p, fc, legal_mask, s->target, g);
                 total_loss += loss;
+                epoch_loss_for_log += loss;
                 processed++;
+                since_log++;
             }
             nn_apply_grads(p, g, lr, (int)(b_end - b_start));
+            // Heartbeat every ~1000 samples so we can tell the trainer is alive.
+            if (since_log >= 1000) {
+                double dt = (double)(clock() - start) / CLOCKS_PER_SEC;
+                fprintf(stderr, "  epoch %d  step %zu/%zu  recentLoss=%.4f  dt=%.1fs\n",
+                        epoch, processed, n_samples,
+                        epoch_loss_for_log / since_log, dt);
+                epoch_loss_for_log = 0;
+                since_log = 0;
+            }
         }
         double avg_loss = total_loss / (processed > 0 ? processed : 1);
         double acc = (double)correct / (processed > 0 ? processed : 1);

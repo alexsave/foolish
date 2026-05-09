@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <Accelerate/Accelerate.h>
 
 // ---------- RNG (matches the JS-side LCG used during init) -----------
 
@@ -120,32 +121,23 @@ void nn_forward(const NNParams *p, const int *tokens, int L, ForwardCache *cache
             for (int d = 0; d < D_MODEL; d++) lc->xLn1[i * D_MODEL + d] = out_buf[d];
         }
 
-        // Q,K,V.
-        for (int i = 0; i < L; i++) {
-            for (int d = 0; d < D_MODEL; d++) {
-                float q = 0, k = 0, v = 0;
-                for (int dd = 0; dd < D_MODEL; dd++) {
-                    float x = lc->xLn1[i * D_MODEL + dd];
-                    q += lp->Wq[d * D_MODEL + dd] * x;
-                    k += lp->Wk[d * D_MODEL + dd] * x;
-                    v += lp->Wv[d * D_MODEL + dd] * x;
-                }
-                lc->Q[i * D_MODEL + d] = q;
-                lc->K[i * D_MODEL + d] = k;
-                lc->V[i * D_MODEL + d] = v;
-            }
-        }
+        // Q,K,V = xLn1 @ W^T  (W stored as [out_dim][in_dim], so transpose).
+        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                    L, D_MODEL, D_MODEL, 1.0f,
+                    lc->xLn1, D_MODEL, lp->Wq, D_MODEL, 0.0f, lc->Q, D_MODEL);
+        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                    L, D_MODEL, D_MODEL, 1.0f,
+                    lc->xLn1, D_MODEL, lp->Wk, D_MODEL, 0.0f, lc->K, D_MODEL);
+        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                    L, D_MODEL, D_MODEL, 1.0f,
+                    lc->xLn1, D_MODEL, lp->Wv, D_MODEL, 0.0f, lc->V, D_MODEL);
 
-        // Scores + softmax.
+        // Scores = Q @ K^T * scale, then softmax row-wise.
         float scale = 1.f / sqrtf((float)D_MODEL);
+        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                    L, L, D_MODEL, scale,
+                    lc->Q, D_MODEL, lc->K, D_MODEL, 0.0f, lc->scores, L);
         for (int i = 0; i < L; i++) {
-            for (int j = 0; j < L; j++) {
-                float s = 0;
-                for (int d = 0; d < D_MODEL; d++) {
-                    s += lc->Q[i * D_MODEL + d] * lc->K[j * D_MODEL + d];
-                }
-                lc->scores[i * L + j] = s * scale;
-            }
             float mx = -1e30f;
             for (int j = 0; j < L; j++) if (lc->scores[i * L + j] > mx) mx = lc->scores[i * L + j];
             float sum = 0;
@@ -159,23 +151,13 @@ void nn_forward(const NNParams *p, const int *tokens, int L, ForwardCache *cache
         }
 
         // attnOut = attn @ V.
-        for (int i = 0; i < L; i++) {
-            for (int d = 0; d < D_MODEL; d++) {
-                float s = 0;
-                for (int j = 0; j < L; j++) s += lc->attn[i * L + j] * lc->V[j * D_MODEL + d];
-                lc->attnOut[i * D_MODEL + d] = s;
-            }
-        }
-        // proj = attnOut @ Wo (Wo[d][dd]: proj[i][d] = sum_dd Wo[d][dd] * attnOut[i][dd]).
-        for (int i = 0; i < L; i++) {
-            for (int d = 0; d < D_MODEL; d++) {
-                float s = 0;
-                for (int dd = 0; dd < D_MODEL; dd++) {
-                    s += lp->Wo[d * D_MODEL + dd] * lc->attnOut[i * D_MODEL + dd];
-                }
-                lc->proj[i * D_MODEL + d] = s;
-            }
-        }
+        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                    L, D_MODEL, L, 1.0f,
+                    lc->attn, L, lc->V, D_MODEL, 0.0f, lc->attnOut, D_MODEL);
+        // proj = attnOut @ Wo^T.
+        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                    L, D_MODEL, D_MODEL, 1.0f,
+                    lc->attnOut, D_MODEL, lp->Wo, D_MODEL, 0.0f, lc->proj, D_MODEL);
         // afterAttn = xIn + proj (residual).
         for (int i = 0; i < L * D_MODEL; i++) lc->afterAttn[i] = lc->xIn[i] + lc->proj[i];
 
@@ -187,21 +169,23 @@ void nn_forward(const NNParams *p, const int *tokens, int L, ForwardCache *cache
             for (int d = 0; d < D_MODEL; d++) lc->xLn2[i * D_MODEL + d] = out_buf[d];
         }
 
-        // FFN.
+        // FFN1: ff1pre = xLn2 @ Wff1^T + bff1; ff1 = ReLU(ff1pre).
+        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                    L, FF_DIM, D_MODEL, 1.0f,
+                    lc->xLn2, D_MODEL, lp->Wff1, D_MODEL, 0.0f, lc->ff1pre, FF_DIM);
         for (int i = 0; i < L; i++) {
             for (int h = 0; h < FF_DIM; h++) {
-                float s = lp->bff1[h];
-                for (int d = 0; d < D_MODEL; d++) s += lp->Wff1[h * D_MODEL + d] * lc->xLn2[i * D_MODEL + d];
+                float s = lc->ff1pre[i * FF_DIM + h] + lp->bff1[h];
                 lc->ff1pre[i * FF_DIM + h] = s;
                 lc->ff1[i * FF_DIM + h] = s > 0 ? s : 0;
             }
         }
+        // FFN2: ff2 = ff1 @ Wff2^T + bff2.
+        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                    L, D_MODEL, FF_DIM, 1.0f,
+                    lc->ff1, FF_DIM, lp->Wff2, FF_DIM, 0.0f, lc->ff2, D_MODEL);
         for (int i = 0; i < L; i++) {
-            for (int d = 0; d < D_MODEL; d++) {
-                float s = lp->bff2[d];
-                for (int h = 0; h < FF_DIM; h++) s += lp->Wff2[d * FF_DIM + h] * lc->ff1[i * FF_DIM + h];
-                lc->ff2[i * D_MODEL + d] = s;
-            }
+            for (int d = 0; d < D_MODEL; d++) lc->ff2[i * D_MODEL + d] += lp->bff2[d];
         }
         for (int i = 0; i < L * D_MODEL; i++) lc->out[i] = lc->afterAttn[i] + lc->ff2[i];
 
@@ -297,34 +281,33 @@ float nn_accumulate_grads(const NNParams *p, const ForwardCache *cache,
             dFf2_buf[i]   = dOutNext[i];
         }
 
-        // ff2[i][d] = sum_h Wff2[d][h] * ff1[i][h] + bff2[d]
-        memset(dFf1_buf, 0, sizeof(float) * L * FF_DIM);
+        // dWff2[d][h] += Σ_i dFf2_buf[i][d] * ff1[i][h]   = (dFf2_buf^T @ ff1)
+        cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                    D_MODEL, FF_DIM, L, 1.0f,
+                    dFf2_buf, D_MODEL, lc->ff1, FF_DIM, 1.0f, lg->Wff2, FF_DIM);
+        // dFf1_buf[i][h] = Σ_d Wff2[d][h] * dFf2_buf[i][d]   = dFf2_buf @ Wff2
+        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                    L, FF_DIM, D_MODEL, 1.0f,
+                    dFf2_buf, D_MODEL, lp->Wff2, FF_DIM, 0.0f, dFf1_buf, FF_DIM);
+        // bff2 grad: sum across L.
         for (int i = 0; i < L; i++) {
-            for (int d = 0; d < D_MODEL; d++) {
-                float dy = dFf2_buf[i * D_MODEL + d];
-                for (int h = 0; h < FF_DIM; h++) {
-                    lg->Wff2[d * FF_DIM + h] += dy * lc->ff1[i * FF_DIM + h];
-                    dFf1_buf[i * FF_DIM + h] += lp->Wff2[d * FF_DIM + h] * dy;
-                }
-                lg->bff2[d] += dy;
-            }
+            for (int d = 0; d < D_MODEL; d++) lg->bff2[d] += dFf2_buf[i * D_MODEL + d];
         }
         // ReLU back.
         for (int i = 0; i < L * FF_DIM; i++) {
             dFf1pre[i] = lc->ff1pre[i] > 0 ? dFf1_buf[i] : 0;
         }
-        // ff1pre[i][h] = sum_d Wff1[h][d] * xLn2[i][d] + bff1[h]
-        memset(dXLn2, 0, sizeof(float) * L * D_MODEL);
+        // dWff1[h][d] += Σ_i dFf1pre[i][h] * xLn2[i][d]   = (dFf1pre^T @ xLn2)
+        cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                    FF_DIM, D_MODEL, L, 1.0f,
+                    dFf1pre, FF_DIM, lc->xLn2, D_MODEL, 1.0f, lg->Wff1, D_MODEL);
+        // dXLn2[i][d] = Σ_h dFf1pre[i][h] * Wff1[h][d]   = dFf1pre @ Wff1
+        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                    L, D_MODEL, FF_DIM, 1.0f,
+                    dFf1pre, FF_DIM, lp->Wff1, D_MODEL, 0.0f, dXLn2, D_MODEL);
+        // bff1 grad: sum across L.
         for (int i = 0; i < L; i++) {
-            for (int h = 0; h < FF_DIM; h++) {
-                float dy = dFf1pre[i * FF_DIM + h];
-                if (dy == 0.f) continue;
-                for (int d = 0; d < D_MODEL; d++) {
-                    lg->Wff1[h * D_MODEL + d] += dy * lc->xLn2[i * D_MODEL + d];
-                    dXLn2[i * D_MODEL + d] += lp->Wff1[h * D_MODEL + d] * dy;
-                }
-                lg->bff1[h] += dy;
-            }
+            for (int h = 0; h < FF_DIM; h++) lg->bff1[h] += dFf1pre[i * FF_DIM + h];
         }
         // Back through LN2 (per token) → adds to dAfterAttn.
         for (int i = 0; i < L; i++) {
@@ -343,31 +326,23 @@ float nn_accumulate_grads(const NNParams *p, const ForwardCache *cache,
             dXIn_b[i] += dAfterAttn[i];
         }
 
-        // proj = attnOut · Wo. dAttnOut, lg->Wo.
-        memset(dAttnOut, 0, sizeof(float) * L * D_MODEL);
-        for (int i = 0; i < L; i++) {
-            for (int d = 0; d < D_MODEL; d++) {
-                float dy = dProj_b[i * D_MODEL + d];
-                for (int dd = 0; dd < D_MODEL; dd++) {
-                    lg->Wo[d * D_MODEL + dd] += dy * lc->attnOut[i * D_MODEL + dd];
-                    dAttnOut[i * D_MODEL + dd] += lp->Wo[d * D_MODEL + dd] * dy;
-                }
-            }
-        }
+        // dWo[d][dd] += Σ_i dProj_b[i][d] * attnOut[i][dd]   = (dProj_b^T @ attnOut)
+        cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                    D_MODEL, D_MODEL, L, 1.0f,
+                    dProj_b, D_MODEL, lc->attnOut, D_MODEL, 1.0f, lg->Wo, D_MODEL);
+        // dAttnOut[i][dd] = Σ_d dProj_b[i][d] * Wo[d][dd]   = dProj_b @ Wo
+        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                    L, D_MODEL, D_MODEL, 1.0f,
+                    dProj_b, D_MODEL, lp->Wo, D_MODEL, 0.0f, dAttnOut, D_MODEL);
 
-        // attnOut[i][d] = sum_j attn[i][j] * V[j][d]
-        memset(dAttn, 0, sizeof(float) * L * L);
-        memset(dV_b, 0, sizeof(float) * L * D_MODEL);
-        for (int i = 0; i < L; i++) {
-            for (int d = 0; d < D_MODEL; d++) {
-                float dy = dAttnOut[i * D_MODEL + d];
-                if (dy == 0.f) continue;
-                for (int j = 0; j < L; j++) {
-                    dAttn[i * L + j] += dy * lc->V[j * D_MODEL + d];
-                    dV_b[j * D_MODEL + d] += lc->attn[i * L + j] * dy;
-                }
-            }
-        }
+        // dAttn[i][j] = Σ_d dAttnOut[i][d] * V[j][d]   = dAttnOut @ V^T
+        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                    L, L, D_MODEL, 1.0f,
+                    dAttnOut, D_MODEL, lc->V, D_MODEL, 0.0f, dAttn, L);
+        // dV[j][d] = Σ_i attn[i][j] * dAttnOut[i][d]   = attn^T @ dAttnOut
+        cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                    L, D_MODEL, L, 1.0f,
+                    lc->attn, L, dAttnOut, D_MODEL, 0.0f, dV_b, D_MODEL);
 
         // Softmax back row-wise.
         for (int i = 0; i < L; i++) {
@@ -378,48 +353,37 @@ float nn_accumulate_grads(const NNParams *p, const ForwardCache *cache,
             }
         }
 
-        // scores[i][j] = (Q[i] · K[j]) / sqrt(d). dQ, dK.
+        // scores[i][j] = (Q[i]·K[j]) / sqrt(d).
+        // dQ[i][d] = Σ_j (dScores[i][j]*scale) * K[j][d]   = (scaled dScores) @ K
+        // dK[j][d] = Σ_i (dScores[i][j]*scale) * Q[i][d]   = (scaled dScores)^T @ Q
         float scale = 1.f / sqrtf((float)D_MODEL);
-        memset(dQ_b, 0, sizeof(float) * L * D_MODEL);
-        memset(dK_b, 0, sizeof(float) * L * D_MODEL);
-        for (int i = 0; i < L; i++) {
-            for (int j = 0; j < L; j++) {
-                float ds = dScores[i * L + j] * scale;
-                if (ds == 0.f) continue;
-                for (int d = 0; d < D_MODEL; d++) {
-                    dQ_b[i * D_MODEL + d] += ds * lc->K[j * D_MODEL + d];
-                    dK_b[j * D_MODEL + d] += ds * lc->Q[i * D_MODEL + d];
-                }
-            }
-        }
+        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                    L, D_MODEL, L, scale,
+                    dScores, L, lc->K, D_MODEL, 0.0f, dQ_b, D_MODEL);
+        cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                    L, D_MODEL, L, scale,
+                    dScores, L, lc->Q, D_MODEL, 0.0f, dK_b, D_MODEL);
 
-        // Q,K,V back through their linear maps.
-        memset(dXLn1, 0, sizeof(float) * L * D_MODEL);
-        for (int i = 0; i < L; i++) {
-            for (int d = 0; d < D_MODEL; d++) {
-                float dy = dQ_b[i * D_MODEL + d];
-                if (dy != 0.f) {
-                    for (int dd = 0; dd < D_MODEL; dd++) {
-                        lg->Wq[d * D_MODEL + dd] += dy * lc->xLn1[i * D_MODEL + dd];
-                        dXLn1[i * D_MODEL + dd] += lp->Wq[d * D_MODEL + dd] * dy;
-                    }
-                }
-                float dyk = dK_b[i * D_MODEL + d];
-                if (dyk != 0.f) {
-                    for (int dd = 0; dd < D_MODEL; dd++) {
-                        lg->Wk[d * D_MODEL + dd] += dyk * lc->xLn1[i * D_MODEL + dd];
-                        dXLn1[i * D_MODEL + dd] += lp->Wk[d * D_MODEL + dd] * dyk;
-                    }
-                }
-                float dyv = dV_b[i * D_MODEL + d];
-                if (dyv != 0.f) {
-                    for (int dd = 0; dd < D_MODEL; dd++) {
-                        lg->Wv[d * D_MODEL + dd] += dyv * lc->xLn1[i * D_MODEL + dd];
-                        dXLn1[i * D_MODEL + dd] += lp->Wv[d * D_MODEL + dd] * dyv;
-                    }
-                }
-            }
-        }
+        // Wq/Wk/Wv backward (each: dW[d][dd] += dY^T @ xLn1, dXLn1 += dY @ W).
+        cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                    D_MODEL, D_MODEL, L, 1.0f,
+                    dQ_b, D_MODEL, lc->xLn1, D_MODEL, 1.0f, lg->Wq, D_MODEL);
+        cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                    D_MODEL, D_MODEL, L, 1.0f,
+                    dK_b, D_MODEL, lc->xLn1, D_MODEL, 1.0f, lg->Wk, D_MODEL);
+        cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                    D_MODEL, D_MODEL, L, 1.0f,
+                    dV_b, D_MODEL, lc->xLn1, D_MODEL, 1.0f, lg->Wv, D_MODEL);
+        // dXLn1 = dQ@Wq + dK@Wk + dV@Wv.
+        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                    L, D_MODEL, D_MODEL, 1.0f,
+                    dQ_b, D_MODEL, lp->Wq, D_MODEL, 0.0f, dXLn1, D_MODEL);
+        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                    L, D_MODEL, D_MODEL, 1.0f,
+                    dK_b, D_MODEL, lp->Wk, D_MODEL, 1.0f, dXLn1, D_MODEL);
+        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                    L, D_MODEL, D_MODEL, 1.0f,
+                    dV_b, D_MODEL, lp->Wv, D_MODEL, 1.0f, dXLn1, D_MODEL);
         // Back through LN1, adds to dXIn.
         for (int i = 0; i < L; i++) {
             float dy[D_MODEL];

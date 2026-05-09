@@ -99,6 +99,7 @@ int main(int argc, char **argv) {
     }
     nitro_strategy_set_params(p);
 
+    setvbuf(stderr, NULL, _IOLBF, 0);
     int wins = 0, draws = 0, total = 0;
     clock_t start = clock();
     for (int s = seed_lo; s <= seed_hi; s++) {
@@ -106,6 +107,11 @@ int main(int argc, char **argv) {
         total++;
         if (r == 1) wins++;
         else if (r < 0) draws++;
+        if (total % 100 == 0) {
+            double dt = (double)(clock() - start) / CLOCKS_PER_SEC;
+            fprintf(stderr, "  ... %d games, wins=%d (%.1f%%), dt=%.1fs\n",
+                    total, wins, 100.0 * wins / total, dt);
+        }
     }
     double dt = (double)(clock() - start) / CLOCKS_PER_SEC;
     int losses = total - wins - draws;

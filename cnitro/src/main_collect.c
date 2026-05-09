@@ -201,6 +201,8 @@ int main(int argc, char **argv) {
     int  seed_hi = parse_int(get_arg(argc, argv, "to", "2000"), 2000);
     const char *pairs_str = get_arg(argc, argv, "pairs", "esp-rand");
     const char *out_path  = get_arg(argc, argv, "out", "/tmp/cnitro_corpus.bin");
+    int  log_every = parse_int(get_arg(argc, argv, "log_every", "100"), 100);
+    setvbuf(stderr, NULL, _IOLBF, 0);
 
     FILE *f = fopen(out_path, "wb");
     if (!f) { perror(out_path); return 1; }
@@ -234,7 +236,7 @@ int main(int argc, char **argv) {
                 n_wins++;
                 for (int i = 0; i < sb.n; i++) { write_sample(f, &sb.samples[i]); n_samples++; }
             }
-            if (n_games % 500 == 0) {
+            if (n_games % log_every == 0) {
                 fprintf(stderr, "# %d games, %d wins, %d samples\n", n_games, n_wins, n_samples);
             }
         }
