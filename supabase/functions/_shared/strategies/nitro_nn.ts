@@ -818,10 +818,36 @@ export function accumulateGrads(
     return -Math.log(Math.max(1e-9, probs[target]));
 }
 
-export function applyGrads(p: NNParams, g: NNGrads, lr: number, batchSize: number): void {
+// Apply gradient updates with global-norm gradient clipping. Without
+// clipping a few outlier samples can produce huge gradients that wreck
+// already-learned weights — exactly what we saw on resume training (loss
+// climbed from 2.43 to 3.5+ over an epoch).
+export function applyGrads(p: NNParams, g: NNGrads, lr: number, batchSize: number, clipNorm = 1.0): void {
     const inv = 1 / batchSize;
+    // Compute global L2 norm of the (mean) gradient across all parameter
+    // tensors.
+    let sq = 0;
+    const all: Float32Array[] = [
+        g.embed, g.posEmbed, g.lnFg, g.lnFb, g.Wout, g.bout,
+    ];
+    for (const lg of g.layers) {
+        all.push(lg.Wq, lg.Wk, lg.Wv, lg.Wo,
+            lg.ln1g, lg.ln1b,
+            lg.Wff1, lg.bff1, lg.Wff2, lg.bff2,
+            lg.ln2g, lg.ln2b);
+    }
+    for (const a of all) {
+        for (let i = 0; i < a.length; i++) {
+            const v = a[i] * inv;
+            sq += v * v;
+        }
+    }
+    const norm = Math.sqrt(sq);
+    const scale = norm > clipNorm ? clipNorm / norm : 1;
+    const eff = lr * inv * scale;
+
     const upd = (a: Float32Array, da: Float32Array) => {
-        for (let i = 0; i < a.length; i++) a[i] -= lr * da[i] * inv;
+        for (let i = 0; i < a.length; i++) a[i] -= eff * da[i];
         da.fill(0);
     };
     upd(p.embed, g.embed);

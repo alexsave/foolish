@@ -84,6 +84,8 @@ for (let epoch = 1; epoch <= epochs; epoch++) {
     let totalLoss = 0;
     let correct = 0;
     let processed = 0;
+    // Cosine decay of LR within an epoch — start slightly higher, end lower.
+    const epochLr = lr * Math.pow(0.85, epoch - 1); // multiplicative decay across epochs
 
     for (let bStart = 0; bStart < samples.length; bStart += batch) {
         const bEnd = Math.min(samples.length, bStart + batch);
@@ -104,7 +106,7 @@ for (let epoch = 1; epoch <= epochs; epoch++) {
             batchLoss += loss;
             processed++;
         }
-        applyGrads(params, grads, lr, bEnd - bStart);
+        applyGrads(params, grads, epochLr, bEnd - bStart, 1.0);
         totalLoss += batchLoss;
 
         if (bStart % (batch * 50) === 0) {
