@@ -1,2 +1,2 @@
 row,timestamp,training_range_size,win_rate_eval_random_10k,win_rate_eval_espresso_10k,principles_added,tactical_added,note
-1,2026-05-09T09:44:39Z,0,0.9514,0.3471,0,0,baseline carried over from random training; first loss vs espresso is seed 1
+1,2026-05-09T09:48:15Z,0,0.2073,0.0005,0,0,fresh restart against espresso curriculum; trivial last-move strategy
