@@ -1,44 +1,156 @@
 import { Card, Game, PrivatePlayer, PLAYER_STATUS } from '../types.ts';
 import { BotStrategy, LegalMove } from '../bot_interfaces.ts';
 import { canCover } from '../common_utils.ts';
+import {
+    NNParams,
+    deserializeParams,
+    forward,
+    softmaxMasked,
+    tokenize,
+    InProgress,
+    actionIdToCard,
+    cardActionId,
+    ACTION_PICKUP,
+    ACTION_STOP,
+    NUM_ACTIONS,
+} from './nitro_nn.ts';
 
 // Nitro — built from scratch, growing one principle at a time. Every change
 // is validated against the full previously-passing range before advancing
 // the frontier.
 
-// ---- card-level costs ----------------------------------------------------
+// ---- tunable weights ------------------------------------------------------
+// The card-cost / pickup-cost functions are parameterised by a 3D weight
+// matrix indexed by (deckSize, isTrump, valueIdx). A separate per-deckSize
+// pickup cost lets the trainer tune the cover-vs-pickup trade-off. A
+// hill-climb trainer (offlinefun/localtest/nitro_train.ts) perturbs these
+// weights and keeps changes that increase wins on a target seed set.
 
-// Cost we want to MINIMIZE when committing cards in different contexts.
-// Attacks / passes — the card is being thrown into the round. Low-value
-// non-trumps are cheapest; trumps get a heavy penalty so we don't fritter
-// them on small exchanges.
-const offensiveCardCost = (card: Card, powerSuit: number): number =>
-    card.suit === powerSuit ? 100 + card.value : card.value;
+export const DECK_BUCKETS = 32;     // 0..31 inclusive — covers every valid deckLeft
+export const NUM_VALUES = 10;       // values 5..14 (J=11, Q=12, K=13, A=14)
 
-// Cover cost: prefer the TIGHTEST card. Same-suit minimum-gap, else
-// lowest trump.
-const coverPairCost = (attack: Card, defense: Card, powerSuit: number): number => {
-    if (defense.suit === powerSuit && attack.suit !== powerSuit) {
-        return 100 + defense.value;
-    }
-    return defense.value - attack.value;
+// cardWeights[deckSize][isTrump 0|1][valueIdx 0..9] — weight of HOLDING this
+// card. Higher = more reluctant to commit it.
+export type NitroWeights = {
+    cardWeights: number[][][];      // [DECK_BUCKETS][2][NUM_VALUES]
+    pickupPerCard: number[];        // [DECK_BUCKETS] — cost per pickup card
+    coverGapPenalty: number[];      // [DECK_BUCKETS] — cost per same-suit gap point
 };
 
-const offensiveMoveCost = (move: LegalMove, powerSuit: number): number => {
+export function makeDefaultWeights(): NitroWeights {
+    const cardWeights: number[][][] = [];
+    for (let n = 0; n < DECK_BUCKETS; n++) {
+        const byTrump: number[][] = [];
+        for (let t = 0; t < 2; t++) {
+            const byValue: number[] = [];
+            for (let v = 0; v < NUM_VALUES; v++) {
+                let w = 5 + v; // base = card value
+                if (t === 1) {
+                    // Trump: heavy penalty + grows as deck shrinks.
+                    w += 100 + Math.max(0, 16 - n);
+                }
+                byValue.push(w);
+            }
+            byTrump.push(byValue);
+        }
+        cardWeights.push(byTrump);
+    }
+    const pickupPerCard: number[] = [];
+    const coverGapPenalty: number[] = [];
+    for (let n = 0; n < DECK_BUCKETS; n++) {
+        // Default pickup cost is HIGH enough that the heuristic never
+        // chooses pickup over cover unless the cover is genuinely
+        // expensive. The trainer can drop specific deck-size buckets
+        // to enable pickup-prefer where it pays off.
+        pickupPerCard.push(200);
+        coverGapPenalty.push(1);
+    }
+    return { cardWeights, pickupPerCard, coverGapPenalty };
+}
+
+let _weights: NitroWeights = makeDefaultWeights();
+
+// Optional: load tuned weights from a JSON file alongside the strategy.
+// Disabled in supabase deploy (no Node fs); guarded with a try/catch.
+try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const candidate = path.join(__dirname, 'nitro_weights.json');
+    if (fs.existsSync(candidate)) {
+        const raw = fs.readFileSync(candidate, 'utf8');
+        const j = JSON.parse(raw);
+        if (
+            Array.isArray(j.cardWeights)
+            && Array.isArray(j.pickupPerCard)
+            && Array.isArray(j.coverGapPenalty)
+        ) {
+            _weights = j as NitroWeights;
+        }
+    }
+} catch {
+    // Running in an environment without fs (e.g., supabase edge function);
+    // fall through to defaults.
+}
+
+export function setNitroWeights(w: NitroWeights): void {
+    _weights = w;
+}
+
+export function getNitroWeights(): NitroWeights {
+    return _weights;
+}
+
+const bucket = (deckSize: number): number =>
+    Math.max(0, Math.min(DECK_BUCKETS - 1, deckSize));
+
+const valueIdx = (value: number): number =>
+    Math.max(0, Math.min(NUM_VALUES - 1, value - 5));
+
+// Weight of a card in nitro's hand at the current deck size — the cost we
+// pay to commit it.
+const cardWeight = (card: Card, powerSuit: number, deckSize: number): number => {
+    const t = card.suit === powerSuit ? 1 : 0;
+    return _weights.cardWeights[bucket(deckSize)][t][valueIdx(card.value)];
+};
+
+// ---- card-level costs ----------------------------------------------------
+
+// Cost of committing a card to attack / pass — the weight of the card.
+const offensiveCardCost = (card: Card, powerSuit: number, deckSize: number): number =>
+    cardWeight(card, powerSuit, deckSize);
+
+// Cost of using a card to cover an attack: the wasted-value gap (or
+// trump-suit penalty) PLUS the weight of giving up the card.
+const coverPairCost = (
+    attack: Card,
+    defense: Card,
+    powerSuit: number,
+    deckSize: number,
+): number => {
+    const cw = cardWeight(defense, powerSuit, deckSize);
+    if (defense.suit === powerSuit && attack.suit !== powerSuit) {
+        return cw; // weight already prices the trump expense
+    }
+    const gap = defense.value - attack.value;
+    return cw + gap * _weights.coverGapPenalty[bucket(deckSize)];
+};
+
+const offensiveMoveCost = (move: LegalMove, powerSuit: number, deckSize: number): number => {
     if (!move.cards || move.cards.length === 0) return 0;
     let s = 0;
-    for (const c of move.cards) s += offensiveCardCost(c, powerSuit);
+    for (const c of move.cards) s += offensiveCardCost(c, powerSuit, deckSize);
     return s;
 };
 
-const coverMoveCost = (move: LegalMove, powerSuit: number): number => {
+const coverMoveCost = (move: LegalMove, powerSuit: number, deckSize: number): number => {
     if (!move.cards || move.cards.length === 0) return 0;
     if (!move.attack_cards || move.attack_cards.length !== move.cards.length) {
-        return offensiveMoveCost(move, powerSuit);
+        return offensiveMoveCost(move, powerSuit, deckSize);
     }
     let s = 0;
     for (let i = 0; i < move.cards.length; i++) {
-        s += coverPairCost(move.attack_cards[i], move.cards[i], powerSuit);
+        s += coverPairCost(move.attack_cards[i], move.cards[i], powerSuit, deckSize);
     }
     return s;
 };
@@ -86,10 +198,208 @@ const trumpCount = (hand: Card[], powerSuit: number): number => {
 
 // ---- decision logic ------------------------------------------------------
 
+// ---- neural-policy inference (loaded if nitro_nn_weights.json exists) -----
+
+let _nnParams: NNParams | null = null;
+try {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const candidate = path.join(__dirname, 'nitro_nn_weights.json');
+    if (fs.existsSync(candidate)) {
+        const raw = fs.readFileSync(candidate, 'utf8');
+        _nnParams = deserializeParams(raw);
+    }
+} catch {
+    _nnParams = null;
+}
+
+export function setNitroNNParams(p: NNParams | null): void {
+    _nnParams = p;
+}
+
+// Pick atomic action: forward through the transformer, mask illegal actions,
+// argmax. The "legal" mask is computed from the current move-in-progress.
+function neuralPickAction(
+    game: Game,
+    botPlayerId: string,
+    inProgress: InProgress,
+    legalActions: number[],
+): number {
+    const t = tokenize(game, botPlayerId, inProgress);
+    const fc = forward(_nnParams!, t.tokens);
+    const mask: boolean[] = new Array(NUM_ACTIONS).fill(false);
+    for (const a of legalActions) mask[a] = true;
+    const probs = softmaxMasked(fc.logits, mask);
+    let bestA = legalActions[0];
+    let bestP = -Infinity;
+    for (const a of legalActions) {
+        if (probs[a] > bestP) { bestP = probs[a]; bestA = a; }
+    }
+    return bestA;
+}
+
+// Build the full LegalMove by repeatedly asking the network for one card or
+// STOP. The legality of each candidate atomic action is derived from the
+// remaining set of legalMoves: a card C is legal iff at least one legalMove
+// would commit C as its next card; STOP is legal iff the cards collected so
+// far form a complete legal move; PICKUP is legal iff that move type exists
+// in legalMoves AND nothing has been collected yet.
+function legalMovesContainingPrefix(
+    legalMoves: LegalMove[],
+    role: 'attack' | 'cover' | 'pass' | 'idle',
+    chosen: Card[],
+): LegalMove[] {
+    if (role === 'idle') return legalMoves;
+    return legalMoves.filter(m => {
+        if (m.type !== role) return false;
+        const cs = m.cards ?? [];
+        if (cs.length < chosen.length) return false;
+        for (let i = 0; i < chosen.length; i++) {
+            const found = cs.some(c => c.suit === chosen[i].suit && c.value === chosen[i].value);
+            if (!found) return false;
+        }
+        return true;
+    });
+}
+
+function neuralChooseMove(
+    game: Game,
+    botPlayerId: string,
+    legalMoves: LegalMove[],
+): LegalMove | null {
+    if (!_nnParams) return null;
+
+    const meIdx = game.players.findIndex(p => p.player_id === botPlayerId);
+    const isDefender = meIdx === game.defender;
+    const trump = game.power_suit;
+
+    // Determine which roles are available based on legalMoves.
+    const hasPickup = legalMoves.some(m => m.type === 'pickup');
+    const hasGood = legalMoves.some(m => m.type === 'good');
+    const attackPool = legalMoves.filter(m => m.type === 'attack');
+    const coverPool = legalMoves.filter(m => m.type === 'cover');
+    const passPool = legalMoves.filter(m => m.type === 'pass');
+
+    // Step 1: pick the role / first card.
+    // Legal first-step actions:
+    //   - any card that could be the FIRST card in any attack/cover/pass move
+    //   - PICKUP if available
+    //   - STOP if "good" is legal (no cards committed yet)
+    const firstStepLegal: number[] = [];
+    const firstStepRoleByCard = new Map<number, 'attack' | 'cover' | 'pass'>();
+    const collectFirstCards = (pool: LegalMove[], role: 'attack' | 'cover' | 'pass') => {
+        for (const m of pool) {
+            for (const c of m.cards ?? []) {
+                const a = cardActionId(c.suit, c.value, trump);
+                if (!firstStepLegal.includes(a)) firstStepLegal.push(a);
+                if (!firstStepRoleByCard.has(a)) firstStepRoleByCard.set(a, role);
+            }
+        }
+    };
+    collectFirstCards(attackPool, 'attack');
+    collectFirstCards(coverPool, 'cover');
+    collectFirstCards(passPool, 'pass');
+    if (hasPickup) firstStepLegal.push(ACTION_PICKUP);
+    if (hasGood) firstStepLegal.push(ACTION_STOP);
+
+    if (firstStepLegal.length === 0) return null;
+
+    let inProgress: InProgress = { role: 'idle', cardsChosen: [] };
+    const firstAction = neuralPickAction(game, botPlayerId, inProgress, firstStepLegal);
+
+    if (firstAction === ACTION_PICKUP) {
+        return legalMoves.find(m => m.type === 'pickup')!;
+    }
+    if (firstAction === ACTION_STOP) {
+        // No cards committed → "good".
+        const good = legalMoves.find(m => m.type === 'good');
+        if (good) return good;
+        // Should not happen — fall through.
+        return legalMoves[0];
+    }
+
+    // It's a card action. Resolve which role it kicked off; if a card could
+    // start either an attack or a cover (rare in 1v1), prefer cover when we're
+    // defender, otherwise attack/pass.
+    const resolveRole = (): 'attack' | 'cover' | 'pass' => {
+        const inferred = firstStepRoleByCard.get(firstAction);
+        if (!inferred) return isDefender ? 'cover' : 'attack';
+        // For defenders: pass takes priority over cover when pass is legal
+        // with this card (the ATOM is the same; pass is a stronger commit).
+        if (isDefender) {
+            const card = actionIdToCard(firstAction, trump);
+            const passable = passPool.some(m =>
+                (m.cards ?? []).some(c => c.suit === card.suit && c.value === card.value),
+            );
+            if (passable) return 'pass';
+            const coverable = coverPool.some(m =>
+                (m.cards ?? []).some(c => c.suit === card.suit && c.value === card.value),
+            );
+            if (coverable) return 'cover';
+        }
+        return inferred;
+    };
+    const role = resolveRole();
+    const firstCard = actionIdToCard(firstAction, trump);
+    inProgress = { role, cardsChosen: [firstCard] };
+
+    // Step 2+: keep picking cards until STOP or until only one move matches.
+    while (true) {
+        const matching = legalMovesContainingPrefix(legalMoves, role, inProgress.cardsChosen);
+        if (matching.length === 0) {
+            // Should not happen — fall back to first cover/pass/attack with this prefix.
+            return legalMoves.find(m => m.type === role) ?? legalMoves[0];
+        }
+        // STOP is legal iff one of the matching moves IS the prefix exactly.
+        const stopOk = matching.some(m => (m.cards?.length ?? 0) === inProgress.cardsChosen.length);
+
+        // Possible next-card actions: cards that, when appended, still keep at
+        // least one matching move alive.
+        const nextLegal: number[] = [];
+        const seen = new Set<number>();
+        const extendCandidates = matching.filter(m => (m.cards?.length ?? 0) > inProgress.cardsChosen.length);
+        for (const m of extendCandidates) {
+            const used = new Set(inProgress.cardsChosen.map(c => `${c.suit}-${c.value}`));
+            for (const c of m.cards ?? []) {
+                const k = `${c.suit}-${c.value}`;
+                if (used.has(k)) continue;
+                const a = cardActionId(c.suit, c.value, trump);
+                if (!seen.has(a)) { seen.add(a); nextLegal.push(a); }
+            }
+        }
+        if (stopOk) nextLegal.push(ACTION_STOP);
+        if (nextLegal.length === 0) {
+            // Forced — pick the longest matching move.
+            return matching[0];
+        }
+        if (nextLegal.length === 1 && nextLegal[0] === ACTION_STOP) {
+            // Only STOP is left — finalize.
+            const exact = matching.find(m => (m.cards?.length ?? 0) === inProgress.cardsChosen.length);
+            return exact ?? matching[0];
+        }
+        const action = neuralPickAction(game, botPlayerId, inProgress, nextLegal);
+        if (action === ACTION_STOP) {
+            const exact = matching.find(m => (m.cards?.length ?? 0) === inProgress.cardsChosen.length);
+            return exact ?? matching[0];
+        }
+        const card = actionIdToCard(action, trump);
+        inProgress.cardsChosen.push(card);
+    }
+}
+
+// ---------------------------------------------------------------------------
+
 export class NitroStrategy implements BotStrategy {
     readonly name = 'nitro';
 
     async chooseMove(game: Game, botPlayerId: string, legalMoves: LegalMove[]): Promise<LegalMove> {
+        // If neural weights are loaded, use them. Otherwise fall through to
+        // the heuristic policy below.
+        if (_nnParams) {
+            const m = neuralChooseMove(game, botPlayerId, legalMoves);
+            if (m) return m;
+        }
+
         const trump = game.power_suit;
         const opp = findOpponent(game, botPlayerId);
         const me = game.players.find(p => p.player_id === botPlayerId)!;
@@ -126,7 +436,7 @@ export class NitroStrategy implements BotStrategy {
                 return !canFullyCover(allAttacks, opp.hand, trump);
             });
             if (passForcing.length > 0) {
-                return cheapest(passForcing, m => offensiveMoveCost(m, trump));
+                return cheapest(passForcing, m => offensiveMoveCost(m, trump, deckLeft));
             }
         }
 
@@ -151,7 +461,7 @@ export class NitroStrategy implements BotStrategy {
                 return !canFullyCover(allAttacks, opp.hand, trump);
             });
             if (passForcing.length > 0) {
-                return cheapest(passForcing, m => offensiveMoveCost(m, trump));
+                return cheapest(passForcing, m => offensiveMoveCost(m, trump, deckLeft));
             }
         }
 
@@ -205,8 +515,31 @@ export class NitroStrategy implements BotStrategy {
             };
             const bestCover = cheapest(
                 candidatePool,
-                m => coverMoveCost(m, trump) + oppMatchPenalty(m),
+                m => coverMoveCost(m, trump, deckLeft) + oppMatchPenalty(m),
             );
+
+            // Principle 18 (defender, parametric): compare best cover cost
+            // to a pickup cost = (cards on table) × pickupPerCard. The
+            // pickupPerCard weight is tunable per deckSize; the trainer
+            // can lower it where pickup-instead-of-cover wins seeds.
+            //   Why: this is the structural knob that lets a learned
+            //   policy say "in deck=N, prefer pickup over a forced trump
+            //   cover" without us hard-coding when. Each entry of
+            //   pickupPerCard is a free parameter.
+            //   Counter (no pickup legal): skip.
+            //   Counter (cover is genuinely cheaper): keep cover.
+            const pickupAlt = legalMoves.find(m => m.type === 'pickup');
+            if (pickupAlt) {
+                const tableCardCount = game.table_battles.reduce(
+                    (s, b) => s + 1 + (b.defense ? 1 : 0),
+                    0,
+                );
+                const pickupCost = tableCardCount * _weights.pickupPerCard[bucket(deckLeft)];
+                const bestCoverCost = coverMoveCost(bestCover, trump, deckLeft) + oppMatchPenalty(bestCover);
+                if (pickupCost < bestCoverCost) {
+                    return pickupAlt;
+                }
+            }
 
             // Principle 10 (defender, perfect info): if the best cover
             // burns a trump AND the opponent holds enough same-value
@@ -333,7 +666,7 @@ export class NitroStrategy implements BotStrategy {
                     return !canFullyCover(all, opp.hand, trump);
                 });
                 if (forcing.length > 0) {
-                    return cheapest(forcing, m => offensiveMoveCost(m, trump));
+                    return cheapest(forcing, m => offensiveMoveCost(m, trump, deckLeft));
                 }
             }
 
@@ -369,14 +702,14 @@ export class NitroStrategy implements BotStrategy {
                 const ca = (a.cards ?? []).length;
                 const cb = (b.cards ?? []).length;
                 if (cb !== ca) return cb - ca;
-                return offensiveMoveCost(a, trump) - offensiveMoveCost(b, trump);
+                return offensiveMoveCost(a, trump, deckLeft) - offensiveMoveCost(b, trump, deckLeft);
             });
             return byPress[0];
         }
 
         const passMoves = legalMoves.filter(m => m.type === 'pass');
         if (passMoves.length > 0) {
-            return cheapest(passMoves, m => offensiveMoveCost(m, trump));
+            return cheapest(passMoves, m => offensiveMoveCost(m, trump, deckLeft));
         }
 
         if (goodMove) return goodMove;
