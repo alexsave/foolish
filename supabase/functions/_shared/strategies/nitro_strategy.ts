@@ -205,7 +205,7 @@ export class NitroStrategy implements BotStrategy {
                         }
                     }
 
-                    // Only swap to pickup when:
+                    // Swap to pickup when:
                     //   (a) the threat is savable by keeping the trump,
                     //   (b) the current pickup is small (≤ 3 table cards),
                     //   (c) we're not already trump-rich vs the opponent.

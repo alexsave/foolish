@@ -1,6 +1,2 @@
-row,training_range_size,win_rate_eval_random_10k,win_rate_eval_espresso_10k,principles_added,tactical_added,note
-1,1,0.2073,0.0005,0,0,baseline last-move strategy
-2,36,0.9374,0.3151,3,0,role-based cheapest-cards heuristic; trumps weighted as +100; cover>pickup; attack>good; pass>pickup
-3,55,0.9549,0.3851,3,0,tight cover (smallest gap); endgame forcing-attack with non-trump; opp-match penalty on cover values
-4,66,0.9395,0.3415,2,0,defender pickup-instead-of-trump-cover when opp can punish via same-value followup; cap forcing-attack card values at jack to prevent boomerang
-5,74,0.9514,0.3471,1,0,deck=0 endgame defender prefers pass over cover (transfers burden permanently)
+row,timestamp,training_range_size,win_rate_eval_random_10k,win_rate_eval_espresso_10k,principles_added,tactical_added,note
+1,2026-05-09T09:44:39Z,0,0.9514,0.3471,0,0,baseline carried over from random training; first loss vs espresso is seed 1
