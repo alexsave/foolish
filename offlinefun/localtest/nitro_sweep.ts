@@ -21,11 +21,6 @@ const ESPRESSO = 'espresso' as StrategyKey;
 registerBotStrategy(NITRO, new NitroStrategy());
 registerBotStrategy(ESPRESSO, new EspressoStrategy());
 
-import { HandwrittenBotStrategy } from '../../supabase/functions/_shared/strategies/handwritten_strategy.ts';
-if (process.env.NITRO_AS_HW) {
-    registerBotStrategy(NITRO, new HandwrittenBotStrategy());
-}
-
 // Deterministic Math.random keyed by seed (game uses Math.random for shuffling and draws)
 let _seed = 1;
 const seededRandom = () => {

@@ -263,15 +263,16 @@ export class NitroStrategy implements BotStrategy {
 
                     // Swap to pickup when:
                     //   (a) the threat is savable by keeping the trump,
-                    //   (b) the current pickup is small (≤ 3 table cards),
+                    //   (b) only ONE attack is currently uncovered — multi-
+                    //       attack scenarios are usually fully coverable
+                    //       and discarding the table is far better than
+                    //       picking up multiple cards,
                     //   (c) we're not already trump-rich vs the opponent.
-                    const tableCardCount = game.table_battles.reduce(
-                        (s, b) => s + 1 + (b.defense ? 1 : 0),
-                        0,
-                    );
-                    if (savableThreat && tableCardCount <= 3 && trumpsLeft <= oppTrumps) {
+                    const uncoveredNow = game.table_battles.filter(b => b.defense === null).length;
+                    if (savableThreat && uncoveredNow === 1 && trumpsLeft <= oppTrumps) {
                         return pickupMove;
                     }
+
                 }
             }
 
