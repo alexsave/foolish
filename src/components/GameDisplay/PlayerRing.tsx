@@ -112,6 +112,15 @@ export const PlayerRing = () => {
 
         if (latestMessage.id && latestMessage.id !== lastMessageIdRef.current) {
             lastMessageIdRef.current = latestMessage.id;
+
+            // Only surface bubbles for live messages. On initial load / reconnect,
+            // chatMessages is hydrated from history and the newest entry can be
+            // hours old — without this guard it would pop up as if just sent.
+            const ageMs = latestMessage.created_at
+                ? Date.now() - new Date(latestMessage.created_at).getTime()
+                : 0;
+            if (ageMs > 10_000) return;
+
             const senderId = latestMessage.user_id;
             const message = latestMessage.message;
 
