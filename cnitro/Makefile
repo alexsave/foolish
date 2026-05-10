@@ -7,7 +7,7 @@ CORE_SRC := src/game.c src/legal.c src/random_strategy.c src/espresso_strategy.c
 CORE_OBJ := $(CORE_SRC:src/%.c=build/%.o)
 
 .PHONY: all clean tests
-all: build/cnitro_collect build/cnitro_train build/cnitro_eval build/cnitro_tests build/cnitro_cross_check build/cnitro_inspect
+all: build/cnitro_collect build/cnitro_train build/cnitro_eval build/cnitro_tests build/cnitro_cross_check build/cnitro_inspect build/cnitro_replay
 
 build/%.o: src/%.c
 	@mkdir -p build
@@ -25,6 +25,8 @@ build/cnitro_cross_check: $(CORE_OBJ) build/cross_check.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 build/cnitro_inspect: $(CORE_OBJ) build/main_inspect.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+build/cnitro_replay: $(CORE_OBJ) build/main_replay.o
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 build/main_collect.o: src/main_collect.c
 	@mkdir -p build
@@ -36,6 +38,9 @@ build/main_eval.o: src/main_eval.c
 	@mkdir -p build
 	$(CC) $(CFLAGS) -c $< -o $@
 build/main_inspect.o: src/main_inspect.c
+	@mkdir -p build
+	$(CC) $(CFLAGS) -c $< -o $@
+build/main_replay.o: src/main_replay.c
 	@mkdir -p build
 	$(CC) $(CFLAGS) -c $< -o $@
 build/tests.o: tests/tests.c
