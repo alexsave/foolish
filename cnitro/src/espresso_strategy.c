@@ -219,6 +219,18 @@ static bool move_is_attack_any_trump(const LegalMove *m, int power_suit) {
 int espresso_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx) {
     (void)ctx;
     if (moves->n == 0) return -1;
+
+    // 3+ active players: TS espresso defers to handwritten (with optional
+    // random tweaks we don't bother to port). The 1v1 logic below requires
+    // a single identifiable opponent, so we cannot use it.
+    int in_count = 0;
+    for (int i = 0; i < g->num_players; i++) {
+        if (g->players[i].status == PLAYER_STATUS_IN) in_count++;
+    }
+    if (in_count > 2) {
+        return handwritten_strategy_choose(g, bot_idx, moves, ctx);
+    }
+
     const Player *bot = &g->players[bot_idx];
     const Player *opp = get_opponent(g, bot_idx);
 

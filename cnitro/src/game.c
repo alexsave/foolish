@@ -115,10 +115,11 @@ static bool hand_contains(const Player *p, Card c) {
 
 // ---------- Deck / draw ------------------------------------------------
 
-static void refill_deck_2p(Game *g) {
+static void refill_deck(Game *g) {
     int idx = 0;
+    int min_v = min_value_for(g->num_players);
     for (int suit = 0; suit < NUM_SUITS; suit++) {
-        for (int v = MIN_VALUE_2P; v <= ACE_VALUE; v++) {
+        for (int v = min_v; v <= ACE_VALUE; v++) {
             g->deck[idx].suit = (int8_t)suit;
             g->deck[idx].value = (int8_t)v;
             idx++;
@@ -193,7 +194,7 @@ void start_game(Game *g) {
         g->players[i].status = PLAYER_STATUS_IN;
     }
 
-    refill_deck_2p(g);
+    refill_deck(g);
     deal_initial(g);
 
     // Flip a non-Ace.

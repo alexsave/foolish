@@ -9,7 +9,9 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#define MAX_PLAYERS    2          // 1v1 only (matches espresso/random testing).
+#define MAX_PLAYERS    8          // 2..8 players. 6..8 players use the full
+                                  // 52-card deck (values 2..A); 2..5 players
+                                  // use the 36-card deck (values 5..A).
 #define MAX_HAND_SIZE  64         // generous; pickup can stack many cards.
 #define MAX_BATTLES    32         // enough for any reasonable round.
 #define MAX_DECK       64         // 36 for 2p, with slack.
