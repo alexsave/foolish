@@ -295,8 +295,8 @@ static NOINLINE void bwd_split_ffn_residual(
 // Stage 3: bias gradient — sum the rows of a (L × D) matrix into (D,).
 // Uses cblas_sgemv(no-trans, all-ones) so AMX handles the reduction.
 static NOINLINE void bwd_bias_grad(int L, int D, const float *dY_LxD, float *bias_grad) {
-    static float ones[MAX_SEQ_LEN];
-    static int ones_init = 0;
+    static _Thread_local float ones[MAX_SEQ_LEN];
+    static _Thread_local int ones_init = 0;
     if (!ones_init) { for (int i = 0; i < MAX_SEQ_LEN; i++) ones[i] = 1.f; ones_init = 1; }
     cblas_sgemv(CblasRowMajor, CblasTrans, L, D, 1.0f,
                 dY_LxD, D, ones, 1, 1.0f, bias_grad, 1);
@@ -392,21 +392,21 @@ float nn_accumulate_grads(const NNParams *p, const ForwardCache *cache,
     layer_norm_backward(cache->finalLnIn, 0, cache->finalLnMean, cache->finalLnVar,
                         p->lnFg, dCls, g->lnFg, g->lnFb, D_MODEL, dFinalLnIn);
 
-    static float dOutNext[MAX_SEQ_LEN * D_MODEL];
-    static float dAfterAttn[MAX_SEQ_LEN * D_MODEL];
-    static float dFf2_buf[MAX_SEQ_LEN * D_MODEL];
-    static float dFf1_buf[MAX_SEQ_LEN * FF_DIM];
-    static float dFf1pre [MAX_SEQ_LEN * FF_DIM];
-    static float dXLn2   [MAX_SEQ_LEN * D_MODEL];
-    static float dProj_b [MAX_SEQ_LEN * D_MODEL];
-    static float dXIn_b  [MAX_SEQ_LEN * D_MODEL];
-    static float dAttnOut[MAX_SEQ_LEN * D_MODEL];
-    static float dAttn   [N_HEADS * MAX_SEQ_LEN * MAX_SEQ_LEN];
-    static float dV_b    [MAX_SEQ_LEN * D_MODEL];
-    static float dScores [N_HEADS * MAX_SEQ_LEN * MAX_SEQ_LEN];
-    static float dQ_b    [MAX_SEQ_LEN * D_MODEL];
-    static float dK_b    [MAX_SEQ_LEN * D_MODEL];
-    static float dXLn1   [MAX_SEQ_LEN * D_MODEL];
+    static _Thread_local float dOutNext[MAX_SEQ_LEN * D_MODEL];
+    static _Thread_local float dAfterAttn[MAX_SEQ_LEN * D_MODEL];
+    static _Thread_local float dFf2_buf[MAX_SEQ_LEN * D_MODEL];
+    static _Thread_local float dFf1_buf[MAX_SEQ_LEN * FF_DIM];
+    static _Thread_local float dFf1pre [MAX_SEQ_LEN * FF_DIM];
+    static _Thread_local float dXLn2   [MAX_SEQ_LEN * D_MODEL];
+    static _Thread_local float dProj_b [MAX_SEQ_LEN * D_MODEL];
+    static _Thread_local float dXIn_b  [MAX_SEQ_LEN * D_MODEL];
+    static _Thread_local float dAttnOut[MAX_SEQ_LEN * D_MODEL];
+    static _Thread_local float dAttn   [N_HEADS * MAX_SEQ_LEN * MAX_SEQ_LEN];
+    static _Thread_local float dV_b    [MAX_SEQ_LEN * D_MODEL];
+    static _Thread_local float dScores [N_HEADS * MAX_SEQ_LEN * MAX_SEQ_LEN];
+    static _Thread_local float dQ_b    [MAX_SEQ_LEN * D_MODEL];
+    static _Thread_local float dK_b    [MAX_SEQ_LEN * D_MODEL];
+    static _Thread_local float dXLn1   [MAX_SEQ_LEN * D_MODEL];
 
     memset(dOutNext, 0, sizeof(float) * L * D_MODEL);
     for (int d = 0; d < D_MODEL; d++) dOutNext[d] = dFinalLnIn[d];
@@ -723,8 +723,17 @@ float nn_accumulate_grads_batch(const NNParams *p,
     int L = cache->L;
     int BL = B * L;
 
+    // Heap-allocate the big batched scratch buffers lazily per thread. With
+    // BATCH_MAX growing past 32, putting these in TLS as static arrays
+    // exceeds macOS thread-local storage limits and the worker silently
+    // SIGILLs on first use. Lazy malloc keeps the pointer in TLS but the
+    // data on the heap.
+    #define TLS_BUF_F(name, n) \
+        static _Thread_local float *name = NULL; \
+        if (!name) name = malloc((size_t)(n) * sizeof(float))
+
     // Compute per-sample probs, dlogits, top-1 accuracy, sum of losses.
-    static float dlogits_all[BATCH_MAX * NUM_ACTIONS];
+    TLS_BUF_F(dlogits_all, BATCH_MAX * NUM_ACTIONS);
     float total_loss = 0.f;
     int correct = 0;
     for (int b = 0; b < B; b++) {
@@ -750,13 +759,13 @@ float nn_accumulate_grads_batch(const NNParams *p,
                 NUM_ACTIONS, D_MODEL, B, 1.0f,
                 dlogits_all, NUM_ACTIONS, cache->cls, D_MODEL, 1.0f, g->Wout, D_MODEL);
     // dCls = dlogits @ Wout.  ([B, NUM_ACTIONS] @ [NUM_ACTIONS, D])
-    static float dCls[BATCH_MAX * D_MODEL];
+    TLS_BUF_F(dCls, BATCH_MAX * D_MODEL);
     cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
                 B, D_MODEL, NUM_ACTIONS, 1.0f,
                 dlogits_all, NUM_ACTIONS, p->Wout, D_MODEL, 0.0f, dCls, D_MODEL);
 
     // Final LN backward per sample → dFinalLnIn (CLS-only, length B*D).
-    static float dFinalLnIn[BATCH_MAX * D_MODEL];
+    TLS_BUF_F(dFinalLnIn, BATCH_MAX * D_MODEL);
     for (int b = 0; b < B; b++) {
         float dy[D_MODEL]; for (int d = 0; d < D_MODEL; d++) dy[d] = dCls[b * D_MODEL + d];
         float dx[D_MODEL];
@@ -767,21 +776,21 @@ float nn_accumulate_grads_batch(const NNParams *p,
     }
 
     // Set up dOutNext = [BL, D]. Only CLS positions get dFinalLnIn; rest 0.
-    static float dOutNext[BATCH_MAX * MAX_SEQ_LEN * D_MODEL];
-    static float dAfterAttn[BATCH_MAX * MAX_SEQ_LEN * D_MODEL];
-    static float dFf2_buf[BATCH_MAX * MAX_SEQ_LEN * D_MODEL];
-    static float dFf1_buf[BATCH_MAX * MAX_SEQ_LEN * FF_DIM];
-    static float dFf1pre [BATCH_MAX * MAX_SEQ_LEN * FF_DIM];
-    static float dXLn2   [BATCH_MAX * MAX_SEQ_LEN * D_MODEL];
-    static float dProj_b [BATCH_MAX * MAX_SEQ_LEN * D_MODEL];
-    static float dXIn_b  [BATCH_MAX * MAX_SEQ_LEN * D_MODEL];
-    static float dAttnOut[BATCH_MAX * MAX_SEQ_LEN * D_MODEL];
-    static float dAttn   [BATCH_MAX * N_HEADS * MAX_SEQ_LEN * MAX_SEQ_LEN];
-    static float dV_b    [BATCH_MAX * MAX_SEQ_LEN * D_MODEL];
-    static float dScores [BATCH_MAX * N_HEADS * MAX_SEQ_LEN * MAX_SEQ_LEN];
-    static float dQ_b    [BATCH_MAX * MAX_SEQ_LEN * D_MODEL];
-    static float dK_b    [BATCH_MAX * MAX_SEQ_LEN * D_MODEL];
-    static float dXLn1   [BATCH_MAX * MAX_SEQ_LEN * D_MODEL];
+    TLS_BUF_F(dOutNext,   BATCH_MAX * MAX_SEQ_LEN * D_MODEL);
+    TLS_BUF_F(dAfterAttn, BATCH_MAX * MAX_SEQ_LEN * D_MODEL);
+    TLS_BUF_F(dFf2_buf,   BATCH_MAX * MAX_SEQ_LEN * D_MODEL);
+    TLS_BUF_F(dFf1_buf,   BATCH_MAX * MAX_SEQ_LEN * FF_DIM);
+    TLS_BUF_F(dFf1pre,    BATCH_MAX * MAX_SEQ_LEN * FF_DIM);
+    TLS_BUF_F(dXLn2,      BATCH_MAX * MAX_SEQ_LEN * D_MODEL);
+    TLS_BUF_F(dProj_b,    BATCH_MAX * MAX_SEQ_LEN * D_MODEL);
+    TLS_BUF_F(dXIn_b,     BATCH_MAX * MAX_SEQ_LEN * D_MODEL);
+    TLS_BUF_F(dAttnOut,   BATCH_MAX * MAX_SEQ_LEN * D_MODEL);
+    TLS_BUF_F(dAttn,      BATCH_MAX * N_HEADS * MAX_SEQ_LEN * MAX_SEQ_LEN);
+    TLS_BUF_F(dV_b,       BATCH_MAX * MAX_SEQ_LEN * D_MODEL);
+    TLS_BUF_F(dScores,    BATCH_MAX * N_HEADS * MAX_SEQ_LEN * MAX_SEQ_LEN);
+    TLS_BUF_F(dQ_b,       BATCH_MAX * MAX_SEQ_LEN * D_MODEL);
+    TLS_BUF_F(dK_b,       BATCH_MAX * MAX_SEQ_LEN * D_MODEL);
+    TLS_BUF_F(dXLn1,      BATCH_MAX * MAX_SEQ_LEN * D_MODEL);
 
     memset(dOutNext, 0, sizeof(float) * BL * D_MODEL);
     for (int b = 0; b < B; b++) {

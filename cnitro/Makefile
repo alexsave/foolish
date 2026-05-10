@@ -3,7 +3,8 @@ CFLAGS  ?= -O3 -ffast-math -Wall -Wextra -Wno-unused-parameter -Wno-deprecated-d
 LDFLAGS ?= -lm -framework Accelerate
 
 CORE_SRC := src/game.c src/legal.c src/random_strategy.c src/espresso_strategy.c \
-            src/handwritten_strategy.c src/tokenize.c src/nn.c src/nitro_strategy.c
+            src/handwritten_strategy.c src/tokenize.c src/nn.c src/nn_thread.c \
+            src/nitro_strategy.c
 CORE_OBJ := $(CORE_SRC:src/%.c=build/%.o)
 
 .PHONY: all clean tests

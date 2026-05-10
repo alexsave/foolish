@@ -7,6 +7,7 @@
 //                --epochs=5 --batch=32 --lr=0.05
 
 #include "../src/nn.h"
+#include "../src/nn_thread.h"
 #include "../src/tokenize.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,6 +15,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <time.h>
+#include <Accelerate/Accelerate.h>
 
 // Wall time in seconds since some monotonic epoch. Unlike clock(), this
 // keeps ticking when the laptop sleeps — critical for overnight runs.
@@ -40,6 +42,59 @@ typedef struct {
     int   tokens[MAX_SEQ_LEN];
     uint8_t legal[NUM_ACTIONS];
 } Sample;
+
+// Bucket / BatchSlot live at file scope so the parallel worker can take them
+// by pointer. (Originally locals to main; promoted when we added threading.)
+typedef struct { int L; size_t start; size_t n; } Bucket;
+typedef struct { int bidx; size_t bs; } BatchSlot;
+
+typedef struct {
+    int   *tokens;   // [BATCH_MAX * MAX_SEQ_LEN]
+    bool  *legal;    // [BATCH_MAX * NUM_ACTIONS]
+    int   *target;   // [BATCH_MAX]
+    BatchedForwardCache *fc;
+    NNGrads *grads;
+    double  loss_sum;
+    size_t  correct;
+} ThreadScratch;
+
+typedef struct {
+    const NNParams *p;
+    Sample         *samples;
+    size_t         *sorted_idx;
+    int             macro_L;          // shared L across all batches in this macro
+    size_t          batch0_offset;    // sorted_idx start of first batch in macro
+    int             batch_size;
+    ThreadScratch  *ts;
+} MacroCtx;
+
+// Run by parallel_for: each call processes ONE iteration of the macro and
+// accumulates into thread-local grads. With the work-stealing pool the
+// same tid can be invoked multiple times in one parallel_for call, so we
+// must NOT zero the grads here — master zeros every ts[t].grads once per
+// macro-step before dispatching.
+static void macro_worker(int start, int end, int tid, void *ctx_) {
+    MacroCtx *ctx = (MacroCtx *)ctx_;
+    ThreadScratch *t = &ctx->ts[tid];
+    int L = ctx->macro_L;
+    int B = ctx->batch_size;
+    for (int idx = start; idx < end; idx++) {
+        size_t bs = ctx->batch0_offset + (size_t)idx * (size_t)B;
+        for (int b = 0; b < B; b++) {
+            Sample *s = &ctx->samples[ctx->sorted_idx[bs + b]];
+            memcpy(t->tokens + b * L, s->tokens, sizeof(int) * L);
+            for (int j = 0; j < NUM_ACTIONS; j++) t->legal[b * NUM_ACTIONS + j] = false;
+            for (int j = 0; j < s->n_legal; j++) t->legal[b * NUM_ACTIONS + s->legal[j]] = true;
+            t->target[b] = s->target;
+        }
+        nn_forward_batch(ctx->p, t->tokens, B, L, t->fc);
+        int batch_correct = 0;
+        float batch_loss = nn_accumulate_grads_batch(ctx->p, t->fc, t->legal,
+                                                     t->target, t->grads, &batch_correct);
+        t->loss_sum += batch_loss;
+        t->correct  += (size_t)batch_correct;
+    }
+}
 
 static Sample *load_corpus(const char *path, size_t *n_out) {
     FILE *f = fopen(path, "rb");
@@ -104,8 +159,7 @@ int main(int argc, char **argv) {
 
     NNParams *p = malloc(sizeof(NNParams));
     NNGrads  *g = malloc(sizeof(NNGrads));
-    BatchedForwardCache *fc = malloc(sizeof(BatchedForwardCache));
-    if (!p || !g || !fc) { perror("malloc"); return 1; }
+    if (!p || !g) { perror("malloc"); return 1; }
     if (in_path && nn_load(in_path, p)) {
         fprintf(stderr, "# resumed from %s\n", in_path);
     } else {
@@ -113,6 +167,14 @@ int main(int argc, char **argv) {
         fprintf(stderr, "# init: fresh seed=%u\n", seed);
     }
     nn_zero_grads(g);
+
+    // Spin up the pthread pool, one worker per online CPU. Each worker runs
+    // forward+backward on its own batch with its own scratch state; the
+    // master sums per-thread gradients into g and applies a single SGD step
+    // per macro-step. Effective batch = n_workers * batch.
+    nn_thread_init(0);
+    int n_workers = nn_thread_count();
+    fprintf(stderr, "# pthread pool: %d workers\n", n_workers);
 
     // Bucket samples by L. Within each bucket, all samples have the same L
     // so we can run BATCH_MAX of them through nn_forward_batch in one call.
@@ -146,7 +208,6 @@ int main(int argc, char **argv) {
     // Build the list of (bucket_L, count, start_in_sorted_idx) for buckets
     // with >= batch samples — these are what we'll iterate through. Drop
     // partial last batch within each bucket.
-    typedef struct { int L; size_t start; size_t n; } Bucket;
     Bucket *buckets = malloc(MAX_SEQ_LEN * sizeof(Bucket));
     int n_buckets = 0;
     size_t total_full_batched = 0;
@@ -165,7 +226,6 @@ int main(int argc, char **argv) {
             n_buckets, total_full_batched, n_samples, n_samples - total_full_batched);
 
     // Per-batch iteration order: pre-build a list of (bucket_idx, batch_start_in_bucket).
-    typedef struct { int bidx; size_t bs; } BatchSlot;
     size_t total_batches = total_full_batched / batch;
     BatchSlot *slots = malloc(total_batches * sizeof(BatchSlot));
     {
@@ -180,49 +240,130 @@ int main(int argc, char **argv) {
         }
     }
 
-    // Scratch for one batch.
-    int   *batch_tokens = malloc(BATCH_MAX * MAX_SEQ_LEN * sizeof(int));
-    bool  *batch_legal  = malloc(BATCH_MAX * NUM_ACTIONS * sizeof(bool));
-    int   *batch_target = malloc(BATCH_MAX * sizeof(int));
+    // Macro-steps: each macro is K_PER_WORKER * n_workers consecutive same-L
+    // batches. K>1 means each worker processes K batches per macro before
+    // the next sync, so we pay the parallel_for / cond_var sync cost K
+    // times less often. Cost: effective batch grows K×, slightly larger
+    // gradient noise per SGD step.
+    #define K_PER_WORKER 4
+    int macro_batches = n_workers * K_PER_WORKER;
+    typedef struct { int bidx; size_t batch0_offset; } MacroSlot;
+    size_t total_macros = 0;
+    for (int bi = 0; bi < n_buckets; bi++) {
+        size_t nb = buckets[bi].n / batch;
+        total_macros += nb / macro_batches;
+    }
+    MacroSlot *macros = malloc(total_macros * sizeof(MacroSlot));
+    {
+        size_t k = 0;
+        for (int bi = 0; bi < n_buckets; bi++) {
+            size_t nb = buckets[bi].n / batch;
+            size_t nm = nb / macro_batches;
+            for (size_t j = 0; j < nm; j++) {
+                macros[k].bidx = bi;
+                macros[k].batch0_offset = buckets[bi].start + j * macro_batches * batch;
+                k++;
+            }
+        }
+    }
+    size_t macro_total_samples = total_macros * macro_batches * batch;
+    fprintf(stderr, "# %zu macro-steps × %d workers × %d batches × %d/batch = %zu samples/epoch "
+                    "(macro-quantization dropped %zu vs batches)\n",
+            total_macros, n_workers, K_PER_WORKER, (int)batch, macro_total_samples,
+            (size_t)(total_full_batched > macro_total_samples ?
+                     total_full_batched - macro_total_samples : 0));
+
+    // Per-thread scratch: input buffers, forward cache, gradient buffer, and
+    // running stats for the macro-step. Each worker writes to its own slot,
+    // no shared mutation during the parallel phase.
+    ThreadScratch *ts = calloc(n_workers, sizeof(ThreadScratch));
+    for (int t = 0; t < n_workers; t++) {
+        ts[t].tokens = malloc(BATCH_MAX * MAX_SEQ_LEN * sizeof(int));
+        ts[t].legal  = malloc(BATCH_MAX * NUM_ACTIONS * sizeof(bool));
+        ts[t].target = malloc(BATCH_MAX * sizeof(int));
+        ts[t].fc     = malloc(sizeof(BatchedForwardCache));
+        ts[t].grads  = malloc(sizeof(NNGrads));
+        if (!ts[t].tokens || !ts[t].legal || !ts[t].target || !ts[t].fc || !ts[t].grads) {
+            perror("malloc"); return 1;
+        }
+        nn_zero_grads(ts[t].grads);
+    }
+
+    // NNGrads is a flat tower of inline float arrays — no pointers, no
+    // padding inside the struct — so we can sum it as a contiguous float
+    // buffer via vDSP.
+    const size_t n_grad_floats = sizeof(NNGrads) / sizeof(float);
+
+    // Tell Accelerate's BLAS not to spawn its own threads — we already split
+    // work K-way across our pool, so internal BLAS threads would over-
+    // subscribe the cores. (The matmuls in this model are small enough that
+    // single-thread BLAS is faster anyway.)
+    setenv("VECLIB_MAXIMUM_THREADS", "1", 1);
 
     double start = wall_secs();
     for (int epoch = 1; epoch <= epochs; epoch++) {
-        // Shuffle batch order each epoch (samples within a batch keep their
-        // bucket — same L is required for the batched path).
-        for (size_t i = total_batches - 1; i > 0; i--) {
+        // Shuffle macro-step order each epoch (within-bucket order is fixed
+        // since all batches in a bucket are interchangeable for SGD; the
+        // sample ordering within sorted_idx is fixed at load time so two
+        // macros that point at the same bucket address different samples).
+        for (size_t i = total_macros - 1; i > 0; i--) {
             size_t j = shuf_next() % (i + 1);
-            BatchSlot t = slots[i]; slots[i] = slots[j]; slots[j] = t;
+            MacroSlot t = macros[i]; macros[i] = macros[j]; macros[j] = t;
         }
 
         double total_loss = 0;
         size_t correct = 0, processed = 0;
         double epoch_loss_for_log = 0;
         size_t since_log = 0;
-        for (size_t k = 0; k < total_batches; k++) {
-            int L = buckets[slots[k].bidx].L;
-            size_t bs = slots[k].bs;
-            for (int b = 0; b < (int)batch; b++) {
-                Sample *s = &samples[sorted_idx[bs + b]];
-                memcpy(batch_tokens + b * L, s->tokens, sizeof(int) * L);
-                for (int j = 0; j < NUM_ACTIONS; j++) batch_legal[b * NUM_ACTIONS + j] = false;
-                for (int j = 0; j < s->n_legal; j++) batch_legal[b * NUM_ACTIONS + s->legal[j]] = true;
-                batch_target[b] = s->target;
+
+        // Macro-step: each macro is K_PER_WORKER * n_workers same-L batches.
+        // We dispatch macro_batches iterations through parallel_for; each of
+        // n_workers workers handles K_PER_WORKER iterations sequentially.
+        // Each worker accumulates K batches' gradients into its own NNGrads
+        // (workers reset their grads inside macro_worker), then a single
+        // parallel reduction sums + applies. Sync cost is paid 1/K as often.
+        for (size_t mk = 0; mk < total_macros; mk++) {
+            // Zero every thread's accumulators ONCE per macro. Work stealing
+            // means a single tid may be called many times by parallel_for,
+            // so the workers can't safely zero their own grads inside.
+            for (int t = 0; t < n_workers; t++) {
+                ts[t].loss_sum = 0;
+                ts[t].correct  = 0;
+                nn_zero_grads(ts[t].grads);
             }
-            nn_forward_batch(p, batch_tokens, batch, L, fc);
-            int batch_correct = 0;
-            float batch_loss = nn_accumulate_grads_batch(p, fc, batch_legal,
-                                                         batch_target, g, &batch_correct);
-            nn_apply_grads(p, g, lr, batch);
-            total_loss += batch_loss;
-            epoch_loss_for_log += batch_loss;
-            correct += batch_correct;
-            processed += batch;
-            since_log += batch;
+            MacroCtx ctx = {
+                .p = p, .samples = samples, .sorted_idx = sorted_idx,
+                .macro_L = buckets[macros[mk].bidx].L,
+                .batch0_offset = macros[mk].batch0_offset,
+                .batch_size = (int)batch, .ts = ts,
+            };
+            parallel_for(macro_batches, macro_worker, &ctx);
+
+            // Master-serial reduce + apply. Avoids a second parallel_for
+            // dispatch (its sync overhead exceeded the work it parallelized
+            // for our small NNGrads). Each step is a single tight scan of
+            // ~85K floats.
+            int eff_batch = macro_batches * (int)batch;
+            float *master_f = (float *)g;
+            memset(master_f, 0, n_grad_floats * sizeof(float));
+            for (int t = 0; t < n_workers; t++) {
+                vDSP_vadd(master_f, 1, (const float *)ts[t].grads, 1,
+                          master_f, 1, n_grad_floats);
+            }
+            nn_apply_grads(p, g, lr, eff_batch);
+
+            for (int t = 0; t < n_workers; t++) {
+                total_loss += ts[t].loss_sum;
+                epoch_loss_for_log += ts[t].loss_sum;
+                correct += ts[t].correct;
+            }
+            processed += eff_batch;
+            since_log += eff_batch;
 
             if (since_log >= 5000) {
                 double dt = wall_secs() - start;
                 fprintf(stderr, "  epoch %d  step %zu/%zu  recentLoss=%.4f  dt=%.1fs\n",
-                        epoch, processed, total_full_batched,
+                        epoch, processed, macro_total_samples,
                         epoch_loss_for_log / since_log, dt);
                 epoch_loss_for_log = 0;
                 since_log = 0;
@@ -236,9 +377,14 @@ int main(int argc, char **argv) {
         nn_save(out_path, p);
     }
 
-    free(batch_tokens); free(batch_legal); free(batch_target);
-    free(slots); free(buckets);
+    for (int t = 0; t < n_workers; t++) {
+        free(ts[t].tokens); free(ts[t].legal); free(ts[t].target);
+        free(ts[t].fc); free(ts[t].grads);
+    }
+    free(ts);
+    nn_thread_shutdown();
+    free(slots); free(macros); free(buckets);
     free(sorted_idx); free(bucket_starts); free(bucket_counts);
-    free(samples); free(fc); free(g); free(p);
+    free(samples); free(g); free(p);
     return 0;
 }
