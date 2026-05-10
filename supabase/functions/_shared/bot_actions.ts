@@ -11,7 +11,7 @@ const supabaseClient = createClient(
 
 // Bot timing constants
 const BOT_PROCESSING_DELAY_WITH_HUMANS = 4500; // Delay when humans are still playing (ms)
-const BOT_PROCESSING_DELAY_BOTS_ONLY = 800; // Delay when only bots remain (ms)
+const BOT_PROCESSING_DELAY_BOTS_ONLY = 300; // Delay when only bots remain (ms)
 
 // Docs say max is 150, but it's really more like 70s
 const MAX_LOOP_RUNTIME = 65_000;
