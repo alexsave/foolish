@@ -121,3 +121,6 @@ no training risk, unlocks everything downstream. After verifying 1v1
 performance is unchanged on the new tokenizer, move to (2).
 
 Run book: `cnitro/RUN.md`.
+
+// open question: how exaclty is this a win?
+ ./build/cnitro_inspect --weights=/tmp/overnight_w.bin --seed=123457 --opp=espresso --max=20 

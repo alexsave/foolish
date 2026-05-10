@@ -173,6 +173,167 @@ static void test_tokenize_basic(void) {
     CHECK(has_role && has_hand, "has role + hand tokens");
 }
 
+// Test: vocab size matches our docs (72 + 7 seat tokens = 79). If this fails,
+// the embed table sizing in nn.h is now wrong too.
+static void test_vocab_size(void) {
+    CHECK(VOCAB_SIZE == 79, "VOCAB_SIZE == 79 after seat-token expansion");
+    CHECK(MAX_OPPONENTS == 7, "MAX_OPPONENTS == 7");
+    CHECK(TOK_OPP_SEAT_7 - TOK_OPP_SEAT_1 == MAX_OPPONENTS - 1, "seat tokens contiguous");
+    CHECK(TOK_CARD_BASE == TOK_OPP_SEAT_7 + 1, "card base sits right after seat tokens");
+}
+
+// Test: action_id round-trip for every legal card. Cards 5..13 in 4 suits
+// should cleanly survive card_action_id → action_id_to_card.
+static void test_action_id_roundtrip(void) {
+    int trump = SUIT_HEARTS;
+    int n_ok = 0, n_bad = 0;
+    for (int suit = 0; suit < 4; suit++) {
+        for (int v = 5; v <= 13; v++) {
+            int id = card_action_id(suit, v, trump);
+            CHECK(id >= 0 && id < ACTION_PICKUP, "action id in range");
+            Card c;
+            action_id_to_card(id, trump, &c);
+            if (c.suit == suit && c.value == v) n_ok++; else n_bad++;
+        }
+    }
+    CHECK(n_ok == 36 && n_bad == 0, "all 36 cards round-trip cleanly");
+}
+
+// Test: opponent_seat helper for a 1v1 game.
+static void test_opponent_seat_1v1(void) {
+    Game g; make_2p_game(&g);
+    g.players[0].status = PLAYER_STATUS_IN;
+    g.players[1].status = PLAYER_STATUS_IN;
+    CHECK(opponent_seat(&g, 0, 1) == 1, "1v1: opp 1 seen from 0 is seat 1");
+    CHECK(opponent_seat(&g, 1, 0) == 1, "1v1: opp 0 seen from 1 is seat 1");
+    CHECK(opponent_seat(&g, 0, 0) == 0, "self has no seat");
+    g.players[1].status = PLAYER_STATUS_OUT;
+    CHECK(opponent_seat(&g, 0, 1) == 0, "OUT player gets no seat");
+}
+
+// Test: tokenize must NOT leak any opponent card id under TOK_SEC_OPP_SIZES.
+// All tokens in the OPP_SIZES section should be either seat tokens or size
+// buckets. (This is the no-cheating invariant.)
+static void test_tokenize_no_opp_cards(void) {
+    Game g; make_2p_game(&g);
+    g.status = GAME_STATUS_PLAYING;
+    g.power_suit = SUIT_DIAMONDS;
+    g.players[0].status = PLAYER_STATUS_IN;
+    g.players[1].status = PLAYER_STATUS_IN;
+    g.first_attacker = 0; g.defender = 1;
+    g.players[0].hand[0] = (Card){ SUIT_SPADES, 5 };
+    g.players[0].hand_count = 1;
+    // Opponent's hand: a known, distinctive card. If the model ever sees its
+    // token id, this test catches it.
+    g.players[1].hand[0] = (Card){ SUIT_HEARTS, 11 };
+    g.players[1].hand[1] = (Card){ SUIT_DIAMONDS, 13 };  // Ace of trump
+    g.players[1].hand_count = 2;
+    g.deck_count = 5;
+    g.has_flipped = false;
+    InProgress ip = { .role = INPROG_IDLE, .n_cards_chosen = 0 };
+    Tokenized t;
+    tokenize(&g, 0, &ip, &t);
+
+    int forbidden_a = card_token_id(SUIT_HEARTS, 11, SUIT_DIAMONDS);
+    int forbidden_b = card_token_id(SUIT_DIAMONDS, 13, SUIT_DIAMONDS);
+    bool leaked = false;
+    bool saw_seat_1 = false;
+    bool saw_size_bucket_after_seat = false;
+    for (int i = 0; i < t.n_tokens; i++) {
+        if (t.tokens[i] == forbidden_a || t.tokens[i] == forbidden_b) leaked = true;
+        if (t.tokens[i] == TOK_OPP_SEAT_1) {
+            saw_seat_1 = true;
+            int next = i + 1 < t.n_tokens ? t.tokens[i + 1] : -1;
+            if (next == TOK_SIZE_LOW || next == TOK_SIZE_MED
+                || next == TOK_SIZE_FULL || next == TOK_SIZE_EMPTY) {
+                saw_size_bucket_after_seat = true;
+            }
+        }
+    }
+    CHECK(!leaked, "opp's specific card ids never appear in token stream");
+    CHECK(saw_seat_1, "seat-1 token emitted in OPP_SIZES section");
+    CHECK(saw_size_bucket_after_seat, "seat-1 followed by a size bucket (hand size 2 → LOW)");
+}
+
+// Test: history move attribution uses TOK_OPP_SEAT_k for opponents.
+// Build a synthetic log with a single ATTACK by player 1 against bot=0,
+// and verify the seat token (not the legacy player-opp token) appears.
+static void test_tokenize_history_seat_attribution(void) {
+    Game g; make_2p_game(&g);
+    g.status = GAME_STATUS_PLAYING;
+    g.power_suit = SUIT_DIAMONDS;
+    g.players[0].status = PLAYER_STATUS_IN;
+    g.players[1].status = PLAYER_STATUS_IN;
+    g.first_attacker = 1; g.defender = 0;
+    g.players[0].hand[0] = (Card){ SUIT_CLUBS, 7 };
+    g.players[0].hand_count = 1;
+    g.players[1].hand_count = 5;
+    g.deck_count = 10;
+    g.has_flipped = false;
+    g.num_logs = 1;
+    g.logs[0].log_type = LOG_ATTACK;
+    g.logs[0].player_idx = 1;
+    g.logs[0].defender_index = -1;
+    g.logs[0].num_pairs = 1;
+    g.logs[0].pairs[0].primary = (Card){ SUIT_SPADES, 9 };
+    g.logs[0].pairs[0].has_target = false;
+    InProgress ip = { .role = INPROG_IDLE, .n_cards_chosen = 0 };
+    Tokenized t;
+    tokenize(&g, 0, &ip, &t);
+
+    // Find TOK_SEC_HISTORY, then immediately after we expect:
+    //   TOK_OPP_SEAT_1, TOK_MOVE_ATTACK, <card token>
+    int hi = -1;
+    for (int i = 0; i < t.n_tokens; i++) if (t.tokens[i] == TOK_SEC_HISTORY) { hi = i; break; }
+    CHECK(hi >= 0, "history section emitted");
+    CHECK(hi + 3 < t.n_tokens, "enough tokens after history header");
+    CHECK(t.tokens[hi + 1] == TOK_OPP_SEAT_1, "history: opponent attributed to seat 1");
+    CHECK(t.tokens[hi + 2] == TOK_MOVE_ATTACK, "history: move type ATTACK");
+}
+
+// Test: a full handwritten-vs-handwritten game terminates without crashing.
+static void test_full_game_handwritten(void) {
+    game_set_seed(99);
+    random_strategy_set_seed(99);
+    Game g; make_2p_game(&g);
+    start_game(&g);
+    int iters = 0;
+    while (game_done(&g) < 0 && iters < 2000) {
+        iters++;
+        int eligible[MAX_PLAYERS]; int n_elig = 0;
+        for (int i = 0; i < g.num_players; i++) if (should_bot_act(&g, i)) eligible[n_elig++] = i;
+        if (n_elig == 0) break;
+        for (int i = n_elig - 1; i > 0; i--) {
+            int j = (int)(game_random() * (i + 1));
+            if (j < 0) j = 0; if (j > i) j = i;
+            int tmp = eligible[i]; eligible[i] = eligible[j]; eligible[j] = tmp;
+        }
+        bool acted = false;
+        for (int k = 0; k < n_elig; k++) {
+            int idx = eligible[k];
+            LegalMoves moves;
+            calculate_legal_moves(&g, idx, &moves);
+            if (moves.n == 0) continue;
+            int chosen = handwritten_strategy_choose(&g, idx, &moves, NULL);
+            if (chosen < 0) continue;
+            const LegalMove *m = &moves.moves[chosen];
+            bool ok = false;
+            switch (m->type) {
+                case MOVE_ATTACK: ok = handle_attack(&g, idx, m->cards, m->n_cards); break;
+                case MOVE_COVER:  ok = handle_cover (&g, idx, m->cards, m->attack_cards, m->n_cards); break;
+                case MOVE_PASS:   ok = handle_pass  (&g, idx, m->cards, m->n_cards); break;
+                case MOVE_PICKUP: ok = handle_pickup(&g, idx); break;
+                case MOVE_GOOD:   ok = handle_good  (&g, idx); break;
+                default: break;
+            }
+            if (ok) { acted = true; break; }
+        }
+        if (!acted) break;
+    }
+    int loser = game_done(&g);
+    CHECK(loser >= 0, "handwritten vs handwritten terminates");
+}
+
 // Test: the engine runs a full random-vs-random game without crashing or
 // looping. Loser must be one of the two players.
 static void test_full_game_random(void) {
@@ -183,7 +344,7 @@ static void test_full_game_random(void) {
     int iters = 0;
     while (game_done(&g) < 0 && iters < 2000) {
         iters++;
-        int eligible[2]; int n_elig = 0;
+        int eligible[MAX_PLAYERS]; int n_elig = 0;
         for (int i = 0; i < g.num_players; i++) if (should_bot_act(&g, i)) eligible[n_elig++] = i;
         if (n_elig == 0) break;
         // shuffle by Math.random (matches TS Fisher-Yates)
@@ -227,6 +388,12 @@ int main(void) {
     test_nn_overfit_one_sample();
     test_tokenize_basic();
     test_full_game_random();
+    test_vocab_size();
+    test_action_id_roundtrip();
+    test_opponent_seat_1v1();
+    test_tokenize_no_opp_cards();
+    test_tokenize_history_seat_attribution();
+    test_full_game_handwritten();
 
     printf("\n%d passed, %d failed\n", n_pass, n_fail);
     return n_fail > 0 ? 1 : 0;

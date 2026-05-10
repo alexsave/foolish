@@ -30,6 +30,39 @@ void action_id_to_card(int id, int trump_suit, Card *out) {
     out->value = (int8_t)value;
 }
 
+int opponent_seat(const Game *g, int bot_idx, int opp_idx) {
+    if (opp_idx < 0 || opp_idx == bot_idx) return 0;
+    if (g->players[opp_idx].status == PLAYER_STATUS_OUT) return 0;
+    int seat = 0;
+    for (int k = 1; k < g->num_players; k++) {
+        int cur = (bot_idx + k) % g->num_players;
+        if (g->players[cur].status == PLAYER_STATUS_OUT) continue;
+        seat++;
+        if (cur == opp_idx) return seat <= MAX_OPPONENTS ? seat : 0;
+    }
+    return 0;
+}
+
+// Coarse size bucket reused for deck length, discard-pile length, and per-opp
+// hand_count. The thresholds are deck-tuned (deck starts at 23 in 2p) but
+// give the model usable signal across all three contexts; the section header
+// disambiguates what's being measured.
+static int size_bucket(int n) {
+    if (n <= 0) return TOK_SIZE_EMPTY;
+    if (n < 8)  return TOK_SIZE_LOW;
+    if (n < 18) return TOK_SIZE_MED;
+    return TOK_SIZE_FULL;
+}
+
+static int seat_token(int seat) {
+    // seat is 1..MAX_OPPONENTS; map to TOK_OPP_SEAT_1..7. Out-of-range
+    // (shouldn't happen with current MAX_PLAYERS but defends 3+ player ports)
+    // collapses to the last seat token rather than emitting a stray id.
+    if (seat < 1) seat = 1;
+    if (seat > MAX_OPPONENTS) seat = MAX_OPPONENTS;
+    return TOK_OPP_SEAT_1 + (seat - 1);
+}
+
 static int s_trump;
 static int sort_by_rank(const void *a, const void *b) {
     const Card *ca = a; const Card *cb = b;
@@ -47,10 +80,6 @@ void tokenize(const Game *g, int bot_idx, const InProgress *ip, Tokenized *out) 
     int trump = g->power_suit;
     s_trump = trump;
     const Player *me = &g->players[bot_idx];
-    int opp_idx = -1;
-    for (int i = 0; i < g->num_players; i++) {
-        if (i != bot_idx && g->players[i].status == PLAYER_STATUS_IN) { opp_idx = i; break; }
-    }
     bool is_def = (bot_idx == g->defender);
     bool is_first_attack = (g->num_battles == 0);
 
@@ -73,7 +102,23 @@ void tokenize(const Game *g, int bot_idx, const InProgress *ip, Tokenized *out) 
         for (int li = start; li < n_logs; li++) {
             const GameLog *log = &g->logs[move_log_idx[li]];
             if (log->player_idx >= 0) {
-                push_tok(out, log->player_idx == bot_idx ? TOK_PLAYER_SELF : TOK_PLAYER_OPP);
+                if (log->player_idx == bot_idx) {
+                    push_tok(out, TOK_PLAYER_SELF);
+                } else {
+                    int seat = opponent_seat(g, bot_idx, log->player_idx);
+                    // Eliminated mid-game: status is OUT now but they DID play
+                    // this move when active. Use the seat they would have had
+                    // had they still been in (next-after-self in ring order).
+                    if (seat == 0) {
+                        int hop = 0;
+                        for (int k = 1; k < g->num_players; k++) {
+                            int cur = (bot_idx + k) % g->num_players;
+                            hop++;
+                            if (cur == log->player_idx) { seat = hop; break; }
+                        }
+                    }
+                    push_tok(out, seat_token(seat));
+                }
             }
             int mt;
             switch (log->log_type) {
@@ -108,10 +153,13 @@ void tokenize(const Game *g, int bot_idx, const InProgress *ip, Tokenized *out) 
     else push_tok(out, TOK_ROLE_ATK);
 
     int deck_left = g->deck_count + (g->has_flipped ? 1 : 0);
-    if (deck_left >= 18) push_tok(out, TOK_DECK_FULL);
-    else if (deck_left >= 8) push_tok(out, TOK_DECK_MED);
-    else if (deck_left >= 1) push_tok(out, TOK_DECK_LOW);
-    else push_tok(out, TOK_DECK_EMPTY);
+    push_tok(out, size_bucket(deck_left));
+
+    // -- Flipped trump card (visible to all players) -------------------
+    if (g->has_flipped && g->flipped.suit >= 0) {
+        push_tok(out, TOK_SEC_FLIPPED);
+        push_tok(out, card_token_id(g->flipped.suit, g->flipped.value, trump));
+    }
 
     // -- Hand (minus cards already chosen this turn) -------------------
     Card live[MAX_HAND_SIZE]; int ln = 0;
@@ -126,29 +174,26 @@ void tokenize(const Game *g, int bot_idx, const InProgress *ip, Tokenized *out) 
     push_tok(out, TOK_SEC_HAND);
     for (int i = 0; i < ln; i++) push_tok(out, card_token_id(live[i].suit, live[i].value, trump));
 
-    if (opp_idx >= 0) {
-        Card opp[MAX_HAND_SIZE]; int on = g->players[opp_idx].hand_count;
-        for (int i = 0; i < on; i++) opp[i] = g->players[opp_idx].hand[i];
-        qsort(opp, on, sizeof(Card), sort_by_rank);
-        push_tok(out, TOK_SEC_OPP);
-        for (int i = 0; i < on; i++) push_tok(out, card_token_id(opp[i].suit, opp[i].value, trump));
+    // -- Per-opponent hand-size summary --------------------------------
+    // No card identities — just a coarse size bucket per active opponent,
+    // emitted in seat order. Walk the ring and skip OUT players; this gives
+    // the same seat numbering used in history attribution (TOK_OPP_SEAT_k).
+    bool any_opp = false;
+    for (int k = 1; k < g->num_players; k++) {
+        int cur = (bot_idx + k) % g->num_players;
+        if (g->players[cur].status == PLAYER_STATUS_OUT) continue;
+        if (!any_opp) { push_tok(out, TOK_SEC_OPP_SIZES); any_opp = true; }
+        int seat = opponent_seat(g, bot_idx, cur);
+        if (seat <= 0) continue;
+        push_tok(out, seat_token(seat));
+        push_tok(out, size_bucket(g->players[cur].hand_count));
     }
 
-    // -- Discard memory (from logs) ------------------------------------
-    Card seen[160]; int sn = 0;
-    for (int i = 0; i < g->num_logs; i++) {
-        if (g->logs[i].log_type != LOG_DISCARD) continue;
-        for (int p = 0; p < g->logs[i].num_pairs; p++) {
-            Card c = g->logs[i].pairs[p].primary;
-            bool dup = false;
-            for (int j = 0; j < sn; j++) if (card_eq(seen[j], c)) { dup = true; break; }
-            if (!dup) seen[sn++] = c;
-        }
-    }
-    if (sn > 0) {
-        qsort(seen, sn, sizeof(Card), sort_by_rank);
-        push_tok(out, TOK_SEC_DISCARD);
-        for (int i = 0; i < sn; i++) push_tok(out, card_token_id(seen[i].suit, seen[i].value, trump));
+    // -- Discard pile length only (cards themselves are hidden) --------
+    int discard_len = g->discard_pile_length;
+    if (discard_len > 0) {
+        push_tok(out, TOK_SEC_DISCARD_LEN);
+        push_tok(out, size_bucket(discard_len));
     }
 
     // -- Table battles -------------------------------------------------

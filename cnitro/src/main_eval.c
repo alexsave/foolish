@@ -47,7 +47,7 @@ static int play_one(uint32_t seed, int opp_strat) {
 
     int iters = 0;
     while (game_done(&g) < 0 && iters++ < 2000) {
-        int elig[2]; int n_e = 0;
+        int elig[MAX_PLAYERS]; int n_e = 0;
         for (int i = 0; i < g.num_players; i++) if (should_bot_act(&g, i)) elig[n_e++] = i;
         if (n_e == 0) break;
         for (int i = n_e - 1; i > 0; i--) {
@@ -63,9 +63,10 @@ static int play_one(uint32_t seed, int opp_strat) {
             if (moves.n == 0) continue;
             int strat = g.players[p].strategy_key;
             int idx;
-            if (strat == STRAT_RANDOM)        idx = random_strategy_choose(&g, p, &moves, NULL);
-            else if (strat == STRAT_ESPRESSO) idx = espresso_strategy_choose(&g, p, &moves, NULL);
-            else                              idx = nitro_strategy_choose(&g, p, &moves, NULL);
+            if (strat == STRAT_RANDOM)             idx = random_strategy_choose(&g, p, &moves, NULL);
+            else if (strat == STRAT_ESPRESSO)      idx = espresso_strategy_choose(&g, p, &moves, NULL);
+            else if (strat == STRAT_HANDWRITTEN)   idx = handwritten_strategy_choose(&g, p, &moves, NULL);
+            else                                   idx = nitro_strategy_choose(&g, p, &moves, NULL);
             if (idx < 0 || idx >= moves.n) continue;
             const LegalMove *m = &moves.moves[idx];
             bool ok = false;
@@ -95,6 +96,7 @@ int main(int argc, char **argv) {
     int opp;
     if (strcmp(opp_str, "espresso") == 0 || strcmp(opp_str, "esp") == 0) opp = STRAT_ESPRESSO;
     else if (strcmp(opp_str, "random") == 0 || strcmp(opp_str, "rand") == 0) opp = STRAT_RANDOM;
+    else if (strcmp(opp_str, "handwritten") == 0 || strcmp(opp_str, "hw") == 0) opp = STRAT_HANDWRITTEN;
     else { fprintf(stderr, "unknown opp '%s'\n", opp_str); return 2; }
 
     NNParams *p = malloc(sizeof(NNParams));

@@ -128,6 +128,7 @@ static void decompose_move(const Game *g, int bot_idx,
 static int strat_id_from_name(const char *s) {
     if (strcmp(s, "esp") == 0 || strcmp(s, "espresso") == 0) return STRAT_ESPRESSO;
     if (strcmp(s, "rand") == 0 || strcmp(s, "random") == 0) return STRAT_RANDOM;
+    if (strcmp(s, "hw") == 0 || strcmp(s, "handwritten") == 0) return STRAT_HANDWRITTEN;
     fprintf(stderr, "unknown strategy '%s'\n", s);
     exit(2);
 }
@@ -135,6 +136,7 @@ static int strat_id_from_name(const char *s) {
 static int run_strategy(int strat, const Game *g, int bot_idx, const LegalMoves *moves) {
     if (strat == STRAT_RANDOM) return random_strategy_choose(g, bot_idx, moves, NULL);
     if (strat == STRAT_ESPRESSO) return espresso_strategy_choose(g, bot_idx, moves, NULL);
+    if (strat == STRAT_HANDWRITTEN) return handwritten_strategy_choose(g, bot_idx, moves, NULL);
     return -1;
 }
 
@@ -161,7 +163,7 @@ static int play_and_capture(uint32_t seed, int strat0, int strat1,
 
     int iters = 0;
     while (game_done(&g) < 0 && iters++ < 2000) {
-        int elig[2]; int n_e = 0;
+        int elig[MAX_PLAYERS]; int n_e = 0;
         for (int i = 0; i < g.num_players; i++) if (should_bot_act(&g, i)) elig[n_e++] = i;
         if (n_e == 0) break;
         for (int i = n_e - 1; i > 0; i--) {

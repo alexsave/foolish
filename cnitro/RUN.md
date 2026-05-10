@@ -2,17 +2,24 @@
 
 Two recipes: the long overnight run, and how to resume from saved weights.
 
+Note: the tokenizer now hides the opponent's cards and the discard-pile
+contents — the model sees only what a real player would (own hand, table,
+flipped trump, sizes, full move history with seat-attributed events). Old
+weights (vocab=72) won't load; train from scratch when bumping the
+tokenizer vocab.
+
 ## Overnight: collect → train → eval → inspect
 
-Builds, collects 80k esp-esp games, trains 35 total epochs with an
-LR ladder (0.05 → 0.02 → 0.005), evaluates on never-seen seeds, and
-runs the inspector on a sample game. Tees everything to `/tmp/overnight.log`.
+Builds, collects 90k mixed-pair games (esp-esp + hw-hw + esp-hw for length
+and style variety, all high-level), trains 35 total epochs with an LR
+ladder (0.05 → 0.02 → 0.005), evaluates on never-seen seeds, and runs
+the inspector on a sample game. Tees everything to `/tmp/overnight.log`.
 
 ```bash
 cd /Users/alex/Dev/foolish/cnitro && make >/dev/null && {
   echo "=== $(date) starting overnight run ===" ;
-  ./build/cnitro_collect --from=1 --to=80000 --pairs=esp-esp \
-      --min_margin=3 --out=/tmp/overnight_corpus.bin --log_every=5000 ;
+  ./build/cnitro_collect --from=1 --to=30000 --pairs=esp-esp,hw-hw,esp-hw \
+      --min_margin=3 --out=/tmp/overnight_corpus.bin --log_every=10000 ;
   ./build/cnitro_train --corpus=/tmp/overnight_corpus.bin \
       --out=/tmp/overnight_w.bin --epochs=15 --batch=32 --lr=0.05 --seed=1 ;
   ./build/cnitro_train --corpus=/tmp/overnight_corpus.bin \
@@ -22,8 +29,9 @@ cd /Users/alex/Dev/foolish/cnitro && make >/dev/null && {
       --in=/tmp/overnight_w.bin --out=/tmp/overnight_w.bin \
       --epochs=10 --batch=32 --lr=0.005 --seed=3 ;
   echo "=== $(date) eval ===" ;
-  ./build/cnitro_eval --weights=/tmp/overnight_w.bin --opp=random   --from=80001 --to=82000 ;
-  ./build/cnitro_eval --weights=/tmp/overnight_w.bin --opp=espresso --from=80001 --to=82000 ;
+  ./build/cnitro_eval --weights=/tmp/overnight_w.bin --opp=random      --from=80001 --to=82000 ;
+  ./build/cnitro_eval --weights=/tmp/overnight_w.bin --opp=espresso    --from=80001 --to=82000 ;
+  ./build/cnitro_eval --weights=/tmp/overnight_w.bin --opp=handwritten --from=80001 --to=82000 ;
   echo "=== $(date) inspect (sample game) ===" ;
   ./build/cnitro_inspect --weights=/tmp/overnight_w.bin --seed=80001 --opp=espresso --max=10 ;
   echo "=== $(date) done ===" ;
@@ -53,8 +61,9 @@ startup, then re-saved each epoch.
 After resume, evaluate again:
 
 ```bash
-./build/cnitro_eval --weights=/tmp/overnight_w.bin --opp=random   --from=80001 --to=82000
-./build/cnitro_eval --weights=/tmp/overnight_w.bin --opp=espresso --from=80001 --to=82000
+./build/cnitro_eval --weights=/tmp/overnight_w.bin --opp=random      --from=80001 --to=82000
+./build/cnitro_eval --weights=/tmp/overnight_w.bin --opp=espresso    --from=80001 --to=82000
+./build/cnitro_eval --weights=/tmp/overnight_w.bin --opp=handwritten --from=80001 --to=82000
 ```
 
 ## Inspect the policy
