@@ -15,6 +15,13 @@
 #include <stdint.h>
 #include <time.h>
 
+// Wall time in seconds since some monotonic epoch. Unlike clock(), this
+// keeps ticking when the laptop sleeps — critical for overnight runs.
+static double wall_secs(void) {
+    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec + ts.tv_nsec * 1e-9;
+}
+
 static const char *get_arg(int argc, char **argv, const char *key, const char *def) {
     size_t kl = strlen(key);
     for (int i = 1; i < argc; i++) {
@@ -97,7 +104,7 @@ int main(int argc, char **argv) {
 
     NNParams *p = malloc(sizeof(NNParams));
     NNGrads  *g = malloc(sizeof(NNGrads));
-    ForwardCache *fc = malloc(sizeof(ForwardCache));
+    BatchedForwardCache *fc = malloc(sizeof(BatchedForwardCache));
     if (!p || !g || !fc) { perror("malloc"); return 1; }
     if (in_path && nn_load(in_path, p)) {
         fprintf(stderr, "# resumed from %s\n", in_path);
@@ -107,47 +114,115 @@ int main(int argc, char **argv) {
     }
     nn_zero_grads(g);
 
-    // Sample-index permutation buffer.
-    size_t *perm = malloc(n_samples * sizeof(size_t));
-    for (size_t i = 0; i < n_samples; i++) perm[i] = i;
+    // Bucket samples by L. Within each bucket, all samples have the same L
+    // so we can run BATCH_MAX of them through nn_forward_batch in one call.
+    fprintf(stderr, "# bucketing by L...\n");
+    size_t *bucket_starts = calloc(MAX_SEQ_LEN + 2, sizeof(size_t));
+    size_t *bucket_counts = calloc(MAX_SEQ_LEN + 2, sizeof(size_t));
+    for (size_t i = 0; i < n_samples; i++) {
+        int L = samples[i].n_tokens;
+        if (L < 1 || L > MAX_SEQ_LEN) continue;
+        bucket_counts[L]++;
+    }
+    // Prefix-sum to get starts.
+    {
+        size_t off = 0;
+        for (int L = 1; L <= MAX_SEQ_LEN; L++) {
+            bucket_starts[L] = off; off += bucket_counts[L];
+        }
+    }
+    size_t *sorted_idx = malloc(n_samples * sizeof(size_t));
+    {
+        size_t *cursor = calloc(MAX_SEQ_LEN + 2, sizeof(size_t));
+        for (int L = 1; L <= MAX_SEQ_LEN; L++) cursor[L] = bucket_starts[L];
+        for (size_t i = 0; i < n_samples; i++) {
+            int L = samples[i].n_tokens;
+            if (L < 1 || L > MAX_SEQ_LEN) continue;
+            sorted_idx[cursor[L]++] = i;
+        }
+        free(cursor);
+    }
 
-    clock_t start = clock();
+    // Build the list of (bucket_L, count, start_in_sorted_idx) for buckets
+    // with >= batch samples — these are what we'll iterate through. Drop
+    // partial last batch within each bucket.
+    typedef struct { int L; size_t start; size_t n; } Bucket;
+    Bucket *buckets = malloc(MAX_SEQ_LEN * sizeof(Bucket));
+    int n_buckets = 0;
+    size_t total_full_batched = 0;
+    for (int L = 1; L <= MAX_SEQ_LEN; L++) {
+        size_t n = bucket_counts[L];
+        size_t full = (n / batch) * batch;
+        if (full == 0) continue;
+        buckets[n_buckets].L = L;
+        buckets[n_buckets].start = bucket_starts[L];
+        buckets[n_buckets].n = full;
+        n_buckets++;
+        total_full_batched += full;
+    }
+    fprintf(stderr, "# %d L-buckets, %zu/%zu samples in full batches "
+                    "(dropped %zu partial-batch tail)\n",
+            n_buckets, total_full_batched, n_samples, n_samples - total_full_batched);
+
+    // Per-batch iteration order: pre-build a list of (bucket_idx, batch_start_in_bucket).
+    typedef struct { int bidx; size_t bs; } BatchSlot;
+    size_t total_batches = total_full_batched / batch;
+    BatchSlot *slots = malloc(total_batches * sizeof(BatchSlot));
+    {
+        size_t k = 0;
+        for (int bi = 0; bi < n_buckets; bi++) {
+            size_t nb = buckets[bi].n / batch;
+            for (size_t j = 0; j < nb; j++) {
+                slots[k].bidx = bi;
+                slots[k].bs = buckets[bi].start + j * batch;
+                k++;
+            }
+        }
+    }
+
+    // Scratch for one batch.
+    int   *batch_tokens = malloc(BATCH_MAX * MAX_SEQ_LEN * sizeof(int));
+    bool  *batch_legal  = malloc(BATCH_MAX * NUM_ACTIONS * sizeof(bool));
+    int   *batch_target = malloc(BATCH_MAX * sizeof(int));
+
+    double start = wall_secs();
     for (int epoch = 1; epoch <= epochs; epoch++) {
-        // Fisher-Yates with shuf_next.
-        for (size_t i = n_samples - 1; i > 0; i--) {
+        // Shuffle batch order each epoch (samples within a batch keep their
+        // bucket — same L is required for the batched path).
+        for (size_t i = total_batches - 1; i > 0; i--) {
             size_t j = shuf_next() % (i + 1);
-            size_t t = perm[i]; perm[i] = perm[j]; perm[j] = t;
+            BatchSlot t = slots[i]; slots[i] = slots[j]; slots[j] = t;
         }
 
         double total_loss = 0;
         size_t correct = 0, processed = 0;
         double epoch_loss_for_log = 0;
         size_t since_log = 0;
-        for (size_t b_start = 0; b_start < n_samples; b_start += batch) {
-            size_t b_end = b_start + batch;
-            if (b_end > n_samples) b_end = n_samples;
-            for (size_t i = b_start; i < b_end; i++) {
-                Sample *s = &samples[perm[i]];
-                bool legal_mask[NUM_ACTIONS] = { false };
-                for (int j = 0; j < s->n_legal; j++) legal_mask[s->legal[j]] = true;
-                nn_forward(p, s->tokens, s->n_tokens, fc);
-                float probs[NUM_ACTIONS];
-                nn_softmax_masked(fc->logits, legal_mask, probs);
-                int best = 0; float bp = -1e30f;
-                for (int j = 0; j < NUM_ACTIONS; j++) if (probs[j] > bp) { bp = probs[j]; best = j; }
-                if (best == s->target) correct++;
-                float loss = nn_accumulate_grads(p, fc, legal_mask, s->target, g);
-                total_loss += loss;
-                epoch_loss_for_log += loss;
-                processed++;
-                since_log++;
+        for (size_t k = 0; k < total_batches; k++) {
+            int L = buckets[slots[k].bidx].L;
+            size_t bs = slots[k].bs;
+            for (int b = 0; b < (int)batch; b++) {
+                Sample *s = &samples[sorted_idx[bs + b]];
+                memcpy(batch_tokens + b * L, s->tokens, sizeof(int) * L);
+                for (int j = 0; j < NUM_ACTIONS; j++) batch_legal[b * NUM_ACTIONS + j] = false;
+                for (int j = 0; j < s->n_legal; j++) batch_legal[b * NUM_ACTIONS + s->legal[j]] = true;
+                batch_target[b] = s->target;
             }
-            nn_apply_grads(p, g, lr, (int)(b_end - b_start));
-            // Heartbeat every ~1000 samples so we can tell the trainer is alive.
-            if (since_log >= 1000) {
-                double dt = (double)(clock() - start) / CLOCKS_PER_SEC;
+            nn_forward_batch(p, batch_tokens, batch, L, fc);
+            int batch_correct = 0;
+            float batch_loss = nn_accumulate_grads_batch(p, fc, batch_legal,
+                                                         batch_target, g, &batch_correct);
+            nn_apply_grads(p, g, lr, batch);
+            total_loss += batch_loss;
+            epoch_loss_for_log += batch_loss;
+            correct += batch_correct;
+            processed += batch;
+            since_log += batch;
+
+            if (since_log >= 5000) {
+                double dt = wall_secs() - start;
                 fprintf(stderr, "  epoch %d  step %zu/%zu  recentLoss=%.4f  dt=%.1fs\n",
-                        epoch, processed, n_samples,
+                        epoch, processed, total_full_batched,
                         epoch_loss_for_log / since_log, dt);
                 epoch_loss_for_log = 0;
                 since_log = 0;
@@ -155,12 +230,15 @@ int main(int argc, char **argv) {
         }
         double avg_loss = total_loss / (processed > 0 ? processed : 1);
         double acc = (double)correct / (processed > 0 ? processed : 1);
-        double dt = (double)(clock() - start) / CLOCKS_PER_SEC;
+        double dt = wall_secs() - start;
         fprintf(stderr, "# epoch %d/%d  avgLoss=%.4f  top1=%.1f%%  dt=%.1fs\n",
                 epoch, epochs, avg_loss, acc * 100.0, dt);
         nn_save(out_path, p);
     }
 
-    free(perm); free(samples); free(fc); free(g); free(p);
+    free(batch_tokens); free(batch_legal); free(batch_target);
+    free(slots); free(buckets);
+    free(sorted_idx); free(bucket_starts); free(bucket_counts);
+    free(samples); free(fc); free(g); free(p);
     return 0;
 }

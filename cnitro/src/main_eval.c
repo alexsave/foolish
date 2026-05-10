@@ -17,6 +17,11 @@
 #include <stdint.h>
 #include <time.h>
 
+static double wall_secs(void) {
+    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec + ts.tv_nsec * 1e-9;
+}
+
 static const char *get_arg(int argc, char **argv, const char *key, const char *def) {
     size_t kl = strlen(key);
     for (int i = 1; i < argc; i++) {
@@ -101,19 +106,19 @@ int main(int argc, char **argv) {
 
     setvbuf(stderr, NULL, _IOLBF, 0);
     int wins = 0, draws = 0, total = 0;
-    clock_t start = clock();
+    double start = wall_secs();
     for (int s = seed_lo; s <= seed_hi; s++) {
         int r = play_one((uint32_t)s, opp);
         total++;
         if (r == 1) wins++;
         else if (r < 0) draws++;
         if (total % 100 == 0) {
-            double dt = (double)(clock() - start) / CLOCKS_PER_SEC;
+            double dt = wall_secs() - start;
             fprintf(stderr, "  ... %d games, wins=%d (%.1f%%), dt=%.1fs\n",
                     total, wins, 100.0 * wins / total, dt);
         }
     }
-    double dt = (double)(clock() - start) / CLOCKS_PER_SEC;
+    double dt = wall_secs() - start;
     int losses = total - wins - draws;
     printf("nitro vs %s  seeds %d..%d  wins=%d/%d (%.1f%%)  losses=%d  draws=%d  dt=%.1fs\n",
            opp_str, seed_lo, seed_hi, wins, total, 100.0 * wins / total,

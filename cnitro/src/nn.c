@@ -556,3 +556,360 @@ bool nn_load(const char *path, NNParams *p) {
     fclose(f);
     return true;
 }
+
+// ===================================================================
+//                  Batched forward / backward
+// -------------------------------------------------------------------
+// Layout: tokens[B*L], embedded[B*L*D], LayerCache buffers [B*L*D].
+// All token-wise ops collapse the (B, L) dims into a single (B*L) leading
+// dim for one big sgemm. Attention is per-sample so we loop over B.
+// ===================================================================
+
+void nn_forward_batch(const NNParams *p,
+                      const int *tokens, int B, int L,
+                      BatchedForwardCache *cache)
+{
+    int BL = B * L;
+    cache->B = B;
+    cache->L = L;
+    memcpy(cache->tokens, tokens, sizeof(int) * BL);
+
+    // Embed + positional. For each (b, i): embedded[b,i,d] = embed[tok][d] + pos[i][d].
+    // Batched: copy embed rows to embedded, then add positional per i.
+    for (int b = 0; b < B; b++) {
+        for (int i = 0; i < L; i++) {
+            int tok = tokens[b * L + i];
+            const float *e = p->embed + tok * D_MODEL;
+            const float *po = p->pos_embed + i * D_MODEL;
+            float *out = cache->embedded + (b * L + i) * D_MODEL;
+            vDSP_vadd(e, 1, po, 1, out, 1, D_MODEL);
+        }
+    }
+
+    const float *cur = cache->embedded;
+    for (int li = 0; li < N_LAYERS; li++) {
+        const LayerParams *lp = &p->layers[li];
+        BatchedLayerCache *lc = &cache->layers[li];
+
+        memcpy(lc->xIn, cur, sizeof(float) * BL * D_MODEL);
+
+        // LN1 per token over BL.
+        for (int t = 0; t < BL; t++) {
+            float out_buf[D_MODEL]; float m, v;
+            layer_norm(cur, t * D_MODEL, lp->ln1g, lp->ln1b, D_MODEL, out_buf, &m, &v);
+            lc->ln1Mean[t] = m; lc->ln1Var[t] = v;
+            for (int d = 0; d < D_MODEL; d++) lc->xLn1[t * D_MODEL + d] = out_buf[d];
+        }
+
+        // QKV: [BL, D] @ [D, D]^T — single big sgemm each.
+        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                    BL, D_MODEL, D_MODEL, 1.0f,
+                    lc->xLn1, D_MODEL, lp->Wq, D_MODEL, 0.0f, lc->Q, D_MODEL);
+        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                    BL, D_MODEL, D_MODEL, 1.0f,
+                    lc->xLn1, D_MODEL, lp->Wk, D_MODEL, 0.0f, lc->K, D_MODEL);
+        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                    BL, D_MODEL, D_MODEL, 1.0f,
+                    lc->xLn1, D_MODEL, lp->Wv, D_MODEL, 0.0f, lc->V, D_MODEL);
+
+        // Attention is per-sample (each sequence is independent). For each b
+        // and each head h, scores_{b,h} = Q_{b,h} @ K_{b,h}^T * scale.
+        float scale = 1.f / sqrtf((float)D_HEAD);
+        for (int b = 0; b < B; b++) {
+            for (int h = 0; h < N_HEADS; h++) {
+                float *scores_bh = lc->scores + ((size_t)b * N_HEADS + h) * L * L;
+                cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                            L, L, D_HEAD, scale,
+                            lc->Q + b * L * D_MODEL + h * D_HEAD, D_MODEL,
+                            lc->K + b * L * D_MODEL + h * D_HEAD, D_MODEL,
+                            0.0f, scores_bh, L);
+            }
+            // Softmax + attn @ V per head.
+            for (int h = 0; h < N_HEADS; h++) {
+                float *scores_bh = lc->scores + ((size_t)b * N_HEADS + h) * L * L;
+                float *attn_bh   = lc->attn   + ((size_t)b * N_HEADS + h) * L * L;
+                for (int i = 0; i < L; i++) {
+                    float *row_in  = scores_bh + i * L;
+                    float *row_out = attn_bh + i * L;
+                    float mx = row_in[0];
+                    for (int j = 1; j < L; j++) if (row_in[j] > mx) mx = row_in[j];
+                    for (int j = 0; j < L; j++) row_out[j] = row_in[j] - mx;
+                }
+                int n_total = L * L;
+                vvexpf(attn_bh, attn_bh, &n_total);
+                for (int i = 0; i < L; i++) {
+                    float *row = attn_bh + i * L;
+                    float sum = 0;
+                    for (int j = 0; j < L; j++) sum += row[j];
+                    float inv = 1.f / sum;
+                    for (int j = 0; j < L; j++) row[j] *= inv;
+                }
+                cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                            L, D_HEAD, L, 1.0f,
+                            attn_bh, L,
+                            lc->V + b * L * D_MODEL + h * D_HEAD, D_MODEL,
+                            0.0f, lc->attnOut + b * L * D_MODEL + h * D_HEAD, D_MODEL);
+            }
+        }
+
+        // Wo: batched [BL, D] @ [D, D]^T.
+        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                    BL, D_MODEL, D_MODEL, 1.0f,
+                    lc->attnOut, D_MODEL, lp->Wo, D_MODEL, 0.0f, lc->proj, D_MODEL);
+        // Residual.
+        vDSP_vadd(lc->xIn, 1, lc->proj, 1, lc->afterAttn, 1, BL * D_MODEL);
+
+        // LN2.
+        for (int t = 0; t < BL; t++) {
+            float out_buf[D_MODEL]; float m, v;
+            layer_norm(lc->afterAttn, t * D_MODEL, lp->ln2g, lp->ln2b, D_MODEL, out_buf, &m, &v);
+            lc->ln2Mean[t] = m; lc->ln2Var[t] = v;
+            for (int d = 0; d < D_MODEL; d++) lc->xLn2[t * D_MODEL + d] = out_buf[d];
+        }
+
+        // FFN1.
+        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                    BL, FF_DIM, D_MODEL, 1.0f,
+                    lc->xLn2, D_MODEL, lp->Wff1, D_MODEL, 0.0f, lc->ff1pre, FF_DIM);
+        for (int t = 0; t < BL; t++) {
+            vDSP_vadd(lc->ff1pre + t * FF_DIM, 1, lp->bff1, 1,
+                      lc->ff1pre + t * FF_DIM, 1, FF_DIM);
+        }
+        for (int i = 0, n = BL * FF_DIM; i < n; i++) {
+            float s = lc->ff1pre[i];
+            lc->ff1[i] = s > 0.f ? s : 0.f;
+        }
+        // FFN2.
+        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                    BL, D_MODEL, FF_DIM, 1.0f,
+                    lc->ff1, FF_DIM, lp->Wff2, FF_DIM, 0.0f, lc->ff2, D_MODEL);
+        for (int t = 0; t < BL; t++) {
+            vDSP_vadd(lc->ff2 + t * D_MODEL, 1, lp->bff2, 1,
+                      lc->ff2 + t * D_MODEL, 1, D_MODEL);
+        }
+        // Residual.
+        vDSP_vadd(lc->afterAttn, 1, lc->ff2, 1, lc->out, 1, BL * D_MODEL);
+
+        cur = lc->out;
+    }
+
+    // Final LN on CLS (position 0) of each sample, then Wout.
+    for (int b = 0; b < B; b++) {
+        const float *cls_in = cur + b * L * D_MODEL;
+        for (int d = 0; d < D_MODEL; d++) cache->finalLnIn[b * D_MODEL + d] = cls_in[d];
+        float out_buf[D_MODEL]; float m, v;
+        layer_norm(cache->finalLnIn, b * D_MODEL, p->lnFg, p->lnFb, D_MODEL, out_buf, &m, &v);
+        cache->finalLnMean[b] = m; cache->finalLnVar[b] = v;
+        for (int d = 0; d < D_MODEL; d++) cache->cls[b * D_MODEL + d] = out_buf[d];
+    }
+    // Logits = cls @ Wout^T + bout. Batched [B, D] @ [D, NUM_ACTIONS]^T.
+    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                B, NUM_ACTIONS, D_MODEL, 1.0f,
+                cache->cls, D_MODEL, p->Wout, D_MODEL, 0.0f, cache->logits, NUM_ACTIONS);
+    for (int b = 0; b < B; b++) {
+        vDSP_vadd(cache->logits + b * NUM_ACTIONS, 1, p->bout, 1,
+                  cache->logits + b * NUM_ACTIONS, 1, NUM_ACTIONS);
+    }
+}
+
+float nn_accumulate_grads_batch(const NNParams *p,
+                                const BatchedForwardCache *cache,
+                                const bool *legal,
+                                const int *targets,
+                                NNGrads *g,
+                                int *out_correct)
+{
+    int B = cache->B;
+    int L = cache->L;
+    int BL = B * L;
+
+    // Compute per-sample probs, dlogits, top-1 accuracy, sum of losses.
+    static float dlogits_all[BATCH_MAX * NUM_ACTIONS];
+    float total_loss = 0.f;
+    int correct = 0;
+    for (int b = 0; b < B; b++) {
+        float probs[NUM_ACTIONS];
+        nn_softmax_masked(cache->logits + b * NUM_ACTIONS, legal + b * NUM_ACTIONS, probs);
+        int best = 0; float bp = -1e30f;
+        for (int j = 0; j < NUM_ACTIONS; j++) if (probs[j] > bp) { bp = probs[j]; best = j; }
+        if (best == targets[b]) correct++;
+        for (int i = 0; i < NUM_ACTIONS; i++) dlogits_all[b * NUM_ACTIONS + i] = probs[i];
+        dlogits_all[b * NUM_ACTIONS + targets[b]] -= 1.0f;
+        float pt = probs[targets[b]];
+        if (pt < 1e-9f) pt = 1e-9f;
+        total_loss += -logf(pt);
+    }
+    if (out_correct) *out_correct = correct;
+
+    // bout: sum dlogits over B.
+    for (int b = 0; b < B; b++) {
+        vDSP_vadd(g->bout, 1, dlogits_all + b * NUM_ACTIONS, 1, g->bout, 1, NUM_ACTIONS);
+    }
+    // Wout += dlogits^T @ cls.  ([NUM_ACTIONS, B] @ [B, D] = [NUM_ACTIONS, D])
+    cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                NUM_ACTIONS, D_MODEL, B, 1.0f,
+                dlogits_all, NUM_ACTIONS, cache->cls, D_MODEL, 1.0f, g->Wout, D_MODEL);
+    // dCls = dlogits @ Wout.  ([B, NUM_ACTIONS] @ [NUM_ACTIONS, D])
+    static float dCls[BATCH_MAX * D_MODEL];
+    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                B, D_MODEL, NUM_ACTIONS, 1.0f,
+                dlogits_all, NUM_ACTIONS, p->Wout, D_MODEL, 0.0f, dCls, D_MODEL);
+
+    // Final LN backward per sample → dFinalLnIn (CLS-only, length B*D).
+    static float dFinalLnIn[BATCH_MAX * D_MODEL];
+    for (int b = 0; b < B; b++) {
+        float dy[D_MODEL]; for (int d = 0; d < D_MODEL; d++) dy[d] = dCls[b * D_MODEL + d];
+        float dx[D_MODEL];
+        layer_norm_backward(cache->finalLnIn, b * D_MODEL,
+                            cache->finalLnMean[b], cache->finalLnVar[b],
+                            p->lnFg, dy, g->lnFg, g->lnFb, D_MODEL, dx);
+        for (int d = 0; d < D_MODEL; d++) dFinalLnIn[b * D_MODEL + d] = dx[d];
+    }
+
+    // Set up dOutNext = [BL, D]. Only CLS positions get dFinalLnIn; rest 0.
+    static float dOutNext[BATCH_MAX * MAX_SEQ_LEN * D_MODEL];
+    static float dAfterAttn[BATCH_MAX * MAX_SEQ_LEN * D_MODEL];
+    static float dFf2_buf[BATCH_MAX * MAX_SEQ_LEN * D_MODEL];
+    static float dFf1_buf[BATCH_MAX * MAX_SEQ_LEN * FF_DIM];
+    static float dFf1pre [BATCH_MAX * MAX_SEQ_LEN * FF_DIM];
+    static float dXLn2   [BATCH_MAX * MAX_SEQ_LEN * D_MODEL];
+    static float dProj_b [BATCH_MAX * MAX_SEQ_LEN * D_MODEL];
+    static float dXIn_b  [BATCH_MAX * MAX_SEQ_LEN * D_MODEL];
+    static float dAttnOut[BATCH_MAX * MAX_SEQ_LEN * D_MODEL];
+    static float dAttn   [BATCH_MAX * N_HEADS * MAX_SEQ_LEN * MAX_SEQ_LEN];
+    static float dV_b    [BATCH_MAX * MAX_SEQ_LEN * D_MODEL];
+    static float dScores [BATCH_MAX * N_HEADS * MAX_SEQ_LEN * MAX_SEQ_LEN];
+    static float dQ_b    [BATCH_MAX * MAX_SEQ_LEN * D_MODEL];
+    static float dK_b    [BATCH_MAX * MAX_SEQ_LEN * D_MODEL];
+    static float dXLn1   [BATCH_MAX * MAX_SEQ_LEN * D_MODEL];
+
+    memset(dOutNext, 0, sizeof(float) * BL * D_MODEL);
+    for (int b = 0; b < B; b++) {
+        for (int d = 0; d < D_MODEL; d++) {
+            dOutNext[b * L * D_MODEL + d] = dFinalLnIn[b * D_MODEL + d];
+        }
+    }
+
+    for (int li = N_LAYERS - 1; li >= 0; li--) {
+        const LayerParams *lp = &p->layers[li];
+        const BatchedLayerCache *lc = &cache->layers[li];
+        LayerParams *lg = &g->layers[li];
+
+        // Split residual.
+        memcpy(dAfterAttn, dOutNext, sizeof(float) * BL * D_MODEL);
+        memcpy(dFf2_buf,   dOutNext, sizeof(float) * BL * D_MODEL);
+
+        // dWff2 += dFf2_buf^T @ ff1   ([D, BL] @ [BL, FF])
+        cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                    D_MODEL, FF_DIM, BL, 1.0f,
+                    dFf2_buf, D_MODEL, lc->ff1, FF_DIM, 1.0f, lg->Wff2, FF_DIM);
+        // dFf1_buf = dFf2_buf @ Wff2
+        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                    BL, FF_DIM, D_MODEL, 1.0f,
+                    dFf2_buf, D_MODEL, lp->Wff2, FF_DIM, 0.0f, dFf1_buf, FF_DIM);
+        // bff2 grad: sum over BL rows.
+        bwd_bias_grad(BL, D_MODEL, dFf2_buf, lg->bff2);
+        // ReLU back.
+        bwd_relu(BL * FF_DIM, lc->ff1pre, dFf1_buf, dFf1pre);
+        // dWff1 += dFf1pre^T @ xLn2
+        cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                    FF_DIM, D_MODEL, BL, 1.0f,
+                    dFf1pre, FF_DIM, lc->xLn2, D_MODEL, 1.0f, lg->Wff1, D_MODEL);
+        // dXLn2 = dFf1pre @ Wff1
+        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                    BL, D_MODEL, FF_DIM, 1.0f,
+                    dFf1pre, FF_DIM, lp->Wff1, D_MODEL, 0.0f, dXLn2, D_MODEL);
+        // bff1 grad: sum over BL rows.
+        bwd_bias_grad(BL, FF_DIM, dFf1pre, lg->bff1);
+
+        // LN2 backward per token over BL.
+        bwd_layer_norm_per_token(BL, lc->afterAttn, lc->ln2Mean, lc->ln2Var,
+                                 lp->ln2g, dXLn2, lg->ln2g, lg->ln2b, dAfterAttn);
+
+        // Split attn residual.
+        memcpy(dProj_b, dAfterAttn, sizeof(float) * BL * D_MODEL);
+        memcpy(dXIn_b,  dAfterAttn, sizeof(float) * BL * D_MODEL);
+
+        // dWo += dProj_b^T @ attnOut
+        cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                    D_MODEL, D_MODEL, BL, 1.0f,
+                    dProj_b, D_MODEL, lc->attnOut, D_MODEL, 1.0f, lg->Wo, D_MODEL);
+        // dAttnOut = dProj_b @ Wo
+        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                    BL, D_MODEL, D_MODEL, 1.0f,
+                    dProj_b, D_MODEL, lp->Wo, D_MODEL, 0.0f, dAttnOut, D_MODEL);
+
+        // Per-sample, per-head attention backward.
+        float scale = 1.f / sqrtf((float)D_HEAD);
+        for (int b = 0; b < B; b++) {
+            for (int h = 0; h < N_HEADS; h++) {
+                const float *attn_bh = lc->attn + ((size_t)b * N_HEADS + h) * L * L;
+                float *dAttn_bh = dAttn + ((size_t)b * N_HEADS + h) * L * L;
+                float *dScores_bh = dScores + ((size_t)b * N_HEADS + h) * L * L;
+                cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                            L, L, D_HEAD, 1.0f,
+                            dAttnOut + b * L * D_MODEL + h * D_HEAD, D_MODEL,
+                            lc->V + b * L * D_MODEL + h * D_HEAD, D_MODEL,
+                            0.0f, dAttn_bh, L);
+                cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                            L, D_HEAD, L, 1.0f,
+                            attn_bh, L,
+                            dAttnOut + b * L * D_MODEL + h * D_HEAD, D_MODEL,
+                            0.0f, dV_b + b * L * D_MODEL + h * D_HEAD, D_MODEL);
+                bwd_softmax_attention(L, attn_bh, dAttn_bh, dScores_bh);
+                cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                            L, D_HEAD, L, scale,
+                            dScores_bh, L,
+                            lc->K + b * L * D_MODEL + h * D_HEAD, D_MODEL,
+                            0.0f, dQ_b + b * L * D_MODEL + h * D_HEAD, D_MODEL);
+                cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                            L, D_HEAD, L, scale,
+                            dScores_bh, L,
+                            lc->Q + b * L * D_MODEL + h * D_HEAD, D_MODEL,
+                            0.0f, dK_b + b * L * D_MODEL + h * D_HEAD, D_MODEL);
+            }
+        }
+
+        // dW{q,k,v} += d{Q,K,V}^T @ xLn1 — single big sgemm each.
+        cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                    D_MODEL, D_MODEL, BL, 1.0f,
+                    dQ_b, D_MODEL, lc->xLn1, D_MODEL, 1.0f, lg->Wq, D_MODEL);
+        cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                    D_MODEL, D_MODEL, BL, 1.0f,
+                    dK_b, D_MODEL, lc->xLn1, D_MODEL, 1.0f, lg->Wk, D_MODEL);
+        cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                    D_MODEL, D_MODEL, BL, 1.0f,
+                    dV_b, D_MODEL, lc->xLn1, D_MODEL, 1.0f, lg->Wv, D_MODEL);
+        // dXLn1 = dQ@Wq + dK@Wk + dV@Wv.
+        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                    BL, D_MODEL, D_MODEL, 1.0f,
+                    dQ_b, D_MODEL, lp->Wq, D_MODEL, 0.0f, dXLn1, D_MODEL);
+        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                    BL, D_MODEL, D_MODEL, 1.0f,
+                    dK_b, D_MODEL, lp->Wk, D_MODEL, 1.0f, dXLn1, D_MODEL);
+        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                    BL, D_MODEL, D_MODEL, 1.0f,
+                    dV_b, D_MODEL, lp->Wv, D_MODEL, 1.0f, dXLn1, D_MODEL);
+
+        // LN1 backward per token over BL.
+        bwd_layer_norm_per_token(BL, lc->xIn, lc->ln1Mean, lc->ln1Var,
+                                 lp->ln1g, dXLn1, lg->ln1g, lg->ln1b, dXIn_b);
+
+        memcpy(dOutNext, dXIn_b, sizeof(float) * BL * D_MODEL);
+    }
+
+    // Embedding gradient: per (b, i), += dOutNext[b*L+i] into embed[tok] and
+    // pos[i]. We can't trivially batch because of the lookup; just loop.
+    for (int b = 0; b < B; b++) {
+        for (int i = 0; i < L; i++) {
+            int tok = cache->tokens[b * L + i];
+            float *e = g->embed + tok * D_MODEL;
+            float *po = g->pos_embed + i * D_MODEL;
+            const float *dy = dOutNext + (b * L + i) * D_MODEL;
+            vDSP_vadd(e, 1, dy, 1, e, 1, D_MODEL);
+            vDSP_vadd(po, 1, dy, 1, po, 1, D_MODEL);
+        }
+    }
+
+    return total_loss;
+}
