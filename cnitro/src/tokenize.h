@@ -6,10 +6,14 @@
 #include "card.h"
 #include <stdbool.h>
 
-#define NUM_CARDS      40
-#define ACTION_PICKUP  40
-#define ACTION_STOP    41
-#define NUM_ACTIONS    42
+// Action vocab: 52 card slots (4 suits × 13 values, 2..A) + PICKUP + STOP.
+// In 2..5 player games values 2,3,4 are never dealt and the corresponding
+// card slots are unused but kept in the vocab so a single trained model can
+// play any player count.
+#define NUM_CARDS      52
+#define ACTION_PICKUP  52
+#define ACTION_STOP    53
+#define NUM_ACTIONS    54
 
 // Identity / structural
 #define TOK_PAD             0
@@ -42,6 +46,7 @@
 #define TOK_MOVE_DISCARD    25
 #define TOK_COVER_TARGET    26
 #define TOK_SEC_OPP_SIZES   27 // section header: per-opp hand-count summary
+#define TOK_MOVE_OUT        28 // history event: player at seat-N was eliminated
 // Per-seat opponent tag. Seat = how many "next active player" hops from self,
 // counting only IN players. In 1v1 the lone opp is always seat 1. Designed as
 // the N-player superset so the same vocab handles 2..8 player games. Used in

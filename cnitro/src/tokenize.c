@@ -6,25 +6,28 @@
 #include <string.h>
 #include <stdlib.h>
 
+// Card encoding: 13 values (1..A) × 4 suits, ordered by trump-relative
+// rotation. Values 1..4 only appear in 6+ player games (full deck); 2..5
+// player games leave those slots unused. Same encoding handles both.
 int card_token_id(int suit, int value, int trump_suit) {
     int rot = (suit - trump_suit + 4) % 4;
-    int v = value - 5;
+    int v = value - MIN_VALUE_LARGE;     // 1..A → 0..12
     if (v < 0) v = 0;
-    if (v > 9) v = 9;
-    return TOK_CARD_BASE + rot * 10 + v;
+    if (v > 12) v = 12;
+    return TOK_CARD_BASE + rot * 13 + v;
 }
 
 int card_action_id(int suit, int value, int trump_suit) {
     int rot = (suit - trump_suit + 4) % 4;
-    int v = value - 5;
+    int v = value - MIN_VALUE_LARGE;
     if (v < 0) v = 0;
-    if (v > 9) v = 9;
-    return rot * 10 + v;
+    if (v > 12) v = 12;
+    return rot * 13 + v;
 }
 
 void action_id_to_card(int id, int trump_suit, Card *out) {
-    int rot = id / 10;
-    int value = 5 + (id % 10);
+    int rot = id / 13;
+    int value = MIN_VALUE_LARGE + (id % 13);
     int suit = (rot + trump_suit) % 4;
     out->suit = (int8_t)suit;
     out->value = (int8_t)value;
@@ -92,7 +95,8 @@ void tokenize(const Game *g, int bot_idx, const InProgress *ip, Tokenized *out) 
         int t = g->logs[i].log_type;
         if (t == LOG_ATTACK || t == LOG_COVER || t == LOG_PASS
             || t == LOG_PICKUP || t == LOG_GOOD
-            || t == LOG_DISCARD || t == LOG_DRAW) {
+            || t == LOG_DISCARD || t == LOG_DRAW
+            || t == LOG_PLAYER_OUT) {
             move_log_idx[n_logs++] = i;
         }
     }
@@ -122,13 +126,14 @@ void tokenize(const Game *g, int bot_idx, const InProgress *ip, Tokenized *out) 
             }
             int mt;
             switch (log->log_type) {
-                case LOG_ATTACK:  mt = TOK_MOVE_ATTACK; break;
-                case LOG_COVER:   mt = TOK_MOVE_COVER; break;
-                case LOG_PASS:    mt = TOK_MOVE_PASS; break;
-                case LOG_PICKUP:  mt = TOK_MOVE_PICKUP; break;
-                case LOG_GOOD:    mt = TOK_MOVE_GOOD; break;
-                case LOG_DISCARD: mt = TOK_MOVE_DISCARD; break;
-                case LOG_DRAW:    mt = TOK_MOVE_DRAW; break;
+                case LOG_ATTACK:     mt = TOK_MOVE_ATTACK; break;
+                case LOG_COVER:      mt = TOK_MOVE_COVER; break;
+                case LOG_PASS:       mt = TOK_MOVE_PASS; break;
+                case LOG_PICKUP:     mt = TOK_MOVE_PICKUP; break;
+                case LOG_GOOD:       mt = TOK_MOVE_GOOD; break;
+                case LOG_DISCARD:    mt = TOK_MOVE_DISCARD; break;
+                case LOG_DRAW:       mt = TOK_MOVE_DRAW; break;
+                case LOG_PLAYER_OUT: mt = TOK_MOVE_OUT; break;
                 default: continue;
             }
             push_tok(out, mt);

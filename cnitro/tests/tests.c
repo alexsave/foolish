@@ -173,22 +173,26 @@ static void test_tokenize_basic(void) {
     CHECK(has_role && has_hand, "has role + hand tokens");
 }
 
-// Test: vocab size matches our docs (72 + 7 seat tokens = 79). If this fails,
-// the embed table sizing in nn.h is now wrong too.
+// Test: vocab size matches our layout. TOK_CARD_BASE (39) + NUM_CARDS (52)
+// for the full 52-card deck = 91. Action vocab is NUM_CARDS + PICKUP + STOP
+// = 54.
 static void test_vocab_size(void) {
-    CHECK(VOCAB_SIZE == 79, "VOCAB_SIZE == 79 after seat-token expansion");
+    CHECK(VOCAB_SIZE == TOK_CARD_BASE + NUM_CARDS, "VOCAB_SIZE = TOK_CARD_BASE + NUM_CARDS");
+    CHECK(NUM_CARDS == 52, "NUM_CARDS == 52 (full 52-card deck)");
+    CHECK(NUM_ACTIONS == 54, "NUM_ACTIONS == NUM_CARDS + PICKUP + STOP");
     CHECK(MAX_OPPONENTS == 7, "MAX_OPPONENTS == 7");
     CHECK(TOK_OPP_SEAT_7 - TOK_OPP_SEAT_1 == MAX_OPPONENTS - 1, "seat tokens contiguous");
     CHECK(TOK_CARD_BASE == TOK_OPP_SEAT_7 + 1, "card base sits right after seat tokens");
 }
 
-// Test: action_id round-trip for every legal card. Cards 5..13 in 4 suits
-// should cleanly survive card_action_id → action_id_to_card.
+// Test: action_id round-trip for every card in the full 52-card deck.
+// Cards 1..13 in 4 suits should cleanly survive card_action_id →
+// action_id_to_card.
 static void test_action_id_roundtrip(void) {
     int trump = SUIT_HEARTS;
     int n_ok = 0, n_bad = 0;
     for (int suit = 0; suit < 4; suit++) {
-        for (int v = 5; v <= 13; v++) {
+        for (int v = MIN_VALUE_LARGE; v <= ACE_VALUE; v++) {
             int id = card_action_id(suit, v, trump);
             CHECK(id >= 0 && id < ACTION_PICKUP, "action id in range");
             Card c;
@@ -196,7 +200,7 @@ static void test_action_id_roundtrip(void) {
             if (c.suit == suit && c.value == v) n_ok++; else n_bad++;
         }
     }
-    CHECK(n_ok == 36 && n_bad == 0, "all 36 cards round-trip cleanly");
+    CHECK(n_ok == 52 && n_bad == 0, "all 52 cards round-trip cleanly");
 }
 
 // Test: opponent_seat helper for a 1v1 game.
@@ -289,6 +293,58 @@ static void test_tokenize_history_seat_attribution(void) {
     CHECK(hi + 3 < t.n_tokens, "enough tokens after history header");
     CHECK(t.tokens[hi + 1] == TOK_OPP_SEAT_1, "history: opponent attributed to seat 1");
     CHECK(t.tokens[hi + 2] == TOK_MOVE_ATTACK, "history: move type ATTACK");
+}
+
+// Test: a 3-player handwritten-vs-handwritten-vs-handwritten game runs to a
+// loser without crashing or looping. Validates that the game engine handles
+// 3+ players (loops are all g->num_players-bounded; previous MAX_PLAYERS=2
+// only exercised the 2-player path).
+static void test_full_game_3p_handwritten(void) {
+    game_set_seed(7);
+    random_strategy_set_seed(7);
+    Game g; memset(&g, 0, sizeof(g));
+    g.num_players = 3;
+    for (int i = 0; i < 3; i++) {
+        g.players[i].status = PLAYER_STATUS_READY;
+        snprintf(g.players[i].player_id, sizeof(g.players[i].player_id), "p%d", i);
+    }
+    start_game(&g);
+    int iters = 0;
+    while (game_done(&g) < 0 && iters < 4000) {
+        iters++;
+        int eligible[MAX_PLAYERS]; int n_elig = 0;
+        for (int i = 0; i < g.num_players; i++) if (should_bot_act(&g, i)) eligible[n_elig++] = i;
+        if (n_elig == 0) break;
+        for (int i = n_elig - 1; i > 0; i--) {
+            int j = (int)(game_random() * (i + 1));
+            if (j < 0) j = 0; if (j > i) j = i;
+            int tmp = eligible[i]; eligible[i] = eligible[j]; eligible[j] = tmp;
+        }
+        bool acted = false;
+        for (int k = 0; k < n_elig; k++) {
+            int idx = eligible[k];
+            LegalMoves moves;
+            calculate_legal_moves(&g, idx, &moves);
+            if (moves.n == 0) continue;
+            int chosen = handwritten_strategy_choose(&g, idx, &moves, NULL);
+            if (chosen < 0) continue;
+            const LegalMove *m = &moves.moves[chosen];
+            bool ok = false;
+            switch (m->type) {
+                case MOVE_ATTACK: ok = handle_attack(&g, idx, m->cards, m->n_cards); break;
+                case MOVE_COVER:  ok = handle_cover (&g, idx, m->cards, m->attack_cards, m->n_cards); break;
+                case MOVE_PASS:   ok = handle_pass  (&g, idx, m->cards, m->n_cards); break;
+                case MOVE_PICKUP: ok = handle_pickup(&g, idx); break;
+                case MOVE_GOOD:   ok = handle_good  (&g, idx); break;
+                default: break;
+            }
+            if (ok) { acted = true; break; }
+        }
+        if (!acted) break;
+    }
+    int loser = game_done(&g);
+    CHECK(loser >= 0, "3p hw vs hw vs hw terminates");
+    CHECK(g.num_eliminated == g.num_players - 1, "all but one player eliminated");
 }
 
 // Test: a full handwritten-vs-handwritten game terminates without crashing.
@@ -394,6 +450,7 @@ int main(void) {
     test_tokenize_no_opp_cards();
     test_tokenize_history_seat_attribution();
     test_full_game_handwritten();
+    test_full_game_3p_handwritten();
 
     printf("\n%d passed, %d failed\n", n_pass, n_fail);
     return n_fail > 0 ? 1 : 0;
