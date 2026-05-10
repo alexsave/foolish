@@ -320,81 +320,6 @@ static void print_atomic_walk(const NNParams *params, const Game *g, int bot_idx
     printf("]\n");
 }
 
-// Predict the opponent's next first-action from the bot's perspective
-// (their hand is hidden by the no-cheat tokenizer). Returns top-K legal
-// actions sorted by predicted probability, and the rank of the actual
-// first action they took (0-indexed; -1 if not in legal set).
-typedef struct {
-    int   top_actions[NUM_ACTIONS];
-    float top_probs[NUM_ACTIONS];
-    int   n;
-    int   actual_action;
-    int   actual_rank;
-    float actual_prob;
-} OppPrediction;
-
-static void predict_opp_action(const NNParams *params, const Game *g, int bot_idx,
-                               const LegalMoves *opp_moves, int opp_chosen,
-                               OppPrediction *out) {
-    static ForwardCache fc;
-    int trump = g->power_suit;
-    out->n = 0; out->actual_rank = -1; out->actual_action = -1; out->actual_prob = 0;
-
-    // Aggregate opp's first-step legal set (we know it because legal-move
-    // computation is from observable state — only the cover/attack values
-    // matter, not opp's hand directly... but cards used DO depend on opp's
-    // hand. The model can't know this set a priori; we use it just as an
-    // evaluation mask to compute predictions over what opp COULD play.)
-    int legal[NUM_ACTIONS]; int n_legal = 0;
-    bool seen[NUM_ACTIONS] = { false };
-    for (int i = 0; i < opp_moves->n; i++) {
-        int t = opp_moves->moves[i].type;
-        if (t == MOVE_ATTACK || t == MOVE_COVER || t == MOVE_PASS) {
-            for (int j = 0; j < opp_moves->moves[i].n_cards; j++) {
-                Card c = opp_moves->moves[i].cards[j];
-                int a = card_action_id(c.suit, c.value, trump);
-                if (!seen[a]) { seen[a] = true; legal[n_legal++] = a; }
-            }
-        } else if (t == MOVE_PICKUP) {
-            if (!seen[ACTION_PICKUP]) { seen[ACTION_PICKUP] = true; legal[n_legal++] = ACTION_PICKUP; }
-        } else if (t == MOVE_GOOD) {
-            if (!seen[ACTION_STOP]) { seen[ACTION_STOP] = true; legal[n_legal++] = ACTION_STOP; }
-        }
-    }
-    if (n_legal == 0) return;
-
-    // Tokenize from BOT's POV — the model does not see opp's hand. Hence
-    // its prediction is genuinely a guess from history + visible state.
-    InProgress ip = { .role = INPROG_IDLE, .n_cards_chosen = 0 };
-    Tokenized tk; tokenize(g, bot_idx, &ip, &tk);
-    nn_forward(params, tk.tokens, tk.n_tokens, &fc);
-    bool mask[NUM_ACTIONS] = { false };
-    for (int i = 0; i < n_legal; i++) mask[legal[i]] = true;
-    float probs[NUM_ACTIONS];
-    nn_softmax_masked(fc.logits, mask, probs);
-
-    int order[NUM_ACTIONS];
-    for (int i = 0; i < n_legal; i++) order[i] = legal[i];
-    sort_indices_desc_by_score(order, n_legal, probs);
-    out->n = n_legal;
-    for (int i = 0; i < n_legal; i++) {
-        out->top_actions[i] = order[i];
-        out->top_probs[i] = probs[order[i]];
-    }
-
-    // Resolve actual action: the first-step token of the move opp picked.
-    const LegalMove *am = &opp_moves->moves[opp_chosen];
-    int actual = -1;
-    if (am->type == MOVE_PICKUP) actual = ACTION_PICKUP;
-    else if (am->type == MOVE_GOOD) actual = ACTION_STOP;
-    else if (am->n_cards > 0) actual = card_action_id(am->cards[0].suit, am->cards[0].value, trump);
-    out->actual_action = actual;
-    out->actual_prob = (actual >= 0) ? probs[actual] : 0;
-    for (int i = 0; i < n_legal; i++) {
-        if (order[i] == actual) { out->actual_rank = i; break; }
-    }
-}
-
 
 static int play_with_inspect(const NNParams *params, uint32_t seed, int opp_strat, int max_decisions) {
     game_set_seed(seed ? seed : 1);
@@ -408,15 +333,6 @@ static int play_with_inspect(const NNParams *params, uint32_t seed, int opp_stra
     snprintf(g.players[0].player_id, sizeof(g.players[0].player_id), "p0");
     snprintf(g.players[1].player_id, sizeof(g.players[1].player_id), "p1");
     start_game(&g);
-
-    // Opp-prediction running tally. At every opp turn we run the model from
-    // bot's POV (so opp's hand is hidden by the no-cheat tokenizer) and ask
-    // "where does the model think opp will play next?" then compare against
-    // the action opp actually took. This is a measurement, not a training
-    // signal — it shows how well the trunk's implicit belief lines up with
-    // reality.
-    int opp_n = 0, opp_top1 = 0, opp_top3 = 0;
-    double opp_prob_actual_sum = 0;
 
     int decisions = 0;
     int iters = 0;
@@ -447,41 +363,45 @@ static int play_with_inspect(const NNParams *params, uint32_t seed, int opp_stra
                     printf("\n=== Decision #%d (nitro is %s) ===\n",
                            decisions + 1, pi == g.defender ? "DEFENDER" : "ATTACKER");
                     print_state_summary(&g, pi);
+
+                    // Raw next-action top-3 across ALL actions (no legal mask).
+                    // This shows what the model thinks the next move would be
+                    // ignoring any legality — useful diagnostic of where the
+                    // probability mass actually lives, and (with no opp-card
+                    // visibility) approximates the model's belief about the
+                    // most likely card to be played from this state.
+                    {
+                        InProgress ip0 = { .role = INPROG_IDLE, .n_cards_chosen = 0 };
+                        Tokenized tk; tokenize(&g, pi, &ip0, &tk);
+                        static ForwardCache fc_raw;
+                        nn_forward(params, tk.tokens, tk.n_tokens, &fc_raw);
+                        bool full[NUM_ACTIONS]; for (int i = 0; i < NUM_ACTIONS; i++) full[i] = true;
+                        float raw[NUM_ACTIONS];
+                        nn_softmax_masked(fc_raw.logits, full, raw);
+                        int order_a[NUM_ACTIONS];
+                        for (int i = 0; i < NUM_ACTIONS; i++) order_a[i] = i;
+                        sort_indices_desc_by_score(order_a, NUM_ACTIONS, raw);
+                        printf("  raw next-action top-3 (any, no legal mask):\n");
+                        for (int kk = 0; kk < 3; kk++) {
+                            int a = order_a[kk];
+                            printf("    [%5.1f%%]  ", raw[a] * 100.0);
+                            print_action(a, trump);
+                            printf("\n");
+                        }
+                    }
+
                     print_atomic_walk(params, &g, pi, &moves);
                     decisions++;
                 }
             } else {
-                // Opp turn. First, run the bot-POV model to see what it
-                // expects the opponent to play.
-                OppPrediction op;
-                int bot_idx = (pi == 0) ? 1 : 0;
+                // Opp turn — just play it out. We deliberately do not score
+                // the model on opp's own moves (training is winner-only;
+                // measuring loser-action prediction would be off-target).
                 if (strat == STRAT_RANDOM)           idx = random_strategy_choose(&g, pi, &moves, NULL);
                 else if (strat == STRAT_ESPRESSO)    idx = espresso_strategy_choose(&g, pi, &moves, NULL);
                 else if (strat == STRAT_HANDWRITTEN) idx = handwritten_strategy_choose(&g, pi, &moves, NULL);
                 else                                 idx = nitro_strategy_choose(&g, pi, &moves, NULL);
                 if (idx < 0 || idx >= moves.n) continue;
-
-                predict_opp_action(params, &g, bot_idx, &moves, idx, &op);
-                if (op.n > 0 && op.actual_action >= 0 && op.actual_rank >= 0) {
-                    opp_n++;
-                    if (op.actual_rank == 0) opp_top1++;
-                    if (op.actual_rank < 3)  opp_top3++;
-                    opp_prob_actual_sum += op.actual_prob;
-
-                    if (decisions < max_decisions) {
-                        printf("\n--- Opp turn (model prediction from bot POV) ---\n");
-                        int show = op.n < 5 ? op.n : 5;
-                        for (int i = 0; i < show; i++) {
-                            int a = op.top_actions[i];
-                            printf("    [%5.1f%%]%s ", op.top_probs[i] * 100.0,
-                                   a == op.actual_action ? " <-" : "  ");
-                            print_action(a, trump);
-                            printf("\n");
-                        }
-                        printf("    actual rank: %d  (model gave %.1f%% to actual)\n",
-                               op.actual_rank + 1, op.actual_prob * 100.0);
-                    }
-                }
             }
 
             if (idx < 0 || idx >= moves.n) continue;
@@ -503,13 +423,6 @@ static int play_with_inspect(const NNParams *params, uint32_t seed, int opp_stra
     int loser = game_done(&g);
     printf("\n=== Game over: nitro %s   (decisions printed: %d) ===\n",
            loser == 0 ? "LOST" : (loser == 1 ? "WON" : "draw/no winner"), decisions);
-    if (opp_n > 0) {
-        printf("Opp-prediction: %d turns measured  top1=%.1f%%  top3=%.1f%%  mean P(actual)=%.1f%%\n",
-               opp_n,
-               100.0 * opp_top1 / opp_n,
-               100.0 * opp_top3 / opp_n,
-               100.0 * opp_prob_actual_sum / opp_n);
-    }
     return 0;
 }
 
