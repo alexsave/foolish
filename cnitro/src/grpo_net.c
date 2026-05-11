@@ -212,11 +212,16 @@ void grpo_net_forward(const GrpoNet *n, GrpoWorkspace *ws,
 
 float grpo_net_backward(const GrpoNet *n, GrpoWorkspace *ws,
                         int M, int chosen_idx, GrpoGrads *grads) {
-    // 1. Softmax-CE gradient: dlogit[i] = p[i] - 1_{i == chosen}
+    // Softmax-CE preamble: dlogit[i] = p[i] - 1_{i == chosen}
     float loss = -ws->log_probs[chosen_idx];
     for (int i = 0; i < M; i++) ws->dlogits[i] = expf(ws->log_probs[i]);
     ws->dlogits[chosen_idx] -= 1.0f;
+    grpo_net_backward_from_dlogits(n, ws, M, grads);
+    return loss;
+}
 
+void grpo_net_backward_from_dlogits(const GrpoNet *n, GrpoWorkspace *ws,
+                                    int M, GrpoGrads *grads) {
     // 2. bh2 grad += sum dlogit[i]
     float dbh2 = 0.f;
     for (int i = 0; i < M; i++) dbh2 += ws->dlogits[i];
@@ -327,8 +332,6 @@ float grpo_net_backward(const GrpoNet *n, GrpoWorkspace *ws,
                GRPO_H1, STATE_DIM, 1.0f,
                ws->dh1, 1, ws->state_vec, 1,
                grads->W1, STATE_DIM);
-
-    return loss;
 }
 
 // --- Grad / Adam lifecycle -------------------------------------------------

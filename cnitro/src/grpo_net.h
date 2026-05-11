@@ -109,6 +109,14 @@ float grpo_net_backward(const GrpoNet *n, GrpoWorkspace *ws,
                         int n_moves, int chosen_idx,
                         GrpoGrads *grads);
 
+// Variant: backward starting from caller-supplied dlogits.
+// `ws->dlogits[0..n_moves-1]` MUST be filled before this is called.
+// Activations from the most recent forward must still be in `ws`. Used by
+// the GRPO update where dlogits combines the clipped-surrogate gradient
+// with the KL-to-π_ref gradient — both expressed in logit space.
+void grpo_net_backward_from_dlogits(const GrpoNet *n, GrpoWorkspace *ws,
+                                    int n_moves, GrpoGrads *grads);
+
 // --- Grad / Adam lifecycle -------------------------------------------------
 
 void grpo_grads_alloc(GrpoGrads *g);

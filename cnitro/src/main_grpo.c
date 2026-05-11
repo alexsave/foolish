@@ -20,6 +20,8 @@
 #include "grpo_format.h"
 #include "grpo_collect.h"
 #include "grpo_train.h"
+#include "grpo_pool.h"
+#include "grpo_rl.h"
 #include "dynamite_strategy.h"
 
 #include <sys/stat.h>
@@ -535,6 +537,250 @@ static int mode_eval(int argc, char **argv) {
 }
 #endif
 
+static int ensure_dir(const char *path);   // defined alongside sft-collect below
+
+// --- grpo train mode -------------------------------------------------------
+//
+// Outer loop: collect B self-play games (seat 0 = π_θ sampling, others =
+// pool members argmax), compute group-relative advantages, run K-epoch
+// clipped-surrogate + KL update. Every eval-every iters, run a fixed
+// eval suite vs handwritten across player counts; if mean finish position
+// improved, promote current π_θ to the pool.
+
+// Aggregate eval across player counts. Returns a single "score" = mean
+// finish position averaged uniformly across PCs (lower is better).
+typedef struct {
+    double mean_finish_per_pc[MAX_PLAYERS + 1];
+    int    n_pcs;
+    double overall_mean_finish;
+} GrpoEvalResult;
+
+static double play_one_for_eval(uint32_t seed, int num_players,
+                                const GrpoNet *pi_theta,
+                                GrpoWorkspace *ws) {
+    game_set_seed(seed);
+    random_strategy_set_seed(seed);
+    Game g; memset(&g, 0, sizeof(g));
+    g.num_players = (int8_t)num_players;
+    for (int i = 0; i < num_players; i++) {
+        g.players[i].status = PLAYER_STATUS_READY;
+        g.players[i].strategy_key = (i == 0) ? STRAT_DYNAMITE : STRAT_HANDWRITTEN;
+        snprintf(g.players[i].player_id, sizeof(g.players[i].player_id), "p%d", i);
+    }
+    start_game(&g);
+    int iters = 0;
+    while (game_done(&g) < 0 && iters++ < 4000) {
+        int elig[MAX_PLAYERS]; int n_e = 0;
+        for (int i = 0; i < g.num_players; i++) if (should_bot_act(&g, i)) elig[n_e++] = i;
+        if (n_e == 0) break;
+        for (int i = n_e - 1; i > 0; i--) {
+            int j = (int)(game_random() * (i + 1));
+            if (j < 0) j = 0; if (j > i) j = i;
+            int t = elig[i]; elig[i] = elig[j]; elig[j] = t;
+        }
+        bool acted = false;
+        for (int k = 0; k < n_e; k++) {
+            int pi = elig[k];
+            LegalMoves moves;
+            calculate_legal_moves(&g, pi, &moves);
+            if (moves.n == 0) continue;
+            int idx;
+            if (pi == 0) {
+                grpo_net_forward(pi_theta, ws, &g, 0, &moves);
+                idx = 0;
+                for (int m = 1; m < moves.n; m++) if (ws->logits[m] > ws->logits[idx]) idx = m;
+            } else {
+                idx = handwritten_strategy_choose(&g, pi, &moves, NULL);
+            }
+            if (idx < 0 || idx >= moves.n) continue;
+            const LegalMove *m = &moves.moves[idx];
+            bool ok = false;
+            switch (m->type) {
+                case MOVE_ATTACK: ok = handle_attack(&g, pi, m->cards, m->n_cards); break;
+                case MOVE_COVER:  ok = handle_cover (&g, pi, m->cards, m->attack_cards, m->n_cards); break;
+                case MOVE_PASS:   ok = handle_pass  (&g, pi, m->cards, m->n_cards); break;
+                case MOVE_PICKUP: ok = handle_pickup(&g, pi); break;
+                case MOVE_GOOD:   ok = handle_good  (&g, pi); break;
+                default: break;
+            }
+            if (ok) { acted = true; break; }
+        }
+        if (!acted) break;
+    }
+    for (int i = 0; i < g.num_eliminated; i++) {
+        if (g.elimination_order[i] == 0) return (double)(i + 1);
+    }
+    return (double)num_players;
+}
+
+static void grpo_run_eval(const GrpoNet *pi_theta, int games_per_pc, uint32_t seed0,
+                          const int *pcs, int n_pcs, GrpoEvalResult *out) {
+    memset(out, 0, sizeof(*out));
+    GrpoWorkspace ws; grpo_workspace_alloc(&ws, MAX_LEGAL_MOVES);
+    double sum_overall = 0.0; int cnt_pcs = 0;
+    for (int i = 0; i < n_pcs; i++) {
+        int n = pcs[i];
+        double sum_fp = 0.0;
+        for (int g = 0; g < games_per_pc; g++) {
+            sum_fp += play_one_for_eval(seed0 + (uint32_t)g, n, pi_theta, &ws);
+        }
+        double mean = sum_fp / games_per_pc;
+        out->mean_finish_per_pc[n] = mean;
+        sum_overall += mean;
+        cnt_pcs++;
+    }
+    out->n_pcs = cnt_pcs;
+    out->overall_mean_finish = sum_overall / cnt_pcs;
+    grpo_workspace_free(&ws);
+}
+
+static double wall_secs_local(void) {
+    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec + ts.tv_nsec * 1e-9;
+}
+
+static int mode_grpo_train(int argc, char **argv) {
+    const char *sft_ckpt  = get_arg(argc, argv, "init",       "/tmp/grpo_sft_40k.bin");
+    const char *out_dir   = get_arg(argc, argv, "out-dir",    "/tmp/grpo_run");
+    int   max_iters       = parse_int(get_arg(argc, argv, "iters",      "200"), 200);
+    int   batch_games     = parse_int(get_arg(argc, argv, "batch",      "64"), 64);
+    int   n_threads       = parse_int(get_arg(argc, argv, "threads",    "8"), 8);
+    int   k_epochs        = parse_int(get_arg(argc, argv, "k-epochs",   "2"), 2);
+    int   minibatch       = parse_int(get_arg(argc, argv, "minibatch",  "64"), 64);
+    float lr              = (float)atof(get_arg(argc, argv, "lr",        "1e-4"));
+    float clip_eps        = (float)atof(get_arg(argc, argv, "clip-eps",  "0.2"));
+    float kl_beta         = (float)atof(get_arg(argc, argv, "kl-beta",   "0.02"));
+    float clip_norm       = (float)atof(get_arg(argc, argv, "clip-norm", "1.0"));
+    int   eval_every      = parse_int(get_arg(argc, argv, "eval-every", "10"), 10);
+    int   eval_games      = parse_int(get_arg(argc, argv, "eval-games", "100"), 100);
+    int   pool_soft_cap   = parse_int(get_arg(argc, argv, "pool-soft-cap", "10"), 10);
+    int   min_players     = parse_int(get_arg(argc, argv, "min-players", "2"), 2);
+    int   max_players     = parse_int(get_arg(argc, argv, "max-players", "8"), 8);
+    uint32_t base_seed    = (uint32_t)parse_int(get_arg(argc, argv, "seed", "1"), 1);
+    float promote_margin  = (float)atof(get_arg(argc, argv, "promote-margin", "0.05"));
+
+    if (ensure_dir(out_dir) != 0) {
+        fprintf(stderr, "grpo: cannot create out dir %s\n", out_dir);
+        return 1;
+    }
+    setvbuf(stderr, NULL, _IOLBF, 0);
+
+    // π_θ — trainable. Initialized from SFT checkpoint.
+    GrpoNet pi_theta; grpo_net_alloc(&pi_theta);
+    if (!grpo_net_load(&pi_theta, sft_ckpt)) {
+        fprintf(stderr, "grpo: cannot load init ckpt %s\n", sft_ckpt);
+        grpo_net_free(&pi_theta); return 1;
+    }
+    // π_ref — frozen copy.
+    GrpoNet pi_ref; grpo_net_alloc(&pi_ref);
+    if (!grpo_net_load(&pi_ref, sft_ckpt)) {
+        fprintf(stderr, "grpo: cannot load reference ckpt %s\n", sft_ckpt);
+        grpo_net_free(&pi_theta); grpo_net_free(&pi_ref); return 1;
+    }
+
+    GrpoAdam opt; grpo_adam_init(&opt, lr, 0.9f, 0.999f, 1e-8f, clip_norm);
+
+    GrpoPool pool; grpo_pool_init(&pool, pool_soft_cap);
+    grpo_pool_add_handwritten_anchor(&pool);
+    // Add SFT warm-start as the first dynamite pool member.
+    GrpoNet pool_sft; grpo_net_alloc(&pool_sft); grpo_net_load(&pool_sft, sft_ckpt);
+    grpo_pool_add_dynamite(&pool, "sft_warm", sft_ckpt, &pool_sft);
+
+    GrpoBatch batch; memset(&batch, 0, sizeof(batch));
+    GrpoCollectRlConfig ccfg = {
+        .n_games = batch_games, .n_threads = n_threads,
+        .base_seed = base_seed,
+        .min_players = min_players, .max_players = max_players,
+        .sample_actions = true,
+    };
+    GrpoUpdateConfig ucfg = {
+        .clip_eps = clip_eps, .kl_beta = kl_beta,
+        .k_epochs = k_epochs, .minibatch_size = minibatch,
+    };
+
+    // Baseline eval: how well does the SFT model do before any GRPO?
+    const int eval_pcs[] = {2, 4, 6, 8};
+    int n_eval_pcs = sizeof(eval_pcs) / sizeof(eval_pcs[0]);
+    GrpoEvalResult baseline; grpo_run_eval(&pi_theta, eval_games, 700001u,
+                                           eval_pcs, n_eval_pcs, &baseline);
+    fprintf(stderr, "[baseline] mean_finish overall=%.3f  per-pc:", baseline.overall_mean_finish);
+    for (int i = 0; i < n_eval_pcs; i++) fprintf(stderr, " pc%d=%.2f", eval_pcs[i], baseline.mean_finish_per_pc[eval_pcs[i]]);
+    fprintf(stderr, "\n");
+    double best_overall = baseline.overall_mean_finish;
+    int    promotions   = 0;
+
+    // Allocate the pool ckpt slots (each new promotion copies pi_theta).
+    GrpoNet pool_slots[GRPO_POOL_CAP];
+    bool    pool_slot_used[GRPO_POOL_CAP] = { false };
+
+    uint32_t collect_rng = base_seed ^ 0x9E3779B9u;
+
+    double t0 = wall_secs_local();
+    for (int iter = 1; iter <= max_iters; iter++) {
+        ccfg.base_seed = base_seed + (uint32_t)iter * 1000003u;
+        grpo_collect_batch(&ccfg, &pi_theta, &pool, &batch);
+        grpo_compute_advantages(&batch);
+
+        GrpoUpdateStats stats;
+        grpo_update(&pi_theta, &opt, kl_beta != 0.0f ? &pi_ref : NULL,
+                    &batch, &ucfg, &stats, &collect_rng);
+
+        fprintf(stderr,
+                "[iter %4d] t=%.1fs  mean_r=%.3f  pol=%.4f  kl=%.4f  ratio=%.3f  clipped=%d/%d  pool=%d\n",
+                iter, wall_secs_local() - t0,
+                stats.mean_reward, stats.mean_policy_loss, stats.mean_kl,
+                stats.mean_ratio, stats.n_clipped, stats.n_updated,
+                pool.n_members);
+
+        if (iter % eval_every == 0 || iter == max_iters) {
+            GrpoEvalResult er;
+            grpo_run_eval(&pi_theta, eval_games, 700001u, eval_pcs, n_eval_pcs, &er);
+            fprintf(stderr, "  eval: overall=%.3f (baseline=%.3f, best=%.3f)  per-pc:",
+                    er.overall_mean_finish, baseline.overall_mean_finish, best_overall);
+            for (int i = 0; i < n_eval_pcs; i++) fprintf(stderr, " pc%d=%.2f", eval_pcs[i], er.mean_finish_per_pc[eval_pcs[i]]);
+            fprintf(stderr, "\n");
+
+            // Save iter checkpoint.
+            char path[512];
+            snprintf(path, sizeof(path), "%s/iter_%04d.bin", out_dir, iter);
+            grpo_net_save(&pi_theta, path);
+
+            // Promote if improved by margin.
+            if (er.overall_mean_finish + promote_margin < best_overall) {
+                // Find a free pool slot, copy pi_theta into it, register.
+                int free_slot = -1;
+                for (int s = 0; s < GRPO_POOL_CAP; s++) if (!pool_slot_used[s]) { free_slot = s; break; }
+                if (free_slot >= 0) {
+                    grpo_net_alloc(&pool_slots[free_slot]);
+                    grpo_net_load(&pool_slots[free_slot], path);  // load from the saved ckpt
+                    char name[64]; snprintf(name, sizeof(name), "iter_%d", iter);
+                    grpo_pool_add_dynamite(&pool, name, path, &pool_slots[free_slot]);
+                    pool_slot_used[free_slot] = true;
+                    promotions++;
+                    best_overall = er.overall_mean_finish;
+                    fprintf(stderr, "  PROMOTED to pool (now %d members, %d total promotions)\n",
+                            pool.n_members, promotions);
+                }
+            }
+        }
+    }
+
+    // Save final.
+    char final_path[512];
+    snprintf(final_path, sizeof(final_path), "%s/final.bin", out_dir);
+    grpo_net_save(&pi_theta, final_path);
+    fprintf(stderr, "saved final ckpt at %s (best overall=%.3f, %d promotions)\n",
+            final_path, best_overall, promotions);
+
+    for (int s = 0; s < GRPO_POOL_CAP; s++) if (pool_slot_used[s]) grpo_net_free(&pool_slots[s]);
+    grpo_net_free(&pool_sft);
+    grpo_batch_free(&batch);
+    grpo_adam_free(&opt);
+    grpo_net_free(&pi_theta);
+    grpo_net_free(&pi_ref);
+    return 0;
+}
+
 // --- sft-collect mode ------------------------------------------------------
 
 static int ensure_dir(const char *path) {
@@ -1043,10 +1289,11 @@ int main(int argc, char **argv) {
     if (strcmp(mode, "sft-train")    == 0) return mode_sft_train(argc, argv);
     if (strcmp(mode, "shard-verify") == 0) return mode_shard_verify(argc, argv);
     if (strcmp(mode, "play")         == 0) return mode_play(argc, argv);
+    if (strcmp(mode, "grpo")         == 0) return mode_grpo_train(argc, argv);
     if (strcmp(mode, "grad-check")   == 0) return mode_grad_check(argc, argv);
     if (strcmp(mode, "roundtrip-test") == 0) return mode_roundtrip_test(argc, argv);
-    if (strcmp(mode, "grpo") == 0 || strcmp(mode, "eval") == 0) {
-        fprintf(stderr, "mode '%s' moved or not implemented — for eval use cnitro_eval\n", mode);
+    if (strcmp(mode, "eval") == 0) {
+        fprintf(stderr, "mode 'eval' moved — use cnitro_eval\n");
         return 1;
     }
     if (false) {

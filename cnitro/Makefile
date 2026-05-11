@@ -7,7 +7,7 @@ CORE_SRC := src/game.c src/legal.c src/random_strategy.c src/espresso_strategy.c
             src/nitro_strategy.c
 CORE_OBJ := $(CORE_SRC:src/%.c=build/%.o)
 
-GRPO_SRC := src/grpo_encode.c src/grpo_net.c src/grpo_format.c src/grpo_collect.c src/grpo_train.c src/dynamite_strategy.c
+GRPO_SRC := src/grpo_encode.c src/grpo_net.c src/grpo_format.c src/grpo_collect.c src/grpo_train.c src/dynamite_strategy.c src/grpo_pool.c src/grpo_rl.c
 GRPO_OBJ := $(GRPO_SRC:src/%.c=build/%.o)
 
 .PHONY: all clean tests
