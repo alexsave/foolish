@@ -10,6 +10,7 @@
 #define STRAT_ESPRESSO    1
 #define STRAT_NITRO       2
 #define STRAT_HANDWRITTEN 3
+#define STRAT_DYNAMITE    4
 
 // Returns chosen move index in moves->moves[] (0..moves->n-1).
 typedef int (*StrategyFn)(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);

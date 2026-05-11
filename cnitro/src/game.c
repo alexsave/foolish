@@ -13,12 +13,35 @@
 #include <stdlib.h>
 
 // ---------- RNG (two independent LCGs, same recurrence as TS) ----------
+//
+// Both LCGs are _Thread_local so multiple worker threads can each run their
+// own game(s) without racing. Default seeds are non-zero so a thread that
+// never calls game_set_seed/random_strategy_set_seed still produces a
+// well-defined sequence. In DEBUG builds (-DGRPO_RNG_DEBUG) we additionally
+// require that the seed was explicitly set in the current thread before any
+// game_random() call — catches missing initialization in worker code.
 
-static uint32_t g_seed = 1237;
-static uint32_t g_rand_seed = 1;
+static _Thread_local uint32_t g_seed = 1237;
+static _Thread_local uint32_t g_rand_seed = 1;
 
-void game_set_seed(uint32_t s) { g_seed = s ? s : 1; }
+#ifdef GRPO_RNG_DEBUG
+static _Thread_local int g_seed_set = 0;
+static _Thread_local int g_rand_seed_set = 0;
+#endif
+
+void game_set_seed(uint32_t s) {
+    g_seed = s ? s : 1;
+#ifdef GRPO_RNG_DEBUG
+    g_seed_set = 1;
+#endif
+}
 uint32_t game_random_u32(void) {
+#ifdef GRPO_RNG_DEBUG
+    if (!g_seed_set) {
+        fprintf(stderr, "game_random_u32: seed not set in this thread\n");
+        abort();
+    }
+#endif
     g_seed = g_seed * 1664525u + 1013904223u;
     return g_seed;
 }
@@ -27,8 +50,19 @@ double game_random(void) {
     return (double)v / 4294967296.0;
 }
 
-void random_strategy_set_seed(uint32_t s) { g_rand_seed = s ? s : 1; }
+void random_strategy_set_seed(uint32_t s) {
+    g_rand_seed = s ? s : 1;
+#ifdef GRPO_RNG_DEBUG
+    g_rand_seed_set = 1;
+#endif
+}
 double random_strategy_random(void) {
+#ifdef GRPO_RNG_DEBUG
+    if (!g_rand_seed_set) {
+        fprintf(stderr, "random_strategy_random: seed not set in this thread\n");
+        abort();
+    }
+#endif
     g_rand_seed = g_rand_seed * 1664525u + 1013904223u;
     return (double)g_rand_seed / 4294967296.0;
 }
