@@ -13,6 +13,7 @@
 #define STRAT_DYNAMITE    4
 #define STRAT_ROBUSTA     5
 #define STRAT_FIRECRACKER 6
+#define STRAT_GUNPOWDER   7
 
 // Returns chosen move index in moves->moves[] (0..moves->n-1).
 typedef int (*StrategyFn)(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
@@ -22,5 +23,6 @@ int espresso_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves
 int handwritten_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
 int robusta_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
 int firecracker_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
+int gunpowder_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
 
 #endif

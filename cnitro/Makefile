@@ -4,8 +4,8 @@ LDFLAGS ?= -lm -framework Accelerate
 
 CORE_SRC := src/game.c src/legal.c src/random_strategy.c src/espresso_strategy.c \
             src/handwritten_strategy.c src/robusta_strategy.c \
-            src/firecracker_strategy.c src/tokenize.c \
-            src/nn.c src/nn_thread.c src/nitro_strategy.c
+            src/firecracker_strategy.c src/gunpowder_strategy.c \
+            src/tokenize.c src/nn.c src/nn_thread.c src/nitro_strategy.c
 CORE_OBJ := $(CORE_SRC:src/%.c=build/%.o)
 
 GRPO_SRC := src/grpo_encode.c src/grpo_net.c src/grpo_format.c src/grpo_collect.c src/grpo_train.c src/dynamite_strategy.c src/grpo_pool.c src/grpo_rl.c
