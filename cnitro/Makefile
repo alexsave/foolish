@@ -12,7 +12,7 @@ GRPO_SRC := src/grpo_encode.c src/grpo_net.c src/grpo_format.c src/grpo_collect.
 GRPO_OBJ := $(GRPO_SRC:src/%.c=build/%.o)
 
 .PHONY: all clean tests
-all: build/cnitro_collect build/cnitro_train build/cnitro_eval build/cnitro_tests build/cnitro_cross_check build/cnitro_inspect build/cnitro_replay build/cnitro_grpo
+all: build/cnitro_collect build/cnitro_train build/cnitro_eval build/cnitro_tests build/cnitro_cross_check build/cnitro_inspect build/cnitro_replay build/cnitro_grpo build/cnitro_elo
 
 build/%.o: src/%.c
 	@mkdir -p build
@@ -34,6 +34,8 @@ build/cnitro_replay: $(CORE_OBJ) build/main_replay.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 build/cnitro_grpo: $(CORE_OBJ) $(GRPO_OBJ) build/main_grpo.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+build/cnitro_elo: $(CORE_OBJ) build/main_elo.o
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 build/main_collect.o: src/main_collect.c
 	@mkdir -p build
@@ -51,6 +53,9 @@ build/main_replay.o: src/main_replay.c
 	@mkdir -p build
 	$(CC) $(CFLAGS) -c $< -o $@
 build/main_grpo.o: src/main_grpo.c
+	@mkdir -p build
+	$(CC) $(CFLAGS) -c $< -o $@
+build/main_elo.o: src/main_elo.c
 	@mkdir -p build
 	$(CC) $(CFLAGS) -c $< -o $@
 build/tests.o: tests/tests.c
