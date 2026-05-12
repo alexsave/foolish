@@ -56,6 +56,7 @@ static int dispatch_choose(int strat, const Game *g, int pi, const LegalMoves *m
         case STRAT_NITRO:       return nitro_strategy_choose(g, pi, moves, NULL);
         case STRAT_DYNAMITE:    return dynamite_strategy_choose(g, pi, moves, NULL);
         case STRAT_ROBUSTA:     return robusta_strategy_choose(g, pi, moves, NULL);
+        case STRAT_FIRECRACKER: return firecracker_strategy_choose(g, pi, moves, NULL);
         default:                return -1;
     }
 }
@@ -120,6 +121,7 @@ static int parse_strategy(const char *s) {
     if (strcmp(s, "nitro")    == 0) return STRAT_NITRO;
     if (strcmp(s, "dynamite") == 0) return STRAT_DYNAMITE;
     if (strcmp(s, "robusta")  == 0) return STRAT_ROBUSTA;
+    if (strcmp(s, "firecracker") == 0 || strcmp(s, "fc") == 0) return STRAT_FIRECRACKER;
     return -1;
 }
 

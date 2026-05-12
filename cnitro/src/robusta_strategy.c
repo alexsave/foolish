@@ -432,11 +432,13 @@ static bool apply_move(Game *g, int p_idx, const LegalMove *m) {
     }
 }
 
-// Roll the game forward using handwritten for every seat, until completion
+// Roll the game forward using `rollout_fn` for every seat, until completion
 // or `max_turns` reached. Uses calculate_legal_moves_lite (single greedy
-// cover) so cover enumeration doesn't blow up — handwritten picks the
-// lowest-product cover anyway.
-static int simulate_to_end(Game *g, int my_idx, int max_turns) {
+// cover) so cover enumeration doesn't blow up. Callers pass:
+//   - handwritten_strategy_choose for robusta (safe deterministic baseline)
+//   - espresso_strategy_choose  for firecracker (cheats inside the
+//     fictional state — which is robusta's own MC sample, not real cards)
+static int simulate_to_end(Game *g, int my_idx, int max_turns, StrategyFn rollout_fn) {
     int turns = 0;
     while (game_done(g) < 0 && turns++ < max_turns) {
         int elig[MAX_PLAYERS]; int n_e = 0;
@@ -448,7 +450,7 @@ static int simulate_to_end(Game *g, int my_idx, int max_turns) {
             LegalMoves moves;
             calculate_legal_moves_lite(g, pi, &moves);
             if (moves.n == 0) continue;
-            int idx = handwritten_strategy_choose(g, pi, &moves, NULL);
+            int idx = rollout_fn(g, pi, &moves, NULL);
             if (idx < 0 || idx >= moves.n) continue;
             if (apply_move(g, pi, &moves.moves[idx])) { acted = true; break; }
         }
@@ -463,7 +465,8 @@ static int simulate_to_end(Game *g, int my_idx, int max_turns) {
 
 // Evaluate a candidate move via Monte Carlo: avg seat-`my_idx` finish.
 static double mc_eval_move(const Game *g_orig, int my_idx, const LegalMove *m,
-                            const UnseenPool *u, int n_samples, uint32_t base_seed) {
+                            const UnseenPool *u, int n_samples, uint32_t base_seed,
+                            StrategyFn rollout_fn) {
     double total = 0.0;
     int valid = 0;
     for (int s = 0; s < n_samples; s++) {
@@ -471,7 +474,7 @@ static double mc_eval_move(const Game *g_orig, int my_idx, const LegalMove *m,
         uint32_t seed = base_seed + (uint32_t)(s + 1) * 0x85EBCA77u;
         if (!sample_consistent_state(&g, g_orig, my_idx, u, seed)) continue;
         if (!apply_move(&g, my_idx, m)) continue;
-        int fp = simulate_to_end(&g, my_idx, 600);
+        int fp = simulate_to_end(&g, my_idx, 600, rollout_fn);
         if (fp == 0) fp = g.num_players;  // count incomplete as durak (worst)
         total += (double)fp;
         valid++;
@@ -519,34 +522,50 @@ static double rollout_eval(const UnseenPool *u, const Game *g, int bot_idx,
 
 // ---------- choose --------------------------------------------------
 
-// Per-PC entry points. Each can be iterated independently. 3p..8p currently
-// share one implementation; promote any to its own function as needed.
-static int robusta_choose_2p(const Game *g, int bot_idx, const LegalMoves *moves);
-static int robusta_choose_multi(const Game *g, int bot_idx, const LegalMoves *moves);
-// All PCs use Monte Carlo move selection (robusta_choose_2p_real, generic).
-// Keep separate dispatch entry points so we can tune sample counts or hybrid
-// behavior per PC later.
-static int robusta_choose_2p_real(const Game *g, int bot_idx, const LegalMoves *moves);
-static int robusta_choose_3p(const Game *g, int bot_idx, const LegalMoves *moves) { return robusta_choose_2p_real(g, bot_idx, moves); }
-static int robusta_choose_4p(const Game *g, int bot_idx, const LegalMoves *moves) { return robusta_choose_2p_real(g, bot_idx, moves); }
-static int robusta_choose_5p(const Game *g, int bot_idx, const LegalMoves *moves) { return robusta_choose_2p_real(g, bot_idx, moves); }
-static int robusta_choose_6p(const Game *g, int bot_idx, const LegalMoves *moves) { return robusta_choose_2p_real(g, bot_idx, moves); }
-static int robusta_choose_7p(const Game *g, int bot_idx, const LegalMoves *moves) { return robusta_choose_2p_real(g, bot_idx, moves); }
-static int robusta_choose_8p(const Game *g, int bot_idx, const LegalMoves *moves) { return robusta_choose_2p_real(g, bot_idx, moves); }
+static int mc_samples_for_pc(int num_players) {
+    if (num_players <= 2) return 12;
+    if (num_players <= 4) return 8;
+    if (num_players <= 6) return 5;
+    return 4;
+}
 
 int robusta_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx) {
     (void)ctx;
     if (moves->n == 0) return -1;
-    switch (g->num_players) {
-        case 2: return robusta_choose_2p(g, bot_idx, moves);
-        case 3: return robusta_choose_3p(g, bot_idx, moves);
-        case 4: return robusta_choose_4p(g, bot_idx, moves);
-        case 5: return robusta_choose_5p(g, bot_idx, moves);
-        case 6: return robusta_choose_6p(g, bot_idx, moves);
-        case 7: return robusta_choose_7p(g, bot_idx, moves);
-        case 8: return robusta_choose_8p(g, bot_idx, moves);
-        default: return robusta_choose_multi(g, bot_idx, moves);
+    // Robusta uses handwritten as the deterministic rollout policy.
+    return robusta_mc_choose(g, bot_idx, moves, handwritten_strategy_choose);
+}
+
+// Generic MC move selector — Monte Carlo over fictional consistent states,
+// scored by simulating to game end with `rollout_fn` for every seat.
+int robusta_mc_choose(const Game *g, int bot_idx, const LegalMoves *moves,
+                       StrategyFn rollout_fn) {
+    if (moves->n == 0) return -1;
+    if (moves->n == 1) return 0;
+
+    int n_non_pickup = 0, last_non_pickup = -1;
+    for (int i = 0; i < moves->n; i++) {
+        if (moves->moves[i].type != MOVE_PICKUP) { n_non_pickup++; last_non_pickup = i; }
     }
+    if (n_non_pickup == 0) return 0;
+    if (n_non_pickup == 1) return last_non_pickup;
+
+    UnseenPool U; build_unseen_pool(g, bot_idx, &U);
+
+    uint32_t base_seed = (uint32_t)g->num_logs * 0x9E3779B1u
+                       ^ (uint32_t)g->discard_pile_length
+                       ^ ((uint32_t)g->deck_count << 7);
+    int n_samples = mc_samples_for_pc(g->num_players);
+
+    int best = -1;
+    double best_score = 1e30;
+    for (int i = 0; i < moves->n; i++) {
+        if (moves->moves[i].type == MOVE_PICKUP) continue;
+        double s = mc_eval_move(g, bot_idx, &moves->moves[i], &U,
+                                 n_samples, base_seed + (uint32_t)i, rollout_fn);
+        if (s < best_score) { best_score = s; best = i; }
+    }
+    return best >= 0 ? best : 0;
 }
 
 // ---------- multi-player (PC 3..8) -----------------------------------
@@ -833,257 +852,3 @@ static int robusta_choose_7p_real(const Game *g, int bot_idx, const LegalMoves *
     return handwritten_strategy_choose(g, bot_idx, moves, NULL);
 }
 
-// ---------- PC=2 (1v1) -----------------------------------------------
-//
-// Standalone strategy for 2-player games. Free to iterate without touching
-// the multi-player path. Currently mirrors the v4/v7 1v1 logic — rollout-
-// based attack selection + product-of-scores cover + pass-avoidance.
-static int robusta_choose_2p_baseline_test(const Game *g, int bot_idx, const LegalMoves *moves) {
-    return handwritten_strategy_choose(g, bot_idx, moves, NULL);
-}
-static int robusta_choose_2p_real(const Game *g, int bot_idx, const LegalMoves *moves);
-static int robusta_choose_2p(const Game *g, int bot_idx, const LegalMoves *moves) {
-    return robusta_choose_2p_real(g, bot_idx, moves);
-}
-
-// Intercept layer: if we're the defender and the only way to cover is to
-// burn a trump (no non-trump full-cover exists), evaluate pickup vs cover.
-// Conditions for pickup:
-//   - attack is low-value (sum < threshold)
-//   - we have >= 2 trumps in hand (cover would drop us to 1)
-//   - deck has cards (we'll draw replacements)
-// Returns the pickup move index if intercepting; -1 otherwise.
-static int intercept_pickup_over_trump_cover(const Game *g, int bot_idx, const LegalMoves *moves) {
-    if (g->defender != bot_idx) return -1;
-
-    int cover_idx[MAX_LEGAL_MOVES]; int cnv = 0;
-    int pickup_idx = -1;
-    int n_uncovered = 0;
-    for (int i = 0; i < g->num_battles; i++) if (!g->table_battles[i].has_defense) n_uncovered++;
-    for (int i = 0; i < moves->n; i++) {
-        if (moves->moves[i].type == MOVE_COVER && moves->moves[i].n_cards == n_uncovered) cover_idx[cnv++] = i;
-        else if (moves->moves[i].type == MOVE_PICKUP) pickup_idx = i;
-    }
-    if (cnv == 0 || pickup_idx < 0) return -1;
-
-    // Check whether every full-cover uses at least one trump.
-    bool all_use_trump = true;
-    for (int i = 0; i < cnv; i++) {
-        const LegalMove *m = &moves->moves[cover_idx[i]];
-        bool uses_trump = false;
-        for (int j = 0; j < m->n_cards; j++) if (m->cards[j].suit == g->power_suit) { uses_trump = true; break; }
-        if (!uses_trump) { all_use_trump = false; break; }
-    }
-    if (!all_use_trump) return -1;
-
-    // Sum attack values being defended.
-    int attack_sum = 0;
-    for (int i = 0; i < g->num_battles; i++) {
-        if (!g->table_battles[i].has_defense) attack_sum += g->table_battles[i].attack.value;
-    }
-
-    const Player *bot = &g->players[bot_idx];
-    int my_trumps = 0;
-    for (int i = 0; i < bot->hand_count; i++) if (bot->hand[i].suit == g->power_suit) my_trumps++;
-
-    bool deck_active = (g->deck_count > 0 || g->has_flipped);
-
-    // Trade conditions: trump retention > expected pickup loss.
-    //   * Attack is cheap to pick up (low sum).
-    //   * We have multiple trumps so 1 retained means a lot.
-    //   * Deck still drawing — we'll replenish.
-    if (deck_active && my_trumps >= 2 && attack_sum <= 14) {
-        return pickup_idx;
-    }
-    return -1;
-}
-
-// Pick how many MC samples to use given a game's seat count. Larger games
-// have much longer simulations, so we drop sample count to keep wall time
-// reasonable; smaller games can afford more samples for tighter estimates.
-static int mc_samples_for_pc(int num_players) {
-    // PC=2 needs 12+ samples to keep the 1.22 mean_fp result. Don't lower.
-    if (num_players <= 2) return 12;
-    if (num_players <= 4) return 8;
-    if (num_players <= 6) return 5;
-    return 4;
-}
-
-static int robusta_choose_2p_real(const Game *g, int bot_idx, const LegalMoves *moves) {
-    // Generic MC move selector. For each legal non-pickup move, sample
-    // fictional consistent states, apply the move, simulate to game end
-    // with handwritten for every seat, score by seat-`bot_idx`'s expected
-    // finish position. Lower is better.
-    if (moves->n == 1) return 0;
-
-    // Fast paths: only one non-pickup candidate, or only good/pickup.
-    int n_non_pickup = 0, last_non_pickup = -1;
-    for (int i = 0; i < moves->n; i++) {
-        if (moves->moves[i].type != MOVE_PICKUP) { n_non_pickup++; last_non_pickup = i; }
-    }
-    if (n_non_pickup == 0) return 0;          // only pickup → take it
-    if (n_non_pickup == 1) return last_non_pickup; // forced single non-pickup
-
-    UnseenPool U; build_unseen_pool(g, bot_idx, &U);
-
-    // Stable seed derived from game state — same state across MC calls gets
-    // the same fictional samples, keeping the eval deterministic.
-    uint32_t base_seed = (uint32_t)g->num_logs * 0x9E3779B1u
-                       ^ (uint32_t)g->discard_pile_length
-                       ^ ((uint32_t)g->deck_count << 7);
-    int n_samples = mc_samples_for_pc(g->num_players);
-
-    int best = -1;
-    double best_score = 1e30;
-    for (int i = 0; i < moves->n; i++) {
-        if (moves->moves[i].type == MOVE_PICKUP) continue;
-        double s = mc_eval_move(g, bot_idx, &moves->moves[i], &U, n_samples, base_seed + (uint32_t)i);
-        if (s < best_score) { best_score = s; best = i; }
-    }
-    return best >= 0 ? best : 0;
-}
-
-// Below: the older rollout-based 2p logic, kept here for reference. Currently
-// dead code — robusta_choose_2p_real returns above. Re-enable if/when we want
-// to re-experiment with a smarter attack picker.
-static int robusta_choose_2p_unused(const Game *g, int bot_idx, const LegalMoves *moves) {
-    const Player *bot = &g->players[bot_idx];
-    UnseenPool U; build_unseen_pool(g, bot_idx, &U);
-
-    // Filter attacks by trump conservation. Without opp's actual trumps,
-    // gate trump attacks by the deck-progress probability.
-    int n_attack = 0, n_non_trump = 0, n_trump = 0;
-    for (int i = 0; i < moves->n; i++) {
-        if (moves->moves[i].type == MOVE_ATTACK) {
-            n_attack++;
-            if (move_is_attack_all_non_trump(&moves->moves[i], g->power_suit)) n_non_trump++;
-            else if (move_is_attack_any_trump(&moves->moves[i], g->power_suit)) n_trump++;
-        }
-    }
-    int candidate_idx[MAX_LEGAL_MOVES]; int cn = 0;
-    if (n_attack > 0) {
-        if (n_non_trump > 0) {
-            for (int i = 0; i < moves->n; i++) {
-                if (move_is_attack_all_non_trump(&moves->moves[i], g->power_suit)) candidate_idx[cn++] = i;
-            }
-        } else if (n_trump > 0) {
-            if (game_random() < get_trump_attack_probability(g)) {
-                for (int i = 0; i < moves->n; i++) {
-                    if (move_is_attack_any_trump(&moves->moves[i], g->power_suit)) candidate_idx[cn++] = i;
-                }
-            } else {
-                for (int i = 0; i < moves->n; i++) {
-                    if (moves->moves[i].type == MOVE_GOOD) return i;
-                }
-            }
-        }
-    }
-
-    if (cn > 0) {
-        int best = candidate_idx[0];
-        double best_eval = -1e30;
-        int best_count = -1;
-        int best_sum = INT32_MAX;
-        bool first = true;
-
-        int defender_hand = defender_hand_size(g, bot_idx);
-        double exp_opp_trumps = 0.0;
-        if (U.n > 0) exp_opp_trumps = (double)U.trumps * (double)defender_hand / (double)U.n;
-
-        for (int ci = 0; ci < cn; ci++) {
-            const LegalMove *m = &moves->moves[candidate_idx[ci]];
-
-            // PC=2: pure rollout signal, 30 samples. Espresso-grade 1-ply
-            // lookahead averaged over hands drawn from the unseen pool.
-            double e = rollout_eval(&U, g, bot_idx,
-                                     m->cards, m->n_cards,
-                                     bot->hand, bot->hand_count,
-                                     defender_hand, 30);
-
-            int cnt = m->n_cards;
-            int sum = 0;
-            for (int i = 0; i < cnt; i++) sum += card_score(m->cards[i], g->power_suit);
-
-            bool take = first
-                || e > best_eval
-                || (e == best_eval && cnt > best_count)
-                || (e == best_eval && cnt == best_count && sum < best_sum);
-            if (take) {
-                best = candidate_idx[ci];
-                best_eval = e;
-                best_count = cnt;
-                best_sum = sum;
-                first = false;
-            }
-        }
-        (void)exp_opp_trumps;
-        return best;
-    }
-
-    // 1v1: pass moves usually illegal (only 2 IN, no third to forward to).
-    // If we ever see one as the only non-pickup option, take it; otherwise
-    // skip to cover/etc.
-    int pass_idx[MAX_LEGAL_MOVES]; int pn = 0;
-    for (int i = 0; i < moves->n; i++) if (moves->moves[i].type == MOVE_PASS) pass_idx[pn++] = i;
-    if (pn > 0) {
-        bool has_other = false;
-        for (int i = 0; i < moves->n; i++) {
-            int t = moves->moves[i].type;
-            if (t != MOVE_PASS && t != MOVE_PICKUP) { has_other = true; break; }
-        }
-        if (!has_other) return pass_idx[0];
-    }
-
-    // Cover: handwritten's product-of-scores (heavy trump penalty).
-    int cover_idx[MAX_LEGAL_MOVES]; int cnv = 0;
-    for (int i = 0; i < moves->n; i++) if (moves->moves[i].type == MOVE_COVER) cover_idx[cnv++] = i;
-    if (cnv > 0) {
-        int uncovered = 0;
-        for (int i = 0; i < g->num_battles; i++) if (!g->table_battles[i].has_defense) uncovered++;
-        int full_idx[MAX_LEGAL_MOVES]; int fn = 0;
-        for (int i = 0; i < cnv; i++) {
-            if (moves->moves[cover_idx[i]].n_cards == uncovered) full_idx[fn++] = cover_idx[i];
-        }
-        if (fn > 0) {
-            int best = full_idx[0];
-            double best_score = 1e30;
-            for (int fi = 0; fi < fn; fi++) {
-                const LegalMove *m = &moves->moves[full_idx[fi]];
-                double prod = 1.0;
-                for (int i = 0; i < m->n_cards; i++) {
-                    prod *= (double)card_score(m->cards[i], g->power_suit);
-                }
-                if (prod < best_score) { best_score = prod; best = full_idx[fi]; }
-            }
-            return best;
-        }
-    }
-
-    for (int i = 0; i < moves->n; i++) if (moves->moves[i].type == MOVE_GOOD) return i;
-
-    // Done attacks: max cards, lowest sum.
-    int done_idx[MAX_LEGAL_MOVES]; int dnv = 0;
-    for (int i = 0; i < moves->n; i++) if (moves->moves[i].type == MOVE_ATTACK) done_idx[dnv++] = i;
-    if (dnv > 0) {
-        int best = done_idx[0];
-        const LegalMove *bm = &moves->moves[best];
-        int best_count = bm->n_cards;
-        int best_sum = 0;
-        for (int i = 0; i < bm->n_cards; i++) best_sum += card_score(bm->cards[i], g->power_suit);
-        for (int i = 1; i < dnv; i++) {
-            const LegalMove *m = &moves->moves[done_idx[i]];
-            int sm = 0;
-            for (int j = 0; j < m->n_cards; j++) sm += card_score(m->cards[j], g->power_suit);
-            int cnt = m->n_cards;
-            bool take = (cnt > best_count) || (cnt == best_count && sm < best_sum);
-            if (take) { best = done_idx[i]; best_count = cnt; best_sum = sm; }
-        }
-        return best;
-    }
-
-    for (int i = 0; i < moves->n; i++) if (moves->moves[i].type == MOVE_PICKUP) return i;
-    int idx = (int)(game_random() * moves->n);
-    if (idx < 0) idx = 0;
-    if (idx >= moves->n) idx = moves->n - 1;
-    return idx;
-}
