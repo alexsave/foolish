@@ -55,6 +55,7 @@ static int dispatch_choose(int strat, const Game *g, int pi, const LegalMoves *m
         case STRAT_HANDWRITTEN: return handwritten_strategy_choose(g, pi, moves, NULL);
         case STRAT_NITRO:       return nitro_strategy_choose(g, pi, moves, NULL);
         case STRAT_DYNAMITE:    return dynamite_strategy_choose(g, pi, moves, NULL);
+        case STRAT_ROBUSTA:     return robusta_strategy_choose(g, pi, moves, NULL);
         default:                return -1;
     }
 }
@@ -118,6 +119,7 @@ static int parse_strategy(const char *s) {
     if (strcmp(s, "handwritten") == 0 || strcmp(s, "hw") == 0) return STRAT_HANDWRITTEN;
     if (strcmp(s, "nitro")    == 0) return STRAT_NITRO;
     if (strcmp(s, "dynamite") == 0) return STRAT_DYNAMITE;
+    if (strcmp(s, "robusta")  == 0) return STRAT_ROBUSTA;
     return -1;
 }
 
@@ -199,12 +201,23 @@ int main(int argc, char **argv) {
             uint64_t fp_sum = 0;
             uint64_t hist[MAX_PLAYERS + 1] = {0};
             int valid = 0;
+            struct timespec t0; clock_gettime(CLOCK_MONOTONIC, &t0);
             for (int gi = 0; gi < games; gi++) {
                 int fp = play_one(seed0 + (uint32_t)gi, n, protagonist, opp);
                 if (fp < 0) continue;
                 fp_sum += (uint64_t)fp;
                 hist[fp]++;
                 valid++;
+                if ((gi + 1) % 100 == 0) {
+                    struct timespec t1; clock_gettime(CLOCK_MONOTONIC, &t1);
+                    double dt = (t1.tv_sec - t0.tv_sec) + (t1.tv_nsec - t0.tv_nsec) * 1e-9;
+                    double mean_so_far = valid ? (double)fp_sum / valid : 0.0;
+                    double win_so_far  = valid ? (double)hist[1] / valid : 0.0;
+                    fprintf(stderr,
+                            "    [pc=%d] %d/%d games  t=%.1fs  rate=%.1f g/s  mean=%.3f  win=%.1f%%\n",
+                            n, gi + 1, games, dt, (gi + 1) / (dt > 0 ? dt : 1.0),
+                            mean_so_far, win_so_far * 100.0);
+                }
             }
             double mean_fp  = valid ? (double)fp_sum / valid : 0.0;
             double baseline = 1.0 + (double)(n - 1) / 2.0;

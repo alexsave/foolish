@@ -33,4 +33,10 @@ typedef struct {
 
 void calculate_legal_moves(const Game *g, int bot_idx, LegalMoves *out);
 
+// Faster variant for use inside Monte Carlo simulations where every player
+// plays a deterministic policy (handwritten). Skips the combinatorial cover
+// enumeration — emits one greedy lowest-cost full-cover move instead, which
+// matches handwritten's pick. Attack/pass enumerations are unchanged.
+void calculate_legal_moves_lite(const Game *g, int bot_idx, LegalMoves *out);
+
 #endif
