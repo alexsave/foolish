@@ -61,6 +61,106 @@ static int dispatch_choose(int strat, const Game *g, int pi, const LegalMoves *m
     }
 }
 
+static const char SUIT_CHAR[4] = { 'S', 'H', 'C', 'D' };
+static const char *VALUE_STR[14] = {
+    "?", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"
+};
+static void format_card_short(Card c, char *buf, size_t n) {
+    const char *v = (c.value >= 1 && c.value <= 13) ? VALUE_STR[c.value] : "?";
+    char s = (c.suit >= 0 && c.suit < 4) ? SUIT_CHAR[(int)c.suit] : '?';
+    snprintf(buf, n, "%s%c", v, s);
+}
+static void format_card_list(const Card *cards, int n, char *buf, size_t buflen) {
+    buf[0] = 0;
+    for (int i = 0; i < n; i++) {
+        char tmp[8]; format_card_short(cards[i], tmp, sizeof(tmp));
+        strncat(buf, tmp, buflen - strlen(buf) - 1);
+        if (i + 1 < n) strncat(buf, ",", buflen - strlen(buf) - 1);
+    }
+}
+
+// Verbose variant of play_one: prints every move with player, type, cards.
+static int play_one_verbose(uint32_t seed, int n_players, int protagonist, int opp) {
+    game_set_seed(seed ? seed : 1);
+    random_strategy_set_seed(seed ? seed : 1);
+    Game g; memset(&g, 0, sizeof(g));
+    g.num_players = (int8_t)n_players;
+    for (int i = 0; i < n_players; i++) {
+        g.players[i].status = PLAYER_STATUS_READY;
+        g.players[i].strategy_key = (int8_t)((i == 0) ? protagonist : opp);
+        snprintf(g.players[i].player_id, sizeof(g.players[i].player_id), "p%d", i);
+    }
+    start_game(&g);
+    printf("seed=%u  trump=%c  deck=%d  hands:", seed, SUIT_CHAR[(int)g.power_suit], g.deck_count);
+    for (int i = 0; i < n_players; i++) {
+        char hbuf[128]; format_card_list(g.players[i].hand, g.players[i].hand_count, hbuf, sizeof(hbuf));
+        printf("  p%d=[%s]", i, hbuf);
+    }
+    printf("\n");
+
+    int iters = 0;
+    int step = 0;
+    while (game_done(&g) < 0 && iters++ < 4000) {
+        int elig[MAX_PLAYERS]; int n_e = 0;
+        for (int i = 0; i < g.num_players; i++) if (should_bot_act(&g, i)) elig[n_e++] = i;
+        if (n_e == 0) break;
+        for (int i = n_e - 1; i > 0; i--) {
+            int j = (int)(game_random() * (i + 1));
+            if (j < 0) j = 0; if (j > i) j = i;
+            int t = elig[i]; elig[i] = elig[j]; elig[j] = t;
+        }
+        bool acted = false;
+        for (int k = 0; k < n_e; k++) {
+            int pi = elig[k];
+            LegalMoves moves;
+            calculate_legal_moves(&g, pi, &moves);
+            if (moves.n == 0) continue;
+            int idx = dispatch_choose(g.players[pi].strategy_key, &g, pi, &moves);
+            if (idx < 0 || idx >= moves.n) continue;
+            const LegalMove *m = &moves.moves[idx];
+            const char *mt =
+                m->type == MOVE_ATTACK ? "ATTACK" :
+                m->type == MOVE_COVER  ? "COVER " :
+                m->type == MOVE_PASS   ? "PASS  " :
+                m->type == MOVE_PICKUP ? "PICKUP" :
+                m->type == MOVE_GOOD   ? "GOOD  " : "?";
+            char cbuf[128]; format_card_list(m->cards, m->n_cards, cbuf, sizeof(cbuf));
+            char table_buf[256]; table_buf[0] = 0;
+            for (int b = 0; b < g.num_battles; b++) {
+                char ab[8], db[8] = {0};
+                format_card_short(g.table_battles[b].attack, ab, sizeof(ab));
+                if (g.table_battles[b].has_defense)
+                    format_card_short(g.table_battles[b].defense, db, sizeof(db));
+                char piece[24];
+                snprintf(piece, sizeof(piece), "%s/%s ", ab, db[0] ? db : "_");
+                strncat(table_buf, piece, sizeof(table_buf) - strlen(table_buf) - 1);
+            }
+            printf("[%3d] p%d  %s  [%-22s]  hand=%d  table=[%s]\n",
+                   ++step, pi, mt, cbuf, g.players[pi].hand_count,
+                   table_buf[0] ? table_buf : "(empty)");
+            bool ok = false;
+            switch (m->type) {
+                case MOVE_ATTACK: ok = handle_attack(&g, pi, m->cards, m->n_cards); break;
+                case MOVE_COVER:  ok = handle_cover (&g, pi, m->cards, m->attack_cards, m->n_cards); break;
+                case MOVE_PASS:   ok = handle_pass  (&g, pi, m->cards, m->n_cards); break;
+                case MOVE_PICKUP: ok = handle_pickup(&g, pi); break;
+                case MOVE_GOOD:   ok = handle_good  (&g, pi); break;
+                default: break;
+            }
+            if (ok) { acted = true; break; }
+        }
+        if (!acted) break;
+    }
+    if (game_done(&g) < 0) { printf("game incomplete\n"); return -1; }
+    printf("\nelimination order:");
+    for (int i = 0; i < g.num_eliminated; i++) printf(" p%d", g.elimination_order[i]);
+    printf("\n");
+    for (int i = 0; i < g.num_eliminated; i++) {
+        if (g.elimination_order[i] == 0) return i + 1;
+    }
+    return g.num_players;
+}
+
 // Play one game. Returns dynamite/nitro seat-0 finish position (1..N).
 // Position N == durak. -1 if the game aborted incomplete.
 static int play_one(uint32_t seed, int n_players, int protagonist, int opp) {
@@ -164,6 +264,19 @@ int main(int argc, char **argv) {
 
     setvbuf(stderr, NULL, _IOLBF, 0);
     double t0 = wall_secs();
+
+    // Verbose single-game path: --inspect=<seed> prints every move.
+    const char *inspect_str = get_arg(argc, argv, "inspect", NULL);
+    if (inspect_str) {
+        int seed = atoi(inspect_str);
+        int n = atoi(pcs);
+        if (n < 2) n = 2;
+        printf("=== INSPECT  %s vs %s  seed=%d  pc=%d ===\n",
+               strat_str, opp_str, seed, n);
+        int fp = play_one_verbose((uint32_t)seed, n, protagonist, opp);
+        printf("\nseat-0 finish position: %d (1=winner, %d=durak)\n", fp, n);
+        return 0;
+    }
 
     // Legacy 2p path: --from / --to over a single player count.
     if (strchr(pcs, ',') == NULL && atoi(pcs) == 2
