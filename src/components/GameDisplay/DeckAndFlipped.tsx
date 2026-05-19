@@ -7,13 +7,13 @@ import { SuitIcon } from "../SovietIcon";
 
 export const DeckAndFlipped = () => {
     const game: PersonalGame = useServer().game as PersonalGame;
-    const { inFlightFromDeck } = useAnimation();
+    const { inFlightFromDeck, inFlightToFlipped } = useAnimation();
 
-    // Cards mid-flight FROM the deck haven't yet had their snapshot applied
-    // (game_state commits at animation end). AnimationContext drops this count
-    // BEFORE the animation starts and resets it when game_state commits, so
-    // the deck visual + badge shrink in lockstep with the cards leaving.
+    // Cards mid-flight FROM the deck pile drive the visible pile size.
+    // Cards mid-flight TO the flipped slot are still in the deck system, so
+    // they count toward the badge total even though they've left the pile.
     const displayedDeckLength = Math.max(0, game.deck_length - inFlightFromDeck);
+    const badgeTotal = displayedDeckLength + (game.flipped ? 1 : 0) + inFlightToFlipped;
 
     return <div style={{ display: 'flex', position: 'absolute', top: '0px', left: '0px', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', height: '240px', width: '100px' }}>
         {displayedDeckLength > 0 && (
@@ -32,15 +32,23 @@ export const DeckAndFlipped = () => {
                     pointerEvents: 'none',
                     zIndex: 1003
                 }}>
-                    {displayedDeckLength + (game.flipped ? 1 : 0)}
+                    {badgeTotal}
                 </p>
             </div>
         )}
-        {game.flipped && (
-            <div style={{ marginTop: game.deck_length > 0 ? '-30px' : '0px', zIndex: 0 }} data-location="flipped">
-                <CardFace card={game.flipped} playerId="flipped" />
-            </div>
-        )}
+        {/* Reserve the flipped slot in the layout from the start so the deck
+            pile doesn't shift when the flipped card lands. */}
+        <div
+            data-location="flipped"
+            style={{
+                marginTop: displayedDeckLength > 0 ? '-30px' : '0px',
+                width: '50px',
+                height: '70px',
+                zIndex: 0,
+            }}
+        >
+            {game.flipped && <CardFace card={game.flipped} playerId="flipped" />}
+        </div>
         {/* Trump indicator appears when deck and flipped card are gone */}
         {game.deck_length === 0 && !game.flipped && (
             <div style={{
