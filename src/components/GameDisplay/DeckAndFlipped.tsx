@@ -7,24 +7,12 @@ import { SuitIcon } from "../SovietIcon";
 
 export const DeckAndFlipped = () => {
     const game: PersonalGame = useServer().game as PersonalGame;
-    const { currentAnimation, getCardAnimationState } = useAnimation();
+    const { inFlightFromDeck } = useAnimation();
 
     // Cards mid-flight FROM the deck haven't yet had their snapshot applied
-    // (game_state commits at animation end). Subtract them so the deck visual
-    // and badge stay consistent with what's flying.
-    //
-    // Use getCardAnimationState to detect whether the animation is actively
-    // running — currentAnimation persists through the ~100ms gap *after*
-    // game_state commits and before the next animation starts, and during
-    // that window subtracting would double-deduct (state is already correct).
-    const firstCard = currentAnimation?.cards?.[0];
-    const isLive = firstCard
-        ? getCardAnimationState(firstCard, currentAnimation?.player_id).isAnimating
-        : false;
-    const inFlightFromDeck =
-        isLive && currentAnimation?.from_location === 'deck' && currentAnimation.cards
-            ? currentAnimation.cards.length
-            : 0;
+    // (game_state commits at animation end). AnimationContext drops this count
+    // BEFORE the animation starts and resets it when game_state commits, so
+    // the deck visual + badge shrink in lockstep with the cards leaving.
     const displayedDeckLength = Math.max(0, game.deck_length - inFlightFromDeck);
 
     return <div style={{ display: 'flex', position: 'absolute', top: '0px', left: '0px', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', height: '240px', width: '100px' }}>

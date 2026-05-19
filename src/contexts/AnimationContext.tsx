@@ -40,6 +40,10 @@ interface ClientAnimationEvent  {
 interface AnimationContextType {
     isAnimating: boolean;
     currentAnimation: ClientAnimationEvent | null;
+    // Cards currently flying from the deck. Decremented BEFORE the animation
+    // starts (so the deck visual drops in lockstep with the cards leaving) and
+    // reset back to 0 when the animation's game_state commits.
+    inFlightFromDeck: number;
     getCardAnimationState: (card: Card, playerId?: string) => {
         isAnimating: boolean;
         animationType: string | null;
@@ -122,6 +126,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     const [isAnimating, setIsAnimating] = useState(false);
     const [currentAnimation, setCurrentAnimation] = useState<ClientAnimationEvent | null>(null);
     const [animationQueue, setAnimationQueue] = useState<ClientAnimationEvent[]>([]);
+    const [inFlightFromDeck, setInFlightFromDeck] = useState(0);
 
     // Keep refs in sync with state
     useEffect(() => {
@@ -1181,6 +1186,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         if (animationQueueRef.current.length === 0) {
             setIsAnimating(false);
             setCurrentAnimation(null);
+            setInFlightFromDeck(0);
 
             // Clear processed event content when queue is empty (allows future legitimate duplicates)
             if (processedEventContent.current.size > 0) {
@@ -1213,6 +1219,14 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         setCurrentAnimation(nextAnimation);
         setAnimationQueue(prev => prev.slice(1));
         setIsAnimating(true);
+
+        // Drop the deck's displayed count NOW (in the same render as currentAnimation
+        // becomes visible) so the deck shrinks in lockstep with the cards leaving.
+        if (nextAnimation.from_location === 'deck' && nextAnimation.cards && nextAnimation.cards.length > 0) {
+            setInFlightFromDeck(nextAnimation.cards.length);
+        } else {
+            setInFlightFromDeck(0);
+        }
 
         // Start tracking cards in this animation (simplified - CSS handles the actual animation)
         if (nextAnimation.cards && nextAnimation.cards.length > 0) {
@@ -1247,6 +1261,10 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
                 updateGameState(currentGameIdRef.current, nextAnimation.game_state);
             }
+
+            // Cards have landed; game.deck_length now reflects the reduction, so
+            // clear the in-flight count to avoid double-counting during the gap.
+            setInFlightFromDeck(0);
 
             // Remove cards from animating state
             if (nextAnimation.cards) {
@@ -1645,6 +1663,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         <AnimationContext.Provider value={{
             isAnimating,
             currentAnimation,
+            inFlightFromDeck,
             getCardAnimationState,
             attack,
             pass,
