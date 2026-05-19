@@ -18,7 +18,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define GRPO_POOL_CAP 16        // hard cap; soft target ~10
+#define GRPO_POOL_CAP 32        // hard cap; soft target ~10
 #define GRPO_POOL_NAME_LEN 64
 
 typedef enum {
@@ -40,9 +40,14 @@ typedef struct {
     int        n_members;
     int        soft_cap;
     int        next_iter;        // monotone counter passed to iter_added
+    // Sampling weight per member = 1 + recency_bias * iter_added.
+    //   0.0 = uniform over members
+    //   1.0 = linear-by-recency (default)
+    float      recency_bias;
 } GrpoPool;
 
 void grpo_pool_init(GrpoPool *pool, int soft_cap);
+void grpo_pool_set_recency_bias(GrpoPool *pool, float bias);
 // Add the permanent handwritten anchor. Call once at startup.
 void grpo_pool_add_handwritten_anchor(GrpoPool *pool);
 // Add a dynamite checkpoint. `net` is borrowed — caller keeps ownership

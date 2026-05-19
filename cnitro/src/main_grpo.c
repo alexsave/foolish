@@ -652,12 +652,17 @@ static int mode_grpo_train(int argc, char **argv) {
     float kl_beta         = (float)atof(get_arg(argc, argv, "kl-beta",   "0.02"));
     float clip_norm       = (float)atof(get_arg(argc, argv, "clip-norm", "1.0"));
     int   eval_every      = parse_int(get_arg(argc, argv, "eval-every", "10"), 10);
-    int   eval_games      = parse_int(get_arg(argc, argv, "eval-games", "100"), 100);
+    int   eval_games      = parse_int(get_arg(argc, argv, "eval-games", "300"), 300);
     int   pool_soft_cap   = parse_int(get_arg(argc, argv, "pool-soft-cap", "10"), 10);
+    float pool_recency_bias = (float)atof(get_arg(argc, argv, "pool-recency-bias", "1.0"));
     int   min_players     = parse_int(get_arg(argc, argv, "min-players", "2"), 2);
     int   max_players     = parse_int(get_arg(argc, argv, "max-players", "8"), 8);
     uint32_t base_seed    = (uint32_t)parse_int(get_arg(argc, argv, "seed", "1"), 1);
     float promote_margin  = (float)atof(get_arg(argc, argv, "promote-margin", "0.05"));
+    // Per-PC regression cap: even if overall improves, refuse to promote
+    // when any individual PC regressed by more than this versus the most
+    // recently promoted checkpoint (or the baseline if no promotions yet).
+    float regression_cap  = (float)atof(get_arg(argc, argv, "regression-cap", "0.05"));
 
     if (ensure_dir(out_dir) != 0) {
         fprintf(stderr, "grpo: cannot create out dir %s\n", out_dir);
@@ -681,6 +686,7 @@ static int mode_grpo_train(int argc, char **argv) {
     GrpoAdam opt; grpo_adam_init(&opt, lr, 0.9f, 0.999f, 1e-8f, clip_norm);
 
     GrpoPool pool; grpo_pool_init(&pool, pool_soft_cap);
+    grpo_pool_set_recency_bias(&pool, pool_recency_bias);
     grpo_pool_add_handwritten_anchor(&pool);
     // Add SFT warm-start as the first dynamite pool member.
     GrpoNet pool_sft; grpo_net_alloc(&pool_sft); grpo_net_load(&pool_sft, sft_ckpt);
@@ -698,15 +704,19 @@ static int mode_grpo_train(int argc, char **argv) {
         .k_epochs = k_epochs, .minibatch_size = minibatch,
     };
 
-    // Baseline eval: how well does the SFT model do before any GRPO?
-    const int eval_pcs[] = {2, 4, 6, 8};
-    int n_eval_pcs = sizeof(eval_pcs) / sizeof(eval_pcs[0]);
+    // Baseline eval across the player-count range we're training on.
+    int eval_pcs[MAX_PLAYERS + 1];
+    int n_eval_pcs = 0;
+    for (int p = min_players; p <= max_players; p++) eval_pcs[n_eval_pcs++] = p;
     GrpoEvalResult baseline; grpo_run_eval(&pi_theta, eval_games, 700001u,
                                            eval_pcs, n_eval_pcs, &baseline);
     fprintf(stderr, "[baseline] mean_finish overall=%.3f  per-pc:", baseline.overall_mean_finish);
     for (int i = 0; i < n_eval_pcs; i++) fprintf(stderr, " pc%d=%.2f", eval_pcs[i], baseline.mean_finish_per_pc[eval_pcs[i]]);
     fprintf(stderr, "\n");
     double best_overall = baseline.overall_mean_finish;
+    // Per-PC bests gate the no-regression check. Updated only on promotion.
+    double best_per_pc[MAX_PLAYERS + 1] = {0};
+    for (int i = 0; i < n_eval_pcs; i++) best_per_pc[eval_pcs[i]] = baseline.mean_finish_per_pc[eval_pcs[i]];
     int    promotions   = 0;
 
     // Allocate the pool ckpt slots (each new promotion copies pi_theta).
@@ -745,22 +755,42 @@ static int mode_grpo_train(int argc, char **argv) {
             snprintf(path, sizeof(path), "%s/iter_%04d.bin", out_dir, iter);
             grpo_net_save(&pi_theta, path);
 
-            // Promote if improved by margin.
-            if (er.overall_mean_finish + promote_margin < best_overall) {
-                // Find a free pool slot, copy pi_theta into it, register.
+            // Promotion criteria:
+            //   (1) overall mean_finish improves by at least `promote_margin`
+            //   (2) no individual PC regresses by more than `regression_cap`
+            //       versus the most recently promoted checkpoint (or baseline
+            //       if no promotions yet)
+            bool overall_ok    = (er.overall_mean_finish + promote_margin < best_overall);
+            int  worst_pc      = -1;
+            double worst_delta = -1e30;
+            for (int i = 0; i < n_eval_pcs; i++) {
+                int pc = eval_pcs[i];
+                double delta = er.mean_finish_per_pc[pc] - best_per_pc[pc];  // +ve = regression
+                if (delta > worst_delta) { worst_delta = delta; worst_pc = pc; }
+            }
+            bool no_regression = (worst_delta <= (double)regression_cap);
+
+            if (overall_ok && no_regression) {
                 int free_slot = -1;
                 for (int s = 0; s < GRPO_POOL_CAP; s++) if (!pool_slot_used[s]) { free_slot = s; break; }
                 if (free_slot >= 0) {
                     grpo_net_alloc(&pool_slots[free_slot]);
-                    grpo_net_load(&pool_slots[free_slot], path);  // load from the saved ckpt
+                    grpo_net_load(&pool_slots[free_slot], path);
                     char name[64]; snprintf(name, sizeof(name), "iter_%d", iter);
                     grpo_pool_add_dynamite(&pool, name, path, &pool_slots[free_slot]);
                     pool_slot_used[free_slot] = true;
                     promotions++;
                     best_overall = er.overall_mean_finish;
+                    for (int i = 0; i < n_eval_pcs; i++) {
+                        int pc = eval_pcs[i];
+                        best_per_pc[pc] = er.mean_finish_per_pc[pc];
+                    }
                     fprintf(stderr, "  PROMOTED to pool (now %d members, %d total promotions)\n",
                             pool.n_members, promotions);
                 }
+            } else if (overall_ok && !no_regression) {
+                fprintf(stderr, "  not promoted: overall improved but pc%d regressed %+.3f (cap %.3f)\n",
+                        worst_pc, worst_delta, regression_cap);
             }
         }
     }

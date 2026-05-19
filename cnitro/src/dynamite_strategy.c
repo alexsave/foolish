@@ -1,7 +1,6 @@
 // Dynamite play-time strategy — see dynamite_strategy.h.
 
 #include "dynamite_strategy.h"
-#include "grpo_encode.h"
 
 #include <stdbool.h>
 

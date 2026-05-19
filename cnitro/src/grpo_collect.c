@@ -2,7 +2,6 @@
 
 #include "grpo_collect.h"
 #include "grpo_format.h"
-#include "card.h"
 #include "game.h"
 #include "legal.h"
 #include "strategy.h"

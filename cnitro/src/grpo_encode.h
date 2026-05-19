@@ -48,11 +48,26 @@
 #define STATE_DECK_REMAINING_DIM 1
 #define STATE_PLAYER_COUNT_DIM   7
 
+// New (v2) features for high-PC and endgame regimes:
+//   hidden_trumps: count of trump cards we haven't observed (not in our
+//     hand, not in discard, not in any publicly-known opp pile). Normalized
+//     by 13 (max trumps in a suit). Tells the model how dangerous the
+//     remaining trump pool is — crucial in late-game.
+//   round_phase: 3-way one-hot — early (deck > 16), mid (1 < deck <= 16),
+//     late (deck <= 1). Sharper signal than deck_remaining scalar alone.
+//   distance_to_defender: one-hot over 8 — clockwise hops from self to the
+//     current defender, skipping OUT players. 0 = self IS defender. Helps
+//     the model situate itself in the multi-player attack/defense cycle.
+#define STATE_HIDDEN_TRUMPS_DIM  1
+#define STATE_ROUND_PHASE_DIM    3
+#define STATE_DIST_TO_DEF_DIM    8
+
 #define STATE_DIM ( \
     STATE_OWN_HAND_DIM + STATE_TRUMP_SUIT_DIM + STATE_TRUMP_CARD_DIM + \
     STATE_DISCARD_DIM + STATE_ATTACKS_DIM + STATE_DEFENSES_DIM + \
     STATE_OPPS_DIM + STATE_NUM_LIVE_OPPS_DIM + STATE_SELF_ROLE_DIM + \
-    STATE_DECK_REMAINING_DIM + STATE_PLAYER_COUNT_DIM)
+    STATE_DECK_REMAINING_DIM + STATE_PLAYER_COUNT_DIM + \
+    STATE_HIDDEN_TRUMPS_DIM + STATE_ROUND_PHASE_DIM + STATE_DIST_TO_DEF_DIM)
 
 // --- per-move vector layout ------------------------------------------------
 #define MOVE_TYPE_DIM       5  // ATTACK, COVER, PASS, PICKUP, GOOD

@@ -1,7 +1,6 @@
 // SFT dataset + training loop. See grpo_train.h.
 
 #include "grpo_train.h"
-#include "grpo_encode.h"
 #include "grpo_format.h"
 #include "grpo_net.h"
 #include "legal.h"

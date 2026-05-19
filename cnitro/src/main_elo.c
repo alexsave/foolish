@@ -33,21 +33,23 @@
 #include <string.h>
 #include <time.h>
 
-#define K_FACTOR        32.0
 #define STARTING_ELO    1000.0
-#define MAX_STRATS      16
+#define MAX_COMPS       128
+
+static double K_FACTOR = 32.0;  // configurable via --k-factor
 
 typedef struct {
-    char   name[32];
+    char   name[32];       // unique competitor name (e.g. "robusta_3")
+    char   strat_name[16]; // strategy family name (e.g. "robusta")
     int    strat_key;
     double elo;
     int    games;
     int    wins;
     int    durak;
-} Strategy;
+} Competitor;
 
-static Strategy STRATS[MAX_STRATS];
-static int      N_STRATS = 0;
+static Competitor COMPS[MAX_COMPS];
+static int        N_COMPS = 0;
 
 static const char *get_arg(int argc, char **argv, const char *key, const char *def) {
     size_t kl = strlen(key);
@@ -103,7 +105,7 @@ static bool play_one_game(uint32_t seed, int num_players, const int *seat_strats
     g.num_players = (int8_t)num_players;
     for (int i = 0; i < num_players; i++) {
         g.players[i].status = PLAYER_STATUS_READY;
-        g.players[i].strategy_key = (int8_t)STRATS[seat_strats[i]].strat_key;
+        g.players[i].strategy_key = (int8_t)COMPS[seat_strats[i]].strat_key;
         snprintf(g.players[i].player_id, sizeof(g.players[i].player_id), "p%d", i);
     }
     start_game(&g);
@@ -160,47 +162,46 @@ static void update_elos_from_game(const int *seat_strats, const int *rankings, i
     double changes[MAX_PLAYERS] = {0};
     for (int i = 0; i < num_players; i++) {
         int seat_i = rankings[i];
-        double pr = STRATS[seat_strats[seat_i]].elo;
+        double pr = COMPS[seat_strats[seat_i]].elo;
         for (int j = 0; j < num_players; j++) {
             if (i == j) continue;
             int seat_j = rankings[j];
-            double opr = STRATS[seat_strats[seat_j]].elo;
+            double opr = COMPS[seat_strats[seat_j]].elo;
             double score = (i < j) ? 1.0 : ((i > j) ? 0.0 : 0.5);
             changes[seat_i] += elo_change(pr, opr, score);
         }
     }
     for (int s = 0; s < num_players; s++) {
         int seat = s;
-        STRATS[seat_strats[seat]].elo += changes[seat];
-        STRATS[seat_strats[seat]].games++;
+        COMPS[seat_strats[seat]].elo += changes[seat];
+        COMPS[seat_strats[seat]].games++;
     }
     // wins/durak (winner = rankings[0], durak = rankings[num_players-1])
-    STRATS[seat_strats[rankings[0]]].wins++;
-    STRATS[seat_strats[rankings[num_players - 1]]].durak++;
+    COMPS[seat_strats[rankings[0]]].wins++;
+    COMPS[seat_strats[rankings[num_players - 1]]].durak++;
 }
 
 static int cmp_by_elo(const void *a, const void *b) {
     int ia = *(const int *)a;
     int ib = *(const int *)b;
-    if (STRATS[ib].elo > STRATS[ia].elo) return 1;
-    if (STRATS[ib].elo < STRATS[ia].elo) return -1;
+    if (COMPS[ib].elo > COMPS[ia].elo) return 1;
+    if (COMPS[ib].elo < COMPS[ia].elo) return -1;
     return 0;
 }
 
 static void print_snapshot(int game_no, double t) {
-    int order[MAX_STRATS]; for (int i = 0; i < N_STRATS; i++) order[i] = i;
-    qsort(order, N_STRATS, sizeof(int), cmp_by_elo);
-    printf("\n=== ELO after %d games  (t=%.1fs) ===\n", game_no, t);
-    printf("  %-14s %8s  %6s  %6s  %6s  %6s\n",
-           "strategy", "elo", "games", "wins", "durak", "winΔ");
-    for (int k = 0; k < N_STRATS; k++) {
+    int order[MAX_COMPS]; for (int i = 0; i < N_COMPS; i++) order[i] = i;
+    qsort(order, N_COMPS, sizeof(int), cmp_by_elo);
+    printf("\n=== ELO after %d games  (t=%.1fs)  competitors=%d ===\n", game_no, t, N_COMPS);
+    printf("  %4s  %-18s %8s  %6s  %6s  %6s\n",
+           "rank", "competitor", "elo", "games", "win%", "durak%");
+    for (int k = 0; k < N_COMPS; k++) {
         int i = order[k];
-        double winr = STRATS[i].games ? (double)STRATS[i].wins / STRATS[i].games : 0.0;
-        double durakr = STRATS[i].games ? (double)STRATS[i].durak / STRATS[i].games : 0.0;
-        printf("  %-14s %8.1f  %6d  %5.1f%%  %5.1f%%  %+6.1f\n",
-               STRATS[i].name, STRATS[i].elo, STRATS[i].games,
-               winr * 100.0, durakr * 100.0,
-               STRATS[i].elo - STARTING_ELO);
+        double winr = COMPS[i].games ? (double)COMPS[i].wins / COMPS[i].games : 0.0;
+        double durakr = COMPS[i].games ? (double)COMPS[i].durak / COMPS[i].games : 0.0;
+        printf("  %4d  %-18s %8.1f  %6d  %5.1f%%  %5.1f%%\n",
+               k + 1, COMPS[i].name, COMPS[i].elo, COMPS[i].games,
+               winr * 100.0, durakr * 100.0);
     }
 }
 
@@ -216,21 +217,38 @@ int main(int argc, char **argv) {
     int games            = parse_int_arg(get_arg(argc, argv, "games", "500"), 500);
     int snap_every       = parse_int_arg(get_arg(argc, argv, "snapshot-every", "50"), 50);
     uint32_t seed0       = (uint32_t)parse_int_arg(get_arg(argc, argv, "seed", "1"), 1);
+    int copies_default   = parse_int_arg(get_arg(argc, argv, "copies", "1"), 1);
     const char *nitro_w  = get_arg(argc, argv, "nitro-weights", NULL);
+    K_FACTOR = atof(get_arg(argc, argv, "k-factor", "32"));
+    if (K_FACTOR <= 0) K_FACTOR = 32.0;
 
-    // Parse strategy pool.
+    // Parse strategy pool. Each entry can be "name" or "name:count".
     char buf[256]; strncpy(buf, pool_str, sizeof(buf) - 1); buf[sizeof(buf) - 1] = 0;
     char *tok = strtok(buf, ",");
-    while (tok && N_STRATS < MAX_STRATS) {
+    while (tok && N_COMPS < MAX_COMPS) {
+        int copies = copies_default;
+        char *colon = strchr(tok, ':');
+        if (colon) {
+            *colon = 0;
+            copies = atoi(colon + 1);
+            if (copies < 1) copies = 1;
+        }
         int sk = parse_strategy(tok);
         if (sk < 0) { fprintf(stderr, "unknown strategy: %s\n", tok); return 2; }
-        snprintf(STRATS[N_STRATS].name, sizeof(STRATS[N_STRATS].name), "%s", tok);
-        STRATS[N_STRATS].strat_key = sk;
-        STRATS[N_STRATS].elo = STARTING_ELO;
-        N_STRATS++;
+        for (int c = 0; c < copies && N_COMPS < MAX_COMPS; c++) {
+            snprintf(COMPS[N_COMPS].strat_name, sizeof(COMPS[N_COMPS].strat_name), "%s", tok);
+            if (copies == 1) {
+                snprintf(COMPS[N_COMPS].name, sizeof(COMPS[N_COMPS].name), "%s", tok);
+            } else {
+                snprintf(COMPS[N_COMPS].name, sizeof(COMPS[N_COMPS].name), "%s_%d", tok, c);
+            }
+            COMPS[N_COMPS].strat_key = sk;
+            COMPS[N_COMPS].elo = STARTING_ELO;
+            N_COMPS++;
+        }
         tok = strtok(NULL, ",");
     }
-    if (N_STRATS < 2) { fprintf(stderr, "pool needs at least 2 strategies\n"); return 2; }
+    if (N_COMPS < 2) { fprintf(stderr, "pool needs at least 2 competitors\n"); return 2; }
 
     // Parse pcs.
     int pcs[7]; int n_pcs = 0;
@@ -244,7 +262,7 @@ int main(int argc, char **argv) {
     // Optionally load nitro weights.
     NNParams *p_nitro = NULL;
     bool need_nitro = false;
-    for (int i = 0; i < N_STRATS; i++) if (STRATS[i].strat_key == STRAT_NITRO) need_nitro = true;
+    for (int i = 0; i < N_COMPS; i++) if (COMPS[i].strat_key == STRAT_NITRO) need_nitro = true;
     if (need_nitro) {
         if (!nitro_w) {
             fprintf(stderr, "pool includes nitro but no --nitro-weights given\n");
@@ -273,7 +291,7 @@ int main(int argc, char **argv) {
         int seat_strats[MAX_PLAYERS];
         for (int s = 0; s < pc; s++) {
             rng_state = rng_state * 1103515245 + 12345;
-            seat_strats[s] = ((unsigned)rng_state >> 16) % (unsigned)N_STRATS;
+            seat_strats[s] = ((unsigned)rng_state >> 16) % (unsigned)N_COMPS;
         }
         int rankings[MAX_PLAYERS];
         uint32_t game_seed = (uint32_t)(seed0 + (uint32_t)gi * 2654435761u);

@@ -22,10 +22,14 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define GRPO_H1          1024
-#define GRPO_H2          1024
-#define GRPO_EMBED       512
-#define GRPO_HEAD_HIDDEN 256
+// v2 arch: ~1.5x widths vs v1 (which capped at overall=3.118 on grpo_run4).
+// Wider trunk + head with the new encoder features (hidden trumps, round
+// phase, distance-to-defender) should give more capacity for high-PC and
+// endgame regimes where v1 stalled.
+#define GRPO_H1          1536
+#define GRPO_H2          1536
+#define GRPO_EMBED       768
+#define GRPO_HEAD_HIDDEN 384
 #define GRPO_HEAD_IN     (GRPO_EMBED + MOVE_FEAT_DIM)
 
 typedef struct {

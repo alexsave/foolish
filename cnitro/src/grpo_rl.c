@@ -1,10 +1,8 @@
 // GRPO RL collector + update. See grpo_rl.h.
 
 #include "grpo_rl.h"
-#include "grpo_encode.h"
 #include "grpo_format.h"
 #include "grpo_pool.h"
-#include "card.h"
 #include "game.h"
 #include "legal.h"
 #include "strategy.h"

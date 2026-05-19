@@ -9,6 +9,11 @@ void grpo_pool_init(GrpoPool *pool, int soft_cap) {
     memset(pool, 0, sizeof(*pool));
     pool->soft_cap = soft_cap > GRPO_POOL_CAP ? GRPO_POOL_CAP : soft_cap;
     pool->next_iter = 0;
+    pool->recency_bias = 1.0f;
+}
+
+void grpo_pool_set_recency_bias(GrpoPool *pool, float bias) {
+    pool->recency_bias = bias < 0.0f ? 0.0f : bias;
 }
 
 void grpo_pool_add_handwritten_anchor(GrpoPool *pool) {
@@ -60,19 +65,20 @@ static inline uint32_t xs32(uint32_t *s) {
 
 int grpo_pool_sample(const GrpoPool *pool, uint32_t *rng) {
     if (pool->n_members == 0) return -1;
-    // Weight = (iter_added + 1) for non-anchors; anchor weighted similarly
-    // so it stays a visible presence. The +1 keeps weights nonzero.
-    uint64_t total = 0;
-    uint32_t weights[GRPO_POOL_CAP];
+    // Sampling weight per member: 1 + bias * iter_added.
+    //   bias = 0 → uniform (all weights == 1)
+    //   bias = 1 → linear-by-recency (current default behavior)
+    double total = 0.0;
+    double weights[GRPO_POOL_CAP];
     for (int i = 0; i < pool->n_members; i++) {
-        weights[i] = (uint32_t)(pool->members[i].iter_added + 1);
+        weights[i] = 1.0 + (double)pool->recency_bias * (double)pool->members[i].iter_added;
         total += weights[i];
     }
-    uint64_t r = (uint64_t)xs32(rng) % total;
-    uint64_t acc = 0;
+    double pick = ((double)xs32(rng) / 4294967296.0) * total;
+    double acc = 0.0;
     for (int i = 0; i < pool->n_members; i++) {
         acc += weights[i];
-        if (r < acc) return i;
+        if (pick < acc) return i;
     }
     return pool->n_members - 1;
 }

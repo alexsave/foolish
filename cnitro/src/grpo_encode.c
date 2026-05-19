@@ -181,6 +181,84 @@ void grpo_encode_state(const Game *g, int self_idx, float *out) {
     }
     p += STATE_PLAYER_COUNT_DIM;
 
+    // hidden_trumps_count (1): trumps we haven't observed anywhere public.
+    //   total trumps in deck variant
+    //     = 9 for 36-card (2-5p, values 5..13)
+    //     = 13 for 52-card (6-8p, values 1..13)
+    //   subtract observed trumps from: our hand, discard, opp_held bitsets,
+    //   trump cards on the table (already in attacks/defenses), and the
+    //   flipped trump card (visible to all if has_flipped).
+    {
+        int trump_suit = g->power_suit;
+        int total_trumps = (g->num_players >= 6) ? 13 : 9;
+        int observed = 0;
+        // Own hand.
+        for (int i = 0; i < self->hand_count; i++) {
+            if (self->hand[i].suit == trump_suit) observed++;
+        }
+        // Discard (recompute from logs — cheap).
+        {
+            bool disc[MAX_DECK_INDEX];
+            compute_discard_set(g, disc);
+            for (int v = 1; v <= 13; v++) {
+                int idx = (v - 1) * 4 + trump_suit;
+                if (disc[idx]) observed++;
+            }
+        }
+        // Per-opp public holdings.
+        for (int s = 0; s < g->num_players; s++) {
+            if (s == self_idx) continue;
+            bool held[MAX_DECK_INDEX];
+            compute_opp_publicly_held(g, s, held);
+            for (int v = 1; v <= 13; v++) {
+                int idx = (v - 1) * 4 + trump_suit;
+                if (held[idx]) observed++;
+            }
+        }
+        // Cards currently on the table that are trumps.
+        for (int i = 0; i < g->num_battles; i++) {
+            if (g->table_battles[i].attack.suit == trump_suit) observed++;
+            if (g->table_battles[i].has_defense
+                && g->table_battles[i].defense.suit == trump_suit) observed++;
+        }
+        // Flipped bottom trump if still there.
+        if (g->has_flipped && g->flipped.suit == trump_suit) observed++;
+        int hidden = total_trumps - observed;
+        if (hidden < 0) hidden = 0;   // bookkeeping safety
+        p[0] = (float)hidden / 13.0f;
+    }
+    p += STATE_HIDDEN_TRUMPS_DIM;
+
+    // round_phase one-hot (3): early/mid/late based on deck remaining.
+    {
+        int dc = g->deck_count + (g->has_flipped ? 1 : 0);
+        int phase = (dc > 16) ? 0 : (dc > 1 ? 1 : 2);
+        p[phase] = 1.0f;
+    }
+    p += STATE_ROUND_PHASE_DIM;
+
+    // distance_to_defender one-hot (8): clockwise hops from self to the
+    // defender, skipping OUT players. 0 = self IS defender, 1 = self is
+    // immediately before defender (so I'm next attacker), etc.
+    {
+        int dist = 0;
+        int seat = self_idx;
+        int hops = 0;
+        if (seat == g->defender) dist = 0;
+        else {
+            for (int step = 1; step <= g->num_players; step++) {
+                seat = (seat + 1) % g->num_players;
+                if (g->players[seat].status == PLAYER_STATUS_OUT) continue;
+                hops++;
+                if (seat == g->defender) { dist = hops; break; }
+            }
+        }
+        if (dist < 0) dist = 0;
+        if (dist >= STATE_DIST_TO_DEF_DIM) dist = STATE_DIST_TO_DEF_DIM - 1;
+        p[dist] = 1.0f;
+    }
+    p += STATE_DIST_TO_DEF_DIM;
+
     (void)p; // sanity: p == out + STATE_DIM
 }
 
