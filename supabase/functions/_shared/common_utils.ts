@@ -352,9 +352,10 @@ export const refillPlayerHandsWithEvents = (game: Game): { refillEvents: any[], 
                 cards: actualCardsDrawn,
                 from_location: 'deck',
                 to_location: 'hand',
-                message: `${game.players[game.defender].name} drew ${defenderCardsDrawn} cards`
+                message: `${game.players[game.defender].name} drew ${defenderCardsDrawn} cards`,
+                game_state: cloneGame(game)
             });
-            
+
             // Add draw log
             drawLogs.push({
                 player_id: game.players[game.defender].player_id,
@@ -397,9 +398,10 @@ export const refillPlayerHandsWithEvents = (game: Game): { refillEvents: any[], 
                 cards: actualCardsDrawn,
                 from_location: 'deck',
                 to_location: 'hand',
-                message: `${game.players[pIndex].name} drew ${cardsDrawn} cards`
+                message: `${game.players[pIndex].name} drew ${cardsDrawn} cards`,
+                game_state: cloneGame(game)
             });
-            
+
             // Add draw log
             drawLogs.push({
                 player_id: game.players[pIndex].player_id,
@@ -484,13 +486,20 @@ export const start_game = (game: Game): AnimationEvent[] => {
         game_state: cloneGame(game)
     });
 
-    const hands: Card[][] = initialize_hands(game);
+    // Draw and emit per player so each DEAL snapshot reflects the deck
+    // drained by exactly that player's batch (deck: 36 → 30 → 24 → ...).
+    // initialize_hands() can't be used here because it drains the full
+    // 6×N cards up front, baking a post-deal deck count into every snapshot.
     for (let i = 0; i < game.players.length; i++) {
-        game.players[i].hand = hands[i];
+        const hand: Card[] = [];
+        for (let k = 0; k < CARDS_PER_PLAYER; k++) {
+            hand.push(draw(game)!);
+        }
+        game.players[i].hand = hand;
         events.push({
             type: ANIMATION_EVENT_TYPE.DEAL,
             player_id: game.players[i].player_id,
-            cards: hands[i],
+            cards: hand,
             from_location: 'deck',
             to_location: 'hand',
             game_state: cloneGame(game)
