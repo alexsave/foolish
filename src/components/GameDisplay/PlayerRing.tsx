@@ -30,14 +30,21 @@ const MiniSovietCardBack = () => (
     </svg>
 );
 
-const CardsVisual = ({ player, selfHandLength }: { player: PublicPlayer, selfHandLength?: number }) => {
+const CardsVisual = ({ player, selfHandLength, isSelf }: { player: PublicPlayer, selfHandLength?: number, isSelf: boolean }) => {
     const styles = useStyles();
     const { fernPattern } = useFernFractal();
-    
+
     const hasPattern = styles.miniCard.usePattern && !!fernPattern;
     const cardWidth = 25;
     const cardHeight = cardWidth * 1.4;
     const displayHandLength = selfHandLength !== undefined ? selfHandLength : player.hand_length;
+
+    // Mark this container as the deal/refill destination for *other* players only.
+    // Self's real hand is rendered by ActionButtons with the same data-* attrs;
+    // tagging this mini-hand too would let querySelector pick the wrong target.
+    const handAttrs = isSelf
+        ? {}
+        : { 'data-location': 'hand', 'data-player-id': player.player_id };
 
     return (
         <div style={{
@@ -48,7 +55,7 @@ const CardsVisual = ({ player, selfHandLength }: { player: PublicPlayer, selfHan
             position: 'relative',
             height: '20px',
             width: '100px',
-        }} data-location="hand" data-player-id={player.player_id}>
+        }} {...handAttrs}>
             {Array.from({ length: displayHandLength }).map((_, cardIndex) => {
                 const mid = (displayHandLength - 1) / 2;
                 const halfCardWidth = cardWidth / 2;
@@ -77,20 +84,22 @@ const CardsVisual = ({ player, selfHandLength }: { player: PublicPlayer, selfHan
                 );
             })}
 
-            <div style={{
-                position: 'absolute',
-                top: '50%',
-                left: '50%',
-                transform: 'translate(-50%, -50%)',
-                color: 'var(--color-text-primary)',
-                fontSize: '10px',
-                fontWeight: 'bold',
-                zIndex: 15,
-                pointerEvents: 'none',
-                textShadow: styles.text.cardCountTextShadow
-            }}>
-                {displayHandLength}
-            </div>
+            {displayHandLength > 0 && (
+                <div style={{
+                    position: 'absolute',
+                    top: '50%',
+                    left: '50%',
+                    transform: 'translate(-50%, -50%)',
+                    color: 'var(--color-text-primary)',
+                    fontSize: '10px',
+                    fontWeight: 'bold',
+                    zIndex: 15,
+                    pointerEvents: 'none',
+                    textShadow: styles.text.cardCountTextShadow
+                }}>
+                    {displayHandLength}
+                </div>
+            )}
         </div>
     );
 };
@@ -199,14 +208,12 @@ export const PlayerRing = () => {
                             )}
                         </div>
 
-                        {player.hand_length && player.hand_length > 0 ? (
-                            <CardsVisual
-                                player={player}
-                                selfHandLength={player.player_id === user_id ? game.self?.hand.length : undefined}
-                            />
-                        ) : (
-                            <div style={{ height: '20px' }} />
-                        )}
+                        {/* Always render so DEAL/REFILL animations have a destination element to target, even when hand_length === 0 */}
+                        <CardsVisual
+                            player={player}
+                            selfHandLength={player.player_id === user_id ? game.self?.hand.length : undefined}
+                            isSelf={player.player_id === user_id}
+                        />
                     </div>
                 );
             })}

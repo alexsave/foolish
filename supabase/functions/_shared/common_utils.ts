@@ -300,7 +300,10 @@ export const calculateGameRankings = (game: Game): string[] => {
 
 // Pure refill logic without side effects (no broadcasting, no async check_win)
 
-// Refill logic that creates animation events for cards drawn
+// Refill logic that creates animation events for cards drawn.
+// Note: canonical Durak rules say the defender draws last (and never first).
+// We intentionally deviate: defender draws in clockwise rotation slot, and
+// draws first when their hand was emptied on a clean cover.
 export const refillPlayerHandsWithEvents = (game: Game): { refillEvents: any[], drawLogs: any[] } => {
     const refillEvents: any[] = [];
     const drawLogs: any[] = []; // Track draw events for game logs
@@ -473,6 +476,14 @@ export const start_game = (game: Game): AnimationEvent[] => {
     game.good_timestamp = null; // Initialize good timestamp
     game.good_players = []; // Initialize good players list
 
+    // Lead with a transition into the PLAYING view with empty hands, so the
+    // client switches from Lobby to GameDisplay before the first DEAL fires.
+    events.push({
+        type: ANIMATION_EVENT_TYPE.MAGIC_TRANSITION,
+        message: `All players ready - starting game!`,
+        game_state: cloneGame(game)
+    });
+
     const hands: Card[][] = initialize_hands(game);
     for (let i = 0; i < game.players.length; i++) {
         game.players[i].hand = hands[i];
@@ -482,7 +493,7 @@ export const start_game = (game: Game): AnimationEvent[] => {
             cards: hands[i],
             from_location: 'deck',
             to_location: 'hand',
-            game_state: game
+            game_state: cloneGame(game)
         });
     }
 
@@ -501,7 +512,7 @@ export const start_game = (game: Game): AnimationEvent[] => {
         cards: [game.flipped!],
         from_location: 'deck',
         to_location: 'flipped',
-        game_state: game
+        game_state: cloneGame(game)
     });
 
     const lowest_power_index = determine_lowest_power_index(game);
@@ -513,7 +524,7 @@ export const start_game = (game: Game): AnimationEvent[] => {
         events.push({
             type: ANIMATION_EVENT_TYPE.DEFENDER_MOVE,
             player_id: game.players[game.defender].player_id,
-            game_state: game
+            game_state: cloneGame(game)
         });
     }
 
@@ -521,7 +532,7 @@ export const start_game = (game: Game): AnimationEvent[] => {
     events.push({
         type: ANIMATION_EVENT_TYPE.MAGIC_TRANSITION,
         message: `Player ${game.players[lowest_power_index].name} is the first attacker, wait for them to attack`,
-        game_state: game
+        game_state: cloneGame(game)
     });
 
     // Send private messages to players (these don't go through animation events)
