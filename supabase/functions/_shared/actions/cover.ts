@@ -137,15 +137,11 @@ export function executeCover(game: Game, player_id: string, cover_cards: Card[],
             game_state: gameStateAfterDiscard
         });
         
-        // Refill hands and capture states for each refill event
+        // Refill hands. Each refill event already carries its own
+        // per-iteration snapshot via cloneGame.
         const { refillEvents, drawLogs } = refillPlayerHandsWithEvents(game);
         for (const refillEvent of refillEvents) {
-            // Apply the refill to get the intermediate state
-            const gameStateAfterRefill = cloneGame(game);
-            events.push({
-                ...refillEvent,
-                game_state: gameStateAfterRefill
-            });
+            events.push(refillEvent);
         }
         
         // Add draw logs to game logs

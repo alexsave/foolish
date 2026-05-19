@@ -40,6 +40,12 @@ interface ClientAnimationEvent  {
 interface AnimationContextType {
     isAnimating: boolean;
     currentAnimation: ClientAnimationEvent | null;
+    // Cards currently flying from the deck pile. Drives the visible pile size.
+    // Drops BEFORE the animation starts and resets when the snapshot commits.
+    inFlightFromDeck: number;
+    // Subset of inFlightFromDeck that's headed to the flipped slot — these
+    // are still "in the deck system" so they count toward the badge total.
+    inFlightToFlipped: number;
     getCardAnimationState: (card: Card, playerId?: string) => {
         isAnimating: boolean;
         animationType: string | null;
@@ -122,6 +128,8 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     const [isAnimating, setIsAnimating] = useState(false);
     const [currentAnimation, setCurrentAnimation] = useState<ClientAnimationEvent | null>(null);
     const [animationQueue, setAnimationQueue] = useState<ClientAnimationEvent[]>([]);
+    const [inFlightFromDeck, setInFlightFromDeck] = useState(0);
+    const [inFlightToFlipped, setInFlightToFlipped] = useState(0);
 
     // Keep refs in sync with state
     useEffect(() => {
@@ -1181,6 +1189,8 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         if (animationQueueRef.current.length === 0) {
             setIsAnimating(false);
             setCurrentAnimation(null);
+            setInFlightFromDeck(0);
+            setInFlightToFlipped(0);
 
             // Clear processed event content when queue is empty (allows future legitimate duplicates)
             if (processedEventContent.current.size > 0) {
@@ -1213,6 +1223,18 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         setCurrentAnimation(nextAnimation);
         setAnimationQueue(prev => prev.slice(1));
         setIsAnimating(true);
+
+        // Drop the deck's displayed count NOW (in the same render as currentAnimation
+        // becomes visible) so the deck shrinks in lockstep with the cards leaving.
+        // Cards bound for the flipped slot stay in the deck system (they don't
+        // affect the badge total), so we track them separately.
+        if (nextAnimation.from_location === 'deck' && nextAnimation.cards && nextAnimation.cards.length > 0) {
+            setInFlightFromDeck(nextAnimation.cards.length);
+            setInFlightToFlipped(nextAnimation.to_location === 'flipped' ? nextAnimation.cards.length : 0);
+        } else {
+            setInFlightFromDeck(0);
+            setInFlightToFlipped(0);
+        }
 
         // Start tracking cards in this animation (simplified - CSS handles the actual animation)
         if (nextAnimation.cards && nextAnimation.cards.length > 0) {
@@ -1247,6 +1269,11 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
                 updateGameState(currentGameIdRef.current, nextAnimation.game_state);
             }
+
+            // Cards have landed; game.deck_length now reflects the reduction, so
+            // clear the in-flight counts to avoid double-counting during the gap.
+            setInFlightFromDeck(0);
+            setInFlightToFlipped(0);
 
             // Remove cards from animating state
             if (nextAnimation.cards) {
@@ -1645,6 +1672,8 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         <AnimationContext.Provider value={{
             isAnimating,
             currentAnimation,
+            inFlightFromDeck,
+            inFlightToFlipped,
             getCardAnimationState,
             attack,
             pass,

@@ -68,15 +68,11 @@ export function executePickup(game: Game, player_id: string): AnimationEvent[] {
         game_state: gameStateAfterPickup
     });
 
-    // Draw cards and capture states for each refill event
+    // Draw cards. Each refill event already carries its own per-iteration
+    // snapshot via cloneGame.
     const { refillEvents, drawLogs } = refillPlayerHandsWithEvents(game);
     for (const refillEvent of refillEvents) {
-        // The refillPlayerHandsWithEvents already modified the game state
-        const gameStateAfterRefill = cloneGame(game);
-        events.push({
-            ...refillEvent,
-            game_state: gameStateAfterRefill
-        });
+        events.push(refillEvent);
     }
     
     // Add draw logs to game logs

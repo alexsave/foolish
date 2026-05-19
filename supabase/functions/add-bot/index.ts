@@ -1,6 +1,6 @@
 import { wrap400, ExecutionParams } from "../_shared/utils.ts";
 import { ANIMATION_EVENT_TYPE, PLAYER_STATUS, AnimationEvent, GAME_STATUS, STRATEGY_KEY } from "../_shared/types.ts";
-import { start_game } from "../_shared/common_utils.ts";
+import { start_game, cloneGame } from "../_shared/common_utils.ts";
 import { createClient } from 'jsr:@supabase/supabase-js';
 
 const supabaseClient = createClient(
@@ -63,18 +63,16 @@ wrap400(async ({body, game, user}: ExecutionParams) => {
     // Check if ALL players are ready AND we have at least 2 players
     const allPlayersReady = game.players.every(p => p.status === PLAYER_STATUS.READY) && game.players.length >= 2;
 
-    let start_events: AnimationEvent[] = [];
     if (allPlayersReady) {
-        // All players are ready - start the game!
-        start_events = start_game(game);
+        // start_game emits its own leading MAGIC_TRANSITION with a clean snapshot.
+        return { game, events: start_game(game) };
     }
 
-    // Add animation event to notify players
     return { game, events: [{
         type: ANIMATION_EVENT_TYPE.MAGIC_TRANSITION,
-        message: allPlayersReady ? `All players ready - starting game!` : `Bot ${availableBot.nickname} joined the game`,
-        game_state: game
-    }, ...start_events] };
+        message: `Bot ${availableBot.nickname} joined the game`,
+        game_state: cloneGame(game)
+    }] };
 
     // Note: saveCompleteGame (called by executeWithGameLock) will handle:
     // - Updating games table with new players array

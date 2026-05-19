@@ -577,6 +577,13 @@ export const FernFractalProvider: React.FC<{ children: React.ReactNode }> = ({ c
       });
   }, []);
 
+  // Kick off generation as soon as the provider mounts — i.e. for any
+  // authenticated page (dashboard, lobby, game). Avoids the 50ms flash on
+  // first deck render when navigating Dashboard → game.
+  useEffect(() => {
+    triggerGeneration();
+  }, [triggerGeneration]);
+
   return (
     <FernFractalContext.Provider value={{ fernPattern, isLoading, triggerGeneration }}>
       {children}
