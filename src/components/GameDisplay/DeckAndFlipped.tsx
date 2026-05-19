@@ -15,8 +15,18 @@ export const DeckAndFlipped = () => {
     const displayedDeckLength = Math.max(0, game.deck_length - inFlightFromDeck);
     const badgeTotal = displayedDeckLength + (game.flipped ? 1 : 0) + inFlightToFlipped;
 
-    return <div style={{ display: 'flex', position: 'absolute', top: '0px', left: '0px', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', height: '240px', width: '100px' }}>
-        {displayedDeckLength > 0 && (
+    const showDeckPile = displayedDeckLength > 0;
+    // Reserve the flipped slot during gameplay and the FLIPPED animation so
+    // findElementByLocation('flipped') resolves correctly. Drop it at end-game
+    // so the SuitIcon can take its place.
+    const showFlippedSlot = showDeckPile || game.flipped !== null || inFlightToFlipped > 0;
+    const showSuitIcon = !showDeckPile && !game.flipped && inFlightToFlipped === 0;
+
+    // paddingTop = (height - CardBack height) / 2 = (240 - 70) / 2 — pins the
+    // deck pile to the spot it would occupy when centered alone, so the deck
+    // doesn't shift when the flipped card lands or when the slot is reserved.
+    return <div style={{ display: 'flex', position: 'absolute', top: '0px', left: '0px', flexDirection: 'column', alignItems: 'center', height: '240px', width: '100px', paddingTop: '85px' }}>
+        {showDeckPile && (
             <div style={{ position: 'relative' }} data-location="deck">
                 <CardBack deckSize={displayedDeckLength} />
                 <p style={{
@@ -36,21 +46,21 @@ export const DeckAndFlipped = () => {
                 </p>
             </div>
         )}
-        {/* Reserve the flipped slot in the layout from the start so the deck
-            pile doesn't shift when the flipped card lands. */}
-        <div
-            data-location="flipped"
-            style={{
-                marginTop: displayedDeckLength > 0 ? '-30px' : '0px',
-                width: '50px',
-                height: '70px',
-                zIndex: 0,
-            }}
-        >
-            {game.flipped && <CardFace card={game.flipped} playerId="flipped" />}
-        </div>
+        {showFlippedSlot && (
+            <div
+                data-location="flipped"
+                style={{
+                    marginTop: showDeckPile ? '-30px' : '0px',
+                    width: '50px',
+                    height: '70px',
+                    zIndex: 0,
+                }}
+            >
+                {game.flipped && <CardFace card={game.flipped} playerId="flipped" />}
+            </div>
+        )}
         {/* Trump indicator appears when deck and flipped card are gone */}
-        {game.deck_length === 0 && !game.flipped && (
+        {showSuitIcon && (
             <div style={{
                 display: 'flex',
                 alignItems: 'center',
