@@ -8,6 +8,11 @@ export const metadata: Metadata = {
   title: 'Foolish',
   description: 'Foolish - The ultimate дурак experience',
   manifest: '/manifest.json',
+  appleWebApp: {
+    capable: true,
+    title: 'Foolish',
+    statusBarStyle: 'black-translucent',
+  },
   icons: {
     icon: [
       { url: '/favicon.ico' },
