@@ -26,12 +26,19 @@ export const UnprotectedRoute = ({ children }: { children: React.ReactNode }) =>
         }
     }, [loading, user_id, redirectAfterLogin, hasHandledRedirect, clearRedirectAfterLogin]);
     
-    // Don't show loading screen - just render the page
-    // The page itself (Welcome) can handle its own loading states
-    
-    // If user is authenticated, redirect to intended destination or dashboard
-    if (user_id && shouldRedirect) {
-        return <Navigate to={shouldRedirect} replace />;
+    // Don't render anything until Supabase has determined the auth state.
+    // Rendering Welcome prematurely causes iOS Safari to focus the username
+    // input (popping the keyboard) before we redirect a signed-in user to the
+    // dashboard, which is disorienting.
+    if (loading) {
+        return null;
+    }
+
+    // If user is authenticated, redirect to intended destination or dashboard.
+    // shouldRedirect is set by the effect on the next tick; until then render
+    // nothing rather than flashing Welcome to a signed-in user.
+    if (user_id) {
+        return shouldRedirect ? <Navigate to={shouldRedirect} replace /> : null;
     }
 
     return (
