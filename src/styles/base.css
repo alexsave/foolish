@@ -11,6 +11,9 @@ html {
   height: 100%;
   overflow: hidden;
   -webkit-text-size-adjust: 100%;
+  /* Fills the iOS safe areas and rubber-band overscroll with the page
+     background color instead of the browser's default white. */
+  background-color: var(--color-background);
 }
 
 body {

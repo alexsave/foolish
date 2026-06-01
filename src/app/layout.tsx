@@ -24,7 +24,9 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: '#000000',
+  // Tints Safari's status-bar / toolbar chrome to match the page background
+  // (--color-background) instead of leaving it white.
+  themeColor: '#ad826e',
   width: 'device-width',
   initialScale: 1,
   viewportFit: 'cover',

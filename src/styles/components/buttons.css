@@ -67,7 +67,9 @@
 /* ===== Icon Button (Back, Sign Out) ===== */
 .btn-icon {
   position: absolute;
-  top: 10px;
+  /* Clear the status bar / notch in standalone (PWA) mode. Absolute children
+     aren't shifted by the .page safe-area padding, so inset directly here. */
+  top: max(10px, env(safe-area-inset-top, 0px));
   z-index: var(--z-header);
   width: var(--btn-icon-size);
   height: var(--btn-icon-size);
@@ -84,11 +86,11 @@
 }
 
 .btn-icon--left {
-  left: 10px;
+  left: max(10px, env(safe-area-inset-left, 0px));
 }
 
 .btn-icon--right {
-  right: 10px;
+  right: max(10px, env(safe-area-inset-right, 0px));
 }
 
 .btn-icon:hover {

@@ -11,6 +11,11 @@
   width: 100%;
   position: relative;
   background-color: var(--color-background);
+  /* Keep page content clear of the notch / home indicator in standalone
+     (PWA) mode, where viewport-fit=cover extends the viewport into the
+     iPhone safe areas. Falls back to 0 on devices without insets. */
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 /* ===== Lobby Container ===== */
@@ -23,6 +28,9 @@
   position: relative;
   background-color: var(--color-background);
   touch-action: manipulation;
+  /* Same safe-area handling as .page for standalone (PWA) mode. */
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 .lobby__name-input {

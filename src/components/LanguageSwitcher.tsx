@@ -119,7 +119,12 @@ export const LanguageSwitcher = () => {
   const { language, setLanguage } = useLocalization();
 
   return (
-    <div className="fixed flex gap-sm" style={{ bottom: '10px', right: '10px', zIndex: 1000 }}>
+    <div className="fixed flex gap-sm" style={{
+      // Stay clear of the home indicator / notch in standalone (PWA) mode.
+      bottom: 'max(10px, env(safe-area-inset-bottom, 0px))',
+      right: 'max(10px, env(safe-area-inset-right, 0px))',
+      zIndex: 1000,
+    }}>
       {LANGUAGES.map(({ code, flag, label }) => {
         const isActive = language === code;
         return (
