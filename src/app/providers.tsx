@@ -6,6 +6,7 @@ import { LocalizationProvider } from '../contexts/LocalizationContext';
 import { ThemeProvider } from '../contexts/ThemeContext';
 import { StyleProvider } from '../contexts/StyleContext';
 import { TextureProvider } from '../components/TexturedSurface';
+import { WoolBackgroundLayer } from '../components/WoolBackgroundLayer';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 
 // Global providers that previously wrapped every route in App.js. With the
@@ -22,6 +23,12 @@ export default function Providers({ children }: { children: React.ReactNode }) {
             <ThemeProvider>
               <StyleProvider>
                 <TextureProvider>
+                  {/* Single app-wide background behind every page. Any loading
+                      or redirect state can simply render nothing and this shows
+                      through, so there is never a bare white screen. */}
+                  <div className="app-background">
+                    <WoolBackgroundLayer />
+                  </div>
                   <AuthProvider>
                     <ErrorBoundary context="Auth Provider">
                       <ErrorBoundary context="Routes">

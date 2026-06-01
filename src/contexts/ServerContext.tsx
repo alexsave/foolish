@@ -84,6 +84,10 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     // Simple reconnection state
     const gameChannelRetryInterval = useRef(500); // Start with 0.5 seconds
     const chatChannelRetryInterval = useRef(500); // Start with 0.5 seconds
+    // Handles for the pending reconnect timers so we can cancel them on teardown
+    // and avoid leaked retries re-subscribing to games the user has left.
+    const gameChannelRetryTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const chatChannelRetryTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
     const MAX_RETRY_INTERVAL = 5000; // Cap at 5 seconds
 
     useEffect(() => {
@@ -132,6 +136,16 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
         // cleanup realtime subscriptions
         return () => {
+            // Cancel any pending reconnect timers so they don't re-subscribe to a
+            // game we're navigating away from (which churns the shared socket).
+            if (gameChannelRetryTimeout.current) {
+                clearTimeout(gameChannelRetryTimeout.current);
+                gameChannelRetryTimeout.current = null;
+            }
+            if (chatChannelRetryTimeout.current) {
+                clearTimeout(chatChannelRetryTimeout.current);
+                chatChannelRetryTimeout.current = null;
+            }
             // Remove all realtime subscriptions
             supabase.removeAllChannels();
         };
@@ -159,11 +173,24 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 .subscribe((status, err) => {
                     if (status === 'SUBSCRIBED') {
                         gameChannelRetryInterval.current = 500; // Reset retry interval on success
+                        if (gameChannelRetryTimeout.current) {
+                            clearTimeout(gameChannelRetryTimeout.current);
+                            gameChannelRetryTimeout.current = null;
+                        }
                     } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+                        // Ignore errors for a game we've left: when navigating away the shared
+                        // socket is torn down (close code 1005) and every channel reports an
+                        // error. Retrying here would re-subscribe to the abandoned game.
+                        if (gameIdRef.current !== gameId) {
+                            return;
+                        }
                         if (err) {
                             console.error(`Game-user channel ${status}:`, err);
                         }
-                        setTimeout(() => {
+                        if (gameChannelRetryTimeout.current) {
+                            clearTimeout(gameChannelRetryTimeout.current);
+                        }
+                        gameChannelRetryTimeout.current = setTimeout(() => {
                             subscribeToGame(gameId).catch(console.error);
                             // Double the interval but cap at MAX_RETRY_INTERVAL
                             gameChannelRetryInterval.current = Math.min(gameChannelRetryInterval.current * 2, MAX_RETRY_INTERVAL);
@@ -171,8 +198,14 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                     }
                 });
         } catch (error) {
+            if (gameIdRef.current !== gameId) {
+                return;
+            }
             console.error('Error subscribing to game channel:', error);
-            setTimeout(() => {
+            if (gameChannelRetryTimeout.current) {
+                clearTimeout(gameChannelRetryTimeout.current);
+            }
+            gameChannelRetryTimeout.current = setTimeout(() => {
                 subscribeToGame(gameId).catch(console.error);
                 // Double the interval but cap at MAX_RETRY_INTERVAL
                 gameChannelRetryInterval.current = Math.min(gameChannelRetryInterval.current * 2, MAX_RETRY_INTERVAL);
@@ -197,11 +230,22 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 .subscribe((status, err) => {
                     if (status === 'SUBSCRIBED') {
                         chatChannelRetryInterval.current = 500; // Reset retry interval on success
+                        if (chatChannelRetryTimeout.current) {
+                            clearTimeout(chatChannelRetryTimeout.current);
+                            chatChannelRetryTimeout.current = null;
+                        }
                     } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+                        // Ignore errors for a game we've left (see subscribeToGame).
+                        if (gameIdRef.current !== gameId) {
+                            return;
+                        }
                         if (err) {
                             console.error(`Chat channel ${status}:`, err);
                         }
-                        setTimeout(() => {
+                        if (chatChannelRetryTimeout.current) {
+                            clearTimeout(chatChannelRetryTimeout.current);
+                        }
+                        chatChannelRetryTimeout.current = setTimeout(() => {
                             subscribeToChatMessages(gameId).catch(console.error);
                             // Double the interval but cap at MAX_RETRY_INTERVAL
                             chatChannelRetryInterval.current = Math.min(chatChannelRetryInterval.current * 2, MAX_RETRY_INTERVAL);
@@ -209,8 +253,14 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                     }
                 });
         } catch (error) {
+            if (gameIdRef.current !== gameId) {
+                return;
+            }
             console.error('Error subscribing to chat channel:', error);
-            setTimeout(() => {
+            if (chatChannelRetryTimeout.current) {
+                clearTimeout(chatChannelRetryTimeout.current);
+            }
+            chatChannelRetryTimeout.current = setTimeout(() => {
                 subscribeToChatMessages(gameId).catch(console.error);
                 // Double the interval but cap at MAX_RETRY_INTERVAL
                 chatChannelRetryInterval.current = Math.min(chatChannelRetryInterval.current * 2, MAX_RETRY_INTERVAL);

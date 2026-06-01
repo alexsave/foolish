@@ -5,7 +5,6 @@ import { GAME_STATUS } from '../common/types';
 import supabase from '../backend/Connector';
 import { TexturedSurface, useTexture, getTextureStyle, seedFromString, flipFromString } from './TexturedSurface';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
-import { LoadingScreen } from './LoadingScreen';
 import { Text } from './Text';
 import { SovietIcon, RankIcon } from './SovietIcon';
 
@@ -131,12 +130,14 @@ export const WinScreen: React.FC = () => {
         loadEloData();
     }, [game]);
 
+    // Render nothing while the game state settles / ELO data loads — the
+    // app-wide background shows through, so the game→rankings handoff is seamless.
     if (!game || game.status !== GAME_STATUS.GAME_OVER) {
-        return <LoadingScreen />;
+        return null;
     }
 
     if (loading) {
-        return <LoadingScreen />;
+        return null;
     }
 
     const handleContinue = async () => {

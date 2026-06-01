@@ -5,7 +5,6 @@ import { Lobby } from './Lobby';
 import { GameDisplay } from './GameDisplay';
 import { WinScreen } from './WinScreen';
 import { GAME_STATUS } from '../common/types';
-import { LoadingScreen } from './LoadingScreen';
 
 export const GameView = () => {
     const { game, gameLoadError } = useServer();
@@ -20,14 +19,14 @@ export const GameView = () => {
         }
     }, [gameLoadError, urlGameId, router]);
 
-    // Handle error state - game doesn't exist (redirecting to dashboard)
+    // Game doesn't exist (redirecting) or not loaded yet: render nothing and
+    // let the app-wide background show through.
     if (gameLoadError === urlGameId) {
-        return <LoadingScreen />;
+        return null;
     }
 
-    // Handle missing game data
     if (!game) {
-        return <LoadingScreen />;
+        return null;
     }
     
     // Conditionally render based on game status

@@ -7,7 +7,6 @@ import { DragProvider } from '../contexts/DragContext';
 import { GameProvider } from '../contexts/GameContext';
 import { AnimationProvider } from '../contexts/AnimationContext';
 import { FernFractalProvider } from '../utils/fernFractal';
-import { LoadingScreen } from './LoadingScreen';
 
 // Wrapper component that protects routes and provides ServerContext
 export const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
@@ -25,12 +24,12 @@ export const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
         }
     }, [loading, user_id, setRedirectAfterLogin, router]);
 
+    // While auth is resolving or redirecting, render nothing — the app-wide
+    // background (see Providers) shows through instead of a blank screen.
     if (loading) {
-        return <LoadingScreen />;
+        return null;
     }
 
-    // Only allow access if user is authenticated; otherwise render nothing
-    // while the effect above redirects to the welcome page.
     if (!user_id) {
         return null;
     }
