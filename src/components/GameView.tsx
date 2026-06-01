@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useRouter } from 'next/navigation';
 import { useServer } from '../contexts/ServerContext';
 import { Lobby } from './Lobby';
 import { GameDisplay } from './GameDisplay';
@@ -8,16 +8,16 @@ import { GAME_STATUS } from '../common/types';
 
 export const GameView = () => {
     const { game, gameLoadError } = useServer();
-    const urlGameId = useParams().game_id?.toLowerCase() || null;
-    const navigate = useNavigate();
+    const urlGameId = useParams<{ game_id: string }>().game_id?.toLowerCase() || null;
+    const router = useRouter();
 
     // Handle game load errors - redirect to dashboard
     useEffect(() => {
         if (gameLoadError && gameLoadError === urlGameId) {
             console.log('Game not found, redirecting to dashboard');
-            navigate('/dashboard');
+            router.push('/dashboard');
         }
-    }, [gameLoadError, urlGameId, navigate]);
+    }, [gameLoadError, urlGameId, router]);
 
     // Handle error state - game doesn't exist
     if (gameLoadError === urlGameId) {

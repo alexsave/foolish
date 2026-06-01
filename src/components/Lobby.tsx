@@ -1,5 +1,5 @@
 import { useServer } from "../contexts/ServerContext";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState, useRef, useMemo } from "react";
 import { WEBSITE_DOMAIN } from "../constants/constants";
 import { useAuth } from "../contexts/AuthContext";
@@ -65,9 +65,9 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
 };
 
 export const Lobby = () => {
-    const game_id = useParams().game_id?.toLowerCase();
+    const game_id = useParams<{ game_id: string }>().game_id?.toLowerCase();
     const { game, updateGameName, rearrangePlayer, addBot, exitGame, joinGame, startGame } = useServer();
-    const navigate = useNavigate();
+    const router = useRouter();
     const { user_id } = useAuth();
     const { t } = useLocalization();
     const { woodUrl, concreteUrl } = useTexture();
@@ -437,7 +437,7 @@ export const Lobby = () => {
                                     onClick={(e) => {
                                         e.stopPropagation();
                                         if (showExitButton && game.players.length === 1) {
-                                            navigate('/dashboard');
+                                            router.push('/dashboard');
                                         }
                                         handleRemovePlayer(player.player_id, showRemoveBotButton);
                                     }}

@@ -2,7 +2,7 @@ import React, { createContext, useContext, useEffect, useState, useRef, useCallb
 import { Card, Game, GAME_STATUS, PLAYER_STATUS, PublicGame } from '../common/types';
 import { useServer } from './ServerContext';
 import { useAuth } from './AuthContext';
-import { useParams } from 'react-router-dom';
+import { useParams } from 'next/navigation';
 import supabase from '../backend/Connector';
 import { ANIMATION_TIME } from '../constants/constants';
 import { validateAttack, validatePass, validatePickup, validateCover } from '../utils/gameValidation';
@@ -123,7 +123,7 @@ const canBotMove = (game: PublicGame | undefined): boolean => {
 export const AnimationProvider = ({ children }: { children: React.ReactNode }) => {
     const { updateGameState, games, game_id, ...serverMethods } = useServer();
     const { user_id } = useAuth();
-    const url_game_id = useParams().game_id?.toLowerCase();
+    const url_game_id = useParams<{ game_id: string }>().game_id?.toLowerCase();
 
     const [isAnimating, setIsAnimating] = useState(false);
     const [currentAnimation, setCurrentAnimation] = useState<ClientAnimationEvent | null>(null);

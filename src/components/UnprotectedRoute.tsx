@@ -1,5 +1,5 @@
 //the oppsoite of protected route
-import { Navigate } from 'react-router-dom';
+import { useRouter } from 'next/navigation';
 import { useAuth } from '../contexts/AuthContext';
 import { ServerProvider } from '../contexts/ServerContext';
 import { useEffect, useState } from 'react';
@@ -7,9 +7,10 @@ import { useEffect, useState } from 'react';
 // Wrapper component that protects routes and provides ServerContext
 export const UnprotectedRoute = ({ children }: { children: React.ReactNode }) => {
     const { user_id, loading, redirectAfterLogin, clearRedirectAfterLogin } = useAuth();
+    const router = useRouter();
     const [shouldRedirect, setShouldRedirect] = useState<string | null>(null);
     const [hasHandledRedirect, setHasHandledRedirect] = useState(false);
-    
+
     // Handle redirect logic when user is authenticated
     useEffect(() => {
         if (!loading && user_id && !hasHandledRedirect) {
@@ -25,7 +26,14 @@ export const UnprotectedRoute = ({ children }: { children: React.ReactNode }) =>
             }
         }
     }, [loading, user_id, redirectAfterLogin, hasHandledRedirect, clearRedirectAfterLogin]);
-    
+
+    // Once a destination is resolved, perform the redirect.
+    useEffect(() => {
+        if (shouldRedirect) {
+            router.replace(shouldRedirect);
+        }
+    }, [shouldRedirect, router]);
+
     // Don't render anything until Supabase has determined the auth state.
     // Rendering Welcome prematurely causes iOS Safari to focus the username
     // input (popping the keyboard) before we redirect a signed-in user to the
@@ -38,7 +46,7 @@ export const UnprotectedRoute = ({ children }: { children: React.ReactNode }) =>
     // shouldRedirect is set by the effect on the next tick; until then render
     // nothing rather than flashing Welcome to a signed-in user.
     if (user_id) {
-        return shouldRedirect ? <Navigate to={shouldRedirect} replace /> : null;
+        return null;
     }
 
     return (

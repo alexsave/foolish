@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useRouter } from "next/navigation";
 import { useServer } from "../../contexts/ServerContext";
 import { TexturedSurface } from "../TexturedSurface";
 import { Text } from "../Text";
@@ -8,14 +8,14 @@ import { useLocalization } from "../../contexts/LocalizationContext";
 export const JoinGameForm: React.FC = () => {
     const [gameId, setGameId] = useState<string>('');
     const { joinGame } = useServer();
-    const navigate = useNavigate();
+    const router = useRouter();
     const { t } = useLocalization();
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         if (gameId.trim()) {
             joinGame(gameId.toLowerCase()).then(data => {
-                navigate(`/${data.game_id}`);
+                router.push(`/${data.game_id}`);
             }).catch(error => {
                 alert(error);
             });

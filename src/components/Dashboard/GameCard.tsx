@@ -1,4 +1,4 @@
-import { useNavigate } from "react-router-dom";
+import { useRouter } from "next/navigation";
 import { useAuth } from "../../contexts/AuthContext";
 import { useTexture, getTextureStyle, seedFromString, flipFromString } from "../TexturedSurface";
 import { Text } from "../Text";
@@ -10,7 +10,7 @@ interface GameCardProps {
 }
 
 export const GameCard: React.FC<GameCardProps> = ({ game }) => {
-    const navigate = useNavigate();
+    const router = useRouter();
     const { username } = useAuth();
     const { woodUrl } = useTexture();
 
@@ -27,7 +27,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game }) => {
     const statusClass = isWaiting ? 'badge--waiting' : isPlaying ? 'badge--playing' : 'badge--gameover';
 
     return (
-        <div className="game-card" onClick={() => navigate(`/${game.id}`)}>
+        <div className="game-card" onClick={() => router.push(`/${game.id}`)}>
             {/* CSS hides this in Soviet mode via [data-theme="soviet"] .bg-wood { display: none } */}
             <div 
                 className="bg-wood"

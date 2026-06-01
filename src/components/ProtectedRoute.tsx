@@ -1,5 +1,5 @@
 import React from 'react';
-import { Navigate, useLocation } from 'react-router-dom';
+import { useRouter } from 'next/navigation';
 import { useAuth } from '../contexts/AuthContext';
 import { ServerProvider } from '../contexts/ServerContext';
 import { useEffect } from 'react';
@@ -11,15 +11,18 @@ import { FernFractalProvider } from '../utils/fernFractal';
 // Wrapper component that protects routes and provides ServerContext
 export const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
     const { user_id, loading, setRedirectAfterLogin } = useAuth();
-    const location = useLocation();
+    const router = useRouter();
 
-    // Store redirect URL when user is not authenticated
+    // When unauthenticated, remember where the user was headed and send them
+    // to the welcome page. (Reading window.location in the effect keeps this
+    // client-only and avoids Next's useSearchParams Suspense requirement.)
     useEffect(() => {
         if (!loading && !user_id) {
-            const redirectUrl = location.pathname + location.search;
+            const redirectUrl = window.location.pathname + window.location.search;
             setRedirectAfterLogin(redirectUrl);
+            router.replace('/');
         }
-    }, [loading, user_id, location.pathname, location.search, setRedirectAfterLogin]);
+    }, [loading, user_id, setRedirectAfterLogin, router]);
 
     if (loading) {
         return (
@@ -31,9 +34,10 @@ export const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
         );
     }
 
-    // Only allow access if user is authenticated
+    // Only allow access if user is authenticated; otherwise render nothing
+    // while the effect above redirects to the welcome page.
     if (!user_id) {
-        return <Navigate to="/" />;
+        return null;
     }
 
     return (

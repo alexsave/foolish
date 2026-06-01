@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { Card, PersonalGame, PublicGame, PRIVATE_EVENT_TYPE, GAME_STATUS, STRATEGY_KEY } from '../common/types';
 import supabase from '../backend/Connector';
-import { useParams } from 'react-router-dom';
+import { useParams } from 'next/navigation';
 import { useAuth } from './AuthContext';
 import { MAX_PLAYERS } from '../common/constants';
 import { get_next_player_index, card_comp } from '../common/common_utils';
@@ -35,7 +35,7 @@ games!inner (
 // this will be kinda similar to client.js
 export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     const { user_id } = useAuth();
-    const url_game_id = useParams().game_id?.toLowerCase();
+    const url_game_id = useParams<{ game_id: string }>().game_id?.toLowerCase();
     // keep a state of games
     // maybe ref idk
     const [games, setGames] = useState<{ [key: string]: (PersonalGame) }>({});
@@ -160,7 +160,9 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                     if (status === 'SUBSCRIBED') {
                         gameChannelRetryInterval.current = 500; // Reset retry interval on success
                     } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-                        console.error('Game-user channel error:', err);
+                        if (err) {
+                            console.error(`Game-user channel ${status}:`, err);
+                        }
                         setTimeout(() => {
                             subscribeToGame(gameId).catch(console.error);
                             // Double the interval but cap at MAX_RETRY_INTERVAL
@@ -196,7 +198,9 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                     if (status === 'SUBSCRIBED') {
                         chatChannelRetryInterval.current = 500; // Reset retry interval on success
                     } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-                        console.error('Chat channel error:', err);
+                        if (err) {
+                            console.error(`Chat channel ${status}:`, err);
+                        }
                         setTimeout(() => {
                             subscribeToChatMessages(gameId).catch(console.error);
                             // Double the interval but cap at MAX_RETRY_INTERVAL

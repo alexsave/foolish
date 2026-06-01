@@ -1,18 +1,18 @@
-import { useNavigate } from 'react-router-dom';
+import { useRouter } from 'next/navigation';
 import { useAuth } from '../contexts/AuthContext';
 import { TexturedSurface } from './TexturedSurface';
 
 export const SignOutButton = () => {
-    const navigate = useNavigate();
+    const router = useRouter();
     const { signOut } = useAuth();
 
     const handleSignOut = async () => {
         try {
             await signOut();
-            navigate('/');
+            router.push('/');
         } catch (error) {
             console.error('Sign out failed:', error);
-            navigate('/');
+            router.push('/');
         }
     };
 

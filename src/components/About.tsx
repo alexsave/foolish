@@ -2,7 +2,7 @@ import { TexturedSurface } from './TexturedSurface';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { Text } from './Text';
-import { Link } from 'react-router-dom';
+import Link from 'next/link';
 
 export const About = () => {
     return (
@@ -29,7 +29,7 @@ export const About = () => {
                 <TexturedSurface
                     as={Link}
                     seed={0.5}
-                    to="/"
+                    href="/"
                     className="btn-wood btn-wood--md"
                     style={{ textDecoration: 'none', display: 'inline-block' }}
                 >

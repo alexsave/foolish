@@ -4,7 +4,7 @@ import { TexturedSurface } from './TexturedSurface';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { Text } from './Text';
-import { Link } from 'react-router-dom';
+import Link from 'next/link';
 import { useStyles } from '../contexts/StyleContext';
 
 export const Welcome = () => {
@@ -132,7 +132,7 @@ export const Welcome = () => {
             
             <LanguageSwitcher />
             
-            <Link to="/about" className="link link--bottom">
+            <Link href="/about" className="link link--bottom">
                 <Text id="about" />
             </Link>
         </div>

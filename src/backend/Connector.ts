@@ -10,8 +10,8 @@ class Connector {
     }
 
     this.client = createClient(
-      process.env.REACT_APP_SUPABASE_URL,
-      process.env.REACT_APP_SUPABASE_KEY
+      process.env.NEXT_PUBLIC_SUPABASE_URL,
+      process.env.NEXT_PUBLIC_SUPABASE_KEY
     );
 
     Connector.instance = this;
@@ -24,4 +24,4 @@ class Connector {
 
 // Create and export a singleton instance
 const connector = new Connector();
-export default connector.getClient()!; 
+export default connector.getClient()!;

@@ -1,15 +1,15 @@
-import { useNavigate } from "react-router-dom";
+import { useRouter } from "next/navigation";
 import supabase from "../../backend/Connector";
 import { TexturedSurface } from "../TexturedSurface";
 import { Text } from "../Text";
 
 export const CreateGameButton: React.FC = () => {
-    const navigate = useNavigate();
+    const router = useRouter();
 
     const handleCreate = () => {
         supabase.functions.invoke('create')
             .then(data => {
-                navigate(`/${data.data.id}`);
+                router.push(`/${data.data.id}`);
             }).catch(error => {
                 alert(error);
             });

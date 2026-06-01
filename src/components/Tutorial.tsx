@@ -1,8 +1,8 @@
-import { useNavigate } from "react-router-dom";
+import { useRouter } from "next/navigation";
 import { TexturedSurface } from "./TexturedSurface";
 
-export const Tutorial = () => { 
-    const navigate = useNavigate();
+export const Tutorial = () => {
+    const router = useRouter();
 
     return (
         <div>
@@ -12,7 +12,7 @@ export const Tutorial = () => {
                 as="button"
                 seed={0.3}
                 className="btn-wood btn-wood--md"
-                onClick={() => navigate('/dashboard')}
+                onClick={() => router.push('/dashboard')}
             >
                 <span className="btn-wood-text">Go to Game</span>
             </TexturedSurface>
