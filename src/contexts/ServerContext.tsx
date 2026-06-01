@@ -146,8 +146,16 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 clearTimeout(chatChannelRetryTimeout.current);
                 chatChannelRetryTimeout.current = null;
             }
-            // Remove all realtime subscriptions
-            supabase.removeAllChannels();
+            // Remove subscriptions one channel at a time instead of removeAllChannels().
+            // removeAllChannels() calls socket.disconnect() unconditionally, force-closing
+            // the websocket (close code 1005) on every game switch — that 1005 then fans
+            // out as a CHANNEL_ERROR to the channels being created for the next game.
+            // Per-channel removeChannel() instead routes through realtime-js's deferred
+            // disconnect (disconnectOnEmptyChannelsAfterMs), which is cancelled as soon as
+            // the next game subscribes, so the socket is never bounced during a fast switch.
+            supabase.getChannels().forEach((channel) => {
+                supabase.removeChannel(channel);
+            });
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [user_id, url_game_id]);
