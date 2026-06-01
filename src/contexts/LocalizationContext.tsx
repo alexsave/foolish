@@ -14,16 +14,24 @@ const LocalizationContext = createContext<LocalizationContextType | undefined>(u
 const LANGUAGE_STORAGE_KEY = 'foolish_language';
 
 export const LocalizationProvider = ({ children }: { children: ReactNode }) => {
-  // Initialize language from localStorage or default to English
-  const [language, setLanguage] = useState<Language>(() => {
-    const stored = localStorage.getItem(LANGUAGE_STORAGE_KEY);
-    return (stored === 'en' || stored === 'ru' || stored === 'ko') ? stored : 'en';
-  });
+  // Default to English for the initial (prerendered) render so the static shell
+  // can be generated without touching localStorage; the persisted choice is
+  // loaded on mount in the browser below.
+  const [language, setLanguageState] = useState<Language>('en');
 
-  // Persist language changes to localStorage
+  // Hydrate the persisted language from localStorage once, on the client.
   useEffect(() => {
-    localStorage.setItem(LANGUAGE_STORAGE_KEY, language);
-  }, [language]);
+    const stored = localStorage.getItem(LANGUAGE_STORAGE_KEY);
+    if (stored === 'en' || stored === 'ru' || stored === 'ko') {
+      setLanguageState(stored);
+    }
+  }, []);
+
+  // Update language and persist the choice.
+  const setLanguage = (lang: Language) => {
+    setLanguageState(lang);
+    localStorage.setItem(LANGUAGE_STORAGE_KEY, lang);
+  };
 
   // Translation function with parameter substitution
   const t = (stringId: StringId, params?: Record<string, string>): string => {

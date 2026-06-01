@@ -2,7 +2,7 @@ import '../styles/index.css';
 import React from 'react';
 import type { Metadata, Viewport } from 'next';
 import { Analytics } from '@vercel/analytics/react';
-import AppShell from './AppShell';
+import Providers from './providers';
 
 export const metadata: Metadata = {
   title: 'Foolish',
@@ -44,7 +44,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body>
         <noscript>You need to enable JavaScript to run this app.</noscript>
-        <AppShell>{children}</AppShell>
+        <Providers>{children}</Providers>
         <Analytics />
       </body>
     </html>
