@@ -28,7 +28,7 @@ interface SovietIconProps {
 }
 
 // Soviet-style flat icons as inline SVGs
-const sovietIcons: Record<IconName, (size: number, color?: string) => JSX.Element> = {
+const sovietIcons: Record<IconName, (size: number, color?: string) => React.JSX.Element> = {
   'bot': (size) => (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
       {/* CPU - square chip with wires/pins */}
