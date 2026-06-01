@@ -7,6 +7,7 @@ import { DragProvider } from '../contexts/DragContext';
 import { GameProvider } from '../contexts/GameContext';
 import { AnimationProvider } from '../contexts/AnimationContext';
 import { FernFractalProvider } from '../utils/fernFractal';
+import { LoadingScreen } from './LoadingScreen';
 
 // Wrapper component that protects routes and provides ServerContext
 export const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
@@ -25,13 +26,7 @@ export const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
     }, [loading, user_id, setRedirectAfterLogin, router]);
 
     if (loading) {
-        return (
-            <div className="auth-container">
-                <div className="auth-card">
-                    <h2>Loading ProtectedRoute...</h2>
-                </div>
-            </div>
-        );
+        return <LoadingScreen />;
     }
 
     // Only allow access if user is authenticated; otherwise render nothing

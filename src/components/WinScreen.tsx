@@ -5,6 +5,7 @@ import { GAME_STATUS } from '../common/types';
 import supabase from '../backend/Connector';
 import { TexturedSurface, useTexture, getTextureStyle, seedFromString, flipFromString } from './TexturedSurface';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
+import { LoadingScreen } from './LoadingScreen';
 import { Text } from './Text';
 import { SovietIcon, RankIcon } from './SovietIcon';
 
@@ -131,11 +132,11 @@ export const WinScreen: React.FC = () => {
     }, [game]);
 
     if (!game || game.status !== GAME_STATUS.GAME_OVER) {
-        return <div className="loading"><Text id="loading" /></div>;
+        return <LoadingScreen />;
     }
 
     if (loading) {
-        return <div className="loading"><Text id="loading" /></div>;
+        return <LoadingScreen />;
     }
 
     const handleContinue = async () => {

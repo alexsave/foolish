@@ -5,6 +5,7 @@ import { Lobby } from './Lobby';
 import { GameDisplay } from './GameDisplay';
 import { WinScreen } from './WinScreen';
 import { GAME_STATUS } from '../common/types';
+import { LoadingScreen } from './LoadingScreen';
 
 export const GameView = () => {
     const { game, gameLoadError } = useServer();
@@ -19,14 +20,14 @@ export const GameView = () => {
         }
     }, [gameLoadError, urlGameId, router]);
 
-    // Handle error state - game doesn't exist
+    // Handle error state - game doesn't exist (redirecting to dashboard)
     if (gameLoadError === urlGameId) {
-        return <div>Game not found. Redirecting to dashboard...</div>;
+        return <LoadingScreen />;
     }
 
     // Handle missing game data
     if (!game) {
-        return <div>Loading...</div>;
+        return <LoadingScreen />;
     }
     
     // Conditionally render based on game status
