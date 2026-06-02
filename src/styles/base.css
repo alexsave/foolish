@@ -11,9 +11,21 @@ html {
   height: 100%;
   overflow: hidden;
   -webkit-text-size-adjust: 100%;
-  /* Fills the iOS safe areas and rubber-band overscroll with the page
-     background color instead of the browser's default white. */
+  /* The document canvas paints across the full physical screen, including the
+     iOS home-indicator strip that fixed-position layers can't reach in
+     standalone (PWA) mode. So we paint the wool texture here (set as a CSS var
+     by WoolBackgroundLayer) with the page color as the fallback — no flat
+     color band below the wool, no white in the safe areas / overscroll. */
   background-color: var(--color-background);
+  background-image: var(--wool-texture, none);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+/* Soviet theme uses a solid red background (--color-background), not the wool. */
+[data-theme="soviet"] {
+  background-image: none;
 }
 
 body {
