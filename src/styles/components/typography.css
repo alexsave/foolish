@@ -135,16 +135,7 @@
    states render nothing and still show the themed background, never white. */
 .app-background {
   position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  /* Anchor by an explicit full-viewport height rather than bottom:0. In
-     standalone (PWA) mode a fixed bottom:0 lands at the home-indicator
-     safe-area boundary (and env(safe-area-inset-bottom) reads 0 there), which
-     left the html background showing through below the wool. A height measured
-     against the full layout viewport covers the whole physical screen. */
-  height: 100vh;
-  height: 100lvh;
+  inset: 0;
   z-index: -1;
   pointer-events: none;
 }

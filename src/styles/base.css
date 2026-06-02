@@ -8,29 +8,24 @@
 }
 
 html {
-  height: 100%;
+  /* MUST be 100vh, not 100% or 100dvh. In an iOS standalone (PWA), 100% breaks
+     the viewport-fit=cover layout entirely (Safari letterboxes to a short web
+     view) and 100dvh reads a stale, too-short value on cold start (only correct
+     after a rotation). 100vh is the one unit correct from the start, so the app
+     fills the full physical screen including under the home indicator. */
+  height: 100vh;
   overflow: hidden;
   -webkit-text-size-adjust: 100%;
-  /* The document canvas paints across the full physical screen, including the
-     iOS home-indicator strip that fixed-position layers can't reach in
-     standalone (PWA) mode. So we paint the wool texture here (set as a CSS var
-     by WoolBackgroundLayer) with the page color as the fallback — no flat
-     color band below the wool, no white in the safe areas / overscroll. */
+  /* Fallback only — with the cover layout fixed the wool covers the screen, so
+     this is just a safety color for the safe areas / overscroll, never a band. */
   background-color: var(--color-background);
-  background-image: var(--wool-texture, none);
-  background-size: cover;
-  background-position: center;
-  background-repeat: no-repeat;
-}
-
-/* Soviet theme uses a solid red background (--color-background), not the wool. */
-[data-theme="soviet"] {
-  background-image: none;
 }
 
 body {
   margin: 0;
-  height: 100%;
+  /* 100vh, matching html — see the note there. (Was 100% + a 100dvh override
+     below, which produced the short/clipped web view in standalone PWA mode.) */
+  height: 100vh;
   overflow: hidden;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
@@ -86,10 +81,9 @@ input, textarea {
 
 /* ===== iOS Safari Fixes ===== */
 @supports (-webkit-touch-callout: none) {
-  body {
-    height: 100dvh;
-  }
-  
+  /* NOTE: do not override body height with 100dvh here. In standalone (PWA)
+     mode 100dvh reads short on cold start and clips the web view, leaving a
+     band below the home indicator. body uses 100vh above, which is correct. */
   .ios-keyboard-fix {
     height: 100vh;
     height: 100dvh;
