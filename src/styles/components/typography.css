@@ -135,7 +135,13 @@
    states render nothing and still show the themed background, never white. */
 .app-background {
   position: fixed;
-  inset: 0;
+  top: 0;
+  left: 0;
+  right: 0;
+  /* In standalone (PWA) mode a fixed bottom:0 stops at the home-indicator
+     safe-area boundary, leaving the html background showing through below the
+     wool. Bleed past it so the background covers the full physical screen. */
+  bottom: calc(-1 * env(safe-area-inset-bottom, 0px));
   z-index: -1;
   pointer-events: none;
 }

@@ -10,7 +10,9 @@
   min-height: 100vh;
   width: 100%;
   position: relative;
-  background-color: var(--color-background);
+  /* Transparent so the single app-wide wool background (see .app-background)
+     shows through edge to edge, including the safe-area padding below. */
+  background-color: transparent;
   /* Keep page content clear of the notch / home indicator in standalone
      (PWA) mode, where viewport-fit=cover extends the viewport into the
      iPhone safe areas. Falls back to 0 on devices without insets. */
@@ -26,7 +28,8 @@
   min-height: 100vh;
   width: 100%;
   position: relative;
-  background-color: var(--color-background);
+  /* Transparent so the app-wide wool background shows through (see .page). */
+  background-color: transparent;
   touch-action: manipulation;
   /* Same safe-area handling as .page for standalone (PWA) mode. */
   padding-top: env(safe-area-inset-top, 0px);
