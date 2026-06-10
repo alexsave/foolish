@@ -308,16 +308,27 @@ export async function generateWoolTexture(): Promise<string> {
       // Yield control immediately to let React render first
       await new Promise(resolve => setTimeout(resolve, 0));
 
-      // 4K point-cloud generation allocates ~270 MB of Float32Arrays and a
-      // 4K canvas, which iOS Safari kills under its memory limits (the wool
-      // then silently never appears). Phones get 1080p — it's a background.
+      // The texture must stay 4K — the weave's apparent scale is tied to the
+      // pixel grid, so a 1080p render shows up 2x zoomed-in on screen. What
+      // kills iOS Safari is not the resolution but the WebGL point-cloud
+      // path's ~270 MB of Float32Arrays; the CPU path peaks around ~35 MB at
+      // 4K. So: desktop renders 4K via WebGL (fast), constrained devices
+      // render 4K via CPU (chunked, idle-yielding), and only if even that
+      // fails do we accept a zoomed 1080p texture over a flat background.
       const constrained =
         typeof navigator !== 'undefined' &&
         (/iP(hone|od|ad)/.test(navigator.userAgent) ||
           Math.min(window.screen.width, window.screen.height) < 500);
-      const blobUrl = constrained
-        ? await generateWoolTextureAsync(1920, 1080)
-        : await generateWoolTextureAsync(3840, 2160);
+      let blobUrl: string;
+      try {
+        blobUrl = constrained
+          ? await generateWoolTextureFallback(3840, 2160)
+          : await generateWoolTextureAsync(3840, 2160);
+        if (!blobUrl) throw new Error('empty blob at 4K');
+      } catch (err) {
+        console.error('4K wool generation failed, retrying at 1080p:', err);
+        blobUrl = await generateWoolTextureFallback(1920, 1080);
+      }
       if (!blobUrl) {
         throw new Error('wool texture generation produced no blob');
       }
@@ -484,15 +495,16 @@ async function generateWoolTextureFallback(width: number, height: number): Promi
   }
   
   ctx.putImageData(imageData, 0, 0);
-  
-  // Convert to Blob URL instead of data URL
-  return new Promise((resolve) => {
+
+  // Convert to Blob URL instead of data URL. A null blob (Safari canvas
+  // memory limit) must reject so callers can retry smaller, not cache ''.
+  return new Promise((resolve, reject) => {
     canvas.toBlob((blob) => {
       if (blob) {
         const blobUrl = URL.createObjectURL(blob);
         resolve(blobUrl);
       } else {
-        resolve('');
+        reject(new Error('canvas.toBlob returned null (canvas memory limit?)'));
       }
     }, 'image/png', 1.0);
   });

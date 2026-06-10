@@ -668,7 +668,7 @@ export const ReplayScreen = ({ code }: { code: string }) => {
     }
 
     return (
-        <div data-game-container className="game-container" style={{ height: '100dvh' }}>
+        <div data-game-container className="game-container">
             <WoolBackgroundLayer />
             <ReplayServerProvider gameId={gameId} initialGame={result.initial}>
                 <FernFractalProvider>
