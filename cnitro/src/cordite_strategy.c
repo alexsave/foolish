@@ -73,8 +73,10 @@ static int cd_env_int(const char *name, int def) {
 static _Thread_local int cd_flags_loaded = 0;
 static _Thread_local int cd_no_solve = 0, cd_no_voids = 0, cd_no_flip = 0;
 static _Thread_local int cd_no_floors = 0, cd_no_leaf = 0, cd_no_avoid = 0;
+static _Thread_local int cd_no_earlyexit = 0;
 static _Thread_local int cd_verify = 0;
 static _Thread_local int cd_w1_override = 0, cd_w2_override = 0;
+static _Thread_local int cd_w3_override = -1;
 
 static int cd_in_count(const Game *g) {
     int n = 0;
@@ -265,11 +267,11 @@ static void cd_build_belief(const Game *g, int bot_idx, Belief *B) {
     }
 
     // Behavior-based trust: lowest-first attackers almost never lead trump
-    // while the deck is alive; one strike kills floors, two kill voids
-    // (random/MC-style opponents also pick up while holding covers).
+    // while the deck is alive, so one strike kills floors. Voids are NOT
+    // gated this way — a trump lead can be forced (all-trump hand), and the
+    // 1-in-4 unconstrained world mixture already absorbs void violators.
     for (int p = 0; p < g->num_players; p++) {
         if (trump_viol[p] >= 1) { B->distrust_floor[p] = true; B->floor_v[p] = 0; }
-        if (trump_viol[p] >= 2) { B->distrust_void[p] = true; B->void_n[p] = 0; }
     }
 
     // Players that left the game hold nothing.
@@ -339,15 +341,21 @@ static void cd_build_belief(const Game *g, int bot_idx, Belief *B) {
 // the real log (all any rollout policy reads), so downstream trial clones
 // stay small. Constraint-violating dealt cards are repaired by swapping with
 // compatible deck cards; impossible repairs degrade gracefully.
+static _Thread_local int cd_full_logs = 0;   // CD_FULL_LOGS=1: bp-style worlds
+
 static void cd_sample_world(Game *g_out, const Game *g_in, int my_idx,
                             const Belief *B, uint32_t seed,
                             bool apply_voids, bool apply_floors) {
-    memcpy(g_out, g_in, offsetof(Game, logs));
-    int nl = 0;
-    for (int i = 0; i < g_in->num_logs; i++) {
-        if (g_in->logs[i].log_type == LOG_DISCARD) g_out->logs[nl++] = g_in->logs[i];
+    if (cd_full_logs) {
+        game_clone(g_out, g_in);
+    } else {
+        memcpy(g_out, g_in, offsetof(Game, logs));
+        int nl = 0;
+        for (int i = 0; i < g_in->num_logs; i++) {
+            if (g_in->logs[i].log_type == LOG_DISCARD) g_out->logs[nl++] = g_in->logs[i];
+        }
+        g_out->num_logs = nl;
     }
-    g_out->num_logs = nl;
 
     for (int i = 0; i < g_in->num_players; i++) {
         if (i == my_idx) continue;
@@ -488,6 +496,7 @@ static int cd_solve(Solver *S, const Game *g, int alpha, int beta, int depth) {
 // few cards. Returns the loser index, or -1 if unresolved (abort/draw).
 static _Thread_local long cd_leaf_budget = CD_LEAF_BUDGET;
 static _Thread_local int  cd_leaf_max_cards = 0;   // set from env at init
+static _Thread_local int  cd_floor_mod = 2;        // floors in 1/mod worlds
 
 static int cd_leaf_solve(const Game *g) {
     if (!cd_solver_ready()) return -1;
@@ -539,7 +548,8 @@ static int cd_simulate(Game *g, int my_idx, int max_turns) {
     bool leaf_tried = false;
     while (game_done(g) < 0 && turns++ < max_turns) {
         // My fate is sealed as soon as I'm out: position = elimination slot.
-        if (g->players[my_idx].status != PLAYER_STATUS_IN) {
+        if (!cd_no_earlyexit
+            && g->players[my_idx].status != PLAYER_STATUS_IN) {
             for (int i = 0; i < g->num_eliminated; i++) {
                 if (g->elimination_order[i] == my_idx) return i + 1;
             }
@@ -631,9 +641,12 @@ static int cd_try_endgame_solve(const Game *g, int bot_idx,
 
     // Pass 1 — win hunt (blackpowder's loop): fail-soft with an accumulating
     // alpha floor at 0, so losing subtrees prune immediately.
+    // CD_BP_SOLVE=1 reverts to blackpowder's exact semantics (alpha starts
+    // wide open, any abort bails the whole solve) for A/B testing.
     int best_idx = -1;
     int best_v = 0;       // only accept strictly winning lines
-    int alpha = 0;
+    int alpha = cd_flag("CD_BP_SOLVE") ? -2000 : 0;
+    bool bail_on_abort = (alpha == -2000);
     bool any_abort = false;
     for (int i = 0; i < moves->n; i++) {
         Game child;
@@ -642,7 +655,7 @@ static int cd_try_endgame_solve(const Game *g, int bot_idx,
         S.aborted = false;
         int v = cd_solve(&S, &child, alpha, 2000, 1);
         if (S.budget <= 0) return -1;   // out of budget: no claims at all
-        if (S.aborted) { any_abort = true; continue; }
+        if (S.aborted) { if (bail_on_abort) return -1; any_abort = true; continue; }
         if (v > best_v) { best_v = v; best_idx = i; }
         if (v > alpha) alpha = v;
     }
@@ -652,21 +665,23 @@ static int cd_try_endgame_solve(const Game *g, int bot_idx,
     // Pass 2 — loss avoidance: no win exists, so classify each move with a
     // null window around 0 (sign only, maximal pruning).
     S.budget = CD_AVOID_BUDGET;
-    int n_loss = 0;
+    int n_loss = 0, n_nonloss = 0;
     for (int i = 0; i < moves->n; i++) {
         Game child;
         cd_lite_clone(&child, &root);
         if (!cd_apply(&child, bot_idx, &moves->moves[i])) continue;
         S.aborted = false;
         int v = cd_solve(&S, &child, -1, 0, 1);
-        if (S.budget <= 0 || S.aborted) continue;   // unknown: treated safe
+        if (S.budget <= 0 || S.aborted) continue;   // unknown
         if (v < 0) { forced_loss[i] = true; n_loss++; }
+        else n_nonloss++;
     }
-    if (n_loss > 0 && n_loss < moves->n) {
+    // Only restrict when some move is PROVEN non-losing — otherwise the
+    // "safe" set would just be the moves the solver failed to read (adverse
+    // selection), while MC models the imperfect opponent better anyway.
+    if (n_loss > 0 && n_nonloss > 0) {
         *n_safe = moves->n - n_loss;
     } else {
-        // All losing (or nothing classified): let MC pick freely — it models
-        // the real, imperfect opponent better than minimax despair.
         for (int i = 0; i < moves->n; i++) forced_loss[i] = false;
         *n_safe = moves->n;
     }
@@ -747,11 +762,12 @@ static void cd_pick_candidates(const Game *g, const LegalMoves *moves,
 // sampling budget at comparable wall-clock.
 static void cd_params(int num_players, int *W1, int *W2, int *W3) {
     if (num_players <= 2)      { *W1 = 16; *W2 = 28; *W3 = 28; }
-    else if (num_players <= 4) { *W1 = 12; *W2 = 24; *W3 = 28; }
-    else if (num_players <= 6) { *W1 = 14; *W2 = 28; *W3 = 28; }
-    else                       { *W1 = 12; *W2 = 24; *W3 = 24; }
+    else if (num_players <= 4) { *W1 = 14; *W2 = 28; *W3 = 28; }
+    else if (num_players <= 6) { *W1 = 20; *W2 = 40; *W3 = 28; }
+    else                       { *W1 = 20; *W2 = 40; *W3 = 24; }
     if (cd_w1_override > 0) *W1 = cd_w1_override;
     if (cd_w2_override > 0) *W2 = cd_w2_override;
+    if (cd_w3_override >= 0) *W3 = cd_w3_override;
 }
 
 // CD_VERIFY=1: oracle self-check (test-only — reads real hands to validate
@@ -807,8 +823,13 @@ int cordite_strategy_choose(const Game *g, int bot_idx,
         cd_verify    = cd_flag("CD_VERIFY");
         cd_w1_override = cd_env_int("CD_W1", 0);
         cd_w2_override = cd_env_int("CD_W2", 0);
+        cd_w3_override = cd_env_int("CD_W3", -1);
         cd_leaf_budget = cd_env_int("CD_LEAF_BUDGET", 1500);
         cd_leaf_max_cards = cd_env_int("CD_LEAF_CARDS", 10);
+        cd_floor_mod = cd_env_int("CD_FLOOR_MOD", 2);
+        if (cd_floor_mod < 1) cd_floor_mod = 1;
+        cd_full_logs = cd_flag("CD_FULL_LOGS");
+        cd_no_earlyexit = cd_flag("CD_NO_EARLYEXIT");
         cd_flags_loaded = 1;
     }
 
@@ -867,7 +888,7 @@ int cordite_strategy_choose(const Game *g, int bot_idx,
             // worlds), floors assume lowest-first attackers (every other
             // world). Per-player distrust already cleared bogus constraints.
             bool use_voids  = (w & 3) != 3;
-            bool use_floors = !cd_no_floors && (w & 1) == 0;
+            bool use_floors = !cd_no_floors && (w % cd_floor_mod) == 0;
             cd_sample_world(&world, g, bot_idx, &B, wseed, use_voids, use_floors);
             uint32_t sim_rng = cd_mix(wseed, 0x51AB1E5u);
             for (int ci = 0; ci < C.n; ci++) {
@@ -902,7 +923,12 @@ int cordite_strategy_choose(const Game *g, int bot_idx,
                 for (int i = 0; i < C.n; i++) {
                     if (!alive[i]) continue;
                     double v = score[i] / (double)(nsim[i] ? nsim[i] : 1);
-                    if (v > worst_v) { worst_v = v; worst = i; }
+                    // >= : among tied scores drop the LAST candidate. The
+                    // candidate list is ranked cheapest-first, so this keeps
+                    // the cheap move on ties; dropping the first-tied instead
+                    // systematically burns trumps (measured ~0.1 mean finish
+                    // vs blackpowder tables at pc4).
+                    if (v >= worst_v) { worst_v = v; worst = i; }
                 }
                 if (worst < 0) break;
                 alive[worst] = false;
