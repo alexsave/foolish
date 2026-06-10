@@ -258,7 +258,9 @@ export const STRATEGY_KEY = {
     CONSOLE: 'console',
     GPT: 'gpt',
     ESPRESSO: 'espresso',
-    NITRO: 'nitro'
+    NITRO: 'nitro',
+    CORDITE: 'cordite',
+    CORDITE_MAX: 'cordite_max'
 } as const;
 
 export type StrategyKey = typeof STRATEGY_KEY[keyof typeof STRATEGY_KEY];

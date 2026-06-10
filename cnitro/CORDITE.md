@@ -191,6 +191,36 @@ cd cnitro && make
   isolating the tie-break bug
 - `CD_VERIFY=1` — oracle self-check of the belief vs real hands (test-only)
 
+## Production TS port (cordite + cordite_max)
+
+Shipped in `supabase/functions/_shared/strategies/`:
+
+- `cordite_core.ts` — transliteration of this C code: compact int-card sim
+  engine, handwritten + espresso rollout policies, belief builder, CRN
+  sampler, endgame solver, staged MC. Reads only public info from the real
+  `Game` (own hand + logs; opponent draws are masked server-side anyway).
+  The TS draw log conveniently exposes the flipped card identity when
+  drawn, so flip-pinning is direct rather than inferred.
+- `cordite_strategy.ts` — `BotStrategy` adapter; registered in
+  `bot_strategy.ts` as `cordite` and `cordite_max`, seeded in
+  `supabase/seed.sql` (Cordite 1-3, Cordite Max).
+- Offline harness: `offlinefun/localtest/cordite_eval.ts`
+  (`npx tsx offlinefun/localtest/cordite_eval.ts cordite_max espresso 4,8 20`).
+
+Validation: TS cordite vs handwritten pc2 = 1.133 mean / 87% win over 30
+offline games (C benchmark: 1.121 / 87.9%).
+
+**World budgets.** `cordite` uses the C-tuned defaults. `cordite_max` uses
+W1/W2/W3 = 40/80/56 at every player count — the highest tier with a
+*measured* strength gain (C evals, 300 games/pc vs handwritten):
+default → 40/80/56 improved mean finish and win rate at pc 4/6/8
+(2.050→1.990, 2.910→2.767, 4.183→4.157); doubling again to 80/160/112 was
+NOT reliably better (pc6 regressed, pc4 flat), so the budget stops there
+even though wall-clock allows far more. Measured TS decision times for
+cordite_max: mean ~15 ms, p95 ~60 ms, max ~200 ms — comfortably inside
+the 2 s/decision target; a 1.9 s wall-clock cap in `cordite_core.ts`
+guarantees the bot loop can never stall on a pathological position.
+
 ## Server-side notes
 
 Same TS-port surface as blackpowder: belief builder (one log pass), CRN
