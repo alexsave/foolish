@@ -615,7 +615,9 @@ INSERT INTO bots (nickname, strategy_key) VALUES
 ('Cordite 3', 'cordite'),
 
 -- Cordite Max (same brain, larger sampled-world budget, <2s per decision)
-('Cordite Max', 'cordite_max');
+('Cordite Max 1', 'cordite_max'),
+('Cordite Max 2', 'cordite_max'),
+('Cordite Max 3', 'cordite_max');
 
 
 -- =============================================================================
