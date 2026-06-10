@@ -74,6 +74,7 @@ static int parse_strategy(const char *s) {
     if (!strcmp(s, "firecracker") || !strcmp(s, "fc"))    return STRAT_FIRECRACKER;
     if (!strcmp(s, "gunpowder") || !strcmp(s, "gp"))      return STRAT_GUNPOWDER;
     if (!strcmp(s, "blackpowder") || !strcmp(s, "bp"))    return STRAT_BLACKPOWDER;
+    if (!strcmp(s, "cordite") || !strcmp(s, "cd"))        return STRAT_CORDITE;
     return -1;
 }
 
@@ -87,6 +88,7 @@ static int dispatch_choose(int strat, const Game *g, int pi, const LegalMoves *m
         case STRAT_FIRECRACKER: return firecracker_strategy_choose(g, pi, moves, NULL);
         case STRAT_GUNPOWDER:   return gunpowder_strategy_choose(g, pi, moves, NULL);
         case STRAT_BLACKPOWDER: return blackpowder_strategy_choose(g, pi, moves, NULL);
+        case STRAT_CORDITE:     return cordite_strategy_choose(g, pi, moves, NULL);
         default:                return -1;
     }
 }
