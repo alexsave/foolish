@@ -50,7 +50,14 @@ export type StringId =
   | 'share_replay'
   | 'copy_code'
   | 'copied'
-  | 'replay_unavailable';
+  | 'replay_unavailable'
+  | 'replay_title'
+  | 'invalid_replay'
+  | 'is_the_fool'
+  | 'is_out'
+  | 'discarded'
+  | 'draws'
+  | 'trump';
 
 // English strings
 export const strings_en: Record<StringId, string> = {
@@ -105,6 +112,13 @@ export const strings_en: Record<StringId, string> = {
   copy_code: 'Copy code',
   copied: 'Copied!',
   replay_unavailable: 'Replay code unavailable for this game',
+  replay_title: 'Replay',
+  invalid_replay: 'This replay link is invalid',
+  is_the_fool: 'is the fool',
+  is_out: 'is out',
+  discarded: 'discarded',
+  draws: 'draws',
+  trump: 'Trump',
 };
 
 // Russian strings
@@ -160,6 +174,13 @@ export const strings_ru: Record<StringId, string> = {
   copy_code: 'Скопировать код',
   copied: 'Скопировано!',
   replay_unavailable: 'Код повтора недоступен для этой игры',
+  replay_title: 'Повтор',
+  invalid_replay: 'Эта ссылка на повтор недействительна',
+  is_the_fool: '— дурак',
+  is_out: 'вышел',
+  discarded: 'бито',
+  draws: 'берёт',
+  trump: 'Козырь',
 };
 
 // Korean strings
@@ -215,6 +236,13 @@ export const strings_ko: Record<StringId, string> = {
   copy_code: '코드 복사',
   copied: '복사됨!',
   replay_unavailable: '이 게임의 리플레이 코드를 사용할 수 없습니다',
+  replay_title: '리플레이',
+  invalid_replay: '이 리플레이 링크가 잘못되었습니다',
+  is_the_fool: '바보입니다',
+  is_out: '탈락',
+  discarded: '버림',
+  draws: '뽑기',
+  trump: '으뜸패',
 };
 
 // Combined strings object for easy access

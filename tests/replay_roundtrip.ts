@@ -46,6 +46,7 @@ import {
   base64Decode,
   bytesToBigint,
 } from "../supabase/functions/_shared/replay/codec.ts";
+import { buildReplaySteps } from "../src/replay/view";
 
 // Silence the very chatty engine
 const saved = console.log.bind(console);
@@ -228,6 +229,12 @@ function diffStreams(a: SeatLog[], b: SeatLog[]): string | null {
 
         // and the public verifier used by the UI must agree
         verifyRoundTrip(input);
+
+        // the replay-screen view builder must fold the stream without any
+        // desync (it throws on hand/deck underflow or card-count drift)
+        const steps = buildReplaySteps(dec as any);
+        if (steps.length !== dec.logs.length + 1)
+          throw new Error("view steps mismatch");
       } catch (e: any) {
         pcFails++;
         failures++;
