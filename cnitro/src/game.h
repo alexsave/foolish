@@ -106,6 +106,14 @@ void   game_set_seed(uint32_t s);
 double game_random(void);            // 0..1
 uint32_t game_random_u32(void);
 
+// Save/restore the game LCG state. Lets a strategy run internal
+// simulations (which consume game_random via draws and rollout policies)
+// without perturbing the outer game's random stream, and gives all
+// simulations of competing moves identical RNG streams (common random
+// numbers). Purely additive — no behavior change for existing callers.
+uint32_t game_rng_get(void);
+void     game_rng_set(uint32_t s);
+
 void     random_strategy_set_seed(uint32_t s);
 double   random_strategy_random(void);
 

@@ -50,6 +50,14 @@ double game_random(void) {
     return (double)v / 4294967296.0;
 }
 
+uint32_t game_rng_get(void) { return g_seed; }
+void     game_rng_set(uint32_t s) {
+    g_seed = s ? s : 1;
+#ifdef GRPO_RNG_DEBUG
+    g_seed_set = 1;
+#endif
+}
+
 void random_strategy_set_seed(uint32_t s) {
     g_rand_seed = s ? s : 1;
 #ifdef GRPO_RNG_DEBUG

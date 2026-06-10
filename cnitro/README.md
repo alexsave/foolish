@@ -11,6 +11,10 @@ What's here:
 - `src/legal.{h,c}` — legal-move enumeration (`calculateLegalMoves`).
 - `src/random_strategy.c`, `src/espresso_strategy.c` — bot strategies.
   Each uses its own deterministic LCG so seeded eval is repeatable.
+- `src/blackpowder_strategy.c` — strongest non-cheating bot: belief-
+  constrained determinized Monte Carlo (card memory rebuilt from logs,
+  common-random-number world sampling, exact alpha-beta endgame).
+  See BLACKPOWDER.md for design + benchmark results.
 - `src/tokenize.{h,c}` — token vocabulary + `tokenize` matching
   `nitro_nn.ts`.
 - `src/nn.{h,c}` — 2-layer × 1-head pre-LN transformer
