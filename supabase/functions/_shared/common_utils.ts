@@ -51,6 +51,7 @@ export const cloneGame = (game: Game): Game => ({
     elimination_order: [...game.elimination_order],
     good_timestamp: game.good_timestamp,
     good_players: [...game.good_players],
+    snapshots: game.snapshots ? [...game.snapshots] : undefined,
     deck: game.deck.map(cloneCard),
     logs: game.logs.map(cloneGameLog)
 });
@@ -237,6 +238,7 @@ export const personalize_game = (game: Game, player_id: string): PersonalGame | 
             elimination_order: game.elimination_order,
             good_timestamp: game.good_timestamp,
             good_players: game.good_players,
+            snapshots: game.snapshots,
             self: self
         }
         return personalGame;
@@ -256,6 +258,7 @@ export const personalize_game = (game: Game, player_id: string): PersonalGame | 
             elimination_order: game.elimination_order,
             good_timestamp: game.good_timestamp,
             good_players: game.good_players,
+            snapshots: game.snapshots,
         }
         return publicGame;
     }

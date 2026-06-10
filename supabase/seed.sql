@@ -81,6 +81,7 @@ CREATE TABLE games (
   elimination_order JSONB NOT NULL DEFAULT '[]'::jsonb, -- Array of player_ids in order they were eliminated
   good_timestamp BIGINT, -- Timestamp in milliseconds when all attacks were covered, null if not all covered
   good_players JSONB NOT NULL DEFAULT '[]'::jsonb, -- Array of player_ids who have pressed 'good'
+  snapshots JSONB NOT NULL DEFAULT '[]'::jsonb, -- string[] of base64 replay codes, one appended per finished session (see _shared/replay/format.ts); replaces the session's game_logs rows, which are wiped after encoding
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW()
 );

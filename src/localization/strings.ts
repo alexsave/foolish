@@ -46,7 +46,11 @@ export type StringId =
   | 'continue_to_lobby'
   | 'weak_password'
   | 'login_failed'
-  | 'signup_failed';
+  | 'signup_failed'
+  | 'share_replay'
+  | 'copy_code'
+  | 'copied'
+  | 'replay_unavailable';
 
 // English strings
 export const strings_en: Record<StringId, string> = {
@@ -97,6 +101,10 @@ export const strings_en: Record<StringId, string> = {
   weak_password: 'Weak password',
   login_failed: 'Login failed',
   signup_failed: 'Sign up failed',
+  share_replay: 'Share Replay',
+  copy_code: 'Copy code',
+  copied: 'Copied!',
+  replay_unavailable: 'Replay code unavailable for this game',
 };
 
 // Russian strings
@@ -148,6 +156,10 @@ export const strings_ru: Record<StringId, string> = {
   weak_password: 'Слабый пароль',
   login_failed: 'Не удалось войти',
   signup_failed: 'Не удалось зарегистрироваться',
+  share_replay: 'Поделиться повтором',
+  copy_code: 'Скопировать код',
+  copied: 'Скопировано!',
+  replay_unavailable: 'Код повтора недоступен для этой игры',
 };
 
 // Korean strings
@@ -199,6 +211,10 @@ export const strings_ko: Record<StringId, string> = {
   weak_password: '비밀번호가 너무 약합니다',
   login_failed: '로그인 실패',
   signup_failed: '가입 실패',
+  share_replay: '리플레이 공유',
+  copy_code: '코드 복사',
+  copied: '복사됨!',
+  replay_unavailable: '이 게임의 리플레이 코드를 사용할 수 없습니다',
 };
 
 // Combined strings object for easy access

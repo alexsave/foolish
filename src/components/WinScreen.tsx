@@ -7,6 +7,7 @@ import { TexturedSurface, useTexture, getTextureStyle, seedFromString, flipFromS
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
 import { Text } from './Text';
 import { SovietIcon, RankIcon } from './SovietIcon';
+import { ReplayShare } from './ReplayShare';
 
 interface PlayerResult {
     player_id: string;
@@ -220,7 +221,9 @@ export const WinScreen: React.FC = () => {
                     );
                 })}
             </div>
-            
+
+            <ReplayShare game={game} />
+
             <TexturedSurface
                 as="button"
                 seed={0.6}
