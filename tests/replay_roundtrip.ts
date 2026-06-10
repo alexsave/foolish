@@ -47,6 +47,16 @@ import {
   bytesToBigint,
 } from "../supabase/functions/_shared/replay/codec.ts";
 import { buildReplaySteps } from "../src/replay/view";
+import {
+  encodeExtras,
+  decodeExtras,
+  splitReplayCode,
+  joinReplayCode,
+  quantizeGap,
+  dequantizeGap,
+  moveTimesFromLogs,
+} from "../supabase/functions/_shared/replay/extras.ts";
+import { INFO_TYPES } from "../supabase/functions/_shared/replay/core.ts";
 
 // Silence the very chatty engine
 const saved = console.log.bind(console);
@@ -235,6 +245,58 @@ function diffStreams(a: SeatLog[], b: SeatLog[]): string | null {
         const steps = buildReplaySteps(dec as any);
         if (steps.length !== dec.logs.length + 1)
           throw new Error("view steps mismatch");
+        // extras (names + per-move timing) round-trip: arbitrary-Unicode
+        // names exactly; gaps within the log-quantizer's ~7% relative error
+        {
+          const unicodeNames = [
+            "ВАСЯ \u{1F0CF}",
+            "\uD55C\uAD6D\uC774\uB984",
+            "ÉMILIE",
+            "P4",
+            "X".repeat(60), // over the byte cap, must trim cleanly
+            "P6",
+            "P7",
+            "P8",
+          ].slice(0, np);
+          // synthesize plausible created_at times: ms flurries to multi-day gaps
+          let t = 1750000000;
+          game.logs.forEach((l, idx) => {
+            t += [0.05, 0.4, 2, 9, 45, 600, 90000][idx % 7];
+            l.created_at = new Date(t * 1000).toISOString();
+          });
+          const moveTimes = moveTimesFromLogs(game.logs);
+          const extras = encodeExtras(unicodeNames, moveTimes);
+          const full = joinReplayCode(enc.base32, extras);
+          const { moves: m2, extras: x2 } = splitReplayCode(full);
+          if (m2 !== enc.base32 || x2 !== extras)
+            throw new Error("extras container split mismatch");
+          if (urlToGame("WWW.FOOLISH.CARDS/" + full) !== enc.x)
+            throw new Error("urlToGame must ignore the extras section");
+
+          const moveCount = dec.logs.filter((l) =>
+            INFO_TYPES.includes(l.log_type),
+          ).length;
+          if (moveCount !== moveTimes.length - 1)
+            throw new Error("extras: move count vs times mismatch");
+          const back = decodeExtras(extras, np, moveCount);
+          const wantNames = unicodeNames.map((nm) =>
+            Array.from(nm).length > 48 ? nm.slice(0, 48) : nm,
+          );
+          back.names!.forEach((nm, i) => {
+            const orig = unicodeNames[i];
+            if (nm !== orig && !orig.startsWith(nm))
+              throw new Error(`name mismatch: ${nm} vs ${orig}`);
+          });
+          if (Math.abs(back.startTime! - Math.floor(moveTimes[0])) > 1)
+            throw new Error("start time mismatch");
+          back.moveGaps!.forEach((g, i) => {
+            const want = moveTimes[i + 1] - moveTimes[i];
+            const err = Math.abs(g - want);
+            if (err > Math.max(0.08, want * 0.08))
+              throw new Error(`gap ${i}: got ${g}, want ${want}`);
+          });
+        }
+
         // the derived bout leader must be the seat that actually opens each
         // bout (only the first attacker may attack an empty table)
         for (let s = 1; s < steps.length; s++) {

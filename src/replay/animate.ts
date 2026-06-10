@@ -43,9 +43,10 @@ export function preDealGame(
     d: DecodedReplay,
     step0: ReplayStep,
     gameId: string,
+    names?: string[] | null,
 ): ReplayGameState {
     const deckSize = d.playerCount > 4 ? 52 : 36;
-    const base = stepToGame(d, step0, gameId);
+    const base = stepToGame(d, step0, gameId, names);
     return {
         ...base,
         deck_length: deckSize,
@@ -60,10 +61,11 @@ export function buildReplaySequences(
     d: DecodedReplay,
     steps: ReplayStep[],
     gameId: string,
+    names?: string[] | null,
 ): AnimationSequenceMessage[] {
     const n = d.playerCount;
     const deckSize = n > 4 ? 52 : 36;
-    const games = steps.map((s) => stepToGame(d, s, gameId));
+    const games = steps.map((s) => stepToGame(d, s, gameId, names));
 
     const sequences: AnimationSequenceMessage[] = [];
 

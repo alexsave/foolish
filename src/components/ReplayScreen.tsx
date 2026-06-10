@@ -29,6 +29,9 @@ import {
     ReplayGameState,
 } from '../replay/view';
 import { buildReplaySequences, preDealGame } from '../replay/animate';
+import { splitReplayCode, decodeExtras, ReplayExtras } from '../replay/extras';
+import { INFO_TYPES } from '../replay/core';
+import { stepTimes } from '../replay/view';
 
 /**
  * Self-contained replay viewer: WWW.FOOLISH.CARDS/<base32> — the path segment
@@ -88,9 +91,10 @@ const InlineCardBack = ({ w = 22 }: { w?: number }) => (
     />
 );
 
-const seatName = (seat: number) => `P${seat + 1}`;
+const seatName = (seat: number, names?: (string | null)[] | null) =>
+    names?.[seat] || `P${seat + 1}`;
 
-const StepMessage = ({ step }: { step: ReplayStep }) => {
+const StepMessage = ({ step, names }: { step: ReplayStep; names: string[] | null }) => {
     const cards = (cs: Card[]) => (
         <span style={{ display: 'inline-flex', gap: 3, verticalAlign: 'middle' }}>
             {cs.map((c, i) => (
@@ -98,7 +102,7 @@ const StepMessage = ({ step }: { step: ReplayStep }) => {
             ))}
         </span>
     );
-    const who = step.seat !== null ? <b>{seatName(step.seat)}</b> : null;
+    const who = step.seat !== null ? <b>{seatName(step.seat, names)}</b> : null;
 
     switch (step.kind) {
         case LOG_TYPE.GAME_START:
@@ -161,7 +165,7 @@ const StepMessage = ({ step }: { step: ReplayStep }) => {
             return (
                 <span>
                     <SovietIcon name="shield" size={13} /> <Text id="defender" />:{' '}
-                    <b>{def >= 0 ? seatName(def) : '—'}</b>
+                    <b>{def >= 0 ? seatName(def, names) : '—'}</b>
                 </span>
             );
         }
@@ -231,9 +235,11 @@ interface StageProps {
     steps: ReplayStep[];
     sequences: AnimationSequenceMessage[];
     gameId: string;
+    names: string[] | null;
+    times: (number | null)[];
 }
 
-const ReplayStage = ({ decoded, steps, sequences, gameId }: StageProps) => {
+const ReplayStage = ({ decoded, steps, sequences, gameId, names, times }: StageProps) => {
     usePreventScroll();
     const { updateGameState } = useServer();
     const { isAnimating, resetAnimations } = useAnimation();
@@ -275,10 +281,10 @@ const ReplayStage = ({ decoded, steps, sequences, gameId }: StageProps) => {
             setPlaying(false);
             resetAnimations();
             const target = Math.max(0, Math.min(i, lastIdx));
-            updateGameState(gameId, stepToGame(decoded, steps[target], gameId));
+            updateGameState(gameId, stepToGame(decoded, steps[target], gameId, names));
             setStepIdx(target);
         },
-        [decoded, steps, gameId, lastIdx, resetAnimations, updateGameState],
+        [decoded, steps, gameId, names, lastIdx, resetAnimations, updateGameState],
     );
 
     // opening deal on mount
@@ -288,16 +294,24 @@ const ReplayStage = ({ decoded, steps, sequences, gameId }: StageProps) => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    // autoplay: feed the next event as soon as the previous one lands
+    // autoplay: feed the next event when the previous one lands, paced by the
+    // recorded move timing when present (clamped — a week-long gap plays as a
+    // beat, not a wait)
     useEffect(() => {
         if (!playing || isAnimating) return;
         if (stepIdx >= lastIdx) {
             setPlaying(false);
             return;
         }
-        const timer = setTimeout(stepForward, 250);
+        let delay = 250;
+        const a = stepIdx >= 0 ? times[stepIdx] : null;
+        const b = times[stepIdx + 1];
+        if (a !== null && b !== null && b !== undefined) {
+            delay = Math.min(Math.max((b - a) * 1000, 150), 3000);
+        }
+        const timer = setTimeout(stepForward, delay);
         return () => clearTimeout(timer);
-    }, [playing, isAnimating, stepIdx, lastIdx, stepForward]);
+    }, [playing, isAnimating, stepIdx, lastIdx, stepForward, times]);
 
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
@@ -387,7 +401,25 @@ const ReplayStage = ({ decoded, steps, sequences, gameId }: StageProps) => {
                         gap: 5,
                     }}
                 >
-                    {stepIdx >= 0 && <StepMessage step={step} />}
+                    {stepIdx >= 0 && <StepMessage step={step} names={names} />}
+                    {stepIdx >= 0 && times[stepIdx] !== null && (
+                        <span
+                            style={{
+                                marginLeft: 'auto',
+                                fontSize: '0.68rem',
+                                opacity: 0.7,
+                                whiteSpace: 'nowrap',
+                            }}
+                        >
+                            {new Date(times[stepIdx]! * 1000).toLocaleString(undefined, {
+                                month: 'short',
+                                day: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                second: '2-digit',
+                            })}
+                        </span>
+                    )}
                 </div>
 
                 <div style={{ display: 'flex', gap: 6, alignItems: 'center', width: '100%' }}>
@@ -445,11 +477,29 @@ export const ReplayScreen = ({ code }: { code: string }) => {
     const result = useMemo(() => {
         if (!mounted) return null;
         try {
-            const decoded = decodeReplay(codeToGame(code));
+            const { moves, extras: extrasCode } = splitReplayCode(code);
+            const decoded = decodeReplay(codeToGame(moves));
             const steps = buildReplaySteps(decoded);
-            const sequences = buildReplaySequences(decoded, steps, gameId);
-            const initial = preDealGame(decoded, steps[0], gameId);
-            return { decoded, steps, sequences, initial };
+
+            // extras (names + timing) are decoration: a malformed blob never
+            // breaks the replay itself
+            let extras: ReplayExtras = { names: null, startTime: null, moveGaps: null };
+            if (extrasCode) {
+                try {
+                    const moveCount = decoded.logs.filter((l) =>
+                        INFO_TYPES.includes(l.log_type),
+                    ).length;
+                    extras = decodeExtras(extrasCode, decoded.playerCount, moveCount);
+                } catch (e) {
+                    console.error('Replay extras ignored:', e);
+                }
+            }
+
+            const names = extras.names;
+            const sequences = buildReplaySequences(decoded, steps, gameId, names);
+            const initial = preDealGame(decoded, steps[0], gameId, names);
+            const times = stepTimes(steps, extras.startTime, extras.moveGaps);
+            return { decoded, steps, sequences, initial, names, times };
         } catch (e) {
             console.error('Replay decode failed:', e);
             return null;
@@ -487,6 +537,8 @@ export const ReplayScreen = ({ code }: { code: string }) => {
                                     steps={result.steps}
                                     sequences={result.sequences}
                                     gameId={gameId}
+                                    names={result.names}
+                                    times={result.times}
                                 />
                             </DragProvider>
                         </GameProvider>

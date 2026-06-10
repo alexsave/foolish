@@ -22,3 +22,4 @@ fix_imports() {
 cp supabase/functions/_shared/replay/codec.ts src/replay/codec.ts
 fix_imports supabase/functions/_shared/replay/core.ts > src/replay/core.ts
 fix_imports supabase/functions/_shared/replay/decode.ts > src/replay/decode.ts
+fix_imports supabase/functions/_shared/replay/extras.ts > src/replay/extras.ts

@@ -298,7 +298,12 @@ export interface ReplayGameState extends PersonalGame {
     replay_hands: (Card | null)[][];
 }
 
-export function stepToGame(d: DecodedReplay, step: ReplayStep, gameId: string): ReplayGameState {
+export function stepToGame(
+    d: DecodedReplay,
+    step: ReplayStep,
+    gameId: string,
+    names?: string[] | null,
+): ReplayGameState {
     const atEnd = step.kind === 'end';
     return {
         id: gameId,
@@ -308,7 +313,7 @@ export function stepToGame(d: DecodedReplay, step: ReplayStep, gameId: string): 
         flipped: step.flipped,
         players: step.players.map((p, s) => ({
             player_id: `seat-${s}`,
-            name: `P${s + 1}${atEnd && d.fool === s ? ' 🃏' : ''}`,
+            name: `${names?.[s] || `P${s + 1}`}${atEnd && d.fool === s ? ' 🃏' : ''}`,
             status: p.out ? PLAYER_STATUS.OUT : PLAYER_STATUS.IN,
             hand_length: p.hidden + p.known.length,
             is_ai: false,
@@ -330,4 +335,33 @@ export function stepToGame(d: DecodedReplay, step: ReplayStep, gameId: string): 
             ...p.slots.map((c) => (c ? { ...c } : null)),
         ]),
     };
+}
+
+/**
+ * Absolute unix time (seconds) per step, from the extras blob: GAME_START is
+ * the start time, each information-bearing step advances the clock by its
+ * gap, and derived steps (draws, discards, rotations, outs) happen "at the
+ * same moment" as the action that caused them.
+ */
+export function stepTimes(
+    steps: ReplayStep[],
+    startTime: number | null,
+    moveGaps: number[] | null,
+): (number | null)[] {
+    if (startTime === null || !moveGaps) return steps.map(() => null);
+    const INFO: (LogType | 'end')[] = [
+        LOG_TYPE.ATTACK,
+        LOG_TYPE.COVER,
+        LOG_TYPE.PASS,
+        LOG_TYPE.PICKUP,
+        LOG_TYPE.GOOD,
+    ];
+    let t = startTime;
+    let g = 0;
+    return steps.map((step) => {
+        if (INFO.includes(step.kind) && g < moveGaps.length) {
+            t += moveGaps[g++];
+        }
+        return t;
+    });
 }

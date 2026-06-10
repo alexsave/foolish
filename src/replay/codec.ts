@@ -289,7 +289,11 @@ export function gameToUrl(x: bigint): string {
 }
 export function urlToGame(url: string): bigint {
   const i = url.toUpperCase().indexOf(URL_PREFIX);
-  const code = i >= 0 ? url.slice(i + URL_PREFIX.length) : url;
+  let code = i >= 0 ? url.slice(i + URL_PREFIX.length) : url;
+  // an optional extras section (player names + move times, see extras.ts)
+  // follows the moves after a dash — the move integer is the prefix
+  const dash = code.indexOf("-");
+  if (dash >= 0) code = code.slice(0, dash);
   return codeToGame(code.replace(/[^A-Za-z2-7]/g, ""));
 }
 

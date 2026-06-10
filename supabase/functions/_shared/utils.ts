@@ -14,6 +14,7 @@ import { getAuthenticatedUser } from './auth.ts';
 import { lockedBotLoop } from './bot_actions.ts';
 import { saveGameLogs, cleanupOldGameLogs, wipeAllGameLogs } from './log_utils.ts';
 import { verifyRoundTrip } from './replay/encode.ts';
+import { encodeExtras, joinReplayCode, moveTimesFromLogs } from './replay/extras.ts';
 
 const supabaseClient = createClient(
     Deno.env.get('SUPABASE_URL') || '',
@@ -821,8 +822,17 @@ const check_win_async = async (game: Game): Promise<boolean> => {
             logs: game.logs,
             flipped: game.flipped,
         });
-        game.snapshots = [...(game.snapshots || []), encoded.base64];
-        console.log(`[REPLAY] Game ${game.id} encoded to ${encoded.byteLength} bytes (${game.snapshots.length} snapshot(s) total)`);
+
+        // Snapshot = "<base32 moves>-<base32 extras>": the moves integer plus
+        // player names and per-move timestamps (see _shared/replay/extras.ts).
+        // The moves-only share code is the prefix before the dash.
+        const extras = encodeExtras(
+            game.players.map(player => player.name),
+            moveTimesFromLogs(game.logs),
+        );
+        const snapshot = joinReplayCode(encoded.base32, extras);
+        game.snapshots = [...(game.snapshots || []), snapshot];
+        console.log(`[REPLAY] Game ${game.id} encoded to ${encoded.byteLength}+${Math.ceil(extras.length * 5 / 8)} bytes (${game.snapshots.length} snapshot(s) total)`);
 
         // Persist the snapshot BEFORE destroying the logs, so a failure
         // between the two never loses both. saveCompleteGame re-writes the

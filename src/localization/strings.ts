@@ -59,7 +59,8 @@ export type StringId =
   | 'draws'
   | 'trump'
   | 'reveal_cards'
-  | 'hide_cards';
+  | 'hide_cards'
+  | 'with_names_time';
 
 // English strings
 export const strings_en: Record<StringId, string> = {
@@ -123,6 +124,7 @@ export const strings_en: Record<StringId, string> = {
   trump: 'Trump',
   reveal_cards: 'Show all hands',
   hide_cards: 'Hide hands',
+  with_names_time: 'Names + timing',
 };
 
 // Russian strings
@@ -187,6 +189,7 @@ export const strings_ru: Record<StringId, string> = {
   trump: 'Козырь',
   reveal_cards: 'Показать все карты',
   hide_cards: 'Скрыть карты',
+  with_names_time: 'Имена и время',
 };
 
 // Korean strings
@@ -251,6 +254,7 @@ export const strings_ko: Record<StringId, string> = {
   trump: '으뜸패',
   reveal_cards: '모든 패 보기',
   hide_cards: '패 숨기기',
+  with_names_time: '이름 + 시간',
 };
 
 // Combined strings object for easy access

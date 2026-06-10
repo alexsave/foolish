@@ -3,19 +3,16 @@ import { QRCodeSVG } from 'qrcode.react';
 import supabase from '../backend/Connector';
 import { PersonalGame, PublicGame } from '../common/types';
 import { Text } from './Text';
-import { base64Decode, bytesToBigint, gameToUrl } from '../replay/codec';
+import { base32Decode, URL_PREFIX } from '../replay/codec';
+import { splitReplayCode } from '../replay/extras';
 
 /**
- * Post-game replay sharing. The server compresses the finished session into a
- * single integer at game end (supabase/functions/_shared/replay/encode.ts)
- * and appends it, base64-encoded, to games.snapshots; the session's logs are
- * wiped — the snapshot IS the game now. This component just shows the latest
- * snapshot as a copyable base64 string and a QR code of the replay URL.
- *
- * The QR holds the uppercase base32 URL form: every character is in the QR
- * alphanumeric charset, which keeps the symbol small. The future replay
- * screen decodes that URL with no auth and no database — the whole game is in
- * the path (src/replay/decode.ts).
+ * Post-game replay sharing. The server compresses the finished session at
+ * game end (supabase/functions/_shared/replay/) and appends the share code to
+ * games.snapshots as "<base32 moves>-<base32 extras>" — the move integer plus
+ * player names and per-move timing. The moves-only code is simply the prefix
+ * before the dash, so one stored string serves both share formats; the
+ * checkbox switches the QR/link between them.
  */
 
 interface ReplayShareProps {
@@ -30,6 +27,7 @@ export const ReplayShare: React.FC<ReplayShareProps> = ({ game }) => {
     );
     const [failed, setFailed] = useState(false);
     const [copied, setCopied] = useState(false);
+    const [withExtras, setWithExtras] = useState(false);
 
     useEffect(() => {
         if (snapshot) return;
@@ -63,13 +61,22 @@ export const ReplayShare: React.FC<ReplayShareProps> = ({ game }) => {
     const view = useMemo(() => {
         if (!snapshot) return null;
         try {
-            const bytes = base64Decode(snapshot);
-            return { url: gameToUrl(bytesToBigint(bytes)), byteLength: bytes.length };
+            const { moves, extras } = splitReplayCode(snapshot);
+            const movesBytes = base32Decode(moves).length;
+            if (movesBytes === 0) throw new Error('empty moves payload');
+            const extrasBytes = extras ? base32Decode(extras).length : 0;
+            const code = withExtras && extras ? `${moves}-${extras}` : moves;
+            return {
+                code,
+                url: URL_PREFIX + code,
+                hasExtras: extras !== null,
+                byteLength: movesBytes + (withExtras && extras ? extrasBytes : 0),
+            };
         } catch (e) {
             console.error('Bad replay snapshot:', e);
             return null;
         }
-    }, [snapshot]);
+    }, [snapshot, withExtras]);
 
     if (failed || (snapshot && !view)) {
         return (
@@ -87,7 +94,7 @@ export const ReplayShare: React.FC<ReplayShareProps> = ({ game }) => {
 
     const handleCopy = async () => {
         try {
-            await navigator.clipboard.writeText(snapshot);
+            await navigator.clipboard.writeText(view.url);
             setCopied(true);
             setTimeout(() => setCopied(false), 2000);
         } catch (e) {
@@ -110,9 +117,33 @@ export const ReplayShare: React.FC<ReplayShareProps> = ({ game }) => {
                 <Text id="share_replay" />
             </h3>
 
+            {/* Uppercase base32 + '-' stay inside the QR alphanumeric charset,
+                keeping the symbol small in both formats. */}
             <div style={{ background: '#fff', padding: '10px', borderRadius: '8px', lineHeight: 0 }}>
                 <QRCodeSVG value={view.url} size={168} level="L" marginSize={1} />
             </div>
+
+            {view.hasExtras && (
+                <label
+                    className="text-shadow"
+                    style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.4rem',
+                        color: 'var(--color-text-primary)',
+                        fontSize: '0.8rem',
+                        cursor: 'pointer',
+                        userSelect: 'none',
+                    }}
+                >
+                    <input
+                        type="checkbox"
+                        checked={withExtras}
+                        onChange={(e) => setWithExtras(e.target.checked)}
+                    />
+                    <Text id="with_names_time" />
+                </label>
+            )}
 
             <code
                 onClick={handleCopy}
@@ -120,7 +151,7 @@ export const ReplayShare: React.FC<ReplayShareProps> = ({ game }) => {
                 style={{
                     maxWidth: 'min(90vw, 28rem)',
                     wordBreak: 'break-all',
-                    fontSize: '0.7rem',
+                    fontSize: '0.65rem',
                     cursor: 'pointer',
                     padding: '0.4rem 0.6rem',
                     borderRadius: '6px',
@@ -129,7 +160,7 @@ export const ReplayShare: React.FC<ReplayShareProps> = ({ game }) => {
                     userSelect: 'all',
                 }}
             >
-                {snapshot}
+                {view.code}
             </code>
 
             <span
