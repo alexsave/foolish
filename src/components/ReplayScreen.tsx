@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { Card, LOG_TYPE } from '../common/types';
-import { HEARTS, DIAMONDS } from '../common/constants';
 import { Text } from './Text';
 import { SovietIcon } from './SovietIcon';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
@@ -11,6 +10,8 @@ import { GameProvider } from '../contexts/GameContext';
 import { DragProvider } from '../contexts/DragContext';
 import { FernFractalProvider } from '../utils/fernFractal';
 import { useLocalization } from '../contexts/LocalizationContext';
+import { CardFace } from './GameDisplay/CardFace';
+import { CardBack } from './GameDisplay/CardBack';
 import { TableBattles } from './GameDisplay/TableBattles';
 import { PlayerRing } from './GameDisplay/PlayerRing';
 import { DefenderShield } from './GameDisplay/DefenderShield';
@@ -44,52 +45,75 @@ import { stepTimes } from '../replay/view';
  * with its full animation; seeking commits the target state directly.
  */
 
-const SUIT_GLYPHS = ['♠', '♥', '♣', '♦'];
-const VALUE_GLYPHS = ['', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
+/* Miniature cards rendered through the REAL CardFace/CardBack (native
+ * 50×70 px, shrunk with a CSS transform) so they match the table exactly —
+ * corner indices, center pip, theme styling, Soviet suit icons and all.
+ * These render inside the replay's provider tree, which CardFace/CardBack
+ * need (animation, styles, fern pattern). */
+const CARD_W = 50;
+const CARD_H = 70;
 
-const InlineCard = ({ card, w = 22 }: { card: Card; w?: number }) => (
-    <span
-        style={{
-            display: 'inline-flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            width: w,
-            height: Math.round(w * 1.4),
-            borderRadius: 3,
-            background: '#faf7ef',
-            border: '1px solid #999',
-            color: card.suit === HEARTS || card.suit === DIAMONDS ? '#dc2626' : '#1a1a1a',
-            fontFamily: 'Georgia, serif',
-            fontWeight: 'bold',
-            fontSize: Math.round(w * 0.45),
-            lineHeight: 1.05,
-            boxShadow: '0 1px 2px rgba(0,0,0,0.35)',
-            userSelect: 'none',
-            flexShrink: 0,
-            verticalAlign: 'middle',
-        }}
-    >
-        <span>{VALUE_GLYPHS[card.value] ?? '?'}</span>
-        <span>{SUIT_GLYPHS[card.suit] ?? '?'}</span>
-    </span>
-);
+const InlineCard = ({ card, w = 22 }: { card: Card; w?: number }) => {
+    const scale = w / CARD_W;
+    return (
+        <span
+            style={{
+                display: 'inline-block',
+                width: w,
+                height: Math.round(CARD_H * scale),
+                position: 'relative',
+                flexShrink: 0,
+                verticalAlign: 'middle',
+            }}
+        >
+            <span
+                style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    transform: `scale(${scale})`,
+                    transformOrigin: 'top left',
+                    display: 'block',
+                    width: CARD_W,
+                    height: CARD_H,
+                }}
+            >
+                <CardFace card={card} playerId="replay-inline" />
+            </span>
+        </span>
+    );
+};
 
-const InlineCardBack = ({ w = 22 }: { w?: number }) => (
-    <span
-        style={{
-            display: 'inline-flex',
-            width: w,
-            height: Math.round(w * 1.4),
-            borderRadius: 3,
-            background: '#B32929',
-            border: '1px solid #7a1d1d',
-            boxShadow: '0 1px 2px rgba(0,0,0,0.35)',
-            flexShrink: 0,
-            verticalAlign: 'middle',
-        }}
-    />
-);
+const InlineCardBack = ({ w = 22 }: { w?: number }) => {
+    const scale = w / CARD_W;
+    return (
+        <span
+            style={{
+                display: 'inline-block',
+                width: w,
+                height: Math.round(CARD_H * scale),
+                position: 'relative',
+                flexShrink: 0,
+                verticalAlign: 'middle',
+            }}
+        >
+            <span
+                style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    transform: `scale(${scale})`,
+                    transformOrigin: 'top left',
+                    display: 'block',
+                    width: CARD_W,
+                    height: CARD_H,
+                }}
+            >
+                <CardBack deckSize={1} />
+            </span>
+        </span>
+    );
+};
 
 const seatName = (seat: number, names?: (string | null)[] | null) =>
     names?.[seat] || `P${seat + 1}`;
@@ -267,8 +291,8 @@ const RevealedHands = () => {
                             display: 'flex',
                             flexWrap: 'wrap',
                             justifyContent: 'center',
-                            gap: 2,
-                            maxWidth: 130,
+                            gap: 3,
+                            maxWidth: 150,
                             zIndex: 60,
                             pointerEvents: 'none',
                             padding: 3,
@@ -277,7 +301,7 @@ const RevealedHands = () => {
                         }}
                     >
                         {hand.map((c, i) =>
-                            c ? <InlineCard key={i} card={c} w={20} /> : <InlineCardBack key={i} w={20} />,
+                            c ? <InlineCard key={i} card={c} w={24} /> : <InlineCardBack key={i} w={24} />,
                         )}
                     </div>
                 );
