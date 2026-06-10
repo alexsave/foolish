@@ -184,17 +184,19 @@ CREATE TABLE game_logs (
 );
 
 -- Game snapshots - one row per finished session: the complete game compressed
--- into a replay code "<base32 moves>-<base32 extras>" (see
--- functions/_shared/replay/). Replaces the session's game_logs rows, which are
--- wiped after the snapshot is verified and stored. The moves-only share code
--- is the prefix before the dash. player_ids doubles as the read ACL and
--- records seat order. game_id is SET NULL on delete so replays outlive lobby
--- deletion.
+-- by functions/_shared/replay/, stored as raw binary. `moves` is the rANS
+-- move integer (decodes to the full game); `extras` is the optional names +
+-- timing blob. The share code is derived: base32(moves) + '-' + base32(extras)
+-- — the moves-only code is just the first part. Replaces the session's
+-- game_logs rows, which are wiped after the snapshot is verified and stored.
+-- player_ids doubles as the read ACL and records seat order. game_id is
+-- SET NULL on delete so replays outlive lobby deletion.
 CREATE TABLE game_snapshots (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   game_id TEXT REFERENCES games(id) ON DELETE SET NULL,
   player_ids JSONB NOT NULL DEFAULT '[]'::jsonb, -- player ids in seat order
-  snapshot TEXT NOT NULL,
+  moves BYTEA NOT NULL,
+  extras BYTEA,
   created_at TIMESTAMP DEFAULT NOW()
 );
 

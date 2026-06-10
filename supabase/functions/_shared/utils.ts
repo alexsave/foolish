@@ -14,7 +14,8 @@ import { getAuthenticatedUser } from './auth.ts';
 import { lockedBotLoop } from './bot_actions.ts';
 import { saveGameLogs, cleanupOldGameLogs, wipeAllGameLogs } from './log_utils.ts';
 import { verifyRoundTrip } from './replay/encode.ts';
-import { encodeExtras, joinReplayCode, moveTimesFromLogs } from './replay/extras.ts';
+import { encodeExtras, moveTimesFromLogs } from './replay/extras.ts';
+import { base32Decode, bytesToHex } from './replay/codec.ts';
 
 const supabaseClient = createClient(
     Deno.env.get('SUPABASE_URL') || '',
@@ -820,16 +821,16 @@ const check_win_async = async (game: Game): Promise<boolean> => {
             flipped: game.flipped,
         });
 
-        // Snapshot = "<base32 moves>-<base32 extras>": the moves integer plus
-        // player names and per-move timestamps (see _shared/replay/extras.ts).
-        // The moves-only share code is the prefix before the dash. One row per
-        // finished session in game_snapshots; player_ids is the read ACL.
-        const extras = encodeExtras(
+        // Stored binary: `moves` is the rANS integer (the whole game),
+        // `extras` the names + timing blob (_shared/replay/extras.ts). The
+        // share code is derived client-side: base32(moves) ['-' base32(extras)].
+        // One row per finished session in game_snapshots; player_ids is the
+        // read ACL.
+        const extrasBytes = base32Decode(encodeExtras(
             game.players.map(player => player.name),
             moveTimesFromLogs(game.logs),
-        );
-        const snapshot = joinReplayCode(encoded.base32, extras);
-        console.log(`[REPLAY] Game ${game.id} encoded to ${encoded.byteLength}+${Math.ceil(extras.length * 5 / 8)} bytes`);
+        ));
+        console.log(`[REPLAY] Game ${game.id} encoded to ${encoded.byteLength}+${extrasBytes.length} bytes`);
 
         // Persist the snapshot BEFORE destroying the logs, so a failure
         // between the two never loses both.
@@ -838,7 +839,8 @@ const check_win_async = async (game: Game): Promise<boolean> => {
             .insert({
                 game_id: game.id,
                 player_ids: game.players.map(player => player.player_id),
-                snapshot,
+                moves: bytesToHex(encoded.bytes),
+                extras: bytesToHex(extrasBytes),
             });
         if (snapError) throw snapError;
 

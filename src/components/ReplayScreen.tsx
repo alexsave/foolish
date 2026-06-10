@@ -260,12 +260,32 @@ const StepMessage = ({ step, names }: { step: ReplayStep; names: string[] | null
     }
 };
 
+/* A face-down card that squishes in a flex row like CardFace does — used for
+ * hidden cards whose identity never surfaces in the replay. */
+const SquishBack = () => (
+    <span
+        style={{
+            flex: '0 0 32px',
+            width: 32,
+            height: 62,
+            borderRadius: 5,
+            background: '#B32929',
+            border: '2px solid #7a1d1d',
+            boxShadow: '0 1px 3px rgba(0,0,0,0.4)',
+            display: 'block',
+        }}
+    />
+);
+
 /**
  * Reveal-hands overlay: every player's current hand face-up, positioned on
  * the same ellipse as PlayerRing (with the same viewer rotation: the replay
- * viewer is never a player, so self_index is -1 there and here). Identities
- * come from replay_hands — retroactive knowledge of every card that ever
- * surfaces; cards that never get played stay face-down.
+ * viewer is never a player, so self_index is -1 there and here) and rendered
+ * exactly like the live self-hand — full CardFace components squished into a
+ * flex row (ActionButtons' style), so squeezed cards drop to the same
+ * thin-card layout as the original. Identities come from replay_hands —
+ * retroactive knowledge of every card that ever surfaces; cards that never
+ * get played stay face-down.
  */
 const RevealedHands = () => {
     const game = useServer().game as ReplayGameState | null;
@@ -287,21 +307,34 @@ const RevealedHands = () => {
                             position: 'absolute',
                             top: y,
                             left: x,
-                            transform: 'translate(-50%, 34px)',
+                            transform: 'translate(-50%, 32px)',
                             display: 'flex',
                             flexWrap: 'wrap',
+                            alignItems: 'center',
                             justifyContent: 'center',
-                            gap: 3,
-                            maxWidth: 150,
+                            gap: 2,
+                            // fixed card width, wrapping into (at most) two rows
+                            width: Math.ceil(hand.length / 2) * 34 + 4,
                             zIndex: 60,
                             pointerEvents: 'none',
-                            padding: 3,
-                            borderRadius: 6,
-                            background: 'rgba(0,0,0,0.35)',
                         }}
                     >
                         {hand.map((c, i) =>
-                            c ? <InlineCard key={i} card={c} w={24} /> : <InlineCardBack key={i} w={24} />,
+                            c ? (
+                                <CardFace
+                                    key={i}
+                                    card={c}
+                                    playerId="replay-reveal"
+                                    style={{
+                                        flex: '0 0 32px',
+                                        width: 32,
+                                        height: 62,
+                                        position: 'relative',
+                                    }}
+                                />
+                            ) : (
+                                <SquishBack key={i} />
+                            ),
                         )}
                     </div>
                 );

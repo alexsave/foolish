@@ -276,6 +276,23 @@ export function base64Decode(s: string): Uint8Array {
 /* Keep the whole URL uppercase: lower-casing the prefix would force the QR out
  * of alphanumeric mode into byte mode and grow the symbol. The HTTP route can
  * still be case-insensitive for typed/clicked links. */
+/* Postgres bytea travels through supabase-js as hex strings ("\\x48ab...").
+ * These helpers convert both directions for the binary snapshot columns. */
+export function bytesToHex(bytes: Uint8Array): string {
+  let out = "\\x";
+  for (const b of bytes) out += b.toString(16).padStart(2, "0");
+  return out;
+}
+
+export function hexToBytes(hex: string): Uint8Array {
+  const h = hex.startsWith("\\x") ? hex.slice(2) : hex;
+  const out = new Uint8Array(h.length >> 1);
+  for (let i = 0; i < out.length; i++) {
+    out[i] = parseInt(h.slice(i * 2, i * 2 + 2), 16);
+  }
+  return out;
+}
+
 export const URL_PREFIX = "WWW.FOOLISH.CARDS/";
 
 export function gameToCode(x: bigint): string {

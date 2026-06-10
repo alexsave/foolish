@@ -261,14 +261,15 @@ const generateWoolTextureAsync = async (width: number = 3840, height: number = 2
     gl.flush();
     await new Promise(resolve => setTimeout(resolve, 10));
 
-    // Convert to Blob URL
-    return new Promise((resolve) => {
+    // Convert to Blob URL. toBlob returns null when Safari hits its canvas
+    // memory limits (common on iOS at 4K) — treat that as a failure so the
+    // catch below retries on the cheaper CPU path instead of caching ''.
+    return await new Promise<string>((resolve, reject) => {
       canvas.toBlob((blob) => {
         if (blob) {
-          const blobUrl = URL.createObjectURL(blob);
-          resolve(blobUrl);
+          resolve(URL.createObjectURL(blob));
         } else {
-          resolve('');
+          reject(new Error('canvas.toBlob returned null (canvas memory limit?)'));
         }
       }, 'image/png', 1.0);
     });
@@ -294,35 +295,48 @@ export async function generateWoolTexture(): Promise<string> {
 
   // Create and cache the promise to prevent duplicate generations
   woolTexturePromise = (async () => {
-    // Check IndexedDB cache first for persistent storage
-    const cachedFromDB = await getCachedTexture('wool');
-    if (cachedFromDB) {
-      woolTextureBlobUrl = cachedFromDB;
+    try {
+      // Check IndexedDB cache first for persistent storage
+      const cachedFromDB = await getCachedTexture('wool').catch(() => null);
+      if (cachedFromDB) {
+        woolTextureBlobUrl = cachedFromDB;
+        return cachedFromDB;
+      }
+
+      const startTime = performance.now();
+
+      // Yield control immediately to let React render first
+      await new Promise(resolve => setTimeout(resolve, 0));
+
+      // 4K point-cloud generation allocates ~270 MB of Float32Arrays and a
+      // 4K canvas, which iOS Safari kills under its memory limits (the wool
+      // then silently never appears). Phones get 1080p — it's a background.
+      const constrained =
+        typeof navigator !== 'undefined' &&
+        (/iP(hone|od|ad)/.test(navigator.userAgent) ||
+          Math.min(window.screen.width, window.screen.height) < 500);
+      const blobUrl = constrained
+        ? await generateWoolTextureAsync(1920, 1080)
+        : await generateWoolTextureAsync(3840, 2160);
+      if (!blobUrl) {
+        throw new Error('wool texture generation produced no blob');
+      }
+      woolTextureBlobUrl = blobUrl;
+
+      // Cache to IndexedDB for persistence across sessions
+      setCachedTexture('wool', blobUrl).catch(() => {
+      });
+
+      const endTime = performance.now();
+      const generationTime = endTime - startTime;
+      console.log(`Wool texture generated in ${generationTime.toFixed(2)}ms (CPU generate + WebGL render, blob URL)`);
+
+      return blobUrl;
+    } finally {
+      // Success cached woolTextureBlobUrl above; on failure this lets the
+      // next caller retry instead of reusing a dead rejected promise forever.
       woolTexturePromise = null;
-      return cachedFromDB;
     }
-    
-    const startTime = performance.now();
-    
-    // Yield control immediately to let React render first
-    await new Promise(resolve => setTimeout(resolve, 0));
-    
-    // Use WebGL with CPU-generated data for best performance
-    const blobUrl = await generateWoolTextureAsync(3840, 2160);
-    woolTextureBlobUrl = blobUrl;
-    
-    // Cache to IndexedDB for persistence across sessions
-    setCachedTexture('wool', blobUrl).catch(err => {
-    });
-    
-    const endTime = performance.now();
-    const generationTime = endTime - startTime;
-    console.log(`Wool texture generated in ${generationTime.toFixed(2)}ms (CPU generate + WebGL render, blob URL)`);
-    
-    // Clear the promise so future calls can detect the cache is ready
-    woolTexturePromise = null;
-    
-    return blobUrl;
   })();
 
   return woolTexturePromise;
@@ -492,13 +506,32 @@ export const useWoolTexture = () => {
     if (woolTextureBlobUrl) {
       // If already cached, set it immediately
       setTextureUrl(woolTextureBlobUrl);
-    } else if (woolTexturePromise) {
-      // If generation is in progress, wait for it
-      woolTexturePromise.then(setTextureUrl);
-    } else {
-      // Start generation - the async chunking will handle yielding
-      generateWoolTexture().then(setTextureUrl);
+      return;
     }
+    let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    const attempt = (retriesLeft: number) => {
+      generateWoolTexture()
+        .then((url) => {
+          if (cancelled) return;
+          if (url) {
+            setTextureUrl(url);
+          } else if (retriesLeft > 0) {
+            retryTimer = setTimeout(() => attempt(retriesLeft - 1), 1500);
+          }
+        })
+        .catch((err) => {
+          console.error('Wool texture failed, retrying:', err);
+          if (!cancelled && retriesLeft > 0) {
+            retryTimer = setTimeout(() => attempt(retriesLeft - 1), 1500);
+          }
+        });
+    };
+    attempt(2);
+    return () => {
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
+    };
   }, []);
 
   return textureUrl;

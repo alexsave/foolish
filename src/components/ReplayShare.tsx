@@ -3,16 +3,16 @@ import { QRCodeSVG } from 'qrcode.react';
 import supabase from '../backend/Connector';
 import { PersonalGame, PublicGame } from '../common/types';
 import { Text } from './Text';
-import { base32Decode, URL_PREFIX } from '../replay/codec';
-import { splitReplayCode } from '../replay/extras';
+import { base32Encode, hexToBytes, URL_PREFIX } from '../replay/codec';
 
 /**
  * Post-game replay sharing. The server compresses the finished session at
- * game end (supabase/functions/_shared/replay/) into one game_snapshots row:
- * "<base32 moves>-<base32 extras>" — the move integer plus player names and
- * per-move timing. The moves-only code is simply the prefix before the dash,
- * so one stored string serves both share formats; the checkbox switches the
- * QR/link between them. RLS lets exactly the game's participants read it.
+ * game end (supabase/functions/_shared/replay/) into one game_snapshots row,
+ * stored binary: `moves` (the rANS move integer) and `extras` (player names +
+ * per-move timing). The share code is derived here — base32(moves), with
+ * '-' + base32(extras) appended when the checkbox is on. Uppercase base32
+ * keeps the QR in alphanumeric mode, a full version smaller than base64 in
+ * byte mode. RLS lets exactly the game's participants read the row.
  */
 
 interface ReplayShareProps {
@@ -20,7 +20,7 @@ interface ReplayShareProps {
 }
 
 export const ReplayShare: React.FC<ReplayShareProps> = ({ game }) => {
-    const [snapshot, setSnapshot] = useState<string | null>(null);
+    const [snapshot, setSnapshot] = useState<{ moves: Uint8Array; extras: Uint8Array | null } | null>(null);
     const [failed, setFailed] = useState(false);
     const [copied, setCopied] = useState(false);
     const [withExtras, setWithExtras] = useState(false);
@@ -32,14 +32,17 @@ export const ReplayShare: React.FC<ReplayShareProps> = ({ game }) => {
             try {
                 const { data, error } = await supabase
                     .from('game_snapshots')
-                    .select('snapshot')
+                    .select('moves, extras')
                     .eq('game_id', game.id)
                     .order('created_at', { ascending: false })
                     .limit(1);
                 if (error) throw error;
                 if (!data || data.length === 0)
                     throw new Error('no snapshot rows for this game');
-                if (!cancelled) setSnapshot(data[0].snapshot);
+                const moves = hexToBytes(data[0].moves as string);
+                if (moves.length === 0) throw new Error('empty moves payload');
+                const extras = data[0].extras ? hexToBytes(data[0].extras as string) : null;
+                if (!cancelled) setSnapshot({ moves, extras });
             } catch (e) {
                 console.error('Replay snapshot unavailable:', e);
                 if (!cancelled) setFailed(true);
@@ -54,22 +57,20 @@ export const ReplayShare: React.FC<ReplayShareProps> = ({ game }) => {
 
     const view = useMemo(() => {
         if (!snapshot) return null;
-        try {
-            const { moves, extras } = splitReplayCode(snapshot);
-            const movesBytes = base32Decode(moves).length;
-            if (movesBytes === 0) throw new Error('empty moves payload');
-            const extrasBytes = extras ? base32Decode(extras).length : 0;
-            const code = withExtras && extras ? `${moves}-${extras}` : moves;
-            return {
-                code,
-                url: URL_PREFIX + code,
-                hasExtras: extras !== null,
-                byteLength: movesBytes + (withExtras && extras ? extrasBytes : 0),
-            };
-        } catch (e) {
-            console.error('Bad replay snapshot:', e);
-            return null;
-        }
+        const movesCode = base32Encode(snapshot.moves);
+        const hasExtras = snapshot.extras !== null && snapshot.extras.length > 0;
+        const code =
+            withExtras && hasExtras
+                ? `${movesCode}-${base32Encode(snapshot.extras!)}`
+                : movesCode;
+        return {
+            code,
+            url: URL_PREFIX + code,
+            hasExtras,
+            byteLength:
+                snapshot.moves.length +
+                (withExtras && hasExtras ? snapshot.extras!.length : 0),
+        };
     }, [snapshot, withExtras]);
 
     if (failed || (snapshot && !view)) {
