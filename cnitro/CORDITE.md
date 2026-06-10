@@ -81,39 +81,86 @@ negative result worth remembering.
 
 ## Results
 
-Protagonist at seat 0, all other seats the listed opponent,
-seeds 910001+ (fresh-seed confirmations at 920001+), `mean` = mean finish
-position (lower is better; baseline = (N+1)/2), `win` = finished 1st.
+Protagonist at seat 0, all other seats the listed opponent, seeds 910001+,
+`mean` = mean finish position (lower is better; baseline = (N+1)/2),
+`win` = finished 1st. Blackpowder columns are its published 1000-game
+numbers from BLACKPOWDER.md.
 
-> Benchmark tables are written by `bench_cordite.sh` to
-> `/tmp/cordite_bench/*.txt` — final 1000-game matrices below.
+### vs handwritten (1000 games/pc)
 
-### vs blackpowder tables — the matchup that matters
+| pc | cordite | blackpowder | baseline |
+|----|---------|-------------|----------|
+| 2 | **1.121** / 87.9% | 1.148 / 85.2% | 1.500 |
+| 3 | **1.553** / 56.0% | 1.622 / 51.5% | 2.000 |
+| 4 | **2.039** / 35.5% | 2.199 / 28.4% | 2.500 |
+| 5 | **2.584** / 24.3% | 2.731 / 21.4% | 3.000 |
+| 6 | **2.960** / 21.6% | 3.196 / 18.0% | 3.500 |
+| 7 | **3.539** / 15.2% | 3.749 / 14.0% | 4.000 |
+| 8 | **4.177** / 11.6% | 4.339 / 11.8% | 4.500 |
 
-Seat-0 has a measurable disadvantage in this harness, so the fair
-comparison is against the **bp-vs-bp control** (blackpowder itself at
-seat 0 of an all-blackpowder table), not the neutral baseline:
+### vs espresso (the cheating bot, 1000 games/pc)
 
-| setup (pc4, 400 games, seeds 920001+) | mean | win% |
-|---|---|---|
-| blackpowder @ blackpowder table (control) | 2.632 | 23.2% |
-| **cordite @ blackpowder table** | **2.320** | **30.0%** |
+| pc | cordite | blackpowder | baseline |
+|----|---------|-------------|----------|
+| 2 | **1.310** / 69.0% | 1.398 / 60.2% | 1.500 |
+| 3 | **1.616** / 56.0% | 1.677 / 51.5% | 2.000 |
+| 4 | **2.083** / 35.5% | 2.257 / 28.4% | 2.500 |
+| 5 | **2.616** / 24.3% | 2.772 / 21.4% | 3.000 |
+| 6 | **2.988** / 21.6% | 3.235 / 18.0% | 3.500 |
+| 7 | **3.559** / 15.2% | 3.776 / 14.0% | 4.000 |
+| 8 | **4.190** / 11.6% | 4.362 / 11.8% | 4.500 |
 
-Cordite beats blackpowder's own seat by 0.31 mean finish — and beats the
-2.5 neutral baseline *on a hostile table*.
+### vs random (1000 games/pc)
 
-### vs handwritten (200 games, same seeds, pre-final-bench snapshot)
+| pc | cordite | blackpowder | baseline |
+|----|---------|-------------|----------|
+| 2 | **1.019** / 98.1% | 1.022 / 97.8% | 1.500 |
+| 3 | **1.131** / 87.3% | 1.197 / 81.3% | 2.000 |
+| 4 | **1.331** / 73.5% | 1.422 / 66.5% | 2.500 |
+| 5 | **1.575** / 61.4% | 1.636 / 56.5% | 3.000 |
+| 6 | 1.753 / 51.1% | **1.718** / 55.0% | 3.500 |
+| 7 | **1.878** / 51.5% | 2.053 / 46.5% | 4.000 |
+| 8 | **2.330** / 39.8% | 2.531 / 32.2% | 4.500 |
 
-| pc | cordite | blackpowder |
-|----|---------|-------------|
-| 2 | **1.090** / 91.0% | 1.175 / 82.5% |
-| 4 | **1.900** / 44.0% | 2.225 / 29.0% |
-| 6 | **3.035** / 21.0% | 3.315 / 16.0% |
-| 8 | **4.110** / 10.5% | 4.170 / 11.0% |
+(pc6 vs random is the single cell blackpowder keeps, by 0.035 ≈ 1σ; at
+pc7-8 cordite also beats gunpowder/handwritten, which had beaten
+blackpowder there.)
 
-(Final 1000-game matrices vs handwritten / espresso / random and the
-mixed-pool ELO arena: see `/tmp/cordite_bench/` outputs, summarized in the
-session report.)
+### vs blackpowder tables — the matchup that matters (400 games/pc)
+
+Seat 0 has a measurable disadvantage in this harness, so the fair
+comparison is the **bp-vs-bp control** (blackpowder itself at seat 0 of an
+all-blackpowder table), not the neutral baseline:
+
+| pc | cordite @ bp table | control: bp @ bp table |
+|----|--------------------|------------------------|
+| 2 | **1.450** / 55.0% | 1.522 / 47.8% |
+| 3 | **1.910** / 36.2% | 2.127 / 27.5% |
+| 4 | **2.447** / 28.8% | 2.635 / 21.8% |
+| 5 | **2.830** / 21.8% | 3.150 / 15.0% |
+| 6 | **3.502** / 13.8% | 3.717 / 12.8% |
+| 7 | **4.050** / 10.8% | 4.080 / 11.5% |
+| 8 | **4.470** / 12.2% | 4.800 /  9.8% |
+
+Cordite outscores blackpowder's own seat at every player count (pc7 is
+the narrowest at -0.03 mean), confirmed at pc4 on fresh seeds 920001+
+(2.320/30.0% vs control 2.632/23.2%).
+
+### ELO arena (random seats, mixed pools, PCs 2-8, 3000 games, K=32)
+
+| rank | competitor | elo | win% | durak% |
+|------|-----------|------|------|--------|
+| 1 | **cordite** | **1194** | **28.2%** | **6.4%** |
+| 2 | handwritten | 1146 | 21.0% | 17.6% |
+| 3 | blackpowder | 1047 | 24.5% | 9.2% |
+| 4 | firecracker | 1026 | 17.6% | 15.0% |
+| 5 | gunpowder | 985 | 22.0% | 16.8% |
+| 6 | robusta | 974 | 19.6% | 14.4% |
+| 7 | espresso | 948 | 21.9% | 15.1% |
+| 8 | random | 680 | 3.9% | 64.3% |
+
+Cordite takes #1 with the highest win rate and the lowest durak rate;
+3000 arena games ran in 222s (~13.5 games/s mixed).
 
 ## Reproduce
 
