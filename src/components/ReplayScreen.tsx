@@ -478,10 +478,6 @@ const ReplayStage = ({ decoded, steps, sequences, gameId, names, times }: StageP
                     bottom: 'calc(112px + max(8px, env(safe-area-inset-bottom)))',
                 }}
             >
-                <p className="title--game-display">
-                    <Text id="replay_title" />
-                </p>
-
                 <DeckAndFlipped />
                 <DiscardPile />
 

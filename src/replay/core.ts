@@ -48,28 +48,32 @@ import { canCover } from "../common/common_utils";
 import { Coder, comb } from "./codec";
 
 // v2: attack-out requires an empty stock (the v1 engine ended games when an
-// attacker emptied their hand mid-bout with cards still in the deck). Rules
-// ARE wire format — v1 integers would silently decode to a different game
-// under v2 menus, so they are refused by version instead.
-export const FORMAT_VERSION = 2;
+// attacker emptied their hand mid-bout with cards still in the deck).
+// v3: weight profile retuned on handwritten+cordite corpora (-15% avg size).
+// Rules AND weights are wire format — older integers would silently decode
+// to a different game under newer menus, so they are refused by version.
+export const FORMAT_VERSION = 3;
 export const VERSION_ALPHABET = 16; // room for 15 future versions before a re-think
 const MAX_ATOMS = 20000; // hard guard: a malformed integer must never hang
 
-/* v1 weight profile — FROZEN wire format (bump FORMAT_VERSION to change).
- * Tuned on engine-driven random + handwritten bot games; every legal option
- * keeps weight >= 1 so any legal game stays encodable. */
-const V1 = {
-  COVER: 48, // best-known cover, geometric decay (>>1 per pref position)
-  COVER_FRESH: 48, // cover from a hidden card
+/* Weight profile — FROZEN wire format (bump FORMAT_VERSION to change).
+ * Tuned by coordinate descent on engine-driven handwritten + cordite
+ * corpora (tests/tune harness); every legal option keeps weight >= 1 so any
+ * legal game stays encodable. Exported ONLY so the tuning harness can probe
+ * candidates — never mutate at runtime. */
+export const V1 = {
+  COVER: 6, // best-known cover, geometric decay (>>1 per pref position)
+  COVER_FRESH: 6, // cover from a hidden card
   PASS: 16, // perevod with a known card, geometric decay
-  PASS_FRESH: 16,
-  PICKUP: 8,
-  ATTACK: 12, // known-card attack/throw-in, geometric decay
-  ATTACK_FRESH_LEAD: 32, // leading a bout from a hidden card (the usual case)
-  ATTACK_FRESH: 8, // throwing in from a hidden card
-  GOOD_COVERED: 64, // "good" once every attack is covered (ends the round)
-  GOOD_OPEN: 8, // declining to act while attacks are still open
-  STOP: 10, // continuation menus: stop after the current card
+  PASS_FRESH: 8,
+  PICKUP: 4,
+  ATTACK: 24, // known-card attack/throw-in, geometric decay
+  ATTACK_FRESH_LEAD: 64, // leading a bout from a hidden card (the usual case)
+  ATTACK_FRESH: 4, // throwing in from a hidden card
+  GOOD_COVERED: 16, // "good" once every attack is covered (ends the round)
+  GOOD_OPEN: 16, // declining to act while attacks are still open
+  STOP: 2, // continuation menus: stop after the current card (multi-card
+  // plays are common under the "go big" house rules, hence the low weight)
   ID_QUANT: 16384, // quantization of hypergeometric identity weights
 } as const;
 
