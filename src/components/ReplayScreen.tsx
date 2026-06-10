@@ -95,16 +95,46 @@ const seatName = (seat: number, names?: (string | null)[] | null) =>
     names?.[seat] || `P${seat + 1}`;
 
 /* Playback speeds. '⚡' is the condensed default: recorded gaps clamped to
- * short beats. The ×N presets replay the RECORDED timing divided by N — at 1×
- * a three-day sulk between moves really takes three days; the countdown keeps
- * the screen honest while you wait. */
-const SPEEDS: { label: string; mult: number | null }[] = [
-    { label: '⚡', mult: null },
-    { label: '1×', mult: 1 },
-    { label: '10×', mult: 10 },
-    { label: '60×', mult: 60 },
-    { label: '1000×', mult: 1000 },
-];
+ * short beats. The ×N stops replay the RECORDED timing divided by N — at 1× a
+ * three-day sulk between moves really takes three days (the countdown keeps
+ * the screen honest), and for simulation games with nanosecond gaps the same
+ * dial generates SLOW-MOTION stops (mult < 1) instead. Stops are derived from
+ * the game's median gap: every power of ten that plays the median between
+ * 0.2 s and 60 s, plus 1× always. */
+interface SpeedStop {
+    label: string;
+    mult: number | null;
+}
+
+const fmtMult = (m: number): string => {
+    if (m >= 1) return m >= 1e4 ? `1e${Math.round(Math.log10(m))}×` : `${m}×`;
+    const exp = Math.round(Math.log10(m));
+    return exp >= -2 ? `${m}×` : `1e${exp}×`;
+};
+
+const buildSpeeds = (times: (number | null)[]): SpeedStop[] => {
+    const stops: SpeedStop[] = [{ label: '⚡', mult: null }];
+    const gaps: number[] = [];
+    for (let i = 1; i < times.length; i++) {
+        const a = times[i - 1];
+        const b = times[i];
+        if (a !== null && b !== null && b > a) gaps.push(b - a);
+    }
+    if (gaps.length === 0) return stops; // no timing data: ⚡ only
+    gaps.sort((x, y) => x - y);
+    const median = gaps[Math.floor(gaps.length / 2)];
+
+    const mults = new Set<number>([1]);
+    for (let k = -12; k <= 12; k++) {
+        const m = Math.pow(10, k);
+        const beat = median / m;
+        if (beat >= 0.2 && beat <= 60) mults.add(m);
+    }
+    [...mults]
+        .sort((x, y) => x - y)
+        .forEach((m) => stops.push({ label: fmtMult(m), mult: m }));
+    return stops;
+};
 
 const fmtDuration = (ms: number): string => {
     const total = Math.max(0, Math.ceil(ms / 1000));
@@ -274,6 +304,7 @@ const ReplayStage = ({ decoded, steps, sequences, gameId, names, times }: StageP
     const [stepIdx, setStepIdx] = useState(-1); // -1 = pre-deal
     const [playing, setPlaying] = useState(false);
     const [reveal, setReveal] = useState(false);
+    const speeds = useMemo(() => buildSpeeds(times), [times]);
     const [speedIdx, setSpeedIdx] = useState(0);
     // wall-clock target for the next autoplay move (realtime waits can exceed
     // setTimeout's 2^31 ms ceiling, so we tick against Date.now() instead)
@@ -337,7 +368,7 @@ const ReplayStage = ({ decoded, steps, sequences, gameId, names, times }: StageP
             setPlaying(false);
             return;
         }
-        const mult = SPEEDS[speedIdx].mult;
+        const mult = speeds[speedIdx % speeds.length].mult;
         let delay = 250;
         const a = stepIdx >= 0 ? times[stepIdx] : null;
         const b = times[stepIdx + 1];
@@ -346,11 +377,11 @@ const ReplayStage = ({ decoded, steps, sequences, gameId, names, times }: StageP
             delay =
                 mult === null
                     ? Math.min(Math.max(gapMs, 150), 3000)
-                    : Math.max(gapMs / mult, 100);
+                    : Math.max(gapMs / mult, 30);
         }
         setWaitTarget(Date.now() + delay);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [playing, isAnimating, stepIdx, lastIdx, speedIdx, times, waitTarget]);
+    }, [playing, isAnimating, stepIdx, lastIdx, speedIdx, speeds, times, waitTarget]);
 
     // the ticker: fires the armed move and drives the countdown display
     useEffect(() => {
@@ -488,15 +519,16 @@ const ReplayStage = ({ decoded, steps, sequences, gameId, names, times }: StageP
                     {btn('▶▶', stepForward)}
                     {btn('⏭', () => jumpTo(lastIdx))}
                     {btn('👁', () => setReveal((r) => !r), t(reveal ? 'hide_cards' : 'reveal_cards'), reveal)}
-                    {btn(
-                        SPEEDS[speedIdx].label,
-                        () => {
-                            setWaitTarget(null); // re-arm with the new speed
-                            setSpeedIdx((i) => (i + 1) % SPEEDS.length);
-                        },
-                        t('playback_speed'),
-                        SPEEDS[speedIdx].mult !== null,
-                    )}
+                    {speeds.length > 1 &&
+                        btn(
+                            speeds[speedIdx % speeds.length].label,
+                            () => {
+                                setWaitTarget(null); // re-arm with the new speed
+                                setSpeedIdx((i) => (i + 1) % speeds.length);
+                            },
+                            t('playback_speed'),
+                            speeds[speedIdx % speeds.length].mult !== null,
+                        )}
                     <input
                         type="range"
                         min={0}

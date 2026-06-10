@@ -49,11 +49,10 @@ import {
 import { buildReplaySteps } from "../src/replay/view";
 import {
   encodeExtras,
+  encodeExtrasFromGaps,
   decodeExtras,
   splitReplayCode,
   joinReplayCode,
-  quantizeGap,
-  dequantizeGap,
   moveTimesFromLogs,
 } from "../supabase/functions/_shared/replay/extras.ts";
 import { INFO_TYPES } from "../supabase/functions/_shared/replay/core.ts";
@@ -180,6 +179,28 @@ function diffStreams(a: SeatLog[], b: SeatLog[]): string | null {
 }
 
 (async () => {
+  // scale-free timing self-test: the same 1-byte/move curve must hold from
+  // nanosecond simulation steps to multi-week correspondence gaps
+  {
+    for (const scale of [1e-9, 1e-6, 1e-3, 1, 3600, 86400 * 7]) {
+      const t0 = 1750000000;
+      const raw = [1, 2.5, 7, 0.3, 40, 12, 0.9, 100];
+      const gaps = raw.map((r) => r * scale);
+      // gaps-based entry point: absolute doubles can't carry ns offsets
+      const blob = encodeExtrasFromGaps(null, t0, gaps);
+      const back = decodeExtras(blob, 2, raw.length);
+      back.moveGaps!.forEach((g, i) => {
+        const want = raw[i] * scale;
+        if (Math.abs(g - want) > want * 0.08) {
+          throw new Error(
+            `time scale ${scale}: gap ${i} got ${g}, want ${want}`,
+          );
+        }
+      });
+    }
+    print("time-scale self-test (1ns..1week units): OK");
+  }
+
   let totalGames = 0;
   let failures = 0;
   let stalled = 0;

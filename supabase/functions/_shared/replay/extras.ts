@@ -12,26 +12,29 @@
  * just the prefix before the dash — store the full form, cut to get the
  * small one.
  *
- * Extras blob layout (version 1):
- *   byte 0          version (1)
+ * Extras blob layout (version 2):
+ *   byte 0          version (2)
  *   byte 1          flags: bit0 = names section, bit1 = times section
  *   names section   playerCount × (UTF-8 bytes + 0x00). playerCount comes
  *                   from the decoded moves payload.
- *   times section   5 bytes: game-start unix time, seconds, big-endian
+ *   times section   1 byte: scale exponent e — the time unit is 2^(e−64) s
+ *                   5 bytes: game-start unix time, seconds, big-endian
  *                   then 1 byte per information-bearing move (ATTACK / COVER /
  *                   PASS / PICKUP / GOOD, in move order): the gap since the
  *                   previous move, log-quantized (see below).
  *
- * TIME SCALING. Move gaps span milliseconds (bot flurries) to weeks
- * (correspondence games), so a linear fixed-width field is hopeless and
- * varints waste bytes on the long tail. Instead each gap is one byte on a
- * μ-law-style logarithmic scale:
+ * TIME SCALING. Move gaps are wildly non-uniform AND wildly game-dependent:
+ * humans pause seconds to weeks, simulations step in nanoseconds. So the
+ * encoding is scale-free. Each gap is one byte on a μ-law-style log curve:
  *
- *     gap(v) = A · (B^v − 1)   with A = 0.05 s, B = 1.072, v ∈ 0..255
+ *     gap(v) = unit · (B^v − 1)   with B = 1.072, v ∈ 0..255
  *
- * v=0 is instant, small gaps resolve to ~70 ms, every gap is stored with
- * ≤ ~7% relative error, and v=255 tops out at ≈ 29 days (longer gaps clamp).
- * Constant cost: a full game's timing is exactly one byte per move.
+ * giving ~7.7 decades of dynamic range at ≤ ~7% relative error for one byte
+ * per move — and `unit` itself is stored per blob as a power of two,
+ * 2^(e−64) seconds (e ∈ 0..255 spans ~5e-20 s to ~3e57 s). The encoder
+ * auto-fits: the smallest unit whose curve still reaches the game's largest
+ * gap. A bot blitz quantizes at microsecond resolution, a correspondence
+ * game at ~50 ms — same wire size either way.
  * ========================================================================== */
 
 import { LogType } from "../types.ts";
@@ -39,12 +42,12 @@ import { base32Encode, base32Decode } from "./codec.ts";
 import { INFO_TYPES } from "./core.ts";
 import { LOG_TYPE } from "../types.ts";
 
-export const EXTRAS_VERSION = 1;
+export const EXTRAS_VERSION = 2;
 const FLAG_NAMES = 1;
 const FLAG_TIMES = 2;
 
-const TIME_A = 0.05; // seconds
 const TIME_B = 1.072;
+const TIME_RANGE = Math.pow(TIME_B, 255) - 1; // ≈ 4.8e7: the curve's reach in units
 const MAX_NAME_BYTES = 48;
 
 export interface ReplayExtras {
@@ -58,14 +61,26 @@ export interface ReplayExtras {
 
 /* ------------------------------ time scaling ------------------------------ */
 
-export function quantizeGap(seconds: number): number {
+/** unit in seconds for a stored scale exponent */
+export function unitFor(scaleExp: number): number {
+    return Math.pow(2, scaleExp - 64);
+}
+
+/** smallest exponent whose curve still reaches the game's largest gap */
+export function pickScaleExp(maxGapSeconds: number): number {
+    if (!(maxGapSeconds > 0)) return 64; // degenerate: all-zero gaps, unit = 1 s
+    const e = Math.ceil(Math.log2(maxGapSeconds / TIME_RANGE)) + 64;
+    return Math.max(0, Math.min(255, e));
+}
+
+export function quantizeGap(seconds: number, unit: number): number {
     const s = Math.max(0, seconds);
-    const v = Math.round(Math.log(1 + s / TIME_A) / Math.log(TIME_B));
+    const v = Math.round(Math.log(1 + s / unit) / Math.log(TIME_B));
     return Math.max(0, Math.min(255, v));
 }
 
-export function dequantizeGap(v: number): number {
-    return TIME_A * (Math.pow(TIME_B, v) - 1);
+export function dequantizeGap(v: number, unit: number): number {
+    return unit * (Math.pow(TIME_B, v) - 1);
 }
 
 /* ----------------------------- container split ---------------------------- */
@@ -94,13 +109,16 @@ function utf8Decode(bytes: Uint8Array): string {
 }
 
 /**
- * Build the extras blob. `names` in seat order; `moveTimes` are absolute unix
- * seconds of GAME_START followed by each information-bearing move, in order
- * (use moveTimesFromLogs to extract them from game logs).
+ * Build the extras blob from a start time plus per-move gaps. This is the
+ * precision-preserving entry point: gaps are stored relative, so nanosecond
+ * resolution survives even though an ABSOLUTE unix-seconds double cannot
+ * represent it (the ULP near 2e9 s is ~240 ns). High-resolution producers
+ * (simulations) should call this directly with their raw gaps.
  */
-export function encodeExtras(
+export function encodeExtrasFromGaps(
     names: string[] | null,
-    moveTimes: number[] | null,
+    startTime: number | null,
+    gaps: number[] | null,
 ): string {
     const out: number[] = [EXTRAS_VERSION, 0];
     let flags = 0;
@@ -122,19 +140,39 @@ export function encodeExtras(
         }
     }
 
-    if (moveTimes && moveTimes.length >= 1) {
+    if (startTime !== null && gaps !== null) {
         flags |= FLAG_TIMES;
-        const start = Math.max(0, Math.floor(moveTimes[0]));
+        const maxGap = gaps.reduce((m, g) => Math.max(m, g), 0);
+        const scaleExp = pickScaleExp(maxGap);
+        const unit = unitFor(scaleExp);
+        out.push(scaleExp);
+        const start = Math.max(0, Math.floor(startTime));
         for (let i = 4; i >= 0; i--) out.push(Math.floor(start / 256 ** i) % 256);
-        let prev = moveTimes[0];
-        for (let i = 1; i < moveTimes.length; i++) {
-            out.push(quantizeGap(moveTimes[i] - prev));
-            prev = moveTimes[i];
-        }
+        for (const g of gaps) out.push(quantizeGap(g, unit));
     }
 
     out[1] = flags;
     return base32Encode(Uint8Array.from(out));
+}
+
+/**
+ * Convenience wrapper over absolute unix-seconds move times — [GAME_START,
+ * move, move, ...] as produced by moveTimesFromLogs. Differences of absolute
+ * doubles resolve to ~μs near the current epoch; finer than that, use
+ * encodeExtrasFromGaps.
+ */
+export function encodeExtras(
+    names: string[] | null,
+    moveTimes: number[] | null,
+): string {
+    if (!moveTimes || moveTimes.length < 1) {
+        return encodeExtrasFromGaps(names, null, null);
+    }
+    const gaps: number[] = [];
+    for (let i = 1; i < moveTimes.length; i++) {
+        gaps.push(Math.max(0, moveTimes[i] - moveTimes[i - 1]));
+    }
+    return encodeExtrasFromGaps(names, moveTimes[0], gaps);
 }
 
 /**
@@ -170,12 +208,13 @@ export function decodeExtras(
     let startTime: number | null = null;
     let moveGaps: number[] | null = null;
     if (flags & FLAG_TIMES) {
-        if (pos + 5 > b.length) throw new Error("extras: truncated start time");
+        if (pos + 6 > b.length) throw new Error("extras: truncated time header");
+        const unit = unitFor(b[pos++]);
         startTime = 0;
         for (let i = 0; i < 5; i++) startTime = startTime * 256 + b[pos++];
         moveGaps = [];
         for (let i = 0; i < moveCount && pos < b.length; i++) {
-            moveGaps.push(dequantizeGap(b[pos++]));
+            moveGaps.push(dequantizeGap(b[pos++], unit));
         }
         // base32 padding can leave a stray trailing byte; a count mismatch
         // beyond that means a corrupt blob
