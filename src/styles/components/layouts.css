@@ -294,6 +294,11 @@
 .game-container {
   width: 100%;
   height: 100vh;
+  /* Establish the containing block so the 100dvh below governs the bottom-anchored
+     UI (self hand, action buttons, replay controls). Without a position here those
+     absolute children resolve against the fixed 100vh body and end up under the
+     iOS Safari toolbar. */
+  position: relative;
   touch-action: none;
 }
 
