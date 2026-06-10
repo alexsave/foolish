@@ -235,6 +235,19 @@ function diffStreams(a: SeatLog[], b: SeatLog[]): string | null {
         const steps = buildReplaySteps(dec as any);
         if (steps.length !== dec.logs.length + 1)
           throw new Error("view steps mismatch");
+        // the derived bout leader must be the seat that actually opens each
+        // bout (only the first attacker may attack an empty table)
+        for (let s = 1; s < steps.length; s++) {
+          if (
+            steps[s].kind === LOG_TYPE.ATTACK &&
+            steps[s - 1].battles.length === 0 &&
+            steps[s].seat !== steps[s - 1].firstAttacker
+          ) {
+            throw new Error(
+              `view firstAttacker drift at step ${s}: P${steps[s].seat} opened, derived P${steps[s - 1].firstAttacker}`,
+            );
+          }
+        }
       } catch (e: any) {
         pcFails++;
         failures++;

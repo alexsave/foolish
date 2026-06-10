@@ -7,8 +7,16 @@
  * data out — the screen just renders steps[i].
  * ========================================================================== */
 
-import { Card, LOG_TYPE, LogType } from '../common/types';
-import { DecodedReplay, SeatLog } from './core';
+import {
+    Card,
+    LOG_TYPE,
+    LogType,
+    PersonalGame,
+    PrivatePlayer,
+    GAME_STATUS,
+    PLAYER_STATUS,
+} from '../common/types';
+import { DecodedReplay } from './core';
 
 export interface ReplaySeatView {
     /** face-down cards (identity unknown to spectators) */
@@ -35,6 +43,8 @@ export interface ReplayStep {
     deckCount: number;
     flipped: Card | null;
     discard: number;
+    /** seat leading the current bout (drives the sword marker) */
+    firstAttacker: number;
 }
 
 const sameCard = (a: Card, b: Card) => a.suit === b.suit && a.value === b.value;
@@ -52,8 +62,22 @@ export function buildReplaySteps(d: DecodedReplay): ReplayStep[] {
     let flipped: Card | null = d.trumpCard;
     let discard = 0;
     let defender = (d.firstAttacker + 1) % n;
+    let firstAttacker = d.firstAttacker;
+    // a pass moves the defender WITHOUT moving the bout leader; every other
+    // defender change re-derives the leader (see executePass vs the
+    // cover/pickup/good rotations in the server actions)
+    let lastInfoWasPass = false;
 
     const handCount = (s: number) => hidden[s] + known[s].length;
+
+    // the IN seat from which get_next_player_index reaches `target`
+    const previousIn = (target: number): number => {
+        for (let k = 1; k <= n; k++) {
+            const cand = (target - k + n) % n;
+            if (!out[cand]) return cand;
+        }
+        return target;
+    };
 
     const removeFromHand = (s: number, c: Card) => {
         const i = known[s].findIndex((k) => sameCard(k, c));
@@ -91,6 +115,7 @@ export function buildReplaySteps(d: DecodedReplay): ReplayStep[] {
         deckCount,
         flipped: flipped ? { ...flipped } : null,
         discard,
+        firstAttacker,
     });
 
     const steps: ReplayStep[] = [];
@@ -108,6 +133,7 @@ export function buildReplaySteps(d: DecodedReplay): ReplayStep[] {
                     removeFromHand(l.seat!, c);
                 }
                 goods.clear();
+                lastInfoWasPass = l.log_type === LOG_TYPE.PASS;
                 break;
 
             case LOG_TYPE.COVER: {
@@ -120,6 +146,7 @@ export function buildReplaySteps(d: DecodedReplay): ReplayStep[] {
                 b.defense = cover;
                 removeFromHand(l.seat!, cover);
                 goods.clear();
+                lastInfoWasPass = false;
                 break;
             }
 
@@ -127,10 +154,12 @@ export function buildReplaySteps(d: DecodedReplay): ReplayStep[] {
                 known[l.seat!].push(...primaries);
                 battles = [];
                 goods.clear();
+                lastInfoWasPass = false;
                 break;
 
             case LOG_TYPE.GOOD:
                 goods.add(l.seat!);
+                lastInfoWasPass = false;
                 break;
 
             case LOG_TYPE.DISCARD:
@@ -160,6 +189,7 @@ export function buildReplaySteps(d: DecodedReplay): ReplayStep[] {
 
             case LOG_TYPE.DEFENDER_CHANGE:
                 defender = l.defender_index!;
+                if (!lastInfoWasPass) firstAttacker = previousIn(defender);
                 break;
         }
 
@@ -206,4 +236,52 @@ export function buildReplaySteps(d: DecodedReplay): ReplayStep[] {
     }
 
     return steps;
+}
+
+/* ----------------------------------------------------------------------------
+ * Synthesize a PersonalGame from a step so the REAL game display components
+ * (PlayerRing, TableBattles, DeckAndFlipped, DiscardPile, DefenderShield)
+ * render the replay exactly like a live game. Served to them through
+ * ReplayServerProvider (ServerContext.tsx).
+ * -------------------------------------------------------------------------- */
+
+const REPLAY_VIEWER: PrivatePlayer = {
+    player_id: 'replay-viewer',
+    name: '',
+    status: PLAYER_STATUS.IDLE,
+    hand_length: 0,
+    is_ai: false,
+    hand: [],
+    awaiting_attack: false,
+    strategy_key: 'human',
+};
+
+export function stepToGame(d: DecodedReplay, step: ReplayStep): PersonalGame {
+    const atEnd = step.kind === 'end';
+    return {
+        id: 'replay',
+        name: '',
+        deck_length: step.deckCount,
+        discard_pile_length: step.discard,
+        flipped: step.flipped,
+        players: step.players.map((p, s) => ({
+            player_id: `seat-${s}`,
+            name: `P${s + 1}${atEnd && d.fool === s ? ' 🃏' : ''}`,
+            status: p.out ? PLAYER_STATUS.OUT : PLAYER_STATUS.IN,
+            hand_length: p.hidden + p.known.length,
+            is_ai: false,
+        })),
+        status: GAME_STATUS.PLAYING,
+        power_suit: d.powerSuit,
+        first_attacker: step.firstAttacker,
+        defender: step.players.findIndex((p) => p.isDefender),
+        table_battles: step.battles,
+        elimination_order: [],
+        good_timestamp: null,
+        good_players: step.players
+            .map((p, s) => (p.good ? `seat-${s}` : null))
+            .filter((x): x is string => x !== null),
+        snapshots: [],
+        self: REPLAY_VIEWER,
+    };
 }

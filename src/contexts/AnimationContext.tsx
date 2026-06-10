@@ -1692,4 +1692,31 @@ export const useAnimation = () => {
         throw new Error('useAnimation must be used within an AnimationProvider');
     }
     return context;
+};
+
+// Inert provider for the replay screen: the real AnimationProvider subscribes
+// to the per-user supabase realtime channel, which doesn't exist for an
+// unauthenticated replay URL. This satisfies CardFace/DeckAndFlipped/... with
+// no animations and no-op action methods.
+export const ReplayAnimationProvider = ({ children }: { children: React.ReactNode }) => {
+    const noop = async () => ({ game_id: 'replay' });
+    const value: AnimationContextType = {
+        isAnimating: false,
+        currentAnimation: null,
+        inFlightFromDeck: 0,
+        inFlightToFlipped: 0,
+        getCardAnimationState: () => ({
+            isAnimating: false,
+            animationType: null,
+            progress: 0,
+            fromLocation: null,
+            toLocation: null,
+        }),
+        attack: noop,
+        pass: noop,
+        pickup: noop,
+        cover: noop,
+        good: noop,
+    };
+    return <AnimationContext.Provider value={value}>{children}</AnimationContext.Provider>;
 }; 
