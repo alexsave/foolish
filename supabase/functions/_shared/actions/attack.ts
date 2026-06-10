@@ -1,6 +1,6 @@
 import { Card, Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, AnimationEvent, ANIMATION_EVENT_TYPE, LOG_TYPE } from '../types.ts';
 import { addLog, cloneGame } from '../common_utils.ts';
-import { validate_defender_status, verify_cards_in_players_hand, cardDisplay, card_comp } from '../common_utils.ts';
+import { validate_defender_status, verify_cards_in_players_hand, cardDisplay, card_comp, no_cards_left } from '../common_utils.ts';
 
 // Validation function for attack moves
 export function validateAttack(game: Game, player_id: string, cards: Card[]): void {
@@ -113,8 +113,13 @@ export function executeAttack(game: Game, player_id: string, cards: Card[]): Ani
         game_state: gameStateAfterAttack
     });
 
-    // Check if attacker has no cards left
-    if (attacker.hand.length === 0) {
+    // Check if attacker emptied their hand. They only LEAVE the game when
+    // the stock is exhausted too — with cards still in the deck they simply
+    // sit out the rest of the bout and refill at round end like everyone
+    // else. (Without the no_cards_left guard, dumping your whole hand as
+    // throw-ins "won" instantly with 20+ cards still in the stock, ending
+    // the game on the spot.)
+    if (attacker.hand.length === 0 && no_cards_left(game)) {
         // Attacker wins this round
         attacker.status = PLAYER_STATUS.OUT;
         attacker.awaiting_attack = false;
