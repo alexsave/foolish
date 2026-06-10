@@ -12,7 +12,10 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { getAuthenticatedUser } from './auth.ts';
 import { lockedBotLoop } from './bot_actions.ts';
-import { saveGameLogs, cleanupOldGameLogs } from './log_utils.ts';
+import { saveGameLogs, cleanupOldGameLogs, wipeAllGameLogs } from './log_utils.ts';
+import { verifyRoundTrip } from './replay/encode.ts';
+import { encodeExtras, moveTimesFromLogs } from './replay/extras.ts';
+import { base32Decode, bytesToHex } from './replay/codec.ts';
 
 const supabaseClient = createClient(
     Deno.env.get('SUPABASE_URL') || '',
@@ -805,9 +808,52 @@ const check_win_async = async (game: Game): Promise<boolean> => {
     // Update ELO ratings before changing game state
     // DOes this NEED to happen before updates to game and player status?
     await updateEloRatings(game);
-    cleanupOldGameLogs(supabaseClient, game.id).catch(error => {
-        console.error(`Error cleaning up old logs for game ${game.id}:`, error);
-    });
+
+    // Compress the finished session into a replay snapshot (game_snapshots
+    // row) and retire its logs. verifyRoundTrip both encodes and proves the
+    // encoding decodes back to the exact action sequence — only on success do
+    // we touch the logs. Clearing game.logs afterwards stops saveCompleteGame
+    // from re-inserting the rows we just wiped.
+    try {
+        const { encoded } = verifyRoundTrip({
+            playerIds: game.players.map(player => player.player_id),
+            logs: game.logs,
+            flipped: game.flipped,
+        });
+
+        // Stored binary: `moves` is the rANS integer (the whole game),
+        // `extras` the names + timing blob (_shared/replay/extras.ts). The
+        // share code is derived client-side: base32(moves) ['-' base32(extras)].
+        // One row per finished session in game_snapshots; player_ids is the
+        // read ACL.
+        const extrasBytes = base32Decode(encodeExtras(
+            game.players.map(player => player.name),
+            moveTimesFromLogs(game.logs),
+        ));
+        console.log(`[REPLAY] Game ${game.id} encoded to ${encoded.byteLength}+${extrasBytes.length} bytes`);
+
+        // Persist the snapshot BEFORE destroying the logs, so a failure
+        // between the two never loses both.
+        const { error: snapError } = await supabaseClient
+            .from('game_snapshots')
+            .insert({
+                game_id: game.id,
+                player_ids: game.players.map(player => player.player_id),
+                moves: bytesToHex(encoded.bytes),
+                extras: bytesToHex(extrasBytes),
+            });
+        if (snapError) throw snapError;
+
+        await wipeAllGameLogs(supabaseClient, game.id);
+        game.logs = [];
+    } catch (error) {
+        // Never break game completion over the snapshot; keep the logs as the
+        // fallback record and fall back to the age-based cleanup.
+        console.error(`[REPLAY] Snapshot failed for game ${game.id} — keeping logs:`, error);
+        cleanupOldGameLogs(supabaseClient, game.id).catch(err => {
+            console.error(`Error cleaning up old logs for game ${game.id}:`, err);
+        });
+    }
     return true;
 }
 

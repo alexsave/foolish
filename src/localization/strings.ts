@@ -46,7 +46,22 @@ export type StringId =
   | 'continue_to_lobby'
   | 'weak_password'
   | 'login_failed'
-  | 'signup_failed';
+  | 'signup_failed'
+  | 'share_replay'
+  | 'copy_code'
+  | 'copied'
+  | 'replay_unavailable'
+  | 'replay_title'
+  | 'invalid_replay'
+  | 'is_the_fool'
+  | 'is_out'
+  | 'discarded'
+  | 'draws'
+  | 'trump'
+  | 'reveal_cards'
+  | 'hide_cards'
+  | 'with_names_time'
+  | 'playback_speed';
 
 // English strings
 export const strings_en: Record<StringId, string> = {
@@ -97,6 +112,21 @@ export const strings_en: Record<StringId, string> = {
   weak_password: 'Weak password',
   login_failed: 'Login failed',
   signup_failed: 'Sign up failed',
+  share_replay: 'Share Replay',
+  copy_code: 'Copy code',
+  copied: 'Copied!',
+  replay_unavailable: 'Replay code unavailable for this game',
+  replay_title: 'Replay',
+  invalid_replay: 'This replay link is invalid',
+  is_the_fool: 'is the fool',
+  is_out: 'is out',
+  discarded: 'discarded',
+  draws: 'draws',
+  trump: 'Trump',
+  reveal_cards: 'Show all hands',
+  hide_cards: 'Hide hands',
+  with_names_time: 'Names + timing',
+  playback_speed: 'Playback speed (× real timing)',
 };
 
 // Russian strings
@@ -148,6 +178,21 @@ export const strings_ru: Record<StringId, string> = {
   weak_password: 'Слабый пароль',
   login_failed: 'Не удалось войти',
   signup_failed: 'Не удалось зарегистрироваться',
+  share_replay: 'Поделиться повтором',
+  copy_code: 'Скопировать код',
+  copied: 'Скопировано!',
+  replay_unavailable: 'Код повтора недоступен для этой игры',
+  replay_title: 'Повтор',
+  invalid_replay: 'Эта ссылка на повтор недействительна',
+  is_the_fool: '— дурак',
+  is_out: 'вышел',
+  discarded: 'бито',
+  draws: 'берёт',
+  trump: 'Козырь',
+  reveal_cards: 'Показать все карты',
+  hide_cards: 'Скрыть карты',
+  with_names_time: 'Имена и время',
+  playback_speed: 'Скорость воспроизведения (× реальное время)',
 };
 
 // Korean strings
@@ -199,6 +244,21 @@ export const strings_ko: Record<StringId, string> = {
   weak_password: '비밀번호가 너무 약합니다',
   login_failed: '로그인 실패',
   signup_failed: '가입 실패',
+  share_replay: '리플레이 공유',
+  copy_code: '코드 복사',
+  copied: '복사됨!',
+  replay_unavailable: '이 게임의 리플레이 코드를 사용할 수 없습니다',
+  replay_title: '리플레이',
+  invalid_replay: '이 리플레이 링크가 잘못되었습니다',
+  is_the_fool: '바보입니다',
+  is_out: '탈락',
+  discarded: '버림',
+  draws: '뽑기',
+  trump: '으뜸패',
+  reveal_cards: '모든 패 보기',
+  hide_cards: '패 숨기기',
+  with_names_time: '이름 + 시간',
+  playback_speed: '재생 속도 (실제 시간 ×)',
 };
 
 // Combined strings object for easy access

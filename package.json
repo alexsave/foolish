@@ -16,6 +16,7 @@
     "test:actions": "jest --config tests/jest.config.js",
     "test:actions:watch": "jest --config tests/jest.config.js --watch",
     "test:actions:coverage": "jest --config tests/jest.config.js --coverage",
+    "test:replay": "tsx tests/replay_roundtrip.ts",
     "bot:game": "tsx offlinefun/localtest/bot_loop_core.ts"
   },
   "devDependencies": {

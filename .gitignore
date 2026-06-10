@@ -45,3 +45,6 @@ supabase/functions/_shared/durakai/node_modules
 # cnitro
 cnitro/build/
 cnitro/*.trace/
+
+# local dev overrides (shadows next.config.mjs if tracked!)
+next.config.js

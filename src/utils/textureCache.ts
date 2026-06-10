@@ -33,8 +33,24 @@ function openDB(): Promise<IDBDatabase> {
   });
 }
 
+// iOS Safari has a long-standing bug where indexedDB.open() can hang forever
+// right after page load — no success, no error. Anything awaiting the cache
+// would then never proceed to generation (textures silently never appear, no
+// console output). Race every cache read against a deadline and fall back to
+// regeneration instead.
+function withDeadline<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms)),
+  ]);
+}
+
 // Get texture from cache
 export async function getCachedTexture(type: TextureType): Promise<string | null> {
+  return withDeadline(getCachedTextureInner(type), 1500, null);
+}
+
+async function getCachedTextureInner(type: TextureType): Promise<string | null> {
   try {
     const db = await openDB();
     const transaction = db.transaction([STORE_NAME], 'readonly');

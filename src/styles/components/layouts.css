@@ -297,6 +297,17 @@
   touch-action: none;
 }
 
+/* Dynamic viewport height where supported: in-browser Safari/Chrome shrink
+   the viewport behind their collapsing toolbars, and 100vh is the EXPANDED
+   size — the bottom of the board (self hand, replay controls) ends up under
+   the toolbar. dvh tracks the visible viewport. PWA standalone is unaffected
+   (dvh == vh there). */
+@supports (height: 100dvh) {
+  .game-container {
+    height: 100dvh;
+  }
+}
+
 /* ===== Flex Utilities ===== */
 .flex {
   display: flex;
