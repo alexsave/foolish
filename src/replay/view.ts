@@ -348,12 +348,14 @@ export function stepTimes(
     moveGaps: number[] | null,
 ): (number | null)[] {
     if (startTime === null || !moveGaps) return steps.map(() => null);
+    // goods are reconstructed by the decoder (not wire moves), so they carry
+    // no recorded gap — they inherit the surrounding clock like other derived
+    // steps
     const INFO: (LogType | 'end')[] = [
         LOG_TYPE.ATTACK,
         LOG_TYPE.COVER,
         LOG_TYPE.PASS,
         LOG_TYPE.PICKUP,
-        LOG_TYPE.GOOD,
     ];
     let t = startTime;
     let g = 0;

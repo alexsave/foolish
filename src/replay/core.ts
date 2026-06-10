@@ -50,9 +50,13 @@ import { Coder, comb } from "./codec";
 // v2: attack-out requires an empty stock (the v1 engine ended games when an
 // attacker emptied their hand mid-bout with cards still in the deck).
 // v3: weight profile retuned on handwritten+cordite corpora (-15% avg size).
+// v4: GOOD presses are implied, not coded. Covers always reset the good set,
+//     so every round-end is "last cover -> goods -> discard"; the only real
+//     decision on a fully-covered table is throw-in vs round-end — ONE menu
+//     option replaces n-1 per-attacker confirmations.
 // Rules AND weights are wire format — older integers would silently decode
 // to a different game under newer menus, so they are refused by version.
-export const FORMAT_VERSION = 3;
+export const FORMAT_VERSION = 4;
 export const VERSION_ALPHABET = 16; // room for 15 future versions before a re-think
 const MAX_ATOMS = 20000; // hard guard: a malformed integer must never hang
 
@@ -70,8 +74,7 @@ export const V1 = {
   ATTACK: 24, // known-card attack/throw-in, geometric decay
   ATTACK_FRESH_LEAD: 64, // leading a bout from a hidden card (the usual case)
   ATTACK_FRESH: 4, // throwing in from a hidden card
-  GOOD_COVERED: 16, // "good" once every attack is covered (ends the round)
-  GOOD_OPEN: 16, // declining to act while attacks are still open
+  ROUND_END: 24, // end the bout once everything is covered (vs more throw-ins)
   STOP: 2, // continuation menus: stop after the current card (multi-card
   // plays are common under the "go big" house rules, hence the low weight)
   ID_QUANT: 16384, // quantization of hypergeometric identity weights
@@ -166,7 +169,6 @@ export interface Model {
   battles: { attack: number; defense: number | null }[];
   firstAttacker: number;
   defender: number;
-  goods: Set<number>;
   eliminationOrder: number[];
   discard: number;
   out: SeatLog[];
@@ -327,7 +329,7 @@ type Option =
   | { kind: "pass"; id: number | null }
   | { kind: "pickup" }
   | { kind: "attack"; seat: number; id: number | null }
-  | { kind: "good"; seat: number };
+  | { kind: "round_end" };
 
 // The top-level menu: every (actor, first-card-or-action) atom legal in the
 // current public state, in a FIXED order (wire format!): for each seat
@@ -429,15 +431,15 @@ function buildTopMenu(m: Model): Menu {
           add({ kind: "attack", seat, id: null }, V1.ATTACK_FRESH);
         }
       }
-      // good (validateGood: not the first attacker on an empty table,
-      // not already said)
-      if (
-        !m.goods.has(seat) &&
-        !(m.battles.length === 0 && seat === m.firstAttacker)
-      ) {
-        add({ kind: "good", seat }, allCovered ? V1.GOOD_COVERED : V1.GOOD_OPEN);
-      }
     }
+  }
+  // One decision ends the bout: once everything is covered, either someone
+  // throws in (options above) or the round closes. The engine reaches this
+  // via per-attacker GOOD presses, but those are implied — covers always
+  // reset the good set, so "all good" after the last cover carries no
+  // information beyond "no further throw-ins".
+  if (allCovered) {
+    add({ kind: "round_end" }, V1.ROUND_END);
   }
   return { opts, weights };
 }
@@ -501,7 +503,6 @@ function applyAttack(m: Model, seat: number, ids: number[]): void {
     seat,
     ids.map((id) => ({ primary: idToCard(id), target: null })),
   );
-  m.goods.clear();
   if (handLen(m, seat) === 0 && stockTotal(m) === 0) {
     // executeAttack: out on an emptied hand only once the stock is dry —
     // with cards still in the deck the attacker refills at round end
@@ -523,7 +524,6 @@ function applyCover(m: Model, b: number, coverId: number): void {
     discardTable(m);
     refill(m);
     m.firstAttacker = m.defender;
-    m.goods.clear();
     if (handLen(m, m.defender) === 0) {
       const wasIn = m.status[m.firstAttacker];
       m.status[m.firstAttacker] = false;
@@ -533,8 +533,6 @@ function applyCover(m: Model, b: number, coverId: number): void {
     }
     m.defender = nextIn(m, m.firstAttacker);
     emit(m, LOG_TYPE.DEFENDER_CHANGE, null, [], m.defender);
-  } else {
-    m.goods.clear(); // every cover lets attackers reconsider
   }
 }
 
@@ -546,7 +544,6 @@ function applyPass(m: Model, seat: number, ids: number[]): void {
     seat,
     ids.map((id) => ({ primary: idToCard(id), target: null })),
   );
-  m.goods.clear();
   const next = nextIn(m, m.defender);
   if (stockTotal(m) === 0 && handLen(m, seat) === 0) {
     m.status[seat] = false;
@@ -566,28 +563,22 @@ function applyPickup(m: Model): void {
   m.firstAttacker = nextIn(m, m.defender);
   m.defender = nextIn(m, m.firstAttacker);
   emit(m, LOG_TYPE.DEFENDER_CHANGE, null, [], m.defender);
-  m.goods.clear();
 }
 
-function applyGood(m: Model, seat: number): void {
-  emit(m, LOG_TYPE.GOOD, seat);
-  m.goods.add(seat);
-  const attackers: number[] = [];
-  for (let s = 0; s < m.n; s++)
-    if (s !== m.defender && m.status[s]) attackers.push(s);
-  const allGood =
-    attackers.length > 0 && attackers.every((s) => m.goods.has(s));
-  const allCovered =
-    m.battles.length > 0 && m.battles.every((b) => b.defense !== null);
-  if (allGood && allCovered) {
-    // executeRoundTransition
-    discardTable(m);
-    refill(m);
-    m.firstAttacker = m.defender;
-    m.defender = nextIn(m, m.firstAttacker);
-    emit(m, LOG_TYPE.DEFENDER_CHANGE, null, [], m.defender);
-    m.goods.clear();
+// executeRoundTransition (good.ts): reached in the engine when the last
+// attacker presses GOOD on a fully-covered table. The presses cost no wire
+// bits — the decoder RECREATES the run that matters: before the discard,
+// every IN attacker says good, in seat order. (Mid-bout goods that later got
+// reset by a throw-in had no effect and are not reconstructed.)
+function applyRoundEnd(m: Model): void {
+  for (let s = 0; s < m.n; s++) {
+    if (s !== m.defender && m.status[s]) emit(m, LOG_TYPE.GOOD, s);
   }
+  discardTable(m);
+  refill(m);
+  m.firstAttacker = m.defender;
+  m.defender = nextIn(m, m.firstAttacker);
+  emit(m, LOG_TYPE.DEFENDER_CHANGE, null, [], m.defender);
 }
 
 /* --------------------------- the shared driver --------------------------- */
@@ -595,19 +586,26 @@ function applyGood(m: Model, seat: number): void {
 // actual game (the info-bearing logs); in decode mode choices come back out
 // of the integer. This symmetry is the round-trip guarantee.
 
+/** What the encoder feeds the driver: either an information-bearing log or
+ *  a synthetic round-end marker (derived from a good-transition DISCARD). */
+export type SourceAction =
+  | { kind: "log"; log: ReplayLogEntry }
+  | { kind: "round_end" };
+
 export interface InfoSource {
-  peek(): ReplayLogEntry; // next info log (throws if exhausted)
+  peek(): SourceAction; // next action (throws if exhausted)
   advance(): void;
   exhausted(): boolean;
   seatOf(pid: string | null): number;
 }
 
+// GOOD is deliberately absent: good presses are implied (v4) — they carry
+// no information beyond the single throw-in-vs-round-end decision.
 export const INFO_TYPES: LogType[] = [
   LOG_TYPE.ATTACK,
   LOG_TYPE.COVER,
   LOG_TYPE.PASS,
   LOG_TYPE.PICKUP,
-  LOG_TYPE.GOOD,
 ];
 
 // Identity of a freshly revealed card. The feasible unseen cards are listed
@@ -649,9 +647,15 @@ function codeFreshIdentity(
 function findTopIndex(
   m: Model,
   opts: Option[],
-  log: ReplayLogEntry,
+  action: SourceAction,
   src: InfoSource,
 ): number {
+  if (action.kind === "round_end") {
+    const idx = opts.findIndex((o) => o.kind === "round_end");
+    if (idx < 0) throw new Error("replay desync: round end not in menu");
+    return idx;
+  }
+  const log = action.log;
   const match = (o: Option): boolean => {
     switch (log.log_type) {
       case LOG_TYPE.ATTACK: {
@@ -682,8 +686,6 @@ function findTopIndex(
       }
       case LOG_TYPE.PICKUP:
         return o.kind === "pickup";
-      case LOG_TYPE.GOOD:
-        return o.kind === "good" && o.seat === src.seatOf(log.player_id);
       default:
         return false;
     }
@@ -720,7 +722,6 @@ export function runReplay(
     battles: [],
     firstAttacker,
     defender: (firstAttacker + 1) % n, // set_positions()
-    goods: new Set<number>(),
     eliminationOrder: [],
     discard: 0,
     out: [],
@@ -746,8 +747,9 @@ export function runReplay(
     if (source) {
       if (source.exhausted())
         throw new Error("incomplete game: logs ended before the fool was known");
-      log = source.peek();
-      chosen = findTopIndex(m, opts, log, source);
+      const action = source.peek();
+      if (action.kind === "log") log = action.log;
+      chosen = findTopIndex(m, opts, action, source);
     }
     const opt = opts[coder.code(weights, chosen)];
 
@@ -931,8 +933,8 @@ export function runReplay(
         applyPickup(m);
         break;
 
-      case "good":
-        applyGood(m, opt.seat);
+      case "round_end":
+        applyRoundEnd(m);
         break;
     }
 

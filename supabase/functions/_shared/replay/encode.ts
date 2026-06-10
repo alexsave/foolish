@@ -25,7 +25,7 @@ import {
   VERSION_ALPHABET,
   INFO_TYPES,
   InfoSource,
-  ReplayLogEntry,
+  SourceAction,
   ReplayInput,
   EncodedReplay,
   DecodedReplay,
@@ -47,8 +47,27 @@ function makeSource(input: ReplayInput): {
       break;
     }
   }
-  const info = logs.filter((l) => INFO_TYPES.includes(l.log_type));
-  if (info.length === 0) throw new Error("no game actions to encode");
+
+  // The wire actions: information-bearing logs, plus a synthetic round-end
+  // marker wherever the engine ran a good-transition. GOOD presses are
+  // implied (v4) and skipped entirely; a transition's DISCARD is recognized
+  // by the GOOD immediately before it in the raw stream (a clean-sweep
+  // cover's DISCARD follows its COVER instead, and is derived by the
+  // decoder's cover cascade).
+  const actions: SourceAction[] = [];
+  for (let i = 0; i < logs.length; i++) {
+    const l = logs[i];
+    if (INFO_TYPES.includes(l.log_type)) {
+      actions.push({ kind: "log", log: l });
+    } else if (
+      l.log_type === LOG_TYPE.DISCARD &&
+      i > 0 &&
+      logs[i - 1].log_type === LOG_TYPE.GOOD
+    ) {
+      actions.push({ kind: "round_end" });
+    }
+  }
+  if (actions.length === 0) throw new Error("no game actions to encode");
 
   const seatOf = (pid: string | null): number => {
     const s = input.playerIds.indexOf(pid ?? "");
@@ -56,20 +75,23 @@ function makeSource(input: ReplayInput): {
     return s;
   };
 
-  const firstAtk = info.find((l) => l.log_type === LOG_TYPE.ATTACK);
-  if (!firstAtk) throw new Error("no attack in logs");
-  const firstAttacker = seatOf(firstAtk.player_id);
+  const firstAtkAction = actions.find(
+    (a) => a.kind === "log" && a.log.log_type === LOG_TYPE.ATTACK,
+  );
+  if (!firstAtkAction || firstAtkAction.kind !== "log")
+    throw new Error("no attack in logs");
+  const firstAttacker = seatOf(firstAtkAction.log.player_id);
 
   let i = 0;
   const src: InfoSource = {
     peek: () => {
-      if (i >= info.length) throw new Error("log source exhausted");
-      return info[i];
+      if (i >= actions.length) throw new Error("log source exhausted");
+      return actions[i];
     },
     advance: () => {
       i++;
     },
-    exhausted: () => i >= info.length,
+    exhausted: () => i >= actions.length,
     seatOf,
   };
   return { src, firstAttacker };

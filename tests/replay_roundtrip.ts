@@ -135,11 +135,14 @@ async function playRandomGame(
   return game;
 }
 
-/* normalize both streams to a comparable shape */
+/* normalize both streams to a comparable shape. GOOD presses are implied in
+ * format v4 — the decoder neither stores nor reproduces them — so they are
+ * stripped from the original before comparing. Everything else (including
+ * every derived DISCARD/DRAW/DEFENDER_CHANGE/PLAYER_OUT) must match. */
 function normOriginal(game: Game): SeatLog[] {
   const seatOf = (pid: string | null) =>
     pid === null ? null : game.players.findIndex((p) => p.player_id === pid);
-  return game.logs.map((l: GameLog) => ({
+  return game.logs.filter((l) => l.log_type !== LOG_TYPE.GOOD).map((l: GameLog) => ({
     log_type: l.log_type,
     seat: seatOf(l.player_id),
     card_pairs: l.card_pairs.map((p) => ({
@@ -153,7 +156,7 @@ function normOriginal(game: Game): SeatLog[] {
 }
 
 function normDecoded(d: DecodedReplay): SeatLog[] {
-  return d.logs.map((l) => ({
+  return d.logs.filter((l) => l.log_type !== LOG_TYPE.GOOD).map((l) => ({
     log_type: l.log_type,
     seat: l.seat,
     card_pairs: l.card_pairs.map((p) => ({
