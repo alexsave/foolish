@@ -43,7 +43,10 @@ export type StringId =
   | 'type_message'
   | 'final_rankings'
   | 'you'
-  | 'continue_to_lobby';
+  | 'continue_to_lobby'
+  | 'weak_password'
+  | 'login_failed'
+  | 'signup_failed';
 
 // English strings
 export const strings_en: Record<StringId, string> = {
@@ -91,6 +94,9 @@ export const strings_en: Record<StringId, string> = {
   final_rankings: 'Final Rankings',
   you: 'You',
   continue_to_lobby: 'Continue to Lobby',
+  weak_password: 'Weak password',
+  login_failed: 'Login failed',
+  signup_failed: 'Sign up failed',
 };
 
 // Russian strings
@@ -139,6 +145,9 @@ export const strings_ru: Record<StringId, string> = {
   final_rankings: 'Итоговые результаты',
   you: 'Вы',
   continue_to_lobby: 'Продолжить в лобби',
+  weak_password: 'Слабый пароль',
+  login_failed: 'Не удалось войти',
+  signup_failed: 'Не удалось зарегистрироваться',
 };
 
 // Korean strings
@@ -187,6 +196,9 @@ export const strings_ko: Record<StringId, string> = {
   final_rankings: '최종 순위',
   you: '나',
   continue_to_lobby: '로비로 이동',
+  weak_password: '비밀번호가 너무 약합니다',
+  login_failed: '로그인 실패',
+  signup_failed: '가입 실패',
 };
 
 // Combined strings object for easy access

@@ -4,6 +4,7 @@ import { TexturedSurface } from './TexturedSurface';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { Text } from './Text';
+import { useLocalization } from '../contexts/LocalizationContext';
 import Link from 'next/link';
 import { useStyles } from '../contexts/StyleContext';
 
@@ -11,6 +12,7 @@ export const Welcome = () => {
     const [name, setName] = useState('');
     const [password, setPassword] = useState('');
     const { signIn, signUp } = useAuth();
+    const { t } = useLocalization();
     const styles = useStyles();
     const passwordRef = useRef<HTMLInputElement>(null);
 
@@ -68,10 +70,11 @@ export const Welcome = () => {
         try {
             const { weakPassword } = await signIn(name, password);
             if (weakPassword) {
-                alert('Weak password');
+                alert(t('weak_password'));
             }
         } catch (error: any) {
-            alert(error.message);
+            // localized headline; the raw server detail stays for debugging
+            alert(`${t('login_failed')}: ${error.message}`);
         }
     };
 
@@ -80,7 +83,7 @@ export const Welcome = () => {
         try {
             await signUp(name, password);
         } catch (error: any) {
-            alert(error.message);
+            alert(`${t('signup_failed')}: ${error.message}`);
         }
     };
 
