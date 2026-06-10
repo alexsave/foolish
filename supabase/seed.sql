@@ -81,7 +81,6 @@ CREATE TABLE games (
   elimination_order JSONB NOT NULL DEFAULT '[]'::jsonb, -- Array of player_ids in order they were eliminated
   good_timestamp BIGINT, -- Timestamp in milliseconds when all attacks were covered, null if not all covered
   good_players JSONB NOT NULL DEFAULT '[]'::jsonb, -- Array of player_ids who have pressed 'good'
-  snapshots JSONB NOT NULL DEFAULT '[]'::jsonb, -- string[] of base64 replay codes, one appended per finished session (see _shared/replay/format.ts); replaces the session's game_logs rows, which are wiped after encoding
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW()
 );
@@ -184,6 +183,21 @@ CREATE TABLE game_logs (
   created_at TIMESTAMP DEFAULT NOW()
 );
 
+-- Game snapshots - one row per finished session: the complete game compressed
+-- into a replay code "<base32 moves>-<base32 extras>" (see
+-- functions/_shared/replay/). Replaces the session's game_logs rows, which are
+-- wiped after the snapshot is verified and stored. The moves-only share code
+-- is the prefix before the dash. player_ids doubles as the read ACL and
+-- records seat order. game_id is SET NULL on delete so replays outlive lobby
+-- deletion.
+CREATE TABLE game_snapshots (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  game_id TEXT REFERENCES games(id) ON DELETE SET NULL,
+  player_ids JSONB NOT NULL DEFAULT '[]'::jsonb, -- player ids in seat order
+  snapshot TEXT NOT NULL,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
 -- =============================================================================
 -- INDEXES: Create indexes for better performance
 -- =============================================================================
@@ -213,6 +227,9 @@ CREATE INDEX idx_game_logs_game_id ON game_logs(game_id);
 CREATE INDEX idx_game_logs_log_type ON game_logs(log_type);
 CREATE INDEX idx_game_logs_player_id ON game_logs(player_id);
 CREATE INDEX idx_game_logs_created_at ON game_logs(created_at);
+CREATE INDEX idx_game_snapshots_game_id ON game_snapshots(game_id);
+CREATE INDEX idx_game_snapshots_created_at ON game_snapshots(created_at);
+CREATE INDEX idx_game_snapshots_player_ids ON game_snapshots USING GIN (player_ids);
 
 -- =============================================================================
 -- ROW LEVEL SECURITY: Enable RLS on all tables
@@ -229,6 +246,7 @@ ALTER TABLE bot_locks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE game_locks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auto_discard_locks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE game_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE game_snapshots ENABLE ROW LEVEL SECURITY;
 
 -- =============================================================================
 -- RLS POLICIES: Security-first approach
@@ -334,6 +352,18 @@ CREATE POLICY "Service role can insert logs" ON game_logs
 
 CREATE POLICY "Service role can read logs" ON game_logs
   FOR SELECT USING ((select auth.role()) = 'service_role');
+
+-- Game snapshots: written by edge functions at game end; readable by the
+-- players who were in that game (player_ids holds their auth uids in seat
+-- order). The replay itself is shared by URL, so this only gates lookup.
+CREATE POLICY "Service role can insert snapshots" ON game_snapshots
+  FOR INSERT WITH CHECK ((select auth.role()) = 'service_role');
+
+CREATE POLICY "Participants can read snapshots" ON game_snapshots
+  FOR SELECT USING (
+    (select auth.role()) = 'service_role'
+    OR player_ids ? (select auth.uid())::text
+  );
 
 -- =============================================================================
 -- FUNCTIONS: Helper functions and triggers

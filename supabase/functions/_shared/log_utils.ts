@@ -53,7 +53,7 @@ export const saveGameLogs = async (supabaseClient: SupabaseClient, game_id: stri
 
 
 // Delete EVERY log row for a game — all sessions, not just the current one.
-// Called at game end after the session has been encoded into games.snapshots
+// Called at game end after the session has been encoded into game_snapshots
 // (see _shared/replay/encode.ts); the snapshot replaces the logs, and older
 // sessions were already snapshotted (or are unsalvageable pre-snapshot data).
 export const wipeAllGameLogs = async (supabaseClient: SupabaseClient, game_id: string): Promise<void> => {

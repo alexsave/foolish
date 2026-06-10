@@ -199,7 +199,6 @@ const gameToPublicGame = (game: Game): PublicGame => {
         elimination_order: game.elimination_order,
         good_timestamp: game.good_timestamp,
         good_players: game.good_players,
-        snapshots: game.snapshots,
     };
 };
 
@@ -588,7 +587,6 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
         elimination_order: data.elimination_order,
         good_timestamp: data.good_timestamp || null,
         good_players: data.good_players || [],
-        snapshots: data.snapshots || [],
         logs: logs, // Loaded from database
     }
 
@@ -810,12 +808,11 @@ const check_win_async = async (game: Game): Promise<boolean> => {
     // DOes this NEED to happen before updates to game and player status?
     await updateEloRatings(game);
 
-    // Compress the finished session into a replay snapshot and retire its
-    // logs. verifyRoundTrip both encodes and proves the encoding decodes back
-    // to the exact action sequence — only on success do we touch the logs.
-    // game.snapshots is persisted by the saveCompleteGame call that follows
-    // check_win_async in executeWithGameLock; clearing game.logs there also
-    // stops saveGameLogs from re-inserting the rows we just wiped.
+    // Compress the finished session into a replay snapshot (game_snapshots
+    // row) and retire its logs. verifyRoundTrip both encodes and proves the
+    // encoding decodes back to the exact action sequence — only on success do
+    // we touch the logs. Clearing game.logs afterwards stops saveCompleteGame
+    // from re-inserting the rows we just wiped.
     try {
         const { encoded } = verifyRoundTrip({
             playerIds: game.players.map(player => player.player_id),
@@ -825,22 +822,24 @@ const check_win_async = async (game: Game): Promise<boolean> => {
 
         // Snapshot = "<base32 moves>-<base32 extras>": the moves integer plus
         // player names and per-move timestamps (see _shared/replay/extras.ts).
-        // The moves-only share code is the prefix before the dash.
+        // The moves-only share code is the prefix before the dash. One row per
+        // finished session in game_snapshots; player_ids is the read ACL.
         const extras = encodeExtras(
             game.players.map(player => player.name),
             moveTimesFromLogs(game.logs),
         );
         const snapshot = joinReplayCode(encoded.base32, extras);
-        game.snapshots = [...(game.snapshots || []), snapshot];
-        console.log(`[REPLAY] Game ${game.id} encoded to ${encoded.byteLength}+${Math.ceil(extras.length * 5 / 8)} bytes (${game.snapshots.length} snapshot(s) total)`);
+        console.log(`[REPLAY] Game ${game.id} encoded to ${encoded.byteLength}+${Math.ceil(extras.length * 5 / 8)} bytes`);
 
         // Persist the snapshot BEFORE destroying the logs, so a failure
-        // between the two never loses both. saveCompleteGame re-writes the
-        // same value moments later, which is harmless.
+        // between the two never loses both.
         const { error: snapError } = await supabaseClient
-            .from('games')
-            .update({ snapshots: game.snapshots })
-            .eq('id', game.id);
+            .from('game_snapshots')
+            .insert({
+                game_id: game.id,
+                player_ids: game.players.map(player => player.player_id),
+                snapshot,
+            });
         if (snapError) throw snapError;
 
         await wipeAllGameLogs(supabaseClient, game.id);

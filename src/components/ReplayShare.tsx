@@ -8,11 +8,11 @@ import { splitReplayCode } from '../replay/extras';
 
 /**
  * Post-game replay sharing. The server compresses the finished session at
- * game end (supabase/functions/_shared/replay/) and appends the share code to
- * games.snapshots as "<base32 moves>-<base32 extras>" — the move integer plus
- * player names and per-move timing. The moves-only code is simply the prefix
- * before the dash, so one stored string serves both share formats; the
- * checkbox switches the QR/link between them.
+ * game end (supabase/functions/_shared/replay/) into one game_snapshots row:
+ * "<base32 moves>-<base32 extras>" — the move integer plus player names and
+ * per-move timing. The moves-only code is simply the prefix before the dash,
+ * so one stored string serves both share formats; the checkbox switches the
+ * QR/link between them. RLS lets exactly the game's participants read it.
  */
 
 interface ReplayShareProps {
@@ -20,32 +20,26 @@ interface ReplayShareProps {
 }
 
 export const ReplayShare: React.FC<ReplayShareProps> = ({ game }) => {
-    const [snapshot, setSnapshot] = useState<string | null>(
-        game.snapshots && game.snapshots.length > 0
-            ? game.snapshots[game.snapshots.length - 1]
-            : null,
-    );
+    const [snapshot, setSnapshot] = useState<string | null>(null);
     const [failed, setFailed] = useState(false);
     const [copied, setCopied] = useState(false);
     const [withExtras, setWithExtras] = useState(false);
 
     useEffect(() => {
-        if (snapshot) return;
         let cancelled = false;
 
-        // The broadcast game state usually carries snapshots already; this
-        // fallback covers clients holding a stale state from before game end.
         const fetchSnapshot = async () => {
             try {
                 const { data, error } = await supabase
-                    .from('games')
-                    .select('snapshots')
-                    .eq('id', game.id)
-                    .single();
+                    .from('game_snapshots')
+                    .select('snapshot')
+                    .eq('game_id', game.id)
+                    .order('created_at', { ascending: false })
+                    .limit(1);
                 if (error) throw error;
-                const all: string[] = data?.snapshots ?? [];
-                if (all.length === 0) throw new Error('no snapshots on game row');
-                if (!cancelled) setSnapshot(all[all.length - 1]);
+                if (!data || data.length === 0)
+                    throw new Error('no snapshot rows for this game');
+                if (!cancelled) setSnapshot(data[0].snapshot);
             } catch (e) {
                 console.error('Replay snapshot unavailable:', e);
                 if (!cancelled) setFailed(true);
@@ -56,7 +50,7 @@ export const ReplayShare: React.FC<ReplayShareProps> = ({ game }) => {
         return () => {
             cancelled = true;
         };
-    }, [game.id, snapshot]);
+    }, [game.id]);
 
     const view = useMemo(() => {
         if (!snapshot) return null;

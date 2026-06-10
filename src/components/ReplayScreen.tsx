@@ -94,6 +94,32 @@ const InlineCardBack = ({ w = 22 }: { w?: number }) => (
 const seatName = (seat: number, names?: (string | null)[] | null) =>
     names?.[seat] || `P${seat + 1}`;
 
+/* Playback speeds. '⚡' is the condensed default: recorded gaps clamped to
+ * short beats. The ×N presets replay the RECORDED timing divided by N — at 1×
+ * a three-day sulk between moves really takes three days; the countdown keeps
+ * the screen honest while you wait. */
+const SPEEDS: { label: string; mult: number | null }[] = [
+    { label: '⚡', mult: null },
+    { label: '1×', mult: 1 },
+    { label: '10×', mult: 10 },
+    { label: '60×', mult: 60 },
+    { label: '1000×', mult: 1000 },
+];
+
+const fmtDuration = (ms: number): string => {
+    const total = Math.max(0, Math.ceil(ms / 1000));
+    const d = Math.floor(total / 86400);
+    const h = Math.floor((total % 86400) / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const sec = total % 60;
+    const hh = String(h).padStart(2, '0');
+    const mm = String(m).padStart(2, '0');
+    const ss = String(sec).padStart(2, '0');
+    if (d > 0) return `${d}d ${hh}:${mm}:${ss}`;
+    if (h > 0) return `${hh}:${mm}:${ss}`;
+    return `${mm}:${ss}`;
+};
+
 const StepMessage = ({ step, names }: { step: ReplayStep; names: string[] | null }) => {
     const cards = (cs: Card[]) => (
         <span style={{ display: 'inline-flex', gap: 3, verticalAlign: 'middle' }}>
@@ -248,6 +274,11 @@ const ReplayStage = ({ decoded, steps, sequences, gameId, names, times }: StageP
     const [stepIdx, setStepIdx] = useState(-1); // -1 = pre-deal
     const [playing, setPlaying] = useState(false);
     const [reveal, setReveal] = useState(false);
+    const [speedIdx, setSpeedIdx] = useState(0);
+    // wall-clock target for the next autoplay move (realtime waits can exceed
+    // setTimeout's 2^31 ms ceiling, so we tick against Date.now() instead)
+    const [waitTarget, setWaitTarget] = useState<number | null>(null);
+    const [now, setNow] = useState(() => Date.now());
     const stepRef = useRef(stepIdx);
     stepRef.current = stepIdx;
     const lastIdx = steps.length - 1;
@@ -267,6 +298,7 @@ const ReplayStage = ({ decoded, steps, sequences, gameId, names, times }: StageP
     );
 
     const stepForward = useCallback(() => {
+        setWaitTarget(null);
         if (stepRef.current >= lastIdx) {
             setPlaying(false);
             return;
@@ -279,6 +311,7 @@ const ReplayStage = ({ decoded, steps, sequences, gameId, names, times }: StageP
     const jumpTo = useCallback(
         (i: number) => {
             setPlaying(false);
+            setWaitTarget(null);
             resetAnimations();
             const target = Math.max(0, Math.min(i, lastIdx));
             updateGameState(gameId, stepToGame(decoded, steps[target], gameId, names));
@@ -294,24 +327,45 @@ const ReplayStage = ({ decoded, steps, sequences, gameId, names, times }: StageP
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    // autoplay: feed the next event when the previous one lands, paced by the
-    // recorded move timing when present (clamped — a week-long gap plays as a
-    // beat, not a wait)
+    // autoplay scheduling: once the previous event's animation lands, pick the
+    // delay before the next move — condensed beats by default, or the recorded
+    // gap divided by the dial speed in realtime modes — and arm a wall-clock
+    // target. The ticker below fires it; this survives day-long waits.
     useEffect(() => {
-        if (!playing || isAnimating) return;
+        if (!playing || isAnimating || waitTarget !== null) return;
         if (stepIdx >= lastIdx) {
             setPlaying(false);
             return;
         }
+        const mult = SPEEDS[speedIdx].mult;
         let delay = 250;
         const a = stepIdx >= 0 ? times[stepIdx] : null;
         const b = times[stepIdx + 1];
         if (a !== null && b !== null && b !== undefined) {
-            delay = Math.min(Math.max((b - a) * 1000, 150), 3000);
+            const gapMs = Math.max(0, (b - a) * 1000);
+            delay =
+                mult === null
+                    ? Math.min(Math.max(gapMs, 150), 3000)
+                    : Math.max(gapMs / mult, 100);
         }
-        const timer = setTimeout(stepForward, delay);
-        return () => clearTimeout(timer);
-    }, [playing, isAnimating, stepIdx, lastIdx, stepForward, times]);
+        setWaitTarget(Date.now() + delay);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [playing, isAnimating, stepIdx, lastIdx, speedIdx, times, waitTarget]);
+
+    // the ticker: fires the armed move and drives the countdown display
+    useEffect(() => {
+        if (waitTarget === null) return;
+        const tick = () => {
+            const t = Date.now();
+            setNow(t);
+            if (t >= waitTarget) {
+                stepForward();
+            }
+        };
+        tick();
+        const interval = setInterval(tick, 250);
+        return () => clearInterval(interval);
+    }, [waitTarget, stepForward]);
 
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
@@ -402,6 +456,11 @@ const ReplayStage = ({ decoded, steps, sequences, gameId, names, times }: StageP
                     }}
                 >
                     {stepIdx >= 0 && <StepMessage step={step} names={names} />}
+                    {playing && waitTarget !== null && waitTarget - now > 4000 && (
+                        <span style={{ fontSize: '0.75rem', opacity: 0.85, whiteSpace: 'nowrap' }}>
+                            ⏳ {fmtDuration(waitTarget - now)}
+                        </span>
+                    )}
                     {stepIdx >= 0 && times[stepIdx] !== null && (
                         <span
                             style={{
@@ -429,6 +488,15 @@ const ReplayStage = ({ decoded, steps, sequences, gameId, names, times }: StageP
                     {btn('▶▶', stepForward)}
                     {btn('⏭', () => jumpTo(lastIdx))}
                     {btn('👁', () => setReveal((r) => !r), t(reveal ? 'hide_cards' : 'reveal_cards'), reveal)}
+                    {btn(
+                        SPEEDS[speedIdx].label,
+                        () => {
+                            setWaitTarget(null); // re-arm with the new speed
+                            setSpeedIdx((i) => (i + 1) % SPEEDS.length);
+                        },
+                        t('playback_speed'),
+                        SPEEDS[speedIdx].mult !== null,
+                    )}
                     <input
                         type="range"
                         min={0}

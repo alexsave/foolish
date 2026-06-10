@@ -97,7 +97,6 @@ const mkGame = (np: number, strategy: StrategyKey): Game => ({
   elimination_order: [],
   good_timestamp: null,
   good_players: [],
-  snapshots: [],
 });
 
 async function playRandomGame(

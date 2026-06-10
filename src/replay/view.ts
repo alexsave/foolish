@@ -328,7 +328,6 @@ export function stepToGame(
         good_players: step.players
             .map((p, s) => (p.good ? `seat-${s}` : null))
             .filter((x): x is string => x !== null),
-        snapshots: [],
         self: REPLAY_VIEWER,
         replay_hands: step.players.map((p) => [
             ...p.known.map((c) => ({ ...c }) as Card | null),
