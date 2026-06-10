@@ -47,7 +47,11 @@ import { ACE_VALUE, CARDS_PER_PLAYER } from "../common/constants";
 import { canCover } from "../common/common_utils";
 import { Coder, comb } from "./codec";
 
-export const FORMAT_VERSION = 1;
+// v2: attack-out requires an empty stock (the v1 engine ended games when an
+// attacker emptied their hand mid-bout with cards still in the deck). Rules
+// ARE wire format — v1 integers would silently decode to a different game
+// under v2 menus, so they are refused by version instead.
+export const FORMAT_VERSION = 2;
 export const VERSION_ALPHABET = 16; // room for 15 future versions before a re-think
 const MAX_ATOMS = 20000; // hard guard: a malformed integer must never hang
 
@@ -494,8 +498,9 @@ function applyAttack(m: Model, seat: number, ids: number[]): void {
     ids.map((id) => ({ primary: idToCard(id), target: null })),
   );
   m.goods.clear();
-  if (handLen(m, seat) === 0) {
-    // executeAttack: out immediately, even with stock remaining
+  if (handLen(m, seat) === 0 && stockTotal(m) === 0) {
+    // executeAttack: out on an emptied hand only once the stock is dry —
+    // with cards still in the deck the attacker refills at round end
     m.status[seat] = false;
     m.eliminationOrder.push(seat);
     emit(m, LOG_TYPE.PLAYER_OUT, seat);
