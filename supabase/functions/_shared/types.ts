@@ -257,7 +257,10 @@ export const STRATEGY_KEY = {
     HACKER: 'hacker',
     CONSOLE: 'console',
     GPT: 'gpt',
-    ESPRESSO: 'espresso'
+    ESPRESSO: 'espresso',
+    NITRO: 'nitro',
+    CORDITE: 'cordite',
+    CORDITE_MAX: 'cordite_max'
 } as const;
 
 export type StrategyKey = typeof STRATEGY_KEY[keyof typeof STRATEGY_KEY];

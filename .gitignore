@@ -41,3 +41,7 @@ yarn-error.log*
 
 supabase/functions/_shared/durakai/move_analysis.txt
 supabase/functions/_shared/durakai/node_modules
+
+# cnitro
+cnitro/build/
+cnitro/*.trace/

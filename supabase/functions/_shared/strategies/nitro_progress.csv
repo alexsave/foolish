@@ -1,0 +1,3 @@
+row,timestamp,training_range_size,win_rate_eval_random_10k,win_rate_eval_espresso_10k,principles_added,tactical_added,note
+1,2026-05-09T09:48:15Z,0,0.2073,0.0005,0,0,fresh restart against espresso curriculum; trivial last-move strategy
+2,2026-05-09T10:03:38Z,1,0.9514,0.3512,16,0,carry-over of all random-curriculum principles plus general Durak rules: pass>cover when forcing; no-partial-cover; press-hard multi-attack capped at jack; no early trump attack

@@ -1,0 +1,80 @@
+=== ELO arena ===  pool=[random,handwritten,espresso,robusta,firecracker,gunpowder,blackpowder,cordite]  pcs=[2,3,4,5,6,7,8]  games=3000  k=32
+
+=== ELO after 500 games  (t=37.6s)  competitors=8 ===
+  rank  competitor              elo   games    win%  durak%
+     1  cordite              1212.0     305   26.9%    7.2%
+     2  handwritten          1210.0     308   23.7%   19.2%
+     3  gunpowder            1140.0     332   24.1%   16.9%
+     4  blackpowder          1042.0     281   22.1%    9.3%
+     5  robusta               995.0     343   19.8%   13.7%
+     6  espresso              947.0     289   23.2%   13.1%
+     7  firecracker           898.0     341   17.0%   13.8%
+     8  random                556.0     318    3.1%   64.5%
+
+=== ELO after 1000 games  (t=74.1s)  competitors=8 ===
+  rank  competitor              elo   games    win%  durak%
+     1  handwritten          1197.0     631   23.3%   18.7%
+     2  gunpowder            1159.0     660   21.4%   16.1%
+     3  blackpowder          1129.0     628   23.1%    8.3%
+     4  cordite              1097.0     614   27.4%    6.4%
+     5  firecracker          1006.0     676   17.0%   15.8%
+     6  espresso              894.0     587   23.0%   13.5%
+     7  robusta               886.0     635   19.4%   14.2%
+     8  random                632.0     631    4.1%   64.8%
+
+=== ELO after 1500 games  (t=110.9s)  competitors=8 ===
+  rank  competitor              elo   games    win%  durak%
+     1  cordite              1271.0     937   27.4%    6.8%
+     2  handwritten          1066.0     926   22.5%   18.5%
+     3  robusta              1059.0     927   20.0%   13.9%
+     4  firecracker           993.0     981   17.8%   15.9%
+     5  espresso              978.0     870   22.4%   14.0%
+     6  blackpowder           950.0     934   24.9%    9.2%
+     7  gunpowder             930.0     963   21.5%   16.8%
+     8  random                753.0     951    4.2%   64.1%
+
+=== ELO after 2000 games  (t=148.8s)  competitors=8 ===
+  rank  competitor              elo   games    win%  durak%
+     1  robusta              1135.0    1265   19.7%   14.3%
+     2  espresso             1106.0    1170   21.6%   14.5%
+     3  blackpowder          1096.0    1226   24.7%    9.4%
+     4  cordite              1091.0    1265   28.7%    6.8%
+     5  handwritten           997.0    1230   21.5%   18.0%
+     6  gunpowder             991.0    1307   22.5%   16.8%
+     7  firecracker           984.0    1270   17.3%   16.0%
+     8  random                600.0    1252    4.3%   64.1%
+
+=== ELO after 2500 games  (t=185.0s)  competitors=8 ===
+  rank  competitor              elo   games    win%  durak%
+     1  cordite              1206.0    1597   28.4%    6.4%
+     2  espresso             1089.0    1523   22.1%   14.8%
+     3  blackpowder          1061.0    1535   24.7%    9.1%
+     4  firecracker           989.0    1616   17.1%   15.5%
+     5  robusta               986.0    1592   18.9%   14.3%
+     6  handwritten           953.0    1550   21.5%   17.5%
+     7  gunpowder             928.0    1627   21.9%   16.8%
+     8  random                788.0    1576    3.9%   64.0%
+
+=== ELO after 3000 games  (t=221.5s)  competitors=8 ===
+  rank  competitor              elo   games    win%  durak%
+     1  cordite              1194.0    1912   28.2%    6.4%
+     2  handwritten          1146.0    1881   21.0%   17.6%
+     3  blackpowder          1047.0    1843   24.5%    9.2%
+     4  firecracker          1026.0    1905   17.6%   15.0%
+     5  gunpowder             985.0    1934   22.0%   16.8%
+     6  robusta               974.0    1918   19.6%   14.4%
+     7  espresso              948.0    1838   21.9%   15.1%
+     8  random                680.0    1885    3.9%   64.3%
+
+=== final ELO ===
+
+=== ELO after 3000 games  (t=221.5s)  competitors=8 ===
+  rank  competitor              elo   games    win%  durak%
+     1  cordite              1194.0    1912   28.2%    6.4%
+     2  handwritten          1146.0    1881   21.0%   17.6%
+     3  blackpowder          1047.0    1843   24.5%    9.2%
+     4  firecracker          1026.0    1905   17.6%   15.0%
+     5  gunpowder             985.0    1934   22.0%   16.8%
+     6  robusta               974.0    1918   19.6%   14.4%
+     7  espresso              948.0    1838   21.9%   15.1%
+     8  random                680.0    1885    3.9%   64.3%
