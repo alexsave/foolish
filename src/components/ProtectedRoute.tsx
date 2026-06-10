@@ -6,6 +6,7 @@ import { useEffect } from 'react';
 import { DragProvider } from '../contexts/DragContext';
 import { GameProvider } from '../contexts/GameContext';
 import { AnimationProvider } from '../contexts/AnimationContext';
+import { RealtimeAnimationFeed } from '../state/RealtimeAnimationFeed';
 import { FernFractalProvider } from '../utils/fernFractal';
 
 // Wrapper component that protects routes and provides ServerContext
@@ -38,6 +39,8 @@ export const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
         <ServerProvider>
             <FernFractalProvider>
                     <AnimationProvider>
+                        {/* live transport: supabase broadcast -> animationFeed -> AnimationProvider */}
+                        <RealtimeAnimationFeed />
                         <GameProvider>
                             <DragProvider>
                                 {children}

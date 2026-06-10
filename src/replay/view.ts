@@ -23,6 +23,16 @@ export interface ReplaySeatView {
     hidden: number;
     /** publicly known cards in hand (picked up from the table, or the trump) */
     known: Card[];
+    /**
+     * One entry per hidden card, in draw order, holding the identity the card
+     * eventually shows when played — or null if it never surfaces. This is
+     * retrodiction for the replay's "reveal hands" toggle: the wire format
+     * reveals identities lazily, so a finished game lets us project every
+     * future play back onto the hand that held the card. Assignment of plays
+     * to draw-slots is FIFO (oldest hidden card first), which is always
+     * time-consistent.
+     */
+    slots: (Card | null)[];
     out: boolean;
     isDefender: boolean;
     good: boolean;
@@ -54,6 +64,14 @@ export function buildReplaySteps(d: DecodedReplay): ReplayStep[] {
     const deckSize = n > 4 ? 52 : 36;
 
     const hidden: number[] = new Array(n).fill(6);
+    // shared-reference slots: snapshots keep references to these objects, so
+    // an identity assigned when the card is finally played becomes visible in
+    // every EARLIER snapshot that held the slot (see materialization below)
+    type Slot = { identity: Card | null };
+    const slots: Slot[][] = Array.from({ length: n }, () =>
+        Array.from({ length: 6 }, () => ({ identity: null })),
+    );
+    const slotRefs: Slot[][][] = []; // per step, per seat
     const known: Card[][] = Array.from({ length: n }, () => []);
     const out: boolean[] = new Array(n).fill(false);
     const goods = new Set<number>();
@@ -86,6 +104,10 @@ export function buildReplaySteps(d: DecodedReplay): ReplayStep[] {
         } else {
             hidden[s]--;
             if (hidden[s] < 0) throw new Error('replay view desync: hand underflow');
+            // a fresh reveal: bind the identity to the oldest hidden card
+            const slot = slots[s].shift();
+            if (!slot) throw new Error('replay view desync: slot underflow');
+            slot.identity = c;
         }
     };
 
@@ -104,6 +126,7 @@ export function buildReplaySteps(d: DecodedReplay): ReplayStep[] {
         players: Array.from({ length: n }, (_, s) => ({
             hidden: hidden[s],
             known: known[s].map((c) => ({ ...c })),
+            slots: [], // filled in the materialization pass below
             out: out[s],
             isDefender: s === defender && !out[s],
             good: goods.has(s),
@@ -176,6 +199,7 @@ export function buildReplaySteps(d: DecodedReplay): ReplayStep[] {
                         flipped = null;
                     } else {
                         hidden[l.seat!]++;
+                        slots[l.seat!].push({ identity: null });
                         deckCount--;
                         if (deckCount < 0)
                             throw new Error('replay view desync: deck underflow');
@@ -200,6 +224,7 @@ export function buildReplaySteps(d: DecodedReplay): ReplayStep[] {
         }
 
         const realDraws = primaries.filter((c) => c.suit >= 0);
+        slotRefs.push(slots.map((q) => [...q]));
         steps.push(
             snapshot(
                 l.log_type,
@@ -214,7 +239,18 @@ export function buildReplaySteps(d: DecodedReplay): ReplayStep[] {
     }
 
     // closing step: the fool is whoever is left holding cards
+    slotRefs.push(slots.map((q) => [...q]));
     steps.push(snapshot('end', d.fool, [], null, 0));
+
+    // materialize slot identities: by now every eventually-played hidden card
+    // has its identity assigned on the shared slot object
+    steps.forEach((step, i) => {
+        step.players.forEach((p, s) => {
+            p.slots = slotRefs[i][s].map((slot) =>
+                slot.identity ? { ...slot.identity } : null,
+            );
+        });
+    });
 
     // conservation: every card is in a hand, the stock, the discard, or on the
     // table (the table is empty at game end, but check generally)
@@ -256,10 +292,16 @@ const REPLAY_VIEWER: PrivatePlayer = {
     strategy_key: 'human',
 };
 
-export function stepToGame(d: DecodedReplay, step: ReplayStep): PersonalGame {
+/** PersonalGame extended with the replay's retroactive hand knowledge,
+ *  consumed by the reveal-hands overlay on the replay screen. */
+export interface ReplayGameState extends PersonalGame {
+    replay_hands: (Card | null)[][];
+}
+
+export function stepToGame(d: DecodedReplay, step: ReplayStep, gameId: string): ReplayGameState {
     const atEnd = step.kind === 'end';
     return {
-        id: 'replay',
+        id: gameId,
         name: '',
         deck_length: step.deckCount,
         discard_pile_length: step.discard,
@@ -283,5 +325,9 @@ export function stepToGame(d: DecodedReplay, step: ReplayStep): PersonalGame {
             .filter((x): x is string => x !== null),
         snapshots: [],
         self: REPLAY_VIEWER,
+        replay_hands: step.players.map((p) => [
+            ...p.known.map((c) => ({ ...c }) as Card | null),
+            ...p.slots.map((c) => (c ? { ...c } : null)),
+        ]),
     };
 }

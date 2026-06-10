@@ -1,57 +1,65 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { Card, LOG_TYPE } from '../common/types';
 import { HEARTS, DIAMONDS } from '../common/constants';
 import { Text } from './Text';
 import { SovietIcon } from './SovietIcon';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
-import { ReplayServerProvider } from '../contexts/ServerContext';
-import { ReplayAnimationProvider } from '../contexts/AnimationContext';
+import { ReplayServerProvider, useServer } from '../contexts/ServerContext';
+import { AnimationProvider, useAnimation } from '../contexts/AnimationContext';
 import { GameProvider } from '../contexts/GameContext';
 import { DragProvider } from '../contexts/DragContext';
 import { FernFractalProvider } from '../utils/fernFractal';
+import { useLocalization } from '../contexts/LocalizationContext';
 import { TableBattles } from './GameDisplay/TableBattles';
 import { PlayerRing } from './GameDisplay/PlayerRing';
 import { DefenderShield } from './GameDisplay/DefenderShield';
 import { DeckAndFlipped } from './GameDisplay/DeckAndFlipped';
 import { DiscardPile } from './GameDisplay/DiscardPile';
+import { AnimationOverlay } from './GameDisplay/AnimationOverlay';
 import { usePreventScroll } from '../hooks/usePreventScroll';
+import { animationFeed, AnimationSequenceMessage } from '../state/animationFeed';
 import { codeToGame } from '../replay/codec';
 import { decodeReplay } from '../replay/decode';
 import { DecodedReplay } from '../replay/core';
-import { buildReplaySteps, stepToGame, ReplayStep } from '../replay/view';
+import {
+    buildReplaySteps,
+    stepToGame,
+    ReplayStep,
+    ReplayGameState,
+} from '../replay/view';
+import { buildReplaySequences, preDealGame } from '../replay/animate';
 
 /**
  * Self-contained replay viewer: WWW.FOOLISH.CARDS/<base32> — the path segment
  * IS the entire game (decoded client-side, no auth, no database row).
  *
- * Renders through the REAL game display components (PlayerRing, TableBattles,
- * DeckAndFlipped, DiscardPile, DefenderShield): each step synthesizes a
- * PersonalGame snapshot (view.ts stepToGame) and serves it through
- * ReplayServerProvider, so the board looks exactly like a live game. The
- * animation context is the inert replay variant — the live one subscribes to
- * the per-user realtime channel, which doesn't exist here.
+ * It IS the real game UI: the same display components, driven by the same
+ * AnimationProvider, fed the same animation-sequence messages a live game
+ * receives — just published into src/state/animationFeed from the decoded
+ * integer instead of a supabase channel. Stepping forward plays the event
+ * with its full animation; seeking commits the target state directly.
  */
 
 const SUIT_GLYPHS = ['♠', '♥', '♣', '♦'];
 const VALUE_GLYPHS = ['', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
 
-const InlineCard = ({ card }: { card: Card }) => (
+const InlineCard = ({ card, w = 22 }: { card: Card; w?: number }) => (
     <span
         style={{
             display: 'inline-flex',
             flexDirection: 'column',
             alignItems: 'center',
             justifyContent: 'center',
-            width: 22,
-            height: 31,
+            width: w,
+            height: Math.round(w * 1.4),
             borderRadius: 3,
             background: '#faf7ef',
             border: '1px solid #999',
             color: card.suit === HEARTS || card.suit === DIAMONDS ? '#dc2626' : '#1a1a1a',
             fontFamily: 'Georgia, serif',
             fontWeight: 'bold',
-            fontSize: 10,
+            fontSize: Math.round(w * 0.45),
             lineHeight: 1.05,
             boxShadow: '0 1px 2px rgba(0,0,0,0.35)',
             userSelect: 'none',
@@ -62,6 +70,22 @@ const InlineCard = ({ card }: { card: Card }) => (
         <span>{VALUE_GLYPHS[card.value] ?? '?'}</span>
         <span>{SUIT_GLYPHS[card.suit] ?? '?'}</span>
     </span>
+);
+
+const InlineCardBack = ({ w = 22 }: { w?: number }) => (
+    <span
+        style={{
+            display: 'inline-flex',
+            width: w,
+            height: Math.round(w * 1.4),
+            borderRadius: 3,
+            background: '#B32929',
+            border: '1px solid #7a1d1d',
+            boxShadow: '0 1px 2px rgba(0,0,0,0.35)',
+            flexShrink: 0,
+            verticalAlign: 'middle',
+        }}
+    />
 );
 
 const seatName = (seat: number) => `P${seat + 1}`;
@@ -152,82 +176,133 @@ const StepMessage = ({ step }: { step: ReplayStep }) => {
     }
 };
 
-const ReplayBoard = ({ decoded, step }: { decoded: DecodedReplay; step: ReplayStep }) => {
-    usePreventScroll();
-    const game = useMemo(() => stepToGame(decoded, step), [decoded, step]);
+/**
+ * Reveal-hands overlay: every player's current hand face-up, positioned on
+ * the same ellipse as PlayerRing (with the same viewer rotation: the replay
+ * viewer is never a player, so self_index is -1 there and here). Identities
+ * come from replay_hands — retroactive knowledge of every card that ever
+ * surfaces; cards that never get played stay face-down.
+ */
+const RevealedHands = () => {
+    const game = useServer().game as ReplayGameState | null;
+    if (!game || !game.replay_hands) return null;
+    const n = game.players.length;
 
     return (
-        <ReplayServerProvider game={game}>
-            <FernFractalProvider>
-                <ReplayAnimationProvider>
-                    <GameProvider>
-                        <DragProvider>
-                            <div className="flex flex-1 flex-center">
-                                <p className="title--game-display">
-                                    <Text id="replay_title" />
-                                </p>
-
-                                <DeckAndFlipped />
-                                <DiscardPile />
-
-                                <div
-                                    className="absolute flex flex-col items-center justify-center w-full"
-                                    style={{ top: 0, bottom: 0 }}
-                                >
-                                    <DefenderShield />
-                                    <TableBattles />
-                                </div>
-
-                                <PlayerRing />
-                            </div>
-                        </DragProvider>
-                    </GameProvider>
-                </ReplayAnimationProvider>
-            </FernFractalProvider>
-        </ReplayServerProvider>
+        <>
+            {game.replay_hands.map((hand, index) => {
+                if (hand.length === 0) return null;
+                const visual_index = (index + 1) % n; // self_index = -1, as in PlayerRing
+                const radians = (2 * Math.PI * visual_index) / n;
+                const x = (-1 * Math.sin(radians) * 35) + 50 + '%';
+                const y = (Math.cos(radians) * 35) + 50 + '%';
+                return (
+                    <div
+                        key={index}
+                        style={{
+                            position: 'absolute',
+                            top: y,
+                            left: x,
+                            transform: 'translate(-50%, 34px)',
+                            display: 'flex',
+                            flexWrap: 'wrap',
+                            justifyContent: 'center',
+                            gap: 2,
+                            maxWidth: 130,
+                            zIndex: 60,
+                            pointerEvents: 'none',
+                            padding: 3,
+                            borderRadius: 6,
+                            background: 'rgba(0,0,0,0.35)',
+                        }}
+                    >
+                        {hand.map((c, i) =>
+                            c ? <InlineCard key={i} card={c} w={20} /> : <InlineCardBack key={i} w={20} />,
+                        )}
+                    </div>
+                );
+            })}
+        </>
     );
 };
 
-export const ReplayScreen = ({ code }: { code: string }) => {
-    // Client-only: the game display reads window dimensions during render
-    // (DefenderShield), so skip SSR/prerender entirely.
-    const [mounted, setMounted] = useState(false);
-    useEffect(() => setMounted(true), []);
+interface StageProps {
+    decoded: DecodedReplay;
+    steps: ReplayStep[];
+    sequences: AnimationSequenceMessage[];
+    gameId: string;
+}
 
-    const result = useMemo<{ decoded: DecodedReplay; steps: ReplayStep[] } | null>(() => {
-        if (!mounted) return null;
-        try {
-            const decoded = decodeReplay(codeToGame(code));
-            return { decoded, steps: buildReplaySteps(decoded) };
-        } catch (e) {
-            console.error('Replay decode failed:', e);
-            return null;
-        }
-    }, [code, mounted]);
+const ReplayStage = ({ decoded, steps, sequences, gameId }: StageProps) => {
+    usePreventScroll();
+    const { updateGameState } = useServer();
+    const { isAnimating, resetAnimations } = useAnimation();
+    const { t } = useLocalization();
 
-    const [stepIdx, setStepIdx] = useState(0);
+    const [stepIdx, setStepIdx] = useState(-1); // -1 = pre-deal
     const [playing, setPlaying] = useState(false);
+    const [reveal, setReveal] = useState(false);
     const stepRef = useRef(stepIdx);
     stepRef.current = stepIdx;
+    const lastIdx = steps.length - 1;
 
-    const lastIdx = result ? result.steps.length - 1 : 0;
+    // publish one step's sequence into the feed; a fresh sequence_id (and a
+    // deep copy) lets the same step replay after scrubbing back
+    const publishStep = useCallback(
+        (i: number) => {
+            const seq: AnimationSequenceMessage = JSON.parse(JSON.stringify(sequences[i]));
+            seq.sequence_id = `replay-${i}-${crypto.randomUUID()}`;
+            seq.timestamp = Date.now();
+            (seq.events[0] as any)._nonce = seq.sequence_id; // defeat content dedup
+            animationFeed.publish(seq);
+            setStepIdx(i);
+        },
+        [sequences],
+    );
 
+    const stepForward = useCallback(() => {
+        if (stepRef.current >= lastIdx) {
+            setPlaying(false);
+            return;
+        }
+        publishStep(stepRef.current + 1);
+    }, [lastIdx, publishStep]);
+
+    // seeking commits the target state directly: drop in-flight animations so
+    // a stale event can't overwrite the jumped-to state afterwards
+    const jumpTo = useCallback(
+        (i: number) => {
+            setPlaying(false);
+            resetAnimations();
+            const target = Math.max(0, Math.min(i, lastIdx));
+            updateGameState(gameId, stepToGame(decoded, steps[target], gameId));
+            setStepIdx(target);
+        },
+        [decoded, steps, gameId, lastIdx, resetAnimations, updateGameState],
+    );
+
+    // opening deal on mount
     useEffect(() => {
-        if (!playing || !result) return;
-        const t = setInterval(() => {
-            if (stepRef.current >= lastIdx) {
-                setPlaying(false);
-            } else {
-                setStepIdx((i) => Math.min(i + 1, lastIdx));
-            }
-        }, 650);
-        return () => clearInterval(t);
-    }, [playing, lastIdx, result]);
+        const timer = setTimeout(() => publishStep(0), 400);
+        return () => clearTimeout(timer);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    // autoplay: feed the next event as soon as the previous one lands
+    useEffect(() => {
+        if (!playing || isAnimating) return;
+        if (stepIdx >= lastIdx) {
+            setPlaying(false);
+            return;
+        }
+        const timer = setTimeout(stepForward, 250);
+        return () => clearTimeout(timer);
+    }, [playing, isAnimating, stepIdx, lastIdx, stepForward]);
 
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
-            if (e.key === 'ArrowRight') setStepIdx((i) => Math.min(i + 1, lastIdx));
-            if (e.key === 'ArrowLeft') setStepIdx((i) => Math.max(i - 1, 0));
+            if (e.key === 'ArrowRight') stepForward();
+            if (e.key === 'ArrowLeft') jumpTo(stepRef.current - 1);
             if (e.key === ' ') {
                 e.preventDefault();
                 setPlaying((p) => !p);
@@ -235,41 +310,22 @@ export const ReplayScreen = ({ code }: { code: string }) => {
         };
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
-    }, [lastIdx]);
+    }, [stepForward, jumpTo]);
 
-    if (!mounted) {
-        return null;
-    }
+    const step = steps[Math.max(0, stepIdx)];
 
-    if (!result) {
-        return (
-            <div className="page" style={{ padding: '2rem', textAlign: 'center' }}>
-                <WoolBackgroundLayer />
-                <h2 className="text-shadow" style={{ color: 'var(--color-text-primary)' }}>
-                    <Text id="invalid_replay" />
-                </h2>
-                <Link href="/" className="text-shadow" style={{ color: 'var(--color-text-primary)' }}>
-                    <Text id="back_to_home" />
-                </Link>
-            </div>
-        );
-    }
-
-    const { decoded, steps } = result;
-    const step = steps[stepIdx];
-
-    const btn = (label: string, onClick: () => void, title?: string) => (
+    const btn = (label: React.ReactNode, onClick: () => void, title?: string, active?: boolean) => (
         <button
             onClick={onClick}
             title={title}
             style={{
-                minWidth: 40,
-                padding: '0.35rem 0.5rem',
+                minWidth: 38,
+                padding: '0.35rem 0.45rem',
                 fontSize: '0.95rem',
                 cursor: 'pointer',
                 borderRadius: 6,
-                border: '1px solid rgba(255,255,255,0.25)',
-                background: 'rgba(0,0,0,0.45)',
+                border: active ? '1px solid #E79743' : '1px solid rgba(255,255,255,0.25)',
+                background: active ? 'rgba(231,151,67,0.3)' : 'rgba(0,0,0,0.45)',
                 color: 'var(--color-text-primary, #eee)',
             }}
         >
@@ -278,12 +334,30 @@ export const ReplayScreen = ({ code }: { code: string }) => {
     );
 
     return (
-        <div data-game-container className="game-container">
-            <WoolBackgroundLayer />
+        <>
+            <div className="flex flex-1 flex-center">
+                <p className="title--game-display">
+                    <Text id="replay_title" />
+                </p>
 
-            <ReplayBoard decoded={decoded} step={step} />
+                <DeckAndFlipped />
+                <DiscardPile />
 
-            {/* replay controls — overlaid above the board, below center */}
+                <div
+                    className="absolute flex flex-col items-center justify-center w-full"
+                    style={{ top: 0, bottom: 0 }}
+                >
+                    <DefenderShield />
+                    <TableBattles />
+                </div>
+
+                <PlayerRing />
+                {reveal && <RevealedHands />}
+            </div>
+
+            <AnimationOverlay />
+
+            {/* replay controls */}
             <div
                 style={{
                     position: 'absolute',
@@ -299,7 +373,7 @@ export const ReplayScreen = ({ code }: { code: string }) => {
                     borderRadius: 10,
                     background: 'rgba(0,0,0,0.5)',
                     backdropFilter: 'blur(2px)',
-                    width: 'min(94vw, 440px)',
+                    width: 'min(94vw, 460px)',
                 }}
             >
                 <div
@@ -313,28 +387,29 @@ export const ReplayScreen = ({ code }: { code: string }) => {
                         gap: 5,
                     }}
                 >
-                    <StepMessage step={step} />
+                    {stepIdx >= 0 && <StepMessage step={step} />}
                 </div>
 
                 <div style={{ display: 'flex', gap: 6, alignItems: 'center', width: '100%' }}>
-                    {btn('⏮', () => { setPlaying(false); setStepIdx(0); })}
-                    {btn('◀', () => { setPlaying(false); setStepIdx((i) => Math.max(i - 1, 0)); })}
+                    {btn('⏮', () => jumpTo(0))}
+                    {btn('◀', () => jumpTo(stepRef.current - 1))}
                     {btn(playing ? '⏸' : '▶', () => setPlaying((p) => !p))}
-                    {btn('▶▶', () => { setPlaying(false); setStepIdx((i) => Math.min(i + 1, lastIdx)); })}
-                    {btn('⏭', () => { setPlaying(false); setStepIdx(lastIdx); })}
+                    {btn('▶▶', stepForward)}
+                    {btn('⏭', () => jumpTo(lastIdx))}
+                    {btn('👁', () => setReveal((r) => !r), t(reveal ? 'hide_cards' : 'reveal_cards'), reveal)}
                     <input
                         type="range"
                         min={0}
                         max={lastIdx}
-                        value={stepIdx}
-                        onChange={(e) => { setPlaying(false); setStepIdx(Number(e.target.value)); }}
-                        style={{ flex: 1, minWidth: 60 }}
+                        value={Math.max(0, stepIdx)}
+                        onChange={(e) => jumpTo(Number(e.target.value))}
+                        style={{ flex: 1, minWidth: 50 }}
                     />
                     <span
                         className="text-shadow"
                         style={{ color: 'var(--color-text-primary)', fontSize: '0.75rem', whiteSpace: 'nowrap' }}
                     >
-                        {stepIdx + 1}/{steps.length}
+                        {Math.max(0, stepIdx) + 1}/{steps.length}
                     </span>
                 </div>
             </div>
@@ -355,6 +430,69 @@ export const ReplayScreen = ({ code }: { code: string }) => {
             >
                 ← <Text id="foolish" />
             </Link>
+        </>
+    );
+};
+
+export const ReplayScreen = ({ code }: { code: string }) => {
+    // Client-only: the game display reads window dimensions during render
+    // (DefenderShield), so skip SSR/prerender entirely.
+    const [mounted, setMounted] = useState(false);
+    useEffect(() => setMounted(true), []);
+
+    const gameId = code.toLowerCase();
+
+    const result = useMemo(() => {
+        if (!mounted) return null;
+        try {
+            const decoded = decodeReplay(codeToGame(code));
+            const steps = buildReplaySteps(decoded);
+            const sequences = buildReplaySequences(decoded, steps, gameId);
+            const initial = preDealGame(decoded, steps[0], gameId);
+            return { decoded, steps, sequences, initial };
+        } catch (e) {
+            console.error('Replay decode failed:', e);
+            return null;
+        }
+    }, [code, gameId, mounted]);
+
+    if (!mounted) {
+        return null;
+    }
+
+    if (!result) {
+        return (
+            <div className="page" style={{ padding: '2rem', textAlign: 'center' }}>
+                <WoolBackgroundLayer />
+                <h2 className="text-shadow" style={{ color: 'var(--color-text-primary)' }}>
+                    <Text id="invalid_replay" />
+                </h2>
+                <Link href="/" className="text-shadow" style={{ color: 'var(--color-text-primary)' }}>
+                    <Text id="back_to_home" />
+                </Link>
+            </div>
+        );
+    }
+
+    return (
+        <div data-game-container className="game-container">
+            <WoolBackgroundLayer />
+            <ReplayServerProvider gameId={gameId} initialGame={result.initial}>
+                <FernFractalProvider>
+                    <AnimationProvider>
+                        <GameProvider>
+                            <DragProvider>
+                                <ReplayStage
+                                    decoded={result.decoded}
+                                    steps={result.steps}
+                                    sequences={result.sequences}
+                                    gameId={gameId}
+                                />
+                            </DragProvider>
+                        </GameProvider>
+                    </AnimationProvider>
+                </FernFractalProvider>
+            </ReplayServerProvider>
         </div>
     );
 };

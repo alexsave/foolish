@@ -57,7 +57,9 @@ export type StringId =
   | 'is_out'
   | 'discarded'
   | 'draws'
-  | 'trump';
+  | 'trump'
+  | 'reveal_cards'
+  | 'hide_cards';
 
 // English strings
 export const strings_en: Record<StringId, string> = {
@@ -119,6 +121,8 @@ export const strings_en: Record<StringId, string> = {
   discarded: 'discarded',
   draws: 'draws',
   trump: 'Trump',
+  reveal_cards: 'Show all hands',
+  hide_cards: 'Hide hands',
 };
 
 // Russian strings
@@ -181,6 +185,8 @@ export const strings_ru: Record<StringId, string> = {
   discarded: 'бито',
   draws: 'берёт',
   trump: 'Козырь',
+  reveal_cards: 'Показать все карты',
+  hide_cards: 'Скрыть карты',
 };
 
 // Korean strings
@@ -243,6 +249,8 @@ export const strings_ko: Record<StringId, string> = {
   discarded: '버림',
   draws: '뽑기',
   trump: '으뜸패',
+  reveal_cards: '모든 패 보기',
+  hide_cards: '패 숨기기',
 };
 
 // Combined strings object for easy access

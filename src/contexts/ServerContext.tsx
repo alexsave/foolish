@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { Card, PersonalGame, PublicGame, PRIVATE_EVENT_TYPE, GAME_STATUS, STRATEGY_KEY } from '../common/types';
 import supabase from '../backend/Connector';
 import { useParams } from 'next/navigation';
@@ -1198,21 +1198,33 @@ export const useServer = () => {
     return context;
 };
 
-// Static provider for the replay screen: serves a synthesized game snapshot
-// through the same context the live display components read (PlayerRing,
-// TableBattles, DeckAndFlipped, ...), with every server method inert. No
-// realtime, no auth, no database — the replay URL already holds the game.
-export const ReplayServerProvider = ({ game, children }: { game: PersonalGame, children: React.ReactNode }) => {
-    const noop = async () => ({ game_id: game.id });
+// Provider for the replay screen: holds a local games map and serves it
+// through the same context the live display components AND AnimationProvider
+// read. updateGameState really updates (plain replacement — no optimistic
+// merging here), which is what lets the real animation pipeline drive the
+// replay: each synthesized event commits its game_state snapshot exactly
+// like a live broadcast would. Every server method is inert.
+export const ReplayServerProvider = ({ gameId, initialGame, children }: {
+    gameId: string,
+    initialGame: PersonalGame,
+    children: React.ReactNode,
+}) => {
+    const [games, setGames] = useState<{ [key: string]: PersonalGame }>({ [gameId]: initialGame });
+
+    const updateGameState = useCallback((gid: string, gameState: any) => {
+        setGames(prev => ({ ...prev, [gid]: gameState }));
+    }, []);
+
+    const noop = async () => ({ game_id: gameId });
     const value: ServerContextType = {
         createGame: noop,
         joinGame: noop,
         startGame: noop,
         addBot: noop,
         exitGame: noop,
-        game_id: game.id,
-        game,
-        games: { [game.id]: game },
+        game_id: gameId,
+        game: games[gameId] ?? initialGame,
+        games,
         attack: noop,
         pass: noop,
         pickup: noop,
@@ -1220,7 +1232,7 @@ export const ReplayServerProvider = ({ game, children }: { game: PersonalGame, c
         good: noop,
         sendMessage: async () => { },
         getUserGames: async () => { },
-        updateGameState: () => { },
+        updateGameState,
         updateGameName: noop,
         rearrangePlayer: noop,
         rearrangeHand: noop,
