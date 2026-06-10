@@ -464,7 +464,20 @@ const ReplayStage = ({ decoded, steps, sequences, gameId, names, times }: StageP
 
     return (
         <>
-            <div className="flex flex-1 flex-center">
+            {/* The board lives in its own positioned region that stops above
+                the transport controls: PlayerRing/DefenderShield/RevealedHands
+                use percentage positions, which resolve against this wrapper,
+                so the bottom seat is never buried under the control bar. */}
+            <div
+                className="flex flex-1 flex-center"
+                style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 'calc(112px + max(8px, env(safe-area-inset-bottom)))',
+                }}
+            >
                 <p className="title--game-display">
                     <Text id="replay_title" />
                 </p>
@@ -655,7 +668,7 @@ export const ReplayScreen = ({ code }: { code: string }) => {
     }
 
     return (
-        <div data-game-container className="game-container">
+        <div data-game-container className="game-container" style={{ height: '100dvh' }}>
             <WoolBackgroundLayer />
             <ReplayServerProvider gameId={gameId} initialGame={result.initial}>
                 <FernFractalProvider>
