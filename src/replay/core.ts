@@ -54,9 +54,10 @@ import { Coder, comb } from "./codec";
 //     so every round-end is "last cover -> goods -> discard"; the only real
 //     decision on a fully-covered table is throw-in vs round-end — ONE menu
 //     option replaces n-1 per-attacker confirmations.
+// v5: weights retuned post-v4 (goods gone, near-flat small weights win).
 // Rules AND weights are wire format — older integers would silently decode
 // to a different game under newer menus, so they are refused by version.
-export const FORMAT_VERSION = 4;
+export const FORMAT_VERSION = 5;
 export const VERSION_ALPHABET = 16; // room for 15 future versions before a re-think
 const MAX_ATOMS = 20000; // hard guard: a malformed integer must never hang
 
@@ -67,16 +68,16 @@ const MAX_ATOMS = 20000; // hard guard: a malformed integer must never hang
  * candidates — never mutate at runtime. */
 export const V1 = {
   COVER: 6, // best-known cover, geometric decay (>>1 per pref position)
-  COVER_FRESH: 6, // cover from a hidden card
+  COVER_FRESH: 3, // cover from a hidden card
   PASS: 16, // perevod with a known card, geometric decay
-  PASS_FRESH: 8,
-  PICKUP: 4,
-  ATTACK: 24, // known-card attack/throw-in, geometric decay
-  ATTACK_FRESH_LEAD: 64, // leading a bout from a hidden card (the usual case)
-  ATTACK_FRESH: 4, // throwing in from a hidden card
-  ROUND_END: 24, // end the bout once everything is covered (vs more throw-ins)
-  STOP: 2, // continuation menus: stop after the current card (multi-card
-  // plays are common under the "go big" house rules, hence the low weight)
+  PASS_FRESH: 4,
+  PICKUP: 2,
+  ATTACK: 2, // known-card attack/throw-in, geometric decay
+  ATTACK_FRESH_LEAD: 2, // leading a bout from a hidden card
+  ATTACK_FRESH: 1, // throwing in from a hidden card
+  ROUND_END: 3, // end the bout once everything is covered (vs more throw-ins)
+  STOP: 1, // continuation menus: stop after the current card (multi-card
+  // plays are the norm under the "go big" house rules)
   ID_QUANT: 16384, // quantization of hypergeometric identity weights
 } as const;
 

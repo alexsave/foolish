@@ -345,11 +345,14 @@ const ReplayStage = ({ decoded, steps, sequences, gameId, names, times }: StageP
     const lastIdx = steps.length - 1;
 
     // publish one step's sequence into the feed; a fresh sequence_id (and a
-    // deep copy) lets the same step replay after scrubbing back
+    // deep copy) lets the same step replay after scrubbing back. Plain
+    // counter + Math.random — crypto.randomUUID needs a secure context and
+    // breaks LAN dev on iOS (http://192.168.x.x).
+    const publishSeq = useRef(0);
     const publishStep = useCallback(
         (i: number) => {
             const seq: AnimationSequenceMessage = JSON.parse(JSON.stringify(sequences[i]));
-            seq.sequence_id = `replay-${i}-${crypto.randomUUID()}`;
+            seq.sequence_id = `replay-${i}-${++publishSeq.current}-${Math.random().toString(36).slice(2)}`;
             seq.timestamp = Date.now();
             (seq.events[0] as any)._nonce = seq.sequence_id; // defeat content dedup
             animationFeed.publish(seq);
