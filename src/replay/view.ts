@@ -242,6 +242,36 @@ export function buildReplaySteps(d: DecodedReplay): ReplayStep[] {
     slotRefs.push(slots.map((q) => [...q]));
     steps.push(snapshot('end', d.fool, [], null, 0));
 
+    // End-of-game deduction: the deck is empty and every player but the fool is
+    // out (emptied their hand), so every card except the fool's leftovers turned
+    // face-up at some point. The fool's never-played cards are therefore the
+    // deck MINUS everything that ever surfaced — knowable by elimination even
+    // though they were never played. Fill the still-blank slots with that
+    // complement; shared slot refs carry the identity back to earlier snapshots
+    // too (exact at the final step; a consistent guess mid-game, same basis as
+    // the play-based retrodiction below).
+    {
+        const ckey = (c: Card) => c.suit * 16 + c.value;
+        const seen = new Set<number>();
+        for (const l of d.logs) {
+            for (const pr of l.card_pairs) {
+                if (pr.primary.suit >= 0) seen.add(ckey(pr.primary));
+                if (pr.target && pr.target.suit >= 0) seen.add(ckey(pr.target));
+            }
+        }
+        if (d.trumpCard.suit >= 0) seen.add(ckey(d.trumpCard));
+        const startValue = deckSize === 52 ? 1 : 5;
+        const leftover: Card[] = [];
+        for (let suit = 0; suit < 4; suit++)
+            for (let v = startValue; v <= 13; v++)
+                if (!seen.has(suit * 16 + v)) leftover.push({ suit, value: v });
+        let li = 0;
+        for (let s = 0; s < n && li < leftover.length; s++)
+            for (const slot of slots[s])
+                if (slot.identity === null && li < leftover.length)
+                    slot.identity = leftover[li++];
+    }
+
     // materialize slot identities: by now every eventually-played hidden card
     // has its identity assigned on the shared slot object
     steps.forEach((step, i) => {
