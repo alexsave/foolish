@@ -5,26 +5,19 @@
 //   * Multi-player: per-pc mean finish position + finish-position histogram.
 //
 // CLI:
-//   cnitro_eval --strategy=nitro|dynamite [other flags]
+//   cnitro_eval --strategy=cordite [--opp=espresso] [flags]
 //
-// Strategy-specific:
-//   nitro:    --weights=<tokenized NN binary>      (legacy)
-//   dynamite: --ckpt=<GrpoNet checkpoint>          (GRPO SFT/RL output)
-//
-// Other flags:
-//   --opp=espresso|random|handwritten|hw   (default espresso for nitro,
-//                                            handwritten for dynamite)
+// Flags:
+//   --opp=espresso|random|handwritten|robusta|...   (default espresso)
 //   --players=N or N1,N2,...               (default 2 = legacy)
 //   --from=, --to=                          legacy 2p seed range
 //   --games= and --seed-start=              per-pc multi-player path
+//   --inspect=<seed>                        verbose single-game dump
 
 #include "../src/game.h"
 #include "../src/legal.h"
 #include "../src/strategy.h"
-#include "../src/nn.h"
-#include "../src/nitro_strategy.h"
-#include "../src/grpo_net.h"
-#include "../src/dynamite_strategy.h"
+#include "../src/cli_util.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -37,24 +30,12 @@ static double wall_secs(void) {
     return ts.tv_sec + ts.tv_nsec * 1e-9;
 }
 
-static const char *get_arg(int argc, char **argv, const char *key, const char *def) {
-    size_t kl = strlen(key);
-    for (int i = 1; i < argc; i++) {
-        if (strncmp(argv[i], "--", 2) == 0 && strncmp(argv[i] + 2, key, kl) == 0
-            && argv[i][2 + kl] == '=') return argv[i] + 2 + kl + 1;
-    }
-    return def;
-}
-static int parse_int(const char *s, int def) { return s ? atoi(s) : def; }
-
 // Dispatch on strategy_key — seat 0 uses `protagonist`, others use `opp`.
 static int dispatch_choose(int strat, const Game *g, int pi, const LegalMoves *moves) {
     switch (strat) {
         case STRAT_RANDOM:      return random_strategy_choose(g, pi, moves, NULL);
         case STRAT_ESPRESSO:    return espresso_strategy_choose(g, pi, moves, NULL);
         case STRAT_HANDWRITTEN: return handwritten_strategy_choose(g, pi, moves, NULL);
-        case STRAT_NITRO:       return nitro_strategy_choose(g, pi, moves, NULL);
-        case STRAT_DYNAMITE:    return dynamite_strategy_choose(g, pi, moves, NULL);
         case STRAT_ROBUSTA:     return robusta_strategy_choose(g, pi, moves, NULL);
         case STRAT_FIRECRACKER: return firecracker_strategy_choose(g, pi, moves, NULL);
         case STRAT_GUNPOWDER:   return gunpowder_strategy_choose(g, pi, moves, NULL);
@@ -164,8 +145,8 @@ static int play_one_verbose(uint32_t seed, int n_players, int protagonist, int o
     return g.num_players;
 }
 
-// Play one game. Returns dynamite/nitro seat-0 finish position (1..N).
-// Position N == durak. -1 if the game aborted incomplete.
+// Play one game. Returns seat-0 finish position (1..N). Position N == durak.
+// -1 if the game aborted incomplete.
 static int play_one(uint32_t seed, int n_players, int protagonist, int opp) {
     game_set_seed(seed ? seed : 1);
     random_strategy_set_seed(seed ? seed : 1);
@@ -217,56 +198,16 @@ static int play_one(uint32_t seed, int n_players, int protagonist, int opp) {
     return g.num_players;   // seat 0 is the durak
 }
 
-static int parse_strategy(const char *s) {
-    if (strcmp(s, "espresso") == 0 || strcmp(s, "esp") == 0) return STRAT_ESPRESSO;
-    if (strcmp(s, "random")   == 0 || strcmp(s, "rand") == 0) return STRAT_RANDOM;
-    if (strcmp(s, "handwritten") == 0 || strcmp(s, "hw") == 0) return STRAT_HANDWRITTEN;
-    if (strcmp(s, "nitro")    == 0) return STRAT_NITRO;
-    if (strcmp(s, "dynamite") == 0) return STRAT_DYNAMITE;
-    if (strcmp(s, "robusta")  == 0) return STRAT_ROBUSTA;
-    if (strcmp(s, "firecracker") == 0 || strcmp(s, "fc") == 0) return STRAT_FIRECRACKER;
-    if (strcmp(s, "gunpowder")  == 0 || strcmp(s, "gp") == 0) return STRAT_GUNPOWDER;
-    if (strcmp(s, "blackpowder") == 0 || strcmp(s, "bp") == 0) return STRAT_BLACKPOWDER;
-    if (strcmp(s, "cordite") == 0 || strcmp(s, "cd") == 0) return STRAT_CORDITE;
-    return -1;
-}
-
 int main(int argc, char **argv) {
-    const char *strat_str = get_arg(argc, argv, "strategy", "nitro");
+    const char *strat_str = get_arg(argc, argv, "strategy", "cordite");
     int protagonist = parse_strategy(strat_str);
     if (protagonist < 0) { fprintf(stderr, "unknown strategy '%s'\n", strat_str); return 2; }
 
-    const char *opp_default = (protagonist == STRAT_DYNAMITE) ? "handwritten" : "espresso";
-    const char *opp_str = get_arg(argc, argv, "opp", opp_default);
+    const char *opp_str = get_arg(argc, argv, "opp", "espresso");
     int opp = parse_strategy(opp_str);
     if (opp < 0) { fprintf(stderr, "unknown opp '%s'\n", opp_str); return 2; }
 
     const char *pcs = get_arg(argc, argv, "players", "2");
-
-    // Load whichever weight file the protagonist needs.
-    NNParams *p_nitro = NULL;
-    GrpoNet   net;     memset(&net, 0, sizeof(net));
-    bool      have_dynamite = false;
-    if (protagonist == STRAT_NITRO) {
-        const char *weights = get_arg(argc, argv, "weights", "weights.bin");
-        p_nitro = malloc(sizeof(NNParams));
-        if (!nn_load(weights, p_nitro)) {
-            fprintf(stderr, "failed to load weights from %s\n", weights);
-            free(p_nitro);
-            return 1;
-        }
-        nitro_strategy_set_params(p_nitro);
-    } else if (protagonist == STRAT_DYNAMITE) {
-        const char *ckpt = get_arg(argc, argv, "ckpt", "grpo_sft.bin");
-        grpo_net_alloc(&net);
-        if (!grpo_net_load(&net, ckpt)) {
-            fprintf(stderr, "failed to load checkpoint %s\n", ckpt);
-            grpo_net_free(&net);
-            return 1;
-        }
-        dynamite_strategy_set_net(&net);
-        have_dynamite = true;
-    }
 
     setvbuf(stderr, NULL, _IOLBF, 0);
     double t0 = wall_secs();
@@ -350,7 +291,5 @@ int main(int argc, char **argv) {
         }
     }
 
-    if (p_nitro) free(p_nitro);
-    if (have_dynamite) grpo_net_free(&net);
     return 0;
 }

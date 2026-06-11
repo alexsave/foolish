@@ -8,21 +8,12 @@
 #include "../src/game.h"
 #include "../src/legal.h"
 #include "../src/strategy.h"
+#include "../src/cli_util.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
 #include <stdint.h>
-
-static const char *get_arg(int argc, char **argv, const char *key, const char *def) {
-    size_t kl = strlen(key);
-    for (int i = 1; i < argc; i++) {
-        if (strncmp(argv[i], "--", 2) == 0 && strncmp(argv[i] + 2, key, kl) == 0
-            && argv[i][2 + kl] == '=') return argv[i] + 2 + kl + 1;
-    }
-    return def;
-}
-static int parse_int(const char *s, int def) { return s ? atoi(s) : def; }
 
 static const char *suit_name(int s) {
     static const char *n[] = { "S","H","C","D" };
