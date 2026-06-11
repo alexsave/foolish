@@ -44,16 +44,32 @@ static void snapshot(const Game *g) {
     g_T++;
 }
 
-// Play one all-cordite game to completion, recording the hand-size history.
+// Dispatch a strategy id to its choose function (mirrors main_eval).
+static int dispatch_choose(int strat, const Game *g, int pi, const LegalMoves *moves) {
+    switch (strat) {
+        case STRAT_RANDOM:      return random_strategy_choose(g, pi, moves, NULL);
+        case STRAT_ESPRESSO:    return espresso_strategy_choose(g, pi, moves, NULL);
+        case STRAT_HANDWRITTEN: return handwritten_strategy_choose(g, pi, moves, NULL);
+        case STRAT_ROBUSTA:     return robusta_strategy_choose(g, pi, moves, NULL);
+        case STRAT_FIRECRACKER: return firecracker_strategy_choose(g, pi, moves, NULL);
+        case STRAT_GUNPOWDER:   return gunpowder_strategy_choose(g, pi, moves, NULL);
+        case STRAT_BLACKPOWDER: return blackpowder_strategy_choose(g, pi, moves, NULL);
+        case STRAT_CORDITE:     return cordite_strategy_choose(g, pi, moves, NULL);
+        case STRAT_ASTROLITE:   return astrolite_strategy_choose(g, pi, moves, NULL);
+        default:                return cordite_strategy_choose(g, pi, moves, NULL);
+    }
+}
+
+// Play one all-`strat` game to completion, recording the hand-size history.
 // Returns true if it finished with a single durak.
-static bool play_all_cordite(Game *g, int np, uint32_t seed) {
+static bool play_all_cordite(Game *g, int np, uint32_t seed, int strat) {
     game_set_seed(seed ? seed : 1);
     random_strategy_set_seed(seed ? seed : 1);
     memset(g, 0, sizeof(*g));
     g->num_players = (int8_t)np;
     for (int i = 0; i < np; i++) {
         g->players[i].status = PLAYER_STATUS_READY;
-        g->players[i].strategy_key = (int8_t)STRAT_CORDITE;
+        g->players[i].strategy_key = (int8_t)strat;
         snprintf(g->players[i].player_id, sizeof(g->players[i].player_id), "p%d", i);
     }
     start_game(g);
@@ -76,7 +92,7 @@ static bool play_all_cordite(Game *g, int np, uint32_t seed) {
             LegalMoves moves;
             calculate_legal_moves(g, pi, &moves);
             if (moves.n == 0) continue;
-            int idx = cordite_strategy_choose(g, pi, &moves, NULL);
+            int idx = dispatch_choose(strat, g, pi, &moves);
             if (idx < 0 || idx >= moves.n) continue;
             const LegalMove *m = &moves.moves[idx];
             bool ok = false;
@@ -201,9 +217,13 @@ int main(int argc, char **argv) {
     uint32_t seed0 = (uint32_t)parse_int(get_arg(argc, argv, "seed", "1"), 1);
     int top        = parse_int(get_arg(argc, argv, "top", "10"), 10);
     const char *pcs = get_arg(argc, argv, "pcs", "4,6");
+    const char *strat_name = get_arg(argc, argv, "strategy", "cordite");
+    int strat = parse_strategy(strat_name);
+    if (strat < 0) { fprintf(stderr, "unknown strategy '%s'\n", strat_name); return 2; }
     if (top < 1) top = 1;
     if (top > MAX_TOP) top = MAX_TOP;
     g_k = top;
+    fprintf(stderr, "showcase strategy: %s\n", strat_name);
 
     setvbuf(stderr, NULL, _IOLBF, 0);
 
@@ -224,7 +244,7 @@ int main(int argc, char **argv) {
         for (int gi = 0; gi < games; gi++) {
             uint32_t seed = seed0 + (uint32_t)(pi * 100000 + gi);
             Game g;
-            if (!play_all_cordite(&g, np, seed)) { stalled++; continue; }
+            if (!play_all_cordite(&g, np, seed, strat)) { stalled++; continue; }
             int peaks[MAX_PLAYERS];
             double s = score_game(&g, np, peaks);
             consider(&g, np, seed, s, peaks);

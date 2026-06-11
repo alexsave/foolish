@@ -115,7 +115,8 @@ function synthMoveTimes(moveCount: number): number[] {
       continue;
     }
 
-    const names = Array.from({ length: g.np }, (_, i) => `Cordite ${i + 1}`);
+    const namePrefix = process.argv[3] || "Cordite";
+    const names = Array.from({ length: g.np }, (_, i) => `${namePrefix} ${i + 1}`);
     const moves = dec.logs.filter((l) => INFO_TYPES.includes(l.log_type)).length;
     const extras = encodeExtras(names, synthMoveTimes(moves));
     const url = URL_PREFIX + joinReplayCode(enc.base32, extras);
