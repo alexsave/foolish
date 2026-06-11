@@ -123,6 +123,33 @@ static bool as_cover_keeps_feasible(const Game *g, int bot_idx,
     return as_can_cover_all(ratt, rna, rhand, rnh, g->power_suit);
 }
 
+// Per-card "cost" for the lead-low (L6) / cover-low (L7) biases: rank value,
+// with trumps pushed far above any non-trump so they're spent last.
+static inline int as_card_cost(Card c, int power) {
+    return c.value + (c.suit == power ? 50 : 0);
+}
+static int as_move_cost(const LegalMove *m, int power) {
+    int s = 0;
+    for (int i = 0; i < m->n_cards; i++) s += as_card_cost(m->cards[i], power);
+    return s;
+}
+
+// Find the MOVE_ATTACK in `moves` whose card multiset equals bundle[0..bn) —
+// used by L5 to map a greedily-grown attack back to a single legal move index.
+static int as_find_attack(const LegalMoves *moves, const Card *bundle, int bn) {
+    for (int i = 0; i < moves->n; i++) {
+        const LegalMove *m = &moves->moves[i];
+        if (m->type != MOVE_ATTACK || m->n_cards != bn) continue;
+        bool used[MAX_MOVE_CARDS] = { false };
+        int matched = 0;
+        for (int a = 0; a < bn; a++)
+            for (int b = 0; b < m->n_cards; b++)
+                if (!used[b] && card_eq(bundle[a], m->cards[b])) { used[b] = true; matched++; break; }
+        if (matched == bn) return i;
+    }
+    return -1;
+}
+
 static bool cd_set_contains(const Card *arr, int n, Card c) {
     for (int i = 0; i < n; i++) if (card_eq(arr[i], c)) return true;
     return false;
@@ -164,8 +191,12 @@ static _Thread_local int cd_w3_override = -1;
 // grabbing those cards — e.g. a trump in the attacked set — has to pay).
 static _Thread_local int as_flags_loaded = 0;
 static _Thread_local int as_no_l1 = 0, as_no_l2 = 0, as_no_l3 = 0, as_no_l4 = 0;
+static _Thread_local int as_no_l5 = 0, as_no_l6 = 0, as_no_l7 = 0;
 static _Thread_local double as_bait_margin = 0.10;
 static _Thread_local double as_grab_margin = 0.10;
+static _Thread_local double as_leadlow_margin  = 0.01;  // L6: lead-low bias / rank
+static _Thread_local double as_coverlow_margin = 0.01;  // L7: cover-low bias / rank
+static _Thread_local int as_in_l5_expand = 0;           // L5 recursion guard
 // (b) Raised exact-endgame reach vs cordite (cap 20, budget 200k). Bigger
 // 2-player endgames (huge hands from repeated pickups) become solvable; the
 // node budget still aborts to MC on the genuinely intractable ones.
@@ -176,12 +207,15 @@ static _Thread_local long as_solve_budget = 400000;
 // "it should help" can be checked against "it almost never fires".
 static long as_stat_dec = 0, as_stat_l1 = 0, as_stat_l2 = 0;
 static long as_stat_l3 = 0, as_stat_l4 = 0;
+static long as_stat_l5 = 0, as_stat_l5_extra = 0, as_stat_l6 = 0, as_stat_l7 = 0;
 static int  as_stats_on = 0;
 static void as_print_stats(void) {
     fprintf(stderr,
-        "[AS_STATS] defender-uncovered decisions=%ld | L1 pickup-forced=%ld "
-        "L2 strand-covers-pruned=%ld L3 bait-gate=%ld L4 fullcover-pref=%ld\n",
-        as_stat_dec, as_stat_l1, as_stat_l2, as_stat_l3, as_stat_l4);
+        "[AS_STATS] defender-uncovered=%ld | L1 pickup-forced=%ld "
+        "L2 strand-pruned=%ld L3 bait-gate=%ld L4 fullcover-pref=%ld | "
+        "L5 attacks-expanded=%ld (+%ld cards) L6 lead-low=%ld L7 cover-low=%ld\n",
+        as_stat_dec, as_stat_l1, as_stat_l2, as_stat_l3, as_stat_l4,
+        as_stat_l5, as_stat_l5_extra, as_stat_l6, as_stat_l7);
 }
 
 static int cd_in_count(const Game *g) {
@@ -923,8 +957,14 @@ int astrolite_strategy_choose(const Game *g, int bot_idx,
         // Lever 4 is OPT-IN: it regressed pc4 (it overrides the MC's legitimate
         // pickup choices on the real cover-vs-pickup tradeoff). AS_LEVER4=1 to try.
         as_no_l4 = !cd_flag("AS_LEVER4");
+        // L5 (attack chaining), L6 (lead low), L7 (cover low) are OPT-IN.
+        as_no_l5 = !cd_flag("AS_LEVER5");
+        as_no_l6 = !cd_flag("AS_LEVER6");
+        as_no_l7 = !cd_flag("AS_LEVER7");
         as_bait_margin = cd_env_int("AS_BAIT_MARGIN_MILLI", 100) / 1000.0;
         as_grab_margin = cd_env_int("AS_GRAB_MARGIN_MILLI", 100) / 1000.0;
+        as_leadlow_margin  = cd_env_int("AS_LEADLOW_MARGIN_MILLI", 10) / 1000.0;
+        as_coverlow_margin = cd_env_int("AS_COVERLOW_MARGIN_MILLI", 10) / 1000.0;
         as_solve_cards  = cd_env_int("AS_SOLVE_CARDS", 28);
         as_solve_budget = cd_env_int("AS_SOLVE_BUDGET", 400000);
         as_stats_on = cd_flag("AS_STATS");
@@ -979,11 +1019,17 @@ int astrolite_strategy_choose(const Game *g, int bot_idx,
     // the tournament/selection stage.
     bool lever3_active = false, lever4_active = false;
     int  lever_U = 0;
+    // L6: lead-low bias on a first attack (leading an empty table).
+    bool l6_active = !as_no_l6 && g->num_battles == 0 && bot_idx == g->first_attacker;
+    if (l6_active) as_stat_l6++;
+    // L7: cover-low bias when defending (set below if there are covers to make).
+    bool l7_active = false;
     if (bot_idx == g->defender && g->num_battles > 0) {
         Card unc[MAX_BATTLES]; int U = 0;
         for (int i = 0; i < g->num_battles; i++)
             if (!g->table_battles[i].has_defense) unc[U++] = g->table_battles[i].attack;
         if (U > 0) {
+            if (!as_no_l7) { l7_active = true; as_stat_l7++; }
             const Player *me = &g->players[bot_idx];
             int H = me->hand_count;
             bool coverable = as_can_cover_all(unc, U, me->hand, H, g->power_suit);
@@ -1067,6 +1113,21 @@ int astrolite_strategy_choose(const Game *g, int bot_idx,
         if (sel_pref_ci < 0) lever_sel = false;
     }
 
+    // L6 (lead low) / L7 (cover low): a small per-candidate finish-position
+    // penalty proportional to card cost (trumps weighted heavy), applied in BOTH
+    // the tournament and final selection so cheap leads/covers aren't dropped.
+    // Off by default, so this is all zero unless AS_LEVER6/7 is set.
+    double cand_bias[CD_MAX_CANDS] = { 0 };
+    if (l6_active || l7_active) {
+        for (int ci = 0; ci < C.n; ci++) {
+            const LegalMove *m = &moves->moves[C.idx[ci]];
+            if (l6_active && m->type == MOVE_ATTACK)
+                cand_bias[ci] += as_leadlow_margin * (double)as_move_cost(m, g->power_suit);
+            if (l7_active && m->type == MOVE_COVER)
+                cand_bias[ci] += as_coverlow_margin * (double)as_move_cost(m, g->power_suit);
+        }
+    }
+
     int W1, W2, W3;
     cd_params(g->num_players, &W1, &W2, &W3);
 
@@ -1129,7 +1190,7 @@ int astrolite_strategy_choose(const Game *g, int bot_idx,
                 for (int i = 0; i < C.n; i++) {
                     if (!alive[i]) continue;
                     if (lever_sel && i == sel_pref_ci) continue; // protect preferred move
-                    double v = score[i] / (double)(nsim[i] ? nsim[i] : 1);
+                    double v = score[i] / (double)(nsim[i] ? nsim[i] : 1) + cand_bias[i];
                     // >= : among tied scores drop the LAST candidate. The
                     // candidate list is ranked cheapest-first, so this keeps
                     // the cheap move on ties; dropping the first-tied instead
@@ -1147,12 +1208,51 @@ int astrolite_strategy_choose(const Game *g, int bot_idx,
     double best_v = 1e30;
     for (int i = 0; i < C.n; i++) {
         if (!alive[i] || nsim[i] == 0) continue;
-        double v = score[i] / (double)nsim[i];
+        double v = score[i] / (double)nsim[i] + cand_bias[i];  // L6/L7 bias
         // LEVER 3/4: discretionary moves must clear the preferred move's margin.
         if (lever_sel && sel_penalize[i]) v += sel_margin;
         if (v < best_v) { best_v = v; best = i; }
     }
 
+    int chosen = (best >= 0) ? C.idx[best] : 0;
+
+    // LEVER 5: attack chaining. Once we've committed to an attack, re-run the
+    // decision from the post-attack state to see if we'd immediately throw in
+    // more (matching the now-on-table ranks); if so, fold those cards into one
+    // multi-card attack instead of dribbling them out over later turns. The
+    // grown bundle's ranks are always a subset of what's already legal, so it
+    // maps back to a single legal move in `moves`.
+    if (!as_no_l5 && !as_in_l5_expand && moves->moves[chosen].type == MOVE_ATTACK) {
+        const LegalMove *cm = &moves->moves[chosen];
+        Card bundle[MAX_MOVE_CARDS]; int bn = 0;
+        for (int k = 0; k < cm->n_cards && bn < MAX_MOVE_CARDS; k++) bundle[bn++] = cm->cards[k];
+        int base_n = bn;
+        Game sim; game_clone(&sim, g);
+        if (handle_attack(&sim, bot_idx, cm->cards, cm->n_cards)) {
+            as_in_l5_expand = 1;
+            for (int guard = 0; guard < 6 && bn < MAX_MOVE_CARDS; guard++) {
+                LegalMoves sm;
+                calculate_legal_moves(&sim, bot_idx, &sm);
+                int any = 0;
+                for (int i = 0; i < sm.n; i++)
+                    if (sm.moves[i].type == MOVE_ATTACK) { any = 1; break; }
+                if (!any) break;
+                int sidx = astrolite_strategy_choose(&sim, bot_idx, &sm, NULL);
+                if (sidx < 0 || sidx >= sm.n || sm.moves[sidx].type != MOVE_ATTACK) break;
+                const LegalMove *am = &sm.moves[sidx];
+                int before = bn;
+                for (int k = 0; k < am->n_cards && bn < MAX_MOVE_CARDS; k++) bundle[bn++] = am->cards[k];
+                if (bn == before) break;
+                if (!handle_attack(&sim, bot_idx, am->cards, am->n_cards)) break;
+            }
+            as_in_l5_expand = 0;
+            if (bn > base_n) {
+                int fi = as_find_attack(moves, bundle, bn);
+                if (fi >= 0) { chosen = fi; as_stat_l5++; as_stat_l5_extra += (bn - base_n); }
+            }
+        }
+    }
+
     game_rng_set(saved_rng);
-    return best >= 0 ? C.idx[best] : 0;
+    return chosen;
 }
