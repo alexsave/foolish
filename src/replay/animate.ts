@@ -241,3 +241,92 @@ export function buildReplaySequences(
 
     return sequences;
 }
+
+/* =============================================================================
+ * Reverse sequences (one-step-back)
+ * =============================================================================
+ * reverse[i] animates the transition OUT of steps[i] back into steps[i-1] — the
+ * mirror image of the forward sequence: cards that flew hand→table on the way
+ * in fly table→hand on the way out, and the sequence commits steps[i-1]'s state
+ * when it lands. reverse[0] is null (there's nothing before the opening deal,
+ * and stepping back from step 0 just clamps).
+ *
+ * Card motions that have no clean visual inverse (drawing from a face-down
+ * stock, the opening deal, pure rotations) collapse to a magic_transition: the
+ * prior state is committed without a flight. Only seeking skips this entirely.
+ * ========================================================================== */
+export function buildReverseSequences(
+    d: DecodedReplay,
+    steps: ReplayStep[],
+    gameId: string,
+    names: string[] | null | undefined,
+    forward: AnimationSequenceMessage[],
+): (AnimationSequenceMessage | null)[] {
+    const games = steps.map((s) => stepToGame(d, s, gameId, names));
+    const reverse: (AnimationSequenceMessage | null)[] = [null];
+
+    for (let i = 1; i < steps.length; i++) {
+        const prevState = games[i - 1];
+        // forward sequences[i>0] always carry exactly one event
+        const fe = forward[i].events[forward[i].events.length - 1];
+        let event: FeedAnimationEvent;
+
+        switch (fe.type) {
+            // hand→table on the way in ⇒ table→hand on the way out
+            case 'attack_pass':
+            case 'cover':
+                event = {
+                    type: 'pickup',
+                    player_id: fe.player_id,
+                    cards: fe.cards,
+                    from_location: 'table',
+                    to_location: 'hand',
+                    game_state: prevState,
+                };
+                break;
+
+            // table→hand on the way in ⇒ hand→table on the way out
+            case 'pickup':
+                event = {
+                    type: 'attack_pass',
+                    player_id: fe.player_id,
+                    cards: fe.cards,
+                    from_location: 'hand',
+                    to_location: 'table',
+                    game_state: prevState,
+                };
+                break;
+
+            // table→discard on the way in ⇒ discard→table on the way out
+            case 'cards_to_trash':
+                event = {
+                    type: 'pickup',
+                    cards: fe.cards,
+                    from_location: 'discard',
+                    to_location: 'table',
+                    game_state: prevState,
+                };
+                break;
+
+            // draws (deck→hand, face-down), the opening deal, and pure rotations
+            // have no honest reverse flight — just restore the prior state
+            default:
+                event = {
+                    type: 'magic_transition',
+                    player_id: fe.player_id,
+                    game_state: prevState,
+                };
+                break;
+        }
+
+        reverse.push({
+            type: 'animation_sequence',
+            sequence_id: '',
+            timestamp: 0,
+            events: [event],
+            game: prevState,
+        });
+    }
+
+    return reverse;
+}
