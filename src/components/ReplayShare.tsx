@@ -4,6 +4,8 @@ import supabase from '../backend/Connector';
 import { PersonalGame, PublicGame } from '../common/types';
 import { Text } from './Text';
 import { base32Encode, hexToBytes, URL_PREFIX } from '../replay/codec';
+import { useStyles } from '../contexts/StyleContext';
+import { useTexture, getTextureStyle } from './TexturedSurface';
 
 /**
  * Post-game replay sharing. The server compresses the finished session at
@@ -23,7 +25,18 @@ export const ReplayShare: React.FC<ReplayShareProps> = ({ game }) => {
     const [snapshot, setSnapshot] = useState<{ moves: Uint8Array; extras: Uint8Array | null } | null>(null);
     const [failed, setFailed] = useState(false);
     const [copied, setCopied] = useState(false);
-    const [withExtras, setWithExtras] = useState(false);
+    // Names + timing are on by default — a replay is far more useful with who
+    // played and when. The toggle still lets you drop them for a shorter code /
+    // denser QR when the snapshot actually carries an extras blob.
+    const [withExtras, setWithExtras] = useState(true);
+
+    // Wood-framed QR to match the lobby join code: the same texture + carved
+    // border + bevel, with the QR drawn on transparent so the grain shows
+    // through. Soviet theme drops the wood (like the lobby) and keeps the frame.
+    const styles = useStyles();
+    const { woodUrl } = useTexture();
+    const useWoodTexture = styles.texture.useWoodTexture;
+    const frameTexture = useWoodTexture ? getTextureStyle(woodUrl, false, 0.2) : null;
 
     useEffect(() => {
         let cancelled = false;
@@ -63,31 +76,11 @@ export const ReplayShare: React.FC<ReplayShareProps> = ({ game }) => {
             withExtras && hasExtras
                 ? `${movesCode}-${base32Encode(snapshot.extras!)}`
                 : movesCode;
-        return {
-            code,
-            url: URL_PREFIX + code,
-            hasExtras,
-            byteLength:
-                snapshot.moves.length +
-                (withExtras && hasExtras ? snapshot.extras!.length : 0),
-        };
+        return { url: URL_PREFIX + code, hasExtras };
     }, [snapshot, withExtras]);
 
-    if (failed || (snapshot && !view)) {
-        return (
-            <div className="replay-share" style={{ textAlign: 'center', opacity: 0.6, margin: '0.5rem 0' }}>
-                <span className="text-shadow" style={{ color: 'var(--color-text-primary)', fontSize: '0.8rem' }}>
-                    <Text id="replay_unavailable" />
-                </span>
-            </div>
-        );
-    }
-
-    if (!snapshot || !view) {
-        return null;
-    }
-
     const handleCopy = async () => {
+        if (!view) return;
         try {
             await navigator.clipboard.writeText(view.url);
             setCopied(true);
@@ -101,6 +94,12 @@ export const ReplayShare: React.FC<ReplayShareProps> = ({ game }) => {
         <div
             className="replay-share"
             style={{
+                // Sit above the absolutely-positioned wool/vignette layers
+                // (.bg-wool is z-index 0 but opaque, so a static box renders
+                // BEHIND it — which is why the QR was invisible). The lobby QR
+                // works for the same reason: .lobby__qr-container is z-index 10.
+                position: 'relative',
+                zIndex: 'var(--z-content)',
                 display: 'flex',
                 flexDirection: 'column',
                 alignItems: 'center',
@@ -112,64 +111,102 @@ export const ReplayShare: React.FC<ReplayShareProps> = ({ game }) => {
                 <Text id="share_replay" />
             </h3>
 
-            {/* Uppercase base32 + '-' stay inside the QR alphanumeric charset,
-                keeping the symbol small in both formats. */}
-            <div style={{ background: '#fff', padding: '10px', borderRadius: '8px', lineHeight: 0 }}>
-                <QRCodeSVG value={view.url} size={168} level="L" marginSize={1} />
+            {/* Fixed-footprint slot: the code only exists after an async
+                snapshot fetch, so reserve the QR's space up front — otherwise the
+                section pops in once the fetch lands and shoves the Continue button
+                down. The same box shows a loading / unavailable note until ready. */}
+            <div
+                style={{
+                    width: 188,
+                    height: 188,
+                    boxSizing: 'border-box',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: 12,
+                    borderRadius: 10,
+                    // Carved wood frame, same as .lobby__qr-container.
+                    border: '2px solid #5D3A1A',
+                    boxShadow:
+                        'inset 0 1px 0 rgba(255,255,255,0.2), inset 0 -1px 0 rgba(0,0,0,0.3), 0 3px 6px rgba(0,0,0,0.4)',
+                    backgroundColor: 'rgba(0, 0, 0, 0.25)',
+                    ...(frameTexture ?? {}),
+                    lineHeight: 0,
+                }}
+            >
+                {view ? (
+                    <QRCodeSVG
+                        value={view.url}
+                        size={160}
+                        level="L"
+                        fgColor="#000"
+                        bgColor="transparent"
+                    />
+                ) : (
+                    <span
+                        className="text-shadow"
+                        style={{
+                            color: 'var(--color-text-primary)',
+                            fontSize: '0.8rem',
+                            textAlign: 'center',
+                            lineHeight: 1.35,
+                            opacity: 0.85,
+                        }}
+                    >
+                        <Text id={failed ? 'replay_unavailable' : 'loading'} />
+                    </span>
+                )}
             </div>
 
-            {view.hasExtras && (
-                <label
-                    className="text-shadow"
-                    style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '0.4rem',
-                        color: 'var(--color-text-primary)',
-                        fontSize: '0.8rem',
-                        cursor: 'pointer',
-                        userSelect: 'none',
-                    }}
-                >
-                    <input
-                        type="checkbox"
-                        checked={withExtras}
-                        onChange={(e) => setWithExtras(e.target.checked)}
-                    />
-                    <Text id="with_names_time" />
-                </label>
-            )}
-
-            <code
-                onClick={handleCopy}
-                title={`${view.byteLength} bytes`}
+            {/* Reserve the controls row too, so the extras toggle / copy
+                button appearing don't nudge the layout a second time. */}
+            <div
                 style={{
-                    maxWidth: 'min(90vw, 28rem)',
-                    wordBreak: 'break-all',
-                    fontSize: '0.65rem',
-                    cursor: 'pointer',
-                    padding: '0.4rem 0.6rem',
-                    borderRadius: '6px',
-                    background: 'rgba(0, 0, 0, 0.35)',
-                    color: 'var(--color-text-primary, #eee)',
-                    userSelect: 'all',
+                    minHeight: '2.6rem',
+                    width: '100%',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    gap: '0.4rem',
                 }}
             >
-                {view.code}
-            </code>
+                {view?.hasExtras && (
+                    <label
+                        className="text-shadow"
+                        style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.4rem',
+                            color: 'var(--color-text-primary)',
+                            fontSize: '0.8rem',
+                            cursor: 'pointer',
+                            userSelect: 'none',
+                        }}
+                    >
+                        <input
+                            type="checkbox"
+                            checked={withExtras}
+                            onChange={(e) => setWithExtras(e.target.checked)}
+                        />
+                        <Text id="with_names_time" />
+                    </label>
+                )}
 
-            <span
-                className="text-shadow"
-                onClick={handleCopy}
-                style={{
-                    color: 'var(--color-text-primary)',
-                    fontSize: '0.75rem',
-                    cursor: 'pointer',
-                    opacity: 0.8,
-                }}
-            >
-                {copied ? <Text id="copied" /> : <Text id="copy_code" />} · {view.byteLength} B
-            </span>
+                {view && (
+                    <span
+                        className="text-shadow"
+                        onClick={handleCopy}
+                        style={{
+                            color: 'var(--color-text-primary)',
+                            fontSize: '0.75rem',
+                            cursor: 'pointer',
+                            opacity: 0.8,
+                        }}
+                    >
+                        {copied ? <Text id="copied" /> : <Text id="copy_code" />}
+                    </span>
+                )}
+            </div>
         </div>
     );
 };
