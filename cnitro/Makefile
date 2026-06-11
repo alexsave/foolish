@@ -10,7 +10,7 @@ CORE_SRC := src/game.c src/legal.c src/random_strategy.c src/espresso_strategy.c
 CORE_OBJ := $(CORE_SRC:src/%.c=build/%.o)
 
 .PHONY: all clean tests
-all: build/cnitro_eval build/cnitro_elo build/cnitro_replay build/cnitro_tests
+all: build/cnitro_eval build/cnitro_elo build/cnitro_replay build/cnitro_showcase build/cnitro_tests
 
 # Generic compile rule for sources under src/ (build/%.o: src/%.c).
 build/%.o: src/%.c
@@ -22,6 +22,8 @@ build/cnitro_eval: $(CORE_OBJ) build/main_eval.o
 build/cnitro_elo: $(CORE_OBJ) build/main_elo.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 build/cnitro_replay: $(CORE_OBJ) build/main_replay.o
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+build/cnitro_showcase: $(CORE_OBJ) build/main_showcase.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 build/cnitro_tests: $(CORE_OBJ) build/tests.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
