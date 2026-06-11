@@ -6,7 +6,8 @@ LDFLAGS ?= -lm -framework Accelerate
 CORE_SRC := src/game.c src/legal.c src/random_strategy.c src/espresso_strategy.c \
             src/handwritten_strategy.c src/robusta_strategy.c \
             src/firecracker_strategy.c src/gunpowder_strategy.c \
-            src/blackpowder_strategy.c src/cordite_strategy.c
+            src/blackpowder_strategy.c src/cordite_strategy.c \
+            src/astrolite_strategy.c
 CORE_OBJ := $(CORE_SRC:src/%.c=build/%.o)
 
 .PHONY: all clean tests
