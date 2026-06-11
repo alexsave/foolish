@@ -1,8 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { Card, LOG_TYPE } from '../common/types';
 import { Text } from './Text';
 import { SovietIcon } from './SovietIcon';
+import { TexturedSurface } from './TexturedSurface';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
 import { ReplayServerProvider, useServer } from '../contexts/ServerContext';
 import { AnimationProvider, useAnimation } from '../contexts/AnimationContext';
@@ -29,7 +31,7 @@ import {
     ReplayStep,
     ReplayGameState,
 } from '../replay/view';
-import { buildReplaySequences, preDealGame } from '../replay/animate';
+import { buildReplaySequences, buildReverseSequences, preDealGame } from '../replay/animate';
 import { splitReplayCode, decodeExtras, ReplayExtras } from '../replay/extras';
 import { INFO_TYPES } from '../replay/core';
 import { stepTimes } from '../replay/view';
@@ -118,7 +120,7 @@ const InlineCardBack = ({ w = 22 }: { w?: number }) => {
 const seatName = (seat: number, names?: (string | null)[] | null) =>
     names?.[seat] || `P${seat + 1}`;
 
-/* Playback speeds. '⚡' is the condensed default: recorded gaps clamped to
+/* Playback speeds. 'AUTO' is the condensed default: recorded gaps clamped to
  * short beats. The ×N stops replay the RECORDED timing divided by N — at 1× a
  * three-day sulk between moves really takes three days (the countdown keeps
  * the screen honest), and for simulation games with nanosecond gaps the same
@@ -137,7 +139,7 @@ const fmtMult = (m: number): string => {
 };
 
 const buildSpeeds = (times: (number | null)[]): SpeedStop[] => {
-    const stops: SpeedStop[] = [{ label: '⚡', mult: null }];
+    const stops: SpeedStop[] = [{ label: 'AUTO', mult: null }];
     const gaps: number[] = [];
     for (let i = 1; i < times.length; i++) {
         const a = times[i - 1];
@@ -316,20 +318,74 @@ const RevealedHands = () => {
     );
 };
 
+/* Flat VHS-deck transport glyphs — geometric, single-colour (currentColor),
+ * no strokes or gradients. A "bar at the point" turns the plain play/rewind
+ * triangle into a step glyph; doubled triangles are the bout-skip glyphs. */
+const Glyph = ({ children }: { children: React.ReactNode }) => (
+    <svg width={18} height={18} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+        {children}
+    </svg>
+);
+const IconStepBack = () => (
+    <Glyph>
+        <rect x={5} y={5} width={2.6} height={14} />
+        <polygon points="20,5 20,19 9,12" />
+    </Glyph>
+);
+const IconStepForward = () => (
+    <Glyph>
+        <polygon points="4,5 4,19 15,12" />
+        <rect x={16.4} y={5} width={2.6} height={14} />
+    </Glyph>
+);
+const IconBoutStart = () => (
+    <Glyph>
+        <rect x={2} y={5} width={2.4} height={14} />
+        <polygon points="13,5 13,19 5.5,12" />
+        <polygon points="21,5 21,19 13.5,12" />
+    </Glyph>
+);
+const IconBoutNext = () => (
+    <Glyph>
+        <polygon points="3,5 3,19 10.5,12" />
+        <polygon points="11,5 11,19 18.5,12" />
+        <rect x={19.6} y={5} width={2.4} height={14} />
+    </Glyph>
+);
+const IconPlay = () => (
+    <Glyph>
+        <polygon points="6,4 6,20 20,12" />
+    </Glyph>
+);
+const IconPause = () => (
+    <Glyph>
+        <rect x={6} y={4} width={4} height={16} />
+        <rect x={14} y={4} width={4} height={16} />
+    </Glyph>
+);
+const IconEye = () => (
+    <Glyph>
+        <path d="M12 5C6.5 5 2.7 9.2 1.5 12c1.2 2.8 5 7 10.5 7s9.3-4.2 10.5-7C21.3 9.2 17.5 5 12 5Zm0 11a4 4 0 1 1 0-8 4 4 0 0 1 0 8Z" />
+        <circle cx={12} cy={12} r={2} />
+    </Glyph>
+);
+
 interface StageProps {
     decoded: DecodedReplay;
     steps: ReplayStep[];
     sequences: AnimationSequenceMessage[];
+    reverses: (AnimationSequenceMessage | null)[];
     gameId: string;
     names: string[] | null;
     times: (number | null)[];
 }
 
-const ReplayStage = ({ decoded, steps, sequences, gameId, names, times }: StageProps) => {
+const ReplayStage = ({ decoded, steps, sequences, reverses, gameId, names, times }: StageProps) => {
     usePreventScroll();
     const { updateGameState } = useServer();
     const { isAnimating, resetAnimations } = useAnimation();
     const { t } = useLocalization();
+    const router = useRouter();
 
     const [stepIdx, setStepIdx] = useState(-1); // -1 = pre-deal
     const [playing, setPlaying] = useState(false);
@@ -370,6 +426,22 @@ const ReplayStage = ({ decoded, steps, sequences, gameId, names, times }: StageP
         publishStep(stepRef.current + 1);
     }, [lastIdx, publishStep]);
 
+    // one step back plays the reverse sequence (cards fly home) and lands on
+    // steps[i-1]; mirrors publishStep but with the inverted flight
+    const publishReverse = useCallback(
+        (i: number) => {
+            const rev = reverses[i];
+            if (!rev) return;
+            const seq: AnimationSequenceMessage = JSON.parse(JSON.stringify(rev));
+            seq.sequence_id = `replay-rev-${i}-${++publishSeq.current}-${Math.random().toString(36).slice(2)}`;
+            seq.timestamp = Date.now();
+            if (seq.events[0]) (seq.events[0] as any)._nonce = seq.sequence_id;
+            animationFeed.publish(seq);
+            setStepIdx(i - 1);
+        },
+        [reverses],
+    );
+
     // seeking commits the target state directly: drop in-flight animations so
     // a stale event can't overwrite the jumped-to state afterwards
     const jumpTo = useCallback(
@@ -383,6 +455,47 @@ const ReplayStage = ({ decoded, steps, sequences, gameId, names, times }: StageP
         },
         [decoded, steps, gameId, names, lastIdx, resetAnimations, updateGameState],
     );
+
+    const stepBack = useCallback(() => {
+        setPlaying(false);
+        setWaitTarget(null);
+        if (stepRef.current <= 0) {
+            jumpTo(0);
+            return;
+        }
+        publishReverse(stepRef.current);
+    }, [publishReverse, jumpTo]);
+
+    // Bout boundaries: a bout begins at the ATTACK that opens onto an empty
+    // table (the previous step cleared it via pickup/discard, or it's the
+    // game's first attack). Skip-to-bout jumps are animationless seeks.
+    const boutStarts = useMemo(() => {
+        const starts: number[] = [];
+        for (let i = 0; i < steps.length; i++) {
+            const opensEmpty = i === 0 || steps[i - 1].battles.length === 0;
+            if (steps[i].kind === LOG_TYPE.ATTACK && opensEmpty) starts.push(i);
+        }
+        return starts;
+    }, [steps]);
+
+    const nextBout = useCallback(() => {
+        const from = Math.max(0, stepRef.current);
+        const next = boutStarts.find((s) => s > from);
+        jumpTo(next ?? lastIdx);
+    }, [boutStarts, lastIdx, jumpTo]);
+
+    // start of the current bout; if already sitting on it, fall back to the
+    // previous bout's start (the usual transport-deck behaviour)
+    const boutStart = useCallback(() => {
+        const from = Math.max(0, stepRef.current);
+        const here = [...boutStarts].reverse().find((s) => s <= from) ?? 0;
+        if (here < from) {
+            jumpTo(here);
+            return;
+        }
+        const prev = [...boutStarts].reverse().find((s) => s < from);
+        jumpTo(prev ?? 0);
+    }, [boutStarts, jumpTo]);
 
     // opening deal on mount
     useEffect(() => {
@@ -434,7 +547,7 @@ const ReplayStage = ({ decoded, steps, sequences, gameId, names, times }: StageP
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
             if (e.key === 'ArrowRight') stepForward();
-            if (e.key === 'ArrowLeft') jumpTo(stepRef.current - 1);
+            if (e.key === 'ArrowLeft') stepBack();
             if (e.key === ' ') {
                 e.preventDefault();
                 setPlaying((p) => !p);
@@ -442,23 +555,37 @@ const ReplayStage = ({ decoded, steps, sequences, gameId, names, times }: StageP
         };
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
-    }, [stepForward, jumpTo]);
+    }, [stepForward, stepBack]);
 
     const step = steps[Math.max(0, stepIdx)];
 
+    // VHS-deck transport button: a round, dark, bevelled knob (faint top
+    // highlight + drop shadow); amber when active. Holds a glyph or a short
+    // text label (the speed dial).
     const btn = (label: React.ReactNode, onClick: () => void, title?: string, active?: boolean) => (
         <button
             onClick={onClick}
             title={title}
             style={{
-                minWidth: 38,
-                padding: '0.35rem 0.45rem',
-                fontSize: '0.95rem',
+                width: 42,
+                height: 42,
+                flex: '0 0 auto',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: 0,
+                fontSize: '0.62rem',
+                fontWeight: 700,
+                letterSpacing: '0.03em',
                 cursor: 'pointer',
-                borderRadius: 6,
-                border: active ? '1px solid #E79743' : '1px solid rgba(255,255,255,0.25)',
-                background: active ? 'rgba(231,151,67,0.3)' : 'rgba(0,0,0,0.45)',
-                color: 'var(--color-text-primary, #eee)',
+                borderRadius: '50%',
+                border: active ? '1px solid #E79743' : '1px solid rgba(255,255,255,0.16)',
+                background: active
+                    ? 'radial-gradient(circle at 50% 32%, rgba(231,151,67,0.42) 0%, rgba(231,151,67,0.18) 100%)'
+                    : 'radial-gradient(circle at 50% 30%, #34343a 0%, #161618 100%)',
+                color: active ? '#F0B36A' : 'rgba(232,232,232,0.92)',
+                boxShadow:
+                    'inset 0 1.5px 1px rgba(255,255,255,0.12), inset 0 -2px 3px rgba(0,0,0,0.5), 0 2px 4px rgba(0,0,0,0.55)',
             }}
         >
             {label}
@@ -467,18 +594,19 @@ const ReplayStage = ({ decoded, steps, sequences, gameId, names, times }: StageP
 
     return (
         <>
-            {/* The board lives in its own positioned region that stops above
-                the transport controls: PlayerRing/DefenderShield/RevealedHands
-                use percentage positions, which resolve against this wrapper,
-                so the bottom seat is never buried under the control bar. */}
+            {/* The board lives in its own positioned region inset from the
+                transport controls (now in the bottom-right corner) and the top
+                status bar: PlayerRing/DefenderShield/RevealedHands use
+                percentage positions, which resolve against this wrapper, so no
+                seat is buried under a control. */}
             <div
                 className="flex flex-1 flex-center"
                 style={{
                     position: 'absolute',
-                    top: 0,
+                    top: 'calc(44px + max(8px, env(safe-area-inset-top)))',
                     left: 0,
                     right: 0,
-                    bottom: 'calc(112px + max(8px, env(safe-area-inset-bottom)))',
+                    bottom: 'calc(96px + max(8px, env(safe-area-inset-bottom)))',
                 }}
             >
                 <DeckAndFlipped />
@@ -498,51 +626,40 @@ const ReplayStage = ({ decoded, steps, sequences, gameId, names, times }: StageP
 
             <AnimationOverlay />
 
-            {/* replay controls */}
+            {/* status bar, top-centre: move counter, timestamp, and what just
+                happened — the readouts a VHS deck shows on its front display. */}
             <div
                 style={{
                     position: 'absolute',
-                    bottom: 'max(8px, env(safe-area-inset-bottom))',
+                    top: 'max(8px, env(safe-area-inset-top))',
                     left: '50%',
                     transform: 'translateX(-50%)',
                     zIndex: 1100,
                     display: 'flex',
                     flexDirection: 'column',
                     alignItems: 'center',
-                    gap: 6,
-                    padding: '8px 12px',
-                    borderRadius: 10,
-                    background: 'rgba(0,0,0,0.5)',
-                    backdropFilter: 'blur(2px)',
-                    width: 'min(94vw, 460px)',
+                    gap: 2,
+                    maxWidth: 'min(92vw, 520px)',
+                    pointerEvents: 'none',
                 }}
             >
                 <div
                     className="text-shadow"
                     style={{
-                        color: 'var(--color-text-primary)',
-                        fontSize: '0.9rem',
-                        minHeight: 32,
                         display: 'flex',
                         alignItems: 'center',
-                        gap: 5,
+                        gap: 8,
+                        color: 'var(--color-text-primary)',
+                        fontVariantNumeric: 'tabular-nums',
+                        letterSpacing: '0.06em',
                     }}
                 >
-                    {stepIdx >= 0 && <StepMessage step={step} names={names} />}
-                    {playing && waitTarget !== null && waitTarget - now > 4000 && (
-                        <span style={{ fontSize: '0.75rem', opacity: 0.85, whiteSpace: 'nowrap' }}>
-                            ⏳ {fmtDuration(waitTarget - now)}
-                        </span>
-                    )}
+                    <span style={{ fontSize: '0.82rem', fontWeight: 700 }}>
+                        {Math.max(0, stepIdx) + 1}
+                        <span style={{ opacity: 0.55 }}> / {steps.length}</span>
+                    </span>
                     {stepIdx >= 0 && times[stepIdx] !== null && (
-                        <span
-                            style={{
-                                marginLeft: 'auto',
-                                fontSize: '0.68rem',
-                                opacity: 0.7,
-                                whiteSpace: 'nowrap',
-                            }}
-                        >
+                        <span style={{ fontSize: '0.7rem', opacity: 0.7, whiteSpace: 'nowrap' }}>
                             {new Date(times[stepIdx]! * 1000).toLocaleString(undefined, {
                                 month: 'short',
                                 day: 'numeric',
@@ -552,15 +669,58 @@ const ReplayStage = ({ decoded, steps, sequences, gameId, names, times }: StageP
                             })}
                         </span>
                     )}
+                    {playing && waitTarget !== null && waitTarget - now > 4000 && (
+                        <span style={{ fontSize: '0.72rem', opacity: 0.85, whiteSpace: 'nowrap' }}>
+                            ⏳ {fmtDuration(waitTarget - now)}
+                        </span>
+                    )}
                 </div>
+                <div
+                    className="text-shadow"
+                    style={{
+                        color: 'var(--color-text-primary)',
+                        fontSize: '0.9rem',
+                        minHeight: 26,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 5,
+                        textAlign: 'center',
+                    }}
+                >
+                    {stepIdx >= 0 && <StepMessage step={step} names={names} />}
+                </div>
+            </div>
 
-                <div style={{ display: 'flex', gap: 6, alignItems: 'center', width: '100%' }}>
-                    {btn('⏮', () => jumpTo(0))}
-                    {btn('◀', () => jumpTo(stepRef.current - 1))}
-                    {btn(playing ? '⏸' : '▶', () => setPlaying((p) => !p))}
-                    {btn('▶▶', stepForward)}
-                    {btn('⏭', () => jumpTo(lastIdx))}
-                    {btn('👁', () => setReveal((r) => !r), t(reveal ? 'hide_cards' : 'reveal_cards'), reveal)}
+            {/* transport controls, bottom-right corner — knobs float directly on
+                the felt, no backing panel */}
+            <div
+                style={{
+                    position: 'absolute',
+                    bottom: 'max(10px, env(safe-area-inset-bottom))',
+                    right: 'max(10px, env(safe-area-inset-right))',
+                    zIndex: 1100,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'flex-end',
+                    gap: 10,
+                    width: 'min(94vw, 360px)',
+                }}
+            >
+                <input
+                    type="range"
+                    min={0}
+                    max={lastIdx}
+                    value={Math.max(0, stepIdx)}
+                    onChange={(e) => jumpTo(Number(e.target.value))}
+                    style={{ width: '100%' }}
+                />
+                <div style={{ display: 'flex', gap: 7, alignItems: 'center', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                    {btn(<IconBoutStart />, boutStart, t('replay_bout_start'))}
+                    {btn(<IconStepBack />, stepBack, t('replay_step_back'))}
+                    {btn(playing ? <IconPause /> : <IconPlay />, () => setPlaying((p) => !p), t(playing ? 'pause' : 'play'))}
+                    {btn(<IconStepForward />, stepForward, t('replay_step_forward'))}
+                    {btn(<IconBoutNext />, nextBout, t('replay_bout_next'))}
+                    {btn(<IconEye />, () => setReveal((r) => !r), t(reveal ? 'hide_cards' : 'reveal_cards'), reveal)}
                     {speeds.length > 1 &&
                         btn(
                             speeds[speedIdx % speeds.length].label,
@@ -571,39 +731,20 @@ const ReplayStage = ({ decoded, steps, sequences, gameId, names, times }: StageP
                             t('playback_speed'),
                             speeds[speedIdx % speeds.length].mult !== null,
                         )}
-                    <input
-                        type="range"
-                        min={0}
-                        max={lastIdx}
-                        value={Math.max(0, stepIdx)}
-                        onChange={(e) => jumpTo(Number(e.target.value))}
-                        style={{ flex: 1, minWidth: 50 }}
-                    />
-                    <span
-                        className="text-shadow"
-                        style={{ color: 'var(--color-text-primary)', fontSize: '0.75rem', whiteSpace: 'nowrap' }}
-                    >
-                        {Math.max(0, stepIdx) + 1}/{steps.length}
-                    </span>
                 </div>
             </div>
 
-            {/* home link, top-left like the in-game back button */}
-            <Link
-                href="/"
-                className="text-shadow"
-                style={{
-                    position: 'absolute',
-                    top: 'max(8px, env(safe-area-inset-top))',
-                    left: 12,
-                    zIndex: 1100,
-                    color: 'var(--color-text-primary)',
-                    fontSize: '0.85rem',
-                    opacity: 0.85,
-                }}
+            {/* home button — the same little wood square as the in-game back
+                button (btn-icon), positioned top-left by its own CSS */}
+            <TexturedSurface
+                as="button"
+                seed={0.2}
+                className="btn-icon btn-icon--left"
+                onClick={() => router.push('/')}
+                aria-label={t('back_to_home')}
             >
-                ← <Text id="foolish" />
-            </Link>
+                <span className="btn-icon__symbol">{'<'}</span>
+            </TexturedSurface>
         </>
     );
 };
@@ -639,9 +780,10 @@ export const ReplayScreen = ({ code }: { code: string }) => {
 
             const names = extras.names;
             const sequences = buildReplaySequences(decoded, steps, gameId, names);
+            const reverses = buildReverseSequences(decoded, steps, gameId, names, sequences);
             const initial = preDealGame(decoded, steps[0], gameId, names);
             const times = stepTimes(steps, extras.startTime, extras.moveGaps);
-            return { decoded, steps, sequences, initial, names, times };
+            return { decoded, steps, sequences, reverses, initial, names, times };
         } catch (e) {
             console.error('Replay decode failed:', e);
             return null;
@@ -678,6 +820,7 @@ export const ReplayScreen = ({ code }: { code: string }) => {
                                     decoded={result.decoded}
                                     steps={result.steps}
                                     sequences={result.sequences}
+                                    reverses={result.reverses}
                                     gameId={gameId}
                                     names={result.names}
                                     times={result.times}

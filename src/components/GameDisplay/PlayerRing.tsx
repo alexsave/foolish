@@ -93,7 +93,7 @@ const CardsVisual = ({ player, selfHandLength, isSelf }: { player: PublicPlayer,
                     color: 'var(--color-text-primary)',
                     fontSize: '10px',
                     fontWeight: 'bold',
-                    zIndex: 15,
+                    zIndex: 100,
                     pointerEvents: 'none',
                     textShadow: styles.text.cardCountTextShadow
                 }}>

@@ -7,8 +7,7 @@
 //   cnitro_elo --games=500 \
 //              --pool=random,espresso,handwritten,robusta,firecracker,gunpowder \
 //              --pcs=2,3,4,5,6,7,8 \
-//              --snapshot-every=50 \
-//              [--nitro-weights=weights.bin]
+//              --snapshot-every=50
 //
 // All competitors start at ELO 1000. Each game picks one player count from
 // --pcs and fills the seats by sampling strategies uniformly (with
@@ -19,11 +18,10 @@
 #include "game.h"
 #include "legal.h"
 #include "strategy.h"
-#include "nitro_strategy.h"
+#include "cli_util.h"
 #include "robusta_strategy.h"
 #include "firecracker_strategy.h"
 #include "gunpowder_strategy.h"
-#include "nn.h"
 
 #include <math.h>
 #include <stdbool.h>
@@ -51,44 +49,17 @@ typedef struct {
 static Competitor COMPS[MAX_COMPS];
 static int        N_COMPS = 0;
 
-static const char *get_arg(int argc, char **argv, const char *key, const char *def) {
-    size_t kl = strlen(key);
-    for (int i = 1; i < argc; i++) {
-        if (strncmp(argv[i], "--", 2) == 0
-            && strncmp(argv[i] + 2, key, kl) == 0
-            && argv[i][2 + kl] == '=') {
-            return argv[i] + 2 + kl + 1;
-        }
-    }
-    return def;
-}
-static int parse_int_arg(const char *s, int def) { return s ? atoi(s) : def; }
-
-static int parse_strategy(const char *s) {
-    if (!s) return -1;
-    if (!strcmp(s, "random") || !strcmp(s, "rand"))       return STRAT_RANDOM;
-    if (!strcmp(s, "espresso") || !strcmp(s, "esp"))      return STRAT_ESPRESSO;
-    if (!strcmp(s, "handwritten") || !strcmp(s, "hw"))    return STRAT_HANDWRITTEN;
-    if (!strcmp(s, "nitro"))                              return STRAT_NITRO;
-    if (!strcmp(s, "robusta") || !strcmp(s, "rob"))       return STRAT_ROBUSTA;
-    if (!strcmp(s, "firecracker") || !strcmp(s, "fc"))    return STRAT_FIRECRACKER;
-    if (!strcmp(s, "gunpowder") || !strcmp(s, "gp"))      return STRAT_GUNPOWDER;
-    if (!strcmp(s, "blackpowder") || !strcmp(s, "bp"))    return STRAT_BLACKPOWDER;
-    if (!strcmp(s, "cordite") || !strcmp(s, "cd"))        return STRAT_CORDITE;
-    return -1;
-}
-
 static int dispatch_choose(int strat, const Game *g, int pi, const LegalMoves *moves) {
     switch (strat) {
         case STRAT_RANDOM:      return random_strategy_choose(g, pi, moves, NULL);
         case STRAT_ESPRESSO:    return espresso_strategy_choose(g, pi, moves, NULL);
         case STRAT_HANDWRITTEN: return handwritten_strategy_choose(g, pi, moves, NULL);
-        case STRAT_NITRO:       return nitro_strategy_choose(g, pi, moves, NULL);
         case STRAT_ROBUSTA:     return robusta_strategy_choose(g, pi, moves, NULL);
         case STRAT_FIRECRACKER: return firecracker_strategy_choose(g, pi, moves, NULL);
         case STRAT_GUNPOWDER:   return gunpowder_strategy_choose(g, pi, moves, NULL);
         case STRAT_BLACKPOWDER: return blackpowder_strategy_choose(g, pi, moves, NULL);
         case STRAT_CORDITE:     return cordite_strategy_choose(g, pi, moves, NULL);
+        case STRAT_ASTROLITE:   return astrolite_strategy_choose(g, pi, moves, NULL);
         default:                return -1;
     }
 }
@@ -218,11 +189,10 @@ int main(int argc, char **argv) {
     const char *pool_str = get_arg(argc, argv, "pool",
                                     "random,handwritten,espresso,robusta,firecracker,gunpowder");
     const char *pcs_str  = get_arg(argc, argv, "pcs", "2,3,4,5,6,7,8");
-    int games            = parse_int_arg(get_arg(argc, argv, "games", "500"), 500);
-    int snap_every       = parse_int_arg(get_arg(argc, argv, "snapshot-every", "50"), 50);
-    uint32_t seed0       = (uint32_t)parse_int_arg(get_arg(argc, argv, "seed", "1"), 1);
-    int copies_default   = parse_int_arg(get_arg(argc, argv, "copies", "1"), 1);
-    const char *nitro_w  = get_arg(argc, argv, "nitro-weights", NULL);
+    int games            = parse_int(get_arg(argc, argv, "games", "500"), 500);
+    int snap_every       = parse_int(get_arg(argc, argv, "snapshot-every", "50"), 50);
+    uint32_t seed0       = (uint32_t)parse_int(get_arg(argc, argv, "seed", "1"), 1);
+    int copies_default   = parse_int(get_arg(argc, argv, "copies", "1"), 1);
     K_FACTOR = atof(get_arg(argc, argv, "k-factor", "32"));
     if (K_FACTOR <= 0) K_FACTOR = 32.0;
 
@@ -263,23 +233,6 @@ int main(int argc, char **argv) {
     }
     if (n_pcs == 0) { fprintf(stderr, "no valid player counts\n"); return 2; }
 
-    // Optionally load nitro weights.
-    NNParams *p_nitro = NULL;
-    bool need_nitro = false;
-    for (int i = 0; i < N_COMPS; i++) if (COMPS[i].strat_key == STRAT_NITRO) need_nitro = true;
-    if (need_nitro) {
-        if (!nitro_w) {
-            fprintf(stderr, "pool includes nitro but no --nitro-weights given\n");
-            return 2;
-        }
-        p_nitro = malloc(sizeof(NNParams));
-        if (!nn_load(nitro_w, p_nitro)) {
-            fprintf(stderr, "failed to load nitro weights from %s\n", nitro_w);
-            return 2;
-        }
-        nitro_strategy_set_params(p_nitro);
-    }
-
     printf("=== ELO arena ===  pool=[%s]  pcs=[%s]  games=%d  k=%.0f\n",
            pool_str, pcs_str, games, K_FACTOR);
 
@@ -313,6 +266,5 @@ int main(int argc, char **argv) {
     printf("\n=== final ELO ===\n");
     print_snapshot(games, wall_secs() - t_start);
 
-    if (p_nitro) free(p_nitro);
     return 0;
 }

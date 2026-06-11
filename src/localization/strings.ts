@@ -61,7 +61,13 @@ export type StringId =
   | 'reveal_cards'
   | 'hide_cards'
   | 'with_names_time'
-  | 'playback_speed';
+  | 'playback_speed'
+  | 'play'
+  | 'pause'
+  | 'replay_step_back'
+  | 'replay_step_forward'
+  | 'replay_bout_start'
+  | 'replay_bout_next';
 
 // English strings
 export const strings_en: Record<StringId, string> = {
@@ -127,6 +133,12 @@ export const strings_en: Record<StringId, string> = {
   hide_cards: 'Hide hands',
   with_names_time: 'Names + timing',
   playback_speed: 'Playback speed (× real timing)',
+  play: 'Play',
+  pause: 'Pause',
+  replay_step_back: 'Step back',
+  replay_step_forward: 'Step forward',
+  replay_bout_start: 'Start of bout',
+  replay_bout_next: 'Next bout',
 };
 
 // Russian strings
@@ -193,6 +205,12 @@ export const strings_ru: Record<StringId, string> = {
   hide_cards: 'Скрыть карты',
   with_names_time: 'Имена и время',
   playback_speed: 'Скорость воспроизведения (× реальное время)',
+  play: 'Воспроизвести',
+  pause: 'Пауза',
+  replay_step_back: 'Шаг назад',
+  replay_step_forward: 'Шаг вперёд',
+  replay_bout_start: 'Начало кона',
+  replay_bout_next: 'Следующий кон',
 };
 
 // Korean strings
@@ -259,6 +277,12 @@ export const strings_ko: Record<StringId, string> = {
   hide_cards: '패 숨기기',
   with_names_time: '이름 + 시간',
   playback_speed: '재생 속도 (실제 시간 ×)',
+  play: '재생',
+  pause: '일시정지',
+  replay_step_back: '뒤로 한 단계',
+  replay_step_forward: '앞으로 한 단계',
+  replay_bout_start: '판 시작',
+  replay_bout_next: '다음 판',
 };
 
 // Combined strings object for easy access
