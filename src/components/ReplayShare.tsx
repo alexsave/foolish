@@ -4,6 +4,8 @@ import supabase from '../backend/Connector';
 import { PersonalGame, PublicGame } from '../common/types';
 import { Text } from './Text';
 import { base32Encode, hexToBytes, URL_PREFIX } from '../replay/codec';
+import { useStyles } from '../contexts/StyleContext';
+import { useTexture, getTextureStyle } from './TexturedSurface';
 
 /**
  * Post-game replay sharing. The server compresses the finished session at
@@ -27,6 +29,14 @@ export const ReplayShare: React.FC<ReplayShareProps> = ({ game }) => {
     // played and when. The toggle still lets you drop them for a shorter code /
     // denser QR when the snapshot actually carries an extras blob.
     const [withExtras, setWithExtras] = useState(true);
+
+    // Wood-framed QR to match the lobby join code: the same texture + carved
+    // border + bevel, with the QR drawn on transparent so the grain shows
+    // through. Soviet theme drops the wood (like the lobby) and keeps the frame.
+    const styles = useStyles();
+    const { woodUrl } = useTexture();
+    const useWoodTexture = styles.texture.useWoodTexture;
+    const frameTexture = useWoodTexture ? getTextureStyle(woodUrl, false, 0.2) : null;
 
     useEffect(() => {
         let cancelled = false;
@@ -113,14 +123,25 @@ export const ReplayShare: React.FC<ReplayShareProps> = ({ game }) => {
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    borderRadius: '8px',
+                    padding: 12,
+                    borderRadius: 10,
+                    // Carved wood frame, same as .lobby__qr-container.
+                    border: '2px solid #5D3A1A',
+                    boxShadow:
+                        'inset 0 1px 0 rgba(255,255,255,0.2), inset 0 -1px 0 rgba(0,0,0,0.3), 0 3px 6px rgba(0,0,0,0.4)',
+                    backgroundColor: 'rgba(0, 0, 0, 0.25)',
+                    ...(frameTexture ?? {}),
                     lineHeight: 0,
-                    background: view ? '#fff' : 'rgba(0, 0, 0, 0.3)',
-                    padding: view ? '10px' : '14px',
                 }}
             >
                 {view ? (
-                    <QRCodeSVG value={view.url} size={168} level="L" marginSize={1} />
+                    <QRCodeSVG
+                        value={view.url}
+                        size={160}
+                        level="L"
+                        fgColor="#000"
+                        bgColor="transparent"
+                    />
                 ) : (
                     <span
                         className="text-shadow"
