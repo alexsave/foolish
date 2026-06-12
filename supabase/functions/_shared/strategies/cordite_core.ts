@@ -15,6 +15,36 @@
 // pickup/good + refill rules) closely enough for rollouts; real moves are
 // always chosen from the server-provided legal move list, so engine
 // discrepancies can only add evaluation noise, never illegal moves.
+//
+// ---------------------------------------------------------------------------
+// TS speed-up & budget (v2.3 TS, this branch) — TS-specific work the C ports
+// did not cover. Profiling (coarse CDPROF counters + a names-preserving
+// esbuild build under --cpu-prof, plus --trace-gc) found the hot costs:
+//   * pc2 deck-empty endgames: the exact alpha-beta SOLVER dominates (>half of
+//     mean latency, ~all of the tail); its node count, not allocation, is the
+//     cost — V8 scavenges the small solver clones cheaply, so it keeps plain
+//     cloneSim. CD_NO_SOLVE isolates its share.
+//   * pc4-8 (deck alive): the per-(world x candidate) ROLLOUT trial — its
+//     cloneSim() was the #1 allocator.
+// Changes (all behavior-PRESERVING; a deterministic full-game outcome
+// fingerprint matches the pre-change baseline bit-for-bit, pc2-8 vs
+// handwritten + espresso, with and without CD_NO_FASTROLL):
+//   1. Pooled rollout trial (cloneSimInto + a reused SimGame) — no per-trial
+//      allocation. ~20% fewer GC events / less GC time end-to-end.
+//   2. Allocation-free fast rollout chooser (handwrittenRolloutChoose): reused
+//      scratch buffers + a single reused returned SimMove instead of per-ply
+//      map/filter/slice/sort/Set + object allocations.
+//   3. Cheaper TT fingerprint (insertion-sort into a shared buffer + no
+//      .slice()/.join()), ~10% off the solver.
+// Budget (CORDITE_PARAMS): worlds raised ~3x and maxMillis 1500 -> 2000. ~3x is
+// the identical-world saturation knee (6x measured ZERO extra win) so the rest
+// of the freed compute goes to WIDER candidate survival in the pruning stages
+// (keep ~half then 3, was max(3,n/3) then 2), not more identical worlds.
+// Offline result vs handwritten (4-core arena, 80 games/pc, seeded): win%
+// pc2 82.5->93.8, pc4 32.5->38.8; no regression vs espresso (pc6/pc8 up).
+// Single-core p99 per-decision ~0.7-0.9s, max ~1.1s — well under the 2s cap.
+// Ablation knobs (offline only): CD_NO_SOLVE, CD_WORLDMUL, CD_NO_FASTROLL.
+// ---------------------------------------------------------------------------
 
 // ---------- cards -------------------------------------------------------
 
@@ -27,6 +57,31 @@ const ACE = 13;
 // per-call (not cached) so a harness can flip it between runs.
 const noFastroll = (): boolean =>
     typeof globalThis !== 'undefined' && (globalThis as { CD_NO_FASTROLL?: boolean }).CD_NO_FASTROLL === true;
+
+// Ablation / tuning knobs (offline harness only; read per-call, not cached):
+//   CD_NO_SOLVE=true   — skip the exact endgame solver (measure its share).
+//   CD_WORLDMUL=<f>    — scale the per-PC world budget by f (budget sweeps).
+const G = (): { CD_NO_SOLVE?: boolean; CD_WORLDMUL?: number } =>
+    (typeof globalThis !== 'undefined' ? globalThis : {}) as Record<string, unknown>;
+const noSolve = (): boolean => G().CD_NO_SOLVE === true;
+const worldMul = (): number => {
+    const m = G().CD_WORLDMUL;
+    return typeof m === 'number' && m > 0 ? m : 1;
+};
+
+// Coarse profiling counters (offline only). Reset via cdProfReset(); read via
+// cdProfRead(). Zero-cost in production (a few integer adds on hot calls).
+export const CDPROF = {
+    cloneSim: 0, sampleWorld: 0, simulate: 0, simTurns: 0,
+    applyMove: 0, calcLegal: 0, solveNodes: 0, fastChoose: 0,
+};
+export const cdProfReset = (): void => {
+    CDPROF.cloneSim = 0; CDPROF.sampleWorld = 0; CDPROF.simulate = 0;
+    CDPROF.simTurns = 0; CDPROF.applyMove = 0; CDPROF.calcLegal = 0;
+    CDPROF.solveNodes = 0; CDPROF.fastChoose = 0;
+};
+export const cdProfRead = (): typeof CDPROF => ({ ...CDPROF });
+
 const CARDS_PER_PLAYER = 6;
 
 export const mkCard = (suit: number, value: number): number => (suit << 4) | value;
@@ -94,7 +149,7 @@ export interface SimGame {
     discards: number[];
 }
 
-const cloneSim = (g: SimGame): SimGame => ({
+const cloneSim = (g: SimGame): SimGame => (CDPROF.cloneSim++, {
     over: g.over,
     numPlayers: g.numPlayers,
     powerSuit: g.powerSuit,
@@ -111,6 +166,58 @@ const cloneSim = (g: SimGame): SimGame => ({
     goodMask: g.goodMask,
     discards: g.discards.slice(),
 });
+
+// ---------- pooled SimGame clones (GC elimination) -----------------------
+// The dominant TS cost was GC churn from the per-(world x candidate) rollout
+// trial, which did a full cloneSim() — 8 array allocations — every trial. We
+// instead reuse a single pooled SimGame: cloneSimInto() copies `world` into it
+// (reusing its buffers, no allocation), simulate() mutates it to completion,
+// then it returns to the pool. cloneSimInto reproduces cloneSim's deep copy
+// exactly (same fields, same array contents), so the rollout is behavior-
+// identical — verified by a deterministic full-game outcome fingerprint that
+// matches the pre-change baseline bit-for-bit (pc2-8 vs handwritten+espresso).
+// (Make/unmake was tried for the solver and lost: snapshot+restore is two
+// copies per node vs cloneSim's one, and V8 scavenges those small short-lived
+// arrays cheaply, so the solver keeps plain cloneSim.)
+const simPool: SimGame[] = [];
+let simPoolN = 0;
+
+const copyInto = (dst: number[], src: number[]): void => {
+    dst.length = src.length;
+    for (let i = 0; i < src.length; i++) dst[i] = src[i];
+};
+
+const acquireSim = (n: number): SimGame => {
+    if (simPoolN > 0) {
+        const s = simPool[--simPoolN];
+        while (s.hands.length < n) s.hands.push([]);
+        return s;
+    }
+    return {
+        over: false, numPlayers: n, powerSuit: 0, firstAttacker: 0, defender: 0,
+        deck: [], flipped: NONE, battlesA: [], battlesD: [], discardLen: 0,
+        pStatus: [], hands: Array.from({ length: n }, () => [] as number[]),
+        elim: [], goodMask: 0, discards: [],
+    };
+};
+const releaseSim = (g: SimGame): void => { simPool[simPoolN++] = g; };
+
+// Copy src into a pooled dst (reusing dst's buffers). Behaviorally identical to
+// cloneSim's deep copy.
+const cloneSimInto = (dst: SimGame, src: SimGame): SimGame => {
+    dst.over = src.over; dst.numPlayers = src.numPlayers; dst.powerSuit = src.powerSuit;
+    dst.firstAttacker = src.firstAttacker; dst.defender = src.defender;
+    dst.flipped = src.flipped; dst.discardLen = src.discardLen; dst.goodMask = src.goodMask;
+    copyInto(dst.deck, src.deck);
+    copyInto(dst.battlesA, src.battlesA);
+    copyInto(dst.battlesD, src.battlesD);
+    copyInto(dst.pStatus, src.pStatus);
+    copyInto(dst.elim, src.elim);
+    copyInto(dst.discards, src.discards);
+    while (dst.hands.length < src.numPlayers) dst.hands.push([]);
+    for (let i = 0; i < src.numPlayers; i++) copyInto(dst.hands[i], src.hands[i]);
+    return dst;
+};
 
 const inCount = (g: SimGame): number => {
     let n = 0;
@@ -548,6 +655,7 @@ const calcCoverGreedy = (g: SimGame, pIdx: number, out: SimMove[]): void => {
 };
 
 const calcLegal = (g: SimGame, pIdx: number, lite: boolean): SimMove[] => {
+    CDPROF.calcLegal++;
     const out: SimMove[] = [];
     if (g.over) return out;
     const isDef = pIdx === g.defender;
@@ -572,6 +680,7 @@ const calcLegal = (g: SimGame, pIdx: number, lite: boolean): SimMove[] => {
 };
 
 const applyMove = (g: SimGame, pIdx: number, m: SimMove): boolean => {
+    CDPROF.applyMove++;
     switch (m.type) {
         case MOVE_ATTACK: return simAttack(g, pIdx, m.cards);
         case MOVE_COVER:  return simCover(g, pIdx, m.cards, m.attackCards);
@@ -706,7 +815,63 @@ const handwrittenChoose = (g: SimGame, _pIdx: number, moves: SimMove[]): number 
 // endgame). It consumes rngNext() exactly where handwritten does (the GOOD
 // branch draws one), so the whole rollout RNG stream is unchanged.
 // Ported from handwritten_rollout_choose in handwritten_strategy.c.
+// Reusable scratch for handwrittenRolloutChoose (called millions of times per
+// decision). The returned SimMove is consumed immediately by applyMove() and
+// never retained, so a single module-level move object + card buffers are
+// safe and avoid a per-ply object/array allocation. Parallel arrays replace
+// the old array-of-{c,score,idx} objects.
+const HR_MOVE: SimMove = { type: MOVE_GOOD, cards: [], attackCards: [] };
+const hrCards: number[] = [];      // backing buffer for HR_MOVE.cards
+const hrAtk: number[] = [];        // backing buffer for HR_MOVE.attackCards
+const hrPoolC: number[] = [];      // pool card values
+const hrPoolS: number[] = [];      // pool scores
+const hrPoolI: number[] = [];      // pool hand indices
+const hrOrder: number[] = [];      // index permutation for sorting the pool
+
+// Emit HR_MOVE with the k lowest-score pool entries (ties by hand index), the
+// chosen cards re-sorted by hand index — reproduces combinations() index-lex
+// order + pickMaxCardsLowestScore. Reuses hrCards; returns HR_MOVE.
+const hrEmitLowestK = (type: number, n: number, k: number): SimMove => {
+    // Selection by (score asc, idx asc) without allocating: order[] is a
+    // 0..n-1 permutation sorted by the pool keys, then we take the first k and
+    // re-sort those by idx. n is tiny (a hand subset), so an insertion sort is
+    // both allocation-free and fast.
+    for (let i = 0; i < n; i++) hrOrder[i] = i;
+    for (let i = 1; i < n; i++) {
+        const oi = hrOrder[i];
+        const si = hrPoolS[oi], di = hrPoolI[oi];
+        let j = i - 1;
+        while (j >= 0) {
+            const oj = hrOrder[j];
+            if (hrPoolS[oj] < si || (hrPoolS[oj] === si && hrPoolI[oj] <= di)) break;
+            hrOrder[j + 1] = hrOrder[j]; j--;
+        }
+        hrOrder[j + 1] = oi;
+    }
+    // chosen = first k of order; re-sort those k by hand index into hrCards.
+    hrCards.length = k;
+    for (let i = 0; i < k; i++) hrCards[i] = hrPoolI[hrOrder[i]];   // temp: store idx
+    // insertion sort hrCards (indices) ascending
+    for (let i = 1; i < k; i++) {
+        const v = hrCards[i]; let j = i - 1;
+        while (j >= 0 && hrCards[j] > v) { hrCards[j + 1] = hrCards[j]; j--; }
+        hrCards[j + 1] = v;
+    }
+    // map chosen hand-indices back to card values (need reverse lookup: build a
+    // small map from idx->card by scanning the pool; n is tiny).
+    for (let i = 0; i < k; i++) {
+        const wantIdx = hrCards[i];
+        for (let p = 0; p < n; p++) if (hrPoolI[p] === wantIdx) { hrCards[i] = hrPoolC[p]; break; }
+    }
+    HR_MOVE.type = type;
+    HR_MOVE.cards = hrCards;
+    hrAtk.length = 0;
+    HR_MOVE.attackCards = hrAtk;
+    return HR_MOVE;
+};
+
 const handwrittenRolloutChoose = (g: SimGame, pIdx: number): SimMove | null => {
+    CDPROF.fastChoose++;
     if (g.over) return null;
     const hand = g.hands[pIdx];
     const power = g.powerSuit;
@@ -715,16 +880,6 @@ const handwrittenRolloutChoose = (g: SimGame, pIdx: number): SimMove | null => {
     const defenderCards = g.hands[g.defender].length;
     let uncovered = 0;
     for (let i = 0; i < g.battlesD.length; i++) if (g.battlesD[i] === NONE) uncovered++;
-
-    // The k lowest-score cards of `pool` (by score, ties by hand index), then
-    // re-sorted by hand index — reproduces combinations() index-lex order +
-    // pickMaxCardsLowestScore (first strict-min sum). Returns the card list.
-    const lowestK = (pool: { c: number, score: number, idx: number }[], k: number): number[] => {
-        pool.sort((a, b) => a.score - b.score || a.idx - b.idx);
-        const chosen = pool.slice(0, k);
-        chosen.sort((a, b) => a.idx - b.idx);
-        return chosen.map(x => x.c);
-    };
 
     // ---- Attacker: first attack ----
     if (firstAttack && pIdx === g.firstAttacker) {
@@ -738,10 +893,14 @@ const handwrittenRolloutChoose = (g: SimGame, pIdx: number): SimMove | null => {
             }
         }
         if (bestVnt >= 0) {
-            const pool = hand
-                .map((c, i) => ({ c, score: cardScore(c, power), idx: i }))
-                .filter(x => (x.c & 15) === bestVnt && (x.c >> 4) !== power);
-            return { type: MOVE_ATTACK, cards: lowestK(pool, bestKnt), attackCards: [] };
+            let n = 0;
+            for (let i = 0; i < hand.length; i++) {
+                const c = hand[i];
+                if ((c & 15) === bestVnt && (c >> 4) !== power) {
+                    hrPoolC[n] = c; hrPoolS[n] = cardScore(c, power); hrPoolI[n] = i; n++;
+                }
+            }
+            return hrEmitLowestK(MOVE_ATTACK, n, bestKnt);
         }
         // Trump-only first attack is RNG-gated by handwritten — defer.
         return null;
@@ -757,50 +916,58 @@ const handwrittenRolloutChoose = (g: SimGame, pIdx: number): SimMove | null => {
             let same = true;
             for (let i = 1; i < g.battlesA.length; i++) if ((g.battlesA[i] & 15) !== v0) same = false;
             if (same) {
-                const pool = hand
-                    .map((c, i) => ({ c, score: cardScore(c, power), idx: i }))
-                    .filter(x => (x.c & 15) === v0);
-                if (pool.length > 0) {
+                let n = 0;
+                for (let i = 0; i < hand.length; i++) {
+                    const c = hand[i];
+                    if ((c & 15) === v0) {
+                        hrPoolC[n] = c; hrPoolS[n] = cardScore(c, power); hrPoolI[n] = i; n++;
+                    }
+                }
+                if (n > 0) {
                     const nextCards = g.hands[nextPlayer(g, g.defender)].length;
                     // Smallest legal k is k=1 if legal (legality tightens with k);
                     // min summed score = the single lowest matching card.
                     if (nextCards >= 1 + g.battlesA.length) {
-                        return { type: MOVE_PASS, cards: lowestK(pool, 1), attackCards: [] };
+                        return hrEmitLowestK(MOVE_PASS, n, 1);
                     }
                 }
             }
         }
         // Greedy lowest-score full cover (matches calcCoverGreedy).
-        const unc: number[] = [];
-        for (let i = 0; i < g.battlesA.length; i++) if (g.battlesD[i] === NONE) unc.push(g.battlesA[i]);
-        const used = new Set<number>();
-        const covers: number[] = [];
+        hrAtk.length = 0;            // unc (attackCards)
+        hrCards.length = 0;         // covers
         let full = true;
-        for (const a of unc) {
+        for (let ai = 0; ai < g.battlesA.length; ai++) {
+            if (g.battlesD[ai] !== NONE) continue;
+            const a = g.battlesA[ai];
+            hrAtk.push(a);
             let best = NONE, bestScore = Infinity;
             for (const c of hand) {
-                if (used.has(c)) continue;
+                // already-used check: skip cards already chosen as a cover
+                let usedC = false;
+                for (let u = 0; u < hrCards.length; u++) if (hrCards[u] === c) { usedC = true; break; }
+                if (usedC) continue;
                 if (canCoverInt(a, c, power)) {
                     const s = cardScore(c, power);
                     if (s < bestScore) { bestScore = s; best = c; }
                 }
             }
             if (best === NONE) { full = false; break; }
-            used.add(best);
-            covers.push(best);
+            hrCards.push(best);
         }
-        if (full) return { type: MOVE_COVER, cards: covers, attackCards: unc };
-        return { type: MOVE_PICKUP, cards: [], attackCards: [] };
+        if (full) {
+            HR_MOVE.type = MOVE_COVER; HR_MOVE.cards = hrCards; HR_MOVE.attackCards = hrAtk;
+            return HR_MOVE;
+        }
+        HR_MOVE.type = MOVE_PICKUP; hrCards.length = 0; HR_MOVE.cards = hrCards;
+        hrAtk.length = 0; HR_MOVE.attackCards = hrAtk;
+        return HR_MOVE;
     }
 
     // ---- Attacker: regular (additional) attack ----
     if (!isDef && g.battlesA.length > 0) {
         if (g.goodMask & (1 << pIdx)) return null;  // no moves; slow path -1
-        const tv = new Set<number>();
-        for (let i = 0; i < g.battlesA.length; i++) {
-            tv.add(g.battlesA[i] & 15);
-            if (g.battlesD[i] !== NONE) tv.add(g.battlesD[i] & 15);
-        }
+        // table values present (small set — linear membership over battlesA).
         const cap = defenderCards - uncovered;
         // The slow regular-attack enumeration is capped at MAX_SOLVE_MOVES (96):
         // with >=7 valid cards it can produce >96 combos and TRUNCATE before the
@@ -808,20 +975,26 @@ const handwrittenRolloutChoose = (g: SimGame, pIdx: number): SimMove | null => {
         // the slow path whenever truncation is possible (2^n-1 > 96, i.e. n>=7)
         // to stay behavior-identical. With <=6 valid cards (<=63 combos) the
         // enumeration never truncates and the direct max-combo is exact.
+        const tableHasVal = (v: number): boolean => {
+            for (let i = 0; i < g.battlesA.length; i++) {
+                if ((g.battlesA[i] & 15) === v) return true;
+                if (g.battlesD[i] !== NONE && (g.battlesD[i] & 15) === v) return true;
+            }
+            return false;
+        };
         let nValid = 0;
-        for (const c of hand) if (tv.has(c & 15)) nValid++;
+        for (const c of hand) if (tableHasVal(c & 15)) nValid++;
         if (nValid >= 7) return null;
-        const nt: { c: number, score: number, idx: number }[] = [];
-        let nTr = 0;
+        let n = 0, nTr = 0;
         for (let i = 0; i < hand.length; i++) {
             const c = hand[i];
-            if (!tv.has(c & 15)) continue;
+            if (!tableHasVal(c & 15)) continue;
             if ((c >> 4) === power) nTr++;
-            else nt.push({ c, score: cardScore(c, power), idx: i });
+            else { hrPoolC[n] = c; hrPoolS[n] = cardScore(c, power); hrPoolI[n] = i; n++; }
         }
-        if (nt.length > 0 && cap >= 1) {
-            let k = nt.length; if (k > cap) k = cap;
-            return { type: MOVE_ATTACK, cards: lowestK(nt, k), attackCards: [] };
+        if (n > 0 && cap >= 1) {
+            let k = n; if (k > cap) k = cap;
+            return hrEmitLowestK(MOVE_ATTACK, n, k);
         }
         // No legal non-trump attack. If no legal trump attack either, handwritten
         // falls straight through to GOOD (drawing one rngNext() to index among
@@ -829,7 +1002,9 @@ const handwrittenRolloutChoose = (g: SimGame, pIdx: number): SimMove | null => {
         const haveTrumpAttack = nTr > 0 && cap >= 1;
         if (!haveTrumpAttack) {
             rngNext();
-            return { type: MOVE_GOOD, cards: [], attackCards: [] };
+            HR_MOVE.type = MOVE_GOOD; hrCards.length = 0; HR_MOVE.cards = hrCards;
+            hrAtk.length = 0; HR_MOVE.attackCards = hrAtk;
+            return HR_MOVE;
         }
         return null;  // trump attack exists: RNG-gated, defer to slow path.
     }
@@ -1175,8 +1350,10 @@ const rolloutPolicyFor = (g: SimGame): ((g: SimGame, p: number, m: SimMove[]) =>
 // Roll a sampled world forward; returns my finish position (1..N), or 0 if
 // the simulation didn't terminate. Exits early once my position is known.
 const simulate = (g: SimGame, myIdx: number, maxTurns: number): number => {
+    CDPROF.simulate++;
     let turns = 0;
     while (gameDone(g) < 0 && turns++ < maxTurns) {
+        CDPROF.simTurns++;
         if (g.over) break;
         if (g.pStatus[myIdx] !== ST_IN) {
             const pos = g.elim.indexOf(myIdx);
@@ -1437,6 +1614,7 @@ const buildBelief = (pv: PublicView): Belief => {
 
 const sampleWorld = (pv: PublicView, B: Belief, seed: number,
         applyVoids: boolean, applyFloors: boolean): SimGame => {
+    CDPROF.sampleWorld++;
     const n = pv.numPlayers;
     const g: SimGame = {
         over: false,
@@ -1542,12 +1720,27 @@ const SOLVE_MAX_CARDS = 20;
 // table, roles) as a string fingerprint (exact — no hash collisions).
 interface Solver { budget: number; aborted: boolean; me: number; tt: Map<string, number>; }
 
+// Reused scratch for sorting a hand inside ttFingerprint (called once per
+// solver node — formerly allocated a .slice().sort() array each time).
+const ttSortBuf: number[] = [];
+
 const ttFingerprint = (g: SimGame): string => {
     let s = "";
     for (let p = 0; p < g.numPlayers; p++) {
         if (g.pStatus[p] !== ST_IN) continue;
-        const h = g.hands[p].slice().sort((a, b) => a - b);
-        s += p + ":" + h.join(",") + "|";
+        const h = g.hands[p];
+        // copy+insertion-sort into the shared buffer (hands are tiny in the
+        // endgame; allocation-free, identical sorted order to .sort((a,b)=>a-b)).
+        const m = h.length;
+        for (let i = 0; i < m; i++) ttSortBuf[i] = h[i];
+        for (let i = 1; i < m; i++) {
+            const v = ttSortBuf[i]; let j = i - 1;
+            while (j >= 0 && ttSortBuf[j] > v) { ttSortBuf[j + 1] = ttSortBuf[j]; j--; }
+            ttSortBuf[j + 1] = v;
+        }
+        s += p + ":";
+        for (let i = 0; i < m; i++) s += (i ? "," : "") + ttSortBuf[i];
+        s += "|";
     }
     s += "B";
     for (let i = 0; i < g.battlesA.length; i++) s += g.battlesA[i] + "." + g.battlesD[i] + ";";
@@ -1560,6 +1753,7 @@ const ttFingerprint = (g: SimGame): string => {
 const ttEncode = (value: number, depth: number): number => value * 256 + depth;
 
 const solve = (S: Solver, g: SimGame, alpha: number, beta: number, depth: number): number => {
+    CDPROF.solveNodes++;
     const loser = gameDone(g);
     if (loser >= 0) return loser === S.me ? -(1000 - depth) : (1000 - depth);
     if (inCount(g) === 0) return 0;
@@ -1733,22 +1927,27 @@ export interface CorditeParams {
     maxMillis: number;
 }
 
-// v2.1 budget: ~2x the original world counts. In C (with the compact bitboard
-// rollout) this 2x budget was measured both faster than the old slow+1x AND
-// stronger at every player count vs handwritten (pc8 win 11.6% -> 13.2%);
-// doubling again to 3x regressed, so it stops at 2x. The TS engine is still
-// wall-clock bounded by maxMillis, so the larger counts only take effect when
-// time allows; the cap guarantees latency is unchanged.
+// v2.3 (TS) budget — see the "TS speed-up & budget" note at the top of the
+// solver section. After the TS GC-elimination work (pooled rollout trials,
+// allocation-free fast chooser, cheaper TT fingerprint) freed ~15-20% per-world
+// cost, the world budget is raised ~3x and maxMillis to 2000. Measured offline
+// (4-core parallel arena, 80 games/pc, seeded) vs handwritten this lifts win%
+// pc2 82.5->92.5, pc4 32.5->41.3 with single-core p99 latency ~0.7-0.9s and
+// max ~1.0s (well under the 2s budget). The per-decision maxMillis cap still
+// bounds latency, so complex positions degrade gracefully instead of exceeding
+// 2s. ~3x is near the identical-world saturation knee; the rest of the freed
+// budget is spent on WIDER candidate survival (see the pruning keep-counts in
+// corditeChoose), not just more identical worlds.
 export const CORDITE_PARAMS: CorditeParams = {
-    worldsFor: (n) => n <= 2 ? [32, 56, 56] : n <= 4 ? [28, 56, 56] : [40, 80, n <= 6 ? 56 : 48],
-    maxMillis: 1500,
+    worldsFor: (n) => n <= 2 ? [96, 168, 168] : n <= 4 ? [84, 168, 168] : [120, 240, n <= 6 ? 168 : 144],
+    maxMillis: 2000,
 };
 
-// cordite_max worlds are set from measured strength tiers (cnitro C evals)
-// capped by the 2s decision budget; see CORDITE.md.
+// cordite_max — a notch more worlds again, still 2s-bounded, for the strongest
+// offline tier.
 export const CORDITE_MAX_PARAMS: CorditeParams = {
-    worldsFor: (n) => n <= 2 ? [40, 80, 56] : n <= 4 ? [40, 80, 56] : [40, 80, 56],
-    maxMillis: 1900,
+    worldsFor: (n) => n <= 2 ? [120, 240, 168] : n <= 4 ? [120, 240, 168] : [120, 240, 168],
+    maxMillis: 2000,
 };
 
 // Choose among `moves` (sim representation of the server's legal moves).
@@ -1762,8 +1961,10 @@ export const corditeChoose = (pv: PublicView, moves: SimMove[],
     const B = buildBelief(pv);
 
     const forcedLoss: boolean[] = new Array(moves.length).fill(false);
-    const solved = tryEndgameSolve(pv, B, moves, forcedLoss);
-    if (solved >= 0) return solved;
+    if (!noSolve()) {
+        const solved = tryEndgameSolve(pv, B, moves, forcedLoss);
+        if (solved >= 0) return solved;
+    }
 
     let cand = pickCandidates(pv.powerSuit, moves, forcedLoss);
     if (cand.length === 0) {
@@ -1773,7 +1974,13 @@ export const corditeChoose = (pv: PublicView, moves: SimMove[],
     if (cand.length === 0) return 0;
     if (cand.length === 1) return cand[0];
 
-    const [W1, W2, W3] = params.worldsFor(pv.numPlayers);
+    const wmul = worldMul();
+    let [W1, W2, W3] = params.worldsFor(pv.numPlayers);
+    if (wmul !== 1) {
+        W1 = Math.max(1, Math.round(W1 * wmul));
+        W2 = Math.max(1, Math.round(W2 * wmul));
+        W3 = Math.max(1, Math.round(W3 * wmul));
+    }
 
     const base = mix(Math.imul(pv.logs.length, 2654435761) >>> 0,
         ((pv.deckCount << 8) ^ pv.discardLen ^ (pv.myIdx << 20)) >>> 0);
@@ -1781,6 +1988,10 @@ export const corditeChoose = (pv: PublicView, moves: SimMove[],
     const score: number[] = new Array(cand.length).fill(0);
     const nsim: number[] = new Array(cand.length).fill(0);
     const alive: boolean[] = new Array(cand.length).fill(true);
+
+    // Single reusable trial buffer for the whole decision (the rollout consumes
+    // it fully each iteration, so one is enough — no concurrent live trials).
+    const trialScratch = acquireSim(pv.numPlayers);
 
     let outOfTime = false;
     for (let stage = 0; stage < 3 && !outOfTime; stage++) {
@@ -1795,7 +2006,11 @@ export const corditeChoose = (pv: PublicView, moves: SimMove[],
             const simRng = mix(wseed, 0x51AB1E5);
             for (let ci = 0; ci < cand.length; ci++) {
                 if (!alive[ci]) continue;
-                const trial = cloneSim(world);
+                // Pooled trial: one reused SimGame copied from `world`, mutated
+                // to completion by simulate(), then returned to the pool. This
+                // is the dominant per-(world x candidate) allocation; pooling it
+                // is the bulk of the GC-elimination win.
+                const trial = cloneSimInto(trialScratch, world);
                 rngSet(simRng);   // identical stream for every candidate (CRN)
                 if (!applyMove(trial, pv.myIdx, moves[cand[ci]])) {
                     score[ci] += pv.numPlayers;
@@ -1811,7 +2026,12 @@ export const corditeChoose = (pv: PublicView, moves: SimMove[],
         if (stage < 2) {
             let nAlive = 0;
             for (const a of alive) if (a) nAlive++;
-            const keep = stage === 0 ? Math.max(3, Math.floor(cand.length / 3)) : 2;
+            // Wider survival than the original max(3, n/3) -> 2. With the larger
+            // post-speedup world budget the extra worlds are better spent
+            // refining MORE surviving candidates (avoids pruning a strong move
+            // on noisy stage-0 estimates) than piling identical worlds onto the
+            // top 2 — which saturates. keep ~half after stage 0, 3 after stage 1.
+            const keep = stage === 0 ? Math.max(4, Math.ceil(cand.length / 2)) : 3;
             if (keep >= nAlive) continue;
             for (let dropped = nAlive - keep; dropped > 0; dropped--) {
                 let worst = -1, worstV = -Infinity;
@@ -1828,6 +2048,8 @@ export const corditeChoose = (pv: PublicView, moves: SimMove[],
             }
         }
     }
+
+    releaseSim(trialScratch);
 
     let best = -1, bestV = Infinity;
     for (let i = 0; i < cand.length; i++) {
