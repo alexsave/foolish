@@ -81,6 +81,7 @@ static _Thread_local int cd_difftest = 0;      // CD_DIFFTEST=1: assert fast==sl
 static _Thread_local int cd_w1_override = 0, cd_w2_override = 0;
 static _Thread_local int cd_w3_override = -1;
 static _Thread_local int cd_old_budget = 0;    // cordite_old variant: pre-2x worlds
+static _Thread_local int cd_keep1 = 0, cd_keep2 = 0;  // CD_KEEP1/2: candidates kept past stage 0/1 (0=default n/3, 2)
 // Bitboard endgame-solver node budgets (per shared pass). The bitboard solver
 // (transposition table + O(1) clone) resolves far more per node than the
 // struct solver, so it needs a much smaller node budget to do equivalent work
@@ -950,6 +951,8 @@ int cordite_strategy_choose(const Game *g, int bot_idx,
         cd_w1_override = cd_env_int("CD_W1", 0);
         cd_w2_override = cd_env_int("CD_W2", 0);
         cd_w3_override = cd_env_int("CD_W3", -1);
+        cd_keep1 = cd_env_int("CD_KEEP1", 0);
+        cd_keep2 = cd_env_int("CD_KEEP2", 0);
         cd_bb_win_budget = cd_env_int("CD_BB_WIN", 20000);
         cd_bb_avoid_budget = cd_env_int("CD_BB_AVOID", 15000);
         cd_leaf_budget = cd_env_int("CD_LEAF_BUDGET", 1500);
@@ -1071,10 +1074,10 @@ int cordite_strategy_choose(const Game *g, int bot_idx,
             for (int i = 0; i < C.n; i++) if (alive[i]) n_alive++;
             int keep;
             if (stage == 0) {
-                keep = C.n / 3;
+                keep = (cd_keep1 > 0) ? cd_keep1 : C.n / 3;
                 if (keep < 3) keep = 3;
             } else {
-                keep = 2;
+                keep = (cd_keep2 > 0) ? cd_keep2 : 2;
             }
             if (keep >= n_alive) continue;
             for (int dropped = n_alive - keep; dropped > 0; dropped--) {
