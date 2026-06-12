@@ -1215,6 +1215,12 @@ export const ReplayServerProvider = ({ gameId, initialGame, children }: {
         setGames(prev => ({ ...prev, [gid]: gameState }));
     }, []);
 
+    // The tutorial seats a real `self`, so the live ActionButtons + drag system
+    // need a hand to render. Mirror the current self hand (a plain replay's
+    // viewer has none, so this stays []). Reordering is a no-op here — the
+    // tutorial doesn't need drag-to-rearrange, only drag-to-play.
+    const localHandOrder = games[gameId]?.self?.hand ?? initialGame.self?.hand ?? [];
+
     const noop = async () => ({ game_id: gameId });
     const value: ServerContextType = {
         createGame: noop,
@@ -1239,7 +1245,7 @@ export const ReplayServerProvider = ({ gameId, initialGame, children }: {
         continueGame: noop,
         gameLoadError: null,
         chatMessages: [],
-        localHandOrder: [],
+        localHandOrder,
         setLocalHandOrder: () => { },
     };
     return <ServerContext.Provider value={value}>{children}</ServerContext.Provider>;

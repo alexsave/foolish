@@ -14,12 +14,7 @@ import { FernFractalProvider } from '../utils/fernFractal';
 import { useLocalization } from '../contexts/LocalizationContext';
 import { CardFace } from './GameDisplay/CardFace';
 import { CardBack } from './GameDisplay/CardBack';
-import { TableBattles } from './GameDisplay/TableBattles';
-import { PlayerRing } from './GameDisplay/PlayerRing';
-import { DefenderShield } from './GameDisplay/DefenderShield';
-import { DeckAndFlipped } from './GameDisplay/DeckAndFlipped';
-import { DiscardPile } from './GameDisplay/DiscardPile';
-import { AnimationOverlay } from './GameDisplay/AnimationOverlay';
+import { GameBoard } from './GameBoard';
 import { usePreventScroll } from '../hooks/usePreventScroll';
 import { animationFeed, AnimationSequenceMessage } from '../state/animationFeed';
 import { codeToGame } from '../replay/codec';
@@ -592,40 +587,23 @@ const ReplayStage = ({ decoded, steps, sequences, reverses, gameId, names, times
         </button>
     );
 
+    // The board lives in its own positioned region inset from the transport
+    // controls (in the bottom-right corner) and the top status bar:
+    // PlayerRing/DefenderShield/RevealedHands use percentage positions, which
+    // resolve against the inset wrapper, so no seat is buried under a control.
+    const boardInset: React.CSSProperties = {
+        position: 'absolute',
+        top: 'calc(44px + max(8px, env(safe-area-inset-top)))',
+        left: 0,
+        right: 0,
+        bottom: 'calc(96px + max(8px, env(safe-area-inset-bottom)))',
+    };
+
     return (
-        <>
-            {/* The board lives in its own positioned region inset from the
-                transport controls (now in the bottom-right corner) and the top
-                status bar: PlayerRing/DefenderShield/RevealedHands use
-                percentage positions, which resolve against this wrapper, so no
-                seat is buried under a control. */}
-            <div
-                className="flex flex-1 flex-center"
-                style={{
-                    position: 'absolute',
-                    top: 'calc(44px + max(8px, env(safe-area-inset-top)))',
-                    left: 0,
-                    right: 0,
-                    bottom: 'calc(96px + max(8px, env(safe-area-inset-bottom)))',
-                }}
-            >
-                <DeckAndFlipped />
-                <DiscardPile />
-
-                <div
-                    className="absolute flex flex-col items-center justify-center w-full"
-                    style={{ top: 0, bottom: 0 }}
-                >
-                    <DefenderShield />
-                    <TableBattles />
-                </div>
-
-                <PlayerRing />
-                {reveal && <RevealedHands />}
-            </div>
-
-            <AnimationOverlay />
-
+        <GameBoard
+            boardInset={boardInset}
+            overlay={reveal && <RevealedHands />}
+            chrome={<>
             {/* status bar, top-centre: move counter, timestamp, and what just
                 happened — the readouts a VHS deck shows on its front display. */}
             <div
@@ -745,7 +723,8 @@ const ReplayStage = ({ decoded, steps, sequences, reverses, gameId, names, times
             >
                 <span className="btn-icon__symbol">{'<'}</span>
             </TexturedSurface>
-        </>
+            </>}
+        />
     );
 };
 

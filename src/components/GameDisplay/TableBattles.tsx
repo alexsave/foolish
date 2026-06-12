@@ -4,6 +4,7 @@ import { useServer } from "../../contexts/ServerContext";
 import { useAuth } from "../../contexts/AuthContext";
 import { useGame } from "../../contexts/GameContext";
 import { useDrag } from "../../contexts/DragContext";
+import { useTutorialHint } from "../../contexts/TutorialHintContext";
 
 const COVER_ROTATION: string = (Math.PI/ 16) + 'rad';
 
@@ -13,6 +14,7 @@ export const TableBattles = () => {
     const { user_id } = useAuth();
     const { coverMap, setCoverMap, isSelectingCover, selectedCards } = useGame();
     const { isDraggingForGameAction, draggedCard, currentCursorPos, determineGameAction } = useDrag();
+    const hint = useTutorialHint();
     
     // Handle case where game is not loaded yet
     if (!game || !game.players || !game.table_battles) {
@@ -94,6 +96,15 @@ export const TableBattles = () => {
             if (isCardBeingCovered(battle.attack)) {
                 containerStyle.border = '3px solid #d29002';
                 containerStyle.backgroundColor = 'rgba(210, 144, 2, 0.1)';
+            }
+
+            // Tutorial: green-outline the attack the learner should cover.
+            if (hint?.targetCard &&
+                hint.targetCard.suit === battle.attack.suit &&
+                hint.targetCard.value === battle.attack.value && !battle.defense) {
+                containerStyle.border = '3px solid #2fcf63';
+                containerStyle.boxShadow = '0 0 14px 2px rgba(47,207,99,0.7)';
+                containerStyle.borderRadius = '8px';
             }
 
             // Determine if this battle is covered

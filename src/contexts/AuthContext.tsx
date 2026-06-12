@@ -5,7 +5,9 @@ import { Session, User } from '@supabase/supabase-js';
 import { Sha256 } from '@aws-crypto/sha256-js';
 import { WeakPassword } from '@supabase/supabase-js';
 
-const AuthContext = createContext<AuthContextType | null>(null);
+// Exported so self-contained screens (e.g. the tutorial) can re-provide a
+// mock identity for a seat without a real Supabase session.
+export const AuthContext = createContext<AuthContextType | null>(null);
 
 const nameToEmail = async (name: string): Promise<string> => {
   // Convert to uppercase for consistent hashing

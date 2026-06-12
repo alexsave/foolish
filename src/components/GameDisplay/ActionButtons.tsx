@@ -11,6 +11,10 @@ import { Text } from "../Text";
 import { canCover as canCoverUtil } from "../../common/common_utils";
 import { canAttack, canPass, canCoverCards } from "../../utils/gameValidation";
 import { useStyles } from "../../contexts/StyleContext";
+import { useTutorialHint } from "../../contexts/TutorialHintContext";
+
+// Green glow used by the tutorial to point at the card/button to use next.
+const TUT_GLOW = '0 0 0 3px #2fcf63, 0 0 16px 3px rgba(47,207,99,0.85)';
 
 interface ActionButtonProps {
     seed: number;
@@ -44,6 +48,7 @@ const CardDiv = ({ user_id }: { user_id: string }) => {
     const { selectedCards } = useGame();
     const { draggedCardIndex, isDraggingForGameAction, startCardDrag, isActuallyDragging } = useDrag();
     const styles = useStyles();
+    const hint = useTutorialHint();
 
     if (!game || !game.self) {
         return <p style={{ color: 'var(--color-text-primary)', fontSize: '18px' }}><Text id="spectating" /></p>;
@@ -67,8 +72,13 @@ const CardDiv = ({ user_id }: { user_id: string }) => {
                 const isDragging = isActuallyDragging && draggedCardIndex === index;
                 const isDraggingForAction = isDraggingForGameAction && draggedCardIndex === index;
 
-                const borderColor = (isDraggingForAction || isSelected) 
-                    ? styles.cardInHand.selectedBorderColor 
+                const isHinted = !!hint?.cards.some(
+                    h => h.suit === card.suit && h.value === card.value,
+                );
+                const borderColor = isHinted
+                    ? '#2fcf63'
+                    : (isDraggingForAction || isSelected)
+                    ? styles.cardInHand.selectedBorderColor
                     : styles.cardInHand.borderColor;
 
                 return (
@@ -96,11 +106,12 @@ const CardDiv = ({ user_id }: { user_id: string }) => {
                             alignItems: 'center',
                             opacity: (isDragging && !isDraggingForAction) ? 0.3 : 1,
                             transition: 'all 0.1s ease',
+                            transform: isHinted ? 'translateY(-10px)' : undefined,
                             cursor: 'move',
                             userSelect: 'none',
                             margin: '0 1px',
                             border: `2px solid ${borderColor}`,
-                            boxShadow: styles.cardInHand.boxShadow,
+                            boxShadow: isHinted ? TUT_GLOW : styles.cardInHand.boxShadow,
                         }}
                     />
                 );
@@ -109,11 +120,20 @@ const CardDiv = ({ user_id }: { user_id: string }) => {
     );
 };
 
+// Wraps a wooden action button with the tutorial's green glow + a stable
+// test hook when it is the move the learner should make next.
+const Glow = ({ on, children }: { on: boolean; children: React.ReactNode }) => (
+    <div data-testid={on ? 'tut-move' : undefined} style={on ? { borderRadius: 10, boxShadow: TUT_GLOW } : undefined}>
+        {children}
+    </div>
+);
+
 export const ActionButtons = () => {
     const { user_id } = useAuth();
     const { game } = useServer() as { game: PersonalGame };
     const { pickup, good, attack, pass, cover } = useAnimation();
     const { selectedCards, setSelectedCards } = useGame();
+    const hint = useTutorialHint();
     
     const [goodButtonClicked, setGoodButtonClicked] = useState(false);
     const [attackButtonClicked, setAttackButtonClicked] = useState(false);
@@ -269,23 +289,29 @@ export const ActionButtons = () => {
                     {isDefending ? (
                         <>
                             {shouldShowPassButton ? (
-                                <ActionButton seed={0.35} onClick={handlePassClick}>
-                                    <Text id="pass" />
-                                </ActionButton>
+                                <Glow on={hint?.action === 'pass'}>
+                                    <ActionButton seed={0.35} onClick={handlePassClick}>
+                                        <Text id="pass" />
+                                    </ActionButton>
+                                </Glow>
                             ) : (
                                 <div style={spacerStyle} />
                             )}
 
                             {game.table_battles.length > 0 && (
-                                <ActionButton seed={0.15} onClick={() => pickup().catch((e) => console.error(e.message))}>
-                                    <Text id="pickup" />
-                                </ActionButton>
+                                <Glow on={hint?.action === 'pickup'}>
+                                    <ActionButton seed={0.15} onClick={() => pickup().catch((e) => console.error(e.message))}>
+                                        <Text id="pickup" />
+                                    </ActionButton>
+                                </Glow>
                             )}
 
                             {shouldShowCoverButton ? (
-                                <ActionButton seed={0.45} onClick={handleCoverClick}>
-                                    <Text id="cover" />
-                                </ActionButton>
+                                <Glow on={hint?.action === 'cover'}>
+                                    <ActionButton seed={0.45} onClick={handleCoverClick}>
+                                        <Text id="cover" />
+                                    </ActionButton>
+                                </Glow>
                             ) : (
                                 <div style={spacerStyle} />
                             )}
@@ -293,23 +319,27 @@ export const ActionButtons = () => {
                     ) : (
                         <>
                             {shouldShowGoodButton && !goodButtonClicked ? (
-                                <ActionButton seed={0.85} onClick={() => {
-                                    setGoodButtonClicked(true);
-                                    good().catch((e) => {
-                                        console.error(e.message);
-                                        setGoodButtonClicked(false);
-                                    });
-                                }}>
-                                    <Text id="good" />
-                                </ActionButton>
+                                <Glow on={hint?.action === 'good'}>
+                                    <ActionButton seed={0.85} onClick={() => {
+                                        setGoodButtonClicked(true);
+                                        good().catch((e) => {
+                                            console.error(e.message);
+                                            setGoodButtonClicked(false);
+                                        });
+                                    }}>
+                                        <Text id="good" />
+                                    </ActionButton>
+                                </Glow>
                             ) : (
                                 <div style={spacerStyle} />
                             )}
 
                             {shouldShowAttackButton ? (
-                                <ActionButton seed={0.25} onClick={handleAttackClick}>
-                                    <Text id="attack" />
-                                </ActionButton>
+                                <Glow on={hint?.action === 'attack'}>
+                                    <ActionButton seed={0.25} onClick={handleAttackClick}>
+                                        <Text id="attack" />
+                                    </ActionButton>
+                                </Glow>
                             ) : (
                                 <div style={spacerStyle} />
                             )}

@@ -66,7 +66,10 @@ interface AnimationContextType {
     resetAnimations: () => void;
 }
 
-const AnimationContext = createContext<AnimationContextType | null>(null);
+// Exported so the tutorial can re-provide a value that overrides the action
+// methods (attack/pass/pickup/cover/good) to drive its scripted playthrough,
+// while still spreading the real animation state (isAnimating, etc.).
+export const AnimationContext = createContext<AnimationContextType | null>(null);
 
 // Check if any bot can possibly move in the current game state
 const canBotMove = (game: PublicGame | undefined): boolean => {
