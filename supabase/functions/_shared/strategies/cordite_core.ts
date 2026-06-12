@@ -1516,22 +1516,30 @@ export const setSeatPolicy = (p: number[] | null): void => { seatPolicy = p; };
 // belief via the existing void machinery in buildBelief.
 
 export interface SeatProfile {
-    policy: number;          // best-fit PolicyId
-    confidence: number;      // posterior weight of the winner (0..1)
+    policy: number;          // best-fit PolicyId (POL_HANDWRITTEN = "looks strong")
+    confidence: number;      // weakness score (0..1) backing the label
     decisions: number;       // # of this seat's decisions scored
-    ll: number[];            // per-archetype accumulated log-likelihood
+    weak: number;            // weighted count of discrete weakness signals
+    rnd: number;             // signal mass attributable to random-like play
+    grd: number;             // signal mass attributable to greedy-like play
+    smp: number;             // signal mass attributable to simple/give-up play
+    trumpsPlayed: number;    // trumps this seat played while the deck was alive
+    cardsPlayed: number;     // total cards this seat played while the deck was alive
 }
 
-// Per-archetype prior log-weight. Handwritten/espresso are the strong defaults;
-// keep their prior high so a seat must EARN a weak label. random/simple/greedy
-// start lower (we only commit to "weak" with evidence).
-const PROFILE_PRIOR = [2.2, 1.4, 0.3, 0.6, 0.5];   // indexed by POL_*
-
-// Emit feature -> per-archetype likelihood increments. `w[k]` is added to
-// ll[k] for k in POL_*. Values are log-likelihood-ish weights (hand-tuned).
-const addFeature = (ll: number[], w: number[]): void => {
-    for (let k = 0; k < NUM_POLICIES; k++) ll[k] += w[k];
-};
+// Design note (v2 — conservative). The first attempt scored EVERY move against
+// every archetype and let neutral moves (a low non-trump lead, a pass, a clean
+// cover) accrue weight to random/simple — which a STRONG bot also plays, so it
+// mislabelled cordite as weak ~3/4 of the time and lost the head-to-head. The
+// fix: only RARE-FOR-STRONG actions count as weakness evidence. Strong bots
+// (handwritten/espresso/cordite) essentially never (a) lead trump while the
+// deck is alive, (b) cover a low non-trump attack with a trump when a same-suit
+// cover was plausible, (c) overpay a same-suit cover by a large margin, or (d)
+// lead a high non-trump card. Each such action adds to a per-seat WEAKNESS mass
+// (split across the weak archetypes it implicates). Everything else is neutral.
+// A seat is labelled weak only when that mass is a meaningful FRACTION of its
+// decisions (see seatPolicyFromProfiles) — so an occasional forced trump dump by
+// a strong bot never flips it. This keeps fulminate == cordite vs strong fields.
 
 // Replay the public table to profile every non-hero IN seat. Cheap: one linear
 // pass over pv.logs with small per-event work (no MC, no rollouts).
@@ -1541,8 +1549,22 @@ export const profileSeats = (pv: PublicView): SeatProfile[] => {
     const profiles: SeatProfile[] = [];
     for (let p = 0; p < n; p++) {
         profiles.push({ policy: POL_HANDWRITTEN, confidence: 0, decisions: 0,
-            ll: PROFILE_PRIOR.slice() });
+            weak: 0, rnd: 0, grd: 0, smp: 0, trumpsPlayed: 0, cardsPlayed: 0 });
     }
+    // Helper: tally trumps-vs-cards a seat voluntarily PLAYED while the deck was
+    // alive. Trump-conservation rate is the most robust hand-free discriminator:
+    // strong bots hoard trumps for defense (low rate); random/greedy spend them
+    // at the base ~1/4 rate. Covers count too — a strong defender covers with a
+    // trump only when forced, so its cover-trump rate is also low. (Pickups do
+    // not reveal cards; they are not counted.)
+    const tallyCards = (prof: SeatProfile, cards: number[], deckAlive: boolean): void => {
+        if (!deckAlive) return;
+        for (const c of cards) {
+            if (c === NONE) continue;
+            prof.cardsPlayed++;
+            if ((c >> 4) === power) prof.trumpsPlayed++;
+        }
+    };
 
     // Track table state across the log so cover/attack features have context.
     const battlesA: number[] = [];
@@ -1564,30 +1586,33 @@ export const profileSeats = (pv: PublicView): SeatProfile[] => {
         switch (L.type) {
             case 'attack': {
                 const cards = L.pairs.map(pr => pr.primary).filter(c => c !== NONE);
-                let anyTrump = false, nTrump = 0;
-                for (const c of cards) if ((c >> 4) === power) { anyTrump = true; nTrump++; }
+                let anyTrump = false;
+                let minNonTrump = 99;
+                for (const c of cards) {
+                    if ((c >> 4) === power) anyTrump = true;
+                    else if ((c & 15) < minNonTrump) minNonTrump = c & 15;
+                }
                 if (prof) {
                     prof.decisions++;
-                    // Feature: trump lead while deck alive. Strong bots avoid it;
-                    // random/greedy emit it freely.
+                    // (a) Trump LEAD (first attack) while the deck is alive —
+                    // strong bots essentially never open a round with a trump
+                    // when the deck is alive (cordite/handwritten lead lowest
+                    // non-trump). Clean evidence of random/greedy. NOTE: kept to
+                    // the FIRST attack only — cordite's MC does sometimes ADD a
+                    // trump to an existing round deliberately, so additional-
+                    // attack trumps are NOT a clean discriminator (they mislabel
+                    // cordite); the first-attack lead is.
                     if (anyTrump && deckAliveAt && firstAttack) {
-                        addFeature(prof.ll, [-1.4, -1.4, 0.5, -0.9, 0.7]);
+                        prof.weak += 1.0; prof.rnd += 0.5; prof.grd += 0.5;
                     }
-                    // Feature: pile-on size. Greedy dumps many cards; random
-                    // mid; handwritten/simple usually 1-2 unless forced.
-                    if (cards.length >= 3) {
-                        addFeature(prof.ll, [-0.3, -0.3, 0.2, -0.2, 0.8]);
-                    } else if (cards.length === 1) {
-                        addFeature(prof.ll, [0.25, 0.25, 0.0, 0.3, -0.2]);
-                    }
-                    // Feature: lowest-rank lead (smart) vs high lead (weak). A
-                    // 1-card non-trump lead of low rank is the textbook strong
-                    // play; a high non-trump lead suggests random/greedy.
-                    if (!anyTrump && cards.length >= 1) {
-                        let minv = 99; for (const c of cards) if ((c & 15) < minv) minv = c & 15;
-                        if (minv <= 7) addFeature(prof.ll, [0.3, 0.3, -0.05, 0.35, -0.2]);
-                        else if (minv >= 11) addFeature(prof.ll, [-0.2, -0.2, 0.25, -0.25, 0.35]);
-                    }
+                    // (NB) A high non-trump LEAD was tried as a weakness signal
+                    // but is NOT separable from "only holds high cards" without
+                    // the hidden hand — it mislabels cordite (whose hand is often
+                    // high-card-dominated mid-game) as weak. Dropped. The only
+                    // clean lead signal is the first-attack TRUMP lead above.
+                    void minNonTrump;
+                    // Trump-conservation: count voluntary attack cards.
+                    tallyCards(prof, cards, deckAliveAt);
                 }
                 for (const c of cards) { battlesA.push(c); battlesD.push(NONE); }
                 firstAttack = false;
@@ -1595,41 +1620,38 @@ export const profileSeats = (pv: PublicView): SeatProfile[] => {
             }
             case 'pass': {
                 const cards = L.pairs.map(pr => pr.primary).filter(c => c !== NONE);
-                if (prof) {
-                    prof.decisions++;
-                    // Passing is a competent defensive idea; rare for random.
-                    addFeature(prof.ll, [0.3, 0.3, -0.3, 0.2, -0.1]);
-                }
+                if (prof) { prof.decisions++; tallyCards(prof, cards, deckAliveAt); }
                 for (const c of cards) { battlesA.push(c); battlesD.push(NONE); }
                 break;
             }
             case 'cover': {
                 if (prof) {
                     prof.decisions++;
+                    const covered = L.pairs.map(pr => pr.primary);
+                    tallyCards(prof, covered, deckAliveAt);
                     for (const pr of L.pairs) {
                         const cov = pr.primary, atk = pr.target;
                         if (cov === NONE || atk === NONE) continue;
                         const covTrump = (cov >> 4) === power;
                         const atkTrump = (atk >> 4) === power;
-                        // Feature: wasteful trump cover of a non-trump attack.
-                        // Greedy/random over-trump; smart bots cover same-suit.
-                        if (covTrump && !atkTrump) {
-                            addFeature(prof.ll, [-0.5, -0.5, 0.3, -0.3, 0.8]);
+                        // (b) Wasteful trump cover of a VERY LOW non-trump attack
+                        // (<=7). Covering a low card with a trump while keeping
+                        // the trump would have been trivial is a random/greedy
+                        // tell. Capped at <=7 so legitimately-forced trump covers
+                        // (no same-suit higher card available, more likely vs a
+                        // mid/high attack) are mostly excluded. Even so this is
+                        // imperfect (the cover MAY be forced), so it is weighted
+                        // modestly and gated downstream by the per-game RATE bar.
+                        if (covTrump && !atkTrump && (atk & 15) <= 7) {
+                            prof.weak += 0.6; prof.rnd += 0.3; prof.grd += 0.3;
                         }
-                        // Feature: economical same-suit cover just above the
-                        // attack (margin <=2) => smart disposal.
-                        if (!covTrump && (cov >> 4) === (atk >> 4)) {
-                            const margin = (cov & 15) - (atk & 15);
-                            if (margin >= 1 && margin <= 2) {
-                                addFeature(prof.ll, [0.4, 0.4, -0.2, 0.3, -0.4]);
-                            } else if (margin >= 5) {
-                                // overpaid with a high same-suit card => weak.
-                                addFeature(prof.ll, [-0.2, -0.2, 0.25, -0.15, 0.5]);
-                            }
-                        }
+                        // (c) Same-suit overpay covers and (e) strategic-pickup
+                        // give-ups were tried but are not separable from FORCED
+                        // plays without the hidden hand (a strong bot overpays /
+                        // picks up only when it must), so they mislabel cordite.
+                        // Dropped — see the profiling design note above.
                     }
                 }
-                // mark covered
                 for (const pr of L.pairs) {
                     if (pr.target === NONE) continue;
                     const q = battlesA.indexOf(pr.target);
@@ -1638,30 +1660,13 @@ export const profileSeats = (pv: PublicView): SeatProfile[] => {
                 break;
             }
             case 'pickup': {
-                if (prof) {
-                    prof.decisions++;
-                    // Strategic give-up. simple_heuristic does this readily;
-                    // greedy almost never (it always defends if it can); random
-                    // at its uniform rate; handwritten/espresso only when forced.
-                    // We can't see the hand, but a pickup with FEW uncovered
-                    // attacks (1) is evidence of give-up tendency, not necessity.
-                    let unc = 0;
-                    for (let j = 0; j < battlesA.length; j++) if (battlesD[j] === NONE) unc++;
-                    if (unc <= 1) addFeature(prof.ll, [-0.3, -0.3, 0.3, 0.7, -0.8]);
-                    else addFeature(prof.ll, [0.0, 0.0, 0.1, 0.4, -0.5]);
-                }
+                if (prof) prof.decisions++;   // neutral (pickup may be forced)
                 clearTable();
                 break;
             }
-            case 'good': {
-                if (prof) {
-                    prof.decisions++;
-                    // Saying good early (few cards on table) is a random-ish or
-                    // simple tell; strong bots keep attacking when profitable.
-                    addFeature(prof.ll, [0.05, 0.05, 0.15, 0.1, -0.1]);
-                }
+            case 'good':
+                if (prof) prof.decisions++;   // neutral
                 break;
-            }
             case 'discard':
             case 'defender_change':
                 clearTable();
@@ -1671,20 +1676,39 @@ export const profileSeats = (pv: PublicView): SeatProfile[] => {
         }
     }
 
-    // Resolve each profile: softmax over ll to a winner + confidence.
+    // Resolve. The dominant, robust signal is the TRUMP-CONSERVATION RATE
+    // (trumps / cards voluntarily played while the deck was alive). Strong bots
+    // hoard trumps (~<=0.10); a uniform-random player spends them at the deck's
+    // base rate (~0.20-0.25 with the 5+/A deck). We map that rate, ABOVE a
+    // strong-play margin, into a [0..1] weakness score, and blend in the small
+    // discrete-signal rate. The combined `confidence` is gated downstream.
     for (let p = 0; p < n; p++) {
         const prof = profiles[p];
-        if (p === pv.myIdx || pv.statuses[p] !== ST_IN) {
+        if (p === pv.myIdx || pv.statuses[p] !== ST_IN || prof.decisions === 0) {
             prof.policy = POL_HANDWRITTEN; prof.confidence = 0; continue;
         }
-        let best = 0, bestV = -Infinity, mx = -Infinity;
-        for (let k = 0; k < NUM_POLICIES; k++) {
-            if (prof.ll[k] > bestV) { bestV = prof.ll[k]; best = k; }
-            if (prof.ll[k] > mx) mx = prof.ll[k];
+        // Trump rate needs a minimum sample to be meaningful. Calibrated to
+        // MEASURED rates (deck-alive, trumps/cards): handwritten ~0.13-0.18,
+        // simple ~0.20, cordite ~0.25 (cordite is NOT a strong hoarder, esp. at
+        // pc2 where it holds most of the deck), random ~0.35+. To leave cordite
+        // alone (the head-to-head must not regress) the ramp starts at 0.22 and
+        // saturates at 0.42, so only a clearly-random ~0.35+ rate clears the
+        // downstream 0.55 bar; cordite's ~0.25 maps to ~0.15 (safe).
+        let trumpScore = 0;
+        if (prof.cardsPlayed >= 8) {
+            const rate = prof.trumpsPlayed / prof.cardsPlayed;
+            trumpScore = (rate - 0.22) / (0.42 - 0.22);
+            if (trumpScore < 0) trumpScore = 0;
+            if (trumpScore > 1) trumpScore = 1;
         }
-        let z = 0; for (let k = 0; k < NUM_POLICIES; k++) z += Math.exp(prof.ll[k] - mx);
-        prof.confidence = Math.exp(bestV - mx) / z;
-        prof.policy = best;
+        const sigRate = prof.weak / prof.decisions;          // discrete-signal rate
+        prof.confidence = Math.max(trumpScore, Math.min(1, sigRate));
+        // Weak archetype: trump-spending without other tells reads as RANDOM;
+        // discrete pile-on/over-trump signals lean greedy. Default RANDOM.
+        let pol = POL_RANDOM, best = prof.rnd;
+        if (prof.grd > best) { pol = POL_GREEDY; best = prof.grd; }
+        if (prof.smp > best) { pol = POL_SIMPLE; best = prof.smp; }
+        prof.policy = pol;   // label always a weak archetype; gating decides use
     }
     return profiles;
 };
@@ -1703,15 +1727,35 @@ export const seatPolicyFromProfiles = (pv: PublicView, profiles: SeatProfile[]):
     for (let p = 0; p < n; p++) {
         if (p === pv.myIdx || pv.statuses[p] !== ST_IN) continue;
         const prof = profiles[p];
-        // Commit thresholds: need >=4 decisions and >=0.45 confidence in a weak
-        // archetype to deviate; espresso/handwritten winners stay on the strong
-        // default anyway (POL_ESPRESSO is handled inside cordite's 1v1 path, so
-        // mapping a "smart" seat to handwritten is correct here).
-        if (prof.decisions < 4) continue;
-        if (prof.policy === POL_HANDWRITTEN || prof.policy === POL_ESPRESSO) continue;
-        if (prof.confidence < 0.45) continue;
+        // Conservative commitment. Deviate to a weak archetype only when the
+        // seat has revealed enough play AND its weakness score (dominated by the
+        // trump-conservation rate) clears a high bar. The bar (>=0.55) maps to a
+        // trump-spend rate of ~0.21 — well above any strong bot's hoarding rate
+        // (~0.08-0.12 measured), so cordite/handwritten/espresso stay on the
+        // POL_HANDWRITTEN default and fulminate == cordite vs strong fields.
+        if (prof.decisions < 6) continue;
+        if (prof.cardsPlayed < 8) continue;     // need a real trump-rate sample
+        if (prof.confidence < 0.55) continue;   // weakness score
         table[p] = prof.policy;
         anyDeviate = true;
+    }
+    // Offline diagnostic (FUL_DEBUG): tally the policy assigned to each opp seat.
+    const dbg = (typeof globalThis !== 'undefined'
+        ? (globalThis as { FUL_DBG?: number[] }).FUL_DBG : undefined);
+    if (dbg) {
+        for (let p = 0; p < n; p++) {
+            if (p === pv.myIdx || pv.statuses[p] !== ST_IN) continue;
+            dbg[table[p]] = (dbg[table[p]] || 0) + 1;
+        }
+    }
+    const tr = (typeof globalThis !== 'undefined'
+        ? (globalThis as { FUL_TR?: number[] }).FUL_TR : undefined);
+    if (tr) {
+        for (let p = 0; p < n; p++) {
+            if (p === pv.myIdx || pv.statuses[p] !== ST_IN) continue;
+            const prof = profiles[p];
+            if (prof.cardsPlayed >= 8) { tr.push(prof.trumpsPlayed / prof.cardsPlayed); }
+        }
     }
     return anyDeviate ? table : null;
 };
