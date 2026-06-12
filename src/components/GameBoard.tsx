@@ -12,6 +12,7 @@ import { CoverArrows } from './GameDisplay/CoverArrows';
 import { Chat } from './GameDisplay/Chat';
 import { AnimationOverlay } from './GameDisplay/AnimationOverlay';
 import { KeyboardInputHandler } from './KeyboardInputHandler';
+import { KeyboardPlayMode } from './GameDisplay/KeyboardPlayMode';
 import { Text } from './Text';
 
 /**
@@ -73,6 +74,10 @@ export const GameBoard = ({
     return (
         <>
             {showKeyboard && <KeyboardInputHandler />}
+            {/* arrow-key play: navigate the hand + cover/pass targeting with a
+                red cursor. Interactive screens only (the replay uses arrows for
+                its own transport). */}
+            {interactive && <KeyboardPlayMode />}
             {interactive && <CoverArrows />}
 
             {/* The play area. Default (live) fills its parent; replay/tutorial
