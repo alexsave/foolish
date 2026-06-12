@@ -1,6 +1,9 @@
 build/
+build_prof/
 *.o
 *.bin
 
-# Instruments profiling traces
+# Profiling / coverage artifacts
 *.trace
+gmon.out
+*.gcda

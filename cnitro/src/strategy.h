@@ -23,6 +23,11 @@ typedef int (*StrategyFn)(const Game *g, int bot_idx, const LegalMoves *moves, v
 int random_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
 int espresso_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
 int handwritten_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
+// Direct rollout chooser: writes handwritten's lite-policy move into *out and
+// returns true, or returns false to defer to the slow enumerate-then-pick
+// path. Behaviorally identical to enumerating calculate_legal_moves_lite then
+// calling handwritten_strategy_choose. See handwritten_strategy.c.
+bool handwritten_rollout_choose(const Game *g, int bot_idx, LegalMove *out);
 int robusta_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
 int firecracker_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
 int gunpowder_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);

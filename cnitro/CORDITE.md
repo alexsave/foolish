@@ -69,6 +69,58 @@ Void constraints are kept exactly as in blackpowder (3-of-4 world
 mixture), *not* gated by trump leads — a trump lead can be forced, and the
 mixture already absorbs violators.
 
+### 6. Compact bitboard rollout engine (v2.1 — ~4x faster rollout)
+
+The 44 KB `Game` struct and its linear-scan / array-shift ops
+(`hand_remove_card` is O(hand)+shift; `should_bot_act` loops battles; etc.)
+made each rollout ply ~320 ns, and a rollout runs a full playout for every
+(world × candidate). `cordite_sim.{c,h}` replaces the rollout with a compact
+bitboard engine:
+
+- A `SimState` is ~200 bytes: each player's hand is a `uint64` bitmask over
+  card-ids `id = suit*13 + (value-1)` (0..51), plus precomputed
+  `VALUE_MASK[v]` / `SUIT_MASK[s]` and the trump suit. `hand_remove =
+  h &= ~(1ull<<id)` is O(1); "cards of value v" is `h & VALUE_MASK[v]`;
+  counts/lowest-card are `popcount`/`ctz`. Clone/copy is one `memcpy`.
+- The rollout rules (attack/cover/pass/pickup/good + refill + elimination)
+  and the rollout **policy** are reimplemented directly on the bitboard
+  state — the policy move is *computed* (decision tree over bit masks), no
+  `LegalMoves` list is ever materialized. The effective rollout policy is
+  always **handwritten**: `cd_rollout_for` only returns espresso when the
+  deck is dead **and** 3+ players are in, but espresso defers to handwritten
+  at 3+ in, so its 1v1 path is never reached. Only handwritten is ported.
+- Each sampled determinized **world** is converted to a `SimState` once
+  (`cd_sim_from_game`); each candidate then clones the SimState, applies its
+  move with `cd_sim_apply_root_move`, and plays out on bitboards. The struct
+  path is kept for `CD_NO_FASTROLL` / `CD_LEAF` (the exact leaf solver lives
+  there) / `CD_DIFFTEST`.
+
+**Correctness.** Two difftests (`tests/sim_difftest.c` move-by-move playout
+equivalence; `tests/apply_difftest.c` root-move application) show **zero**
+genuine rule divergences over thousands of games at every player count
+(`np 2..8`). The only differences are benign interchangeable
+equal-value / equal-trumpness card swaps (handwritten breaks ties by hand
+array order, which a bitmask can't preserve; the game value is identical).
+`cnitro_tests` stays 14/14.
+
+**Speed.** Rollout in isolation (`CD_NO_SOLVE`, eval wall-clock) is ~4x
+faster (pc4: 6.74 s → 1.55 s / 200 games; pc2: 8.65 s → 2.25 s). With the
+exact endgame solver on (the solver runs on the struct and is now the
+dominant cost, especially at pc2), the whole-eval speedup at the *old*
+budget is ~2.5x (pc4 14.4 s → 5.7 s / 300 games).
+
+**Spent on strength (the v2.1 budget).** The freed CPU buys ~2x the world
+budget — W1/W2/W3 = 32/56/56 at 2p, 28/56/56 at 3-4p, 40/80/56 at 5-6p,
+40/80/48 at 7-8p (≈2x the v2 numbers below). At this budget cordite is both
+faster than the old slow+1x (pc4 14.3 s → 8.7 s, pc6 26.5 s → 14.7 s per
+300 games) **and** stronger (vs handwritten, 400 games, seeds 910001):
+pc2 87.9% → 88.0%, pc5 24.3% → 24.8%, pc6 21.6% → 22.5%, pc8 11.6% →
+13.2% win rate; mean finish at or below the published 1000-game baseline at
+every player count. Doubling again to 3x was *worse* (pc6 2.873 → 2.962,
+pc8 4.223 → 4.272) — the budget stops at 2x. Knobs: `CD_NO_FASTROLL=1`
+forces the struct rollout; `CD_DIFFTEST=1` runs both engines per rollout and
+reports the divergence rate.
+
 ### Rejected: exact leaf endgames inside rollouts
 
 Solving small 2-player deck-empty endgames exactly *inside rollouts*
@@ -78,6 +130,53 @@ handwritten: 1.150 → 1.240 mean). Modeling the actual imperfect opponent
 (handwritten plays the endgame in the rollout) beats assuming perfect
 play, and beats it at a fraction of the cost. Kept behind `CD_LEAF=1` as a
 negative result worth remembering.
+
+### 6. Direct rollout chooser (faster Monte Carlo, identical play)
+
+The rollout used to call `calculate_legal_moves_lite` (full combination
+enumeration) every ply, then let the policy pick ONE structured move. Since
+the rollout policy is handwritten almost everywhere (deck alive, heads-up, or
+espresso deferring to handwritten at 3+ in — i.e. every case except the
+espresso 1v1 deck-empty endgame), `handwritten_rollout_choose` now computes
+that one move *directly*: the most-non-trump-cards / lowest-value first attack,
+the lowest-summed-score max-cards regular attack (emitting GOOD directly when
+no non-trump attack exists), and the pass-then-greedy-cover-then-pickup
+defender order. It reproduces handwritten's exact tie-breaks **and** draws
+`game_random()` in the same spots (the GOOD branch), so the whole rollout is
+bit-for-bit unchanged. Trump-gated attacks and the espresso 1v1 endgame defer
+to the slow path (the reference). Verified by `CD_DIFFTEST=1` (per-move
+fast-vs-slow comparison: 0 mismatches over ~1000 games at pc 2–8 vs every
+opponent) and by whole-eval bit-identity to `CD_NO_FASTROLL=1`. Throughput
+(cordite vs handwritten, 200 games): **pc2 +10%, pc4 +20%, pc6 +30%** — the win
+grows with player count as enumeration dominates more decisions; `combinations_
+attack` calls fall ~40% and `handwritten_strategy_choose` calls ~68%. A
+transposition table was **not** pursued: rollout states rarely repeat and the
+empty-deck 2-player endgame is already solved exactly — the win is purely
+cutting per-ply enumeration, confirmed by the profile. `CD_NO_FASTROLL=1`
+restores the enumerate-then-pick path for A/B.
+
+The TS port (`cordite_core.ts`) is identical except the regular-attack branch
+defers to the slow path for hands with ≥7 valid cards: the TS enumerator caps
+attacks at `MAX_SOLVE_MOVES` (96) and truncates large hands before the biggest
+combo, which the C enumerator does not. TS throughput gain is smaller (~2–3%)
+because the JS rollout is allocation-bound rather than enumeration-bound; the
+benefit there is more worlds sampled inside the 1.5–1.9 s wall-clock cap.
+
+### Rejected: fool-risk (last-place) objective
+
+cordite ranks candidates by **mean** finishing position. Since the only real
+loss in Durak is finishing last (the fool), a risk-averse objective
+`mean + λ·P(finish == N)` was added (per-candidate fool-rate tracked alongside
+the mean; same cheapest-first tie-break) and A/B'd at λ ∈ {0.1, 0.25, 0.5, 1,
+2} across pc 4/6/8 vs handwritten, espresso, and random (250–400 games each).
+It was **worse or flat on every metric in every config**, and — counter to its
+purpose — often *raised* the actual fool-rate vs strong opponents (pc4 vs
+espresso 400g: λ=0 → mean 2.080/win 35.8%/fool 10.3%; λ=1 → 2.172/32.8%/12.8%).
+The mean objective already weights the fool maximally (it is the worst position,
+N, dominating the average); an extra penalty double-counts it and pushes the bot
+into passive "safe-now" moves that end up worse positioned against the real,
+imperfect opponent. **Not kept** — cordite stays pure-mean. Negative result
+worth remembering.
 
 ## Results
 
@@ -184,11 +283,20 @@ cd cnitro && make
 - `CD_NO_FLOORS` — disable rank-floor inference; `CD_FLOOR_MOD=k` — floors
   in 1/k of worlds (default 2)
 - `CD_NO_AVOID` — disable the loss-avoiding solver pass
-- `CD_LEAF=1` — re-enable exact leaf endgames in rollouts (measured worse)
+- `CD_LEAF=1` — re-enable exact leaf endgames in rollouts (measured worse);
+  also forces the struct rollout path (the leaf solver lives there)
+- `CD_NO_FASTROLL=1` — use the struct rollout instead of the bitboard engine
+- `CD_DIFFTEST=1` — run both rollout engines per call and report the
+  fast-vs-slow divergence rate at exit (keeps the struct result)
 - `CD_W1/CD_W2/CD_W3` — world-count overrides
 - `CD_FULL_LOGS=1` — blackpowder-style full-log worlds (A/B; identical)
 - `CD_NO_EARLYEXIT=1` / `CD_BP_SOLVE=1` — debug A/B switches used while
   isolating the tie-break bug
+- `CD_NO_FASTROLL=1` — disable the direct rollout chooser, reverting to
+  enumerate-then-pick (A/B; bit-identical, just slower)
+- `CD_DIFFTEST=1` — assert the direct rollout chooser matches the slow path on
+  every accepted decision; aborts on divergence (test-only). The TS port uses
+  `globalThis.CD_NO_FASTROLL=true` for the same A/B.
 - `CD_VERIFY=1` — oracle self-check of the belief vs real hands (test-only)
 
 ## Production TS port (cordite + cordite_max)
@@ -209,6 +317,17 @@ Shipped in `supabase/functions/_shared/strategies/`:
 
 Validation: TS cordite vs handwritten pc2 = 1.133 mean / 87% win over 30
 offline games (C benchmark: 1.121 / 87.9%).
+
+**v2.1 (bitboard rollout) and the TS port.** The compact bitboard rollout
+engine (section 6) is a C-only win: it relies on native 64-bit `popcount` /
+`ctz` / bitmask ops. In V8 the equivalent would need `BigInt`, which is
+*slower* than the small-array `SimGame` the TS port already uses, so the
+engine is deliberately **not** ported — the TS rollout stays on its compact
+int-card arrays. The portable win is the **budget**: `CORDITE_PARAMS` in
+`cordite_core.ts` was raised to the v2.1 2x counts (32/56/56 at 2p,
+28/56/56 at 3-4p, 40/80/56|48 at 5-8p). The TS path is wall-clock bounded
+(`maxMillis`), so the larger counts only take effect when time allows and
+the latency cap is unchanged.
 
 **World budgets.** `cordite` uses the C-tuned defaults. `cordite_max` uses
 W1/W2/W3 = 40/80/56 at every player count — the highest tier with a

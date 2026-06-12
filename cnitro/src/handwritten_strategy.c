@@ -83,6 +83,276 @@ static int pick_max_cards_lowest_score(const LegalMoves *moves, int power_suit,
     return best;
 }
 
+// ===================================================================
+// Direct rollout chooser (TASK A)
+// ===================================================================
+//
+// handwritten_rollout_choose produces the *identical* move that
+// handwritten_strategy_choose would pick from calculate_legal_moves_lite,
+// but WITHOUT enumerating the full combination list first. It writes the
+// chosen move into `*out` and returns true, or returns false when the
+// position has no handwritten-policy move (caller falls back to the slow
+// enumerate-then-pick path, which is correct for every case the direct
+// chooser declines).
+//
+// Equivalence is validated by cd_rollout_difftest (see cordite_strategy.c,
+// env CD_DIFFTEST=1): for millions of random rollout states it compares the
+// move type, the card multiset, and (for covers) the attack-card pairing
+// against the slow path and aborts on any divergence.
+
+typedef struct { Card c; int score; int idx; } ScoredCard;
+
+// Stable sort by (score asc, idx asc): selecting the prefix of length k of
+// this order yields both the minimum-sum k-subset AND the lexicographically
+// smallest index tuple among min-sum subsets — exactly what
+// combinations_attack (index-lex order) + pick_max_cards_lowest_score
+// (first strict-min sum) returns.
+static void sc_sort(ScoredCard *a, int n) {
+    for (int i = 1; i < n; i++) {
+        ScoredCard key = a[i];
+        int j = i - 1;
+        while (j >= 0 && (a[j].score > key.score
+                || (a[j].score == key.score && a[j].idx > key.idx))) {
+            a[j + 1] = a[j]; j--;
+        }
+        a[j + 1] = key;
+    }
+}
+
+// Build a MOVE_ATTACK / MOVE_PASS from the k lowest-score non-trump (or any)
+// cards of `pool`, in the order the enumerator would emit them (ascending
+// original index among the chosen set — combinations_attack copies arr in
+// index order, so the chosen prefix is re-sorted by idx).
+static void emit_attack_move(LegalMove *out, int8_t type,
+                             ScoredCard *pool, int npool, int k) {
+    (void)npool;
+    // pool already sorted by (score, idx); the chosen set is the first k.
+    // The enumerator emits cards in original-index order, so re-sort the
+    // chosen k by idx to reproduce the exact card array (multiset identical
+    // regardless, but we match ordering for cleanliness).
+    ScoredCard chosen[MAX_MOVE_CARDS];
+    for (int i = 0; i < k; i++) chosen[i] = pool[i];
+    for (int i = 1; i < k; i++) {
+        ScoredCard key = chosen[i]; int j = i - 1;
+        while (j >= 0 && chosen[j].idx > key.idx) { chosen[j + 1] = chosen[j]; j--; }
+        chosen[j + 1] = key;
+    }
+    out->type = type;
+    out->n_cards = (int8_t)k;
+    for (int i = 0; i < k; i++) out->cards[i] = chosen[i].c;
+}
+
+// Returns true and fills *out with handwritten's chosen lite move; false if
+// it declines (caller uses the slow path).
+bool handwritten_rollout_choose(const Game *g, int bot_idx, LegalMove *out) {
+    if (g->status != GAME_STATUS_PLAYING) return false;
+    const Player *p = &g->players[bot_idx];
+    // Degenerate positions where a move could exceed MAX_MOVE_CARDS slots are
+    // left to the slow path (the enumerator's own handling, buggy or not, is
+    // then the reference; the fast path must never disagree).
+    if (g->num_battles > MAX_MOVE_CARDS) return false;
+    int power = g->power_suit;
+    bool is_def = (bot_idx == g->defender);
+    bool is_first_attacker = (bot_idx == g->first_attacker);
+    bool first_attack = (g->num_battles == 0);
+
+    int defender_cards = g->players[g->defender].hand_count;
+    int uncovered = 0;
+    for (int i = 0; i < g->num_battles; i++)
+        if (!g->table_battles[i].has_defense) uncovered++;
+
+    // ---------- Attacker: first attack ----------------------------------
+    if (first_attack && is_first_attacker) {
+        // Non-trump first attack: among values, most non-trump cards (capped
+        // by defender_cards), ties -> lowest value. Move = those cards.
+        // Trump-only attacks considered only if no non-trump attack legal.
+        int best_v_nt = -1, best_k_nt = 0;
+        int best_v_tr = -1, best_k_tr = 0;
+        // Walk values in first-seen hand order to match enumerator value order
+        // for tie handling (lowest value wins anyway, so value order suffices).
+        for (int v = 0; v <= ACE_VALUE; v++) {
+            int nt = 0, tr = 0;
+            for (int i = 0; i < p->hand_count; i++) {
+                if (p->hand[i].value != v) continue;
+                if (p->hand[i].suit == power) tr++; else nt++;
+            }
+            if (nt > 0) {
+                int k = nt; if (k > defender_cards) k = defender_cards;
+                if (k >= 1) {
+                    // most cards, ties -> lowest value (v ascending, so first
+                    // strictly-greater-k wins; equal-k keeps the lower v).
+                    if (k > best_k_nt) { best_k_nt = k; best_v_nt = v; }
+                }
+            }
+            // A trump-only attack of this value: all cards same value are
+            // trump (tr>0 && nt==0). Mixed values can't form one move here.
+            if (tr > 0 && nt == 0) {
+                int k = tr; if (k > defender_cards) k = defender_cards;
+                if (k >= 1 && k > best_k_tr) { best_k_tr = k; best_v_tr = v; }
+            }
+        }
+        if (best_v_nt >= 0) {
+            ScoredCard pool[MAX_HAND_SIZE]; int np = 0;
+            for (int i = 0; i < p->hand_count; i++) {
+                if (p->hand[i].value == best_v_nt && p->hand[i].suit != power)
+                    pool[np++] = (ScoredCard){ p->hand[i], card_score(p->hand[i], power), i };
+            }
+            if (best_k_nt > MAX_MOVE_CARDS) return false;
+            sc_sort(pool, np);
+            emit_attack_move(out, MOVE_ATTACK, pool, np, best_k_nt);
+            return true;
+        }
+        if (best_v_tr >= 0) {
+            // Trump attack gated by probability; on decline handwritten falls
+            // through to GOOD/forced fallbacks. There is no GOOD for a first
+            // attacker, and the forced fallback re-picks an attack. Defer to
+            // the slow path for this rare RNG-gated branch to stay exact.
+            return false;
+        }
+        // No attack at all (e.g. defender_cards == 0): slow path.
+        return false;
+    }
+
+    // ---------- Defender ------------------------------------------------
+    if (is_def && g->num_battles > 0) {
+        // Handwritten covers ONLY when it can fully cover all uncovered
+        // attacks (else pickup). The lite enumerator's greedy cover is the
+        // lowest-score full cover; handwritten then picks the lowest-PRODUCT
+        // full cover. With lite producing exactly ONE cover move, the policy
+        // either takes that single cover or picks up. We must replicate the
+        // greedy cover (calc_cover_moves_greedy) and the full-cover test.
+        Card uc[MAX_BATTLES];
+        for (int i = 0, j = 0; i < g->num_battles; i++)
+            if (!g->table_battles[i].has_defense) uc[j++] = g->table_battles[i].attack;
+
+        // Pass branch takes priority in handwritten only AFTER attacks; for a
+        // defender there are no attack moves, so order is: (lite) cover move
+        // exists -> but handwritten evaluates PASS before COVER. Replicate the
+        // exact handwritten order: pass first (if any), then cover-if-full,
+        // then pickup.
+        // --- pass moves ---
+        bool any_cov = (uncovered != g->num_battles);
+        if (!any_cov && g->num_battles > 0) {
+            int v0 = g->table_battles[0].attack.value;
+            bool same = true;
+            for (int i = 1; i < g->num_battles; i++)
+                if (g->table_battles[i].attack.value != v0) { same = false; break; }
+            if (same) {
+                ScoredCard pool[MAX_HAND_SIZE]; int np = 0;
+                for (int i = 0; i < p->hand_count; i++)
+                    if (p->hand[i].value == v0)
+                        pool[np++] = (ScoredCard){ p->hand[i], card_score(p->hand[i], power), i };
+                if (np > 0) {
+                    int next = get_next_player_index(g, g->defender);
+                    int next_cards = g->players[next].hand_count;
+                    // pass legal for size k iff next_cards >= k + num_battles.
+                    // handwritten picks lowest summed score among ALL legal
+                    // pass moves (any size). Min sum -> smallest single card
+                    // (k=1) when legal, since adding cards only increases sum.
+                    sc_sort(pool, np);
+                    // Find the smallest k>=1 with a legal pass; min-sum is the
+                    // k smallest cards. Smallest sum overall is k=1 if legal.
+                    int kmin = -1;
+                    for (int k = 1; k <= np; k++) {
+                        if (next_cards >= k + g->num_battles) { kmin = k; break; }
+                    }
+                    if (kmin >= 1) {
+                        if (kmin > MAX_MOVE_CARDS) return false;
+                        // Among all legal sizes, min summed score is the
+                        // smallest legal k (each extra card adds >=0). Equal
+                        // only if extra cards score 0 (impossible: value>=1).
+                        emit_attack_move(out, MOVE_PASS, pool, np, kmin);
+                        return true;
+                    }
+                }
+            }
+        }
+
+        // --- cover-if-full (greedy lowest-score full cover) ---
+        bool used[MAX_HAND_SIZE] = { false };
+        Card covers[MAX_BATTLES];
+        bool full = true;
+        for (int i = 0; i < uncovered; i++) {
+            int best = -1, best_score = INT32_MAX;
+            for (int j = 0; j < p->hand_count; j++) {
+                if (used[j]) continue;
+                if (can_cover(uc[i], p->hand[j], power)) {
+                    int s = card_score(p->hand[j], power);
+                    if (s < best_score) { best_score = s; best = j; }
+                }
+            }
+            if (best < 0) { full = false; break; }
+            used[best] = true;
+            covers[i] = p->hand[best];
+        }
+        if (full) {
+            out->type = MOVE_COVER;
+            out->n_cards = (int8_t)uncovered;
+            for (int i = 0; i < uncovered; i++) {
+                out->cards[i] = covers[i];
+                out->attack_cards[i] = uc[i];
+            }
+            return true;
+        }
+        // Can't fully cover -> pickup (only if not all covered, which holds).
+        if (uncovered > 0) {
+            out->type = MOVE_PICKUP;
+            out->n_cards = 0;
+            return true;
+        }
+        return false;
+    }
+
+    // ---------- Attacker: regular (additional) attack -------------------
+    if (!is_def && g->num_battles > 0) {
+        bool said_good = (g->good_players_mask & (1u << bot_idx)) != 0;
+        if (said_good) return false;  // no moves; slow path returns -1 anyway
+        // valid = hand cards whose value is on the table.
+        bool table_values[16] = { false };
+        for (int i = 0; i < g->num_battles; i++) {
+            table_values[g->table_battles[i].attack.value] = true;
+            if (g->table_battles[i].has_defense)
+                table_values[g->table_battles[i].defense.value] = true;
+        }
+        int cap = defender_cards - uncovered;   // max k via emit_attack guard
+        // Non-trump valid cards.
+        ScoredCard nt[MAX_HAND_SIZE]; int n_nt = 0;
+        int n_tr = 0;   // only the count matters: trump attacks are deferred
+        for (int i = 0; i < p->hand_count; i++) {
+            if (!table_values[p->hand[i].value]) continue;
+            if (p->hand[i].suit == power) n_tr++;
+            else nt[n_nt++] = (ScoredCard){ p->hand[i], card_score(p->hand[i], power), i };
+        }
+        if (n_nt > 0 && cap >= 1) {
+            int k = n_nt; if (k > cap) k = cap;
+            if (k > MAX_MOVE_CARDS) return false;
+            sc_sort(nt, n_nt);
+            emit_attack_move(out, MOVE_ATTACK, nt, n_nt, k);
+            return true;
+        }
+        // No legal non-trump attack. If there is also no legal trump attack,
+        // handwritten falls straight through to GOOD (the only other legal
+        // move for an additional attacker) — the overwhelmingly common case
+        // (an attacker usually can't add cards). Emit GOOD directly.
+        bool have_trump_attack = (n_tr > 0 && cap >= 1);
+        if (!have_trump_attack) {
+            // handwritten reaches GOOD via its `n_goods>0` branch, which draws
+            // one game_random() to index among GOOD moves (always exactly one
+            // GOOD here). Consume the identical draw so the rollout RNG stream
+            // stays bit-identical to the enumerate-then-pick path.
+            (void)game_random();
+            out->type = MOVE_GOOD;
+            out->n_cards = 0;
+            return true;
+        }
+        // A trump attack exists: handwritten RNG-gates it (and on decline
+        // emits GOOD). Defer this rarer branch to the slow path to stay exact.
+        return false;
+    }
+
+    return false;
+}
+
 int handwritten_strategy_choose(const Game *g, int bot_idx,
                                 const LegalMoves *moves, void *ctx) {
     (void)bot_idx; (void)ctx;
