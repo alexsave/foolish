@@ -80,6 +80,7 @@ static _Thread_local int cd_no_fastroll = 0;   // CD_NO_FASTROLL=1: struct rollo
 static _Thread_local int cd_difftest = 0;      // CD_DIFFTEST=1: assert fast==slow
 static _Thread_local int cd_w1_override = 0, cd_w2_override = 0;
 static _Thread_local int cd_w3_override = -1;
+static _Thread_local int cd_old_budget = 0;    // cordite_old variant: pre-2x worlds
 // Bitboard endgame-solver node budgets (per shared pass). The bitboard solver
 // (transposition table + O(1) clone) resolves far more per node than the
 // struct solver, so it needs a much smaller node budget to do equivalent work
@@ -880,6 +881,16 @@ static void cd_params(int num_players, int *W1, int *W2, int *W3) {
     else if (num_players <= 4) { *W1 = 28; *W2 = 56; *W3 = 56; }
     else if (num_players <= 6) { *W1 = 40; *W2 = 80; *W3 = 56; }
     else                       { *W1 = 40; *W2 = 80; *W3 = 48; }
+    // cordite_old: the pre-change 1x budget (half the above). The only
+    // strength-affecting change was doubling the budget — the rollout/solver
+    // rewrites are exact — so this gives a faithful "cordite before the changes"
+    // to play head-to-head against. Research-only.
+    if (cd_old_budget) {
+        if (num_players <= 2)      { *W1 = 16; *W2 = 28; *W3 = 28; }
+        else if (num_players <= 4) { *W1 = 14; *W2 = 28; *W3 = 28; }
+        else if (num_players <= 6) { *W1 = 20; *W2 = 40; *W3 = 28; }
+        else                       { *W1 = 20; *W2 = 40; *W3 = 24; }
+    }
     if (cd_w1_override > 0) *W1 = cd_w1_override;
     if (cd_w2_override > 0) *W2 = cd_w2_override;
     if (cd_w3_override >= 0) *W3 = cd_w3_override;
@@ -1095,4 +1106,14 @@ int cordite_strategy_choose(const Game *g, int bot_idx,
 
     game_rng_set(saved_rng);
     return best >= 0 ? C.idx[best] : 0;
+}
+
+// "cordite before the changes": same engine (fast + exact) but the pre-2x world
+// budget, so head-to-head eval isolates whether the budget change actually wins.
+int cordite_old_strategy_choose(const Game *g, int bot_idx,
+                                const LegalMoves *moves, void *ctx) {
+    cd_old_budget = 1;
+    int r = cordite_strategy_choose(g, bot_idx, moves, ctx);
+    cd_old_budget = 0;
+    return r;
 }
