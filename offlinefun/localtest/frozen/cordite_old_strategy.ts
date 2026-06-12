@@ -1,6 +1,7 @@
 // OFFLINE-ONLY. A frozen snapshot of cordite "before the changes" — the
 // pre-speedup/pre-budget core (cordite_core_old.ts, copied verbatim from the
-// production core at commit bdd07f2). Used purely to play the NEW cordite
+// deployed production core on origin/main: worlds [16,28,28], maxMillis 1500).
+// Used purely to play the NEW cordite
 // head-to-head against the OLD one in TS. Not wired into the production
 // strategy registry; registered on demand by the h2h harness.
 

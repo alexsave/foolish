@@ -20,13 +20,6 @@
 
 export const NONE = -1;
 const ACE = 13;
-
-// Test-only A/B switch (offline harness): set globalThis.CD_NO_FASTROLL=true to
-// disable the direct rollout chooser and fall back to enumerate-then-pick. The
-// two paths are behavior-identical; this exists only to validate that. Read
-// per-call (not cached) so a harness can flip it between runs.
-const noFastroll = (): boolean =>
-    typeof globalThis !== 'undefined' && (globalThis as { CD_NO_FASTROLL?: boolean }).CD_NO_FASTROLL === true;
 const CARDS_PER_PLAYER = 6;
 
 export const mkCard = (suit: number, value: number): number => (suit << 4) | value;
@@ -697,146 +690,6 @@ const handwrittenChoose = (g: SimGame, _pIdx: number, moves: SimMove[]): number 
     return idx;
 };
 
-// ---------- direct rollout chooser (TASK A) -------------------------------
-// handwrittenRolloutChoose produces the *identical* move that
-// handwrittenChoose would pick from calcLegal(g, pi, lite=true), but WITHOUT
-// enumerating the full combination list first. Returns the chosen SimMove, or
-// null to defer to the slow enumerate-then-pick path (the reference for the
-// branches it declines: trump-only/RNG-gated attacks and the espresso 1v1
-// endgame). It consumes rngNext() exactly where handwritten does (the GOOD
-// branch draws one), so the whole rollout RNG stream is unchanged.
-// Ported from handwritten_rollout_choose in handwritten_strategy.c.
-const handwrittenRolloutChoose = (g: SimGame, pIdx: number): SimMove | null => {
-    if (g.over) return null;
-    const hand = g.hands[pIdx];
-    const power = g.powerSuit;
-    const isDef = pIdx === g.defender;
-    const firstAttack = g.battlesA.length === 0;
-    const defenderCards = g.hands[g.defender].length;
-    let uncovered = 0;
-    for (let i = 0; i < g.battlesD.length; i++) if (g.battlesD[i] === NONE) uncovered++;
-
-    // The k lowest-score cards of `pool` (by score, ties by hand index), then
-    // re-sorted by hand index — reproduces combinations() index-lex order +
-    // pickMaxCardsLowestScore (first strict-min sum). Returns the card list.
-    const lowestK = (pool: { c: number, score: number, idx: number }[], k: number): number[] => {
-        pool.sort((a, b) => a.score - b.score || a.idx - b.idx);
-        const chosen = pool.slice(0, k);
-        chosen.sort((a, b) => a.idx - b.idx);
-        return chosen.map(x => x.c);
-    };
-
-    // ---- Attacker: first attack ----
-    if (firstAttack && pIdx === g.firstAttacker) {
-        let bestVnt = -1, bestKnt = 0;
-        for (let v = 0; v <= 13; v++) {
-            let nt = 0;
-            for (const c of hand) if ((c & 15) === v && (c >> 4) !== power) nt++;
-            if (nt > 0) {
-                let k = nt; if (k > defenderCards) k = defenderCards;
-                if (k >= 1 && k > bestKnt) { bestKnt = k; bestVnt = v; }
-            }
-        }
-        if (bestVnt >= 0) {
-            const pool = hand
-                .map((c, i) => ({ c, score: cardScore(c, power), idx: i }))
-                .filter(x => (x.c & 15) === bestVnt && (x.c >> 4) !== power);
-            return { type: MOVE_ATTACK, cards: lowestK(pool, bestKnt), attackCards: [] };
-        }
-        // Trump-only first attack is RNG-gated by handwritten — defer.
-        return null;
-    }
-
-    // ---- Defender ----
-    if (isDef && g.battlesA.length > 0) {
-        // Pass branch first (handwritten evaluates PASS before COVER).
-        let anyCov = false;
-        for (let i = 0; i < g.battlesD.length; i++) if (g.battlesD[i] !== NONE) anyCov = true;
-        if (!anyCov) {
-            const v0 = g.battlesA[0] & 15;
-            let same = true;
-            for (let i = 1; i < g.battlesA.length; i++) if ((g.battlesA[i] & 15) !== v0) same = false;
-            if (same) {
-                const pool = hand
-                    .map((c, i) => ({ c, score: cardScore(c, power), idx: i }))
-                    .filter(x => (x.c & 15) === v0);
-                if (pool.length > 0) {
-                    const nextCards = g.hands[nextPlayer(g, g.defender)].length;
-                    // Smallest legal k is k=1 if legal (legality tightens with k);
-                    // min summed score = the single lowest matching card.
-                    if (nextCards >= 1 + g.battlesA.length) {
-                        return { type: MOVE_PASS, cards: lowestK(pool, 1), attackCards: [] };
-                    }
-                }
-            }
-        }
-        // Greedy lowest-score full cover (matches calcCoverGreedy).
-        const unc: number[] = [];
-        for (let i = 0; i < g.battlesA.length; i++) if (g.battlesD[i] === NONE) unc.push(g.battlesA[i]);
-        const used = new Set<number>();
-        const covers: number[] = [];
-        let full = true;
-        for (const a of unc) {
-            let best = NONE, bestScore = Infinity;
-            for (const c of hand) {
-                if (used.has(c)) continue;
-                if (canCoverInt(a, c, power)) {
-                    const s = cardScore(c, power);
-                    if (s < bestScore) { bestScore = s; best = c; }
-                }
-            }
-            if (best === NONE) { full = false; break; }
-            used.add(best);
-            covers.push(best);
-        }
-        if (full) return { type: MOVE_COVER, cards: covers, attackCards: unc };
-        return { type: MOVE_PICKUP, cards: [], attackCards: [] };
-    }
-
-    // ---- Attacker: regular (additional) attack ----
-    if (!isDef && g.battlesA.length > 0) {
-        if (g.goodMask & (1 << pIdx)) return null;  // no moves; slow path -1
-        const tv = new Set<number>();
-        for (let i = 0; i < g.battlesA.length; i++) {
-            tv.add(g.battlesA[i] & 15);
-            if (g.battlesD[i] !== NONE) tv.add(g.battlesD[i] & 15);
-        }
-        const cap = defenderCards - uncovered;
-        // The slow regular-attack enumeration is capped at MAX_SOLVE_MOVES (96):
-        // with >=7 valid cards it can produce >96 combos and TRUNCATE before the
-        // largest, so handwritten may not see the true max-cards combo. Defer to
-        // the slow path whenever truncation is possible (2^n-1 > 96, i.e. n>=7)
-        // to stay behavior-identical. With <=6 valid cards (<=63 combos) the
-        // enumeration never truncates and the direct max-combo is exact.
-        let nValid = 0;
-        for (const c of hand) if (tv.has(c & 15)) nValid++;
-        if (nValid >= 7) return null;
-        const nt: { c: number, score: number, idx: number }[] = [];
-        let nTr = 0;
-        for (let i = 0; i < hand.length; i++) {
-            const c = hand[i];
-            if (!tv.has(c & 15)) continue;
-            if ((c >> 4) === power) nTr++;
-            else nt.push({ c, score: cardScore(c, power), idx: i });
-        }
-        if (nt.length > 0 && cap >= 1) {
-            let k = nt.length; if (k > cap) k = cap;
-            return { type: MOVE_ATTACK, cards: lowestK(nt, k), attackCards: [] };
-        }
-        // No legal non-trump attack. If no legal trump attack either, handwritten
-        // falls straight through to GOOD (drawing one rngNext() to index among
-        // GOOD moves — always exactly one here). Consume the identical draw.
-        const haveTrumpAttack = nTr > 0 && cap >= 1;
-        if (!haveTrumpAttack) {
-            rngNext();
-            return { type: MOVE_GOOD, cards: [], attackCards: [] };
-        }
-        return null;  // trump attack exists: RNG-gated, defer to slow path.
-    }
-
-    return null;
-};
-
 // ---------- rollout policy: espresso (port of espresso_strategy.c) --------
 // Inside a sampled world, espresso's hand-reading is our own guess, not real
 // hidden state — same legitimacy argument as the C bots. Used only for
@@ -1184,22 +1037,8 @@ const simulate = (g: SimGame, myIdx: number, maxTurns: number): number => {
             break;
         }
         let acted = false;
-        // The rollout policy resolves to pure handwritten everywhere EXCEPT the
-        // espresso 1v1 endgame (deck dead AND exactly 2 players in). The direct
-        // chooser (TASK A) skips per-ply combination enumeration in that common
-        // case; it defers (returns null) on the trump-gated / espresso-1v1
-        // branches, which fall through to the slow enumerate-then-pick path.
-        const deckActive = g.deck.length > 0 || g.flipped !== NONE;
-        const useHw = (deckActive || inCount(g) !== 2) && !noFastroll();
         for (let pi = 0; pi < g.numPlayers; pi++) {
             if (!shouldAct(g, pi)) continue;
-            if (useHw) {
-                const fm = handwrittenRolloutChoose(g, pi);
-                if (fm !== null) {
-                    if (applyMove(g, pi, fm)) { acted = true; break; }
-                    // unexpectedly illegal: fall through to slow path.
-                }
-            }
             const moves = calcLegal(g, pi, true);
             if (moves.length === 0) continue;
             const policy = rolloutPolicyFor(g);
@@ -1530,34 +1369,7 @@ const SOLVE_BUDGET = 200000;
 const AVOID_BUDGET = 150000;
 const SOLVE_MAX_CARDS = 20;
 
-// Transposition table for the endgame solver. These 2-player deck-empty
-// endgames transpose heavily (move orderings converge to the same position),
-// so memoizing resolved subtrees is a large win — and on the latency-bounded
-// TS path a faster solve frees wall-clock for more world sampling. Mirrors the
-// C bitboard solver's TT: store EXACT values only (a fail-soft alpha-beta
-// result is the true game value only when it lands strictly inside the
-// original window — otherwise it is a bound and must not be memoized), and the
-// stored value is depth-relative so it re-bases when the same position is
-// reached at a different depth. Keyed on the value-relevant state (both hands,
-// table, roles) as a string fingerprint (exact — no hash collisions).
-interface Solver { budget: number; aborted: boolean; me: number; tt: Map<string, number>; }
-
-const ttFingerprint = (g: SimGame): string => {
-    let s = "";
-    for (let p = 0; p < g.numPlayers; p++) {
-        if (g.pStatus[p] !== ST_IN) continue;
-        const h = g.hands[p].slice().sort((a, b) => a - b);
-        s += p + ":" + h.join(",") + "|";
-    }
-    s += "B";
-    for (let i = 0; i < g.battlesA.length; i++) s += g.battlesA[i] + "." + g.battlesD[i] + ";";
-    s += "d" + g.defender + "f" + g.firstAttacker + "g" + g.goodMask;
-    return s;
-};
-
-// Pack a depth-relative value + depth into one number (value*256 + depth) so a
-// single Map<string,number> suffices. value in [-1000,1000], depth in [0,255].
-const ttEncode = (value: number, depth: number): number => value * 256 + depth;
+interface Solver { budget: number; aborted: boolean; me: number; }
 
 const solve = (S: Solver, g: SimGame, alpha: number, beta: number, depth: number): number => {
     const loser = gameDone(g);
@@ -1573,21 +1385,10 @@ const solve = (S: Solver, g: SimGame, alpha: number, beta: number, depth: number
     }
     if (actor < 0) return 0;
 
-    const key = ttFingerprint(g);
-    const hit = S.tt.get(key);
-    if (hit !== undefined) {
-        let v = Math.trunc(hit / 256);
-        const sd = hit - v * 256;   // stored depth
-        if (v > 0) v = v - (1000 - sd) + (1000 - depth);
-        else if (v < 0) v = v + (1000 - sd) - (1000 - depth);
-        return v;
-    }
-
     const mv = calcLegal(g, actor, false);
     if (mv.length === 0) return 0;
     if (mv.length > MAX_SOLVE_MOVES) { S.aborted = true; return 0; }
 
-    const alpha0 = alpha, beta0 = beta;
     const maximizing = actor === S.me;
     let best = maximizing ? -2000 : 2000;
     for (const m of mv) {
@@ -1605,10 +1406,6 @@ const solve = (S: Solver, g: SimGame, alpha: number, beta: number, depth: number
         if (alpha >= beta) break;
     }
     if (best === -2000 || best === 2000) return 0;
-    // Memoize EXACT values only (strictly inside the original window).
-    if (best > alpha0 && best < beta0 && depth <= 255) {
-        S.tt.set(key, ttEncode(best, depth));
-    }
     return best;
 };
 
@@ -1634,7 +1431,7 @@ const tryEndgameSolve = (pv: PublicView, B: Belief, candidates: SimMove[],
     const root = sampleWorld(pv, B, 1, false, false);
     // sampleWorld already deals pool → opp unknown slots (deckCount = 0).
 
-    const S: Solver = { budget: SOLVE_BUDGET, aborted: false, me: pv.myIdx, tt: new Map() };
+    const S: Solver = { budget: SOLVE_BUDGET, aborted: false, me: pv.myIdx };
 
     let bestIdx = -1, bestV = 0, alpha = 0;
     let anyAbort = false;
@@ -1733,14 +1530,8 @@ export interface CorditeParams {
     maxMillis: number;
 }
 
-// v2.1 budget: ~2x the original world counts. In C (with the compact bitboard
-// rollout) this 2x budget was measured both faster than the old slow+1x AND
-// stronger at every player count vs handwritten (pc8 win 11.6% -> 13.2%);
-// doubling again to 3x regressed, so it stops at 2x. The TS engine is still
-// wall-clock bounded by maxMillis, so the larger counts only take effect when
-// time allows; the cap guarantees latency is unchanged.
 export const CORDITE_PARAMS: CorditeParams = {
-    worldsFor: (n) => n <= 2 ? [32, 56, 56] : n <= 4 ? [28, 56, 56] : [40, 80, n <= 6 ? 56 : 48],
+    worldsFor: (n) => n <= 2 ? [16, 28, 28] : n <= 4 ? [14, 28, 28] : [20, 40, n <= 6 ? 28 : 24],
     maxMillis: 1500,
 };
 
