@@ -1339,6 +1339,383 @@ const espressoChoose = (g: SimGame, pIdx: number, moves: SimMove[]): number => {
     return idx;
 };
 
+// ---------- archetype rollout policies (fulminate opponent modeling) -------
+// These sim-level choosers mirror the real BOT_STRATEGIES used as opponent
+// archetypes (random_strategy.ts, simple_heuristic_strategy.ts) plus a crude
+// "greedy/dumb" attacker. They are used by fulminate to (a) PROFILE an
+// opponent seat against archetypes from the public log, and (b) drive that
+// seat's rollout play with the best-fit archetype. They operate on the same
+// (SimGame, pIdx, SimMove[]) signature as handwrittenChoose/espressoChoose so
+// they slot directly into the rollout dispatch. cordite itself never calls
+// these (its rolloutPolicyFor only returns handwritten/espresso); they are
+// inert unless a per-seat policy table is installed (setSeatPolicy).
+
+// PolicyId — stable integer ids for the archetype rollout policies. Order is
+// load-bearing: profiling reports the best-fit id and the rollout dispatch
+// indexes ARCH_POLICIES by it.
+export const POL_HANDWRITTEN = 0, POL_ESPRESSO = 1, POL_RANDOM = 2,
+    POL_SIMPLE = 3, POL_GREEDY = 4;
+export const NUM_POLICIES = 5;
+
+// random_strategy.ts: pick a uniformly random legal move. Consumes exactly one
+// rngNext() (keeps the rollout RNG stream well-defined).
+const randomChoose = (_g: SimGame, _pIdx: number, moves: SimMove[]): number => {
+    if (moves.length === 0) return -1;
+    let idx = Math.floor(rngNext() * moves.length);
+    if (idx < 0) idx = 0;
+    if (idx >= moves.length) idx = moves.length - 1;
+    return idx;
+};
+
+// simple_heuristic_strategy.ts: attack/pass/cover with lowest-cost cards
+// (non-trump preferred), strategic give-up (pickup) when overwhelmed. A
+// behavior-faithful sim port: attack pref = value (+20 if trump); defense pref
+// = value (+10 if trump); pass pref = value (+20 if trump); give-up when not
+// every uncovered attack is defendable or trumps-needed > trumpCount/2.
+const shScore = (m: SimMove, power: number, trumpPenalty: number): number => {
+    let s = 0;
+    for (const c of m.cards) s += (c & 15) + ((c >> 4) === power ? trumpPenalty : 0);
+    return s;
+};
+// shouldGiveUp mirror (simple_heuristic_strategy.shouldGiveUp), on sim state.
+const shGiveUp = (g: SimGame, pIdx: number): boolean => {
+    const hand = g.hands[pIdx];
+    const power = g.powerSuit;
+    const unc: number[] = [];
+    for (let i = 0; i < g.battlesA.length; i++) if (g.battlesD[i] === NONE) unc.push(g.battlesA[i]);
+    if (unc.length === 0) return false;
+    let defendable = 0, trumpsNeeded = 0;
+    for (const a of unc) {
+        const as = a >> 4, av = a & 15;
+        let same = false;
+        for (const c of hand) if ((c >> 4) === as && (c & 15) > av) { same = true; break; }
+        if (same) { defendable++; continue; }
+        let trump = false;
+        for (const c of hand) if ((c >> 4) === power && canCoverInt(a, c, power)) { trump = true; break; }
+        if (trump) { defendable++; trumpsNeeded++; }
+    }
+    if (defendable < unc.length) return true;
+    let trumpCount = 0;
+    for (const c of hand) if ((c >> 4) === power) trumpCount++;
+    if (trumpsNeeded > trumpCount / 2) return true;
+    let attSum = 0; for (const a of unc) attSum += a & 15;
+    let handSum = 0; for (const c of hand) handSum += c & 15;
+    const avgAtt = attSum / unc.length, avgHand = hand.length ? handSum / hand.length : 0;
+    return avgAtt > avgHand + 2 && unc.length >= 3;
+};
+const simpleHeuristicChoose = (g: SimGame, pIdx: number, moves: SimMove[]): number => {
+    if (moves.length === 0) return -1;
+    const power = g.powerSuit;
+    const isDef = pIdx === g.defender;
+    let attackBest = -1, attackScore = Infinity;
+    let coverBest = -1, coverScore = Infinity;
+    let passBest = -1, passScore = Infinity;
+    let goodIdx = -1, pickupIdx = -1;
+    for (let i = 0; i < moves.length; i++) {
+        const m = moves[i];
+        switch (m.type) {
+            case MOVE_ATTACK: {
+                const s = shScore(m, power, 20);
+                if (s < attackScore) { attackScore = s; attackBest = i; }
+                break;
+            }
+            case MOVE_COVER: {
+                const s = shScore(m, power, 10);
+                if (s < coverScore) { coverScore = s; coverBest = i; }
+                break;
+            }
+            case MOVE_PASS: {
+                const s = shScore(m, power, 20);
+                if (s < passScore) { passScore = s; passBest = i; }
+                break;
+            }
+            case MOVE_GOOD: goodIdx = i; break;
+            case MOVE_PICKUP: pickupIdx = i; break;
+        }
+    }
+    const isAttacker = pIdx === g.firstAttacker || !isDef;
+    if (attackBest >= 0 && isAttacker) return attackBest;
+    if (coverBest >= 0 && isDef) {
+        if (pickupIdx >= 0 && shGiveUp(g, pIdx)) return pickupIdx;
+        return coverBest;
+    }
+    if (passBest >= 0) return passBest;
+    if (goodIdx >= 0) return goodIdx;
+    if (pickupIdx >= 0) return pickupIdx;
+    return attackBest >= 0 ? attackBest : 0;
+};
+
+// "Dumb greedy" archetype: a weak, exploitable player. Always defends if it
+// can (never strategic pickup), dumps trumps freely on attack, covers with the
+// HIGHEST card it has (wasteful). Models the kind of opponent fulminate should
+// exploit harder. Distinct from random (deterministic-ish) and handwritten (it
+// makes systematically bad disposal choices).
+const greedyChoose = (g: SimGame, _pIdx: number, moves: SimMove[]): number => {
+    if (moves.length === 0) return -1;
+    const power = g.powerSuit;
+    let attackBest = -1, attackKey = -Infinity;   // most cards, then HIGH score (wasteful)
+    let coverBest = -1, coverKey = -Infinity;      // cover with highest cards
+    let passBest = -1, goodIdx = -1, pickupIdx = -1;
+    for (let i = 0; i < moves.length; i++) {
+        const m = moves[i];
+        switch (m.type) {
+            case MOVE_ATTACK: {
+                let s = 0; for (const c of m.cards) s += cardScore(c, power);
+                const key = m.cards.length * 1000 + s;
+                if (key > attackKey) { attackKey = key; attackBest = i; }
+                break;
+            }
+            case MOVE_COVER: {
+                let s = 0; for (const c of m.cards) s += cardScore(c, power);
+                if (s > coverKey) { coverKey = s; coverBest = i; }
+                break;
+            }
+            case MOVE_PASS: if (passBest < 0) passBest = i; break;
+            case MOVE_GOOD: goodIdx = i; break;
+            case MOVE_PICKUP: pickupIdx = i; break;
+        }
+    }
+    if (attackBest >= 0) return attackBest;   // greedy: always pile on if able
+    if (coverBest >= 0) return coverBest;      // always defend, wastefully
+    if (passBest >= 0) return passBest;
+    if (goodIdx >= 0) return goodIdx;
+    if (pickupIdx >= 0) return pickupIdx;
+    return 0;
+};
+
+// Dispatch table: ARCH_POLICIES[policyId] -> chooser. Index with POL_*.
+export type SimPolicy = (g: SimGame, p: number, m: SimMove[]) => number;
+export const ARCH_POLICIES: SimPolicy[] = [
+    handwrittenChoose, espressoChoose, randomChoose, simpleHeuristicChoose, greedyChoose,
+];
+
+// Per-seat rollout policy override (fulminate). When null (default), simulate()
+// runs cordite's exact global dispatch (bit-for-bit identical). When set, it is
+// a length-numPlayers array of PolicyId; seat p plays with ARCH_POLICIES[p].
+// Hero / unprofiled seats are given POL_HANDWRITTEN by the installer so they
+// fall back to the strong default. Module-level + set/cleared around a single
+// corditeChoose call (deliberation is synchronous, so no re-entrancy).
+let seatPolicy: number[] | null = null;
+export const setSeatPolicy = (p: number[] | null): void => { seatPolicy = p; };
+
+// ---------- opponent profiling (fulminate) --------------------------------
+// Walk the public move log, replay the public table state, and for each
+// opponent decision score how well each archetype {handwritten, espresso,
+// random, simple, greedy} explains the move actually played. The output is a
+// per-seat best-fit PolicyId used to skew that seat's rollout play.
+//
+// Hidden-hand caveat: we do NOT know an opponent's hidden hand at a past
+// decision, so we cannot replay each archetype's exact chooser. Instead we use
+// HAND-FREE discriminating FEATURES that each archetype emits with a known
+// rate (trump leads while deck alive, wasteful trump covers, strategic pickup
+// vs defend, max-card pile-ons, random "good"). Each observed feature adds a
+// per-archetype log-likelihood weight. A handwritten-favouring prior means few
+// logs => handwritten default (matches cordite); the profile sharpens as the
+// seat reveals more moves. NEGATIVE inference (declined-to-cover => likely
+// lacks a cover) is captured by the pickup/defend feature and also fed to the
+// belief via the existing void machinery in buildBelief.
+
+export interface SeatProfile {
+    policy: number;          // best-fit PolicyId
+    confidence: number;      // posterior weight of the winner (0..1)
+    decisions: number;       // # of this seat's decisions scored
+    ll: number[];            // per-archetype accumulated log-likelihood
+}
+
+// Per-archetype prior log-weight. Handwritten/espresso are the strong defaults;
+// keep their prior high so a seat must EARN a weak label. random/simple/greedy
+// start lower (we only commit to "weak" with evidence).
+const PROFILE_PRIOR = [2.2, 1.4, 0.3, 0.6, 0.5];   // indexed by POL_*
+
+// Emit feature -> per-archetype likelihood increments. `w[k]` is added to
+// ll[k] for k in POL_*. Values are log-likelihood-ish weights (hand-tuned).
+const addFeature = (ll: number[], w: number[]): void => {
+    for (let k = 0; k < NUM_POLICIES; k++) ll[k] += w[k];
+};
+
+// Replay the public table to profile every non-hero IN seat. Cheap: one linear
+// pass over pv.logs with small per-event work (no MC, no rollouts).
+export const profileSeats = (pv: PublicView): SeatProfile[] => {
+    const n = pv.numPlayers;
+    const power = pv.powerSuit;
+    const profiles: SeatProfile[] = [];
+    for (let p = 0; p < n; p++) {
+        profiles.push({ policy: POL_HANDWRITTEN, confidence: 0, decisions: 0,
+            ll: PROFILE_PRIOR.slice() });
+    }
+
+    // Track table state across the log so cover/attack features have context.
+    const battlesA: number[] = [];
+    const battlesD: number[] = [];
+    let firstAttack = true;
+    let lastDrawIdx = -1;
+    for (let i = 0; i < pv.logs.length; i++) if (pv.logs[i].type === 'draw') lastDrawIdx = i;
+    const deckAliveNow = pv.deckCount > 0 || pv.flipped !== NONE;
+
+    const clearTable = (): void => { battlesA.length = 0; battlesD.length = 0; firstAttack = true; };
+
+    for (let i = 0; i < pv.logs.length; i++) {
+        const L = pv.logs[i];
+        const p = L.playerIdx;
+        const deckAliveAt = deckAliveNow || i <= lastDrawIdx;
+        const isOpp = p >= 0 && p !== pv.myIdx && pv.statuses[p] === ST_IN;
+        const prof = isOpp ? profiles[p] : null;
+
+        switch (L.type) {
+            case 'attack': {
+                const cards = L.pairs.map(pr => pr.primary).filter(c => c !== NONE);
+                let anyTrump = false, nTrump = 0;
+                for (const c of cards) if ((c >> 4) === power) { anyTrump = true; nTrump++; }
+                if (prof) {
+                    prof.decisions++;
+                    // Feature: trump lead while deck alive. Strong bots avoid it;
+                    // random/greedy emit it freely.
+                    if (anyTrump && deckAliveAt && firstAttack) {
+                        addFeature(prof.ll, [-1.4, -1.4, 0.5, -0.9, 0.7]);
+                    }
+                    // Feature: pile-on size. Greedy dumps many cards; random
+                    // mid; handwritten/simple usually 1-2 unless forced.
+                    if (cards.length >= 3) {
+                        addFeature(prof.ll, [-0.3, -0.3, 0.2, -0.2, 0.8]);
+                    } else if (cards.length === 1) {
+                        addFeature(prof.ll, [0.25, 0.25, 0.0, 0.3, -0.2]);
+                    }
+                    // Feature: lowest-rank lead (smart) vs high lead (weak). A
+                    // 1-card non-trump lead of low rank is the textbook strong
+                    // play; a high non-trump lead suggests random/greedy.
+                    if (!anyTrump && cards.length >= 1) {
+                        let minv = 99; for (const c of cards) if ((c & 15) < minv) minv = c & 15;
+                        if (minv <= 7) addFeature(prof.ll, [0.3, 0.3, -0.05, 0.35, -0.2]);
+                        else if (minv >= 11) addFeature(prof.ll, [-0.2, -0.2, 0.25, -0.25, 0.35]);
+                    }
+                }
+                for (const c of cards) { battlesA.push(c); battlesD.push(NONE); }
+                firstAttack = false;
+                break;
+            }
+            case 'pass': {
+                const cards = L.pairs.map(pr => pr.primary).filter(c => c !== NONE);
+                if (prof) {
+                    prof.decisions++;
+                    // Passing is a competent defensive idea; rare for random.
+                    addFeature(prof.ll, [0.3, 0.3, -0.3, 0.2, -0.1]);
+                }
+                for (const c of cards) { battlesA.push(c); battlesD.push(NONE); }
+                break;
+            }
+            case 'cover': {
+                if (prof) {
+                    prof.decisions++;
+                    for (const pr of L.pairs) {
+                        const cov = pr.primary, atk = pr.target;
+                        if (cov === NONE || atk === NONE) continue;
+                        const covTrump = (cov >> 4) === power;
+                        const atkTrump = (atk >> 4) === power;
+                        // Feature: wasteful trump cover of a non-trump attack.
+                        // Greedy/random over-trump; smart bots cover same-suit.
+                        if (covTrump && !atkTrump) {
+                            addFeature(prof.ll, [-0.5, -0.5, 0.3, -0.3, 0.8]);
+                        }
+                        // Feature: economical same-suit cover just above the
+                        // attack (margin <=2) => smart disposal.
+                        if (!covTrump && (cov >> 4) === (atk >> 4)) {
+                            const margin = (cov & 15) - (atk & 15);
+                            if (margin >= 1 && margin <= 2) {
+                                addFeature(prof.ll, [0.4, 0.4, -0.2, 0.3, -0.4]);
+                            } else if (margin >= 5) {
+                                // overpaid with a high same-suit card => weak.
+                                addFeature(prof.ll, [-0.2, -0.2, 0.25, -0.15, 0.5]);
+                            }
+                        }
+                    }
+                }
+                // mark covered
+                for (const pr of L.pairs) {
+                    if (pr.target === NONE) continue;
+                    const q = battlesA.indexOf(pr.target);
+                    if (q >= 0 && battlesD[q] === NONE) battlesD[q] = pr.primary;
+                }
+                break;
+            }
+            case 'pickup': {
+                if (prof) {
+                    prof.decisions++;
+                    // Strategic give-up. simple_heuristic does this readily;
+                    // greedy almost never (it always defends if it can); random
+                    // at its uniform rate; handwritten/espresso only when forced.
+                    // We can't see the hand, but a pickup with FEW uncovered
+                    // attacks (1) is evidence of give-up tendency, not necessity.
+                    let unc = 0;
+                    for (let j = 0; j < battlesA.length; j++) if (battlesD[j] === NONE) unc++;
+                    if (unc <= 1) addFeature(prof.ll, [-0.3, -0.3, 0.3, 0.7, -0.8]);
+                    else addFeature(prof.ll, [0.0, 0.0, 0.1, 0.4, -0.5]);
+                }
+                clearTable();
+                break;
+            }
+            case 'good': {
+                if (prof) {
+                    prof.decisions++;
+                    // Saying good early (few cards on table) is a random-ish or
+                    // simple tell; strong bots keep attacking when profitable.
+                    addFeature(prof.ll, [0.05, 0.05, 0.15, 0.1, -0.1]);
+                }
+                break;
+            }
+            case 'discard':
+            case 'defender_change':
+                clearTable();
+                break;
+            default:
+                break;
+        }
+    }
+
+    // Resolve each profile: softmax over ll to a winner + confidence.
+    for (let p = 0; p < n; p++) {
+        const prof = profiles[p];
+        if (p === pv.myIdx || pv.statuses[p] !== ST_IN) {
+            prof.policy = POL_HANDWRITTEN; prof.confidence = 0; continue;
+        }
+        let best = 0, bestV = -Infinity, mx = -Infinity;
+        for (let k = 0; k < NUM_POLICIES; k++) {
+            if (prof.ll[k] > bestV) { bestV = prof.ll[k]; best = k; }
+            if (prof.ll[k] > mx) mx = prof.ll[k];
+        }
+        let z = 0; for (let k = 0; k < NUM_POLICIES; k++) z += Math.exp(prof.ll[k] - mx);
+        prof.confidence = Math.exp(bestV - mx) / z;
+        prof.policy = best;
+    }
+    return profiles;
+};
+
+// Decide the per-seat rollout policy table from profiles. A seat only gets a
+// NON-default (weak) policy once it has enough decisions AND enough posterior
+// confidence; otherwise it stays POL_HANDWRITTEN (cordite's strong default).
+// This guarantees early-game behavior ~= cordite and avoids premature
+// commitment on noisy evidence. Returns null if no seat deviates (so the caller
+// can skip installing an override entirely and stay on the fast path).
+export const seatPolicyFromProfiles = (pv: PublicView, profiles: SeatProfile[]):
+        number[] | null => {
+    const n = pv.numPlayers;
+    const table = new Array(n).fill(POL_HANDWRITTEN);
+    let anyDeviate = false;
+    for (let p = 0; p < n; p++) {
+        if (p === pv.myIdx || pv.statuses[p] !== ST_IN) continue;
+        const prof = profiles[p];
+        // Commit thresholds: need >=4 decisions and >=0.45 confidence in a weak
+        // archetype to deviate; espresso/handwritten winners stay on the strong
+        // default anyway (POL_ESPRESSO is handled inside cordite's 1v1 path, so
+        // mapping a "smart" seat to handwritten is correct here).
+        if (prof.decisions < 4) continue;
+        if (prof.policy === POL_HANDWRITTEN || prof.policy === POL_ESPRESSO) continue;
+        if (prof.confidence < 0.45) continue;
+        table[p] = prof.policy;
+        anyDeviate = true;
+    }
+    return anyDeviate ? table : null;
+};
+
 // ---------- rollout ------------------------------------------------------
 
 const rolloutPolicyFor = (g: SimGame): ((g: SimGame, p: number, m: SimMove[]) => number) => {
@@ -1368,8 +1745,21 @@ const simulate = (g: SimGame, myIdx: number, maxTurns: number): number => {
         // branches, which fall through to the slow enumerate-then-pick path.
         const deckActive = g.deck.length > 0 || g.flipped !== NONE;
         const useHw = (deckActive || inCount(g) !== 2) && !noFastroll();
+        const sp = seatPolicy;   // fulminate per-seat override (null for cordite)
         for (let pi = 0; pi < g.numPlayers; pi++) {
             if (!shouldAct(g, pi)) continue;
+            // fulminate: a profiled seat with a non-default policy plays with
+            // its archetype chooser (skips the handwritten fast-roll path, which
+            // is only valid for the global handwritten/espresso dispatch). Seats
+            // mapped to POL_HANDWRITTEN keep cordite's exact fast path.
+            if (sp !== null && sp[pi] !== POL_HANDWRITTEN) {
+                const moves = calcLegal(g, pi, true);
+                if (moves.length === 0) continue;
+                const idx = ARCH_POLICIES[sp[pi]](g, pi, moves);
+                if (idx < 0 || idx >= moves.length) continue;
+                if (applyMove(g, pi, moves[idx])) { acted = true; break; }
+                continue;
+            }
             if (useHw) {
                 const fm = handwrittenRolloutChoose(g, pi);
                 if (fm !== null) {
