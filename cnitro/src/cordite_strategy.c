@@ -80,6 +80,12 @@ static _Thread_local int cd_no_fastroll = 0;   // CD_NO_FASTROLL=1: struct rollo
 static _Thread_local int cd_difftest = 0;      // CD_DIFFTEST=1: assert fast==slow
 static _Thread_local int cd_w1_override = 0, cd_w2_override = 0;
 static _Thread_local int cd_w3_override = -1;
+// Bitboard endgame-solver node budgets (per shared pass). The bitboard solver
+// (transposition table + O(1) clone) resolves far more per node than the
+// struct solver, so it needs a much smaller node budget to do equivalent work
+// in less wall-clock. Tunable via CD_BB_WIN / CD_BB_AVOID for sweeps.
+static _Thread_local int cd_bb_win_budget = 20000;
+static _Thread_local int cd_bb_avoid_budget = 15000;
 
 static int cd_in_count(const Game *g) {
     int n = 0;
@@ -495,6 +501,26 @@ static int cd_solve(Solver *S, const Game *g, int alpha, int beta, int depth) {
     return best;
 }
 
+// Test hook: run the struct solver on a position from `me`'s perspective with
+// the given window/budget. Returns the value; *aborted set on budget/depth
+// blow. Used by tests/solver_difftest.c to validate the bitboard solver.
+int cd_struct_solve_test(const Game *g, int me, int alpha, int beta,
+                         long budget, int *aborted) {
+    if (!cd_solver_ready()) { if (aborted) *aborted = 1; return 0; }
+    Game root;
+    cd_lite_clone(&root, g);
+    root.num_logs = 0;
+    Solver S;
+    S.budget = budget;
+    S.aborted = false;
+    S.me = me;
+    S.child = cd_solver_child;
+    S.mv = cd_solver_mv;
+    int v = cd_solve(&S, &root, alpha, beta, 0);
+    if (aborted) *aborted = S.aborted;
+    return v;
+}
+
 // Exact full-info resolution of a rollout leaf: 2 players in, deck gone,
 // few cards. Returns the loser index, or -1 if unresolved (abort/draw).
 static _Thread_local long cd_leaf_budget = CD_LEAF_BUDGET;
@@ -681,12 +707,25 @@ static int cd_try_endgame_solve(const Game *g, int bot_idx,
         root.players[opp].hand[B->pinned_n[opp] + k] = B->pool[k];
     }
 
+    // Fast path: solve on the compact bitboard engine (transposition table +
+    // O(1) clone + bitmask move-gen). The bitboard solver returns the exact
+    // same value as the struct solver when resolved (validated by
+    // tests/solver_difftest.c), and resolves more positions within budget.
+    // CD_NO_BBSOLVE=1 falls back to the struct solver for A/B.
+    bool bbsolve = !cd_flag("CD_NO_BBSOLVE");
+    SimState root_sim;
+    if (bbsolve) cd_sim_from_game(&root_sim, &root);
+    cd_sim_solve_reset();
+
     Solver S;
     S.budget  = CD_SOLVE_BUDGET;
     S.aborted = false;
     S.me      = bot_idx;
     S.child   = cd_solver_child;
     S.mv      = cd_solver_mv;
+    long win_budget   = bbsolve ? (long)cd_bb_win_budget   : CD_SOLVE_BUDGET;
+    long avoid_budget = bbsolve ? (long)cd_bb_avoid_budget : CD_AVOID_BUDGET;
+    long budget = win_budget;
 
     // Pass 1 — win hunt (blackpowder's loop): fail-soft with an accumulating
     // alpha floor at 0, so losing subtrees prune immediately.
@@ -698,13 +737,22 @@ static int cd_try_endgame_solve(const Game *g, int bot_idx,
     bool bail_on_abort = (alpha == -2000);
     bool any_abort = false;
     for (int i = 0; i < moves->n; i++) {
-        Game child;
-        cd_lite_clone(&child, &root);
-        if (!cd_apply(&child, bot_idx, &moves->moves[i])) continue;
-        S.aborted = false;
-        int v = cd_solve(&S, &child, alpha, 2000, 1);
-        if (S.budget <= 0) return -1;   // out of budget: no claims at all
-        if (S.aborted) { if (bail_on_abort) return -1; any_abort = true; continue; }
+        int v, aborted_i;
+        if (bbsolve) {
+            SimState child = root_sim;
+            if (!cd_sim_apply_root_move(&child, bot_idx, &moves->moves[i])) continue;
+            v = cd_sim_solve_d(&child, bot_idx, alpha, 2000, &budget, 1, &aborted_i);
+            if (budget <= 0) return -1;   // shared budget drained: no claims
+        } else {
+            Game child;
+            cd_lite_clone(&child, &root);
+            if (!cd_apply(&child, bot_idx, &moves->moves[i])) continue;
+            S.aborted = false;
+            v = cd_solve(&S, &child, alpha, 2000, 1);
+            aborted_i = S.aborted;
+            if (S.budget <= 0) return -1;
+        }
+        if (aborted_i) { if (bail_on_abort) return -1; any_abort = true; continue; }
         if (v > best_v) { best_v = v; best_idx = i; }
         if (v > alpha) alpha = v;
     }
@@ -714,14 +762,25 @@ static int cd_try_endgame_solve(const Game *g, int bot_idx,
     // Pass 2 — loss avoidance: no win exists, so classify each move with a
     // null window around 0 (sign only, maximal pruning).
     S.budget = CD_AVOID_BUDGET;
+    budget = avoid_budget;
     int n_loss = 0, n_nonloss = 0;
     for (int i = 0; i < moves->n; i++) {
-        Game child;
-        cd_lite_clone(&child, &root);
-        if (!cd_apply(&child, bot_idx, &moves->moves[i])) continue;
-        S.aborted = false;
-        int v = cd_solve(&S, &child, -1, 0, 1);
-        if (S.budget <= 0 || S.aborted) continue;   // unknown
+        int v, aborted_i;
+        if (bbsolve) {
+            SimState child = root_sim;
+            if (!cd_sim_apply_root_move(&child, bot_idx, &moves->moves[i])) continue;
+            aborted_i = 0;
+            v = cd_sim_solve_d(&child, bot_idx, -1, 0, &budget, 1, &aborted_i);
+            if (budget <= 0) aborted_i = 1;
+        } else {
+            Game child;
+            cd_lite_clone(&child, &root);
+            if (!cd_apply(&child, bot_idx, &moves->moves[i])) continue;
+            S.aborted = false;
+            v = cd_solve(&S, &child, -1, 0, 1);
+            aborted_i = (S.budget <= 0) || S.aborted;
+        }
+        if (aborted_i) continue;   // unknown
         if (v < 0) { forced_loss[i] = true; n_loss++; }
         else n_nonloss++;
     }
@@ -880,6 +939,8 @@ int cordite_strategy_choose(const Game *g, int bot_idx,
         cd_w1_override = cd_env_int("CD_W1", 0);
         cd_w2_override = cd_env_int("CD_W2", 0);
         cd_w3_override = cd_env_int("CD_W3", -1);
+        cd_bb_win_budget = cd_env_int("CD_BB_WIN", 20000);
+        cd_bb_avoid_budget = cd_env_int("CD_BB_AVOID", 15000);
         cd_leaf_budget = cd_env_int("CD_LEAF_BUDGET", 1500);
         cd_leaf_max_cards = cd_env_int("CD_LEAF_CARDS", 10);
         cd_floor_mod = cd_env_int("CD_FLOOR_MOD", 2);

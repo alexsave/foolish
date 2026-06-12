@@ -13,6 +13,7 @@
 #include "card.h"
 #include <string.h>
 #include <stdint.h>
+#include <stdlib.h>   // calloc/free for the solver transposition table
 
 // ---------- card-id helpers --------------------------------------------
 
@@ -696,6 +697,388 @@ int cd_sim_apply_root_move(SimState *s, int p_idx, const LegalMove *m) {
             return 1;
         default: return 0;
     }
+}
+
+// ===================================================================
+// Exact 2-player deck-empty endgame solver (bitboard).
+//
+// Mirrors cd_solve in cordite_strategy.c node-for-node (same actor
+// selection, the SAME full legal-move set, the same alpha-beta and the
+// same ±(1000-depth) value encoding) but on the compact SimState, so a
+// node clones with a memcpy and moves are enumerated with bit ops. A
+// transposition table memoizes resolved subtrees (endgames transpose
+// heavily). The value, when fully resolved, is identical to the struct
+// solver's — validated by tests/solver_difftest.c. Only used when the
+// deck is empty and 2 players are IN (no draws/refills can add cards).
+// ===================================================================
+
+// A solver move. Covers carry per-card target battle indices.
+typedef struct {
+    uint8_t type;      // MV_ATTACK / MV_COVER / MV_PASS / MV_PICKUP / MV_GOOD
+    uint8_t n;
+    uint8_t cards[8];
+    uint8_t battle[8]; // cover only
+} SolMove;
+
+// ---- transposition table -------------------------------------------
+// Keyed on the salient state (both hands, table, roles). Stores the exact
+// resolved value (only EXACT entries; alpha-beta bound entries are not
+// stored — the endgames are tiny so exact memoization is the win and it
+// keeps the value provably correct regardless of the window it was found
+// under). Cleared per top-level solve call.
+
+#define CD_TT_BITS  16
+#define CD_TT_SIZE  (1u << CD_TT_BITS)
+#define CD_TT_MASK  (CD_TT_SIZE - 1u)
+
+typedef struct {
+    uint64_t key;     // full 64-bit fingerprint (0 => empty)
+    int16_t  value;   // exact value at this node (me-perspective, abs depth-relative)
+    uint8_t  depth;   // ply depth this value was computed at (value is depth-relative)
+    uint8_t  valid;
+} CdTTEntry;
+
+typedef struct {
+    long budget;
+    int  aborted;
+    int  me;
+    CdTTEntry *tt;
+} SimSolver;
+
+static _Thread_local CdTTEntry *cd_tt = NULL;
+
+static CdTTEntry *cd_tt_get(void) {
+    if (!cd_tt) cd_tt = (CdTTEntry *)calloc(CD_TT_SIZE, sizeof(CdTTEntry));
+    return cd_tt;
+}
+
+// 64-bit fingerprint of the value-relevant state. Two players a<b are IN.
+static uint64_t sim_fingerprint(const SimState *s, int a, int b) {
+    uint64_t h = s->hand[a] * 0x9E3779B97F4A7C15ull;
+    h ^= (s->hand[b] + 0x7F4A7C15ull) * 0xC2B2AE3D27D4EB4Full;
+    uint64_t t = 0;
+    for (int i = 0; i < s->num_battles; i++) {
+        uint64_t cell = s->atk[i];
+        if (s->covered_mask & (1ull << i)) cell |= ((uint64_t)s->def[i] << 8) | (1ull << 16);
+        t = t * 1099511628211ull + (cell + 1);
+    }
+    h ^= t * 0xFF51AFD7ED558CCDull;
+    h ^= (uint64_t)s->defender << 1;
+    h ^= (uint64_t)s->first_attacker << 9;
+    h ^= (uint64_t)(s->good_mask & 0xff) << 17;
+    h ^= (uint64_t)s->num_battles << 25;
+    h ^= 0x94D049BB133111EBull;
+    h ^= h >> 31;
+    return h ? h : 1;
+}
+
+// The single attacker (the non-defender IN player) in a 2-player node.
+static inline int sim_other_in(const SimState *s, int p) {
+    for (int i = 0; i < s->num_players; i++)
+        if (i != p && s->status_p[i] == PLAYER_STATUS_IN) return i;
+    return -1;
+}
+
+// ---- move enumeration (full legal set, mirrors calculate_legal_moves) ----
+
+// Same-value k-subset enumeration over a value-group bitmask, recursively.
+// Each distinct subset of the (suit-distinct) cards is a distinct move.
+static void enum_subsets(uint64_t group, int cap_lo, int cap_hi,
+                         SolMove *buf, int *n, int max_n, uint8_t type) {
+    // Enumerate all non-empty subsets of `group` whose popcount is in
+    // [cap_lo, cap_hi]. group has few bits (a single value group, <=4).
+    int ids[8], gn = 0;
+    uint64_t g = group;
+    while (g) { ids[gn++] = ctz64(g); g &= g - 1; }
+    int total = 1 << gn;
+    for (int mask = 1; mask < total && *n < max_n; mask++) {
+        int k = __builtin_popcount(mask);
+        if (k < cap_lo || k > cap_hi) continue;
+        SolMove *m = &buf[(*n)++];
+        m->type = type;
+        m->n = (uint8_t)k;
+        int c = 0;
+        for (int i = 0; i < gn; i++) if (mask & (1 << i)) m->cards[c++] = (uint8_t)ids[i];
+    }
+}
+
+// First-attack moves: all same-value k-subsets across value groups, capped
+// by defender capacity (defcap >= k). Mirrors calc_first_attack_moves.
+static int sim_gen_first_attack(const SimState *s, int p, SolMove *buf, int max_n) {
+    int n = 0;
+    int defcap = sim_hand_count(s, s->defender);
+    uint64_t h = s->hand[p];
+    for (int v = 1; v <= 13 && n < max_n; v++) {
+        uint64_t group = h & VALUE_MASK[v];
+        if (!group) continue;
+        enum_subsets(group, 1, defcap, buf, &n, max_n, MV_ATTACK);
+    }
+    return n;
+}
+
+// Regular-attack moves: all k-subsets of table-valued cards, capped by
+// defcap = defender_cards - uncovered. Mirrors calc_regular_attack_moves.
+static int sim_gen_regular_attack(const SimState *s, int p, SolMove *buf, int max_n) {
+    uint64_t tv = sim_table_value_mask(s);
+    uint64_t h = s->hand[p] & tv;
+    if (!h) return 0;
+    int uncovered = sim_count_uncovered(s);
+    int defcap = sim_hand_count(s, s->defender) - uncovered;
+    if (defcap <= 0) return 0;
+    int n = 0;
+    int ids[16], hn = 0;
+    uint64_t hh = h;
+    while (hh) { ids[hn++] = ctz64(hh); hh &= hh - 1; }
+    if (defcap > hn) defcap = hn;
+    // all non-empty subsets of size 1..defcap (mixed values allowed)
+    int total = 1 << hn;
+    for (int mask = 1; mask < total && n < max_n; mask++) {
+        int k = __builtin_popcount(mask);
+        if (k > defcap) continue;
+        SolMove *m = &buf[n++];
+        m->type = MV_ATTACK;
+        m->n = (uint8_t)k;
+        int c = 0;
+        for (int i = 0; i < hn; i++) if (mask & (1 << i)) m->cards[c++] = (uint8_t)ids[i];
+    }
+    return n;
+}
+
+// Pass moves: all same-value k-subsets of matching cards, capped by the
+// next player's capacity (next_cards >= k + num_battles). Mirrors
+// calc_pass_moves (all battles uncovered, all same value).
+static int sim_gen_pass(const SimState *s, int p, SolMove *buf, int max_n) {
+    if (s->num_battles == 0) return 0;
+    if (s->covered_mask) return 0;
+    int v0 = id_value(s->atk[0]);
+    for (int i = 1; i < s->num_battles; i++)
+        if (id_value(s->atk[i]) != v0) return 0;
+    uint64_t matching = s->hand[p] & VALUE_MASK[v0];
+    if (!matching) return 0;
+    int next = sim_next_player(s, s->defender);
+    int kmax = sim_hand_count(s, next) - s->num_battles;
+    if (kmax < 1) return 0;
+    int n = 0;
+    enum_subsets(matching, 1, kmax, buf, &n, max_n, MV_PASS);
+    return n;
+}
+
+// Cover moves: choose a non-empty subset of uncovered battles and, for each,
+// a distinct covering card. Mirrors calc_cover_moves (choose_attack_subset +
+// emit_cover_combo). Returns count; battles index into the battle array.
+// For the chosen battle subset, assign distinct covers per battle.
+static void cover_assign(const SimState *s, int power, const int *bidx, int pn,
+                         int depth, uint8_t *chosen_card, uint64_t used,
+                         SolMove *buf, int *n, int max_n) {
+    if (depth == pn) {
+        if (*n >= max_n) return;
+        SolMove *m = &buf[(*n)++];
+        m->type = MV_COVER;
+        m->n = (uint8_t)pn;
+        for (int i = 0; i < pn; i++) { m->cards[i] = chosen_card[i]; m->battle[i] = (uint8_t)bidx[i]; }
+        return;
+    }
+    int atk = s->atk[bidx[depth]];
+    uint64_t avail = s->hand[s->defender] & ~used;
+    uint64_t a = avail;
+    while (a && *n < max_n) {
+        int id = ctz64(a); a &= a - 1;
+        if (!id_can_cover(atk, id, power)) continue;
+        chosen_card[depth] = (uint8_t)id;
+        cover_assign(s, power, bidx, pn, depth + 1, chosen_card,
+                     used | (1ull << id), buf, n, max_n);
+    }
+}
+
+static int sim_gen_cover(const SimState *s, int power, SolMove *buf, int max_n) {
+    int ubat[SIM_MAX_BATTLES], nub = 0;
+    for (int i = 0; i < s->num_battles; i++)
+        if (!(s->covered_mask & (1ull << i))) ubat[nub++] = i;
+    if (nub == 0) return 0;
+    int n = 0;
+    int bidx[SIM_MAX_BATTLES];
+    uint8_t chosen[SIM_MAX_BATTLES];
+    // choose k battles to cover, k = 1..nub, in combination order
+    for (int k = 1; k <= nub && n < max_n; k++) {
+        // iterate combinations of nub choose k
+        int comb[SIM_MAX_BATTLES];
+        for (int i = 0; i < k; i++) comb[i] = i;
+        while (n < max_n) {
+            for (int i = 0; i < k; i++) bidx[i] = ubat[comb[i]];
+            cover_assign(s, power, bidx, k, 0, chosen, 0, buf, &n, max_n);
+            // next combination
+            int i = k - 1;
+            while (i >= 0 && comb[i] == nub - k + i) i--;
+            if (i < 0) break;
+            comb[i]++;
+            for (int j = i + 1; j < k; j++) comb[j] = comb[j - 1] + 1;
+        }
+    }
+    return n;
+}
+
+// Apply a SolMove to a SimState (uses the same handlers as the rollout).
+static void sim_apply_sol(SimState *s, int p, const SolMove *m) {
+    switch (m->type) {
+        case MV_ATTACK: sim_apply_attack(s, p, m->cards, m->n); break;
+        case MV_PASS:   sim_apply_pass(s, p, m->cards, m->n); break;
+        case MV_PICKUP: sim_apply_pickup(s, p); break;
+        case MV_GOOD:   sim_apply_good(s, p); break;
+        case MV_COVER: {
+            int bi[8];
+            for (int i = 0; i < m->n; i++) bi[i] = m->battle[i];
+            sim_apply_cover(s, p, m->cards, bi, m->n);
+            break;
+        }
+    }
+}
+
+#define CD_SIM_SOLVE_MAX_DEPTH 48    // match the struct solver (CD_SOLVE_MAX_DEPTH)
+#define CD_SOLVE_MOVES_CAP     96    // struct's CD_SOLVE_MAX_MOVES: abort when a
+                                     // node has > this many legal moves, so the
+                                     // resolved/aborted position SET — hence
+                                     // play — is identical to the struct solver
+#define CD_SIM_SOLVE_MAX_MOVES 160   // generation buffer (slack above the cap)
+
+// Generate the full legal-move set for `actor`, mirroring
+// calculate_legal_moves' branch selection.
+static int sim_gen_moves(const SimState *s, int actor, SolMove *buf, int max_n) {
+    int power = s->power_suit;
+    int first_attack = (s->num_battles == 0);
+    int is_def = (actor == s->defender);
+    if (first_attack && actor == s->first_attacker) {
+        return sim_gen_first_attack(s, actor, buf, max_n);
+    } else if (is_def && s->num_battles > 0) {
+        int n = sim_gen_cover(s, power, buf, max_n);
+        if (!sim_all_covered(s) && n < max_n) {
+            buf[n].type = MV_PICKUP; buf[n].n = 0; n++;
+        }
+        n += sim_gen_pass(s, actor, buf + n, max_n - n);
+        return n;
+    } else if (!is_def && s->num_battles > 0) {
+        if (s->good_mask & (1u << actor)) return 0;
+        int n = sim_gen_regular_attack(s, actor, buf, max_n);
+        if (n < max_n) { buf[n].type = MV_GOOD; buf[n].n = 0; n++; }
+        return n;
+    }
+    return 0;
+}
+
+// Move-ordering key: lower = tried first. For the maximizer we want quick
+// wins; for both sides emptying the hand / ending the round tends to resolve
+// fast. We sort attacks/covers by card count desc then score, pickup/good
+// last. Ordering does not affect the value (full search), only speed.
+static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int depth) {
+    int loser = sim_done(s);
+    if (loser >= 0) return (loser == S->me) ? -(1000 - depth) : (1000 - depth);
+    int incount = sim_in_count(s);
+    if (incount == 0) return 0;
+    if (depth >= CD_SIM_SOLVE_MAX_DEPTH) { S->aborted = 1; return 0; }
+    if (--S->budget <= 0) { S->aborted = 1; return 0; }
+
+    // actor: defender-priority, then first IN actor (mirrors cd_solve).
+    int actor = -1;
+    if (sim_should_act(s, s->defender)) actor = s->defender;
+    else {
+        for (int i = 0; i < s->num_players; i++)
+            if (sim_should_act(s, i)) { actor = i; break; }
+    }
+    if (actor < 0) return 0;
+
+    // Two players for the fingerprint (the only IN pair in an endgame).
+    int a = -1, b = -1;
+    for (int i = 0; i < s->num_players; i++)
+        if (s->status_p[i] == PLAYER_STATUS_IN) { if (a < 0) a = i; else b = i; }
+    uint64_t key = 0;
+    CdTTEntry *e = NULL;
+    if (b >= 0) {
+        key = sim_fingerprint(s, a, b);
+        e = &S->tt[key & CD_TT_MASK];
+        if (e->valid && e->key == key) {
+            // stored value is depth-relative to e->depth; re-base to this depth.
+            int v = e->value;
+            if (v > 0) v = v - (1000 - e->depth) + (1000 - depth);
+            else if (v < 0) v = v + (1000 - e->depth) - (1000 - depth);
+            return v;
+        }
+    }
+
+    SolMove moves[CD_SIM_SOLVE_MAX_MOVES];
+    int nm = sim_gen_moves(s, actor, moves, CD_SIM_SOLVE_MAX_MOVES);
+    if (nm == 0) return 0;
+    // Mirror the struct solver's `mv->n > CD_SOLVE_MAX_MOVES` bail: abort on
+    // nodes with more than the cap legal moves, so we resolve/abort the exact
+    // same position set as the struct solver (identical play). The buffer has
+    // slack above the cap so a true count above it is still detected.
+    if (nm > CD_SOLVE_MOVES_CAP) { S->aborted = 1; return 0; }
+
+    int alpha0 = alpha, beta0 = beta;   // original window for exactness test
+    int maximizing = (actor == S->me);
+    int best = maximizing ? -2000 : 2000;
+    int applied = 0;
+    SimState child;
+    for (int i = 0; i < nm; i++) {
+        child = *s;
+        sim_apply_sol(&child, actor, &moves[i]);
+        applied = 1;
+        int v = sim_solve_rec(S, &child, alpha, beta, depth + 1);
+        if (S->aborted) return 0;
+        if (maximizing) {
+            if (v > best) best = v;
+            if (best > alpha) alpha = best;
+        } else {
+            if (v < best) best = v;
+            if (best < beta) beta = best;
+        }
+        if (alpha >= beta) break;
+    }
+    if (!applied || best == -2000 || best == 2000) return 0;
+
+    // Memoize EXACT values only. A fail-soft alpha-beta result `best` is the
+    // true game value only when it lands strictly INSIDE the original window
+    // (alpha0 < best < beta0). On a fail-low (best <= alpha0) it is only an
+    // upper bound; on a fail-high (best >= beta0) only a lower bound — storing
+    // either as exact would corrupt a later lookup under a wider window. So we
+    // store solely the exact case; bound nodes are simply not memoized.
+    if (e && key && best > alpha0 && best < beta0) {
+        e->key = key;
+        e->value = (int16_t)best;
+        e->depth = (uint8_t)depth;
+        e->valid = 1;
+    }
+    return best;
+}
+
+// Public entry: exact value of position `s` from `me`'s perspective, with the
+// given window and budget. Returns the value; sets *aborted if budget/depth
+// blew. Clears the TT each call (positions across calls are unrelated).
+int cd_sim_solve(SimState *s, int me, int alpha, int beta, long budget, int *aborted) {
+    long b = budget;
+    return cd_sim_solve_d(s, me, alpha, beta, &b, 0, aborted);
+}
+
+// As cd_sim_solve, but starting the depth counter at `depth0` so the value
+// encoding (±(1000-depth)) lines up with a caller that already applied a move
+// (e.g. the root win-hunt evaluates children at depth 1). `*budget` is the
+// shared remaining node budget: it is decremented by the nodes this call
+// expanded so a caller can drain one budget across many root moves (matching
+// the struct solver's shared-budget semantics).
+int cd_sim_solve_d(SimState *s, int me, int alpha, int beta, long *budget,
+                   int depth0, int *aborted) {
+    SimSolver S;
+    S.budget = *budget;
+    S.aborted = 0;
+    S.me = me;
+    S.tt = cd_tt_get();
+    if (!S.tt) { if (aborted) *aborted = 1; return 0; }
+    int v = sim_solve_rec(&S, s, alpha, beta, depth0);
+    *budget = S.budget;
+    if (aborted) *aborted = S.aborted;
+    return v;
+}
+
+void cd_sim_solve_reset(void) {
+    if (cd_tt) memset(cd_tt, 0, CD_TT_SIZE * sizeof(CdTTEntry));
 }
 
 // Single-step (test hook): advance one actor; returns the actor index or -1.

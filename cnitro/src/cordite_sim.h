@@ -65,4 +65,15 @@ int cd_sim_apply_root_move(SimState *s, int p_idx, const LegalMove *m);
 // !cd_no_earlyexit.
 int  cd_sim_playout(SimState *s, int my_idx, int max_turns, int early_exit);
 
+// Exact 2-player deck-empty endgame solver on the bitboard state. Returns the
+// value of position `s` from `me`'s perspective in [-1000,1000] (positive = me
+// escapes, magnitude prefers faster wins / slower losses), identical to the
+// struct solver's value when fully resolved. Uses a thread-local transposition
+// table (reset with cd_sim_solve_reset). `*aborted` is set if the budget or
+// depth cap blew (value then meaningless, treat as unresolved).
+int  cd_sim_solve(SimState *s, int me, int alpha, int beta, long budget, int *aborted);
+int  cd_sim_solve_d(SimState *s, int me, int alpha, int beta, long *budget,
+                    int depth0, int *aborted);
+void cd_sim_solve_reset(void);
+
 #endif

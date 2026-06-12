@@ -121,6 +121,90 @@ pc8 4.223 → 4.272) — the budget stops at 2x. Knobs: `CD_NO_FASTROLL=1`
 forces the struct rollout; `CD_DIFFTEST=1` runs both engines per rollout and
 reports the divergence rate.
 
+### 7. Bitboard exact endgame solver (v2.2 — the solver was the new top cost)
+
+Once the rollout was on bitboards, the **exact 2-player endgame solver**
+(`cd_try_endgame_solve` → `cd_solve`) became the dominant cost — it still ran
+on the 44 KB `Game` struct, cloning a Game and re-enumerating
+`calculate_legal_moves` (combinations + cover blow-up) at every minimax node.
+Profiled share of total eval wall-clock (cordite vs handwritten, 300 games):
+**pc2 ≈ 69%** (28.6 s with the solver vs 8.9 s `CD_NO_SOLVE`), pc4 ≈ 45%,
+falling to ≈14% at pc6 (2-player endgames are rare while many players remain).
+gprof confirmed `cd_try_endgame_solve` at ~40% of total, almost all in the
+struct `cd_apply`/`handle_*`/`calculate_legal_moves` it drives.
+
+`cordite_sim.c` now carries a second engine: an exact minimax solver
+(`cd_sim_solve`) on the compact `SimState`. A node clones with a `*child = *s`
+memcpy (~200 B) instead of a Game clone; the **full** legal-move set is
+enumerated with bit ops (subset masks for same-value attacks/passes,
+combination-of-battles × per-card covers for the defender — the same SET the
+struct enumerates, so the minimax value is identical); and a **transposition
+table** (64K entries, full-64-bit key) memoizes resolved subtrees — these
+endgames transpose heavily (move orderings converge). The TT stores **EXACT
+values only**: a fail-soft alpha-beta result is the true game value solely when
+it lands strictly inside the original window (`alpha0 < best < beta0`);
+fail-low/fail-high results are bounds and are not memoized. Stored values are
+depth-relative (mate-distance re-basing), so a position reached at a different
+depth reads back correctly.
+
+**Correctness (it is EXACT — a wrong solver = wrong play).**
+`tests/solver_difftest.c` plays real games and, at every deck-empty 2-player
+node (the regime the solver runs in), resolves the full game value from each
+IN player's perspective with **both** engines (wide window, large budget) and
+asserts bit-identical values. **Zero mismatches** over thousands of
+fully-resolved positions at np 2/3/4. (An early version had sign-correct but
+depth-off-by-1 values; the bug was the TT storing alpha-beta *bound* values as
+exact — fixed by the strict-window exactness test above; with the TT disabled
+the two engines already agreed exactly, which localized it.) The bitboard
+solver also resolves *more* positions within budget than the struct (cheaper
+nodes + TT); since every resolved value is provably the true value, this is
+strictly more exact information, not a different answer. `cnitro_tests` stays
+14/14; the rollout difftests stay 0 REAL divergence.
+
+**Speed.** Same strength, less wall-clock (cordite vs handwritten, 400 games,
+seeds 910001; `CD_NO_BBSOLVE=1` is the old struct solver in the same binary):
+
+| pc | struct solver | bitboard solver | speedup | mean / win |
+|----|---------------|-----------------|---------|------------|
+| 2 | 37.9 s | **13.9 s** | **2.74x** | 1.120 / 88.0% (identical) |
+| 3 | 20.2 s | **11.9 s** | 1.70x | 1.545 / 56.2% (identical) |
+| 4 | 15.2 s | **10.1 s** | 1.51x | 2.028 / 34.8% (≈, within noise) |
+| 6 | 24.6 s | **22.5 s** | 1.10x | 2.873 / 22.5% (identical) |
+| 8 | 20.0 s | **17.1 s** | 1.17x | 4.223 / 13.2% (identical) |
+
+vs espresso (500 games, seed 930001) strength holds within noise: pc2
+1.288 → 1.292, pc3 1.538 (identical), pc4 2.098 → 2.100. The gain is largest
+exactly where the solver dominated (pc2, ~2.7x); at high
+player counts the rollout dominates and the solver share — hence the gain — is
+small. The bitboard solver needs a much smaller **node** budget than the
+struct (each node is far cheaper and the TT converges fast): `CD_BB_WIN`
+(default 20000) / `CD_BB_AVOID` (default 15000) replace the struct's shared
+200K/150K; at this budget strength matches the struct's exactly while
+wall-clock is minimized (a 60K budget gave bit-identical strength but no
+faster, confirming 20K already resolves every decisive endgame). Knobs:
+`CD_NO_BBSOLVE=1` reverts to the struct solver (A/B); `CD_BB_WIN` /
+`CD_BB_AVOID` tune the per-pass node budgets.
+
+**Spending the freed CPU.** The solver speedup frees the most wall-clock at
+low player counts (where it dominated) — at pc2 the whole eval drops from
+37.9 s to 13.9 s / 400 games, leaving headroom under the old budget. Re-investing
+it in more sampled worlds at pc2 (W1/W2/W3 64/112/112, ~2x) was **not** a robust
+win: vs handwritten it was seed-dependent (seed 910001 88.0% → 93.0%, but seed
+920001 90.2% → 90.0% — flat), and vs espresso it helped (+3% win) but
+inconsistently. As with the v2.1 budget study, more worlds past the tuned point
+is noise, not signal, so the world budgets are **left unchanged** and the win is
+banked as throughput. The solver budget itself stays small (`CD_BB_WIN` 20000)
+because a larger one gave bit-identical strength at higher cost.
+
+The TS port (`cordite_core.ts`) keeps its compact-array `SimGame` solver (the
+bitboard engine is C-only — V8 would need `BigInt`), but **does** get the
+portable algorithmic win: the same EXACT-only, depth-rebased **transposition
+table** (a `Map` keyed on a string fingerprint of the two hands + table +
+roles). On the latency-bounded TS path a faster solve frees wall-clock for
+more world sampling; play is unchanged (exact memoization cannot change the
+solver's value). Offline harness still plays correctly (pc2/pc4 vs
+handwritten) with decision times well inside the cap.
+
 ### Rejected: exact leaf endgames inside rollouts
 
 Solving small 2-player deck-empty endgames exactly *inside rollouts*
@@ -288,6 +372,10 @@ cd cnitro && make
 - `CD_NO_FASTROLL=1` — use the struct rollout instead of the bitboard engine
 - `CD_DIFFTEST=1` — run both rollout engines per call and report the
   fast-vs-slow divergence rate at exit (keeps the struct result)
+- `CD_NO_BBSOLVE=1` — use the struct endgame solver instead of the bitboard
+  one (A/B; same result, slower). `CD_BB_WIN` / `CD_BB_AVOID` — node budgets
+  for the bitboard solver's win-hunt / loss-avoidance passes (default
+  20000 / 15000)
 - `CD_W1/CD_W2/CD_W3` — world-count overrides
 - `CD_FULL_LOGS=1` — blackpowder-style full-log worlds (A/B; identical)
 - `CD_NO_EARLYEXIT=1` / `CD_BP_SOLVE=1` — debug A/B switches used while

@@ -1530,7 +1530,34 @@ const SOLVE_BUDGET = 200000;
 const AVOID_BUDGET = 150000;
 const SOLVE_MAX_CARDS = 20;
 
-interface Solver { budget: number; aborted: boolean; me: number; }
+// Transposition table for the endgame solver. These 2-player deck-empty
+// endgames transpose heavily (move orderings converge to the same position),
+// so memoizing resolved subtrees is a large win — and on the latency-bounded
+// TS path a faster solve frees wall-clock for more world sampling. Mirrors the
+// C bitboard solver's TT: store EXACT values only (a fail-soft alpha-beta
+// result is the true game value only when it lands strictly inside the
+// original window — otherwise it is a bound and must not be memoized), and the
+// stored value is depth-relative so it re-bases when the same position is
+// reached at a different depth. Keyed on the value-relevant state (both hands,
+// table, roles) as a string fingerprint (exact — no hash collisions).
+interface Solver { budget: number; aborted: boolean; me: number; tt: Map<string, number>; }
+
+const ttFingerprint = (g: SimGame): string => {
+    let s = "";
+    for (let p = 0; p < g.numPlayers; p++) {
+        if (g.pStatus[p] !== ST_IN) continue;
+        const h = g.hands[p].slice().sort((a, b) => a - b);
+        s += p + ":" + h.join(",") + "|";
+    }
+    s += "B";
+    for (let i = 0; i < g.battlesA.length; i++) s += g.battlesA[i] + "." + g.battlesD[i] + ";";
+    s += "d" + g.defender + "f" + g.firstAttacker + "g" + g.goodMask;
+    return s;
+};
+
+// Pack a depth-relative value + depth into one number (value*256 + depth) so a
+// single Map<string,number> suffices. value in [-1000,1000], depth in [0,255].
+const ttEncode = (value: number, depth: number): number => value * 256 + depth;
 
 const solve = (S: Solver, g: SimGame, alpha: number, beta: number, depth: number): number => {
     const loser = gameDone(g);
@@ -1546,10 +1573,21 @@ const solve = (S: Solver, g: SimGame, alpha: number, beta: number, depth: number
     }
     if (actor < 0) return 0;
 
+    const key = ttFingerprint(g);
+    const hit = S.tt.get(key);
+    if (hit !== undefined) {
+        let v = Math.trunc(hit / 256);
+        const sd = hit - v * 256;   // stored depth
+        if (v > 0) v = v - (1000 - sd) + (1000 - depth);
+        else if (v < 0) v = v + (1000 - sd) - (1000 - depth);
+        return v;
+    }
+
     const mv = calcLegal(g, actor, false);
     if (mv.length === 0) return 0;
     if (mv.length > MAX_SOLVE_MOVES) { S.aborted = true; return 0; }
 
+    const alpha0 = alpha, beta0 = beta;
     const maximizing = actor === S.me;
     let best = maximizing ? -2000 : 2000;
     for (const m of mv) {
@@ -1567,6 +1605,10 @@ const solve = (S: Solver, g: SimGame, alpha: number, beta: number, depth: number
         if (alpha >= beta) break;
     }
     if (best === -2000 || best === 2000) return 0;
+    // Memoize EXACT values only (strictly inside the original window).
+    if (best > alpha0 && best < beta0 && depth <= 255) {
+        S.tt.set(key, ttEncode(best, depth));
+    }
     return best;
 };
 
@@ -1592,7 +1634,7 @@ const tryEndgameSolve = (pv: PublicView, B: Belief, candidates: SimMove[],
     const root = sampleWorld(pv, B, 1, false, false);
     // sampleWorld already deals pool → opp unknown slots (deckCount = 0).
 
-    const S: Solver = { budget: SOLVE_BUDGET, aborted: false, me: pv.myIdx };
+    const S: Solver = { budget: SOLVE_BUDGET, aborted: false, me: pv.myIdx, tt: new Map() };
 
     let bestIdx = -1, bestV = 0, alpha = 0;
     let anyAbort = false;

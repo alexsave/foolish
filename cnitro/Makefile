@@ -58,8 +58,13 @@ build/sim_difftest: tests/sim_difftest.c $(CORE_OBJ)
 	$(CC) $(CFLAGS) tests/sim_difftest.c $(CORE_OBJ) -o $@ $(LDFLAGS)
 build/apply_difftest: tests/apply_difftest.c $(CORE_OBJ)
 	$(CC) $(CFLAGS) tests/apply_difftest.c $(CORE_OBJ) -o $@ $(LDFLAGS)
-difftests: build/sim_difftest build/apply_difftest
-	./build/sim_difftest 4 1000 && ./build/apply_difftest 4 200
+build/solver_difftest: tests/solver_difftest.c $(CORE_OBJ)
+	$(CC) $(CFLAGS) tests/solver_difftest.c $(CORE_OBJ) -o $@ $(LDFLAGS)
+difftests: build/sim_difftest build/apply_difftest build/solver_difftest
+	./build/sim_difftest 4 1000 && ./build/apply_difftest 4 200 && \
+	./build/solver_difftest 2 40 "" 200000 && \
+	./build/solver_difftest 3 40 "" 200000 && \
+	./build/solver_difftest 4 40 "" 200000
 
 clean:
 	rm -rf build
