@@ -82,6 +82,7 @@ static _Thread_local int cd_w1_override = 0, cd_w2_override = 0;
 static _Thread_local int cd_w3_override = -1;
 static _Thread_local int cd_old_budget = 0;    // cordite_old variant: pre-2x worlds
 static _Thread_local int cd_keep1 = 0, cd_keep2 = 0;  // CD_KEEP1/2: candidates kept past stage 0/1 (0=default n/3, 2)
+static _Thread_local int cd_rollout_policy = 0;       // CD_ROLLOUT: 0=default, 1=espresso, 2=handwritten (struct path)
 // Bitboard endgame-solver node budgets (per shared pass). The bitboard solver
 // (transposition table + O(1) clone) resolves far more per node than the
 // struct solver, so it needs a much smaller node budget to do equivalent work
@@ -565,6 +566,13 @@ static int cd_leaf_solve(const Game *g) {
 // Stage-aware rollout policy (gunpowder's rule): handwritten while the deck
 // is alive or the game is heads-up, espresso for multi-player endgames.
 static StrategyFn cd_rollout_for(const Game *g) {
+    // CD_ROLLOUT (struct path only): 1 = espresso everywhere, 2 = handwritten
+    // everywhere. Research knob for the "rollout-policy bias" hypothesis — vs a
+    // strong opponent, a weak (handwritten) rollout policy biases value
+    // estimates, so more worlds saturates. A stronger rollout policy may reduce
+    // that bias. Run with CD_NO_FASTROLL=1.
+    if (cd_rollout_policy == 1) return espresso_strategy_choose;
+    if (cd_rollout_policy == 2) return handwritten_strategy_choose;
     bool deck_active = (g->deck_count > 0 || g->has_flipped);
     if (deck_active || cd_in_count(g) == 2) return handwritten_strategy_choose;
     return espresso_strategy_choose;
@@ -953,6 +961,7 @@ int cordite_strategy_choose(const Game *g, int bot_idx,
         cd_w3_override = cd_env_int("CD_W3", -1);
         cd_keep1 = cd_env_int("CD_KEEP1", 0);
         cd_keep2 = cd_env_int("CD_KEEP2", 0);
+        cd_rollout_policy = cd_env_int("CD_ROLLOUT", 0);
         cd_bb_win_budget = cd_env_int("CD_BB_WIN", 20000);
         cd_bb_avoid_budget = cd_env_int("CD_BB_AVOID", 15000);
         cd_leaf_budget = cd_env_int("CD_LEAF_BUDGET", 1500);
