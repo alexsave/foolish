@@ -48,3 +48,6 @@ cnitro/*.trace/
 
 # local dev overrides (shadows next.config.mjs if tracked!)
 next.config.js
+
+# Local Claude Code agent worktrees
+.claude/
