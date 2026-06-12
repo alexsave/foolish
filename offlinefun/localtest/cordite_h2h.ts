@@ -32,6 +32,13 @@ function runWorker(): void {
         const pcs = process.env.AR_PCS!.split(',').map(Number);
         const games = Number(process.env.AR_GAMES);
         const seed0 = Number(process.env.AR_SEED);
+        // The core reads these off globalThis (offline ablation knobs); env vars
+        // alone are invisible to it, so mirror them in. The frozen OLD core
+        // predates these knobs and ignores them, so e.g. CD_WORLDMUL scales ONLY
+        // the NEW (seat-0) bot — a clean "does more compute help NEW?" probe.
+        if (process.env.CD_WORLDMUL) (globalThis as any).CD_WORLDMUL = Number(process.env.CD_WORLDMUL);
+        if (process.env.CD_NO_SOLVE) (globalThis as any).CD_NO_SOLVE = true;
+        if (process.env.CD_NO_FASTROLL) (globalThis as any).CD_NO_FASTROLL = true;
         if (process.env.CD_MAXMS) {
             const core = await import('../../supabase/functions/_shared/strategies/cordite_core.ts');
             (core.CORDITE_PARAMS as any).maxMillis = Number(process.env.CD_MAXMS);
