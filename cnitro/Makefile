@@ -8,6 +8,16 @@ CC      ?= clang
 CFLAGS  ?= -O3 -ffast-math -flto -Wall -Wextra -Wno-unused-parameter -Wno-deprecated-declarations -Isrc -DACCELERATE_NEW_LAPACK
 LDFLAGS ?= -lm -flto -framework Accelerate
 
+# Parallel eval: `make OMP=1 ...` fans the independent games of cnitro_eval
+# across cores (the engine RNG and all cordite scratch state are _Thread_local,
+# so games don't race; results are identical to serial). Off by default so a
+# plain `make` needs no libomp. On macOS/clang you'll also want libomp
+# (brew install libomp) — gcc has it built in.
+ifeq ($(OMP),1)
+  CFLAGS  += -fopenmp
+  LDFLAGS += -fopenmp
+endif
+
 # The engine + all heuristic / Monte-Carlo bots. Linked into every binary.
 CORE_SRC := src/game.c src/legal.c src/random_strategy.c src/espresso_strategy.c \
             src/handwritten_strategy.c src/robusta_strategy.c \
