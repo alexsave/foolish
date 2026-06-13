@@ -1947,6 +1947,12 @@ export const seatWeightsFromProfiles = (pv: PublicView, profiles: SeatProfile[])
     const logPrior = [6.0, 4.0, 0, 0, 0, 0, 0];
     const extra = Math.max(0, n - 2);
     const minDec = 8 + 4 * extra;          // pc2:8 pc4:16 pc6:24 pc8:32
+    // Commit bar scales UP with player count: at higher pc each seat reveals
+    // fewer decisions, so its weak-mass estimate is noisier and a STRONG seat
+    // can cross a fixed bar by chance. Requiring CLEARLY-majority weak mass at
+    // pc6/pc8 keeps strong seats (esp. espresso, whose style is borderline)
+    // pinned to the strong policy. pc2:0.50 pc4:0.60 pc6:0.70 pc8:0.80.
+    const commitThresh = Math.min(0.85, 0.50 + 0.05 * extra);
     const oneHotHw = (): number[] => { const a = new Array(NUM_POLICIES).fill(0); a[POL_HANDWRITTEN] = 1; return a; };
     const weights: number[][] = [];
     let anyDeviate = false;
@@ -1991,7 +1997,7 @@ export const seatWeightsFromProfiles = (pv: PublicView, profiles: SeatProfile[])
         // cordite-grade vs strong fields. A genuinely-weak seat clears 0.5 easily
         // and keeps its full posterior blend (including any residual strong mass,
         // so the rollout still mixes in strong play proportionally).
-        if (nonStrong < 0.5) { weights.push(oneHotHw()); }
+        if (nonStrong < commitThresh) { weights.push(oneHotHw()); }
         else { anyDeviate = true; weights.push(w); }
     }
     return anyDeviate ? weights : null;
