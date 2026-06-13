@@ -108,3 +108,17 @@ came WITHOUT the principled safety; the mixture is safe AND general.
   likelihood is hand-free move-level only.
 - Real-budget (2s + full worlds) validation in progress — more worlds should
   integrate the posterior better.
+
+### REAL-BUDGET validation (deployment-faithful: maxMillis=2000 + full ~3x worlds), 140g/cell
+| field | pc4 dWin | pc6 dWin |
+|---|---|---|
+| simple_heuristic (weak) | +16.4 | +8.6 |
+| mixed [random,simple,handwritten] | +10.0 | +22.9 |
+| espresso (mixture) | -14.3 | -7.9 |
+| espresso (FUL_OFF control) | -12.9 | -13.6 |
+=> Weak/mixed fields: fulminate clearly beats cordite (mixed pc6: 40% vs 17%).
+   Strong espresso: mixture ~= control (pc4) / BETTER than control (pc6) => safe;
+   the negative dWin is seat-position noise the control shares.
+   NB the bigger budget IMPROVED the weak win vs the 400ms runs (+8.8 -> +16.4 pc4):
+   more worlds integrate the posterior better. The general mixture model is
+   safe AND a real winner vs weak/human-like fields.
