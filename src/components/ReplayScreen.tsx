@@ -15,6 +15,7 @@ import { useLocalization } from '../contexts/LocalizationContext';
 import { CardFace } from './GameDisplay/CardFace';
 import { CardBack } from './GameDisplay/CardBack';
 import { GameBoard } from './GameBoard';
+import { Telestrator } from './Telestrator';
 import { usePreventScroll } from '../hooks/usePreventScroll';
 import { animationFeed, AnimationSequenceMessage } from '../state/animationFeed';
 import { codeToGame } from '../replay/codec';
@@ -364,6 +365,13 @@ const IconEye = () => (
         <circle cx={12} cy={12} r={2} />
     </Glyph>
 );
+/* Telestrator pen — a simple diagonal marker; the active state tints the
+   whole knob amber like the other transport toggles. */
+const IconPen = () => (
+    <Glyph>
+        <path d="M16.5 3.5a2 2 0 0 1 2.8 2.8L8.7 16.9 4 18.5l1.6-4.7L16.5 3.5Z" />
+    </Glyph>
+);
 
 interface StageProps {
     decoded: DecodedReplay;
@@ -385,6 +393,11 @@ const ReplayStage = ({ decoded, steps, sequences, reverses, gameId, names, times
     const [stepIdx, setStepIdx] = useState(-1); // -1 = pre-deal
     const [playing, setPlaying] = useState(false);
     const [reveal, setReveal] = useState(false);
+    // Telestrator toggle: press to enter a red-pen overlay; press again to exit
+    // AND clear it. Because the canvas is unmounted while `drawing` is false,
+    // toggling off wipes the strokes and toggling on always starts blank.
+    const [drawing, setDrawing] = useState(false);
+    const toggleDrawing = useCallback(() => setDrawing((d) => !d), []);
     const speeds = useMemo(() => buildSpeeds(times), [times]);
     const [speedIdx, setSpeedIdx] = useState(0);
     // wall-clock target for the next autoplay move (realtime waits can exceed
@@ -541,6 +554,15 @@ const ReplayStage = ({ decoded, steps, sequences, reverses, gameId, names, times
 
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
+            // 'c' (comment) cycles the telestrator: enter draw mode, then exit
+            // + clear, then a fresh blank overlay again.
+            if (e.key === 'c' || e.key === 'C') {
+                toggleDrawing();
+                return;
+            }
+            // While drawing, the transport keys are inert so a commentator's
+            // keystrokes can't scrub or play the replay underneath the pen.
+            if (drawing) return;
             if (e.key === 'ArrowRight') stepForward();
             if (e.key === 'ArrowLeft') stepBack();
             if (e.key === ' ') {
@@ -550,7 +572,7 @@ const ReplayStage = ({ decoded, steps, sequences, reverses, gameId, names, times
         };
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
-    }, [stepForward, stepBack]);
+    }, [stepForward, stepBack, drawing, toggleDrawing]);
 
     const step = steps[Math.max(0, stepIdx)];
 
@@ -604,6 +626,12 @@ const ReplayStage = ({ decoded, steps, sequences, reverses, gameId, names, times
             boardInset={boardInset}
             overlay={reveal && <RevealedHands />}
             chrome={<>
+            {/* Telestrator: a red-pen canvas that overlays the whole replay
+                while drawing is on. Rendered in the board chrome (above the
+                board + animation overlay); intercepts pointer events only
+                while active. */}
+            <Telestrator active={drawing} />
+
             {/* status bar, top-centre: move counter, timestamp, and what just
                 happened — the readouts a VHS deck shows on its front display. */}
             <div
@@ -699,6 +727,7 @@ const ReplayStage = ({ decoded, steps, sequences, reverses, gameId, names, times
                     {btn(<IconStepForward />, stepForward, t('replay_step_forward'))}
                     {btn(<IconBoutNext />, nextBout, t('replay_bout_next'))}
                     {btn(<IconEye />, () => setReveal((r) => !r), t(reveal ? 'hide_cards' : 'reveal_cards'), reveal)}
+                    {btn(<IconPen />, toggleDrawing, t(drawing ? 'replay_draw_clear' : 'replay_draw'), drawing)}
                     {speeds.length > 1 &&
                         btn(
                             speeds[speedIdx % speeds.length].label,

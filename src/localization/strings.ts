@@ -67,7 +67,9 @@ export type StringId =
   | 'replay_step_back'
   | 'replay_step_forward'
   | 'replay_bout_start'
-  | 'replay_bout_next';
+  | 'replay_bout_next'
+  | 'replay_draw'
+  | 'replay_draw_clear';
 
 // English strings
 export const strings_en: Record<StringId, string> = {
@@ -139,6 +141,8 @@ export const strings_en: Record<StringId, string> = {
   replay_step_forward: 'Step forward',
   replay_bout_start: 'Start of bout',
   replay_bout_next: 'Next bout',
+  replay_draw: 'Draw (press C)',
+  replay_draw_clear: 'Clear drawing (press C)',
 };
 
 // Russian strings
@@ -211,6 +215,8 @@ export const strings_ru: Record<StringId, string> = {
   replay_step_forward: 'Шаг вперёд',
   replay_bout_start: 'Начало кона',
   replay_bout_next: 'Следующий кон',
+  replay_draw: 'Рисовать (клавиша C)',
+  replay_draw_clear: 'Стереть рисунок (клавиша C)',
 };
 
 // Korean strings
@@ -283,6 +289,8 @@ export const strings_ko: Record<StringId, string> = {
   replay_step_forward: '앞으로 한 단계',
   replay_bout_start: '판 시작',
   replay_bout_next: '다음 판',
+  replay_draw: '그리기 (C 키)',
+  replay_draw_clear: '그림 지우기 (C 키)',
 };
 
 // Combined strings object for easy access
