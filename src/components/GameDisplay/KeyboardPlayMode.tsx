@@ -353,7 +353,7 @@ export const KeyboardPlayMode = () => {
                     style={{
                         position: 'fixed',
                         left: geom.sel.x + geom.sel.w * 0.15,
-                        top: geom.sel.y + geom.sel.h + 6,
+                        top: geom.sel.y + geom.sel.h + 4,
                         width: geom.sel.w * 0.7, height: 3,
                         background: '#ff2d2d', borderRadius: 2,
                         boxShadow: '0 0 6px 1px rgba(255,45,45,0.85)',
