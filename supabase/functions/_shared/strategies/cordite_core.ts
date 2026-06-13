@@ -1611,6 +1611,8 @@ export interface SeatProfile {
     smp: number;             // signal mass attributable to simple/give-up play
     trumpsPlayed: number;    // trumps this seat played while the deck was alive
     cardsPlayed: number;     // total cards this seat played while the deck was alive
+    pickups: number;         // # times this seat took the table (defender pickup)
+    defends: number;         // # times this seat covered (defender cover decision)
 }
 
 // Design note (v2 — conservative). The first attempt scored EVERY move against
@@ -1635,7 +1637,8 @@ export const profileSeats = (pv: PublicView): SeatProfile[] => {
     const profiles: SeatProfile[] = [];
     for (let p = 0; p < n; p++) {
         profiles.push({ policy: POL_HANDWRITTEN, confidence: 0, decisions: 0,
-            weak: 0, rnd: 0, grd: 0, smp: 0, trumpsPlayed: 0, cardsPlayed: 0 });
+            weak: 0, rnd: 0, grd: 0, smp: 0, trumpsPlayed: 0, cardsPlayed: 0,
+            pickups: 0, defends: 0 });
     }
     // Helper: tally trumps-vs-cards a seat voluntarily PLAYED while the deck was
     // alive. Trump-conservation rate is the most robust hand-free discriminator:
@@ -1713,6 +1716,7 @@ export const profileSeats = (pv: PublicView): SeatProfile[] => {
             case 'cover': {
                 if (prof) {
                     prof.decisions++;
+                    prof.defends++;
                     const covered = L.pairs.map(pr => pr.primary);
                     tallyCards(prof, covered, deckAliveAt);
                     for (const pr of L.pairs) {
@@ -1746,7 +1750,7 @@ export const profileSeats = (pv: PublicView): SeatProfile[] => {
                 break;
             }
             case 'pickup': {
-                if (prof) prof.decisions++;   // neutral (pickup may be forced)
+                if (prof) { prof.decisions++; prof.pickups++; }   // neutral for weakness, but a passive/timid tell
                 clearTable();
                 break;
             }
@@ -1795,11 +1799,24 @@ export const profileSeats = (pv: PublicView): SeatProfile[] => {
         }
         const sigRate = prof.weak / prof.decisions;          // discrete-signal rate
         prof.confidence = Math.max(trumpScore, Math.min(1, sigRate));
-        // Weak archetype: trump-spending without other tells reads as RANDOM;
-        // discrete pile-on/over-trump signals lean greedy. Default RANDOM.
-        let pol = POL_RANDOM, best = prof.rnd;
-        if (prof.grd > best) { pol = POL_GREEDY; best = prof.grd; }
-        if (prof.smp > best) { pol = POL_SIMPLE; best = prof.smp; }
+        // Pick WHICH weak rollout best matches the seat's observed STYLE. (The
+        // downstream gate decides WHETHER to use it at all; a strong seat scores
+        // ~0 confidence and never reaches here, so this never affects strong
+        // fields.) Two orthogonal, hand-free style axes beyond the trump-spend
+        // weakness used for confidence:
+        //   - defender behaviour: pickup-rate (takes vs covers). A seat that
+        //     TAKES far more than it covers is timid/passive; one that ALWAYS
+        //     covers and never gives up is the stubborn loss-averse "human".
+        //   - trump-dumping: a clear first-attack-trump / wasteful-trump-cover
+        //     lean (grd mass) is the reckless/greedy disposer.
+        let pol = POL_RANDOM;
+        const defendOpps = prof.pickups + prof.defends;
+        if (defendOpps >= 3) {
+            const pickupRate = prof.pickups / defendOpps;
+            if (pickupRate >= 0.45) pol = POL_PASSIVE;                       // takes >= covers -> timid
+            else if (prof.pickups === 0 && defendOpps >= 4) pol = POL_HUMAN; // always defends, never gives up
+        }
+        if (pol === POL_RANDOM && prof.grd > prof.rnd) pol = POL_GREEDY;     // clear trump-dumper -> reckless
         prof.policy = pol;   // label always a weak archetype; gating decides use
     }
     return profiles;
