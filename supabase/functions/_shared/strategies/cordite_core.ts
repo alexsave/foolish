@@ -1983,8 +1983,16 @@ export const seatWeightsFromProfiles = (pv: PublicView, profiles: SeatProfile[])
         for (let k = 0; k < NUM_POLICIES; k++) { const e = Math.exp(L[k] - mx); w[k] = e; sum += e; }
         let nonStrong = 0;
         for (let k = 0; k < NUM_POLICIES; k++) { w[k] /= sum; if (k !== POL_HANDWRITTEN && k !== POL_ESPRESSO) nonStrong += w[k]; }
-        if (nonStrong > 0.08) anyDeviate = true;     // enough weak mass to be worth installing
-        weights.push(w);
+        // Per-seat COMMIT threshold (the safety mechanism). Only let a seat
+        // deviate from the strong default when its posterior is MAJORITY-weak
+        // (> 0.5). A strong seat (cordite/espresso/handwritten) carries only a
+        // little leaked weak mass from the prior/noise — pinning it EXACTLY to
+        // the strong policy gives zero rollout perturbation, so fulminate plays
+        // cordite-grade vs strong fields. A genuinely-weak seat clears 0.5 easily
+        // and keeps its full posterior blend (including any residual strong mass,
+        // so the rollout still mixes in strong play proportionally).
+        if (nonStrong < 0.5) { weights.push(oneHotHw()); }
+        else { anyDeviate = true; weights.push(w); }
     }
     return anyDeviate ? weights : null;
 };
