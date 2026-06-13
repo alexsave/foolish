@@ -1724,18 +1724,37 @@ export const seatPolicyFromProfiles = (pv: PublicView, profiles: SeatProfile[]):
     const n = pv.numPlayers;
     const table = new Array(n).fill(POL_HANDWRITTEN);
     let anyDeviate = false;
+    // Player-count-scaled commitment gate. At pc2 a single opponent reveals many
+    // decisions per game, so its trump-rate / discrete-signal sample is large and
+    // low-variance; at pc6/pc8 each opponent reveals FEWER decisions (the round
+    // rotates through more seats), so the same per-seat sample is far noisier and
+    // a STRONG seat (cordite/espresso/handwritten) clears a fixed bar by chance
+    // more often — that mislabel is where the strong-field regression lived. The
+    // safe default is always cordite's own strong policy (POL_HANDWRITTEN), so we
+    // scale BOTH the evidence requirement (decisions / cards) AND the weakness bar
+    // UP with player count. The pc2 thresholds are unchanged (where the weak-field
+    // win is largest and the sample is rich); pc4+ tightens so strong seats
+    // essentially never deviate. (Cordite itself never calls this — it stays on
+    // the fast POL_HANDWRITTEN path regardless; this only governs fulminate.)
+    const extra = Math.max(0, n - 2);
+    const minDecisions = 6 + 4 * extra;     // pc2:6  pc4:14 pc6:22 pc8:30
+    const minCards = 8 + 4 * extra;         // pc2:8  pc4:16 pc6:24 pc8:32
+    let minConf = 0.55 + 0.08 * extra;      // pc2:0.55 pc4:0.71 pc6:0.87 pc8:1.03
+    if (minConf > 0.92) minConf = 0.92;     // keep a clearly-random seat reachable
     for (let p = 0; p < n; p++) {
         if (p === pv.myIdx || pv.statuses[p] !== ST_IN) continue;
         const prof = profiles[p];
         // Conservative commitment. Deviate to a weak archetype only when the
         // seat has revealed enough play AND its weakness score (dominated by the
-        // trump-conservation rate) clears a high bar. The bar (>=0.55) maps to a
-        // trump-spend rate of ~0.21 — well above any strong bot's hoarding rate
-        // (~0.08-0.12 measured), so cordite/handwritten/espresso stay on the
-        // POL_HANDWRITTEN default and fulminate == cordite vs strong fields.
-        if (prof.decisions < 6) continue;
-        if (prof.cardsPlayed < 8) continue;     // need a real trump-rate sample
-        if (prof.confidence < 0.55) continue;   // weakness score
+        // trump-conservation rate) clears a high bar. The pc2 bar (>=0.55) maps
+        // to a trump-spend rate of ~0.21 — well above any strong bot's hoarding
+        // rate (~0.08-0.12 measured); the bar ramps higher at pc4+ so the noisier
+        // few-decision samples there cannot flip a strong seat. cordite /
+        // handwritten / espresso stay on POL_HANDWRITTEN and fulminate >= cordite
+        // vs strong fields.
+        if (prof.decisions < minDecisions) continue;
+        if (prof.cardsPlayed < minCards) continue;   // need a real trump-rate sample
+        if (prof.confidence < minConf) continue;     // weakness score
         table[p] = prof.policy;
         anyDeviate = true;
     }
