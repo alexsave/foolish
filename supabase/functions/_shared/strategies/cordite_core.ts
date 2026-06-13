@@ -1935,11 +1935,24 @@ export interface CorditeParams {
 // pc2 82.5->92.5, pc4 32.5->41.3 with single-core p99 latency ~0.7-0.9s and
 // max ~1.0s (well under the 2s budget). The per-decision maxMillis cap still
 // bounds latency, so complex positions degrade gracefully instead of exceeding
-// 2s. ~3x is near the identical-world saturation knee; the rest of the freed
-// budget is spent on WIDER candidate survival (see the pruning keep-counts in
-// corditeChoose), not just more identical worlds.
+// 2s. ~3x is near the identical-world saturation knee at LOW player counts; the
+// rest of the freed budget is spent on WIDER candidate survival (see the pruning
+// keep-counts in corditeChoose), not just more identical worlds.
+//
+// v2.4 player-count-aware budget. Head-to-head vs the deployed origin/main
+// cordite (same exact solver) exposed a high-player-count regression that the
+// vs-handwritten arena hid: at pc2/pc4 the budget is saturated (more worlds give
+// nothing — confirmed by a clean WORLDMUL sweep), but pc6/pc8 were VARIANCE-
+// STARVED — 6-8 way hidden state needs more determinized worlds to estimate.
+// Measured (h2h vs old, mean finish position, lower=better): pc6 worlds x1->x2
+// moved mean 3.71->3.47 and win% 12.5->18.8 (x1 was BELOW the 1/n fair share,
+// x2 above it); pc8 likewise improved. Gains plateau by ~x2-3 and single-core
+// p99 at ~x2 stays ~1.2s (x3 was ~1.8s, near the 2s cap). So pc6/pc8 get ~2x the
+// low-count budget; pc2/pc4 are unchanged (already saturated). maxMillis=2000
+// still caps the rare long pc6/pc8 decision gracefully.
 export const CORDITE_PARAMS: CorditeParams = {
-    worldsFor: (n) => n <= 2 ? [96, 168, 168] : n <= 4 ? [84, 168, 168] : [120, 240, n <= 6 ? 168 : 144],
+    worldsFor: (n) => n <= 2 ? [96, 168, 168] : n <= 4 ? [84, 168, 168]
+        : n <= 6 ? [240, 480, 360] : [240, 480, 288],
     maxMillis: 2000,
 };
 
