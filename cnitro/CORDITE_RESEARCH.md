@@ -63,10 +63,25 @@ fair share. More worlds fixes it (TS, NEW-only `CD_WORLDMUL` vs old, pc6, 160g):
 | 3× | 18.1 | 3.456 |
 | 4× | 24.4 | 3.394 |
 
-The gain plateaus by ~2–3×; single-core p99 at ~2× is ~1.2 s (3× ~1.8 s, near the
-2 s cap). **Shipped (v2.4):** pc6/pc8 get ~2× the low-count world budget
-(`[240,480,360]`/`[240,480,288]`), pc2/pc4 unchanged (saturated), `maxMillis`
-2000 still caps the rare long decision gracefully.
+A methodology trap surfaced here: under the production `maxMillis=2000` cap the
+number of worlds completed depends on wall-clock load, so capped multi-worker
+runs are **non-deterministic** and a first "confirmation" looked like no gain.
+Re-running uncapped (`MAXMS=10000`, full budget every decision → reproducible)
+at higher N settled it — the shipped v2.4 budget is a genuine pc6 improvement,
+and going beyond it does not help (deterministic, 300 games, vs old cordite):
+
+| pc6 budget | win% | mean finish |
+|------------|-----:|------------:|
+| v2.3 (old, 1×) | 14.0 | 3.707 (below fair 16.7%/3.50) |
+| **v2.4 (shipped, 2×)** | **19.3** | **3.440 (above fair)** |
+| 4× (2× v2.4) | 18.7 | 3.580 (no further gain) |
+
+The gain plateaus by ~2×; single-core p99 at 2× is ~1.2 s (well under the cap).
+**Shipped (v2.4):** pc6/pc8 get a clean 2× the low-count world budget
+(`[240,480,336]`/`[240,480,288]`), pc2/pc4 unchanged (saturated), `maxMillis`
+2000 still caps the rare long decision gracefully. (The pc8 deterministic
+confirmation was deprioritized — pc8 is rare in play and the direction matches
+pc6; the cordite track was parked here as clearly diminishing.)
 
 ## Finding 3 — the one algorithmic lever: rollout-policy realism
 
