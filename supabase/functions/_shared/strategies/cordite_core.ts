@@ -1807,7 +1807,15 @@ export const profileSeats = (pv: PublicView): SeatProfile[] => {
                         for (let q = 0; q < battlesA.length; q++) {
                             if (battlesD[q] !== NONE) continue;
                             let canCov = false;
-                            for (const c of kh) if (canCoverInt(battlesA[q], c, power)) { canCov = true; break; }
+                            // Only a CHEAP cover (low non-trump) declined is a weak
+                            // tell. Declining to cover when the only held cover is a
+                            // trump or a high card is STRATEGIC pickup (strong play),
+                            // so it must not count — that conflation is what makes a
+                            // naive "declined a cover" signal mislabel strong bots.
+                            for (const c of kh) {
+                                if ((c >> 4) === power || (c & 15) > 9) continue;
+                                if (canCoverInt(battlesA[q], c, power)) { canCov = true; break; }
+                            }
                             if (canCov) { prof.declinedCover++; break; }
                         }
                     }
