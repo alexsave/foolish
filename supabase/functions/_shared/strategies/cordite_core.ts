@@ -1645,6 +1645,7 @@ export interface SeatProfile {
     cardsPlayed: number;     // total cards this seat played while the deck was alive
     pickups: number;         // # times this seat took the table (defender pickup)
     defends: number;         // # times this seat covered (defender cover decision)
+    declinedCover: number;   // # times it took/passed while KNOWN-HELD a legal cover (negative inference)
 }
 
 // Design note (v2 — conservative). The first attempt scored EVERY move against
@@ -1670,7 +1671,7 @@ export const profileSeats = (pv: PublicView): SeatProfile[] => {
     for (let p = 0; p < n; p++) {
         profiles.push({ policy: POL_HANDWRITTEN, confidence: 0, decisions: 0,
             weak: 0, rnd: 0, grd: 0, smp: 0, trumpsPlayed: 0, cardsPlayed: 0,
-            pickups: 0, defends: 0 });
+            pickups: 0, defends: 0, declinedCover: 0 });
     }
     // Helper: tally trumps-vs-cards a seat voluntarily PLAYED while the deck was
     // alive. Trump-conservation rate is the most robust hand-free discriminator:
@@ -1697,6 +1698,18 @@ export const profileSeats = (pv: PublicView): SeatProfile[] => {
 
     const clearTable = (): void => { battlesA.length = 0; battlesD.length = 0; firstAttack = true; };
 
+    // NEGATIVE INFERENCE. Track cards each seat is KNOWN to still hold: cards it
+    // took via pickup, minus any it later played. This is certain knowledge (no
+    // guessing). When a seat then TAKES instead of covering while it demonstrably
+    // held a legal cover, that "had the card, declined to play it" is a clean weak
+    // tell (a strong/loss-averse player would have covered).
+    const knownHeld: number[][] = Array.from({ length: n }, () => []);
+    const removeKnown = (pp: number, cards: number[]): void => {
+        if (pp < 0) return;
+        const kh = knownHeld[pp];
+        for (const c of cards) { const i = kh.indexOf(c); if (i >= 0) kh.splice(i, 1); }
+    };
+
     for (let i = 0; i < pv.logs.length; i++) {
         const L = pv.logs[i];
         const p = L.playerIdx;
@@ -1707,6 +1720,7 @@ export const profileSeats = (pv: PublicView): SeatProfile[] => {
         switch (L.type) {
             case 'attack': {
                 const cards = L.pairs.map(pr => pr.primary).filter(c => c !== NONE);
+                removeKnown(p, cards);
                 let anyTrump = false;
                 let minNonTrump = 99;
                 for (const c of cards) {
@@ -1741,11 +1755,13 @@ export const profileSeats = (pv: PublicView): SeatProfile[] => {
             }
             case 'pass': {
                 const cards = L.pairs.map(pr => pr.primary).filter(c => c !== NONE);
+                removeKnown(p, cards);
                 if (prof) { prof.decisions++; tallyCards(prof, cards, deckAliveAt); }
                 for (const c of cards) { battlesA.push(c); battlesD.push(NONE); }
                 break;
             }
             case 'cover': {
+                removeKnown(p, L.pairs.map(pr => pr.primary).filter(c => c !== NONE));
                 if (prof) {
                     prof.decisions++;
                     prof.defends++;
@@ -1782,7 +1798,25 @@ export const profileSeats = (pv: PublicView): SeatProfile[] => {
                 break;
             }
             case 'pickup': {
-                if (prof) { prof.decisions++; prof.pickups++; }   // neutral for weakness, but a passive/timid tell
+                if (prof) {
+                    prof.decisions++; prof.pickups++;
+                    // negative inference: did it take while KNOWN-holding a legal
+                    // cover for some uncovered attack? (clean "had it, declined it")
+                    const kh = knownHeld[p];
+                    if (kh.length) {
+                        for (let q = 0; q < battlesA.length; q++) {
+                            if (battlesD[q] !== NONE) continue;
+                            let canCov = false;
+                            for (const c of kh) if (canCoverInt(battlesA[q], c, power)) { canCov = true; break; }
+                            if (canCov) { prof.declinedCover++; break; }
+                        }
+                    }
+                }
+                // the taker gains all table cards into hand (now known-held)
+                if (p >= 0) {
+                    for (const c of battlesA) if (c !== NONE) knownHeld[p].push(c);
+                    for (const c of battlesD) if (c !== NONE) knownHeld[p].push(c);
+                }
                 clearTable();
                 break;
             }
@@ -1984,6 +2018,15 @@ export const seatWeightsFromProfiles = (pv: PublicView, profiles: SeatProfile[])
             L[POL_PASSIVE] += 6 * pdev;              // takes a lot -> timid
             L[POL_HUMAN] -= 6 * pdev;                // never gives up -> stubborn defender
             L[POL_HANDWRITTEN] -= 1 * pdev;
+        }
+        // (4) NEGATIVE inference (clean evidence): took while KNOWN-holding a legal
+        // cover. A strong player, and the loss-averse "human", cover when they can;
+        // declining a cover you demonstrably held is a strong timid/random tell.
+        // Weighted heavily PER instance (it is certain, not inferred) but capped.
+        if (prof.declinedCover > 0) {
+            const dc = ev * Math.min(3, prof.declinedCover);
+            L[POL_PASSIVE] += 1.2 * dc; L[POL_RANDOM] += 0.6 * dc;
+            L[POL_HANDWRITTEN] -= 1.5 * dc; L[POL_ESPRESSO] -= 1.2 * dc; L[POL_HUMAN] -= 1.5 * dc;
         }
         // softmax
         let mx = -Infinity; for (const v of L) if (v > mx) mx = v;
