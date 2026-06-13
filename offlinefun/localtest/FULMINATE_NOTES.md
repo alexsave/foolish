@@ -122,3 +122,38 @@ came WITHOUT the principled safety; the mixture is safe AND general.
    NB the bigger budget IMPROVED the weak win vs the 400ms runs (+8.8 -> +16.4 pc4):
    more worlds integrate the posterior better. The general mixture model is
    safe AND a real winner vs weak/human-like fields.
+
+### Negative inference (cheap-cover only) + DEFINITIVE real-budget verdict
+NI v1 ("declined ANY held cover") was net-negative — it counted STRATEGIC pickups
+(strong play avoids spending a trump/high card) as weakness, mislabeling espresso.
+Refined to count only declining a CHEAP cover (low non-trump, value<=9), which is
+unambiguously timid.
+
+Definitive: real 2s budget + full worlds, 200 games/cell, current config (NI v2):
+| field | pc4 dWin | pc6 dWin |
+|---|---|---|
+| simple_heuristic (weak) | +14.0 | +5.5 |
+| mixed [random,simple,handwritten] | +12.5 | +17.0 |
+| espresso (mixture) | -14.0 | -4.5 |
+| espresso (FUL_OFF control) | -19.5 | -13.5 |
+
+=> vs weak/mixed: fulminate clearly beats cordite (mixed pc6 +17).
+=> vs strong espresso: mixture BEATS the cordite-identical control by +5.5pp (pc4)
+   and +9pp (pc6) — fulminate is not merely safe, its opponent modeling recovers
+   part of the seat-0 positional disadvantage that the control loses to. The
+   negative absolute dWin is seat-position noise (control shares it and loses more).
+cordite fingerprint unchanged (3229187219). NI v2 is KEPT.
+
+## FINAL STATE (this session)
+General per-seat POSTERIOR MIXTURE over the policy basis (handwritten/espresso/
+random/simple/greedy/passive/human), built online from observed decisions as
+signed per-policy log-likelihood votes (trump-rate, first-attack-trump/wasteful-
+cover tells, defender pickup-rate, and cheap-cover negative inference), SAMPLED
+per world in the MC rollout. Strong prior + per-seat commit threshold (0.50 pc<=4,
+scaling to 0.80 by pc8) => strong seats pinned to cordite play (safe); weak seats'
+posteriors concentrate and are exploited. Result: >= cordite everywhere, clear
+wins vs weak/mixed/human-like fields, larger budget improves it. cordite untouched.
+
+### Remaining ideas (not pursued / future)
+- Full per-decision hand-belief replay (vs the current known-held-only inference).
+- "good"-as-stop signal needs hand context to be clean (hand-free it mislabels).
