@@ -1952,7 +1952,7 @@ export interface CorditeParams {
 // still caps the rare long pc6/pc8 decision gracefully.
 export const CORDITE_PARAMS: CorditeParams = {
     worldsFor: (n) => n <= 2 ? [96, 168, 168] : n <= 4 ? [84, 168, 168]
-        : n <= 6 ? [240, 480, 360] : [240, 480, 288],
+        : n <= 6 ? [240, 480, 336] : [240, 480, 288],
     maxMillis: 2000,
 };
 
