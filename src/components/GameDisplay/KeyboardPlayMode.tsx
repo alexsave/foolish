@@ -33,8 +33,9 @@ import { Card, PersonalGame } from '../../common/types';
 import { useServer } from '../../contexts/ServerContext';
 import { useAnimation } from '../../contexts/AnimationContext';
 import { useAuth } from '../../contexts/AuthContext';
+import { useGame } from '../../contexts/GameContext';
 import { canCover } from '../../common/common_utils';
-import { canAttack, canPass } from '../../utils/gameValidation';
+import { canAttack, canPass, canCoverCards } from '../../utils/gameValidation';
 
 type CoverTarget = { kind: 'cover'; attack: Card; battleIndex: number };
 type Target = CoverTarget | { kind: 'pass' };
@@ -66,6 +67,7 @@ export const KeyboardPlayMode = () => {
     const game = rawGame as PersonalGame | null;
     const { attack, cover, pass, pickup, good } = useAnimation();
     const { user_id } = useAuth();
+    const { selectedCards, setSelectedCards, handleCardSelection } = useGame();
 
     const hand: Card[] = localHandOrder && localHandOrder.length ? localHandOrder : (game?.self?.hand ?? []);
 
@@ -75,7 +77,11 @@ export const KeyboardPlayMode = () => {
     // latest of everything the key handler needs, so the listener stays
     // installed once instead of re-subscribing on every state change
     const ref = useRef<any>({});
-    ref.current = { game, hand, user_id, selIdx, target, attack, cover, pass, pickup, good };
+    ref.current = {
+        game, hand, user_id, selIdx, target,
+        attack, cover, pass, pickup, good,
+        selectedCards, setSelectedCards, handleCardSelection,
+    };
 
     const reset = useCallback(() => { setSelIdx(null); setTarget(null); }, []);
 
@@ -92,8 +98,31 @@ export const KeyboardPlayMode = () => {
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
             const k = e.key;
+            if (isTypingTarget()) return;
+
+            // Meta (Cmd) is a DISCRETE TAP, never held: tapping it toggles the
+            // cursored card into/out of the shared selectedCards set (exactly
+            // like clicking the card). The red cursor is unaffected.
+            if (k === 'Meta') {
+                if (e.ctrlKey || e.altKey) return;
+                const s = ref.current;
+                const g: PersonalGame | null = s.game;
+                if (!g || !g.self) return;
+                const h: Card[] = s.hand;
+                const sel: number | null = s.selIdx;
+                if (sel == null || !h[sel]) return;
+                // ignore while in cover/pass target sub-mode (selection is for
+                // the card-selection flow only)
+                if (s.target) return;
+                e.preventDefault();
+                s.handleCardSelection(h[sel]);
+                return;
+            }
+
             if (k !== 'ArrowLeft' && k !== 'ArrowRight' && k !== 'ArrowUp' && k !== 'ArrowDown' && k !== 'Escape') return;
-            if (isTypingTarget() || e.ctrlKey || e.metaKey || e.altKey) return;
+            // Shift+arrows are a special drag mode handled below; everything else
+            // with a modifier is ignored.
+            if (e.ctrlKey || e.metaKey || e.altKey) return;
 
             const s = ref.current;
             const g: PersonalGame | null = s.game;
@@ -104,6 +133,44 @@ export const KeyboardPlayMode = () => {
             const h: Card[] = s.hand;
             const cur: { targets: Target[]; idx: number } | null = s.target;
             const sel: number | null = s.selIdx;
+
+            // ----- Shift + left/right: DRAG the cursored card into/out of play -
+            // Reuses the SAME legality the mouse drag uses (DragContext's
+            // determineGameAction), evaluated at the card's on-screen position
+            // for Shift+Left (=cancel/none) and at the target area for Shift+
+            // Right (=play). Shift+Right "drags into play": attacker -> attack;
+            // defender -> cover a legal target, else pass. Shift+Left is a
+            // no-op cancel that just clears any pending target sub-mode.
+            if (e.shiftKey && (k === 'ArrowLeft' || k === 'ArrowRight')) {
+                e.preventDefault();
+                if (k === 'ArrowLeft') { setTarget(null); return; }
+                if (sel == null || !h[sel]) return;
+                const card = h[sel];
+                if (!isDefender) {
+                    // attacker drag-into-play == attack (same legality as drag)
+                    if (canAttack(g, [card])) run(s.attack([card]));
+                    return;
+                }
+                // defender drag-into-play: cover a legal target, else pass —
+                // same precedence the mouse drag uses (cover over an attack,
+                // pass to empty space).
+                const coverable = (g.table_battles || [])
+                    .filter((b) => !b.defense && canCover(b.attack, card, g.power_suit));
+                if (coverable.length === 1) { run(s.cover([card], [coverable[0].attack])); return; }
+                if (coverable.length > 1) {
+                    // ambiguous which attack to cover -> enter target sub-mode
+                    const targets: Target[] = coverable.map((b) => ({
+                        kind: 'cover' as const, attack: b.attack,
+                        battleIndex: (g.table_battles || []).indexOf(b),
+                    }));
+                    if (canPass(g, [card])) targets.push({ kind: 'pass' });
+                    setTarget({ targets, idx: 0 });
+                    return;
+                }
+                // nothing coverable -> pass if legal
+                if (canPass(g, [card])) run(s.pass([card]));
+                return;
+            }
 
             e.preventDefault();
 
@@ -146,6 +213,36 @@ export const KeyboardPlayMode = () => {
             }
 
             if (k === 'ArrowUp') {
+                // ----- multi-select commit (Feature 2) -------------------------
+                // When the shared selectedCards set (built via Meta taps, same as
+                // clicking) is non-empty, Up commits a move from the SET, exactly
+                // like the ActionButtons attack/pass/cover buttons. When the set
+                // is empty, fall through to the single-cursor-card behaviour.
+                const selected: Card[] = s.selectedCards || [];
+                if (selected.length > 0) {
+                    if (!isDefender) {
+                        if (canAttack(g, selected)) {
+                            run(withClear(s, s.attack(selected)));
+                        }
+                        return;
+                    }
+                    // defender: cover via the unambiguous mapping, else pass.
+                    if (canCoverCards(g, selected)) {
+                        const uncoveredAttacks = (g.table_battles || [])
+                            .filter((b) => !b.defense).map((b) => b.attack);
+                        const mapping = findUnambiguousCoverMapping(selected, uncoveredAttacks, g.power_suit);
+                        if (mapping) {
+                            run(withClear(s, s.cover(mapping.coverCards, mapping.attackCards)));
+                            return;
+                        }
+                    }
+                    if (canPass(g, selected)) {
+                        run(withClear(s, s.pass(selected)));
+                    }
+                    // ambiguous / illegal multi-card cover: no-op, keep selection
+                    return;
+                }
+
                 if (!isDefender) {
                     if (canAttack(g, [card])) run(s.attack([card]));
                     return;
@@ -283,6 +380,51 @@ export const KeyboardPlayMode = () => {
 };
 
 /* ------------------------------- helpers ----------------------------------- */
+// wrap a move promise so the shared selectedCards set is cleared on success
+// (mirrors ActionButtons, which calls setSelectedCards([]) after the action)
+function withClear(s: any, p: Promise<unknown>): Promise<unknown> {
+    return p.then((v) => { s.setSelectedCards([]); return v; });
+}
+
+// Mirror of ActionButtons' handleCoverClick mapping: returns a single
+// cover->attack assignment only when every valid permutation covers the SAME
+// set of attacks (i.e. the mapping is unambiguous); otherwise null.
+function findUnambiguousCoverMapping(
+    coverCards: Card[],
+    uncoveredAttacks: Card[],
+    powerSuit: Card['suit'],
+): { coverCards: Card[]; attackCards: Card[] } | null {
+    if (coverCards.length === 0 || coverCards.length > uncoveredAttacks.length) return null;
+
+    const generatePermutations = (arr: Card[], length: number): Card[][] => {
+        if (length === 1) return arr.map((item) => [item]);
+        const result: Card[][] = [];
+        for (let i = 0; i < arr.length; i++) {
+            const rest = arr.slice(0, i).concat(arr.slice(i + 1));
+            for (const subPerm of generatePermutations(rest, length - 1)) {
+                result.push([arr[i], ...subPerm]);
+            }
+        }
+        return result;
+    };
+
+    const combinations: { coverCards: Card[]; attackCards: Card[] }[] = [];
+    for (const attackPerm of generatePermutations(uncoveredAttacks, coverCards.length)) {
+        if (coverCards.every((c, i) => canCover(attackPerm[i], c, powerSuit))) {
+            combinations.push({ coverCards: [...coverCards], attackCards: [...attackPerm] });
+        }
+    }
+    if (combinations.length === 0) return null;
+
+    const key = (c: Card) => `${c.value}-${c.suit}`;
+    const firstSet = new Set(combinations[0].attackCards.map(key));
+    const sameSet = combinations.every((combo) => {
+        const set = new Set(combo.attackCards.map(key));
+        return set.size === firstSet.size && Array.from(set).every((s) => firstSet.has(s));
+    });
+    return sameSet ? combinations[0] : null;
+}
+
 function tableFullyCovered(g: PersonalGame): boolean {
     const b = g.table_battles || [];
     return b.length > 0 && b.every((x) => x.defense);
