@@ -17,3 +17,8 @@ Open question: are the strong-field negatives noise or a real regression? (objec
 
 ## Results log
 (appended below as runs complete)
+
+## Cordite fingerprint baseline (must not change)
+`cordite_fingerprint.ts cordite handwritten 2,4,6 10` -> hash=3229187219
+seq=[1,1,1,1,1,1,1,1,1,1,1,3,2,2,1,3,3,2,1,1,4,1,1,1,3,3,2,2,1,3]
+(Verified identical at f51658d. Any core change must reproduce this.)
