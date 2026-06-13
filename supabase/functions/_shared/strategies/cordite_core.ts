@@ -1947,12 +1947,14 @@ export const seatWeightsFromProfiles = (pv: PublicView, profiles: SeatProfile[])
     const logPrior = [6.0, 4.0, 0, 0, 0, 0, 0];
     const extra = Math.max(0, n - 2);
     const minDec = 8 + 4 * extra;          // pc2:8 pc4:16 pc6:24 pc8:32
-    // Commit bar scales UP with player count: at higher pc each seat reveals
-    // fewer decisions, so its weak-mass estimate is noisier and a STRONG seat
-    // can cross a fixed bar by chance. Requiring CLEARLY-majority weak mass at
-    // pc6/pc8 keeps strong seats (esp. espresso, whose style is borderline)
-    // pinned to the strong policy. pc2:0.50 pc4:0.60 pc6:0.70 pc8:0.80.
-    const commitThresh = Math.min(0.85, 0.50 + 0.05 * extra);
+    // Commit bar: a seat deviates only if its posterior is at least this
+    // weak. pc2/pc4 stay at 0.50 (measured safe vs an espresso field — mixture
+    // matched/beat the cordite-identical control there — and a higher bar only
+    // costs weak-field exploitation). pc6+ scales UP, because at higher player
+    // counts each seat reveals fewer decisions, so its weak-mass estimate is
+    // noisier and a borderline-strong seat (esp. espresso) can cross a low bar
+    // by chance. pc6:0.65 pc8:0.80.
+    const commitThresh = n <= 4 ? 0.50 : Math.min(0.85, 0.50 + 0.075 * (n - 4));
     const oneHotHw = (): number[] => { const a = new Array(NUM_POLICIES).fill(0); a[POL_HANDWRITTEN] = 1; return a; };
     const weights: number[][] = [];
     let anyDeviate = false;
