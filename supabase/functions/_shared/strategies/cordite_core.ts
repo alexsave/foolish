@@ -1730,6 +1730,11 @@ export const seatPolicyFromProfiles = (pv: PublicView, profiles: SeatProfile[]):
     const n = pv.numPlayers;
     const table = new Array(n).fill(POL_HANDWRITTEN);
     let anyDeviate = false;
+    // Offline control knob (FUL_OFF): force NO deviation so fulminate runs
+    // cordite's exact path. Used by the arena to separate harness/seat noise from
+    // the profiler's effect. Zero cost in production (env unset).
+    if (typeof globalThis !== 'undefined'
+        && (globalThis as { FUL_OFF?: boolean }).FUL_OFF === true) return null;
     // Player-count-scaled commitment gate. At pc2 a single opponent reveals many
     // decisions per game, so its trump-rate / discrete-signal sample is large and
     // low-variance; at pc6/pc8 each opponent reveals FEWER decisions (the round

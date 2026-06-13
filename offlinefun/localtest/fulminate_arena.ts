@@ -48,6 +48,7 @@ function runWorker(): void {
         const seed0 = Number(process.env.AR_SEED);
 
         if (process.env.CD_WORLDMUL) (globalThis as any).CD_WORLDMUL = Number(process.env.CD_WORLDMUL);
+        if (process.env.FUL_OFF) (globalThis as any).FUL_OFF = true;
         if (process.env.CD_NO_SOLVE) (globalThis as any).CD_NO_SOLVE = true;
         if (process.env.CD_NO_FASTROLL) (globalThis as any).CD_NO_FASTROLL = true;
         if (process.env.CD_MAXMS) {
