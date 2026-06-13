@@ -8,7 +8,7 @@
  *   - hand cards:    [data-location="hand"][data-player-id=<me>][data-card="s-v"]
  *   - table attacks: [data-battle-index=i]
  * so it needs no changes to ActionButtons / TableBattles — it draws its own
- * overlay (a red cursor ring + a cover/pass arrow). Mounted by GameBoard
+ * overlay (a red cursor underline + a cover/pass arrow). Mounted by GameBoard
  * wherever the board is `interactive` (live + tutorial). The replay screen is
  * NOT interactive, so its arrow-key transport is never hijacked.
  *
@@ -344,13 +344,19 @@ export const KeyboardPlayMode = () => {
     return (
         <>
             {stateEl}
-            {/* red cursor ring on the selected hand card */}
+            {/* arrow-key cursor: a short red underline a little below the card.
+                Deliberately NOT a border ring — the full-border highlight is
+                reserved for SELECTED cards (Cmd/click), so the two indicators
+                never collide on a card that is both cursored and selected. */}
             {geom.sel && (
                 <div
                     style={{
-                        position: 'fixed', left: geom.sel.x - 3, top: geom.sel.y - 3,
-                        width: geom.sel.w + 6, height: geom.sel.h + 6, borderRadius: 8,
-                        border: '3px solid #ff2d2d', boxShadow: '0 0 12px 2px rgba(255,45,45,0.8)',
+                        position: 'fixed',
+                        left: geom.sel.x + geom.sel.w * 0.15,
+                        top: geom.sel.y + geom.sel.h + 6,
+                        width: geom.sel.w * 0.7, height: 3,
+                        background: '#ff2d2d', borderRadius: 2,
+                        boxShadow: '0 0 6px 1px rgba(255,45,45,0.85)',
                         pointerEvents: 'none', zIndex: 1500,
                     }}
                 />
