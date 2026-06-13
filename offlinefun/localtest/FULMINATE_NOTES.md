@@ -67,3 +67,44 @@ play). The weak-field win is intact (+17 / +24.5). cordite fingerprint unchanged
 `cordite_fingerprint.ts cordite handwritten 2,4,6 10` -> hash=3229187219
 seq=[1,1,1,1,1,1,1,1,1,1,1,3,2,2,1,3,3,2,1,1,4,1,1,1,3,3,2,2,1,3]
 (Verified identical at f51658d. Any core change must reproduce this.)
+
+---
+
+## General model: per-seat posterior MIXTURE (this session)
+
+Replaced hard archetype selection with a per-opponent **posterior over the
+ARCH_POLICIES basis** (handwritten/espresso/random/simple/greedy + new
+**passive**/**human**). Built online from observed decisions as signed per-policy
+log-likelihood votes (trump-conservation rate, first-attack-trump / wasteful-cover
+tells, defender pickup-vs-cover). Heavy strong prior [6,4,0..]; an evidence factor
+grows with #decisions (pc-scaled). The MC world loop SAMPLES each seat's policy
+from its posterior per world (CRN-preserved). "Gets more confident as we feed it
+priors": few decisions -> posterior ~= strong prior -> plays like cordite.
+
+### Safety mechanism (the key to no strong-field regression)
+Per-seat COMMIT threshold: a seat deviates from the strong default only when its
+posterior is majority-weak (nonStrong > commitThresh); else it is pinned EXACTLY
+to POL_HANDWRITTEN (zero rollout perturbation). commitThresh = 0.50 for pc2/pc4,
+scales up at pc6+ (0.65/0.80) where few-decision samples are noisier.
+
+### Results (same-table A/B vs cordite, CD_MAXMS=400, 240g/cell, Δ vs cordite)
+With the pc-scaled commit threshold (a7479ba):
+| field | pc4 dWin | pc6 dWin | note |
+|---|---|---|---|
+| simple_heuristic (weak) | +8.8 | +10.4 | win holds |
+| espresso (mixture) | -5.4 | +0.4 | vs control -10.4 / -0.4 => mixture >= control => SAFE |
+| cordite all-strong (earlier) | +0.4 | -1.3 | vs control +1.7 / -4.6 => SAFE |
+cordite fingerprint unchanged (3229187219); cordite path untouched (seatWeights null).
+
+Interpretation: the seated A/B carries ~10pp seat-position noise at seat 0 (the
+FUL_OFF control shows it). Against that baseline the mixture is >= cordite vs
+strong fields and clearly + vs weak. The weak-field win is a bit lower than the
+discrete RANDOM-rollout version's noisy +17/+24.5, but that was high-variance and
+came WITHOUT the principled safety; the mixture is safe AND general.
+
+### TODO (frontier)
+- Hand reconstruction + negative inference into the likelihood ("had the card,
+  declined to play it"; voids from declined covers; `good` = stop signal). Current
+  likelihood is hand-free move-level only.
+- Real-budget (2s + full worlds) validation in progress — more worlds should
+  integrate the posterior better.
