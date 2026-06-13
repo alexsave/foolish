@@ -1687,17 +1687,23 @@ export const profileSeats = (pv: PublicView): SeatProfile[] => {
         if (p === pv.myIdx || pv.statuses[p] !== ST_IN || prof.decisions === 0) {
             prof.policy = POL_HANDWRITTEN; prof.confidence = 0; continue;
         }
-        // Trump rate needs a minimum sample to be meaningful. Calibrated to
-        // MEASURED rates (deck-alive, trumps/cards): handwritten ~0.13-0.18,
-        // simple ~0.20, cordite ~0.25 (cordite is NOT a strong hoarder, esp. at
-        // pc2 where it holds most of the deck), random ~0.35+. To leave cordite
-        // alone (the head-to-head must not regress) the ramp starts at 0.22 and
-        // saturates at 0.42, so only a clearly-random ~0.35+ rate clears the
-        // downstream 0.55 bar; cordite's ~0.25 maps to ~0.15 (safe).
+        // Trump rate needs a minimum sample to be meaningful. RE-CALIBRATED to
+        // the probe-MEASURED rates (deck-alive, trumps/cards) — the old ramp
+        // (0.22..0.42) was based on an underestimate of strong-bot trump spend.
+        // Measured: a STRONG espresso seat averages ~0.265 with a per-game TAIL
+        // up to ~0.55, indistinguishable from a weak seat at the low end. The old
+        // ramp mapped that 0.55 tail to 1.0 and mislabelled espresso as RANDOM
+        // ~17% of the time — the strong-field regression. cordite sits at the
+        // same ~0.25. A uniform-random seat runs higher and more consistently.
+        // To keep strong seats off the weak path we move the ramp FLOOR up to
+        // 0.40 (so ~0.265 -> 0) and saturate at 0.60; only a clearly-random
+        // ~0.50+ rate produces meaningful score, and even espresso's 0.55 tail
+        // maps to ~0.75 — which the player-count-scaled bar below then rejects
+        // unless the seat ALSO shows discrete weak signals.
         let trumpScore = 0;
         if (prof.cardsPlayed >= 8) {
             const rate = prof.trumpsPlayed / prof.cardsPlayed;
-            trumpScore = (rate - 0.22) / (0.42 - 0.22);
+            trumpScore = (rate - 0.40) / (0.60 - 0.40);
             if (trumpScore < 0) trumpScore = 0;
             if (trumpScore > 1) trumpScore = 1;
         }
@@ -1737,21 +1743,22 @@ export const seatPolicyFromProfiles = (pv: PublicView, profiles: SeatProfile[]):
     // essentially never deviate. (Cordite itself never calls this — it stays on
     // the fast POL_HANDWRITTEN path regardless; this only governs fulminate.)
     const extra = Math.max(0, n - 2);
-    const minDecisions = 6 + 4 * extra;     // pc2:6  pc4:14 pc6:22 pc8:30
-    const minCards = 8 + 4 * extra;         // pc2:8  pc4:16 pc6:24 pc8:32
-    let minConf = 0.55 + 0.08 * extra;      // pc2:0.55 pc4:0.71 pc6:0.87 pc8:1.03
-    if (minConf > 0.92) minConf = 0.92;     // keep a clearly-random seat reachable
+    const minDecisions = 8 + 4 * extra;     // pc2:8  pc4:16 pc6:24 pc8:32
+    const minCards = 14 + 4 * extra;        // pc2:14 pc4:22 pc6:30 pc8:38 (stable rate)
+    let minConf = 0.70 + 0.07 * extra;      // pc2:0.70 pc4:0.84 pc6:0.98 pc8:1.12
+    if (minConf > 0.95) minConf = 0.95;     // keep a clearly-random seat reachable
     for (let p = 0; p < n; p++) {
         if (p === pv.myIdx || pv.statuses[p] !== ST_IN) continue;
         const prof = profiles[p];
         // Conservative commitment. Deviate to a weak archetype only when the
         // seat has revealed enough play AND its weakness score (dominated by the
-        // trump-conservation rate) clears a high bar. The pc2 bar (>=0.55) maps
-        // to a trump-spend rate of ~0.21 — well above any strong bot's hoarding
-        // rate (~0.08-0.12 measured); the bar ramps higher at pc4+ so the noisier
-        // few-decision samples there cannot flip a strong seat. cordite /
-        // handwritten / espresso stay on POL_HANDWRITTEN and fulminate >= cordite
-        // vs strong fields.
+        // re-calibrated trump-conservation rate) clears a high bar. The pc2 bar
+        // (>=0.70) maps to a STABLE trump-spend rate of ~0.54 — well above the
+        // probe-measured strong-bot rate (espresso/cordite ~0.265 mean), so a
+        // strong seat scores ~0 and stays on POL_HANDWRITTEN; the bar ramps even
+        // higher at pc4+ where the few-decision sample is noisier. cordite /
+        // handwritten / espresso stay on the strong default and fulminate >=
+        // cordite vs strong fields.
         if (prof.decisions < minDecisions) continue;
         if (prof.cardsPlayed < minCards) continue;   // need a real trump-rate sample
         if (prof.confidence < minConf) continue;     // weakness score
