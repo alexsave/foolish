@@ -26,6 +26,17 @@
  *           attacks; if the card can also pass, one step right past the last
  *           attack points the arrow at an empty space (= pass); up executes.
  *   down / escape (in target mode) -> cancel back to card selection
+ *
+ *   shift+right                   -> DRAG the cursor card into play (same
+ *       legality as a mouse drag): attacker -> attack; defender -> cover a legal
+ *       target (target sub-mode if several uncovered attacks qualify) else pass.
+ *   shift+left                    -> cancel any pending cover/pass target sub-mode
+ *   meta/cmd (DISCRETE TAP)       -> toggle the cursor card in/out of the shared
+ *       selectedCards set (identical to clicking it; reuses selected styling).
+ *       The red cursor is unaffected, so you keep navigating after selecting.
+ *   up (selectedCards non-empty)  -> commit a move from the SET, like the
+ *       attack/pass/cover buttons: attacker -> attack; defender -> unambiguous
+ *       cover else pass. Cleared on success; ambiguous covers are a no-op.
  * ========================================================================== */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -135,12 +146,12 @@ export const KeyboardPlayMode = () => {
             const sel: number | null = s.selIdx;
 
             // ----- Shift + left/right: DRAG the cursored card into/out of play -
-            // Reuses the SAME legality the mouse drag uses (DragContext's
-            // determineGameAction), evaluated at the card's on-screen position
-            // for Shift+Left (=cancel/none) and at the target area for Shift+
-            // Right (=play). Shift+Right "drags into play": attacker -> attack;
-            // defender -> cover a legal target, else pass. Shift+Left is a
-            // no-op cancel that just clears any pending target sub-mode.
+            // Reuses the SAME legality the mouse drag uses: canAttack / canCover
+            // / canPass are exactly what DragContext.determineGameAction checks
+            // to resolve a drop, so this is the drag-play without DOM hit-testing.
+            // Shift+Right "drags into play": attacker -> attack; defender -> cover
+            // a legal target (target sub-mode if several), else pass. Shift+Left
+            // is a no-op cancel that just clears any pending target sub-mode.
             if (e.shiftKey && (k === 'ArrowLeft' || k === 'ArrowRight')) {
                 e.preventDefault();
                 if (k === 'ArrowLeft') { setTarget(null); return; }
