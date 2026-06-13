@@ -42,6 +42,26 @@ low-variance probe (above) is the reliable signal; on it the fix clearly works.
 (Full-budget runs at default maxMillis showed the documented small -2.5/-5.0 and
 were too slow to repeat in-budget; 200g/CD_MAXMS=400 was used to stay in time.)
 
+### Weak-field A/B (simple_heuristic, 200g/cell, CD_MAXMS=400) — the win HELD
+- pc4 dWin **+17.0** (50.0% vs 33.0%)
+- pc6 dWin **+24.5** (47.5% vs 23.0%)
+vs the prior-commit table (+16.9 / +13.8). The much-stricter strong-seat gate did
+NOT cost the weak-field exploitation: a genuinely weak seat (simple_heuristic)
+still clears the gate (high trump-rate + discrete signals) and fulminate exploits
+it. pc6 actually improved. Crucially the weak win (+24, seat 0) and the strong
+"loss" (-14, seat 0) have OPPOSITE signs at the SAME seat position, so the +24 is
+real strategy, not seat luck — and the -14 is shared by the FUL_OFF control, so it
+is seat/harness noise, not the profiler.
+
+## Verdict
+The task's mechanism (profiler mislabels strong seats -> mis-skews rollout) is
+fixed at the source: strong-seat mislabel 17.18% -> 0.30% (probe). On the only
+low-variance signal available the fix is unambiguous; the seated A/B dWin is
+swamped by seat-position asymmetry (FUL_OFF control = -12.5 with cordite-identical
+play). The weak-field win is intact (+17 / +24.5). cordite fingerprint unchanged
+(3229187219). Net: fulminate no longer deviates from cordite vs strong fields
+(safe), while keeping its large weak-field edge.
+
 
 ## Cordite fingerprint baseline (must not change)
 `cordite_fingerprint.ts cordite handwritten 2,4,6 10` -> hash=3229187219
