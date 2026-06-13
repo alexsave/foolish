@@ -1354,8 +1354,8 @@ const espressoChoose = (g: SimGame, pIdx: number, moves: SimMove[]): number => {
 // load-bearing: profiling reports the best-fit id and the rollout dispatch
 // indexes ARCH_POLICIES by it.
 export const POL_HANDWRITTEN = 0, POL_ESPRESSO = 1, POL_RANDOM = 2,
-    POL_SIMPLE = 3, POL_GREEDY = 4;
-export const NUM_POLICIES = 5;
+    POL_SIMPLE = 3, POL_GREEDY = 4, POL_PASSIVE = 5, POL_HUMAN = 6;
+export const NUM_POLICIES = 7;
 
 // random_strategy.ts: pick a uniformly random legal move. Consumes exactly one
 // rngNext() (keeps the rollout RNG stream well-defined).
@@ -1483,10 +1483,96 @@ const greedyChoose = (g: SimGame, _pIdx: number, moves: SimMove[]): number => {
     return 0;
 };
 
+// "Passive / timid" archetype: a cautious, loss-averse opponent. Leads the
+// single lowest non-trump and prefers to STOP (good) rather than pile on extra
+// attacks; as defender covers with its lowest card and REFUSES to spend trumps
+// — if the only cover needs a trump it picks up instead. Models the timid human
+// who hoards and takes cards rather than committing. Exploitable: safe to attack
+// into (it won't punish over-extension and bleeds cards by taking).
+const passiveChoose = (g: SimGame, pIdx: number, moves: SimMove[]): number => {
+    if (moves.length === 0) return -1;
+    const power = g.powerSuit;
+    let attackBest = -1, attackKey = Infinity;            // fewest cards, lowest, non-trump
+    let coverBest = -1, coverKey = Infinity, coverTrump = false;
+    let passBest = -1, passKey = Infinity, goodIdx = -1, pickupIdx = -1;
+    for (let i = 0; i < moves.length; i++) {
+        const m = moves[i];
+        switch (m.type) {
+            case MOVE_ATTACK: {
+                let s = 0, tr = 0;
+                for (const c of m.cards) { s += c & 15; if ((c >> 4) === power) tr++; }
+                const key = m.cards.length * 1000 + s + tr * 200;   // fewest, lowest, avoid trumps
+                if (key < attackKey) { attackKey = key; attackBest = i; }
+                break;
+            }
+            case MOVE_COVER: {
+                let s = 0, anyTr = false;
+                for (const c of m.cards) { s += c & 15; if ((c >> 4) === power) { anyTr = true; s += 200; } }
+                if (s < coverKey) { coverKey = s; coverBest = i; coverTrump = anyTr; }
+                break;
+            }
+            case MOVE_PASS: { let s = 0; for (const c of m.cards) s += c & 15; if (s < passKey) { passKey = s; passBest = i; } break; }
+            case MOVE_GOOD: goodIdx = i; break;
+            case MOVE_PICKUP: pickupIdx = i; break;
+        }
+    }
+    const isDef = pIdx === g.defender;
+    if (isDef) {
+        if (coverBest >= 0 && !coverTrump) return coverBest;   // cover only with a cheap non-trump
+        if (pickupIdx >= 0) return pickupIdx;                  // else take rather than spend a trump
+        if (coverBest >= 0) return coverBest;
+        if (passBest >= 0) return passBest;
+    } else {
+        if (goodIdx >= 0) return goodIdx;                      // prefer to STOP over piling on
+        if (attackBest >= 0) return attackBest;                // else a single low lead
+    }
+    if (attackBest >= 0) return attackBest;
+    if (passBest >= 0) return passBest;
+    if (goodIdx >= 0) return goodIdx;
+    if (pickupIdx >= 0) return pickupIdx;
+    return 0;
+};
+
+// "Human / loss-averse" archetype: plays sensibly-low like a casual human but is
+// reluctant to give up cards — it NEVER makes a strategic pickup (always defends
+// when it legally can) and prefers covering to passing. Not wasteful (unlike
+// greedy) and not timid (unlike passive): a stubborn, slightly-suboptimal
+// defender that over-commits to defending. Exploitable: can be baited into
+// spending its hand defending attacks it should have let through.
+const humanChoose = (g: SimGame, pIdx: number, moves: SimMove[]): number => {
+    if (moves.length === 0) return -1;
+    const power = g.powerSuit;
+    let attackBest = -1, attackScore = Infinity;
+    let coverBest = -1, coverScore = Infinity;
+    let passBest = -1, passScore = Infinity, goodIdx = -1, pickupIdx = -1;
+    for (let i = 0; i < moves.length; i++) {
+        const m = moves[i];
+        switch (m.type) {
+            case MOVE_ATTACK: { const s = shScore(m, power, 20); if (s < attackScore) { attackScore = s; attackBest = i; } break; }
+            case MOVE_COVER:  { const s = shScore(m, power, 10); if (s < coverScore) { coverScore = s; coverBest = i; } break; }
+            case MOVE_PASS:   { const s = shScore(m, power, 20); if (s < passScore) { passScore = s; passBest = i; } break; }
+            case MOVE_GOOD: goodIdx = i; break;
+            case MOVE_PICKUP: pickupIdx = i; break;
+        }
+    }
+    const isDef = pIdx === g.defender;
+    if (isDef) {
+        if (coverBest >= 0) return coverBest;     // never give up: always cover if able
+        if (passBest >= 0) return passBest;
+        if (pickupIdx >= 0) return pickupIdx;
+    }
+    if (attackBest >= 0) return attackBest;
+    if (passBest >= 0) return passBest;
+    if (goodIdx >= 0) return goodIdx;
+    if (pickupIdx >= 0) return pickupIdx;
+    return 0;
+};
+
 // Dispatch table: ARCH_POLICIES[policyId] -> chooser. Index with POL_*.
 export type SimPolicy = (g: SimGame, p: number, m: SimMove[]) => number;
 export const ARCH_POLICIES: SimPolicy[] = [
     handwrittenChoose, espressoChoose, randomChoose, simpleHeuristicChoose, greedyChoose,
+    passiveChoose, humanChoose,
 ];
 
 // Per-seat rollout policy override (fulminate). When null (default), simulate()
