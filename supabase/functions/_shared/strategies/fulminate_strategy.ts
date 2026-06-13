@@ -26,7 +26,7 @@ import {
     BeliefLog, CorditeParams, CORDITE_PARAMS,
     MOVE_ATTACK, MOVE_COVER, MOVE_GOOD, MOVE_PASS, MOVE_PICKUP,
     NONE, PublicView, SimMove, corditeChoose, mkCard,
-    profileSeats, seatPolicyFromProfiles, setSeatPolicy,
+    profileSeats, seatWeightsFromProfiles, setSeatWeights,
 } from './cordite_core.ts';
 
 const toInt = (c: Card | null | undefined): number =>
@@ -117,24 +117,25 @@ export class FulminateStrategy implements BotStrategy {
             const simMoves = legalMoves.map(toSimMove);
 
             // Profile opponents from this game's public log (cheap: one linear
-            // pass), derive a per-seat rollout policy table, and install it for
-            // the duration of this single (synchronous) decision. If no seat has
-            // earned a non-default label, leave the override OFF so the engine
-            // runs cordite's exact fast path.
+            // pass), build a per-seat POSTERIOR over the rollout-policy basis, and
+            // install it for the duration of this single (synchronous) decision.
+            // The MC world loop samples each seat's policy from its posterior per
+            // world. If no seat carries meaningful non-strong mass, leave the
+            // override OFF so the engine runs cordite's exact fast path.
             const profiles = profileSeats(pv);
-            const table = seatPolicyFromProfiles(pv, profiles);
-            setSeatPolicy(table);
+            const wts = seatWeightsFromProfiles(pv, profiles);
+            setSeatWeights(wts);
             try {
                 const idx = corditeChoose(pv, simMoves, this.params);
                 if (idx >= 0 && idx < legalMoves.length) {
                     return Promise.resolve(legalMoves[idx]);
                 }
             } finally {
-                setSeatPolicy(null);   // always restore cordite-identical default
+                setSeatWeights(null);   // always restore cordite-identical default
             }
         } catch (error) {
             console.error(`[fulminate] chooseMove failed, falling back to first legal move:`, error);
-            setSeatPolicy(null);
+            setSeatWeights(null);
         }
         return Promise.resolve(legalMoves[0]);
     }

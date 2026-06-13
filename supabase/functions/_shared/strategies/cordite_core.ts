@@ -1584,6 +1584,38 @@ export const ARCH_POLICIES: SimPolicy[] = [
 let seatPolicy: number[] | null = null;
 export const setSeatPolicy = (p: number[] | null): void => { seatPolicy = p; };
 
+// Posterior MIXTURE (fulminate's general opponent model). Rather than committing
+// each opponent seat to ONE archetype, the installer sets a per-seat posterior
+// WEIGHT vector over the ARCH_POLICIES basis (built online from the seat's
+// observed decisions, see seatWeightsFromProfiles). The MC world loop then SAMPLES
+// a concrete per-seat policy table from these weights once per world (shared by
+// all candidates in that world — preserves CRN), so across many worlds each
+// seat's rollout behaviour is DISTRIBUTED by its posterior: an uncertain seat
+// spreads over plausible policies, a seat we've seen a lot concentrates on its
+// best-fit one. null => cordite's exact global dispatch (no override).
+let seatWeights: number[][] | null = null;
+export const setSeatWeights = (w: number[][] | null): void => {
+    seatWeights = w;
+    seatPolicy = null;   // cleared; re-sampled per world while w is set
+};
+// Per-world sampler: fill `seatPolicy` (the table simulate() reads) by drawing
+// each seat's policy from its weight vector with a small LCG seeded by the world
+// seed — independent of the rollout RNG so it never perturbs the CRN stream.
+const sampledSeatPolicy: number[] = [];
+const samplePolicyTable = (seed: number, n: number): void => {
+    let s = (seed ^ 0x9e3779b9) >>> 0;
+    sampledSeatPolicy.length = n;
+    for (let p = 0; p < n; p++) {
+        const w = seatWeights![p];
+        s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
+        let r = s / 4294967296;
+        let k = 0;
+        for (; k < w.length - 1; k++) { if (r < w[k]) break; r -= w[k]; }
+        sampledSeatPolicy[p] = k;
+    }
+    seatPolicy = sampledSeatPolicy;
+};
+
 // ---------- opponent profiling (fulminate) --------------------------------
 // Walk the public move log, replay the public table state, and for each
 // opponent decision score how well each archetype {handwritten, espresso,
@@ -1892,6 +1924,69 @@ export const seatPolicyFromProfiles = (pv: PublicView, profiles: SeatProfile[]):
         }
     }
     return anyDeviate ? table : null;
+};
+
+// GENERAL model: build a per-seat POSTERIOR over the ARCH_POLICIES basis instead
+// of hard-selecting one archetype. weights[p][k] = softmax_k( logPrior[k] +
+// evidence_p * sum_of_signed_log_likelihood_votes ). The prior is heavy on the
+// cordite-grade policies (handwritten/espresso), so with little/no evidence a
+// seat's posterior stays ~all on the strong policies (the rollout then plays
+// like cordite — same safety the hard gate gave, now continuous). As a seat
+// reveals more decisions the `evidence` factor grows (and is pc-scaled: fewer
+// decisions per seat at higher player counts => less confident => safer), so a
+// consistently-weak seat's posterior concentrates on its best-fit weak policy.
+// Returns null (=> cordite fast path) when no seat carries meaningful non-strong
+// mass. Signals are the same hand-free tells profileSeats accumulates; here they
+// are signed per-policy votes rather than a single argmax.
+export const seatWeightsFromProfiles = (pv: PublicView, profiles: SeatProfile[]):
+        number[][] | null => {
+    const n = pv.numPlayers;
+    if (typeof globalThis !== 'undefined'
+        && (globalThis as { FUL_OFF?: boolean }).FUL_OFF === true) return null;
+    // log-prior over [hw, esp, rnd, smp, grd, pas, hum]: strongly favour strong.
+    const logPrior = [6.0, 4.0, 0, 0, 0, 0, 0];
+    const extra = Math.max(0, n - 2);
+    const minDec = 8 + 4 * extra;          // pc2:8 pc4:16 pc6:24 pc8:32
+    const oneHotHw = (): number[] => { const a = new Array(NUM_POLICIES).fill(0); a[POL_HANDWRITTEN] = 1; return a; };
+    const weights: number[][] = [];
+    let anyDeviate = false;
+    for (let p = 0; p < n; p++) {
+        const prof = profiles[p];
+        if (p === pv.myIdx || pv.statuses[p] !== ST_IN || prof.decisions === 0) { weights.push(oneHotHw()); continue; }
+        const L = logPrior.slice();
+        // evidence factor: 0 with no plays, grows to a cap as the seat reveals
+        // ~minDec decisions. Few decisions => L≈prior => ~strong (safe).
+        const ev = Math.min(1.4, prof.decisions / minDec);
+        // (1) trump-conservation rate (robust): strong hoard ~0.26, weak ~0.45+.
+        if (prof.cardsPlayed >= 8) {
+            const t = ev * (prof.trumpsPlayed / prof.cardsPlayed - 0.30);
+            L[POL_HANDWRITTEN] -= 7 * t; L[POL_ESPRESSO] -= 6 * t; L[POL_HUMAN] -= 5 * t;
+            L[POL_RANDOM] += 6 * t; L[POL_GREEDY] += 6 * t; L[POL_SIMPLE] += 2 * t;
+            L[POL_PASSIVE] -= 4 * t;                 // passive hoards trumps (takes instead)
+        }
+        // (2) discrete weak tells (first-attack trump lead, wasteful low-trump cover).
+        const sig = ev * (prof.weak / Math.max(1, prof.decisions));
+        L[POL_RANDOM] += 5 * sig; L[POL_GREEDY] += 5 * sig;
+        L[POL_HANDWRITTEN] -= 9 * sig; L[POL_ESPRESSO] -= 7 * sig;
+        L[POL_PASSIVE] -= 5 * sig; L[POL_HUMAN] -= 5 * sig;
+        // (3) defender style: pickup-rate (takes vs covers).
+        const dops = prof.pickups + prof.defends;
+        if (dops >= 3) {
+            const pdev = ev * (prof.pickups / dops - 0.30);
+            L[POL_PASSIVE] += 6 * pdev;              // takes a lot -> timid
+            L[POL_HUMAN] -= 6 * pdev;                // never gives up -> stubborn defender
+            L[POL_HANDWRITTEN] -= 1 * pdev;
+        }
+        // softmax
+        let mx = -Infinity; for (const v of L) if (v > mx) mx = v;
+        let sum = 0; const w = new Array(NUM_POLICIES);
+        for (let k = 0; k < NUM_POLICIES; k++) { const e = Math.exp(L[k] - mx); w[k] = e; sum += e; }
+        let nonStrong = 0;
+        for (let k = 0; k < NUM_POLICIES; k++) { w[k] /= sum; if (k !== POL_HANDWRITTEN && k !== POL_ESPRESSO) nonStrong += w[k]; }
+        if (nonStrong > 0.08) anyDeviate = true;     // enough weak mass to be worth installing
+        weights.push(w);
+    }
+    return anyDeviate ? weights : null;
 };
 
 // ---------- rollout ------------------------------------------------------
@@ -2584,6 +2679,9 @@ export const corditeChoose = (pv: PublicView, moves: SimMove[],
             const useVoids = (w & 3) !== 3;
             const useFloors = (w & 1) === 0;
             const world = sampleWorld(pv, B, wseed, useVoids, useFloors);
+            // fulminate: sample this world's per-seat rollout policies from the
+            // posterior weights (shared across all candidates in the world for CRN).
+            if (seatWeights !== null) samplePolicyTable(wseed, pv.numPlayers);
             const simRng = mix(wseed, 0x51AB1E5);
             for (let ci = 0; ci < cand.length; ci++) {
                 if (!alive[ci]) continue;
