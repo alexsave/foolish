@@ -470,10 +470,11 @@ CREATE TRIGGER handle_new_user_elo_rating
 
 -- Reserve the bot-name prefix. Replay codes encode only the player NAME (not the
 -- is_ai flag), so bot-vs-human must be recoverable from the name alone. Bots are
--- named with a leading 🤖 (U+1F916, decimal 129302); humans may not use it
--- anywhere in their username. This trigger is the AUTHORITATIVE guard (the
--- client-side check in AuthContext is only for fast UX and is bypassable).
--- chr() avoids embedding a raw emoji in the SQL file.
+-- named with a leading '%'; humans may not use it anywhere in their username. A
+-- single-byte ASCII prefix keeps the game_snapshots.extras blob tiny. This trigger
+-- is the AUTHORITATIVE guard (the client-side check in AuthContext is only for
+-- fast UX and is bypassable). NOTE: position() is a LITERAL substring search, so
+-- '%' here is just the character, not a LIKE wildcard.
 CREATE OR REPLACE FUNCTION public.enforce_username_not_bot()
 RETURNS TRIGGER
 SECURITY DEFINER
@@ -481,8 +482,8 @@ SET search_path = ''
 LANGUAGE plpgsql
 AS $$
 BEGIN
-  IF position(chr(129302) in coalesce(NEW.raw_user_meta_data->>'username', '')) > 0 THEN
-    RAISE EXCEPTION 'username may not contain the reserved bot prefix (U+1F916)'
+  IF position('%' in coalesce(NEW.raw_user_meta_data->>'username', '')) > 0 THEN
+    RAISE EXCEPTION 'username may not contain the reserved bot prefix (%%)'
       USING ERRCODE = 'check_violation';
   END IF;
   RETURN NEW;
