@@ -741,7 +741,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         }, ANIMATION_TIME);
 
         // Server API call
-        return invokeGameFunctions('attack', {
+        return invokeGameFunctions('action', {
+            type: 'attack',
             game_id: game_id!,
             cards: cards,
         });
@@ -776,7 +777,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         }, ANIMATION_TIME);
 
         // Server API call
-        return invokeGameFunctions('pass', {
+        return invokeGameFunctions('action', {
+            type: 'pass',
             game_id: game_id!,
             cards: cards,
         });
@@ -821,7 +823,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         }, ANIMATION_TIME);
 
         // Server API call
-        return invokeGameFunctions('pickup', {
+        return invokeGameFunctions('action', {
+            type: 'pickup',
             game_id: game_id!,
         });
     };
@@ -861,7 +864,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         }, ANIMATION_TIME);
 
         // Server API call
-        return invokeGameFunctions('cover', {
+        return invokeGameFunctions('action', {
+            type: 'cover',
             game_id: game_id!,
             cover_cards: coverCards,
             attack_cards: attackCards,
@@ -869,7 +873,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     };
 
     const good = (): Promise<{ game_id: string }> => {
-        return invokeGameFunctions('good', {
+        return invokeGameFunctions('action', {
+            type: 'good',
             game_id: game_id!,
         });
     };
