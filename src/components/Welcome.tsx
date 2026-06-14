@@ -7,6 +7,7 @@ import { Text } from './Text';
 import { useLocalization } from '../contexts/LocalizationContext';
 import Link from 'next/link';
 import { useStyles } from '../contexts/StyleContext';
+import { usernameUsesReservedPrefix } from '../common/botName';
 
 export const Welcome = () => {
     const [name, setName] = useState('');
@@ -80,10 +81,19 @@ export const Welcome = () => {
 
     const handleSignUp = async (e: React.FormEvent) => {
         e.preventDefault();
+        // The robot-emoji prefix is reserved for bots; reject it up front with a
+        // localized message (the AuthContext guard + DB trigger also enforce it).
+        if (usernameUsesReservedPrefix(name)) {
+            alert(t('username_reserved'));
+            return;
+        }
         try {
             await signUp(name, password);
         } catch (error: any) {
-            alert(`${t('signup_failed')}: ${error.message}`);
+            const msg = error?.message === 'USERNAME_RESERVED_PREFIX'
+                ? t('username_reserved')
+                : `${t('signup_failed')}: ${error.message}`;
+            alert(msg);
         }
     };
 

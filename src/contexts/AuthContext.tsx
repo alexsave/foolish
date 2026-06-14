@@ -4,6 +4,7 @@ import { WEBSITE_DOMAIN } from '../constants/constants';
 import { Session, User } from '@supabase/supabase-js';
 import { Sha256 } from '@aws-crypto/sha256-js';
 import { WeakPassword } from '@supabase/supabase-js';
+import { usernameUsesReservedPrefix } from '../common/botName';
 
 // Exported so self-contained screens (e.g. the tutorial) can re-provide a
 // mock identity for a seat without a real Supabase session.
@@ -106,6 +107,12 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     // this is a hack to get around the fact that supabase doesn't support username/password auth
     // Convert to uppercase for consistency
     const normalizedUsername = username.toUpperCase();
+    // The robot-emoji prefix is reserved for bots (so bot-vs-human survives the
+    // name-only replay codec). Humans may not use it. The DB trigger on
+    // auth.users is the authoritative guard; this is the fast client-side reject.
+    if (usernameUsesReservedPrefix(normalizedUsername)) {
+      throw new Error('USERNAME_RESERVED_PREFIX');
+    }
     const email = await nameToEmail(username);
 
     // Proceed with signup - Supabase handles duplicate email prevention
