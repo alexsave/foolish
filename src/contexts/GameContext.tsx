@@ -15,6 +15,15 @@ export const GameProvider = ({ children }: { children: React.ReactNode }) => {
     const [selectedCards, setSelectedCards] = useState<Card[]>([]);
     // we chose a card to cover WITH, now we choose WHICH card to cover
     const [isSelectingCover, setIsSelectingCover] = useState(false);
+    // optimistic "this action was just fired" flags, keyed by action name
+    // (good/attack/pickup/pass/cover). Setting one hides that button instantly —
+    // on click OR keyboard — until the server state catches up (or the move
+    // fails and we clear it). Shared here so keyboard play hides buttons exactly
+    // like a click does. ActionButtons clears each flag when its button should
+    // legitimately reappear.
+    const [pressedActions, setPressedActions] = useState<Record<string, boolean>>({});
+    const setActionPressed = (action: string, pressed: boolean) =>
+        setPressedActions(prev => ({ ...prev, [action]: pressed }));
 
     // Game loading state is now handled by ServerContext
 
@@ -39,6 +48,8 @@ export const GameProvider = ({ children }: { children: React.ReactNode }) => {
             setCoverMap,
             setIsSelectingCover,
             handleCardSelection,
+            pressedActions,
+            setActionPressed,
         }}>
             {children}
         </GameContext.Provider>
@@ -53,6 +64,8 @@ interface GameContextType {
     setCoverMap: (coverMap: Map<Card, Card>) => void;
     setIsSelectingCover: (isSelectingCover: boolean) => void;
     handleCardSelection: (card: Card) => void;
+    pressedActions: Record<string, boolean>;
+    setActionPressed: (action: string, pressed: boolean) => void;
 }
 
 

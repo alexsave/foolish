@@ -14,9 +14,10 @@
  *
  * CONTROLS
  *   left/right (nothing selected) -> select the leftmost card
- *   left/right (card selected)    -> move the red cursor between hand cards
+ *   left/right (card selected)    -> move the cursor between hand cards
  *   down  (defender)              -> pick up (if the table is non-empty)
  *   down  (attacker)              -> good   (if the table is fully covered)
+ *       down works with or without an active cursor (neither needs a card).
  *   up    (attacker)              -> attack with the cursor card (if legal)
  *   up    (defender):
  *       can cover exactly one & cannot pass  -> cover it immediately
@@ -25,15 +26,18 @@
  *           cursor card at an attack; left/right moves it between the coverable
  *           attacks; if the card can also pass, one step right past the last
  *           attack points the arrow at an empty space (= pass); up executes.
- *   down / escape (in target mode) -> cancel back to card selection
+ *   down (in target mode)         -> cancel back to card selection
  *
- *   shift+right                   -> DRAG the cursor card into play (same
- *       legality as a mouse drag): attacker -> attack; defender -> cover a legal
- *       target (target sub-mode if several uncovered attacks qualify) else pass.
- *   shift+left                    -> cancel any pending cover/pass target sub-mode
- *   meta/cmd (DISCRETE TAP)       -> toggle the cursor card in/out of the shared
+ *   shift (press)                 -> toggle the cursor card in/out of the shared
  *       selectedCards set (identical to clicking it; reuses selected styling).
- *       The red cursor is unaffected, so you keep navigating after selecting.
+ *       The cursor itself is unaffected, so you keep navigating after selecting.
+ *   shift + left/right (HOLD)     -> sweep-select: move the cursor and toggle
+ *       each card it lands on (already-selected -> deselected), matching the OS
+ *       "Shift extends the selection" gesture. Combined with the press-toggle
+ *       above, holding Shift over a card then arrowing right selects that card
+ *       AND each one swept onto.
+ *   meta/cmd + left/right         -> REARRANGE: drag the cursor card sideways in
+ *       the hand (cursor follows it). Reserved for reordering — never plays.
  *   up (selectedCards non-empty)  -> commit a move from the SET, like the
  *       attack/pass/cover buttons: attacker -> attack; defender -> unambiguous
  *       cover else pass. Cleared on success; ambiguous covers are a no-op.
@@ -74,11 +78,11 @@ const isTypingTarget = () => {
 };
 
 export const KeyboardPlayMode = () => {
-    const { game: rawGame, localHandOrder } = useServer();
+    const { game: rawGame, localHandOrder, setLocalHandOrder } = useServer();
     const game = rawGame as PersonalGame | null;
     const { attack, cover, pass, pickup, good } = useAnimation();
     const { user_id } = useAuth();
-    const { selectedCards, setSelectedCards, handleCardSelection } = useGame();
+    const { selectedCards, setSelectedCards, handleCardSelection, setActionPressed } = useGame();
 
     const hand: Card[] = localHandOrder && localHandOrder.length ? localHandOrder : (game?.self?.hand ?? []);
 
@@ -88,22 +92,40 @@ export const KeyboardPlayMode = () => {
     // latest of everything the key handler needs, so the listener stays
     // installed once instead of re-subscribing on every state change
     const ref = useRef<any>({});
-    ref.current = {
-        game, hand, user_id, selIdx, target,
-        attack, cover, pass, pickup, good,
-        selectedCards, setSelectedCards, handleCardSelection,
-    };
 
-    const reset = useCallback(() => { setSelIdx(null); setTarget(null); }, []);
-
-    // clamp / clear the cursor when the hand changes under it
+    // clamp / clear the cursor when the hand changes under it: keep the same
+    // index (so the cursor stays put across a move), shift it left to the last
+    // card if what it sat on got played off the end, and only turn it off once
+    // the hand is empty.
     useEffect(() => {
         if (selIdx !== null && selIdx >= hand.length) setSelIdx(hand.length ? hand.length - 1 : null);
     }, [hand.length, selIdx]);
 
-    const run = useCallback((p: Promise<unknown>) => {
-        p.then(reset).catch((e) => { console.error('[kbd] move failed:', e?.message ?? e); reset(); });
-    }, [reset]);
+    // After a move we only leave the cover/pass sub-mode; the CURSOR is kept
+    // (the clamp effect above shifts/clears it as the hand shrinks) so you don't
+    // have to re-aim from scratch after every play.
+    const afterMove = useCallback(() => { setTarget(null); }, []);
+
+    // Fire a move and mirror the on-screen buttons: optimistically hide the
+    // action's button (shared pressedActions flag) the instant the key is hit,
+    // optionally clear the multi-card selection on success, and un-hide the
+    // button if the move fails. Replaces the old run()/withClear()/runGood().
+    const fire = useCallback((action: string, p: Promise<unknown>, clearSel = false) => {
+        setActionPressed(action, true);
+        const done = clearSel ? p.then((v) => { setSelectedCards([]); return v; }) : p;
+        done.then(afterMove).catch((e) => {
+            console.error(`[kbd] ${action} failed:`, e?.message ?? e);
+            setActionPressed(action, false);
+            afterMove();
+        });
+    }, [afterMove, setActionPressed, setSelectedCards]);
+
+    ref.current = {
+        game, hand, user_id, selIdx, target,
+        attack, cover, pass, pickup, good, fire,
+        selectedCards, setSelectedCards, handleCardSelection,
+        setLocalHandOrder,
+    };
 
     /* ------------------------------- key logic ----------------------------- */
     useEffect(() => {
@@ -111,29 +133,69 @@ export const KeyboardPlayMode = () => {
             const k = e.key;
             if (isTypingTarget()) return;
 
-            // Meta (Cmd) is a DISCRETE TAP, never held: tapping it toggles the
-            // cursored card into/out of the shared selectedCards set (exactly
-            // like clicking the card). The red cursor is unaffected.
-            if (k === 'Meta') {
-                if (e.ctrlKey || e.altKey) return;
+            // Shift down: immediately toggle the cursored card into/out of the
+            // shared selection (like shift-clicking to anchor a range). With no
+            // active cursor it's a no-op; holding Shift and arrowing (below)
+            // extends the selection from here, so the card under the cursor when
+            // Shift was pressed is included.
+            if (k === 'Shift') {
+                if (e.ctrlKey || e.altKey || e.metaKey) return;
                 const s = ref.current;
                 const g: PersonalGame | null = s.game;
                 if (!g || !g.self) return;
                 const h: Card[] = s.hand;
                 const sel: number | null = s.selIdx;
-                if (sel == null || !h[sel]) return;
-                // ignore while in cover/pass target sub-mode (selection is for
-                // the card-selection flow only)
-                if (s.target) return;
+                if (sel == null || !h[sel] || s.target) return;
                 e.preventDefault();
                 s.handleCardSelection(h[sel]);
                 return;
             }
 
-            if (k !== 'ArrowLeft' && k !== 'ArrowRight' && k !== 'ArrowUp' && k !== 'ArrowDown' && k !== 'Escape') return;
-            // Shift+arrows are a special drag mode handled below; everything else
-            // with a modifier is ignored.
-            if (e.ctrlKey || e.metaKey || e.altKey) return;
+            if (k !== 'ArrowLeft' && k !== 'ArrowRight' && k !== 'ArrowUp' && k !== 'ArrowDown') return;
+
+            // Shift + left/right: SWEEP-SELECT — walk the cursor and toggle each
+            // card it lands on into the shared selection (already-selected ->
+            // deselected). Matches the OS "Shift extends the selection" gesture:
+            // hold Shift, right, right, right grabs three cards in one motion.
+            if (e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && (k === 'ArrowLeft' || k === 'ArrowRight')) {
+                e.preventDefault();
+                const s = ref.current;
+                const g: PersonalGame | null = s.game;
+                if (!g || !g.self) return;
+                const h: Card[] = s.hand;
+                if (!h.length) return;
+                if (s.target) return; // not while in the cover/pass sub-mode
+                const sel: number | null = s.selIdx;
+                const ni = sel == null
+                    ? 0
+                    : k === 'ArrowLeft' ? (sel - 1 + h.length) % h.length : (sel + 1) % h.length;
+                setSelIdx(ni);
+                if (h[ni]) s.handleCardSelection(h[ni]);
+                return;
+            }
+
+            // Cmd/Meta + left/right: REARRANGE — drag the cursored card sideways
+            // in the hand (cursor follows it), persisted via the same
+            // localHandOrder the mouse drag uses. Never plays a card; Cmd+up/down
+            // are inert.
+            if (e.metaKey && !e.ctrlKey && !e.altKey && (k === 'ArrowLeft' || k === 'ArrowRight')) {
+                e.preventDefault();
+                const s = ref.current;
+                const h: Card[] = s.hand;
+                const sel: number | null = s.selIdx;
+                if (sel == null || !h[sel]) return;
+                const to = k === 'ArrowLeft' ? sel - 1 : sel + 1;
+                if (to < 0 || to >= h.length) return; // clamp at the ends
+                const next = h.slice();
+                [next[sel], next[to]] = [next[to], next[sel]];
+                s.setLocalHandOrder(next);
+                setSelIdx(to);
+                return;
+            }
+
+            // every other modifier+arrow combo (Shift/Cmd+up/down, Ctrl, Alt) is
+            // inert so a held modifier can never trigger a play.
+            if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
 
             const s = ref.current;
             const g: PersonalGame | null = s.game;
@@ -145,44 +207,6 @@ export const KeyboardPlayMode = () => {
             const cur: { targets: Target[]; idx: number } | null = s.target;
             const sel: number | null = s.selIdx;
 
-            // ----- Shift + left/right: DRAG the cursored card into/out of play -
-            // Reuses the SAME legality the mouse drag uses: canAttack / canCover
-            // / canPass are exactly what DragContext.determineGameAction checks
-            // to resolve a drop, so this is the drag-play without DOM hit-testing.
-            // Shift+Right "drags into play": attacker -> attack; defender -> cover
-            // a legal target (target sub-mode if several), else pass. Shift+Left
-            // is a no-op cancel that just clears any pending target sub-mode.
-            if (e.shiftKey && (k === 'ArrowLeft' || k === 'ArrowRight')) {
-                e.preventDefault();
-                if (k === 'ArrowLeft') { setTarget(null); return; }
-                if (sel == null || !h[sel]) return;
-                const card = h[sel];
-                if (!isDefender) {
-                    // attacker drag-into-play == attack (same legality as drag)
-                    if (canAttack(g, [card])) run(s.attack([card]));
-                    return;
-                }
-                // defender drag-into-play: cover a legal target, else pass —
-                // same precedence the mouse drag uses (cover over an attack,
-                // pass to empty space).
-                const coverable = (g.table_battles || [])
-                    .filter((b) => !b.defense && canCover(b.attack, card, g.power_suit));
-                if (coverable.length === 1) { run(s.cover([card], [coverable[0].attack])); return; }
-                if (coverable.length > 1) {
-                    // ambiguous which attack to cover -> enter target sub-mode
-                    const targets: Target[] = coverable.map((b) => ({
-                        kind: 'cover' as const, attack: b.attack,
-                        battleIndex: (g.table_battles || []).indexOf(b),
-                    }));
-                    if (canPass(g, [card])) targets.push({ kind: 'pass' });
-                    setTarget({ targets, idx: 0 });
-                    return;
-                }
-                // nothing coverable -> pass if legal
-                if (canPass(g, [card])) run(s.pass([card]));
-                return;
-            }
-
             e.preventDefault();
 
             // ---------- TARGET (cover/pass) mode -------------------------------
@@ -190,22 +214,27 @@ export const KeyboardPlayMode = () => {
                 const len = cur.targets.length;
                 if (k === 'ArrowLeft') { setTarget({ ...cur, idx: (cur.idx - 1 + len) % len }); return; }
                 if (k === 'ArrowRight') { setTarget({ ...cur, idx: (cur.idx + 1) % len }); return; }
-                if (k === 'ArrowDown' || k === 'Escape') { setTarget(null); return; }
+                if (k === 'ArrowDown') { setTarget(null); return; }
                 if (k === 'ArrowUp') {
                     if (sel == null || !h[sel]) { setTarget(null); return; }
                     const card = h[sel];
                     const t = cur.targets[cur.idx];
-                    if (t.kind === 'pass') run(s.pass([card]));
-                    else run(s.cover([card], [t.attack]));
+                    if (t.kind === 'pass') s.fire('pass', s.pass([card]));
+                    else s.fire('cover', s.cover([card], [t.attack]));
                     return;
                 }
                 return;
             }
 
             // ---------- card-selection mode ------------------------------------
-            if (k === 'Escape') { reset(); return; }
-
             if (sel == null) {
+                // Down picks up (defender) / goods (attacker) without needing a
+                // cursor first — neither move depends on a selected card.
+                if (k === 'ArrowDown') {
+                    if (isDefender) { if ((g.table_battles?.length ?? 0) > 0) s.fire('pickup', s.pickup()); }
+                    else { if (tableFullyCovered(g) && !alreadyGood(g, s.user_id)) s.fire('good', s.good()); }
+                    return;
+                }
                 if (k === 'ArrowLeft' || k === 'ArrowRight') { if (h.length) setSelIdx(0); }
                 return;
             }
@@ -218,8 +247,8 @@ export const KeyboardPlayMode = () => {
             if (!card) return;
 
             if (k === 'ArrowDown') {
-                if (isDefender) { if ((g.table_battles?.length ?? 0) > 0) run(s.pickup()); }
-                else { if (tableFullyCovered(g) && !alreadyGood(g, s.user_id)) run(s.good()); }
+                if (isDefender) { if ((g.table_battles?.length ?? 0) > 0) s.fire('pickup', s.pickup()); }
+                else { if (tableFullyCovered(g) && !alreadyGood(g, s.user_id)) s.fire('good', s.good()); }
                 return;
             }
 
@@ -233,7 +262,7 @@ export const KeyboardPlayMode = () => {
                 if (selected.length > 0) {
                     if (!isDefender) {
                         if (canAttack(g, selected)) {
-                            run(withClear(s, s.attack(selected)));
+                            s.fire('attack', s.attack(selected), true);
                         }
                         return;
                     }
@@ -243,19 +272,19 @@ export const KeyboardPlayMode = () => {
                             .filter((b) => !b.defense).map((b) => b.attack);
                         const mapping = findUnambiguousCoverMapping(selected, uncoveredAttacks, g.power_suit);
                         if (mapping) {
-                            run(withClear(s, s.cover(mapping.coverCards, mapping.attackCards)));
+                            s.fire('cover', s.cover(mapping.coverCards, mapping.attackCards), true);
                             return;
                         }
                     }
                     if (canPass(g, selected)) {
-                        run(withClear(s, s.pass(selected)));
+                        s.fire('pass', s.pass(selected), true);
                     }
                     // ambiguous / illegal multi-card cover: no-op, keep selection
                     return;
                 }
 
                 if (!isDefender) {
-                    if (canAttack(g, [card])) run(s.attack([card]));
+                    if (canAttack(g, [card])) s.fire('attack', s.attack([card]));
                     return;
                 }
                 // defender: decide cover vs pass vs target-selection
@@ -265,8 +294,8 @@ export const KeyboardPlayMode = () => {
                     .map(({ b, i }) => ({ kind: 'cover', attack: b.attack, battleIndex: i }));
                 const passOK = canPass(g, [card]);
 
-                if (coverable.length === 0 && passOK) { run(s.pass([card])); return; }
-                if (coverable.length === 1 && !passOK) { run(s.cover([card], [coverable[0].attack])); return; }
+                if (coverable.length === 0 && passOK) { s.fire('pass', s.pass([card])); return; }
+                if (coverable.length === 1 && !passOK) { s.fire('cover', s.cover([card], [coverable[0].attack])); return; }
                 if (coverable.length === 0 && !passOK) return; // illegal
 
                 // ambiguous cover, or cover-AND-pass: assume cover first, append
@@ -279,7 +308,9 @@ export const KeyboardPlayMode = () => {
 
         document.addEventListener('keydown', onKey);
         return () => document.removeEventListener('keydown', onKey);
-    }, [reset, run]);
+        // everything the handler needs is read through ref.current, so the
+        // listener installs once.
+    }, []);
 
     /* ------------------------------- overlay geometry ---------------------- */
     const [geom, setGeom] = useState<{ sel: Rect | null; arrowTo: Rect | { point: { x: number; y: number } } | null; pass: boolean }>(
@@ -344,7 +375,9 @@ export const KeyboardPlayMode = () => {
     return (
         <>
             {stateEl}
-            {/* arrow-key cursor: a short red underline a little below the card.
+            {/* arrow-key cursor: a short near-black underline a little below the
+                card (black reads far better than red over the wool table). A soft
+                white halo keeps it visible on dark wood too.
                 Deliberately NOT a border ring — the full-border highlight is
                 reserved for SELECTED cards (Cmd/click), so the two indicators
                 never collide on a card that is both cursored and selected. */}
@@ -355,8 +388,8 @@ export const KeyboardPlayMode = () => {
                         left: geom.sel.x + geom.sel.w * 0.15,
                         top: geom.sel.y + geom.sel.h + 4,
                         width: geom.sel.w * 0.7, height: 3,
-                        background: '#ff2d2d', borderRadius: 2,
-                        boxShadow: '0 0 6px 1px rgba(255,45,45,0.85)',
+                        background: '#111', borderRadius: 2,
+                        boxShadow: '0 0 5px 1px rgba(255,255,255,0.7)',
                         pointerEvents: 'none', zIndex: 1500,
                     }}
                 />
@@ -397,12 +430,6 @@ export const KeyboardPlayMode = () => {
 };
 
 /* ------------------------------- helpers ----------------------------------- */
-// wrap a move promise so the shared selectedCards set is cleared on success
-// (mirrors ActionButtons, which calls setSelectedCards([]) after the action)
-function withClear(s: any, p: Promise<unknown>): Promise<unknown> {
-    return p.then((v) => { s.setSelectedCards([]); return v; });
-}
-
 // Mirror of ActionButtons' handleCoverClick mapping: returns a single
 // cover->attack assignment only when every valid permutation covers the SAME
 // set of attacks (i.e. the mapping is unambiguous); otherwise null.

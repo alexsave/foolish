@@ -6,7 +6,7 @@ import { useGame } from "../../contexts/GameContext";
 import { useDrag } from "../../contexts/DragContext";
 import { CardFace } from "./CardFace";
 import { TexturedSurface } from "../TexturedSurface";
-import { useState, useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { Text } from "../Text";
 import { canCover as canCoverUtil } from "../../common/common_utils";
 import { canAttack, canPass, canCoverCards } from "../../utils/gameValidation";
@@ -132,42 +132,42 @@ export const ActionButtons = () => {
     const { user_id } = useAuth();
     const { game } = useServer() as { game: PersonalGame };
     const { pickup, good, attack, pass, cover } = useAnimation();
-    const { selectedCards, setSelectedCards } = useGame();
+    const { selectedCards, setSelectedCards, pressedActions, setActionPressed } = useGame();
     const hint = useTutorialHint();
-    
-    const [goodButtonClicked, setGoodButtonClicked] = useState(false);
-    const [attackButtonClicked, setAttackButtonClicked] = useState(false);
-    
-    const prevShouldShowGoodButtonRef = useRef(false);
-    const prevShouldShowAttackButtonRef = useRef(false);
 
     const self_index = game?.players.findIndex((player) => player.player_id === user_id) ?? -1;
     const isDefending = game && self_index !== -1 ? game.defender === self_index : false;
-    const shouldShowGoodButton = !isDefending && 
-        (game?.table_battles.length ?? 0) > 0 && 
-        (game?.table_battles.every(battle => battle.defense) ?? false) &&
-        !(game?.good_players?.includes(user_id ?? '') ?? false);
-    
-    const shouldShowAttackButton = game && !isDefending && canAttack(game, selectedCards) && !attackButtonClicked;
-    const shouldShowPassButton = game && isDefending && canPass(game, selectedCards);
-    const shouldShowCoverButton = game && isDefending && canCoverCards(game, selectedCards);
 
+    // raw "this button is relevant" predicates, ignoring the optimistic pressed
+    // flag. The rendered button additionally requires !pressedActions[name], so a
+    // press (click OR keyboard) hides it immediately until the server catches up.
+    const rawGood = !!(!isDefending &&
+        (game?.table_battles.length ?? 0) > 0 &&
+        (game?.table_battles.every(battle => battle.defense) ?? false) &&
+        !(game?.good_players?.includes(user_id ?? '') ?? false));
+    const rawAttack = !!(game && !isDefending && canAttack(game, selectedCards));
+    const rawPass = !!(game && isDefending && canPass(game, selectedCards));
+    const rawCover = !!(game && isDefending && canCoverCards(game, selectedCards));
+    const rawPickup = !!(game && isDefending && (game?.table_battles.length ?? 0) > 0);
+
+    const shouldShowGoodButton = rawGood && !pressedActions['good'];
+    const shouldShowAttackButton = rawAttack && !pressedActions['attack'];
+    const shouldShowPassButton = rawPass && !pressedActions['pass'];
+    const shouldShowCoverButton = rawCover && !pressedActions['cover'];
+    const shouldShowPickupButton = rawPickup && !pressedActions['pickup'];
+
+    // when a button becomes legitimately relevant again (raw rising edge), drop
+    // its stale optimistic flag so it can re-show on the next turn.
+    const prevRaw = useRef<Record<string, boolean>>({});
     useEffect(() => {
-        const prevShouldShowGood = prevShouldShowGoodButtonRef.current;
-        const prevShouldShowAttack = prevShouldShowAttackButtonRef.current;
-        
-        if (!prevShouldShowGood && shouldShowGoodButton && goodButtonClicked) {
-            setGoodButtonClicked(false);
+        const raws: Record<string, boolean> = {
+            good: rawGood, attack: rawAttack, pass: rawPass, cover: rawCover, pickup: rawPickup,
+        };
+        for (const a of Object.keys(raws)) {
+            if (!prevRaw.current[a] && raws[a] && pressedActions[a]) setActionPressed(a, false);
+            prevRaw.current[a] = raws[a];
         }
-        
-        const shouldShowAttackButtonRaw = game && !isDefending && canAttack(game, selectedCards);
-        if (!prevShouldShowAttack && shouldShowAttackButtonRaw && attackButtonClicked) {
-            setAttackButtonClicked(false);
-        }
-        
-        prevShouldShowGoodButtonRef.current = shouldShowGoodButton;
-        prevShouldShowAttackButtonRef.current = shouldShowAttackButtonRaw;
-    }, [shouldShowGoodButton, goodButtonClicked, game, isDefending, selectedCards, attackButtonClicked]);
+    }, [rawGood, rawAttack, rawPass, rawCover, rawPickup, pressedActions, setActionPressed]);
 
     if (!game || !game.self) {
         return <div></div>;
@@ -179,20 +179,22 @@ export const ActionButtons = () => {
     }
 
     const handleAttackClick = () => {
-        setAttackButtonClicked(true);
+        setActionPressed('attack', true);
         attack(selectedCards).then(() => {
             setSelectedCards([]);
         }).catch((e) => {
             console.error('Attack failed:', e.message);
-            setAttackButtonClicked(false);
+            setActionPressed('attack', false);
         });
     };
 
     const handlePassClick = () => {
+        setActionPressed('pass', true);
         pass(selectedCards).then(() => {
             setSelectedCards([]);
         }).catch((e) => {
             console.error('Pass failed:', e.message);
+            setActionPressed('pass', false);
         });
     };
 
@@ -205,10 +207,12 @@ export const ActionButtons = () => {
                 canCoverUtil(battle.attack, selectedCards[0], game.power_suit)
             );
             if (validTarget) {
+                setActionPressed('cover', true);
                 cover([selectedCards[0]], [validTarget.attack]).then(() => {
                     setSelectedCards([]);
                 }).catch((e) => {
                     console.error('Cover failed:', e.message);
+                    setActionPressed('cover', false);
                 });
             }
         } else {
@@ -257,10 +261,12 @@ export const ActionButtons = () => {
 
             const mapping = findUnambiguousCoverMapping(selectedCards, uncoveredAttacks);
             if (mapping) {
+                setActionPressed('cover', true);
                 cover(mapping.coverCards, mapping.attackCards).then(() => {
                     setSelectedCards([]);
                 }).catch((e) => {
                     console.error('Multi-card cover failed:', e.message);
+                    setActionPressed('cover', false);
                 });
             }
         }
@@ -298,9 +304,15 @@ export const ActionButtons = () => {
                                 <div style={spacerStyle} />
                             )}
 
-                            {game.table_battles.length > 0 && (
+                            {shouldShowPickupButton && (
                                 <Glow on={hint?.action === 'pickup'}>
-                                    <ActionButton seed={0.15} onClick={() => pickup().catch((e) => console.error(e.message))}>
+                                    <ActionButton seed={0.15} onClick={() => {
+                                        setActionPressed('pickup', true);
+                                        pickup().catch((e) => {
+                                            console.error(e.message);
+                                            setActionPressed('pickup', false);
+                                        });
+                                    }}>
                                         <Text id="pickup" />
                                     </ActionButton>
                                 </Glow>
@@ -318,13 +330,13 @@ export const ActionButtons = () => {
                         </>
                     ) : (
                         <>
-                            {shouldShowGoodButton && !goodButtonClicked ? (
+                            {shouldShowGoodButton ? (
                                 <Glow on={hint?.action === 'good'}>
                                     <ActionButton seed={0.85} onClick={() => {
-                                        setGoodButtonClicked(true);
+                                        setActionPressed('good', true);
                                         good().catch((e) => {
                                             console.error(e.message);
-                                            setGoodButtonClicked(false);
+                                            setActionPressed('good', false);
                                         });
                                     }}>
                                         <Text id="good" />
