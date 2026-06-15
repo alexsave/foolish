@@ -680,6 +680,12 @@ INSERT INTO bots (nickname, strategy_key) VALUES
 ('Cordite Max 2', 'cordite_max'),
 ('Cordite Max 3', 'cordite_max');
 
+-- Bots carry the reserved '%' prefix so bot-vs-human is recoverable from the
+-- name-only replay codec. Done as an UPDATE (rather than prefixing every literal
+-- above) so the list stays readable; idempotent via the left() check. The live
+-- DB gets this same rename via migrations/20260615120000_reserve_bot_username_prefix.sql.
+UPDATE bots SET nickname = '%' || nickname WHERE left(nickname, 1) <> '%';
+
 
 -- =============================================================================
 -- SETUP COMPLETE!
