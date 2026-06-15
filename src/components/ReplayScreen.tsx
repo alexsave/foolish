@@ -332,10 +332,10 @@ const RevealedHands = () => {
     // against the seat's current replay_hands order on every step/seek.
     const [localOrders, setLocalOrders] = useState<{ [seat: number]: (Card | null)[] }>({});
 
-    // Active drag: which seat's hand and which slot in the (displayed) order is
-    // being dragged. Reorder-only — no selection, no play, no game action.
-    const dragSeat = useRef<number | null>(null);
-    const dragIndex = useRef<number | null>(null);
+    // Active drag (STATE, not a ref, so the held card can render faded in place
+    // exactly like the live hand): which seat's hand and which displayed slot is
+    // being dragged. Reorder-only — no selection, no play, no cross-seat moves.
+    const [drag, setDrag] = useState<{ seat: number; index: number } | null>(null);
 
     const displayHands = useMemo(() => {
         if (!game || !game.replay_hands) return null;
@@ -344,38 +344,42 @@ const RevealedHands = () => {
         );
     }, [game, localOrders]);
 
-    const onPointerMove = useCallback((e: PointerEvent) => {
-        const seat = dragSeat.current;
-        const from = dragIndex.current;
-        if (seat === null || from === null) return;
-        const els = document.elementsFromPoint(e.clientX, e.clientY);
-        const target = els.find(
-            (el) =>
-                el.getAttribute('data-replay-seat') === String(seat) &&
-                el.getAttribute('data-replay-card-index') !== null,
-        );
-        if (!target) return;
-        const to = parseInt(target.getAttribute('data-replay-card-index')!, 10);
-        if (to === from) return;
-        setLocalOrders((prev) => {
-            const base = prev[seat] ?? displayHands?.[seat] ?? [];
-            const next = [...base];
-            // swap the two slots, mirroring the live hand reorder mechanic
-            const tmp = next[from];
-            next[from] = next[to];
-            next[to] = tmp;
-            return { ...prev, [seat]: next };
-        });
-        dragIndex.current = to;
-    }, [displayHands]);
-
-    const endDrag = useCallback(() => {
-        dragSeat.current = null;
-        dragIndex.current = null;
-        document.removeEventListener('pointermove', onPointerMove);
-        document.removeEventListener('pointerup', endDrag);
-        document.removeEventListener('pointercancel', endDrag);
-    }, [onPointerMove]);
+    // While a card is held, hovering another slot in the SAME seat swaps the two
+    // — the live hand's real-time swap-on-hover (elementsFromPoint + data-*
+    // indices). elementsFromPoint finds the slot under the cursor in EITHER
+    // wrapped row, so dragging across rows just works; the seat filter keeps a
+    // drag confined to one player's hand. The effect re-subscribes on every swap
+    // so it always reads the latest dragged slot (mirrors the live DragContext).
+    useEffect(() => {
+        if (!drag) return;
+        const onMove = (e: PointerEvent) => {
+            const target = document.elementsFromPoint(e.clientX, e.clientY).find(
+                (el) =>
+                    el.getAttribute('data-replay-seat') === String(drag.seat) &&
+                    el.getAttribute('data-replay-card-index') !== null,
+            );
+            if (!target) return;
+            const to = parseInt(target.getAttribute('data-replay-card-index')!, 10);
+            if (to === drag.index) return;
+            setLocalOrders((prev) => {
+                const base = [...(prev[drag.seat] ?? displayHands?.[drag.seat] ?? [])];
+                const tmp = base[drag.index];
+                base[drag.index] = base[to];
+                base[to] = tmp;
+                return { ...prev, [drag.seat]: base };
+            });
+            setDrag({ seat: drag.seat, index: to });
+        };
+        const onUp = () => setDrag(null);
+        document.addEventListener('pointermove', onMove);
+        document.addEventListener('pointerup', onUp);
+        document.addEventListener('pointercancel', onUp);
+        return () => {
+            document.removeEventListener('pointermove', onMove);
+            document.removeEventListener('pointerup', onUp);
+            document.removeEventListener('pointercancel', onUp);
+        };
+    }, [drag, displayHands]);
 
     const startDrag = useCallback(
         (seat: number, index: number, hand: (Card | null)[]) => (e: React.PointerEvent) => {
@@ -384,16 +388,10 @@ const RevealedHands = () => {
             // Seed the seat's preferred order from what's currently shown so the
             // first swap reorders the exact cards on screen.
             setLocalOrders((prev) => (prev[seat] ? prev : { ...prev, [seat]: hand }));
-            dragSeat.current = seat;
-            dragIndex.current = index;
-            document.addEventListener('pointermove', onPointerMove);
-            document.addEventListener('pointerup', endDrag);
-            document.addEventListener('pointercancel', endDrag);
+            setDrag({ seat, index });
         },
-        [onPointerMove, endDrag],
+        [],
     );
-
-    useEffect(() => endDrag, [endDrag]);
 
     if (!game || !game.replay_hands || !displayHands) return null;
     const n = game.players.length;
@@ -427,26 +425,38 @@ const RevealedHands = () => {
                             pointerEvents: 'none',
                         }}
                     >
-                        {hand.map((c, i) => (
-                            <div
-                                key={i}
-                                data-replay-seat={index}
-                                data-replay-card-index={i}
-                                onPointerDown={startDrag(index, i, hand)}
-                                style={{
-                                    display: 'inline-flex',
-                                    pointerEvents: 'auto',
-                                    cursor: 'grab',
-                                    touchAction: 'none',
-                                }}
-                            >
-                                {c ? (
-                                    <InlineCard card={c} w={40} />
-                                ) : (
-                                    <InlineCardBack w={40} />
-                                )}
-                            </div>
-                        ))}
+                        {hand.map((c, i) => {
+                            const isDragged = drag?.seat === index && drag?.index === i;
+                            return (
+                                <div
+                                    // stable per-card key (like the live hand's
+                                    // value+suit key) so React MOVES the node on a
+                                    // swap instead of repainting content in place —
+                                    // that's what makes the reorder read cleanly.
+                                    key={c ? `${c.suit}-${c.value}` : `back-${i}`}
+                                    data-replay-seat={index}
+                                    data-replay-card-index={i}
+                                    onPointerDown={startDrag(index, i, hand)}
+                                    style={{
+                                        display: 'inline-flex',
+                                        pointerEvents: 'auto',
+                                        cursor: isDragged ? 'grabbing' : 'grab',
+                                        touchAction: 'none',
+                                        // match the live hand: the held card stays
+                                        // in flow as a faded placeholder while the
+                                        // rest swap around it.
+                                        opacity: isDragged ? 0.3 : 1,
+                                        transition: 'opacity 0.1s ease',
+                                    }}
+                                >
+                                    {c ? (
+                                        <InlineCard card={c} w={40} />
+                                    ) : (
+                                        <InlineCardBack w={40} />
+                                    )}
+                                </div>
+                            );
+                        })}
                     </div>
                 );
             })}
