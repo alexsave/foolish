@@ -261,8 +261,9 @@ export const personalize_game = (game: Game, player_id: string): PersonalGame | 
     }
 }
 
-// Standard ELO rating calculation
-export const calculateEloChange = (playerRating: number, opponentRating: number, actualScore: number, kFactor: number = 32): number => {
+// Standard ELO rating calculation. K-factor lowered from 32 -> 10 so live-game
+// ratings move in smaller, less jumpy steps (mirrored in src/common/common_utils.ts).
+export const calculateEloChange = (playerRating: number, opponentRating: number, actualScore: number, kFactor: number = 10): number => {
     const expectedScore = 1 / (1 + Math.pow(10, (opponentRating - playerRating) / 400));
     return Math.round(kFactor * (actualScore - expectedScore));
 };
