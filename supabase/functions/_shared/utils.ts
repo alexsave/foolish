@@ -75,20 +75,21 @@ const auditCards = (game: Game): {
 // is held, so nothing can leak or freeze. On conflict we reload and redo.
 // (Name kept as executeWithGameLock so callers are unchanged; it no longer locks.)
 // ============================================================================
-export const executeWithGameLock = async (game_id: string, operation: (game: Game) => Promise<{ game: Game, events: AnimationEvent[] }>, reqId: string = 'unknown'): Promise<{ game: Game, events: AnimationEvent[] }> => {
+export const executeWithGameLock = async (game_id: string, operation: (game: Game) => Promise<{ game: Game, events: AnimationEvent[] }>, reqId: string = 'unknown', mootIfGameOver: boolean = false): Promise<{ game: Game, events: AnimationEvent[] }> => {
     const MAX_ATTEMPTS = 5;
 
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
         const loadedGame: Game = await loadCompleteGame(game_id);
         const expectedVersion = loadedGame.version ?? 0;
 
-        // End-game race: if the game already ended (a concurrent move finished it
-        // while this request was in flight — e.g. a human cover landing right as the
-        // game-ending move commits), the incoming move is MOOT. Return the final
-        // state instead of running the handler, which would throw "can't act in a
-        // finished game" and surface as the client's "missing game ID" error. The
-        // client just transitions to the win screen.
-        if (loadedGame.status === GAME_STATUS.GAME_OVER) {
+        // End-game race: for a MOVE (mootIfGameOver), if the game already ended (a
+        // concurrent move finished it while this request was in flight — e.g. a human
+        // cover landing right as the game-ending move commits), the incoming move is
+        // MOOT. Return the final state instead of running the handler, which would
+        // throw "can't act in a finished game" and surface as the client's "missing
+        // game ID" error. NOT applied to post-game actions like `continue` (reset to
+        // lobby), which legitimately operate on a GAME_OVER game.
+        if (mootIfGameOver && loadedGame.status === GAME_STATUS.GAME_OVER) {
             console.log(`[${reqId}][TXN] game ${game_id} already over — move is a no-op`);
             return { game: loadedGame, events: [] };
         }
@@ -370,7 +371,7 @@ export interface ExecutionParams {
     reqId: string;
 }
 
-export const wrap400 = (execute: (params: ExecutionParams) => Promise<{ game: Game, events: AnimationEvent[] }>, run_bots: boolean = false) => {
+export const wrap400 = (execute: (params: ExecutionParams) => Promise<{ game: Game, events: AnimationEvent[] }>, run_bots: boolean = false, mootIfGameOver: boolean = false) => {
     const handler = async (req: Request): Promise<Response> => {
         // Generate unique request ID (short hash from crypto)
         const reqId = crypto.randomUUID().split('-')[0];
@@ -415,7 +416,7 @@ export const wrap400 = (execute: (params: ExecutionParams) => Promise<{ game: Ga
                 // Execute operation with database lock for this specific game
                 const lockStart = Date.now();
                 console.log(`[${reqId}][WRAP400] Starting executeWithGameLock for game ${game_id}`);
-                const { game, events: operationEvents } = await executeWithGameLock(game_id, (game) => execute({ user, user_name, body, game, reqId }), reqId);
+                const { game, events: operationEvents } = await executeWithGameLock(game_id, (game) => execute({ user, user_name, body, game, reqId }), reqId, mootIfGameOver);
                 console.log(`[${reqId}][WRAP400] executeWithGameLock took ${Date.now() - lockStart}ms`);
                 result = game;
                 events = operationEvents;

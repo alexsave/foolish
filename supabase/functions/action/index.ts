@@ -54,4 +54,4 @@ wrap400(async ({ user, body, game }: ExecutionParams) => {
     }
 
     return { game, events };
-}, true);
+}, true, true); // run_bots=true; mootIfGameOver=true (a move that lost the end-game race is a no-op, not a 400)
