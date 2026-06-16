@@ -12,6 +12,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { getAuthenticatedUser } from './auth.ts';
 import { lockedBotLoop } from './bot_actions.ts';
+import { botDiag } from './diag.ts';
 import { saveGameLogs, cleanupOldGameLogs, wipeAllGameLogs } from './log_utils.ts';
 import { verifyRoundTrip } from './replay/encode.ts';
 import { encodeExtras, moveTimesFromLogs } from './replay/extras.ts';
@@ -53,6 +54,13 @@ export const acquireGameLock = async (game_id: string): Promise<boolean> => {
             if (lockAge <= 10000) { // 10 seconds in milliseconds
                 return false;
             }
+
+            // T2: a game_lock older than 10s is being stolen — it was leaked by a
+            // request/loop that died holding it (clean release happens in well under
+            // a second). Frequent rows here = isolates dying mid-operation.
+            await botDiag(game_id, 'T2_GAMELOCK', {
+                event: 'stealing_stale_lock', lockAgeMs: lockAge,
+            });
 
             // Delete the stale lock
             await supabaseClient
@@ -117,11 +125,22 @@ export const executeWithGameLock = async (game_id: string, operation: (game: Gam
     }
 
     if (!lockAcquired) {
+        // T2: a human/bot request gave up after 9 retries (~4.5s). The caller's
+        // action FAILS here — this is what a player experiences as a dropped/hung
+        // move while something else holds (or leaked) the game_lock.
+        await botDiag(game_id, 'T2_GAMELOCK', {
+            event: 'acquire_failed_giving_up', reqId, retries: maxRetries,
+        });
         throw new Error(`Could not acquire lock for game ${game_id} - too many concurrent operations`);
     }
 
+    // T2: time spent holding the per-op lock. If this approaches the 10s stale
+    // threshold (now plausible with maxMillis=2000 compute + load + save), other
+    // requests start stealing a lock we still hold → double-execution / churn.
+    const lockHeldStart = Date.now();
+
     let result: { game: Game, events: AnimationEvent[] };
-    
+
     try {
         const loadedGame: Game = await loadCompleteGame(game_id);
         result = await operation(loadedGame);
@@ -168,18 +187,27 @@ export const executeWithGameLock = async (game_id: string, operation: (game: Gam
             result.events.push({type: ANIMATION_EVENT_TYPE.MAGIC_TRANSITION, game_state: result.game })
         }
     } finally {
+        const heldMs = Date.now() - lockHeldStart;
         await releaseGameLock(game_id);
+        // T2: only flag dangerously long holds — those approaching the 10s stale
+        // window are where concurrent stealers cause trouble. Normal fast ops stay
+        // out of the table to keep it readable.
+        if (heldMs > 3000) {
+            await botDiag(game_id, 'T2_GAMELOCK', {
+                event: 'long_hold', reqId, heldMs,
+            });
+        }
     }
 
     // Broadcast animation events AFTER releasing the lock (fire-and-forget)
     // This happens for all operations: human actions, bot actions, and auto-discard
     if (result.events.length > 0) {
         console.log(`[${reqId}][LOCK] Broadcasting ${result.events.length} events after executeWithGameLock`);
-        broadcastAnimationEvents(result.game, result.events, reqId).catch(err => 
+        broadcastAnimationEvents(result.game, result.events, reqId).catch(err =>
             console.error(`[${reqId}] Error broadcasting events from executeWithGameLock:`, err)
         );
     }
-    
+
     return result;
 };
 
@@ -281,6 +309,7 @@ export const broadcastAnimationEvents = async (game: Game, events: AnimationEven
     const broadcastTotalStart = Date.now();
     console.log(`[${reqId}][BROADCAST] broadcastAnimationEvents called for game ${game.id} with ${events.length} events`);
 
+    try {
     // Calculate base game state once (shared for all players) - removes private information
     const baseGameStart = Date.now();
     const baseGameState = gameToPublicGame(game);
@@ -364,7 +393,27 @@ export const broadcastAnimationEvents = async (game: Game, events: AnimationEven
     await supabaseClient.removeChannel(spectatorChannel);
     console.log(`[${reqId}][BROADCAST] Spectator broadcast took ${Date.now() - spectatorStart}ms`);
     
-    console.log(`[${reqId}][BROADCAST] Total broadcastAnimationEvents took ${Date.now() - broadcastTotalStart}ms`);
+    const broadcastTotalMs = Date.now() - broadcastTotalStart;
+    console.log(`[${reqId}][BROADCAST] Total broadcastAnimationEvents took ${broadcastTotalMs}ms`);
+    // T5: a slow broadcast is a perceived freeze — the move IS applied server-side
+    // but no client renders it until this resolves (or a manual refetch "snaps" it).
+    if (broadcastTotalMs > 2000) {
+        await botDiag(game.id, 'T5_BROADCAST', {
+            event: 'slow', reqId, totalMs: broadcastTotalMs,
+            events: events.length,
+            humanPlayers: game.players.filter(p => !p.is_ai).length,
+        });
+    }
+    } catch (err: any) {
+        // T5: broadcast threw — clients get NOTHING for this move and the board looks
+        // stuck until the next event/refetch. Normally swallowed by the callers'
+        // fire-and-forget .catch, so capture it here before rethrowing.
+        await botDiag(game.id, 'T5_BROADCAST', {
+            event: 'error', reqId, message: String(err?.message ?? err),
+            events: events.length,
+        });
+        throw err;
+    }
 };
 
 export interface ExecutionParams {
@@ -450,12 +499,24 @@ export const wrap400 = (execute: (params: ExecutionParams) => Promise<{ game: Ga
                 );
             }
 
-            // Fire-and-forget: Schedule bot actions AFTER preparing response (already non-blocking)
+            // Background bot loop, scheduled AFTER preparing the response (non-blocking).
             if (game_id && run_bots) {
-                console.log(`[${reqId}][WRAP400] Starting fire-and-forget bot loop`);
-                // TODO: not quite. Only after start/attack/cover/pass/pickup/good 
+                console.log(`[${reqId}][WRAP400] Starting background bot loop`);
+                // TODO: not quite. Only after start/attack/cover/pass/pickup/good
                 // todo add validation before kicking this off
-                lockedBotLoop(game_id);
+                //
+                // CRITICAL: this runs AFTER the HTTP response is sent. Without
+                // EdgeRuntime.waitUntil the runtime reaps the isolate ~15s later —
+                // mid-loop — so lockedBotLoop's `finally` never releases the bot_locks
+                // baton and it leaks for the full stale window, freezing the game
+                // (confirmed by T1 diagnostics: loops died at ~15s with no
+                // released_clean). waitUntil keeps the worker alive until it settles.
+                const botLoop = lockedBotLoop(game_id).catch(err =>
+                    console.error(`[${reqId}] bot loop error:`, err));
+                const er = (globalThis as any).EdgeRuntime;
+                if (er && typeof er.waitUntil === 'function') {
+                    er.waitUntil(botLoop);
+                }
             }
 
             // Create standardized response and return immediately
