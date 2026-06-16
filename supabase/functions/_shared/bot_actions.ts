@@ -11,10 +11,10 @@ const supabaseClient = createClient(
 );
 
 // Bot timing constants
-// Inter-bot pacing so humans can follow the moves. Was 4500ms, which — with 5+
-// bots acting per round — dominated the "slow as fuck" feel (cordite's own
-// compute is mostly <500ms per the T3_PACE logs). 1500ms is still readable.
-const BOT_PROCESSING_DELAY_WITH_HUMANS = 1500;
+// Inter-bot pacing so humans can follow the moves. 4500ms felt sluggish but 1500ms
+// was too fast to follow — 3000ms is the middle ground (the freeze that made it
+// feel even slower was a separate bug, now fixed). Tune here if needed.
+const BOT_PROCESSING_DELAY_WITH_HUMANS = 3000;
 const BOT_PROCESSING_DELAY_BOTS_ONLY = 300; // Delay when only bots remain (ms)
 
 // How long one loop runs before self-releasing its lease. EdgeRuntime.waitUntil

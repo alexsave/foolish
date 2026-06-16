@@ -25,7 +25,11 @@
 
 export type DiagTag =
     | 'T1_BATON' | 'T2_GAMELOCK' | 'T3_PACE' | 'T4_NOPROGRESS'
-    | 'T5_BROADCAST' | 'T6_DELAYGLOBAL' | 'T7_GHOSTHUMAN' | 'T9_RUNAWAY';
+    | 'T5_BROADCAST' | 'T6_DELAYGLOBAL' | 'T7_GHOSTHUMAN' | 'T9_RUNAWAY'
+    // Card-conservation audit: the total card count must always equal 36 (≤4
+    // players) or 52 (≥5), and no (suit,value) may appear twice. A break = state
+    // corruption (e.g. the duplicate-4♠ bug). Logged only when violated.
+    | 'CARD_AUDIT';
 
 // Kept async + awaited at the call sites so wiring is uniform, but it does no I/O
 // (console.log is synchronous) — so it adds no latency inside the game lock and

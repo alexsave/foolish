@@ -26,6 +26,42 @@ const supabaseClient = createClient(
 // (game_locks acquire/release removed — concurrency is now optimistic CAS via
 // the commit_game RPC; see executeWithGameLock below.)
 
+// Card-conservation audit. The whole game must always hold exactly 36 cards (≤4
+// players) or 52 (≥5), with no (suit,value) appearing twice. Returns null when the
+// game isn't in active play (a waiting game has no cards dealt). The discard pile
+// is stored as a count only (no Card objects), so its cards count toward the total
+// but can't be dup-checked — a card duplicated in the deck/hands/table is still
+// caught, which is exactly the corruption we're hunting.
+const auditCards = (game: Game): {
+    ok: boolean; total: number; expected: number;
+    enumerated: number; discard: number; duplicates: string[];
+} | null => {
+    if (game.status !== GAME_STATUS.PLAYING && game.status !== GAME_STATUS.GAME_OVER) {
+        return null;
+    }
+    const cards: Card[] = [];
+    cards.push(...game.deck);
+    if (game.flipped) cards.push(game.flipped);
+    for (const p of game.players) cards.push(...(p.hand ?? []));
+    for (const b of game.table_battles) {
+        if (b.attack) cards.push(b.attack);
+        if (b.defense) cards.push(b.defense);
+    }
+    const discard = game.discard_pile_length ?? 0;
+    const total = cards.length + discard;
+    const expected = game.players.length > 4 ? 52 : 36;
+    const seen = new Map<string, number>();
+    for (const c of cards) {
+        const k = `${c.suit}-${c.value}`;
+        seen.set(k, (seen.get(k) ?? 0) + 1);
+    }
+    const duplicates = [...seen.entries()].filter(([, n]) => n > 1).map(([k, n]) => `${k}x${n}`);
+    return {
+        ok: total === expected && duplicates.length === 0,
+        total, expected, enumerated: cards.length, discard, duplicates,
+    };
+};
+
 // ============================================================================
 // CONCURRENCY: optimistic version CAS (replaces the old game_locks table).
 //
@@ -46,6 +82,10 @@ export const executeWithGameLock = async (game_id: string, operation: (game: Gam
         const loadedGame: Game = await loadCompleteGame(game_id);
         const expectedVersion = loadedGame.version ?? 0;
 
+        // Snapshot card-conservation BEFORE this op so we can tell whether THIS
+        // operation introduced a duplication or it was already corrupt on load.
+        const beforeAudit = auditCards(loadedGame);
+
         const result = await operation(loadedGame);
 
         // Pure end-of-game detection: sets GAME_OVER + player statuses in memory,
@@ -61,6 +101,21 @@ export const executeWithGameLock = async (game_id: string, operation: (game: Gam
             await botDiag(game_id, 'T2_GAMELOCK', { event: 'cas_conflict', reqId, attempt });
             if (attempt < MAX_ATTEMPTS) continue;
             throw new Error(`Could not commit game ${game_id} after ${MAX_ATTEMPTS} attempts — write contention`);
+        }
+
+        // Card-conservation audit on the just-committed state. Log ONLY on a
+        // violation (wrong total, or a duplicate (suit,value)). `brokeThisOp`
+        // distinguishes corruption introduced by THIS move from pre-existing.
+        const afterAudit = auditCards(result.game);
+        if ((beforeAudit && !beforeAudit.ok) || (afterAudit && !afterAudit.ok)) {
+            await botDiag(game_id, 'CARD_AUDIT', {
+                reqId,
+                brokeThisOp: !!(beforeAudit?.ok && afterAudit && !afterAudit.ok),
+                status: result.game.status,
+                pc: result.game.players.length,
+                before: beforeAudit && { total: beforeAudit.total, expected: beforeAudit.expected, dups: beforeAudit.duplicates },
+                after: afterAudit && { total: afterAudit.total, expected: afterAudit.expected, enumerated: afterAudit.enumerated, discard: afterAudit.discard, dups: afterAudit.duplicates },
+            });
         }
 
         // Logs are append-only + UUID-keyed (idempotent), so they live outside the
