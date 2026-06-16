@@ -199,6 +199,11 @@ export interface Game extends PublicGame {
     deck: Card[];
     players: PrivatePlayer[];
     logs: GameLog[]; // Pending logs to be saved with game state
+    // Optimistic-concurrency token. Loaded from games.version; the commit_game
+    // RPC only writes when the stored version still equals what we loaded, then
+    // bumps it. Undefined for in-memory games never loaded from the DB (tests,
+    // offline arenas) — commit treats undefined as 0.
+    version?: number;
 }
 
 export interface Battle {

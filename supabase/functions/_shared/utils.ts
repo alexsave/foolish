@@ -23,192 +23,72 @@ const supabaseClient = createClient(
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
 );
 
-// Database-level game locking using table-based locks
-export const acquireGameLock = async (game_id: string): Promise<boolean> => {
-    try {
-        // Generate a random lock ID for this instance
-        const lockId = crypto.randomUUID();
+// (game_locks acquire/release removed — concurrency is now optimistic CAS via
+// the commit_game RPC; see executeWithGameLock below.)
 
-        const { error } = await supabaseClient
-            .from('game_locks')
-            .insert({ game_id, lock_id: lockId });
-
-        if (error) {
-            // Handle non-unique constraint errors
-            if (error.code !== '23505') {
-                return false;
-            }
-
-            // Check if existing lock is older than 150 seconds
-            const { data: existingLock } = await supabaseClient
-                .from('game_locks')
-                .select('acquired_at')
-                .eq('game_id', game_id)
-                .single();
-
-            if (!existingLock) {
-                return false;
-            }
-
-            const lockAge = Date.now() - new Date(existingLock.acquired_at).getTime();
-            if (lockAge <= 10000) { // 10 seconds in milliseconds
-                return false;
-            }
-
-            // T2: a game_lock older than 10s is being stolen — it was leaked by a
-            // request/loop that died holding it (clean release happens in well under
-            // a second). Frequent rows here = isolates dying mid-operation.
-            await botDiag(game_id, 'T2_GAMELOCK', {
-                event: 'stealing_stale_lock', lockAgeMs: lockAge,
-            });
-
-            // Delete the stale lock
-            await supabaseClient
-                .from('game_locks')
-                .delete()
-                .eq('game_id', game_id);
-
-            // Try to insert again
-            const { error: retryError } = await supabaseClient
-                .from('game_locks')
-                .insert({ game_id, lock_id: lockId });
-
-            if (retryError) {
-                return false;
-            }
-        }
-
-        // Verify we actually got the lock by checking the lock_id
-        const { data, error: selectError } = await supabaseClient
-            .from('game_locks')
-            .select('lock_id')
-            .eq('game_id', game_id)
-            .single();
-
-        if (selectError || !data || data.lock_id !== lockId) {
-            return false;
-        }
-
-        return true;
-    } catch (error) {
-        return false;
-    }
-};
-
-export const releaseGameLock = async (game_id: string): Promise<void> => {
-    try {
-        const { error } = await supabaseClient
-            .from('game_locks')
-            .delete()
-            .eq('game_id', game_id);
-
-        if (error) {
-            console.error(`Failed to release lock for game ${game_id}:`, error);
-        }
-
-    } catch (error) {
-        console.error(`Error releasing lock for game ${game_id}:`, error);
-    }
-};
-
-// Sequential operation execution with database-level locking
+// ============================================================================
+// CONCURRENCY: optimistic version CAS (replaces the old game_locks table).
+//
+// We can't hold a real DB lock across the TS load→compute→save: PostgREST gives
+// one transaction per call, never spanning the (up to 2s) cordite compute. So
+// instead of locking, we load the game WITH its version, compute the move, and
+// commit via the commit_game RPC, which only writes if games.version still equals
+// what we loaded — then bumps it. That commit is ONE transaction across all
+// tables (no torn reads) and is FENCED by the version (a stale/slow execution can
+// never overwrite a newer state → the duplicate-card bug is impossible). Nothing
+// is held, so nothing can leak or freeze. On conflict we reload and redo.
+// (Name kept as executeWithGameLock so callers are unchanged; it no longer locks.)
+// ============================================================================
 export const executeWithGameLock = async (game_id: string, operation: (game: Game) => Promise<{ game: Game, events: AnimationEvent[] }>, reqId: string = 'unknown'): Promise<{ game: Game, events: AnimationEvent[] }> => {
-    // Try to acquire database lock with retry logic
-    const maxRetries = 9;
-    let lockAcquired = false;
+    const MAX_ATTEMPTS = 5;
 
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-        lockAcquired = await acquireGameLock(game_id);
-        if (lockAcquired) break;
-
-        await new Promise(resolve => setTimeout(resolve, 100 * attempt)); // Linear backoff
-    }
-
-    if (!lockAcquired) {
-        // T2: a human/bot request gave up after 9 retries (~4.5s). The caller's
-        // action FAILS here — this is what a player experiences as a dropped/hung
-        // move while something else holds (or leaked) the game_lock.
-        await botDiag(game_id, 'T2_GAMELOCK', {
-            event: 'acquire_failed_giving_up', reqId, retries: maxRetries,
-        });
-        throw new Error(`Could not acquire lock for game ${game_id} - too many concurrent operations`);
-    }
-
-    // T2: time spent holding the per-op lock. If this approaches the 10s stale
-    // threshold (now plausible with maxMillis=2000 compute + load + save), other
-    // requests start stealing a lock we still hold → double-execution / churn.
-    const lockHeldStart = Date.now();
-
-    let result: { game: Game, events: AnimationEvent[] };
-
-    try {
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
         const loadedGame: Game = await loadCompleteGame(game_id);
-        result = await operation(loadedGame);
+        const expectedVersion = loadedGame.version ?? 0;
 
-        // This path is common to bots and real player attacks
-        // So we can put something like check_win here and not worry about it anywhere else
-        // The sync part is very quick, so it's ok if moves that couldn't possibly cause win call it
-        // Needs to be done BEFORE saving so that save it as DONE
-        const game_ended = await check_win_async(result.game);
+        const result = await operation(loadedGame);
 
-        // Auto-discard disabled: discard now requires all in-players to press "good".
-        // Before re-enabling, fix the following (the original TODO was "add validation before
-        // kicking this off" — concrete items below):
-        //   1. Add `.catch(err => console.error(...))` to the fire-and-forget call. Every other
-        //      fire-and-forget in this file (broadcastAnimationEvents, cleanupOldGameLogs) does
-        //      this; lockedAutoDiscardLoop and lockedBotLoop are the outliers. An unhandled
-        //      rejection from acquireAutoDiscardLock or the DB client can terminate the Deno
-        //      edge worker.
-        //   2. Move the spawn to AFTER `releaseGameLock` (i.e. outside the try/finally), or have
-        //      monitorAutoDiscard retry on initial executeWithGameLock failure. As written, the
-        //      loop is spawned while the parent still holds the per-game lock, so its first
-        //      iteration races to re-acquire the same lock (9 retries × 100ms linear backoff,
-        //      ~4.5s budget). Under contention the first acquire can fail and the watchdog dies
-        //      silently — the catch in monitorAutoDiscard swallows the error and does not
-        //      reschedule.
-        //   3. Tighten the trigger condition. Today it fires after every action whose end state
-        //      has any covered table — including actions that don't change the discard window
-        //      (update-name, rearrange-hand, join, exit). Each spawns a loop that bails after
-        //      one DB roundtrip. Add `result.game.status === GAME_STATUS.PLAYING &&
-        //      result.game.good_timestamp` — `good_timestamp` is only set in cover.ts when all
-        //      attacks just became covered, which is the actual condition that opens the
-        //      discard window.
-        //   4. (Not blocking, just noted) The auto_discard_locks table dedupes concurrent loops
-        //      per game, and the 100-iteration cap × 5s interval gives ~8min of watchdog life
-        //      vs the 60s timeout — plenty of headroom. Both fine as-is.
-        // if (result.game.table_battles.length > 0 && result.game.table_battles.every(battle => battle.defense !== null)) {
-        //     lockedAutoDiscardLoop(game_id);
-        // }
+        // Pure end-of-game detection: sets GAME_OVER + player statuses in memory,
+        // no DB writes — so the committed state below is already final.
+        const game_ended = check_win_sync(result.game);
 
-        // Always save the game state
-        await saveCompleteGame(result.game);
+        // Atomic, version-gated commit of the whole game state.
+        const commit = await commitGame(result.game, expectedVersion);
 
+        if (commit.status === 'conflict') {
+            // Another actor committed between our load and our commit, so the move
+            // we just computed is against stale state. Reload and redo it.
+            await botDiag(game_id, 'T2_GAMELOCK', { event: 'cas_conflict', reqId, attempt });
+            if (attempt < MAX_ATTEMPTS) continue;
+            throw new Error(`Could not commit game ${game_id} after ${MAX_ATTEMPTS} attempts — write contention`);
+        }
+
+        // Logs are append-only + UUID-keyed (idempotent), so they live outside the
+        // CAS. For an ended game, finalizeEndedGame snapshots from the in-memory
+        // logs and wipes the table, so we don't persist them here.
+        if (!game_ended && result.game.logs.length > 0) {
+            await saveGameLogs(supabaseClient, game_id, result.game.logs);
+        }
+
+        // End-of-game one-time side effects (ELO + replay snapshot + log wipe),
+        // run exactly once — only the winning commit reaches here.
         if (game_ended) {
-            result.events.push({type: ANIMATION_EVENT_TYPE.MAGIC_TRANSITION, game_state: result.game })
+            await finalizeEndedGame(result.game);
+            result.events.push({ type: ANIMATION_EVENT_TYPE.MAGIC_TRANSITION, game_state: result.game });
         }
-    } finally {
-        const heldMs = Date.now() - lockHeldStart;
-        await releaseGameLock(game_id);
-        // T2: only flag dangerously long holds — those approaching the 10s stale
-        // window are where concurrent stealers cause trouble. Normal fast ops stay
-        // out of the table to keep it readable.
-        if (heldMs > 3000) {
-            await botDiag(game_id, 'T2_GAMELOCK', {
-                event: 'long_hold', reqId, heldMs,
-            });
+
+        // Broadcast AFTER the durable commit (fire-and-forget).
+        if (result.events.length > 0) {
+            console.log(`[${reqId}][TXN] Broadcasting ${result.events.length} events after commit`);
+            broadcastAnimationEvents(result.game, result.events, reqId).catch(err =>
+                console.error(`[${reqId}] Error broadcasting events:`, err));
         }
+
+        return result;
     }
 
-    // Broadcast animation events AFTER releasing the lock (fire-and-forget)
-    // This happens for all operations: human actions, bot actions, and auto-discard
-    if (result.events.length > 0) {
-        console.log(`[${reqId}][LOCK] Broadcasting ${result.events.length} events after executeWithGameLock`);
-        broadcastAnimationEvents(result.game, result.events, reqId).catch(err =>
-            console.error(`[${reqId}] Error broadcasting events from executeWithGameLock:`, err)
-        );
-    }
-
-    return result;
+    // The loop always returns or throws above; keeps the type checker happy.
+    throw new Error(`Could not commit game ${game_id}`);
 };
 
 // Helper function to convert full Game to PublicGame (removes private data)
@@ -634,6 +514,7 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
 
     const game: Game = {
         id: data.id,
+        version: data.version ?? 0, // optimistic-concurrency token for commit_game
         name: data.name,
         deck: data.game_decks.deck,
         // unused but necessary for type
@@ -688,104 +569,53 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
     */
 };
 
-// Save complete game state to separated tables using efficient upserts
-// TODO This could easily return public state for later use. we calculate lengths here so its very useful
-export const saveCompleteGame = async (game: Game): Promise<any> => {
-    // converter of game to SQL
-    // Update lengths here too
-    // Update public game data (remove deck and hands from players)
+// Atomically commit the full game state via the commit_game RPC, gated on the
+// version we loaded (optimistic concurrency — replaces the old game_locks +
+// multi-statement saveCompleteGame). One DB transaction across games/game_decks/
+// player_hands/bot_hands → no torn reads; the version gate is the fence that makes
+// double-apply impossible. Returns 'conflict' if another writer committed first;
+// the caller reloads and retries. Logs are handled separately (idempotent).
+export const commitGame = async (
+    game: Game,
+    expectedVersion: number,
+): Promise<{ status: 'ok' | 'conflict'; version?: number }> => {
     const publicGame: PublicGame = gameToPublicGame(game);
 
-    await supabaseClient
-        .from('games')
-        .update(publicGame)
-        .eq('id', game.id);
+    const humanHands = game.players
+        .filter(player => !player.is_ai)
+        .map(player => ({
+            player_id: player.player_id,
+            hand: player.hand,
+            awaiting_attack: player.awaiting_attack,
+        }));
 
-    // Update deck efficiently
-    await supabaseClient
-        .from('game_decks')
-        .upsert({
-            game_id: game.id,
-            deck: game.deck
-        });
+    const botHands = game.players
+        .filter(player => player.is_ai)
+        .map(player => ({
+            bot_id: player.player_id,
+            hand: player.hand,
+            awaiting_attack: player.awaiting_attack,
+        }));
 
-    // Batch update human player hands
-    const humanPlayers = game.players.filter(player => !player.is_ai);
-    const handUpdates: PlayerHand[] = humanPlayers.map(player => ({
-        game_id: game.id,
-        player_id: player.player_id,
-        hand: player.hand,
-        awaiting_attack: player.awaiting_attack,
-    }));
+    const { data, error } = await supabaseClient.rpc('commit_game', {
+        p_game_id: game.id,
+        p_expected_version: expectedVersion,
+        p_game: publicGame,
+        p_deck: game.deck,
+        p_hands: humanHands,
+        p_bot_hands: botHands,
+    });
 
-    if (handUpdates.length > 0) {
-        await supabaseClient
-            .from('player_hands')
-            .upsert(handUpdates);
+    if (error) {
+        console.error(`[COMMIT] commit_game RPC failed for ${game.id}:`, error);
+        throw error;
     }
 
-    // Batch update bot hands
-    const botPlayers = game.players.filter(player => player.is_ai);
-    const botHandUpdates: BotHand[] = botPlayers.map(player => ({
-        game_id: game.id,
-        bot_id: player.player_id,
-        hand: player.hand,
-        awaiting_attack: player.awaiting_attack,
-    }));
-
-    if (botHandUpdates.length > 0) {
-        await supabaseClient
-            .from('bot_hands')
-            .upsert(botHandUpdates);
+    const res = data as { status: 'ok' | 'conflict'; version?: number };
+    if (res.status === 'ok' && typeof res.version === 'number') {
+        game.version = res.version; // keep the in-memory game's token current
     }
-
-    // Save pending logs atomically with game state
-    if (game.logs.length > 0) {
-        await saveGameLogs(supabaseClient, game.id, game.logs);
-        // Note: We don't clear game.logs here because:
-        // 1. The game object is returned and may be used after saving
-        // 2. Logs are valuable state that should remain part of the game object
-        // 3. saveCompleteGame is only called once per operation in executeWithGameLock anyway
-    }
-
-    // dumb? maybe
-    const game_utils = {
-        broadcast: async (messageType: string, baseMessage: any) => {
-            for (const player of game.players) {
-                // Create personalized game state by adding player's self data
-                const personalizedGame = gameToPersonalGame(game, player);
-
-                const channel = supabaseClient.channel(`gu-${game.id}-${player.player_id}`, {
-                    config: { private: true }
-                });
-                await channel.send({
-                    type: 'broadcast',
-                    event: messageType,
-                    payload: { ...baseMessage, game: personalizedGame }
-                });
-
-                await supabaseClient.removeChannel(channel);
-            }
-
-        },
-        sendToUser: async (messageType: string, baseMessage: any, user_id: string) => {
-            const channel = supabaseClient.channel(`gu-${game.id}-${user_id}`, {
-                config: { private: true }
-            });
-
-            const playerSelf = game.players.find(player => player.player_id === user_id)!;
-            const personalizedGame = gameToPersonalGame(game, playerSelf);
-            await channel.send({
-                type: 'broadcast',
-                event: messageType,
-                payload: { ...baseMessage, game: personalizedGame }
-            });
-            await supabaseClient.removeChannel(channel);
-        },
-        publicGame: publicGame,
-    }
-
-    return game_utils;
+    return res;
 };
 
 // Get player's hand for a specific game using direct query
@@ -860,14 +690,13 @@ const check_win_sync = (game: Game): boolean => {
     return true;
 }
 
-const check_win_async = async (game: Game): Promise<boolean> => {
-    const game_ended = check_win_sync(game)
-    if (!game_ended)
-        return false;
-
-
-    // Update ELO ratings before changing game state
-    // DOes this NEED to happen before updates to game and player status?
+// One-time end-of-game side effects (ELO + replay snapshot + log wipe). Run by
+// executeWithGameLock AFTER the final GAME_OVER state is durably committed, so it
+// fires exactly once (only the winning CAS commit reaches it). This is the tail of
+// the old check_win_async; its check_win_sync half now runs BEFORE the commit so
+// the committed state already reflects GAME_OVER.
+const finalizeEndedGame = async (game: Game): Promise<void> => {
+    // Update ELO ratings
     await updateEloRatings(game);
 
     // Compress the finished session into a replay snapshot (game_snapshots
@@ -915,7 +744,6 @@ const check_win_async = async (game: Game): Promise<boolean> => {
             console.error(`Error cleaning up old logs for game ${game.id}:`, err);
         });
     }
-    return true;
 }
 
 

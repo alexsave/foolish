@@ -17,150 +17,80 @@ const supabaseClient = createClient(
 const BOT_PROCESSING_DELAY_WITH_HUMANS = 1500;
 const BOT_PROCESSING_DELAY_BOTS_ONLY = 300; // Delay when only bots remain (ms)
 
-// How long one loop holds the baton before self-releasing. With
-// EdgeRuntime.waitUntil keeping the isolate alive, the loop reliably reaches this
-// and releases cleanly. MUST stay safely below BOT_LOCK_STALE_MS, else a healthy
-// long-running loop looks "stale" to a concurrent bump and gets its baton stolen
-// (two loops at once). Lowered from 65s so a leaked baton (should no longer
-// happen, but defense in depth) recovers in tens of seconds, not 150s.
+// How long one loop runs before self-releasing its lease. EdgeRuntime.waitUntil
+// keeps the isolate alive so the loop reliably reaches this and releases cleanly.
+// MUST stay below BOT_LEASE_TTL_MS, else a healthy long-running loop could lose
+// its lease mid-run to a concurrent bump (two loops at once).
 const MAX_LOOP_RUNTIME = 30_000;
 
-// A bot_locks baton older than this is treated as leaked and stolen. Keep
-// > MAX_LOOP_RUNTIME (see above). Lowered from 150s — the freeze duration when a
-// loop did leak.
-const BOT_LOCK_STALE_MS = 45_000;
+// Bot-loop lease lifetime (games.bot_lease_*). Auto-expiring, so a reaped isolate's
+// lease simply lapses — there is NO finally-release to leak. Kept > MAX_LOOP_RUNTIME
+// so a live loop keeps its lease for its whole run; the 10s gap bounds how long
+// after a crash a new loop must wait before taking over.
+const BOT_LEASE_TTL_MS = 40_000;
 
 // Global variable to track current bot processing delay
 let currentBotDelay = BOT_PROCESSING_DELAY_WITH_HUMANS;
 
-const acquireBotLoopLock = async (game_id: string): Promise<boolean> => {
+// Claim the bot-loop lease atomically (replaces the bot_locks baton). The RPC
+// returns a token if no live lease exists, else null. Auto-expiring → nothing to
+// leak even if this isolate dies mid-loop.
+const acquireBotLease = async (game_id: string): Promise<string | null> => {
     try {
-        // Generate a random lock ID for this instance
-        const lockId = crypto.randomUUID();
-
-        const { error } = await supabaseClient
-            .from('bot_locks')
-            .insert({ game_id, lock_id: lockId });
-
+        const { data, error } = await supabaseClient.rpc('try_acquire_bot_lease', {
+            p_game_id: game_id,
+            p_ttl_ms: BOT_LEASE_TTL_MS,
+        });
         if (error) {
-            // Handle non-unique constraint errors
-            if (error.code !== '23505') {
-                return false;
-            }
-
-            // Check if existing lock is older than 150 seconds
-            const { data: existingLock } = await supabaseClient
-                .from('bot_locks')
-                .select('acquired_at, lock_id')
-                .eq('game_id', game_id)
-                .single();
-
-            if (!existingLock) {
-                return false;
-            }
-
-            const lockAge = Date.now() - new Date(existingLock.acquired_at).getTime();
-            if (lockAge <= BOT_LOCK_STALE_MS) {
-                // T1: a baton is already held and is NOT yet stale, so this bump is
-                // refused. If the holder is a live loop this is normal; if the holder
-                // was hard-killed mid-cycle (finally skipped, lock leaked) then EVERY
-                // bump lands here for up to 150s — the freeze. The age trend across
-                // rows tells the two apart (a leaked lock's age climbs toward 150000).
-                await botDiag(game_id, 'T1_BATON', {
-                    event: 'blocked_lock_held', lockAgeMs: lockAge,
-                    held_lock_id: existingLock.lock_id ?? null,
-                });
-                return false;
-            }
-
-            // T1: the baton was stale (>150s) — almost certainly a leaked lock from a
-            // killed loop. We are about to steal it. Seeing this row at all means a
-            // prior loop did NOT release cleanly.
-            await botDiag(game_id, 'T1_BATON', {
-                event: 'stealing_stale_lock', lockAgeMs: lockAge,
-                held_lock_id: existingLock.lock_id ?? null,
-            });
-
-            // Delete the stale lock
-            await supabaseClient
-                .from('bot_locks')
-                .delete()
-                .eq('game_id', game_id);
-
-            // Try to insert again
-            const { error: retryError } = await supabaseClient
-                .from('bot_locks')
-                .insert({ game_id, lock_id: lockId });
-
-            if (retryError) {
-                return false;
-            }
+            console.error(`Failed to acquire bot lease for ${game_id}:`, error);
+            return null;
         }
-
-        // Verify we actually got the lock by checking the lock_id
-        const { data, error: selectError } = await supabaseClient
-            .from('bot_locks')
-            .select('lock_id')
-            .eq('game_id', game_id)
-            .single();
-
-        if (selectError || !data || data.lock_id !== lockId) {
-            return false;
-        }
-
-        return true;
+        return (data as string | null) ?? null;
     } catch (error) {
-        return false;
+        console.error(`Error acquiring bot lease for ${game_id}:`, error);
+        return null;
     }
 };
 
-const releaseBotLoopLock = async (game_id: string): Promise<void> => {
+// Best-effort early release (fenced on our token in SQL). If we never get here —
+// reaped isolate — the lease just expires on its own.
+const releaseBotLease = async (game_id: string, token: string): Promise<void> => {
     try {
-        // Only delete if we have the correct lock_id
-        const { error } = await supabaseClient
-            .from('bot_locks')
-            .delete()
-            .eq('game_id', game_id)
-        //.eq('lock_id', lockId);
-
-        if (error) {
-            console.error(`Failed to release lock for game ${game_id}:`, error);
-        }
-
+        await supabaseClient.rpc('release_bot_lease', { p_game_id: game_id, p_token: token });
     } catch (error) {
-        console.error(`Error releasing lock for game ${game_id}:`, error);
+        console.error(`Error releasing bot lease for ${game_id}:`, error);
     }
 };
 
 export const lockedBotLoop = async (game_id: string): Promise<void> => {
-    if (!(await acquireBotLoopLock(game_id))) {
-        console.log('unable to acquire bot loop lock')
-        return;         // another cycle has the baton
+    const leaseToken = await acquireBotLease(game_id);
+    if (!leaseToken) {
+        console.log('bot lease held by another loop, skipping')
+        return;         // another loop holds the lease
     }
 
-    // T1: a short id ties this loop's acquire row to its release/cycle rows. If a
-    // loop logs 'acquired' but never 'released_clean', the isolate was hard-killed
-    // mid-loop and the baton leaked — the row pattern that explains the freeze.
+    // A short id ties this loop's rows together. The lease auto-expires, so a
+    // missing 'lease_released' just means the isolate was reaped — harmless now
+    // (no leak), unlike the old baton.
     const loopId = crypto.randomUUID().split('-')[0];
     const loopStart = Date.now();
-    await botDiag(game_id, 'T1_BATON', { event: 'acquired', loopId });
+    await botDiag(game_id, 'T1_BATON', { event: 'lease_acquired', loopId });
 
     try {
-        console.log('bot loop lock acquired, processing bot actions')
+        console.log('bot lease acquired, processing bot actions')
         await processBotActions(game_id, 0, undefined, loopId);
         console.log('done processing bot actions')
         await botDiag(game_id, 'T1_BATON', {
             event: 'loop_ended', loopId, runtimeMs: Date.now() - loopStart,
         });
     } finally {
-        console.log('releasing bot loop lock')
-        await releaseBotLoopLock(game_id);
-        // T1: clean release. Its ABSENCE (acquired with no matching released_clean)
-        // is the leak signal — a hard kill skips this `finally`.
+        // Best-effort early release so the next bump can start immediately; if we
+        // never reach here the lease expires on its own (no leak, no freeze).
+        await releaseBotLease(game_id, leaseToken);
         await botDiag(game_id, 'T1_BATON', {
-            event: 'released_clean', loopId, runtimeMs: Date.now() - loopStart,
+            event: 'lease_released', loopId, runtimeMs: Date.now() - loopStart,
         });
-        console.log('released bot loop lock')
+        console.log('bot lease released')
     }
 }
 
@@ -175,15 +105,10 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
         const now = Date.now();
         const elapsed = now - loopStartTime;
         if (elapsed > MAX_LOOP_RUNTIME) {
-            // Stop the loop, even if there are more moves
-            // It's better to release the lock and wait 5 seconds
-            // vs have the server kill the process without releasing lock
-            // If another bot_bump call comes in and the lock is still held,
-            // how are we supposed to know if it's because the loop is still running or it got killed?
-            // only safe bet there is to wait ANOTHER 150s to be clear
-            // T1: self-abort at MAX_LOOP_RUNTIME. This is the GOOD path (we stop and
-            // release ourselves). If we instead see a cycle START near 65000ms below
-            // with no following abort, the platform killed us first → leak.
+            // Self-abort: stop and let the finally release our lease, even if more
+            // bot moves remain. The next bump (client poll / next action) re-claims
+            // the lease and continues. The lease auto-expires regardless, so an
+            // abort vs a reaped isolate are both harmless now.
             await botDiag(game_id, 'T1_BATON', {
                 event: 'max_runtime_abort', loopId, cycle, elapsedMs: elapsed,
             });

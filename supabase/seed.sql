@@ -22,8 +22,6 @@ DROP TABLE IF EXISTS game_decks CASCADE;
 DROP TABLE IF EXISTS games CASCADE;
 DROP TABLE IF EXISTS user_elo_ratings CASCADE;
 DROP TABLE IF EXISTS bots CASCADE;
-DROP TABLE IF EXISTS game_locks CASCADE;
-DROP TABLE IF EXISTS bot_locks CASCADE;
 DROP TABLE IF EXISTS auto_discard_locks CASCADE;
 
 -- Drop custom types
@@ -81,6 +79,9 @@ CREATE TABLE games (
   elimination_order JSONB NOT NULL DEFAULT '[]'::jsonb, -- Array of player_ids in order they were eliminated
   good_timestamp BIGINT, -- Timestamp in milliseconds when all attacks were covered, null if not all covered
   good_players JSONB NOT NULL DEFAULT '[]'::jsonb, -- Array of player_ids who have pressed 'good'
+  version BIGINT NOT NULL DEFAULT 0, -- optimistic-concurrency token (see commit_game RPC); replaces game_locks
+  bot_lease_token UUID,              -- bot-loop lease holder token (replaces bot_locks)
+  bot_lease_until TIMESTAMPTZ,       -- bot-loop lease expiry; auto-expiring, no finally-release needed
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW()
 );
@@ -150,19 +151,9 @@ CREATE TABLE bot_hands (
   PRIMARY KEY (game_id, bot_id) -- One hand per bot per game
 );
 
--- Bot locks table - Simple table-based locking for bot processing
-CREATE TABLE bot_locks (
-  game_id TEXT PRIMARY KEY REFERENCES games(id) ON DELETE CASCADE,
-  lock_id TEXT NOT NULL, -- Random ID to verify lock ownership
-  acquired_at TIMESTAMP DEFAULT NOW()
-);
-
--- Game locks table - Simple table-based locking for game operations
-CREATE TABLE game_locks (
-  game_id TEXT PRIMARY KEY REFERENCES games(id) ON DELETE CASCADE,
-  lock_id TEXT NOT NULL, -- Random ID to verify lock ownership
-  acquired_at TIMESTAMP DEFAULT NOW()
-);
+-- NOTE: game_locks and bot_locks are GONE. Concurrency is now handled by
+-- games.version (optimistic CAS via the commit_game RPC) and the games.bot_lease_*
+-- columns (auto-expiring bot-loop lease). See migration 20260616030000.
 
 -- Auto discard locks table - Simple table-based locking for auto-discard monitoring
 CREATE TABLE auto_discard_locks (
@@ -219,10 +210,6 @@ CREATE INDEX idx_bots_strategy_key ON bots(strategy_key);
 CREATE INDEX idx_bots_elo_rating ON bots(elo_rating);
 CREATE INDEX idx_bot_hands_game_id ON bot_hands(game_id);
 CREATE INDEX idx_bot_hands_bot_id ON bot_hands(bot_id);
-CREATE INDEX idx_bot_locks_game_id ON bot_locks(game_id);
-CREATE INDEX idx_bot_locks_acquired_at ON bot_locks(acquired_at);
-CREATE INDEX idx_game_locks_game_id ON game_locks(game_id);
-CREATE INDEX idx_game_locks_acquired_at ON game_locks(acquired_at);
 CREATE INDEX idx_auto_discard_locks_game_id ON auto_discard_locks(game_id);
 CREATE INDEX idx_auto_discard_locks_acquired_at ON auto_discard_locks(acquired_at);
 CREATE INDEX idx_game_logs_game_id ON game_logs(game_id);
@@ -244,8 +231,6 @@ ALTER TABLE chat_messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_elo_ratings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bots ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bot_hands ENABLE ROW LEVEL SECURITY;
-ALTER TABLE bot_locks ENABLE ROW LEVEL SECURITY;
-ALTER TABLE game_locks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auto_discard_locks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE game_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE game_snapshots ENABLE ROW LEVEL SECURITY;
@@ -333,14 +318,6 @@ CREATE POLICY "Only service role can delete bots" ON bots
 
 -- Bot hands: ONLY service role can access (edge functions only)
 CREATE POLICY "Only service role can access bot hands" ON bot_hands
-  FOR ALL USING ((select auth.role()) = 'service_role');
-
--- Bot locks: ONLY service role can access (edge functions only)
-CREATE POLICY "Only service role can access bot locks" ON bot_locks
-  FOR ALL USING ((select auth.role()) = 'service_role');
-
--- Game locks: ONLY service role can access (edge functions only)
-CREATE POLICY "Only service role can access game locks" ON game_locks
   FOR ALL USING ((select auth.role()) = 'service_role');
 
 -- Auto discard locks: ONLY service role can access (edge functions only)
@@ -495,6 +472,102 @@ CREATE TRIGGER enforce_username_not_bot
   BEFORE INSERT OR UPDATE ON auth.users
   FOR EACH ROW
   EXECUTE FUNCTION public.enforce_username_not_bot();
+
+-- =============================================================================
+-- CONCURRENCY RPCs (replace game_locks + bot_locks). See migration
+-- 20260616030000_cas_concurrency.sql for the rationale. Kept identical here.
+-- =============================================================================
+
+-- Atomic, version-gated commit of the whole game state in one transaction.
+CREATE OR REPLACE FUNCTION commit_game(
+  p_game_id          TEXT,
+  p_expected_version BIGINT,
+  p_game             JSONB,
+  p_deck             JSONB,
+  p_hands            JSONB,
+  p_bot_hands        JSONB
+) RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_new_version BIGINT;
+  g games%ROWTYPE;
+BEGIN
+  g := jsonb_populate_record(NULL::games, p_game);
+
+  UPDATE games SET
+    name = g.name, deck_length = g.deck_length, discard_pile_length = g.discard_pile_length,
+    flipped = g.flipped, players = g.players, status = g.status, power_suit = g.power_suit,
+    first_attacker = g.first_attacker, defender = g.defender, table_battles = g.table_battles,
+    elimination_order = g.elimination_order, good_timestamp = g.good_timestamp,
+    good_players = g.good_players, updated_at = now(), version = version + 1
+  WHERE id = p_game_id AND version = p_expected_version
+  RETURNING version INTO v_new_version;
+
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('status', 'conflict');
+  END IF;
+
+  IF p_deck IS NOT NULL THEN
+    INSERT INTO game_decks (game_id, deck) VALUES (p_game_id, p_deck)
+    ON CONFLICT (game_id) DO UPDATE SET deck = EXCLUDED.deck, updated_at = now();
+  END IF;
+
+  IF p_hands IS NOT NULL AND jsonb_array_length(p_hands) > 0 THEN
+    INSERT INTO player_hands (game_id, player_id, hand, awaiting_attack)
+    SELECT p_game_id, (h->>'player_id')::uuid, h->'hand',
+           COALESCE((h->>'awaiting_attack')::bool, false)
+    FROM jsonb_array_elements(p_hands) AS h
+    ON CONFLICT (game_id, player_id) DO UPDATE
+      SET hand = EXCLUDED.hand, awaiting_attack = EXCLUDED.awaiting_attack, updated_at = now();
+  END IF;
+
+  IF p_bot_hands IS NOT NULL AND jsonb_array_length(p_bot_hands) > 0 THEN
+    INSERT INTO bot_hands (game_id, bot_id, hand, awaiting_attack)
+    SELECT p_game_id, (b->>'bot_id')::uuid, b->'hand',
+           COALESCE((b->>'awaiting_attack')::bool, false)
+    FROM jsonb_array_elements(p_bot_hands) AS b
+    ON CONFLICT (game_id, bot_id) DO UPDATE
+      SET hand = EXCLUDED.hand, awaiting_attack = EXCLUDED.awaiting_attack, updated_at = now();
+  END IF;
+
+  RETURN jsonb_build_object('status', 'ok', 'version', v_new_version);
+END;
+$$;
+
+-- Bot-loop lease: atomic claim (NULL if another loop holds a live lease).
+CREATE OR REPLACE FUNCTION try_acquire_bot_lease(p_game_id TEXT, p_ttl_ms INT)
+RETURNS UUID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_token UUID;
+BEGIN
+  UPDATE games SET
+    bot_lease_token = gen_random_uuid(),
+    bot_lease_until = now() + make_interval(secs => p_ttl_ms / 1000.0)
+  WHERE id = p_game_id
+    AND (bot_lease_until IS NULL OR bot_lease_until < now())
+  RETURNING bot_lease_token INTO v_token;
+  RETURN v_token;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION release_bot_lease(p_game_id TEXT, p_token UUID)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  UPDATE games SET bot_lease_until = now() - interval '1 second'
+  WHERE id = p_game_id AND bot_lease_token = p_token;
+END;
+$$;
 
 -- =============================================================================
 -- REALTIME AUTHORIZATION POLICIES
