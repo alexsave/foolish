@@ -82,6 +82,17 @@ export const executeWithGameLock = async (game_id: string, operation: (game: Gam
         const loadedGame: Game = await loadCompleteGame(game_id);
         const expectedVersion = loadedGame.version ?? 0;
 
+        // End-game race: if the game already ended (a concurrent move finished it
+        // while this request was in flight — e.g. a human cover landing right as the
+        // game-ending move commits), the incoming move is MOOT. Return the final
+        // state instead of running the handler, which would throw "can't act in a
+        // finished game" and surface as the client's "missing game ID" error. The
+        // client just transitions to the win screen.
+        if (loadedGame.status === GAME_STATUS.GAME_OVER) {
+            console.log(`[${reqId}][TXN] game ${game_id} already over — move is a no-op`);
+            return { game: loadedGame, events: [] };
+        }
+
         // Snapshot card-conservation BEFORE this op so we can tell whether THIS
         // operation introduced a duplication or it was already corrupt on load.
         const beforeAudit = auditCards(loadedGame);

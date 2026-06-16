@@ -17,17 +17,18 @@ const supabaseClient = createClient(
 const BOT_PROCESSING_DELAY_WITH_HUMANS = 3000;
 const BOT_PROCESSING_DELAY_BOTS_ONLY = 300; // Delay when only bots remain (ms)
 
-// How long one loop runs before self-releasing its lease. EdgeRuntime.waitUntil
-// keeps the isolate alive so the loop reliably reaches this and releases cleanly.
-// MUST stay below BOT_LEASE_TTL_MS, else a healthy long-running loop could lose
-// its lease mid-run to a concurrent bump (two loops at once).
-const MAX_LOOP_RUNTIME = 30_000;
+// How long one loop runs before self-releasing its lease. Kept SHORT on purpose:
+// cordite is CPU-bound and Supabase caps CPU at ~2s/request, so a long single loop
+// can't help anyway — continuation is driven by the pg_cron bot-heartbeat (each tick
+// is a fresh request => fresh CPU budget). A short loop + short lease means fast
+// recovery if an isolate is CPU-killed mid-run. MUST stay below BOT_LEASE_TTL_MS.
+const MAX_LOOP_RUNTIME = 20_000;
 
 // Bot-loop lease lifetime (games.bot_lease_*). Auto-expiring, so a reaped isolate's
-// lease simply lapses — there is NO finally-release to leak. Kept > MAX_LOOP_RUNTIME
-// so a live loop keeps its lease for its whole run; the 10s gap bounds how long
-// after a crash a new loop must wait before taking over.
-const BOT_LEASE_TTL_MS = 40_000;
+// lease simply lapses — no finally-release to leak. This is the RECOVERY knob: if an
+// isolate is killed (CPU/wall) mid-loop, the game is blocked until the lease expires.
+// Kept short (just above MAX_LOOP_RUNTIME) so the next heartbeat retakes quickly.
+const BOT_LEASE_TTL_MS = 25_000;
 
 // Global variable to track current bot processing delay
 let currentBotDelay = BOT_PROCESSING_DELAY_WITH_HUMANS;
@@ -63,41 +64,45 @@ const releaseBotLease = async (game_id: string, token: string): Promise<void> =>
 };
 
 export const lockedBotLoop = async (game_id: string): Promise<void> => {
+    // ONE drive segment. Continuation across segments is handled by the pg_cron
+    // bot-heartbeat (each tick is a fresh request => fresh CPU budget) — we do NOT
+    // self-continue in-isolate, since chained segments would share one 2s CPU budget.
     const leaseToken = await acquireBotLease(game_id);
     if (!leaseToken) {
-        console.log('bot lease held by another loop, skipping')
-        return;         // another loop holds the lease
+        console.log('bot lease held by another loop, skipping');
+        return;         // another loop / driver holds the lease
     }
 
-    // A short id ties this loop's rows together. The lease auto-expires, so a
-    // missing 'lease_released' just means the isolate was reaped — harmless now
-    // (no leak), unlike the old baton.
     const loopId = crypto.randomUUID().split('-')[0];
     const loopStart = Date.now();
+    // Cumulative cordite/bot compute (wall ms ~= CPU ms, since it's compute-bound)
+    // so we can see how close a single drive gets to the ~2s CPU cap.
+    const cpu = { computeMs: 0 };
     await botDiag(game_id, 'T1_BATON', { event: 'lease_acquired', loopId });
 
+    let outcome: LoopOutcome = 'idle-wait';
     try {
-        console.log('bot lease acquired, processing bot actions')
-        await processBotActions(game_id, 0, undefined, loopId);
-        console.log('done processing bot actions')
-        await botDiag(game_id, 'T1_BATON', {
-            event: 'loop_ended', loopId, runtimeMs: Date.now() - loopStart,
-        });
+        outcome = await processBotActions(game_id, 0, undefined, loopId, cpu);
     } finally {
-        // Best-effort early release so the next bump can start immediately; if we
-        // never reach here the lease expires on its own (no leak, no freeze).
         await releaseBotLease(game_id, leaseToken);
         await botDiag(game_id, 'T1_BATON', {
-            event: 'lease_released', loopId, runtimeMs: Date.now() - loopStart,
+            event: 'loop_ended', loopId, outcome,
+            cpuComputeMs: cpu.computeMs, runtimeMs: Date.now() - loopStart,
         });
-        console.log('bot lease released')
     }
 }
 
 
+// Outcome of a bot-processing run, used by lockedBotLoop to decide self-continuation:
+//   maxruntime    cut short at MAX_LOOP_RUNTIME with bot work still pending -> continue
+//   idle-botsonly no bot could act, but game is PLAYING with NO human left in -> bots
+//                 must keep going on their own (no client will bump us) -> continue
+//   idle-wait     waiting on a human / game over / error -> stop (their move re-triggers)
+type LoopOutcome = 'maxruntime' | 'idle-botsonly' | 'idle-wait';
+
 // New improved bot processing that fixes eligibility drift
 // Uses one-bot-per-iteration approach to prevent race conditions
-const processBotActions = async (game_id: string, cycle: number = 0, loopStartTime?: number, loopId: string = '?'): Promise<void> => {
+const processBotActions = async (game_id: string, cycle: number = 0, loopStartTime?: number, loopId: string = '?', cpu: { computeMs: number } = { computeMs: 0 }): Promise<LoopOutcome> => {
 
     if(loopStartTime === undefined) {
         loopStartTime = Date.now();
@@ -112,7 +117,7 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
             await botDiag(game_id, 'T1_BATON', {
                 event: 'max_runtime_abort', loopId, cycle, elapsedMs: elapsed,
             });
-            return;
+            return 'maxruntime';
 
         }
     }
@@ -136,6 +141,12 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
         console.log(`[${reqId}][TIMING] Acquiring game lock...`);
         const { game } = await executeWithGameLock(game_id, async (game) => {
             console.log(`[TIMING] Lock acquired in ${Date.now() - lockStartTime}ms`);
+            // CRITICAL: executeWithGameLock re-invokes this operation on a CAS
+            // conflict. actionEvents/botProcessed live in the OUTER (cycle) scope, so
+            // without resetting them here a retried bot move would push its events a
+            // SECOND time → the duplicate animation on the client. Reset per attempt.
+            actionEvents = [];
+            botProcessed = false;
             const lockWorkStartTime = Date.now();
             // Update global delay based on whether humans are still playing
             const humanPlayersStillIn = game.players.filter(player =>
@@ -221,6 +232,7 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
                     const botActionResult = await processBotAction(game, selectedBot.bot);
 
                     const actionDuration = Date.now() - actionStartTime;
+                    cpu.computeMs += actionDuration; // track cumulative bot compute (CPU-cap proximity)
                     if (botActionResult) {
                         actionEvents.push(...(botActionResult.events as unknown as AnimationEvent[]));
 
@@ -313,7 +325,7 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
         console.log(`[TIMING] Total time in executeWithGameLock: ${Date.now() - lockStartTime}ms`);
     } catch (error) {
         console.error('Error in bot processing:', error);
-        return;
+        return 'idle-wait';
     }
 
     const totalCycleTime = Date.now() - cycleStartTime;
@@ -334,18 +346,21 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
             console.log(`[CYCLE ${cycle}] Cycle took ${totalCycleTime}ms (>= ${currentBotDelay}ms target), continuing immediately`);
         }
 
-        return await processBotActions(game_id, cycle + 1, loopStartTime, loopId);
+        return await processBotActions(game_id, cycle + 1, loopStartTime, loopId, cpu);
     } else {
         console.log(`[CYCLE ${cycle}] No more bot actions needed, ending bot loop for game ${game_id}`);
+
+        const isPlaying = !!game && game.status === GAME_STATUS.PLAYING;
+        const humanInCount = isPlaying
+            ? game.players.filter(p => !p.is_ai && p.status === PLAYER_STATUS.IN).length
+            : -1;
+
         // T7: the loop is ending while the game is still PLAYING — i.e. we are now
-        // waiting on a HUMAN. Normal if they're present; an indefinite stall if they
-        // left (auto-discard is disabled, so nothing rescues a ghost). Log who we're
-        // blocked on so a freeze can be matched to a player who'd actually gone.
+        // waiting on a HUMAN (or, if humanInCount===0, it's bots-only and we'll
+        // self-continue). Log who we're blocked on either way.
         try {
-            if (game && game.status === GAME_STATUS.PLAYING) {
+            if (isPlaying) {
                 const defender = game.players[game.defender];
-                const humanInCount = game.players.filter(
-                    p => !p.is_ai && p.status === PLAYER_STATUS.IN).length;
                 await botDiag(game_id, 'T7_GHOSTHUMAN', {
                     loopId, cycle,
                     defenderIndex: game.defender,
@@ -359,5 +374,12 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
                 });
             }
         } catch (_e) { /* diagnostics must not break the loop */ }
+
+        // No bot could act. If the game is still PLAYING but NO human remains in,
+        // the bots must keep advancing it themselves (nobody will bump us) — signal
+        // self-continuation. Otherwise we're correctly waiting on a human (their
+        // action re-triggers the loop), or the game is over.
+        if (isPlaying && humanInCount === 0) return 'idle-botsonly';
+        return 'idle-wait';
     }
 }
