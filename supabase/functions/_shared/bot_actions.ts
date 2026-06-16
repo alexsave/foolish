@@ -17,17 +17,26 @@ const supabaseClient = createClient(
 const BOT_PROCESSING_DELAY_WITH_HUMANS = 3000;
 const BOT_PROCESSING_DELAY_BOTS_ONLY = 300; // Delay when only bots remain (ms)
 
-// How long one loop runs before self-releasing its lease. Kept SHORT on purpose:
-// cordite is CPU-bound and Supabase caps CPU at ~2s/request, so a long single loop
-// can't help anyway — continuation is driven by the pg_cron bot-heartbeat (each tick
-// is a fresh request => fresh CPU budget). A short loop + short lease means fast
-// recovery if an isolate is CPU-killed mid-run. MUST stay below BOT_LEASE_TTL_MS.
-const MAX_LOOP_RUNTIME = 20_000;
+// --- Adaptive CPU budgeting (instead of a hardcoded wall cap) ---------------
+// Supabase caps CPU at ~2s per request (async I/O / setTimeout sleeps don't count;
+// cordite's Monte-Carlo search does). Rather than guess a fixed loop length, the
+// loop MEASURES each decision's cost and bails when the PREDICTED next decision
+// would risk the cap — so a cheap bot runs many cycles while an expensive one stops
+// after a few. None of these are bot times; they're the platform cap + safety.
+const CPU_HARD_CAP_MS = 2000;          // Supabase per-request CPU limit
+const CPU_SOFT_BUDGET_MS = 1700;       // bail target — margin for non-bot CPU + tail
+const CPU_PREDICT_FACTOR = 1.5;        // next-decision estimate = avg * this (variance margin)
 
-// Bot-loop lease lifetime (games.bot_lease_*). Auto-expiring, so a reaped isolate's
-// lease simply lapses — no finally-release to leak. This is the RECOVERY knob: if an
-// isolate is killed (CPU/wall) mid-loop, the game is blocked until the lease expires.
-// Kept short (just above MAX_LOOP_RUNTIME) so the next heartbeat retakes quickly.
+// Secondary WALL ceiling: a cheap loop that never approaches the CPU budget still
+// releases before the ~150s isolate wall-clock kill. The lease is RENEWED each cycle
+// (renew_bot_lease), so this is NOT bounded by the lease TTL — a cheap bot can drive
+// for up to this long in one segment.
+const WALL_CEILING_MS = 120_000;
+
+// Bot-loop lease lifetime (games.bot_lease_*). Auto-expiring; the loop renews it each
+// cycle, so it stays SHORT regardless of how long the loop runs. RECOVERY knob: a
+// hard-killed loop blocks its game only until this expires (it was renewed <1 cycle
+// ago), so recovery is fast even though loops can run long.
 const BOT_LEASE_TTL_MS = 25_000;
 
 // Global variable to track current bot processing delay
@@ -63,6 +72,25 @@ const releaseBotLease = async (game_id: string, token: string): Promise<void> =>
     }
 };
 
+// Extend our lease (called each cycle). Returns false if we no longer hold it (the
+// RPC's fence didn't match) — i.e. another loop took over — so we should stop. On a
+// transport error, assume we still hold it (don't drop a healthy loop over a blip).
+const renewBotLease = async (game_id: string, token: string): Promise<boolean> => {
+    try {
+        const { data, error } = await supabaseClient.rpc('renew_bot_lease', {
+            p_game_id: game_id, p_token: token, p_ttl_ms: BOT_LEASE_TTL_MS,
+        });
+        if (error) {
+            console.error(`Error renewing bot lease for ${game_id}:`, error);
+            return true;
+        }
+        return data !== false;
+    } catch (error) {
+        console.error(`Error renewing bot lease for ${game_id}:`, error);
+        return true;
+    }
+};
+
 export const lockedBotLoop = async (game_id: string): Promise<void> => {
     // ONE drive segment. Continuation across segments is handled by the pg_cron
     // bot-heartbeat (each tick is a fresh request => fresh CPU budget) — we do NOT
@@ -75,50 +103,78 @@ export const lockedBotLoop = async (game_id: string): Promise<void> => {
 
     const loopId = crypto.randomUUID().split('-')[0];
     const loopStart = Date.now();
-    // Cumulative cordite/bot compute (wall ms ~= CPU ms, since it's compute-bound)
-    // so we can see how close a single drive gets to the ~2s CPU cap.
-    const cpu = { computeMs: 0 };
+    // Adaptive CPU accounting: cumulative bot compute (wall ms ~= CPU ms, compute-bound),
+    // decision count and worst single decision — the loop predicts from these when to bail.
+    const cpu: CpuAcct = { computeMs: 0, decisions: 0, maxMs: 0 };
     await botDiag(game_id, 'T1_BATON', { event: 'lease_acquired', loopId });
 
     let outcome: LoopOutcome = 'idle-wait';
     try {
-        outcome = await processBotActions(game_id, 0, undefined, loopId, cpu);
+        outcome = await processBotActions(game_id, 0, undefined, loopId, cpu, leaseToken);
     } finally {
         await releaseBotLease(game_id, leaseToken);
         await botDiag(game_id, 'T1_BATON', {
             event: 'loop_ended', loopId, outcome,
-            cpuComputeMs: cpu.computeMs, runtimeMs: Date.now() - loopStart,
+            cpuComputeMs: Math.round(cpu.computeMs), decisions: cpu.decisions,
+            avgMs: cpu.decisions ? Math.round(cpu.computeMs / cpu.decisions) : 0,
+            maxMs: Math.round(cpu.maxMs), runtimeMs: Date.now() - loopStart,
         });
     }
 }
 
 
-// Outcome of a bot-processing run, used by lockedBotLoop to decide self-continuation:
-//   maxruntime    cut short at MAX_LOOP_RUNTIME with bot work still pending -> continue
-//   idle-botsonly no bot could act, but game is PLAYING with NO human left in -> bots
-//                 must keep going on their own (no client will bump us) -> continue
-//   idle-wait     waiting on a human / game over / error -> stop (their move re-triggers)
-type LoopOutcome = 'maxruntime' | 'idle-botsonly' | 'idle-wait';
+// Outcome of a bot-processing run (diagnostics; continuation is the pg_cron
+// heartbeat's job). A *-bail means the segment ended with bot work still pending:
+//   cpu-budget    predicted next decision would risk the ~2s CPU cap -> stop early
+//   wall-ceiling  hit the wall safety (below the isolate kill / lease TTL)
+//   idle-botsonly no bot could act, game PLAYING with no human left in (bots-only)
+//   idle-wait     waiting on a human / game over / error
+//   lease-lost    another loop took over our lease -> stop
+type LoopOutcome = 'cpu-budget' | 'wall-ceiling' | 'idle-botsonly' | 'idle-wait' | 'lease-lost';
+
+type CpuAcct = { computeMs: number; decisions: number; maxMs: number };
 
 // New improved bot processing that fixes eligibility drift
 // Uses one-bot-per-iteration approach to prevent race conditions
-const processBotActions = async (game_id: string, cycle: number = 0, loopStartTime?: number, loopId: string = '?', cpu: { computeMs: number } = { computeMs: 0 }): Promise<LoopOutcome> => {
+const processBotActions = async (game_id: string, cycle: number = 0, loopStartTime?: number, loopId: string = '?', cpu: CpuAcct = { computeMs: 0, decisions: 0, maxMs: 0 }, leaseToken: string = ''): Promise<LoopOutcome> => {
 
-    if(loopStartTime === undefined) {
+    if (loopStartTime === undefined) {
         loopStartTime = Date.now();
     } else {
-        const now = Date.now();
-        const elapsed = now - loopStartTime;
-        if (elapsed > MAX_LOOP_RUNTIME) {
-            // Self-abort: stop and let the finally release our lease, even if more
-            // bot moves remain. The next bump (client poll / next action) re-claims
-            // the lease and continues. The lease auto-expires regardless, so an
-            // abort vs a reaped isolate are both harmless now.
-            await botDiag(game_id, 'T1_BATON', {
-                event: 'max_runtime_abort', loopId, cycle, elapsedMs: elapsed,
-            });
-            return 'maxruntime';
+        const elapsed = Date.now() - loopStartTime;
 
+        // (1) Wall ceiling — release before the ~150s isolate wall-clock kill.
+        // Caught by a cheap loop that never approaches the CPU budget.
+        if (elapsed > WALL_CEILING_MS) {
+            await botDiag(game_id, 'T1_BATON', {
+                event: 'wall_ceiling_bail', loopId, cycle, elapsedMs: elapsed,
+            });
+            return 'wall-ceiling';
+        }
+
+        // (2) CPU prediction — estimate the next decision from observed cost and bail
+        // BEFORE we'd risk the ~2s CPU cap (a CPU-kill would hold the lease until it
+        // expires). predict = max(avg * factor, worst-seen): honours the average but
+        // stays tail-aware. Cheap bots (small avg) run many cycles; expensive ones
+        // bail after a few. No hardcoded bot times — all measured.
+        if (cpu.decisions > 0) {
+            const avg = cpu.computeMs / cpu.decisions;
+            const predictedNext = Math.max(avg * CPU_PREDICT_FACTOR, cpu.maxMs);
+            if (cpu.computeMs + predictedNext > CPU_SOFT_BUDGET_MS) {
+                await botDiag(game_id, 'T1_BATON', {
+                    event: 'cpu_budget_bail', loopId, cycle,
+                    cpuMs: Math.round(cpu.computeMs), decisions: cpu.decisions,
+                    avgMs: Math.round(avg), maxMs: Math.round(cpu.maxMs),
+                    predictedNextMs: Math.round(predictedNext), budgetMs: CPU_SOFT_BUDGET_MS,
+                });
+                return 'cpu-budget';
+            }
+        }
+
+        // (3) We're continuing — keep our (short-TTL) lease alive for this cycle.
+        if (leaseToken && !(await renewBotLease(game_id, leaseToken))) {
+            await botDiag(game_id, 'T1_BATON', { event: 'lease_lost', loopId, cycle });
+            return 'lease-lost';
         }
     }
 
@@ -232,7 +288,10 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
                     const botActionResult = await processBotAction(game, selectedBot.bot);
 
                     const actionDuration = Date.now() - actionStartTime;
-                    cpu.computeMs += actionDuration; // track cumulative bot compute (CPU-cap proximity)
+                    // Feed the CPU predictor (count every attempt — failed ones burn CPU too).
+                    cpu.computeMs += actionDuration;
+                    cpu.decisions += 1;
+                    if (actionDuration > cpu.maxMs) cpu.maxMs = actionDuration;
                     if (botActionResult) {
                         actionEvents.push(...(botActionResult.events as unknown as AnimationEvent[]));
 
@@ -346,7 +405,7 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
             console.log(`[CYCLE ${cycle}] Cycle took ${totalCycleTime}ms (>= ${currentBotDelay}ms target), continuing immediately`);
         }
 
-        return await processBotActions(game_id, cycle + 1, loopStartTime, loopId, cpu);
+        return await processBotActions(game_id, cycle + 1, loopStartTime, loopId, cpu, leaseToken);
     } else {
         console.log(`[CYCLE ${cycle}] No more bot actions needed, ending bot loop for game ${game_id}`);
 
