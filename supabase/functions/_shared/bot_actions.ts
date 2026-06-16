@@ -3,7 +3,6 @@ import { executeWithGameLock } from './utils.ts';
 import { calculateLegalMoves } from './bot_strategy.ts';
 import { createClient } from 'jsr:@supabase/supabase-js';
 import { processBotAction, shouldBotActCore } from './pure_bot_actions.ts';
-import { botDiag } from './diag.ts';
 
 const supabaseClient = createClient(
     Deno.env.get('SUPABASE_URL') || '',
@@ -101,42 +100,22 @@ export const lockedBotLoop = async (game_id: string): Promise<void> => {
         return;         // another loop / driver holds the lease
     }
 
-    const loopId = crypto.randomUUID().split('-')[0];
-    const loopStart = Date.now();
     // Adaptive CPU accounting: cumulative bot compute (wall ms ~= CPU ms, compute-bound),
     // decision count and worst single decision — the loop predicts from these when to bail.
     const cpu: CpuAcct = { computeMs: 0, decisions: 0, maxMs: 0 };
-    await botDiag(game_id, 'T1_BATON', { event: 'lease_acquired', loopId });
-
-    let outcome: LoopOutcome = 'idle-wait';
     try {
-        outcome = await processBotActions(game_id, 0, undefined, loopId, cpu, leaseToken);
+        await processBotActions(game_id, 0, undefined, cpu, leaseToken);
     } finally {
         await releaseBotLease(game_id, leaseToken);
-        await botDiag(game_id, 'T1_BATON', {
-            event: 'loop_ended', loopId, outcome,
-            cpuComputeMs: Math.round(cpu.computeMs), decisions: cpu.decisions,
-            avgMs: cpu.decisions ? Math.round(cpu.computeMs / cpu.decisions) : 0,
-            maxMs: Math.round(cpu.maxMs), runtimeMs: Date.now() - loopStart,
-        });
     }
 }
 
-
-// Outcome of a bot-processing run (diagnostics; continuation is the pg_cron
-// heartbeat's job). A *-bail means the segment ended with bot work still pending:
-//   cpu-budget    predicted next decision would risk the ~2s CPU cap -> stop early
-//   wall-ceiling  hit the wall safety (below the isolate kill / lease TTL)
-//   idle-botsonly no bot could act, game PLAYING with no human left in (bots-only)
-//   idle-wait     waiting on a human / game over / error
-//   lease-lost    another loop took over our lease -> stop
-type LoopOutcome = 'cpu-budget' | 'wall-ceiling' | 'idle-botsonly' | 'idle-wait' | 'lease-lost';
 
 type CpuAcct = { computeMs: number; decisions: number; maxMs: number };
 
 // New improved bot processing that fixes eligibility drift
 // Uses one-bot-per-iteration approach to prevent race conditions
-const processBotActions = async (game_id: string, cycle: number = 0, loopStartTime?: number, loopId: string = '?', cpu: CpuAcct = { computeMs: 0, decisions: 0, maxMs: 0 }, leaseToken: string = ''): Promise<LoopOutcome> => {
+const processBotActions = async (game_id: string, cycle: number = 0, loopStartTime?: number, cpu: CpuAcct = { computeMs: 0, decisions: 0, maxMs: 0 }, leaseToken: string = ''): Promise<void> => {
 
     if (loopStartTime === undefined) {
         loopStartTime = Date.now();
@@ -146,10 +125,7 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
         // (1) Wall ceiling — release before the ~150s isolate wall-clock kill.
         // Caught by a cheap loop that never approaches the CPU budget.
         if (elapsed > WALL_CEILING_MS) {
-            await botDiag(game_id, 'T1_BATON', {
-                event: 'wall_ceiling_bail', loopId, cycle, elapsedMs: elapsed,
-            });
-            return 'wall-ceiling';
+            return;
         }
 
         // (2) CPU prediction — estimate the next decision from observed cost and bail
@@ -161,30 +137,17 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
             const avg = cpu.computeMs / cpu.decisions;
             const predictedNext = Math.max(avg * CPU_PREDICT_FACTOR, cpu.maxMs);
             if (cpu.computeMs + predictedNext > CPU_SOFT_BUDGET_MS) {
-                await botDiag(game_id, 'T1_BATON', {
-                    event: 'cpu_budget_bail', loopId, cycle,
-                    cpuMs: Math.round(cpu.computeMs), decisions: cpu.decisions,
-                    avgMs: Math.round(avg), maxMs: Math.round(cpu.maxMs),
-                    predictedNextMs: Math.round(predictedNext), budgetMs: CPU_SOFT_BUDGET_MS,
-                });
-                return 'cpu-budget';
+                return;
             }
         }
 
         // (3) We're continuing — keep our (short-TTL) lease alive for this cycle.
         if (leaseToken && !(await renewBotLease(game_id, leaseToken))) {
-            await botDiag(game_id, 'T1_BATON', { event: 'lease_lost', loopId, cycle });
-            return 'lease-lost';
+            return; // another loop took over our lease
         }
     }
 
     const cycleStartTime = Date.now();
-    // T1: how deep into the 65s budget this cycle is STARTING. A cycle starting at,
-    // say, 61000ms then doing ~7s of work blows past the ~70s platform hard-kill —
-    // exactly the leak window. The last row before a freeze should show a high value.
-    await botDiag(game_id, 'T1_BATON', {
-        event: 'cycle_start', loopId, cycle, sinceLoopStartMs: cycleStartTime - loopStartTime,
-    });
     console.log(`[CYCLE ${cycle}] Starting bot processing for game ${game_id}`);
 
     let botProcessed = false;
@@ -212,14 +175,6 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
             const newDelay = humanPlayersStillIn > 0 ? BOT_PROCESSING_DELAY_WITH_HUMANS : BOT_PROCESSING_DELAY_BOTS_ONLY;
             if (newDelay !== currentBotDelay) {
                 console.log(`Bot delay changed from ${currentBotDelay}ms to ${newDelay}ms (humans in game: ${humanPlayersStillIn})`);
-                // T6: currentBotDelay is a MODULE-GLOBAL shared by every game served
-                // by this warm isolate. If two games (one with humans, one bots-only)
-                // interleave here, they clobber each other's pacing. Rapid flip-flop
-                // rows for DIFFERENT game_ids = the global is being corrupted.
-                await botDiag(game_id, 'T6_DELAYGLOBAL', {
-                    loopId, cycle, from: currentBotDelay, to: newDelay,
-                    humanPlayersStillIn,
-                });
                 currentBotDelay = newDelay;
             }
 
@@ -295,32 +250,6 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
                     if (botActionResult) {
                         actionEvents.push(...(botActionResult.events as unknown as AnimationEvent[]));
 
-                        // T3: the single biggest "slow as fuck" lever. computeMs is the
-                        // bot's think time (cordite's maxMillis=2000 caps it); delayMs is
-                        // the artificial inter-bot pacing added AFTER. Per-decision rows
-                        // let us sum "real compute" vs "padding" across a whole round.
-                        await botDiag(game_id, 'T3_PACE', {
-                            loopId, cycle, bot: selectedBot.bot.name,
-                            strategy: (selectedBot.bot as any).strategy_key ?? null,
-                            moveType: botActionResult.moveType,
-                            computeMs: actionDuration,
-                            plannedDelayMs: currentBotDelay,
-                            pc: game.players.length,
-                        });
-
-                        // T9: a SINGLE decision that overran the 10s game_lock stale
-                        // window. maxMillis (2000) is only checked between worlds, so one
-                        // world's exact-endgame solve can blow far past it — and while we
-                        // overrun, another request can steal the lock we still hold.
-                        if (actionDuration > 8000) {
-                            await botDiag(game_id, 'T9_RUNAWAY', {
-                                loopId, cycle, bot: selectedBot.bot.name,
-                                strategy: (selectedBot.bot as any).strategy_key ?? null,
-                                moveType: botActionResult.moveType,
-                                computeMs: actionDuration, pc: game.players.length,
-                            });
-                        }
-
                         const isPassiveAction = botActionResult.moveType === GAME_MOVE_TYPE.GOOD || botActionResult.moveType === GAME_MOVE_TYPE.WAIT;
                         
                         console.log(`[ACTION] ✓ Bot ${selectedBot.bot.name} completed ${botActionResult.moveType} action in ${actionDuration}ms`);
@@ -353,22 +282,6 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
 
                 if (!botProcessed) {
                     console.log(`[ACTION] No eligible bots could make valid moves in game ${game_id}`);
-                    // T4: the engine said these bots SHOULD act (shouldBotActCore true +
-                    // legal moves existed) yet every processBotAction failed. That is a
-                    // genuine logic stall — capture enough state to reconstruct why.
-                    await botDiag(game_id, 'T4_NOPROGRESS', {
-                        loopId, cycle,
-                        status: game.status, defender: game.defender,
-                        firstAttacker: game.first_attacker,
-                        tableBattles: game.table_battles.length,
-                        coveredBattles: game.table_battles.filter((b: any) => b.defense !== null).length,
-                        goodPlayers: game.good_players?.length ?? 0,
-                        eligible: eligibleBots.map(b => ({
-                            name: b.bot.name, index: b.index,
-                            strategy: (b.bot as any).strategy_key ?? null,
-                            legalMoves: calculateLegalMoves(game, b.bot.player_id).length,
-                        })),
-                    });
                 }
             } else {
                 console.log(`No eligible bots found for game ${game_id}, ending bot processing cycle`);
@@ -384,7 +297,7 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
         console.log(`[TIMING] Total time in executeWithGameLock: ${Date.now() - lockStartTime}ms`);
     } catch (error) {
         console.error('Error in bot processing:', error);
-        return 'idle-wait';
+        return;
     }
 
     const totalCycleTime = Date.now() - cycleStartTime;
@@ -405,40 +318,10 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
             console.log(`[CYCLE ${cycle}] Cycle took ${totalCycleTime}ms (>= ${currentBotDelay}ms target), continuing immediately`);
         }
 
-        return await processBotActions(game_id, cycle + 1, loopStartTime, loopId, cpu, leaseToken);
+        return await processBotActions(game_id, cycle + 1, loopStartTime, cpu, leaseToken);
     } else {
+        // No bot could act — waiting on a human, or the game is over. Stop; the cron
+        // heartbeat (or the next human move) re-drives if there's still bot work.
         console.log(`[CYCLE ${cycle}] No more bot actions needed, ending bot loop for game ${game_id}`);
-
-        const isPlaying = !!game && game.status === GAME_STATUS.PLAYING;
-        const humanInCount = isPlaying
-            ? game.players.filter(p => !p.is_ai && p.status === PLAYER_STATUS.IN).length
-            : -1;
-
-        // T7: the loop is ending while the game is still PLAYING — i.e. we are now
-        // waiting on a HUMAN (or, if humanInCount===0, it's bots-only and we'll
-        // self-continue). Log who we're blocked on either way.
-        try {
-            if (isPlaying) {
-                const defender = game.players[game.defender];
-                await botDiag(game_id, 'T7_GHOSTHUMAN', {
-                    loopId, cycle,
-                    defenderIndex: game.defender,
-                    defender: defender
-                        ? { name: defender.name, is_ai: defender.is_ai, status: defender.status }
-                        : null,
-                    humanInCount,
-                    tableBattles: game.table_battles.length,
-                    coveredBattles: game.table_battles.filter((b: any) => b.defense !== null).length,
-                    goodPlayers: game.good_players?.length ?? 0,
-                });
-            }
-        } catch (_e) { /* diagnostics must not break the loop */ }
-
-        // No bot could act. If the game is still PLAYING but NO human remains in,
-        // the bots must keep advancing it themselves (nobody will bump us) — signal
-        // self-continuation. Otherwise we're correctly waiting on a human (their
-        // action re-triggers the loop), or the game is over.
-        if (isPlaying && humanInCount === 0) return 'idle-botsonly';
-        return 'idle-wait';
     }
 }
