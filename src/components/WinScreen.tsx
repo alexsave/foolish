@@ -162,10 +162,6 @@ export const WinScreen: React.FC = () => {
                 <SovietIcon name="celebration" size={32} /> <Text id="game_over" /> <SovietIcon name="celebration" size={32} />
             </h1>
 
-            <h2 className="win-screen__subtitle">
-                <Text id="final_rankings" />
-            </h2>
-            
             <div className="win-screen__results">
                 {sortedResults.map((result) => {
                     const isCurrentUser = result.player_id === user_id;

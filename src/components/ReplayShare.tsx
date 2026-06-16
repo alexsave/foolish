@@ -104,7 +104,7 @@ export const ReplayShare: React.FC<ReplayShareProps> = ({ game }) => {
                 flexDirection: 'column',
                 alignItems: 'center',
                 gap: '0.6rem',
-                margin: '0.75rem 0',
+                margin: '0 0 0.5rem',
             }}
         >
             {/* Fixed-footprint slot: the code only exists after an async

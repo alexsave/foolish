@@ -694,7 +694,7 @@
   max-width: 350px;
   position: relative;
   z-index: var(--z-content);
-  margin-bottom: 1.5rem;
+  margin-bottom: 0.4rem;
 }
 
 /* ===== Player Result Card ===== */
