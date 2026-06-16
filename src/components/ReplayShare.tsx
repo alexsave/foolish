@@ -107,10 +107,6 @@ export const ReplayShare: React.FC<ReplayShareProps> = ({ game }) => {
                 margin: '0.75rem 0',
             }}
         >
-            <h3 className="win-screen__subtitle" style={{ margin: 0 }}>
-                <Text id="share_replay" />
-            </h3>
-
             {/* Fixed-footprint slot: the code only exists after an async
                 snapshot fetch, so reserve the QR's space up front — otherwise the
                 section pops in once the fetch lands and shoves the Continue button
@@ -159,15 +155,18 @@ export const ReplayShare: React.FC<ReplayShareProps> = ({ game }) => {
             </div>
 
             {/* Reserve the controls row too, so the extras toggle / copy
-                button appearing don't nudge the layout a second time. */}
+                button appearing don't nudge the layout a second time. Single row:
+                the with-names checkbox and the copy-code link side by side. */}
             <div
                 style={{
-                    minHeight: '2.6rem',
+                    minHeight: '1.5rem',
                     width: '100%',
                     display: 'flex',
-                    flexDirection: 'column',
+                    flexDirection: 'row',
+                    flexWrap: 'wrap',
                     alignItems: 'center',
-                    gap: '0.4rem',
+                    justifyContent: 'center',
+                    gap: '0.9rem',
                 }}
             >
                 {view?.hasExtras && (
