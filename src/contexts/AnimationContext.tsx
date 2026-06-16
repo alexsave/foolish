@@ -218,9 +218,10 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                     return;
                 }
 
-                // No bot moves but a bot could move - call bot_bump to wake up the bot loop
-                supabase.functions.invoke('bot_bump', {
-                    body: { game_id: url_game_id }
+                // No bot moves but a bot could move - nudge the bot loop (folded into
+                // the unified `action` endpoint as type:'bump'; was the bot_bump fn)
+                supabase.functions.invoke('action', {
+                    body: { game_id: url_game_id, type: 'bump' }
                 }).catch(error => {
                     console.error('Bot bump failed:', error);
                 });

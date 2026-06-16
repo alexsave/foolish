@@ -8,17 +8,30 @@ import { verify_player_in_game } from "../_shared/common_utils.ts";
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 
-// Unified game-move endpoint. Replaces the five per-move edge functions
-// (attack / cover / pass / pickup / good) with ONE function that dispatches on
-// `body.type` — fewer Supabase functions => faster deploys. Each move's handler
-// and request payload are unchanged; only the routing is consolidated.
+// Unified game endpoint. Replaces the five per-move edge functions (attack /
+// cover / pass / pickup / good) AND the standalone bot_bump function with ONE
+// function that dispatches on `body.type` — fewer Supabase functions => faster
+// deploys. Each move's handler and request payload are unchanged; only the
+// routing is consolidated.
+//
+// run_bots=true: wrap400 fires the (fire-and-forget) bot loop AFTER this returns,
+// for every type. So a human move now also wakes the bots in the same request —
+// previously the client had to make a separate bot_bump call. `type: "bump"` is
+// the pure-nudge case (folded in from bot_bump): no move to apply, just trigger
+// the loop.
 wrap400(async ({ user, body, game }: ExecutionParams) => {
     const user_id = user.id;
+    const { type } = body;
 
-    // Verify player is in game (shared by every move)
+    // Pure bot-loop nudge (was the bot_bump function). Read-only and may be
+    // triggered by a spectator's client, so it does NOT require player membership.
+    if (type === "bump") {
+        return { game, events: [] };
+    }
+
+    // Verify player is in game (shared by every real move)
     verify_player_in_game(game, user_id);
 
-    const { type } = body;
     let events;
     switch (type) {
         case "attack":
@@ -41,4 +54,4 @@ wrap400(async ({ user, body, game }: ExecutionParams) => {
     }
 
     return { game, events };
-}, false);
+}, true);

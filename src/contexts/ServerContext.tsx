@@ -600,7 +600,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                         // Trigger bot loop only if there are AI players in the game
                         // Fire and forget - don't block UI rendering
                         if (game.players.some(player => player.is_ai)) {
-                            supabase.functions.invoke('bot_bump', { body: { game_id: gameId } }).catch(botError => {
+                            supabase.functions.invoke('action', { body: { game_id: gameId, type: 'bump' } }).catch(botError => {
                             });
                         }
 
