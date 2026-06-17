@@ -51,7 +51,9 @@ import { stepTimes } from '../replay/view';
 const CARD_W = 50;
 const CARD_H = 70;
 
-const InlineCard = ({ card, w = 22 }: { card: Card; w?: number }) => {
+// Shared scaled-down wrapper: a CARD_W×CARD_H card rendered at `w` px wide via
+// a CSS transform, so the real CardFace/CardBack render at native size.
+const ScaledCard = ({ w = 22, children }: { w?: number; children: React.ReactNode }) => {
     const scale = w / CARD_W;
     return (
         <span
@@ -76,42 +78,23 @@ const InlineCard = ({ card, w = 22 }: { card: Card; w?: number }) => {
                     height: CARD_H,
                 }}
             >
-                <CardFace card={card} playerId="replay-inline" />
+                {children}
             </span>
         </span>
     );
 };
 
-const InlineCardBack = ({ w = 22 }: { w?: number }) => {
-    const scale = w / CARD_W;
-    return (
-        <span
-            style={{
-                display: 'inline-block',
-                width: w,
-                height: Math.round(CARD_H * scale),
-                position: 'relative',
-                flexShrink: 0,
-                verticalAlign: 'middle',
-            }}
-        >
-            <span
-                style={{
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    transform: `scale(${scale})`,
-                    transformOrigin: 'top left',
-                    display: 'block',
-                    width: CARD_W,
-                    height: CARD_H,
-                }}
-            >
-                <CardBack deckSize={1} />
-            </span>
-        </span>
-    );
-};
+const InlineCard = ({ card, w = 22 }: { card: Card; w?: number }) => (
+    <ScaledCard w={w}>
+        <CardFace card={card} playerId="replay-inline" />
+    </ScaledCard>
+);
+
+const InlineCardBack = ({ w = 22 }: { w?: number }) => (
+    <ScaledCard w={w}>
+        <CardBack deckSize={1} />
+    </ScaledCard>
+);
 
 const seatName = (seat: number, names?: (string | null)[] | null) =>
     names?.[seat] || `P${seat + 1}`;

@@ -353,6 +353,36 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         const myOptimisticAttackCovers: Card[] = [];
         const myOptimisticPickups: Card[] = [];
 
+        // Queue revert events for every still-pending optimistic attack/cover
+        // (skipping any already being reverted). Used by the several conflict
+        // branches below that all need to roll these cards back to hand.
+        const revertOptimisticAttackCovers = () => {
+            myOptimisticAttackCovers.forEach(optCard => {
+                const cardKey = getCardKey(optCard);
+
+                if (revertingCards.current.has(cardKey)) {
+                    return;
+                }
+                revertingCards.current.add(cardKey);
+
+                const visualPosition = optimisticCardPositions.current.get(cardKey);
+                const fromLocation = visualPosition?.location || 'table';
+
+                revertEvents.push({
+                    type: 'revert',
+                    cards: [optCard],
+                    from_location: fromLocation as any,
+                    to_location: 'hand',
+                    player_id: myPlayerId,
+                    is_revert: true,
+                    game_state: null as any
+                });
+
+                const cardEventString = createCardEventString('attack_pass', optCard, 'hand', 'table', myPlayerId);
+                optimisticAnimations.current.delete(cardEventString);
+            });
+        };
+
         optimisticAnimations.current.forEach((timestamp, cardEventString) => {
             try {
                 const parsedEvent = JSON.parse(cardEventString);
@@ -490,30 +520,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
                 if (myPlayerIndex === newDefenderId) {
                     // Revert all optimistic attacks
-                    myOptimisticAttackCovers.forEach(optCard => {
-                        const cardKey = getCardKey(optCard);
-
-                        if (revertingCards.current.has(cardKey)) {
-                            return;
-                        }
-                        revertingCards.current.add(cardKey);
-
-                        const visualPosition = optimisticCardPositions.current.get(cardKey);
-                        const fromLocation = visualPosition?.location || 'table';
-
-                        revertEvents.push({
-                            type: 'revert',
-                            cards: [optCard],
-                            from_location: fromLocation as any,
-                            to_location: 'hand',
-                            player_id: myPlayerId,
-                            is_revert: true,
-                            game_state: null as any
-                        });
-
-                        const cardEventString = createCardEventString('attack_pass', optCard, 'hand', 'table', myPlayerId);
-                        optimisticAnimations.current.delete(cardEventString);
-                    });
+                    revertOptimisticAttackCovers();
 
                     // Remove from merge list
                     myOptimisticAttackCovers.length = 0;
@@ -532,30 +539,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 // If table is full (new defender has exactly enough cards), no more attacks allowed
                 if (totalAttacksAfterPass >= newDefenderHandSize) {
                     // Revert all optimistic attacks
-                    myOptimisticAttackCovers.forEach(optCard => {
-                        const cardKey = getCardKey(optCard);
-
-                        if (revertingCards.current.has(cardKey)) {
-                            return;
-                        }
-                        revertingCards.current.add(cardKey);
-
-                        const visualPosition = optimisticCardPositions.current.get(cardKey);
-                        const fromLocation = visualPosition?.location || 'table';
-
-                        revertEvents.push({
-                            type: 'revert',
-                            cards: [optCard],
-                            from_location: fromLocation as any,
-                            to_location: 'hand',
-                            player_id: myPlayerId,
-                            is_revert: true,
-                            game_state: null as any
-                        });
-
-                        const cardEventString = createCardEventString('attack_pass', optCard, 'hand', 'table', myPlayerId);
-                        optimisticAnimations.current.delete(cardEventString);
-                    });
+                    revertOptimisticAttackCovers();
 
                     // Remove from merge list
                     myOptimisticAttackCovers.length = 0;
@@ -617,33 +601,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             );
 
             if (hasTableClearEvent) {
-                myOptimisticAttackCovers.forEach(optCard => {
-                    const cardKey = getCardKey(optCard);
-
-                    // Check if already reverting
-                    if (revertingCards.current.has(cardKey)) {
-                        return;
-                    }
-                    revertingCards.current.add(cardKey);
-
-                    // Get visual position
-                    const visualPosition = optimisticCardPositions.current.get(cardKey);
-                    const fromLocation = visualPosition?.location || 'table';
-
-                    revertEvents.push({
-                        type: 'revert',
-                        cards: [optCard],
-                        from_location: fromLocation as any,
-                        to_location: 'hand',
-                        player_id: myPlayerId,
-                        is_revert: true,
-                        game_state: null as any // Will be set later in revert queueing logic
-                    });
-
-                    // Clear tracking
-                    const cardEventString = createCardEventString('attack_pass', optCard, 'hand', 'table', myPlayerId);
-                    optimisticAnimations.current.delete(cardEventString);
-                });
+                revertOptimisticAttackCovers();
 
                 // CRITICAL: Don't merge optimistic cards into pickup/cards_to_trash events!
                 // The table is already cleared on the server, optimistic cards were too slow
