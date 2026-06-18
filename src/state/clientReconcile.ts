@@ -3,7 +3,7 @@
 // needed). The components import from here; the e2e suite imports from here. There
 // is no second copy.
 
-import { Card, PersonalGame, Battle } from '../common/types';
+import { Card, PersonalGame, Battle } from '@shared/types.ts';
 
 export const cardKey = (c: Card): string => `${c.suit}-${c.value}`;
 export const cardComp = (a: Card, b: Card): boolean => a.suit === b.suit && a.value === b.value;

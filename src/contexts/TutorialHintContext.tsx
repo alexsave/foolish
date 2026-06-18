@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react';
-import { Card } from '../common/types';
+import { Card } from '@shared/types.ts';
 
 /* An optional, tutorial-only hint that the live ActionButtons reads to glow the
  * card(s) and the wooden button the learner should use next. It defaults to

@@ -16,12 +16,12 @@
  * straight into the game state.
  * ========================================================================== */
 
-import { Card, LOG_TYPE } from '../common/types';
+import { Card, LOG_TYPE } from '@shared/types.ts';
 import {
     AnimationSequenceMessage,
     FeedAnimationEvent,
 } from '../state/animationFeed';
-import { DecodedReplay } from './core';
+import { DecodedReplay } from '@shared/replay/core.ts';
 import { ReplayStep, ReplayGameState, stepToGame } from './view';
 
 const HIDDEN: Card = { suit: -1, value: -1 };

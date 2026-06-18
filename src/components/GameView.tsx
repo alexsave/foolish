@@ -5,7 +5,7 @@ import { Lobby } from './Lobby';
 import { GameDisplay } from './GameDisplay';
 import { WinScreen } from './WinScreen';
 import { GameLoadingPlaceholder } from './GameLoadingPlaceholder';
-import { GAME_STATUS } from '../common/types';
+import { GAME_STATUS } from '@shared/types.ts';
 
 export const GameView = () => {
     const { game, gameLoadError } = useServer();

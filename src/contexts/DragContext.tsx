@@ -1,10 +1,10 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
-import { Card, PersonalGame } from '../common/types';
+import { Card, PersonalGame } from '@shared/types.ts';
 import { useServer } from './ServerContext';
 import { useAnimation } from './AnimationContext';
 import { useAuth } from './AuthContext';
 import { useGame } from './GameContext';
-import { canCover } from '../common/common_utils';
+import { canCover } from '@shared/common_utils.ts';
 import { canAttack, canPass as canPassValidation } from '../utils/gameValidation';
 
 const DragContext = createContext<DragContextType | null>(null);

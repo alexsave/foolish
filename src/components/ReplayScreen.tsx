@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Card, LOG_TYPE } from '../common/types';
+import { Card, LOG_TYPE } from '@shared/types.ts';
 import { Text } from './Text';
 import { SovietIcon } from './SovietIcon';
 import { TexturedSurface } from './TexturedSurface';
@@ -18,9 +18,9 @@ import { GameBoard } from './GameBoard';
 import { Telestrator } from './Telestrator';
 import { usePreventScroll } from '../hooks/usePreventScroll';
 import { animationFeed, AnimationSequenceMessage } from '../state/animationFeed';
-import { codeToGame } from '../replay/codec';
-import { decodeReplay } from '../replay/decode';
-import { DecodedReplay } from '../replay/core';
+import { codeToGame } from '@shared/replay/codec.ts';
+import { decodeReplay } from '@shared/replay/decode.ts';
+import { DecodedReplay } from '@shared/replay/core.ts';
 import {
     buildReplaySteps,
     stepToGame,
@@ -28,8 +28,8 @@ import {
     ReplayGameState,
 } from '../replay/view';
 import { buildReplaySequences, buildReverseSequences, preDealGame } from '../replay/animate';
-import { splitReplayCode, decodeExtras, ReplayExtras } from '../replay/extras';
-import { INFO_TYPES } from '../replay/core';
+import { splitReplayCode, decodeExtras, ReplayExtras } from '@shared/replay/extras.ts';
+import { INFO_TYPES } from '@shared/replay/core.ts';
 import { stepTimes } from '../replay/view';
 
 /**

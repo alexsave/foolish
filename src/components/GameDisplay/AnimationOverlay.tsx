@@ -1,10 +1,10 @@
 import { useEffect, useState, useRef } from 'react';
-import { Card } from '../../common/types';
+import { Card } from '@shared/types.ts';
 import { ANIMATION_TIME, useAnimation } from '../../contexts/AnimationContext';
 import { CardFace } from './CardFace';
 import { CardBack } from './CardBack';
 import { useServer } from '../../contexts/ServerContext';
-import { canCover } from '../../common/common_utils';
+import { canCover } from '@shared/common_utils.ts';
 
 interface AnimatedCard {
     id: string;

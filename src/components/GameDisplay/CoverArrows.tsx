@@ -1,4 +1,4 @@
-import { PersonalGame } from "../../common/types";
+import { PersonalGame } from "@shared/types.ts";
 import { useGame } from "../../contexts/GameContext";
 import { useServer } from "../../contexts/ServerContext";
 

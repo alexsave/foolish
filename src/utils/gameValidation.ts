@@ -1,5 +1,5 @@
-import { Card, PersonalGame, PublicPlayer } from '../common/types';
-import { canCover } from '../common/common_utils';
+import { Card, PersonalGame, PublicPlayer } from '@shared/types.ts';
+import { canCover } from '@shared/common_utils.ts';
 
 // Boolean validation functions for UI (buttons/drag) - return true if valid
 export const canAttack = (game: PersonalGame, cards: Card[]): boolean => {

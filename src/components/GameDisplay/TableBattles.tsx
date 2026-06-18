@@ -1,4 +1,4 @@
-import { PersonalGame } from "../../common/types";
+import { PersonalGame } from "@shared/types.ts";
 import { CardFace } from "./CardFace";
 import { useServer } from "../../contexts/ServerContext";
 import { useAuth } from "../../contexts/AuthContext";
