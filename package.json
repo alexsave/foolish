@@ -13,23 +13,16 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test:actions": "jest --config tests/jest.config.js",
-    "test:actions:watch": "jest --config tests/jest.config.js --watch",
-    "test:actions:coverage": "jest --config tests/jest.config.js --coverage",
-    "test:replay": "tsx tests/replay_roundtrip.ts",
     "test:e2e": "TSX_TSCONFIG_PATH=e2e/tsconfig.json node --import tsx --test --test-concurrency=1 e2e/*.test.ts",
     "bot:game": "tsx offlinefun/localtest/bot_loop_core.ts"
   },
   "devDependencies": {
-    "@types/jest": "^29.5.12",
     "@types/node": "^20.0.0",
     "@types/pg": "^8.20.0",
     "@types/react": "^19.2.15",
     "@types/react-dom": "^19.2.3",
     "dotenv": "^16.0.0",
-    "jest": "^29.7.0",
     "pg": "^8.21.0",
-    "ts-jest": "^29.1.2",
     "tsx": "^4.7.0",
     "typescript": "^5.4.0"
   }
