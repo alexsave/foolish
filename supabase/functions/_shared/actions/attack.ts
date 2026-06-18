@@ -25,7 +25,7 @@ export function validateAttack(game: Game, player_id: string, cards: Card[]): vo
     verify_cards_in_players_hand(attacker, cards);
 
     // check no duplicates
-    if (new Set(cards).size !== cards.length) {
+    if (new Set(cards.map(c => `${c.suit}-${c.value}`)).size !== cards.length) {
         throw new Error(`Cards ${cards.map(card => cardDisplay(card)).join(', ')} have duplicates`);
     }
 
