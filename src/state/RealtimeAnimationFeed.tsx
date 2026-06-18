@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { useParams } from 'next/navigation';
 import supabase from '../backend/Connector';
 import { useAuth } from '../contexts/AuthContext';
+import { useServer } from '../contexts/ServerContext';
 import { animationFeed } from './animationFeed';
 
 /**
@@ -16,7 +17,13 @@ import { animationFeed } from './animationFeed';
  */
 export const RealtimeAnimationFeed = () => {
     const { user_id } = useAuth();
+    const { loadGame } = useServer();
     const url_game_id = useParams<{ game_id: string }>().game_id?.toLowerCase();
+
+    // Keep loadGame reachable from inside the subscription callback without
+    // re-running the effect when its identity changes.
+    const loadGameRef = useRef(loadGame);
+    loadGameRef.current = loadGame;
 
     // Store channel reference for proper cleanup
     const gameUserChannelRef = useRef<any>(null);
@@ -81,7 +88,15 @@ export const RealtimeAnimationFeed = () => {
                         if (status === 'SUBSCRIBED') {
                             animationChannelRetryInterval.current = 500; // Reset retry interval on success
                             isSubscribing = false;
+                            const wasReconnect = hasEverConnected;
                             hasEverConnected = true;
+                            // Broadcasts sent while we were disconnected are lost —
+                            // realtime has no catch-up. After a RE-subscribe, refetch
+                            // authoritative state so the client can't be left showing a
+                            // stale / mixed-bout table.
+                            if (wasReconnect && url_game_id) {
+                                loadGameRef.current(url_game_id).catch(console.error);
+                            }
                         } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
                             // Only retry on actual errors, not on CLOSED
                             console.log('connection error: ' + status + ', retrying in ', animationChannelRetryInterval.current, 'ms');

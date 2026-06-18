@@ -36,6 +36,8 @@ let BLATENCY = flag('blatency', 120);
 // BLATENCY ~ EMITGAP.
 let EMITGAP = flag('emitgap', 5);
 const SWEEP = args.includes('--sweep');
+// Apply the modelled fix (broadcast version gate + reconnect resync) during replay.
+const FIXED = args.includes('--fixed');
 
 const key = (c: { suit: number; value: number }) => `${c.suit}:${c.value}`;
 const tableKeys = (battles: any[]): string[] => {
@@ -162,7 +164,7 @@ function buildDelivery(stream: Stream, regime: Regime): Broadcast[] {
     .map((x) => x.b);
 }
 
-function replay(stream: Stream, regime: Regime): Glitch {
+function replay(stream: Stream, regime: Regime, fixed = false): Glitch {
   // client starts from the dealt state (as loadGame would give it)
   let client: any = { table_battles: stream.initialTable.map(cloneBattle), self: { hand: [] } };
   // server's authoritative table at each version, to compare the client against
@@ -175,13 +177,43 @@ function replay(stream: Stream, regime: Regime): Glitch {
   // that was shown covered then shown uncovered while still on the table.
   const coverState = new Map<string, string | null>(); // attackKey -> defenseKey|null
 
+  // --- THE FIX, modelled ---
+  // (1) monotonic version gate: drop any sequence at/below the newest applied
+  //     version. (2) reconnect resync: when a packet was dropped (disconnect), the
+  //     client refetches authoritative state instead of merging the next snapshot.
+  let lastApplied = fixed ? (stream.broadcasts[0]?.version ?? -1) : -Infinity;
+  const delivered = new Set(buildDelivery(stream, regime).map((b) => b.version));
+  const droppedVersions = stream.broadcasts.map((b) => b.version).filter((v) => !delivered.has(v));
+
   const delivery = buildDelivery(stream, regime);
   for (const bc of delivery) {
-    // apply each event snapshot, then the final — exactly the client's per-event
-    // commit + final commit.
-    const snapshots = [...bc.eventTables, bc.finalTable];
-    for (const tb of snapshots) {
-      client = mergeGameData(client, { table_battles: tb.map(cloneBattle) });
+    if (fixed) {
+      if (bc.version <= lastApplied) continue; // gate: stale / out-of-order / dup
+      // reconnect resync: if a version between what we last applied and this one
+      // was never delivered, the client reconnected and refetched authoritative
+      // state — model that as an authoritative REPLACE of the table.
+      const gap = droppedVersions.some((d) => d > lastApplied && d < bc.version);
+      if (gap) {
+        client = { table_battles: bc.finalTable.map(cloneBattle), self: { hand: [] } };
+        lastApplied = bc.version;
+        maxVer = Math.max(maxVer, bc.version);
+        continue;
+      }
+    }
+    if (fixed) {
+      // Proposed fix: with the version gate already handling out-of-order delivery,
+      // each gated sequence's committed table is authoritative — REPLACE it rather
+      // than merge-append stale battles (the append is what re-introduces
+      // cross-bout orphans when an intermediate clear is skipped).
+      client = { table_battles: bc.finalTable.map(cloneBattle), self: client.self };
+      lastApplied = bc.version;
+    } else {
+      // apply each event snapshot, then the final — exactly today's client (per-
+      // event commit + final commit through the appending merge).
+      const snapshots = [...bc.eventTables, bc.finalTable];
+      for (const tb of snapshots) {
+        client = mergeGameData(client, { table_battles: tb.map(cloneBattle) });
+      }
     }
     maxVer = Math.max(maxVer, bc.version);
 
@@ -253,7 +285,7 @@ async function sweepMain(): Promise<void> {
     for (const L of lats) {
       BLATENCY = L;
       let mism = 0;
-      for (const s of streams) if (replay(s, 'reordered').finalMismatch) mism++;
+      for (const s of streams) if (replay(s, 'reordered', FIXED).finalMismatch) mism++;
       process.stdout.write(`${(mism / N * 100).toFixed(0)}%`.padStart(6));
     }
     console.log();
@@ -281,7 +313,7 @@ async function main(): Promise<void> {
     const stream = await capture();
     if (stream.broadcasts[stream.broadcasts.length - 1].bout > 0) multiBout++;
     for (const regime of ['in-order', 'reordered', 'disconnect'] as Regime[]) {
-      const g = replay(stream, regime);
+      const g = replay(stream, regime, FIXED);
       const a = agg[regime];
       a.trials++;
       if (g.phantomPeak > 0) a.phantom++;

@@ -187,6 +187,29 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     // Track optimistic pass state (defender and first_attacker changes)
     const optimisticPassState = useRef<{ defender: number, first_attacker: number } | null>(null);
 
+    // Highest committed games.version we've applied from a live broadcast. Live
+    // sequences are fired un-awaited by the server over per-call channels, so under
+    // realtime latency they can arrive out of order; we drop any whose version is
+    // <= this one (strictly superseded — each sequence carries the full resulting
+    // state). null until the first versioned sequence; reset when the game changes.
+    const lastAppliedVersionRef = useRef<number | null>(null);
+    const gateGameRef = useRef<string | undefined>(undefined);
+    // Reset the gate when switching games, and seed/raise it from authoritative
+    // REST loads (initial load and the post-reconnect resync). Live broadcasts
+    // advance it higher during play; we never lower it, so a late in-flight stale
+    // broadcast arriving after a resync is still dropped.
+    useEffect(() => {
+        if (gateGameRef.current !== url_game_id) {
+            gateGameRef.current = url_game_id;
+            lastAppliedVersionRef.current = null;
+        }
+        const v = url_game_id ? games[url_game_id]?.version : undefined;
+        if (typeof v === 'number') {
+            lastAppliedVersionRef.current = lastAppliedVersionRef.current === null
+                ? v : Math.max(lastAppliedVersionRef.current, v);
+        }
+    }, [url_game_id, games]);
+
     // Keep currentGameRef in sync with latest game state
     useEffect(() => {
         currentGameRef.current = url_game_id ? games[url_game_id] : undefined;
@@ -736,6 +759,19 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     const handleAnimationMessage = (message: any) => {
         if (!message.events || !Array.isArray(message.events)) {
             return;
+        }
+
+        // Monotonic ordering gate. Live broadcasts carry the committed games.version;
+        // drop any that arrives at or below the newest version we've already applied
+        // (stale/out-of-order/duplicate). Each sequence carries the full resulting
+        // state, so dropping a superseded one loses nothing. Replay-synthesized
+        // sequences have no version and are never gated.
+        const incomingVersion = typeof message.version === 'number' ? message.version : null;
+        if (incomingVersion !== null) {
+            if (lastAppliedVersionRef.current !== null && incomingVersion <= lastAppliedVersionRef.current) {
+                return;
+            }
+            lastAppliedVersionRef.current = incomingVersion;
         }
 
         // Store the game ID for use during animations

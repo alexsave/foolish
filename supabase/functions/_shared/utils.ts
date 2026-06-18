@@ -217,7 +217,12 @@ export const broadcastAnimationEvents = async (game: Game, events: AnimationEven
             type: 'animation_sequence',
             events: personalEvents,
             sequence_id: crypto.randomUUID(),
-            timestamp: Date.now()
+            timestamp: Date.now(),
+            // Committed games.version this sequence reflects. Broadcasts are fired
+            // un-awaited over per-call channels, so under realtime latency they can
+            // arrive out of order; the client uses this monotonic token to drop any
+            // sequence at or below the newest it has already applied (no rubber-band).
+            version: game.version ?? 0,
         };
 
         console.log(`[${reqId}][BROADCAST] Sending ${personalEvents.length} events to ${player.name}`);
@@ -261,7 +266,8 @@ export const broadcastAnimationEvents = async (game: Game, events: AnimationEven
         type: 'animation_sequence',
         events: publicEvents,
         sequence_id: crypto.randomUUID(),
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        version: game.version ?? 0,
     };
 
     console.log(`[${reqId}][BROADCAST] Sending ${publicEvents.length} events to spectators`);
