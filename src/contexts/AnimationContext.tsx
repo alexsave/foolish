@@ -788,6 +788,30 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 return;
             }
             lastAppliedVersionRef.current = incomingVersion;
+
+            // Release any of my optimistic cards that this AUTHORITATIVE state
+            // confirms are on the table — even if the broadcast that literally
+            // confirmed them (its events named the card) was dropped by the gate
+            // because a higher version reordered ahead of it. Without this the
+            // entry would linger until the 30s TTL and could be re-injected as a
+            // phantom after its bout ends. message.game is the pristine server
+            // state here (resolveOptimisticConflicts hasn't injected into it yet).
+            if (message.game?.table_battles && optimisticAnimations.current.size > 0) {
+                const onTable = new Set<string>();
+                for (const b of message.game.table_battles) {
+                    if (b?.attack) onTable.add(getCardKey(b.attack));
+                    if (b?.defense) onTable.add(getCardKey(b.defense));
+                }
+                optimisticAnimations.current.forEach((_ts, cardEventString) => {
+                    try {
+                        const parsed = JSON.parse(cardEventString);
+                        if (parsed.card && onTable.has(getCardKey(parsed.card))) {
+                            optimisticAnimations.current.delete(cardEventString);
+                            optimisticCardPositions.current.delete(getCardKey(parsed.card));
+                        }
+                    } catch { /* ignore malformed key */ }
+                });
+            }
         }
 
         // Store the game ID for use during animations

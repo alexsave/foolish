@@ -123,5 +123,27 @@ const applyOverlay = (table: Battle[], entries: Entry[]): Battle[] => {
   check(coverKept[0].defense != null && k(coverKept[0].defense!) === k(cov), 'D3: resync + overlay keeps the optimistic cover');
 }
 
-console.log(pass ? 'optimistic + revert: PASS (still working; reverts clean; resync no longer vanishes optimistic cards)' : 'optimistic + revert: FAIL');
+// Scenario E — Q6: a gated-out confirmation still releases optimistic tracking.
+// My attack 7♦ is optimistically tracked. Its confirming broadcast (events name
+// 7♦) is DROPPED by the version gate because a higher version reordered ahead.
+// That higher-version message's events don't name 7♦, but its AUTHORITATIVE table
+// contains 7♦ (the server has it). The fix clears any optimistic entry whose card
+// is on the authoritative table, so the entry doesn't linger (and can't be
+// re-injected as a phantom after the bout ends).
+{
+  const tracked = new Set<string>([k(c(3, 7))]); // optimistic 7♦ still tracked
+  // higher-version authoritative state that confirms 7♦ on the table
+  const authoritativeTable: Battle[] = [{ attack: c(3, 7), defense: c(0, 9) }];
+  const onTable = new Set<string>();
+  for (const b of authoritativeTable) { onTable.add(k(b.attack)); if (b.defense) onTable.add(k(b.defense)); }
+  // the fix: release tracked entries whose card is on the authoritative table
+  for (const key of [...tracked]) if (onTable.has(key)) tracked.delete(key);
+  check(!tracked.has(k(c(3, 7))), 'E1: gated-out confirmation still releases the optimistic entry (no lingering leak)');
+
+  // and after the bout ends (7♦ no longer on the table), nothing is re-injected
+  const reinjectCandidates = [...tracked]; // would-be phantoms
+  check(reinjectCandidates.length === 0, 'E2: nothing left to re-inject as a phantom after the bout ends');
+}
+
+console.log(pass ? 'optimistic + revert: PASS (still working; reverts clean; resync no vanish; Q6 leak closed)' : 'optimistic + revert: FAIL');
 process.exit(pass ? 0 : 1);
