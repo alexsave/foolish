@@ -1,10 +1,10 @@
 import { useEffect, useCallback } from 'react';
-import { Card } from '../common/types';
+import { Card } from '@shared/types.ts';
 import { useServer } from '../contexts/ServerContext';
 import { useAnimation } from '../contexts/AnimationContext';
 import { useGame } from '../contexts/GameContext';
 import { useAuth } from '../contexts/AuthContext';
-import { canCover } from '../common/common_utils';
+import { canCover } from '@shared/common_utils.ts';
 
 export const KeyboardInputHandler = () => {
     const { user_id } = useAuth();

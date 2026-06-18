@@ -32,6 +32,18 @@ Client-exposed variables use the `NEXT_PUBLIC_` prefix:
 Deploys to Vercel with zero configuration — Vercel auto-detects Next.js and
 serves the `.next` build output.
 
+## Shared code (`@shared`)
+
+The game rules, types, constants and replay codec are shared between the web
+client and the Supabase edge functions. There is a single source of truth:
+`supabase/functions/_shared/`. The client imports it via the `@shared/*`
+path alias (see `tsconfig.json`), e.g. `import { Card } from '@shared/types.ts'`.
+
+The imports keep Deno's required `.ts` extensions (enabled for the client by
+`allowImportingTsExtensions`; resolved by Turbopack), so the same files load
+unmodified in both Deno and Next. This replaces the previous `copy-common.sh`
+script, which duplicated the files into `src/` and let them drift.
+
 ## Routing
 
 The App Router maps to the previous react-router routes:

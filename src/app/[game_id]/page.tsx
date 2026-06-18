@@ -5,7 +5,7 @@ import { ErrorBoundary } from '../../components/ErrorBoundary';
 import { ProtectedRoute } from '../../components/ProtectedRoute';
 import { GameView } from '../../components/GameView';
 import { ReplayScreen } from '../../components/ReplayScreen';
-import { classifyPathSegment } from '../../replay/codec';
+import { classifyPathSegment } from '@shared/replay/codec.ts';
 
 export default function GamePage() {
   const segment = useParams<{ game_id: string }>().game_id || '';

@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
-import { Card, Game, GAME_STATUS, PLAYER_STATUS, PublicGame } from '../common/types';
+import { Card, Game, GAME_STATUS, PLAYER_STATUS, PublicGame } from '@shared/types.ts';
 import { useServer } from './ServerContext';
 import { useAuth } from './AuthContext';
 import { useParams } from 'next/navigation';

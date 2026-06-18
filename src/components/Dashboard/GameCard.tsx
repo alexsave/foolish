@@ -3,7 +3,7 @@ import { useAuth } from "../../contexts/AuthContext";
 import { useTexture, getTextureStyle, seedFromString, flipFromString } from "../TexturedSurface";
 import { Text } from "../Text";
 import { SovietIcon, SuitIcon } from "../SovietIcon";
-import { PLAYER_STATUS, GAME_STATUS, PublicGame } from "../../common/types";
+import { PLAYER_STATUS, GAME_STATUS, PublicGame } from "@shared/types.ts";
 
 interface GameCardProps {
     game: PublicGame;

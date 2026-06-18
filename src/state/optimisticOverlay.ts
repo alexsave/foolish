@@ -1,4 +1,4 @@
-import { Card } from '../common/types';
+import { Card } from '@shared/types.ts';
 
 /**
  * A tiny bridge so the authoritative REST load path (ServerContext.loadGame, used

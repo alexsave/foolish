@@ -2,7 +2,7 @@
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Card, LOG_TYPE, LogType } from '../common/types';
+import { Card, LOG_TYPE, LogType } from '@shared/types.ts';
 import { TexturedSurface } from './TexturedSurface';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
 import { AuthContext } from '../contexts/AuthContext';
@@ -16,9 +16,9 @@ import { TutorialHintProvider, TutorialHint } from '../contexts/TutorialHintCont
 import { GameBoard } from './GameBoard';
 import { usePreventScroll } from '../hooks/usePreventScroll';
 import { animationFeed, AnimationSequenceMessage } from '../state/animationFeed';
-import { codeToGame } from '../replay/codec';
-import { decodeReplay } from '../replay/decode';
-import { DecodedReplay } from '../replay/core';
+import { codeToGame } from '@shared/replay/codec.ts';
+import { decodeReplay } from '@shared/replay/decode.ts';
+import { DecodedReplay } from '@shared/replay/core.ts';
 import { buildReplaySteps, stepToGame, ReplayStep, ReplayGameState } from '../replay/view';
 import { buildReplaySequences, preDealGame } from '../replay/animate';
 import { canCoverCards } from '../utils/gameValidation';

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useServer } from '../contexts/ServerContext';
 import { useAuth } from '../contexts/AuthContext';
-import { GAME_STATUS } from '../common/types';
+import { GAME_STATUS } from '@shared/types.ts';
 import supabase from '../backend/Connector';
 import { TexturedSurface, useTexture, getTextureStyle, seedFromString, flipFromString } from './TexturedSurface';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';

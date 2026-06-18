@@ -1,10 +1,10 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { Card, PersonalGame, PublicGame, PRIVATE_EVENT_TYPE, GAME_STATUS, STRATEGY_KEY } from '../common/types';
+import { Card, PersonalGame, PublicGame, PRIVATE_EVENT_TYPE, GAME_STATUS, STRATEGY_KEY } from '@shared/types.ts';
 import supabase from '../backend/Connector';
 import { useParams } from 'next/navigation';
 import { useAuth } from './AuthContext';
-import { MAX_PLAYERS } from '../common/constants';
-import { get_next_player_index, card_comp } from '../common/common_utils';
+import { MAX_PLAYERS } from '@shared/constants.ts';
+import { get_next_player_index, card_comp } from '@shared/common_utils.ts';
 import { ANIMATION_TIME } from '../constants/constants';
 import { optimisticOverlay } from '../state/optimisticOverlay';
 import { cardKey, mergeHandOrder, reconcileHandMemory, displayedHand, mergeTableBattles, applyOverlayEntries } from '../state/clientReconcile';

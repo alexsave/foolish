@@ -1,4 +1,4 @@
-import { Battle, Card, PublicGame } from "../common/types";
+import { Battle, Card, PublicGame } from "@shared/types.ts";
 
 export const getTableCards = (gameState: PublicGame): Card[] => gameState.table_battles
     ?.flatMap((b: Battle) => b.defense ? [b.attack, b.defense] : [b.attack]) || [];

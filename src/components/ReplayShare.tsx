@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import supabase from '../backend/Connector';
-import { PersonalGame, PublicGame } from '../common/types';
+import { PersonalGame, PublicGame } from '@shared/types.ts';
 import { Text } from './Text';
-import { base32Encode, hexToBytes, URL_PREFIX } from '../replay/codec';
+import { base32Encode, hexToBytes, URL_PREFIX } from '@shared/replay/codec.ts';
 import { useStyles } from '../contexts/StyleContext';
 import { useTexture, getTextureStyle } from './TexturedSurface';
 

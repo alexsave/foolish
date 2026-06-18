@@ -15,8 +15,8 @@ import {
     PrivatePlayer,
     GAME_STATUS,
     PLAYER_STATUS,
-} from '../common/types';
-import { DecodedReplay } from './core';
+} from '@shared/types.ts';
+import { DecodedReplay } from '@shared/replay/core.ts';
 
 export interface ReplaySeatView {
     /** face-down cards (identity unknown to spectators) */

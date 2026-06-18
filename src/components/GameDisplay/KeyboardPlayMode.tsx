@@ -44,12 +44,12 @@
  * ========================================================================== */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Card, PersonalGame } from '../../common/types';
+import { Card, PersonalGame } from '@shared/types.ts';
 import { useServer } from '../../contexts/ServerContext';
 import { useAnimation } from '../../contexts/AnimationContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { useGame } from '../../contexts/GameContext';
-import { canCover } from '../../common/common_utils';
+import { canCover } from '@shared/common_utils.ts';
 import { canAttack, canPass, canCoverCards } from '../../utils/gameValidation';
 
 type CoverTarget = { kind: 'cover'; attack: Card; battleIndex: number };
