@@ -7,59 +7,13 @@ import { MAX_PLAYERS } from '../common/constants';
 import { get_next_player_index, card_comp } from '../common/common_utils';
 import { ANIMATION_TIME } from '../constants/constants';
 import { optimisticOverlay } from '../state/optimisticOverlay';
+import { cardKey, mergeHandOrder, reconcileHandMemory, displayedHand, mergeTableBattles, applyOverlayEntries } from '../state/clientReconcile';
 
 // Re-apply the local player's unconfirmed optimistic table cards onto an
-// authoritatively-loaded game, so a reconnect resync doesn't momentarily drop a
-// card the player just played (it would otherwise vanish, then reappear when the
-// confirming broadcast lands). Idempotent: anything already present, or with no
-// pending optimistic cards, is left untouched.
+// authoritatively-loaded game (reconnect resync), so a just-played card doesn't
+// vanish then reappear. Thin wrapper over the shared, unit-tested applyOverlayEntries.
 const applyOptimisticOverlay = (g: PersonalGame): void => {
-    const entries = optimisticOverlay.entries();
-    if (entries.length === 0 || !g.self) return;
-    for (const e of entries) {
-        if (e.target) {
-            // optimistic cover: set the defense on the matching uncovered battle
-            const battle = g.table_battles.find(b =>
-                card_comp(b.attack, e.target!) && b.defense === null);
-            if (battle) battle.defense = e.card;
-        } else {
-            // optimistic attack: add the battle if the card isn't already on the table
-            const present = g.table_battles.some(b =>
-                card_comp(b.attack, e.card) || (b.defense !== null && card_comp(b.defense, e.card)));
-            if (!present) g.table_battles.push({ attack: e.card, defense: null });
-        }
-        // and take the card out of my displayed hand (it's on the table now)
-        if (g.self.hand) g.self.hand = g.self.hand.filter(c => !card_comp(c, e.card));
-    }
-};
-
-// ---- Hand-order display: a sticky arrangement memory + an authoritative-only
-// rendered hand. The player's preferred order is purely client-side. The
-// rendered hand is ALWAYS a deduplicated reordering of the authoritative hand:
-//   - duplicates are impossible (each card appears once),
-//   - a card on the table is never shown in the hand (only authoritative cards),
-//   - a card removed optimistically and then rejected returns to its ORIGINAL
-//     slot rather than teleporting to the end (the "crazy swap"), because the
-//     arrangement memory is sticky — it never forgets a card's slot on a
-//     transient absence, only grows with genuinely-new cards.
-const cardKey = (c: Card) => `${c.suit}-${c.value}`;
-
-// Arrangement memory: keep every known card's slot, append genuinely-new cards.
-const reconcileHandMemory = (memory: Card[], authHand: Card[]): Card[] => {
-    const seen = new Set<string>();
-    const dedupMem = (memory || []).filter(c => { const k = cardKey(c); if (seen.has(k)) return false; seen.add(k); return true; });
-    const additions = (authHand || []).filter(c => !seen.has(cardKey(c)));
-    return [...dedupMem, ...additions];
-};
-
-// The rendered hand: the authoritative hand, deduped and ordered by the memory.
-const displayedHand = (memory: Card[], authHand: Card[]): Card[] => {
-    const byKey = new Map((authHand || []).map(c => [cardKey(c), c] as const));
-    const used = new Set<string>();
-    const out: Card[] = [];
-    for (const m of (memory || [])) { const k = cardKey(m); const a = byKey.get(k); if (a && !used.has(k)) { out.push(a); used.add(k); } }
-    for (const c of (authHand || [])) { const k = cardKey(c); if (!used.has(k)) { out.push(c); used.add(k); } }
-    return out;
+    applyOverlayEntries(g, optimisticOverlay.entries());
 };
 
 const ServerContext = createContext<ServerContextType | null>(null);
@@ -361,41 +315,9 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         }
     };
 
-    // Helper method to merge hands while preserving local card order
-    const mergeHandOrder = (oldHand: Card[], newHand: Card[]): Card[] => {
-        if (!oldHand || !newHand) return newHand || [];
-
-        // Create a map of card positions in the old hand for quick lookup
-        const oldCardPositions = new Map<string, number>();
-        oldHand.forEach((card, index) => {
-            const key = `${card.suit}-${card.value}`;
-            oldCardPositions.set(key, index);
-        });
-
-        // Create a set of new cards for quick lookup
-        const newCardSet = new Set(newHand.map(card => `${card.suit}-${card.value}`));
-
-        // Keep existing cards in their current positions
-        const preservedCards: Card[] = [];
-        const preservedPositions = new Set<number>();
-
-        oldHand.forEach((card, oldIndex) => {
-            const key = `${card.suit}-${card.value}`;
-            if (newCardSet.has(key)) {
-                preservedCards.push(card);
-                preservedPositions.add(oldIndex);
-            }
-        });
-
-        // Find new cards (cards in newHand but not in oldHand)
-        const newCards = newHand.filter(card => {
-            const key = `${card.suit}-${card.value}`;
-            return !oldCardPositions.has(key);
-        });
-
-        // Combine preserved cards with new cards (new cards go to the end)
-        return [...preservedCards, ...newCards];
-    };
+    // mergeHandOrder / reconcileHandMemory / displayedHand / mergeTableBattles all
+    // live in src/state/clientReconcile.ts (imported at the top) so they can be
+    // unit-tested directly without React.
 
     // Helper method to update local hand order when game state changes. Sticky:
     // the arrangement memory keeps known slots and only grows with new cards, so a
@@ -405,20 +327,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         setLocalHandOrders(prev => ({ ...prev, [gameId]: reconcileHandMemory(prev[gameId] || [], newHand) }));
     };
 
-    // Trust the server's table_battles outright.
-    //
-    // This used to append any existing battle missing from the incoming snapshot,
-    // to keep optimistic attacks visible while server responses arrived
-    // out-of-order. That is now handled two layers up — the broadcast version gate
-    // (AnimationContext) drops out-of-order sequences, and the optimistic-conflict
-    // resolver injects the local player's unconfirmed cards into the incoming state
-    // before it ever reaches here — so the append is redundant. Worse, it was
-    // actively harmful: when an intermediate table-clear was skipped (a reordered
-    // or dropped round-transition packet), it re-introduced a previous bout's cards
-    // onto the table (cards from two bouts at once). Trusting incoming removes that.
-    const mergeTableBattles = (existingBattles: any[], incomingBattles: any[]): any[] => {
-        return incomingBattles ?? existingBattles ?? [];
-    };
 
     // Helper method to merge game data while preserving self when not present in new data
     const mergeGameData = (gameId: string, newGameData: any, prevGames: any) => {

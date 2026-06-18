@@ -1,0 +1,12 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": "..",
+    "noEmit": true,
+    "paths": {
+      "jsr:@supabase/supabase-js": ["e2e/adapters/supabase.ts"],
+      "jsr:@supabase/functions-js/edge-runtime.d.ts": ["e2e/adapters/empty.ts"],
+      "https://deno.land/std@0.168.0/http/server.ts": ["e2e/adapters/server.ts"]
+    }
+  }
+}
