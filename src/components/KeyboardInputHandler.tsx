@@ -5,6 +5,7 @@ import { useAnimation } from '../contexts/AnimationContext';
 import { useGame } from '../contexts/GameContext';
 import { useAuth } from '../contexts/AuthContext';
 import { canCover } from '@shared/common_utils.ts';
+import { findUnambiguousCover } from '../utils/coverCombinations';
 
 export const KeyboardInputHandler = () => {
     const { user_id } = useAuth();
@@ -35,82 +36,8 @@ export const KeyboardInputHandler = () => {
         return localHandOrder[position - 1];
     };
 
-    // Helper function to find unambiguous cover combinations (similar to DragContext)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    const findUnambiguousCover = (cardsToUse: Card[]): { coverCards: Card[], attackCards: Card[] } | null => {
-        if (!game) return null;
-        
-        const uncoveredBattles = game.table_battles.filter(battle => !battle.defense);
-        const uncoveredAttacks = uncoveredBattles.map(battle => battle.attack);
-        
-        const validCombinations = findCoverCombinations(cardsToUse, uncoveredAttacks);
-        
-        if (validCombinations.length === 0) {
-            return null;
-        }
-        
-        // Check if all valid combinations result in the same set of attack cards being covered
-        const cardToString = (card: Card) => `${card.value}-${card.suit}`;
-        const firstCombinationAttackSet = new Set(validCombinations[0].attackCards.map(cardToString));
-        
-        const allCombinationsHaveSameAttackSet = validCombinations.every(combo => {
-            const comboAttackSet = new Set(combo.attackCards.map(cardToString));
-            return comboAttackSet.size === firstCombinationAttackSet.size && 
-                   Array.from(comboAttackSet).every(cardStr => firstCombinationAttackSet.has(cardStr));
-        });
-        
-        // If all combinations cover the same set of attack cards, it's unambiguous
-        if (allCombinationsHaveSameAttackSet) {
-            return validCombinations[0]; // Return any valid combination since they all cover the same attacks
-        }
-        
-        return null;
-    };
-
-    // Helper function to find all valid cover combinations for multiple cards
-    const findCoverCombinations = (coverCards: Card[], uncoveredAttacks: Card[]): { coverCards: Card[], attackCards: Card[] }[] => {
-        const combinations: { coverCards: Card[], attackCards: Card[] }[] = [];
-        
-        if (coverCards.length === 0 || uncoveredAttacks.length === 0) {
-            return combinations;
-        }
-
-        // For each permutation of uncovered attacks (taking coverCards.length items)
-        const generatePermutations = (arr: Card[], length: number): Card[][] => {
-            if (length === 1) return arr.map(item => [item]);
-            
-            const result: Card[][] = [];
-            for (let i = 0; i < arr.length; i++) {
-                const rest = arr.slice(0, i).concat(arr.slice(i + 1));
-                const subPermutations = generatePermutations(rest, length - 1);
-                for (const subPerm of subPermutations) {
-                    result.push([arr[i], ...subPerm]);
-                }
-            }
-            return result;
-        };
-
-        // Only consider combinations where we have the right number of cards
-        if (coverCards.length <= uncoveredAttacks.length) {
-            const attackPermutations = generatePermutations(uncoveredAttacks, coverCards.length);
-            
-            for (const attackPerm of attackPermutations) {
-                // Check if this cover-attack pairing is valid
-                const isValidCombination = coverCards.every((coverCard, index) => 
-                    canCover(attackPerm[index], coverCard, game!.power_suit)
-                );
-                
-                if (isValidCombination) {
-                    combinations.push({
-                        coverCards: [...coverCards],
-                        attackCards: [...attackPerm]
-                    });
-                }
-            }
-        }
-
-        return combinations;
-    };
+    // Cover-combination resolution lives in ../utils/coverCombinations (shared
+    // with DragContext).
 
     // Check if passing is possible
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -164,7 +91,9 @@ export const KeyboardInputHandler = () => {
                 }
             } else {
                 // Multi-card cover - check if unambiguous
-                const unambiguousCover = findUnambiguousCover(selectedCards);
+                const unambiguousCover = game
+                    ? findUnambiguousCover(selectedCards, game.table_battles, game.power_suit)
+                    : null;
                 if (unambiguousCover) {
                     await cover(unambiguousCover.coverCards, unambiguousCover.attackCards);
                     setSelectedCards([]); // Clear selection after successful action
@@ -176,7 +105,7 @@ export const KeyboardInputHandler = () => {
             console.error('Cover failed:', error);
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [game, selectedCards, cover, setSelectedCards, findUnambiguousCover]);
+    }, [game, selectedCards, cover, setSelectedCards]);
 
     const handlePass = useCallback(async () => {
         if (!game || selectedCards.length === 0) return;

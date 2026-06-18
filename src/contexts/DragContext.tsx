@@ -6,6 +6,7 @@ import { useAuth } from './AuthContext';
 import { useGame } from './GameContext';
 import { canCover } from '@shared/common_utils.ts';
 import { canAttack, canPass as canPassValidation } from '../utils/gameValidation';
+import { findUnambiguousCover } from '../utils/coverCombinations';
 
 const DragContext = createContext<DragContextType | null>(null);
 
@@ -44,79 +45,8 @@ export const DragProvider = ({ children }: { children: React.ReactNode }) => {
         return y >= handAreaTop;
     };
 
-    // Helper function to find all valid cover combinations for multiple cards
-    const findCoverCombinations = (coverCards: Card[], uncoveredAttacks: Card[]): { coverCards: Card[], attackCards: Card[] }[] => {
-        const combinations: { coverCards: Card[], attackCards: Card[] }[] = [];
-        
-        if (coverCards.length === 0 || uncoveredAttacks.length === 0) {
-            return combinations;
-        }
-
-        // For each permutation of uncovered attacks (taking coverCards.length items)
-        const generatePermutations = (arr: Card[], length: number): Card[][] => {
-            if (length === 1) return arr.map(item => [item]);
-            
-            const result: Card[][] = [];
-            for (let i = 0; i < arr.length; i++) {
-                const rest = arr.slice(0, i).concat(arr.slice(i + 1));
-                const subPermutations = generatePermutations(rest, length - 1);
-                for (const subPerm of subPermutations) {
-                    result.push([arr[i], ...subPerm]);
-                }
-            }
-            return result;
-        };
-
-        // Only consider combinations where we have the right number of cards
-        if (coverCards.length <= uncoveredAttacks.length) {
-            const attackPermutations = generatePermutations(uncoveredAttacks, coverCards.length);
-            
-            for (const attackPerm of attackPermutations) {
-                // Check if this cover-attack pairing is valid
-                const isValidCombination = coverCards.every((coverCard, index) => 
-                    canCover(attackPerm[index], coverCard, game.power_suit)
-                );
-                
-                if (isValidCombination) {
-                    combinations.push({
-                        coverCards: [...coverCards],
-                        attackCards: [...attackPerm]
-                    });
-                }
-            }
-        }
-
-        return combinations;
-    };
-
-    // Helper function to check if a multi-card cover is unambiguous
-    const findUnambiguousCover = (cardsToUse: Card[]): { coverCards: Card[], attackCards: Card[] } | null => {
-        const uncoveredBattles = game.table_battles.filter(battle => !battle.defense);
-        const uncoveredAttacks = uncoveredBattles.map(battle => battle.attack);
-        
-        const validCombinations = findCoverCombinations(cardsToUse, uncoveredAttacks);
-        
-        if (validCombinations.length === 0) {
-            return null;
-        }
-        
-        // Check if all valid combinations result in the same set of attack cards being covered
-        const cardToString = (card: Card) => `${card.value}-${card.suit}`;
-        const firstCombinationAttackSet = new Set(validCombinations[0].attackCards.map(cardToString));
-        
-        const allCombinationsHaveSameAttackSet = validCombinations.every(combo => {
-            const comboAttackSet = new Set(combo.attackCards.map(cardToString));
-            return comboAttackSet.size === firstCombinationAttackSet.size && 
-                   Array.from(comboAttackSet).every(cardStr => firstCombinationAttackSet.has(cardStr));
-        });
-        
-        // If all combinations cover the same set of attack cards, it's unambiguous
-        if (allCombinationsHaveSameAttackSet) {
-            return validCombinations[0]; // Return any valid combination since they all cover the same attacks
-        }
-        
-        return null;
-    };
+    // Cover-combination resolution lives in ../utils/coverCombinations (shared
+    // with KeyboardInputHandler).
 
     // Helper function to determine what action should be taken
     const determineGameAction = (x: number, y: number, draggedCard: Card) => {
@@ -146,7 +76,7 @@ export const DragProvider = ({ children }: { children: React.ReactNode }) => {
                     return { type: 'cover' as const, targetCard: tableCardUnderCursor.attack };
                 } else {
                     // Multi-card cover - check if unambiguous
-                    const unambiguousCover = findUnambiguousCover(cardsToUse);
+                    const unambiguousCover = findUnambiguousCover(cardsToUse, game.table_battles, game.power_suit);
                     if (unambiguousCover) {
                         return { type: 'multicover' as const, coverCards: unambiguousCover.coverCards, attackCards: unambiguousCover.attackCards };
                     } else {
@@ -170,7 +100,7 @@ export const DragProvider = ({ children }: { children: React.ReactNode }) => {
                     }
                 } else {
                     // Multi-card cover - check if unambiguous
-                    const unambiguousCover = findUnambiguousCover(cardsToUse);
+                    const unambiguousCover = findUnambiguousCover(cardsToUse, game.table_battles, game.power_suit);
                     if (unambiguousCover) {
                         return { type: 'multicover' as const, coverCards: unambiguousCover.coverCards, attackCards: unambiguousCover.attackCards };
                     } else {
