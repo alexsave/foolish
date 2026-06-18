@@ -1,5 +1,6 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { generateTitleFern } from '../utils/fernFractal';
 import { TexturedSurface } from './TexturedSurface';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
 import { LanguageSwitcher } from './LanguageSwitcher';
@@ -9,13 +10,66 @@ import Link from 'next/link';
 import { useStyles } from '../contexts/StyleContext';
 import { usernameUsesReservedPrefix } from '../common/botName';
 
+// The fern PNG is portrait (~5:7); the brand title's box is wide. Rotate the
+// generated texture so a single fern lies across the word. CSS can't rotate a
+// background image, so we re-raster the blob once and cache it. Positive degrees
+// rotate clockwise: 90° lays it landscape, nudged 30° counterclockwise → 60°.
+const FERN_ROTATION_DEG = 60;
+let rotatedFernCache: string | null = null;
+function rotateFern(url: string, degrees: number): Promise<string> {
+    if (rotatedFernCache) return Promise.resolve(rotatedFernCache);
+    return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+            const rad = (degrees * Math.PI) / 180;
+            const cos = Math.abs(Math.cos(rad));
+            const sin = Math.abs(Math.sin(rad));
+            const w = img.width;
+            const h = img.height;
+            const canvas = document.createElement('canvas');
+            // Size the canvas to the rotated bounding box so nothing is clipped.
+            canvas.width = w * cos + h * sin;
+            canvas.height = w * sin + h * cos;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) { resolve(url); return; }
+            ctx.translate(canvas.width / 2, canvas.height / 2);
+            ctx.rotate(rad);
+            ctx.drawImage(img, -w / 2, -h / 2);
+            canvas.toBlob((blob) => {
+                if (!blob) { resolve(url); return; }
+                rotatedFernCache = URL.createObjectURL(blob);
+                resolve(rotatedFernCache);
+            }, 'image/png', 1.0);
+        };
+        img.onerror = () => resolve(url);
+        img.src = url;
+    });
+}
+
 export const Welcome = () => {
     const [name, setName] = useState('');
     const [password, setPassword] = useState('');
     const { signIn, signUp } = useAuth();
-    const { t } = useLocalization();
+    const { t, language } = useLocalization();
     const styles = useStyles();
     const passwordRef = useRef<HTMLInputElement>(null);
+
+    // For the en/ko locales, fill the brand title's glyphs with the cardback
+    // fern texture (red outline, fern interior over a black base). The texture is
+    // generated lazily and globally cached; until it resolves the title stays
+    // plain red.
+    const useFernTitle = language === 'en' || language === 'ko';
+    const [fernPattern, setFernPattern] = useState('');
+
+    useEffect(() => {
+        if (!useFernTitle) return;
+        let cancelled = false;
+        generateTitleFern()
+            .then((url) => rotateFern(url, FERN_ROTATION_DEG))
+            .then((url) => { if (!cancelled) setFernPattern(url); })
+            .catch(() => { /* leave the plain-red fallback in place */ });
+        return () => { cancelled = true; };
+    }, [useFernTitle]);
 
     const useCustomMasking = styles.behavior.useCustomPasswordMasking;
     const maskedPassword = '#'.repeat(password.length);
@@ -102,7 +156,15 @@ export const Welcome = () => {
             <WoolBackgroundLayer />
             
             <p className="title title--brand z-content">
-                <Text id="foolish" />
+                <Text
+                    id="foolish"
+                    className={useFernTitle
+                        ? `title-fern${fernPattern ? ' title-fern--loaded' : ''}`
+                        : undefined}
+                    style={useFernTitle && fernPattern
+                        ? ({ '--fern-texture': `url(${fernPattern})` } as React.CSSProperties)
+                        : undefined}
+                />
             </p>
             
             <form onSubmit={handleLogin} className="flex flex-col items-center z-content" style={{ gap: '15px' }}>

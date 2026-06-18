@@ -149,35 +149,39 @@ function createCardParams(canvasWidth: number, canvasHeight: number): FernParame
 }
 
 // OpenGL-based fern pattern generation (like C++ example: CPU computes IFS, GL renders)
-async function generateFernPattern(
-    params?: FernParameters
+export async function generateFernPattern(
+    params?: FernParameters,
+    options?: { width?: number; height?: number; bypassCache?: boolean }
 ): Promise<string> {
-    
-    // Return cached pattern if available  
-    if (cachedFernPatternBlobUrl) {
+    const bypassCache = options?.bypassCache ?? false;
+
+    // Return cached pattern if available
+    if (!bypassCache && cachedFernPatternBlobUrl) {
         return Promise.resolve(cachedFernPatternBlobUrl);
     }
-    
+
     // Return existing promise if generation is already in progress
-    if (fernPatternPromise) {
+    if (!bypassCache && fernPatternPromise) {
         return fernPatternPromise;
     }
-    
-    // Create and cache the promise to prevent duplicate generations
-    fernPatternPromise = (async () => {
+
+    // Create (and, unless bypassing, cache) the promise to dedupe generations
+    const run = (async () => {
         // Check IndexedDB cache first for persistent storage
-        const cachedFromDB = await getCachedTexture('fern');
-        if (cachedFromDB) {
-            cachedFernPatternBlobUrl = cachedFromDB;
-            fernPatternPromise = null;
-            return cachedFromDB;
+        if (!bypassCache) {
+            const cachedFromDB = await getCachedTexture('fern');
+            if (cachedFromDB) {
+                cachedFernPatternBlobUrl = cachedFromDB;
+                fernPatternPromise = null;
+                return cachedFromDB;
+            }
         }
-        
+
         // Yield control immediately to let React render first
         await new Promise(resolve => setTimeout(resolve, 0));
-        
-        const canvasWidth = 200 * 5;
-        const canvasHeight = 280 * 5;
+
+        const canvasWidth = options?.width ?? 200 * 5;
+        const canvasHeight = options?.height ?? 280 * 5;
         const finalParams = params || createCardParams(canvasWidth, canvasHeight);
 
         try {
@@ -392,22 +396,62 @@ async function generateFernPattern(
                 }, 'image/png', 1.0);
             });
             
-            cachedFernPatternBlobUrl = blobUrl;
-            
-            // Cache to IndexedDB for persistence across sessions
-            setCachedTexture('fern', blobUrl).catch(err => { });
-            
-            fernPatternPromise = null;
-            
+            if (!bypassCache) {
+                cachedFernPatternBlobUrl = blobUrl;
+                // Cache to IndexedDB for persistence across sessions
+                setCachedTexture('fern', blobUrl).catch(err => { });
+                fernPatternPromise = null;
+            }
+
             return blobUrl;
         } catch (error) {
             console.error('WebGL fern generation failed, using fallback:', error);
-            fernPatternPromise = null;
+            if (!bypassCache) fernPatternPromise = null;
             return generateFernPatternFallback(canvasWidth, canvasHeight, finalParams);
         }
     })();
-    
-    return fernPatternPromise;
+
+    if (!bypassCache) {
+        fernPatternPromise = run;
+    }
+
+    return run;
+}
+
+// Dedicated, higher-resolution fern for the brand title. Rendered on a larger
+// canvas with extra iterations/dot size so the title can crop and rotate into it
+// without upscaling a small raster into mush. Memoized separately from the shared
+// cardback fern (and bypasses its cache so the cardback stays low-res).
+let titleFernUrl: string | null = null;
+let titleFernPromise: Promise<string> | null = null;
+export async function generateTitleFern(): Promise<string> {
+    if (titleFernUrl) return Promise.resolve(titleFernUrl);
+    if (titleFernPromise) return titleFernPromise;
+
+    titleFernPromise = (async () => {
+        // Persist to IndexedDB so the 12M-iteration render only happens once,
+        // ever — later visits load it instantly (cached under its own key so the
+        // low-res cardback fern is untouched).
+        const cached = await getCachedTexture('fern-title');
+        if (cached) {
+            titleFernUrl = cached;
+            titleFernPromise = null;
+            return cached;
+        }
+
+        const width = 1400;
+        const height = 1960;
+        const params = createCardParams(width, height);
+        params.render.iterations = 12000000; // keep frond density at the larger canvas
+        params.render.dotSize = 2;
+
+        const url = await generateFernPattern(params, { width, height, bypassCache: true });
+        titleFernUrl = url;
+        setCachedTexture('fern-title', url).catch(() => { });
+        titleFernPromise = null;
+        return url;
+    })();
+    return titleFernPromise;
 }
 
 // Fallback CPU implementation
