@@ -33,6 +33,35 @@ const applyOptimisticOverlay = (g: PersonalGame): void => {
     }
 };
 
+// ---- Hand-order display: a sticky arrangement memory + an authoritative-only
+// rendered hand. The player's preferred order is purely client-side. The
+// rendered hand is ALWAYS a deduplicated reordering of the authoritative hand:
+//   - duplicates are impossible (each card appears once),
+//   - a card on the table is never shown in the hand (only authoritative cards),
+//   - a card removed optimistically and then rejected returns to its ORIGINAL
+//     slot rather than teleporting to the end (the "crazy swap"), because the
+//     arrangement memory is sticky — it never forgets a card's slot on a
+//     transient absence, only grows with genuinely-new cards.
+const cardKey = (c: Card) => `${c.suit}-${c.value}`;
+
+// Arrangement memory: keep every known card's slot, append genuinely-new cards.
+const reconcileHandMemory = (memory: Card[], authHand: Card[]): Card[] => {
+    const seen = new Set<string>();
+    const dedupMem = (memory || []).filter(c => { const k = cardKey(c); if (seen.has(k)) return false; seen.add(k); return true; });
+    const additions = (authHand || []).filter(c => !seen.has(cardKey(c)));
+    return [...dedupMem, ...additions];
+};
+
+// The rendered hand: the authoritative hand, deduped and ordered by the memory.
+const displayedHand = (memory: Card[], authHand: Card[]): Card[] => {
+    const byKey = new Map((authHand || []).map(c => [cardKey(c), c] as const));
+    const used = new Set<string>();
+    const out: Card[] = [];
+    for (const m of (memory || [])) { const k = cardKey(m); const a = byKey.get(k); if (a && !used.has(k)) { out.push(a); used.add(k); } }
+    for (const c of (authHand || [])) { const k = cardKey(c); if (!used.has(k)) { out.push(c); used.add(k); } }
+    return out;
+};
+
 const ServerContext = createContext<ServerContextType | null>(null);
 
 const handsQuery =
@@ -368,20 +397,12 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         return [...preservedCards, ...newCards];
     };
 
-    // Helper method to update local hand order when game state changes
+    // Helper method to update local hand order when game state changes. Sticky:
+    // the arrangement memory keeps known slots and only grows with new cards, so a
+    // card that's transiently absent (optimistically played then rejected) keeps
+    // its slot instead of jumping to the end.
     const updateLocalHandOrder = (gameId: string, newHand: Card[]) => {
-        setLocalHandOrders(prev => {
-            const currentOrder = prev[gameId] || [];
-
-            // If we don't have a previous order, just use the new hand
-            if (currentOrder.length === 0) {
-                return { ...prev, [gameId]: newHand };
-            }
-
-            // Otherwise, preserve existing order and add new cards to the end
-            const mergedOrder = mergeHandOrder(currentOrder, newHand);
-            return { ...prev, [gameId]: mergedOrder };
-        });
+        setLocalHandOrders(prev => ({ ...prev, [gameId]: reconcileHandMemory(prev[gameId] || [], newHand) }));
     };
 
     // Trust the server's table_battles outright.
@@ -755,12 +776,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                     self: { ...prev[game_id!].self, hand: newHand }
                 }
             }));
-
-            // Update local hand order
-            setLocalHandOrders(prev => ({
-                ...prev,
-                [game_id!]: (prev[game_id!] || []).filter(card => !cards.some(c => c.suit === card.suit && c.value === card.value))
-            }));
+            // Hand order is derived from self.hand by the displayedHand selector,
+            // so the optimistic removal above is reflected automatically.
 
         }, ANIMATION_TIME);
 
@@ -791,12 +808,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                     defender: next_defender
                 }
             }));
-
-            // Update local hand order
-            setLocalHandOrders(prev => ({
-                ...prev,
-                [game_id!]: (prev[game_id!] || []).filter(card => !cards.some(c => c.suit === card.suit && c.value === card.value))
-            }));
+            // Hand order derives from self.hand (see displayedHand selector).
 
         }, ANIMATION_TIME);
 
@@ -837,12 +849,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                     defender: next_defender
                 }
             }));
-
-            // Update local hand order (add new cards to the end)
-            setLocalHandOrders(prev => ({
-                ...prev,
-                [game_id!]: [...(prev[game_id!] || []), ...allTableCards]
-            }));
+            // Picked-up cards appear via self.hand; the displayedHand selector
+            // appends any new cards to the end of the arrangement automatically.
 
         }, ANIMATION_TIME);
 
@@ -878,12 +886,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                     self: { ...prev[game_id!].self, hand: newHand }
                 }
             }));
-
-            // Update local hand order
-            setLocalHandOrders(prev => ({
-                ...prev,
-                [game_id!]: (prev[game_id!] || []).filter(card => !coverCards.some(c => card_comp(c, card)))
-            }));
+            // Hand order derives from self.hand (see displayedHand selector).
 
         }, ANIMATION_TIME);
 
@@ -1142,7 +1145,10 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     }
 
     const currentChatMessages = chatMessages[game_id!] || [];
-    const currentLocalHandOrder = localHandOrders[game_id!] || [];
+    // The rendered hand: authoritative self.hand, deduped and ordered by the
+    // sticky arrangement memory. Guarantees no duplicates and no on-table cards
+    // in the hand, and keeps a rejected card in its original slot.
+    const currentLocalHandOrder = displayedHand(localHandOrders[game_id!] || [], games[game_id!]?.self?.hand || []);
 
     return (
         <ServerContext.Provider value={{
@@ -1184,7 +1190,13 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             localHandOrder: currentLocalHandOrder,
             setLocalHandOrder: (order: Card[]) => {
                 if (game_id) {
-                    setLocalHandOrders(prev => ({ ...prev, [game_id]: order }));
+                    // Sticky: take the dragged order of the visible cards, then keep
+                    // any remembered (currently-absent) cards so their slots survive.
+                    setLocalHandOrders(prev => {
+                        const inOrder = new Set(order.map(cardKey));
+                        const remembered = (prev[game_id] || []).filter(c => !inOrder.has(cardKey(c)));
+                        return { ...prev, [game_id]: [...order, ...remembered] };
+                    });
                 }
             }
         }}>
