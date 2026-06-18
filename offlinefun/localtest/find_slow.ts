@@ -6,6 +6,7 @@ import { start_game, game_done } from '../../supabase/functions/_shared/common_u
 import { Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, STRATEGY_KEY, StrategyKey } from '../../supabase/functions/_shared/types.ts';
 import { EspressoStrategy } from '../../supabase/functions/_shared/strategies/espresso_strategy.ts';
 import { setRandomSeed } from '../../supabase/functions/_shared/strategies/random_strategy.ts';
+import { createGame } from './harness.ts';
 
 const ESPRESSO = 'espresso' as StrategyKey;
 registerBotStrategy(ESPRESSO, new EspressoStrategy());
@@ -26,19 +27,8 @@ const print = (...args: any[]) => {
     fs.writeSync(2, msg + '\n'); // stderr fd, sync
 };
 
-const createPlayer = (strategy: StrategyKey, index: number): PrivatePlayer => ({
-    player_id: `bot_${index}_${strategy}`, name: `${strategy}${index}`, status: PLAYER_STATUS.READY,
-    is_ai: true, hand: [], awaiting_attack: false, hand_length: 0, strategy_key: strategy
-});
-
-const createGame = (heroStrat: StrategyKey, oppStrat: StrategyKey, numOpps: number): Game => {
-    const players: PrivatePlayer[] = [createPlayer(heroStrat, 0)];
-    for (let i = 0; i < numOpps; i++) players.push(createPlayer(oppStrat, i + 1));
-    return { players, deck: [], logs: [], id: 'g', name: 'g', status: GAME_STATUS.PLAYING,
-        deck_length: 0, discard_pile_length: 0, flipped: null, power_suit: 0,
-        first_attacker: 0, defender: 0, table_battles: [], elimination_order: [],
-        good_timestamp: null, good_players: [] };
-};
+const gameFor = (heroStrat: StrategyKey, oppStrat: StrategyKey, numOpps: number) =>
+    createGame([heroStrat, ...Array(numOpps).fill(oppStrat)]);
 
 (async () => {
     print('coffee vs 2 randoms — per-game (seeded), per-game cap 1.5s wall');
@@ -48,7 +38,7 @@ const createGame = (heroStrat: StrategyKey, oppStrat: StrategyKey, numOpps: numb
         print(`SEED=${s}`);
         _seed = s;
         setRandomSeed(s);
-        const game = createGame(STRATEGY_KEY.HANDWRITTEN, STRATEGY_KEY.RANDOM, 2);
+        const game = gameFor(STRATEGY_KEY.HANDWRITTEN, STRATEGY_KEY.RANDOM, 2);
         start_game(game);
         const t0 = Date.now();
         let iter = 0;
