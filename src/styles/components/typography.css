@@ -22,15 +22,20 @@
    the interior is filled with the cardback fern texture. Until the texture loads
    only `.title-fern` is applied, leaving a solid red title as the fallback. */
 .title-fern {
-  -webkit-text-stroke: 2px var(--color-accent-red);
+  -webkit-text-stroke: 1.5px var(--color-accent-red);
   color: var(--color-accent-red);
 }
 
 .title-fern--loaded {
-  background-image: var(--fern-texture);
-  background-size: cover;
-  background-position: center;
-  background-repeat: no-repeat;
+  /* Two clipped layers: the fern on top, a solid red fill underneath so the
+     fern's transparent gaps read as red instead of letting the wool show
+     through. `contain` + repeat keeps the whole frond visible (not a zoomed-in
+     scatter of points). */
+  background-image: var(--fern-texture),
+                    linear-gradient(var(--color-accent-red), var(--color-accent-red));
+  background-size: contain, cover;
+  background-position: center, center;
+  background-repeat: repeat, no-repeat;
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
