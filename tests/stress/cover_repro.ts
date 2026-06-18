@@ -1,15 +1,16 @@
-// Deterministic repro for the Q4 finding (no concurrency, no DB): validateCover
-// checks each attack card is on the table by VALUE only
-//   (cover.ts:32  battle.attack.value === card.value && battle.defense === null)
-// but executeCover locates it by EXACT suit+value
-//   (cover.ts:72  card_comp(battle.attack, attack_card) && battle.defense === null).
+// Regression test for the cover validate/execute matching mismatch.
 //
-// So when two same-value attacks are on the table and the specific one the
-// defender names is already covered, validation passes (the OTHER same-value
-// attack satisfies the value check) and execution throws the uncaught
-// 'SEVERE: Card not found on table'. In production this is reachable by a
-// defender double-tapping "cover" on one of two same-rank attacks (the second
-// tap reloads a state where that exact card is already covered).
+// Before the fix: validateCover checked the named attack card by VALUE only
+// (cover.ts), while executeCover located it by EXACT suit+value (card_comp). With
+// two same-rank attacks on the table, naming one that's already covered passed
+// validation (the OTHER same-rank attack satisfied the value check) and then
+// threw the uncaught 'SEVERE: Card not found on table' in execution — reachable
+// by a defender double-tapping cover.
+//
+// After the fix: validateCover matches by exact card, so the second tap is
+// rejected gracefully, and covering the still-uncovered same-rank attack works.
+//
+//   npx tsx tests/stress/cover_repro.ts   (exit 0 = pass)
 
 import { Game, GAME_STATUS, PLAYER_STATUS, STRATEGY_KEY } from '../../supabase/functions/_shared/types.ts';
 import { handleCover } from '../../supabase/functions/_shared/actions/cover.ts';
@@ -21,36 +22,42 @@ function makeGame(): Game {
     id: 'repro', name: 'repro', deck_length: 0, discard_pile_length: 0,
     flipped: null, status: GAME_STATUS.PLAYING, power_suit: 0, // spades trump
     first_attacker: 0, defender: 1, table_battles: [
-      { attack: card(0, 6), defense: null }, // 7 of spades  (value 6)
-      { attack: card(1, 6), defense: null }, // 7 of hearts  (value 6)
+      { attack: card(0, 6), defense: null }, // 7 of spades
+      { attack: card(1, 6), defense: null }, // 7 of hearts (same rank)
     ],
     elimination_order: [], good_timestamp: null, good_players: [],
     deck: [], logs: [],
     players: [
       { player_id: 'attacker', name: 'Attacker', status: PLAYER_STATUS.IN, is_ai: false, hand: [], awaiting_attack: false, hand_length: 0, strategy_key: STRATEGY_KEY.HUMAN },
-      // defender holds two spade trumps that can each cover a 7
       { player_id: 'defender', name: 'Defender', status: PLAYER_STATUS.IN, is_ai: false, hand: [card(0, 7), card(0, 8)], awaiting_attack: false, hand_length: 2, strategy_key: STRATEGY_KEY.HUMAN },
     ],
   };
 }
 
-console.log('=== Q4 deterministic repro: cover validate/execute matching mismatch ===');
-const game = makeGame();
+let pass = true;
+const check = (cond: boolean, label: string) => { console.log(`  ${cond ? 'PASS' : 'FAIL'}  ${label}`); if (!cond) pass = false; };
 
-// First cover: 7♠ (value 6, suit 0) with 8♠ — legitimate.
-handleCover(game, 'defender', [card(0, 7)], [card(0, 6)]);
-console.log('after first cover, table:', game.table_battles.map(b => `${b.attack.suit}:${b.attack.value}${b.defense ? `/def ${b.defense.suit}:${b.defense.value}` : ''}`).join('  '));
+console.log('=== cover matching regression ===');
 
-// Second cover (the realistic stale double-tap): defender again names 7♠, which
-// is now covered. 7♥ (same value) is still uncovered, so validateCover passes.
-try {
-  handleCover(game, 'defender', [card(0, 8)], [card(0, 6)]);
-  console.log('Q4 repro: NO error (unexpected)');
-} catch (e: any) {
-  const severe = String(e.message).includes('SEVERE');
-  console.log(`Q4 repro: threw -> "${e.message}"`);
-  console.log(severe
-    ? 'CONFIRMED BUG: validation passed (value match on the other 7) but execution could not find the exact covered card -> uncaught SEVERE (surfaces as a 500-class error to the user).'
-    : 'threw a different (graceful) error');
-  process.exit(severe ? 0 : 1);
+// 1) Double-tap on the already-covered same-rank card must be a graceful reject.
+{
+  const g = makeGame();
+  handleCover(g, 'defender', [card(0, 7)], [card(0, 6)]); // cover 7♠ with 8♠... (legit)
+  let msg = '';
+  try { handleCover(g, 'defender', [card(0, 8)], [card(0, 6)]); } catch (e: any) { msg = String(e.message); }
+  check(msg.length > 0 && !msg.includes('SEVERE'), `double-tap on covered 7♠ rejected gracefully (got: "${msg || 'no error'}")`);
 }
+
+// 2) Covering the still-uncovered same-rank attack (7♥) must succeed.
+{
+  const g = makeGame();
+  handleCover(g, 'defender', [card(0, 7)], [card(0, 6)]); // cover 7♠
+  let ok = false;
+  try { handleCover(g, 'defender', [card(0, 8)], [card(1, 6)]); ok = true; } catch { ok = false; }
+  const bothCovered = ok && (makeGame(), true);
+  check(ok, 'covering the still-uncovered 7♥ succeeds');
+  void bothCovered;
+}
+
+console.log(pass ? 'cover regression: PASS' : 'cover regression: FAIL');
+process.exit(pass ? 0 : 1);
