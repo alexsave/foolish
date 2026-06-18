@@ -47,6 +47,7 @@ deadlocks under parallelism.
 | `fuzz.test.ts` | the real validation+handler dispatch + CAS | adversarial/illegal/malformed input never duplicates or loses a card, illegal moves are rejected, the server survives hostile payloads (found + fixed a card-duplication exploit) |
 | `rearrange.test.ts` | the real `handleRearrangeHand` + CAS | duplicate/garbage index lists are rejected (found + fixed a card-cloning exploit); a real permutation conserves cards |
 | `meta.test.ts` | the real consolidated `meta` handlers + CAS | start/add-bot/exit/continue behave correctly through one endpoint |
+| `replay_codec.test.ts` | the real engine + replay encode/decode codec | engine-played games round-trip byte-exact through encode → serialize → decode (plus extras names/timing and the replay-screen view builder). Pure codec test — needs no Postgres. |
 
 The latency-sweep conclusions are folded into deterministic checks in
 `client.test.ts` ("reordering" / "disconnect").
