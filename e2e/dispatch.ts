@@ -1,38 +1,51 @@
-// Dispatch a legal Move to the REAL action handler — the same handlers the
-// deployed `action` edge function calls. Pure server code; no mock.
-import { Game, AnimationEvent } from '../supabase/functions/_shared/types.ts';
-import { handleAttack } from '../supabase/functions/_shared/actions/attack.ts';
-import { handleCover } from '../supabase/functions/_shared/actions/cover.ts';
-import { handlePass } from '../supabase/functions/_shared/actions/pass.ts';
-import { handlePickup } from '../supabase/functions/_shared/actions/pickup.ts';
-import { handleGood } from '../supabase/functions/_shared/actions/good.ts';
-import { Move } from './moves.ts';
+// Drive games with the REAL deployed bot code: calculateLegalMoves (the same
+// enumeration the bot loop uses) and executeBotMove (the same LegalMove ->
+// handler dispatch). The only test glue is iterating players and a card-counting
+// assertion that reads the durable DB state directly.
 
-export const applyMove = (game: Game, move: Move): { game: Game; events: AnimationEvent[] } => {
-    switch (move.type) {
-        case 'attack': return { game, events: handleAttack(game, move.player_id, move.cards) };
-        case 'cover': return { game, events: handleCover(game, move.player_id, move.cover_cards, move.attack_cards) };
-        case 'pass': return { game, events: handlePass(game, move.player_id, move.cards) };
-        case 'pickup': return { game, events: handlePickup(game, move.player_id) };
-        case 'good': return { game, events: handleGood(game, move.player_id) };
-        default: throw new Error('unknown move');
-    }
-};
-
-// Read the durably-committed game and check the core invariant directly from the
-// DB (independent of the server's in-memory view).
+import { Game, AnimationEvent, PLAYER_STATUS } from '../supabase/functions/_shared/types.ts';
+import { LegalMove } from '../supabase/functions/_shared/bot_interfaces.ts';
+import { calculateLegalMoves } from '../supabase/functions/_shared/bot_strategy.ts';
+import { executeBotMove } from '../supabase/functions/_shared/pure_bot_actions.ts';
 import { pgPool } from './harness.ts';
+
+export interface PlayerMove { playerId: string; move: LegalMove }
+
+// Every legal move for every in-play player, via the REAL enumeration.
+export function legalMovesFor(game: Game, allow?: (playerId: string) => boolean): PlayerMove[] {
+    const out: PlayerMove[] = [];
+    for (const p of game.players) {
+        if (p.status !== PLAYER_STATUS.IN) continue;
+        if (allow && !allow(p.player_id)) continue;
+        for (const move of calculateLegalMoves(game, p.player_id)) {
+            if (move.type === 'wait') continue;
+            out.push({ playerId: p.player_id, move });
+        }
+    }
+    return out;
+}
+
+// Apply via the REAL executeBotMove (returns false on a validation race, which
+// commits as a harmless no-op — exactly how the live bot loop tolerates races).
+export function applyPlayerMove(game: Game, pm: PlayerMove): AnimationEvent[] {
+    const player = game.players.find((p) => p.player_id === pm.playerId)!;
+    const ev = executeBotMove(game, player, pm.move);
+    return ev || [];
+}
+
+// Card conservation, read straight from the committed DB (independent of the
+// server's in-memory view): deck + flipped + hands + table + discard == full deck,
+// no duplicates, no card-backs.
 const key = (c: { suit: number; value: number }) => `${c.suit}:${c.value}`;
 export async function checkCardConservation(gameId: string): Promise<{ ok: boolean; detail: string }> {
-    const g = (await pgPool.query('SELECT players, table_battles, discard_pile_length FROM games WHERE id=$1', [gameId])).rows[0];
+    const g = (await pgPool.query('SELECT players, table_battles, discard_pile_length, flipped FROM games WHERE id=$1', [gameId])).rows[0];
     const deck = (await pgPool.query('SELECT deck FROM game_decks WHERE game_id=$1', [gameId])).rows[0]?.deck ?? [];
     const ph = (await pgPool.query('SELECT hand FROM player_hands WHERE game_id=$1', [gameId])).rows;
     const bh = (await pgPool.query('SELECT hand FROM bot_hands WHERE game_id=$1', [gameId])).rows;
-    const flipped = (await pgPool.query('SELECT flipped FROM games WHERE id=$1', [gameId])).rows[0]?.flipped;
 
     const live: { suit: number; value: number }[] = [];
     for (const c of deck) live.push(c);
-    if (flipped) live.push(flipped);
+    if (g.flipped) live.push(g.flipped);
     for (const r of [...ph, ...bh]) for (const c of (r.hand ?? [])) live.push(c);
     for (const b of (g.table_battles ?? [])) { live.push(b.attack); if (b.defense) live.push(b.defense); }
 

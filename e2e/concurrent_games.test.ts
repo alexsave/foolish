@@ -15,8 +15,7 @@ import { applySchema, resetDb, seedGame, uuid, pgPool } from './harness.ts';
 import { executeWithGameLock, loadCompleteGame } from '../supabase/functions/_shared/utils.ts';
 import { start_game } from '../supabase/functions/_shared/common_utils.ts';
 import { AnimationEvent } from '../supabase/functions/_shared/types.ts';
-import { legalMoves } from './moves.ts';
-import { applyMove, checkCardConservation } from './dispatch.ts';
+import { legalMovesFor, applyPlayerMove, checkCardConservation } from './dispatch.ts';
 
 const pick = <T>(a: T[]): T => a[Math.floor(Math.random() * a.length)];
 
@@ -53,10 +52,10 @@ test('many concurrent games on one Postgres: no deadlock, no cross-game corrupti
             let g;
             try { g = await loadCompleteGame(gameId); } catch (e: any) { errors.push(`load ${gameId}: ${e.message}`); return; }
             if (g.status !== 'playing') break;
-            const moves = legalMoves(g);
+            const moves = legalMovesFor(g);
             if (moves.length === 0) break;
             try {
-                await executeWithGameLock(gameId, async (gg) => applyMove(gg, pick(moves)), `${gameId}-${steps}`, true);
+                await executeWithGameLock(gameId, async (gg) => ({ game: gg, events: applyPlayerMove(gg, pick(moves)) }), `${gameId}-${steps}`, true);
             } catch (e: any) {
                 const msg = String(e.message);
                 if (/deadlock/i.test(msg)) errors.push(`DEADLOCK ${gameId}: ${msg}`);

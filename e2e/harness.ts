@@ -7,6 +7,10 @@
 (globalThis as any).Deno = (globalThis as any).Deno || { env: { get: (k: string) => process.env[k] || 'x' } };
 (globalThis as any).EdgeRuntime = (globalThis as any).EdgeRuntime || { waitUntil: (_p: Promise<unknown>) => {} };
 
+// The real handlers / bot code log play-by-play; silence the gameplay chatter so
+// test output stays readable (assertions still surface failures).
+if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
+
 import { randomUUID } from 'crypto';
 import { readFileSync } from 'fs';
 import { join } from 'path';
