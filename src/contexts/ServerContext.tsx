@@ -6,6 +6,32 @@ import { useAuth } from './AuthContext';
 import { MAX_PLAYERS } from '../common/constants';
 import { get_next_player_index, card_comp } from '../common/common_utils';
 import { ANIMATION_TIME } from '../constants/constants';
+import { optimisticOverlay } from '../state/optimisticOverlay';
+
+// Re-apply the local player's unconfirmed optimistic table cards onto an
+// authoritatively-loaded game, so a reconnect resync doesn't momentarily drop a
+// card the player just played (it would otherwise vanish, then reappear when the
+// confirming broadcast lands). Idempotent: anything already present, or with no
+// pending optimistic cards, is left untouched.
+const applyOptimisticOverlay = (g: PersonalGame): void => {
+    const entries = optimisticOverlay.entries();
+    if (entries.length === 0 || !g.self) return;
+    for (const e of entries) {
+        if (e.target) {
+            // optimistic cover: set the defense on the matching uncovered battle
+            const battle = g.table_battles.find(b =>
+                card_comp(b.attack, e.target!) && b.defense === null);
+            if (battle) battle.defense = e.card;
+        } else {
+            // optimistic attack: add the battle if the card isn't already on the table
+            const present = g.table_battles.some(b =>
+                card_comp(b.attack, e.card) || (b.defense !== null && card_comp(b.defense, e.card)));
+            if (!present) g.table_battles.push({ attack: e.card, defense: null });
+        }
+        // and take the card out of my displayed hand (it's on the table now)
+        if (g.self.hand) g.self.hand = g.self.hand.filter(c => !card_comp(c, e.card));
+    }
+};
 
 const ServerContext = createContext<ServerContextType | null>(null);
 
@@ -585,6 +611,12 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                                 strategy_key: STRATEGY_KEY.HUMAN
                             }
                         };
+
+                        // Re-apply the local player's unconfirmed optimistic cards onto
+                        // the authoritative state so a reconnect resync doesn't make a
+                        // just-played card vanish-then-reappear (Q7). No-op on a normal
+                        // load (nothing optimistic pending).
+                        applyOptimisticOverlay(personalizedGame);
 
                         setGames(prev => ({ ...prev, [gameId]: mergeGameData(gameId, personalizedGame, prev) }));
                         joinOrSubscribe(personalizedGame);
