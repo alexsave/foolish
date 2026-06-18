@@ -83,6 +83,72 @@ test('meta:continue — resets a finished game back to the lobby', async () => {
     assert.ok(g.players.every(p => p.is_ai ? p.status === PLAYER_STATUS.READY : p.status === PLAYER_STATUS.IDLE), 'statuses reset');
 });
 
+test('meta:join — a new player joins a waiting game and gets a hand row', async () => {
+    const gameId = `m${uuid().slice(0, 5)}`;
+    const h1 = uuid(), joiner = uuid();
+    await seedGame(gameId, [{ id: h1, name: 'H1', is_ai: false, strategy_key: 'human' }]);
+    await pgPool.query("UPDATE games SET status='waiting' WHERE id=$1", [gameId]);
+    // joiner must exist in auth.users for the player_hands FK
+    await pgPool.query('INSERT INTO auth.users(id) VALUES($1) ON CONFLICT DO NOTHING', [joiner]);
+
+    await runMeta(gameId, joiner, { type: 'join', game_id: gameId });
+    const g = await loadCompleteGame(gameId);
+    assert.equal(g.players.length, 2, 'joiner added to players');
+    assert.ok(g.players.some(p => p.player_id === joiner), 'joiner present');
+    assert.equal((await pgPool.query('SELECT count(*) FROM player_hands WHERE game_id=$1 AND player_id=$2', [gameId, joiner])).rows[0].count, '1', 'joiner hand row persisted');
+
+    // can't join twice
+    await assert.rejects(runMeta(gameId, joiner, { type: 'join', game_id: gameId }), /already in game/i);
+});
+
+test('meta:rearrange-players — reorders the lobby seating', async () => {
+    const gameId = `m${uuid().slice(0, 5)}`;
+    const h1 = uuid(), h2 = uuid();
+    await seedGame(gameId, [
+        { id: h1, name: 'H1', is_ai: false, strategy_key: 'human' },
+        { id: h2, name: 'H2', is_ai: false, strategy_key: 'human' },
+    ]);
+    await pgPool.query("UPDATE games SET status='waiting' WHERE id=$1", [gameId]);
+
+    await runMeta(gameId, h1, { type: 'rearrange-players', game_id: gameId, new_order: [h2, h1] });
+    const g = await loadCompleteGame(gameId);
+    assert.deepEqual(g.players.map(p => p.player_id), [h2, h1], 'order swapped');
+
+    // bad order (wrong length / unknown id) is rejected
+    await assert.rejects(runMeta(gameId, h1, { type: 'rearrange-players', game_id: gameId, new_order: [h1] }), /exactly 2 player/i);
+    await assert.rejects(runMeta(gameId, h1, { type: 'rearrange-players', game_id: gameId, new_order: [h1, uuid()] }), /not found/i);
+});
+
+test('meta:update-name — renames the game in the lobby (with validation)', async () => {
+    const gameId = `m${uuid().slice(0, 5)}`;
+    const h1 = uuid();
+    await seedGame(gameId, [{ id: h1, name: 'H1', is_ai: false, strategy_key: 'human' }]);
+    await pgPool.query("UPDATE games SET status='waiting' WHERE id=$1", [gameId]);
+
+    await runMeta(gameId, h1, { type: 'update-name', game_id: gameId, new_name: '  Cool Game  ' });
+    const g = await loadCompleteGame(gameId);
+    assert.equal(g.name, 'Cool Game', 'name trimmed + saved');
+
+    await assert.rejects(runMeta(gameId, h1, { type: 'update-name', game_id: gameId, new_name: '   ' }), /non-empty/i);
+    await assert.rejects(runMeta(gameId, h1, { type: 'update-name', game_id: gameId, new_name: 'x'.repeat(51) }), /50 characters/i);
+});
+
+test('create_game RPC — creates games + game_decks + player_hands in one call', async () => {
+    const gameId = `c${uuid().slice(0, 5)}`;
+    const creator = uuid();
+    await pgPool.query('INSERT INTO auth.users(id) VALUES($1) ON CONFLICT DO NOTHING', [creator]);
+
+    const players = [{ player_id: creator, name: 'Creator', status: 'idle', is_ai: false }];
+    await pgPool.query('SELECT create_game($1,$2,$3,$4)', [gameId, "Creator's Game", creator, JSON.stringify(players)]);
+
+    const g = await loadCompleteGame(gameId);
+    assert.equal(g.status, GAME_STATUS.WAITING, 'waiting lobby');
+    assert.equal(g.name, "Creator's Game");
+    assert.equal(g.players.length, 1, 'creator seated');
+    assert.deepEqual(g.deck, [], 'empty deck row created');
+    assert.equal((await pgPool.query('SELECT count(*) FROM player_hands WHERE game_id=$1 AND player_id=$2', [gameId, creator])).rows[0].count, '1', 'creator hand row created');
+});
+
 test('meta: unknown type is rejected', async () => {
     const gameId = `m${uuid().slice(0, 5)}`;
     const h1 = uuid();

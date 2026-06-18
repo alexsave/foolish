@@ -537,6 +537,30 @@ BEGIN
 END;
 $$;
 
+-- create_game: the three create-game inserts (games → game_decks → player_hands)
+-- in one transaction / one round-trip. See migration 20260618120000.
+CREATE OR REPLACE FUNCTION create_game(
+  p_game_id   TEXT,
+  p_name      TEXT,
+  p_player_id UUID,
+  p_players   JSONB
+) RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  INSERT INTO games (id, name, players, status)
+    VALUES (p_game_id, p_name, p_players, 'waiting');
+
+  INSERT INTO game_decks (game_id, deck)
+    VALUES (p_game_id, '[]'::jsonb);
+
+  INSERT INTO player_hands (game_id, player_id, hand, awaiting_attack)
+    VALUES (p_game_id, p_player_id, '[]'::jsonb, false);
+END;
+$$;
+
 -- Bot-loop lease: atomic claim (NULL if another loop holds a live lease).
 CREATE OR REPLACE FUNCTION try_acquire_bot_lease(p_game_id TEXT, p_ttl_ms INT)
 RETURNS UUID
