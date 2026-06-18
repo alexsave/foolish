@@ -45,6 +45,7 @@ deadlocks under parallelism.
 | `client.test.ts` | `clientReconcile` (the deployed client logic) | no hand swaps/dupes/table-cards; trust-incoming table; version gate; optimistic-overlay resync |
 | `concurrent_games.test.ts` | many real games on one Postgres | no deadlock, no cross-game corruption (answers "is the parallel deadlock a real bug?" — it isn't) |
 
-The narrative write-ups that produced these assertions live in `tests/stress/`
-(`FINDINGS_*.md`) alongside the exploratory sweep tools (latency grids etc.); this
-folder is the codified, pass/fail version.
+The narrative write-ups that produced these assertions live in `findings/`
+(`FINDINGS_*.md`). They're historical investigation notes; the codified, pass/fail
+version is this suite. The latency-sweep conclusions are folded into deterministic
+checks in `client.test.ts` ("reordering" / "disconnect").

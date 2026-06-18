@@ -11,8 +11,7 @@ import { applySchema, resetDb, seedGame, uuid, pgPool, broadcastLog } from './ha
 import { executeWithGameLock } from '../supabase/functions/_shared/utils.ts';
 import { start_game } from '../supabase/functions/_shared/common_utils.ts';
 import { AnimationEvent } from '../supabase/functions/_shared/types.ts';
-import { legalMoves, Move } from './moves.ts';
-import { applyMove, checkCardConservation } from './dispatch.ts';
+import { legalMovesFor, applyPlayerMove, checkCardConservation, PlayerMove } from './dispatch.ts';
 
 const rand = (n: number) => Math.floor(Math.random() * n);
 const pick = <T>(a: T[]): T => a[rand(a.length)];
@@ -45,10 +44,10 @@ test('card conservation holds across a full sequential game (real executeWithGam
     while (steps < 3000) {
         const g = await loadGame(gameId);
         if (g.status !== 'playing') break;
-        const moves = legalMoves(g);
+        const moves = legalMovesFor(g);
         if (moves.length === 0) break;
         const m = pick(moves);
-        try { await executeWithGameLock(gameId, async (gg) => applyMove(gg, m), `s${steps}`, true); } catch { /* stale */ }
+        try { await executeWithGameLock(gameId, async (gg) => ({ game: gg, events: applyPlayerMove(gg, m) }), `s${steps}`, true); } catch { /* stale */ }
         const chk = await checkCardConservation(gameId);
         assert.ok(chk.ok, `card conservation violated at step ${steps}: ${chk.detail}`);
         steps++;
@@ -62,9 +61,9 @@ test('every broadcast carries a monotonically non-decreasing games.version (the 
     while (steps < 2000) {
         const g = await loadGame(gameId);
         if (g.status !== 'playing') break;
-        const moves = legalMoves(g);
+        const moves = legalMovesFor(g);
         if (moves.length === 0) break;
-        try { await executeWithGameLock(gameId, async (gg) => applyMove(gg, pick(moves)), `s${steps}`, true); } catch { /* */ }
+        try { await executeWithGameLock(gameId, async (gg) => ({ game: gg, events: applyPlayerMove(gg, pick(moves)) }), `s${steps}`, true); } catch { /* */ }
         steps++;
     }
     // Each animation_events broadcast must carry a numeric version; per recipient
@@ -90,14 +89,14 @@ test('CAS serializes concurrent moves without losing or duplicating a card', asy
     while (steps < 1500) {
         const snap = await loadGame(gameId);
         if (snap.status !== 'playing') break;
-        const moves = legalMoves(snap).filter((m: Move) => !botIds.has((m as any).player_id));
+        const moves = legalMovesFor(snap, (id) => !botIds.has(id));
         if (moves.length === 0) { steps++; continue; }
         // fire a burst of overlapping requests against the same loaded version
-        const burst: Move[] = [];
+        const burst: PlayerMove[] = [];
         const n = 1 + rand(Math.min(3, moves.length));
         for (let i = 0; i < n; i++) burst.push(pick(moves));
         if (Math.random() < 0.3) burst.push(burst[0]); // rapid double-submit
-        await Promise.all(burst.map((m, i) => executeWithGameLock(gameId, async (gg) => applyMove(gg, m), `b${steps}-${i}`, true).catch(() => {})));
+        await Promise.all(burst.map((m, i) => executeWithGameLock(gameId, async (gg) => ({ game: gg, events: applyPlayerMove(gg, m) }), `b${steps}-${i}`, true).catch(() => {})));
         const chk = await checkCardConservation(gameId);
         assert.ok(chk.ok, `conservation broke under contention at step ${steps}: ${chk.detail}`);
         steps++;

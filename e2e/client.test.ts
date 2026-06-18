@@ -53,6 +53,40 @@ test('shouldDropStaleSequence drops at-or-below the newest applied version, keep
     assert.equal(shouldDropStaleSequence(5, null), false, 'replay (no version) never gated');
 });
 
+// ---- reordering / cross-bout (codified from the latency sweeps) ------------
+// A stream spanning a bout change: v1 = bout A (covered), v2 = clear, v3 = bout B.
+// Replay it through the REAL gate + merge under an adversarial reorder and assert
+// the client lands on the newest authoritative state, never a stale/mixed bout.
+const boutStream = [
+    { version: 1, finalTable: [{ attack: c(0, 6), defense: c(0, 7) }] as B[] }, // bout A, covered
+    { version: 2, finalTable: [] as B[] },                                       // round-transition clear
+    { version: 3, finalTable: [{ attack: c(2, 8), defense: null }] as B[] },     // bout B, new attack
+];
+const replay = (order: typeof boutStream, gated: boolean) => {
+    let table: B[] = []; let last: number | null = null;
+    for (const b of order) {
+        if (gated && shouldDropStaleSequence(last, b.version)) continue;
+        table = mergeTableBattles(table, b.finalTable);
+        last = b.version;
+    }
+    return table;
+};
+const tkeys = (bs: B[]) => bs.flatMap((b) => (b.defense ? [cardKey(b.attack), cardKey(b.defense)] : [cardKey(b.attack)])).sort();
+
+test('reordering: the version gate lands the client on the newest bout (not a stale one)', () => {
+    // adversarial: newest (v3) arrives first, then the older v1 and the clear v2.
+    const reordered = [boutStream[2], boutStream[0], boutStream[1]];
+    assert.deepEqual(tkeys(replay(reordered, true)), tkeys(boutStream[2].finalTable), 'gate => newest bout');
+    // without the gate the client would end on whatever arrived last (a stale bout)
+    assert.notDeepEqual(tkeys(replay(reordered, false)), tkeys(boutStream[2].finalTable), 'no gate => stale (why the gate is needed)');
+});
+
+test('disconnect: a dropped round-transition clear does not strand previous-bout cards', () => {
+    // the clear (v2) is the lost packet; the client jumps A -> B directly.
+    const dropped = [boutStream[0], boutStream[2]];
+    assert.deepEqual(tkeys(replay(dropped, true)), tkeys(boutStream[2].finalTable), 'trust-incoming replaces, no cross-bout cards');
+});
+
 // ---- optimistic overlay (resync no-vanish) ---------------------------------
 test('applyOverlayEntries re-applies unconfirmed optimistic cards onto a resync (no vanish)', () => {
     const myAttack = c(3, 7);
