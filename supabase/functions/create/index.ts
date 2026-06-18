@@ -1,5 +1,5 @@
 import { wrap400, ExecutionParams } from "../_shared/utils.ts";
-import { Game, AnimationEvent, ANIMATION_EVENT_TYPE, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY } from "../_shared/types.ts";
+import { Game, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY } from "../_shared/types.ts";
 import { createId } from "../_shared/common_utils.ts";
 import { createClient } from 'jsr:@supabase/supabase-js';
 
@@ -35,7 +35,8 @@ wrap400(async ({ user, user_name }: ExecutionParams) => {
         throw new Error(`Failed to create game: ${createError.message}`);
     }
 
-    // Construct complete game state directly from inserted data (no need to query back)
+    // Construct complete game state directly from inserted data (no need to query back).
+    // Returned synchronously in the HTTP response — which is the ONLY consumer.
     const dbGameData: Game = {
         id: game_id,
         name: game_name,
@@ -64,12 +65,10 @@ wrap400(async ({ user, user_name }: ExecutionParams) => {
         logs: []
     };
 
-    // Create game creation event
-    const creationEvent: AnimationEvent = {
-        type: ANIMATION_EVENT_TYPE.MAGIC_TRANSITION,
-        message: `Game created by ${user_name}`,
-        game_state: dbGameData
-    };
-
-    return { game: dbGameData, events: [creationEvent] };
+    // No broadcast on create: a just-created game has exactly one member (the
+    // creator), who already has the full state above via the HTTP response, and
+    // nobody is subscribed to the channels of a game that didn't exist a moment
+    // ago. The old creation broadcast reached no one yet cost ~800ms of function
+    // time (worse, via the Realtime→REST fallback). Returning no events skips it.
+    return { game: dbGameData, events: [] };
 }, false);
