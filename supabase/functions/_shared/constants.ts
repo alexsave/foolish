@@ -2,9 +2,9 @@
 export const CARDS_PER_PLAYER = 6;
 
 // Suits
-export const SPADES = 0;
+const SPADES = 0;
 export const HEARTS = 1;
-export const CLUBS = 2;
+const CLUBS = 2;
 export const DIAMONDS = 3;
 export const SUITS = [SPADES, HEARTS, CLUBS, DIAMONDS];
 

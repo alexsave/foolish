@@ -11,12 +11,8 @@
 // game_snapshots.extras blob, so a 1-byte prefix beats a 4-byte emoji on every
 // bot seat of every stored game. '%' has no case, so it survives the signup
 // uppercase-normalization unchanged.
-export const BOT_USERNAME_PREFIX = '%';
+const BOT_USERNAME_PREFIX = '%';
 
-// A name belongs to a bot iff it starts with the reserved prefix. Single source
-// of truth for the codec/analysis pipeline and any display logic.
-export const isBotUsername = (name: string | null | undefined): boolean =>
-    !!name && name.startsWith(BOT_USERNAME_PREFIX);
 
 // Humans may not put the reserved prefix ANYWHERE in their name (stricter than
 // "must not start with it" — there is no legitimate human use of it, and this

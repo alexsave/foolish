@@ -46,10 +46,4 @@ export function decodeReplay(x: bigint): DecodedReplay {
   };
 }
 
-export function decodeReplayBase64(s: string): DecodedReplay {
-  return decodeReplay(bytesToBigint(base64Decode(s)));
-}
 
-export function decodeReplayUrl(url: string): DecodedReplay {
-  return decodeReplay(urlToGame(url));
-}

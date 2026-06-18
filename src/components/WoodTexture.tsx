@@ -322,7 +322,7 @@ const generateWoodTextureFallback = async (width: number = 1920, height: number 
 };
 
 // Async generator function similar to fern fractal with promise caching
-export async function generateWoodTexture(): Promise<string> {
+async function generateWoodTexture(): Promise<string> {
   // Return cached texture if available
   if (woodTextureBlobUrl) {
     console.log('Using cached wood texture');
@@ -412,78 +412,6 @@ export const useWoodTexture = () => {
   return textureUrl;
 };
 
-// Main hook: Returns wood texture style, triggers loading, and handles fallback
-export const useWoodStyle = (seed?: number, willRotate: boolean = false): React.CSSProperties => {
-  const textureUrl = useWoodTexture();
 
-  // Memoize calculations to prevent randomSeed from changing on every render
-  const styleParams = useMemo(() => {
-    const randomSeed = seed !== undefined ? seed : Math.random();
-    const xOffset = Math.floor(randomSeed * 1920);
-    const yOffset = Math.floor((randomSeed * 1000) % 1080);
-    const scaleFactor = willRotate ? 1.5 : 1;
-    const scaledWidth = Math.floor(1920 * scaleFactor);
-    const scaledHeight = Math.floor(1080 * scaleFactor);
-    const adjustedXOffset = Math.floor(xOffset * scaleFactor);
-    const adjustedYOffset = Math.floor(yOffset * scaleFactor);
-    
-    return { scaledWidth, scaledHeight, adjustedXOffset, adjustedYOffset };
-  }, [seed, willRotate]);
-
-  // Memoize the style object - SAME structure always, just texture changes
-  const style = useMemo(() => {
-    // Always return the same structure - texture just "pops in" when loaded
-    return {
-      backgroundColor: '#c33f08',
-      backgroundImage: textureUrl 
-        ? `url(${textureUrl})`
-        : `repeating-linear-gradient(90deg, transparent, transparent 1px, rgba(0,0,0,0.1) 1px, rgba(0,0,0,0.1) 2px)`,
-      backgroundSize: `${styleParams.scaledWidth}px ${styleParams.scaledHeight}px`,
-      backgroundPosition: `${styleParams.adjustedXOffset}px ${styleParams.adjustedYOffset}px`,
-      backgroundRepeat: 'repeat'
-    };
-  }, [textureUrl, styleParams]);
-  
-  return style;
-};
-
-// Legacy function for non-React contexts (kept for backward compatibility)
-export const getWoodTextureStyle = (randomSeed?: number, willRotate: boolean = false): React.CSSProperties => {
-  // Trigger lazy loading if not already generated - the async chunking will handle yielding
-  if (!woodTextureBlobUrl && !woodTexturePromise && typeof window !== 'undefined') {
-    generateWoodTexture();
-  }
-
-  if (!woodTextureBlobUrl) {
-    return {
-      backgroundColor: '#c33f08',
-      backgroundImage: `repeating-linear-gradient(
-        90deg,
-        transparent,
-        transparent 1px,
-        rgba(0,0,0,0.1) 1px,
-        rgba(0,0,0,0.1) 2px
-      )`
-    };
-  }
-
-  const seed = randomSeed || Math.random();
-  const xOffset = Math.floor(seed * 1920);
-  const yOffset = Math.floor((seed * 1000) % 1080);
-
-  const scaleFactor = willRotate ? 1.5 : 1;
-  const scaledWidth = Math.floor(1920 * scaleFactor);
-  const scaledHeight = Math.floor(1080 * scaleFactor);
-  
-  const adjustedXOffset = Math.floor(xOffset * scaleFactor);
-  const adjustedYOffset = Math.floor(yOffset * scaleFactor);
-
-  return {
-    backgroundImage: `url(${woodTextureBlobUrl})`,
-    backgroundSize: `${scaledWidth}px ${scaledHeight}px`,
-    backgroundPosition: `${adjustedXOffset}px ${adjustedYOffset}px`,
-    backgroundRepeat: 'repeat'
-  };
-};
 
 export default WoodTexture; 

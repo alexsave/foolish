@@ -97,9 +97,6 @@ export function setNitroWeights(w: NitroWeights): void {
     _weights = w;
 }
 
-export function getNitroWeights(): NitroWeights {
-    return _weights;
-}
 
 const bucket = (deckSize: number): number =>
     Math.max(0, Math.min(DECK_BUCKETS - 1, deckSize));
@@ -213,9 +210,6 @@ try {
     _nnParams = null;
 }
 
-export function setNitroNNParams(p: NNParams | null): void {
-    _nnParams = p;
-}
 
 // Pick atomic action: forward through the transformer, mask illegal actions,
 // argmax. The "legal" mask is computed from the current move-in-progress.

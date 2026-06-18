@@ -73,7 +73,7 @@ export type StringId =
   | 'replay_draw_clear';
 
 // English strings
-export const strings_en: Record<StringId, string> = {
+const strings_en: Record<StringId, string> = {
   playing: 'Playing',
   waiting: 'Waiting',
   ready: 'Ready',
@@ -148,7 +148,7 @@ export const strings_en: Record<StringId, string> = {
 };
 
 // Russian strings
-export const strings_ru: Record<StringId, string> = {
+const strings_ru: Record<StringId, string> = {
   playing: 'В игре',
   waiting: 'Ожидание',
   ready: 'Готов',
@@ -223,7 +223,7 @@ export const strings_ru: Record<StringId, string> = {
 };
 
 // Korean strings
-export const strings_ko: Record<StringId, string> = {
+const strings_ko: Record<StringId, string> = {
   playing: '게임 중',
   waiting: '대기 중',
   ready: '준비 완료',

@@ -19,7 +19,7 @@ export function validatePickup(game: Game, player_id: string): void {
 }
 
 // Execution function for pickup moves
-export function executePickup(game: Game, player_id: string): AnimationEvent[] {
+function executePickup(game: Game, player_id: string): AnimationEvent[] {
     const events: AnimationEvent[] = [];
     
     // Guard against modifying game state if game is already over

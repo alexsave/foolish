@@ -1,22 +1,5 @@
-// Types and interfaces for the game
-// Player was id name status hand
 
-export interface GameMessage {
-    game_id: string;
-    message: Message;
-}
 
-export interface PrivateMessage {
-    user_id: string;
-    message: Message;
-}
-
-export interface ChatMessage {
-    is_system: boolean;
-    game_id: string;
-    user_id: string;
-    message: string;
-}
 
 export const PLAYER_STATUS = {
     IDLE: 'idle',
@@ -25,7 +8,7 @@ export const PLAYER_STATUS = {
     OUT: 'out'
 } as const;
 
-export type PlayerStatus = typeof PLAYER_STATUS[keyof typeof PLAYER_STATUS];
+type PlayerStatus = typeof PLAYER_STATUS[keyof typeof PLAYER_STATUS];
 
 export const GAME_STATUS = {
     WAITING: 'waiting',
@@ -33,20 +16,9 @@ export const GAME_STATUS = {
     GAME_OVER: 'game_over'
 } as const;
 
-export type GameStatus = typeof GAME_STATUS[keyof typeof GAME_STATUS];
+type GameStatus = typeof GAME_STATUS[keyof typeof GAME_STATUS];
 
-export const LOBBY_MOVE_TYPE = {
-    CREATE: 'create',
-    JOIN: 'join',
-    BACK: 'back',
-    START: 'start',
-    ENTER: 'enter',
-    LIST: 'list',
-    LOGIN: 'login',
-    WEBSOCKET_CONNECT: 'websocket_connect'
-} as const;
 
-export type LobbyMoveType = typeof LOBBY_MOVE_TYPE[keyof typeof LOBBY_MOVE_TYPE];
 
 export const GAME_MOVE_TYPE = {
     PASS: 'pass',
@@ -60,7 +32,6 @@ export const GAME_MOVE_TYPE = {
     WAIT: 'wait'
 } as const;
 
-export type GameMoveType = typeof GAME_MOVE_TYPE[keyof typeof GAME_MOVE_TYPE];
 
 export const SERVER_EVENT_TYPE = {
     PLAYER_JOINED_GAME: 'player_joined_game',
@@ -82,7 +53,6 @@ export const SERVER_EVENT_TYPE = {
     GOOD_PLAYED: 'good_played'
 } as const;
 
-export type ServerEventType = typeof SERVER_EVENT_TYPE[keyof typeof SERVER_EVENT_TYPE];
 
 export const PRIVATE_EVENT_TYPE = {
     PLAYER_HAND: 'player_hand',
@@ -90,7 +60,6 @@ export const PRIVATE_EVENT_TYPE = {
     //PLAYER_STATUS: 'player_status'
 } as const;
 
-export type PrivateEventType = typeof PRIVATE_EVENT_TYPE[keyof typeof PRIVATE_EVENT_TYPE];
 
 export const ANIMATION_EVENT_TYPE = {
     MAGIC_TRANSITION: 'magic_transition', // change online view
@@ -106,7 +75,7 @@ export const ANIMATION_EVENT_TYPE = {
     CARDS_TO_TRASH: 'cards_to_trash' // cards to discard pile
 } as const;
 
-export type AnimationEventType = typeof ANIMATION_EVENT_TYPE[keyof typeof ANIMATION_EVENT_TYPE];
+type AnimationEventType = typeof ANIMATION_EVENT_TYPE[keyof typeof ANIMATION_EVENT_TYPE];
 
 // Base animation event for public view (spectators)
 export interface PublicAnimationEvent {
@@ -131,12 +100,6 @@ export interface AnimationEvent extends PublicAnimationEvent {
     game_state: Game; // full game state with all private data
 }
 
-// Stripped down versions
-export interface LobbyPlayer {
-    name: string;
-    status: PlayerStatus;
-    id: string;
-}
 
 export interface Message {
     type: string;
@@ -222,10 +185,6 @@ export interface PlayerHand {
     awaiting_attack: boolean;
 }
 
-export interface GameDeck {
-    game_id: string;
-    deck: Card[];
-}
 
 export interface UserEloRating {
     user_id: string;

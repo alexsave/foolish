@@ -23,47 +23,45 @@ import { Card, Game, PrivatePlayer, PLAYER_STATUS } from '../types.ts';
 
 // ---------- Token vocabulary ----------
 
-export const NUM_CARDS = 40;            // 4 suits × 10 values (5..14)
+const NUM_CARDS = 40;            // 4 suits × 10 values (5..14)
 export const ACTION_PICKUP = 40;
 export const ACTION_STOP = 41;
 export const NUM_ACTIONS = 42;
 
-// Special tokens come first; cards follow.
-export const TOK_PAD = 0;
-export const TOK_CLS = 1;
-export const TOK_ROLE_ATK = 2;
-export const TOK_ROLE_DEF = 3;
-export const TOK_ROLE_FIRST = 4;
-export const TOK_DECK_FULL = 5;
-export const TOK_DECK_MED = 6;
-export const TOK_DECK_LOW = 7;
-export const TOK_DECK_EMPTY = 8;
-export const TOK_SEC_HAND = 9;
-export const TOK_SEC_OPP = 10;
-export const TOK_SEC_DISCARD = 11;
-export const TOK_SEC_TABLE = 12;
-export const TOK_SEC_PROGRESS = 13;
-export const TOK_BATTLE_COVER = 14;
-export const TOK_BATTLE_NEXT = 15;
+const TOK_CLS = 1;
+const TOK_ROLE_ATK = 2;
+const TOK_ROLE_DEF = 3;
+const TOK_ROLE_FIRST = 4;
+const TOK_DECK_FULL = 5;
+const TOK_DECK_MED = 6;
+const TOK_DECK_LOW = 7;
+const TOK_DECK_EMPTY = 8;
+const TOK_SEC_HAND = 9;
+const TOK_SEC_OPP = 10;
+const TOK_SEC_DISCARD = 11;
+const TOK_SEC_TABLE = 12;
+const TOK_SEC_PROGRESS = 13;
+const TOK_BATTLE_COVER = 14;
+const TOK_BATTLE_NEXT = 15;
 // Move-history tokens (prepended to the state portion).
-export const TOK_SEC_HISTORY = 16;
-export const TOK_PLAYER_SELF = 17;
-export const TOK_PLAYER_OPP = 18;
-export const TOK_MOVE_ATTACK = 19;
-export const TOK_MOVE_COVER = 20;
-export const TOK_MOVE_PASS = 21;
-export const TOK_MOVE_PICKUP = 22;
-export const TOK_MOVE_GOOD = 23;
-export const TOK_MOVE_DRAW = 24;
-export const TOK_MOVE_DISCARD = 25;
-export const TOK_COVER_TARGET = 26;     // separator: cover_card [TARGET] attack_card
-export const TOK_CARD_BASE = 32;        // leave a small buffer for future special tokens
-export const VOCAB_SIZE = TOK_CARD_BASE + NUM_CARDS; // 72
+const TOK_SEC_HISTORY = 16;
+const TOK_PLAYER_SELF = 17;
+const TOK_PLAYER_OPP = 18;
+const TOK_MOVE_ATTACK = 19;
+const TOK_MOVE_COVER = 20;
+const TOK_MOVE_PASS = 21;
+const TOK_MOVE_PICKUP = 22;
+const TOK_MOVE_GOOD = 23;
+const TOK_MOVE_DRAW = 24;
+const TOK_MOVE_DISCARD = 25;
+const TOK_COVER_TARGET = 26;     // separator: cover_card [TARGET] attack_card
+const TOK_CARD_BASE = 32;        // leave a small buffer for future special tokens
+const VOCAB_SIZE = TOK_CARD_BASE + NUM_CARDS; // 72
 
-export const MAX_SEQ_LEN = 192;
+const MAX_SEQ_LEN = 192;
 // Cap how much history we replay — cheaper inference, and the deeper past
 // is summarized by the discard pile / current table state anyway.
-export const MAX_HISTORY_EVENTS = 32;
+const MAX_HISTORY_EVENTS = 32;
 
 const cardTokenId = (suit: number, value: number, trumpSuit: number): number => {
     const rotSuit = (suit - trumpSuit + 4) % 4;
@@ -234,12 +232,12 @@ export function tokenize(
 
 // ---------- Transformer ----------
 
-export const D_MODEL = 32;
-export const FF_DIM = 64;          // 2× d_model — small but two layers gives expressivity
-export const N_LAYERS = 2;         // small stack
+const D_MODEL = 32;
+const FF_DIM = 64;          // 2× d_model — small but two layers gives expressivity
+const N_LAYERS = 2;         // small stack
 // Single-head attention (multi-head left to a future iteration; this is small enough).
 
-export interface LayerParams {
+interface LayerParams {
     Wq: Float32Array; Wk: Float32Array; Wv: Float32Array;  // [D_MODEL][D_MODEL] flat
     Wo: Float32Array;                                       // attention output proj
     ln1g: Float32Array; ln1b: Float32Array;                 // pre-attention LayerNorm
@@ -534,7 +532,7 @@ export function softmaxMasked(logits: Float32Array, legal: boolean[]): Float32Ar
 
 // ---------- Backprop ----------
 
-export interface NNGrads {
+interface NNGrads {
     embed: Float32Array;
     posEmbed: Float32Array;
     layers: Array<{

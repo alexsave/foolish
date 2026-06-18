@@ -80,7 +80,7 @@ export const cdProfReset = (): void => {
     CDPROF.simTurns = 0; CDPROF.applyMove = 0; CDPROF.calcLegal = 0;
     CDPROF.solveNodes = 0; CDPROF.fastChoose = 0;
 };
-export const cdProfRead = (): typeof CDPROF => ({ ...CDPROF });
+const cdProfRead = (): typeof CDPROF => ({ ...CDPROF });
 
 const CARDS_PER_PLAYER = 6;
 
@@ -1355,7 +1355,7 @@ const espressoChoose = (g: SimGame, pIdx: number, moves: SimMove[]): number => {
 // indexes ARCH_POLICIES by it.
 export const POL_HANDWRITTEN = 0, POL_ESPRESSO = 1, POL_RANDOM = 2,
     POL_SIMPLE = 3, POL_GREEDY = 4, POL_PASSIVE = 5, POL_HUMAN = 6;
-export const NUM_POLICIES = 7;
+const NUM_POLICIES = 7;
 
 // random_strategy.ts: pick a uniformly random legal move. Consumes exactly one
 // rngNext() (keeps the rollout RNG stream well-defined).
@@ -1569,8 +1569,8 @@ const humanChoose = (g: SimGame, pIdx: number, moves: SimMove[]): number => {
 };
 
 // Dispatch table: ARCH_POLICIES[policyId] -> chooser. Index with POL_*.
-export type SimPolicy = (g: SimGame, p: number, m: SimMove[]) => number;
-export const ARCH_POLICIES: SimPolicy[] = [
+type SimPolicy = (g: SimGame, p: number, m: SimMove[]) => number;
+const ARCH_POLICIES: SimPolicy[] = [
     handwrittenChoose, espressoChoose, randomChoose, simpleHeuristicChoose, greedyChoose,
     passiveChoose, humanChoose,
 ];
@@ -1902,7 +1902,7 @@ export const profileSeats = (pv: PublicView): SeatProfile[] => {
 // This guarantees early-game behavior ~= cordite and avoids premature
 // commitment on noisy evidence. Returns null if no seat deviates (so the caller
 // can skip installing an override entirely and stay on the fast path).
-export const seatPolicyFromProfiles = (pv: PublicView, profiles: SeatProfile[]):
+const seatPolicyFromProfiles = (pv: PublicView, profiles: SeatProfile[]):
         number[] | null => {
     const n = pv.numPlayers;
     const table = new Array(n).fill(POL_HANDWRITTEN);

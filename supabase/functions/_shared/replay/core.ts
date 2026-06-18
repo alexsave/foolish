@@ -66,7 +66,7 @@ const MAX_ATOMS = 20000; // hard guard: a malformed integer must never hang
  * corpora (tests/tune harness); every legal option keeps weight >= 1 so any
  * legal game stays encodable. Exported ONLY so the tuning harness can probe
  * candidates — never mutate at runtime. */
-export const V1 = {
+const V1 = {
   COVER: 6, // best-known cover, geometric decay (>>1 per pref position)
   COVER_FRESH: 3, // cover from a hidden card
   PASS: 16, // perevod with a known card, geometric decay

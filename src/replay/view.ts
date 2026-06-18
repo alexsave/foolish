@@ -18,7 +18,7 @@ import {
 } from '@shared/types.ts';
 import { DecodedReplay } from '@shared/replay/core.ts';
 
-export interface ReplaySeatView {
+interface ReplaySeatView {
     /** face-down cards (identity unknown to spectators) */
     hidden: number;
     /** publicly known cards in hand (picked up from the table, or the trump) */

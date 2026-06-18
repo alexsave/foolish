@@ -31,14 +31,14 @@
  * A conforming decoder ends with x === 0n.
  * -------------------------------------------------------------------------- */
 
-export function ransPush(x: bigint, cum: number, w: number, M: number): bigint {
+function ransPush(x: bigint, cum: number, w: number, M: number): bigint {
   const W = BigInt(w);
   const r = x % W; // x mod w
   const q = x / W; // x div w
   return q * BigInt(M) + BigInt(cum) + r;
 }
 
-export function ransPop(
+function ransPop(
   x: bigint,
   weights: number[],
 ): { index: number; x: bigint } {
@@ -159,10 +159,6 @@ export class Coder {
   }
 }
 
-export interface CoderLike {
-  code(weights: number[], chosen?: number): number;
-  codeUniform(n: number, chosen?: number): number;
-}
 
 /* ----------------------------------------------------------------------------
  * 3. INTEGER <-> BYTES <-> BASE32 / BASE64 <-> URL
@@ -295,7 +291,7 @@ export function hexToBytes(hex: string): Uint8Array {
 
 export const URL_PREFIX = "WWW.FOOLISH.CARDS/";
 
-export function gameToCode(x: bigint): string {
+function gameToCode(x: bigint): string {
   return base32Encode(bigintToBytes(x));
 }
 export function codeToGame(code: string): bigint {
@@ -325,7 +321,7 @@ export function urlToGame(url: string): bigint {
  * consider a /r/ namespace before replay URLs are shared publicly).
  * -------------------------------------------------------------------------- */
 
-export const LEGACY_MAX_LEN = 7;
+const LEGACY_MAX_LEN = 7;
 
 export function classifyPathSegment(seg: string): "shortcode" | "replay" {
   return seg.length > LEGACY_MAX_LEN ? "replay" : "shortcode";
@@ -355,21 +351,4 @@ export function comb(n: number, k: number): number {
   return COMB[n][k];
 }
 
-/** xs strictly ascending, each in [0, m). rank in [0, C(m,k)). */
-export function cnsRank(xs: number[]): number {
-  let r = 0;
-  for (let i = 0; i < xs.length; i++) r += comb(xs[i], i + 1);
-  return r;
-}
 
-/** inverse of cnsRank for a k-subset. */
-export function cnsUnrank(rank: number, k: number): number[] {
-  const xs = new Array(k).fill(0);
-  for (let i = k; i >= 1; i--) {
-    let v = i - 1;
-    while (comb(v + 1, i) <= rank) v++;
-    xs[i - 1] = v;
-    rank -= comb(v, i);
-  }
-  return xs;
-}

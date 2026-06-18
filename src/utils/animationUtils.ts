@@ -3,7 +3,6 @@ import { Battle, Card, PublicGame } from "@shared/types.ts";
 export const getTableCards = (gameState: PublicGame): Card[] => gameState.table_battles
     ?.flatMap((b: Battle) => b.defense ? [b.attack, b.defense] : [b.attack]) || [];
 
-export const getCardStrings = (cards: Card[] | undefined): string[] => cards && cards.length > 0 ? cards.map(c => `${c.suit}${c.value}`) : [];
 
 export const cardsIntersection = (arr1: Card[], arr2: Card[]): Card[] => arr1.filter(card => arr2.some(c => c.suit === card.suit && c.value === card.value));
 
