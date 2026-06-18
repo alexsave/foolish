@@ -1,5 +1,6 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { generateFernPattern } from '../utils/fernFractal';
 import { TexturedSurface } from './TexturedSurface';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
 import { LanguageSwitcher } from './LanguageSwitcher';
@@ -13,9 +14,24 @@ export const Welcome = () => {
     const [name, setName] = useState('');
     const [password, setPassword] = useState('');
     const { signIn, signUp } = useAuth();
-    const { t } = useLocalization();
+    const { t, language } = useLocalization();
     const styles = useStyles();
     const passwordRef = useRef<HTMLInputElement>(null);
+
+    // For the en/ko locales, fill the brand title's glyphs with the cardback
+    // fern texture (red outline, fern interior). The texture is generated lazily
+    // and globally cached; until it resolves the title stays plain red.
+    const useFernTitle = language === 'en' || language === 'ko';
+    const [fernPattern, setFernPattern] = useState('');
+
+    useEffect(() => {
+        if (!useFernTitle) return;
+        let cancelled = false;
+        generateFernPattern()
+            .then((url) => { if (!cancelled) setFernPattern(url); })
+            .catch(() => { /* leave the plain-red fallback in place */ });
+        return () => { cancelled = true; };
+    }, [useFernTitle]);
 
     const useCustomMasking = styles.behavior.useCustomPasswordMasking;
     const maskedPassword = '#'.repeat(password.length);
@@ -102,7 +118,15 @@ export const Welcome = () => {
             <WoolBackgroundLayer />
             
             <p className="title title--brand z-content">
-                <Text id="foolish" />
+                <Text
+                    id="foolish"
+                    className={useFernTitle
+                        ? `title-fern${fernPattern ? ' title-fern--loaded' : ''}`
+                        : undefined}
+                    style={useFernTitle && fernPattern
+                        ? ({ '--fern-texture': `url(${fernPattern})` } as React.CSSProperties)
+                        : undefined}
+                />
             </p>
             
             <form onSubmit={handleLogin} className="flex flex-col items-center z-content" style={{ gap: '15px' }}>

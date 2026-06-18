@@ -18,6 +18,24 @@
   margin-bottom: 30px;
 }
 
+/* Fern-textured brand title (en/ko locales): the glyph outline stays red while
+   the interior is filled with the cardback fern texture. Until the texture loads
+   only `.title-fern` is applied, leaving a solid red title as the fallback. */
+.title-fern {
+  -webkit-text-stroke: 2px var(--color-accent-red);
+  color: var(--color-accent-red);
+}
+
+.title-fern--loaded {
+  background-image: var(--fern-texture);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
 .title--page {
   font-size: var(--font-size-xxl);
   color: var(--color-accent-red);
