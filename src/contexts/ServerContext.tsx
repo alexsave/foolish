@@ -441,20 +441,25 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         })
     };
 
+    // start / add-bot / exit / continue are one consolidated `meta` endpoint
+    // (dispatched on `type`) — fewer functions, faster deploys.
     const startGame = (gameId: string): Promise<{ game_id: string }> => {
-        return invokeGameFunctions('start', {
+        return invokeGameFunctions('meta', {
+            type: 'start',
             game_id: gameId,
         })
     };
 
     const addBot = (gameId: string): Promise<{ game_id: string }> => {
-        return invokeGameFunctions('add-bot', {
+        return invokeGameFunctions('meta', {
+            type: 'add-bot',
             game_id: gameId,
         })
     };
 
     const exitGame = (gameId: string, botId?: string, playerId?: string): Promise<{ game_id: string }> => {
-        return invokeGameFunctions('exit', {
+        return invokeGameFunctions('meta', {
+            type: 'exit',
             game_id: gameId,
             bot_id: botId,
             player_id: playerId
@@ -1016,7 +1021,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     };
 
     const continueGame = (gameId: string): Promise<{ game_id: string }> => {
-        return invokeGameFunctions('continue', { game_id: gameId });
+        return invokeGameFunctions('meta', { type: 'continue', game_id: gameId });
     };
 
     const invokeGameFunctions = async <T = any>(
