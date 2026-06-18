@@ -1,10 +1,11 @@
 import { Card, Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, AnimationEvent, ANIMATION_EVENT_TYPE, LOG_TYPE } from '../types.ts';
 import { addLog, cloneGame } from '../common_utils.ts';
-import { validate_defender_status, verify_cards_in_players_hand, cardDisplay, card_comp, no_cards_left } from '../common_utils.ts';
+import { validate_defender_status, verify_cards_in_players_hand, verify_card_array, cardDisplay, card_comp, no_cards_left } from '../common_utils.ts';
 
 // Validation function for attack moves
 export function validateAttack(game: Game, player_id: string, cards: Card[]): void {
-    if (!cards || cards.length === 0) {
+    verify_card_array(cards, 'cards');
+    if (cards.length === 0) {
         throw new Error('No cards provided');
     }
 

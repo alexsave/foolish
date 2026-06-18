@@ -146,7 +146,7 @@ test('adversarial fuzz: no illegal/malformed input ever duplicates or loses a ca
             committed++;
         } catch (e) {
             rejected++; // rejection is the desired outcome for illegal input
-            if (isCrashClass(e)) crashClass++; // ungraceful (still caught by wrap400 in prod) — informational
+            if (isCrashClass(e)) crashClass++;
         }
 
         const chk = await checkCardConservation(gameId);
@@ -156,8 +156,11 @@ test('adversarial fuzz: no illegal/malformed input ever duplicates or loses a ca
     // Hard invariant: no adversarial input may ever duplicate or lose a card.
     assert.equal(violations.length, 0, `card conservation broken by adversarial input:\n  ${violations.slice(0, 3).join('\n  ')}`);
     assert.ok(attempts > 100 && rejected > 0, `fuzz ran (attempts=${attempts} rejected=${rejected} committed=${committed} crashClass=${crashClass})`);
+    // Malformed payloads must now produce clean rule rejections, not low-level
+    // TypeErrors — the input guards make crash-class errors impossible.
+    assert.equal(crashClass, 0, `malformed input produced ${crashClass} ungraceful crash-class error(s)`);
     // The process surviving ITER hostile requests IS the no-crash assertion.
-    console.error(`[fuzz] attempts=${attempts} rejected=${rejected} committed=${committed} crashClass(caught)=${crashClass}`);
+    console.error(`[fuzz] attempts=${attempts} rejected=${rejected} committed=${committed} crashClass=${crashClass}`);
 });
 
 test('targeted: forged cards and non-members are always rejected', async () => {

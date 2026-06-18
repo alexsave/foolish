@@ -1,33 +1,16 @@
 import { wrap400, broadcastToGameUser, ExecutionParams } from "../_shared/utils.ts";
 import { SERVER_EVENT_TYPE } from "../_shared/types.ts";
+import { handleRearrangeHand } from "../_shared/actions/rearrange.ts";
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 
 wrap400(async ({user, user_name, body, game}: ExecutionParams) => {
     const user_id = user.id;
-    const { card_indices } = body;
 
-    if (!card_indices || !Array.isArray(card_indices)) {
-        throw new Error('Missing required field: card_indices');
-    }
-
-    // Check if the user is in the game
-    const player = game.players.find(player => player.player_id === user_id);
-    if (!player) {
-        throw new Error('You are not in this game');
-    }
-
-    // Validate indices
-    if (card_indices.length !== player.hand.length || 
-        !card_indices.every((idx: number) => idx >= 0 && idx < player.hand.length)) {
-        throw new Error('Invalid card indices');
-    }
-
-    // Rearrange the hand according to the provided indices
-    const rearrangedHand = card_indices.map((index: number) => player.hand[index]);
-
-    // Update the player's hand in the game object
-    player.hand = rearrangedHand;
+    // Reorder the caller's hand. Validates membership + that card_indices is a
+    // permutation (the uniqueness check prevents a client from minting duplicate
+    // cards via repeated indices). Mutates game in place.
+    handleRearrangeHand(game, user_id, body.card_indices);
 
     // This doesn't need a broadcast to everyone
     broadcastToGameUser(game, SERVER_EVENT_TYPE.HAND_REARRANGED, {
@@ -35,4 +18,4 @@ wrap400(async ({user, user_name, body, game}: ExecutionParams) => {
     }, user_id);
 
     return { game, events: [] };
-}, false); 
+}, false);
