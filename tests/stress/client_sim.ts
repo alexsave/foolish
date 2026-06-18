@@ -17,7 +17,7 @@
 import { randomUUID } from 'crypto';
 import { Game } from '../../supabase/functions/_shared/types.ts';
 import { start_game } from '../../supabase/functions/_shared/common_utils.ts';
-import { resetDb, seedGame, loadCompleteGame, commitGame, SeedPlayer } from './db.ts';
+import { pool, resetDb, seedGame, loadCompleteGame, commitGame, SeedPlayer } from './db.ts';
 import { checkWinSync } from './orchestrator.ts';
 import { legalMoves } from './moves.ts';
 import { applyMove } from './apply.ts';
@@ -29,7 +29,13 @@ const flag = (n: string, d: number) => {
 };
 const MAX_VERSIONS = flag('versions', 220);
 const TRIALS = flag('trials', 200);
-const BLATENCY = flag('blatency', 120);
+let BLATENCY = flag('blatency', 120);
+// Gap (ms) between consecutive broadcast emissions. Small = clustered moves
+// (multi-attacker throw-ins, rapid taps, a human move racing the bot loop);
+// large = well-spaced moves (e.g. the 3s bot pacing). Reordering onset is at
+// BLATENCY ~ EMITGAP.
+let EMITGAP = flag('emitgap', 5);
+const SWEEP = args.includes('--sweep');
 
 const key = (c: { suit: number; value: number }) => `${c.suit}:${c.value}`;
 const tableKeys = (battles: any[]): string[] => {
@@ -147,9 +153,11 @@ function buildDelivery(stream: Stream, regime: Regime): Broadcast[] {
     const c = clears[Math.floor(Math.random() * clears.length)].i;
     return bs.filter((_, i) => i !== c);
   }
-  // reordered: assign each broadcast a random arrival time (emit order + jitter)
+  // reordered: each broadcast is emitted EMITGAP ms after the previous one, then
+  // delivered after a uniform 0..BLATENCY jitter. Whether deliveries reorder is
+  // governed by jitter-variance vs the emission gap.
   return bs
-    .map((b, i) => ({ b, t: i * 2 + Math.random() * BLATENCY }))
+    .map((b, i) => ({ b, t: i * EMITGAP + Math.random() * BLATENCY }))
     .sort((a, z) => a.t - z.t)
     .map((x) => x.b);
 }
@@ -214,7 +222,49 @@ function replay(stream: Stream, regime: Regime): Glitch {
   return { phantomPeak, crossBoutPeak, uncoverEvents, finalMismatch };
 }
 
+// Capture-once, replay-across-grid latency characterization. Answers "how high
+// until the reordering bugs show?" as a function of both delivery latency and how
+// closely spaced the broadcasts are.
+async function sweepMain(): Promise<void> {
+  const N = TRIALS;
+  console.log(`=== latency threshold sweep: capturing ${N} real games once, replaying across the grid ===`);
+  await resetDb();
+  const streams: Stream[] = [];
+  for (let i = 0; i < N; i++) {
+    process.stdout.write(`capturing ${i + 1}/${N}...\r`);
+    await resetDb();
+    streams.push(await capture());
+  }
+  await pool.end();
+
+  const gaps = [1, 2, 5, 10, 25, 50, 100, 250, 1000];
+  const lats = [0, 1, 2, 5, 10, 25, 50, 100, 250, 1000];
+
+  // Each cell = % of games whose client table ends up PERMANENTLY wrong
+  // (final-table mismatch) under the reordered regime.
+  console.log(`\nPermanently-wrong client table (% of ${N} games), reordered delivery`);
+  console.log(`rows = emission gap between broadcasts (ms), cols = realtime delivery jitter 0..L (ms)\n`);
+  process.stdout.write('gap\\lat'.padEnd(8));
+  for (const L of lats) process.stdout.write(String(L).padStart(6));
+  console.log();
+  for (const G of gaps) {
+    EMITGAP = G;
+    process.stdout.write(String(G).padEnd(8));
+    for (const L of lats) {
+      BLATENCY = L;
+      let mism = 0;
+      for (const s of streams) if (replay(s, 'reordered').finalMismatch) mism++;
+      process.stdout.write(`${(mism / N * 100).toFixed(0)}%`.padStart(6));
+    }
+    console.log();
+  }
+  console.log(`\nReordering onset is the diagonal L≈gap: once delivery jitter exceeds the`);
+  console.log(`gap between consecutive broadcasts, sequences start arriving out of order.`);
+  process.exit(0);
+}
+
 async function main(): Promise<void> {
+  if (SWEEP) return sweepMain();
   console.log('=== Foolish client reconciliation sim ===');
   await resetDb();
 
