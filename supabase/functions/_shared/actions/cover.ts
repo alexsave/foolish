@@ -27,9 +27,15 @@ export function validateCover(game: Game, player_id: string, cover_cards: Card[]
         throw new Error(`Cards ${cover_cards.map(card => cardDisplay(card)).join(', ')} have duplicates`);
     }
 
-    // ensure that each of the attack cards are on the table AND uncovered
+    // ensure that each of the attack cards are on the table AND uncovered.
+    // Match by EXACT card (suit+value), not just value: executeCover locates the
+    // battle with card_comp, so a value-only check here lets a request naming an
+    // already-covered card slip past validation when another same-rank attack is
+    // still uncovered, then throw the uncaught 'SEVERE: Card not found on table'
+    // in execution (reachable via a defender double-tapping cover on one of two
+    // same-rank attacks).
     for (const card of attack_cards) {
-        if (!game.table_battles.some(battle => battle.attack.value === card.value && battle.defense === null)) {
+        if (!game.table_battles.some(battle => card_comp(battle.attack, card) && battle.defense === null)) {
             throw new Error(`Card ${cardDisplay(card)} is not on the table`);
         }
     }
