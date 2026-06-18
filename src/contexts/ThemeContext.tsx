@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, ReactNode } from 'react';
 import { useLocalization, Language } from './LocalizationContext';
 
-export type Theme = 'default' | 'soviet';
+type Theme = 'default' | 'soviet';
 
 interface ThemeContextType {
   theme: Theme;

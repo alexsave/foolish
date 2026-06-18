@@ -143,7 +143,7 @@ const shouldSanitizeCards = (event: AnimationEvent): boolean => {
 };
 
 // Convert server AnimationEvents to PublicAnimationEvents for spectators
-export const convertToPublicAnimationEvents = (events: AnimationEvent[]): PublicAnimationEvent[] => {
+const convertToPublicAnimationEvents = (events: AnimationEvent[]): PublicAnimationEvent[] => {
     return events.map(event => {
         const publicEvent: PublicAnimationEvent = { ...event };
 
@@ -162,7 +162,7 @@ export const convertToPublicAnimationEvents = (events: AnimationEvent[]): Public
 };
 
 // Convert server AnimationEvents to PersonalAnimationEvents for a specific player
-export const convertToPersonalAnimationEvents = (events: AnimationEvent[], forPlayerId: string): PersonalAnimationEvent[] => {
+const convertToPersonalAnimationEvents = (events: AnimationEvent[], forPlayerId: string): PersonalAnimationEvent[] => {
     return events.map(event => {
         const { game_state, ...baseEvent } = event;
 
@@ -619,33 +619,7 @@ export const commitGame = async (
     return res;
 };
 
-// Get player's hand for a specific game using direct query
-export const getPlayerHand = async (game_id: string, player_id: string): Promise<Card[]> => {
-    const { data, error } = await supabaseClient
-        .from('player_hands')
-        .select('hand')
-        .eq('game_id', game_id)
-        .eq('player_id', player_id)
-        .single();
 
-    if (error) {
-        console.error('Error loading player hand', error);
-        return [];
-    }
-
-    return data?.hand || [];
-};
-
-// Update player's hand efficiently
-export const updatePlayerHand = async (game_id: string, player_id: string, hand: Card[]): Promise<void> => {
-    await supabaseClient
-        .from('player_hands')
-        .upsert({
-            game_id: game_id,
-            player_id: player_id,
-            hand: hand
-        });
-};
 
 // =============================================================================
 // REALTIME BROADCAST UTILITIES
@@ -760,7 +734,7 @@ const finalizeEndedGame = async (game: Game): Promise<void> => {
 
 
 // Get or create ELO rating for a user
-export const getOrCreateEloRating = async (userId: string): Promise<UserEloRating> => {
+const getOrCreateEloRating = async (userId: string): Promise<UserEloRating> => {
     const { data, error } = await supabaseClient
         .from('user_elo_ratings')
         .select('*')
@@ -798,7 +772,7 @@ export const getOrCreateEloRating = async (userId: string): Promise<UserEloRatin
 };
 
 // Get ELO rating for a bot
-export const getBotEloRating = async (botId: string): Promise<{ elo_rating: number, games_played: number, nickname: string, strategy_key: string }> => {
+const getBotEloRating = async (botId: string): Promise<{ elo_rating: number, games_played: number, nickname: string, strategy_key: string }> => {
     const { data, error } = await supabaseClient
         .from('bots')
         .select('elo_rating, games_played, nickname, strategy_key')
@@ -814,7 +788,7 @@ export const getBotEloRating = async (botId: string): Promise<{ elo_rating: numb
 };
 
 // Update ELO ratings for all players after game completion
-export const updateEloRatings = async (game: Game): Promise<void> => {
+const updateEloRatings = async (game: Game): Promise<void> => {
     if (game.players.length < 2) {
         return; // No ELO updates for single player games
     }

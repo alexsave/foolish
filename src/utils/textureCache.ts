@@ -119,27 +119,3 @@ export async function setCachedTexture(type: TextureType, blobUrl: string): Prom
   }
 }
 
-// Clear all cached textures (useful for debugging)
-export async function clearTextureCache(): Promise<void> {
-  try {
-    const db = await openDB();
-    const transaction = db.transaction([STORE_NAME], 'readwrite');
-    const store = transaction.objectStore(STORE_NAME);
-
-    return new Promise((resolve, reject) => {
-      const request = store.clear();
-
-      request.onsuccess = () => {
-        console.log('Cleared texture cache');
-        resolve();
-      };
-
-      request.onerror = () => {
-        console.warn('Failed to clear cache:', request.error);
-        resolve();
-      };
-    });
-  } catch (error) {
-    console.warn('Failed to clear cache:', error);
-  }
-}

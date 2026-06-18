@@ -3,19 +3,19 @@ import { GameLog, UnsavedGameLog } from './types.ts';
 import { ACE_VALUE, CARDS_PER_PLAYER, SUITS, VALUE_MAP, SUIT_MAP } from './constants.ts';
 
 // Fast deep clone for Game objects - avoids expensive JSON.parse(JSON.stringify())
-export const cloneCard = (card: Card): Card => ({ suit: card.suit, value: card.value });
+const cloneCard = (card: Card): Card => ({ suit: card.suit, value: card.value });
 
-export const cloneBattle = (battle: Battle): Battle => ({
+const cloneBattle = (battle: Battle): Battle => ({
     attack: cloneCard(battle.attack),
     defense: battle.defense ? cloneCard(battle.defense) : null
 });
 
-export const cloneCardPair = (pair: LogCardPair): LogCardPair => ({
+const cloneCardPair = (pair: LogCardPair): LogCardPair => ({
     primary: cloneCard(pair.primary),
     target: pair.target ? cloneCard(pair.target) : pair.target
 });
 
-export const cloneGameLog = (log: GameLog): GameLog => ({
+const cloneGameLog = (log: GameLog): GameLog => ({
     id: log.id,
     created_at: log.created_at,
     game_id: log.game_id,
@@ -25,7 +25,7 @@ export const cloneGameLog = (log: GameLog): GameLog => ({
     defender_index: log.defender_index
 });
 
-export const clonePlayer = (player: PrivatePlayer): PrivatePlayer => ({
+const clonePlayer = (player: PrivatePlayer): PrivatePlayer => ({
     player_id: player.player_id,
     status: player.status,
     name: player.name,
@@ -166,7 +166,7 @@ export const draw = (game: Game): Card | null => {
     return card;
 };
 
-export const determine_lowest_power_index = (game: Game): number => {
+const determine_lowest_power_index = (game: Game): number => {
     let lowestPowerValue = ACE_VALUE + 1;
     let lowestPowerPlayer = -1;
     for (let i = 0; i < game.players.length; i++) {
@@ -191,7 +191,7 @@ export const set_positions = (game: Game) => {
     game.defender = (game.first_attacker + 1) % game.players.length;
 }
 
-export const initialize_hands = (game: Game): Card[][] => {
+const initialize_hands = (game: Game): Card[][] => {
     const result: Card[][] = [];
     for (let j = 0; j < game.players.length; j++) {
         result.push([]);
@@ -439,31 +439,6 @@ export const refillPlayerHandsWithEvents = (game: Game): { refillEvents: any[], 
     return { refillEvents, drawLogs };
 };
 
-// Pure win check logic without side effects (no ELO updates, no broadcasting)
-export const checkWinAndResetGame = (game: Game): string | null => {
-    const the_fool = game_done(game);
-    if (the_fool !== null) {
-        // Guard against overwriting GAME_OVER status - only continue/ should do this
-        if (game.status === GAME_STATUS.GAME_OVER) {
-            return the_fool;
-        }
-        
-        // Reset game state to waiting
-        game.status = GAME_STATUS.WAITING;
-        // set all players to idle
-        game.players.forEach((player: PrivatePlayer) => {
-            player.status = PLAYER_STATUS.IDLE;
-            player.hand = [];
-        });
-        game.table_battles = [];
-        game.deck = refill_deck(game.players.length);
-        game.elimination_order = []; // Reset elimination order
-        game.discard_pile_length = 0; // Reset discard pile length
-        
-        return the_fool;
-    }
-    return null;
-};
 
 
 // Stats the game with all the animations

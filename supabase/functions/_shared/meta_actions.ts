@@ -21,7 +21,7 @@ const GPT_ALLOWED_USER_ID = '60a5c562-0922-40a6-b416-77e3285d87b2';
 type Result = { game: Game; events: AnimationEvent[] };
 
 // ---- start / ready ---------------------------------------------------------
-export function handleStart({ user, game }: ExecutionParams): Result {
+function handleStart({ user, game }: ExecutionParams): Result {
     const user_id = user.id;
     verify_player_in_game(game, user_id);
 

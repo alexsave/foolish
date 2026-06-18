@@ -280,7 +280,7 @@ const generateWoolTextureAsync = async (width: number = 3840, height: number = 2
 };
 
 // Async generator function with chunked processing to yield control
-export async function generateWoolTexture(): Promise<string> {
+async function generateWoolTexture(): Promise<string> {
   // Return cached texture if available
   if (woolTextureBlobUrl) {
     console.log('Using cached wool texture');
@@ -550,25 +550,5 @@ export const useWoolTexture = () => {
 };
 
 
-// Legacy function for non-React contexts (kept for backward compatibility)
-export const getWoolTextureStyle = (): React.CSSProperties => {
-  // Trigger lazy loading if not already generated
-  if (!woolTextureBlobUrl && !woolTexturePromise && typeof window !== 'undefined') {
-    generateWoolTexture();
-  }
-
-  if (!woolTextureBlobUrl) {
-    return {
-      backgroundColor: '#cac5af',
-    };
-  }
-
-  return {
-    backgroundImage: `url(${woolTextureBlobUrl})`,
-    backgroundSize: 'cover',
-    backgroundPosition: 'center',
-    backgroundRepeat: 'no-repeat'
-  };
-};
 
 export default generateWoolTexture;

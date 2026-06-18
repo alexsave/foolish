@@ -42,7 +42,7 @@ import { base32Encode, base32Decode } from "./codec.ts";
 import { INFO_TYPES } from "./core.ts";
 import { LOG_TYPE } from "../types.ts";
 
-export const EXTRAS_VERSION = 2;
+const EXTRAS_VERSION = 2;
 const FLAG_NAMES = 1;
 const FLAG_TIMES = 2;
 
@@ -62,24 +62,24 @@ export interface ReplayExtras {
 /* ------------------------------ time scaling ------------------------------ */
 
 /** unit in seconds for a stored scale exponent */
-export function unitFor(scaleExp: number): number {
+function unitFor(scaleExp: number): number {
     return Math.pow(2, scaleExp - 64);
 }
 
 /** smallest exponent whose curve still reaches the game's largest gap */
-export function pickScaleExp(maxGapSeconds: number): number {
+function pickScaleExp(maxGapSeconds: number): number {
     if (!(maxGapSeconds > 0)) return 64; // degenerate: all-zero gaps, unit = 1 s
     const e = Math.ceil(Math.log2(maxGapSeconds / TIME_RANGE)) + 64;
     return Math.max(0, Math.min(255, e));
 }
 
-export function quantizeGap(seconds: number, unit: number): number {
+function quantizeGap(seconds: number, unit: number): number {
     const s = Math.max(0, seconds);
     const v = Math.round(Math.log(1 + s / unit) / Math.log(TIME_B));
     return Math.max(0, Math.min(255, v));
 }
 
-export function dequantizeGap(v: number, unit: number): number {
+function dequantizeGap(v: number, unit: number): number {
     return unit * (Math.pow(TIME_B, v) - 1);
 }
 

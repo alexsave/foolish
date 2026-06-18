@@ -6,7 +6,7 @@
 import { Card, PersonalGame, Battle } from '@shared/types.ts';
 
 export const cardKey = (c: Card): string => `${c.suit}-${c.value}`;
-export const cardComp = (a: Card, b: Card): boolean => a.suit === b.suit && a.value === b.value;
+const cardComp = (a: Card, b: Card): boolean => a.suit === b.suit && a.value === b.value;
 
 // ---- Live broadcast ordering gate -----------------------------------------
 // Broadcasts are fired un-awaited over per-call channels, so under realtime

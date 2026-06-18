@@ -71,7 +71,7 @@ export const wipeAllGameLogs = async (supabaseClient: SupabaseClient, game_id: s
 
 // Load all logs for the current game session
 // Finds the most recent GAME_START and returns all logs after it
-export const loadCurrentSessionLogs = async (supabaseClient: SupabaseClient, game_id: string): Promise<GameLog[]> => {
+const loadCurrentSessionLogs = async (supabaseClient: SupabaseClient, game_id: string): Promise<GameLog[]> => {
     try {
         // Get all logs for this game ordered by creation time
         const { data: allLogs, error } = await supabaseClient

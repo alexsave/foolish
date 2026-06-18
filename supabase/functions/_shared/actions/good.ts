@@ -97,7 +97,7 @@ export function executeRoundTransition(game: Game, reason: string): AnimationEve
 }
 
 // Validation function for good moves
-export function validateGood(game: Game, player_id: string): void {
+function validateGood(game: Game, player_id: string): void {
     // Can only say good during playing state
     if (game.status !== GAME_STATUS.PLAYING) {
         throw new Error(`Game ${game.id} is not in playing state`);
@@ -126,7 +126,7 @@ export function validateGood(game: Game, player_id: string): void {
 }
 
 // Execution function for good moves
-export function executeGood(game: Game, player_id: string): AnimationEvent[] {
+function executeGood(game: Game, player_id: string): AnimationEvent[] {
     const events: AnimationEvent[] = [];
     
     // Guard against modifying game state if game is already over

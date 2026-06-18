@@ -15,7 +15,7 @@ const VALUE_NAMES: Record<number, string> = {
     5: '6', 6: '7', 7: '8', 8: '9', 9: '10', 10: 'J', 11: 'Q', 12: 'K', 13: 'A'
 };
 
-export interface AttackStats {
+interface AttackStats {
     canDefinitelyCover: boolean;
     definitelyCannotCover: boolean;
     canDefinitelyPassBack: boolean;
@@ -25,12 +25,12 @@ export interface AttackStats {
     probCoverAllowsAttack: number;
 }
 
-export interface CoverStats {
+interface CoverStats {
     probAllowsAdditionalAttack: number;
     probDrawBetterCard: number;
 }
 
-export interface PassStats {
+interface PassStats {
     canDefinitelyCover: boolean;
     definitelyCannotCover: boolean;
     canDefinitelyPassBack: boolean;
@@ -137,7 +137,7 @@ export interface DebugInfo {
     pass?: PassDebugInfo;
 }
 
-export interface AttackDebugInfo {
+interface AttackDebugInfo {
     unknownTotal: number;
     coverCardsCount: number;
     defenderUnknownHand: number;
@@ -149,7 +149,7 @@ export interface AttackDebugInfo {
     totalPossibleCovers: number;
 }
 
-export interface CoverDebugInfo {
+interface CoverDebugInfo {
     unknownTotal: number;
     coverValue: number;
     valueCardsRemaining: number;
@@ -159,7 +159,7 @@ export interface CoverDebugInfo {
     cardValue: number;
 }
 
-export interface PassDebugInfo {
+interface PassDebugInfo {
     unknownTotal: number;
     coverCardsCount: number;
     newDefenderUnknownHand: number;
@@ -368,7 +368,7 @@ function initializeDPWithKnownCardsPair(
     return dp;
 }
 
-export interface CoverWithGoodRankResult {
+interface CoverWithGoodRankResult {
     pCover: number;                  // P(defender can cover all attacks)
     pPossibleGoodRank: number;       // P(∃ cover using matching rank | cover)
     pForcedGoodRank: number;         // P(every cover uses matching rank | cover)
