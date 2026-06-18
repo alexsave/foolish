@@ -8,6 +8,7 @@ import { ANIMATION_TIME } from '../constants/constants';
 import { validateAttack, validatePass, validatePickup, validateCover } from '../utils/gameValidation';
 import { getTableCards, cardsIntersection, getCardKeyPlayerId, createCardEventString, getCardKey } from '../utils/animationUtils';
 import { animationFeed } from '../state/animationFeed';
+import { optimisticOverlay } from '../state/optimisticOverlay';
 
 // Animation timing constant
 export { ANIMATION_TIME } from '../constants/constants';
@@ -186,6 +187,21 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
     // Track optimistic pass state (defender and first_attacker changes)
     const optimisticPassState = useRef<{ defender: number, first_attacker: number } | null>(null);
+
+    // Expose the local player's live optimistic table cards to the REST load path,
+    // so a reconnect resync re-applies them instead of momentarily wiping them
+    // (the "vanish then reappear" glitch). Derived on demand from the live
+    // position tracking, so it's always current.
+    useEffect(() => optimisticOverlay.register(() => {
+        const out: { card: Card; target?: Card | null }[] = [];
+        optimisticCardPositions.current.forEach((pos, cardKey) => {
+            const [suit, value] = cardKey.split('-').map(Number);
+            if (Number.isFinite(suit) && Number.isFinite(value)) {
+                out.push({ card: { suit, value }, target: pos.target_card ?? null });
+            }
+        });
+        return out;
+    }), []);
 
     // Highest committed games.version we've applied from a live broadcast. Live
     // sequences are fired un-awaited by the server over per-call channels, so under
