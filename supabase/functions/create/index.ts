@@ -40,19 +40,23 @@ wrap400(async ({ user, user_name }: ExecutionParams) => {
 
     await supabaseClient.from('games').insert(gameData);
 
-    // 2. Initialize empty deck
-    await supabaseClient.from('game_decks').insert({
-        game_id: game_id,
-        deck: []
-    });
-
-    // 3. Initialize empty hand for creator (also serves as player-game relationship)
-    await supabaseClient.from('player_hands').insert({
-        game_id: game_id,
-        player_id: user_id,
-        hand: [],
-        awaiting_attack: false
-    } as PlayerHand);
+    // The deck row and the creator's hand row both only FK-reference the game
+    // row inserted above and are independent of each other, so insert them
+    // concurrently — one round-trip instead of two serial PostgREST calls.
+    await Promise.all([
+        // 2. Initialize empty deck
+        supabaseClient.from('game_decks').insert({
+            game_id: game_id,
+            deck: []
+        }),
+        // 3. Initialize empty hand for creator (also serves as player-game relationship)
+        supabaseClient.from('player_hands').insert({
+            game_id: game_id,
+            player_id: user_id,
+            hand: [],
+            awaiting_attack: false
+        } as PlayerHand),
+    ]);
 
     // Construct complete game state directly from inserted data (no need to query back)
     const dbGameData: Game = {
