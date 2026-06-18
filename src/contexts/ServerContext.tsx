@@ -28,7 +28,8 @@ games!inner (
     updated_at,
     elimination_order,
     good_timestamp,
-    good_players
+    good_players,
+    version
 )`;
 
 // for now we'll just use a fake auth impl
@@ -357,32 +358,19 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         });
     };
 
-    // Helper method to merge table_battles, preserving optimistic attacks
-    // This handles the race condition where server responses arrive out-of-order
+    // Trust the server's table_battles outright.
+    //
+    // This used to append any existing battle missing from the incoming snapshot,
+    // to keep optimistic attacks visible while server responses arrived
+    // out-of-order. That is now handled two layers up — the broadcast version gate
+    // (AnimationContext) drops out-of-order sequences, and the optimistic-conflict
+    // resolver injects the local player's unconfirmed cards into the incoming state
+    // before it ever reaches here — so the append is redundant. Worse, it was
+    // actively harmful: when an intermediate table-clear was skipped (a reordered
+    // or dropped round-transition packet), it re-introduced a previous bout's cards
+    // onto the table (cards from two bouts at once). Trusting incoming removes that.
     const mergeTableBattles = (existingBattles: any[], incomingBattles: any[]): any[] => {
-        if (!existingBattles || existingBattles.length === 0) return incomingBattles || [];
-        if (!incomingBattles) return existingBattles;
-
-        // If incoming is empty, it's a table clear (pickup/good) - trust server completely
-        if (incomingBattles.length === 0) return [];
-
-        // Create a map of incoming battles by attack card key
-        const incomingByKey = new Map(
-            incomingBattles.map(b => [`${b.attack.suit}-${b.attack.value}`, b])
-        );
-
-        // Start with incoming battles (these have the latest defense states from server)
-        const result = [...incomingBattles];
-
-        // Add any existing battles whose attack cards aren't in incoming (these are optimistic attacks)
-        for (const battle of existingBattles) {
-            const key = `${battle.attack.suit}-${battle.attack.value}`;
-            if (!incomingByKey.has(key)) {
-                result.push(battle);
-            }
-        }
-
-        return result;
+        return incomingBattles ?? existingBattles ?? [];
     };
 
     // Helper method to merge game data while preserving self when not present in new data
@@ -390,7 +378,11 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         const result = {
             ...newGameData,
             // If self is explicitly provided (including null), use it; otherwise preserve previous self
-            self: newGameData.hasOwnProperty('self') ? newGameData.self : prevGames[gameId]?.self
+            self: newGameData.hasOwnProperty('self') ? newGameData.self : prevGames[gameId]?.self,
+            // Only authoritative REST loads carry games.version; live broadcast
+            // snapshots don't, so keep the last known version rather than clobbering
+            // it with undefined (the animation feed seeds its ordering gate from it).
+            version: newGameData.version ?? prevGames[gameId]?.version,
         };
 
         // Merge table_battles to preserve optimistic attacks during out-of-order server responses
@@ -1154,6 +1146,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             rearrangePlayer,
             rearrangeHand,
             continueGame,
+            loadGame,
             gameLoadError,
             chatMessages: currentChatMessages,
             localHandOrder: currentLocalHandOrder,
@@ -1189,6 +1182,9 @@ interface ServerContextType {
     rearrangePlayer: (gameId: string, playerIds: string[]) => Promise<{ game_id: string }>;
     rearrangeHand: (gameId: string, cardIndices: number[]) => Promise<{ game_id: string }>;
     continueGame: (gameId: string) => Promise<{ game_id: string }>;
+    /** Refetch authoritative game state over REST. Used to resync after a
+     *  realtime reconnect, where broadcasts missed during the gap are lost. */
+    loadGame: (gameId: string) => Promise<{ game_id: string }>;
     gameLoadError: string | null;
     chatMessages: any[];
     localHandOrder: Card[];
@@ -1248,6 +1244,7 @@ export const ReplayServerProvider = ({ gameId, initialGame, children }: {
         rearrangePlayer: noop,
         rearrangeHand: noop,
         continueGame: noop,
+        loadGame: noop,
         gameLoadError: null,
         chatMessages: [],
         localHandOrder,

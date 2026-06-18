@@ -46,6 +46,11 @@ export interface AnimationSequenceMessage {
     events: FeedAnimationEvent[];
     /** final game state, committed when the whole sequence has played */
     game: PersonalGame | PublicGame;
+    /** Committed games.version this sequence reflects. Present on live broadcasts
+     *  (stamped by the server); absent for replay-synthesized sequences. The
+     *  consumer uses it to drop sequences that arrive out of order under realtime
+     *  latency, so the board never animates backwards. */
+    version?: number;
 }
 
 type FeedListener = (message: AnimationSequenceMessage) => void;
