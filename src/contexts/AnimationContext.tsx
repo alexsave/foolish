@@ -9,6 +9,7 @@ import { validateAttack, validatePass, validatePickup, validateCover } from '../
 import { getTableCards, cardsIntersection, getCardKeyPlayerId, createCardEventString, getCardKey } from '../utils/animationUtils';
 import { animationFeed } from '../state/animationFeed';
 import { optimisticOverlay } from '../state/optimisticOverlay';
+import { shouldDropStaleSequence } from '../state/clientReconcile';
 
 // Animation timing constant
 export { ANIMATION_TIME } from '../constants/constants';
@@ -784,7 +785,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         // sequences have no version and are never gated.
         const incomingVersion = typeof message.version === 'number' ? message.version : null;
         if (incomingVersion !== null) {
-            if (lastAppliedVersionRef.current !== null && incomingVersion <= lastAppliedVersionRef.current) {
+            if (shouldDropStaleSequence(lastAppliedVersionRef.current, incomingVersion)) {
                 return;
             }
             lastAppliedVersionRef.current = incomingVersion;

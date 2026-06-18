@@ -17,6 +17,7 @@
     "test:actions:watch": "jest --config tests/jest.config.js --watch",
     "test:actions:coverage": "jest --config tests/jest.config.js --coverage",
     "test:replay": "tsx tests/replay_roundtrip.ts",
+    "test:e2e": "TSX_TSCONFIG_PATH=e2e/tsconfig.json node --import tsx --test --test-concurrency=1 e2e/*.test.ts",
     "test:stress": "tsx tests/stress/stress.ts",
     "bot:game": "tsx offlinefun/localtest/bot_loop_core.ts"
   },
