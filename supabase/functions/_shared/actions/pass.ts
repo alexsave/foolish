@@ -19,7 +19,7 @@ export function validatePass(game: Game, player_id: string, cards: Card[]): void
     }
 
     // check no duplicates
-    if (new Set(cards).size !== cards.length) {
+    if (new Set(cards.map(c => `${c.suit}-${c.value}`)).size !== cards.length) {
         throw new Error(`Cards ${cards.map(card => cardDisplay(card)).join(', ')} have duplicates`);
     }
 

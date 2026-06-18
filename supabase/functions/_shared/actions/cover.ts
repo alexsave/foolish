@@ -23,7 +23,7 @@ export function validateCover(game: Game, player_id: string, cover_cards: Card[]
     verify_cards_in_players_hand(defender, cover_cards);
 
     // check no duplicates
-    if (new Set(cover_cards).size !== cover_cards.length) {
+    if (new Set(cover_cards.map(c => `${c.suit}-${c.value}`)).size !== cover_cards.length) {
         throw new Error(`Cards ${cover_cards.map(card => cardDisplay(card)).join(', ')} have duplicates`);
     }
 
@@ -41,7 +41,7 @@ export function validateCover(game: Game, player_id: string, cover_cards: Card[]
     }
 
     // check no duplicates
-    if (new Set(attack_cards).size !== attack_cards.length) {
+    if (new Set(attack_cards.map(c => `${c.suit}-${c.value}`)).size !== attack_cards.length) {
         throw new Error(`Cards ${attack_cards.map(card => cardDisplay(card)).join(', ')} have duplicates`);
     }
 
