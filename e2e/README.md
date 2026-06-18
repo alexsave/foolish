@@ -44,11 +44,9 @@ deadlocks under parallelism.
 | `reconcile.test.ts` | real broadcasts → real client gate + table merge | client converges to the authoritative table under heavy reordering |
 | `client.test.ts` | `clientReconcile` (the deployed client logic) | no hand swaps/dupes/table-cards; trust-incoming table; version gate; optimistic-overlay resync |
 | `concurrent_games.test.ts` | many real games on one Postgres | no deadlock, no cross-game corruption (answers "is the parallel deadlock a real bug?" — it isn't) |
-| `fuzz.test.ts` | the real validation+handler dispatch + CAS | adversarial/illegal/malformed input never duplicates or loses a card, illegal moves are rejected, the server survives hostile payloads (found + fixed a card-duplication exploit — see `findings/FINDINGS_FUZZ.md`) |
+| `fuzz.test.ts` | the real validation+handler dispatch + CAS | adversarial/illegal/malformed input never duplicates or loses a card, illegal moves are rejected, the server survives hostile payloads (found + fixed a card-duplication exploit) |
 | `rearrange.test.ts` | the real `handleRearrangeHand` + CAS | duplicate/garbage index lists are rejected (found + fixed a card-cloning exploit); a real permutation conserves cards |
 | `meta.test.ts` | the real consolidated `meta` handlers + CAS | start/add-bot/exit/continue behave correctly through one endpoint |
 
-The narrative write-ups that produced these assertions live in `findings/`
-(`FINDINGS_*.md`). They're historical investigation notes; the codified, pass/fail
-version is this suite. The latency-sweep conclusions are folded into deterministic
-checks in `client.test.ts` ("reordering" / "disconnect").
+The latency-sweep conclusions are folded into deterministic checks in
+`client.test.ts` ("reordering" / "disconnect").
