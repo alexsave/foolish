@@ -8,6 +8,7 @@ import { ANIMATION_TIME } from '../constants/constants';
 import { validateAttack, validatePass, validatePickup, validateCover } from '../utils/gameValidation';
 import { getTableCards, cardsIntersection, getCardKeyPlayerId, createCardEventString, getCardKey } from '../utils/animationUtils';
 import { animationFeed } from '../state/animationFeed';
+import { staleOptimisticKeysOnTable } from '../state/optimisticAnimation';
 import { optimisticOverlay } from '../state/optimisticOverlay';
 import { shouldDropStaleSequence } from '../state/clientReconcile';
 
@@ -749,27 +750,25 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             lastAppliedVersionRef.current = incomingVersion;
 
             // Release any of my optimistic cards that this AUTHORITATIVE state
-            // confirms are on the table — even if the broadcast that literally
-            // confirmed them (its events named the card) was dropped by the gate
-            // because a higher version reordered ahead of it. Without this the
-            // entry would linger until the 30s TTL and could be re-injected as a
-            // phantom after its bout ends. message.game is the pristine server
-            // state here (resolveOptimisticConflicts hasn't injected into it yet).
+            // confirms are on the table BUT whose confirming broadcast was
+            // dropped by the version gate (i.e. NOT named by this broadcast's
+            // own events). Cards this broadcast DOES name are deliberately left
+            // for the per-event dedup below — releasing them here first would
+            // make their own confirming event look un-optimistic and animate a
+            // second time (the double-play bug). message.game is the pristine
+            // server state here (resolveOptimisticConflicts hasn't injected yet).
             if (message.game?.table_battles && optimisticAnimations.current.size > 0) {
-                const onTable = new Set<string>();
+                const tableCards: Card[] = [];
                 for (const b of message.game.table_battles) {
-                    if (b?.attack) onTable.add(getCardKey(b.attack));
-                    if (b?.defense) onTable.add(getCardKey(b.defense));
+                    if (b?.attack) tableCards.push(b.attack);
+                    if (b?.defense) tableCards.push(b.defense);
                 }
-                optimisticAnimations.current.forEach((_ts, cardEventString) => {
+                for (const key of staleOptimisticKeysOnTable(optimisticAnimations.current.keys(), tableCards, message.events)) {
+                    optimisticAnimations.current.delete(key);
                     try {
-                        const parsed = JSON.parse(cardEventString);
-                        if (parsed.card && onTable.has(getCardKey(parsed.card))) {
-                            optimisticAnimations.current.delete(cardEventString);
-                            optimisticCardPositions.current.delete(getCardKey(parsed.card));
-                        }
+                        optimisticCardPositions.current.delete(getCardKey(JSON.parse(key).card));
                     } catch { /* ignore malformed key */ }
-                });
+                }
             }
         }
 
