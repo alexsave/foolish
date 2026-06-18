@@ -102,6 +102,22 @@ export const validate_defender_status = (game: Game, player_id: string, should_b
     }
 }
 
+// Guard a card-array argument from a client payload BEFORE any handler logic
+// touches it, so a malformed payload (non-array, or cards missing numeric
+// suit/value) becomes a clean 400 rejection rather than a confusing TypeError
+// ("cards is not iterable") or a "Card undefined of undefined" message deep in
+// validation.
+export const verify_card_array = (cards: unknown, label: string): asserts cards is Card[] => {
+    if (!Array.isArray(cards)) {
+        throw new Error(`${label} must be an array of cards`);
+    }
+    for (const card of cards) {
+        if (!card || typeof card !== 'object' || typeof (card as any).suit !== 'number' || typeof (card as any).value !== 'number') {
+            throw new Error(`${label} contains an invalid card`);
+        }
+    }
+};
+
 export const verify_cards_in_players_hand = (player: PrivatePlayer, cards: Card[]) => {
     for (const card of cards) {
         if (!player.hand.some(handCard => card_comp(handCard, card))) {

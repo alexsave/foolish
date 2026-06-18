@@ -11,11 +11,14 @@ import { createClient, User } from 'jsr:@supabase/supabase-js';
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { getAuthenticatedUser } from './auth.ts';
-import { lockedBotLoop } from './bot_actions.ts';
 import { saveGameLogs, cleanupOldGameLogs, wipeAllGameLogs } from './log_utils.ts';
-import { verifyRoundTrip } from './replay/encode.ts';
-import { encodeExtras, moveTimesFromLogs } from './replay/extras.ts';
-import { base32Decode, bytesToHex } from './replay/codec.ts';
+// NOTE: bot_actions (→ the entire bot-strategy stack: cordite's ~127KB Monte-Carlo
+// engine, nitro, etc.) and the replay codec are imported LAZILY at their use sites
+// below, NOT statically. wrap400 is imported by every edge function, so a static
+// import here would make cold starts of lightweight functions (create/join/start/
+// the lobby) transpile+evaluate that whole graph for nothing — the dominant cost
+// behind multi-second "create game" cold starts. They now load only when a bot
+// actually drives (the run_bots branch) or a game actually ends (finalizeEndedGame).
 
 const supabaseClient = createClient(
     Deno.env.get('SUPABASE_URL') || '',
@@ -386,8 +389,11 @@ export const wrap400 = (execute: (params: ExecutionParams) => Promise<{ game: Ga
                 // baton and it leaks for the full stale window, freezing the game
                 // (confirmed by T1 diagnostics: loops died at ~15s with no
                 // released_clean). waitUntil keeps the worker alive until it settles.
-                const botLoop = lockedBotLoop(game_id).catch(err =>
-                    console.error(`[${reqId}] bot loop error:`, err));
+                // Lazy import: only now (a real bot drive) do we pull in the bot
+                // strategy stack. Lightweight functions never load it.
+                const botLoop = import('./bot_actions.ts')
+                    .then(m => m.lockedBotLoop(game_id))
+                    .catch(err => console.error(`[${reqId}] bot loop error:`, err));
                 const er = (globalThis as any).EdgeRuntime;
                 if (er && typeof er.waitUntil === 'function') {
                     er.waitUntil(botLoop);
@@ -700,6 +706,11 @@ const finalizeEndedGame = async (game: Game): Promise<void> => {
     // we touch the logs. Clearing game.logs afterwards stops saveCompleteGame
     // from re-inserting the rows we just wiped.
     try {
+        // Lazy import: the replay codec is only needed here, at game end.
+        const { verifyRoundTrip } = await import('./replay/encode.ts');
+        const { encodeExtras, moveTimesFromLogs } = await import('./replay/extras.ts');
+        const { base32Decode, bytesToHex } = await import('./replay/codec.ts');
+
         const { encoded } = verifyRoundTrip({
             playerIds: game.players.map(player => player.player_id),
             logs: game.logs,

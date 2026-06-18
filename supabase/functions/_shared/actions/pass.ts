@@ -1,6 +1,6 @@
 import { Card, Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, AnimationEvent, ANIMATION_EVENT_TYPE, LOG_TYPE } from '../types.ts';
 import { addLog, cloneGame } from '../common_utils.ts';
-import { get_next_player_index, validate_defender_status, verify_cards_in_players_hand, no_cards_left, card_comp, cardDisplay } from '../common_utils.ts';
+import { get_next_player_index, validate_defender_status, verify_cards_in_players_hand, verify_card_array, no_cards_left, card_comp, cardDisplay } from '../common_utils.ts';
 
 // Validation function for pass moves
 export function validatePass(game: Game, player_id: string, cards: Card[]): void {
@@ -9,7 +9,8 @@ export function validatePass(game: Game, player_id: string, cards: Card[]): void
         throw new Error(`Game ${game.id} is not in playing state`);
     }
 
-    if (!cards) {
+    verify_card_array(cards, 'cards');
+    if (cards.length === 0) {
         throw new Error(`No cards provided`);
     }
 

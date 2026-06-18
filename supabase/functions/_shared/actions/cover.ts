@@ -1,6 +1,6 @@
 import { Card, Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, AnimationEvent, ANIMATION_EVENT_TYPE, LOG_TYPE } from '../types.ts';
 import { addLog, cloneGame } from '../common_utils.ts';
-import { canCover, get_next_player_index, validate_defender_status, verify_cards_in_players_hand, card_comp, cardDisplay, refillPlayerHandsWithEvents } from '../common_utils.ts';
+import { canCover, get_next_player_index, validate_defender_status, verify_cards_in_players_hand, verify_card_array, card_comp, cardDisplay, refillPlayerHandsWithEvents } from '../common_utils.ts';
 
 // Validation function for cover moves
 export function validateCover(game: Game, player_id: string, cover_cards: Card[], attack_cards: Card[]): void {
@@ -8,6 +8,9 @@ export function validateCover(game: Game, player_id: string, cover_cards: Card[]
     if (game.status !== GAME_STATUS.PLAYING) {
         throw new Error(`Game ${game.id} is not in playing state`);
     }
+
+    verify_card_array(cover_cards, 'cover_cards');
+    verify_card_array(attack_cards, 'attack_cards');
 
     const uncoveredAttacks = game.table_battles.filter(battle => battle.defense === null);
     if (uncoveredAttacks.length === 0) {
@@ -45,6 +48,14 @@ export function validateCover(game: Game, player_id: string, cover_cards: Card[]
         throw new Error(`Cards ${attack_cards.map(card => cardDisplay(card)).join(', ')} have duplicates`);
     }
 
+    // assert same size of arrays — BEFORE the canCover loop below, which pairs
+    // cover_cards[i] with attack_cards[i]; a mismatched length would otherwise
+    // index undefined and throw a "reading 'suit'" TypeError instead of this clean
+    // rejection.
+    if (cover_cards.length !== attack_cards.length) {
+        throw new Error(`Cover cards ${cover_cards.map(card => cardDisplay(card)).join(', ')} and attack cards ${attack_cards.map(card => cardDisplay(card)).join(', ')} have different sizes`);
+    }
+
     // can they cover?
     for (let i = 0; i < cover_cards.length; i++) {
         const cover_card = cover_cards[i];
@@ -52,11 +63,6 @@ export function validateCover(game: Game, player_id: string, cover_cards: Card[]
         if (!canCover(attack_card, cover_card, game.power_suit)) {
             throw new Error(`Card ${cardDisplay(cover_card)} cannot cover ${cardDisplay(attack_card)}`);
         }
-    }
-
-    // assert same size of arrays
-    if (cover_cards.length !== attack_cards.length) {
-        throw new Error(`Cover cards ${cover_cards.map(card => cardDisplay(card)).join(', ')} and attack cards ${attack_cards.map(card => cardDisplay(card)).join(', ')} have different sizes`);
     }
 }
 
