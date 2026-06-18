@@ -1,13 +1,15 @@
-// Lobby / "game meta" actions, consolidated. These used to be four separate edge
-// functions (start, add-bot, exit, continue); folding them into one `meta`
-// endpoint (dispatched on body.type) cuts the function count for faster deploys —
-// the same move the `action` endpoint made for gameplay. The per-action logic is
-// unchanged; only the packaging is consolidated. Each handler mutates params.game
-// and returns {game, events}; executeWithGameLock (via wrap400) does the commit.
+// Lobby / "game meta" actions, consolidated. These used to be separate edge
+// functions (start, add-bot, exit, continue, join, rearrange-hand,
+// rearrange-players, update-name); folding them into one `meta` endpoint
+// (dispatched on body.type) cuts the function count for faster deploys — the same
+// move the `action` endpoint made for gameplay. The per-action logic is unchanged;
+// only the packaging is consolidated. Each handler mutates params.game and returns
+// {game, events}; executeWithGameLock (via wrap400) does the commit.
 
-import { ExecutionParams } from './utils.ts';
-import { ANIMATION_EVENT_TYPE, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY, AnimationEvent, Game } from './types.ts';
+import { ExecutionParams, broadcastToGameUser } from './utils.ts';
+import { ANIMATION_EVENT_TYPE, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY, SERVER_EVENT_TYPE, AnimationEvent, Game } from './types.ts';
 import { start_game, cloneGame, verify_player_in_game } from './common_utils.ts';
+import { handleRearrangeHand as applyRearrangeHand } from './actions/rearrange.ts';
 import { createClient } from 'jsr:@supabase/supabase-js';
 
 const supabaseClient = createClient(
@@ -176,6 +178,111 @@ export function handleContinue({ user, game }: ExecutionParams): Result {
     }] };
 }
 
+// ---- join ------------------------------------------------------------------
+function handleJoin({ user, user_name, body, game }: ExecutionParams): Result {
+    const user_id = user.id;
+    const { game_id } = body;
+
+    if (game.status !== GAME_STATUS.WAITING) {
+        throw new Error(`Game ${game_id} is not waiting for players`);
+    }
+    if (game.players.some(p => p.player_id === user_id)) {
+        throw new Error(`Player ${user_id} is already in game ${game_id}`);
+    }
+
+    game.players.push({
+        player_id: user_id,
+        name: user_name,
+        status: PLAYER_STATUS.IDLE,
+        is_ai: false,
+        hand: [],
+        awaiting_attack: false,
+        hand_length: 0,
+        strategy_key: STRATEGY_KEY.HUMAN
+    });
+
+    // saveCompleteGame (via executeWithGameLock) persists the new players array
+    // and upserts the joiner's player_hands row — no extra DB ops needed here.
+    return { game, events: [{
+        type: ANIMATION_EVENT_TYPE.MAGIC_TRANSITION,
+        message: `${user_name} joined the game`,
+        game_state: game
+    }] };
+}
+
+// ---- rearrange hand --------------------------------------------------------
+function handleRearrangeHand({ user, user_name, game, body }: ExecutionParams): Result {
+    // Reorder the caller's hand. applyRearrangeHand validates membership + that
+    // card_indices is a permutation (uniqueness prevents minting duplicate
+    // cards via repeated indices). Mutates game in place.
+    applyRearrangeHand(game, user.id, body.card_indices);
+
+    // Targeted broadcast only to the caller (their hand order is private); the
+    // committed game itself is broadcast by executeWithGameLock.
+    broadcastToGameUser(game, SERVER_EVENT_TYPE.HAND_REARRANGED, {
+        message: `${user_name} rearranged their hand`
+    }, user.id);
+
+    return { game, events: [] };
+}
+
+// ---- rearrange players (lobby seating order) -------------------------------
+function handleRearrangePlayers({ user, body, game }: ExecutionParams): Result {
+    const user_id = user.id;
+    const { new_order } = body;
+
+    verify_player_in_game(game, user_id);
+
+    if (game.status !== GAME_STATUS.WAITING) {
+        throw new Error(`Can only rearrange players during game lobby`);
+    }
+    if (!Array.isArray(new_order) || new_order.length !== game.players.length) {
+        throw new Error(`New order must contain exactly ${game.players.length} player IDs`);
+    }
+    for (const player_id of new_order) {
+        if (!game.players.some(p => p.player_id === player_id)) {
+            throw new Error(`Player ID ${player_id} not found in game`);
+        }
+    }
+
+    game.players = new_order.map(player_id => game.players.find(p => p.player_id === player_id)!);
+
+    const userName = game.players.find(p => p.player_id === user_id)?.name || 'Someone';
+    return { game, events: [{
+        type: ANIMATION_EVENT_TYPE.MAGIC_TRANSITION,
+        message: `${userName} rearranged the player order`,
+        game_state: game
+    }] };
+}
+
+// ---- update game name ------------------------------------------------------
+function handleUpdateName({ user, body, game }: ExecutionParams): Result {
+    const user_id = user.id;
+    const { new_name } = body;
+
+    verify_player_in_game(game, user_id);
+
+    if (game.status !== GAME_STATUS.WAITING) {
+        throw new Error(`Can only update name during game lobby`);
+    }
+    if (!new_name || typeof new_name !== 'string' || new_name.trim().length === 0) {
+        throw new Error('New name must be a non-empty string');
+    }
+    if (new_name.length > 50) {
+        throw new Error('Name must be 50 characters or less');
+    }
+
+    const oldName = game.name;
+    game.name = new_name.trim();
+
+    const userName = game.players.find(p => p.player_id === user_id)?.name || 'Someone';
+    return { game, events: [{
+        type: ANIMATION_EVENT_TYPE.MAGIC_TRANSITION,
+        message: `${userName} changed game name from "${oldName}" to "${game.name}"`,
+        game_state: game
+    }] };
+}
+
 // Dispatch a meta action by type (shared by the `meta` edge function and tests).
 export async function handleMetaAction(params: ExecutionParams): Promise<Result> {
     switch (params.body?.type) {
@@ -183,6 +290,10 @@ export async function handleMetaAction(params: ExecutionParams): Promise<Result>
         case 'add-bot': return await handleAddBot(params);
         case 'exit': return await handleExit(params);
         case 'continue': return handleContinue(params);
+        case 'join': return handleJoin(params);
+        case 'rearrange-hand': return handleRearrangeHand(params);
+        case 'rearrange-players': return handleRearrangePlayers(params);
+        case 'update-name': return handleUpdateName(params);
         default: throw new Error(`unknown meta action type: ${params.body?.type}`);
     }
 }

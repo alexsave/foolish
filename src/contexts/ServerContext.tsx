@@ -412,7 +412,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     };
 
     const joinGame = (gameId: string): Promise<{ game_id: string }> => {
-        return invokeGameFunctions('join', {
+        return invokeGameFunctions('meta', {
+            type: 'join',
             game_id: gameId,
         }, {
             onSuccess: (data) => {
@@ -881,7 +882,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             }));
         }
 
-        return invokeGameFunctions('update-name', {
+        return invokeGameFunctions('meta', {
+            type: 'update-name',
             game_id: gameId,
             new_name: name
         }, {
@@ -914,7 +916,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             playerIds_content: playerIds
         });
 
-        return invokeGameFunctions('rearrange-players', {
+        return invokeGameFunctions('meta', {
+            type: 'rearrange-players',
             game_id: gameId,
             new_order: playerIds
         }, {
@@ -948,7 +951,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             }));
         }
 
-        return invokeGameFunctions('rearrange-hand', {
+        return invokeGameFunctions('meta', {
+            type: 'rearrange-hand',
             game_id: gameId,
             card_indices: cardIndices
         }, {
