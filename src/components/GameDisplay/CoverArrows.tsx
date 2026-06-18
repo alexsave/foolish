@@ -3,7 +3,12 @@ import { useGame } from "../../contexts/GameContext";
 import { useServer } from "../../contexts/ServerContext";
 
 export const CoverArrows = () => {
-    const game: PersonalGame = useServer().game as PersonalGame;
+    const { game: rawGame, localHandOrder } = useServer();
+    const game: PersonalGame = rawGame as PersonalGame;
+    // Position arrows against the SAME order the hand is rendered in
+    // (localHandOrder / displayedHand), not the authoritative game.self.hand order,
+    // so the arrow's tail lands on the actual on-screen covering card.
+    const hand = (localHandOrder && localHandOrder.length ? localHandOrder : game?.self?.hand) ?? [];
 
     const { coverMap } = useGame();
 
@@ -12,8 +17,8 @@ export const CoverArrows = () => {
             // Skip if spectator (no self)
             if (!game.self) return null;
 
-            // Find the position of the covering card (in hand)
-            const handCardIndex = game.self.hand.findIndex(card =>
+            // Find the position of the covering card (in the rendered hand order)
+            const handCardIndex = hand.findIndex(card =>
                 card.value === coveringCard.value && card.suit === coveringCard.suit
             );
 
@@ -26,7 +31,7 @@ export const CoverArrows = () => {
 
             // Calculate approximate positions
             // Hand cards are at the bottom center
-            const handCardsStartX = window.innerWidth / 2 - (game.self.hand.length * 50) / 2; // Updated for 5:7 ratio cards
+            const handCardsStartX = window.innerWidth / 2 - (hand.length * 50) / 2; // Updated for 5:7 ratio cards
             const handX = handCardsStartX + (handCardIndex * 50) + 25; // 25 is half card width (50px)
             const handY = window.innerHeight - 100; // approximate bottom position
 

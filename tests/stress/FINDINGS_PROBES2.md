@@ -11,7 +11,7 @@ Q1–Q5 are tested in `probe2.ts`; Q6–Q10 are code analysis with cites.
 | Q3 | does version keep climbing across `continue`/reset (new deal not gated)? | ✅ yes |
 | Q4 | "silent good" — non-transitioning good emits no broadcast? | ✅ by design (confirmed intended) |
 | Q5 | intra-sequence table forward-only (authoritative replace safe)? | ✅ yes (7,873 seqs) |
-| Q6 | gated-out optimistic confirmation leaves tracking uncleared? | ⚠️ **real, new, bounded** |
+| Q6 | gated-out optimistic confirmation leaves tracking uncleared? | 🔧 fixed |
 | Q7 | reconnect resync erases an in-flight optimistic attack? | 🔧 fixed (optimistic overlay) |
 | Q8 | flapping WS → unbounded resync REST storm? | ⚠️ watch-item (add debounce) |
 | Q9 | spectator joining mid-game gets the gate stale-seeded? | ✅ re-seeded by loadGame |
@@ -31,7 +31,7 @@ Q1–Q5 are tested in `probe2.ts`; Q6–Q10 are code analysis with cites.
   single sequence. So applying each event's table as an authoritative replace
   animates correctly — validating the `mergeTableBattles` change.
 
-## Q6 — real, new, low-severity: a gated-out confirmation can leave optimistic tracking uncleared
+## Q6 — FIXED (was real, new, low-severity): a gated-out confirmation could leave optimistic tracking uncleared
 
 The optimistic entry for a local move is cleared in `handleAnimationMessage`
 (AnimationContext.tsx:777-799) when a server **event** matching it is processed. If
@@ -48,12 +48,12 @@ phantom** until the TTL clears it. Bounded (≤30 s, self-healing) and requires
 consecutive-version reorder of my own move, but it's a genuine new interaction
 between the gate and the optimistic layer.
 
-**Recommended fix:** when the gate accepts a sequence, also release optimistic
-entries the authoritative state confirms — i.e. after `lastAppliedVersionRef`
-advances, delete any of my `optimisticAnimations` whose card is present in
-`message.game.table_battles`. That clears a confirmation even when its literal
-broadcast was dropped. (Left as a recommendation rather than shipped blind —
-it's in the delicate optimistic path and wants in-app verification.)
+**Fix (shipped):** when the gate accepts a sequence, it now also releases
+optimistic entries the authoritative state confirms — after `lastAppliedVersionRef`
+advances, any of my `optimisticAnimations` whose card is present in the pristine
+`message.game.table_battles` is deleted (along with its position tracking). That
+clears a confirmation even when its literal broadcast was dropped, so nothing
+lingers to be re-injected. Validated in `optimistic_revert.ts` (scenario E).
 
 ## Q7 — fixed: reconnect resync no longer vanishes in-flight optimistic cards
 
