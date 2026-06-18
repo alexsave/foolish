@@ -35,7 +35,16 @@ npm install pg --no-save
 ```bash
 npm run test:stress                              # defaults: 8 games, 2H+1B
 npx tsx tests/stress/stress.ts 10 --humans=3 --bots=1 --delay=8 --blatency=120
+
+# client reconciliation under packet loss / reordering (see FINDINGS_CLIENT.md)
+npx tsx tests/stress/client_sim.ts --trials=80 --blatency=120
 ```
+
+`client_sim.ts` replays REAL broadcast streams through the client's REAL merge
+logic (`client_merge.ts`, ported verbatim from `ServerContext.tsx`) under three
+delivery regimes — in-order (baseline), reordered (latency), and disconnect (one
+lost round-transition packet) — and audits for cross-bout/phantom cards,
+un-covered cards, and a permanently-wrong table.
 
 Flags:
 
