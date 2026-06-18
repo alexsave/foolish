@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
 import { getCachedTexture, setCachedTexture } from '../utils/textureCache';
+import { PixelData, pixelsToPointArrays, generateTextureViaWebGL } from '../utils/webglTexture';
 
 interface WoodTextureProps {
   width?: number;
@@ -24,11 +25,7 @@ const getRandomOffsets = () => {
 };
 
 // Generate wood pixel data in JavaScript (like fernFractal generates points/colors)
-async function generateWoodPixelData(width: number, height: number): Promise<{
-  positions: Float32Array;
-  colors: Float32Array;
-  pointCount: number;
-}> {
+async function generateWoodPixelData(width: number, height: number): Promise<PixelData> {
   const { offsetX, offsetY } = getRandomOffsets();
   
   const C = Math.cos;
@@ -96,137 +93,19 @@ async function generateWoodPixelData(width: number, height: number): Promise<{
     }
   }
   
-  // Convert to positions and colors arrays for WebGL
-  const totalPixels = width * height;
-  const positions = new Float32Array(totalPixels * 2);
-  const colors = new Float32Array(totalPixels * 3);
-  
-  let pointIndex = 0;
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const idx = (y * width + x) * 3;
-      
-      positions[pointIndex * 2] = x + 0.5;
-      positions[pointIndex * 2 + 1] = y + 0.5;
-      
-      colors[pointIndex * 3] = pixelColors[idx];
-      colors[pointIndex * 3 + 1] = pixelColors[idx + 1];
-      colors[pointIndex * 3 + 2] = pixelColors[idx + 2];
-      
-      pointIndex++;
-    }
-  }
-  
-  return {
-    positions,
-    colors,
-    pointCount: totalPixels
-  };
+  return pixelsToPointArrays(pixelColors, width, height);
 }
 
 // GPU-accelerated wood texture rendering using WebGL (CPU generates, GPU draws)
-const generateWoodTextureAsync = async (width: number = 1920, height: number = 1080): Promise<string> => {
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const gl = canvas.getContext('webgl', { preserveDrawingBuffer: true });
-  
-  if (!gl) {
-    console.error('WebGL not available, falling back to CPU-only');
-    return generateWoodTextureFallback(width, height);
-  }
-
-  try {
-    // Step 1: Generate pixel data using CPU (like fernFractal generates points)
-    const pixelData = await generateWoodPixelData(width, height);
-    
-    // Step 2: Use WebGL to draw the pixels efficiently
-    const vertexShaderSource = `
-      attribute vec2 position;
-      attribute vec3 color;
-      varying vec3 vColor;
-      uniform vec2 resolution;
-      
-      void main() {
-        vec2 normalized = position / resolution;
-        vec2 clipSpace = normalized * 2.0 - 1.0;
-        clipSpace.y = -clipSpace.y;
-        gl_Position = vec4(clipSpace, 0.0, 1.0);
-        gl_PointSize = 1.0;
-        vColor = color;
-      }
-    `;
-
-    const fragmentShaderSource = `
-      precision mediump float;
-      varying vec3 vColor;
-      
-      void main() {
-        gl_FragColor = vec4(vColor, 1.0);
-      }
-    `;
-
-    // Compile shaders
-    const vertexShader = gl.createShader(gl.VERTEX_SHADER)!;
-    gl.shaderSource(vertexShader, vertexShaderSource);
-    gl.compileShader(vertexShader);
-
-    const fragmentShader = gl.createShader(gl.FRAGMENT_SHADER)!;
-    gl.shaderSource(fragmentShader, fragmentShaderSource);
-    gl.compileShader(fragmentShader);
-
-    const program = gl.createProgram()!;
-    gl.attachShader(program, vertexShader);
-    gl.attachShader(program, fragmentShader);
-    gl.linkProgram(program);
-    gl.useProgram(program);
-
-    // Upload position data (one point per pixel)
-    const positionBuffer = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, pixelData.positions, gl.STATIC_DRAW);
-
-    const positionLocation = gl.getAttribLocation(program, 'position');
-    gl.enableVertexAttribArray(positionLocation);
-    gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
-
-    // Upload color data
-    const colorBuffer = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, pixelData.colors, gl.STATIC_DRAW);
-
-    const colorLocation = gl.getAttribLocation(program, 'color');
-    gl.enableVertexAttribArray(colorLocation);
-    gl.vertexAttribPointer(colorLocation, 3, gl.FLOAT, false, 0, 0);
-
-    // Set uniforms
-    const resolutionLocation = gl.getUniformLocation(program, 'resolution');
-    gl.uniform2f(resolutionLocation, width, height);
-
-    // Clear and draw all pixels
-    gl.clearColor(70 / 255, 14 / 255, 9 / 255, 1);
-    gl.clear(gl.COLOR_BUFFER_BIT);
-    gl.drawArrays(gl.POINTS, 0, pixelData.pointCount);
-
-    gl.flush();
-    await new Promise(resolve => setTimeout(resolve, 10));
-
-    // Convert to Blob URL
-    return new Promise((resolve) => {
-      canvas.toBlob((blob) => {
-        if (blob) {
-          const blobUrl = URL.createObjectURL(blob);
-          resolve(blobUrl);
-        } else {
-          resolve('');
-        }
-      }, 'image/png', 1.0);
-    });
-  } catch (error) {
-    console.error('WebGL wood texture generation failed, using fallback:', error);
-    return generateWoodTextureFallback(width, height);
-  }
-};
+const generateWoodTextureAsync = (width: number = 1920, height: number = 1080): Promise<string> =>
+  generateTextureViaWebGL(
+    width,
+    height,
+    'wood',
+    [70 / 255, 14 / 255, 9 / 255, 1],
+    generateWoodPixelData,
+    generateWoodTextureFallback
+  );
 
 // CPU implementation (original code)
 const generateWoodTextureFallback = async (width: number = 1920, height: number = 1080): Promise<string> => {
