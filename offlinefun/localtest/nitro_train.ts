@@ -12,8 +12,8 @@
 //
 // Resume by passing --in=<same path> (defaults to --out).
 
-import { calculateLegalMoves, registerBotStrategy } from '../../supabase/functions/_shared/bot_strategy.ts';
-import { shouldBotActCore, processBotAction } from '../../supabase/functions/_shared/pure_bot_actions.ts';
+import { registerBotStrategy } from '../../supabase/functions/_shared/bot_strategy.ts';
+import { createGame, normSeed, runBotsToCompletion } from './harness.ts';
 import { start_game, game_done } from '../../supabase/functions/_shared/common_utils.ts';
 import { Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, STRATEGY_KEY, StrategyKey } from '../../supabase/functions/_shared/types.ts';
 import { EspressoStrategy } from '../../supabase/functions/_shared/strategies/espresso_strategy.ts';
@@ -44,51 +44,12 @@ const noop = () => { };
 console.log = noop; console.warn = noop; console.error = noop; console.info = noop;
 const print = (...args: any[]) => fs.writeSync(1, args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ') + '\n');
 
-const createPlayer = (strategy: StrategyKey, index: number): PrivatePlayer => ({
-    player_id: `bot_${index}_${strategy}`, name: `${strategy}${index}`, status: PLAYER_STATUS.READY,
-    is_ai: true, hand: [], awaiting_attack: false, hand_length: 0, strategy_key: strategy,
-});
-
-const createGame = (heroStrat: StrategyKey, oppStrat: StrategyKey): Game => {
-    const players: PrivatePlayer[] = [createPlayer(heroStrat, 0), createPlayer(oppStrat, 1)];
-    return {
-        players, deck: [], logs: [], id: 'g', name: 'g', status: GAME_STATUS.PLAYING,
-        deck_length: 0, discard_pile_length: 0, flipped: null, power_suit: 0,
-        first_attacker: 0, defender: 0, table_battles: [], elimination_order: [],
-        good_timestamp: null, good_players: [],
-    };
-};
-
-const norm = (s: number): number => ((s >>> 0) || 1);
-
 async function nitroWinsSeed(seed: number, capIters = 2000): Promise<boolean> {
-    _seed = norm(seed);
-    setRandomSeed(norm(seed));
-    const game = createGame(NITRO, ESPRESSO);
+    _seed = normSeed(seed);
+    setRandomSeed(normSeed(seed));
+    const game = createGame([NITRO, ESPRESSO]);
     start_game(game);
-    let iter = 0;
-    while (game_done(game) === null && iter < capIters) {
-        iter++;
-        const eligible: { bot: PrivatePlayer }[] = [];
-        for (let i = 0; i < game.players.length; i++) {
-            if (shouldBotActCore(game, game.players[i], i)) {
-                const lm = calculateLegalMoves(game, game.players[i].player_id);
-                if (lm.length > 0) eligible.push({ bot: game.players[i] });
-            }
-        }
-        if (eligible.length === 0) break;
-        const shuffled = [...eligible];
-        for (let i = shuffled.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-        }
-        let acted = false;
-        for (const sb of shuffled) {
-            const r = await processBotAction(game, sb.bot);
-            if (r) { acted = true; break; }
-        }
-        if (!acted) break;
-    }
+    await runBotsToCompletion(game, capIters);
     const loser = game_done(game);
     return loser !== null && loser !== 'bot_0_nitro';
 }
