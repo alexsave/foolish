@@ -5,6 +5,7 @@ import { start_game, game_done } from '../../supabase/functions/_shared/common_u
 import { Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, STRATEGY_KEY, StrategyKey, Card } from '../../supabase/functions/_shared/types.ts';
 import { EspressoStrategy } from '../../supabase/functions/_shared/strategies/espresso_strategy.ts';
 import { setRandomSeed } from '../../supabase/functions/_shared/strategies/random_strategy.ts';
+import { runBotsToCompletion } from './harness.ts';
 import * as fs from 'node:fs';
 
 const ESPRESSO = 'espresso' as StrategyKey;
@@ -43,28 +44,7 @@ async function runOne(seed: number): Promise<{ heroLost: boolean; iters: number 
     _seed = seed; setRandomSeed(seed);
     const game = createGame(ESPRESSO, STRATEGY_KEY.HANDWRITTEN, 1);
     start_game(game);
-    let iter = 0;
-    while (game_done(game) === null && iter++ < 1500) {
-        const eligible: { bot: PrivatePlayer; index: number }[] = [];
-        for (let i = 0; i < game.players.length; i++) {
-            if (shouldBotActCore(game, game.players[i], i)) {
-                const lm = calculateLegalMoves(game, game.players[i].player_id);
-                if (lm.length > 0) eligible.push({ bot: game.players[i], index: i });
-            }
-        }
-        if (eligible.length === 0) break;
-        const shuffled = [...eligible];
-        for (let i = shuffled.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-        }
-        let acted = false;
-        for (const sb of shuffled) {
-            const r = await processBotAction(game, sb.bot);
-            if (r) { acted = true; break; }
-        }
-        if (!acted) break;
-    }
+    const iter = await runBotsToCompletion(game, 1500);
     const loserId = game_done(game);
     const heroLost = loserId === 'bot_0_espresso';
     return { heroLost, iters: iter };

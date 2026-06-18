@@ -5,6 +5,7 @@ import { start_game, game_done } from '../../supabase/functions/_shared/common_u
 import { Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, STRATEGY_KEY, StrategyKey } from '../../supabase/functions/_shared/types.ts';
 import { EspressoStrategy } from '../../supabase/functions/_shared/strategies/espresso_strategy.ts';
 import { setRandomSeed } from '../../supabase/functions/_shared/strategies/random_strategy.ts';
+import { createGame, runBotsToCompletion } from './harness.ts';
 import * as fs from 'node:fs';
 
 const ESPRESSO = 'espresso' as StrategyKey;
@@ -21,48 +22,15 @@ const noop = () => { };
 console.log = noop; console.warn = noop; console.error = noop; console.info = noop;
 const print = (...args: any[]) => fs.writeSync(2, args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ') + '\n');
 
-const createPlayer = (strategy: StrategyKey, index: number): PrivatePlayer => ({
-    player_id: `bot_${index}_${strategy}`, name: `${strategy}${index}`, status: PLAYER_STATUS.READY,
-    is_ai: true, hand: [], awaiting_attack: false, hand_length: 0, strategy_key: strategy
-});
-
-const createGame = (heroStrat: StrategyKey, oppStrat: StrategyKey, numOpps: number): Game => {
-    const players: PrivatePlayer[] = [createPlayer(heroStrat, 0)];
-    for (let i = 0; i < numOpps; i++) players.push(createPlayer(oppStrat, i + 1));
-    return { players, deck: [], logs: [], id: 'g', name: 'g', status: GAME_STATUS.PLAYING,
-        deck_length: 0, discard_pile_length: 0, flipped: null, power_suit: 0,
-        first_attacker: 0, defender: 0, table_battles: [], elimination_order: [],
-        good_timestamp: null, good_players: [] };
-};
+const gameFor = (heroStrat: StrategyKey, oppStrat: StrategyKey, numOpps: number): Game =>
+    createGame([heroStrat, ...Array(numOpps).fill(oppStrat)]);
 
 async function runOne(seed: number, heroStrat: StrategyKey, oppStrat: StrategyKey, numOpps: number, capIters = 2000): Promise<{ iters: number; finished: boolean; gameAtEnd?: Game }> {
     _seed = seed;
     setRandomSeed(seed);
-    const game = createGame(heroStrat, oppStrat, numOpps);
+    const game = gameFor(heroStrat, oppStrat, numOpps);
     start_game(game);
-    let iter = 0;
-    while (game_done(game) === null && iter < capIters) {
-        iter++;
-        const eligible: { bot: PrivatePlayer; index: number }[] = [];
-        for (let i = 0; i < game.players.length; i++) {
-            if (shouldBotActCore(game, game.players[i], i)) {
-                const lm = calculateLegalMoves(game, game.players[i].player_id);
-                if (lm.length > 0) eligible.push({ bot: game.players[i], index: i });
-            }
-        }
-        if (eligible.length === 0) break;
-        const shuffled = [...eligible];
-        for (let i = shuffled.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-        }
-        let acted = false;
-        for (const sb of shuffled) {
-            const r = await processBotAction(game, sb.bot);
-            if (r) { acted = true; break; }
-        }
-        if (!acted) break;
-    }
+    const iter = await runBotsToCompletion(game, capIters);
     const finished = game_done(game) !== null;
     return { iters: iter, finished, gameAtEnd: game };
 }
@@ -70,7 +38,7 @@ async function runOne(seed: number, heroStrat: StrategyKey, oppStrat: StrategyKe
 async function runOneVerbose(seed: number, heroStrat: StrategyKey, oppStrat: StrategyKey, numOpps: number, capIters = 200): Promise<void> {
     _seed = seed;
     setRandomSeed(seed);
-    const game = createGame(heroStrat, oppStrat, numOpps);
+    const game = gameFor(heroStrat, oppStrat, numOpps);
     start_game(game);
     print(`\nseed=${seed} START. power=${game.power_suit}, defender=${game.defender}, hands=${game.players.map(p => p.hand.length).join(',')}`);
     let iter = 0;
