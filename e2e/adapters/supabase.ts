@@ -156,6 +156,29 @@ class Channel {
     }
 }
 
+// The server now reaches Realtime by POSTing { messages: [{topic,event,payload}] }
+// to /realtime/v1/api/broadcast in ONE batched request (see broadcastMessages in
+// _shared/utils.ts) rather than per-recipient channel.send(). There's no Realtime
+// server here, so intercept that POST and record each message into broadcastLog —
+// the same recorder, moved to the HTTP layer where Realtime now lives. Each
+// message becomes one log entry (channel = its topic), so tests see exactly what
+// they saw under the old channel.send() shim. Non-broadcast fetches pass through.
+const _realFetch = globalThis.fetch;
+globalThis.fetch = (async (input: any, init?: any): Promise<Response> => {
+    const url = typeof input === 'string' ? input : (input?.url ?? '');
+    if (url.includes('/realtime/v1/api/broadcast') && init?.method === 'POST') {
+        try {
+            const { messages } = JSON.parse(init.body);
+            for (const m of messages ?? []) {
+                broadcastLog.push({ channel: m.topic, event: m.event, payload: m.payload, at: Date.now() });
+            }
+        } catch { /* malformed body — record nothing, mirror a server-side reject */ }
+        return new Response(null, { status: 202 });
+    }
+    if (_realFetch) return _realFetch(input, init);
+    throw new Error(`e2e: unexpected fetch to ${url}`);
+}) as typeof fetch;
+
 export const createClient = (_url?: string, _key?: string) => ({
     from: (table: string) => new QueryBuilder(table),
     rpc: async (name: string, params: Record<string, any> = {}): Promise<Result> => {
