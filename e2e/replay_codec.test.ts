@@ -246,23 +246,43 @@ function roundTripGame(game: Game, np: number): void {
   }
 }
 
-// Scale-free timing self-test: the same 1-byte/move curve must hold from
-// nanosecond simulation steps to multi-week correspondence gaps.
-test('replay extras: time scale holds from 1ns to 1 week units', () => {
-  for (const scale of [1e-9, 1e-6, 1e-3, 1, 3600, 86400 * 7]) {
-    const t0 = 1750000000;
-    const raw = [1, 2.5, 7, 0.3, 40, 12, 0.9, 100];
-    const gaps = raw.map((r) => r * scale);
-    const blob = encodeExtrasFromGaps(null, t0, gaps);
-    const back = decodeExtras(blob, 2, raw.length);
-    back.moveGaps!.forEach((g, i) => {
-      const want = raw[i] * scale;
-      assert.ok(Math.abs(g - want) <= want * 0.08, `time scale ${scale}: gap ${i} got ${g}, want ${want}`);
-    });
-  }
-});
+// Owns the replay validation scenarios; the fast runner
+// (e2e/validation/replay_validation.test.ts) imports `registerReplayValidation`.
+export function registerReplayValidation(): void {
+  // Scale-free timing self-test: the same 1-byte/move curve must hold from
+  // nanosecond simulation steps to multi-week correspondence gaps.
+  test('replay extras: time scale holds from 1ns to 1 week units', () => {
+    for (const scale of [1e-9, 1e-6, 1e-3, 1, 3600, 86400 * 7]) {
+      const t0 = 1750000000;
+      const raw = [1, 2.5, 7, 0.3, 40, 12, 0.9, 100];
+      const gaps = raw.map((r) => r * scale);
+      const blob = encodeExtrasFromGaps(null, t0, gaps);
+      const back = decodeExtras(blob, 2, raw.length);
+      back.moveGaps!.forEach((g, i) => {
+        const want = raw[i] * scale;
+        assert.ok(Math.abs(g - want) <= want * 0.08, `time scale ${scale}: gap ${i} got ${g}, want ${want}`);
+      });
+    }
+  });
 
-test(`replay codec round-trips engine-played games (${GAMES_PER_PC}/player-count, 2..8 players)`, async () => {
+  // A few short engine games round-trip byte-exact (engine<->replay drift guard).
+  test('replay codec round-trips short engine games byte-exact (2..4 players)', async () => {
+    let played = 0;
+    for (let np = 2; np <= 4; np++) {
+      for (let g = 0; g < 2; g++) {
+        const game = await playRandomGame(np, (g % 2 === 0 ? 'random' : 'handwritten') as StrategyKey);
+        if (!game) continue;
+        played++;
+        roundTripGame(game, np);
+      }
+    }
+    assert.ok(played > 0, 'at least one short game completed');
+  });
+}
+
+if (!process.env.VALIDATION_ONLY) registerReplayValidation();
+
+if (!process.env.VALIDATION_ONLY) test(`replay codec round-trips engine-played games (${GAMES_PER_PC}/player-count, 2..8 players)`, async () => {
   let totalGames = 0;
   let stalled = 0;
   for (let np = 2; np <= 8; np++) {

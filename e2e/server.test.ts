@@ -35,6 +35,48 @@ async function newGame(humans: number, bots: number): Promise<{ gameId: string; 
     return { gameId, humanIds, botIds };
 }
 
+// ---- handpicked validation: a short game + a burst, sharing DB before/after ---
+export function registerServerValidation(): void {
+    test('server: a short real game conserves cards and broadcasts strictly-increasing versions', async () => {
+        const { gameId } = await newGame(2, 1);
+        for (let step = 0; step < 40; step++) {
+            const g = await loadGame(gameId);
+            if (g.status !== 'playing') break;
+            const moves = legalMovesFor(g);
+            if (moves.length === 0) break;
+            try { await executeWithGameLock(gameId, async (gg) => ({ game: gg, events: applyPlayerMove(gg, pick(moves)) }), `s${step}`, true); } catch { /* stale */ }
+            const chk = await checkCardConservation(gameId);
+            assert.ok(chk.ok, `card conservation violated at step ${step}: ${chk.detail}`);
+        }
+        const evts = broadcastLog.filter((b) => b.event === 'animation_events');
+        assert.ok(evts.length > 0, 'expected broadcasts');
+        const perChannel = new Map<string, number[]>();
+        for (const e of evts) {
+            assert.equal(typeof e.payload.version, 'number', 'broadcast carries a numeric version');
+            if (!perChannel.has(e.channel)) perChannel.set(e.channel, []);
+            perChannel.get(e.channel)!.push(e.payload.version);
+        }
+        for (const [chan, vs] of perChannel)
+            for (let i = 1; i < vs.length; i++) assert.ok(vs[i] > vs[i - 1], `versions not increasing on ${chan}: ${vs.join(',')}`);
+    });
+
+    test('server: a burst of overlapping submits against one version cannot duplicate or lose a card', async () => {
+        const { gameId, botIds } = await newGame(3, 1);
+        for (let step = 0; step < 25; step++) {
+            const snap = await loadGame(gameId);
+            if (snap.status !== 'playing') break;
+            const moves = legalMovesFor(snap, (id) => !botIds.has(id));
+            if (moves.length === 0) continue;
+            const burst: PlayerMove[] = [pick(moves), pick(moves)];
+            burst.push(burst[0]); // rapid double-submit
+            await Promise.all(burst.map((m, i) => executeWithGameLock(gameId, async (gg) => ({ game: gg, events: applyPlayerMove(gg, m) }), `b${step}-${i}`, true).catch(() => {})));
+            const chk = await checkCardConservation(gameId);
+            assert.ok(chk.ok, `conservation broke under contention at step ${step}: ${chk.detail}`);
+        }
+    });
+}
+
+if (!process.env.VALIDATION_ONLY) {
 before(async () => { await applySchema(); });
 beforeEach(async () => { await resetDb(); });
 
@@ -103,4 +145,7 @@ test('CAS serializes concurrent moves without losing or duplicating a card', asy
     }
 });
 
+registerServerValidation();
+
 after(async () => { await pgPool.end(); });
+}

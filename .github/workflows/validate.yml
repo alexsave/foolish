@@ -1,15 +1,17 @@
 name: validate
 
 # Fast regression validation: small, deterministic, handpicked scenarios that
-# guard the bugs behind every e2e suite — NOT the full fuzzers. Runs
-# e2e/*_validation.test.ts:
-#   pass_parity_validation  - client/server agreement on pass legality
-#   logic_validation        - cover / rearrange / adversarial-input handler rejections
-#   client_validation       - reconcile gate+merge, rendered hand, optimistic dedup
-#   replay_validation       - replay codec round-trip (engine<->replay drift) + timing
-#   db_validation           - CAS conservation + version monotonicity, lease, meta, isolation
-# The exhaustive fuzzers (fuzz / pass_parity / server / concurrent / reconcile /
-# replay_codec) remain for local / on-demand deep runs via `npm run test:e2e`.
+# guard the bugs behind every e2e suite — NOT the full fuzzers. Each scenario
+# LIVES in its domain test file (e.g. pass cases in e2e/pass_parity.test.ts,
+# alongside the fuzzer) and is exported as register*Validation(); the thin
+# runners in e2e/validation/ import and execute them with VALIDATION_ONLY=1 so
+# importing a domain file does not register its heavy/fuzzer tests.
+#   validation/pass_parity_validation - client/server agreement on pass legality
+#   validation/handlers_validation    - cover / rearrange / adversarial-attack rejection
+#   validation/client_validation      - reconcile gate+merge, rendered hand, optimistic dedup
+#   validation/replay_validation      - replay codec round-trip (engine<->replay drift) + timing
+#   validation/db_validation          - CAS conservation + version monotonicity, lease, meta, isolation
+# The exhaustive fuzzers remain for local / on-demand deep runs via `npm run test:e2e`.
 
 on:
   push:
