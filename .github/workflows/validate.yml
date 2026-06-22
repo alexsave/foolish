@@ -9,6 +9,7 @@ name: validate
 #   validation/pass_parity_validation - client/server agreement on pass legality
 #   validation/handlers_validation    - cover / rearrange / adversarial-attack rejection
 #   validation/client_validation      - reconcile gate+merge, rendered hand, optimistic dedup
+#   validation/client_rules_validation - next-defender rotation + keyboard pass parity (hand-rolled-logic fixes)
 #   validation/replay_validation      - replay codec round-trip (engine<->replay drift) + timing
 #   validation/db_validation          - CAS conservation + version monotonicity, lease, meta, isolation
 # The exhaustive fuzzers remain for local / on-demand deep runs via `npm run test:e2e`.
