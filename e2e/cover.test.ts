@@ -1,5 +1,8 @@
 // E2E: the REAL cover handler (supabase/functions/_shared/actions/cover.ts) — the
 // validate/execute matching-mismatch fix. Pure deployed code, no DB needed.
+//
+// Owns the cover validation scenarios; the fast runner
+// (e2e/validation/handlers_validation.test.ts) imports `registerCoverValidation`.
 
 import './harness.ts'; // Deno globals for any transitive server import
 import { test } from 'node:test';
@@ -19,18 +22,22 @@ const makeGame = (): Game => ({
     ],
 });
 
-test('cover: double-tapping an already-covered same-rank attack is rejected gracefully (no SEVERE 500)', () => {
-    const g = makeGame();
-    handleCover(g, 'defender', [card(0, 7)], [card(0, 6)]); // cover 7♠ legitimately
-    assert.throws(
-        () => handleCover(g, 'defender', [card(0, 8)], [card(0, 6)]), // 7♠ already covered; 7♥ still uncovered
-        (e: any) => e.message.includes('is not on the table') && !e.message.includes('SEVERE'),
-        'must be a graceful rejection, not the uncaught SEVERE',
-    );
-});
+export function registerCoverValidation(): void {
+    test('cover: double-tapping an already-covered same-rank attack is rejected gracefully (no SEVERE 500)', () => {
+        const g = makeGame();
+        handleCover(g, 'defender', [card(0, 7)], [card(0, 6)]); // cover 7♠ legitimately
+        assert.throws(
+            () => handleCover(g, 'defender', [card(0, 8)], [card(0, 6)]), // 7♠ already covered; 7♥ still uncovered
+            (e: any) => e.message.includes('is not on the table') && !e.message.includes('SEVERE'),
+            'must be a graceful rejection, not the uncaught SEVERE',
+        );
+    });
 
-test('cover: the still-uncovered same-rank attack can be covered', () => {
-    const g = makeGame();
-    handleCover(g, 'defender', [card(0, 7)], [card(0, 6)]); // cover 7♠
-    assert.doesNotThrow(() => handleCover(g, 'defender', [card(0, 8)], [card(1, 6)])); // cover 7♥
-});
+    test('cover: the still-uncovered same-rank attack can be covered', () => {
+        const g = makeGame();
+        handleCover(g, 'defender', [card(0, 7)], [card(0, 6)]); // cover 7♠
+        assert.doesNotThrow(() => handleCover(g, 'defender', [card(0, 8)], [card(1, 6)])); // cover 7♥
+    });
+}
+
+if (!process.env.VALIDATION_ONLY) registerCoverValidation();

@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 import { applySchema, resetDb, seedGame, uuid, pgPool } from './harness.ts';
 import { executeWithGameLock } from '../supabase/functions/_shared/utils.ts';
 import { start_game, verify_player_in_game } from '../supabase/functions/_shared/common_utils.ts';
-import { Game, AnimationEvent, PLAYER_STATUS, Card } from '../supabase/functions/_shared/types.ts';
+import { Game, AnimationEvent, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY, PrivatePlayer, Card } from '../supabase/functions/_shared/types.ts';
 import { handleAttack } from '../supabase/functions/_shared/actions/attack.ts';
 import { handleCover } from '../supabase/functions/_shared/actions/cover.ts';
 import { handlePass } from '../supabase/functions/_shared/actions/pass.ts';
@@ -119,6 +119,33 @@ async function freshGame(): Promise<string> {
     return gameId;
 }
 
+// ---- handpicked, pure validation (no DB): the always-reject invariants -------
+export function registerAttackValidation(): void {
+    const card = (suit: number, value: number): Card => ({ suit, value });
+    const player = (id: string, hand: Card[]): PrivatePlayer => ({
+        player_id: id, name: id, status: PLAYER_STATUS.IN, is_ai: false,
+        hand, awaiting_attack: false, hand_length: hand.length, strategy_key: STRATEGY_KEY.HUMAN,
+    });
+    const mkGame = (players: PrivatePlayer[], defender = 1): Game => ({
+        id: 'g', name: 'g', deck_length: 0, discard_pile_length: 0, flipped: null,
+        status: GAME_STATUS.PLAYING, power_suit: 0, first_attacker: 0, defender,
+        table_battles: [], elimination_order: [], good_timestamp: null, good_players: [], deck: [], logs: [], players,
+    });
+
+    test('attack: forged card, identical-duplicate, and non-member attacks are all rejected', () => {
+        const hand = [card(0, 10), card(1, 10), card(2, 12)];
+        const g = mkGame([player('atk', hand.slice()), player('def', [card(3, 14)])], 1);
+        // forged card not in hand
+        assert.throws(() => handleAttack(g, 'atk', [card(3, 9)]), /not in/i, 'forged card');
+        // the object-identity duplicate hole: [X, X] must be rejected, never duplicated
+        const x = card(0, 10);
+        assert.throws(() => handleAttack(g, 'atk', [{ ...x }, { ...x }]), /duplicate/i, 'identical duplicate');
+        // a player who isn't in the game
+        assert.throws(() => handleAttack(g, 'ghost', [card(0, 10)]), /not found in game/i, 'non-member');
+    });
+}
+
+if (!process.env.VALIDATION_ONLY) {
 before(async () => { await applySchema(); });
 beforeEach(async () => { await resetDb(); });
 
@@ -185,4 +212,7 @@ test('regression: sending the same card twice in one move is rejected (no duplic
     assert.ok(chk.ok, `state intact after rejected duplicate: ${chk.detail}`);
 });
 
+registerAttackValidation();
+
 after(async () => { await pgPool.end(); });
+}
