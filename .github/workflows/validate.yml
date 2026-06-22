@@ -1,19 +1,52 @@
 name: validate
 
-# Fast regression validation: a few handpicked, deterministic scenarios that
-# lock in client/server agreement on pass legality (e2e/pass_parity_validation.test.ts).
-# Pure functions only — no Postgres, no fuzzing — so it runs in seconds.
-# The exhaustive fuzzer (e2e/pass_parity.test.ts) is for local / on-demand runs.
+# Fast regression validation: small, deterministic, handpicked scenarios that
+# guard the bugs behind every e2e suite — NOT the full fuzzers. Runs
+# e2e/*_validation.test.ts:
+#   pass_parity_validation  - client/server agreement on pass legality
+#   logic_validation        - cover / rearrange / adversarial-input handler rejections
+#   client_validation       - reconcile gate+merge, rendered hand, optimistic dedup
+#   replay_validation       - replay codec round-trip (engine<->replay drift) + timing
+#   db_validation           - CAS conservation + version monotonicity, lease, meta, isolation
+# The exhaustive fuzzers (fuzz / pass_parity / server / concurrent / reconcile /
+# replay_codec) remain for local / on-demand deep runs via `npm run test:e2e`.
 
 on:
   push:
-    branches: ['**']
+    branches: [main]
   pull_request:
     branches: [main]
 
 jobs:
   validate:
     runs-on: ubuntu-latest
+
+    # db_validation.test.ts exercises the real CAS commit / bot-lease plpgsql / meta
+    # endpoint. The harness connects with these defaults (e2e/adapters/supabase.ts):
+    # host 127.0.0.1, user/password/db = stress/stress/foolish. The postgres image's
+    # POSTGRES_USER is a superuser, which the schema/seed need.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: stress
+          POSTGRES_PASSWORD: stress
+          POSTGRES_DB: foolish
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U stress -d foolish"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      E2E_PGHOST: 127.0.0.1
+      E2E_PGPORT: 5432
+      E2E_PGUSER: stress
+      E2E_PGPASSWORD: stress
+      E2E_PGDATABASE: foolish
+
     steps:
       - uses: actions/checkout@v4
 
@@ -24,5 +57,5 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Pass-parity validation (handpicked regression scenarios)
+      - name: Run validation suite (handpicked regression scenarios)
         run: npm run test:validate
