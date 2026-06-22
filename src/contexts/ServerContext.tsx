@@ -673,9 +673,20 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         }
     };
 
-    const attack = (cards: Card[]): Promise<{ game_id: string }> => {
-        // Optimistic game state update after animation completes
+    const attack = (cards: Card[], applyOptimistic: () => boolean = () => true): Promise<{ game_id: string }> => {
+        // Fire the server request FIRST — the server is authoritative and rejects an
+        // illegal move, so the round-trip isn't gated on local validation.
+        const promise = invokeGameFunctions('action', {
+            type: 'attack',
+            game_id: game_id!,
+            cards: cards,
+        });
+
+        // Optimistic game state update after animation completes — but only if the
+        // caller's validation (evaluated by ANIMATION_TIME, when this fires) agrees the
+        // move was legal. An invalid move gets no optimistic state to roll back.
         setTimeout(() => {
+            if (!applyOptimistic()) return;
             const g: PersonalGame = games[game_id!];
             if (!g) return;
 
@@ -695,17 +706,20 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
         }, ANIMATION_TIME);
 
-        // Server API call
-        return invokeGameFunctions('action', {
-            type: 'attack',
+        return promise;
+    };
+
+    const pass = (cards: Card[], applyOptimistic: () => boolean = () => true): Promise<{ game_id: string }> => {
+        // Server request first (see attack); optimistic patch gated on validity.
+        const promise = invokeGameFunctions('action', {
+            type: 'pass',
             game_id: game_id!,
             cards: cards,
         });
-    };
 
-    const pass = (cards: Card[]): Promise<{ game_id: string }> => {
         // Optimistic game state update after animation completes
         setTimeout(() => {
+            if (!applyOptimistic()) return;
             const g: PersonalGame = games[game_id!];
             if (!g) return;
 
@@ -726,17 +740,19 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
         }, ANIMATION_TIME);
 
-        // Server API call
-        return invokeGameFunctions('action', {
-            type: 'pass',
-            game_id: game_id!,
-            cards: cards,
-        });
+        return promise;
     };
 
-    const pickup = (): Promise<{ game_id: string }> => {
+    const pickup = (applyOptimistic: () => boolean = () => true): Promise<{ game_id: string }> => {
+        // Server request first (see attack); optimistic patch gated on validity.
+        const promise = invokeGameFunctions('action', {
+            type: 'pickup',
+            game_id: game_id!,
+        });
+
         // Optimistic game state update after animation completes
         setTimeout(() => {
+            if (!applyOptimistic()) return;
             const g: PersonalGame = games[game_id!];
             if (!g) return;
 
@@ -768,16 +784,21 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
         }, ANIMATION_TIME);
 
-        // Server API call
-        return invokeGameFunctions('action', {
-            type: 'pickup',
-            game_id: game_id!,
-        });
+        return promise;
     };
 
-    const cover = (coverCards: Card[], attackCards: Card[]): Promise<{ game_id: string }> => {
+    const cover = (coverCards: Card[], attackCards: Card[], applyOptimistic: () => boolean = () => true): Promise<{ game_id: string }> => {
+        // Server request first (see attack); optimistic patch gated on validity.
+        const promise = invokeGameFunctions('action', {
+            type: 'cover',
+            game_id: game_id!,
+            cover_cards: coverCards,
+            attack_cards: attackCards,
+        });
+
         // Optimistic game state update after animation completes
         setTimeout(() => {
+            if (!applyOptimistic()) return;
             const g: PersonalGame = games[game_id!];
             if (!g) return;
 
@@ -804,13 +825,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
         }, ANIMATION_TIME);
 
-        // Server API call
-        return invokeGameFunctions('action', {
-            type: 'cover',
-            game_id: game_id!,
-            cover_cards: coverCards,
-            attack_cards: attackCards,
-        });
+        return promise;
     };
 
     const good = (): Promise<{ game_id: string }> => {
@@ -1131,10 +1146,13 @@ interface ServerContextType {
     game_id: string | null;
     game: PersonalGame | null;
     games: { [key: string]: PersonalGame };
-    attack: (cards: Card[]) => Promise<{ game_id: string }>;
-    pass: (cards: Card[]) => Promise<{ game_id: string }>;
-    pickup: () => Promise<{ game_id: string }>;
-    cover: (coverCards: Card[], attackCards: Card[]) => Promise<{ game_id: string }>;
+    // The optional `applyOptimistic` thunk gates the deferred optimistic local-state
+    // patch: callers fire the request before validating, then have the patch apply
+    // only if validation passed (evaluated at ANIMATION_TIME). Defaults to always-on.
+    attack: (cards: Card[], applyOptimistic?: () => boolean) => Promise<{ game_id: string }>;
+    pass: (cards: Card[], applyOptimistic?: () => boolean) => Promise<{ game_id: string }>;
+    pickup: (applyOptimistic?: () => boolean) => Promise<{ game_id: string }>;
+    cover: (coverCards: Card[], attackCards: Card[], applyOptimistic?: () => boolean) => Promise<{ game_id: string }>;
     good: () => Promise<{ game_id: string }>;
     sendMessage: (message: string) => Promise<void>;
     getUserGames: () => Promise<void>;

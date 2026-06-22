@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
-import { SupabaseClient } from '@supabase/supabase-js';
+// Type-only: erased at build, never pulls supabase-js into the runtime graph.
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 class Connector {
   private static instance: Connector;

@@ -7,11 +7,12 @@ import {
     other_player,
 } from './common_utils.ts';
 import { Card, Game, GAME_STATUS, PLAYER_STATUS, PersonalGame, PrivatePlayer, PublicGame, PlayerHand, UserEloRating, BotHand, AnimationEvent, PublicAnimationEvent, PersonalAnimationEvent, ANIMATION_EVENT_TYPE, GameLog, STRATEGY_KEY } from './types.ts';
-import { createClient, User } from 'jsr:@supabase/supabase-js';
+import { createClient } from 'jsr:@supabase/supabase-js';
+import type { User } from 'jsr:@supabase/supabase-js';
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { getAuthenticatedUser } from './auth.ts';
-import { saveGameLogs, cleanupOldGameLogs, wipeAllGameLogs } from './log_utils.ts';
+import { saveGameLogs, cleanupOldGameLogs, wipeAllGameLogs, loadCurrentSessionLogs } from './log_utils.ts';
 // NOTE: bot_actions (→ the entire bot-strategy stack: cordite's ~127KB Monte-Carlo
 // engine, nitro, etc.) and the replay codec are imported LAZILY at their use sites
 // below, NOT statically. wrap400 is imported by every edge function, so a static
@@ -76,25 +77,34 @@ export const executeWithGameLock = async (game_id: string, operation: (game: Gam
             throw new Error(`Could not commit game ${game_id} after ${MAX_ATTEMPTS} attempts — write contention`);
         }
 
-        // Logs are append-only + UUID-keyed (idempotent), so they live outside the
-        // CAS. For an ended game, finalizeEndedGame snapshots from the in-memory
-        // logs and wipes the table, so we don't persist them here.
-        if (!game_ended && result.game.logs.length > 0) {
-            await saveGameLogs(supabaseClient, game_id, result.game.logs);
-        }
-
         // End-of-game one-time side effects (ELO + replay snapshot + log wipe),
-        // run exactly once — only the winning commit reaches here.
+        // run exactly once — only the winning commit reaches here. This MUST run
+        // before the broadcast: it pushes the MAGIC_TRANSITION event and the final
+        // state the broadcast carries. The ending move's own logs are persisted
+        // first so finalizeEndedGame can load the COMPLETE session for the replay
+        // snapshot (logs are now lazy — not held in memory across the game).
         if (game_ended) {
+            if (result.game.logs.length > 0) {
+                await saveGameLogs(supabaseClient, game_id, result.game.logs);
+            }
             await finalizeEndedGame(result.game);
             result.events.push({ type: ANIMATION_EVENT_TYPE.MAGIC_TRANSITION, game_state: result.game });
         }
 
-        // Broadcast AFTER the durable commit (fire-and-forget).
+        // Broadcast AFTER the durable commit (fire-and-forget). For a normal move we
+        // do this BEFORE persisting logs: the opponent's animation should not wait on
+        // an append-only, UUID-keyed (idempotent) log write that can't affect game
+        // state. The fence is the version, not the log table.
         if (result.events.length > 0) {
             console.log(`[${reqId}][TXN] Broadcasting ${result.events.length} events after commit`);
             broadcastAnimationEvents(result.game, result.events, reqId).catch(err =>
                 console.error(`[${reqId}] Error broadcasting events:`, err));
+        }
+
+        // Persist this move's logs AFTER kicking off the broadcast (skipped when the
+        // game ended — finalizeEndedGame already saved + snapshotted + wiped above).
+        if (!game_ended && result.game.logs.length > 0) {
+            await saveGameLogs(supabaseClient, game_id, result.game.logs);
         }
 
         return result;
@@ -451,8 +461,7 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
             *,
             game_decks(deck),
             player_hands(player_id, hand, awaiting_attack),
-            bot_hands(bot_id, hand, awaiting_attack, bots(strategy_key)),
-            game_logs(id, game_id, log_type, player_id, card_pairs, defender_index, created_at)
+            bot_hands(bot_id, hand, awaiting_attack, bots(strategy_key))
         `)
         .eq('id', game_id)
         .single();
@@ -461,8 +470,6 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
         console.error('Error loading complete game', error);
         throw new Error(`Game ${game_id} not found`);
     }
-
-    console.log(JSON.stringify(data));
 
     const players: PrivatePlayer[] = data.players.map((player: any) => {
         let hand, awaiting_attack, strategy_key;
@@ -495,28 +502,14 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
         } as PrivatePlayer;
     });
 
-    // Filter logs to get only the current game session
-    // Find the most recent GAME_START and return all logs after it
-    let logs: GameLog[] = [];
-    if (data.game_logs && data.game_logs.length > 0) {
-        const allLogs = data.game_logs.sort((a: any, b: any) => 
-            new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-        );
-        
-        // Find the index of the most recent GAME_START
-        let gameStartIndex = -1;
-        for (let i = allLogs.length - 1; i >= 0; i--) {
-            if (allLogs[i].log_type === 'game_start') {
-                gameStartIndex = i;
-                break;
-            }
-        }
-        
-        // If GAME_START found, return logs from that point onwards
-        if (gameStartIndex !== -1) {
-            logs = allLogs.slice(gameStartIndex);
-        }
-    }
+    // Logs are loaded LAZILY (not here). Game logic never reads historical logs —
+    // handlers only APPEND via addLog, and the per-move response/broadcast strip
+    // logs entirely (gameToPublicGame / personalize_game). The only consumer of the
+    // full session is the end-of-game replay snapshot, which loads it on demand
+    // (finalizeEndedGame → loadCurrentSessionLogs). So every move starts with an
+    // empty log buffer that collects just this move's new logs; we no longer pull
+    // and sort the entire (growing) log history on the hot path.
+    const logs: GameLog[] = [];
 
     const game: Game = {
         id: data.id,
@@ -675,6 +668,14 @@ const finalizeEndedGame = async (game: Game): Promise<void> => {
     // Update ELO ratings
     await updateEloRatings(game);
 
+    // Logs are loaded lazily, so game.logs holds only the FINAL move's logs here.
+    // The replay snapshot needs the whole session, so load it from the DB (the
+    // caller persisted this move's logs first, so the DB is complete). Fall back to
+    // the in-memory logs if the load returns nothing, so a transient read failure
+    // can't lose a snapshot it could otherwise still partially make.
+    const sessionLogs = await loadCurrentSessionLogs(supabaseClient, game.id);
+    const replayLogs = sessionLogs.length > 0 ? sessionLogs : game.logs;
+
     // Compress the finished session into a replay snapshot (game_snapshots
     // row) and retire its logs. verifyRoundTrip both encodes and proves the
     // encoding decodes back to the exact action sequence — only on success do
@@ -688,7 +689,7 @@ const finalizeEndedGame = async (game: Game): Promise<void> => {
 
         const { encoded } = verifyRoundTrip({
             playerIds: game.players.map(player => player.player_id),
-            logs: game.logs,
+            logs: replayLogs,
             flipped: game.flipped,
         });
 
@@ -699,7 +700,7 @@ const finalizeEndedGame = async (game: Game): Promise<void> => {
         // read ACL.
         const extrasBytes = base32Decode(encodeExtras(
             game.players.map(player => player.name),
-            moveTimesFromLogs(game.logs),
+            moveTimesFromLogs(replayLogs),
         ));
         console.log(`[REPLAY] Game ${game.id} encoded to ${encoded.byteLength}+${extrasBytes.length} bytes`);
 

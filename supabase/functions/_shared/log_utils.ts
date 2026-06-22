@@ -70,8 +70,12 @@ export const wipeAllGameLogs = async (supabaseClient: SupabaseClient, game_id: s
 };
 
 // Load all logs for the current game session
-// Finds the most recent GAME_START and returns all logs after it
-const loadCurrentSessionLogs = async (supabaseClient: SupabaseClient, game_id: string): Promise<GameLog[]> => {
+// Finds the most recent GAME_START and returns all logs after it.
+// Exported because logs are now loaded LAZILY: the per-move load path
+// (loadCompleteGame) no longer pulls the log history — only the end-of-game
+// replay snapshot (finalizeEndedGame) needs the full session, so it loads it
+// here on demand instead of on every move.
+export const loadCurrentSessionLogs = async (supabaseClient: SupabaseClient, game_id: string): Promise<GameLog[]> => {
     try {
         // Get all logs for this game ordered by creation time
         const { data: allLogs, error } = await supabaseClient

@@ -74,6 +74,34 @@ interface AnimationContextType {
 // while still spreading the real animation state (isAnimating, etc.).
 export const AnimationContext = createContext<AnimationContextType | null>(null);
 
+// Compact content fingerprint of a sequence's events, for backup dedup (the
+// primary key is sequence_id). The old code did JSON.stringify(events), which
+// serialized each event's entire embedded `game_state` — the heaviest part of the
+// payload — on every received message just to compare it. This signature captures
+// the move-defining fields (type, player, from/to, cards, battle index) PLUS a few
+// O(1) scalars off game_state (deck size, table size, own hand size) so two
+// same-shaped-but-distinct sequences — e.g. two single-card refills at different
+// deck sizes — still hash differently, the way the full stringify did, at a tiny
+// fraction of the cost.
+const eventsSignature = (events: any[]): string =>
+    events
+        .map((e) => {
+            const gs = e.game_state;
+            return [
+                e.type,
+                e.player_id ?? '',
+                e.from_location ?? '',
+                e.to_location ?? '',
+                e.battle_index ?? '',
+                (e.cards ?? []).map((c: Card) => `${c.suit}-${c.value}`).join(','),
+                // cheap state discriminators (no deep serialization)
+                gs?.deck_length ?? '',
+                gs?.table_battles?.length ?? '',
+                gs?.self?.hand?.length ?? '',
+            ].join('|');
+        })
+        .join(';');
+
 // Check if any bot can possibly move in the current game state
 const canBotMove = (game: PublicGame | undefined): boolean => {
     if (!game || game.status !== GAME_STATUS.PLAYING) {
@@ -782,8 +810,9 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             return;
         }
 
-        // Also check event content as backup
-        const eventsString = JSON.stringify(message.events);
+        // Also check event content as backup (compact signature, not a full
+        // JSON.stringify of the events + their embedded game snapshots).
+        const eventsString = eventsSignature(message.events);
 
         if (processedEventContent.current.has(eventsString)) {
             return;
@@ -1217,8 +1246,14 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 remainingSequenceEventsRef.current--;
             }
 
-            // Process next animation after a short delay
-            setTimeout(processAnimationQueue, 100);
+            // Immediately pick up the next queued event — no inter-event gap. The
+            // queue is still strictly serialized (each event waited the full
+            // ANIMATION_TIME above); we just removed the dead air between events so a
+            // multi-event sequence (round end: discard → refills → deal) doesn't add
+            // 100ms × N of stall on top of the animations themselves. setTimeout(…, 0)
+            // (not a direct call) yields a tick so the setState updates above flush
+            // before the next event reads/commits state.
+            setTimeout(processAnimationQueue, 0);
         }, ANIMATION_TIME);
     }, [updateGameState, url_game_id, games]);
 
@@ -1315,16 +1350,27 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
         const game = games[game_id];
 
-        // 1. Validate first - don't do anything if validation fails
-        validateAttack(game, cards);
+        // 1. Send the request BEFORE validating — the server is authoritative and
+        //    rejects illegal moves, so we don't block the round-trip on local
+        //    validation. `valid` is captured by the server method's deferred
+        //    optimistic patch (applied only if still valid) and gates the optimistic
+        //    animation below.
+        let valid = true;
+        const serverPromise = serverMethods.attack(cards, () => valid);
 
-        // 2. Trigger optimistic animation - single animation with all cards going to their spots
-        triggerOptimisticAnimation('attack_pass', cards, 'hand', 'table', game.self?.player_id);
-
-        // 3. Call server method (which will do optimistic game state updates)
+        // 2. Validate locally; only add optimistic feedback if the move is legal.
         try {
-            const result = await serverMethods.attack(cards);
-            return result;
+            validateAttack(game, cards);
+        } catch {
+            valid = false;
+        }
+        if (valid) {
+            triggerOptimisticAnimation('attack_pass', cards, 'hand', 'table', game.self?.player_id);
+        }
+
+        // 3. Await the server's verdict (revert-on-rejection below).
+        try {
+            return await serverPromise;
         } catch (error) {
             // Server rejected the attack - but check if we already reverted due to conflict detection
 
@@ -1377,25 +1423,33 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
         const game = games[game_id];
 
-        // 1. Validate first - don't do anything if validation fails
-        validatePass(game, cards);
+        // 1. Send the request BEFORE validating (server is authoritative; see attack).
+        let valid = true;
+        const serverPromise = serverMethods.pass(cards, () => valid);
 
-        // 2. Trigger optimistic animation - single animation with all cards going to their spots
-        triggerOptimisticAnimation('attack_pass', cards, 'hand', 'table', game.self?.player_id);
-
-        // 3. Track optimistic pass state (defender will change to next player)
-        // Pass moves defender to the next IN-PLAY player (skipping eliminated
-        // seats, exactly like the server's get_next_player_index); first_attacker
-        // does NOT change during a pass (only changes on new round).
-        optimisticPassState.current = {
-            defender: nextDefenderIndex(game),
-            first_attacker: game.first_attacker  // Unchanged
-        };
-
-        // 4. Call server method (which will do optimistic game state updates)
+        // 2. Validate locally; only add optimistic feedback if the move is legal.
         try {
-            const result = await serverMethods.pass(cards);
-            return result;
+            validatePass(game, cards);
+        } catch {
+            valid = false;
+        }
+        if (valid) {
+            // Trigger optimistic animation - single animation with all cards going to their spots
+            triggerOptimisticAnimation('attack_pass', cards, 'hand', 'table', game.self?.player_id);
+
+            // Track optimistic pass state (defender will change to next player).
+            // Pass moves defender to the next IN-PLAY player (skipping eliminated
+            // seats, exactly like the server's get_next_player_index); first_attacker
+            // does NOT change during a pass (only changes on new round).
+            optimisticPassState.current = {
+                defender: nextDefenderIndex(game),
+                first_attacker: game.first_attacker  // Unchanged
+            };
+        }
+
+        // 3. Await the server's verdict (revert-on-rejection below).
+        try {
+            return await serverPromise;
         } catch (error) {
             // Server rejected the pass - clear optimistic pass state and create revert animation (if not already handled)
             optimisticPassState.current = null;
@@ -1440,19 +1494,25 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         }
 
         const game = games[game_id];
-
-        // 1. Validate first - don't do anything if validation fails
-        validatePickup(game);
-
         const allTableCards = getTableCards(game);
 
-        // 2. Trigger optimistic animation
-        triggerOptimisticAnimation('pickup', allTableCards, 'table', 'hand', game.self?.player_id);
+        // 1. Send the request BEFORE validating (server is authoritative; see attack).
+        let valid = true;
+        const serverPromise = serverMethods.pickup(() => valid);
 
-        // 3. Call server method (which will do optimistic game state updates)
+        // 2. Validate locally; only add optimistic feedback if the move is legal.
         try {
-            const result = await serverMethods.pickup();
-            return result;
+            validatePickup(game);
+        } catch {
+            valid = false;
+        }
+        if (valid) {
+            triggerOptimisticAnimation('pickup', allTableCards, 'table', 'hand', game.self?.player_id);
+        }
+
+        // 3. Await the server's verdict (revert-on-rejection below).
+        try {
+            return await serverPromise;
         } catch (error) {
             // Server rejected the pickup
             // Check if conflict detection already handled reverts
@@ -1497,53 +1557,62 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
         const game = games[game_id];
 
-        // 1. Validate first - don't do anything if validation fails
-        validateCover(game, coverCards, attackCards);
+        // 1. Send the request BEFORE validating (server is authoritative; see attack).
+        let valid = true;
+        const serverPromise = serverMethods.cover(coverCards, attackCards, () => valid);
 
-        // 2. Trigger optimistic cover animation - SINGLE animation with all cards going to their targets
-        // Track cover cards with their target attack cards for proper merging later
-        const animationEvent: ClientAnimationEvent = {
-            type: 'cover',
-            cards: coverCards,
-            target_cards: attackCards, // Pass the target attack cards for each cover card
-            from_location: 'hand',
-            to_location: 'table',
-            player_id: game.self?.player_id,
-            message: 'Optimistic cover animation'
-        };
-
-        // Track EACH CARD individually with its target attack card
-        const timestamp = Date.now();
-        coverCards.forEach((coverCard, idx) => {
-            const attackCard = attackCards[idx];
-            const cardKey = getCardKey(coverCard);
-
-            // Find battle index for this attack
-            const battleIndex = game.table_battles.findIndex(b =>
-                b.attack.suit === attackCard.suit && b.attack.value === attackCard.value
-            );
-
-            // Track for conflict detection
-            const cardEventString = createCardEventString('cover', coverCard, 'hand', 'table', game.self?.player_id);
-            optimisticAnimations.current.set(cardEventString, timestamp);
-
-            // Track visual position with target card info for animations
-            const positionInfo: any = {
-                location: 'table',
-                playerId: game.self?.player_id || '',
-                target_card: attackCard,
-                battle_index: battleIndex
-            };
-            optimisticCardPositions.current.set(cardKey, positionInfo);
-        });
-
-        // Queue the single animation with all cover cards
-        queueAnimation(animationEvent);
-
-        // 3. Call server method (which will do optimistic game state updates)
+        // 2. Validate locally; only add optimistic feedback if the move is legal.
         try {
-            const result = await serverMethods.cover(coverCards, attackCards);
-            return result;
+            validateCover(game, coverCards, attackCards);
+        } catch {
+            valid = false;
+        }
+
+        if (valid) {
+            // Trigger optimistic cover animation - SINGLE animation with all cards going to their targets
+            // Track cover cards with their target attack cards for proper merging later
+            const animationEvent: ClientAnimationEvent = {
+                type: 'cover',
+                cards: coverCards,
+                target_cards: attackCards, // Pass the target attack cards for each cover card
+                from_location: 'hand',
+                to_location: 'table',
+                player_id: game.self?.player_id,
+                message: 'Optimistic cover animation'
+            };
+
+            // Track EACH CARD individually with its target attack card
+            const timestamp = Date.now();
+            coverCards.forEach((coverCard, idx) => {
+                const attackCard = attackCards[idx];
+                const cardKey = getCardKey(coverCard);
+
+                // Find battle index for this attack
+                const battleIndex = game.table_battles.findIndex(b =>
+                    b.attack.suit === attackCard.suit && b.attack.value === attackCard.value
+                );
+
+                // Track for conflict detection
+                const cardEventString = createCardEventString('cover', coverCard, 'hand', 'table', game.self?.player_id);
+                optimisticAnimations.current.set(cardEventString, timestamp);
+
+                // Track visual position with target card info for animations
+                const positionInfo: any = {
+                    location: 'table',
+                    playerId: game.self?.player_id || '',
+                    target_card: attackCard,
+                    battle_index: battleIndex
+                };
+                optimisticCardPositions.current.set(cardKey, positionInfo);
+            });
+
+            // Queue the single animation with all cover cards
+            queueAnimation(animationEvent);
+        }
+
+        // 3. Await the server's verdict (revert-on-rejection below).
+        try {
+            return await serverPromise;
         } catch (error) {
             // Server rejected the cover - create revert animation
             coverCards.forEach(card => {

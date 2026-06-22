@@ -6,6 +6,21 @@ import { CardBack } from './CardBack';
 import { useServer } from '../../contexts/ServerContext';
 import { canCover } from '@shared/common_utils.ts';
 
+// Table-slot geometry cache (Stage 9). The on-table battle layout is a function of
+// only (how many battle slots there are, the viewport size) — the 4th slot in a
+// 4-slot table sits in the same place as the 4th slot in any other 4-slot table, so
+// once measured we never need to re-measure that (count, index) at that viewport.
+// This lets us skip the expensive measure path below (create placeholders → force a
+// synchronous reflow → read rects → remove) on every attack after the first of each
+// table size. The viewport is part of the KEY so a resize can't return stale
+// coordinates; we also clear the whole cache on resize to bound its size and drop
+// anything a layout/theme change may have shifted.
+const tableSlotPositionCache = new Map<string, { x: number; y: number }>();
+// A slot is identified by the table's total slot count + the slot's absolute index,
+// at a given viewport.
+const tableSlotKey = (totalSlots: number, slotIndex: number): string =>
+    `${window.innerWidth}x${window.innerHeight}|${totalSlots}|${slotIndex}`;
+
 interface AnimatedCard {
     id: string;
     card: Card;
@@ -24,6 +39,16 @@ export const AnimationOverlay = () => {
     const { currentAnimation, isAnimating } = useAnimation();
     const { game } = useServer();
     const overlayRef = useRef<HTMLDivElement>(null);
+
+    // Invalidate the table-slot geometry cache on resize (Stage 9). The cache key
+    // already includes the viewport, so a resized window can't read stale
+    // coordinates; clearing on top of that bounds the map's size and drops entries a
+    // reflow/theme shift may have moved.
+    useEffect(() => {
+        const onResize = () => tableSlotPositionCache.clear();
+        window.addEventListener('resize', onResize);
+        return () => window.removeEventListener('resize', onResize);
+    }, []);
 
     // Helper function to get element position relative to viewport
     const getElementPosition = (element: HTMLElement): { x: number; y: number } => {
@@ -90,12 +115,28 @@ export const AnimationOverlay = () => {
         const positions = new Map<string, { x: number; y: number }>();
         
         if (type === 'attack_pass') {
+            const currentBattleCount = game?.table_battles?.length || 0;
+            // After this attack lands the table has currentBattleCount + cards.length
+            // slots; each new card targets the slot at (currentBattleCount + index).
+            const totalSlots = currentBattleCount + cards.length;
+
+            // Fast path: if every target slot's geometry is already cached for this
+            // table size + viewport, return it and skip the placeholder/reflow work.
+            const cached = new Map<string, { x: number; y: number }>();
+            let allCached = true;
+            for (let index = 0; index < cards.length; index++) {
+                const hit = tableSlotPositionCache.get(tableSlotKey(totalSlots, currentBattleCount + index));
+                if (!hit) { allCached = false; break; }
+                cached.set(`${index}`, hit);
+            }
+            if (allCached) {
+                return cached;
+            }
+
             // Find the table battles container
             const tableBattlesElement = document.querySelector('[data-location="table"]')?.parentElement;
             if (!tableBattlesElement) return positions;
-            
-            const currentBattleCount = game?.table_battles?.length || 0;
-            
+
             // Create invisible placeholder battle containers
             const placeholders: HTMLElement[] = [];
             cards.forEach((card, index) => {
@@ -136,8 +177,11 @@ export const AnimationOverlay = () => {
                     y: rect.top + rect.height / 2
                 };
                 positions.set(`${index}`, position);
+                // Cache this slot's geometry keyed by (table size, absolute slot
+                // index, viewport) so future attacks at the same size skip the reflow.
+                tableSlotPositionCache.set(tableSlotKey(totalSlots, currentBattleCount + index), position);
             });
-            
+
             // Clean up placeholders
             placeholders.forEach(placeholder => placeholder.remove());
         }
