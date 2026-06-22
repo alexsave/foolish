@@ -425,21 +425,31 @@ export const AnimationOverlay = () => {
             }
 
             // Use CSS transitions - much smoother than manual animation
-            // Set progress to 1 after a small delay to trigger CSS transition
+            // Set progress to 1 after a short delay to trigger the CSS transition. This
+            // delay must still cross a browser paint (so the start frame renders before
+            // the transition begins) but is kept tight so the per-event lifecycle fits
+            // the queue's reduced inter-event gap (see below / AnimationContext).
             setTimeout(() => {
-                setAnimatedCards(prev => 
+                setAnimatedCards(prev =>
                     prev.map(animatedCard => ({
                         ...animatedCard,
                         progress: 1 // This triggers the CSS transition
                     }))
                 );
-            }, 50);
+            }, 25);
 
-            // Clear animated cards after animation completes
+            // Clear the overlay at ANIMATION_TIME. The AnimationContext queue advances
+            // every ANIMATION_TIME + 25ms, and this clear is what would otherwise wipe
+            // the NEXT event's freshly-created cards if it fired too late: clearing at
+            // ANIMATION_TIME (rather than ANIMATION_TIME + 50) keeps it ~25ms ahead of
+            // the next event's card creation. The visible glide is trimmed by only the
+            // ~25ms transition-trigger delay above (the underlying card is already
+            // committed at its destination by then), so the trim isn't noticeable.
+            // These timings are matched to the queue gap — change them together.
             setTimeout(() => {
                 setAnimatedCards([]);
-            }, ANIMATION_TIME + 50); // 500ms animation + 50ms buffer
-        }, 50); // Small delay to ensure DOM is ready
+            }, ANIMATION_TIME);
+        }, 50); // Small delay to ensure DOM is ready (measurement reads committed state)
 
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [currentAnimation, isAnimating]);

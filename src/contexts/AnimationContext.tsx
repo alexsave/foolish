@@ -1246,14 +1246,16 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 remainingSequenceEventsRef.current--;
             }
 
-            // Immediately pick up the next queued event — no inter-event gap. The
-            // queue is still strictly serialized (each event waited the full
-            // ANIMATION_TIME above); we just removed the dead air between events so a
-            // multi-event sequence (round end: discard → refills → deal) doesn't add
-            // 100ms × N of stall on top of the animations themselves. setTimeout(…, 0)
-            // (not a direct call) yields a tick so the setState updates above flush
-            // before the next event reads/commits state.
-            setTimeout(processAnimationQueue, 0);
+            // Inter-event gap. This is NOT pure dead air — it's coupled to the
+            // AnimationOverlay's per-event lifecycle, which ends by scheduling a "clear
+            // overlay" timeout. If the previous event's clear fires AFTER the next event
+            // has created its cards, it wipes them mid-flight (cards teleport; multi-card
+            // deals lose every card after the first). With the overlay clearing at
+            // ANIMATION_TIME (see AnimationOverlay), the safety margin before the next
+            // event's cards are created is (gap + ANIMATION_TIME) − (overlay clear) and
+            // works out to ~gap ms, so this 25ms keeps a real (if small) margin. The two
+            // constants are a matched pair — don't lower one without the other.
+            setTimeout(processAnimationQueue, 25);
         }, ANIMATION_TIME);
     }, [updateGameState, url_game_id, games]);
 
