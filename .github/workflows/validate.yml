@@ -1,0 +1,28 @@
+name: validate
+
+# Fast regression validation: a few handpicked, deterministic scenarios that
+# lock in client/server agreement on pass legality (e2e/pass_parity_validation.test.ts).
+# Pure functions only — no Postgres, no fuzzing — so it runs in seconds.
+# The exhaustive fuzzer (e2e/pass_parity.test.ts) is for local / on-demand runs.
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Pass-parity validation (handpicked regression scenarios)
+        run: npm run test:validate
