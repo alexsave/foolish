@@ -1,5 +1,5 @@
 import { Card, PersonalGame, PublicPlayer } from '@shared/types.ts';
-import { canCover } from '@shared/common_utils.ts';
+import { canCover, get_next_player_index } from '@shared/common_utils.ts';
 
 // Boolean validation functions for UI (buttons/drag) - return true if valid
 export const canAttack = (game: PersonalGame, cards: Card[]): boolean => {
@@ -48,8 +48,12 @@ export const canPass = (game: PersonalGame, cards: Card[]): boolean => {
         return false;
     }
 
-    // Find the next player (clockwise from defender)
-    const nextPlayerIndex = (game.defender + 1) % game.players.length;
+    // Find the next player (clockwise from defender). Must skip ELIMINATED
+    // players exactly like the server (get_next_player_index) and the bot's
+    // legal-move enumeration do — otherwise, when the seat immediately after the
+    // defender is out, this looks at an out player's empty hand and wrongly hides
+    // a pass the server would accept.
+    const nextPlayerIndex = get_next_player_index(game, game.defender);
     const nextPlayerHandSize = game.players[nextPlayerIndex]?.hand_length || 0;
     
     // Calculate total cards that would be passed (only uncovered battles get passed)
