@@ -9,6 +9,7 @@ import { TexturedSurface } from "../TexturedSurface";
 import { useEffect, useRef } from "react";
 import { Text } from "../Text";
 import { canCover as canCoverUtil } from "@shared/common_utils.ts";
+import { findUnambiguousCover } from "../../utils/coverCombinations";
 import { canAttack, canPass, canCoverCards } from "../../utils/gameValidation";
 import { useStyles } from "../../contexts/StyleContext";
 import { useTutorialHint } from "../../contexts/TutorialHintContext";
@@ -200,10 +201,9 @@ export const ActionButtons = () => {
 
     const handleCoverClick = () => {
         const uncoveredBattles = game.table_battles.filter(battle => !battle.defense);
-        const uncoveredAttacks = uncoveredBattles.map(battle => battle.attack);
-        
+
         if (selectedCards.length === 1) {
-            const validTarget = uncoveredBattles.find(battle => 
+            const validTarget = uncoveredBattles.find(battle =>
                 canCoverUtil(battle.attack, selectedCards[0], game.power_suit)
             );
             if (validTarget) {
@@ -216,50 +216,9 @@ export const ActionButtons = () => {
                 });
             }
         } else {
-            const findUnambiguousCoverMapping = (coverCards: Card[], uncoveredAttacks: Card[]): { coverCards: Card[], attackCards: Card[] } | null => {
-                const combinations: { coverCards: Card[], attackCards: Card[] }[] = [];
-                
-                const generatePermutations = (arr: Card[], length: number): Card[][] => {
-                    if (length === 1) return arr.map(item => [item]);
-                    
-                    const result: Card[][] = [];
-                    for (let i = 0; i < arr.length; i++) {
-                        const rest = arr.slice(0, i).concat(arr.slice(i + 1));
-                        const subPermutations = generatePermutations(rest, length - 1);
-                        for (const subPerm of subPermutations) {
-                            result.push([arr[i], ...subPerm]);
-                        }
-                    }
-                    return result;
-                };
-
-                const attackPermutations = generatePermutations(uncoveredAttacks, coverCards.length);
-                
-                for (const attackPerm of attackPermutations) {
-                    const isValidCombination = coverCards.every((coverCard, index) => 
-                        canCoverUtil(attackPerm[index], coverCard, game.power_suit)
-                    );
-                    
-                    if (isValidCombination) {
-                        combinations.push({ coverCards: [...coverCards], attackCards: [...attackPerm] });
-                    }
-                }
-
-                if (combinations.length === 0) return null;
-                
-                const cardToString = (card: Card) => `${card.value}-${card.suit}`;
-                const firstCombinationAttackSet = new Set(combinations[0].attackCards.map(cardToString));
-                
-                const allCombinationsHaveSameAttackSet = combinations.every(combo => {
-                    const comboAttackSet = new Set(combo.attackCards.map(cardToString));
-                    return comboAttackSet.size === firstCombinationAttackSet.size && 
-                           Array.from(comboAttackSet).every(cardStr => firstCombinationAttackSet.has(cardStr));
-                });
-                
-                return allCombinationsHaveSameAttackSet ? combinations[0] : null;
-            };
-
-            const mapping = findUnambiguousCoverMapping(selectedCards, uncoveredAttacks);
+            // Use the shared cover resolver (same as DragContext/KeyboardInputHandler)
+            // instead of re-implementing the permutation search inline.
+            const mapping = findUnambiguousCover(selectedCards, game.table_battles, game.power_suit);
             if (mapping) {
                 setActionPressed('cover', true);
                 cover(mapping.coverCards, mapping.attackCards).then(() => {
