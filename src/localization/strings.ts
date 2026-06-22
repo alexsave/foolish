@@ -22,6 +22,7 @@ export type StringId =
   | 'game_over'
   | 'join_game'
   | 'add_bot'
+  | 'add_bot_named'
   | 'remove_bot'
   | 'exit_game'
   | 'id'
@@ -96,6 +97,7 @@ const strings_en: Record<StringId, string> = {
   game_over: 'Game Over',
   join_game: 'Join Game',
   add_bot: 'Add Bot',
+  add_bot_named: 'Add {name}',
   remove_bot: 'Remove Bot',
   exit_game: 'Exit Game',
   id: 'ID',
@@ -171,6 +173,7 @@ const strings_ru: Record<StringId, string> = {
   game_over: 'Игра окончена',
   join_game: 'Присоединиться к игре',
   add_bot: 'Добавить бота',
+  add_bot_named: 'Добавить {name}',
   remove_bot: 'Удалить бота',
   exit_game: 'Выйти из игры',
   id: 'ID',
@@ -246,6 +249,7 @@ const strings_ko: Record<StringId, string> = {
   game_over: '게임 종료',
   join_game: '게임 참가',
   add_bot: '봇 추가',
+  add_bot_named: '{name} 추가',
   remove_bot: '봇 제거',
   exit_game: '게임 나가기',
   id: 'ID',

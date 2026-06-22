@@ -205,6 +205,52 @@
   position: relative;
 }
 
+/* ===== Lobby bot picker — cycle arrows flanking "Add {name}" ===== */
+.lobby__add-bot-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-xs);
+  margin-bottom: var(--spacing-xs);
+}
+
+.lobby__add-bot-row .btn-add-bot {
+  margin-bottom: 0;
+}
+
+/* Same wooden box as the remove-player ✕ button (50×50). */
+.btn-bot-cycle {
+  width: 50px;
+  height: 50px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: var(--border-wood);
+  border-radius: var(--radius-none);
+  box-shadow: var(--shadow-wood-inset);
+  overflow: hidden;
+  cursor: pointer;
+  transition: var(--transition-base);
+  user-select: none;
+  flex-shrink: 0;
+  z-index: var(--z-content);
+}
+
+.btn-bot-cycle:hover {
+  filter: brightness(1.1) contrast(1.1);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-wood-hover);
+}
+
+.btn-bot-cycle__icon {
+  color: var(--color-text-dark);
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-black);
+  line-height: 1;
+}
+
 /* ===== Ready Button (Fixed at bottom) ===== */
 .btn-ready {
   position: fixed;
@@ -374,6 +420,7 @@
 [data-theme="soviet"] .btn-icon,
 [data-theme="soviet"] .btn-remove-player,
 [data-theme="soviet"] .btn-add-bot,
+[data-theme="soviet"] .btn-bot-cycle,
 [data-theme="soviet"] .btn-ready,
 [data-theme="soviet"] .btn-chat-send,
 [data-theme="soviet"] .btn-chat-toggle {
@@ -406,6 +453,7 @@
 [data-theme="soviet"] .btn-icon__symbol,
 [data-theme="soviet"] .btn-remove-player__icon,
 [data-theme="soviet"] .btn-add-bot__text,
+[data-theme="soviet"] .btn-bot-cycle__icon,
 [data-theme="soviet"] .btn-ready__text {
   color: #B32929 !important;
   text-shadow: none;
