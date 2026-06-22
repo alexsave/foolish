@@ -451,10 +451,11 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         })
     };
 
-    const addBot = (gameId: string): Promise<{ game_id: string }> => {
+    const addBot = (gameId: string, botId?: string): Promise<{ game_id: string }> => {
         return invokeGameFunctions('meta', {
             type: 'add-bot',
             game_id: gameId,
+            bot_id: botId,
         })
     };
 
@@ -1126,7 +1127,7 @@ interface ServerContextType {
     createGame: () => Promise<{ game_id: string }>;
     joinGame: (gameId: string) => Promise<{ game_id: string }>;
     startGame: (gameId: string) => Promise<{ game_id: string }>;
-    addBot: (gameId: string) => Promise<{ game_id: string }>;
+    addBot: (gameId: string, botId?: string) => Promise<{ game_id: string }>;
     exitGame: (gameId: string, botId?: string, playerId?: string) => Promise<{ game_id: string }>;
     game_id: string | null;
     game: PersonalGame | null;

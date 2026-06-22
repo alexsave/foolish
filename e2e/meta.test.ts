@@ -59,6 +59,28 @@ if (!process.env.VALIDATION_ONLY) {
         assert.equal(g.status, GAME_STATUS.PLAYING, 'all ready -> started');
     });
 
+    test('meta:add-bot — a specific bot_id adds exactly that bot', async () => {
+        const gameId = `m${uuid().slice(0, 5)}`;
+        const h1 = uuid(), b1 = uuid(), b2 = uuid();
+        await seedGame(gameId, [{ id: h1, name: 'H1', is_ai: false, strategy_key: 'human' }]);
+        await pgPool.query('INSERT INTO bots(id,nickname,strategy_key) VALUES($1,$2,$3),($4,$5,$6)',
+            [b1, 'Botty1', 'random', b2, 'Botty2', 'random']);
+
+        await runMeta(gameId, h1, { type: 'add-bot', game_id: gameId, bot_id: b2 });
+        const g = await loadCompleteGame(gameId);
+        const bots = g.players.filter(p => p.is_ai);
+        assert.equal(bots.length, 1, 'one bot added');
+        assert.equal(bots[0].player_id, b2, 'the requested bot (b2), not a random one');
+    });
+
+    test('meta:add-bot — an unavailable bot_id is rejected', async () => {
+        const gameId = `m${uuid().slice(0, 5)}`;
+        const h1 = uuid();
+        await seedGame(gameId, [{ id: h1, name: 'H1', is_ai: false, strategy_key: 'human' }]);
+        await pgPool.query('INSERT INTO bots(id,nickname,strategy_key) VALUES($1,$2,$3)', [uuid(), 'Botty', 'random']);
+        await assert.rejects(runMeta(gameId, h1, { type: 'add-bot', game_id: gameId, bot_id: uuid() }), /not available/i);
+    });
+
     test('meta:exit — removing a bot drops it; removing the last player deletes the game', async () => {
         const gameId = `m${uuid().slice(0, 5)}`;
         const h1 = uuid(), bot = uuid();

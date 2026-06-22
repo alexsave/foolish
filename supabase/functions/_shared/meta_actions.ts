@@ -50,7 +50,7 @@ function handleStart({ user, game }: ExecutionParams): Result {
 
 // ---- add bot ---------------------------------------------------------------
 export async function handleAddBot({ body, game, user }: ExecutionParams): Promise<Result> {
-    const { game_id } = body;
+    const { game_id, bot_id } = body;
 
     if (game.status !== GAME_STATUS.WAITING) {
         throw new Error(`Game ${game_id} is not waiting for players`);
@@ -72,7 +72,16 @@ export async function handleAddBot({ body, game, user }: ExecutionParams): Promi
         throw new Error(`No available bots to add to the game`);
     }
 
-    const availableBot = availableBots[Math.floor(Math.random() * availableBots.length)];
+    // If the caller named a specific bot (lobby bot picker), add exactly that one;
+    // it must pass the same availability gate (not already in game, GPT allowed).
+    // Without a bot_id we keep the original random pick (backwards compatible).
+    const availableBot = bot_id
+        ? availableBots.find(b => b.id === bot_id)
+        : availableBots[Math.floor(Math.random() * availableBots.length)];
+
+    if (!availableBot) {
+        throw new Error(`Bot ${bot_id} is not available to add to this game`);
+    }
 
     game.players.push({
         player_id: availableBot.id,

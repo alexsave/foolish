@@ -4,7 +4,8 @@ import { useEffect, useState, useRef, useMemo } from "react";
 import { WEBSITE_DOMAIN } from "../constants/constants";
 import { useAuth } from "../contexts/AuthContext";
 import { QRCodeSVG } from "qrcode.react";
-import { PLAYER_STATUS, PublicPlayer, GAME_STATUS } from "@shared/types.ts";
+import { PLAYER_STATUS, PublicPlayer, GAME_STATUS, STRATEGY_KEY } from "@shared/types.ts";
+import supabase from "../backend/Connector";
 import { usePreventScroll } from "../hooks/usePreventScroll";
 import { MAX_PLAYERS } from "@shared/constants.ts";
 import { useTexture, getTextureStyle, seedFromString, flipFromString } from "./TexturedSurface";
@@ -14,6 +15,15 @@ import { Text } from "./Text";
 import { useLocalization } from "../contexts/LocalizationContext";
 import { SovietIcon } from "./SovietIcon";
 import { useStyles } from "../contexts/StyleContext";
+
+interface BotOption {
+    id: string;
+    nickname: string;
+    strategy_key: string;
+}
+
+// Bot nicknames carry a reserved '%' prefix (replay-codec recovery); strip it for display.
+const botDisplayName = (nickname: string) => nickname.replace(/^%/, '');
 
 interface PlayerCardProps {
     player: PublicPlayer;
@@ -75,8 +85,8 @@ export const Lobby = () => {
     const useWoodTexture = styles.texture.useWoodTexture;
     const textureUrl = useWoodTexture ? woodUrl : concreteUrl;
     
-    const buttonTextureStyle = useMemo(() => 
-        useWoodTexture ? getTextureStyle(textureUrl, false, 0.2) : {}, 
+    const buttonTextureStyle = useMemo(() =>
+        useWoodTexture ? getTextureStyle(textureUrl, false, 0.2) : {},
         [textureUrl, useWoodTexture]
     );
 
@@ -92,6 +102,22 @@ export const Lobby = () => {
     const [hasPendingRearrange, setHasPendingRearrange] = useState(false);
     const [pendingReady, setPendingReady] = useState(false);
     const [optimisticBotIds, setOptimisticBotIds] = useState<Set<string>>(new Set());
+    // The full bot roster (newest first) for the lobby bot picker, the index the
+    // left/right arrows cycle, and the real bot ids we've optimistically added but
+    // the server hasn't confirmed yet (so the picker drops them immediately).
+    const [allBots, setAllBots] = useState<BotOption[]>([]);
+    const [selectedBotIndex, setSelectedBotIndex] = useState(0);
+    const [pendingBotRealIds, setPendingBotRealIds] = useState<Set<string>>(new Set());
+
+    // Bots the picker can still add: the roster minus those already seated and
+    // those added optimistically this session (server not yet caught up).
+    const selectableBots = useMemo(() => {
+        const taken = new Set<string>([
+            ...(game?.players ?? []).filter(p => p.is_ai).map(p => p.player_id),
+            ...pendingBotRealIds,
+        ]);
+        return allBots.filter(b => !taken.has(b.id));
+    }, [allBots, game?.players, pendingBotRealIds]);
 
     const rearrangeTimerRef = useRef<NodeJS.Timeout | null>(null);
     const pendingReadyRef = useRef<boolean>(false);
@@ -154,7 +180,8 @@ export const Lobby = () => {
         setPendingReady(false);
         pendingReadyRef.current = false;
         setOptimisticBotIds(new Set());
-        
+        setPendingBotRealIds(new Set());
+
         if (rearrangeTimerRef.current) {
             clearTimeout(rearrangeTimerRef.current);
             rearrangeTimerRef.current = null;
@@ -170,6 +197,23 @@ export const Lobby = () => {
                 setHasPendingRearrange(false);
             }
         };
+    }, []);
+
+    // Load the bot roster once for the lobby picker, newest first so the default
+    // selection lands on the most recently created bot. The bots table is
+    // read-only to authenticated users (RLS). GPT bots are gated to one user
+    // server-side, so we don't surface them in the picker.
+    useEffect(() => {
+        let cancelled = false;
+        supabase
+            .from('bots')
+            .select('id, nickname, strategy_key')
+            .order('created_at', { ascending: false })
+            .then(({ data, error }) => {
+                if (cancelled || error || !data) return;
+                setAllBots(data.filter((b: BotOption) => b.strategy_key !== STRATEGY_KEY.GPT));
+            });
+        return () => { cancelled = true; };
     }, []);
 
     useEffect(() => {
@@ -233,6 +277,13 @@ export const Lobby = () => {
     }
 
     const qrUrl = `www.${WEBSITE_DOMAIN}/${game_id}`.toUpperCase();
+
+    // The bot the picker is currently pointing at (most recently created by
+    // default). Index wraps so the arrows cycle endlessly; null until the roster
+    // loads, in which case the button falls back to a plain random "Add Bot".
+    const selectedBot = selectableBots.length > 0
+        ? selectableBots[((selectedBotIndex % selectableBots.length) + selectableBots.length) % selectableBots.length]
+        : null;
 
     const handleStartEditing = () => {
         setIsEditingName(true);
@@ -298,26 +349,37 @@ export const Lobby = () => {
         }, 5000);
     };
 
-    const handleAddBot = () => {
+    const handleCycleBot = (delta: number) => {
+        // Read clamps with modulo, so just nudge the index; wrap is handled there.
+        setSelectedBotIndex(i => i + delta);
+    };
+
+    const handleAddBot = (bot?: BotOption) => {
         if (!game_id) return;
-        
+
         const tempBotId = `temp-bot-${Date.now()}`;
         const optimisticBot: PublicPlayer = {
             player_id: tempBotId,
-            name: '',
+            name: bot ? bot.nickname : '',
             status: PLAYER_STATUS.IDLE,
             is_ai: true,
             hand_length: 0
         };
-        
+
         setOptimisticBotIds(prev => new Set(prev).add(tempBotId));
+        if (bot) setPendingBotRealIds(prev => new Set(prev).add(bot.id));
         setLocalPlayerOrder(prev => [...prev, optimisticBot]);
-        
-        addBot(game_id).catch(error => {
+
+        addBot(game_id, bot?.id).catch(error => {
             console.error('Failed to add bot:', error);
             setOptimisticBotIds(prev => {
                 const next = new Set(prev);
                 next.delete(tempBotId);
+                return next;
+            });
+            if (bot) setPendingBotRealIds(prev => {
+                const next = new Set(prev);
+                next.delete(bot.id);
                 return next;
             });
             setLocalPlayerOrder(prev => prev.filter(p => p.player_id !== tempBotId));
@@ -453,9 +515,39 @@ export const Lobby = () => {
             </div>
             
             {game.status === GAME_STATUS.WAITING && game.self && localPlayerOrder.length < MAX_PLAYERS && (
-                <div className="btn-add-bot" onClick={handleAddBot} style={useWoodTexture ? buttonTextureStyle : undefined}>
-                    {useWoodTexture && <div className="btn-add-bot__texture" style={buttonTextureStyle} />}
-                    <p className="btn-add-bot__text"><Text id="add_bot" /></p>
+                <div className="lobby__add-bot-row">
+                    {selectableBots.length > 1 && (
+                        <button
+                            className="btn-bot-cycle"
+                            onClick={() => handleCycleBot(-1)}
+                            style={useWoodTexture ? buttonTextureStyle : undefined}
+                            aria-label="Previous bot"
+                        >
+                            <span className="btn-bot-cycle__icon">‹</span>
+                        </button>
+                    )}
+                    <div
+                        className="btn-add-bot"
+                        onClick={() => handleAddBot(selectedBot ?? undefined)}
+                        style={useWoodTexture ? buttonTextureStyle : undefined}
+                    >
+                        {useWoodTexture && <div className="btn-add-bot__texture" style={buttonTextureStyle} />}
+                        <p className="btn-add-bot__text">
+                            {selectedBot
+                                ? t('add_bot_named', { name: botDisplayName(selectedBot.nickname) })
+                                : t('add_bot')}
+                        </p>
+                    </div>
+                    {selectableBots.length > 1 && (
+                        <button
+                            className="btn-bot-cycle"
+                            onClick={() => handleCycleBot(1)}
+                            style={useWoodTexture ? buttonTextureStyle : undefined}
+                            aria-label="Next bot"
+                        >
+                            <span className="btn-bot-cycle__icon">›</span>
+                        </button>
+                    )}
                 </div>
             )}
             
