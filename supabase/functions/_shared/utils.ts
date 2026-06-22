@@ -194,6 +194,58 @@ const convertToPersonalAnimationEvents = (events: AnimationEvent[], forPlayerId:
 
 
 // Broadcast animation events to all players and spectators
+// One batched REST broadcast for many topics in a single POST.
+//
+// This is exactly what realtime-js's httpSend() does internally (see
+// node_modules/@supabase/realtime-js/.../RealtimeChannel.js) — a POST of
+// { messages: [{ topic, event, payload, private }] } to /realtime/v1/api/broadcast
+// — generalized to many topics so ALL recipients of one game update go out in a
+// SINGLE round-trip. The old path created a channel per recipient and called
+// channel.send(), which (the channel was never subscribed) silently fell back to
+// this same REST endpoint ONE connection at a time, plus a removeChannel and the
+// "Realtime send() is automatically falling back to REST API ... use httpSend()"
+// deprecation warning per call. The server never holds a websocket; clients keep
+// receiving over their existing subscriptions. `topic` is the bare channel name
+// (realtime-js strips the "realtime:" prefix to form subTopic); all our channels
+// are private, hence private: true.
+const REALTIME_BROADCAST_URL = `${Deno.env.get('SUPABASE_URL') || ''}/realtime/v1/api/broadcast`;
+const REALTIME_BROADCAST_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+
+interface BroadcastMessage { topic: string; event: string; payload: any; }
+
+const broadcastMessages = async (messages: BroadcastMessage[], reqId: string = 'unknown'): Promise<void> => {
+    if (messages.length === 0) return;
+    const start = Date.now();
+    try {
+        const response = await fetch(REALTIME_BROADCAST_URL, {
+            method: 'POST',
+            headers: {
+                apikey: REALTIME_BROADCAST_KEY,
+                Authorization: `Bearer ${REALTIME_BROADCAST_KEY}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                messages: messages.map(m => ({
+                    topic: m.topic,
+                    event: m.event,
+                    payload: m.payload,
+                    private: true,
+                })),
+            }),
+        });
+        // Realtime returns 202 Accepted on success.
+        if (response.status !== 202) {
+            const text = await response.text().catch(() => response.statusText);
+            console.error(`[${reqId}][BROADCAST] REST broadcast failed: ${response.status} ${text}`);
+        } else {
+            await response.body?.cancel();
+        }
+    } catch (err) {
+        console.error(`[${reqId}][BROADCAST] REST broadcast error:`, err);
+    }
+    console.log(`[${reqId}][BROADCAST] batched ${messages.length} message(s) in ${Date.now() - start}ms`);
+};
+
 export const broadcastAnimationEvents = async (game: Game, events: AnimationEvent[], reqId: string = 'unknown'): Promise<void> => {
     if (events.length === 0) {
         return;
@@ -207,90 +259,43 @@ export const broadcastAnimationEvents = async (game: Game, events: AnimationEven
     const baseGameState = gameToPublicGame(game);
     console.log(`[${reqId}][BROADCAST] gameToPublicGame took ${Date.now() - baseGameStart}ms`);
 
-    // Send personalized events to each player in parallel (excluding bots - they have no clients)
-    const playerBroadcastStart = Date.now();
+    // Build one message per recipient, then fire them all in a single batched
+    // POST (players are personalized; bots are skipped — they have no clients).
     const humanPlayers = game.players.filter(player => !player.is_ai);
-    console.log(`[${reqId}][BROADCAST] Broadcasting to ${humanPlayers.length} human players (skipping ${game.players.length - humanPlayers.length} bots)`);
-    
-    const playerBroadcastPromises = humanPlayers.map(async (player) => {
-        const playerStart = Date.now();
-        const personalEvents = convertToPersonalAnimationEvents(events, player.player_id);
+    console.log(`[${reqId}][BROADCAST] Broadcasting to ${humanPlayers.length} human players + spectators (skipping ${game.players.length - humanPlayers.length} bots)`);
 
-        const payload = {
-            type: 'animation_sequence',
-            events: personalEvents,
-            sequence_id: crypto.randomUUID(),
-            timestamp: Date.now(),
-            // Committed games.version this sequence reflects. Broadcasts are fired
-            // un-awaited over per-call channels, so under realtime latency they can
-            // arrive out of order; the client uses this monotonic token to drop any
-            // sequence at or below the newest it has already applied (no rubber-band).
-            version: game.version ?? 0,
-        };
-
-        console.log(`[${reqId}][BROADCAST] Sending ${personalEvents.length} events to ${player.name}`);
-
-        // Create personalized game state by adding player's self data
-        const personalizedGame = gameToPersonalGame(game, player);
-
-        const channelCreateStart = Date.now();
-        const channel = supabaseClient.channel(`gu-${game.id}-${player.player_id}`, {
-            config: { private: true }
-        });
-        console.log(`[${reqId}][BROADCAST] Channel create for ${player.name} took ${Date.now() - channelCreateStart}ms`);
-
-        const sendStart = Date.now();
-        await channel.send({
-            type: 'broadcast',
-            event: 'animation_events',
-            payload: {
-                ...payload,
-                game: personalizedGame
-            }
-        });
-        console.log(`[${reqId}][BROADCAST] Channel send for ${player.name} took ${Date.now() - sendStart}ms`);
-
-        const removeStart = Date.now();
-        await supabaseClient.removeChannel(channel);
-        console.log(`[${reqId}][BROADCAST] Channel remove for ${player.name} took ${Date.now() - removeStart}ms`);
-        
-        console.log(`[${reqId}][BROADCAST] Total for ${player.name}: ${Date.now() - playerStart}ms`);
-    });
-    
-    // Wait for all player broadcasts to complete in parallel
-    await Promise.all(playerBroadcastPromises);
-    console.log(`[${reqId}][BROADCAST] All player broadcasts took ${Date.now() - playerBroadcastStart}ms`);
-
-    // Send public events to spectator channel
-    const spectatorStart = Date.now();
-    const publicEvents = convertToPublicAnimationEvents(events);
-
-    const spectatorPayload = {
-        type: 'animation_sequence',
-        events: publicEvents,
-        sequence_id: crypto.randomUUID(),
-        timestamp: Date.now(),
-        version: game.version ?? 0,
-    };
-
-    console.log(`[${reqId}][BROADCAST] Sending ${publicEvents.length} events to spectators`);
-
-    const spectatorChannel = supabaseClient.channel(`game-${game.id}`, {
-        config: { private: true }
-    });
-
-    await spectatorChannel.send({
-        type: 'broadcast',
+    const messages: BroadcastMessage[] = humanPlayers.map(player => ({
+        topic: `gu-${game.id}-${player.player_id}`,
         event: 'animation_events',
         payload: {
-            ...spectatorPayload,
-            game: baseGameState
-        }
+            type: 'animation_sequence',
+            events: convertToPersonalAnimationEvents(events, player.player_id),
+            sequence_id: crypto.randomUUID(),
+            timestamp: Date.now(),
+            // Committed games.version this sequence reflects. Broadcasts can arrive
+            // out of order under realtime latency; the client uses this monotonic
+            // token to drop any sequence at or below the newest it has already
+            // applied (no rubber-band).
+            version: game.version ?? 0,
+            game: gameToPersonalGame(game, player),
+        },
+    }));
+
+    // Public events to the spectator channel.
+    messages.push({
+        topic: `game-${game.id}`,
+        event: 'animation_events',
+        payload: {
+            type: 'animation_sequence',
+            events: convertToPublicAnimationEvents(events),
+            sequence_id: crypto.randomUUID(),
+            timestamp: Date.now(),
+            version: game.version ?? 0,
+            game: baseGameState,
+        },
     });
 
-    await supabaseClient.removeChannel(spectatorChannel);
-    console.log(`[${reqId}][BROADCAST] Spectator broadcast took ${Date.now() - spectatorStart}ms`);
-    
+    await broadcastMessages(messages, reqId);
     console.log(`[${reqId}][BROADCAST] Total broadcastAnimationEvents took ${Date.now() - broadcastTotalStart}ms`);
 };
 
@@ -627,18 +632,14 @@ export const commitGame = async (
 
 // private message to specific user
 export const broadcastToGameUser = async (game: Game, messageType: string, baseMessage: any, user_id: string): Promise<void> => {
-    const channel = supabaseClient.channel(`gu-${game.id}-${user_id}`, {
-        config: { private: true }
-    });
-    await channel.send({
-        type: 'broadcast',
+    await broadcastMessages([{
+        topic: `gu-${game.id}-${user_id}`,
         event: messageType,
         payload: {
             ...baseMessage,
             game: personalize_game(game, user_id)
         }
-    });
-    await supabaseClient.removeChannel(channel);
+    }]);
 }
 
 
