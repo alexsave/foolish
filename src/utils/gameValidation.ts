@@ -66,6 +66,14 @@ export const canPass = (game: PersonalGame, cards: Card[]): boolean => {
     return totalCardsAfterPass <= nextPlayerHandSize;
 };
 
+// The seat that BECOMES the defender after the current defender passes / the bout
+// ends. Must skip ELIMINATED players exactly like the server and bot do — a naive
+// `(defender + 1) % players.length` lands on an out seat when the next seat is
+// eliminated, which diverges from the authoritative rotation. Used by the
+// optimistic pass animation so its predicted defender matches the server's.
+export const nextDefenderIndex = (game: PersonalGame): number =>
+    get_next_player_index(game, game.defender);
+
 export const canCoverCards = (game: PersonalGame, selectedCards: Card[]): boolean => {
     if (selectedCards.length === 0) return false;
 
