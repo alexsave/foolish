@@ -357,16 +357,20 @@ export const Lobby = () => {
     const handleAddBot = (bot?: BotOption) => {
         if (!game_id) return;
 
-        const tempBotId = `temp-bot-${Date.now()}`;
+        // Use the real bot id as the optimistic id when we know it (picker), so the
+        // card's React key — and thus its texture seed (seedFromString(player_id)) —
+        // stays identical once the server confirms: no plank-texture pop on the
+        // red→green switch. The random fallback has no id yet, so it keeps a temp id.
+        const optimisticId = bot ? bot.id : `temp-bot-${Date.now()}`;
         const optimisticBot: PublicPlayer = {
-            player_id: tempBotId,
+            player_id: optimisticId,
             name: bot ? bot.nickname : '',
             status: PLAYER_STATUS.IDLE,
             is_ai: true,
             hand_length: 0
         };
 
-        setOptimisticBotIds(prev => new Set(prev).add(tempBotId));
+        setOptimisticBotIds(prev => new Set(prev).add(optimisticId));
         if (bot) setPendingBotRealIds(prev => new Set(prev).add(bot.id));
         setLocalPlayerOrder(prev => [...prev, optimisticBot]);
 
@@ -374,7 +378,7 @@ export const Lobby = () => {
             console.error('Failed to add bot:', error);
             setOptimisticBotIds(prev => {
                 const next = new Set(prev);
-                next.delete(tempBotId);
+                next.delete(optimisticId);
                 return next;
             });
             if (bot) setPendingBotRealIds(prev => {
@@ -382,7 +386,7 @@ export const Lobby = () => {
                 next.delete(bot.id);
                 return next;
             });
-            setLocalPlayerOrder(prev => prev.filter(p => p.player_id !== tempBotId));
+            setLocalPlayerOrder(prev => prev.filter(p => p.player_id !== optimisticId));
         });
     };
     
