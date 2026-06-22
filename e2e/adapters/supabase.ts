@@ -163,10 +163,12 @@ class Channel {
 // the same recorder, moved to the HTTP layer where Realtime now lives. Each
 // message becomes one log entry (channel = its topic), so tests see exactly what
 // they saw under the old channel.send() shim. Non-broadcast fetches pass through.
+const _bcastLatency = Number(process.env.E2E_BCAST_LATENCY_MS || 0);
 const _realFetch = globalThis.fetch;
 globalThis.fetch = (async (input: any, init?: any): Promise<Response> => {
     const url = typeof input === 'string' ? input : (input?.url ?? '');
     if (url.includes('/realtime/v1/api/broadcast') && init?.method === 'POST') {
+        if (_bcastLatency) await new Promise((r) => setTimeout(r, _bcastLatency));
         try {
             const { messages } = JSON.parse(init.body);
             for (const m of messages ?? []) {
