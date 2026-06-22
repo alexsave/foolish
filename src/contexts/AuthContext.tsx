@@ -1,9 +1,8 @@
 import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
 import supabase from '../backend/Connector';
 import { WEBSITE_DOMAIN } from '../constants/constants';
-import { Session, User } from '@supabase/supabase-js';
+import type { Session, User, WeakPassword } from '@supabase/supabase-js';
 import { Sha256 } from '@aws-crypto/sha256-js';
-import { WeakPassword } from '@supabase/supabase-js';
 import { usernameUsesReservedPrefix } from '../common/botName';
 
 // Exported so self-contained screens (e.g. the tutorial) can re-provide a

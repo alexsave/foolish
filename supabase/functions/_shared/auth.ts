@@ -1,4 +1,5 @@
-import { createClient, User } from 'jsr:@supabase/supabase-js';
+import { createClient } from 'jsr:@supabase/supabase-js';
+import type { User } from 'jsr:@supabase/supabase-js';
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 
 const supabaseClient = createClient(
