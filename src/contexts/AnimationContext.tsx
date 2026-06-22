@@ -5,7 +5,7 @@ import { useAuth } from './AuthContext';
 import { useParams } from 'next/navigation';
 import supabase from '../backend/Connector';
 import { ANIMATION_TIME } from '../constants/constants';
-import { validateAttack, validatePass, validatePickup, validateCover } from '../utils/gameValidation';
+import { validateAttack, validatePass, validatePickup, validateCover, nextDefenderIndex } from '../utils/gameValidation';
 import { getTableCards, cardsIntersection, getCardKeyPlayerId, createCardEventString, getCardKey } from '../utils/animationUtils';
 import { animationFeed } from '../state/animationFeed';
 import { staleOptimisticKeysOnTable } from '../state/optimisticAnimation';
@@ -1384,11 +1384,11 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         triggerOptimisticAnimation('attack_pass', cards, 'hand', 'table', game.self?.player_id);
 
         // 3. Track optimistic pass state (defender will change to next player)
-        // Pass moves defender to the next player in sequence
-        // first_attacker does NOT change during a pass (only changes on new round)
-        const nextDefenderIndex = (game.defender + 1) % game.players.length;
+        // Pass moves defender to the next IN-PLAY player (skipping eliminated
+        // seats, exactly like the server's get_next_player_index); first_attacker
+        // does NOT change during a pass (only changes on new round).
         optimisticPassState.current = {
-            defender: nextDefenderIndex,
+            defender: nextDefenderIndex(game),
             first_attacker: game.first_attacker  // Unchanged
         };
 

@@ -5,6 +5,7 @@ import { useAnimation } from '../contexts/AnimationContext';
 import { useGame } from '../contexts/GameContext';
 import { useAuth } from '../contexts/AuthContext';
 import { canCover } from '@shared/common_utils.ts';
+import { canPass } from '../utils/gameValidation';
 import { findUnambiguousCover } from '../utils/coverCombinations';
 
 export const KeyboardInputHandler = () => {
@@ -38,26 +39,11 @@ export const KeyboardInputHandler = () => {
 
     // Cover-combination resolution lives in ../utils/coverCombinations (shared
     // with DragContext).
-
-    // Check if passing is possible
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    const canPass = (cardsToCheck: Card[]): boolean => {
-        if (!game) return false;
-        
-        const table_battles = game.table_battles;
-        if (table_battles.length === 0) return false;
-
-        // All cards must have the same value
-        if (!cardsToCheck.every(card => card.value === cardsToCheck[0].value)) {
-            return false;
-        }
-
-        // All table battles must be uncovered (defense === null)
-        // All uncovered attacks must have the same value as the cards to check
-        return table_battles.every(battle =>
-            battle.defense === null && battle.attack.value === cardsToCheck[0].value
-        );
-    };
+    //
+    // Pass legality uses the SHARED canPass (src/utils/gameValidation.ts) — the
+    // same predicate the buttons/drag use — so the keyboard path can't diverge.
+    // The previous local copy omitted the next-player capacity check AND the
+    // eliminated-seat skip, so it offered passes the server would reject.
 
     // Action handlers
     const handleAttack = useCallback(async () => {
@@ -111,7 +97,7 @@ export const KeyboardInputHandler = () => {
         if (!game || selectedCards.length === 0) return;
 
         try {
-            if (canPass(selectedCards)) {
+            if (canPass(game, selectedCards)) {
                 await pass(selectedCards);
                 setSelectedCards([]); // Clear selection after successful action
             } else {
@@ -120,8 +106,7 @@ export const KeyboardInputHandler = () => {
         } catch (error) {
             console.error('Pass failed:', error);
         }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [game, selectedCards, pass, setSelectedCards, canPass]);
+    }, [game, selectedCards, pass, setSelectedCards]);
 
     const handlePickup = useCallback(async () => {
         if (!game) return;
