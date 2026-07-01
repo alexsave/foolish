@@ -82,6 +82,10 @@ static _Thread_local int sx_no_fastroll = 0;   // SX_NO_FASTROLL=1: struct rollo
 // instead of handwritten policy play. Against opponents that themselves play
 // endgames exactly (cordite), the exact model is the realistic one.
 static _Thread_local int sx_bbleaf = 0;
+// Root endgame-solve card ceiling (cordite: 20). The bitboard solver + TT can
+// resolve bigger endgames within budget; a higher ceiling opens a window where
+// semtex plays exactly while cordite still guesses with MC.
+static _Thread_local int sx_solve_cards = 20;
 static _Thread_local int sx_bbleaf_cards = 12;
 static _Thread_local long sx_bbleaf_budget = 3000;
 static _Thread_local int sx_difftest = 0;      // SX_DIFFTEST=1: assert fast==slow
@@ -694,7 +698,7 @@ static int sx_try_endgame_solve(const Game *g, int bot_idx,
     if (unknown < 0 || unknown != B->n) return -1;  // deduction failed; bail
 
     int total = g->players[bot_idx].hand_count + g->players[opp].hand_count;
-    if (total > SX_SOLVE_MAX_CARDS) return -1;
+    if (total > sx_solve_cards) return -1;
 
     if (!sx_solver_ready()) return -1;
 
@@ -954,6 +958,7 @@ int semtex_strategy_choose(const Game *g, int bot_idx,
         sx_keep2 = sx_env_int("SX_KEEP2", 0);
         sx_rollout_policy = sx_env_int("SX_ROLLOUT", 0);
         sx_bb_win_budget = sx_env_int("SX_BB_WIN", 20000);
+        sx_solve_cards = sx_env_int("SX_SOLVE_CARDS", 20);
         sx_bb_avoid_budget = sx_env_int("SX_BB_AVOID", 15000);
         sx_leaf_budget = sx_env_int("SX_LEAF_BUDGET", 1500);
         sx_leaf_max_cards = sx_env_int("SX_LEAF_CARDS", 10);
