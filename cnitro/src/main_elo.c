@@ -60,6 +60,7 @@ static int dispatch_choose(int strat, const Game *g, int pi, const LegalMoves *m
         case STRAT_BLACKPOWDER: return blackpowder_strategy_choose(g, pi, moves, NULL);
         case STRAT_CORDITE:     return cordite_strategy_choose(g, pi, moves, NULL);
         case STRAT_ASTROLITE:   return astrolite_strategy_choose(g, pi, moves, NULL);
+        case STRAT_SEMTEX:      return semtex_strategy_choose(g, pi, moves, NULL);
         default:                return -1;
     }
 }
