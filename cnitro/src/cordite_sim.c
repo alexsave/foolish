@@ -1093,6 +1093,70 @@ int cd_sim_one_step(SimState *s) {
     return -1;
 }
 
+// As cd_sim_playout, but resolves small 2-player deck-empty endgames exactly
+// with the bitboard solver instead of finishing them with policy play (one
+// attempt per playout; a failed solve falls back to the policy for good).
+// The TT is NOT cleared between leaf calls: entries are keyed on a full
+// 64-bit position fingerprint, so worlds can share it, and values are
+// depth-rebased so cross-call reuse reads back correctly. Used by semtex —
+// against near-perfect endgame players (cordite itself) modeling the endgame
+// as exact beats modeling it as handwritten play.
+int cd_sim_playout_leaf(SimState *s, int my_idx, int max_turns, int early_exit,
+                        int leaf_cards, long leaf_budget) {
+    int turns = 0;
+    int leaf_tried = 0;
+    while (sim_done(s) < 0 && turns++ < max_turns) {
+        if (early_exit && s->status_p[my_idx] != PLAYER_STATUS_IN) {
+            for (int i = 0; i < s->num_eliminated; i++)
+                if (s->elim_order[i] == my_idx) return i + 1;
+            break;
+        }
+        if (!leaf_tried && s->deck_n == 0 && !s->has_flipped) {
+            int a = -1, b = -1;
+            for (int i = 0; i < s->num_players; i++) {
+                if (s->status_p[i] != PLAYER_STATUS_IN) continue;
+                if (a < 0) a = i; else if (b < 0) b = i; else { b = -2; break; }
+            }
+            if (a >= 0 && b >= 0) {
+                int total = __builtin_popcountll(s->hand[a])
+                          + __builtin_popcountll(s->hand[b]);
+                for (int i = 0; i < s->num_battles; i++)
+                    total += 1 + ((s->covered_mask >> i) & 1);
+                if (total <= leaf_cards) {
+                    leaf_tried = 1;
+                    int aborted = 0;
+                    long budget = leaf_budget;
+                    // Sign-only null window: who is the durak?
+                    int v = cd_sim_solve_d(s, a, -1, 1, &budget, 0, &aborted);
+                    if (!aborted && v != 0) {
+                        int loser = (v < 0) ? a : b;
+                        int np = s->num_players;
+                        if (my_idx == loser) return np;
+                        if (my_idx == a || my_idx == b) return np - 1;
+                        for (int i = 0; i < s->num_eliminated; i++)
+                            if (s->elim_order[i] == my_idx) return i + 1;
+                        return np - 1;   // unreachable; defensive
+                    }
+                }
+            }
+        }
+        int acted = 0;
+        for (int pi = 0; pi < s->num_players; pi++) {
+            if (!sim_should_act(s, pi)) continue;
+            SimMove m;
+            if (!sim_handwritten_move(s, pi, &m)) continue;
+            sim_apply(s, pi, &m);
+            acted = 1;
+            break;
+        }
+        if (!acted) break;
+    }
+    if (sim_done(s) < 0) return 0;
+    for (int i = 0; i < s->num_eliminated; i++)
+        if (s->elim_order[i] == my_idx) return i + 1;
+    return s->num_players;
+}
+
 int cd_sim_playout(SimState *s, int my_idx, int max_turns, int early_exit) {
     int turns = 0;
     while (sim_done(s) < 0 && turns++ < max_turns) {

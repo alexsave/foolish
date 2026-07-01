@@ -77,6 +77,13 @@ static _Thread_local int sx_no_floors = 0, sx_no_leaf = 0, sx_no_avoid = 0;
 static _Thread_local int sx_no_earlyexit = 0;
 static _Thread_local int sx_verify = 0;
 static _Thread_local int sx_no_fastroll = 0;   // SX_NO_FASTROLL=1: struct rollout
+// Bitboard exact-leaf endgames inside rollouts (semtex's own lever): resolve
+// small 2-player deck-empty rollout endgames with the fast bitboard solver
+// instead of handwritten policy play. Against opponents that themselves play
+// endgames exactly (cordite), the exact model is the realistic one.
+static _Thread_local int sx_bbleaf = 0;
+static _Thread_local int sx_bbleaf_cards = 12;
+static _Thread_local long sx_bbleaf_budget = 3000;
 static _Thread_local int sx_difftest = 0;      // SX_DIFFTEST=1: assert fast==slow
 static _Thread_local int sx_w1_override = 0, sx_w2_override = 0;
 static _Thread_local int sx_w3_override = -1;
@@ -620,6 +627,9 @@ static int sx_simulate(Game *g, int my_idx, int max_turns) {
 static int sx_simulate_fast(const Game *g, int my_idx, int max_turns) {
     SimState s;
     cd_sim_from_game(&s, g);
+    if (sx_bbleaf)
+        return cd_sim_playout_leaf(&s, my_idx, max_turns, !sx_no_earlyexit,
+                                   sx_bbleaf_cards, sx_bbleaf_budget);
     return cd_sim_playout(&s, my_idx, max_turns, !sx_no_earlyexit);
 }
 
@@ -952,6 +962,9 @@ int semtex_strategy_choose(const Game *g, int bot_idx,
         sx_full_logs = sx_flag("SX_FULL_LOGS");
         sx_no_earlyexit = sx_flag("SX_NO_EARLYEXIT");
         sx_no_fastroll = sx_flag("SX_NO_FASTROLL");
+        sx_bbleaf = sx_env_int("SX_BBLEAF", 0);
+        sx_bbleaf_cards = sx_env_int("SX_BBLEAF_CARDS", 12);
+        sx_bbleaf_budget = sx_env_int("SX_BBLEAF_BUDGET", 3000);
         sx_difftest = sx_flag("SX_DIFFTEST");
         if (sx_difftest) { void sx_difftest_report(void); atexit(sx_difftest_report); }
         sx_flags_loaded = 1;
@@ -1035,7 +1048,11 @@ int semtex_strategy_choose(const Game *g, int bot_idx,
                                                 &moves->moves[C.idx[ci]])) {
                         fp = g->num_players;
                     } else {
-                        fp = cd_sim_playout(&trial_sim, bot_idx, 600, !sx_no_earlyexit);
+                        fp = sx_bbleaf
+                           ? cd_sim_playout_leaf(&trial_sim, bot_idx, 600,
+                                                 !sx_no_earlyexit,
+                                                 sx_bbleaf_cards, sx_bbleaf_budget)
+                           : cd_sim_playout(&trial_sim, bot_idx, 600, !sx_no_earlyexit);
                         if (fp == 0) fp = g->num_players;
                     }
                     score[ci] += (double)fp;

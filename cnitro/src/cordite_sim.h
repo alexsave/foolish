@@ -65,6 +65,13 @@ int cd_sim_apply_root_move(SimState *s, int p_idx, const LegalMove *m);
 // !cd_no_earlyexit.
 int  cd_sim_playout(SimState *s, int my_idx, int max_turns, int early_exit);
 
+// As cd_sim_playout, but small 2-player deck-empty endgames are resolved
+// exactly by the bitboard solver (sign-only null window, `leaf_budget` nodes,
+// positions with <= `leaf_cards` cards) instead of played out by the policy.
+// One attempt per playout; unresolved solves fall back to policy play.
+int  cd_sim_playout_leaf(SimState *s, int my_idx, int max_turns, int early_exit,
+                         int leaf_cards, long leaf_budget);
+
 // Exact 2-player deck-empty endgame solver on the bitboard state. Returns the
 // value of position `s` from `me`'s perspective in [-1000,1000] (positive = me
 // escapes, magnitude prefers faster wins / slower losses), identical to the
