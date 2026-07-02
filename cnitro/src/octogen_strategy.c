@@ -120,6 +120,15 @@ static _Thread_local int og_profile = 0;
 // resolve bigger endgames within budget; a higher ceiling opens a window where
 // semtex plays exactly while cordite still guesses with MC.
 static _Thread_local int og_solve_cards = 20;
+// Loss-avoidance ceiling (OG_AVOID_CARDS, default 24 = semtex's window).
+// The extended 25-28-card window is WIN-HUNT ONLY: taking a proven win is
+// strictly safe (the win re-proves at every subsequent in-window ply), but
+// avoiding "proven losing" moves out there measured HARMFUL against a
+// near-peer (semtex tables pc2: 0 better/5 worse/195) — under optimal play
+// they lose, but against an equally imperfect opponent they carry the best
+// swindle equity, which the safe move forfeits. CORDITE.md's
+// adverse-selection guard, one level up.
+static _Thread_local int og_avoid_cards = 24;
 static _Thread_local int og_bbleaf_cards = 12;
 static _Thread_local long og_bbleaf_budget = 3000;
 // Per-seat rollout policy map for the current decision (NULL = all
@@ -907,6 +916,7 @@ static int og_try_endgame_solve(const Game *g, int bot_idx,
     }
     if (best_idx >= 0) return best_idx;
     if (og_no_avoid || any_abort) return -1;
+    if (total > og_avoid_cards) return -1;   // extended window: win hunt only
 
     // Pass 2 — loss avoidance: no win exists, so classify each move with a
     // null window around 0 (sign only, maximal pruning).
@@ -1123,6 +1133,7 @@ int octogen_strategy_choose(const Game *g, int bot_idx,
         og_rollout_policy = og_env_int("OG_ROLLOUT", 0);
         og_bb_win_budget = og_env_int("OG_BB_WIN", 400000);
         og_solve_cards = og_env_int("OG_SOLVE_CARDS", 28);
+        og_avoid_cards = og_env_int("OG_AVOID_CARDS", 24);
         og_bb_avoid_budget = og_env_int("OG_BB_AVOID", 250000);
         og_leaf_budget = og_env_int("OG_LEAF_BUDGET", 1500);
         og_leaf_max_cards = og_env_int("OG_LEAF_CARDS", 10);
