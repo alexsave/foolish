@@ -81,6 +81,13 @@ int  cd_sim_playout_leaf(SimState *s, int my_idx, int max_turns, int early_exit,
 int  cd_sim_playout_pol(SimState *s, int my_idx, int max_turns, int early_exit,
                         int leaf_cards, long leaf_budget, const uint8_t *pol);
 
+// Reply-tournament playout (octogen): the first opponent decision is chosen
+// by search over their full legal reply set (up to reply_cap playouts; the
+// opponent takes the reply best for THEM). Returns my finish position.
+int  cd_sim_playout_reply(SimState *s, int my_idx, int max_turns,
+                          int leaf_cards, long leaf_budget,
+                          const uint8_t *pol, int reply_cap);
+
 // Exact 2-player deck-empty endgame solver on the bitboard state. Returns the
 // value of position `s` from `me`'s perspective in [-1000,1000] (positive = me
 // escapes, magnitude prefers faster wins / slower losses), identical to the

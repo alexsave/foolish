@@ -1244,6 +1244,122 @@ int cd_sim_playout_pol(SimState *s, int my_idx, int max_turns, int early_exit,
     return s->num_players;
 }
 
+// ---------- reply-tournament playout (octogen) ---------------------------
+// The FIRST opponent decision of the playout is chosen by SEARCH instead of
+// the rollout policy: enumerate the actor's full legal reply set (the
+// solver's bitboard move-gen), play each candidate reply out to completion,
+// and let the opponent take the reply with the best outcome FOR THEM (their
+// own finish position; ties -> the cheapest-ranked reply, matching the
+// cheap-first convention). Returns MY finish under that reply. This models
+// "the opponent punishes this move" one ply deep — the classic determinized-
+// MC blind spot where a fixed rollout policy never plays the refutation.
+// Cost: up to reply_cap full playouts instead of one, so callers use it only
+// on late-stage (few-candidate) worlds.
+
+// Rank key for pruning oversized reply sets: same family ordering cordite's
+// candidate picker uses (attacks max-cards-cheapest, covers cheapest,
+// passes cheapest, then good/pickup — which are always kept).
+static double sol_rank_key(const SolMove *m, int power) {
+    switch (m->type) {
+        case MV_ATTACK: {
+            int sum = 0;
+            for (int i = 0; i < m->n; i++) sum += id_score(m->cards[i], power);
+            return -(double)m->n * 10000.0 + (double)sum;
+        }
+        case MV_COVER: {
+            double prod = 1.0;
+            for (int i = 0; i < m->n; i++) prod *= (double)id_score(m->cards[i], power);
+            return 100000.0 + prod;
+        }
+        case MV_PASS: {
+            int sum = 0;
+            for (int i = 0; i < m->n; i++) sum += id_score(m->cards[i], power);
+            return 200000.0 + (double)sum;
+        }
+        case MV_GOOD:   return 300000.0;
+        default:        return 300001.0;   // MV_PICKUP
+    }
+}
+
+// Finish position of `p` after a TERMINATED playout: eliminated players by
+// slot, the one remaining IN player (the durak) gets N.
+static int sim_pos_of(const SimState *s, int p) {
+    for (int i = 0; i < s->num_eliminated; i++)
+        if (s->elim_order[i] == p) return i + 1;
+    return s->num_players;
+}
+
+extern uint32_t game_rng_get(void);
+extern void game_rng_set(uint32_t s);
+
+int cd_sim_playout_reply(SimState *s, int my_idx, int max_turns,
+                         int leaf_cards, long leaf_budget,
+                         const uint8_t *pol, int reply_cap) {
+    // Advance with the policy while it is still MY move (or forced steps),
+    // for a handful of plies, until an OPPONENT decision surfaces.
+    for (int guard = 0; guard < 8; guard++) {
+        if (sim_done(s) >= 0)
+            return cd_sim_playout_pol(s, my_idx, max_turns, 1,
+                                      leaf_cards, leaf_budget, pol);
+        int actor = -1;
+        for (int pi = 0; pi < s->num_players; pi++)
+            if (sim_should_act(s, pi)) { actor = pi; break; }
+        if (actor < 0) break;
+        if (actor != my_idx) {
+            // The reply decision. Enumerate + tournament.
+            SolMove buf[CD_SIM_SOLVE_MAX_MOVES];
+            int n = sim_gen_moves(s, actor, buf, CD_SIM_SOLVE_MAX_MOVES);
+            if (n <= 1) {
+                if (n == 1) sim_apply_sol(s, actor, &buf[0]);
+                else break;   // no reply moves: defer to the policy playout
+                continue;
+            }
+            // Rank cheap-first; keep the top reply_cap.
+            int order[CD_SIM_SOLVE_MAX_MOVES];
+            double key[CD_SIM_SOLVE_MAX_MOVES];
+            for (int i = 0; i < n; i++) {
+                order[i] = i;
+                key[i] = sol_rank_key(&buf[i], s->power_suit);
+            }
+            for (int i = 1; i < n; i++) {   // insertion sort, small n
+                int oi = order[i]; double ki = key[oi];
+                int j = i - 1;
+                while (j >= 0 && key[order[j]] > ki) { order[j+1] = order[j]; j--; }
+                order[j+1] = oi;
+            }
+            int kept = n < reply_cap ? n : reply_cap;
+            uint32_t rng0 = game_rng_get();
+            int best_actor_pos = 1 << 20;
+            int best_my_pos = -1;
+            for (int k = 0; k < kept; k++) {
+                SimState trial = *s;
+                game_rng_set(rng0);   // CRN across replies
+                sim_apply_sol(&trial, actor, &buf[order[k]]);
+                // Full playout, NO early exit: both finishes are needed.
+                (void)cd_sim_playout_pol(&trial, my_idx, max_turns, 0,
+                                         leaf_cards, leaf_budget, pol);
+                if (sim_done(&trial) < 0) continue;   // unterminated: skip
+                int ap = sim_pos_of(&trial, actor);
+                if (ap < best_actor_pos) {
+                    best_actor_pos = ap;
+                    best_my_pos = sim_pos_of(&trial, my_idx);
+                }
+            }
+            if (best_my_pos > 0) return best_my_pos;
+            break;   // tournament failed entirely: policy playout below
+        }
+        // My (or forced) move: one policy step.
+        SimMove m;
+        int got = (pol && pol[actor] == CD_POL_LOOSE)
+                ? sim_loose_move(s, actor, &m)
+                : sim_handwritten_move(s, actor, &m);
+        if (!got) break;
+        sim_apply(s, actor, &m);
+    }
+    return cd_sim_playout_pol(s, my_idx, max_turns, 1,
+                              leaf_cards, leaf_budget, pol);
+}
+
 // As cd_sim_playout, but resolves small 2-player deck-empty endgames exactly
 // with the bitboard solver instead of finishing them with policy play (one
 // attempt per playout; a failed solve falls back to the policy for good).

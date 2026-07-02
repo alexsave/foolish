@@ -46,6 +46,8 @@ static int dispatch_choose(int strat, const Game *g, int pi, const LegalMoves *m
         case STRAT_ASTROLITE:   return astrolite_strategy_choose(g, pi, moves, NULL);
         case STRAT_SEMTEX:      return semtex_strategy_choose(g, pi, moves, NULL);
         case STRAT_SEMTEX_ORACLE: return semtex_oracle_strategy_choose(g, pi, moves, NULL);
+        case STRAT_OCTOGEN:     return octogen_strategy_choose(g, pi, moves, NULL);
+        case STRAT_OCTOGEN_ORACLE: return octogen_oracle_strategy_choose(g, pi, moves, NULL);
         default:                return -1;
     }
 }

@@ -19,6 +19,8 @@
 #define STRAT_CORDITE_OLD 9    // cordite with the pre-change (1x) budget; research
 #define STRAT_SEMTEX      10   // cordite-derived; tuned to beat cordite itself
 #define STRAT_SEMTEX_ORACLE 11 // semtex at 6x worlds (research/audit only)
+#define STRAT_OCTOGEN     12   // semtex + stage-3 opponent reply tournament
+#define STRAT_OCTOGEN_ORACLE 13 // octogen at 6x worlds (research/audit only)
 
 // Returns chosen move index in moves->moves[] (0..moves->n-1).
 typedef int (*StrategyFn)(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
@@ -42,6 +44,8 @@ int semtex_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, 
 // Oracle semtex (research): 6x world budget + wider candidate survival. For
 // loss audits — a decision the oracle changes was compute-limited.
 int semtex_oracle_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
+int octogen_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
+int octogen_oracle_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
 
 // Map a strategy name (or short alias) to its STRAT_* id; -1 if unknown.
 // Single source of truth for the name<->id mapping the main programs share.
@@ -59,6 +63,8 @@ static inline int parse_strategy(const char *s) {
     if (!strcmp(s, "cordite_old") || !strcmp(s, "cd0"))  return STRAT_CORDITE_OLD;
     if (!strcmp(s, "semtex")      || !strcmp(s, "sx"))   return STRAT_SEMTEX;
     if (!strcmp(s, "semtex_oracle") || !strcmp(s, "sxo")) return STRAT_SEMTEX_ORACLE;
+    if (!strcmp(s, "octogen")     || !strcmp(s, "og"))   return STRAT_OCTOGEN;
+    if (!strcmp(s, "octogen_oracle") || !strcmp(s, "ogo")) return STRAT_OCTOGEN_ORACLE;
     return -1;
 }
 
