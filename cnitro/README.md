@@ -24,8 +24,14 @@ Bots (weakest → strongest):
 - `robusta` — public-info Monte-Carlo; `firecracker` / `gunpowder` are
   robusta with different rollout policies.
 - `blackpowder` — belief-constrained determinized MC + exact endgame.
-- `cordite` — blackpowder's successor; ELO #1, beats every other bot at
+- `cordite` — blackpowder's successor; beats every other bot at
   every player count. See `CORDITE.md` (and `BLACKPOWDER.md`).
+- `semtex` — cordite's successor; strictly dominates cordite (never a
+  significantly worse cell vs any field, +13.5pp win heads-up on
+  same-deal pairs): exact rollout-leaf endgames heads-up, extended exact
+  root-solve window, per-seat MC-tells. See `SEMTEX.md`.
+- `astrolite` — cordite + defender card-management levers (research;
+  roughly cordite-equal).
 
 Each strategy uses its own deterministic LCG (seeded per game) so a given
 seed reproduces the same play run-to-run.
@@ -40,6 +46,11 @@ make tests        # build + run the engine unit tests
 - `cnitro_eval`   — protagonist (seat 0) vs `--opp` everywhere else; reports
   win-rate / mean finish position. e.g.
   `./build/cnitro_eval --strategy=cordite --opp=espresso --players=4 --games=500`
+  - `--control=<strategy>` plays every seed twice on the same deal (hero
+    vs control at seat 0) and reports the paired finish delta ± SE —
+    same-deal pairing cancels deal luck, so far fewer games reach
+    significance. `--dump=<file>` logs per-pair outcomes for loss
+    analysis (`analyze_losses.sh` replays and diffs regression seeds).
 - `cnitro_elo`    — mixed-pool ELO arena. e.g.
   `./build/cnitro_elo --games=3000 --pcs=2,3,4,5,6,7,8 \`
   `    --pool=random,handwritten,espresso,robusta,firecracker,gunpowder,blackpowder,cordite`

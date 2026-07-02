@@ -106,10 +106,42 @@ deltas (negative = semtex better; positions 1..N, lower is better).
 
 ## Results
 
-(Validation matrix on fresh seeds 930001, 300–400 pairs/cell; see the
-tables below — filled from the final validation run.)
+All paired vs the cordite control on fresh seeds 930001 (400 pairs/cell,
+300 for blackpowder), final shipped defaults. `Δ` = hero mean finish −
+control mean finish (negative = semtex better), `±` = SE of the paired
+delta, `b/w/e` = pairs where semtex finished better / worse / equal.
 
-RESULTS_PLACEHOLDER
+### Heads-up vs cordite — the decisive edge
+
+| field | Δ mean finish | win% semtex | win% cordite | b/w/e |
+|---|---|---|---|---|
+| cordite pc2 | **−0.135 ± 0.034** | **61.5%** | 48.0% | 122/68/210 |
+| espresso pc2 | −0.050 ± 0.031 | 75.8% | 70.8% | 85/65/250 |
+| blackpowder pc2 | −0.050 ± 0.042 | 62.7% | 57.7% | 86/71/143 |
+| handwritten pc2 | −0.003 ± 0.024 | 88.0% | 87.8% | 45/44/311 |
+
+The pc2 cordite-mirror result is 4σ on same-deal pairs: the small exact
+rollout leaves + the extended solve window + the MC-tells stack into a
++13.5pp win-rate edge over cordite on identical deals.
+
+### 3+ players — strict dominance, small margins
+
+With the final defaults (no rollout leaves at 3+), semtex diverges from
+cordite rarely at 3+ players, and when it does it is right: across the
+2,400 paired games of the I-runs (cordite pc5/pc8, handwritten pc3/4/6,
+espresso pc4) it finished **better in 11 pairs, worse in 0**, identical
+in the rest. The earlier full-matrix run (12-card leaves at 3+ still on)
+showed the same shape at pc3–pc8 vs every field — no cell significantly
+negative, pc4/pc5 mildly positive vs cordite (−0.043 ± 0.042 /
+−0.030 ± 0.034), espresso pc4 −0.050 ± 0.027.
+
+### No rock-paper-scissors
+
+Semtex was never significantly worse than cordite in any of the ~25
+validated (field × player-count) cells — cordite, handwritten, espresso,
+random, and blackpowder tables. The one lever family that *did* trade
+cordite-mirror strength for heuristic-field weakness (globally disabling
+floor/void inference) was cut for exactly that reason.
 
 ## Knobs (read once per process, `SX_*` — semtex only, never the cordite opponents)
 
