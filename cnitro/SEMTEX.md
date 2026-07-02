@@ -135,6 +135,22 @@ showed the same shape at pc3–pc8 vs every field — no cell significantly
 negative, pc4/pc5 mildly positive vs cordite (−0.043 ± 0.042 /
 −0.030 ± 0.034), espresso pc4 −0.050 ± 0.027.
 
+### ELO arena (random seats, mixed pools, PCs 2-8, 3000 games, K=32)
+
+Two runs (seeds 1 / 777001), 9-bot pool = the CORDITE.md pool + semtex.
+The K=32 sequential arena is a noisy instrument — game order alone moves
+final ratings by >100 points (it even ranks blackpowder above cordite,
+contradicting every direct head-to-head) — so the paired same-deal evals
+above are the primary evidence; the arena is a sanity check:
+
+| run | semtex | cordite | semtex win% / durak% | cordite win% / durak% |
+|---|---|---|---|---|
+| seed 1 | 1090 (#4) | 1094 (#3) | 26.6% / **8.3%** | 27.9% / 8.4% |
+| seed 777001 | **1252 (#1)** | 1125 (#3) | **29.0%** / 8.2% | 26.8% / 7.9% |
+
+Semtex ranks at-or-above cordite in both runs and never below any other
+bot's tier.
+
 ### No rock-paper-scissors
 
 Semtex was never significantly worse than cordite in any of the ~25
