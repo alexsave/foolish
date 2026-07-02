@@ -107,10 +107,9 @@ static _Thread_local int og_adapt = 1;
 static _Thread_local int og_reply = 0;   // flat vs semtex; research knob
 static _Thread_local int og_reply_cap = 6;
 static _Thread_local int og_reply_stage = 2;
-// OG_MCDEF (default 1, octogen's lever): seats with a proven mc_tell are
-// rolled out with the MC-defender model (CD_POL_MCDEF) — strategic
-// trump-saving pickups — instead of handwritten's cover-if-you-can.
-// Evidence-gated per seat, so heuristic fields see no change.
+// OG_MCDEF (default 0 — measured flat-to-harmful vs semtex, pc3
+// +0.055±0.039; the 50% pickup rate over-models strategic pickups):
+// seats with a proven mc_tell roll out with CD_POL_MCDEF. Research knob.
 static _Thread_local int og_mcdef = 1;
 // Void world-mixture: voids applied in (mod-1)/mod of sampled worlds
 // (cordite: 3 of 4). A softer mixture hedges between heuristic-family
@@ -1135,7 +1134,7 @@ int octogen_strategy_choose(const Game *g, int bot_idx,
         og_bbleaf = og_env_int("OG_BBLEAF", 2);
         og_adapt = og_env_int("OG_ADAPT", 1);
         og_reply = og_env_int("OG_REPLY", 0);
-        og_mcdef = og_env_int("OG_MCDEF", 1);
+        og_mcdef = og_env_int("OG_MCDEF", 0);
         og_reply_cap = og_env_int("OG_REPLY_CAP", 6);
         og_reply_stage = og_env_int("OG_REPLY_STAGE", 2);
         og_void_mod = og_env_int("OG_VOID_MOD", 4);
