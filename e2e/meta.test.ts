@@ -95,7 +95,11 @@ if (!process.env.VALIDATION_ONLY) {
         assert.equal(g.players.length, 1, 'bot removed');
         assert.equal((await pgPool.query('SELECT count(*) FROM bot_hands WHERE game_id=$1', [gameId])).rows[0].count, '0', 'bot hand deleted');
 
-        await runMeta(gameId, h1, { type: 'exit', game_id: gameId }).catch(() => {});
+        // The last exit must RESOLVE, not just happen to delete the row: it used
+        // to succeed and then 400 (the CAS commit missed the deleted row, read it
+        // as a conflict, and the retry's reload threw "not found").
+        const res = await runMeta(gameId, h1, { type: 'exit', game_id: gameId });
+        assert.equal(res.deleted, true, 'exit of the last player reports the deletion');
         assert.equal((await pgPool.query('SELECT count(*) FROM games WHERE id=$1', [gameId])).rows[0].count, '0', 'empty game deleted');
     });
 

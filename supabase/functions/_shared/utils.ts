@@ -42,7 +42,7 @@ const supabaseClient = createClient(
 // is held, so nothing can leak or freeze. On conflict we reload and redo.
 // (Name kept as executeWithGameLock so callers are unchanged; it no longer locks.)
 // ============================================================================
-export const executeWithGameLock = async (game_id: string, operation: (game: Game) => Promise<{ game: Game, events: AnimationEvent[] }>, reqId: string = 'unknown', mootIfGameOver: boolean = false): Promise<{ game: Game, events: AnimationEvent[] }> => {
+export const executeWithGameLock = async (game_id: string, operation: (game: Game) => Promise<{ game: Game, events: AnimationEvent[], deleted?: boolean }>, reqId: string = 'unknown', mootIfGameOver: boolean = false): Promise<{ game: Game, events: AnimationEvent[], deleted?: boolean }> => {
     const MAX_ATTEMPTS = 5;
 
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -62,6 +62,15 @@ export const executeWithGameLock = async (game_id: string, operation: (game: Gam
         }
 
         const result = await operation(loadedGame);
+
+        // The operation deleted the game row itself (last player exiting the
+        // lobby). There is nothing left to CAS against — committing would report
+        // a spurious `conflict`, and the retry's reload would throw "not found",
+        // turning a successful teardown into a 400.
+        if (result.deleted) {
+            console.log(`[${reqId}][TXN] game ${game_id} deleted by operation — skipping commit`);
+            return result;
+        }
 
         // Pure end-of-game detection: sets GAME_OVER + player statuses in memory,
         // no DB writes — so the committed state below is already final.

@@ -20,7 +20,10 @@ const supabaseClient = createClient(
 // Only this user can add GPT bots (to control API costs)
 const GPT_ALLOWED_USER_ID = '60a5c562-0922-40a6-b416-77e3285d87b2';
 
-type Result = { game: Game; events: AnimationEvent[] };
+// `deleted` marks that the handler removed the games row itself (last player
+// exiting); executeWithGameLock then skips the version-CAS commit, which would
+// otherwise miss the deleted row, read as a conflict, and 400 a clean teardown.
+type Result = { game: Game; events: AnimationEvent[]; deleted?: boolean };
 
 // ---- start / ready ---------------------------------------------------------
 function handleStart({ user, game }: ExecutionParams): Result {
@@ -137,7 +140,7 @@ export async function handleExit({ user, body, game }: ExecutionParams): Promise
     if (game.players.length === 0) {
         await supabaseClient.from('games').delete().eq('id', game.id);
         await supabaseClient.from('game_decks').delete().eq('game_id', game.id);
-        return { game, events: [] };
+        return { game, events: [], deleted: true };
     }
 
     const playerType = bot_id ? 'Bot' : 'Player';
