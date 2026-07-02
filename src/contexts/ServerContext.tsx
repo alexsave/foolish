@@ -71,6 +71,14 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
     const [game_id, setGameId] = useState<string | null>(null);
 
+    // The active game. The route param is the source of truth whenever it is
+    // present — it is what AnimationContext, the broadcast version gate and
+    // RealtimeAnimationFeed all key off — so actions must target it too, or a
+    // move fired mid-navigation goes to the previously-selected game. The state
+    // value only bridges flows that happen before navigation (create/join from
+    // the dashboard).
+    const active_game_id = url_game_id ?? game_id;
+
     // Local hand order state - keyed by game_id
     // Thinking we just need one tbh
     const [localHandOrders, setLocalHandOrders] = useState<{ [key: string]: Card[] }>({});
@@ -594,7 +602,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         // illegal move, so the round-trip isn't gated on local validation.
         const promise = invokeGameFunctions('action', {
             type: 'attack',
-            game_id: game_id!,
+            game_id: active_game_id!,
             cards: cards,
         });
 
@@ -608,11 +616,11 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         setTimeout(() => {
             if (!applyOptimistic()) return;
             setGames(prev => {
-                const g: PersonalGame = prev[game_id!];
+                const g: PersonalGame = prev[active_game_id!];
                 if (!g) return prev;
                 return {
                     ...prev,
-                    [game_id!]: {
+                    [active_game_id!]: {
                         ...g,
                         table_battles: [...g.table_battles, ...cards.map(card => ({ attack: card, defense: null }))],
                         self: { ...g.self, hand: g.self.hand.filter(card => !cards.some(c => card_comp(c, card))) }
@@ -631,7 +639,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         // Server request first (see attack); optimistic patch gated on validity.
         const promise = invokeGameFunctions('action', {
             type: 'pass',
-            game_id: game_id!,
+            game_id: active_game_id!,
             cards: cards,
         });
 
@@ -640,11 +648,11 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         setTimeout(() => {
             if (!applyOptimistic()) return;
             setGames(prev => {
-                const g: PersonalGame = prev[game_id!];
+                const g: PersonalGame = prev[active_game_id!];
                 if (!g) return prev;
                 return {
                     ...prev,
-                    [game_id!]: {
+                    [active_game_id!]: {
                         ...g,
                         table_battles: [...g.table_battles, ...cards.map(card => ({ attack: card, defense: null }))],
                         self: { ...g.self, hand: g.self.hand.filter(card => !cards.some(c => card_comp(c, card))) },
@@ -663,7 +671,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         // Server request first (see attack); optimistic patch gated on validity.
         const promise = invokeGameFunctions('action', {
             type: 'pickup',
-            game_id: game_id!,
+            game_id: active_game_id!,
         });
 
         // Optimistic game state update after animation completes. Derived inside
@@ -671,7 +679,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         setTimeout(() => {
             if (!applyOptimistic()) return;
             setGames(prev => {
-                const g: PersonalGame = prev[game_id!];
+                const g: PersonalGame = prev[active_game_id!];
                 if (!g) return prev;
 
                 const next_first_attacker = get_next_player_index(g, g.defender);
@@ -684,7 +692,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
                 return {
                     ...prev,
-                    [game_id!]: {
+                    [active_game_id!]: {
                         ...g,
                         table_battles: [],
                         self: {
@@ -708,7 +716,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         // Server request first (see attack); optimistic patch gated on validity.
         const promise = invokeGameFunctions('action', {
             type: 'cover',
-            game_id: game_id!,
+            game_id: active_game_id!,
             cover_cards: coverCards,
             attack_cards: attackCards,
         });
@@ -718,7 +726,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         setTimeout(() => {
             if (!applyOptimistic()) return;
             setGames(prev => {
-                const g: PersonalGame = prev[game_id!];
+                const g: PersonalGame = prev[active_game_id!];
                 if (!g) return prev;
 
                 const updatedTableBattles = g.table_battles.map(battle => {
@@ -733,7 +741,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
                 return {
                     ...prev,
-                    [game_id!]: {
+                    [active_game_id!]: {
                         ...g,
                         table_battles: updatedTableBattles,
                         self: { ...g.self, hand: g.self.hand.filter(card => !coverCards.some(c => card_comp(c, card))) }
@@ -750,7 +758,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     const good = (): Promise<{ game_id: string }> => {
         return invokeGameFunctions('action', {
             type: 'good',
-            game_id: game_id!,
+            game_id: active_game_id!,
         });
     };
 
@@ -777,7 +785,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             const { error } = await supabase
                 .from('chat_messages')
                 .insert({
-                    game_id: game_id,
+                    game_id: active_game_id,
                     user_id: user_id,
                     message: trimmedMessage,
                     is_system: false
@@ -995,11 +1003,11 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         }
     }
 
-    const currentChatMessages = chatMessages[game_id!] || [];
+    const currentChatMessages = chatMessages[active_game_id!] || [];
     // The rendered hand: authoritative self.hand, deduped and ordered by the
     // sticky arrangement memory. Guarantees no duplicates and no on-table cards
     // in the hand, and keeps a rejected card in its original slot.
-    const currentLocalHandOrder = displayedHand(localHandOrders[game_id!] || [], games[game_id!]?.self?.hand || []);
+    const currentLocalHandOrder = displayedHand(localHandOrders[active_game_id!] || [], games[active_game_id!]?.self?.hand || []);
 
     return (
         <ServerContext.Provider value={{
@@ -1008,8 +1016,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             startGame,
             addBot,
             exitGame,
-            game_id,
-            game: games[game_id!],
+            game_id: active_game_id,
+            game: games[active_game_id!],
             games,
             attack,
             pass,
@@ -1040,13 +1048,13 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             chatMessages: currentChatMessages,
             localHandOrder: currentLocalHandOrder,
             setLocalHandOrder: (order: Card[]) => {
-                if (game_id) {
+                if (active_game_id) {
                     // Sticky: take the dragged order of the visible cards, then keep
                     // any remembered (currently-absent) cards so their slots survive.
                     setLocalHandOrders(prev => {
                         const inOrder = new Set(order.map(cardKey));
-                        const remembered = (prev[game_id] || []).filter(c => !inOrder.has(cardKey(c)));
-                        return { ...prev, [game_id]: [...order, ...remembered] };
+                        const remembered = (prev[active_game_id] || []).filter(c => !inOrder.has(cardKey(c)));
+                        return { ...prev, [active_game_id]: [...order, ...remembered] };
                     });
                 }
             }
