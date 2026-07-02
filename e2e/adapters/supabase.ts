@@ -29,7 +29,9 @@ type Result = { data: any; error: any };
 const ok = (data: any): Result => ({ data, error: null });
 
 // Build the nested object loadCompleteGame expects from its PostgREST embed:
-//   games row + game_decks(object) + player_hands[] + bot_hands[].bots + game_logs[]
+//   games row + game_decks(object) + player_hands[] + bot_hands[].bots.
+// No game_logs: the production select doesn't embed them (logs are loaded
+// lazily, only at game end), so the shim shouldn't pay for them either.
 async function loadGamesEmbed(id: string): Promise<Result> {
     const c = await pool.connect();
     try {
@@ -41,10 +43,8 @@ async function loadGamesEmbed(id: string): Promise<Result> {
         const bh = (await c.query(
             `SELECT bh.bot_id, bh.hand, bh.awaiting_attack, jsonb_build_object('strategy_key', b.strategy_key) AS bots
              FROM bot_hands bh JOIN bots b ON b.id = bh.bot_id WHERE bh.game_id=$1`, [id])).rows;
-        const logs = (await c.query(
-            'SELECT id, game_id, log_type, player_id, card_pairs, defender_index, created_at FROM game_logs WHERE game_id=$1', [id])).rows;
         await c.query('COMMIT');
-        return ok({ ...g, game_decks: deck, player_hands: ph, bot_hands: bh, game_logs: logs });
+        return ok({ ...g, game_decks: deck, player_hands: ph, bot_hands: bh });
     } catch (e) {
         try { await c.query('ROLLBACK'); } catch { /* */ }
         return { data: null, error: e };
