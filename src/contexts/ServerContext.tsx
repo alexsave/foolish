@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { Card, PersonalGame, PublicGame, PRIVATE_EVENT_TYPE, GAME_STATUS, STRATEGY_KEY } from '@shared/types.ts';
+import { Card, PersonalGame, PublicGame, GAME_STATUS, STRATEGY_KEY } from '@shared/types.ts';
 import supabase from '../backend/Connector';
 import { useParams } from 'next/navigation';
 import { useAuth } from './AuthContext';
@@ -92,11 +92,9 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     const getUserGamesPromise = useRef<Promise<void> | null>(null);
 
     // Simple reconnection state
-    const gameChannelRetryInterval = useRef(500); // Start with 0.5 seconds
     const chatChannelRetryInterval = useRef(500); // Start with 0.5 seconds
-    // Handles for the pending reconnect timers so we can cancel them on teardown
+    // Handle for the pending reconnect timer so we can cancel it on teardown
     // and avoid leaked retries re-subscribing to games the user has left.
-    const gameChannelRetryTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
     const chatChannelRetryTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
     const MAX_RETRY_INTERVAL = 5000; // Cap at 5 seconds
 
@@ -146,12 +144,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
         // cleanup realtime subscriptions
         return () => {
-            // Cancel any pending reconnect timers so they don't re-subscribe to a
+            // Cancel any pending reconnect timer so it doesn't re-subscribe to a
             // game we're navigating away from (which churns the shared socket).
-            if (gameChannelRetryTimeout.current) {
-                clearTimeout(gameChannelRetryTimeout.current);
-                gameChannelRetryTimeout.current = null;
-            }
             if (chatChannelRetryTimeout.current) {
                 clearTimeout(chatChannelRetryTimeout.current);
                 chatChannelRetryTimeout.current = null;
@@ -163,7 +157,11 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             // Per-channel removeChannel() instead routes through realtime-js's deferred
             // disconnect (disconnectOnEmptyChannelsAfterMs), which is cancelled as soon as
             // the next game subscribes, so the socket is never bounced during a fast switch.
+            // ONLY this context's channels (chat:… and the spectator game-…): the
+            // gu-… animation channel is owned and torn down by RealtimeAnimationFeed —
+            // removing it here raced its own cleanup/reconnect handling.
             supabase.getChannels().forEach((channel) => {
+                if (channel.topic.includes('gu-')) return;
                 supabase.removeChannel(channel);
             });
         };
@@ -171,65 +169,11 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     }, [user_id, url_game_id]);
 
 
-    const subscribeToGame = async (gameId: string) => {
-        try {
-            // Ensure we have proper auth before subscribing
-            await supabase.realtime.setAuth();
-
-            // Subscribe to personalized game-user channel for non-animation game updates  
-            const gameUserChannel = supabase.channel(`gu-${gameId}-${user_id}`, {
-                config: { private: true }
-            });
-
-            gameUserChannel
-                .on('broadcast', { event: 'private_message' }, (payload) => {
-                    handleGameMessage(payload.payload, 'private_message');
-                })
-                .on('broadcast', { event: 'HAND_REARRANGED' }, (payload) => {
-                    handleGameMessage(payload.payload, 'HAND_REARRANGED');
-                })
-                .subscribe((status, err) => {
-                    if (status === 'SUBSCRIBED') {
-                        gameChannelRetryInterval.current = 500; // Reset retry interval on success
-                        if (gameChannelRetryTimeout.current) {
-                            clearTimeout(gameChannelRetryTimeout.current);
-                            gameChannelRetryTimeout.current = null;
-                        }
-                    } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-                        // Ignore errors for a game we've left: when navigating away the shared
-                        // socket is torn down (close code 1005) and every channel reports an
-                        // error. Retrying here would re-subscribe to the abandoned game.
-                        if (gameIdRef.current !== gameId) {
-                            return;
-                        }
-                        if (err) {
-                            console.error(`Game-user channel ${status}:`, err);
-                        }
-                        if (gameChannelRetryTimeout.current) {
-                            clearTimeout(gameChannelRetryTimeout.current);
-                        }
-                        gameChannelRetryTimeout.current = setTimeout(() => {
-                            subscribeToGame(gameId).catch(console.error);
-                            // Double the interval but cap at MAX_RETRY_INTERVAL
-                            gameChannelRetryInterval.current = Math.min(gameChannelRetryInterval.current * 2, MAX_RETRY_INTERVAL);
-                        }, gameChannelRetryInterval.current);
-                    }
-                });
-        } catch (error) {
-            if (gameIdRef.current !== gameId) {
-                return;
-            }
-            console.error('Error subscribing to game channel:', error);
-            if (gameChannelRetryTimeout.current) {
-                clearTimeout(gameChannelRetryTimeout.current);
-            }
-            gameChannelRetryTimeout.current = setTimeout(() => {
-                subscribeToGame(gameId).catch(console.error);
-                // Double the interval but cap at MAX_RETRY_INTERVAL
-                gameChannelRetryInterval.current = Math.min(gameChannelRetryInterval.current * 2, MAX_RETRY_INTERVAL);
-            }, gameChannelRetryInterval.current);
-        }
-    };
+    // NOTE: there is deliberately no gu-<game>-<user> subscription here. That
+    // personalized channel is owned by RealtimeAnimationFeed (the animation
+    // pipeline); a second subscription from this context was pure duplicate
+    // socket load — its only events were `private_message` (sender commented out
+    // server-side) and `HAND_REARRANGED` (handler was a no-op).
 
     const subscribeToChatMessages = async (gameId: string) => {
         try {
@@ -253,7 +197,9 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                             chatChannelRetryTimeout.current = null;
                         }
                     } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-                        // Ignore errors for a game we've left (see subscribeToGame).
+                        // Ignore errors for a game we've left: when navigating away the
+                        // shared socket is torn down and every channel reports an error;
+                        // retrying would re-subscribe to the abandoned game.
                         if (gameIdRef.current !== gameId) {
                             return;
                         }
@@ -283,35 +229,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 // Double the interval but cap at MAX_RETRY_INTERVAL
                 chatChannelRetryInterval.current = Math.min(chatChannelRetryInterval.current * 2, MAX_RETRY_INTERVAL);
             }, chatChannelRetryInterval.current);
-        }
-    };
-
-    const handleGameMessage = (message: any, source: string = 'unknown') => {
-        // Handle both old format (message.game_id) and new format (message.game.id)
-        // Also handle nested message format from broadcastToGame
-        let actualMessage = message;
-        let messageGameId = message.game?.id || message.game_id;
-
-        // Check if this is a nested message from broadcastToGame
-        if (message.message && typeof message.message === 'object') {
-            actualMessage = message.message;
-            messageGameId = actualMessage.game?.id || message.game_id;
-        }
-
-        if (!messageGameId || !gameIdRef.current || messageGameId !== gameIdRef.current) {
-            return;
-        }
-
-        const gameData = actualMessage.game || message.game;
-
-        // Handle non-animation messages (private messages, direct responses, etc.)
-        if (actualMessage.type === PRIVATE_EVENT_TYPE.REQUEST_FIRST_ATTACK ||
-            actualMessage.type === PRIVATE_EVENT_TYPE.PLAYER_HAND) {
-            // These are private messages that don't need game state updates
-        } else if (gameData) {
-            // For any other message type that includes game data, update the game state
-            // This handles cases like direct function invocation responses
-            //setGames(prev => ({ ...prev, [messageGameId]: mergeGameData(messageGameId, gameData, prev) }));
         }
     };
 
@@ -404,8 +321,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             onSuccess: (data) => {
                 setGameId(data.data.id);
                 setGames(prev => ({ ...prev, [data.data.id]: mergeGameData(data.data.id, data.data, prev) }));
-                // Subscribe to the new game's channel and chat messages
-                subscribeToGame(data.data.id).catch(console.error);
+                // Subscribe to the new game's chat (the gu- animation channel is
+                // owned by RealtimeAnimationFeed)
                 subscribeToChatMessages(data.data.id).catch(console.error);
             }
         });
@@ -433,8 +350,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                     supabase.removeChannel(oldChannel);
                 }
 
-                // Subscribe to the game's channel and chat messages
-                subscribeToGame(data.data.id).catch(console.error);
+                // Subscribe to the game's chat (the gu- animation channel is
+                // owned by RealtimeAnimationFeed)
                 subscribeToChatMessages(data.data.id).catch(console.error);
                 // Load chat history with game data
                 loadChatHistory(data.data.id, data.data).catch(console.error);
@@ -612,9 +529,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 newSet.delete(gameId);
                 return newSet;
             });
-            // game self + waiting -> subscribe to gu
-            // game self + not waiting -> subscribe to gu
-            subscribeToGame(gameId).catch(console.error);
+            // gu- (animation) subscription is handled by RealtimeAnimationFeed
             subscribeToChatMessages(gameId).catch(console.error);
             return;
         }
