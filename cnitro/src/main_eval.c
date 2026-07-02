@@ -24,6 +24,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <time.h>
+#include <math.h>
 
 static double wall_secs(void) {
     struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -225,6 +226,77 @@ int main(int argc, char **argv) {
                strat_str, opp_str, seed, n);
         int fp = play_one_verbose((uint32_t)seed, n, protagonist, opp);
         printf("\nseat-0 finish position: %d (1=winner, %d=durak)\n", fp, n);
+        return 0;
+    }
+
+    // Paired A/B path: --control=<strategy> plays every seed TWICE on the
+    // same deal — protagonist at seat 0, then the control bot at seat 0 —
+    // with the same opponents, and reports the PAIRED finish-position delta
+    // (mean diff +- SE, win rates, better/worse/equal counts). Same-deal
+    // pairing cancels most deal luck, so a significant delta needs far fewer
+    // games than two independent runs.
+    const char *control_str = get_arg(argc, argv, "control", NULL);
+    if (control_str) {
+        int control = parse_strategy(control_str);
+        if (control < 0) { fprintf(stderr, "unknown control '%s'\n", control_str); return 2; }
+        int games  = parse_int(get_arg(argc, argv, "games", "200"), 200);
+        uint32_t seed0 = (uint32_t)parse_int(get_arg(argc, argv, "seed-start", "200001"), 200001);
+        printf("=== PAIRED %s vs control %s @ %s tables ===  games_per_pc=%d  seed_start=%u\n",
+               strat_str, control_str, opp_str, games, seed0);
+        printf("\n  pc  mean_hero  mean_ctrl  diff+-SE      win_hero  win_ctrl  h<c/h>c/eq\n");
+        const char *q = pcs;
+        while (*q) {
+            int n = atoi(q);
+            while (*q && *q != ',') q++;
+            if (*q == ',') q++;
+            if (n < 2 || n > MAX_PLAYERS) continue;
+            long hero_sum = 0, ctrl_sum = 0;
+            long hero_win = 0, ctrl_win = 0;
+            long better = 0, worse = 0, equal = 0;
+            double dsum = 0, dsum2 = 0;
+            int valid = 0;
+            struct timespec pt0; clock_gettime(CLOCK_MONOTONIC, &pt0);
+            if (games > 0) {   // warm lazy shared state single-threaded
+                int fh = play_one(seed0, n, protagonist, opp);
+                int fc = play_one(seed0, n, control, opp);
+                if (fh >= 0 && fc >= 0) {
+                    hero_sum += fh; ctrl_sum += fc;
+                    hero_win += (fh == 1); ctrl_win += (fc == 1);
+                    double d = (double)fh - (double)fc;
+                    dsum += d; dsum2 += d * d;
+                    better += (d < 0); worse += (d > 0); equal += (d == 0);
+                    valid++;
+                }
+            }
+            #pragma omp parallel for schedule(dynamic) \
+                reduction(+:hero_sum,ctrl_sum,hero_win,ctrl_win,better,worse,equal,dsum,dsum2,valid)
+            for (int gi = 1; gi < games; gi++) {
+                int fh = play_one(seed0 + (uint32_t)gi, n, protagonist, opp);
+                int fc = play_one(seed0 + (uint32_t)gi, n, control, opp);
+                if (fh < 0 || fc < 0) continue;
+                hero_sum += fh; ctrl_sum += fc;
+                hero_win += (fh == 1); ctrl_win += (fc == 1);
+                double d = (double)fh - (double)fc;
+                dsum += d; dsum2 += d * d;
+                better += (d < 0); worse += (d > 0); equal += (d == 0);
+                valid++;
+            }
+            {
+                struct timespec pt1; clock_gettime(CLOCK_MONOTONIC, &pt1);
+                double dt = (pt1.tv_sec - pt0.tv_sec) + (pt1.tv_nsec - pt0.tv_nsec) * 1e-9;
+                fprintf(stderr, "    [pc=%d] %d pairs  t=%.1fs  rate=%.1f pairs/s\n",
+                        n, valid, dt, valid / (dt > 0 ? dt : 1.0));
+            }
+            if (!valid) continue;
+            double mean_d = dsum / valid;
+            double var_d  = (dsum2 - dsum * dsum / valid) / (valid > 1 ? valid - 1 : 1);
+            double se_d   = sqrt(var_d / valid);
+            printf("  %2d  %9.3f  %9.3f  %+.3f+-%.3f  %7.1f%%  %7.1f%%  %ld/%ld/%ld\n",
+                   n, (double)hero_sum / valid, (double)ctrl_sum / valid,
+                   mean_d, se_d,
+                   100.0 * hero_win / valid, 100.0 * ctrl_win / valid,
+                   better, worse, equal);
+        }
         return 0;
     }
 
