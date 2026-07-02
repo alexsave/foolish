@@ -4,11 +4,11 @@ Octogen (HMX, one rung above semtex's RDX) is the hunt-4 bot: the attempt
 to build a successor that beats semtex the way semtex beats cordite. The
 honest headline result is negative and important: **semtex sits at the
 practical ceiling of this determinized-MC architecture for strong-vs-strong
-play.** Five octogen variants attacked the remaining loss surface from
-different angles; every opponent-modeling variant measured flat or worse,
-and the only lever that survived is a strictly-dominant but microscopic
-truth extension. All numbers are paired same-deal deltas vs a **semtex**
-control (the harness's `--control=semtex`).
+play.** Six octogen variants attacked the remaining loss surface from
+different angles; every one measured flat or worse against semtex —
+including the "strictly safe" truth extensions, whose falsification
+produced the most interesting discoveries of the hunt. All numbers are
+paired same-deal deltas vs a **semtex** control (`--control=semtex`).
 
 ## What was tried (hunt 4)
 
@@ -41,12 +41,22 @@ the refutation.
 4. **Deeper heads-up rollout leaves** (10 cards / 8k nodes): flat
    (+0.003±0.034) at 4x the pc2 cost. Dead.
 5. **Extended exact root-solve window** (28 cards, 400k/250k node
-   budgets, vs semtex's 24 / 150k/100k): **strictly dominant** — across
-   ~1,500 paired games it finished better in 4, worse in 0, identical
-   otherwise. It binds in ~0.25% of heads-up deals and roughly doubles
-   pc2 decision wall-clock. This is octogen's only enabled diff.
+   budgets, vs semtex's 24 / 150k/100k): looked strictly dominant vs
+   CORDITE fields (3/0/1198 pairs) — then the semtex-tables cell
+   falsified it: **0 better / 5 worse / 195** (+0.025±0.011). Gating
+   loss-avoidance back to 24 changed nothing, and even window=24 with
+   only the BIGGER BUDGETS was 0/4/196: every extra borderline claim the
+   solver resolves and acts on measured harmful against the near-peer.
+   Two mechanisms, both adverse selection one level up from CORDITE.md's
+   guard: (a) avoiding a "proven losing" move forfeits the swindle
+   equity that beats an equally imperfect opponent; (b) a "proven win"
+   under the solver's defender-priority sequencing abstraction can fail
+   under the real randomized actor order — and bigger windows/budgets
+   act on more such claims.
+6. **Deeper solve budgets alone** (400k/250k at window 24): 0/4/196 vs
+   semtex tables. See above.
 
-## The ceiling finding
+## The ceiling finding (confirmed the hard way)
 
 Combined with the semtex hunts, the pattern over ~10 measured levers is
 unambiguous: against a strong determinized-MC opponent, the outcome is
@@ -61,19 +71,21 @@ information-set search), not another lever on this one.
 
 ## Final form and deployment
 
-Octogen = semtex + the 28-card window (`octogen`/`og`, C only). Because it
-is decision-identical to semtex outside that window, semtex's entire
-validated dominance matrix (SEMTEX.md: cordite, blackpowder, espresso,
-handwritten, random fields; ELO arena) transfers to octogen verbatim, plus
-the strict extra wins. It is **deliberately not ported to TS / seeded into
-production**: doubling heads-up decision CPU on Supabase for a 0.25%-of-
-deals improvement fails the compute-budget bar; production keeps `semtex`
-(base cost) and `semtex_max` (full measured world budgets).
+Hunt 4's result is a **full null on the mirror**: every measured octogen
+diff — six variants across opponent modeling, reply search, deeper leaves,
+wider solve windows and bigger solve budgets — came out ≤ 0 against
+semtex. Octogen therefore ships as a REGISTERED RESEARCH VEHICLE
+(`octogen`/`og`, C only), bit-identical to semtex at its defaults, whose
+value is this documented map of dead ends and the two adverse-selection
+discoveries above. It is not ported to TS or seeded into production;
+production keeps `semtex` (base cost) and `semtex_max` (full measured
+world budgets). The strongest deployable bot remains semtex.
 
 ## Knobs (`OG_*`, octogen only)
 
-- `OG_SOLVE_CARDS` (28) / `OG_BB_WIN` (400k) / `OG_BB_AVOID` (250k) — the
-  enabled lever.
+- `OG_SOLVE_CARDS` (24) / `OG_AVOID_CARDS` (24) / `OG_BB_WIN` (150k) /
+  `OG_BB_AVOID` (100k) — semtex-identical defaults; raise to reproduce the
+  falsified extended-window experiments.
 - `OG_REPLY` (0) / `OG_REPLY_CAP` (6) / `OG_REPLY_STAGE` (2) — reply
   tournament, kept for research.
 - `OG_MCDEF` (0) — MC-defender rollout model, kept for research.
