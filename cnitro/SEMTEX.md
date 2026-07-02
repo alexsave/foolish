@@ -162,8 +162,8 @@ floor/void inference) was cut for exactly that reason.
 ## Knobs (read once per process, `SX_*` — semtex only, never the cordite opponents)
 
 - `SX_BBLEAF` — 2 (default) pc-aware exact rollout leaves; 1 = everywhere;
-  0 = off. `SX_BBLEAF_CARDS` (12) / `SX_BBLEAF_CARDS2` (8, heads-up) /
-  `SX_BBLEAF_BUDGET` (3000).
+  0 = off. `SX_BBLEAF_CARDS` (0 — 3+ leaves off by default) /
+  `SX_BBLEAF_CARDS2` (8, heads-up) / `SX_BBLEAF_BUDGET` (3000).
 - `SX_SOLVE_CARDS` (24) — root endgame-solve ceiling; `SX_BB_WIN` (150000) /
   `SX_BB_AVOID` (100000) — solver node budgets.
 - `SX_ADAPT` (1) — per-seat MC-tells; `SX_PROFILE` (0) — C weak-seat
@@ -181,4 +181,16 @@ bit-for-bit cordite; clean-tree fingerprint reproduced). Registered as
 (Semtex 1–3, Semtex Max 1–3). TS-specific adaptations: rollout-leaf node
 budget 600 (a TS solver node costs ~50x a bitboard node) and a fail-memo
 so unresolvable leaves are attempted once per decision, not once per
-world. Offline decision latency: p95 well under the 2 s bot-loop cap.
+world.
+
+TS validation (`cordite_arena.ts`, hero seat 0 vs all-cordite tables,
+same seeds hero/control): pc2 semtex 64.0% / 1.360 vs control 63.0% /
+1.370 (100 games — the TS harness gives seat 0 a large pc2 advantage,
+compressing the visible edge; the C paired result is the reliable
+measurement of the same algorithm), pc4 semtex 18.3% / 2.713 vs control
+18.7% / 2.650 (300 games, within noise, matching the C paired ~0). The
+unpaired TS cells are noisy (a 100-game control cell moved 28.0% -> 18.7%
+at 300 games); strength conclusions come from the C paired harness,
+which plays the identical algorithm. Decision latency (4-core dev box):
+pc2 mean 422 ms / p99 1.28 s, pc4 mean 116 ms / p99 0.64 s -- inside the
+2 s bot-loop cap.
