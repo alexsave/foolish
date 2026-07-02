@@ -25,12 +25,16 @@ play). The transposition table persists across the worlds of a decision —
 keys are exact 64-bit position fingerprints and values are depth-rebased,
 so cross-world reuse is sound.
 
-Player-count aware: 12-card leaves at 3+ players; **8-card** leaves
-heads-up. CORDITE.md records that exact leaves measured *worse* vs
-imperfect opponents (CD_LEAF, struct solver, vs handwritten) — that result
-reproduces here for *large* heads-up leaves, so pc2 keeps only small leaves
-(which any opponent plays near-optimally anyway, and which still fix the
-rollout's evaluation of them).
+Final config: **small (8-card) leaves, heads-up only**. Loss analysis
+(paired `--dump` + move-trace diffs on regression seeds) showed larger
+(12-card) leaves at 3+ players inject "the endgame will be played
+perfectly" into mid-game values — individually terrible calls (a trump-K
+cover of a 6 with a pass available; passive pickups; held aces) that
+exactly cancel the good calls (paired mirror delta ~0 at pc3-8 across two
+seed sets) while costing ~3x wall-clock. CORDITE.md's negative CD_LEAF
+result (exact leaves measured worse vs imperfect opponents) reproduces
+here for large leaves; the small heads-up leaf is the part that
+replicates as a win.
 
 ### 2. Extended exact root-solve window
 

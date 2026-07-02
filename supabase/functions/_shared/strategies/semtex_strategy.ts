@@ -3,12 +3,12 @@
 // weaker opponents, with no rock-paper-scissors regressions (validated
 // against cordite/handwritten/espresso/random fields — see cnitro/SEMTEX.md):
 //
-//   1. EXACT LEAF ENDGAMES IN ROLLOUTS (3+ players): small 2-player
-//      deck-empty endgames inside rollouts are solved exactly instead of
-//      finished with handwritten policy play. Against opponents that play
-//      endgames exactly (cordite, strong humans) the exact model is the
-//      realistic one; heads-up it stays off (the root solver owns that
-//      phase, and assuming perfect play vs imperfect opponents costs).
+//   1. EXACT LEAF ENDGAMES IN ROLLOUTS (heads-up): small (8-card)
+//      2-player deck-empty endgames inside rollouts are solved exactly
+//      instead of finished with handwritten policy play. Against opponents
+//      that play endgames exactly (cordite, strong humans) the exact model
+//      is the realistic one. At 3+ players leaves stay OFF: loss analysis
+//      showed larger leaves there distort mid-game values (see SEMTEX.md).
 //   2. EXTENDED ROOT SOLVE WINDOW: the exact endgame solver engages at <= 24
 //      total cards (cordite: 20) — a window where semtex plays perfectly
 //      while cordite still samples. Never worse (proven-win/proven-loss
