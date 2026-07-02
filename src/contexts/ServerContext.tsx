@@ -83,9 +83,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     // Thinking we just need one tbh
     const [localHandOrders, setLocalHandOrders] = useState<{ [key: string]: Card[] }>({});
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const [localHand, setLocalHand] = useState<Card[]>([]);
-
     // Use ref to avoid closure issues in WebSocket handler
     const gameIdRef = useRef<string | null>(null);
     const userNamesRef = useRef<{ [userId: string]: string }>({});
@@ -122,7 +119,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 loadGame(url_game_id).catch(error => {
                     setGameLoadError(url_game_id); // Set error for this specific game
                 });
-            } else {
             }
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -146,7 +142,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             // If we have a URL game, loadGame will handle it
             if (!url_game_id) {
                 getUserGames();
-            } else {
             }
         }
 
@@ -850,14 +845,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             setGames(prev => ({ ...prev, [gameId]: { ...prev[gameId], players: previousPlayers } }));
         }
 
-        console.log('CLIENT: Sending rearrange request:', {
-            game_id: gameId,
-            new_order: playerIds,
-            playerIds_type: typeof playerIds,
-            playerIds_length: playerIds.length,
-            playerIds_content: playerIds
-        });
-
         return invokeGameFunctions('meta', {
             type: 'rearrange-players',
             game_id: gameId,
@@ -986,12 +973,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             }
 
             const game_id = data.data.id;
-
-            // TEMPORARILY DISABLED: Let animations handle game state updates instead of immediately jumping to final state
-            // setGames(prev => ({
-            //     ...prev,
-            //     [game_id]: mergeGameData(game_id, data.data, prev)
-            // }))
 
             options.onSuccess?.(data as T);
 
