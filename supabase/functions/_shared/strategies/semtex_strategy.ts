@@ -150,13 +150,21 @@ class SemtexBase implements BotStrategy {
             if (!pv) return Promise.resolve(legalMoves[0]);
             const simMoves = legalMoves.map(toSimMove);
 
-            setSemtexOpts(semtexOptsFor(pv.numPlayers));
+            // Test-only ablation switches (offline harness sets these on
+            // globalThis; absent in production).
+            const G = globalThis as unknown as
+                { SEMTEX_NO_PROFILE?: boolean; SEMTEX_NO_ADAPT?: boolean };
+            const opts = semtexOptsFor(pv.numPlayers);
+            if (G.SEMTEX_NO_ADAPT) opts.adapt = false;
+            setSemtexOpts(opts);
             // Fulminate's opponent model: per-seat posterior over the archetype
             // rollout policies, sampled per world. Conservatively gated — with
             // few logs or strong-looking seats it stays on the cordite-identical
             // handwritten default.
-            const profiles = profileSeats(pv);
-            setSeatWeights(seatWeightsFromProfiles(pv, profiles));
+            if (!G.SEMTEX_NO_PROFILE) {
+                const profiles = profileSeats(pv);
+                setSeatWeights(seatWeightsFromProfiles(pv, profiles));
+            }
             let idx: number;
             try {
                 idx = corditeChoose(pv, simMoves, this.params);
