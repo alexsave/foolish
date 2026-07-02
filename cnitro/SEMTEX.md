@@ -119,14 +119,30 @@ delta, `b/w/e` = pairs where semtex finished better / worse / equal.
 
 | field | Δ mean finish | win% semtex | win% cordite | b/w/e |
 |---|---|---|---|---|
-| cordite pc2 | **−0.135 ± 0.034** | **61.5%** | 48.0% | 122/68/210 |
-| espresso pc2 | −0.050 ± 0.031 | 75.8% | 70.8% | 85/65/250 |
-| blackpowder pc2 | −0.050 ± 0.042 | 62.7% | 57.7% | 86/71/143 |
-| handwritten pc2 | −0.003 ± 0.024 | 88.0% | 87.8% | 45/44/311 |
+| cordite pc2 | **−0.185 ± 0.034** | **66.5%** | 48.0% | 135/61/204 |
+| blackpowder pc2 | −0.140 ± 0.039 | 71.7% | 57.7% | 92/50/158 |
+| espresso pc2 | −0.050 ± 0.033 | 79.7% | 74.7% | 56/41/203 |
+| handwritten pc2 | −0.033 ± 0.024 | 91.3% | 88.0% | 31/21/248 |
 
-The pc2 cordite-mirror result is 4σ on same-deal pairs: the small exact
-rollout leaves + the extended solve window + the MC-tells stack into a
-+13.5pp win-rate edge over cordite on identical deals.
+The pc2 cordite-mirror result is >5σ on same-deal pairs: the 6x world
+budget + small exact rollout leaves + the extended solve window + the
+MC-tells stack into a +18.5pp win-rate edge over cordite on identical
+deals, confirmed at −0.168/−0.138 (+16.8/+13.7pp) on two more seed sets.
+
+### The worlds finding (second loss-audit cycle)
+
+An oracle audit of the 68 pc2 deals semtex (pre-6x) lost the mirror on:
+a 6x-worlds probe disagreed with 27.4% of hero decisions, and PLAYING
+those deals with 6x worlds won 66% of them, against a 10% rescue rate
+for a same-budget noise perturbation — the pc2 losses were
+**variance-limited, not model-limited**. The gain is entirely worlds
+(wider candidate survival alone matched the old default), 2x/3x were not
+reliable stops, and the "pc2 is world-saturated" conclusion in
+CORDITE_RESEARCH.md does not transfer to the cordite mirror (it was
+measured on weaker fields and on the TS engine, which already ran ~3x
+the C budget). Because it is a variance fix, it helps against every
+field (all four rows above improved). Baked as semtex's heads-up
+budget: W1/W2/W3 = 192/336/336.
 
 ### 3+ players — strict dominance, small margins
 
