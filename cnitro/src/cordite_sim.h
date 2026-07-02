@@ -75,6 +75,8 @@ int  cd_sim_playout_leaf(SimState *s, int my_idx, int max_turns, int early_exit,
 // Per-seat rollout policies (cd_sim_playout_pol's pol[] values).
 #define CD_POL_HW    0   // handwritten (the default rollout model)
 #define CD_POL_LOOSE 1   // weak random-ish opponent model (profiled-weak seats)
+#define CD_POL_MCDEF 2   // MC-defender model: strategic trump-saving pickups
+                         // half the time (proven-strategic seats, octogen)
 
 // Playout where seat p plays pol[p] (NULL = all handwritten), with optional
 // exact leaf endgames when leaf_cards > 0. Superset of cd_sim_playout_leaf.

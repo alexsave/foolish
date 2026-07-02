@@ -104,9 +104,14 @@ static _Thread_local int og_adapt = 1;
 // (default). OG_REPLY_CAP: replies searched per world (cheap-first ranked;
 // good/pickup always ranked last so they stay in range). OG_REPLY_STAGE:
 // first MC stage (0-2) that uses the tournament (default 2 = final duel).
-static _Thread_local int og_reply = 1;
+static _Thread_local int og_reply = 0;   // flat vs semtex; research knob
 static _Thread_local int og_reply_cap = 6;
 static _Thread_local int og_reply_stage = 2;
+// OG_MCDEF (default 1, octogen's lever): seats with a proven mc_tell are
+// rolled out with the MC-defender model (CD_POL_MCDEF) — strategic
+// trump-saving pickups — instead of handwritten's cover-if-you-can.
+// Evidence-gated per seat, so heuristic fields see no change.
+static _Thread_local int og_mcdef = 1;
 // Void world-mixture: voids applied in (mod-1)/mod of sampled worlds
 // (cordite: 3 of 4). A softer mixture hedges between heuristic-family
 // opponents (voids true) and MC/human strategic pickups (voids misleading).
@@ -1129,7 +1134,8 @@ int octogen_strategy_choose(const Game *g, int bot_idx,
         og_no_fastroll = og_flag("OG_NO_FASTROLL");
         og_bbleaf = og_env_int("OG_BBLEAF", 2);
         og_adapt = og_env_int("OG_ADAPT", 1);
-        og_reply = og_env_int("OG_REPLY", 1);
+        og_reply = og_env_int("OG_REPLY", 0);
+        og_mcdef = og_env_int("OG_MCDEF", 1);
         og_reply_cap = og_env_int("OG_REPLY_CAP", 6);
         og_reply_stage = og_env_int("OG_REPLY_STAGE", 2);
         og_void_mod = og_env_int("OG_VOID_MOD", 4);
@@ -1156,13 +1162,17 @@ int octogen_strategy_choose(const Game *g, int bot_idx,
     og_bbleaf_cards_eff = (og_bbleaf == 2 && g->num_players == 2)
                         ? og_bbleaf_cards2 : og_bbleaf_cards;
 
-    // Per-seat rollout policies: profiled-weak seats get the LOOSE model.
+    // Per-seat rollout policies: profiled-weak seats get the LOOSE model;
+    // proven-strategic seats (mc_tell) get the MC-defender model.
     og_polmap = NULL;
-    if (og_profile) {
+    {
         bool any = false;
         for (int p = 0; p < g->num_players; p++) {
-            og_polmap_buf[p] = B.loose[p] ? CD_POL_LOOSE : CD_POL_HW;
-            if (B.loose[p]) any = true;
+            og_polmap_buf[p] = CD_POL_HW;
+            if (og_profile && B.loose[p]) { og_polmap_buf[p] = CD_POL_LOOSE; any = true; }
+            else if (og_mcdef && B.mc_tell[p] && p != bot_idx) {
+                og_polmap_buf[p] = CD_POL_MCDEF; any = true;
+            }
         }
         if (any) og_polmap = og_polmap_buf;
     }

@@ -1183,6 +1183,37 @@ static int sim_loose_move(SimState *s, int p, SimMove *out) {
     return 0;
 }
 
+// MC-defender model (CD_POL_MCDEF): handwritten EXCEPT the defender's
+// cover decision — when the greedy full cover would spend a trump while the
+// deck is still alive, the seat picks up instead half the time. Handwritten
+// NEVER picks up while holding a full cover, but MC bots (cordite/semtex)
+// and thinking humans do it constantly to protect trumps — the same
+// behavior the mc_tell belief evidence detects. Rolling proven-strategic
+// seats out with this model instead of pure handwritten removes that bias
+// from every value estimate at zero extra playout cost.
+static int sim_mcdef_move(SimState *s, int p, SimMove *out) {
+    if (p == s->defender && s->num_battles > 0 && !sim_all_covered(s)
+        && (s->deck_n > 0 || s->has_flipped)) {
+        SimMove pm;
+        if (sim_pass_move(s, p, s->power_suit, &pm)) { *out = pm; return 1; }
+        SimMove cm;
+        if (sim_greedy_full_cover(s, p, s->power_suit, &cm)) {
+            int trumps = 0;
+            for (int i = 0; i < cm.n; i++)
+                if (id_suit(cm.cards[i]) == s->power_suit) trumps++;
+            if (trumps > 0 && game_random() < 0.5) {
+                out->type = MV_PICKUP; out->n = 0;
+                return 1;
+            }
+            *out = cm;
+            return 1;
+        }
+        out->type = MV_PICKUP; out->n = 0;
+        return 1;
+    }
+    return sim_handwritten_move(s, p, out);
+}
+
 // Playout where each seat plays its own policy (pol[p] = CD_POL_*), with
 // optional exact leaf endgames (leaf_cards > 0). pol == NULL means all
 // handwritten, matching cd_sim_playout_leaf / cd_sim_playout exactly.
@@ -1230,6 +1261,8 @@ int cd_sim_playout_pol(SimState *s, int my_idx, int max_turns, int early_exit,
             SimMove m;
             int got = (pol && pol[pi] == CD_POL_LOOSE)
                     ? sim_loose_move(s, pi, &m)
+                    : (pol && pol[pi] == CD_POL_MCDEF)
+                    ? sim_mcdef_move(s, pi, &m)
                     : sim_handwritten_move(s, pi, &m);
             if (!got) continue;
             sim_apply(s, pi, &m);
@@ -1372,6 +1405,8 @@ int cd_sim_playout_reply(SimState *s, int my_idx, int max_turns,
         SimMove m;
         int got = (pol && pol[actor] == CD_POL_LOOSE)
                 ? sim_loose_move(s, actor, &m)
+                : (pol && pol[actor] == CD_POL_MCDEF)
+                ? sim_mcdef_move(s, actor, &m)
                 : sim_handwritten_move(s, actor, &m);
         if (!got) break;
         sim_apply(s, actor, &m);
