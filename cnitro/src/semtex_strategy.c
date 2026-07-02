@@ -82,9 +82,13 @@ static _Thread_local int sx_no_fastroll = 0;   // SX_NO_FASTROLL=1: struct rollo
 // instead of handwritten policy play. Against opponents that themselves play
 // endgames exactly (cordite), the exact model is the realistic one.
 // SX_BBLEAF: 2 (default) = pc-aware exact leaf endgames in rollouts —
-// SX_BBLEAF_CARDS (12) at 3+ players, small leaves (SX_BBLEAF_CARDS2, 8)
-// heads-up where bigger exact leaves mis-model imperfect opponents;
-// 1 = SX_BBLEAF_CARDS everywhere; 0 = off.
+// small (SX_BBLEAF_CARDS2, 8) leaves heads-up only; SX_BBLEAF_CARDS
+// (default 0 = off) at 3+ players. Loss analysis showed 12-card leaves at
+// 3+ inject "the endgame will be played perfectly" into mid-game values —
+// individually terrible calls (trump-burning covers, passive pickups) that
+// exactly cancel the good calls (paired mirror delta ~0) while costing 3x
+// wall-clock; the replicated win is the heads-up leaf. 1 = SX_BBLEAF_CARDS
+// everywhere; 0 = off.
 static _Thread_local int sx_bbleaf = 2;
 static _Thread_local int sx_bbleaf_cards2 = 8;
 // SX_ADAPT: void-contradiction => per-seat distrust of floors+voids (on by
@@ -1092,7 +1096,7 @@ int semtex_strategy_choose(const Game *g, int bot_idx,
         sx_void_mod = sx_env_int("SX_VOID_MOD", 4);
         if (sx_void_mod < 2) sx_void_mod = 2;
         sx_profile = sx_env_int("SX_PROFILE", 0);
-        sx_bbleaf_cards = sx_env_int("SX_BBLEAF_CARDS", 12);
+        sx_bbleaf_cards = sx_env_int("SX_BBLEAF_CARDS", 0);
         sx_bbleaf_cards2 = sx_env_int("SX_BBLEAF_CARDS2", 8);
         sx_bbleaf_budget = sx_env_int("SX_BBLEAF_BUDGET", 3000);
         sx_difftest = sx_flag("SX_DIFFTEST");

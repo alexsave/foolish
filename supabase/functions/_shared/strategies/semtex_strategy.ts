@@ -117,13 +117,15 @@ const makePublicView = (game: Game, botPlayerId: string): PublicView | null => {
 
 // The semtex lever configuration (see file header + cnitro/SEMTEX.md).
 const semtexOptsFor = (numPlayers: number): SemtexOpts => ({
-    // 12-card exact leaves at 3+ players; small (8-card) leaves heads-up,
-    // where bigger exact leaves mis-model imperfect opponents. The TS node
-    // budget is far below the C bitboard's 3000: a TS solver node costs ~50x
-    // a bitboard node (clone + move enumeration + string TT key), and the
-    // fail-memo (leafFail) makes small budgets effective — unresolvable
-    // leaves are attempted once per decision, not once per world.
-    leafCards: numPlayers >= 3 ? 12 : 8,
+    // Small (8-card) exact leaves HEADS-UP ONLY. Loss analysis in C showed
+    // larger leaves at 3+ players inject "the endgame will be played
+    // perfectly" into mid-game values — individually terrible calls that
+    // net zero vs cordite and cost wall-clock; the replicated win is the
+    // heads-up leaf. The TS node budget is far below the C bitboard's 3000:
+    // a TS solver node costs ~50x a bitboard node, and the fail-memo
+    // (leafFail) makes small budgets effective — unresolvable leaves are
+    // attempted once per decision, not once per world.
+    leafCards: numPlayers >= 3 ? 0 : 8,
     leafBudget: 600,
     solveCards: 24,
     noFloors: false,     // floors stay; MC-tells drop them per proven seat
