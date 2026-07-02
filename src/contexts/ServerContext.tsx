@@ -686,22 +686,24 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         // Optimistic game state update after animation completes — but only if the
         // caller's validation (evaluated by ANIMATION_TIME, when this fires) agrees the
         // move was legal. An invalid move gets no optimistic state to roll back.
+        // Everything is derived inside the updater from prev: this fires up to
+        // ANIMATION_TIME after the tap, and a broadcast can commit fresher state in
+        // that window — deriving from the render-time `games` closure would write
+        // that stale table/hand back over it.
         setTimeout(() => {
             if (!applyOptimistic()) return;
-            const g: PersonalGame = games[game_id!];
-            if (!g) return;
-
-            const table_battles = g.table_battles;
-            const newHand = g.self.hand.filter(card => !cards.some(c => card_comp(c, card)));
-
-            setGames(prev => ({
-                ...prev,
-                [game_id!]: {
-                    ...prev[game_id!],
-                    table_battles: [...table_battles, ...cards.map(card => ({ attack: card, defense: null }))],
-                    self: { ...prev[game_id!].self, hand: newHand }
-                }
-            }));
+            setGames(prev => {
+                const g: PersonalGame = prev[game_id!];
+                if (!g) return prev;
+                return {
+                    ...prev,
+                    [game_id!]: {
+                        ...g,
+                        table_battles: [...g.table_battles, ...cards.map(card => ({ attack: card, defense: null }))],
+                        self: { ...g.self, hand: g.self.hand.filter(card => !cards.some(c => card_comp(c, card))) }
+                    }
+                };
+            });
             // Hand order is derived from self.hand by the displayedHand selector,
             // so the optimistic removal above is reflected automatically.
 
@@ -718,25 +720,23 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             cards: cards,
         });
 
-        // Optimistic game state update after animation completes
+        // Optimistic game state update after animation completes. Derived inside
+        // the updater from prev — see attack for why the closure state is stale.
         setTimeout(() => {
             if (!applyOptimistic()) return;
-            const g: PersonalGame = games[game_id!];
-            if (!g) return;
-
-            const table_battles = g.table_battles;
-            const next_defender = get_next_player_index(g, g.defender);
-            const newHand = g.self.hand.filter(card => !cards.some(c => card_comp(c, card)));
-
-            setGames(prev => ({
-                ...prev,
-                [game_id!]: {
-                    ...prev[game_id!],
-                    table_battles: [...table_battles, ...cards.map(card => ({ attack: card, defense: null }))],
-                    self: { ...prev[game_id!].self, hand: newHand },
-                    defender: next_defender
-                }
-            }));
+            setGames(prev => {
+                const g: PersonalGame = prev[game_id!];
+                if (!g) return prev;
+                return {
+                    ...prev,
+                    [game_id!]: {
+                        ...g,
+                        table_battles: [...g.table_battles, ...cards.map(card => ({ attack: card, defense: null }))],
+                        self: { ...g.self, hand: g.self.hand.filter(card => !cards.some(c => card_comp(c, card))) },
+                        defender: get_next_player_index(g, g.defender)
+                    }
+                };
+            });
             // Hand order derives from self.hand (see displayedHand selector).
 
         }, ANIMATION_TIME);
@@ -751,35 +751,36 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             game_id: game_id!,
         });
 
-        // Optimistic game state update after animation completes
+        // Optimistic game state update after animation completes. Derived inside
+        // the updater from prev — see attack for why the closure state is stale.
         setTimeout(() => {
             if (!applyOptimistic()) return;
-            const g: PersonalGame = games[game_id!];
-            if (!g) return;
+            setGames(prev => {
+                const g: PersonalGame = prev[game_id!];
+                if (!g) return prev;
 
-            const table_battles = g.table_battles;
-            const next_first_attacker = get_next_player_index(g, g.defender);
-            const next_defender = get_next_player_index(g, next_first_attacker);
+                const next_first_attacker = get_next_player_index(g, g.defender);
+                const next_defender = get_next_player_index(g, next_first_attacker);
 
-            // Collect all cards from the table (both attacks and defenses)
-            const allTableCards = table_battles.flatMap(battle =>
-                battle.defense ? [battle.attack, battle.defense] : [battle.attack]
-            );
-            const newHand = [...g.self.hand, ...allTableCards];
+                // Collect all cards from the table (both attacks and defenses)
+                const allTableCards = g.table_battles.flatMap(battle =>
+                    battle.defense ? [battle.attack, battle.defense] : [battle.attack]
+                );
 
-            setGames(prev => ({
-                ...prev,
-                [game_id!]: {
-                    ...prev[game_id!],
-                    table_battles: [],
-                    self: {
-                        ...prev[game_id!].self,
-                        hand: newHand
-                    },
-                    first_attacker: next_first_attacker,
-                    defender: next_defender
-                }
-            }));
+                return {
+                    ...prev,
+                    [game_id!]: {
+                        ...g,
+                        table_battles: [],
+                        self: {
+                            ...g.self,
+                            hand: [...g.self.hand, ...allTableCards]
+                        },
+                        first_attacker: next_first_attacker,
+                        defender: next_defender
+                    }
+                };
+            });
             // Picked-up cards appear via self.hand; the displayedHand selector
             // appends any new cards to the end of the arrangement automatically.
 
@@ -797,31 +798,33 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             attack_cards: attackCards,
         });
 
-        // Optimistic game state update after animation completes
+        // Optimistic game state update after animation completes. Derived inside
+        // the updater from prev — see attack for why the closure state is stale.
         setTimeout(() => {
             if (!applyOptimistic()) return;
-            const g: PersonalGame = games[game_id!];
-            if (!g) return;
+            setGames(prev => {
+                const g: PersonalGame = prev[game_id!];
+                if (!g) return prev;
 
-            const newHand = g.self.hand.filter(card => !coverCards.some(c => card_comp(c, card)));
-            const updatedTableBattles = g.table_battles.map(battle => {
-                const attackIndex = attackCards.findIndex(card =>
-                    card_comp(card, battle.attack)
-                );
-                if (attackIndex !== -1) {
-                    return { ...battle, defense: coverCards[attackIndex] };
-                }
-                return battle;
+                const updatedTableBattles = g.table_battles.map(battle => {
+                    const attackIndex = attackCards.findIndex(card =>
+                        card_comp(card, battle.attack)
+                    );
+                    if (attackIndex !== -1) {
+                        return { ...battle, defense: coverCards[attackIndex] };
+                    }
+                    return battle;
+                });
+
+                return {
+                    ...prev,
+                    [game_id!]: {
+                        ...g,
+                        table_battles: updatedTableBattles,
+                        self: { ...g.self, hand: g.self.hand.filter(card => !coverCards.some(c => card_comp(c, card))) }
+                    }
+                };
             });
-
-            setGames(prev => ({
-                ...prev,
-                [game_id!]: {
-                    ...prev[game_id!],
-                    table_battles: updatedTableBattles,
-                    self: { ...prev[game_id!].self, hand: newHand }
-                }
-            }));
             // Hand order derives from self.hand (see displayedHand selector).
 
         }, ANIMATION_TIME);
