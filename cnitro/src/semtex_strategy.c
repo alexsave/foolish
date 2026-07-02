@@ -81,7 +81,11 @@ static _Thread_local int sx_no_fastroll = 0;   // SX_NO_FASTROLL=1: struct rollo
 // small 2-player deck-empty rollout endgames with the fast bitboard solver
 // instead of handwritten policy play. Against opponents that themselves play
 // endgames exactly (cordite), the exact model is the realistic one.
-static _Thread_local int sx_bbleaf = 0;
+// SX_BBLEAF: 2 (default) = exact leaf endgames in rollouts at 3+ players
+// (off heads-up: the root solver already owns the pc2 endgame, and assuming
+// exact play vs imperfect heads-up opponents measured slightly worse);
+// 1 = everywhere; 0 = off.
+static _Thread_local int sx_bbleaf = 2;
 // SX_ADAPT: void-contradiction => per-seat distrust of floors+voids (on by
 // default — pure evidence, no downside). SX_PROFILE: weak-seat detection +
 // LOOSE rollout model for profiled seats.
@@ -97,6 +101,7 @@ static _Thread_local long sx_bbleaf_budget = 3000;
 // handwritten). Set by semtex_strategy_choose when profiling flags seats.
 static _Thread_local uint8_t sx_polmap_buf[MAX_PLAYERS];
 static _Thread_local const uint8_t *sx_polmap = NULL;
+static _Thread_local int sx_bbleaf_on = 0;   // effective flag for this decision
 static _Thread_local int sx_difftest = 0;      // SX_DIFFTEST=1: assert fast==slow
 static _Thread_local int sx_w1_override = 0, sx_w2_override = 0;
 static _Thread_local int sx_w3_override = -1;
@@ -218,6 +223,17 @@ static void sx_build_belief(const Game *g, int bot_idx, Belief *B) {
     int trump_viol[MAX_PLAYERS] = {0};
     int in_now = g->num_players;
 
+    // Declined-attack tell state: per-seat bitmask of non-trump values the
+    // seat said GOOD over (while the defender had spare capacity). A
+    // handwritten-family attacker NEVER declines a legal non-trump attack, so
+    // later playing a non-trump card of a declined value (before gaining
+    // cards) proves the seat attacks strategically — an MC bot or a thinking
+    // human. Cleared on draw/pickup (the played card might be a new one).
+    uint16_t decl_vals[MAX_PLAYERS] = {0};
+    int hand_n[MAX_PLAYERS];
+    for (int i = 0; i < g->num_players; i++) hand_n[i] = CARDS_PER_PLAYER;
+    int cur_def = -1;
+
     // Replayed table state (per-move events only; PICKUP/DISCARD card lists
     // silently truncate at MAX_LOG_PAIRS=16 and must not be trusted).
     Card tbl[80];
@@ -235,6 +251,10 @@ static void sx_build_belief(const Game *g, int bot_idx, Belief *B) {
             case LOG_ATTACK:
             case LOG_PASS: {
                 bool first_attack = (L->log_type == LOG_ATTACK && tbl_n == 0);
+                if (p >= 0) hand_n[p] -= L->num_pairs;
+                if (first_attack && cur_def < 0 && p >= 0) {
+                    cur_def = (p + 1) % g->num_players;   // pre-change rounds
+                }
                 bool any_trump = false;
                 for (int k = 0; k < L->num_pairs; k++) {
                     Card c = L->pairs[k].primary;
@@ -252,6 +272,8 @@ static void sx_build_belief(const Game *g, int bot_idx, Belief *B) {
                         // holding cover. Handwritten-family never does that.
                         if (!sx_set_contains(B->pinned[p], B->pinned_n[p], c)
                             && sx_void_forbidden(B, g, p, c)) B->mc_tell[p] = true;
+                        if (c.suit != g->power_suit
+                            && (decl_vals[p] & (1u << c.value))) B->mc_tell[p] = true;
                         sx_floor_check(B, g, p, c);
                         sx_pinned_remove(B, p, c);
                     }
@@ -266,6 +288,7 @@ static void sx_build_belief(const Game *g, int bot_idx, Belief *B) {
                 break;
             }
             case LOG_COVER:
+                if (p >= 0) hand_n[p] -= L->num_pairs;
                 for (int k = 0; k < L->num_pairs; k++) {
                     Card c = L->pairs[k].primary;
                     if (tbl_n < (int)(sizeof(tbl) / sizeof(tbl[0]))) tbl[tbl_n++] = c;
@@ -276,6 +299,8 @@ static void sx_build_belief(const Game *g, int bot_idx, Belief *B) {
                         }
                         if (!sx_set_contains(B->pinned[p], B->pinned_n[p], c)
                             && sx_void_forbidden(B, g, p, c)) B->mc_tell[p] = true;
+                        if (c.suit != g->power_suit
+                            && (decl_vals[p] & (1u << c.value))) B->mc_tell[p] = true;
                         sx_floor_check(B, g, p, c);
                         sx_pinned_remove(B, p, c);
                     }
@@ -289,7 +314,20 @@ static void sx_build_belief(const Game *g, int bot_idx, Belief *B) {
                     }
                 }
                 break;
+            case LOG_GOOD:
+                if (p >= 0 && p != bot_idx && in_now > 2 && cur_def >= 0
+                    && hand_n[cur_def] - unc_n >= 1) {
+                    for (int k = 0; k < tbl_n; k++) {
+                        if (tbl[k].suit != g->power_suit)
+                            decl_vals[p] |= (uint16_t)(1u << tbl[k].value);
+                    }
+                }
+                break;
+            case LOG_DEFENDER_CHANGE:
+                cur_def = L->defender_index;
+                break;
             case LOG_PICKUP:
+                if (p >= 0) { hand_n[p] += tbl_n; decl_vals[p] = 0; }
                 if (p >= 0 && p != bot_idx) {
                     // Exactly one uncovered attack => defender held no cover.
                     if (unc_n == 1 && B->void_n[p] < SX_MAX_VOIDS) {
@@ -307,6 +345,7 @@ static void sx_build_belief(const Game *g, int bot_idx, Belief *B) {
                 unc_n = 0;
                 break;
             case LOG_DRAW:
+                if (p >= 0) { hand_n[p] += L->num_pairs; decl_vals[p] = 0; }
                 if (p >= 0 && p != bot_idx) {
                     B->void_n[p] = 0;    // new unknown cards: constraints expire
                     B->floor_v[p] = 0;
@@ -705,9 +744,9 @@ static int sx_simulate(Game *g, int my_idx, int max_turns) {
 static int sx_simulate_fast(const Game *g, int my_idx, int max_turns) {
     SimState s;
     cd_sim_from_game(&s, g);
-    if (sx_bbleaf || sx_polmap)
+    if (sx_bbleaf_on || sx_polmap)
         return cd_sim_playout_pol(&s, my_idx, max_turns, !sx_no_earlyexit,
-                                  sx_bbleaf ? sx_bbleaf_cards : 0,
+                                  sx_bbleaf_on ? sx_bbleaf_cards : 0,
                                   sx_bbleaf_budget, sx_polmap);
     return cd_sim_playout(&s, my_idx, max_turns, !sx_no_earlyexit);
 }
@@ -1042,7 +1081,7 @@ int semtex_strategy_choose(const Game *g, int bot_idx,
         sx_full_logs = sx_flag("SX_FULL_LOGS");
         sx_no_earlyexit = sx_flag("SX_NO_EARLYEXIT");
         sx_no_fastroll = sx_flag("SX_NO_FASTROLL");
-        sx_bbleaf = sx_env_int("SX_BBLEAF", 0);
+        sx_bbleaf = sx_env_int("SX_BBLEAF", 2);
         sx_adapt = sx_env_int("SX_ADAPT", 1);
         sx_profile = sx_env_int("SX_PROFILE", 0);
         sx_bbleaf_cards = sx_env_int("SX_BBLEAF_CARDS", 12);
@@ -1058,6 +1097,9 @@ int semtex_strategy_choose(const Game *g, int bot_idx,
     sx_build_belief(g, bot_idx, &B);
     if (sx_no_voids) for (int p = 0; p < MAX_PLAYERS; p++) B.void_n[p] = 0;
     if (sx_verify) sx_verify_belief(g, bot_idx, &B);
+
+    // Player-count gate for the leaf lever (see sx_bbleaf comment).
+    sx_bbleaf_on = (sx_bbleaf == 1) || (sx_bbleaf == 2 && g->num_players >= 3);
 
     // Per-seat rollout policies: profiled-weak seats get the LOOSE model.
     sx_polmap = NULL;
@@ -1141,10 +1183,10 @@ int semtex_strategy_choose(const Game *g, int bot_idx,
                                                 &moves->moves[C.idx[ci]])) {
                         fp = g->num_players;
                     } else {
-                        fp = (sx_bbleaf || sx_polmap)
+                        fp = (sx_bbleaf_on || sx_polmap)
                            ? cd_sim_playout_pol(&trial_sim, bot_idx, 600,
                                                 !sx_no_earlyexit,
-                                                sx_bbleaf ? sx_bbleaf_cards : 0,
+                                                sx_bbleaf_on ? sx_bbleaf_cards : 0,
                                                 sx_bbleaf_budget, sx_polmap)
                            : cd_sim_playout(&trial_sim, bot_idx, 600, !sx_no_earlyexit);
                         if (fp == 0) fp = g->num_players;
