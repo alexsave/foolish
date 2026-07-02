@@ -248,21 +248,32 @@ unwired parallel copy of engine/types that drifts silently (excluded in
 
 ---
 
-## Suggested order of attack
+## Status
 
-| # | Item | Kind | Effort |
-|---|------|------|--------|
-| ✅ | Replay snapshot log ordering | prod bug | done (this branch) |
-| ✅ | Last-player exit 400 | prod bug | done (this branch) |
-| ✅ | Stale-closure optimistic patches | client bug | done (this branch) |
-| ✅ | Adapter `.lt` / multi-`.order` | harness gap | done (this branch) |
-| 1 | Delete ServerContext's dead `gu-` subscription + scoped channel cleanup | client bug | small |
-| 2 | Kick bot loop on game start | UX | small |
-| 3 | Bot compute reuse across CAS retries | perf/stability | medium |
-| 4 | `game_id` vs `url_game_id` single source of truth | client bug | medium |
-| 5 | `currentBotDelay` → per-loop local | server bug | small |
-| 6 | `bump` membership/rate check | hardening | small |
-| 7 | Context value splitting / memoization | perf | medium |
-| 8 | Extract `resolveOptimisticConflicts` into a pure tested module | robustness | large |
-| 9 | Decide the disconnected-attacker story (timeout vs presence) | design | medium |
-| 10 | Dead-code sweep (auto_discard_locks, inert handlers, offlinefun drift) | cleanup | small |
+Everything verifiable in this pass has been fixed on this branch, one commit
+per item:
+
+| Item | Kind | Status |
+|------|------|--------|
+| Replay snapshot log ordering | prod bug | ✅ fixed |
+| Last-player exit 400 | prod bug | ✅ fixed |
+| Stale-closure optimistic patches | client bug | ✅ fixed |
+| Adapter `.lt` / multi-`.order` | harness gap | ✅ fixed |
+| ServerContext's dead duplicate `gu-` subscription + scoped channel cleanup | client bug | ✅ fixed |
+| Kick bot loop on game start (and only when PLAYING) | UX + hardening | ✅ fixed |
+| Bot move reuse across CAS retries | perf/stability | ✅ fixed |
+| `game_id` vs `url_game_id` — route param is the source of truth | client bug | ✅ fixed |
+| `currentBotDelay` → per-cycle local | server bug | ✅ fixed |
+| Broadcast single retry | robustness | ✅ fixed |
+| Batched ELO loads at game end | perf | ✅ fixed |
+| Dead-code sweep (auto_discard_locks table dropped, inert handlers, debug logs) | cleanup | ✅ fixed |
+
+Deliberately left open — these need runtime UI verification or a product
+decision, not just code motion:
+
+| Item | Why it's open |
+|------|---------------|
+| Context value splitting / memoization | Real win requires `useCallback`-wrapping ~25 context methods; done blindly that's a stale-closure factory. Needs a session with the running UI + profiler. |
+| Extract `resolveOptimisticConflicts` into a pure tested module | ~400-line move threading a dozen refs/setters; mechanical but only safe with the UI exercising the conflict paths. |
+| Dedup-window asymmetry | The version gate already drops same/older-versioned redeliveries before either dedup set is consulted; the residual hole affects only versionless (replay) sequences, and tightening it interacts with intentional replay re-publishing. Verify against the replay screen first. |
+| Disconnected-attacker story (all-good timeout vs presence) | The 60s timeout is deliberately disabled ("no auto-discard out from under absent attackers"). Re-enabling is a gameplay decision; the dead lock-table scaffolding is now removed either way. |
