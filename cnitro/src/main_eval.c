@@ -18,6 +18,7 @@
 #include "../src/legal.h"
 #include "../src/strategy.h"
 #include "../src/cli_util.h"
+#include "../src/cordite_sim.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -72,6 +73,13 @@ static void format_card_list(const Card *cards, int n, char *buf, size_t buflen)
 
 // Verbose variant of play_one: prints every move with player, type, cards.
 static int play_one_verbose(uint32_t seed, int n_players, int protagonist, int opp) {
+    // Cold solver TT per game: semtex/octogen leaf solving persists the TT
+    // across the worlds of a decision (sound: exact fingerprints), but
+    // letting it persist ACROSS GAMES couples the two games of a --control
+    // pair (game B inherits game A's warmth; budget-dependent solves then
+    // differ) — measured as 5/200 phantom divergences between bit-identical
+    // strategies at pc2, an anti-hero artifact in every pc2 paired cell.
+    cd_sim_solve_reset();
     game_set_seed(seed ? seed : 1);
     random_strategy_set_seed(seed ? seed : 1);
     Game g; memset(&g, 0, sizeof(g));
@@ -172,6 +180,13 @@ static void fmt_move(const LegalMove *m, char *buf, size_t n) {
 
 static int play_one_audit(uint32_t seed, int n_players, int protagonist, int opp,
                           int *n_dec, int *n_disagree) {
+    // Cold solver TT per game: semtex/octogen leaf solving persists the TT
+    // across the worlds of a decision (sound: exact fingerprints), but
+    // letting it persist ACROSS GAMES couples the two games of a --control
+    // pair (game B inherits game A's warmth; budget-dependent solves then
+    // differ) — measured as 5/200 phantom divergences between bit-identical
+    // strategies at pc2, an anti-hero artifact in every pc2 paired cell.
+    cd_sim_solve_reset();
     game_set_seed(seed ? seed : 1);
     random_strategy_set_seed(seed ? seed : 1);
     Game g; memset(&g, 0, sizeof(g));
@@ -244,6 +259,13 @@ static int play_one_audit(uint32_t seed, int n_players, int protagonist, int opp
 // Play one game. Returns seat-0 finish position (1..N). Position N == durak.
 // -1 if the game aborted incomplete.
 static int play_one(uint32_t seed, int n_players, int protagonist, int opp) {
+    // Cold solver TT per game: semtex/octogen leaf solving persists the TT
+    // across the worlds of a decision (sound: exact fingerprints), but
+    // letting it persist ACROSS GAMES couples the two games of a --control
+    // pair (game B inherits game A's warmth; budget-dependent solves then
+    // differ) — measured as 5/200 phantom divergences between bit-identical
+    // strategies at pc2, an anti-hero artifact in every pc2 paired cell.
+    cd_sim_solve_reset();
     game_set_seed(seed ? seed : 1);
     random_strategy_set_seed(seed ? seed : 1);
     Game g; memset(&g, 0, sizeof(g));
