@@ -90,6 +90,10 @@ static _Thread_local int sx_bbleaf = 2;
 // default — pure evidence, no downside). SX_PROFILE: weak-seat detection +
 // LOOSE rollout model for profiled seats.
 static _Thread_local int sx_adapt = 1;
+// Void world-mixture: voids applied in (mod-1)/mod of sampled worlds
+// (cordite: 3 of 4). A softer mixture hedges between heuristic-family
+// opponents (voids true) and MC/human strategic pickups (voids misleading).
+static _Thread_local int sx_void_mod = 4;
 static _Thread_local int sx_profile = 0;
 // Root endgame-solve card ceiling (cordite: 20). The bitboard solver + TT can
 // resolve bigger endgames within budget; a higher ceiling opens a window where
@@ -1083,6 +1087,8 @@ int semtex_strategy_choose(const Game *g, int bot_idx,
         sx_no_fastroll = sx_flag("SX_NO_FASTROLL");
         sx_bbleaf = sx_env_int("SX_BBLEAF", 2);
         sx_adapt = sx_env_int("SX_ADAPT", 1);
+        sx_void_mod = sx_env_int("SX_VOID_MOD", 4);
+        if (sx_void_mod < 2) sx_void_mod = 2;
         sx_profile = sx_env_int("SX_PROFILE", 0);
         sx_bbleaf_cards = sx_env_int("SX_BBLEAF_CARDS", 12);
         sx_bbleaf_budget = sx_env_int("SX_BBLEAF_BUDGET", 3000);
@@ -1167,7 +1173,7 @@ int semtex_strategy_choose(const Game *g, int bot_idx,
             // Belief mixture: voids assume cover-if-you-can pickups (3 of 4
             // worlds), floors assume lowest-first attackers (every other
             // world). Per-player distrust already cleared bogus constraints.
-            bool use_voids  = (w & 3) != 3;
+            bool use_voids  = (w % sx_void_mod) != sx_void_mod - 1;
             bool use_floors = !sx_no_floors && (w % sx_floor_mod) == 0;
             sx_sample_world(&world, g, bot_idx, &B, wseed, use_voids, use_floors);
             uint32_t sim_rng = sx_mix(wseed, 0x51AB1E5u);
