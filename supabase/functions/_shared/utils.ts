@@ -402,10 +402,12 @@ export const wrap400 = (execute: (params: ExecutionParams) => Promise<{ game: Ga
             }
 
             // Background bot loop, scheduled AFTER preparing the response (non-blocking).
-            if (game_id && run_bots) {
+            // Gated on the game actually PLAYING: a lobby action, a deleted game, or a
+            // just-finished game has no bot to drive, and `bump` (membership-free by
+            // design, spectators nudge stalled games) shouldn't be able to spin the
+            // loop on non-live games either.
+            if (game_id && run_bots && result?.status === GAME_STATUS.PLAYING) {
                 console.log(`[${reqId}][WRAP400] Starting background bot loop`);
-                // TODO: not quite. Only after start/attack/cover/pass/pickup/good
-                // todo add validation before kicking this off
                 //
                 // CRITICAL: this runs AFTER the HTTP response is sent. Without
                 // EdgeRuntime.waitUntil the runtime reaps the isolate ~15s later —
