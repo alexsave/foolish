@@ -5,8 +5,8 @@ import type { SupabaseClient } from 'jsr:@supabase/supabase-js';
 // GAME LOG UTILITIES
 // =============================================================================
 
-// Internal function to save logs to database
-// Should only be called from saveCompleteGame to ensure atomicity
+// Persist a move's logs. Called by executeWithGameLock after the CAS commit
+// (and just before finalizeEndedGame when the move ended the game).
 export const saveGameLogs = async (supabaseClient: SupabaseClient, game_id: string, logs: GameLog[]): Promise<void> => {
     if (logs.length === 0) {
         return;

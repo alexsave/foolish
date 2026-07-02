@@ -101,15 +101,6 @@ export const executeBotMove = (game: Game, bot: PrivatePlayer, move: LegalMove):
             //console.log(`[TIMING] Action handler (${move.type}) completed in ${Date.now() - actionHandlerStart}ms`);
             //console.log(`Bot ${bot.name} performed ${move.type} action`);
 
-            // Add all events from the action to the animation manager
-            const addEventsStart = Date.now();
-            for (const event of actionEvents) {
-                // FUCK. i don't know what to do with this.
-                // TODO uncomment and return up to bot_actions.ts
-                // animationEvents.addEvent(event);
-            }
-            //console.log(`[TIMING] Adding ${actionEvents.length} events took ${Date.now() - addEventsStart}ms`);
-
         } catch (error) {
             // Handle validation failures gracefully (e.g., due to race conditions)
             console.log(`Bot ${bot.name} move validation failed: ${error.stack} - this can happen due to race conditions and is normal`);

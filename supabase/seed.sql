@@ -155,12 +155,8 @@ CREATE TABLE bot_hands (
 -- games.version (optimistic CAS via the commit_game RPC) and the games.bot_lease_*
 -- columns (auto-expiring bot-loop lease). See migration 20260616030000.
 
--- Auto discard locks table - Simple table-based locking for auto-discard monitoring
-CREATE TABLE auto_discard_locks (
-  game_id TEXT PRIMARY KEY REFERENCES games(id) ON DELETE CASCADE,
-  lock_id TEXT NOT NULL, -- Random ID to verify lock ownership
-  acquired_at TIMESTAMP DEFAULT NOW()
-);
+-- (auto_discard_locks removed — it backed the 60s all-good auto-discard, which
+-- is disabled in actions/good.ts; see migration 20260702090000.)
 
 -- Game logs table - Log all game actions for bot memory and game history
 -- This allows bots to track which cards have been played and infer information about opponent hands
@@ -214,8 +210,6 @@ CREATE INDEX idx_bots_strategy_key ON bots(strategy_key);
 CREATE INDEX idx_bots_elo_rating ON bots(elo_rating);
 CREATE INDEX idx_bot_hands_game_id ON bot_hands(game_id);
 CREATE INDEX idx_bot_hands_bot_id ON bot_hands(bot_id);
-CREATE INDEX idx_auto_discard_locks_game_id ON auto_discard_locks(game_id);
-CREATE INDEX idx_auto_discard_locks_acquired_at ON auto_discard_locks(acquired_at);
 CREATE INDEX idx_game_logs_game_id ON game_logs(game_id);
 CREATE INDEX idx_game_logs_log_type ON game_logs(log_type);
 CREATE INDEX idx_game_logs_player_id ON game_logs(player_id);
@@ -235,7 +229,6 @@ ALTER TABLE chat_messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_elo_ratings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bots ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bot_hands ENABLE ROW LEVEL SECURITY;
-ALTER TABLE auto_discard_locks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE game_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE game_snapshots ENABLE ROW LEVEL SECURITY;
 
@@ -322,10 +315,6 @@ CREATE POLICY "Only service role can delete bots" ON bots
 
 -- Bot hands: ONLY service role can access (edge functions only)
 CREATE POLICY "Only service role can access bot hands" ON bot_hands
-  FOR ALL USING ((select auth.role()) = 'service_role');
-
--- Auto discard locks: ONLY service role can access (edge functions only)
-CREATE POLICY "Only service role can access auto discard locks" ON auto_discard_locks
   FOR ALL USING ((select auth.role()) = 'service_role');
 
 -- Game logs: ONLY service role can write, but can be read for analysis

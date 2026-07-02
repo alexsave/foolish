@@ -67,7 +67,7 @@ export function validateCover(game: Game, player_id: string, cover_cards: Card[]
 }
 
 // Execution function for cover moves
-export function executeCover(game: Game, player_id: string, cover_cards: Card[], attack_cards: Card[], skipBroadcast: boolean = false): AnimationEvent[] {
+export function executeCover(game: Game, player_id: string, cover_cards: Card[], attack_cards: Card[]): AnimationEvent[] {
     const events: AnimationEvent[] = [];
     
     // Guard against modifying game state if game is already over
@@ -266,5 +266,5 @@ export function executeCover(game: Game, player_id: string, cover_cards: Card[],
 // Combined function with validation
 export function handleCover(game: Game, player_id: string, cover_cards: Card[], attack_cards: Card[]): AnimationEvent[] {
     validateCover(game, player_id, cover_cards, attack_cards);
-    return executeCover(game, player_id, cover_cards, attack_cards, true);
+    return executeCover(game, player_id, cover_cards, attack_cards);
 } 
