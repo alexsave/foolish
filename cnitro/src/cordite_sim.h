@@ -72,6 +72,15 @@ int  cd_sim_playout(SimState *s, int my_idx, int max_turns, int early_exit);
 int  cd_sim_playout_leaf(SimState *s, int my_idx, int max_turns, int early_exit,
                          int leaf_cards, long leaf_budget);
 
+// Per-seat rollout policies (cd_sim_playout_pol's pol[] values).
+#define CD_POL_HW    0   // handwritten (the default rollout model)
+#define CD_POL_LOOSE 1   // weak random-ish opponent model (profiled-weak seats)
+
+// Playout where seat p plays pol[p] (NULL = all handwritten), with optional
+// exact leaf endgames when leaf_cards > 0. Superset of cd_sim_playout_leaf.
+int  cd_sim_playout_pol(SimState *s, int my_idx, int max_turns, int early_exit,
+                        int leaf_cards, long leaf_budget, const uint8_t *pol);
+
 // Exact 2-player deck-empty endgame solver on the bitboard state. Returns the
 // value of position `s` from `me`'s perspective in [-1000,1000] (positive = me
 // escapes, magnitude prefers faster wins / slower losses), identical to the

@@ -1093,6 +1093,157 @@ int cd_sim_one_step(SimState *s) {
     return -1;
 }
 
+// ---------- per-seat-policy playout (semtex) -----------------------------
+// POL_HW seats play the handwritten policy. POL_LOOSE seats play a weak
+// "random-ish" opponent model: random attack leads (no lowest-first), random
+// covers instead of cheapest (burning trumps freely), occasional needless
+// pickups, and no trump conservation. Rolling a profiled-weak seat out with
+// this model instead of handwritten is the fulminate lever: value estimates
+// against weak opponents stop assuming they play well.
+
+// Uniformly random set bit of `mask` (consumes one game_random() draw).
+static int sim_random_card(uint64_t mask) {
+    int n = popcnt64(mask);
+    if (!n) return -1;
+    int k = (int)(game_random() * n);
+    if (k < 0) k = 0;
+    if (k >= n) k = n - 1;
+    while (k--) mask &= mask - 1;
+    return ctz64(mask);
+}
+
+static int sim_loose_move(SimState *s, int p, SimMove *out) {
+    int power = s->power_suit;
+    int first = (s->num_battles == 0);
+    int is_def = (p == s->defender);
+
+    if (is_def && s->num_battles > 0) {
+        // Occasional needless pickup (weak players give up early).
+        if (game_random() < 0.10) { out->type = MV_PICKUP; out->n = 0; return 1; }
+        // Pass half the time it's available, with a random matching card.
+        SimMove pm;
+        if (sim_pass_move(s, p, power, &pm)) {
+            if (game_random() < 0.5) {
+                int v0 = id_value(s->atk[0]);
+                int id = sim_random_card(s->hand[p] & VALUE_MASK[v0]);
+                if (id >= 0) pm.cards[0] = (uint8_t)id;
+                *out = pm;
+                return 1;
+            }
+        }
+        // Random cover per battle (not cheapest — wasteful trumping included).
+        uint64_t avail = s->hand[p];
+        int n = 0;
+        for (int i = 0; i < s->num_battles; i++) {
+            if (s->covered_mask & (1ull << i)) continue;
+            uint64_t cov = 0, a = avail;
+            while (a) {
+                int id = ctz64(a); a &= a - 1;
+                if (id_can_cover(s->atk[i], id, power)) cov |= 1ull << id;
+            }
+            int pick = sim_random_card(cov);
+            if (pick < 0) { out->type = MV_PICKUP; out->n = 0; return 1; }
+            avail &= ~(1ull << pick);
+            out->cards[n] = (uint8_t)pick;
+            out->battle[n] = i;
+            n++;
+        }
+        out->type = MV_COVER; out->n = n;
+        return 1;
+    }
+
+    int can_attack = first ? (p == s->first_attacker)
+                           : (!is_def && !(s->good_mask & (1u << p)));
+    if (can_attack) {
+        if (first) {
+            if (sim_hand_count(s, s->defender) >= 1) {
+                int id = sim_random_card(s->hand[p]);
+                if (id >= 0) {
+                    out->type = MV_ATTACK; out->n = 1; out->cards[0] = (uint8_t)id;
+                    return 1;
+                }
+            }
+        } else {
+            int uncovered = sim_count_uncovered(s);
+            int defcap = sim_hand_count(s, s->defender) - uncovered;
+            uint64_t tv = sim_table_value_mask(s) & s->hand[p];
+            if (defcap >= 1 && tv && game_random() < 0.6) {
+                int id = sim_random_card(tv);
+                out->type = MV_ATTACK; out->n = 1; out->cards[0] = (uint8_t)id;
+                return 1;
+            }
+            out->type = MV_GOOD; out->n = 0;
+            return 1;
+        }
+    }
+    if (!is_def && s->num_battles > 0 && !(s->good_mask & (1u << p))) {
+        out->type = MV_GOOD; out->n = 0;
+        return 1;
+    }
+    return 0;
+}
+
+// Playout where each seat plays its own policy (pol[p] = CD_POL_*), with
+// optional exact leaf endgames (leaf_cards > 0). pol == NULL means all
+// handwritten, matching cd_sim_playout_leaf / cd_sim_playout exactly.
+int cd_sim_playout_pol(SimState *s, int my_idx, int max_turns, int early_exit,
+                       int leaf_cards, long leaf_budget, const uint8_t *pol) {
+    int turns = 0;
+    int leaf_tried = 0;
+    while (sim_done(s) < 0 && turns++ < max_turns) {
+        if (early_exit && s->status_p[my_idx] != PLAYER_STATUS_IN) {
+            for (int i = 0; i < s->num_eliminated; i++)
+                if (s->elim_order[i] == my_idx) return i + 1;
+            break;
+        }
+        if (leaf_cards > 0 && !leaf_tried && s->deck_n == 0 && !s->has_flipped) {
+            int a = -1, b = -1;
+            for (int i = 0; i < s->num_players; i++) {
+                if (s->status_p[i] != PLAYER_STATUS_IN) continue;
+                if (a < 0) a = i; else if (b < 0) b = i; else { b = -2; break; }
+            }
+            if (a >= 0 && b >= 0) {
+                int total = __builtin_popcountll(s->hand[a])
+                          + __builtin_popcountll(s->hand[b]);
+                for (int i = 0; i < s->num_battles; i++)
+                    total += 1 + ((s->covered_mask >> i) & 1);
+                if (total <= leaf_cards) {
+                    leaf_tried = 1;
+                    int aborted = 0;
+                    long budget = leaf_budget;
+                    int v = cd_sim_solve_d(s, a, -1, 1, &budget, 0, &aborted);
+                    if (!aborted && v != 0) {
+                        int loser = (v < 0) ? a : b;
+                        int np = s->num_players;
+                        if (my_idx == loser) return np;
+                        if (my_idx == a || my_idx == b) return np - 1;
+                        for (int i = 0; i < s->num_eliminated; i++)
+                            if (s->elim_order[i] == my_idx) return i + 1;
+                        return np - 1;
+                    }
+                }
+            }
+        }
+        int acted = 0;
+        for (int pi = 0; pi < s->num_players; pi++) {
+            if (!sim_should_act(s, pi)) continue;
+            SimMove m;
+            int got = (pol && pol[pi] == CD_POL_LOOSE)
+                    ? sim_loose_move(s, pi, &m)
+                    : sim_handwritten_move(s, pi, &m);
+            if (!got) continue;
+            sim_apply(s, pi, &m);
+            acted = 1;
+            break;
+        }
+        if (!acted) break;
+    }
+    if (sim_done(s) < 0) return 0;
+    for (int i = 0; i < s->num_eliminated; i++)
+        if (s->elim_order[i] == my_idx) return i + 1;
+    return s->num_players;
+}
+
 // As cd_sim_playout, but resolves small 2-player deck-empty endgames exactly
 // with the bitboard solver instead of finishing them with policy play (one
 // attempt per playout; a failed solve falls back to the policy for good).

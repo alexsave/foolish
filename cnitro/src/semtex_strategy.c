@@ -82,12 +82,21 @@ static _Thread_local int sx_no_fastroll = 0;   // SX_NO_FASTROLL=1: struct rollo
 // instead of handwritten policy play. Against opponents that themselves play
 // endgames exactly (cordite), the exact model is the realistic one.
 static _Thread_local int sx_bbleaf = 0;
+// SX_ADAPT: void-contradiction => per-seat distrust of floors+voids (on by
+// default — pure evidence, no downside). SX_PROFILE: weak-seat detection +
+// LOOSE rollout model for profiled seats.
+static _Thread_local int sx_adapt = 1;
+static _Thread_local int sx_profile = 0;
 // Root endgame-solve card ceiling (cordite: 20). The bitboard solver + TT can
 // resolve bigger endgames within budget; a higher ceiling opens a window where
 // semtex plays exactly while cordite still guesses with MC.
 static _Thread_local int sx_solve_cards = 20;
 static _Thread_local int sx_bbleaf_cards = 12;
 static _Thread_local long sx_bbleaf_budget = 3000;
+// Per-seat rollout policy map for the current decision (NULL = all
+// handwritten). Set by semtex_strategy_choose when profiling flags seats.
+static _Thread_local uint8_t sx_polmap_buf[MAX_PLAYERS];
+static _Thread_local const uint8_t *sx_polmap = NULL;
 static _Thread_local int sx_difftest = 0;      // SX_DIFFTEST=1: assert fast==slow
 static _Thread_local int sx_w1_override = 0, sx_w2_override = 0;
 static _Thread_local int sx_w3_override = -1;
@@ -146,6 +155,13 @@ typedef struct {
     // Trust flags, from observed behavior this game.
     bool distrust_floor[MAX_PLAYERS];
     bool distrust_void[MAX_PLAYERS];
+    // Per-seat behavior profile from the public log (semtex additions).
+    int  cards_played[MAX_PLAYERS];   // cards played while the deck was alive
+    int  trumps_played[MAX_PLAYERS];  // of those, trumps
+    int  trump_leads[MAX_PLAYERS];    // trump attacks while the deck was alive
+    bool mc_tell[MAX_PLAYERS];        // proven void contradiction: strategic
+                                      // pickup-while-holding-cover (MC/human)
+    bool loose[MAX_PLAYERS];          // profiled weak/random seat
 } Belief;
 
 static bool sx_void_forbidden(const Belief *B, const Game *g, int p, Card c) {
@@ -226,6 +242,16 @@ static void sx_build_belief(const Game *g, int bot_idx, Belief *B) {
                     if (unc_n < (int)(sizeof(unc) / sizeof(unc[0]))) unc[unc_n++] = c;
                     if (tbl_n < (int)(sizeof(tbl) / sizeof(tbl[0]))) tbl[tbl_n++] = c;
                     if (p >= 0 && p != bot_idx) {
+                        if (deck_alive_at) {
+                            B->cards_played[p]++;
+                            if (c.suit == g->power_suit) B->trumps_played[p]++;
+                        }
+                        // Playing a card a still-active void says they lacked
+                        // (and that wasn't publicly picked up) proves the void
+                        // wrong: the seat picked up strategically while
+                        // holding cover. Handwritten-family never does that.
+                        if (!sx_set_contains(B->pinned[p], B->pinned_n[p], c)
+                            && sx_void_forbidden(B, g, p, c)) B->mc_tell[p] = true;
                         sx_floor_check(B, g, p, c);
                         sx_pinned_remove(B, p, c);
                     }
@@ -244,6 +270,12 @@ static void sx_build_belief(const Game *g, int bot_idx, Belief *B) {
                     Card c = L->pairs[k].primary;
                     if (tbl_n < (int)(sizeof(tbl) / sizeof(tbl[0]))) tbl[tbl_n++] = c;
                     if (p >= 0 && p != bot_idx) {
+                        if (deck_alive_at) {
+                            B->cards_played[p]++;
+                            if (c.suit == g->power_suit) B->trumps_played[p]++;
+                        }
+                        if (!sx_set_contains(B->pinned[p], B->pinned_n[p], c)
+                            && sx_void_forbidden(B, g, p, c)) B->mc_tell[p] = true;
                         sx_floor_check(B, g, p, c);
                         sx_pinned_remove(B, p, c);
                     }
@@ -294,7 +326,49 @@ static void sx_build_belief(const Game *g, int bot_idx, Belief *B) {
     // gated this way — a trump lead can be forced (all-trump hand), and the
     // 1-in-4 unconstrained world mixture already absorbs void violators.
     for (int p = 0; p < g->num_players; p++) {
+        B->trump_leads[p] = trump_viol[p];
         if (trump_viol[p] >= 1) { B->distrust_floor[p] = true; B->floor_v[p] = 0; }
+    }
+
+    // Semtex adaptivity: a proven void contradiction means the seat picks up
+    // strategically while holding cover — an MC bot (cordite family) or a
+    // thinking human. Both floor and void inference model heuristic-family
+    // opponents and are wrong for such seats; drop them for the rest of the
+    // game (no draw-expiry reset — the tell is about the PLAYER, not the hand).
+    if (sx_adapt) {
+        for (int p = 0; p < g->num_players; p++) {
+            if (!B->mc_tell[p]) continue;
+            B->void_n[p] = 0;
+            B->floor_v[p] = 0;
+            B->distrust_void[p] = true;
+            B->distrust_floor[p] = true;
+        }
+    }
+
+    // Semtex weak-seat profile (fulminate's lever, conservatively gated): a
+    // seat that burns trumps while the deck is alive at a rate no strong or
+    // heuristic bot exhibits is rolled out with the LOOSE model instead of
+    // handwritten. Evidence: deck-alive trump share ramped over [0.40, 0.60]
+    // (needs >= 14 observed cards), plus repeated deck-alive trump attacks.
+    if (sx_profile) {
+        for (int p = 0; p < g->num_players; p++) {
+            if (p == bot_idx) continue;
+            double conf = 0.0;
+            if (B->cards_played[p] >= 14) {
+                double r = (double)B->trumps_played[p] / (double)B->cards_played[p];
+                double ramp = (r - 0.40) / 0.20;
+                if (ramp < 0) ramp = 0;
+                if (ramp > 1) ramp = 1;
+                conf += ramp;
+            }
+            int leads = B->trump_leads[p] > 3 ? 3 : B->trump_leads[p];
+            conf += 0.25 * leads;
+            if (conf >= 0.70) {
+                B->loose[p] = true;
+                B->void_n[p] = 0;    // weak seats don't obey cover-if-you-can
+                B->floor_v[p] = 0;   // ...or lowest-first attacks
+            }
+        }
     }
 
     // Players that left the game hold nothing.
@@ -631,9 +705,10 @@ static int sx_simulate(Game *g, int my_idx, int max_turns) {
 static int sx_simulate_fast(const Game *g, int my_idx, int max_turns) {
     SimState s;
     cd_sim_from_game(&s, g);
-    if (sx_bbleaf)
-        return cd_sim_playout_leaf(&s, my_idx, max_turns, !sx_no_earlyexit,
-                                   sx_bbleaf_cards, sx_bbleaf_budget);
+    if (sx_bbleaf || sx_polmap)
+        return cd_sim_playout_pol(&s, my_idx, max_turns, !sx_no_earlyexit,
+                                  sx_bbleaf ? sx_bbleaf_cards : 0,
+                                  sx_bbleaf_budget, sx_polmap);
     return cd_sim_playout(&s, my_idx, max_turns, !sx_no_earlyexit);
 }
 
@@ -968,6 +1043,8 @@ int semtex_strategy_choose(const Game *g, int bot_idx,
         sx_no_earlyexit = sx_flag("SX_NO_EARLYEXIT");
         sx_no_fastroll = sx_flag("SX_NO_FASTROLL");
         sx_bbleaf = sx_env_int("SX_BBLEAF", 0);
+        sx_adapt = sx_env_int("SX_ADAPT", 1);
+        sx_profile = sx_env_int("SX_PROFILE", 0);
         sx_bbleaf_cards = sx_env_int("SX_BBLEAF_CARDS", 12);
         sx_bbleaf_budget = sx_env_int("SX_BBLEAF_BUDGET", 3000);
         sx_difftest = sx_flag("SX_DIFFTEST");
@@ -981,6 +1058,17 @@ int semtex_strategy_choose(const Game *g, int bot_idx,
     sx_build_belief(g, bot_idx, &B);
     if (sx_no_voids) for (int p = 0; p < MAX_PLAYERS; p++) B.void_n[p] = 0;
     if (sx_verify) sx_verify_belief(g, bot_idx, &B);
+
+    // Per-seat rollout policies: profiled-weak seats get the LOOSE model.
+    sx_polmap = NULL;
+    if (sx_profile) {
+        bool any = false;
+        for (int p = 0; p < g->num_players; p++) {
+            sx_polmap_buf[p] = B.loose[p] ? CD_POL_LOOSE : CD_POL_HW;
+            if (B.loose[p]) any = true;
+        }
+        if (any) sx_polmap = sx_polmap_buf;
+    }
 
     // Exact endgame: take a proven win; mark proven losses for exclusion.
     static _Thread_local bool forced_loss[MAX_LEGAL_MOVES];
@@ -1053,10 +1141,11 @@ int semtex_strategy_choose(const Game *g, int bot_idx,
                                                 &moves->moves[C.idx[ci]])) {
                         fp = g->num_players;
                     } else {
-                        fp = sx_bbleaf
-                           ? cd_sim_playout_leaf(&trial_sim, bot_idx, 600,
-                                                 !sx_no_earlyexit,
-                                                 sx_bbleaf_cards, sx_bbleaf_budget)
+                        fp = (sx_bbleaf || sx_polmap)
+                           ? cd_sim_playout_pol(&trial_sim, bot_idx, 600,
+                                                !sx_no_earlyexit,
+                                                sx_bbleaf ? sx_bbleaf_cards : 0,
+                                                sx_bbleaf_budget, sx_polmap)
                            : cd_sim_playout(&trial_sim, bot_idx, 600, !sx_no_earlyexit);
                         if (fp == 0) fp = g->num_players;
                     }
