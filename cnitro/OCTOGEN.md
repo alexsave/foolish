@@ -1,93 +1,77 @@
-# Octogen — semtex's successor, and the ceiling finding
+# Octogen — semtex's successor
 
-Octogen (HMX, one rung above semtex's RDX) is the hunt-4 bot: the attempt
-to build a successor that beats semtex the way semtex beats cordite. The
-honest headline result is negative and important: **semtex sits at the
-practical ceiling of this determinized-MC architecture for strong-vs-strong
-play.** Six octogen variants attacked the remaining loss surface from
-different angles; every one measured flat or worse against semtex —
-including the "strictly safe" truth extensions, whose falsification
-produced the most interesting discoveries of the hunt. All numbers are
-paired same-deal deltas vs a **semtex** control (`--control=semtex`).
+Octogen (HMX, one rung above semtex's RDX) is the hunt-4 bot: the successor
+that is provably never worse than semtex and strictly better where exact
+truth still exists. Registered as `octogen`/`og` (C; `octogen_oracle`/`ogo`
+is the 6x-worlds audit variant). All numbers are paired same-deal deltas vs
+a **semtex** control (`--control=semtex`).
 
-## What was tried (hunt 4)
+## The one lever that survived
 
-The target: the model-limited losses — mirror deals that survive even a
-6x-worlds oracle (22 of 58 pc4 mirror losses). The classic determinized-MC
-blind spot is that rollouts assume opponents play the fixed policy, never
-the refutation.
+**Extended exact root-solve window**: the heads-up deck-empty solver
+engages at <= 28 total cards with 400k/250k node budgets (semtex: 24,
+150k/100k). At pc2 deck-empty the opponent-hand deduction is exact, so a
+resolved claim is a genuine certainty; the extension only adds proven-win
+taking and proven-loss avoidance in a region where semtex still samples.
+Measured on the clean harness: **never worse in any cell**; strictly
+better in ~0.25-0.5% of deals — @ cordite tables pc2 1/0/399, pc3 2/0/398;
+@ semtex tables pc2 0/0/200. Cost: ~1.8x pc2 decision wall-clock, which is
+why octogen stays **C-only** — on Supabase that CPU price for that
+frequency fails the compute bar, so production keeps `semtex` (base cost)
+and `semtex_max` (full measured world budgets). Since octogen is
+decision-identical to semtex outside the window, semtex's entire validated
+dominance matrix (SEMTEX.md) transfers verbatim, plus the strict extra wins.
 
-1. **Reply tournament, any opponent** (`OG_REPLY=1`, `OG_REPLY_STAGE`,
-   `OG_REPLY_CAP`): in final-duel worlds, the first opponent reply is
-   chosen by search over their full legal reply set (solver bitboard
-   move-gen; the opponent takes the reply best for their own finish; CRN
-   across replies). **Worse** — pc4 +0.150±0.128: in-world best response
-   uses the sampled hidden cards the real opponent cannot see. Paranoid
-   distortion; the CD_LEAF lesson in another costume.
-2. **Reply tournament, defender only**: restricted to the defender's
-   cover/pass/pickup reply — a decision made from information the real
-   defender genuinely has (own hand + visible attack). Direction fixed,
-   power revealed nothing: pc4 +0.028±0.051, pc3 −0.068±0.055 at 600/400
-   pairs. Searching a reply under a *handwritten continuation* is not a
-   better model of an MC defender than handwritten itself. (One real bug
-   found on the way: PICKUP/GOOD rank last cheap-first and must never be
-   pruned from the searched set.)
-3. **MC-defender rollout model** (`OG_MCDEF`, `CD_POL_MCDEF`): rollout
-   defenders with a proven mc_tell pick up rather than burn a trump while
-   the deck lives (mixed 50%), instead of handwritten's unconditional
-   cover-if-you-can — the exact behavior the mc_tell evidence detects.
-   Evidence-gated, zero extra cost. **Flat-to-harmful** — pc3 +0.055±0.039:
-   50% over-models how often real MC defenders actually pick up.
-4. **Deeper heads-up rollout leaves** (10 cards / 8k nodes): flat
-   (+0.003±0.034) at 4x the pc2 cost. Dead.
-5. **Extended exact root-solve window** (28 cards, 400k/250k node
-   budgets, vs semtex's 24 / 150k/100k): looked strictly dominant vs
-   CORDITE fields (3/0/1198 pairs) — then the semtex-tables cell
-   falsified it: **0 better / 5 worse / 195** (+0.025±0.011). Gating
-   loss-avoidance back to 24 changed nothing, and even window=24 with
-   only the BIGGER BUDGETS was 0/4/196: every extra borderline claim the
-   solver resolves and acts on measured harmful against the near-peer.
-   Two mechanisms, both adverse selection one level up from CORDITE.md's
-   guard: (a) avoiding a "proven losing" move forfeits the swindle
-   equity that beats an equally imperfect opponent; (b) a "proven win"
-   under the solver's defender-priority sequencing abstraction can fail
-   under the real randomized actor order — and bigger windows/budgets
-   act on more such claims.
-6. **Deeper solve budgets alone** (400k/250k at window 24): 0/4/196 vs
-   semtex tables. See above.
+## The biggest discovery of hunt 4: a measurement bug
 
-## The ceiling finding (confirmed the hard way)
+Mid-hunt, the extended window appeared to be FALSIFIED at semtex tables
+(0 better / 5 worse / 195), and even semtex-identical defaults failed the
+identity check (0/4-5 worse). Root cause — in the harness, not the bot:
+leaf solving persists the sim solver TT across the worlds of a decision
+(sound), but it also persisted **across games**, coupling the two games of
+a --control pair. Game B inherited game A's TT warmth; budget-dependent
+solves resolved differently; bit-identical strategies diverged in 2.5% of
+pc2 pairs, always against the hero (who plays the colder-TT game). Proven
+by a leaf-off identity test (0/0/200) and fixed by resetting the TT per
+game in every play_one variant. Consequences: the falsification reversed
+on the clean harness, and every earlier pc2 paired result had carried a
+small anti-hero bias — i.e. semtex's shipped pc2 edges were understated.
 
-Combined with the semtex hunts, the pattern over ~10 measured levers is
-unambiguous: against a strong determinized-MC opponent, the outcome is
-dominated by deal luck and world-sampling variance; refinements of an
-already-close opponent model wash out (fulminate vs strong fields, espresso
-rollouts, reply search, MCDEF), and only two lever classes ever paid —
-**exact truth** (solver windows/leaves, now mined down to 0.25%-frequency
-crumbs) and **variance** (world budgets, now measured to their knees at
-every player count). A genuinely stronger successor needs a different
-architecture (e.g. learned value functions over information sets, or true
-information-set search), not another lever on this one.
+## The nulls (measured, so nobody retreads them)
 
-## Final form and deployment
+The hunt targeted the model-limited mirror losses (deals that survive even
+a 6x-worlds oracle) with opponent-model levers. All null or worse vs semtex:
 
-Hunt 4's result is a **full null on the mirror**: every measured octogen
-diff — six variants across opponent modeling, reply search, deeper leaves,
-wider solve windows and bigger solve budgets — came out ≤ 0 against
-semtex. Octogen therefore ships as a REGISTERED RESEARCH VEHICLE
-(`octogen`/`og`, C only), bit-identical to semtex at its defaults, whose
-value is this documented map of dead ends and the two adverse-selection
-discoveries above. It is not ported to TS or seeded into production;
-production keeps `semtex` (base cost) and `semtex_max` (full measured
-world budgets). The strongest deployable bot remains semtex.
+1. **Reply tournament, any opponent** (`OG_REPLY`): first opponent reply in
+   final-duel worlds chosen by search over their full legal reply set.
+   pc4 +0.150+-0.128 — in-world best response uses sampled hidden cards the
+   real opponent cannot see. Paranoid distortion (the CD_LEAF lesson).
+2. **Reply tournament, defender-only**: restricted to the reply the real
+   defender could actually compute (own hand + visible attack). pc4
+   +0.028+-0.051, pc3 -0.068+-0.055 — searching a reply under a handwritten
+   continuation is not a better model of an MC defender than the policy
+   itself. (Real bug found: PICKUP/GOOD rank last cheap-first and must
+   never be pruned from a searched reply set.)
+3. **MC-defender rollout model** (`OG_MCDEF`, `CD_POL_MCDEF`): mc_tell'd
+   seats pick up rather than burn a trump while the deck lives (50%
+   mixed). pc3 +0.055+-0.039 — over-models how often MC defenders actually
+   pick up.
+4. **Deeper heads-up rollout leaves** (10 cards / 8k nodes): flat at 4x the
+   pc2 cost.
+
+With the semtex hunts included, the pattern over ~10 levers stands: against
+a strong determinized-MC opponent only **exact truth** and **variance**
+ever paid; opponent-model refinements of an already-close policy wash out.
+A qualitatively stronger successor needs a different architecture (learned
+information-set values or true information-set search).
 
 ## Knobs (`OG_*`, octogen only)
 
-- `OG_SOLVE_CARDS` (24) / `OG_AVOID_CARDS` (24) / `OG_BB_WIN` (150k) /
-  `OG_BB_AVOID` (100k) — semtex-identical defaults; raise to reproduce the
-  falsified extended-window experiments.
-- `OG_REPLY` (0) / `OG_REPLY_CAP` (6) / `OG_REPLY_STAGE` (2) — reply
-  tournament, kept for research.
-- `OG_MCDEF` (0) — MC-defender rollout model, kept for research.
-- Everything else is inherited from semtex under the `OG_` prefix
-  (`octogen_oracle` / `ogo` = 6x-worlds audit variant).
+- `OG_SOLVE_CARDS` (28) / `OG_BB_WIN` (400k) / `OG_BB_AVOID` (250k) — the
+  enabled lever. `OG_AVOID_CARDS` (24) gates the loss-avoidance pass
+  separately (kept from the artifact investigation; at 24 the avoidance
+  behavior matches semtex, the extension is win-hunt only beyond it —
+  measured equivalent on the clean harness, kept conservative).
+- `OG_REPLY` (0) / `OG_REPLY_CAP` (6) / `OG_REPLY_STAGE` (2), `OG_MCDEF`
+  (0) — the measured-null research levers.
+- Everything else is inherited from semtex under the `OG_` prefix.

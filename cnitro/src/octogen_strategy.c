@@ -1131,10 +1131,10 @@ int octogen_strategy_choose(const Game *g, int bot_idx,
         og_keep1 = og_env_int("OG_KEEP1", 0);
         og_keep2 = og_env_int("OG_KEEP2", 0);
         og_rollout_policy = og_env_int("OG_ROLLOUT", 0);
-        og_bb_win_budget = og_env_int("OG_BB_WIN", 150000);
-        og_solve_cards = og_env_int("OG_SOLVE_CARDS", 24);
+        og_bb_win_budget = og_env_int("OG_BB_WIN", 400000);
+        og_solve_cards = og_env_int("OG_SOLVE_CARDS", 28);
         og_avoid_cards = og_env_int("OG_AVOID_CARDS", 24);
-        og_bb_avoid_budget = og_env_int("OG_BB_AVOID", 100000);
+        og_bb_avoid_budget = og_env_int("OG_BB_AVOID", 250000);
         og_leaf_budget = og_env_int("OG_LEAF_BUDGET", 1500);
         og_leaf_max_cards = og_env_int("OG_LEAF_CARDS", 10);
         og_floor_mod = og_env_int("OG_FLOOR_MOD", 2);

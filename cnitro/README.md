@@ -27,9 +27,14 @@ Bots (weakest → strongest):
 - `cordite` — blackpowder's successor; beats every other bot at
   every player count. See `CORDITE.md` (and `BLACKPOWDER.md`).
 - `semtex` — cordite's successor; strictly dominates cordite (never a
-  significantly worse cell vs any field, +13.5pp win heads-up on
+  significantly worse cell vs any field, +18.5pp win heads-up on
   same-deal pairs): exact rollout-leaf endgames heads-up, extended exact
-  root-solve window, per-seat MC-tells. See `SEMTEX.md`.
+  root-solve window, per-seat MC-tells, measured-knee world budgets.
+  The strongest deployed bot. See `SEMTEX.md`.
+- `octogen` — semtex's successor (C-only): a wider exact-solve window
+  makes it provably never worse than semtex and strictly better in the
+  rare deep-endgame deals; also the documented map of hunt-4's
+  measured-null opponent-model levers. See `OCTOGEN.md`.
 - `astrolite` — cordite + defender card-management levers (research;
   roughly cordite-equal).
 
