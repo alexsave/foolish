@@ -81,11 +81,12 @@ static _Thread_local int sx_no_fastroll = 0;   // SX_NO_FASTROLL=1: struct rollo
 // small 2-player deck-empty rollout endgames with the fast bitboard solver
 // instead of handwritten policy play. Against opponents that themselves play
 // endgames exactly (cordite), the exact model is the realistic one.
-// SX_BBLEAF: 2 (default) = exact leaf endgames in rollouts at 3+ players
-// (off heads-up: the root solver already owns the pc2 endgame, and assuming
-// exact play vs imperfect heads-up opponents measured slightly worse);
-// 1 = everywhere; 0 = off.
+// SX_BBLEAF: 2 (default) = pc-aware exact leaf endgames in rollouts —
+// SX_BBLEAF_CARDS (12) at 3+ players, small leaves (SX_BBLEAF_CARDS2, 8)
+// heads-up where bigger exact leaves mis-model imperfect opponents;
+// 1 = SX_BBLEAF_CARDS everywhere; 0 = off.
 static _Thread_local int sx_bbleaf = 2;
+static _Thread_local int sx_bbleaf_cards2 = 8;
 // SX_ADAPT: void-contradiction => per-seat distrust of floors+voids (on by
 // default — pure evidence, no downside). SX_PROFILE: weak-seat detection +
 // LOOSE rollout model for profiled seats.
@@ -106,6 +107,7 @@ static _Thread_local long sx_bbleaf_budget = 3000;
 static _Thread_local uint8_t sx_polmap_buf[MAX_PLAYERS];
 static _Thread_local const uint8_t *sx_polmap = NULL;
 static _Thread_local int sx_bbleaf_on = 0;   // effective flag for this decision
+static _Thread_local int sx_bbleaf_cards_eff = 12;
 static _Thread_local int sx_difftest = 0;      // SX_DIFFTEST=1: assert fast==slow
 static _Thread_local int sx_w1_override = 0, sx_w2_override = 0;
 static _Thread_local int sx_w3_override = -1;
@@ -750,7 +752,7 @@ static int sx_simulate_fast(const Game *g, int my_idx, int max_turns) {
     cd_sim_from_game(&s, g);
     if (sx_bbleaf_on || sx_polmap)
         return cd_sim_playout_pol(&s, my_idx, max_turns, !sx_no_earlyexit,
-                                  sx_bbleaf_on ? sx_bbleaf_cards : 0,
+                                  sx_bbleaf_on ? sx_bbleaf_cards_eff : 0,
                                   sx_bbleaf_budget, sx_polmap);
     return cd_sim_playout(&s, my_idx, max_turns, !sx_no_earlyexit);
 }
@@ -1075,9 +1077,9 @@ int semtex_strategy_choose(const Game *g, int bot_idx,
         sx_keep1 = sx_env_int("SX_KEEP1", 0);
         sx_keep2 = sx_env_int("SX_KEEP2", 0);
         sx_rollout_policy = sx_env_int("SX_ROLLOUT", 0);
-        sx_bb_win_budget = sx_env_int("SX_BB_WIN", 20000);
-        sx_solve_cards = sx_env_int("SX_SOLVE_CARDS", 20);
-        sx_bb_avoid_budget = sx_env_int("SX_BB_AVOID", 15000);
+        sx_bb_win_budget = sx_env_int("SX_BB_WIN", 150000);
+        sx_solve_cards = sx_env_int("SX_SOLVE_CARDS", 24);
+        sx_bb_avoid_budget = sx_env_int("SX_BB_AVOID", 100000);
         sx_leaf_budget = sx_env_int("SX_LEAF_BUDGET", 1500);
         sx_leaf_max_cards = sx_env_int("SX_LEAF_CARDS", 10);
         sx_floor_mod = sx_env_int("SX_FLOOR_MOD", 2);
@@ -1091,6 +1093,7 @@ int semtex_strategy_choose(const Game *g, int bot_idx,
         if (sx_void_mod < 2) sx_void_mod = 2;
         sx_profile = sx_env_int("SX_PROFILE", 0);
         sx_bbleaf_cards = sx_env_int("SX_BBLEAF_CARDS", 12);
+        sx_bbleaf_cards2 = sx_env_int("SX_BBLEAF_CARDS2", 8);
         sx_bbleaf_budget = sx_env_int("SX_BBLEAF_BUDGET", 3000);
         sx_difftest = sx_flag("SX_DIFFTEST");
         if (sx_difftest) { void sx_difftest_report(void); atexit(sx_difftest_report); }
@@ -1104,8 +1107,11 @@ int semtex_strategy_choose(const Game *g, int bot_idx,
     if (sx_no_voids) for (int p = 0; p < MAX_PLAYERS; p++) B.void_n[p] = 0;
     if (sx_verify) sx_verify_belief(g, bot_idx, &B);
 
-    // Player-count gate for the leaf lever (see sx_bbleaf comment).
-    sx_bbleaf_on = (sx_bbleaf == 1) || (sx_bbleaf == 2 && g->num_players >= 3);
+    // Player-count gate for the leaf lever (see sx_bbleaf comment). In the
+    // pc-aware default mode heads-up uses the small-leaf threshold.
+    sx_bbleaf_on = (sx_bbleaf != 0);
+    sx_bbleaf_cards_eff = (sx_bbleaf == 2 && g->num_players == 2)
+                        ? sx_bbleaf_cards2 : sx_bbleaf_cards;
 
     // Per-seat rollout policies: profiled-weak seats get the LOOSE model.
     sx_polmap = NULL;
@@ -1192,7 +1198,7 @@ int semtex_strategy_choose(const Game *g, int bot_idx,
                         fp = (sx_bbleaf_on || sx_polmap)
                            ? cd_sim_playout_pol(&trial_sim, bot_idx, 600,
                                                 !sx_no_earlyexit,
-                                                sx_bbleaf_on ? sx_bbleaf_cards : 0,
+                                                sx_bbleaf_on ? sx_bbleaf_cards_eff : 0,
                                                 sx_bbleaf_budget, sx_polmap)
                            : cd_sim_playout(&trial_sim, bot_idx, 600, !sx_no_earlyexit);
                         if (fp == 0) fp = g->num_players;

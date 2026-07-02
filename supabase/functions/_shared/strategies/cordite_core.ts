@@ -1616,6 +1616,25 @@ const samplePolicyTable = (seed: number, n: number): void => {
     seatPolicy = sampledSeatPolicy;
 };
 
+// ---------- semtex options -------------------------------------------------
+// Semtex = cordite + the anti-strong levers validated in cnitro (see
+// cnitro/SEMTEX.md): exact leaf endgames inside rollouts, an extended exact
+// root-solve window, no rank-floor inference, and per-seat MC-tells that drop
+// the heuristic-family belief constraints for seats that provably play
+// strategically. null (default) keeps the engine bit-for-bit cordite.
+export interface SemtexOpts {
+    leafCards: number;    // rollout endgames with <= this many cards solve
+                          // exactly (0 = off; semtex: 12 at 3+ players)
+    leafBudget: number;   // solver node budget per rollout leaf
+    solveCards: number;   // root endgame-solve card ceiling (cordite: 20)
+    noFloors: boolean;    // skip rank-floor inference entirely
+    voidMod: number;      // voids in (voidMod-1)/voidMod of worlds (cordite: 4)
+    adapt: boolean;       // per-seat MC-tells (void contradiction, declined
+                          // attack) drop floors+voids for that seat
+}
+let semtexOpts: SemtexOpts | null = null;
+export const setSemtexOpts = (o: SemtexOpts | null): void => { semtexOpts = o; };
+
 // ---------- opponent profiling (fulminate) --------------------------------
 // Walk the public move log, replay the public table state, and for each
 // opponent decision score how well each archetype {handwritten, espresso,
@@ -2066,9 +2085,21 @@ const rolloutPolicyFor = (g: SimGame): ((g: SimGame, p: number, m: SimMove[]) =>
 
 // Roll a sampled world forward; returns my finish position (1..N), or 0 if
 // the simulation didn't terminate. Exits early once my position is known.
+// Persistent TT for semtex's rollout-leaf solves. Safe to share across the
+// worlds of one decision: keys are exact position fingerprints and stored
+// values are depth-relative. Cleared per corditeChoose call to bound memory.
+// leafFail memoizes ABORTED root solves (the TT stores exact values only, so
+// without it an unresolvable leaf re-burns the whole node budget in every
+// world that reaches it — the dominant TS leaf cost in practice).
+const leafTT = new Map<string, number>();
+const leafFail = new Set<string>();
+export const leafTTReset = (): void => { leafTT.clear(); leafFail.clear(); };
+
 const simulate = (g: SimGame, myIdx: number, maxTurns: number): number => {
     CDPROF.simulate++;
     let turns = 0;
+    let leafTried = false;
+    const leafCards = semtexOpts !== null ? semtexOpts.leafCards : 0;
     while (gameDone(g) < 0 && turns++ < maxTurns) {
         CDPROF.simTurns++;
         if (g.over) break;
@@ -2076,6 +2107,41 @@ const simulate = (g: SimGame, myIdx: number, maxTurns: number): number => {
             const pos = g.elim.indexOf(myIdx);
             if (pos >= 0) return pos + 1;
             break;
+        }
+        // Semtex: resolve small 2-player deck-empty rollout endgames exactly
+        // instead of finishing them with policy play (one attempt per playout;
+        // an unresolved solve falls back to the policy for good). Against
+        // opponents that themselves play endgames exactly — cordite, strong
+        // humans — the exact model is the realistic one. See cnitro/SEMTEX.md.
+        if (leafCards > 0 && !leafTried && g.deck.length === 0 && g.flipped === NONE) {
+            let a = -1, b = -1, extra = false;
+            for (let i = 0; i < g.numPlayers; i++) {
+                if (g.pStatus[i] !== ST_IN) continue;
+                if (a < 0) a = i; else if (b < 0) b = i; else { extra = true; break; }
+            }
+            if (a >= 0 && b >= 0 && !extra) {
+                let total = g.hands[a].length + g.hands[b].length;
+                for (let i = 0; i < g.battlesA.length; i++)
+                    total += 1 + (g.battlesD[i] !== NONE ? 1 : 0);
+                if (total <= leafCards) {
+                    leafTried = true;
+                    const fp = ttFingerprint(g) + "m" + a;
+                    if (leafFail.has(fp)) { /* known unresolvable: policy play */ }
+                    else {
+                    const S: Solver = { budget: semtexOpts!.leafBudget,
+                        aborted: false, me: a, tt: leafTT };
+                    const v = solve(S, g, -1, 1, 0);
+                    if (S.aborted || v === 0) leafFail.add(fp);
+                    if (!S.aborted && v !== 0) {
+                        const loser = v < 0 ? a : b;
+                        if (myIdx === loser) return g.numPlayers;
+                        if (myIdx === a || myIdx === b) return g.numPlayers - 1;
+                        const pos = g.elim.indexOf(myIdx);
+                        return pos >= 0 ? pos + 1 : g.numPlayers - 1;
+                    }
+                    }
+                }
+            }
         }
         let acted = false;
         // The rollout policy resolves to pure handwritten everywhere EXCEPT the
@@ -2133,6 +2199,7 @@ export interface BeliefLog {
         | 'discard' | 'defender_change' | 'player_out' | 'draw';
     playerIdx: number;          // -1 for system events
     pairs: { primary: number, target: number }[];  // target NONE unless cover
+    defenderIdx?: number;       // defender_change only (semtex MC-tells)
 }
 
 export interface PublicView {
@@ -2204,6 +2271,25 @@ const buildBelief = (pv: PublicView): Belief => {
     const unc: number[] = [];
     const discards: number[] = [];
 
+    // Semtex MC-tells (sxAdapt): per-seat proof the seat plays strategically,
+    // not heuristic-family — (1) void contradiction: playing a card an active
+    // void said it couldn't hold (and that wasn't publicly picked up) means it
+    // picked up strategically while holding cover; (2) declined attack: saying
+    // GOOD with defender capacity free, then later (before gaining cards)
+    // playing a non-trump card whose value was on the table at GOOD time.
+    // Both drop floor+void inference for that seat for the rest of the game.
+    const sxAdapt = semtexOpts !== null && semtexOpts.adapt;
+    const sxNoFloors = semtexOpts !== null && semtexOpts.noFloors;
+    const mcTell = new Array(n).fill(false);
+    const declVals = new Array(n).fill(0);      // value bitmask of declined attacks
+    const handN = new Array(n).fill(CARDS_PER_PLAYER);
+    let curDef = -1;
+    const sxCardTell = (p: number, c: number): void => {
+        if (!sxAdapt || mcTell[p]) return;
+        if (B.pinned[p].indexOf(c) < 0 && voidForbidden(B, power, p, c)) mcTell[p] = true;
+        if ((c >> 4) !== power && (declVals[p] & (1 << (c & 15)))) mcTell[p] = true;
+    };
+
     for (let i = 0; i < pv.logs.length; i++) {
         const L = pv.logs[i];
         const p = L.playerIdx;
@@ -2212,6 +2298,8 @@ const buildBelief = (pv: PublicView): Belief => {
             case 'attack':
             case 'pass': {
                 const firstAttack = L.type === 'attack' && tbl.length === 0;
+                if (p >= 0) handN[p] -= L.pairs.length;
+                if (firstAttack && curDef < 0 && p >= 0) curDef = (p + 1) % n;
                 let anyTrump = false;
                 for (const pair of L.pairs) {
                     const c = pair.primary;
@@ -2220,24 +2308,28 @@ const buildBelief = (pv: PublicView): Belief => {
                     unc.push(c);
                     tbl.push(c);
                     if (p >= 0 && p !== pv.myIdx) {
+                        sxCardTell(p, c);
                         floorCheck(p, c);
                         pinnedRemove(p, c);
                     }
                 }
                 if (p >= 0 && p !== pv.myIdx && L.type === 'attack') {
                     if (anyTrump && deckAliveAt) trumpViol[p]++;
-                    if (firstAttack && L.pairs.length === 1 && !anyTrump && inNow > 2) {
+                    if (firstAttack && L.pairs.length === 1 && !anyTrump && inNow > 2
+                        && !sxNoFloors) {
                         B.floorV[p] = L.pairs[0].primary & 15;
                     }
                 }
                 break;
             }
             case 'cover':
+                if (p >= 0) handN[p] -= L.pairs.length;
                 for (const pair of L.pairs) {
                     const c = pair.primary;
                     if (c === NONE) continue;
                     tbl.push(c);
                     if (p >= 0 && p !== pv.myIdx) {
+                        sxCardTell(p, c);
                         floorCheck(p, c);
                         pinnedRemove(p, c);
                     }
@@ -2247,7 +2339,20 @@ const buildBelief = (pv: PublicView): Belief => {
                     }
                 }
                 break;
+            case 'good':
+                if (sxAdapt && p >= 0 && p !== pv.myIdx && inNow > 2
+                    && curDef >= 0 && handN[curDef] - unc.length >= 1) {
+                    for (const c of tbl) {
+                        if ((c >> 4) !== power) declVals[p] |= 1 << (c & 15);
+                    }
+                }
+                break;
+            case 'defender_change':
+                if (L.defenderIdx !== undefined && L.defenderIdx !== null
+                    && L.defenderIdx >= 0) curDef = L.defenderIdx;
+                break;
             case 'pickup':
+                if (p >= 0) { handN[p] += tbl.length; declVals[p] = 0; }
                 if (p >= 0 && p !== pv.myIdx) {
                     if (unc.length === 1 && B.voids[p].length < MAX_VOIDS) {
                         B.voids[p].push(unc[0]);
@@ -2264,6 +2369,7 @@ const buildBelief = (pv: PublicView): Belief => {
                 unc.length = 0;
                 break;
             case 'draw':
+                if (p >= 0) { handN[p] += L.pairs.length; declVals[p] = 0; }
                 if (p >= 0 && p !== pv.myIdx) {
                     B.voids[p].length = 0;
                     B.floorV[p] = 0;
@@ -2287,6 +2393,16 @@ const buildBelief = (pv: PublicView): Belief => {
     // 1-in-4 unconstrained world mixture absorbs void violators).
     for (let p = 0; p < n; p++) {
         if (trumpViol[p] >= 1) { distrustFloor[p] = true; B.floorV[p] = 0; }
+    }
+
+    // Semtex: proven-strategic seats lose both inference channels for good.
+    if (sxAdapt) {
+        for (let p = 0; p < n; p++) {
+            if (!mcTell[p]) continue;
+            B.voids[p].length = 0;
+            B.floorV[p] = 0;
+            distrustFloor[p] = true;
+        }
     }
 
     for (let p = 0; p < n; p++) {
@@ -2553,7 +2669,8 @@ const tryEndgameSolve = (pv: PublicView, B: Belief, candidates: SimMove[],
     if (opp < 0) return -1;
     const unknown = pv.handCounts[opp] - B.pinned[opp].length;
     if (unknown < 0 || unknown !== B.pool.length) return -1;
-    if (pv.myHand.length + pv.handCounts[opp] > SOLVE_MAX_CARDS) return -1;
+    const maxCards = semtexOpts !== null ? semtexOpts.solveCards : SOLVE_MAX_CARDS;
+    if (pv.myHand.length + pv.handCounts[opp] > maxCards) return -1;
 
     const root = sampleWorld(pv, B, 1, false, false);
     // sampleWorld already deals pool → opp unknown slots (deckCount = 0).
@@ -2700,6 +2817,7 @@ export const corditeChoose = (pv: PublicView, moves: SimMove[],
     if (moves.length === 0) return -1;
     if (moves.length === 1) return 0;
     const t0 = Date.now();
+    leafTTReset();
 
     const B = buildBelief(pv);
 
@@ -2743,7 +2861,8 @@ export const corditeChoose = (pv: PublicView, moves: SimMove[],
         for (let w = wLo; w < wHi; w++) {
             if (Date.now() - t0 > params.maxMillis) { outOfTime = true; break; }
             const wseed = mix(base, Math.imul(w + 1, 0x85EBCA77) >>> 0);
-            const useVoids = (w & 3) !== 3;
+            const vm = semtexOpts !== null ? semtexOpts.voidMod : 4;
+            const useVoids = (w % vm) !== vm - 1;
             const useFloors = (w & 1) === 0;
             const world = sampleWorld(pv, B, wseed, useVoids, useFloors);
             // fulminate: sample this world's per-seat rollout policies from the

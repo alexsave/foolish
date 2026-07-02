@@ -792,7 +792,19 @@ INSERT INTO bots (nickname, strategy_key) VALUES
 -- Cordite Max (same brain, larger sampled-world budget, <2s per decision)
 ('Cordite Max 1', 'cordite_max'),
 ('Cordite Max 2', 'cordite_max'),
-('Cordite Max 3', 'cordite_max');
+('Cordite Max 3', 'cordite_max'),
+
+-- Semtex (cordite's successor: exact leaf endgames in rollouts, extended
+-- exact-solve window, per-seat MC-tells + opponent profiling — beats cordite
+-- head-to-head and exploits weak opponents harder; see cnitro/SEMTEX.md)
+('Semtex 1', 'semtex'),
+('Semtex 2', 'semtex'),
+('Semtex 3', 'semtex'),
+
+-- Semtex Max (same brain, cordite_max world budget)
+('Semtex Max 1', 'semtex_max'),
+('Semtex Max 2', 'semtex_max'),
+('Semtex Max 3', 'semtex_max');
 
 -- Bots carry the reserved '%' prefix so bot-vs-human is recoverable from the
 -- name-only replay codec. Done as an UPDATE (rather than prefixing every literal

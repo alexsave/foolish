@@ -12,6 +12,7 @@ import { EspressoStrategy } from './strategies/espresso_strategy.ts';
 import { NitroStrategy } from './strategies/nitro_strategy.ts';
 import { CorditeStrategy, CorditeMaxStrategy } from './strategies/cordite_strategy.ts';
 import { FulminateStrategy } from './strategies/fulminate_strategy.ts';
+import { SemtexStrategy, SemtexMaxStrategy } from './strategies/semtex_strategy.ts';
 
 // Re-export interfaces for backwards compatibility
 export type { BotStrategy, LegalMove };
@@ -29,6 +30,8 @@ export const BOT_STRATEGIES: Map<string, BotStrategy> = new Map<string, BotStrat
     ['cordite', new CorditeStrategy()],
     ['cordite_max', new CorditeMaxStrategy()],
     ['fulminate', new FulminateStrategy()],
+    ['semtex', new SemtexStrategy()],
+    ['semtex_max', new SemtexMaxStrategy()],
 ]);
 
 // Lazy-load GPT strategy to avoid requiring API key at module load time
