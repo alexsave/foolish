@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Card, PersonalGame, PublicGame, GAME_STATUS, STRATEGY_KEY } from '@shared/types.ts';
 import supabase from '../backend/Connector';
 import { useParams } from 'next/navigation';
@@ -16,7 +16,14 @@ const applyOptimisticOverlay = (g: PersonalGame): void => {
     applyOverlayEntries(g, optimisticOverlay.entries());
 };
 
-const ServerContext = createContext<ServerContextType | null>(null);
+// Split contexts: actions are all useCallback([])-stable so this provider's
+// value NEVER changes identity — components that only dispatch (buttons, drag
+// handlers, feeds) subscribe via useServerActions() and stop re-rendering on
+// every games/chat state change. State lives in its own context; useServer()
+// merges both for backward compatibility (and re-renders on state changes,
+// exactly as before the split).
+const ServerActionsContext = createContext<ServerActionsType | null>(null);
+const ServerStateContext = createContext<ServerStateType | null>(null);
 
 const handsQuery =
     `game_id,
@@ -78,6 +85,20 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     // value only bridges flows that happen before navigation (create/join from
     // the dashboard).
     const active_game_id = url_game_id ?? game_id;
+
+    // Live mirrors of state that the action callbacks read. Every action below
+    // is useCallback([]) so the ServerActionsContext value NEVER changes
+    // identity; reading through refs (synced after each commit) keeps those
+    // frozen closures from ever serving a stale user/game/games value to a
+    // handler that fires later.
+    const gamesRef = useRef(games);
+    const userIdRef = useRef(user_id);
+    const activeGameIdRef = useRef<string | null>(null);
+    const spectatorGamesRef = useRef(spectatorGames);
+    useEffect(() => { gamesRef.current = games; }, [games]);
+    useEffect(() => { userIdRef.current = user_id; }, [user_id]);
+    useEffect(() => { activeGameIdRef.current = active_game_id; }, [active_game_id]);
+    useEffect(() => { spectatorGamesRef.current = spectatorGames; }, [spectatorGames]);
 
     // Local hand order state - keyed by game_id
     // Thinking we just need one tbh
@@ -319,7 +340,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         }
     };
 
-    const createGame = (): Promise<{ game_id: string }> => {
+    const createGame = useCallback((): Promise<{ game_id: string }> => {
         return invokeGameFunctions('create', {}, {
             onSuccess: (data) => {
                 setGameId(data.data.id);
@@ -329,9 +350,10 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 subscribeToChatMessages(data.data.id).catch(console.error);
             }
         });
-    };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
-    const joinGame = (gameId: string): Promise<{ game_id: string }> => {
+    const joinGame = useCallback((gameId: string): Promise<{ game_id: string }> => {
         return invokeGameFunctions('meta', {
             type: 'join',
             game_id: gameId,
@@ -360,26 +382,29 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 loadChatHistory(data.data.id, data.data).catch(console.error);
             }
         })
-    };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     // start / add-bot / exit / continue are one consolidated `meta` endpoint
     // (dispatched on `type`) — fewer functions, faster deploys.
-    const startGame = (gameId: string): Promise<{ game_id: string }> => {
+    const startGame = useCallback((gameId: string): Promise<{ game_id: string }> => {
         return invokeGameFunctions('meta', {
             type: 'start',
             game_id: gameId,
         })
-    };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
-    const addBot = (gameId: string, botId?: string): Promise<{ game_id: string }> => {
+    const addBot = useCallback((gameId: string, botId?: string): Promise<{ game_id: string }> => {
         return invokeGameFunctions('meta', {
             type: 'add-bot',
             game_id: gameId,
             bot_id: botId,
         })
-    };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
-    const exitGame = (gameId: string, botId?: string, playerId?: string): Promise<{ game_id: string }> => {
+    const exitGame = useCallback((gameId: string, botId?: string, playerId?: string): Promise<{ game_id: string }> => {
         return invokeGameFunctions('meta', {
             type: 'exit',
             game_id: gameId,
@@ -392,7 +417,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                     setSpectatorGames(prev => new Set(prev).add(gameId));
 
                     // Clean up old game-user channel and switch to game channel for spectators
-                    const oldChannelName = `gu-${gameId}-${user_id}`;
+                    const oldChannelName = `gu-${gameId}-${userIdRef.current}`;
                     const channels = supabase.getChannels();
                     const oldChannel = channels.find(channel => channel.topic === oldChannelName);
                     if (oldChannel) {
@@ -413,11 +438,12 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 }
             }
         })
-    };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     // Hmm loading the url should add the player to the game.
 
-    const loadGame = async (gameId: string): Promise<{ game_id: string }> => {
+    const loadGame = useCallback(async (gameId: string): Promise<{ game_id: string }> => {
         // Check if we already have an ongoing request for this game
         const existingPromise = loadGamePromises.current.get(gameId);
         if (existingPromise) {
@@ -434,11 +460,13 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         });
 
         return gamePromise;
-    };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     const loadGameInternal = async (gameId: string): Promise<{ game_id: string }> => {
         try {
             // First try to get game data if user is a player (only if user_id exists)
+            const user_id = userIdRef.current;
             if (user_id) {
                 const { data: playerData, error: playerError } = await supabase
                     .from('player_hands')
@@ -538,7 +566,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         }
 
         // Check if user is intentionally spectating this game
-        const isSpectating = spectatorGames.has(gameId);
+        const isSpectating = spectatorGamesRef.current.has(gameId);
 
         // no game self + waiting + not spectating + room available -> join
         // no game self + (not waiting OR spectating OR no room) -> subscribe to game
@@ -592,12 +620,16 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         }
     };
 
-    const attack = (cards: Card[], applyOptimistic: () => boolean = () => true): Promise<{ game_id: string }> => {
+    const attack = useCallback((cards: Card[], applyOptimistic: () => boolean = () => true): Promise<{ game_id: string }> => {
+        // The game this move targets: captured ONCE at tap time, so the deferred
+        // optimistic patch below applies to the same game the request went to
+        // even if the user navigates during the animation.
+        const gid = activeGameIdRef.current!;
         // Fire the server request FIRST — the server is authoritative and rejects an
         // illegal move, so the round-trip isn't gated on local validation.
         const promise = invokeGameFunctions('action', {
             type: 'attack',
-            game_id: active_game_id!,
+            game_id: gid,
             cards: cards,
         });
 
@@ -611,11 +643,11 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         setTimeout(() => {
             if (!applyOptimistic()) return;
             setGames(prev => {
-                const g: PersonalGame = prev[active_game_id!];
+                const g: PersonalGame = prev[gid];
                 if (!g) return prev;
                 return {
                     ...prev,
-                    [active_game_id!]: {
+                    [gid]: {
                         ...g,
                         table_battles: [...g.table_battles, ...cards.map(card => ({ attack: card, defense: null }))],
                         self: { ...g.self, hand: g.self.hand.filter(card => !cards.some(c => card_comp(c, card))) }
@@ -628,13 +660,15 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         }, ANIMATION_TIME);
 
         return promise;
-    };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
-    const pass = (cards: Card[], applyOptimistic: () => boolean = () => true): Promise<{ game_id: string }> => {
+    const pass = useCallback((cards: Card[], applyOptimistic: () => boolean = () => true): Promise<{ game_id: string }> => {
+        const gid = activeGameIdRef.current!; // see attack
         // Server request first (see attack); optimistic patch gated on validity.
         const promise = invokeGameFunctions('action', {
             type: 'pass',
-            game_id: active_game_id!,
+            game_id: gid,
             cards: cards,
         });
 
@@ -643,11 +677,11 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         setTimeout(() => {
             if (!applyOptimistic()) return;
             setGames(prev => {
-                const g: PersonalGame = prev[active_game_id!];
+                const g: PersonalGame = prev[gid];
                 if (!g) return prev;
                 return {
                     ...prev,
-                    [active_game_id!]: {
+                    [gid]: {
                         ...g,
                         table_battles: [...g.table_battles, ...cards.map(card => ({ attack: card, defense: null }))],
                         self: { ...g.self, hand: g.self.hand.filter(card => !cards.some(c => card_comp(c, card))) },
@@ -660,13 +694,15 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         }, ANIMATION_TIME);
 
         return promise;
-    };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
-    const pickup = (applyOptimistic: () => boolean = () => true): Promise<{ game_id: string }> => {
+    const pickup = useCallback((applyOptimistic: () => boolean = () => true): Promise<{ game_id: string }> => {
+        const gid = activeGameIdRef.current!; // see attack
         // Server request first (see attack); optimistic patch gated on validity.
         const promise = invokeGameFunctions('action', {
             type: 'pickup',
-            game_id: active_game_id!,
+            game_id: gid,
         });
 
         // Optimistic game state update after animation completes. Derived inside
@@ -674,7 +710,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         setTimeout(() => {
             if (!applyOptimistic()) return;
             setGames(prev => {
-                const g: PersonalGame = prev[active_game_id!];
+                const g: PersonalGame = prev[gid];
                 if (!g) return prev;
 
                 const next_first_attacker = get_next_player_index(g, g.defender);
@@ -687,7 +723,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
                 return {
                     ...prev,
-                    [active_game_id!]: {
+                    [gid]: {
                         ...g,
                         table_battles: [],
                         self: {
@@ -705,13 +741,15 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         }, ANIMATION_TIME);
 
         return promise;
-    };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
-    const cover = (coverCards: Card[], attackCards: Card[], applyOptimistic: () => boolean = () => true): Promise<{ game_id: string }> => {
+    const cover = useCallback((coverCards: Card[], attackCards: Card[], applyOptimistic: () => boolean = () => true): Promise<{ game_id: string }> => {
+        const gid = activeGameIdRef.current!; // see attack
         // Server request first (see attack); optimistic patch gated on validity.
         const promise = invokeGameFunctions('action', {
             type: 'cover',
-            game_id: active_game_id!,
+            game_id: gid,
             cover_cards: coverCards,
             attack_cards: attackCards,
         });
@@ -721,7 +759,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         setTimeout(() => {
             if (!applyOptimistic()) return;
             setGames(prev => {
-                const g: PersonalGame = prev[active_game_id!];
+                const g: PersonalGame = prev[gid];
                 if (!g) return prev;
 
                 const updatedTableBattles = g.table_battles.map(battle => {
@@ -736,7 +774,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
                 return {
                     ...prev,
-                    [active_game_id!]: {
+                    [gid]: {
                         ...g,
                         table_battles: updatedTableBattles,
                         self: { ...g.self, hand: g.self.hand.filter(card => !coverCards.some(c => card_comp(c, card))) }
@@ -748,18 +786,22 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         }, ANIMATION_TIME);
 
         return promise;
-    };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
-    const good = (): Promise<{ game_id: string }> => {
+    const good = useCallback((): Promise<{ game_id: string }> => {
         return invokeGameFunctions('action', {
             type: 'good',
-            game_id: active_game_id!,
+            game_id: activeGameIdRef.current!,
         });
-    };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
-    const sendMessage = async (message: string): Promise<void> => {
+    const sendMessage = useCallback(async (message: string): Promise<void> => {
         try {
-            if (!game_id || !user_id) {
+            const gid = activeGameIdRef.current;
+            const user_id = userIdRef.current;
+            if (!gid || !user_id) {
                 const error = new Error('No game or user available');
                 throw error;
             }
@@ -780,7 +822,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             const { error } = await supabase
                 .from('chat_messages')
                 .insert({
-                    game_id: active_game_id,
+                    game_id: gid,
                     user_id: user_id,
                     message: trimmedMessage,
                     is_system: false
@@ -793,10 +835,11 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         } catch (error) {
             throw error;
         }
-    };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
-    const updateGameName = (gameId: string, name: string): Promise<{ game_id: string }> => {
-        const previousName = games[gameId]?.name;
+    const updateGameName = useCallback((gameId: string, name: string): Promise<{ game_id: string }> => {
+        const previousName = gamesRef.current[gameId]?.name;
 
         setGames(prev => ({
             ...prev,
@@ -826,10 +869,11 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         }, {
             onError: revert
         });
-    };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
-    const rearrangePlayer = (gameId: string, playerIds: string[]): Promise<{ game_id: string }> => {
-        const previousPlayers = games[gameId]?.players ? [...games[gameId].players] : [];
+    const rearrangePlayer = useCallback((gameId: string, playerIds: string[]): Promise<{ game_id: string }> => {
+        const previousPlayers = gamesRef.current[gameId]?.players ? [...gamesRef.current[gameId].players] : [];
         if (previousPlayers.length === 0) {
             return Promise.reject(new Error(`Cannot rearrange players`));
         }
@@ -852,10 +896,11 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         }, {
             onError: revert
         });
-    };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
-    const rearrangeHand = (gameId: string, cardIndices: number[]): Promise<{ game_id: string }> => {
-        const previousHand = games[gameId]?.self?.hand ? [...games[gameId].self.hand] : [];
+    const rearrangeHand = useCallback((gameId: string, cardIndices: number[]): Promise<{ game_id: string }> => {
+        const previousHand = gamesRef.current[gameId]?.self?.hand ? [...gamesRef.current[gameId].self.hand] : [];
 
         if (previousHand.length === 0) {
             return Promise.reject(new Error(`Cannot rearrange hand`));
@@ -887,9 +932,10 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         }, {
             onError: revert
         });
-    };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
-    const getUserGames = async (): Promise<void> => {
+    const getUserGames = useCallback(async (): Promise<void> => {
         // Check if we already have an ongoing getUserGames request
         if (getUserGamesPromise.current) {
             return getUserGamesPromise.current;
@@ -905,11 +951,13 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         });
 
         return gamesPromise;
-    };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     const getUserGamesInternal = async (): Promise<void> => {
         // This needs to also throw in status at least
         try {
+            const user_id = userIdRef.current;
             if (!user_id) {
                 return;
             }
@@ -953,9 +1001,10 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         }
     };
 
-    const continueGame = (gameId: string): Promise<{ game_id: string }> => {
+    const continueGame = useCallback((gameId: string): Promise<{ game_id: string }> => {
         return invokeGameFunctions('meta', { type: 'continue', game_id: gameId });
-    };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     const invokeGameFunctions = async <T = any>(
         functionName: string,
@@ -984,76 +1033,62 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         }
     }
 
-    const currentChatMessages = chatMessages[active_game_id!] || [];
-    // The rendered hand: authoritative self.hand, deduped and ordered by the
-    // sticky arrangement memory. Guarantees no duplicates and no on-table cards
-    // in the hand, and keeps a rejected card in its original slot.
-    const currentLocalHandOrder = displayedHand(localHandOrders[active_game_id!] || [], games[active_game_id!]?.self?.hand || []);
+    const updateGameState = useCallback((gameId: string, gameState: any) => {
+        setGames(prev => ({ ...prev, [gameId]: mergeGameData(gameId, gameState, prev) }));
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    const setLocalHandOrder = useCallback((order: Card[]) => {
+        const gid = activeGameIdRef.current;
+        if (gid) {
+            // Sticky: take the dragged order of the visible cards, then keep
+            // any remembered (currently-absent) cards so their slots survive.
+            setLocalHandOrders(prev => {
+                const inOrder = new Set(order.map(cardKey));
+                const remembered = (prev[gid] || []).filter(c => !inOrder.has(cardKey(c)));
+                return { ...prev, [gid]: [...order, ...remembered] };
+            });
+        }
+    }, []);
+
+    // Every entry is a stable useCallback, so this object is created once and
+    // the actions context never re-renders its consumers.
+    const actions: ServerActionsType = useMemo(() => ({
+        createGame, joinGame, startGame, addBot, exitGame,
+        attack, pass, pickup, cover, good,
+        sendMessage, getUserGames, updateGameState, updateGameName,
+        rearrangePlayer, rearrangeHand, continueGame, loadGame, setLocalHandOrder,
+    }), [createGame, joinGame, startGame, addBot, exitGame, attack, pass, pickup, cover, good,
+        sendMessage, getUserGames, updateGameState, updateGameName, rearrangePlayer, rearrangeHand,
+        continueGame, loadGame, setLocalHandOrder]);
+
+    const state: ServerStateType = useMemo(() => ({
+        game_id: active_game_id,
+        game: games[active_game_id!],
+        games,
+        gameLoadError,
+        chatMessages: chatMessages[active_game_id!] || [],
+        // The rendered hand: authoritative self.hand, deduped and ordered by the
+        // sticky arrangement memory. Guarantees no duplicates and no on-table
+        // cards in the hand, and keeps a rejected card in its original slot.
+        localHandOrder: displayedHand(localHandOrders[active_game_id!] || [], games[active_game_id!]?.self?.hand || []),
+    }), [games, active_game_id, gameLoadError, chatMessages, localHandOrders]);
 
     return (
-        <ServerContext.Provider value={{
-            createGame,
-            joinGame,
-            startGame,
-            addBot,
-            exitGame,
-            game_id: active_game_id,
-            game: games[active_game_id!],
-            games,
-            attack,
-            pass,
-            pickup,
-            cover,
-            good,
-            sendMessage,
-            getUserGames,
-            updateGameState: (gameId: string, gameState: any) => {
-
-
-                setGames(prev => {
-
-                    const merged = mergeGameData(gameId, gameState, prev);
-
-                    return {
-                        ...prev,
-                        [gameId]: merged
-                    };
-                });
-            },
-            updateGameName,
-            rearrangePlayer,
-            rearrangeHand,
-            continueGame,
-            loadGame,
-            gameLoadError,
-            chatMessages: currentChatMessages,
-            localHandOrder: currentLocalHandOrder,
-            setLocalHandOrder: (order: Card[]) => {
-                if (active_game_id) {
-                    // Sticky: take the dragged order of the visible cards, then keep
-                    // any remembered (currently-absent) cards so their slots survive.
-                    setLocalHandOrders(prev => {
-                        const inOrder = new Set(order.map(cardKey));
-                        const remembered = (prev[active_game_id] || []).filter(c => !inOrder.has(cardKey(c)));
-                        return { ...prev, [active_game_id]: [...order, ...remembered] };
-                    });
-                }
-            }
-        }}>
-            {children}
-        </ServerContext.Provider>
+        <ServerActionsContext.Provider value={actions}>
+            <ServerStateContext.Provider value={state}>
+                {children}
+            </ServerStateContext.Provider>
+        </ServerActionsContext.Provider>
     );
 };
 
-interface ServerContextType {
+interface ServerActionsType {
     createGame: () => Promise<{ game_id: string }>;
     joinGame: (gameId: string) => Promise<{ game_id: string }>;
     startGame: (gameId: string) => Promise<{ game_id: string }>;
     addBot: (gameId: string, botId?: string) => Promise<{ game_id: string }>;
     exitGame: (gameId: string, botId?: string, playerId?: string) => Promise<{ game_id: string }>;
-    game_id: string | null;
-    game: PersonalGame | null;
-    games: { [key: string]: PersonalGame };
     // The optional `applyOptimistic` thunk gates the deferred optimistic local-state
     // patch: callers fire the request before validating, then have the patch apply
     // only if validation passed (evaluated at ANIMATION_TIME). Defaults to always-on.
@@ -1072,18 +1107,38 @@ interface ServerContextType {
     /** Refetch authoritative game state over REST. Used to resync after a
      *  realtime reconnect, where broadcasts missed during the gap are lost. */
     loadGame: (gameId: string) => Promise<{ game_id: string }>;
-    gameLoadError: string | null;
-    chatMessages: any[];
-    localHandOrder: Card[];
     setLocalHandOrder: (order: Card[]) => void;
 }
 
-export const useServer = () => {
-    const context = useContext(ServerContext);
+interface ServerStateType {
+    game_id: string | null;
+    game: PersonalGame | null;
+    games: { [key: string]: PersonalGame };
+    gameLoadError: string | null;
+    chatMessages: any[];
+    localHandOrder: Card[];
+}
+
+type ServerContextType = ServerActionsType & ServerStateType;
+
+/** Actions only — the value is referentially stable for the provider's whole
+ *  lifetime, so consumers that only dispatch never re-render on state churn. */
+export const useServerActions = (): ServerActionsType => {
+    const context = useContext(ServerActionsContext);
     if (!context) {
-        throw new Error('useServer must be used within a ServerProvider');
+        throw new Error('useServerActions must be used within a ServerProvider');
     }
     return context;
+};
+
+export const useServer = (): ServerContextType => {
+    const actions = useContext(ServerActionsContext);
+    const state = useContext(ServerStateContext);
+    if (!actions || !state) {
+        throw new Error('useServer must be used within a ServerProvider');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return useMemo(() => ({ ...actions, ...state }), [actions, state]);
 };
 
 // Provider for the replay screen: holds a local games map and serves it
@@ -1109,33 +1164,46 @@ export const ReplayServerProvider = ({ gameId, initialGame, children }: {
     // tutorial doesn't need drag-to-rearrange, only drag-to-play.
     const localHandOrder = games[gameId]?.self?.hand ?? initialGame.self?.hand ?? [];
 
-    const noop = async () => ({ game_id: gameId });
-    const value: ServerContextType = {
-        createGame: noop,
-        joinGame: noop,
-        startGame: noop,
-        addBot: noop,
-        exitGame: noop,
+    const actions: ServerActionsType = useMemo(() => {
+        const noop = async () => ({ game_id: gameId });
+        return {
+            createGame: noop,
+            joinGame: noop,
+            startGame: noop,
+            addBot: noop,
+            exitGame: noop,
+            attack: noop,
+            pass: noop,
+            pickup: noop,
+            cover: noop,
+            good: noop,
+            sendMessage: async () => { },
+            getUserGames: async () => { },
+            updateGameState,
+            updateGameName: noop,
+            rearrangePlayer: noop,
+            rearrangeHand: noop,
+            continueGame: noop,
+            loadGame: noop,
+            setLocalHandOrder: () => { },
+        };
+    }, [gameId, updateGameState]);
+
+    const state: ServerStateType = useMemo(() => ({
         game_id: gameId,
         game: games[gameId] ?? initialGame,
         games,
-        attack: noop,
-        pass: noop,
-        pickup: noop,
-        cover: noop,
-        good: noop,
-        sendMessage: async () => { },
-        getUserGames: async () => { },
-        updateGameState,
-        updateGameName: noop,
-        rearrangePlayer: noop,
-        rearrangeHand: noop,
-        continueGame: noop,
-        loadGame: noop,
         gameLoadError: null,
         chatMessages: [],
         localHandOrder,
-        setLocalHandOrder: () => { },
-    };
-    return <ServerContext.Provider value={value}>{children}</ServerContext.Provider>;
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }), [games, gameId, initialGame, localHandOrder]);
+
+    return (
+        <ServerActionsContext.Provider value={actions}>
+            <ServerStateContext.Provider value={state}>
+                {children}
+            </ServerStateContext.Provider>
+        </ServerActionsContext.Provider>
+    );
 };

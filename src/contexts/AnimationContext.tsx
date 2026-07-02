@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
 import { Card, Game, GAME_STATUS, PLAYER_STATUS, PublicGame } from '@shared/types.ts';
-import { useServer } from './ServerContext';
+import { useServer, useServerActions } from './ServerContext';
 import { useAuth } from './AuthContext';
 import { useParams } from 'next/navigation';
 import supabase from '../backend/Connector';
@@ -160,7 +160,11 @@ const canBotMove = (game: PublicGame | undefined): boolean => {
 };
 
 export const AnimationProvider = ({ children }: { children: React.ReactNode }) => {
-    const { updateGameState, games, game_id, ...serverMethods } = useServer();
+    // Actions come from the stable actions context (identity never changes);
+    // only the state this provider genuinely needs comes from the state context.
+    const serverActions = useServerActions();
+    const { updateGameState } = serverActions;
+    const { games, game_id } = useServer();
     const { user_id } = useAuth();
     const url_game_id = useParams<{ game_id: string }>().game_id?.toLowerCase();
 
@@ -1358,7 +1362,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         //    optimistic patch (applied only if still valid) and gates the optimistic
         //    animation below.
         let valid = true;
-        const serverPromise = serverMethods.attack(cards, () => valid);
+        const serverPromise = serverActions.attack(cards, () => valid);
 
         // 2. Validate locally; only add optimistic feedback if the move is legal.
         try {
@@ -1427,7 +1431,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
         // 1. Send the request BEFORE validating (server is authoritative; see attack).
         let valid = true;
-        const serverPromise = serverMethods.pass(cards, () => valid);
+        const serverPromise = serverActions.pass(cards, () => valid);
 
         // 2. Validate locally; only add optimistic feedback if the move is legal.
         try {
@@ -1500,7 +1504,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
         // 1. Send the request BEFORE validating (server is authoritative; see attack).
         let valid = true;
-        const serverPromise = serverMethods.pickup(() => valid);
+        const serverPromise = serverActions.pickup(() => valid);
 
         // 2. Validate locally; only add optimistic feedback if the move is legal.
         try {
@@ -1561,7 +1565,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
         // 1. Send the request BEFORE validating (server is authoritative; see attack).
         let valid = true;
-        const serverPromise = serverMethods.cover(coverCards, attackCards, () => valid);
+        const serverPromise = serverActions.cover(coverCards, attackCards, () => valid);
 
         // 2. Validate locally; only add optimistic feedback if the move is legal.
         try {
@@ -1641,7 +1645,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         }
     };
 
-    const good = async (): Promise<{ game_id: string }> => await serverMethods.good();
+    const good = async (): Promise<{ game_id: string }> => await serverActions.good();
 
     // Cleanup timeouts on unmount
     useEffect(() => {

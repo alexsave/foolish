@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { useParams } from 'next/navigation';
 import supabase from '../backend/Connector';
 import { useAuth } from '../contexts/AuthContext';
-import { useServer } from '../contexts/ServerContext';
+import { useServerActions } from '../contexts/ServerContext';
 import { animationFeed } from './animationFeed';
 
 /**
@@ -17,7 +17,7 @@ import { animationFeed } from './animationFeed';
  */
 export const RealtimeAnimationFeed = () => {
     const { user_id } = useAuth();
-    const { loadGame } = useServer();
+    const { loadGame } = useServerActions();
     const url_game_id = useParams<{ game_id: string }>().game_id?.toLowerCase();
 
     // Keep loadGame reachable from inside the subscription callback without

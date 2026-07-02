@@ -6,7 +6,7 @@ import { Text } from './Text';
 import { SovietIcon } from './SovietIcon';
 import { TexturedSurface } from './TexturedSurface';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
-import { ReplayServerProvider, useServer } from '../contexts/ServerContext';
+import { ReplayServerProvider, useServer, useServerActions } from '../contexts/ServerContext';
 import { AnimationProvider, useAnimation } from '../contexts/AnimationContext';
 import { GameProvider } from '../contexts/GameContext';
 import { DragProvider } from '../contexts/DragContext';
@@ -518,7 +518,7 @@ interface StageProps {
 
 const ReplayStage = ({ decoded, steps, sequences, reverses, gameId, names, times }: StageProps) => {
     usePreventScroll();
-    const { updateGameState } = useServer();
+    const { updateGameState } = useServerActions();
     const { isAnimating, resetAnimations } = useAnimation();
     const { t } = useLocalization();
     const router = useRouter();
