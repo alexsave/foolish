@@ -1,8 +1,8 @@
 import { PrivatePlayer, AnimationEvent, GAME_STATUS, PLAYER_STATUS, GAME_MOVE_TYPE } from './types.ts';
 import { executeWithGameLock } from './utils.ts';
-import { calculateLegalMoves } from './bot_strategy.ts';
+import { calculateLegalMoves, LegalMove } from './bot_strategy.ts';
 import { createClient } from 'jsr:@supabase/supabase-js';
-import { processBotAction, shouldBotActCore } from './pure_bot_actions.ts';
+import { processBotAction, executeBotMove, shouldBotActCore } from './pure_bot_actions.ts';
 
 const supabaseClient = createClient(
     Deno.env.get('SUPABASE_URL') || '',
@@ -154,6 +154,15 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
     // and a bots-only game writing 300ms there leaked into a concurrent
     // humans game expecting 3000ms, and vice versa.
     let cycleDelay = BOT_PROCESSING_DELAY_WITH_HUMANS;
+    // Strategy decisions carried across CAS attempts within this cycle. On a
+    // version conflict executeWithGameLock re-runs the whole operation; without
+    // this a bot recomputes its move from scratch each attempt — for cordite's
+    // Monte-Carlo search that can be seconds of CPU, and up to 5 attempts blows
+    // the ~2s budget and gets the isolate killed holding the lease. A cached
+    // move is replayed iff it is still LEGAL in the reloaded state (a legal,
+    // slightly-stale choice beats a CPU kill); otherwise we recompute.
+    const movesFromFailedAttempts = new Map<string, LegalMove>();
+    const canonMove = (m: LegalMove) => JSON.stringify({ t: m.type, c: m.cards ?? null, a: m.attack_cards ?? null });
 
     // Do everything within a single lock: find eligible bots, choose one, execute action
     try {
@@ -236,8 +245,30 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
                     console.log(`[ACTION] Trying bot ${selectedBot.bot.name} from ${eligibleBots.length} eligible bots`);
                     const actionStartTime = Date.now();
 
-                    // Try to process this bot's action
-                    const botActionResult = await processBotAction(game, selectedBot.bot);
+                    // Replay a move computed in a failed CAS attempt if it is
+                    // still legal against the reloaded state; else run the
+                    // strategy and remember its choice for a possible retry.
+                    let botActionResult: false | { events: AnimationEvent[]; moveType: string } = false;
+                    const cached = movesFromFailedAttempts.get(selectedBot.bot.player_id);
+                    if (cached) {
+                        const stillLegal = calculateLegalMoves(game, selectedBot.bot.player_id)
+                            .some((m) => canonMove(m) === canonMove(cached));
+                        if (stillLegal) {
+                            const cachedEvents = executeBotMove(game, selectedBot.bot, cached);
+                            if (cachedEvents) {
+                                console.log(`[ACTION] Replayed ${selectedBot.bot.name}'s cached ${cached.type} from a conflicted attempt`);
+                                botActionResult = { events: cachedEvents, moveType: cached.type };
+                            }
+                        }
+                        if (!botActionResult) movesFromFailedAttempts.delete(selectedBot.bot.player_id);
+                    }
+                    if (!botActionResult) {
+                        const fresh = await processBotAction(game, selectedBot.bot);
+                        if (fresh) {
+                            movesFromFailedAttempts.set(selectedBot.bot.player_id, fresh.move);
+                            botActionResult = fresh;
+                        }
+                    }
 
                     const actionDuration = Date.now() - actionStartTime;
                     // Feed the CPU predictor (count every attempt — failed ones burn CPU too).

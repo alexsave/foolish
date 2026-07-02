@@ -11,8 +11,9 @@ import { handleGood } from './actions/good.ts';
 import { AnimationEvent } from './types.ts';
 import { cardDisplay } from './common_utils.ts';
 
-// Process a single bot's action
-export const processBotAction = async (game: Game, bot: PrivatePlayer): Promise<false | { events: AnimationEvent[], moveType: string }> => {
+// Process a single bot's action. Returns the chosen move too, so the caller
+// can replay it cheaply if its CAS commit conflicts (see bot_actions.ts).
+export const processBotAction = async (game: Game, bot: PrivatePlayer): Promise<false | { events: AnimationEvent[], moveType: string, move: LegalMove }> => {
     try {
         const botActionStartTime = Date.now();
         
@@ -40,7 +41,7 @@ export const processBotAction = async (game: Game, bot: PrivatePlayer): Promise<
 
         const totalBotActionTime = Date.now() - botActionStartTime;
         //console.log(`[TIMING] Total bot action time for ${bot.name}: ${totalBotActionTime}ms`);
-        return { events: actionEvents, moveType: chosenMove.type };
+        return { events: actionEvents, moveType: chosenMove.type, move: chosenMove };
 
     } catch (error) {
         console.error(`Error processing bot action for ${bot.name}:`, error);
