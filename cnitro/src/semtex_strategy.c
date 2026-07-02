@@ -1019,9 +1019,19 @@ static void sx_params(int num_players, int *W1, int *W2, int *W3) {
     // candidate survival added nothing (keeps-only: -0.133). 2x/3x were NOT
     // reliable stops (-0.130/-0.093); the measured knee is at ~6x.
     if (num_players <= 2)      { *W1 = 192; *W2 = 336; *W3 = 336; }
-    else if (num_players <= 4) { *W1 = 28; *W2 = 56; *W3 = 56; }
-    else if (num_players <= 6) { *W1 = 40; *W2 = 80; *W3 = 56; }
-    else                       { *W1 = 40; *W2 = 80; *W3 = 48; }
+    // 3+ players: 6x cordite's C budget (hunt-3 finding). The rescue tests
+    // showed pc4/pc6 losses were also compute-limited, but the aggregate
+    // mirror gain is small (opponent MC noise dominates MC-vs-MC outcomes);
+    // the real payoff is against HEURISTIC fields — the human proxies —
+    // where the same budget is worth +5..+8pp win at pc3/pc4 (paired vs the
+    // cordite control, seeds 950001: pc3 -0.087+-0.041 / 67.2% vs 59.5%,
+    // pc4 -0.135+-0.053 / 39.8% vs 34.8%, attribution clean: the default
+    // played 400/400 pairs identically to cordite on those deals) and
+    // directionally positive at pc6 on both fields. pc5-8 use the ratios
+    // production TS cordite already ships (its v2.4 budget = 6x the C one).
+    else if (num_players <= 4) { *W1 = 168; *W2 = 336; *W3 = 336; }
+    else if (num_players <= 6) { *W1 = 240; *W2 = 480; *W3 = 336; }
+    else                       { *W1 = 240; *W2 = 480; *W3 = 288; }
     // cordite_old: the pre-change 1x budget (half the above). The only
     // strength-affecting change was doubling the budget — the rollout/solver
     // rewrites are exact — so this gives a faithful "cordite before the changes"

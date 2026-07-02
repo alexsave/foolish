@@ -30,7 +30,7 @@
 import { Card, Game, GameLog, PLAYER_STATUS } from '../types.ts';
 import { BotStrategy, LegalMove } from '../bot_interfaces.ts';
 import {
-    BeliefLog, CorditeParams, CORDITE_PARAMS, CORDITE_MAX_PARAMS,
+    BeliefLog, CorditeParams, CORDITE_PARAMS,
     MOVE_ATTACK, MOVE_COVER, MOVE_GOOD, MOVE_PASS, MOVE_PICKUP,
     NONE, PublicView, SimMove, corditeChoose, mkCard,
     profileSeats, seatWeightsFromProfiles, setSeatWeights,
@@ -124,8 +124,16 @@ const SEMTEX_PARAMS: CorditeParams = {
     worldsFor: (n) => n <= 2 ? [192, 336, 336] : CORDITE_PARAMS.worldsFor(n),
     maxMillis: 2000,
 };
+// semtex_max: the full C-measured budget at every player count (hunt-3:
+// 6x worlds at 3+ players is worth +5..+8pp win vs heuristic/human-style
+// fields at pc3/pc4; see SEMTEX.md). Costs ~2x the base tier's CPU per
+// decision at 3-4 players — kept out of the base `semtex` deliberately so
+// the default bot's Supabase compute cost is unchanged; flip the params if
+// strength matters more than cost. maxMillis still caps latency at 2 s.
 const SEMTEX_MAX_PARAMS: CorditeParams = {
-    worldsFor: (n) => n <= 2 ? [192, 336, 336] : CORDITE_MAX_PARAMS.worldsFor(n),
+    worldsFor: (n) => n <= 2 ? [192, 336, 336]
+        : n <= 4 ? [168, 336, 336]
+        : n <= 6 ? [240, 480, 336] : [240, 480, 288],
     maxMillis: 2000,
 };
 
