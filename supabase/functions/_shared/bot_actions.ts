@@ -38,9 +38,6 @@ const WALL_CEILING_MS = 120_000;
 // ago), so recovery is fast even though loops can run long.
 const BOT_LEASE_TTL_MS = 25_000;
 
-// Global variable to track current bot processing delay
-let currentBotDelay = BOT_PROCESSING_DELAY_WITH_HUMANS;
-
 // Claim the bot-loop lease atomically (replaces the bot_locks baton). The RPC
 // returns a token if no live lease exists, else null. Auto-expiring → nothing to
 // leak even if this isolate dies mid-loop.
@@ -152,6 +149,11 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
 
     let botProcessed = false;
     let actionEvents: AnimationEvent[] = [];
+    // Pacing for THIS cycle, derived from THIS game's players. Must not be
+    // module state: one warm isolate can drive several games (heartbeat SCAN),
+    // and a bots-only game writing 300ms there leaked into a concurrent
+    // humans game expecting 3000ms, and vice versa.
+    let cycleDelay = BOT_PROCESSING_DELAY_WITH_HUMANS;
 
     // Do everything within a single lock: find eligible bots, choose one, execute action
     try {
@@ -167,16 +169,11 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
             actionEvents = [];
             botProcessed = false;
             const lockWorkStartTime = Date.now();
-            // Update global delay based on whether humans are still playing
+            // Pacing based on whether humans are still playing in THIS game
             const humanPlayersStillIn = game.players.filter(player =>
                 !player.is_ai && player.status === PLAYER_STATUS.IN
             ).length;
-
-            const newDelay = humanPlayersStillIn > 0 ? BOT_PROCESSING_DELAY_WITH_HUMANS : BOT_PROCESSING_DELAY_BOTS_ONLY;
-            if (newDelay !== currentBotDelay) {
-                console.log(`Bot delay changed from ${currentBotDelay}ms to ${newDelay}ms (humans in game: ${humanPlayersStillIn})`);
-                currentBotDelay = newDelay;
-            }
+            cycleDelay = humanPlayersStillIn > 0 ? BOT_PROCESSING_DELAY_WITH_HUMANS : BOT_PROCESSING_DELAY_BOTS_ONLY;
 
             // Capture game state for broadcasting later
             // Only process bot actions if game is in a state where bots can act
@@ -307,15 +304,15 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
     if (botProcessed) {
         // Skip pacing when there are no humans watching AND this cycle produced no
         // animations — bots churning through silent goods shouldn't feel padded.
-        const skipDelay = actionEvents.length === 0 && currentBotDelay === BOT_PROCESSING_DELAY_BOTS_ONLY;
+        const skipDelay = actionEvents.length === 0 && cycleDelay === BOT_PROCESSING_DELAY_BOTS_ONLY;
 
         if (skipDelay) {
-            console.log(`[CYCLE ${cycle}] Cycle took ${totalCycleTime}ms, skipping ${currentBotDelay}ms delay (no events, no humans)`);
-        } else if (currentBotDelay > 0) {
-            console.log(`[CYCLE ${cycle}] Cycle took ${totalCycleTime}ms, waiting ${currentBotDelay}ms to maintain ${currentBotDelay}ms interval`);
-            await new Promise(resolve => setTimeout(resolve, currentBotDelay));
+            console.log(`[CYCLE ${cycle}] Cycle took ${totalCycleTime}ms, skipping ${cycleDelay}ms delay (no events, no humans)`);
+        } else if (cycleDelay > 0) {
+            console.log(`[CYCLE ${cycle}] Cycle took ${totalCycleTime}ms, waiting ${cycleDelay}ms to maintain ${cycleDelay}ms interval`);
+            await new Promise(resolve => setTimeout(resolve, cycleDelay));
         } else {
-            console.log(`[CYCLE ${cycle}] Cycle took ${totalCycleTime}ms (>= ${currentBotDelay}ms target), continuing immediately`);
+            console.log(`[CYCLE ${cycle}] Cycle took ${totalCycleTime}ms (>= ${cycleDelay}ms target), continuing immediately`);
         }
 
         return await processBotActions(game_id, cycle + 1, loopStartTime, cpu, leaseToken);
