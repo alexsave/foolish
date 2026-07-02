@@ -754,60 +754,6 @@ const finalizeEndedGame = async (game: Game): Promise<void> => {
 
 
 
-// Get or create ELO rating for a user
-const getOrCreateEloRating = async (userId: string): Promise<UserEloRating> => {
-    const { data, error } = await supabaseClient
-        .from('user_elo_ratings')
-        .select('*')
-        .eq('user_id', userId)
-        .single();
-
-    if (error && error.code === 'PGRST116') {
-        // User doesn't have ELO rating, create one
-        const newRating = {
-            user_id: userId,
-            elo_rating: 1000,
-            games_played: 0
-        };
-
-        const { data: insertData, error: insertError } = await supabaseClient
-            .from('user_elo_ratings')
-            .insert(newRating)
-            .select()
-            .single();
-
-        if (insertError) {
-            console.error('Error creating ELO rating:', insertError);
-            throw new Error('Failed to create ELO rating');
-        }
-
-        return insertData;
-    }
-
-    if (error) {
-        console.error('Error fetching ELO rating:', error);
-        throw new Error('Failed to fetch ELO rating');
-    }
-
-    return data;
-};
-
-// Get ELO rating for a bot
-const getBotEloRating = async (botId: string): Promise<{ elo_rating: number, games_played: number, nickname: string, strategy_key: string }> => {
-    const { data, error } = await supabaseClient
-        .from('bots')
-        .select('elo_rating, games_played, nickname, strategy_key')
-        .eq('id', botId)
-        .single();
-
-    if (error) {
-        console.error('Error fetching bot ELO rating:', error);
-        throw new Error('Failed to fetch bot ELO rating');
-    }
-
-    return data;
-};
-
 // Update ELO ratings for all players after game completion
 const updateEloRatings = async (game: Game): Promise<void> => {
     if (game.players.length < 2) {
@@ -815,22 +761,43 @@ const updateEloRatings = async (game: Game): Promise<void> => {
     }
 
     try {
-        // Get all player ELO ratings (both human and bot)
+        // Load all player ELO ratings in TWO batched selects (one per table)
+        // instead of one round-trip per player — this runs on the game-ending
+        // hot path, before the final broadcast is pushed.
         const playerRatings = new Map<string, { elo_rating: number, games_played: number }>();
         const botData = new Map<string, { elo_rating: number, games_played: number, nickname: string, strategy_key: string }>();
-        const humanPlayers: string[] = [];
-        const botPlayers: string[] = [];
+        const humanPlayers: string[] = game.players.filter(p => !p.is_ai).map(p => p.player_id);
+        const botPlayers: string[] = game.players.filter(p => p.is_ai).map(p => p.player_id);
 
-        for (const player of game.players) {
-            if (player.is_ai) {
-                const botInfo = await getBotEloRating(player.player_id);
-                playerRatings.set(player.player_id, botInfo);
-                botData.set(player.player_id, botInfo);
-                botPlayers.push(player.player_id);
-            } else {
-                const rating = await getOrCreateEloRating(player.player_id);
-                playerRatings.set(player.player_id, rating);
-                humanPlayers.push(player.player_id);
+        if (botPlayers.length > 0) {
+            const { data, error } = await supabaseClient
+                .from('bots')
+                .select('id, elo_rating, games_played, nickname, strategy_key')
+                .in('id', botPlayers);
+            if (error || !data || data.length !== botPlayers.length) {
+                console.error('Error fetching bot ELO ratings:', error ?? `expected ${botPlayers.length} bots, got ${data?.length ?? 0}`);
+                throw new Error('Failed to fetch bot ELO ratings');
+            }
+            for (const row of data) {
+                playerRatings.set(row.id, row);
+                botData.set(row.id, row);
+            }
+        }
+
+        if (humanPlayers.length > 0) {
+            const { data, error } = await supabaseClient
+                .from('user_elo_ratings')
+                .select('*')
+                .in('user_id', humanPlayers);
+            if (error) {
+                console.error('Error fetching ELO ratings:', error);
+                throw new Error('Failed to fetch ELO ratings');
+            }
+            const existing = new Map((data ?? []).map((r: UserEloRating) => [r.user_id, r]));
+            for (const id of humanPlayers) {
+                // A first-time player has no row yet; start them at the base
+                // rating — the batched upsert below creates the row.
+                playerRatings.set(id, existing.get(id) ?? { elo_rating: 1000, games_played: 0 });
             }
         }
 
