@@ -241,6 +241,10 @@ int main(int argc, char **argv) {
         if (control < 0) { fprintf(stderr, "unknown control '%s'\n", control_str); return 2; }
         int games  = parse_int(get_arg(argc, argv, "games", "200"), 200);
         uint32_t seed0 = (uint32_t)parse_int(get_arg(argc, argv, "seed-start", "200001"), 200001);
+        // --dump=<file>: append one "pc seed hero_fp ctrl_fp" line per pair,
+        // so regression seeds (hero worse than control) can be replayed and
+        // diffed move-by-move (--inspect=<seed>) for loss analysis.
+        const char *dump_path = get_arg(argc, argv, "dump", NULL);
         printf("=== PAIRED %s vs control %s @ %s tables ===  games_per_pc=%d  seed_start=%u\n",
                strat_str, control_str, opp_str, games, seed0);
         printf("\n  pc  mean_hero  mean_ctrl  diff+-SE      win_hero  win_ctrl  h<c/h>c/eq\n");
@@ -255,10 +259,12 @@ int main(int argc, char **argv) {
             long better = 0, worse = 0, equal = 0;
             double dsum = 0, dsum2 = 0;
             int valid = 0;
+            int8_t *fh_arr = malloc((size_t)games), *fc_arr = malloc((size_t)games);
             struct timespec pt0; clock_gettime(CLOCK_MONOTONIC, &pt0);
             if (games > 0) {   // warm lazy shared state single-threaded
                 int fh = play_one(seed0, n, protagonist, opp);
                 int fc = play_one(seed0, n, control, opp);
+                fh_arr[0] = (int8_t)fh; fc_arr[0] = (int8_t)fc;
                 if (fh >= 0 && fc >= 0) {
                     hero_sum += fh; ctrl_sum += fc;
                     hero_win += (fh == 1); ctrl_win += (fc == 1);
@@ -273,6 +279,7 @@ int main(int argc, char **argv) {
             for (int gi = 1; gi < games; gi++) {
                 int fh = play_one(seed0 + (uint32_t)gi, n, protagonist, opp);
                 int fc = play_one(seed0 + (uint32_t)gi, n, control, opp);
+                fh_arr[gi] = (int8_t)fh; fc_arr[gi] = (int8_t)fc;
                 if (fh < 0 || fc < 0) continue;
                 hero_sum += fh; ctrl_sum += fc;
                 hero_win += (fh == 1); ctrl_win += (fc == 1);
@@ -281,6 +288,17 @@ int main(int argc, char **argv) {
                 better += (d < 0); worse += (d > 0); equal += (d == 0);
                 valid++;
             }
+            if (dump_path) {
+                FILE *df = fopen(dump_path, "a");
+                if (df) {
+                    for (int gi = 0; gi < games; gi++) {
+                        fprintf(df, "%d %u %d %d\n", n, seed0 + (uint32_t)gi,
+                                (int)fh_arr[gi], (int)fc_arr[gi]);
+                    }
+                    fclose(df);
+                }
+            }
+            free(fh_arr); free(fc_arr);
             {
                 struct timespec pt1; clock_gettime(CLOCK_MONOTONIC, &pt1);
                 double dt = (pt1.tv_sec - pt0.tv_sec) + (pt1.tv_nsec - pt0.tv_nsec) * 1e-9;
