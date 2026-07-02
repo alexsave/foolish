@@ -5,52 +5,9 @@ import type { SupabaseClient } from 'jsr:@supabase/supabase-js';
 // GAME LOG UTILITIES
 // =============================================================================
 
-// Persist a move's logs. Called by executeWithGameLock after the CAS commit
-// (and just before finalizeEndedGame when the move ended the game).
-export const saveGameLogs = async (supabaseClient: SupabaseClient, game_id: string, logs: GameLog[]): Promise<void> => {
-    if (logs.length === 0) {
-        return;
-    }
-
-    try {
-        // Filter to only new logs (created within the last 10 minutes)
-        // Due to Supabase function runtime limits, we can't be saving logs older than 10 minutes
-        // This means logs older than 10 minutes must have been loaded from the database
-        const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
-        const newLogs = logs.filter(log => new Date(log.created_at) > tenMinutesAgo);
-
-        if (newLogs.length === 0) {
-            console.log(`[LOG] No new logs to save for game ${game_id} (all logs older than 10 minutes)`);
-            return;
-        }
-
-        const logsToUpsert = newLogs.map(log => ({
-            id: log.id,
-            game_id: log.game_id,
-            log_type: log.log_type,
-            player_id: log.player_id,
-            card_pairs: log.card_pairs,
-            defender_index: log.defender_index,
-            created_at: log.created_at
-        }));
-
-        // Use upsert with onConflict to ignore existing logs
-        const { error } = await supabaseClient
-            .from('game_logs')
-            .upsert(logsToUpsert, { onConflict: 'id', ignoreDuplicates: true });
-
-        if (error) {
-            console.error('Error saving game logs:', error);
-            throw error; // Propagate error to fail the entire save operation
-        }
-
-        console.log(`[LOG] Successfully saved ${newLogs.length} new log(s) for game ${game_id}`);
-    } catch (error) {
-        console.error('Error in saveGameLogs:', error);
-        throw error; // Ensure transaction-like behavior
-    }
-};
-
+// (saveGameLogs is gone: a move's logs now ride inside the commit_game RPC —
+// same transaction as the version-gated state write. See migration
+// 20260702100000 and commitGame in utils.ts.)
 
 // Delete EVERY log row for a game — all sessions, not just the current one.
 // Called at game end after the session has been encoded into game_snapshots

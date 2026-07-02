@@ -189,7 +189,9 @@ export const createClient = (_url?: string, _key?: string) => ({
     rpc: async (name: string, params: Record<string, any> = {}): Promise<Result> => {
         try {
             const keys = Object.keys(params);
-            const placeholders = keys.map((_k, i) => `$${i + 1}`).join(',');
+            // Named-argument call, like PostgREST: defaulted params may be
+            // omitted and the caller's key order can't silently misbind.
+            const placeholders = keys.map((k, i) => `${k} => $${i + 1}`).join(',');
             const vals = keys.map((k) => { const v = params[k]; return v !== null && typeof v === 'object' ? JSON.stringify(v) : v; });
             const r = await pool.query(`SELECT ${name}(${placeholders}) AS result`, vals);
             return ok(r.rows[0]?.result ?? null);

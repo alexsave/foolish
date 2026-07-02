@@ -478,7 +478,8 @@ CREATE OR REPLACE FUNCTION commit_game(
   p_game             JSONB,
   p_deck             JSONB,
   p_hands            JSONB,
-  p_bot_hands        JSONB
+  p_bot_hands        JSONB,
+  p_logs             JSONB DEFAULT NULL
 ) RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -524,6 +525,23 @@ BEGIN
     FROM jsonb_array_elements(p_bot_hands) AS b
     ON CONFLICT (game_id, bot_id) DO UPDATE
       SET hand = EXCLUDED.hand, awaiting_attack = EXCLUDED.awaiting_attack, updated_at = now();
+  END IF;
+
+  -- This move's logs, atomic with the state they describe (see migration
+  -- 20260702100000). Array order is preserved by jsonb_array_elements, so
+  -- game_logs.seq keeps the emit order the replay encoder depends on.
+  -- ON CONFLICT keeps the write idempotent for retried requests.
+  IF p_logs IS NOT NULL AND jsonb_array_length(p_logs) > 0 THEN
+    INSERT INTO game_logs (id, game_id, log_type, player_id, card_pairs, defender_index, created_at)
+    SELECT (l->>'id')::uuid,
+           p_game_id,
+           (l->>'log_type')::log_type,
+           l->>'player_id',
+           COALESCE(l->'card_pairs', '[]'::jsonb),
+           (l->>'defender_index')::int,
+           (l->>'created_at')::timestamp
+    FROM jsonb_array_elements(p_logs) AS l
+    ON CONFLICT (id) DO NOTHING;
   END IF;
 
   RETURN jsonb_build_object('status', 'ok', 'version', v_new_version);

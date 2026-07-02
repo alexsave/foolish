@@ -12,7 +12,7 @@ import type { User } from 'jsr:@supabase/supabase-js';
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { getAuthenticatedUser } from './auth.ts';
-import { saveGameLogs, cleanupOldGameLogs, wipeAllGameLogs, loadCurrentSessionLogs } from './log_utils.ts';
+import { cleanupOldGameLogs, wipeAllGameLogs, loadCurrentSessionLogs } from './log_utils.ts';
 // NOTE: bot_actions (→ the entire bot-strategy stack: cordite's ~127KB Monte-Carlo
 // engine, nitro, etc.) and the replay codec are imported LAZILY at their use sites
 // below, NOT statically. wrap400 is imported by every edge function, so a static
@@ -89,31 +89,21 @@ export const executeWithGameLock = async (game_id: string, operation: (game: Gam
         // End-of-game one-time side effects (ELO + replay snapshot + log wipe),
         // run exactly once — only the winning commit reaches here. This MUST run
         // before the broadcast: it pushes the MAGIC_TRANSITION event and the final
-        // state the broadcast carries. The ending move's own logs are persisted
-        // first so finalizeEndedGame can load the COMPLETE session for the replay
-        // snapshot (logs are now lazy — not held in memory across the game).
+        // state the broadcast carries. The ending move's own logs were committed
+        // atomically with the final state above, so finalizeEndedGame loads the
+        // COMPLETE session for the replay snapshot.
         if (game_ended) {
-            if (result.game.logs.length > 0) {
-                await saveGameLogs(supabaseClient, game_id, result.game.logs);
-            }
             await finalizeEndedGame(result.game);
             result.events.push({ type: ANIMATION_EVENT_TYPE.MAGIC_TRANSITION, game_state: result.game });
         }
 
-        // Broadcast AFTER the durable commit (fire-and-forget). For a normal move we
-        // do this BEFORE persisting logs: the opponent's animation should not wait on
-        // an append-only, UUID-keyed (idempotent) log write that can't affect game
-        // state. The fence is the version, not the log table.
+        // Broadcast AFTER the durable commit (fire-and-forget). The move's logs
+        // were part of the commit itself (commit_game p_logs) — there is no
+        // separate log write left on this path; the fence is the version.
         if (result.events.length > 0) {
             console.log(`[${reqId}][TXN] Broadcasting ${result.events.length} events after commit`);
             broadcastAnimationEvents(result.game, result.events, reqId).catch(err =>
                 console.error(`[${reqId}] Error broadcasting events:`, err));
-        }
-
-        // Persist this move's logs AFTER kicking off the broadcast (skipped when the
-        // game ended — finalizeEndedGame already saved + snapshotted + wiped above).
-        if (!game_ended && result.game.logs.length > 0) {
-            await saveGameLogs(supabaseClient, game_id, result.game.logs);
         }
 
         return result;
@@ -599,6 +589,24 @@ export const commitGame = async (
 ): Promise<{ status: 'ok' | 'conflict'; version?: number }> => {
     const publicGame: PublicGame = gameToPublicGame(game);
 
+    // This move's logs ride in the SAME transaction as the version-gated
+    // commit (migration 20260702100000): one round-trip instead of a commit +
+    // separate saveGameLogs, and the logs can never be durably out of sync
+    // with the state they describe. The 10-minute guard mirrors the old
+    // saveGameLogs filter: anything older was loaded from the DB, not
+    // produced by this move.
+    const tenMinutesAgo = Date.now() - 10 * 60 * 1000;
+    const freshLogs = game.logs.filter(log => new Date(log.created_at).getTime() > tenMinutesAgo)
+        .map(log => ({
+            id: log.id,
+            game_id: log.game_id,
+            log_type: log.log_type,
+            player_id: log.player_id,
+            card_pairs: log.card_pairs,
+            defender_index: log.defender_index,
+            created_at: log.created_at,
+        }));
+
     const humanHands = game.players
         .filter(player => !player.is_ai)
         .map(player => ({
@@ -622,6 +630,7 @@ export const commitGame = async (
         p_deck: game.deck,
         p_hands: humanHands,
         p_bot_hands: botHands,
+        p_logs: freshLogs.length > 0 ? freshLogs : null,
     });
 
     if (error) {
