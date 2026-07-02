@@ -235,32 +235,40 @@ interface BroadcastMessage { topic: string; event: string; payload: any; }
 const broadcastMessages = async (messages: BroadcastMessage[], reqId: string = 'unknown'): Promise<void> => {
     if (messages.length === 0) return;
     const start = Date.now();
-    try {
-        const response = await fetch(REALTIME_BROADCAST_URL, {
-            method: 'POST',
-            headers: {
-                apikey: REALTIME_BROADCAST_KEY,
-                Authorization: `Bearer ${REALTIME_BROADCAST_KEY}`,
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                messages: messages.map(m => ({
-                    topic: m.topic,
-                    event: m.event,
-                    payload: m.payload,
-                    private: true,
-                })),
-            }),
-        });
-        // Realtime returns 202 Accepted on success.
-        if (response.status !== 202) {
+    // One retry on failure: the whole path is fire-and-forget (a dropped
+    // broadcast only surfaces as a missed animation until the next event's
+    // versioned state supersedes it), so a single cheap re-send covers the
+    // transient Realtime hiccup without adding meaningful tail latency.
+    // Duplicate delivery is safe — clients dedup by sequence_id and drop
+    // stale versions.
+    for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+            const response = await fetch(REALTIME_BROADCAST_URL, {
+                method: 'POST',
+                headers: {
+                    apikey: REALTIME_BROADCAST_KEY,
+                    Authorization: `Bearer ${REALTIME_BROADCAST_KEY}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    messages: messages.map(m => ({
+                        topic: m.topic,
+                        event: m.event,
+                        payload: m.payload,
+                        private: true,
+                    })),
+                }),
+            });
+            // Realtime returns 202 Accepted on success.
+            if (response.status === 202) {
+                await response.body?.cancel();
+                break;
+            }
             const text = await response.text().catch(() => response.statusText);
-            console.error(`[${reqId}][BROADCAST] REST broadcast failed: ${response.status} ${text}`);
-        } else {
-            await response.body?.cancel();
+            console.error(`[${reqId}][BROADCAST] REST broadcast failed (attempt ${attempt}): ${response.status} ${text}`);
+        } catch (err) {
+            console.error(`[${reqId}][BROADCAST] REST broadcast error (attempt ${attempt}):`, err);
         }
-    } catch (err) {
-        console.error(`[${reqId}][BROADCAST] REST broadcast error:`, err);
     }
     console.log(`[${reqId}][BROADCAST] batched ${messages.length} message(s) in ${Date.now() - start}ms`);
 };
