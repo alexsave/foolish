@@ -1296,7 +1296,13 @@ int cd_sim_playout_reply(SimState *s, int my_idx, int max_turns,
                          int leaf_cards, long leaf_budget,
                          const uint8_t *pol, int reply_cap) {
     // Advance with the policy while it is still MY move (or forced steps),
-    // for a handful of plies, until an OPPONENT decision surfaces.
+    // for a handful of plies, until the DEFENDER's reply to the attack
+    // surfaces. Only the defender's cover/pass/pickup decision is searched:
+    // the defender makes that choice from information they genuinely have
+    // (their own hand + the visible attack), so the in-world best reply is a
+    // realistic model of their actual play. Searching OTHER reply types
+    // (e.g. an opponent's next attack) uses the sampled hidden cards the
+    // real opponent cannot see — paranoid distortion, measured harmful.
     for (int guard = 0; guard < 8; guard++) {
         if (sim_done(s) >= 0)
             return cd_sim_playout_pol(s, my_idx, max_turns, 1,
@@ -1305,7 +1311,7 @@ int cd_sim_playout_reply(SimState *s, int my_idx, int max_turns,
         for (int pi = 0; pi < s->num_players; pi++)
             if (sim_should_act(s, pi)) { actor = pi; break; }
         if (actor < 0) break;
-        if (actor != my_idx) {
+        if (actor != my_idx && actor == s->defender && s->num_battles > 0) {
             // The reply decision. Enumerate + tournament.
             SolMove buf[CD_SIM_SOLVE_MAX_MOVES];
             int n = sim_gen_moves(s, actor, buf, CD_SIM_SOLVE_MAX_MOVES);
@@ -1348,7 +1354,7 @@ int cd_sim_playout_reply(SimState *s, int my_idx, int max_turns,
             if (best_my_pos > 0) return best_my_pos;
             break;   // tournament failed entirely: policy playout below
         }
-        // My (or forced) move: one policy step.
+        // My move, or a non-defender opponent decision: one policy step.
         SimMove m;
         int got = (pol && pol[actor] == CD_POL_LOOSE)
                 ? sim_loose_move(s, actor, &m)
