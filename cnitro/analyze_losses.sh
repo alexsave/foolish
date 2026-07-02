@@ -33,7 +33,7 @@ if [ "$cmd" = diff ]; then
     ./build/cnitro_eval --strategy="$ctrl" --opp="$opp" --players="$pc" --inspect="$seed" > "$b" 2>/dev/null
     echo "=== deal (shared) ==="
     sed -n 2p "$a"
-    div=$(diff <(cat "$a") <(cat "$b") | head -1 | sed 's/[acd].*//')
+    div=$(diff <(cat "$a") <(cat "$b") | head -1 | grep -oE '^[0-9]+' | head -1)
     if [ -z "$div" ]; then echo "traces identical"; rm -f "$a" "$b"; exit 0; fi
     echo "=== first divergence at line $div (context: 6 before, 12 after) ==="
     echo "--- $hero ---"
