@@ -267,13 +267,15 @@ per item:
 | Broadcast single retry | robustness | ✅ fixed |
 | Batched ELO loads at game end | perf | ✅ fixed |
 | Dead-code sweep (auto_discard_locks table dropped, inert handlers, debug logs) | cleanup | ✅ fixed |
+| ServerContext split: stable actions context + state context, `useServerActions()` | perf | ✅ fixed (needs UI verification) |
+| Move logs into the commit_game transaction (one round-trip per move, atomic) | perf + correctness | ✅ fixed |
+| ELO ∥ replay snapshot at game end; partial index for the heartbeat scan | perf | ✅ fixed |
 
 Deliberately left open — these need runtime UI verification or a product
 decision, not just code motion:
 
 | Item | Why it's open |
 |------|---------------|
-| Context value splitting / memoization | Real win requires `useCallback`-wrapping ~25 context methods; done blindly that's a stale-closure factory. Needs a session with the running UI + profiler. |
 | Extract `resolveOptimisticConflicts` into a pure tested module | ~400-line move threading a dozen refs/setters; mechanical but only safe with the UI exercising the conflict paths. |
 | Dedup-window asymmetry | The version gate already drops same/older-versioned redeliveries before either dedup set is consulted; the residual hole affects only versionless (replay) sequences, and tightening it interacts with intentional replay re-publishing. Verify against the replay screen first. |
 | Disconnected-attacker story (all-good timeout vs presence) | The 60s timeout is deliberately disabled ("no auto-discard out from under absent attackers"). Re-enabling is a gameplay decision; the dead lock-table scaffolding is now removed either way. |
