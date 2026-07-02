@@ -6,5 +6,6 @@
 #include "legal.h"
 
 int semtex_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
+int semtex_oracle_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
 
 #endif

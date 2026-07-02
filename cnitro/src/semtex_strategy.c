@@ -117,6 +117,10 @@ static _Thread_local int sx_w1_override = 0, sx_w2_override = 0;
 static _Thread_local int sx_w3_override = -1;
 static _Thread_local int sx_old_budget = 0;    // cordite_old variant: pre-2x worlds
 static _Thread_local int sx_keep1 = 0, sx_keep2 = 0;  // SX_KEEP1/2: candidates kept past stage 0/1 (0=default n/3, 2)
+// Oracle mode (research): multiply the world budget and widen candidate
+// survival for one call. Used by semtex_oracle_strategy_choose to audit
+// loss games — a decision the oracle changes was compute-limited.
+static _Thread_local int sx_oracle = 0;
 static _Thread_local int sx_rollout_policy = 0;       // SX_ROLLOUT: 0=default, 1=espresso, 2=handwritten (struct path)
 // Bitboard endgame-solver node budgets (per shared pass). The bitboard solver
 // (transposition table + O(1) clone) resolves far more per node than the
@@ -1019,6 +1023,7 @@ static void sx_params(int num_players, int *W1, int *W2, int *W3) {
         else if (num_players <= 6) { *W1 = 20; *W2 = 40; *W3 = 28; }
         else                       { *W1 = 20; *W2 = 40; *W3 = 24; }
     }
+    if (sx_oracle) { *W1 *= 6; *W2 *= 6; *W3 *= 6; }
     if (sx_w1_override > 0) *W1 = sx_w1_override;
     if (sx_w2_override > 0) *W2 = sx_w2_override;
     if (sx_w3_override >= 0) *W3 = sx_w3_override;
@@ -1233,10 +1238,10 @@ int semtex_strategy_choose(const Game *g, int bot_idx,
             for (int i = 0; i < C.n; i++) if (alive[i]) n_alive++;
             int keep;
             if (stage == 0) {
-                keep = (sx_keep1 > 0) ? sx_keep1 : C.n / 3;
-                if (keep < 3) keep = 3;
+                keep = (sx_keep1 > 0) ? sx_keep1 : (sx_oracle ? (C.n + 1) / 2 : C.n / 3);
+                if (keep < (sx_oracle ? 4 : 3)) keep = sx_oracle ? 4 : 3;
             } else {
-                keep = (sx_keep2 > 0) ? sx_keep2 : 2;
+                keep = (sx_keep2 > 0) ? sx_keep2 : (sx_oracle ? 3 : 2);
             }
             if (keep >= n_alive) continue;
             for (int dropped = n_alive - keep; dropped > 0; dropped--) {
@@ -1270,3 +1275,13 @@ int semtex_strategy_choose(const Game *g, int bot_idx,
     return best >= 0 ? C.idx[best] : 0;
 }
 
+// Oracle semtex: the same brain with 6x the sampled-world budget and wider
+// candidate survival. Research-only — used to audit losses: where the oracle
+// picks a different move, the default budget was the binding constraint.
+int semtex_oracle_strategy_choose(const Game *g, int bot_idx,
+                                  const LegalMoves *moves, void *ctx) {
+    sx_oracle = 1;
+    int r = semtex_strategy_choose(g, bot_idx, moves, ctx);
+    sx_oracle = 0;
+    return r;
+}

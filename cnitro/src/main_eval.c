@@ -45,6 +45,7 @@ static int dispatch_choose(int strat, const Game *g, int pi, const LegalMoves *m
         case STRAT_CORDITE_OLD: return cordite_old_strategy_choose(g, pi, moves, NULL);
         case STRAT_ASTROLITE:   return astrolite_strategy_choose(g, pi, moves, NULL);
         case STRAT_SEMTEX:      return semtex_strategy_choose(g, pi, moves, NULL);
+        case STRAT_SEMTEX_ORACLE: return semtex_oracle_strategy_choose(g, pi, moves, NULL);
         default:                return -1;
     }
 }
@@ -149,6 +150,95 @@ static int play_one_verbose(uint32_t seed, int n_players, int protagonist, int o
     return g.num_players;
 }
 
+// Audit variant of play_one: plays the game normally (protagonist at seat 0),
+// but at every seat-0 decision with >1 legal move ALSO queries the oracle
+// (semtex with 6x worlds + wider candidate survival) and reports
+// disagreements. Both strategies save/restore the game RNG internally, so
+// the trajectory is identical to a normal game; the oracle is a pure probe.
+// A disagreement marks a compute-limited decision; unanimous decisions in a
+// lost game are model-limited or unavoidable.
+static void fmt_move(const LegalMove *m, char *buf, size_t n) {
+    const char *mt =
+        m->type == MOVE_ATTACK ? "ATTACK" :
+        m->type == MOVE_COVER  ? "COVER"  :
+        m->type == MOVE_PASS   ? "PASS"   :
+        m->type == MOVE_PICKUP ? "PICKUP" :
+        m->type == MOVE_GOOD   ? "GOOD"   : "?";
+    char cbuf[128]; format_card_list(m->cards, m->n_cards, cbuf, sizeof(cbuf));
+    snprintf(buf, n, "%s[%s]", mt, cbuf);
+}
+
+static int play_one_audit(uint32_t seed, int n_players, int protagonist, int opp,
+                          int *n_dec, int *n_disagree) {
+    game_set_seed(seed ? seed : 1);
+    random_strategy_set_seed(seed ? seed : 1);
+    Game g; memset(&g, 0, sizeof(g));
+    g.num_players = (int8_t)n_players;
+    for (int i = 0; i < n_players; i++) {
+        g.players[i].status = PLAYER_STATUS_READY;
+        g.players[i].strategy_key = (int8_t)((i == 0) ? protagonist : opp);
+        snprintf(g.players[i].player_id, sizeof(g.players[i].player_id), "p%d", i);
+    }
+    start_game(&g);
+
+    int iters = 0, step = 0;
+    while (game_done(&g) < 0 && iters++ < 4000) {
+        int elig[MAX_PLAYERS]; int n_e = 0;
+        for (int i = 0; i < g.num_players; i++) if (should_bot_act(&g, i)) elig[n_e++] = i;
+        if (n_e == 0) break;
+        for (int i = n_e - 1; i > 0; i--) {
+            int j = (int)(game_random() * (i + 1));
+            if (j < 0) j = 0; if (j > i) j = i;
+            int t = elig[i]; elig[i] = elig[j]; elig[j] = t;
+        }
+        bool acted = false;
+        for (int k = 0; k < n_e; k++) {
+            int pi = elig[k];
+            LegalMoves moves;
+            calculate_legal_moves(&g, pi, &moves);
+            if (moves.n == 0) continue;
+            int idx = dispatch_choose(g.players[pi].strategy_key, &g, pi, &moves);
+            if (idx < 0 || idx >= moves.n) continue;
+            step++;
+            if (pi == 0 && moves.n > 1) {
+                (*n_dec)++;
+                int oidx = semtex_oracle_strategy_choose(&g, pi, &moves, NULL);
+                if (oidx >= 0 && oidx < moves.n && oidx != idx) {
+                    (*n_disagree)++;
+                    int in_c = 0;
+                    for (int q = 0; q < g.num_players; q++)
+                        if (g.players[q].status == PLAYER_STATUS_IN) in_c++;
+                    char mb[160], ob[160];
+                    fmt_move(&moves.moves[idx], mb, sizeof(mb));
+                    fmt_move(&moves.moves[oidx], ob, sizeof(ob));
+                    printf("  DISAGREE seed=%u step=%d deck=%d in=%d role=%s hand=%d "
+                           "moves=%d  played=%s  oracle=%s\n",
+                           seed, step, g.deck_count, in_c,
+                           (g.defender == 0) ? "def" : "att",
+                           g.players[0].hand_count, moves.n, mb, ob);
+                }
+            }
+            const LegalMove *m = &moves.moves[idx];
+            bool ok = false;
+            switch (m->type) {
+                case MOVE_ATTACK: ok = handle_attack(&g, pi, m->cards, m->n_cards); break;
+                case MOVE_COVER:  ok = handle_cover (&g, pi, m->cards, m->attack_cards, m->n_cards); break;
+                case MOVE_PASS:   ok = handle_pass  (&g, pi, m->cards, m->n_cards); break;
+                case MOVE_PICKUP: ok = handle_pickup(&g, pi); break;
+                case MOVE_GOOD:   ok = handle_good  (&g, pi); break;
+                default: break;
+            }
+            if (ok) { acted = true; break; }
+        }
+        if (!acted) break;
+    }
+    if (game_done(&g) < 0) return -1;
+    for (int i = 0; i < g.num_eliminated; i++) {
+        if (g.elimination_order[i] == 0) return i + 1;
+    }
+    return g.num_players;
+}
+
 // Play one game. Returns seat-0 finish position (1..N). Position N == durak.
 // -1 if the game aborted incomplete.
 static int play_one(uint32_t seed, int n_players, int protagonist, int opp) {
@@ -226,6 +316,77 @@ int main(int argc, char **argv) {
                strat_str, opp_str, seed, n);
         int fp = play_one_verbose((uint32_t)seed, n, protagonist, opp);
         printf("\nseat-0 finish position: %d (1=winner, %d=durak)\n", fp, n);
+        return 0;
+    }
+
+    // Replay-seeds path: --replay-seeds=<file> ("seed" or "pc seed ..."
+    // lines) — play each seed once with the chosen protagonist and print the
+    // finish position. For rescue-rate comparisons over a fixed loss set.
+    const char *replay_file = get_arg(argc, argv, "replay-seeds", NULL);
+    if (replay_file) {
+        int n = atoi(pcs);
+        if (n < 2) n = 2;
+        FILE *f = fopen(replay_file, "r");
+        if (!f) { fprintf(stderr, "cannot open %s\n", replay_file); return 2; }
+        char line[256];
+        long sum = 0; int cnt = 0, wins = 0;
+        while (fgets(line, sizeof(line), f)) {
+            unsigned pc_l, seed_l;
+            if (sscanf(line, "%u %u", &pc_l, &seed_l) == 2) {
+                if ((int)pc_l != n) continue;
+            } else if (sscanf(line, "%u", &seed_l) == 1) {
+                /* bare seed */
+            } else continue;
+            int fp = play_one(seed_l, n, protagonist, opp);
+            printf("seed=%u finish=%d\n", seed_l, fp);
+            if (fp > 0) { sum += fp; cnt++; wins += (fp == 1); }
+        }
+        fclose(f);
+        printf("=== REPLAY SUMMARY (%s): %d games mean=%.3f win=%.1f%% ===\n",
+               strat_str, cnt, cnt ? (double)sum / cnt : 0.0,
+               cnt ? 100.0 * wins / cnt : 0.0);
+        return 0;
+    }
+
+    // Oracle-audit path: --audit=<seed> or --audit-seeds=<file> (one seed per
+    // line, or "pc seed ..." lines from --dump). Plays each game normally and
+    // reports every seat-0 decision where the 6x-budget oracle disagrees.
+    const char *audit_one = get_arg(argc, argv, "audit", NULL);
+    const char *audit_file = get_arg(argc, argv, "audit-seeds", NULL);
+    if (audit_one || audit_file) {
+        int n = atoi(pcs);
+        if (n < 2) n = 2;
+        long tot_dec = 0, tot_dis = 0;
+        int n_games = 0;
+        if (audit_one) {
+            int nd = 0, nx = 0;
+            int fp = play_one_audit((uint32_t)atoi(audit_one), n, protagonist, opp, &nd, &nx);
+            printf("seed=%s finish=%d decisions=%d disagreements=%d\n",
+                   audit_one, fp, nd, nx);
+            tot_dec += nd; tot_dis += nx; n_games++;
+        } else {
+            FILE *f = fopen(audit_file, "r");
+            if (!f) { fprintf(stderr, "cannot open %s\n", audit_file); return 2; }
+            char line[256];
+            while (fgets(line, sizeof(line), f)) {
+                unsigned pc_l, seed_l;
+                // accept both "seed" and "pc seed hero ctrl" formats
+                if (sscanf(line, "%u %u", &pc_l, &seed_l) == 2) {
+                    if ((int)pc_l != n) continue;
+                } else if (sscanf(line, "%u", &seed_l) == 1) {
+                    /* bare seed */
+                } else continue;
+                int nd = 0, nx = 0;
+                int fp = play_one_audit(seed_l, n, protagonist, opp, &nd, &nx);
+                printf("seed=%u finish=%d decisions=%d disagreements=%d\n",
+                       seed_l, fp, nd, nx);
+                tot_dec += nd; tot_dis += nx; n_games++;
+            }
+            fclose(f);
+        }
+        printf("=== AUDIT SUMMARY: %d games, %ld seat-0 decisions, %ld oracle "
+               "disagreements (%.1f%%) ===\n", n_games, tot_dec, tot_dis,
+               tot_dec ? 100.0 * tot_dis / tot_dec : 0.0);
         return 0;
     }
 
