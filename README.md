@@ -11,6 +11,13 @@ from-scratch game-playing neural net, an information-theoretic replay codec, and
 a fully procedural, offline-capable renderer. See
 [The four projects under the hood](#the-four-projects-under-the-hood).
 
+Feature analysis and what's next: see [ROADMAP.md](ROADMAP.md) — a full
+gap review with priorities. The two P0 items are shipped: a global
+**leaderboard** (`/leaderboard`, humans and bots on one Elo ladder) and
+**match history with a replay gallery** (`/history`, every finished game
+decoded from its snapshot, re-watchable forever). Screenshots in
+[`docs/screenshots/`](docs/screenshots/).
+
 ---
 
 ## Quick start
@@ -49,7 +56,8 @@ Deploys to Vercel with zero config — Vercel auto-detects Next.js and serves th
 
 ```
 src/                      Next.js web client (App Router)
-  app/                    routes — /, /about, /tutorial, /dashboard, /:game_id
+  app/                    routes — /, /about, /tutorial, /dashboard, /:game_id,
+                          /leaderboard (Elo ladder), /history (past games + replays)
   components/             UI, incl. GameDisplay/* (board, cards, animations)
   contexts/               game state, auth, realtime, drag, animation, theme, i18n
   state/                  realtime animation feed + client reconciliation

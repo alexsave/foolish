@@ -71,7 +71,23 @@ export type StringId =
   | 'replay_bout_start'
   | 'replay_bout_next'
   | 'replay_draw'
-  | 'replay_draw_clear';
+  | 'replay_draw_clear'
+  | 'leaderboard'
+  | 'match_history'
+  | 'rating'
+  | 'games_label'
+  | 'tab_all'
+  | 'tab_humans'
+  | 'tab_bots'
+  | 'no_ranked_players'
+  | 'result_survived'
+  | 'result_fool'
+  | 'watch_replay'
+  | 'no_match_history'
+  | 'your_stats'
+  | 'survival_rate'
+  | 'times_fool'
+  | 'load_failed';
 
 // English strings
 const strings_en: Record<StringId, string> = {
@@ -147,6 +163,22 @@ const strings_en: Record<StringId, string> = {
   replay_bout_next: 'Next bout',
   replay_draw: 'Draw (press C)',
   replay_draw_clear: 'Clear drawing (press C)',
+  leaderboard: 'Leaderboard',
+  match_history: 'Match History',
+  rating: 'Rating',
+  games_label: 'Games',
+  tab_all: 'All',
+  tab_humans: 'Humans',
+  tab_bots: 'Bots',
+  no_ranked_players: 'No rated players yet — finish a game to appear here.',
+  result_survived: 'Survived',
+  result_fool: 'The fool',
+  watch_replay: 'Watch replay',
+  no_match_history: 'No recorded games yet. Games you finish will show up here with a replay.',
+  your_stats: 'Your stats (listed games)',
+  survival_rate: 'Survival rate',
+  times_fool: 'Times the fool',
+  load_failed: 'Could not load — try again later',
 };
 
 // Russian strings
@@ -223,6 +255,22 @@ const strings_ru: Record<StringId, string> = {
   replay_bout_next: 'Следующий кон',
   replay_draw: 'Рисовать (клавиша C)',
   replay_draw_clear: 'Стереть рисунок (клавиша C)',
+  leaderboard: 'Таблица лидеров',
+  match_history: 'История игр',
+  rating: 'Рейтинг',
+  games_label: 'Игры',
+  tab_all: 'Все',
+  tab_humans: 'Люди',
+  tab_bots: 'Боты',
+  no_ranked_players: 'Пока нет игроков с рейтингом — доиграйте партию, чтобы попасть сюда.',
+  result_survived: 'Не дурак',
+  result_fool: 'Дурак',
+  watch_replay: 'Смотреть повтор',
+  no_match_history: 'Пока нет записанных игр. Завершённые партии появятся здесь с повтором.',
+  your_stats: 'Ваша статистика (по списку игр)',
+  survival_rate: 'Процент выживания',
+  times_fool: 'Раз дураком',
+  load_failed: 'Не удалось загрузить — попробуйте позже',
 };
 
 // Korean strings
@@ -299,6 +347,22 @@ const strings_ko: Record<StringId, string> = {
   replay_bout_next: '다음 판',
   replay_draw: '그리기 (C 키)',
   replay_draw_clear: '그림 지우기 (C 키)',
+  leaderboard: '리더보드',
+  match_history: '경기 기록',
+  rating: '레이팅',
+  games_label: '게임 수',
+  tab_all: '전체',
+  tab_humans: '사람',
+  tab_bots: '봇',
+  no_ranked_players: '아직 랭킹에 오른 플레이어가 없습니다. 게임을 끝내면 여기에 표시됩니다.',
+  result_survived: '생존',
+  result_fool: '바보',
+  watch_replay: '리플레이 보기',
+  no_match_history: '아직 기록된 게임이 없습니다. 완료한 게임이 리플레이와 함께 여기에 표시됩니다.',
+  your_stats: '내 통계 (목록의 게임 기준)',
+  survival_rate: '생존율',
+  times_fool: '바보가 된 횟수',
+  load_failed: '불러오지 못했습니다. 나중에 다시 시도하세요',
 };
 
 // Combined strings object for easy access

@@ -286,5 +286,9 @@ export const RankIcon: React.FC<{ rank: number; totalPlayers: number; size?: num
     );
   }
 
-  return <span>#{rank}</span>;
+  return (
+    <span className="text-shadow" style={{ color: 'var(--color-text-primary)', fontWeight: 'bold' }}>
+      #{rank}
+    </span>
+  );
 };
