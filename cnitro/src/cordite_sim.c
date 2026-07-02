@@ -1333,14 +1333,28 @@ int cd_sim_playout_reply(SimState *s, int my_idx, int max_turns,
                 while (j >= 0 && key[order[j]] > ki) { order[j+1] = order[j]; j--; }
                 order[j+1] = oi;
             }
-            int kept = n < reply_cap ? n : reply_cap;
+            // Keep the top reply_cap cheap-first replies, but PICKUP and
+            // GOOD (which rank last) are always searched — "just take the
+            // cards" is the defender's most realistic fallback and must not
+            // be pruned by a large cover-combination set.
+            int kept_idx[CD_SIM_SOLVE_MAX_MOVES];
+            int kept = 0;
+            for (int k = 0; k < n && kept < reply_cap; k++) {
+                uint8_t t = buf[order[k]].type;
+                if (t == MV_PICKUP || t == MV_GOOD) continue;   // added below
+                kept_idx[kept++] = order[k];
+            }
+            for (int i = 0; i < n; i++) {
+                uint8_t t = buf[i].type;
+                if (t == MV_PICKUP || t == MV_GOOD) kept_idx[kept++] = i;
+            }
             uint32_t rng0 = game_rng_get();
             int best_actor_pos = 1 << 20;
             int best_my_pos = -1;
             for (int k = 0; k < kept; k++) {
                 SimState trial = *s;
                 game_rng_set(rng0);   // CRN across replies
-                sim_apply_sol(&trial, actor, &buf[order[k]]);
+                sim_apply_sol(&trial, actor, &buf[kept_idx[k]]);
                 // Full playout, NO early exit: both finishes are needed.
                 (void)cd_sim_playout_pol(&trial, my_idx, max_turns, 0,
                                          leaf_cards, leaf_budget, pol);
