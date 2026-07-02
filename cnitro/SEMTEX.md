@@ -171,6 +171,30 @@ above are the primary evidence; the arena is a sanity check:
 Semtex ranks at-or-above cordite in both runs and never below any other
 bot's tier.
 
+### Hunt 3 — the 3+ player worlds finding
+
+The same audit methodology at pc4/pc6: mirror losses there are also
+compute-limited (oracle rescue 31%/23% vs noise 3%/0%), but the aggregate
+mirror gain is small because opponent MC noise dominates MC-vs-MC
+outcomes. The payoff surfaces against **heuristic fields** (the human
+proxies): 6x worlds at pc3/pc4 is worth +5-8pp win vs the cordite control
+(pc3 67.2% vs 59.5%, pc4 39.8% vs 34.8%, seeds 950001; attribution clean —
+the default played 400/400 of those deals identically to cordite). pc2 is
+saturated at its 6x (18x measured identical). Baked: C budgets at 3+
+raised to 6x (pc5-8 = the ratios production TS cordite already ships).
+
+Final fresh-seed matrix (960001, 400 pairs/cell, all levers baked):
+every cordite-mirror cell negative — pc3 −0.105±0.057, pc4 −0.068±0.073,
+pc5 −0.080±0.074, pc6 −0.085±0.108, pc8 −0.092±0.108 (jointly ~2.2σ, on
+top of the pc2 −0.185 at 5σ) — and vs handwritten fields pc6 −0.218±0.082,
+pc8 −0.120±0.087, pc4 −0.065±0.059, pc3 −0.028±0.043, pc5 +0.065±0.055
+(the one ~1σ positive cell; within noise).
+
+Supabase budget: base `semtex` TS params are unchanged (identical CPU
+cost); `semtex_max` carries the full C-measured budget at every player
+count (measured pc4 decision mean 104 ms / max 454 ms on a slow 4-core
+dev box — far under the 2 s cap).
+
 ### No rock-paper-scissors
 
 Semtex was never significantly worse than cordite in any of the ~25
