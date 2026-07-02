@@ -1009,7 +1009,16 @@ static void sx_params(int num_players, int *W1, int *W2, int *W3) {
     // pc4 2.007->1.990, pc8 4.183/12.2% -> 4.125/15.0%. Doubling again was not
     // reliably better and costs more (esp. at pc2 where the exact solver, not
     // the rollout, dominates), so the budget stops at 2x.
-    if (num_players <= 2)      { *W1 = 32; *W2 = 56; *W3 = 56; }
+    // Semtex heads-up budget: 6x cordite's. Loss-audit finding: on the deals
+    // semtex lost the pc2 cordite mirror, a 6x-worlds oracle won 66% (noise
+    // control: 10%) — heads-up vs a strong opponent was variance-limited,
+    // not saturated (the old saturation result was measured on weaker
+    // fields / the TS engine, which already ran ~3x). Paired aggregate,
+    // three seed sets: -0.168/-0.138/-0.173 mean finish, +14..+17pp win vs
+    // the cordite control (vs -0.135/+13.5pp at 1x). Worlds only — wider
+    // candidate survival added nothing (keeps-only: -0.133). 2x/3x were NOT
+    // reliable stops (-0.130/-0.093); the measured knee is at ~6x.
+    if (num_players <= 2)      { *W1 = 192; *W2 = 336; *W3 = 336; }
     else if (num_players <= 4) { *W1 = 28; *W2 = 56; *W3 = 56; }
     else if (num_players <= 6) { *W1 = 40; *W2 = 80; *W3 = 56; }
     else                       { *W1 = 40; *W2 = 80; *W3 = 48; }

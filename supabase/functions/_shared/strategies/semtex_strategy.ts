@@ -115,6 +115,20 @@ const makePublicView = (game: Game, botPlayerId: string): PublicView | null => {
     return view;
 };
 
+// Semtex world budget: cordite's params with the heads-up budget raised to
+// the C-measured knee (192/336/336 — see SEMTEX.md "worlds" finding: heads-up
+// vs strong opponents was variance-limited, not saturated). The 2 s
+// maxMillis cap still bounds the rare long decision; when wall-clock runs
+// out the sampler stops gracefully with the worlds completed so far.
+const SEMTEX_PARAMS: CorditeParams = {
+    worldsFor: (n) => n <= 2 ? [192, 336, 336] : CORDITE_PARAMS.worldsFor(n),
+    maxMillis: 2000,
+};
+const SEMTEX_MAX_PARAMS: CorditeParams = {
+    worldsFor: (n) => n <= 2 ? [192, 336, 336] : CORDITE_MAX_PARAMS.worldsFor(n),
+    maxMillis: 2000,
+};
+
 // The semtex lever configuration (see file header + cnitro/SEMTEX.md).
 const semtexOptsFor = (numPlayers: number): SemtexOpts => ({
     // Small (8-card) exact leaves HEADS-UP ONLY. Loss analysis in C showed
@@ -183,9 +197,9 @@ class SemtexBase implements BotStrategy {
 }
 
 export class SemtexStrategy extends SemtexBase {
-    constructor() { super('semtex', CORDITE_PARAMS); }
+    constructor() { super('semtex', SEMTEX_PARAMS); }
 }
 
 export class SemtexMaxStrategy extends SemtexBase {
-    constructor() { super('semtex_max', CORDITE_MAX_PARAMS); }
+    constructor() { super('semtex_max', SEMTEX_MAX_PARAMS); }
 }
