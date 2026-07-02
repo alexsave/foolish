@@ -204,6 +204,8 @@ CREATE INDEX idx_chat_messages_game_id ON chat_messages(game_id);
 CREATE INDEX idx_chat_messages_user_id ON chat_messages(user_id);
 CREATE INDEX idx_chat_messages_created_at ON chat_messages(created_at);
 CREATE INDEX idx_games_updated_at ON games(updated_at);
+-- bot-heartbeat SCAN (every 10s): status='playing' + updated_at window
+CREATE INDEX idx_games_playing_updated_at ON games(updated_at) WHERE status = 'playing';
 CREATE INDEX idx_user_elo_ratings_user_id ON user_elo_ratings(user_id);
 CREATE INDEX idx_user_elo_ratings_elo_rating ON user_elo_ratings(elo_rating);
 CREATE INDEX idx_bots_strategy_key ON bots(strategy_key);

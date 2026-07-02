@@ -693,8 +693,11 @@ const check_win_sync = (game: Game): boolean => {
 // the old check_win_async; its check_win_sync half now runs BEFORE the commit so
 // the committed state already reflects GAME_OVER.
 const finalizeEndedGame = async (game: Game): Promise<void> => {
-    // Update ELO ratings
-    await updateEloRatings(game);
+    // ELO and the replay snapshot touch disjoint tables and don't read each
+    // other's writes — run them concurrently instead of serially, since both
+    // sit on the game-end critical path before the final broadcast.
+    // updateEloRatings never throws (it swallows its own errors).
+    const eloPromise = updateEloRatings(game);
 
     // Logs are loaded lazily, so game.logs holds only the FINAL move's logs here.
     // The replay snapshot needs the whole session, so load it from the DB (the
@@ -754,6 +757,8 @@ const finalizeEndedGame = async (game: Game): Promise<void> => {
             console.error(`Error cleaning up old logs for game ${game.id}:`, err);
         });
     }
+
+    await eloPromise;
 }
 
 
