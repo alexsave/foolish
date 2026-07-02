@@ -51,7 +51,7 @@ async function loadGamesEmbed(id: string): Promise<Result> {
     } finally { c.release(); }
 }
 
-interface Filter { col: string; op: 'eq' | 'in'; val: any }
+interface Filter { col: string; op: 'eq' | 'in' | 'lt'; val: any }
 
 class QueryBuilder implements PromiseLike<Result> {
     private filters: Filter[] = [];
@@ -59,7 +59,7 @@ class QueryBuilder implements PromiseLike<Result> {
     private op: 'select' | 'insert' | 'upsert' | 'update' | 'delete' = 'select';
     private rows: any[] = [];
     private upsertOpts: { onConflict?: string; ignoreDuplicates?: boolean } = {};
-    private orderCol?: string; private orderAsc = true; private limitN?: number;
+    private orders: { col: string; asc: boolean }[] = []; private limitN?: number;
     private wantSingle = false;
 
     constructor(private table: string) {}
@@ -71,7 +71,9 @@ class QueryBuilder implements PromiseLike<Result> {
     delete() { this.op = 'delete'; return this; }
     eq(col: string, val: any) { this.filters.push({ col, op: 'eq', val }); return this; }
     in(col: string, val: any[]) { this.filters.push({ col, op: 'in', val }); return this; }
-    order(col: string, opts: any = {}) { this.orderCol = col; this.orderAsc = opts.ascending !== false; return this; }
+    lt(col: string, val: any) { this.filters.push({ col, op: 'lt', val }); return this; }
+    // supabase-js appends on repeated .order() calls; mirror that
+    order(col: string, opts: any = {}) { this.orders.push({ col, asc: opts.ascending !== false }); return this; }
     limit(n: number) { this.limitN = n; return this; }
     single() { this.wantSingle = true; return this; }
     maybeSingle() { this.wantSingle = true; return this; }
@@ -80,7 +82,8 @@ class QueryBuilder implements PromiseLike<Result> {
         if (this.filters.length === 0) return '';
         const parts = this.filters.map((f) => {
             if (f.op === 'in') { params.push(f.val); return `${f.col} = ANY($${params.length})`; }
-            params.push(f.val); return `${f.col} = $${params.length}`;
+            params.push(f.val);
+            return f.op === 'lt' ? `${f.col} < $${params.length}` : `${f.col} = $${params.length}`;
         });
         return ' WHERE ' + parts.join(' AND ');
     }
@@ -95,7 +98,7 @@ class QueryBuilder implements PromiseLike<Result> {
             if (this.op === 'select') {
                 const params: any[] = [];
                 let sql = `SELECT ${this.selectCols === '*' ? '*' : this.selectCols} FROM ${this.table}${this.where(params)}`;
-                if (this.orderCol) sql += ` ORDER BY ${this.orderCol} ${this.orderAsc ? 'ASC' : 'DESC'}`;
+                if (this.orders.length > 0) sql += ` ORDER BY ${this.orders.map((o) => `${o.col} ${o.asc ? 'ASC' : 'DESC'}`).join(', ')}`;
                 if (this.limitN != null) sql += ` LIMIT ${this.limitN}`;
                 const r = await pool.query(sql, params);
                 if (this.wantSingle) {

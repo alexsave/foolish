@@ -171,7 +171,11 @@ CREATE TABLE game_logs (
   player_id TEXT, -- Player who performed the action (null for system events like discard/defender_change)
   card_pairs JSONB NOT NULL DEFAULT '[]'::jsonb, -- Array of {primary: Card, target?: Card} - target only used for COVER
   defender_index INTEGER, -- For defender_change events, the new defender index
-  created_at TIMESTAMP DEFAULT NOW()
+  created_at TIMESTAMP DEFAULT NOW(),
+  -- Insert-order tie-breaker: created_at only has ms precision and one move's
+  -- cascade logs share a millisecond, so the replay encoder orders the session
+  -- by (created_at, seq). See migration 20260701120000.
+  seq BIGSERIAL
 );
 
 -- Game snapshots - one row per finished session: the complete game compressed

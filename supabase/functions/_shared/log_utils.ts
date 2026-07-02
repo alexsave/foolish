@@ -77,12 +77,18 @@ export const wipeAllGameLogs = async (supabaseClient: SupabaseClient, game_id: s
 // here on demand instead of on every move.
 export const loadCurrentSessionLogs = async (supabaseClient: SupabaseClient, game_id: string): Promise<GameLog[]> => {
     try {
-        // Get all logs for this game ordered by creation time
+        // Get all logs for this game ordered by creation time. created_at alone
+        // is NOT a total order: it has ms precision and a single move's cascade
+        // (attack → player_out → defender_change → draw…) stamps several logs in
+        // the same millisecond, so ties come back in arbitrary order and the
+        // replay encoder desyncs ("logged attack not in menu"). seq (insert
+        // order, see migration 20260701120000) breaks the ties exactly.
         const { data: allLogs, error } = await supabaseClient
             .from('game_logs')
             .select('*')
             .eq('game_id', game_id)
-            .order('created_at', { ascending: true });
+            .order('created_at', { ascending: true })
+            .order('seq', { ascending: true });
 
         if (error) {
             console.error('Error loading game logs:', error);
