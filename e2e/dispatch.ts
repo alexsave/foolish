@@ -53,7 +53,7 @@ export async function checkCardConservation(gameId: string): Promise<{ ok: boole
     let backs = 0;
     for (const c of live) { if (c.suit === -1) backs++; seen.set(key(c), (seen.get(key(c)) ?? 0) + 1); }
     const dupes = [...seen.entries()].filter(([, n]) => n > 1).map(([k, n]) => `${k}x${n}`);
-    const expected = (g.players?.length ?? 0) > 4 ? 52 : 36;
+    const expected = (g.players?.length ?? 0) >= 6 ? 52 : 36;
     const total = live.length + (g.discard_pile_length ?? 0);
     const okFlag = total === expected && dupes.length === 0 && backs === 0;
     return { ok: okFlag, detail: `total=${total}/${expected} live=${live.length} discard=${g.discard_pile_length}${dupes.length ? ` DUP[${dupes.join(',')}]` : ''}${backs ? ` BACKS=${backs}` : ''}` };

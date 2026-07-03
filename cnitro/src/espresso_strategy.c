@@ -446,7 +446,7 @@ int espresso_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves
                     }
                 }
             }
-            int start_v = (g->num_players > 4) ? 1 : MIN_VALUE_2P;
+            int start_v = min_value_for(g->num_players);
             Card deck_pool[80]; int dn = 0;
             for (int suit = 0; suit < 4; suit++) {
                 for (int v = start_v; v <= 14; v++) {  // TS uses 14 (not ACE_VALUE) — port verbatim

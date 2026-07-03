@@ -5,11 +5,14 @@
 #include "legal.h"
 #include <string.h>
 
-// Append a move; silently drops past MAX_LEGAL_MOVES.
+// Append a move; silently drops past MAX_LEGAL_MOVES. The slot is NOT
+// zeroed: every consumer reads cards[]/attack_cards[] bounded by n_cards
+// (set by the caller), and clearing the full struct was a measurable cost
+// at tens of thousands of moves per enumeration.
 static LegalMove *push_move(LegalMoves *out) {
     if (out->n >= MAX_LEGAL_MOVES) return NULL;
     LegalMove *m = &out->moves[out->n++];
-    memset(m, 0, sizeof(*m));
+    m->n_cards = 0;
     return m;
 }
 
@@ -123,13 +126,13 @@ typedef struct {
     int attack_idx;        // index into uncovered_battles
     int covers_n;
     Card covers[MAX_HAND_SIZE]; // cards in defender hand that can cover this attack
+    int8_t cover_hand_idx[MAX_HAND_SIZE]; // hand index of each cover (dedup key)
     Card attack_card;      // the actual card on the table
 } CoverOption;
 
 static void emit_cover_combo(LegalMoves *out,
-                             const CoverOption *opts, int n_opts,
-                             int *chosen_idx, int depth, bool *used,
-                             const Player *defender) {
+                             const CoverOption *const *opts, int n_opts,
+                             int *chosen_idx, int depth, bool *used) {
     if (out->n >= MAX_LEGAL_MOVES) return;  // early-exit; combinatorial blowup otherwise
     if (depth == n_opts) {
         LegalMove *m = push_move(out);
@@ -137,22 +140,20 @@ static void emit_cover_combo(LegalMoves *out,
         m->type = MOVE_COVER;
         m->n_cards = (int8_t)n_opts;
         for (int i = 0; i < n_opts; i++) {
-            m->cards[i] = opts[i].covers[chosen_idx[i]];
-            m->attack_cards[i] = opts[i].attack_card;
+            m->cards[i] = opts[i]->covers[chosen_idx[i]];
+            m->attack_cards[i] = opts[i]->attack_card;
         }
         return;
     }
-    for (int i = 0; i < opts[depth].covers_n; i++) {
-        // Avoid using the same card twice across attacks.
-        Card c = opts[depth].covers[i];
-        int hi = -1;
-        for (int j = 0; j < defender->hand_count; j++) {
-            if (card_eq(defender->hand[j], c)) { hi = j; break; }
-        }
-        if (hi < 0 || used[hi]) continue;
+    for (int i = 0; i < opts[depth]->covers_n; i++) {
+        // Avoid using the same card twice across attacks: the hand index of
+        // each cover was recorded at option-build time, so the dedup check is
+        // O(1) instead of a hand scan per candidate.
+        int hi = opts[depth]->cover_hand_idx[i];
+        if (used[hi]) continue;
         used[hi] = true;
         chosen_idx[depth] = i;
-        emit_cover_combo(out, opts, n_opts, chosen_idx, depth + 1, used, defender);
+        emit_cover_combo(out, opts, n_opts, chosen_idx, depth + 1, used);
         used[hi] = false;
     }
 }
@@ -164,14 +165,15 @@ static void choose_attack_subset(const Game *g, const Player *defender,
                                  int *picked, int picked_n,
                                  LegalMoves *out) {
     if (k_left == 0) {
-        // Build CoverOption array for the picked attack indices.
-        CoverOption opts[MAX_BATTLES];
-        for (int i = 0; i < picked_n; i++) opts[i] = all_opts[picked[i]];
+        // Reference the picked options by pointer — copying each CoverOption
+        // (a couple hundred bytes) per enumerated subset was pure overhead.
+        const CoverOption *opts[MAX_BATTLES];
+        for (int i = 0; i < picked_n; i++) opts[i] = &all_opts[picked[i]];
         // Skip if any picked attack has no covers.
-        for (int i = 0; i < picked_n; i++) if (opts[i].covers_n == 0) return;
+        for (int i = 0; i < picked_n; i++) if (opts[i]->covers_n == 0) return;
         int chosen[MAX_BATTLES];
         bool used[MAX_HAND_SIZE] = { false };
-        emit_cover_combo(out, opts, picked_n, chosen, 0, used, defender);
+        emit_cover_combo(out, opts, picked_n, chosen, 0, used);
         return;
     }
     for (int i = start; i <= n_uncovered - k_left; i++) {
@@ -197,6 +199,7 @@ static void calc_cover_moves(const Game *g, const Player *defender, LegalMoves *
         opts[i].covers_n = 0;
         for (int j = 0; j < defender->hand_count; j++) {
             if (can_cover(b->attack, defender->hand[j], g->power_suit)) {
+                opts[i].cover_hand_idx[opts[i].covers_n] = (int8_t)j;
                 opts[i].covers[opts[i].covers_n++] = defender->hand[j];
             }
         }

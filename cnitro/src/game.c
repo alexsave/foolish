@@ -24,11 +24,6 @@
 static _Thread_local uint32_t g_seed = 1237;
 static _Thread_local uint32_t g_rand_seed = 1;
 
-// Deck-size boundary (see card.h): cnitro research default is 6+, the WASM
-// production bridge sets 5 to match the TS server and the frozen replay
-// format.
-int g_large_deck_min_players = 6;
-
 // Observation hook + rejection reason (see game.h). Both are no-cost when
 // unused: the hook is NULL by default and the reason is a plain store.
 void (*engine_snap_hook)(const Game *g, int tag, int aux) = 0;

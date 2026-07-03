@@ -86,8 +86,37 @@ function engine(): EngineExports {
     return ex;
 }
 
-function io(ex: EngineExports, len: number): Uint8Array {
-    return new Uint8Array(ex.memory.buffer, ex.wasm_io_ptr(), len);
+// One cached view over the whole linear memory. The kernel never mallocs, so
+// memory.grow is never called and the buffer identity is stable — but guard
+// anyway. Reading through one persistent view (with explicit base offsets)
+// avoids allocating a subarray per call, which showed up as GC pressure in
+// profiles.
+let memView = new Uint8Array(0);
+function mem(ex: EngineExports): Uint8Array {
+    if (memView.buffer !== ex.memory.buffer) memView = new Uint8Array(ex.memory.buffer);
+    return memView;
+}
+
+// Sign-fix for i8 fields read through the u8 view. Module-scoped: defining
+// helpers inside the hot parse functions made the bundler's keepNames
+// wrapper (__name) a measurable per-call cost.
+const i8 = (v: number) => (v > 127 ? v - 256 : v);
+const MOVE_TYPE = ['attack', 'cover', 'pass', 'pickup', 'good', 'wait'];
+
+// Interned card objects. Every deck/hand/battle/log/move parse used to
+// allocate fresh {suit,value} objects — tens of thousands per second of pure
+// GC food. There are only 52 cards (plus the hidden-card sentinel), and the
+// whole codebase treats Card objects as immutable (the old TS engine aliased
+// them freely between hands, battles and logs), so pooled singletons are
+// drop-in. Reads (suit, value) come straight off the u8 view.
+const HIDDEN_CARD: Card = { suit: -1, value: -1 };
+const CARD_POOL: Card[] = [];
+for (let s = 0; s < 4; s++) for (let v = 1; v <= 13; v++) CARD_POOL[s * 13 + v - 1] = { suit: s, value: v };
+function pooledCard(rawSuit: number, rawValue: number): Card {
+    const s = i8(rawSuit), v = i8(rawValue);
+    if (s >= 0 && s < 4 && v >= 1 && v <= 13) return CARD_POOL[s * 13 + v - 1];
+    if (s === -1 && v === -1) return HIDDEN_CARD;
+    return { suit: s, value: v };
 }
 
 // ---------------------------------------------------------------------------
@@ -156,8 +185,8 @@ function goodPlayersFromMask(mask: number, game: Game, preGood: string[], actorI
 }
 
 function marshalGame(ex: EngineExports, game: Game): void {
-    const buf = io(ex, 768 * 1024);
-    let q = 0;
+    const buf = mem(ex);
+    let q = ex.wasm_io_ptr();
     buf[q++] = G_STATUS_TO_INT[game.status] ?? 0;
     buf[q++] = game.players.length;
     buf[q++] = game.power_suit & 0xff;
@@ -219,9 +248,7 @@ interface KernelState {
     elimination: number[];
 }
 
-function parseState(buf: Uint8Array): KernelState {
-    let q = 0;
-    const i8 = (v: number) => (v > 127 ? v - 256 : v);
+function parseState(buf: Uint8Array, q: number): KernelState {
     const status = buf[q++];
     const numPlayers = buf[q++];
     const powerSuit = i8(buf[q++]);
@@ -233,13 +260,13 @@ function parseState(buf: Uint8Array): KernelState {
     const goodMask = buf[q] | (buf[q + 1] << 8) | (buf[q + 2] << 16) | (buf[q + 3] << 24); q += 4;
     const hasGoodTs = buf[q++] !== 0;
     const deckN = buf[q] | (buf[q + 1] << 8); q += 2;
-    const deck: Card[] = [];
-    for (let i = 0; i < deckN; i++) { deck.push({ suit: i8(buf[q]), value: i8(buf[q + 1]) }); q += 2; }
+    const deck: Card[] = new Array(deckN);
+    for (let i = 0; i < deckN; i++) { deck[i] = pooledCard(buf[q], buf[q + 1]); q += 2; }
     const nBattles = buf[q++];
     const battles: Battle[] = [];
     for (let i = 0; i < nBattles; i++) {
-        const attack = { suit: i8(buf[q]), value: i8(buf[q + 1]) };
-        const defense = buf[q + 4] !== 0 ? { suit: i8(buf[q + 2]), value: i8(buf[q + 3]) } : null;
+        const attack = pooledCard(buf[q], buf[q + 1]);
+        const defense = buf[q + 4] !== 0 ? pooledCard(buf[q + 2], buf[q + 3]) : null;
         battles.push({ attack, defense });
         q += 5;
     }
@@ -248,8 +275,8 @@ function parseState(buf: Uint8Array): KernelState {
         const pStatus = buf[q++];
         const awaiting = buf[q++] !== 0;
         const handN = buf[q++];
-        const hand: Card[] = [];
-        for (let j = 0; j < handN; j++) { hand.push({ suit: i8(buf[q]), value: i8(buf[q + 1]) }); q += 2; }
+        const hand: Card[] = new Array(handN);
+        for (let j = 0; j < handN; j++) { hand[j] = pooledCard(buf[q], buf[q + 1]); q += 2; }
         players.push({ status: pStatus, awaiting, hand });
     }
     const elimN = buf[q++];
@@ -257,7 +284,7 @@ function parseState(buf: Uint8Array): KernelState {
     for (let i = 0; i < elimN; i++) elimination.push(i8(buf[q++]));
     return {
         status, numPlayers, powerSuit, firstAttacker, defender, discard,
-        flipped: hasFlipped ? { suit: fs, value: fv } : null,
+        flipped: hasFlipped ? pooledCard(fs, fv) : null,
         goodMask, hasGoodTs, deck, battles, players, elimination,
     };
 }
@@ -269,9 +296,7 @@ interface KernelLog {
     pairs: { primary: Card; target: Card | null }[];
 }
 
-function parseLogs(buf: Uint8Array): KernelLog[] {
-    const i8 = (v: number) => (v > 127 ? v - 256 : v);
-    let q = 0;
+function parseLogs(buf: Uint8Array, q: number): KernelLog[] {
     const n = buf[q] | (buf[q + 1] << 8); q += 2;
     const logs: KernelLog[] = [];
     for (let i = 0; i < n; i++) {
@@ -281,8 +306,8 @@ function parseLogs(buf: Uint8Array): KernelLog[] {
         const nPairs = buf[q++];
         const pairs: KernelLog['pairs'] = [];
         for (let j = 0; j < nPairs; j++) {
-            const primary = { suit: i8(buf[q]), value: i8(buf[q + 1]) };
-            const target = buf[q + 4] !== 0 ? { suit: i8(buf[q + 2]), value: i8(buf[q + 3]) } : null;
+            const primary = pooledCard(buf[q], buf[q + 1]);
+            const target = buf[q + 4] !== 0 ? pooledCard(buf[q + 2], buf[q + 3]) : null;
             pairs.push({ primary, target });
             q += 5;
         }
@@ -375,7 +400,7 @@ function appendLogs(game: Game, kernelLogs: KernelLog[], preFlipped: Card | null
             pairs = kl.pairs.map(p => ({
                 primary: flippedWasDrawn && sameCard(p.primary, preFlipped!)
                     ? p.primary
-                    : { suit: -1, value: -1 },
+                    : HIDDEN_CARD,
                 target: null,
             }));
         }
@@ -406,10 +431,10 @@ interface KernelRun {
 }
 
 function writeCards(ex: EngineExports, ptr: number, cards: Card[]): void {
-    const view = new Uint8Array(ex.memory.buffer, ptr, cards.length * 2);
+    const buf = mem(ex);
     for (let i = 0; i < cards.length; i++) {
-        view[i * 2] = cards[i].suit & 0xff;
-        view[i * 2 + 1] = cards[i].value & 0xff;
+        buf[ptr + i * 2] = cards[i].suit & 0xff;
+        buf[ptr + i * 2 + 1] = cards[i].value & 0xff;
     }
 }
 
@@ -459,15 +484,19 @@ function runKernel(game: Game, action: KernelAction): KernelRun {
 
     if (!ok) return { ok: false, reason: ex.wasm_reject_reason(), post: null, logs: [], snaps: [] };
 
-    const post = parseState(io(ex, ex.wasm_export_state()));
-    const logs = parseLogs(io(ex, ex.wasm_export_logs()));
+    const base = ex.wasm_io_ptr();
+    ex.wasm_export_state();
+    const post = parseState(mem(ex), base);
+    ex.wasm_export_logs();
+    const logs = parseLogs(mem(ex), base);
     const snaps: Snapshot[] = [];
     const n = ex.wasm_snap_count();
     for (let i = 0; i < n; i++) {
+        ex.wasm_export_snapshot(i);
         snaps.push({
             tag: ex.wasm_snap_tag(i),
             aux: ex.wasm_snap_aux(i),
-            state: parseState(io(ex, ex.wasm_export_snapshot(i))),
+            state: parseState(mem(ex), base),
         });
     }
     return { ok: true, reason: 0, post, logs, snaps };
@@ -883,23 +912,31 @@ export function kernelLegalMoves(game: Game, player_id: string): { type: string;
     const ex = engine();
     marshalGame(ex, game);
     const total = ex.wasm_legal_moves(seat);
-    const i8 = (v: number) => (v > 127 ? v - 256 : v);
-    const TYPE = ['attack', 'cover', 'pass', 'pickup', 'good', 'wait'];
+    const base = ex.wasm_io_ptr();
     const moves: { type: string; cards?: Card[]; attack_cards?: Card[] }[] = [];
     for (let start = 0; start < total; start += MOVES_CHUNK) {
-        const buf = io(ex, ex.wasm_export_moves(start, MOVES_CHUNK));
-        let q = 0;
+        ex.wasm_export_moves(start, MOVES_CHUNK);
+        const buf = mem(ex);
+        let q = base;
         const n = buf[q] | (buf[q + 1] << 8) | (buf[q + 2] << 16) | (buf[q + 3] << 24); q += 4;
         for (let i = 0; i < n; i++) {
-            const type = TYPE[buf[q++]];
+            const type = MOVE_TYPE[buf[q++]];
             const k = buf[q++];
-            const cards: Card[] = [];
-            for (let j = 0; j < k; j++) { cards.push({ suit: i8(buf[q]), value: i8(buf[q + 1]) }); q += 2; }
-            const attacks: Card[] = [];
-            for (let j = 0; j < k; j++) { attacks.push({ suit: i8(buf[q]), value: i8(buf[q + 1]) }); q += 2; }
-            if (type === 'cover') moves.push({ type, cards, attack_cards: attacks });
-            else if (type === 'pickup' || type === 'good' || type === 'wait') moves.push({ type });
-            else moves.push({ type, cards });
+            if (type === 'pickup' || type === 'good' || type === 'wait') {
+                q += k * 4;
+                moves.push({ type });
+                continue;
+            }
+            const cards: Card[] = new Array(k);
+            for (let j = 0; j < k; j++) { cards[j] = pooledCard(buf[q], buf[q + 1]); q += 2; }
+            if (type === 'cover') {
+                const attacks: Card[] = new Array(k);
+                for (let j = 0; j < k; j++) { attacks[j] = pooledCard(buf[q], buf[q + 1]); q += 2; }
+                moves.push({ type, cards, attack_cards: attacks });
+            } else {
+                q += k * 2;
+                moves.push({ type, cards });
+            }
         }
     }
     return moves;

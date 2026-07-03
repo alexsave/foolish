@@ -83,11 +83,10 @@ static void snap_cb(const Game *g, int tag, int aux) {
     g_n_snaps++;
 }
 
-// Production configuration: install the snapshot hook and use the live
-// server's deck-size boundary (5+ players -> 52 cards; see card.h).
+// Production configuration: install the snapshot hook. (The deck-size rule
+// is hardcoded in card.h — one rule for every deployment.)
 void wasm_init(void) {
     engine_snap_hook = snap_cb;
-    g_large_deck_min_players = 5;
 }
 
 void wasm_set_seed(unsigned int s) { game_set_seed(s); }

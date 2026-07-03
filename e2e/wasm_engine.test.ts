@@ -2,9 +2,8 @@
 // single source of truth for gameplay; the TS modules in _shared delegate to
 // it. This file guards the seams of that arrangement:
 //
-//   1. the kernel obeys the PRODUCTION deck-size rule (5+ players -> 52
-//      cards), which the frozen replay format also encodes — the cnitro
-//      research default differs (see cnitro/src/card.h);
+//   1. the kernel obeys THE deck-size rule (2..5 players -> 36 cards,
+//      6+ -> 52), settled once for every deployment (see cnitro/src/card.h);
 //   2. full random games through the kernel conserve cards and end with a
 //      single fool at every player count;
 //   3. the few thin TS projections kept for the client's synchronous use
@@ -50,11 +49,11 @@ const countCards = (g: Game): number =>
   + g.players.reduce((a, p) => a + p.hand.length, 0)
   + g.table_battles.reduce((a, b) => a + 1 + (b.defense ? 1 : 0), 0);
 
-test('kernel deals the production deck size at every player count (5+ -> 52)', () => {
+test('kernel deals the settled deck size at every player count (6+ -> 52)', () => {
   for (let np = 2; np <= 8; np++) {
     const g = mkGame(np);
     start_game(g);
-    const expected = np > 4 ? 52 : 36;
+    const expected = np >= 6 ? 52 : 36;
     assert.equal(countCards(g), expected, `${np}p deals ${expected} cards`);
     assert.ok(g.flipped === null || g.flipped.value !== 13, 'flipped trump is never an Ace');
   }

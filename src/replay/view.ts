@@ -61,7 +61,7 @@ const sameCard = (a: Card, b: Card) => a.suit === b.suit && a.value === b.value;
 
 export function buildReplaySteps(d: DecodedReplay): ReplayStep[] {
     const n = d.playerCount;
-    const deckSize = n > 4 ? 52 : 36;
+    const deckSize = n >= 6 ? 52 : 36;
 
     const hidden: number[] = new Array(n).fill(6);
     // shared-reference slots: snapshots keep references to these objects, so

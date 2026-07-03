@@ -9,11 +9,11 @@ compile to WebAssembly (`make wasm`) and run every live move: the TS files in
 `supabase/functions/_shared/actions/` are thin bridges over this code (see
 `wasm/wasm_api.c` and `_shared/wasm/engine.ts`). The old TS rule
 implementations were deleted after a differential harness proved the two
-engines byte-identical across ~100k mirrored actions. Two behaviors are build
-parameters because the deployments deliberately differ: the deck-size
-boundary (production/WASM: 5+ players → 52 cards, matching the frozen replay
-format; native research tools: 6+, per `card.h`) and the log/battle/move
-capacities (`-DMAX_LOG_PAIRS=64 -DMAX_BATTLES=64 -DMAX_LEGAL_MOVES=65536` for
+engines byte-identical across ~100k mirrored actions. The deck rule is
+settled and hardcoded in `card.h`: 2..5 players → 36 cards, 6+ → 52,
+everywhere (historical 5-player replays encoded under the old 5+ → 52 rule
+no longer decode). Log/battle/move capacities remain build parameters
+(`-DMAX_LOG_PAIRS=64 -DMAX_BATTLES=64 -DMAX_LEGAL_MOVES=65536` for
 production). The kernel fires `engine_snap_hook` at the exact points the old
 TS handlers captured animation snapshots — a NULL no-op for native builds.
 

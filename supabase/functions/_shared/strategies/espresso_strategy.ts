@@ -532,7 +532,7 @@ export class EspressoStrategy implements BotStrategy {
     }
 
     private getDeckCards(game: Game): Card[] {
-        const startValue = game.players.length > 4 ? 1 : 5;
+        const startValue = game.players.length >= 6 ? 1 : 5;
         const known = new Set<string>();
         for (const p of game.players) for (const c of p.hand) known.add(cardKey(c));
         for (const b of game.table_battles) {

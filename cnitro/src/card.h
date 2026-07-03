@@ -12,25 +12,20 @@
 #define SUIT_DIAMONDS 3
 #define NUM_SUITS     4
 
-// Card values: 1..13 (Ace=13). Small games use the 36-card deck (values
-// 5..A); large games use the full 52-card deck (values 1..A). Where the
-// boundary sits is configurable because the two deployments disagree ON
-// PURPOSE: production TS (`refill_deck` in common_utils.ts) and the FROZEN
-// replay wire format both use `players > 4` (5+ → 52 cards), while the
-// cnitro research tools were tightened to 6+ per project owner. Native
-// builds keep the research default (6); the WASM production build sets 5
-// at init so the kernel is byte-exact with the live server and with every
-// historical replay.
+// Card values: 1..13 (Ace=13). THE deck rule, settled: 2..5 players use the
+// 36-card deck (values 5..A); 6..8 players use the full 52-card deck
+// (values 1..A). This is the single source of truth for every deployment —
+// the WASM production server, the cnitro arena, and the replay projection
+// (runReplay in _shared/replay/core.ts, a living spec that mirrors this).
+// Historical 5-player replays encoded under the old 5+ → 52 rule no longer
+// decode; accepted when the rule was settled.
 #define ACE_VALUE         13
 #define MIN_VALUE_SMALL   5  // small-deck Durak (36 cards)
 #define MIN_VALUE_LARGE   1  // full-deck Durak (52 cards)
 #define CARDS_PER_PLAYER  6
 
-// Minimum player count that deals the full 52-card deck. Defined in game.c.
-extern int g_large_deck_min_players;
-
 static inline int min_value_for(int num_players) {
-    return num_players >= g_large_deck_min_players ? MIN_VALUE_LARGE : MIN_VALUE_SMALL;
+    return num_players >= 6 ? MIN_VALUE_LARGE : MIN_VALUE_SMALL;
 }
 
 // Back-compat alias: existing call sites used MIN_VALUE_2P.
