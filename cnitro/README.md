@@ -35,6 +35,11 @@ Bots (weakest → strongest):
   makes it provably never worse than semtex and strictly better in the
   rare deep-endgame deals; also the documented map of hunt-4's
   measured-null opponent-model levers. See `OCTOGEN.md`.
+- `torpex` — the value-net reboot of the ML track (research): full
+  gen/train/infer pipeline for a learned rollout replacement, and the
+  measured negative result explaining why simulation beats learning at
+  CPU scale in this game. Without weights it plays exactly like semtex.
+  See `TORPEX.md`.
 - `astrolite` — cordite + defender card-management levers (research;
   roughly cordite-equal).
 
