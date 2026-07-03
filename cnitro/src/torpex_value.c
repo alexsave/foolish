@@ -18,8 +18,9 @@
 #include <stdint.h>
 #include <math.h>
 
-#define TX_IN  (7 * 52 + 14)
-#define TX_H1  256
+#define TX_DERIVED 16
+#define TX_IN  (7 * 52 + 14 + TX_DERIVED)
+#define TX_H1  512
 #define TX_H2  64
 
 static float *tx_W1, *tx_b1, *tx_W2, *tx_b2, *tx_W3, *tx_b3;
@@ -32,7 +33,7 @@ int tx_value_ready(void) {
     FILE *f = fopen(path, "rb");
     if (!f) { tx_loaded = 0; return 0; }
     char magic[4]; int32_t dims[3];
-    if (fread(magic, 1, 4, f) != 4 || memcmp(magic, "TPX1", 4) != 0
+    if (fread(magic, 1, 4, f) != 4 || memcmp(magic, "TPX2", 4) != 0
         || fread(dims, 4, 3, f) != 3
         || dims[0] != TX_IN || dims[1] != TX_H1 || dims[2] != TX_H2) {
         fclose(f); tx_loaded = 0; return 0;
@@ -112,6 +113,37 @@ float tx_value(const SimState *s, int p) {
     sc[11] = (float)cnt[0] / 18.0f;
     sc[12] = (float)cnt[1] / 18.0f;
     sc[13] = (float)cnt[2] / 18.0f;
+
+    // Derived features — mirrors train_torpex.py expand() EXACTLY, computed
+    // on the rotated bit layout already written into x[0..363].
+    {
+        float *dv = x + 7 * 52 + 14;
+        const float *my = x + 0 * 52, *o1 = x + 1 * 52, *rest = x + 3 * 52;
+        const float *unc = x + 4 * 52, *cov = x + 5 * 52;
+        for (int su = 0; su < 4; su++) {
+            float cm = 0, co = 0;
+            for (int v = 0; v < 13; v++) { cm += my[su*13+v]; co += o1[su*13+v]; }
+            dv[su] = cm / 13.0f;
+            dv[4 + su] = co / 13.0f;
+        }
+        float trmax = 0;
+        for (int v = 0; v < 13; v++) if (my[v] > 0) trmax = (float)(v + 1);
+        dv[8] = trmax / 13.0f;
+        float ntmin = 99.0f; int has_nt = 0;
+        for (int su = 1; su < 4; su++)
+            for (int v = 0; v < 13; v++)
+                if (my[su*13+v] > 0) { has_nt = 1; if (v + 1 < ntmin) ntmin = (float)(v + 1); }
+        dv[9] = has_nt ? ntmin / 13.0f : 0.0f;
+        float un = 0, cn = 0, rtr = 0;
+        for (int i = 0; i < 52; i++) { un += unc[i]; cn += cov[i]; }
+        for (int v = 0; v < 13; v++) rtr += rest[v];
+        dv[10] = un / 6.0f;
+        dv[11] = cn / 6.0f;
+        dv[12] = (s->deck_n == 0 && !s->has_flipped) ? 1.0f : 0.0f;
+        dv[13] = (sc[10] * 18.0f - sc[11] * 18.0f) / 18.0f;
+        dv[14] = rtr / 13.0f;
+        dv[15] = my[12];
+    }
 
     // forward: x is sparse-ish (only set features matter) but a dense GEMV
     // at -O3 is fast enough (~100k MACs).

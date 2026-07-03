@@ -22,8 +22,9 @@ import sys
 import time
 
 REC = 72
-IN_DIM = 7 * 52 + 14
-H1, H2 = 256, 64
+N_DERIVED = 16
+IN_DIM = 7 * 52 + 14 + N_DERIVED
+H1, H2 = 512, 64
 
 
 def load(paths):
@@ -67,7 +68,32 @@ def expand(raw):
         s[:, 9] / 18.0,                    # my_cnt
         s[:, 10] / 18.0, s[:, 11] / 18.0, s[:, 12] / 18.0,  # opp counts
     ], axis=1).astype(np.float32)
-    X = np.concatenate([bits, scal], axis=1)
+    # Derived features (mirrored EXACTLY in src/torpex_value.c): explicit
+    # suit/trump/table summaries a small net would otherwise have to learn.
+    b7 = bits.reshape(B, 7, 52)
+    my, o1, rest = b7[:, 0], b7[:, 1], b7[:, 3]
+    unc, cov = b7[:, 4], b7[:, 5]
+    suit_my = my.reshape(B, 4, 13).sum(2) / 13.0                      # 4
+    suit_o1 = o1.reshape(B, 4, 13).sum(2) / 13.0                      # 4
+    vals = np.arange(1, 14, dtype=np.float32)
+    my_tr = my[:, :13]
+    my_tr_max = (my_tr * vals).max(1) / 13.0                          # 1
+    nt = my[:, 13:].reshape(B, 3, 13)
+    ntv = np.where(nt > 0, vals[None, None, :], 99.0)
+    my_nt_min = np.where(nt.sum((1, 2)) > 0, ntv.min((1, 2)), 0.0) / 13.0  # 1
+    unc_n = unc.sum(1) / 6.0                                          # 1
+    cov_n = cov.sum(1) / 6.0                                          # 1
+    deck_dead = ((s[:, 2] == 0) & (s[:, 4] == 0)).astype(np.float32)  # 1
+    cnt_diff = (s[:, 9] - s[:, 10]) / 18.0                            # 1
+    rest_tr = rest[:, :13].sum(1) / 13.0                              # 1
+    my_ace_tr = my[:, 12]                                             # 1
+    derived = np.stack([
+        suit_my[:, 0], suit_my[:, 1], suit_my[:, 2], suit_my[:, 3],
+        suit_o1[:, 0], suit_o1[:, 1], suit_o1[:, 2], suit_o1[:, 3],
+        my_tr_max, my_nt_min, unc_n, cov_n, deck_dead, cnt_diff,
+        rest_tr, my_ace_tr,
+    ], axis=1).astype(np.float32)
+    X = np.concatenate([bits, scal, derived], axis=1)
     tgt = s[:, 14]
     y = (tgt - 1.0) / np.maximum(np_players - 1.0, 1.0)
     return X, y.astype(np.float32)
@@ -158,7 +184,7 @@ def main():
         print(f"# epoch {ep} done: val-mse={mse:.4f} val-mae={mae:.4f}")
 
     with open(args.out, "wb") as f:
-        f.write(b"TPX1")
+        f.write(b"TPX2")
         np.array([IN_DIM, H1, H2], dtype=np.int32).tofile(f)
         for p in params:
             p.astype(np.float32).tofile(f)
