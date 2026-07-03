@@ -27,6 +27,8 @@ static uint64_t VALUE_MASK[14];   // VALUE_MASK[v] = all ids with value v (1..13
 static uint64_t SUIT_MASK[4];
 static int      g_masks_ready = 0;
 
+static uint64_t HIGHER_MASK[52];  // same-suit ids with strictly higher value
+
 static void ensure_masks(void) {
     if (g_masks_ready) return;
     for (int s = 0; s < 4; s++) {
@@ -35,6 +37,12 @@ static void ensure_masks(void) {
             int id = ID(s, v);
             SUIT_MASK[s] |= (1ull << id);
             VALUE_MASK[v] |= (1ull << id);
+        }
+    }
+    for (int s = 0; s < 4; s++) {
+        for (int v = 1; v <= 13; v++) {
+            int id = ID(s, v);
+            for (int w = v + 1; w <= 13; w++) HIGHER_MASK[id] |= (1ull << ID(s, w));
         }
     }
     g_masks_ready = 1;
@@ -87,9 +95,11 @@ void cd_sim_from_game(SimState *s, const Game *g) {
 
     for (int i = 0; i < g->num_battles; i++) {
         s->atk[i] = (uint8_t)card_id(g->table_battles[i].attack);
+        s->table_vmask |= VALUE_MASK[id_value(s->atk[i])];
         if (g->table_battles[i].has_defense) {
             s->def[i] = (uint8_t)card_id(g->table_battles[i].defense);
             s->covered_mask |= (1ull << i);
+            s->table_vmask |= VALUE_MASK[id_value(s->def[i])];
         }
     }
 
@@ -146,13 +156,10 @@ static inline int sim_all_covered(const SimState *s) {
 }
 
 // table values bitmask: which values (by VALUE_MASK) are present on the table.
+// Cached in the state (see cordite_sim.h) — this was the hottest loop in the
+// wasm profile when rebuilt per query.
 static inline uint64_t sim_table_value_mask(const SimState *s) {
-    uint64_t m = 0;
-    for (int i = 0; i < s->num_battles; i++) {
-        m |= VALUE_MASK[id_value(s->atk[i])];
-        if (s->covered_mask & (1ull << i)) m |= VALUE_MASK[id_value(s->def[i])];
-    }
-    return m;
+    return s->table_vmask;
 }
 
 // draw one card id, mirroring draw_card (deck array splice + flipped fallback).
@@ -221,6 +228,7 @@ static void sim_apply_attack(SimState *s, int p_idx, const uint8_t *ids, int n) 
         int b = s->num_battles++;
         s->atk[b] = ids[i];
         s->covered_mask &= ~(1ull << b);
+        s->table_vmask |= VALUE_MASK[id_value(ids[i])];
     }
     s->good_mask = 0;
     // Attackers only leave when the stock is exhausted too (mirrors the
@@ -239,12 +247,14 @@ static void sim_apply_cover(SimState *s, int p_idx,
         s->def[b] = covers[i];
         s->covered_mask |= (1ull << b);
         s->hand[p_idx] &= ~(1ull << covers[i]);
+        s->table_vmask |= VALUE_MASK[id_value(covers[i])];
     }
 
     if (sim_hand_count(s, p_idx) == 0) {
         s->discard_pile_length += s->num_battles * 2;
         s->num_battles = 0;
         s->covered_mask = 0;
+        s->table_vmask = 0;
         sim_refill(s);
         s->first_attacker = s->defender;
         s->good_mask = 0;
@@ -269,6 +279,7 @@ static void sim_apply_pass(SimState *s, int p_idx, const uint8_t *ids, int n) {
         int b = s->num_battles++;
         s->atk[b] = ids[i];
         s->covered_mask &= ~(1ull << b);
+        s->table_vmask |= VALUE_MASK[id_value(ids[i])];
     }
     s->good_mask = 0;
     if (sim_no_cards_left(s) && sim_hand_count(s, p_idx) == 0) {
@@ -284,6 +295,7 @@ static void sim_apply_pickup(SimState *s, int p_idx) {
     }
     s->num_battles = 0;
     s->covered_mask = 0;
+    s->table_vmask = 0;
     sim_refill(s);
     s->first_attacker = sim_next_player(s, s->defender);
     s->defender = sim_next_player(s, s->first_attacker);
@@ -294,6 +306,7 @@ static void sim_round_transition(SimState *s) {
     s->discard_pile_length += s->num_battles * 2;
     s->num_battles = 0;
     s->covered_mask = 0;
+    s->table_vmask = 0;
     sim_refill(s);
     s->first_attacker = s->defender;
     s->defender = sim_next_player(s, s->first_attacker);
@@ -461,14 +474,17 @@ static int sim_greedy_full_cover(const SimState *s, int p, int power, SimMove *o
     for (int i = 0; i < s->num_battles; i++) {
         if (s->covered_mask & (1ull << i)) continue;
         int atk = s->atk[i];
-        int best = -1, best_score = INT32_MAX;
-        uint64_t a = avail;
-        while (a) {
-            int id = ctz64(a); a &= a - 1;
-            if (id_can_cover(atk, id, power)) {
-                int sc = id_score(id, power);
-                if (sc < best_score) { best_score = sc; best = id; }
-            }
+        // Lowest-id_score cover, O(1): candidates are same-suit-higher cards
+        // (score = value) and, for a non-trump attack, any trump (score =
+        // value + 1000). A same-suit candidate always outranks a trump one,
+        // and within a single suit ascending id IS ascending value, so ctz
+        // picks exactly the first strict-min the old per-card scan kept.
+        int best = -1;
+        uint64_t same = HIGHER_MASK[atk] & avail;
+        if (same) best = ctz64(same);
+        else if (id_suit(atk) != power) {
+            uint64_t tr = SUIT_MASK[power] & avail;
+            if (tr) best = ctz64(tr);
         }
         if (best < 0) return 0;
         avail &= ~(1ull << best);
@@ -511,14 +527,12 @@ static int sim_pass_move(const SimState *s, int p, int power, SimMove *out) {
     // lowest summed score => take the k lowest-score matching cards with the
     // smallest k that's legal. Smallest legal k is 1. But handwritten compares
     // ALL emitted pass moves by sum; k=1 with the lowest card always wins
-    // (positive scores). So k=1, lowest-score matching card.
-    int best = -1, best_score = INT32_MAX;
-    uint64_t mm = matching;
-    while (mm) {
-        int id = ctz64(mm); mm &= mm - 1;
-        int sc = id_score(id, power);
-        if (sc < best_score) { best_score = sc; best = id; }
-    }
+    // (positive scores). So k=1, lowest-score matching card. All matching
+    // cards share one value, so score only splits trump vs non-trump; the
+    // old first-strict-min scan kept the lowest non-trump id when one
+    // exists, else the (single) trump — exactly ctz on those masks.
+    uint64_t nt = matching & ~SUIT_MASK[power];
+    int best = ctz64(nt ? nt : matching);
     out->type = MV_PASS;
     out->n = 1;
     out->cards[0] = (uint8_t)best;

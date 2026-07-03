@@ -82,7 +82,11 @@ difftests: build/sim_difftest build/apply_difftest build/solver_difftest
 # strips TLS (single-threaded module); the bridge sets the production
 # deck-size boundary at init (see card.h).
 WASM_CC    ?= clang
-WASM_FLAGS := --target=wasm32 -O2 -nostdlib -ffreestanding \
+# -mbulk-memory: memcpy/memset (incl. clang-lowered struct copies) become the
+# wasm memory.copy/memory.fill instructions, which every 2020+ runtime (V8,
+# JSC, SpiderMonkey, Deno edge) executes as native memmove — the hand-rolled
+# word-loop shim showed up at ~5% of cordite's wasm profile.
+WASM_FLAGS := --target=wasm32 -O2 -nostdlib -ffreestanding -mbulk-memory \
               -isystem wasm/include -Isrc -D_Thread_local= -DMAX_LOG_PAIRS=64 \
               -DMAX_LEGAL_MOVES=65536 -DMAX_MOVE_CARDS=40 -DMAX_BATTLES=64 \
               -Wall -Wextra -Wno-unused-parameter \

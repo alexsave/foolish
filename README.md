@@ -105,8 +105,14 @@ proves the kernel picks the identical move on every decision of thousands
 of seeded games (RNG streams pinned on both sides); the retired TS sources
 are frozen as oracles in `offlinefun/localtest/frozen/`. cordite/fulminate
 run the C originals directly (the TS versions were ports of them), at the
-production world budget via the `CD_BUDGET` knob — roughly **10× faster**
-wall-clock than the TS implementation at 4 players. The only TS-brained
+production world budget via the `CD_BUDGET` knob — roughly **15× faster**
+per decision than the TS implementation at 4 players (bitboard rollouts +
+no GC; a wasm tick-profile pass then took another ~1.5× out of the rollout
+inner loops: cached table-value mask, O(1) greedy-cover pick, wasm
+bulk-memory copies). The extra speed is banked as latency, not strength:
+world-budget sweeps show the deployed budget already sits at the
+saturation knee (2×/4× worlds moved win rate 40.0%→40.0%→39.0% at pc4,
+26%→25% at pc6 over 400 seeded games each). The only TS-brained
 strategies left are the non-algorithmic ones: `gpt` (LLM adapter) and the
 experimental `nitro` NN.
 

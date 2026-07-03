@@ -43,6 +43,13 @@ typedef struct {
     uint8_t  atk[SIM_MAX_BATTLES];      // attack card ids
     uint8_t  def[SIM_MAX_BATTLES];      // defense card ids (valid iff covered bit)
     uint64_t covered_mask;              // bit i set => battle i is covered
+    // Cached OR of VALUE_MASK over every card on the table. The playout
+    // queries this several times per ply (attack grouping, solver movegen);
+    // rebuilding it per query was the single hottest loop in the wasm
+    // profile. Maintained incrementally by the sim_apply_* functions (cards
+    // are only ever added to the table; round end clears it), rides along in
+    // struct-copy clones.
+    uint64_t table_vmask;
 
     int16_t  deck_n;                    // mirror of deck_count for the array
     uint8_t  deck[MAX_DECK];            // remaining deck card ids, in draw order

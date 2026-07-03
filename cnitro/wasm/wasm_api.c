@@ -18,29 +18,18 @@
 
 // ---------- minimal libc ------------------------------------------------
 
-// Word-wise copies: these run on multi-KB structs in the per-action hot path
-// (snapshot prefix copies, LegalMove clears), so a byte loop is not enough.
-typedef unsigned long long u64;
-
+// The build enables -mbulk-memory, so these __builtin calls (and every
+// clang-lowered struct copy across the module) compile to the single wasm
+// memory.copy / memory.fill instruction — native memmove in the runtime.
+// These out-of-line definitions only back the calls clang chooses not to
+// lower inline.
 void *memcpy(void *dst, const void *src, size_t n) {
-    unsigned char *d = (unsigned char *)dst;
-    const unsigned char *s = (const unsigned char *)src;
-    while (n >= 8 && ((size_t)d & 7) == 0 && ((size_t)s & 7) == 0) {
-        *(u64 *)d = *(const u64 *)s;
-        d += 8; s += 8; n -= 8;
-    }
-    while (n--) *d++ = *s++;
+    __builtin_memcpy(dst, src, n);
     return dst;
 }
 
 void *memset(void *dst, int c, size_t n) {
-    unsigned char *d = (unsigned char *)dst;
-    u64 word = 0x0101010101010101ull * (unsigned char)c;
-    while (n >= 8 && ((size_t)d & 7) == 0) {
-        *(u64 *)d = word;
-        d += 8; n -= 8;
-    }
-    while (n--) *d++ = (unsigned char)c;
+    __builtin_memset(dst, c, n);
     return dst;
 }
 
