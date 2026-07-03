@@ -58,6 +58,8 @@ const CardDiv = ({ user_id }: { user_id: string }) => {
     return (
         <div 
             data-touch-interactive
+            data-hand-container
+            data-player-id={user_id}
             style={{
                 display: 'flex',
                 flexDirection: 'row',
