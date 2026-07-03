@@ -1,6 +1,6 @@
-import { Card, Game, PrivatePlayer } from '../types.ts';
-import { BotStrategy, LegalMove } from '../bot_interfaces.ts';
-import { canCover } from '../common_utils.ts';
+import { Card, Game, PrivatePlayer } from '../../../supabase/functions/_shared/types.ts';
+import { BotStrategy, LegalMove } from '../../../supabase/functions/_shared/bot_interfaces.ts';
+import { canCover } from '../../../supabase/functions/_shared/common_utils.ts';
 
 /**
  * Ultimate Champion Durak Strategy - Probabilistic Evolution

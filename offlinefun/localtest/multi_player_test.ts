@@ -2,8 +2,8 @@ import { calculateLegalMoves, registerBotStrategy } from '../../supabase/functio
 import { shouldBotActCore, processBotAction } from '../../supabase/functions/_shared/pure_bot_actions.ts';
 import { start_game, game_done } from '../../supabase/functions/_shared/common_utils.ts';
 import { Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, STRATEGY_KEY, StrategyKey } from '../../supabase/functions/_shared/types.ts';
-import { EspressoStrategy } from '../../supabase/functions/_shared/strategies/espresso_strategy.ts';
-import { setRandomSeed } from '../../supabase/functions/_shared/strategies/random_strategy.ts';
+import { EspressoStrategy } from './frozen/espresso_strategy.ts';
+import { setRandomSeed } from './frozen/random_strategy.ts';
 
 const ESPRESSO = 'espresso' as StrategyKey;
 registerBotStrategy(ESPRESSO, new EspressoStrategy());

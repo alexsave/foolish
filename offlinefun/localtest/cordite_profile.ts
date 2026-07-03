@@ -11,7 +11,7 @@ import { shouldBotActCore, executeBotMove } from '../../supabase/functions/_shar
 import { start_game, game_done } from '../../supabase/functions/_shared/common_utils.ts';
 import { getBotStrategy } from '../../supabase/functions/_shared/bot_strategy.ts';
 import { Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS } from '../../supabase/functions/_shared/types.ts';
-import { CDPROF, cdProfReset } from '../../supabase/functions/_shared/strategies/cordite_core.ts';
+import { CDPROF, cdProfReset } from './frozen/cordite_core.ts';
 
 let _seed = 424242;
 Math.random = () => { _seed = (_seed * 1664525 + 1013904223) % 4294967296; return _seed / 4294967296; };

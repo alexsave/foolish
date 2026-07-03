@@ -69,6 +69,12 @@ static Card g_in_b[MAX_IN_CARDS];   // cover: the attack cards being covered
 unsigned char *wasm_io_ptr(void) { return g_io; }
 int wasm_io_cap(void) { return IO_CAP; }
 
+// For sibling bridge units (wasm_bots_api.c) that operate on the same
+// working game and scratch move list (LegalMoves is ~20MB at the wasm build's
+// MAX_LEGAL_MOVES — not worth a second copy).
+Game *wasm_game_ptr_internal(void) { return &g_game; }
+LegalMoves *wasm_moves_ptr_internal(void) { return &g_moves; }
+
 // Card input buffers: TS writes (suit,value) byte pairs.
 unsigned char *wasm_cards_a_ptr(void) { return (unsigned char *)g_in_a; }
 unsigned char *wasm_cards_b_ptr(void) { return (unsigned char *)g_in_b; }

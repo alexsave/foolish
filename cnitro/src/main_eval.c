@@ -43,6 +43,13 @@ static int dispatch_choose(int strat, const Game *g, int pi, const LegalMoves *m
         case STRAT_CORDITE:     return cordite_strategy_choose(g, pi, moves, NULL);
         case STRAT_CORDITE_OLD: return cordite_old_strategy_choose(g, pi, moves, NULL);
         case STRAT_ASTROLITE:   return astrolite_strategy_choose(g, pi, moves, NULL);
+        case STRAT_SIMPLE_HEURISTIC:
+                                return simple_heuristic_strategy_choose(g, pi, moves, NULL);
+        case STRAT_CHAMPION:    return champion_strategy_choose(g, pi, moves, NULL);
+        case STRAT_ULTIMATE_CHAMPION:
+                                return ultimate_champion_strategy_choose(g, pi, moves, NULL);
+        case STRAT_HACKER:      return hacker_strategy_choose(g, pi, moves, NULL);
+        case STRAT_FULMINATE:   return fulminate_strategy_choose(g, pi, moves, NULL);
         default:                return -1;
     }
 }

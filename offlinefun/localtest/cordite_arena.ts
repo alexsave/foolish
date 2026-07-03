@@ -54,7 +54,7 @@ function runWorker(): void {
 
         // Optionally override maxMillis on the strategy params (CD_MAXMS).
         if (maxms > 0) {
-            const core = await import('../../supabase/functions/_shared/strategies/cordite_core.ts');
+            const core = await import('./frozen/cordite_core.ts');
             (core.CORDITE_PARAMS as any).maxMillis = maxms;
             (core.CORDITE_MAX_PARAMS as any).maxMillis = maxms;
         }

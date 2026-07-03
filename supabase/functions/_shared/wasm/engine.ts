@@ -941,3 +941,15 @@ export function kernelLegalMoves(game: Game, player_id: string): { type: string;
     }
     return moves;
 }
+
+// ---------------------------------------------------------------------------
+// Shared with the bot-module bridge (bots.ts)
+// ---------------------------------------------------------------------------
+// bots.wasm embeds this same kernel (plus every algorithmic bot strategy), so
+// its bridge reuses this module's byte-layout marshaling instead of
+// duplicating it. Underscore-prefixed: internal surface, not part of the
+// kernel API the actions/ handlers use.
+export type { EngineExports };
+export { decodeBase64 as __decodeBase64, marshalGame as __marshalGame, mem as __mem };
+export const __LOG_TYPE_TO_INT: Record<string, number> = {};
+LOG_TYPE_FROM_INT.forEach((t, i) => { __LOG_TYPE_TO_INT[t] = i; });

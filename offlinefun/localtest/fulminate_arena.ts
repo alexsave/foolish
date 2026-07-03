@@ -52,7 +52,7 @@ function runWorker(): void {
         if (process.env.CD_NO_SOLVE) (globalThis as any).CD_NO_SOLVE = true;
         if (process.env.CD_NO_FASTROLL) (globalThis as any).CD_NO_FASTROLL = true;
         if (process.env.CD_MAXMS) {
-            const core = await import('../../supabase/functions/_shared/strategies/cordite_core.ts');
+            const core = await import('./frozen/cordite_core.ts');
             (core.CORDITE_PARAMS as any).maxMillis = Number(process.env.CD_MAXMS);
             (core.CORDITE_MAX_PARAMS as any).maxMillis = Number(process.env.CD_MAXMS);
         }

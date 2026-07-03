@@ -6,7 +6,11 @@ CC      ?= clang
 # eval, bit-identical play (verified: same mean_finish / win_rate / histogram,
 # CD_DIFFTEST clean). The win grows with player count.
 CFLAGS  ?= -O3 -ffast-math -flto -Wall -Wextra -Wno-unused-parameter -Wno-deprecated-declarations -Isrc -DACCELERATE_NEW_LAPACK
-LDFLAGS ?= -lm -flto -framework Accelerate
+ifeq ($(shell uname),Darwin)
+  LDFLAGS ?= -lm -flto -framework Accelerate
+else
+  LDFLAGS ?= -lm -flto
+endif
 
 # Parallel eval: `make OMP=1 ...` fans the independent games of cnitro_eval
 # across cores (the engine RNG and all cordite scratch state are _Thread_local,
@@ -23,7 +27,11 @@ CORE_SRC := src/game.c src/legal.c src/random_strategy.c src/espresso_strategy.c
             src/handwritten_strategy.c src/robusta_strategy.c \
             src/firecracker_strategy.c src/gunpowder_strategy.c \
             src/blackpowder_strategy.c src/cordite_strategy.c \
-            src/cordite_sim.c src/astrolite_strategy.c
+            src/cordite_sim.c src/astrolite_strategy.c \
+            src/simple_heuristic_strategy.c src/champion_strategy.c \
+            src/ultimate_champion_strategy.c src/hacker_strategy.c \
+            src/fulminate_strategy.c src/espresso_prod_strategy.c \
+            src/handwritten_prod_strategy.c
 CORE_OBJ := $(CORE_SRC:src/%.c=build/%.o)
 
 .PHONY: all clean tests
@@ -88,6 +96,25 @@ build/rules.wasm: src/game.c src/legal.c wasm/wasm_api.c src/game.h src/legal.h 
 # Deno edge functions, Node and browsers — no asset pipeline needed).
 wasm: build/rules.wasm
 	node wasm/embed.mjs build/rules.wasm ../supabase/functions/_shared/wasm/rules_wasm.ts
+
+# Bot module: the rules kernel PLUS every algorithmic bot strategy and the
+# choose-move bridge. A superset of rules.wasm, loaded only where bots run
+# (edge functions' bot turns, offline harnesses) so the pure rules path keeps
+# the smaller module.
+WASM_BOT_SRC := src/game.c src/legal.c src/random_strategy.c \
+                src/espresso_strategy.c src/handwritten_strategy.c \
+                src/cordite_strategy.c src/cordite_sim.c \
+                src/simple_heuristic_strategy.c src/champion_strategy.c \
+                src/ultimate_champion_strategy.c src/hacker_strategy.c \
+                src/fulminate_strategy.c src/espresso_prod_strategy.c \
+                src/handwritten_prod_strategy.c wasm/wasm_api.c wasm/wasm_bots_api.c
+
+build/bots.wasm: $(WASM_BOT_SRC) src/game.h src/legal.h src/card.h src/strategy.h
+	@mkdir -p build
+	$(WASM_CC) $(WASM_FLAGS) $(WASM_BOT_SRC) -o $@
+
+wasm-bots: build/bots.wasm
+	node wasm/embed.mjs build/bots.wasm ../supabase/functions/_shared/wasm/bots_wasm.ts BOTS_WASM_B64
 
 clean:
 	rm -rf build

@@ -61,8 +61,8 @@ src/                      Next.js web client (App Router)
 supabase/
   functions/              edge functions: create/join/attack/cover/pass/pickup/
                           good/exit/start/continue/add-bot/bot_bump/meta/...
-  functions/_shared/      single source of truth: rules, types, actions,
-                          replay codec, bot strategies
+  functions/_shared/      types, actions, replay codec, and the WASM bridges
+                          to the C kernel (rules + bot brains)
   migrations/             schema, incl. CAS concurrency + bot-lease heartbeat
   seed.sql                seeds the bot roster (Cordite, Espresso, Handwritten, …)
 
@@ -90,6 +90,25 @@ differential harness replayed ~100k mirrored actions plus ~30k adversarial
 probes through both engines with identical seeds and byte-compared states,
 logs, events and rejection messages: zero divergence. `e2e/wasm_engine.test.ts`
 keeps policing the seams.
+
+**The bot brains are C too.** Every algorithmic strategy (`random`,
+`espresso`, `handwritten`, `simple_heuristic`, `champion`,
+`ultimate_champion`, `hacker`, `cordite`, `cordite_max`, `fulminate`) lives
+in `cnitro/src/*_strategy.c` and ships as a second module, `bots.wasm`
+(`make wasm-bots` → `_shared/wasm/bots_wasm.ts`, ~150 KB): the rules kernel
+plus all bots plus a choose-move bridge. A bot turn marshals the game in
+once and the kernel enumerates legal moves and picks one — only the chosen
+index crosses back to TS (`_shared/wasm/bots.ts`,
+`WasmBotStrategy` in `bot_strategy.ts`). The seven heuristic bots are
+**exact behavioral mirrors** of the TS originals — `e2e/bot_parity.test.ts`
+proves the kernel picks the identical move on every decision of thousands
+of seeded games (RNG streams pinned on both sides); the retired TS sources
+are frozen as oracles in `offlinefun/localtest/frozen/`. cordite/fulminate
+run the C originals directly (the TS versions were ports of them), at the
+production world budget via the `CD_BUDGET` knob — roughly **10× faster**
+wall-clock than the TS implementation at 4 players. The only TS-brained
+strategies left are the non-algorithmic ones: `gpt` (LLM adapter) and the
+experimental `nitro` NN.
 
 Types, constants, the replay codec, meta/lobby actions, and the I/O layer
 (DB, broadcast, bot loop) remain TS in `supabase/functions/_shared/`, shared
@@ -150,8 +169,9 @@ every other bot at every player count) — plus tools for head-to-head evals, a
 mixed-pool ELO arena, and seeded move-by-move replays. Cordite is a
 **belief-constrained determinized Monte-Carlo** player with an exact endgame solver
 that derives hidden information by deduction rather than peeking, under a strict
-**no-LLM / no-cheating** contract. It's ported back to TypeScript and runs as the
-live `cordite` / `cordite_max` bots. See `cnitro/README.md`, `cnitro/CORDITE.md`,
+**no-LLM / no-cheating** contract. It runs live as the `cordite` /
+`cordite_max` / `fulminate` bots — the C implementation itself, compiled into
+`bots.wasm`. See `cnitro/README.md`, `cnitro/CORDITE.md`,
 `cnitro/BLACKPOWDER.md`, and `cnitro/CORDITE_RESEARCH.md`.
 
 ```bash

@@ -72,6 +72,11 @@ static int cd_env_int(const char *name, int def) {
     return (v && v[0]) ? atoi(v) : def;
 }
 static _Thread_local int cd_flags_loaded = 0;
+// Force the CD_* knobs to be re-read on the next choose call. The wasm bridge
+// calls this after rewriting its env table (one module instance serves both
+// cordite and cordite_max, which differ only by CD_W*/CD_KEEP*).
+void cordite_reload_flags(void);
+void cordite_reload_flags(void) { cd_flags_loaded = 0; }
 static _Thread_local int cd_no_solve = 0, cd_no_voids = 0, cd_no_flip = 0;
 static _Thread_local int cd_no_floors = 0, cd_no_leaf = 0, cd_no_avoid = 0;
 static _Thread_local int cd_no_earlyexit = 0;
@@ -82,6 +87,7 @@ static _Thread_local int cd_w1_override = 0, cd_w2_override = 0;
 static _Thread_local int cd_w3_override = -1;
 static _Thread_local int cd_old_budget = 0;    // cordite_old variant: pre-2x worlds
 static _Thread_local int cd_keep1 = 0, cd_keep2 = 0;  // CD_KEEP1/2: candidates kept past stage 0/1 (0=default n/3, 2)
+static _Thread_local int cd_budget_mode = 0;   // CD_BUDGET: 0=arena, 1=prod (TS v2.4), 2=max
 static _Thread_local int cd_rollout_policy = 0;       // CD_ROLLOUT: 0=default, 1=espresso, 2=handwritten (struct path)
 // Bitboard endgame-solver node budgets (per shared pass). The bitboard solver
 // (transposition table + O(1) clone) resolves far more per node than the
@@ -578,6 +584,360 @@ static StrategyFn cd_rollout_for(const Game *g) {
     return espresso_strategy_choose;
 }
 
+// ---------- fulminate: per-seat rollout-policy override ---------------------
+// Port of the seat-weight machinery + archetype sim choosers in
+// cordite_core.ts (POL_*/ARCH_POLICIES 1356-1576, setSeatWeights/
+// samplePolicyTable 1596-1617, the simulate() per-seat hook 2088-2102 and the
+// world-loop sampling call 2749-2751). Everything here is INERT unless
+// cordite_set_seat_weights installed a posterior: every new branch is guarded
+// by cd_seat_weights_on / cd_seat_policy_dev, so plain cordite stays
+// bit-for-bit unchanged (verified against a fixed-seed baseline).
+//
+// Representation note: the TS archetype choosers run on the enumerated LITE
+// move list (calcLegal(g, pi, true)); the C equivalents below run on
+// calculate_legal_moves_lite's LegalMoves, which enumerates the same move set
+// in the same order (attacks / greedy-cover+pickup+pass / attacks+good). Seats
+// whose sampled policy IS handwritten keep cordite's existing dispatch; a
+// world whose sampled table deviates runs on the struct rollout (cd_simulate)
+// instead of the bitboard fast path — the two are behavior-identical for
+// handwritten seats (sim_difftest), so only the deviating seats actually play
+// differently, exactly as in the TS per-seat skip of the fast-roll path.
+
+static _Thread_local double cd_seat_weights[MAX_PLAYERS][CORDITE_NUM_POLICIES];
+static _Thread_local int    cd_seat_weights_n = 0;
+static _Thread_local int    cd_seat_weights_on = 0;
+// Per-world sampled policy table + "any seat deviates" flag. Re-sampled at the
+// top of every world while weights are installed; cd_simulate reads it.
+static _Thread_local int8_t cd_seat_policy[MAX_PLAYERS];
+static _Thread_local int    cd_seat_policy_dev = 0;
+
+void cordite_set_seat_weights(const double w[MAX_PLAYERS][CORDITE_NUM_POLICIES],
+                              int num_players) {
+    if (!w || num_players <= 0) { cordite_clear_seat_weights(); return; }
+    if (num_players > MAX_PLAYERS) num_players = MAX_PLAYERS;
+    for (int p = 0; p < num_players; p++) {
+        for (int k = 0; k < CORDITE_NUM_POLICIES; k++) {
+            cd_seat_weights[p][k] = w[p][k];
+        }
+    }
+    cd_seat_weights_n = num_players;
+    cd_seat_weights_on = 1;
+    cd_seat_policy_dev = 0;   // TS setSeatWeights: seatPolicy = null until sampled
+}
+
+void cordite_clear_seat_weights(void) {
+    cd_seat_weights_on = 0;
+    cd_seat_weights_n = 0;
+    cd_seat_policy_dev = 0;
+}
+
+// Per-world sampler (cordite_core.ts samplePolicyTable, lines 1605-1617).
+// Draws each seat's policy from its weight vector with a small LCG seeded by
+// the world seed — independent of the rollout RNG so it never perturbs the
+// CRN stream. The recurrence is EXACTLY the TS one (uint32 wrap + /2^32).
+// Returns 1 if any seat's drawn policy deviates from handwritten.
+static int cd_fm_sample_table(uint32_t seed, int n) {
+    uint32_t s = seed ^ 0x9e3779b9u;
+    int dev = 0;
+    if (n > cd_seat_weights_n) n = cd_seat_weights_n;
+    for (int p = 0; p < n; p++) {
+        const double *w = cd_seat_weights[p];
+        s = s * 1664525u + 1013904223u;
+        double r = (double)s / 4294967296.0;
+        int k = 0;
+        for (; k < CORDITE_NUM_POLICIES - 1; k++) {
+            if (r < w[k]) break;
+            r -= w[k];
+        }
+        cd_seat_policy[p] = (int8_t)k;
+        if (k != CORDITE_POL_HANDWRITTEN) dev = 1;
+    }
+    return dev;
+}
+
+// ---- archetype choosers (cordite_core.ts 1362-1569) ------------------------
+// These mirror the TS sim-level choosers move-for-move: same scores, same
+// strict-inequality tie-breaks (first enumerated move wins ties), same
+// cascade order, and the same RNG draws (randomChoose consumes exactly one
+// game_random(); simple/greedy/passive/human consume none).
+
+// randomChoose (TS 1362-1368): uniform over the legal list, one RNG draw from
+// the SIM stream (not random_strategy's separate LCG — the TS chooser uses
+// rngNext, which is the C game_random stream inside rollouts).
+static int cd_arch_random(const LegalMoves *moves) {
+    int idx = (int)(game_random() * moves->n);
+    if (idx < 0) idx = 0;
+    if (idx >= moves->n) idx = moves->n - 1;
+    return idx;
+}
+
+// shScore (TS 1375-1379): summed value + flat trump penalty.
+static int cd_sh_score(const LegalMove *m, int power, int trump_penalty) {
+    int s = 0;
+    for (int i = 0; i < m->n_cards; i++) {
+        s += m->cards[i].value + (m->cards[i].suit == power ? trump_penalty : 0);
+    }
+    return s;
+}
+
+// shGiveUp (TS 1381-1405): strategic give-up when not every uncovered attack
+// is defendable, trumps-needed exceeds half the trump count, or the table is
+// heavy relative to the hand.
+static bool cd_sh_give_up(const Game *g, int p_idx) {
+    const Player *pl = &g->players[p_idx];
+    int power = g->power_suit;
+    Card unc[MAX_BATTLES];
+    int un = 0;
+    for (int i = 0; i < g->num_battles; i++) {
+        if (!g->table_battles[i].has_defense) unc[un++] = g->table_battles[i].attack;
+    }
+    if (un == 0) return false;
+    int defendable = 0, trumps_needed = 0;
+    for (int a = 0; a < un; a++) {
+        bool same = false;
+        for (int j = 0; j < pl->hand_count; j++) {
+            if (pl->hand[j].suit == unc[a].suit && pl->hand[j].value > unc[a].value) {
+                same = true;
+                break;
+            }
+        }
+        if (same) { defendable++; continue; }
+        bool trump = false;
+        for (int j = 0; j < pl->hand_count; j++) {
+            if (pl->hand[j].suit == power && can_cover(unc[a], pl->hand[j], power)) {
+                trump = true;
+                break;
+            }
+        }
+        if (trump) { defendable++; trumps_needed++; }
+    }
+    if (defendable < un) return true;
+    int trump_count = 0;
+    for (int j = 0; j < pl->hand_count; j++) {
+        if (pl->hand[j].suit == power) trump_count++;
+    }
+    // TS `trumpsNeeded > trumpCount / 2` is FLOAT division (JS number math).
+    if ((double)trumps_needed > (double)trump_count / 2.0) return true;
+    int att_sum = 0;
+    for (int a = 0; a < un; a++) att_sum += unc[a].value;
+    int hand_sum = 0;
+    for (int j = 0; j < pl->hand_count; j++) hand_sum += pl->hand[j].value;
+    double avg_att = (double)att_sum / (double)un;
+    double avg_hand = pl->hand_count ? (double)hand_sum / (double)pl->hand_count : 0.0;
+    return avg_att > avg_hand + 2 && un >= 3;
+}
+
+// simpleHeuristicChoose (TS 1406-1446): behavior-faithful sim port of
+// simple_heuristic_strategy — lowest-cost attack/cover/pass with trump
+// penalties, strategic give-up (pickup) when overwhelmed.
+static int cd_arch_simple(const Game *g, int p_idx, const LegalMoves *moves) {
+    int power = g->power_suit;
+    bool is_def = (p_idx == g->defender);
+    int attack_best = -1, attack_score = INT32_MAX;
+    int cover_best = -1, cover_score = INT32_MAX;
+    int pass_best = -1, pass_score = INT32_MAX;
+    int good_idx = -1, pickup_idx = -1;
+    for (int i = 0; i < moves->n; i++) {
+        const LegalMove *m = &moves->moves[i];
+        switch (m->type) {
+            case MOVE_ATTACK: {
+                int s = cd_sh_score(m, power, 20);
+                if (s < attack_score) { attack_score = s; attack_best = i; }
+                break;
+            }
+            case MOVE_COVER: {
+                int s = cd_sh_score(m, power, 10);
+                if (s < cover_score) { cover_score = s; cover_best = i; }
+                break;
+            }
+            case MOVE_PASS: {
+                int s = cd_sh_score(m, power, 20);
+                if (s < pass_score) { pass_score = s; pass_best = i; }
+                break;
+            }
+            case MOVE_GOOD:   good_idx = i;   break;
+            case MOVE_PICKUP: pickup_idx = i; break;
+            default: break;
+        }
+    }
+    bool is_attacker = (p_idx == g->first_attacker) || !is_def;
+    if (attack_best >= 0 && is_attacker) return attack_best;
+    if (cover_best >= 0 && is_def) {
+        if (pickup_idx >= 0 && cd_sh_give_up(g, p_idx)) return pickup_idx;
+        return cover_best;
+    }
+    if (pass_best >= 0) return pass_best;
+    if (good_idx >= 0) return good_idx;
+    if (pickup_idx >= 0) return pickup_idx;
+    return attack_best >= 0 ? attack_best : 0;
+}
+
+// greedyChoose (TS 1453-1484): "dumb greedy" — always piles on with the most
+// cards / HIGHEST scores, covers with its highest card, never gives up
+// strategically. Deliberately wasteful (the exploitable disposer archetype).
+static int cd_arch_greedy(const Game *g, const LegalMoves *moves) {
+    int power = g->power_suit;
+    int attack_best = -1; int32_t attack_key = INT32_MIN;
+    int cover_best = -1;  int32_t cover_key = INT32_MIN;
+    int pass_best = -1, good_idx = -1, pickup_idx = -1;
+    for (int i = 0; i < moves->n; i++) {
+        const LegalMove *m = &moves->moves[i];
+        switch (m->type) {
+            case MOVE_ATTACK: {
+                int32_t s = 0;
+                for (int j = 0; j < m->n_cards; j++) s += cd_card_score(m->cards[j], power);
+                int32_t key = m->n_cards * 1000 + s;
+                if (key > attack_key) { attack_key = key; attack_best = i; }
+                break;
+            }
+            case MOVE_COVER: {
+                int32_t s = 0;
+                for (int j = 0; j < m->n_cards; j++) s += cd_card_score(m->cards[j], power);
+                if (s > cover_key) { cover_key = s; cover_best = i; }
+                break;
+            }
+            case MOVE_PASS: if (pass_best < 0) pass_best = i; break;
+            case MOVE_GOOD:   good_idx = i;   break;
+            case MOVE_PICKUP: pickup_idx = i; break;
+            default: break;
+        }
+    }
+    if (attack_best >= 0) return attack_best;   // greedy: always pile on if able
+    if (cover_best >= 0) return cover_best;     // always defend, wastefully
+    if (pass_best >= 0) return pass_best;
+    if (good_idx >= 0) return good_idx;
+    if (pickup_idx >= 0) return pickup_idx;
+    return 0;
+}
+
+// passiveChoose (TS 1492-1534): timid hoarder — leads the single lowest
+// non-trump, prefers to STOP over piling on, refuses to spend trumps on
+// defense (takes instead).
+static int cd_arch_passive(const Game *g, int p_idx, const LegalMoves *moves) {
+    int power = g->power_suit;
+    int attack_best = -1; int32_t attack_key = INT32_MAX;
+    int cover_best = -1;  int32_t cover_key = INT32_MAX;
+    bool cover_trump = false;
+    int pass_best = -1;   int32_t pass_key = INT32_MAX;
+    int good_idx = -1, pickup_idx = -1;
+    for (int i = 0; i < moves->n; i++) {
+        const LegalMove *m = &moves->moves[i];
+        switch (m->type) {
+            case MOVE_ATTACK: {
+                int32_t s = 0, tr = 0;
+                for (int j = 0; j < m->n_cards; j++) {
+                    s += m->cards[j].value;
+                    if (m->cards[j].suit == power) tr++;
+                }
+                int32_t key = m->n_cards * 1000 + s + tr * 200;
+                if (key < attack_key) { attack_key = key; attack_best = i; }
+                break;
+            }
+            case MOVE_COVER: {
+                int32_t s = 0;
+                bool any_tr = false;
+                for (int j = 0; j < m->n_cards; j++) {
+                    s += m->cards[j].value;
+                    if (m->cards[j].suit == power) { any_tr = true; s += 200; }
+                }
+                if (s < cover_key) { cover_key = s; cover_best = i; cover_trump = any_tr; }
+                break;
+            }
+            case MOVE_PASS: {
+                int32_t s = 0;
+                for (int j = 0; j < m->n_cards; j++) s += m->cards[j].value;
+                if (s < pass_key) { pass_key = s; pass_best = i; }
+                break;
+            }
+            case MOVE_GOOD:   good_idx = i;   break;
+            case MOVE_PICKUP: pickup_idx = i; break;
+            default: break;
+        }
+    }
+    bool is_def = (p_idx == g->defender);
+    if (is_def) {
+        if (cover_best >= 0 && !cover_trump) return cover_best;  // cheap non-trump cover only
+        if (pickup_idx >= 0) return pickup_idx;                  // else take, don't spend a trump
+        if (cover_best >= 0) return cover_best;
+        if (pass_best >= 0) return pass_best;
+    } else {
+        if (good_idx >= 0) return good_idx;                      // prefer to STOP over piling on
+        if (attack_best >= 0) return attack_best;                // else a single low lead
+    }
+    if (attack_best >= 0) return attack_best;
+    if (pass_best >= 0) return pass_best;
+    if (good_idx >= 0) return good_idx;
+    if (pickup_idx >= 0) return pickup_idx;
+    return 0;
+}
+
+// humanChoose (TS 1542-1569): loss-averse stubborn defender — plays low like
+// simple but NEVER makes a strategic pickup (always covers when able) and
+// prefers covering to passing.
+static int cd_arch_human(const Game *g, int p_idx, const LegalMoves *moves) {
+    int power = g->power_suit;
+    int attack_best = -1, attack_score = INT32_MAX;
+    int cover_best = -1, cover_score = INT32_MAX;
+    int pass_best = -1, pass_score = INT32_MAX;
+    int good_idx = -1, pickup_idx = -1;
+    for (int i = 0; i < moves->n; i++) {
+        const LegalMove *m = &moves->moves[i];
+        switch (m->type) {
+            case MOVE_ATTACK: {
+                int s = cd_sh_score(m, power, 20);
+                if (s < attack_score) { attack_score = s; attack_best = i; }
+                break;
+            }
+            case MOVE_COVER: {
+                int s = cd_sh_score(m, power, 10);
+                if (s < cover_score) { cover_score = s; cover_best = i; }
+                break;
+            }
+            case MOVE_PASS: {
+                int s = cd_sh_score(m, power, 20);
+                if (s < pass_score) { pass_score = s; pass_best = i; }
+                break;
+            }
+            case MOVE_GOOD:   good_idx = i;   break;
+            case MOVE_PICKUP: pickup_idx = i; break;
+            default: break;
+        }
+    }
+    bool is_def = (p_idx == g->defender);
+    if (is_def) {
+        if (cover_best >= 0) return cover_best;   // never give up: always cover if able
+        if (pass_best >= 0) return pass_best;
+        if (pickup_idx >= 0) return pickup_idx;
+    }
+    if (attack_best >= 0) return attack_best;
+    if (pass_best >= 0) return pass_best;
+    if (good_idx >= 0) return good_idx;
+    if (pickup_idx >= 0) return pickup_idx;
+    return 0;
+}
+
+// ARCH_POLICIES dispatch (TS 1573-1576). Indices 0-2 reuse the existing C
+// equivalents the TS choosers were themselves ported from: handwritten never
+// reaches here (the caller keeps cordite's own dispatch for it) and espresso
+// is the real espresso_strategy_choose (it reads the sampled world's hands —
+// legitimate inside a determinized world, same argument as the TS sim port).
+static int cd_arch_choose(int pol, const Game *g, int p_idx, const LegalMoves *moves) {
+    switch (pol) {
+        case CORDITE_POL_ESPRESSO: return espresso_strategy_choose(g, p_idx, moves, NULL);
+        case CORDITE_POL_RANDOM:   return cd_arch_random(moves);
+        case CORDITE_POL_SIMPLE:   return cd_arch_simple(g, p_idx, moves);
+        case CORDITE_POL_GREEDY:   return cd_arch_greedy(g, moves);
+        case CORDITE_POL_PASSIVE:  return cd_arch_passive(g, p_idx, moves);
+        case CORDITE_POL_HUMAN:    return cd_arch_human(g, p_idx, moves);
+        default: {
+            // POL_HANDWRITTEN is filtered by the caller; defensive fallback
+            // keeps cordite's own stage-aware dispatch.
+            StrategyFn fn = cd_rollout_for(g);
+            return fn(g, p_idx, moves, NULL);
+        }
+    }
+}
+
 // Roll a sampled world forward; returns my finish position (1..N), or 0 if
 // the simulation didn't terminate. Exits early once my position is known,
 // and resolves small 2-player deck-empty endgames exactly (one attempt per
@@ -615,11 +975,24 @@ static int cd_simulate(Game *g, int my_idx, int max_turns) {
         bool acted = false;
         for (int pi = 0; pi < g->num_players; pi++) {
             if (!should_bot_act(g, pi)) continue;
-            LegalMoves moves;
+            // Static, not stack: LegalMoves is ~10MB at the wasm build's
+            // MAX_LEGAL_MOVES and the wasm stack is 1MB — a stack instance
+            // traps the module the moment a rollout reaches this ply loop.
+            // Consumed fully before the next iteration, so one per thread.
+            static _Thread_local LegalMoves moves;
             calculate_legal_moves_lite(g, pi, &moves);
             if (moves.n == 0) continue;
-            StrategyFn fn = cd_rollout_for(g);
-            int idx = fn(g, pi, &moves, NULL);
+            int idx;
+            if (cd_seat_policy_dev && cd_seat_policy[pi] != CORDITE_POL_HANDWRITTEN) {
+                // fulminate: a profiled seat with a non-default sampled policy
+                // plays with its archetype chooser on the lite move set
+                // (cordite_core.ts simulate(), lines 2095-2101). Seats mapped
+                // to POL_HANDWRITTEN keep cordite's exact existing dispatch.
+                idx = cd_arch_choose(cd_seat_policy[pi], g, pi, &moves);
+            } else {
+                StrategyFn fn = cd_rollout_for(g);
+                idx = fn(g, pi, &moves, NULL);
+            }
             if (idx < 0 || idx >= moves.n) continue;
             if (cd_apply(g, pi, &moves.moves[idx])) { acted = true; break; }
         }
@@ -900,6 +1273,20 @@ static void cd_params(int num_players, int *W1, int *W2, int *W3) {
         else if (num_players <= 6) { *W1 = 20; *W2 = 40; *W3 = 28; }
         else                       { *W1 = 20; *W2 = 40; *W3 = 24; }
     }
+    // CD_BUDGET=prod: the deployed TS v2.4 player-count-aware budget
+    // (cordite_core.ts CORDITE_PARAMS — pc2/pc4 saturated at ~3x the arena
+    // table, pc6/pc8 variance-starved so ~6x, plus wider keep counts in the
+    // pruning stages). CD_BUDGET=max: the cordite_max tier. The TS ran these
+    // under a 2s wall-clock cap it almost never hit; the C engine's per-world
+    // cost is ~4x lower, so the cap is dropped rather than ported.
+    if (cd_budget_mode == 1) {
+        if (num_players <= 2)      { *W1 =  96; *W2 = 168; *W3 = 168; }
+        else if (num_players <= 4) { *W1 =  84; *W2 = 168; *W3 = 168; }
+        else if (num_players <= 6) { *W1 = 240; *W2 = 480; *W3 = 336; }
+        else                       { *W1 = 240; *W2 = 480; *W3 = 288; }
+    } else if (cd_budget_mode == 2) {
+        *W1 = 120; *W2 = 240; *W3 = 168;
+    }
     if (cd_w1_override > 0) *W1 = cd_w1_override;
     if (cd_w2_override > 0) *W2 = cd_w2_override;
     if (cd_w3_override >= 0) *W3 = cd_w3_override;
@@ -961,6 +1348,15 @@ int cordite_strategy_choose(const Game *g, int bot_idx,
         cd_w3_override = cd_env_int("CD_W3", -1);
         cd_keep1 = cd_env_int("CD_KEEP1", 0);
         cd_keep2 = cd_env_int("CD_KEEP2", 0);
+        {
+            // CD_BUDGET=prod|max: the world/pruning budgets the production TS
+            // port shipped with (see cd_params / the keep counts below). The
+            // server's bots.wasm adapter sets this; the arena default stays
+            // the C-tuned budget.
+            const char *bm = getenv("CD_BUDGET");
+            cd_budget_mode = (bm && !strcmp(bm, "prod")) ? 1
+                           : (bm && !strcmp(bm, "max"))  ? 2 : 0;
+        }
         cd_rollout_policy = cd_env_int("CD_ROLLOUT", 0);
         cd_bb_win_budget = cd_env_int("CD_BB_WIN", 20000);
         cd_bb_avoid_budget = cd_env_int("CD_BB_AVOID", 15000);
@@ -1041,9 +1437,17 @@ int cordite_strategy_choose(const Game *g, int bot_idx,
             bool use_voids  = (w & 3) != 3;
             bool use_floors = !cd_no_floors && (w % cd_floor_mod) == 0;
             cd_sample_world(&world, g, bot_idx, &B, wseed, use_voids, use_floors);
+            // fulminate: sample this world's per-seat rollout policies from
+            // the installed posterior weights (cordite_core.ts:2749-2751),
+            // seeded by the WORLD seed so the table is shared by every
+            // candidate in this world (preserves CRN) and independent of the
+            // rollout RNG stream. Zero work when no weights are installed —
+            // cordite's exact path.
+            cd_seat_policy_dev = cd_seat_weights_on
+                               ? cd_fm_sample_table(wseed, g->num_players) : 0;
             uint32_t sim_rng = cd_mix(wseed, 0x51AB1E5u);
 
-            if (fast_path) {
+            if (fast_path && !cd_seat_policy_dev) {
                 cd_sim_from_game(&world_sim, &world);   // convert world ONCE
                 for (int ci = 0; ci < C.n; ci++) {
                     if (!alive[ci]) continue;
@@ -1072,7 +1476,14 @@ int cordite_strategy_choose(const Game *g, int bot_idx,
                     nsim[ci]++;
                     continue;
                 }
-                int fp = cd_rollout(&trial, bot_idx, 600);
+                // A world whose sampled policy table deviates must roll out on
+                // the struct engine (the archetype hook lives in cd_simulate;
+                // the bitboard playout has no move list to choose from). It
+                // also bypasses cd_rollout's CD_DIFFTEST comparison — the
+                // difftest is only meaningful with the override off.
+                int fp = cd_seat_policy_dev
+                       ? cd_simulate(&trial, bot_idx, 600)
+                       : cd_rollout(&trial, bot_idx, 600);
                 if (fp == 0) fp = g->num_players;
                 score[ci] += (double)fp;
                 nsim[ci]++;
@@ -1083,10 +1494,16 @@ int cordite_strategy_choose(const Game *g, int bot_idx,
             for (int i = 0; i < C.n; i++) if (alive[i]) n_alive++;
             int keep;
             if (stage == 0) {
-                keep = (cd_keep1 > 0) ? cd_keep1 : C.n / 3;
-                if (keep < 3) keep = 3;
+                // Budget modes use the TS scheme: keep max(4, ceil(n/2))
+                // after stage 0 and 3 after stage 1 — wider survival for the
+                // larger world budget (see cordite_core.ts corditeChoose).
+                keep = (cd_keep1 > 0) ? cd_keep1
+                     : cd_budget_mode ? (C.n + 1) / 2
+                     : C.n / 3;
+                int keep_floor = cd_budget_mode ? 4 : 3;
+                if (keep < keep_floor) keep = keep_floor;
             } else {
-                keep = (cd_keep2 > 0) ? cd_keep2 : 2;
+                keep = (cd_keep2 > 0) ? cd_keep2 : (cd_budget_mode ? 3 : 2);
             }
             if (keep >= n_alive) continue;
             for (int dropped = n_alive - keep; dropped > 0; dropped--) {
