@@ -105,7 +105,10 @@ static void calc_regular_attack_moves(const Game *g, const Player *p, LegalMoves
     int uncovered = 0;
     for (int i = 0; i < g->num_battles; i++) if (!g->table_battles[i].has_defense) uncovered++;
     Card buf[MAX_MOVE_CARDS];
-    for (int k = 1; k <= vn; k++) {
+    // Combos wider than a LegalMove can hold are dropped (documented cap;
+    // also prevents buf overflow when a post-pickup hand is huge).
+    int k_max = vn < MAX_MOVE_CARDS ? vn : MAX_MOVE_CARDS;
+    for (int k = 1; k <= k_max; k++) {
         combinations_attack(valid, vn, 0, k, buf, 0, out, defender_cards, uncovered);
     }
 }
@@ -200,7 +203,8 @@ static void calc_cover_moves(const Game *g, const Player *defender, LegalMoves *
     }
 
     int picked[MAX_BATTLES];
-    for (int k = 1; k <= n_uncovered; k++) {
+    int k_max = n_uncovered < MAX_MOVE_CARDS ? n_uncovered : MAX_MOVE_CARDS;
+    for (int k = 1; k <= k_max; k++) {
         choose_attack_subset(g, defender, uncovered_battles, n_uncovered,
                              opts, 0, k, picked, 0, out);
     }
@@ -244,6 +248,7 @@ static void calc_cover_moves_greedy(const Game *g, const Player *defender, Legal
         if (!g->table_battles[i].has_defense) uncovered[n_uncovered++] = g->table_battles[i].attack;
     }
     if (n_uncovered == 0) return;
+    if (n_uncovered > MAX_MOVE_CARDS) return; // can't fit in one LegalMove
 
     bool used[MAX_HAND_SIZE] = { false };
     Card covers[MAX_BATTLES];

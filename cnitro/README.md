@@ -1,13 +1,21 @@
 # cnitro — pure-C Durak engine + bot arena
 
-Self-contained C port of the Russian Durak engine and its heuristic /
-Monte-Carlo bots. Native code so we can simulate and evaluate millions of
-games without crossing the language boundary into the TS server.
+Self-contained C implementation of the Russian Durak engine and its
+heuristic / Monte-Carlo bots. Native code so we can simulate and evaluate
+millions of games without crossing the language boundary into the TS server.
 
-The engine and legal-move enumeration mirror
-`supabase/functions/_shared/{common_utils,actions/*}.ts` exactly, so a game
-played here is a legal game on the production server (the replay codec on the
-TS side round-trips C-played games unchanged).
+**The kernel here IS the production rules engine.** `game.c` + `legal.c`
+compile to WebAssembly (`make wasm`) and run every live move: the TS files in
+`supabase/functions/_shared/actions/` are thin bridges over this code (see
+`wasm/wasm_api.c` and `_shared/wasm/engine.ts`). The old TS rule
+implementations were deleted after a differential harness proved the two
+engines byte-identical across ~100k mirrored actions. Two behaviors are build
+parameters because the deployments deliberately differ: the deck-size
+boundary (production/WASM: 5+ players → 52 cards, matching the frozen replay
+format; native research tools: 6+, per `card.h`) and the log/battle/move
+capacities (`-DMAX_LOG_PAIRS=64 -DMAX_BATTLES=64 -DMAX_LEGAL_MOVES=65536` for
+production). The kernel fires `engine_snap_hook` at the exact points the old
+TS handlers captured animation snapshots — a NULL no-op for native builds.
 
 ## What's here
 

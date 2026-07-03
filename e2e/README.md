@@ -48,6 +48,7 @@ deadlocks under parallelism.
 | `rearrange.test.ts` | the real `handleRearrangeHand` + CAS | duplicate/garbage index lists are rejected (found + fixed a card-cloning exploit); a real permutation conserves cards |
 | `meta.test.ts` | the real consolidated `meta` handlers + CAS | start/add-bot/exit/continue behave correctly through one endpoint |
 | `replay_codec.test.ts` | the real engine + replay encode/decode codec | engine-played games round-trip byte-exact through encode → serialize → decode (plus extras names/timing and the replay-screen view builder). Pure codec test — needs no Postgres. |
+| `wasm_engine.test.ts` | the C rules kernel (WASM) behind the _shared API | production deck sizes (5+ → 52), card conservation through full kernel games, the retained TS projections (canCover/game_done/next-player/shouldBotAct) never drift from the kernel, hostile inputs reject with production messages. Pure kernel test — needs no Postgres. |
 
 The latency-sweep conclusions are folded into deterministic checks in
 `client.test.ts` ("reordering" / "disconnect").

@@ -14,7 +14,15 @@
 #define MOVE_GOOD   4
 #define MOVE_WAIT   5
 
+// Capacities are build parameters (like MAX_LOG_PAIRS): the native arena
+// keeps the compact bot-vs-bot sizes; the WASM production build widens them
+// (-DMAX_MOVE_CARDS=40 -DMAX_LEGAL_MOVES=65536) because human games reach
+// states (huge post-pickup hands) the arena never does. Moves past the caps
+// are dropped in enumeration order — a deliberate, documented bound that
+// replaces the old TS enumerator's unbounded combinatorial blow-up.
+#ifndef MAX_MOVE_CARDS
 #define MAX_MOVE_CARDS 8         // hand size 6 + slack
+#endif
 typedef struct {
     int8_t type;
     int8_t n_cards;
@@ -22,9 +30,9 @@ typedef struct {
     Card   attack_cards[MAX_MOVE_CARDS]; // cover only
 } LegalMove;
 
-// Combinatorial blow-up cap. Espresso-vs-random in TS rarely produces more
-// than a few hundred moves at a time; this is a safety bound.
+#ifndef MAX_LEGAL_MOVES
 #define MAX_LEGAL_MOVES 4096
+#endif
 
 typedef struct {
     int      n;

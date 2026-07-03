@@ -112,6 +112,11 @@ static inline int sim_in_count(const SimState *s) {
 
 static inline int sim_next_player(const SimState *s, int cur) {
     int n = s->num_players;
+    // Mirrors get_next_player_index's <=1-IN guard (TS parity): with the
+    // rotation collapsed the caller's seat is returned unchanged.
+    int in_count = 0;
+    for (int i = 0; i < n; i++) if (s->status_p[i] == PLAYER_STATUS_IN) in_count++;
+    if (in_count <= 1) return cur;
     int next = (cur + 1) % n;
     while (s->status_p[next] == PLAYER_STATUS_OUT) next = (next + 1) % n;
     return next;
@@ -218,7 +223,10 @@ static void sim_apply_attack(SimState *s, int p_idx, const uint8_t *ids, int n) 
         s->covered_mask &= ~(1ull << b);
     }
     s->good_mask = 0;
-    if (sim_hand_count(s, p_idx) == 0) {
+    // Attackers only leave when the stock is exhausted too (mirrors the
+    // no_cards_left guard in handle_attack); with cards still in the deck
+    // they sit out the bout and refill at round end.
+    if (sim_hand_count(s, p_idx) == 0 && sim_no_cards_left(s)) {
         sim_eliminate(s, p_idx);
     }
 }

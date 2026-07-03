@@ -24,6 +24,19 @@
 static _Thread_local uint32_t g_seed = 1237;
 static _Thread_local uint32_t g_rand_seed = 1;
 
+// Deck-size boundary (see card.h): cnitro research default is 6+, the WASM
+// production bridge sets 5 to match the TS server and the frozen replay
+// format.
+int g_large_deck_min_players = 6;
+
+// Observation hook + rejection reason (see game.h). Both are no-cost when
+// unused: the hook is NULL by default and the reason is a plain store.
+void (*engine_snap_hook)(const Game *g, int tag, int aux) = 0;
+int engine_last_reject = ENGINE_REJECT_NONE;
+
+#define SNAP(g, tag, aux) do { if (engine_snap_hook) engine_snap_hook((g), (tag), (aux)); } while (0)
+#define REJECT(code) do { engine_last_reject = (code); return false; } while (0)
+
 #ifdef GRPO_RNG_DEBUG
 static _Thread_local int g_seed_set = 0;
 static _Thread_local int g_rand_seed_set = 0;
@@ -86,6 +99,13 @@ bool can_cover(Card attack, Card defense, int power_suit) {
 
 int get_next_player_index(const Game *g, int current) {
     int n = g->num_players;
+    // TS guard: with one (or zero) players still IN the rotation is
+    // meaningless — return the caller's seat unchanged. This only fires in
+    // the endgame (game_done is imminent) but it decides the final stored
+    // first_attacker/defender, so it must match.
+    int in_count = 0;
+    for (int i = 0; i < n; i++) if (g->players[i].status == PLAYER_STATUS_IN) in_count++;
+    if (in_count <= 1) return current;
     int next = (current + 1) % n;
     while (g->players[next].status == PLAYER_STATUS_OUT) {
         next = (next + 1) % n;
@@ -190,13 +210,18 @@ static bool draw_card(Game *g, Card *out) {
 }
 
 static void deal_initial(Game *g) {
+    // Player-major deal, mirroring the TS start_game: each player draws all
+    // CARDS_PER_PLAYER cards before the next player starts, and a snapshot
+    // hook fires per player (that's the per-player DEAL animation event, with
+    // the deck draining 36 → 30 → 24 → ... between snapshots).
     for (int j = 0; j < g->num_players; j++) g->players[j].hand_count = 0;
-    for (int i = 0; i < CARDS_PER_PLAYER; i++) {
-        for (int j = 0; j < g->num_players; j++) {
+    for (int j = 0; j < g->num_players; j++) {
+        for (int i = 0; i < CARDS_PER_PLAYER; i++) {
             Card c;
-            if (!draw_card(g, &c)) return;
+            if (!draw_card(g, &c)) break;
             g->players[j].hand[g->players[j].hand_count++] = c;
         }
+        SNAP(g, ENGINE_HOOK_DEAL, j);
     }
 }
 
@@ -237,6 +262,9 @@ void start_game(Game *g) {
     }
 
     refill_deck(g);
+    // TS emits its opening MAGIC_TRANSITION here: PLAYING status, full deck,
+    // hands still empty from the lobby.
+    SNAP(g, ENGINE_HOOK_START_MAGIC, -1);
     deal_initial(g);
 
     // Flip a non-Ace.
@@ -253,10 +281,12 @@ void start_game(Game *g) {
     g->flipped = f;
     g->has_flipped = true;
     g->power_suit = f.suit;
+    SNAP(g, ENGINE_HOOK_FLIPPED, -1);
 
     int lowest = determine_lowest_power_index(g);
     g->first_attacker = (int8_t)lowest;
     g->defender = (int8_t)((lowest + 1) % g->num_players);
+    SNAP(g, ENGINE_HOOK_START_DEFENDER, g->defender);
 }
 
 // Refill phase: defender first if their hand is empty, then around starting
@@ -291,6 +321,7 @@ static void refill_player_hands(Game *g) {
         if (n_drawn > 0) {
             GameLog *l = log_alloc(g, LOG_DRAW, defender);
             for (int i = 0; i < n_drawn; i++) log_add_card(l, drawn[i]);
+            SNAP(g, ENGINE_HOOK_DRAW, defender);
         }
     }
 
@@ -310,6 +341,9 @@ static void refill_player_hands(Game *g) {
         if (n_drawn > 0) {
             GameLog *l = log_alloc(g, LOG_DRAW, p_idx);
             for (int i = 0; i < n_drawn; i++) log_add_card(l, drawn[i]);
+            // TS pushes the refill event (and its snapshot) BEFORE the
+            // zero-hand OUT check below, so the hook fires here.
+            SNAP(g, ENGINE_HOOK_DRAW, p_idx);
         }
         if (g->players[p_idx].hand_count == 0
             && g->players[p_idx].status == PLAYER_STATUS_IN) {
@@ -338,29 +372,35 @@ static bool table_has_value(const Game *g, int v) {
 }
 
 bool handle_attack(Game *g, int player_idx, const Card *cards, int n_cards) {
-    if (g->status != GAME_STATUS_PLAYING) return false;
-    if (n_cards <= 0) return false;
-    if (player_idx == g->defender) return false;
+    engine_last_reject = ENGINE_REJECT_NONE;
+    if (n_cards <= 0) REJECT(ENGINE_REJECT_EMPTY);
+    if (g->status != GAME_STATUS_PLAYING) REJECT(ENGINE_REJECT_NOT_PLAYING);
+    if (player_idx == g->defender) REJECT(ENGINE_REJECT_IS_DEFENDER);
 
+    // Validation ordering mirrors TS validateAttack: full in-hand sweep
+    // first, then the duplicate sweep, so multi-fault inputs reject for the
+    // same reason on both engines.
     Player *p = &g->players[player_idx];
     for (int i = 0; i < n_cards; i++) {
-        if (!hand_contains(p, cards[i])) return false;
-        for (int j = i + 1; j < n_cards; j++) if (card_eq(cards[i], cards[j])) return false;
+        if (!hand_contains(p, cards[i])) REJECT(ENGINE_REJECT_NOT_IN_HAND);
+    }
+    for (int i = 0; i < n_cards; i++) {
+        for (int j = i + 1; j < n_cards; j++) if (card_eq(cards[i], cards[j])) REJECT(ENGINE_REJECT_DUPLICATES);
     }
 
     bool first_attack = (g->num_battles == 0);
     if (first_attack) {
-        for (int i = 1; i < n_cards; i++) if (cards[i].value != cards[0].value) return false;
-        if (player_idx != g->first_attacker) return false;
+        for (int i = 1; i < n_cards; i++) if (cards[i].value != cards[0].value) REJECT(ENGINE_REJECT_NOT_SAME_VALUE);
+        if (player_idx != g->first_attacker) REJECT(ENGINE_REJECT_NOT_FIRST_ATTACKER);
     } else {
         for (int i = 0; i < n_cards; i++) {
-            if (!table_has_value(g, cards[i].value)) return false;
+            if (!table_has_value(g, cards[i].value)) REJECT(ENGINE_REJECT_VALUE_NOT_ON_TABLE);
         }
     }
 
     int uncovered = count_uncovered(g);
     int defender_cards = g->players[g->defender].hand_count;
-    if (defender_cards < uncovered + n_cards) return false;
+    if (defender_cards < uncovered + n_cards) REJECT(ENGINE_REJECT_DEFENDER_CAPACITY);
 
     // Apply.
     for (int i = 0; i < n_cards; i++) {
@@ -375,12 +415,18 @@ bool handle_attack(Game *g, int player_idx, const Card *cards, int n_cards) {
 
     g->good_players_mask = 0;
     g->has_good_timestamp = false;
+    SNAP(g, ENGINE_HOOK_ATTACK, player_idx);
 
-    if (p->hand_count == 0) {
+    // Attackers only LEAVE the game when the stock is exhausted too — with
+    // cards still in the deck they sit out the bout and refill at round end
+    // (mirrors the TS no_cards_left guard; without it, dumping a whole hand
+    // as throw-ins "won" instantly with 20+ cards still in the stock).
+    if (p->hand_count == 0 && no_cards_left(g)) {
         p->status = PLAYER_STATUS_OUT;
         p->awaiting_attack = false;
         g->elimination_order[g->num_eliminated++] = (int8_t)player_idx;
         log_alloc(g, LOG_PLAYER_OUT, player_idx);
+        SNAP(g, ENGINE_HOOK_OUT, player_idx);
         return true;
     }
 
@@ -397,33 +443,44 @@ bool handle_attack(Game *g, int player_idx, const Card *cards, int n_cards) {
 
 bool handle_cover(Game *g, int player_idx,
                   const Card *cover_cards, const Card *attack_cards, int n) {
-    if (g->status != GAME_STATUS_PLAYING) return false;
-    if (n <= 0) return false;
-    if (player_idx != g->defender) return false;
+    engine_last_reject = ENGINE_REJECT_NONE;
+    if (g->status != GAME_STATUS_PLAYING) REJECT(ENGINE_REJECT_NOT_PLAYING);
+    if (n <= 0) REJECT(ENGINE_REJECT_EMPTY);
 
+    // TS validateCover checks for uncovered attacks BEFORE the defender
+    // check; keep that priority.
     int uncovered = count_uncovered(g);
-    if (uncovered == 0) return false;
+    if (uncovered == 0) REJECT(ENGINE_REJECT_NO_UNCOVERED);
+    if (player_idx != g->defender) REJECT(ENGINE_REJECT_NOT_DEFENDER);
 
     Player *def = &g->players[player_idx];
     for (int i = 0; i < n; i++) {
-        if (!hand_contains(def, cover_cards[i])) return false;
-        for (int j = i + 1; j < n; j++) if (card_eq(cover_cards[i], cover_cards[j])) return false;
+        if (!hand_contains(def, cover_cards[i])) REJECT(ENGINE_REJECT_NOT_IN_HAND);
+    }
+    for (int i = 0; i < n; i++) {
+        for (int j = i + 1; j < n; j++) if (card_eq(cover_cards[i], cover_cards[j])) REJECT(ENGINE_REJECT_DUPLICATES);
     }
 
-    // Each attack card must be on the table & uncovered (matches the TS
-    // `battle.attack.value === card.value` lookup).
+    // Each attack card must be on the table & uncovered — matched by EXACT
+    // card (suit+value), not just value. The value-only lookup let a request
+    // naming an already-covered card slip past validation when another
+    // same-rank attack was still uncovered (the defender double-tap bug the
+    // TS side fixed in validateCover).
     for (int i = 0; i < n; i++) {
         bool found = false;
         for (int j = 0; j < g->num_battles; j++) {
             if (!g->table_battles[j].has_defense
-                && g->table_battles[j].attack.value == attack_cards[i].value) {
+                && card_eq(g->table_battles[j].attack, attack_cards[i])) {
                 found = true; break;
             }
         }
-        if (!found) return false;
+        if (!found) REJECT(ENGINE_REJECT_ATTACK_NOT_ON_TABLE);
     }
     for (int i = 0; i < n; i++) {
-        if (!can_cover(attack_cards[i], cover_cards[i], g->power_suit)) return false;
+        for (int j = i + 1; j < n; j++) if (card_eq(attack_cards[i], attack_cards[j])) REJECT(ENGINE_REJECT_DUPLICATES);
+    }
+    for (int i = 0; i < n; i++) {
+        if (!can_cover(attack_cards[i], cover_cards[i], g->power_suit)) REJECT(ENGINE_REJECT_CANNOT_COVER);
     }
 
     // Apply each cover (with logging) and record discards if defender clears
@@ -438,13 +495,14 @@ bool handle_cover(Game *g, int player_idx,
                 idx = j; break;
             }
         }
-        if (idx < 0) return false;
+        if (idx < 0) REJECT(ENGINE_REJECT_ATTACK_NOT_ON_TABLE);
         g->table_battles[idx].defense = cover_card;
         g->table_battles[idx].has_defense = true;
         hand_remove_card(def, cover_card);
 
         GameLog *l = log_alloc(g, LOG_COVER, player_idx);
         log_add_pair(l, cover_card, attack_card);
+        SNAP(g, ENGINE_HOOK_COVER, idx);
     }
 
     if (def->hand_count == 0) {
@@ -460,6 +518,7 @@ bool handle_cover(Game *g, int player_idx,
         }
 
         g->num_battles = 0;
+        SNAP(g, ENGINE_HOOK_DISCARD, -1);
 
         refill_player_hands(g);
 
@@ -474,12 +533,14 @@ bool handle_cover(Game *g, int player_idx,
             g->players[g->first_attacker].awaiting_attack = false;
             if (was_in) g->elimination_order[g->num_eliminated++] = g->first_attacker;
             log_alloc(g, LOG_PLAYER_OUT, g->first_attacker);
+            SNAP(g, ENGINE_HOOK_OUT, g->first_attacker);
             g->first_attacker = (int8_t)get_next_player_index(g, g->first_attacker);
         }
         g->defender = (int8_t)get_next_player_index(g, g->first_attacker);
 
         GameLog *dc = log_alloc(g, LOG_DEFENDER_CHANGE, -1);
         dc->defender_index = g->defender;
+        SNAP(g, ENGINE_HOOK_DEFENDER_MOVE, g->defender);
         return true;
     }
 
@@ -504,24 +565,29 @@ bool handle_cover(Game *g, int player_idx,
 // ---------- Action: pass ----------------------------------------------
 
 bool handle_pass(Game *g, int player_idx, const Card *cards, int n_cards) {
-    if (g->status != GAME_STATUS_PLAYING) return false;
-    if (n_cards <= 0) return false;
-    if (player_idx != g->defender) return false;
-    if (g->num_battles == 0) return false;
-    for (int i = 0; i < g->num_battles; i++) if (g->table_battles[i].has_defense) return false;
+    engine_last_reject = ENGINE_REJECT_NONE;
+    if (g->status != GAME_STATUS_PLAYING) REJECT(ENGINE_REJECT_NOT_PLAYING);
+    if (n_cards <= 0) REJECT(ENGINE_REJECT_EMPTY);
 
+    // TS validatePass priority: same-value → duplicates → defender →
+    // in-hand → table-nonempty → cover-present → values-match → capacity.
     int v = cards[0].value;
-    for (int i = 1; i < n_cards; i++) if (cards[i].value != v) return false;
-    for (int i = 0; i < g->num_battles; i++) if (g->table_battles[i].attack.value != v) return false;
+    for (int i = 1; i < n_cards; i++) if (cards[i].value != v) REJECT(ENGINE_REJECT_NOT_SAME_VALUE);
+    for (int i = 0; i < n_cards; i++) {
+        for (int j = i + 1; j < n_cards; j++) if (card_eq(cards[i], cards[j])) REJECT(ENGINE_REJECT_DUPLICATES);
+    }
+    if (player_idx != g->defender) REJECT(ENGINE_REJECT_NOT_DEFENDER);
 
     Player *def = &g->players[player_idx];
     for (int i = 0; i < n_cards; i++) {
-        if (!hand_contains(def, cards[i])) return false;
-        for (int j = i + 1; j < n_cards; j++) if (card_eq(cards[i], cards[j])) return false;
+        if (!hand_contains(def, cards[i])) REJECT(ENGINE_REJECT_NOT_IN_HAND);
     }
+    if (g->num_battles == 0) REJECT(ENGINE_REJECT_NO_TABLE_CARDS);
+    for (int i = 0; i < g->num_battles; i++) if (g->table_battles[i].has_defense) REJECT(ENGINE_REJECT_COVER_PRESENT);
+    for (int i = 0; i < g->num_battles; i++) if (g->table_battles[i].attack.value != v) REJECT(ENGINE_REJECT_PASS_VALUES);
 
     int next = get_next_player_index(g, g->defender);
-    if (g->players[next].hand_count < n_cards + g->num_battles) return false;
+    if (g->players[next].hand_count < n_cards + g->num_battles) REJECT(ENGINE_REJECT_PASS_CAPACITY);
 
     for (int i = 0; i < n_cards; i++) {
         hand_remove_card(def, cards[i]);
@@ -535,12 +601,14 @@ bool handle_pass(Game *g, int player_idx, const Card *cards, int n_cards) {
 
     g->good_players_mask = 0;
     g->has_good_timestamp = false;
+    SNAP(g, ENGINE_HOOK_PASS, player_idx);
 
     if (no_cards_left(g) && def->hand_count == 0) {
         def->status = PLAYER_STATUS_OUT;
         def->awaiting_attack = false;
         g->elimination_order[g->num_eliminated++] = (int8_t)player_idx;
         log_alloc(g, LOG_PLAYER_OUT, player_idx);
+        SNAP(g, ENGINE_HOOK_OUT, player_idx);
     }
 
     g->defender = (int8_t)next;
@@ -550,9 +618,10 @@ bool handle_pass(Game *g, int player_idx, const Card *cards, int n_cards) {
     int uncovered = count_uncovered(g);
     int defender_cards = g->players[g->defender].hand_count;
     if (uncovered > defender_cards) {
-        // TS throws here. We treat as fatal — abort the game.
+        // TS throws here (post-mutation, so the move never commits). We
+        // treat as fatal — abort the game — and report the reason.
         g->status = GAME_STATUS_GAME_OVER;
-        return false;
+        REJECT(ENGINE_REJECT_PASS_OVERFLOW);
     }
     return true;
 }
@@ -560,13 +629,16 @@ bool handle_pass(Game *g, int player_idx, const Card *cards, int n_cards) {
 // ---------- Action: pickup --------------------------------------------
 
 bool handle_pickup(Game *g, int player_idx) {
-    if (g->status != GAME_STATUS_PLAYING) return false;
-    if (player_idx != g->defender) return false;
-    if (g->num_battles == 0) return false;
+    engine_last_reject = ENGINE_REJECT_NONE;
+    if (g->status != GAME_STATUS_PLAYING) REJECT(ENGINE_REJECT_NOT_PLAYING);
+    if (player_idx != g->defender) REJECT(ENGINE_REJECT_NOT_DEFENDER);
+    if (g->num_battles == 0) REJECT(ENGINE_REJECT_NO_TABLE_CARDS);
 
     Player *def = &g->players[player_idx];
     GameLog *l = log_alloc(g, LOG_PICKUP, player_idx);
 
+    // TS pickup logs table cards attack-major (all attacks' cards in battle
+    // order, defense right after its attack) — same interleaving here.
     for (int i = 0; i < g->num_battles; i++) {
         Battle *b = &g->table_battles[i];
         log_add_card(l, b->attack);
@@ -577,6 +649,7 @@ bool handle_pickup(Game *g, int player_idx) {
         }
     }
     g->num_battles = 0;
+    SNAP(g, ENGINE_HOOK_PICKUP, player_idx);
 
     refill_player_hands(g);
 
@@ -593,6 +666,9 @@ bool handle_pickup(Game *g, int player_idx) {
 // ---------- Action: good ----------------------------------------------
 
 static void execute_round_transition(Game *g) {
+    // TS emits a MAGIC_TRANSITION event with the pre-discard state.
+    SNAP(g, ENGINE_HOOK_MAGIC_TRANSITION, -1);
+
     int discarded = g->num_battles * 2;
     g->discard_pile_length += discarded;
 
@@ -602,6 +678,7 @@ static void execute_round_transition(Game *g) {
         if (g->table_battles[i].has_defense) log_add_card(l, g->table_battles[i].defense);
     }
     g->num_battles = 0;
+    SNAP(g, ENGINE_HOOK_TRASH, -1);
 
     refill_player_hands(g);
 
@@ -616,11 +693,12 @@ static void execute_round_transition(Game *g) {
 }
 
 bool handle_good(Game *g, int player_idx) {
-    if (g->status != GAME_STATUS_PLAYING) return false;
-    if (g->players[player_idx].status != PLAYER_STATUS_IN) return false;
-    if (player_idx == g->defender) return false;
-    if (g->num_battles == 0 && player_idx == g->first_attacker) return false;
-    if (g->good_players_mask & (1u << player_idx)) return false;
+    engine_last_reject = ENGINE_REJECT_NONE;
+    if (g->status != GAME_STATUS_PLAYING) REJECT(ENGINE_REJECT_NOT_PLAYING);
+    if (g->players[player_idx].status != PLAYER_STATUS_IN) REJECT(ENGINE_REJECT_NOT_IN_STATUS);
+    if (player_idx == g->defender) REJECT(ENGINE_REJECT_IS_DEFENDER);
+    if (g->num_battles == 0 && player_idx == g->first_attacker) REJECT(ENGINE_REJECT_FIRST_MUST_ATTACK);
+    if (g->good_players_mask & (1u << player_idx)) REJECT(ENGINE_REJECT_ALREADY_GOOD);
 
     g->good_players_mask |= (1u << player_idx);
     log_alloc(g, LOG_GOOD, player_idx);
@@ -644,6 +722,10 @@ bool handle_good(Game *g, int player_idx) {
     if (all_good && all_covered) execute_round_transition(g);
     return true;
 }
+
+// Standalone entries mirroring the TS exports (see game.h).
+void engine_run_round_transition(Game *g) { execute_round_transition(g); }
+void engine_run_refill(Game *g) { refill_player_hands(g); }
 
 // ---------- should_bot_act --------------------------------------------
 

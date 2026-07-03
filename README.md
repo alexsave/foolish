@@ -72,18 +72,33 @@ e2e/                      full-stack test suite (real server code, real Postgres
 docs/                     design / refactor notes
 ```
 
-### Shared code (`@shared`)
+### Shared code (`@shared`) and the C rules kernel
 
-The game rules, types, constants, action handlers and the replay codec are
-shared between the web client and the Supabase edge functions, with a **single
-source of truth**: `supabase/functions/_shared/`. The client imports it via the
-`@shared/*` path alias (see `tsconfig.json`), e.g.
-`import { Card } from '@shared/types.ts'`.
+**The game rules have one implementation: C.** The kernel in
+`cnitro/src/game.c` + `legal.c` (state transitions, legality, legal-move
+enumeration, dealing/refill, the log stream) is compiled to WebAssembly
+(`cd cnitro && make wasm`) and embedded as base64 in
+`supabase/functions/_shared/wasm/rules_wasm.ts`, so the same 29 KB module
+loads with zero asset plumbing in Deno edge functions, Node (tests, offline
+sims) and browsers. The TS files in `_shared/actions/` and parts of
+`common_utils.ts` are now thin bridges: they marshal the `Game` object into
+the kernel, run the action, and reconstruct the exact TS API surface —
+mutated state, `game_logs`, error messages, and the AnimationEvent stream
+with its per-step snapshots (the kernel fires a hook at every point the old
+TS handlers captured one). Before the TS implementations were deleted, a
+differential harness replayed ~100k mirrored actions plus ~30k adversarial
+probes through both engines with identical seeds and byte-compared states,
+logs, events and rejection messages: zero divergence. `e2e/wasm_engine.test.ts`
+keeps policing the seams.
 
-The imports keep Deno's required `.ts` extensions (enabled for the client by
-`allowImportingTsExtensions`, resolved by Turbopack), so the same files load
-unmodified in both Deno and Next. This replaced an older `copy-common.sh` script
-that duplicated files into `src/` and let them drift.
+Types, constants, the replay codec, meta/lobby actions, and the I/O layer
+(DB, broadcast, bot loop) remain TS in `supabase/functions/_shared/`, shared
+between client and edge functions via the `@shared/*` path alias (see
+`tsconfig.json`) with Deno-style `.ts` extensions, as before. A few thin,
+kernel-mirrored projections (`canCover`, `game_done`,
+`get_next_player_index`, `shouldBotActCore`) stay in TS for the client's
+synchronous use — parity-tested against the kernel, never independently
+evolved.
 
 ### How the game runs
 
@@ -121,12 +136,15 @@ games flow between them: a match simulated in native C can be replayed in the
 browser, shared as a QR code, and re-fought by a Monte-Carlo bot that provably
 never cheats.
 
-### 1. `cnitro/` — a pure-C Durak engine and bot arena
+### 1. `cnitro/` — the C Durak engine (now THE engine) and bot arena
 
-A self-contained C port of the engine whose job is to simulate **millions of
-games** and evaluate bots without paying the TS language-boundary cost. It mirrors
-`supabase/functions/_shared/` exactly, so a game played in C is a legal game on the
-production server. It ships a full bot ladder — `random` → `espresso`/`handwritten`
+A self-contained C engine whose job began as simulating **millions of games**
+to evaluate bots without the TS language-boundary cost — and which is now the
+**production rules engine itself**: its kernel (`game.c` + `legal.c`) compiles
+to WebAssembly and executes every live move on the server (see
+[Shared code and the C rules kernel](#shared-code-shared-and-the-c-rules-kernel)).
+A game played in C isn't just *legal* on the production server — it runs the
+same machine code path. It ships a full bot ladder — `random` → `espresso`/`handwritten`
 → `robusta`/`firecracker`/`gunpowder` → `blackpowder` → **`cordite`** (ELO #1, beats
 every other bot at every player count) — plus tools for head-to-head evals, a
 mixed-pool ELO arena, and seeded move-by-move replays. Cordite is a

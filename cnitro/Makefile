@@ -66,5 +66,28 @@ difftests: build/sim_difftest build/apply_difftest build/solver_difftest
 	./build/solver_difftest 3 40 "" 200000 && \
 	./build/solver_difftest 4 40 "" 200000
 
+# ---------------------------------------------------------------------------
+# WebAssembly rules kernel: game.c + legal.c + the wasm bridge, compiled
+# freestanding (no libc; wasm/include has the tiny shims, wasm_api.c provides
+# memcpy/memset). This is THE production rules engine: the TS server imports
+# the resulting module via supabase/functions/_shared/wasm/. `-D_Thread_local=`
+# strips TLS (single-threaded module); the bridge sets the production
+# deck-size boundary at init (see card.h).
+WASM_CC    ?= clang
+WASM_FLAGS := --target=wasm32 -O2 -nostdlib -ffreestanding \
+              -isystem wasm/include -Isrc -D_Thread_local= -DMAX_LOG_PAIRS=64 \
+              -DMAX_LEGAL_MOVES=65536 -DMAX_MOVE_CARDS=40 -DMAX_BATTLES=64 \
+              -Wall -Wextra -Wno-unused-parameter \
+              -Wl,--no-entry -Wl,--export-all -Wl,-z,stack-size=1048576
+
+build/rules.wasm: src/game.c src/legal.c wasm/wasm_api.c src/game.h src/legal.h src/card.h
+	@mkdir -p build
+	$(WASM_CC) $(WASM_FLAGS) src/game.c src/legal.c wasm/wasm_api.c -o $@
+
+# Regenerates the base64 module the TS side imports (works unchanged in
+# Deno edge functions, Node and browsers — no asset pipeline needed).
+wasm: build/rules.wasm
+	node wasm/embed.mjs build/rules.wasm ../supabase/functions/_shared/wasm/rules_wasm.ts
+
 clean:
 	rm -rf build
