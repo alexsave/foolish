@@ -804,7 +804,18 @@ INSERT INTO bots (nickname, strategy_key) VALUES
 -- Semtex Max (same brain, cordite_max world budget)
 ('Semtex Max 1', 'semtex_max'),
 ('Semtex Max 2', 'semtex_max'),
-('Semtex Max 3', 'semtex_max');
+('Semtex Max 3', 'semtex_max'),
+
+-- Octogen (semtex + extended exact-solve window; provably never worse than
+-- semtex, strictly better in deep heads-up endgames — see cnitro/OCTOGEN.md)
+('Octogen 1', 'octogen'),
+('Octogen 2', 'octogen'),
+('Octogen 3', 'octogen'),
+
+-- Octogen Max (same brain, semtex_max world budget)
+('Octogen Max 1', 'octogen_max'),
+('Octogen Max 2', 'octogen_max'),
+('Octogen Max 3', 'octogen_max');
 
 -- Bots carry the reserved '%' prefix so bot-vs-human is recoverable from the
 -- name-only replay codec. Done as an UPDATE (rather than prefixing every literal

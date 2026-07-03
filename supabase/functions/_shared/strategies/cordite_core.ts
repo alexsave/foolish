@@ -1627,6 +1627,10 @@ export interface SemtexOpts {
                           // exactly (0 = off; semtex: 12 at 3+ players)
     leafBudget: number;   // solver node budget per rollout leaf
     solveCards: number;   // root endgame-solve card ceiling (cordite: 20)
+    // Loss-avoidance ceiling (octogen; default = solveCards). Beyond it the
+    // window is WIN-HUNT ONLY: taking a proven win is strictly safe, and
+    // skipping the avoidance pass out there also skips its cost.
+    avoidCards?: number;
     noFloors: boolean;    // skip rank-floor inference entirely
     voidMod: number;      // voids in (voidMod-1)/voidMod of worlds (cordite: 4)
     adapt: boolean;       // per-seat MC-tells (void contradiction, declined
@@ -2694,6 +2698,10 @@ const tryEndgameSolve = (pv: PublicView, B: Belief, candidates: SimMove[],
 
     // Loss avoidance: null-window classification; only restrict when some
     // move is PROVEN non-losing (else adverse selection — see CORDITE.md).
+    // Octogen's extended window is win-hunt only past avoidCards.
+    const avoidCap = semtexOpts !== null
+        ? (semtexOpts.avoidCards ?? maxCards) : maxCards;
+    if (pv.myHand.length + pv.handCounts[opp] > avoidCap) return -1;
     S.budget = AVOID_BUDGET;
     let nLoss = 0, nNonLoss = 0;
     for (let i = 0; i < candidates.length; i++) {

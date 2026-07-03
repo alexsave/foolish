@@ -158,10 +158,13 @@ const semtexOptsFor = (numPlayers: number): SemtexOpts => ({
 class SemtexBase implements BotStrategy {
     readonly name: string;
     private params: CorditeParams;
+    private optsFor: (numPlayers: number) => SemtexOpts;
 
-    constructor(name: string, params: CorditeParams) {
+    constructor(name: string, params: CorditeParams,
+                optsFor: (numPlayers: number) => SemtexOpts = semtexOptsFor) {
         this.name = name;
         this.params = params;
+        this.optsFor = optsFor;
     }
 
     chooseMove(game: Game, botPlayerId: string, legalMoves: LegalMove[]): Promise<LegalMove> {
@@ -176,7 +179,7 @@ class SemtexBase implements BotStrategy {
             // globalThis; absent in production).
             const G = globalThis as unknown as
                 { SEMTEX_NO_PROFILE?: boolean; SEMTEX_NO_ADAPT?: boolean };
-            const opts = semtexOptsFor(pv.numPlayers);
+            const opts = this.optsFor(pv.numPlayers);
             if (G.SEMTEX_NO_ADAPT) opts.adapt = false;
             setSemtexOpts(opts);
             // Fulminate's opponent model: per-seat posterior over the archetype
@@ -210,4 +213,25 @@ export class SemtexStrategy extends SemtexBase {
 
 export class SemtexMaxStrategy extends SemtexBase {
     constructor() { super('semtex_max', SEMTEX_MAX_PARAMS); }
+}
+
+// Octogen — semtex + the extended exact-solve window (see cnitro/OCTOGEN.md):
+// the heads-up deck-empty solver engages at <= 28 total cards (semtex: 24),
+// win-hunt only beyond 24 (avoidCards gate — taking a proven win is strictly
+// safe; the avoidance pass is skipped out there, which also saves its cost).
+// C-measured strictly dominant vs semtex: never worse in any paired cell,
+// better in the rare deep-endgame deals. TS node budgets are unchanged (they
+// are TS-scale already); an aborted solve falls back to the MC gracefully.
+const octogenOptsFor = (numPlayers: number): SemtexOpts => ({
+    ...semtexOptsFor(numPlayers),
+    solveCards: 28,
+    avoidCards: 24,
+});
+
+export class OctogenStrategy extends SemtexBase {
+    constructor() { super('octogen', SEMTEX_PARAMS, octogenOptsFor); }
+}
+
+export class OctogenMaxStrategy extends SemtexBase {
+    constructor() { super('octogen_max', SEMTEX_MAX_PARAMS, octogenOptsFor); }
 }
