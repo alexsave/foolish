@@ -23,11 +23,12 @@ CORE_SRC := src/game.c src/legal.c src/random_strategy.c src/espresso_strategy.c
             src/handwritten_strategy.c src/robusta_strategy.c \
             src/firecracker_strategy.c src/gunpowder_strategy.c \
             src/blackpowder_strategy.c src/cordite_strategy.c \
-            src/cordite_sim.c src/astrolite_strategy.c src/semtex_strategy.c src/octogen_strategy.c
+            src/cordite_sim.c src/astrolite_strategy.c src/semtex_strategy.c src/octogen_strategy.c \
+            src/torpex_strategy.c src/torpex_value.c
 CORE_OBJ := $(CORE_SRC:src/%.c=build/%.o)
 
 .PHONY: all clean tests
-all: build/cnitro_eval build/cnitro_elo build/cnitro_replay build/cnitro_showcase build/cnitro_tests
+all: build/cnitro_eval build/cnitro_elo build/cnitro_replay build/cnitro_showcase build/cnitro_tests build/cnitro_gen
 
 # Generic compile rule for sources under src/ (build/%.o: src/%.c).
 build/%.o: src/%.c
@@ -43,6 +44,8 @@ build/cnitro_replay: $(CORE_OBJ) build/main_replay.o
 build/cnitro_showcase: $(CORE_OBJ) build/main_showcase.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 build/cnitro_tests: $(CORE_OBJ) build/tests.o
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+build/cnitro_gen: $(CORE_OBJ) build/main_gen.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 build/tests.o: tests/tests.c
