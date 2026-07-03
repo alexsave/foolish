@@ -27,10 +27,19 @@ H1, H2 = 256, 64
 
 
 def load(paths):
-    bufs = [np.fromfile(p, dtype=np.uint8) for p in paths]
+    # Truncate each file to a whole number of records BEFORE concatenating:
+    # a killed generator can leave a partial trailing record, and one short
+    # file misaligns every byte after it in the concatenated stream.
+    bufs = []
+    for p in paths:
+        b = np.fromfile(p, dtype=np.uint8)
+        n = len(b) // REC
+        if len(b) != n * REC:
+            print(f"# {p}: trimming {len(b) - n * REC} trailing bytes")
+        bufs.append(b[: n * REC])
     raw = np.concatenate(bufs)
     n = len(raw) // REC
-    raw = raw[: n * REC].reshape(n, REC)
+    raw = raw.reshape(n, REC)
     print(f"# loaded {n} records")
     return raw
 
