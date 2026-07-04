@@ -37,6 +37,14 @@ typedef struct {
 
     uint64_t hand[MAX_PLAYERS];     // card-id bitmask per player
     uint8_t  status_p[MAX_PLAYERS]; // PLAYER_STATUS_*
+    // Bitmask mirrors of status_p (bit p set iff status_p[p] is IN / OUT).
+    // The playout runs several O(num_players) status scans per ply
+    // (sim_done, sim_next_player, should_act, the good-action attacker
+    // count) — the second-biggest cost in the wasm profile after the policy
+    // chooser. Statuses only ever transition to OUT mid-rollout, so the
+    // masks are trivially maintained alongside the array.
+    uint32_t in_mask;
+    uint32_t out_mask;
 
     int8_t   elim_order[MAX_PLAYERS];
 

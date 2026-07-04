@@ -90,6 +90,8 @@ void cd_sim_from_game(SimState *s, const Game *g) {
         for (int j = 0; j < pl->hand_count; j++) h |= (1ull << card_id(pl->hand[j]));
         s->hand[p] = h;
         s->status_p[p] = pl->status;
+        if (pl->status == PLAYER_STATUS_IN)       s->in_mask  |= (1u << p);
+        else if (pl->status == PLAYER_STATUS_OUT) s->out_mask |= (1u << p);
     }
     for (int i = 0; i < g->num_eliminated; i++) s->elim_order[i] = g->elimination_order[i];
 
@@ -114,33 +116,25 @@ static inline int sim_hand_count(const SimState *s, int p) {
 }
 
 static inline int sim_in_count(const SimState *s) {
-    int n = 0;
-    for (int i = 0; i < s->num_players; i++)
-        if (s->status_p[i] == PLAYER_STATUS_IN) n++;
-    return n;
+    return __builtin_popcount(s->in_mask);
 }
 
 static inline int sim_next_player(const SimState *s, int cur) {
-    int n = s->num_players;
     // Mirrors get_next_player_index's <=1-IN guard (TS parity): with the
     // rotation collapsed the caller's seat is returned unchanged.
-    int in_count = 0;
-    for (int i = 0; i < n; i++) if (s->status_p[i] == PLAYER_STATUS_IN) in_count++;
-    if (in_count <= 1) return cur;
-    int next = (cur + 1) % n;
-    while (s->status_p[next] == PLAYER_STATUS_OUT) next = (next + 1) % n;
-    return next;
+    if (__builtin_popcount(s->in_mask) <= 1) return cur;
+    // First non-OUT seat cyclically after cur (the byte loop skipped only
+    // OUT statuses, so non-IN-non-OUT seats are eligible stops — preserved).
+    uint32_t notout = ~s->out_mask & ((1u << s->num_players) - 1u);
+    uint32_t hi = notout & ~((2u << cur) - 1u);
+    return __builtin_ctz(hi ? hi : notout);
 }
 
 // Returns the single IN player if exactly one remains (game over), else -1.
 static int sim_done(const SimState *s) {
-    int in_count = 0, out_count = 0, last_in = -1;
-    for (int i = 0; i < s->num_players; i++) {
-        if (s->status_p[i] == PLAYER_STATUS_IN) { in_count++; last_in = i; }
-        else if (s->status_p[i] == PLAYER_STATUS_OUT) out_count++;
-    }
-    if (in_count == 1 && out_count == s->num_players - 1) return last_in;
-    return -1;
+    if (__builtin_popcount(s->in_mask) != 1) return -1;
+    if (__builtin_popcount(s->out_mask) != s->num_players - 1) return -1;
+    return __builtin_ctz(s->in_mask);
 }
 
 static inline int sim_no_cards_left(const SimState *s) {
@@ -182,6 +176,8 @@ static int sim_draw(SimState *s, int *out) {
 
 static void sim_eliminate(SimState *s, int p) {
     s->status_p[p] = PLAYER_STATUS_OUT;
+    s->in_mask  &= ~(1u << p);
+    s->out_mask |= (1u << p);
     s->elim_order[s->num_eliminated++] = (int8_t)p;
 }
 
@@ -189,7 +185,7 @@ static void sim_eliminate(SimState *s, int p) {
 static void sim_refill(SimState *s) {
     if (sim_no_cards_left(s)) {
         for (int i = 0; i < s->num_players; i++) {
-            if (s->status_p[i] == PLAYER_STATUS_IN && sim_hand_count(s, i) == 0)
+            if ((s->in_mask >> i & 1u) && sim_hand_count(s, i) == 0)
                 sim_eliminate(s, i);
         }
         return;
@@ -212,7 +208,7 @@ static void sim_refill(SimState *s) {
             if (!sim_draw(s, &c)) break;
             s->hand[p_idx] |= (1ull << c);
         }
-        if (sim_hand_count(s, p_idx) == 0 && s->status_p[p_idx] == PLAYER_STATUS_IN)
+        if (sim_hand_count(s, p_idx) == 0 && (s->in_mask >> p_idx & 1u))
             sim_eliminate(s, p_idx);
         p_idx = sim_next_player(s, p_idx);
     } while (p_idx != s->first_attacker);
@@ -260,9 +256,9 @@ static void sim_apply_cover(SimState *s, int p_idx,
         s->good_mask = 0;
         if (sim_hand_count(s, s->first_attacker) == 0) {
             int fa = s->first_attacker;
-            int was_in = (s->status_p[fa] == PLAYER_STATUS_IN);
+            int was_in = (s->in_mask >> fa) & 1u;
             if (was_in) sim_eliminate(s, fa);
-            else s->status_p[fa] = PLAYER_STATUS_OUT;
+            else { s->status_p[fa] = PLAYER_STATUS_OUT; s->out_mask |= (1u << fa); }
             s->first_attacker = sim_next_player(s, fa);
         }
         s->defender = sim_next_player(s, s->first_attacker);
@@ -315,15 +311,8 @@ static void sim_round_transition(SimState *s) {
 
 static void sim_apply_good(SimState *s, int p_idx) {
     s->good_mask |= (1u << p_idx);
-    int n_attackers = 0;
-    int all_good = 1;
-    for (int i = 0; i < s->num_players; i++) {
-        if (i != s->defender && s->status_p[i] == PLAYER_STATUS_IN) {
-            n_attackers++;
-            if (!(s->good_mask & (1ull << i))) all_good = 0;
-        }
-    }
-    if (n_attackers == 0) all_good = 0;
+    uint32_t attackers = s->in_mask & ~(1u << s->defender);
+    int all_good = attackers != 0 && (s->good_mask & attackers) == attackers;
     if (all_good && sim_all_covered(s)) sim_round_transition(s);
 }
 
@@ -331,7 +320,7 @@ static void sim_apply_good(SimState *s, int p_idx) {
 
 static int sim_should_act(const SimState *s, int p) {
     if (s->status != GAME_STATUS_PLAYING) return 0;
-    if (s->status_p[p] != PLAYER_STATUS_IN) return 0;
+    if (!(s->in_mask >> p & 1u)) return 0;
     int first_attack = (s->num_battles == 0);
     if (first_attack) return p == s->first_attacker;
     if (p == s->defender) return !sim_all_covered(s);
@@ -1118,17 +1107,31 @@ int cd_sim_one_step(SimState *s) {
 int cd_sim_playout(SimState *s, int my_idx, int max_turns, int early_exit) {
     int turns = 0;
     while (sim_done(s) < 0 && turns++ < max_turns) {
-        if (early_exit && s->status_p[my_idx] != PLAYER_STATUS_IN) {
+        if (early_exit && !(s->in_mask >> my_idx & 1u)) {
             for (int i = 0; i < s->num_eliminated; i++)
                 if (s->elim_order[i] == my_idx) return i + 1;
             break;
         }
+        // Eligible-actor mask == sim_should_act over every seat, evaluated
+        // once per ply instead of per seat (this scan was the second-hottest
+        // region in the wasm profile). Iterating set bits ascending keeps
+        // the exact first-eligible-seat order of the old loop, including
+        // trying the next seat when the policy returns no move.
+        uint32_t elig = 0;
+        if (s->status == GAME_STATUS_PLAYING) {
+            if (s->num_battles == 0) {
+                elig = s->in_mask & (1u << s->first_attacker);
+            } else {
+                elig = s->in_mask & ~s->good_mask & ~(1u << s->defender);
+                if (!sim_all_covered(s)) elig |= s->in_mask & (1u << s->defender);
+            }
+        }
         int acted = 0;
-        for (int pi = 0; pi < s->num_players; pi++) {
-            if (!sim_should_act(s, pi)) continue;
-            SimMove m;
-            if (!sim_handwritten_move(s, pi, &m)) continue;
-            sim_apply(s, pi, &m);
+        for (uint32_t m = elig; m; m &= m - 1) {
+            int pi = __builtin_ctz(m);
+            SimMove mv;
+            if (!sim_handwritten_move(s, pi, &mv)) continue;
+            sim_apply(s, pi, &mv);
             acted = 1;
             break;
         }

@@ -86,7 +86,12 @@ WASM_CC    ?= clang
 # wasm memory.copy/memory.fill instructions, which every 2020+ runtime (V8,
 # JSC, SpiderMonkey, Deno edge) executes as native memmove — the hand-rolled
 # word-loop shim showed up at ~5% of cordite's wasm profile.
-WASM_FLAGS := --target=wasm32 -O2 -nostdlib -ffreestanding -mbulk-memory \
+# -O3 (but NO -flto: wasm-ld LTO corrupts the indirect-function table for
+# the address-taken hook/strategy pointers — engine_snap_hook calls trap with
+# "table index out of bounds"; caught by the fuzz suite). No -ffast-math
+# either: wasm float semantics must stay IEEE-identical to the TS oracles
+# the parity suite compares against.
+WASM_FLAGS := --target=wasm32 -O3 -nostdlib -ffreestanding -mbulk-memory \
               -isystem wasm/include -Isrc -D_Thread_local= -DMAX_LOG_PAIRS=64 \
               -DMAX_LEGAL_MOVES=65536 -DMAX_MOVE_CARDS=40 -DMAX_BATTLES=64 \
               -Wall -Wextra -Wno-unused-parameter \
