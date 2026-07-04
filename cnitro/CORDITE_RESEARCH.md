@@ -164,3 +164,26 @@ rollouts). A future attempt needs a leaf that models table state and pickup
 pressure, not card counts. Racing (CD_RACE, adopted) is the safe way to cut
 rollout spend: it prunes redundant WORLDS on easy decisions instead of
 biasing every playout.
+
+## Distilling cordite into a linear policy — NEGATIVE result (tooling kept)
+
+Hypothesis: a linear ranker over cheap per-move features (55 features:
+state/move scalars plus "which move would handwritten/espresso/simple/
+champion pick" oracle meta-features), trained Bradley-Terry-style on 74k
+cordite(prod) self-play decisions, imitates most of cordite's moves in
+microseconds; a score-margin gate (DL_TAU) defers uncertain decisions to
+real cordite.
+
+Rejected for production: held-out move-match ceilings at ~52% (best single
+oracle matches cordite only 40%; cordite's close-call MC picks are
+intrinsically hard for this model class), and strength tracks the deferral
+rate monotonically — pure imitation (8µs/decision, 255x faster) loses to
+plain espresso and finishes 3.23 vs cordite's 2.5 head-to-head; parity
+needs >90% deferral, which is no speedup. The margin between "confident"
+and "correct" is exactly where cordite's search earns its strength.
+
+Kept in-tree as arena research (`--strategy=distilled`, DL_TAU knob,
+`build/cnitro_distill` dumper + `tools/distill_train.py`): the pipeline is
+reusable for a stronger model class (GBDT / small net) and the pure policy
+is a fine µs-scale opponent where strength doesn't matter. Deliberately NOT
+in bots.wasm or the production registry.
