@@ -2,7 +2,7 @@
 // that has a whole lot of baggage in it
 // Import shared action handlers with validation
 import { Game, PrivatePlayer, Bot, GAME_STATUS, PLAYER_STATUS } from './types.ts';
-import { calculateLegalMoves, getBotStrategy, LegalMove } from './bot_strategy.ts';
+import { calculateLegalMoves, getBotStrategy, LegalMove, WasmBotStrategy } from './bot_strategy.ts';
 import { handleAttack } from './actions/attack.ts';
 import { handleCover } from './actions/cover.ts';
 import { handlePass } from './actions/pass.ts';
@@ -19,17 +19,32 @@ export const processBotAction = async (game: Game, bot: PrivatePlayer): Promise<
         // Get bot's strategy
         const strategy = getBotStrategy(bot.strategy_key);
 
-        // Calculate legal moves for this bot
-        const legalMoves = calculateLegalMoves(game, bot.player_id);
+        let chosenMove: LegalMove;
+        if (strategy instanceof WasmBotStrategy) {
+            // Kernel-backed bots enumerate AND choose inside the C kernel in
+            // one call; only the chosen move crosses back. Skips the full
+            // enumerate-export-parse move-list round trip below, which the
+            // pipeline profile showed costing more than the decisions
+            // themselves for the cheap strategies.
+            const direct = strategy.chooseMoveDirect(game, bot.player_id);
+            if (!direct) {
+                console.log(`No legal moves for bot ${bot.name}`);
+                return false;
+            }
+            chosenMove = direct;
+        } else {
+            // Calculate legal moves for this bot
+            const legalMoves = calculateLegalMoves(game, bot.player_id);
 
-        if (legalMoves.length === 0) {
-            console.log(`No legal moves for bot ${bot.name}`);
-            return false;
+            if (legalMoves.length === 0) {
+                console.log(`No legal moves for bot ${bot.name}`);
+                return false;
+            }
+
+            // Let the strategy choose a move
+            // This is ok to keep async, we might be calling LLMs later
+            chosenMove = await strategy.chooseMove(game, bot.player_id, legalMoves);
         }
-
-        // Let the strategy choose a move
-        // This is ok to keep async, we might be calling LLMs later
-        const chosenMove = await strategy.chooseMove(game, bot.player_id, legalMoves);
 
         // Execute the chosen move using shared actions (with validation to handle race conditions)
         const actionEvents = executeBotMove(game, bot, chosenMove);

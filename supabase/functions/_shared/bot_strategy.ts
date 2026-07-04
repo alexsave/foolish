@@ -1,6 +1,6 @@
 import { Game } from './types.ts';
 import { kernelLegalMoves } from './wasm/engine.ts';
-import { STRAT, wasmChooseMove } from './wasm/bots.ts';
+import { STRAT, wasmChooseMove, wasmChooseMoveDirect } from './wasm/bots.ts';
 import { BotStrategy, LegalMove } from './bot_interfaces.ts';
 import { GPTBotStrategy } from './strategies/gpt_strategy.ts';
 import { NitroStrategy } from './strategies/nitro_strategy.ts';
@@ -19,20 +19,24 @@ export type { BotStrategy, LegalMove };
 //   - nitro: the experimental transformer NN (nitro_nn.ts + JSON weights) —
 //     a research artifact that plateaued below cordite (see README); porting
 //     an NN runtime to freestanding C isn't worth it unless it ever wins.
-class WasmBotStrategy implements BotStrategy {
+export class WasmBotStrategy implements BotStrategy {
     readonly name: string;
     private strat: number;
     private env?: Record<string, string>;
+    // Only the belief/memory bots read the session log; skipping the log
+    // marshal for the rest removes the hottest TS frame of a bot turn.
+    private logs: boolean;
 
-    constructor(name: string, strat: number, env?: Record<string, string>) {
+    constructor(name: string, strat: number, opts: { env?: Record<string, string>; logs?: boolean } = {}) {
         this.name = name;
         this.strat = strat;
-        this.env = env;
+        this.env = opts.env;
+        this.logs = opts.logs ?? false;
     }
 
     chooseMove(game: Game, botPlayerId: string, legalMoves: LegalMove[]): Promise<LegalMove> {
         try {
-            const idx = wasmChooseMove(game, botPlayerId, this.strat, { env: this.env });
+            const idx = wasmChooseMove(game, botPlayerId, this.strat, { env: this.env, logs: this.logs });
             if (idx >= 0 && idx < legalMoves.length) {
                 return Promise.resolve(legalMoves[idx]);
             }
@@ -40,6 +44,14 @@ class WasmBotStrategy implements BotStrategy {
             console.error(`[${this.name}] kernel chooseMove failed, falling back to first legal move:`, error);
         }
         return Promise.resolve(legalMoves[0]);
+    }
+
+    // Fast path for the bot loop: the kernel enumerates AND picks in one
+    // call and only the chosen move crosses back — no TS-side move-list
+    // materialization. null = no legal moves. Falls back to the list path
+    // in processBotAction on error.
+    chooseMoveDirect(game: Game, botPlayerId: string): LegalMove | null {
+        return wasmChooseMoveDirect(game, botPlayerId, this.strat, { env: this.env, logs: this.logs });
     }
 }
 
@@ -53,11 +65,13 @@ export const BOT_STRATEGIES: Map<string, BotStrategy> = new Map<string, BotStrat
     ['ultimate_champion', new WasmBotStrategy('ultimate_champion', STRAT.ultimate_champion)],
     ['champion', new WasmBotStrategy('champion', STRAT.champion)],
     ['hacker', new WasmBotStrategy('hacker', STRAT.hacker)],
-    ['espresso', new WasmBotStrategy('espresso', STRAT.espresso)],
+    // logs: espresso's discard memory reads LOG_DISCARD; cordite/fulminate
+    // build their belief from the full public log.
+    ['espresso', new WasmBotStrategy('espresso', STRAT.espresso, { logs: true })],
     ['nitro', new NitroStrategy()],
-    ['cordite', new WasmBotStrategy('cordite', STRAT.cordite, { CD_BUDGET: 'prod' })],
-    ['cordite_max', new WasmBotStrategy('cordite_max', STRAT.cordite, { CD_BUDGET: 'max' })],
-    ['fulminate', new WasmBotStrategy('fulminate', STRAT.fulminate, { CD_BUDGET: 'prod' })],
+    ['cordite', new WasmBotStrategy('cordite', STRAT.cordite, { env: { CD_BUDGET: 'prod' }, logs: true })],
+    ['cordite_max', new WasmBotStrategy('cordite_max', STRAT.cordite, { env: { CD_BUDGET: 'max' }, logs: true })],
+    ['fulminate', new WasmBotStrategy('fulminate', STRAT.fulminate, { env: { CD_BUDGET: 'prod' }, logs: true })],
 ]);
 
 // Lazy-load GPT strategy to avoid requiring API key at module load time

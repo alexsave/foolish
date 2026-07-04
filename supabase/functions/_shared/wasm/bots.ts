@@ -15,9 +15,11 @@
 // the larger module; the first bot decision instantiates it.
 
 import { Game } from '../types.ts';
+import { LegalMove } from '../bot_interfaces.ts';
 import { BOTS_WASM_B64 } from './bots_wasm.ts';
 import {
-    EngineExports, __LOG_TYPE_TO_INT, __decodeBase64, __marshalGame, __mem,
+    EngineExports, __LOG_TYPE_TO_INT, __MOVE_TYPE, __decodeBase64,
+    __marshalGame, __mem, __pooledCard,
 } from './engine.ts';
 
 interface BotsExports extends EngineExports {
@@ -81,11 +83,16 @@ function importLogs(ex: BotsExports, game: Game): void {
     const n = Math.min(logs.length, MAX_KERNEL_LOGS);
     buf[q++] = n & 0xff;
     buf[q++] = (n >> 8) & 0xff;
+    // Seat lookup once, not a findIndex string scan per log — this function
+    // walks the whole (ever-growing) session log per decision and was the
+    // single hottest TS frame in the bot-pipeline profile.
+    const seatOf = new Map<string, number>();
+    game.players.forEach((p, i) => seatOf.set(p.player_id, i));
     for (let i = 0; i < n; i++) {
         const l = logs[i];
-        buf[q++] = __LOG_TYPE_TO_INT[l.log_type] ?? 0;
+        buf[q++] = __LOG_TYPE_TO_INT.get(l.log_type) ?? 0;
         const seat = l.player_id !== null && l.player_id !== undefined
-            ? game.players.findIndex(p => p.player_id === l.player_id)
+            ? (seatOf.get(l.player_id) ?? -1)
             : -1;
         buf[q++] = seat & 0xff;
         buf[q++] = (l.defender_index ?? -1) & 0xff;
@@ -136,15 +143,18 @@ function setEnv(ex: BotsExports, env: Record<string, string>): void {
     ex.wasm_reload_bot_flags();
 }
 
-// Run one full bot decision in the kernel: marshal state + public logs,
-// install knobs, seed the strategy RNG, enumerate + choose in C. Returns the
-// chosen index into the same legal-move ordering kernelLegalMoves produces,
-// or -1 (unknown player / no legal moves).
+// Run one full bot decision in the kernel: marshal state (+ public logs for
+// the strategies that read them), install knobs, seed the strategy RNG,
+// enumerate + choose in C. Returns the chosen index into the same legal-move
+// ordering kernelLegalMoves produces, or -1 (unknown player / no legal
+// moves). `opts.logs` defaults ON; the registry turns it off for strategies
+// that never read the session log — the log marshal was the hottest TS
+// frame in the bot-pipeline profile.
 export function wasmChooseMove(
     game: Game,
     playerId: string,
     strat: number,
-    opts: { env?: Record<string, string> } = {},
+    opts: { env?: Record<string, string>; logs?: boolean } = {},
 ): number {
     const seat = game.players.findIndex(p => p.player_id === playerId);
     if (seat < 0) return -1;
@@ -159,9 +169,39 @@ export function wasmChooseMove(
     }
     ex.wasm_set_game_key(h >>> 0);
     importStrategyKeys(ex, game);
-    importLogs(ex, game);
+    if (opts.logs !== false) importLogs(ex, game);
     if (opts.env) setEnv(ex, opts.env);
     const seed = seedSource ? seedSource() : Math.floor(Math.random() * 4294967296);
     ex.wasm_set_strategy_seed(seed >>> 0);
     return ex.wasm_choose_move(strat, seat);
+}
+
+// Same decision, but the chosen move is read straight from the bytes
+// wasm_choose_move wrote to the IO buffer (u8 type, u8 n, cards,
+// attack_cards) instead of indexing a TS-materialized move list. This lets
+// the bot loop skip kernelLegalMoves' full enumerate-export-parse round
+// trip — the kernel enumerates internally either way. Returns null when the
+// player is unknown or has no legal moves.
+export function wasmChooseMoveDirect(
+    game: Game,
+    playerId: string,
+    strat: number,
+    opts: { env?: Record<string, string>; logs?: boolean } = {},
+): LegalMove | null {
+    const ex = bots();
+    const idx = wasmChooseMove(game, playerId, strat, opts);
+    if (idx < 0) return null;
+    const buf = __mem(ex);
+    let q = ex.wasm_io_ptr();
+    const type = __MOVE_TYPE[buf[q++]] as LegalMove['type'];
+    const k = buf[q++];
+    if (type === 'pickup' || type === 'good' || type === 'wait') return { type };
+    const cards = new Array(k);
+    for (let j = 0; j < k; j++) { cards[j] = __pooledCard(buf[q], buf[q + 1]); q += 2; }
+    if (type === 'cover') {
+        const attacks = new Array(k);
+        for (let j = 0; j < k; j++) { attacks[j] = __pooledCard(buf[q], buf[q + 1]); q += 2; }
+        return { type, cards, attack_cards: attacks };
+    }
+    return { type, cards };
 }

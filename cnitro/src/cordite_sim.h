@@ -19,7 +19,12 @@
 #include "game.h"
 #include <stdint.h>
 
-#define SIM_MAX_BATTLES 40   // >= MAX_BATTLES (32) with slack
+// Must cover the ENGINE's battle capacity: the wasm build compiles with
+// -DMAX_BATTLES=64 and an overflow here corrupts the adjacent SimState
+// fields (observed: garbage atk ids ORed into hands as card bits >= 52 via
+// pickup's 1<<id). 64 is also the ceiling covered_mask can index.
+#define SIM_MAX_BATTLES 64
+_Static_assert(MAX_BATTLES <= SIM_MAX_BATTLES, "SimState battle arrays smaller than the engine's");
 
 typedef struct {
     uint8_t  num_players;

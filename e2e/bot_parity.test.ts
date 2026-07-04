@@ -21,7 +21,7 @@ import assert from 'node:assert/strict';
 import { start_game, game_done } from '../supabase/functions/_shared/common_utils.ts';
 import { calculateLegalMoves, BotStrategy, LegalMove } from '../supabase/functions/_shared/bot_strategy.ts';
 import { shouldBotActCore, executeBotMove } from '../supabase/functions/_shared/pure_bot_actions.ts';
-import { STRAT, wasmChooseMove, __setBotSeedSource } from '../supabase/functions/_shared/wasm/bots.ts';
+import { STRAT, wasmChooseMove, wasmChooseMoveDirect, __setBotSeedSource } from '../supabase/functions/_shared/wasm/bots.ts';
 import { __setKernelSeedSource } from '../supabase/functions/_shared/wasm/engine.ts';
 import {
   Game, PrivatePlayer, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY,
@@ -131,7 +131,16 @@ for (const { name, ts, strat, pin } of CASES) {
 
               __setBotSeedSource(() => seed);
               const wasmIdx = wasmChooseMove(g, p.player_id, strat);
+              // The bot loop's fast path decodes the chosen move from the
+              // kernel's IO buffer instead of indexing this list — assert
+              // the bytes decode to the exact same move.
+              __setBotSeedSource(() => seed);
+              const direct = wasmChooseMoveDirect(g, p.player_id, strat);
               __setBotSeedSource(null);
+              assert.deepStrictEqual(
+                direct, legalMoves[wasmIdx],
+                `${name} direct-move decode mismatch at decision ${decisions}`,
+              );
 
               assert.equal(
                 wasmIdx, tsIdx,

@@ -951,5 +951,9 @@ export function kernelLegalMoves(game: Game, player_id: string): { type: string;
 // kernel API the actions/ handlers use.
 export type { EngineExports };
 export { decodeBase64 as __decodeBase64, marshalGame as __marshalGame, mem as __mem };
-export const __LOG_TYPE_TO_INT: Record<string, number> = {};
-LOG_TYPE_FROM_INT.forEach((t, i) => { __LOG_TYPE_TO_INT[t] = i; });
+// Map, not a plain object: the per-log lookup in the bots bridge showed up
+// as a megamorphic keyed load (~10% of the heuristic-bot pipeline profile).
+export const __LOG_TYPE_TO_INT: Map<string, number> = new Map(
+    LOG_TYPE_FROM_INT.map((t, i) => [t, i]),
+);
+export { pooledCard as __pooledCard, MOVE_TYPE as __MOVE_TYPE };

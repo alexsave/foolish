@@ -38,7 +38,10 @@ CORE_OBJ := $(CORE_SRC:src/%.c=build/%.o)
 all: build/cnitro_eval build/cnitro_elo build/cnitro_replay build/cnitro_showcase build/cnitro_tests
 
 # Generic compile rule for sources under src/ (build/%.o: src/%.c).
-build/%.o: src/%.c
+# Blanket header dependency: a struct-layout change in any header must
+# rebuild every object, or the binaries mix layouts (observed: SimState
+# edits producing garbage evals until a make clean).
+build/%.o: src/%.c $(wildcard src/*.h)
 	@mkdir -p build
 	$(CC) $(CFLAGS) -c $< -o $@
 

@@ -401,14 +401,22 @@ static int sim_first_attack_group(const SimState *s, int p, int power,
     // lowest summed score (= lowest value, since same-value group). So compare
     // groups by their *capped* size, tie -> lowest value.
     int defcap = sim_hand_count(s, s->defender);
+    if (defcap <= 0 || !h) return 0;
+    // Visit only the DISTINCT VALUES present in the hand (typically 4-6)
+    // instead of all 13: pop the lowest id, take its whole value group,
+    // clear the group. Group order is by lowest-id, not ascending value, so
+    // the explicit v-tie-break below carries the ordering exactly as before
+    // (strict > keeps any first winner; equal eff resolves to lowest v).
+    // hh&(hh-1) guarantees progress even on an out-of-range id.
     int best_v = -1, best_eff = 0;
-    for (int v = 1; v <= 13; v++) {
+    uint64_t hh = h;
+    while (hh) {
+        int v = id_value(ctz64(hh));
         uint64_t g = h & VALUE_MASK[v];
+        hh = (hh & (hh - 1)) & ~g;
         int sz = popcnt64(g);
-        if (sz == 0) continue;
         int eff = sz < defcap ? sz : defcap;
-        if (eff <= 0) continue;
-        if (eff > best_eff || (eff == best_eff && (best_v < 0 || v < best_v))) {
+        if (eff > best_eff || (eff == best_eff && v < best_v)) {
             best_eff = eff; best_v = v;
         }
     }
@@ -420,15 +428,12 @@ static int sim_first_attack_group(const SimState *s, int p, int power,
 }
 
 // Regular (non-first) attack: play all table-valued cards (non-trump if any),
-// capped by defender capacity (defender_cards >= uncovered + k).
-static int sim_regular_attack_group(const SimState *s, int p, int power,
-                                    int non_trump_only, uint8_t *out) {
-    uint64_t tv = sim_table_value_mask(s);
-    uint64_t h = s->hand[p] & tv;
-    if (non_trump_only) h &= ~SUIT_MASK[power];
+// capped by defender capacity (defender_cards >= uncovered + k). The core
+// takes the candidate mask and capacity precomputed — the policy evaluates a
+// non-trump and an all-cards variant of the SAME inputs, and computing them
+// once per ply was measurably cheaper in the wasm profile.
+static int sim_attack_group_core(uint64_t h, int defcap, int power, uint8_t *out) {
     if (!h) return 0;
-    int uncovered = sim_count_uncovered(s);
-    int defcap = sim_hand_count(s, s->defender) - uncovered;
     if (defcap <= 0) return 0;
     // handwritten picks max n_cards (full set) then lowest summed score. The
     // full set IS the max-cards move; we just take it (capped). To match
@@ -539,13 +544,22 @@ static int sim_handwritten_move(SimState *s, int p, SimMove *out) {
     if (first_attack) can_attack = (p == s->first_attacker);
     else can_attack = (!is_def && !(s->good_mask & (1u << p)));
 
+    // Regular-attack inputs, computed once for the non-trump and all-cards
+    // variants below (and reused by the forced fallback).
+    uint64_t h_tab = 0;
+    int defcap = 0;
+    if (can_attack && !first_attack) {
+        h_tab = s->hand[p] & sim_table_value_mask(s);
+        defcap = sim_hand_count(s, s->defender) - sim_count_uncovered(s);
+    }
+
     if (can_attack) {
         uint8_t buf[MAX_HAND_SIZE];
-        int n_nt, n_full;
+        int n_nt;
         if (first_attack) {
             n_nt = sim_first_attack_group(s, p, power, 1, buf);
         } else {
-            n_nt = sim_regular_attack_group(s, p, power, 1, buf);
+            n_nt = sim_attack_group_core(h_tab & ~SUIT_MASK[power], defcap, power, buf);
         }
         // Attack branch: prefer non-trump attacks.
         if (n_nt > 0) {
@@ -557,7 +571,7 @@ static int sim_handwritten_move(SimState *s, int p, SimMove *out) {
         uint8_t tbuf[MAX_HAND_SIZE];
         int n_tr;
         if (first_attack) n_tr = sim_first_attack_group(s, p, power, 0, tbuf);
-        else              n_tr = sim_regular_attack_group(s, p, power, 0, tbuf);
+        else              n_tr = sim_attack_group_core(h_tab, defcap, power, tbuf);
         if (n_tr > 0) {
             if (game_random() < sim_trump_attack_prob(s)) {
                 out->type = MV_ATTACK; out->n = n_tr;
@@ -600,7 +614,7 @@ static int sim_handwritten_move(SimState *s, int p, SimMove *out) {
         if (s->deck_n > 0 || s->has_flipped) {
             int n;
             if (first_attack) n = sim_first_attack_group(s, p, power, 1, buf);
-            else              n = sim_regular_attack_group(s, p, power, 1, buf);
+            else              n = sim_attack_group_core(h_tab & ~SUIT_MASK[power], defcap, power, buf);
             if (n > 0) {
                 out->type = MV_ATTACK; out->n = n;
                 for (int i = 0; i < n; i++) out->cards[i] = buf[i];
@@ -611,7 +625,7 @@ static int sim_handwritten_move(SimState *s, int p, SimMove *out) {
         // most-cards lowest-score among all attacks (incl trump).
         int n;
         if (first_attack) n = sim_first_attack_group(s, p, power, 0, buf);
-        else              n = sim_regular_attack_group(s, p, power, 0, buf);
+        else              n = sim_attack_group_core(h_tab, defcap, power, buf);
         if (n > 0) {
             out->type = MV_ATTACK; out->n = n;
             for (int i = 0; i < n; i++) out->cards[i] = buf[i];
