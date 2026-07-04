@@ -143,3 +143,24 @@ Big, real wins against exploitable opponents; roughly neutral vs strong fields
 the most promising lever found — exploiting weak/human/random opponents harder
 while playing tight against strong ones — and it is exactly where a bot facing
 real humans stands to gain the most.
+
+## Truncated rollouts + positional leaf eval — NEGATIVE result (do not re-run blind)
+
+Hypothesis: truncate every playout after K plies and score the leaf with a
+positional estimate (rank by hand size; variant orders card-count ties by
+hand strength Σ(value + 20·trump)); rollout cost should drop several-fold at
+small strength cost. Implemented behind CD_TRUNC=K / CD_TRUNC_EVAL (kept
+default-off in an experiment branch, not merged) and swept K ∈ {12..64} ×
+both evals, 400-game evals vs espresso and handwritten, 800-game finalist.
+
+Rejected: the speed–strength frontier never crosses "within noise". K=12
+buys ~3x but costs ~10% win rate at pc4; K=32 (best tradeoff, RANK+TRUMP)
+still costs ~5% at pc4 (−4.8%, ≈2.8σ at 800 games) and −3% at pc6; by
+K=48–64 the speedup decays to ~1.05–1.2x while pc4 stays depressed — the
+bias from replacing the playout's opponent-modeling tail with a static
+positional guess dominates long before the saved plies stop mattering. Only
+pc2 tolerates truncation (its strength rides the exact endgame solver, not
+rollouts). A future attempt needs a leaf that models table state and pickup
+pressure, not card counts. Racing (CD_RACE, adopted) is the safe way to cut
+rollout spend: it prunes redundant WORLDS on easy decisions instead of
+biasing every playout.
