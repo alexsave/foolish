@@ -30,6 +30,9 @@
 // get their own exact mirrors.
 #define STRAT_ESPRESSO_PROD     15
 #define STRAT_HANDWRITTEN_PROD  16
+// Linear policy distilled from cordite(prod) self-play, with a DL_TAU
+// confidence gate that defers uncertain decisions back to cordite.
+#define STRAT_DISTILLED         17
 
 // Returns chosen move index in moves->moves[] (0..moves->n-1).
 typedef int (*StrategyFn)(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
@@ -56,6 +59,7 @@ int hacker_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, 
 int fulminate_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
 int espresso_prod_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
 int handwritten_prod_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
+int distilled_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
 
 // Map a strategy name (or short alias) to its STRAT_* id; -1 if unknown.
 // Single source of truth for the name<->id mapping the main programs share.
@@ -78,6 +82,7 @@ static inline int parse_strategy(const char *s) {
     if (!strcmp(s, "fulminate")         || !strcmp(s, "fm")) return STRAT_FULMINATE;
     if (!strcmp(s, "espresso_prod")     || !strcmp(s, "ep")) return STRAT_ESPRESSO_PROD;
     if (!strcmp(s, "handwritten_prod")  || !strcmp(s, "hp")) return STRAT_HANDWRITTEN_PROD;
+    if (!strcmp(s, "distilled")         || !strcmp(s, "dl")) return STRAT_DISTILLED;
     return -1;
 }
 

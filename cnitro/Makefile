@@ -31,7 +31,8 @@ CORE_SRC := src/game.c src/legal.c src/random_strategy.c src/espresso_strategy.c
             src/simple_heuristic_strategy.c src/champion_strategy.c \
             src/ultimate_champion_strategy.c src/hacker_strategy.c \
             src/fulminate_strategy.c src/espresso_prod_strategy.c \
-            src/handwritten_prod_strategy.c
+            src/handwritten_prod_strategy.c src/distill_feat.c \
+            src/distilled_strategy.c
 CORE_OBJ := $(CORE_SRC:src/%.c=build/%.o)
 
 .PHONY: all clean tests
@@ -54,6 +55,8 @@ build/cnitro_replay: $(CORE_OBJ) build/main_replay.o
 build/cnitro_showcase: $(CORE_OBJ) build/main_showcase.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 build/cnitro_tests: $(CORE_OBJ) build/tests.o
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+build/cnitro_distill: $(CORE_OBJ) build/main_distill.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 build/tests.o: tests/tests.c
@@ -119,7 +122,8 @@ WASM_BOT_SRC := src/game.c src/legal.c src/random_strategy.c \
                 src/simple_heuristic_strategy.c src/champion_strategy.c \
                 src/ultimate_champion_strategy.c src/hacker_strategy.c \
                 src/fulminate_strategy.c src/espresso_prod_strategy.c \
-                src/handwritten_prod_strategy.c wasm/wasm_api.c wasm/wasm_bots_api.c
+                src/handwritten_prod_strategy.c src/distill_feat.c \
+                src/distilled_strategy.c wasm/wasm_api.c wasm/wasm_bots_api.c
 
 build/bots.wasm: $(WASM_BOT_SRC) src/game.h src/legal.h src/card.h src/strategy.h
 	@mkdir -p build

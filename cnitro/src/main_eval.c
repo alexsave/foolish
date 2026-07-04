@@ -50,6 +50,7 @@ static int dispatch_choose(int strat, const Game *g, int pi, const LegalMoves *m
                                 return ultimate_champion_strategy_choose(g, pi, moves, NULL);
         case STRAT_HACKER:      return hacker_strategy_choose(g, pi, moves, NULL);
         case STRAT_FULMINATE:   return fulminate_strategy_choose(g, pi, moves, NULL);
+        case STRAT_DISTILLED:   return distilled_strategy_choose(g, pi, moves, NULL);
         default:                return -1;
     }
 }
