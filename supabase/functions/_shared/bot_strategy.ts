@@ -69,9 +69,13 @@ export const BOT_STRATEGIES: Map<string, BotStrategy> = new Map<string, BotStrat
     // build their belief from the full public log.
     ['espresso', new WasmBotStrategy('espresso', STRAT.espresso, { logs: true })],
     ['nitro', new NitroStrategy()],
-    ['cordite', new WasmBotStrategy('cordite', STRAT.cordite, { env: { CD_BUDGET: 'prod' }, logs: true })],
-    ['cordite_max', new WasmBotStrategy('cordite_max', STRAT.cordite, { env: { CD_BUDGET: 'max' }, logs: true })],
-    ['fulminate', new WasmBotStrategy('fulminate', STRAT.fulminate, { env: { CD_BUDGET: 'prod' }, logs: true })],
+    // CD_RACE stops a deliberation early once the leading candidate is
+    // statistically separated (validated strength-neutral at C=75: pc4x800
+    // identical, pc2/pc6 within noise; landslide decisions finish in ~50
+    // worlds instead of ~900).
+    ['cordite', new WasmBotStrategy('cordite', STRAT.cordite, { env: { CD_BUDGET: 'prod', CD_RACE: '1', CD_RACE_C: '75' }, logs: true })],
+    ['cordite_max', new WasmBotStrategy('cordite_max', STRAT.cordite, { env: { CD_BUDGET: 'max', CD_RACE: '1', CD_RACE_C: '75' }, logs: true })],
+    ['fulminate', new WasmBotStrategy('fulminate', STRAT.fulminate, { env: { CD_BUDGET: 'prod', CD_RACE: '1', CD_RACE_C: '75' }, logs: true })],
 ]);
 
 // Lazy-load GPT strategy to avoid requiring API key at module load time

@@ -162,6 +162,13 @@ void wasm_import_logs(void) {
 // the 'random' bot, so the bot bridge imports them separately: one i8 per
 // seat (a STRAT_* id, or -1 for unknown/human/LLM), written AFTER
 // wasm_import_state has rebuilt the players.
+// Drop the session logs imported for a decision. The TS bridge calls this
+// after a choose so the SAME resident kernel state can then run the chosen
+// action: the action appends its own logs from zero, exactly like a fresh
+// marshal (wasm_import_state also starts from zero), so the post-action log
+// export contains only the new entries.
+void wasm_clear_logs(void) { wasm_game_ptr_internal()->num_logs = 0; }
+
 // Game identity for per-game bot memory (espresso's discard memory was a
 // per-game-id map in TS). The bridge sends a hash of game.id per decision.
 void espresso_prod_set_game_key(uint32_t key);

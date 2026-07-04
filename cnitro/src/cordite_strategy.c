@@ -88,6 +88,8 @@ static _Thread_local int cd_w3_override = -1;
 static _Thread_local int cd_old_budget = 0;    // cordite_old variant: pre-2x worlds
 static _Thread_local int cd_keep1 = 0, cd_keep2 = 0;  // CD_KEEP1/2: candidates kept past stage 0/1 (0=default n/3, 2)
 static _Thread_local int cd_budget_mode = 0;   // CD_BUDGET: 0=arena, 1=prod (TS v2.4), 2=max
+static _Thread_local int cd_race = 0;          // CD_RACE=1: stop sampling once the leader is separated
+static _Thread_local int cd_race_c = 100;      // CD_RACE_C: separation threshold, percent (see cd loop)
 static _Thread_local int cd_rollout_policy = 0;       // CD_ROLLOUT: 0=default, 1=espresso, 2=handwritten (struct path)
 // Bitboard endgame-solver node budgets (per shared pass). The bitboard solver
 // (transposition table + O(1) clone) resolves far more per node than the
@@ -1292,6 +1294,33 @@ static void cd_params(int num_players, int *W1, int *W2, int *W3) {
     if (cd_w3_override >= 0) *W3 = cd_w3_override;
 }
 
+// CD_RACE=1: sequential early stop. The stage schedule spends the same world
+// budget whether the decision is a coin flip or a landslide; most are
+// landslides. Every 16 worlds (after a 32-world floor) compare the two best
+// running means over the alive candidates and stop the whole deliberation
+// once the leader's gap clears a distance that shrinks like 1/sqrt(n)
+// (Hoeffding-flavored; finish positions span ~num_players, and the constant
+// is folded into CD_RACE_C, percent, default 100). Close decisions still
+// consume the full budget, so quality concentrates where it matters.
+// __builtin_sqrt is the native f64.sqrt instruction on wasm — no libm.
+static int cd_race_separated(const double *score, const int *nsim,
+                             const bool *alive, int n_cands,
+                             int worlds_done, int num_players, int race_c) {
+    if (worlds_done < 32 || (worlds_done & 15) != 0) return 0;
+    double best = 1e30, second = 1e30;
+    int n = 0;
+    for (int i = 0; i < n_cands; i++) {
+        if (!alive[i] || nsim[i] == 0) continue;
+        double v = score[i] / (double)nsim[i];
+        if (v < best) { second = best; best = v; }
+        else if (v < second) second = v;
+        if (nsim[i] > n) n = nsim[i];
+    }
+    if (second >= 1e29) return 1;   // a single live candidate: nothing to race
+    return (second - best) * __builtin_sqrt((double)n)
+         > (double)race_c * 0.01 * (double)num_players;
+}
+
 // CD_VERIFY=1: oracle self-check (test-only — reads real hands to validate
 // the public-info belief, never to play).
 static void cd_verify_belief(const Game *g, int bot_idx, const Belief *B) {
@@ -1348,6 +1377,8 @@ int cordite_strategy_choose(const Game *g, int bot_idx,
         cd_w3_override = cd_env_int("CD_W3", -1);
         cd_keep1 = cd_env_int("CD_KEEP1", 0);
         cd_keep2 = cd_env_int("CD_KEEP2", 0);
+        cd_race = cd_env_int("CD_RACE", 0);
+        cd_race_c = cd_env_int("CD_RACE_C", 100);
         {
             // CD_BUDGET=prod|max: the world/pruning budgets the production TS
             // port shipped with (see cd_params / the keep counts below). The
@@ -1464,6 +1495,9 @@ int cordite_strategy_choose(const Game *g, int bot_idx,
                     score[ci] += (double)fp;
                     nsim[ci]++;
                 }
+                if (cd_race && cd_race_separated(score, nsim, alive, C.n,
+                                                 w + 1, g->num_players, cd_race_c))
+                    goto race_done;
                 continue;
             }
 
@@ -1488,6 +1522,9 @@ int cordite_strategy_choose(const Game *g, int bot_idx,
                 score[ci] += (double)fp;
                 nsim[ci]++;
             }
+            if (cd_race && cd_race_separated(score, nsim, alive, C.n,
+                                             w + 1, g->num_players, cd_race_c))
+                goto race_done;
         }
         if (stage < 2) {
             int n_alive = 0;
@@ -1525,6 +1562,7 @@ int cordite_strategy_choose(const Game *g, int bot_idx,
         }
     }
 
+race_done:;
     int best = -1;
     double best_v = 1e30;
     for (int i = 0; i < C.n; i++) {

@@ -86,6 +86,26 @@ function engine(): EngineExports {
     return ex;
 }
 
+// The bots module (bots.wasm) embeds this same kernel plus the strategies.
+// When it loads, it adopts the engine slot so choose + action run on ONE
+// instance — which enables the resident-state fast path below.
+export function __adoptEngine(ex: EngineExports): void {
+    exportsCache = ex;
+    memView = new Uint8Array(0);
+    residentFor = null;
+}
+
+// Resident-state fast path: wasmChooseMove marshals the game and only READS
+// it; the bot loop then immediately executes the chosen action on the same
+// game object. Marking the object resident lets that next marshal be
+// skipped — the kernel state is byte-identical to what a fresh marshal
+// would rebuild (choose is read-only; imported logs are cleared kernel-side
+// so the action logs from zero exactly like after wasm_import_state). ANY
+// marshal clears the mark, so the window is strictly choose -> next kernel
+// call on the same object.
+let residentFor: Game | null = null;
+export function __setResident(g: Game | null): void { residentFor = g; }
+
 // One cached view over the whole linear memory. The kernel never mallocs, so
 // memory.grow is never called and the buffer identity is stable — but guard
 // anyway. Reading through one persistent view (with explicit base offsets)
@@ -185,6 +205,11 @@ function goodPlayersFromMask(mask: number, game: Game, preGood: string[], actorI
 }
 
 function marshalGame(ex: EngineExports, game: Game): void {
+    if (residentFor === game && ex === exportsCache) {
+        residentFor = null;
+        return;
+    }
+    residentFor = null;
     const buf = mem(ex);
     let q = ex.wasm_io_ptr();
     buf[q++] = G_STATUS_TO_INT[game.status] ?? 0;

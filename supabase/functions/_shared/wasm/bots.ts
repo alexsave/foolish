@@ -18,12 +18,13 @@ import { Game } from '../types.ts';
 import { LegalMove } from '../bot_interfaces.ts';
 import { BOTS_WASM_B64 } from './bots_wasm.ts';
 import {
-    EngineExports, __LOG_TYPE_TO_INT, __MOVE_TYPE, __decodeBase64,
-    __marshalGame, __mem, __pooledCard,
+    EngineExports, __LOG_TYPE_TO_INT, __MOVE_TYPE, __adoptEngine,
+    __decodeBase64, __marshalGame, __mem, __pooledCard, __setResident,
 } from './engine.ts';
 
 interface BotsExports extends EngineExports {
     wasm_import_logs(): void;
+    wasm_clear_logs(): void;
     wasm_import_strategy_keys(): void;
     wasm_set_game_key(key: number): void;
     wasm_setenv_from_io(): void;
@@ -58,6 +59,10 @@ function bots(): BotsExports {
     const ex = instance.exports as unknown as BotsExports;
     ex.wasm_init();
     exportsCache = ex;
+    // bots.wasm is a superset of rules.wasm — adopt the engine slot so a bot
+    // turn's choose and its follow-up action run on one instance, enabling
+    // the resident-state marshal skip (see engine.ts).
+    __adoptEngine(ex);
     return ex;
 }
 
@@ -173,7 +178,13 @@ export function wasmChooseMove(
     if (opts.env) setEnv(ex, opts.env);
     const seed = seedSource ? seedSource() : Math.floor(Math.random() * 4294967296);
     ex.wasm_set_strategy_seed(seed >>> 0);
-    return ex.wasm_choose_move(strat, seat);
+    const idx = ex.wasm_choose_move(strat, seat);
+    // The choose only READ the marshaled state; clearing the imported logs
+    // makes the resident kernel state byte-equivalent to a fresh marshal, so
+    // the action that follows on this same game object can skip its own.
+    ex.wasm_clear_logs();
+    __setResident(game);
+    return idx;
 }
 
 // Same decision, but the chosen move is read straight from the bytes
