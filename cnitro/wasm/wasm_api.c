@@ -233,6 +233,10 @@ static void get_state(Game *g, const unsigned char *p) {
     if (g->num_eliminated > MAX_PLAYERS) g->num_eliminated = MAX_PLAYERS;
     for (int i = 0; i < g->num_eliminated; i++) g->elimination_order[i] = (int8_t)*q++;
     g->num_logs = 0;
+    // The resident game always has a full-size log array; only sampled-world
+    // slots ever set log_cap (see game.h). Re-pin defensively per marshal.
+    g->log_cap = 0;
+    g->log_virt = 0;
 }
 
 // TS -> C: parse the IO buffer into the working game.

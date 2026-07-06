@@ -109,9 +109,13 @@ WASM_CC    ?= clang
 # the buffer only feeds the exported move MENU, where the legal.c cap guards
 # already stop combinatorial blowups safely at any value. 65536 cost 10.9MB
 # of the module's 12MB for zero correctness benefit.
+# WORLD_LOG_CAP=40: sampled-world/trial/difftest Game slots keep a 40-entry
+# discard-only log instead of the full 512 (see cordite_sim.h) — the research
+# full-log world modes stay native-only. 3 x 61KB per bots.wasm instance.
 WASM_FLAGS := --target=wasm32 -O3 -nostdlib -ffreestanding -mbulk-memory \
               -isystem wasm/include -Isrc -D_Thread_local= -DMAX_LOG_PAIRS=64 \
               -DMAX_LEGAL_MOVES=4096 -DMAX_MOVE_CARDS=40 -DMAX_BATTLES=64 \
+              -DWORLD_LOG_CAP=40 \
               -Wall -Wextra -Wno-unused-parameter \
               -Wl,--no-entry -Wl,--export-all -Wl,-z,stack-size=524288 -Wl,--stack-first
 
