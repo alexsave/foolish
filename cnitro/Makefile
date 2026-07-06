@@ -116,9 +116,15 @@ WASM_CC    ?= clang
 # shared scratch, the deepest real path is the bitboard solver's 48-frame
 # recursion (~1.5KB/frame) — 256KB is ~3x that worst case. --stack-first
 # keeps any regression a loud trap, and CI's mem job runs unpinned games.
+# MAX_MOVE_CARDS=28: for ANY state reachable with <= 52 distinct cards no
+# legal move exceeds 26 cards — an attack/pass of k needs the defender to
+# hold >= k (2k <= 52), a cover of n needs n covers + n table attacks
+# (2n <= 52) — so 28 emits the identical move set for every real game (the
+# production deck is 36). Only corrupt/hostile marshaled states (duplicate
+# cards) could enumerate wider moves, which the caps drop by design.
 WASM_FLAGS := --target=wasm32 -O3 -nostdlib -ffreestanding -mbulk-memory \
               -isystem wasm/include -Isrc -D_Thread_local= -DMAX_LOG_PAIRS=64 \
-              -DMAX_LEGAL_MOVES=4096 -DMAX_MOVE_CARDS=40 -DMAX_BATTLES=64 \
+              -DMAX_LEGAL_MOVES=4096 -DMAX_MOVE_CARDS=28 -DMAX_BATTLES=64 \
               -DWORLD_LOG_CAP=40 \
               -Wall -Wextra -Wno-unused-parameter \
               -Wl,--no-entry -Wl,--export-all -Wl,-z,stack-size=262144 -Wl,--stack-first

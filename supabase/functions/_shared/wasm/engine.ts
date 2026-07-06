@@ -952,10 +952,12 @@ export function kernelCanCover(attack: Card, defense: Card, powerSuit: number): 
 }
 
 // Worst-case wire bytes for one exported move: type + n + 2 x MAX_MOVE_CARDS
-// wire cards (cnitro's wasm build pins MAX_MOVE_CARDS=40). The chunk size
+// wire cards (cnitro's wasm build pins MAX_MOVE_CARDS=28). The chunk size
 // derives from the kernel's actual IO capacity so the two can't drift apart;
-// the kernel clamps defensively on its side too (wasm_export_moves).
-const MOVE_WIRE_MAX = 2 + 2 * 40;
+// the kernel clamps defensively on its side too (wasm_export_moves), and the
+// loop below advances by the RETURNED count, so even a mismatched clamp can
+// shorten chunks but never skip moves.
+const MOVE_WIRE_MAX = 2 + 2 * 28;
 
 export function kernelLegalMoves(game: Game, player_id: string): { type: string; cards?: Card[]; attack_cards?: Card[] }[] {
     const seat = game.players.findIndex(p => p.player_id === player_id);
@@ -966,7 +968,7 @@ export function kernelLegalMoves(game: Game, player_id: string): { type: string;
     const base = ex.wasm_io_ptr();
     const chunk = Math.floor((ex.wasm_io_cap() - 4) / MOVE_WIRE_MAX);
     const moves: { type: string; cards?: Card[]; attack_cards?: Card[] }[] = [];
-    for (let start = 0; start < total; start += chunk) {
+    for (let start = 0; start < total;) {
         ex.wasm_export_moves(start, chunk);
         const buf = mem(ex);
         let q = base;
@@ -990,6 +992,8 @@ export function kernelLegalMoves(game: Game, player_id: string): { type: string;
                 moves.push({ type, cards });
             }
         }
+        if (n <= 0) break;   // defensive: a zero-move chunk must not spin
+        start += n;
     }
     return moves;
 }
