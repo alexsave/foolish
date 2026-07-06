@@ -54,6 +54,13 @@ export const STRAT = {
 
 let exportsCache: BotsExports | null = null;
 
+// Memory diagnostics for the edge 150MB-external budget (see utils.ts [MEM]
+// logging): current size of the bots.wasm linear memory, -1 until loaded.
+export function __botsWasmMB(): number {
+    const mem = (exportsCache as unknown as { memory?: WebAssembly.Memory } | null)?.memory;
+    return mem ? Math.round(mem.buffer.byteLength / 1048576) : -1;
+}
+
 function bots(): BotsExports {
     if (exportsCache) return exportsCache;
     const module = new WebAssembly.Module(__decodeBase64(BOTS_WASM_B64) as BufferSource);

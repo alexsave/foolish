@@ -3,6 +3,20 @@ import { executeWithGameLock } from './utils.ts';
 import { calculateLegalMoves, LegalMove } from './bot_strategy.ts';
 import { createClient } from 'jsr:@supabase/supabase-js';
 import { processBotAction, executeBotMove, shouldBotActCore } from './pure_bot_actions.ts';
+import { __botsWasmMB } from './wasm/bots.ts';
+import { __kernelWasmMB } from './wasm/engine.ts';
+
+// One-line memory snapshot against the edge limits (150MB heap + 150MB
+// external, where wasm linear memory counts as external). Logged around every
+// bot decision to localize "Memory limit exceeded" kills.
+const memLine = (): string => {
+    let d = '';
+    try {
+        const m = (globalThis as { Deno?: { memoryUsage?: () => { rss: number; heapTotal: number; heapUsed: number; external: number } } }).Deno?.memoryUsage?.();
+        if (m) d = `heap=${Math.round(m.heapUsed / 1048576)}/${Math.round(m.heapTotal / 1048576)}MB ext=${Math.round(m.external / 1048576)}MB rss=${Math.round(m.rss / 1048576)}MB `;
+    } catch { /* memoryUsage unavailable */ }
+    return `${d}kernelWasm=${__kernelWasmMB()}MB botsWasm=${__botsWasmMB()}MB`;
+};
 
 const supabaseClient = createClient(
     Deno.env.get('SUPABASE_URL') || '',
@@ -91,6 +105,7 @@ export const lockedBotLoop = async (game_id: string): Promise<void> => {
     // ONE drive segment. Continuation across segments is handled by the pg_cron
     // bot-heartbeat (each tick is a fresh request => fresh CPU budget) — we do NOT
     // self-continue in-isolate, since chained segments would share one 2s CPU budget.
+    console.log(`[MEM] lockedBotLoop start: ${memLine()}`);
     const leaseToken = await acquireBotLease(game_id);
     if (!leaseToken) {
         console.log('bot lease held by another loop, skipping');
@@ -263,7 +278,9 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
                         if (!botActionResult) movesFromFailedAttempts.delete(selectedBot.bot.player_id);
                     }
                     if (!botActionResult) {
+                        console.log(`[MEM] before ${selectedBot.bot.name} (${selectedBot.bot.strategy_key}): ${memLine()}`);
                         const fresh = await processBotAction(game, selectedBot.bot);
+                        console.log(`[MEM] after  ${selectedBot.bot.name} (${selectedBot.bot.strategy_key}): ${memLine()}`);
                         if (fresh) {
                             movesFromFailedAttempts.set(selectedBot.bot.player_id, fresh.move);
                             botActionResult = fresh;

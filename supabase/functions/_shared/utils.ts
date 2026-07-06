@@ -405,6 +405,10 @@ export const wrap400 = (execute: (params: ExecutionParams) => Promise<{ game: Ga
             // design, spectators nudge stalled games) shouldn't be able to spin the
             // loop on non-live games either.
             if (game_id && run_bots && result?.status === GAME_STATUS.PLAYING) {
+                try {
+                    const m = (globalThis as { Deno?: { memoryUsage?: () => { rss: number; heapTotal: number; heapUsed: number; external: number } } }).Deno?.memoryUsage?.();
+                    if (m) console.log(`[${reqId}][MEM] pre-loop: heap=${Math.round(m.heapUsed / 1048576)}/${Math.round(m.heapTotal / 1048576)}MB ext=${Math.round(m.external / 1048576)}MB rss=${Math.round(m.rss / 1048576)}MB`);
+                } catch { /* memoryUsage unavailable */ }
                 console.log(`[${reqId}][WRAP400] Starting background bot loop`);
                 //
                 // CRITICAL: this runs AFTER the HTTP response is sent. Without

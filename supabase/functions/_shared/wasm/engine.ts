@@ -76,6 +76,14 @@ function decodeBase64(b64: string): Uint8Array {
 
 let exportsCache: EngineExports | null = null;
 
+// Memory diagnostics for the edge 150MB-external budget (see utils.ts [MEM]
+// logging): current size of the resident kernel's linear memory, -1 until
+// loaded. After __adoptEngine this reports the bots.wasm memory.
+export function __kernelWasmMB(): number {
+    const mem = exportsCache?.memory;
+    return mem ? Math.round(mem.buffer.byteLength / 1048576) : -1;
+}
+
 function engine(): EngineExports {
     if (exportsCache) return exportsCache;
     const module = new WebAssembly.Module(decodeBase64(RULES_WASM_B64) as BufferSource);
