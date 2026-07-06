@@ -13,7 +13,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test:e2e": "TSX_TSCONFIG_PATH=e2e/tsconfig.json node --import tsx --test --test-concurrency=1 e2e/*.test.ts",
+    "test:e2e": "TSX_TSCONFIG_PATH=e2e/tsconfig.json node --import tsx --test --test-concurrency=1 --experimental-test-module-mocks e2e/*.test.ts",
     "test:validate": "VALIDATION_ONLY=1 TSX_TSCONFIG_PATH=e2e/tsconfig.json node --import tsx --test --test-concurrency=1 e2e/validation/*.test.ts",
     "bot:game": "tsx offlinefun/localtest/bot_loop_core.ts"
   },
@@ -23,6 +23,7 @@
     "@types/react": "^19.2.15",
     "@types/react-dom": "^19.2.3",
     "dotenv": "^16.0.0",
+    "jsdom": "^29.1.1",
     "pg": "^8.21.0",
     "tsx": "^4.7.0",
     "typescript": "^5.4.0"
