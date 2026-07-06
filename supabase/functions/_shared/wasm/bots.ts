@@ -16,7 +16,7 @@
 
 import { Game } from '../types.ts';
 import { LegalMove } from '../bot_interfaces.ts';
-import { BOTS_WASM_B64 } from './bots_wasm.ts';
+import { takeBOTS_WASM_B64 } from './bots_wasm.ts';
 import {
     EngineExports, __LOG_TYPE_TO_INT, __MOVE_TYPE, __adoptEngine,
     __decodeBase64, __marshalGame, __mem, __pooledCard, __setResident,
@@ -62,9 +62,16 @@ export function __botsWasmMB(): number {
     return mem ? Math.round(mem.buffer.byteLength / 1048576) : -1;
 }
 
+// Eager adoption for bot-serving workers: a fresh worker's first kernel
+// touch is otherwise a rules-path helper (kernelLegalMoves), which decodes
+// and instantiates rules.wasm only for bots.wasm to adopt over it one call
+// later — a whole engine instance built to be abandoned. Calling this at
+// the top of the bot loop makes bots.wasm the FIRST and only instance.
+export function __ensureBots(): void { bots(); }
+
 function bots(): BotsExports {
     if (exportsCache) return exportsCache;
-    const module = new WebAssembly.Module(__decodeBase64(BOTS_WASM_B64) as BufferSource);
+    const module = new WebAssembly.Module(__decodeBase64(takeBOTS_WASM_B64()) as BufferSource);
     const instance = new WebAssembly.Instance(module, {});
     const ex = instance.exports as unknown as BotsExports;
     ex.wasm_init();
