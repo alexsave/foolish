@@ -522,15 +522,14 @@ static int cd_solve(Solver *S, const Game *g, int alpha, int beta, int depth) {
 int cd_struct_solve_test(const Game *g, int me, int alpha, int beta,
                          long budget, int *aborted) {
     if (!cd_solver_ready()) { if (aborted) *aborted = 1; return 0; }
-    Game root;
-    cd_lite_clone(&root, g);
-    root.num_logs = 0;
+    Game *root = solve_scratch_root();
+    solve_clone_root(root, g);
     Solver S;
     S.budget = budget;
     S.aborted = false;
     S.me = me;
     S.mv = cd_solver_mv;
-    int v = cd_solve(&S, &root, alpha, beta, 0);
+    int v = cd_solve(&S, root, alpha, beta, 0);
     if (aborted) *aborted = S.aborted;
     return v;
 }
@@ -554,9 +553,8 @@ static int cd_leaf_solve(const Game *g) {
     }
     if (opp < 0) return -1;
 
-    Game root;
-    cd_lite_clone(&root, g);
-    root.num_logs = 0;   // solver never reads history
+    Game *root = solve_scratch_root();
+    solve_clone_root(root, g);
 
     Solver S;
     S.budget  = cd_leaf_budget;
@@ -566,7 +564,7 @@ static int cd_leaf_solve(const Game *g) {
 
     // Null window around 0: only the sign matters (true values are ±(1000-d)
     // for decided games), and the narrow window maximizes pruning.
-    int v = cd_solve(&S, &root, -1, 1, 0);
+    int v = cd_solve(&S, root, -1, 1, 0);
     if (S.aborted || v == 0) return -1;
     return (v > 0) ? opp : me;
 }
@@ -1030,9 +1028,9 @@ static int cd_rollout(Game *g, int my_idx, int max_turns) {
         uint32_t rng0 = game_rng_get();
         int fast = cd_simulate_fast(g, my_idx, max_turns);
         game_rng_set(rng0);
-        Game slow_g;
-        cd_lite_clone(&slow_g, g);
-        int slow = cd_simulate(&slow_g, my_idx, max_turns);
+        Game *slow_g = rollout_scratch_diff();
+        cd_lite_clone(slow_g, g);
+        int slow = cd_simulate(slow_g, my_idx, max_turns);
         cd_diff_total++;
         if (fast != slow) {
             cd_diff_mismatch++;
@@ -1084,14 +1082,13 @@ static int cd_try_endgame_solve(const Game *g, int bot_idx,
 
     if (!cd_solver_ready()) return -1;
 
-    Game root;
-    game_clone(&root, g);
-    root.num_logs = 0;
+    Game *root = solve_scratch_root();
+    solve_clone_root(root, g);
     for (int k = 0; k < B->pinned_n[opp]; k++) {
-        root.players[opp].hand[k] = B->pinned[opp][k];
+        root->players[opp].hand[k] = B->pinned[opp][k];
     }
     for (int k = 0; k < B->n; k++) {
-        root.players[opp].hand[B->pinned_n[opp] + k] = B->pool[k];
+        root->players[opp].hand[B->pinned_n[opp] + k] = B->pool[k];
     }
 
     // Fast path: solve on the compact bitboard engine (transposition table +
@@ -1101,7 +1098,7 @@ static int cd_try_endgame_solve(const Game *g, int bot_idx,
     // CD_NO_BBSOLVE=1 falls back to the struct solver for A/B.
     bool bbsolve = !cd_flag("CD_NO_BBSOLVE");
     SimState root_sim;
-    if (bbsolve) cd_sim_from_game(&root_sim, &root);
+    if (bbsolve) cd_sim_from_game(&root_sim, root);
     cd_sim_solve_reset();
 
     Solver S;
@@ -1130,11 +1127,12 @@ static int cd_try_endgame_solve(const Game *g, int bot_idx,
             v = cd_sim_solve_d(&child, bot_idx, alpha, 2000, &budget, 1, &aborted_i);
             if (budget <= 0) return -1;   // shared budget drained: no claims
         } else {
-            Game child;
-            cd_lite_clone(&child, &root);
-            if (!cd_apply(&child, bot_idx, &moves->moves[i])) continue;
+            // Slot 0 is free here: cd_solve starts the recursion at depth 1.
+            Game *child = solve_scratch_child(0);
+            solve_clone_prefix(child, root);
+            if (!cd_apply(child, bot_idx, &moves->moves[i])) continue;
             S.aborted = false;
-            v = cd_solve(&S, &child, alpha, 2000, 1);
+            v = cd_solve(&S, child, alpha, 2000, 1);
             aborted_i = S.aborted;
             if (S.budget <= 0) return -1;
         }
@@ -1159,11 +1157,11 @@ static int cd_try_endgame_solve(const Game *g, int bot_idx,
             v = cd_sim_solve_d(&child, bot_idx, -1, 0, &budget, 1, &aborted_i);
             if (budget <= 0) aborted_i = 1;
         } else {
-            Game child;
-            cd_lite_clone(&child, &root);
-            if (!cd_apply(&child, bot_idx, &moves->moves[i])) continue;
+            Game *child = solve_scratch_child(0);
+            solve_clone_prefix(child, root);
+            if (!cd_apply(child, bot_idx, &moves->moves[i])) continue;
             S.aborted = false;
-            v = cd_solve(&S, &child, -1, 0, 1);
+            v = cd_solve(&S, child, -1, 0, 1);
             aborted_i = (S.budget <= 0) || S.aborted;
         }
         if (aborted_i) continue;   // unknown

@@ -1588,7 +1588,25 @@ int cd_sim_playout(SimState *s, int my_idx, int max_turns, int early_exit) {
 #define SOLVE_CHILD_STRIDE (((size_t)offsetof(Game, logs) + 15u) & ~(size_t)15u)
 static _Thread_local unsigned char solve_child_scratch[SOLVE_SCRATCH_DEPTH * SOLVE_CHILD_STRIDE]
     __attribute__((aligned(16)));
-static _Thread_local SolveMoves solve_mv_scratch[SOLVE_SCRATCH_DEPTH];
+
+// Solver move slots and the struct-rollout move list share one allocation:
+// they are never live at the same time (a leaf solve runs at the TOP of a
+// rollout ply, before that ply's enumeration; the rollout list is consumed
+// before the next ply — see cd_simulate/sx_simulate/og_simulate; root solves
+// run before any rollout starts). The union costs
+// max(48 x SolveMoves, LegalMoves) instead of both — the rollout list alone
+// is sizeof(LegalMoves) (~332KB at the bots build's MAX_LEGAL_MOVES=4096).
+static _Thread_local union {
+    SolveMoves mv[SOLVE_SCRATCH_DEPTH];
+    LegalMoves rollout;
+} solve_ws;
+
+// Solver root slot: prefix-sized like the child slots (roots never take
+// appends — only children are applied to), but with num_logs pinned at 0,
+// not MAX_LOGS: lite clones READ `src->num_logs` log entries, and 0 keeps
+// any such read inside the prefix.
+static _Thread_local unsigned char solve_root_scratch[SOLVE_CHILD_STRIDE]
+    __attribute__((aligned(16)));
 
 Game *solve_scratch_child(int depth) {
     return (Game *)(solve_child_scratch + (size_t)depth * SOLVE_CHILD_STRIDE);
@@ -1601,7 +1619,21 @@ void solve_clone_prefix(Game *dst, const Game *src) {
     dst->num_logs = MAX_LOGS;
 }
 
-SolveMoves *solve_scratch_mv(void) { return solve_mv_scratch; }
+SolveMoves *solve_scratch_mv(void) { return solve_ws.mv; }
 
-static _Thread_local LegalMoves rollout_moves;
-LegalMoves *rollout_moves_scratch(void) { return &rollout_moves; }
+LegalMoves *rollout_moves_scratch(void) { return &solve_ws.rollout; }
+
+Game *solve_scratch_root(void) { return (Game *)solve_root_scratch; }
+
+void solve_clone_root(Game *dst, const Game *src) {
+    memcpy(dst, src, offsetof(Game, logs));
+    dst->num_logs = 0;   // solver never reads history; keeps lite reads in-slot
+}
+
+// Difftest slow-rollout game (CD/SX/OG_DIFFTEST research modes). Unlike the
+// solver slots this needs a real log array: the slow rollout appends logs
+// its policies read back (espresso's discard memory). One shared copy —
+// difftests run one family at a time, fast rollout before slow.
+static _Thread_local Game rollout_diff_game;
+
+Game *rollout_scratch_diff(void) { return &rollout_diff_game; }
