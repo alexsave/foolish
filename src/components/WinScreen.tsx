@@ -3,10 +3,10 @@ import { useServer } from '../contexts/ServerContext';
 import { useAuth } from '../contexts/AuthContext';
 import { GAME_STATUS } from '@shared/types.ts';
 import supabase from '../backend/Connector';
-import { TexturedSurface, useTexture, getTextureStyle, seedFromString, flipFromString } from './TexturedSurface';
+import { TexturedSurface, useTexture, getTextureStyle } from './TexturedSurface';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
 import { Text } from './Text';
-import { SovietIcon, RankIcon } from './SovietIcon';
+import { RankIcon } from './SovietIcon';
 import { ReplayShare } from './ReplayShare';
 
 interface PlayerResult {
@@ -155,23 +155,22 @@ export const WinScreen: React.FC = () => {
     const totalPlayers = sortedResults.length;
 
     return (
-        <div className="page" style={{ padding: '1rem' }}>
+        <div className="page" style={{ padding: '0.25rem 1rem 1rem' }}>
             <WoolBackgroundLayer />
             
-            <h1 className="win-screen__title">
-                <SovietIcon name="celebration" size={32} /> <Text id="game_over" /> <SovietIcon name="celebration" size={32} />
-            </h1>
+            <h1 className="win-screen__title">done - {game.name}</h1>
 
             <div className="win-screen__results">
+                {/* One wood plank behind the whole list (CSS hides it in Soviet
+                    mode via [data-theme="soviet"] .bg-wood { display: none }). */}
+                <div className="bg-wood" style={getTextureStyle(woodUrl, false, 0.42)} />
                 {sortedResults.map((result) => {
                     const isCurrentUser = result.player_id === user_id;
-                    const playerSeed = seedFromString(result.player_id);
-                    const flip = flipFromString(result.player_id);
 
-                    const eloClass = result.elo_change > 0 
-                        ? 'result-card__elo-change--positive' 
-                        : result.elo_change < 0 
-                            ? 'result-card__elo-change--negative' 
+                    const eloClass = result.elo_change > 0
+                        ? 'result-card__elo-change--positive'
+                        : result.elo_change < 0
+                            ? 'result-card__elo-change--negative'
                             : 'result-card__elo-change--neutral';
 
                     return (
@@ -179,34 +178,23 @@ export const WinScreen: React.FC = () => {
                             key={result.player_id}
                             className={`result-card ${isCurrentUser ? 'result-card--current-user' : ''}`}
                         >
-                            {/* CSS hides this in Soviet mode via [data-theme="soviet"] .bg-wood { display: none } */}
-                            <div 
-                                className="bg-wood"
-                                style={{
-                                    ...getTextureStyle(woodUrl, false, playerSeed),
-                                    transform: `scaleX(${flip})`,
-                                }} 
-                            />
-
                             <div className="flex items-center gap-md flex-1 min-w-0">
                                 <div className="result-card__rank">
-                                    <RankIcon rank={result.rank} totalPlayers={totalPlayers} size={28} />
+                                    <RankIcon rank={result.rank} totalPlayers={totalPlayers} size={22} />
                                 </div>
 
-                                <div className="flex flex-col min-w-0">
+                                <div className="flex items-baseline gap-sm min-w-0">
                                     <span className={`result-card__name ${isCurrentUser ? 'result-card__name--current' : ''}`}>
-                                        {result.is_ai ? <><SovietIcon name="bot" size={14} /> </> : ''}{result.name}
+                                        {result.name}
                                     </span>
                                     {isCurrentUser && (
-                                        <span className="result-card__you">
-                                            (<Text id="you" />)
-                                        </span>
+                                        <span className="result-card__you">(<Text id="you" />)</span>
                                     )}
                                 </div>
                             </div>
 
                             <div className="result-card__elo">
-                                <span className="text-shadow" style={{ color: 'var(--color-text-primary)', fontSize: '0.85rem' }}>
+                                <span style={{ color: 'var(--color-text-primary)', fontSize: '0.85rem' }}>
                                     {result.old_elo} → {result.new_elo}
                                 </span>
                                 <span className={`result-card__elo-change ${eloClass}`}>

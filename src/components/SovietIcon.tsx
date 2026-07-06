@@ -247,7 +247,12 @@ export const SuitIcon: React.FC<{ suit: number; size?: number; style?: React.CSS
   const iconName = suitNames[suit];
   if (!iconName) return <span>?</span>;
 
-  return <SovietIcon name={iconName} size={size} color={suitColors[suit]} style={style} />;
+  // In the default theme SovietIcon renders an emoji glyph that ignores `size`
+  // (it has no intrinsic dimensions), so drive it with font-size here. The
+  // Soviet SVG branch keys off width/height and ignores font-size, so passing
+  // both is safe in either theme.
+  return <SovietIcon name={iconName} size={size} color={suitColors[suit]}
+    style={{ fontSize: `${size}px`, lineHeight: 1, ...style }} />;
 };
 
 // Helper component for rank display

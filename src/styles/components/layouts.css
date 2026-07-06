@@ -664,11 +664,14 @@
 }
 
 /* ===== Win Screen ===== */
+/* Mirrors the lobby game-name title (.lobby__name-input): same 2rem bold, but
+   compact — no oversized emoji, minimal vertical footprint. */
 .win-screen__title {
   color: var(--color-text-primary);
   font-size: 2rem;
   font-weight: var(--font-weight-bold);
-  margin-bottom: 0.5rem;
+  margin: 0;
+  padding: 0.25rem 0;
   text-align: center;
   position: relative;
   z-index: var(--z-content);
@@ -685,41 +688,46 @@
   opacity: 0.8;
 }
 
+/* One wood plank holds the whole ranking (see .bg-wood child in WinScreen). */
 .win-screen__results {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: var(--spacing-sm);
+  align-items: stretch;
   width: 100%;
   max-width: 350px;
   position: relative;
+  overflow: hidden;
+  border: var(--border-wood);
+  border-radius: var(--radius-none);
+  box-shadow: var(--shadow-wood-card);
   z-index: var(--z-content);
   margin-bottom: 0.4rem;
 }
 
-/* ===== Player Result Card ===== */
+/* ===== Player Result Row (flush rows on the single plank) ===== */
 .result-card {
-  border: var(--border-wood);
-  border-radius: var(--radius-none);
-  box-shadow: var(--shadow-wood-card);
   position: relative;
-  overflow: hidden;
+  z-index: 1;
   width: 100%;
-  padding: var(--spacing-md) var(--spacing-lg);
+  padding: 6px var(--spacing-md);
   display: flex;
   flex-direction: row;
   justify-content: space-between;
   align-items: center;
   gap: var(--spacing-md);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.28);
 }
 
-.result-card--current-user {
-  border: 3px solid var(--color-success);
+.result-card:last-child {
+  border-bottom: none;
 }
+
+/* The player's own row is already marked by its green name + (you) label —
+   no border needed on the single plank. */
 
 .result-card__rank {
-  font-size: 1.5rem;
-  min-width: 36px;
+  font-size: 1.1rem;
+  min-width: 30px;
   text-align: center;
 }
 
@@ -729,7 +737,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  text-shadow: var(--text-shadow-dark);
 }
 
 .result-card__name--current {
@@ -740,13 +747,13 @@
   color: var(--color-success);
   font-size: 0.75rem;
   font-weight: normal;
-  text-shadow: var(--text-shadow-dark);
 }
 
 .result-card__elo {
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
+  flex-direction: row;
+  align-items: baseline;
+  gap: 0.4rem;
   flex-shrink: 0;
 }
 

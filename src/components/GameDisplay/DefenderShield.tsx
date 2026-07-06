@@ -55,16 +55,19 @@ export const DefenderShield = () => {
 
     return <>
 
-        <svg style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 50 }}>
+        {/* Keyed by defender so a defender change remounts the arrow instead of
+            leaving a stale one on screen. The arrowhead is a marker with the
+            default markerUnits="strokeWidth", so strokeWidth scales the whole
+            triangle uniformly — bumped for size WITHOUT altering its angles. */}
+        <svg key={`defender-arrow-${game.defender}`} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 50 }}>
 
             <line
-                key="debug-arrow-defender"
                 x1={`${arrowStartX}%`}
                 y1={`${arrowStartY}%`}
                 x2={`${arrowEndX}%`}
                 y2={`${arrowEndY}%`}
                 stroke="black"
-                strokeWidth="4"
+                strokeWidth="6"
                 markerEnd="url(#blackArrowHead)"
             />
             {/* Arrow marker definition for black arrows */}
@@ -83,7 +86,7 @@ export const DefenderShield = () => {
         </svg>
 
         {/* Shield and arrow pointing to defender */}
-        <div style={{
+        <div key={`defender-shield-${game.defender}`} style={{
             position: 'absolute',
             left: `${shieldXPct}%`,
             top: `${shieldYPct}%`,
