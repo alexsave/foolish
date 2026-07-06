@@ -52,6 +52,8 @@ static int dispatch_choose(int strat, const Game *g, int pi, const LegalMoves *m
                                 return ultimate_champion_strategy_choose(g, pi, moves, NULL);
         case STRAT_HACKER:      return hacker_strategy_choose(g, pi, moves, NULL);
         case STRAT_FULMINATE:   return fulminate_strategy_choose(g, pi, moves, NULL);
+        case STRAT_ESPRESSO_PROD:    return espresso_prod_strategy_choose(g, pi, moves, NULL);
+        case STRAT_HANDWRITTEN_PROD: return handwritten_prod_strategy_choose(g, pi, moves, NULL);
         case STRAT_DISTILLED:   return distilled_strategy_choose(g, pi, moves, NULL);
         case STRAT_SEMTEX:      return semtex_strategy_choose(g, pi, moves, NULL);
         case STRAT_SEMTEX_ORACLE: return semtex_oracle_strategy_choose(g, pi, moves, NULL);
