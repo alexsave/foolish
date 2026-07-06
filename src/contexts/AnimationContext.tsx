@@ -9,6 +9,7 @@ import { validateAttack, validatePass, validatePickup, validateCover, nextDefend
 import { getTableCards, cardsIntersection, getCardKeyPlayerId, createCardEventString, getCardKey } from '../utils/animationUtils';
 import { animationFeed } from '../state/animationFeed';
 import { staleOptimisticKeysOnTable } from '../state/optimisticAnimation';
+import { resolveUnconfirmedAttackCovers } from '../state/optimisticConflicts';
 import { optimisticOverlay } from '../state/optimisticOverlay';
 import { shouldDropStaleSequence } from '../state/clientReconcile';
 
@@ -625,63 +626,61 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         }
 
         if (myOptimisticAttackCovers.length > 0 && myOptimisticCardsAccepted.length === 0) {
-            // Server didn't include our optimistic cards yet
-
-            // SPECIAL CASE: If server sent pickup/cards_to_trash, table is cleared
-            // Our optimistic attacks were too slow - revert them immediately
-            const hasTableClearEvent = message.events.some((evt: any) =>
-                evt.type === 'pickup' || evt.type === 'cards_to_trash'
+            // Server didn't include our optimistic cards yet. Decide per card whether
+            // each was genuinely never accepted (revert to hand) or is simply not yet
+            // confirmed on THIS (possibly concurrent / pre-our-commit) broadcast and
+            // should be kept (merged) — see optimisticConflicts.ts. This is the same
+            // decision the deployed client and the e2e suite both exercise.
+            const { revert: cardsToRevert, merge: cardsToMerge, clear: cardsToClear } = resolveUnconfirmedAttackCovers(
+                myOptimisticAttackCovers,
+                serverTableCards,
+                message.events,
+                message.game || serverState,
             );
 
-            if (hasTableClearEvent) {
-                revertOptimisticAttackCovers();
+            // Cards that were accepted then swept off the table by this broadcast's
+            // own pickup/trash: drop their optimistic tracking with NO revert — the
+            // clear event animates them off the table (was the "someone picked up my
+            // card and it flew back to my hand" flicker).
+            cardsToClear.forEach((card: Card) => {
+                const cardKey = getCardKey(card);
+                optimisticAnimations.current.delete(createCardEventString('attack_pass', card, 'hand', 'table', myPlayerId));
+                optimisticAnimations.current.delete(createCardEventString('cover', card, 'hand', 'table', myPlayerId));
+                optimisticCardPositions.current.delete(cardKey);
+            });
 
-                // CRITICAL: Don't merge optimistic cards into pickup/cards_to_trash events!
-                // The table is already cleared on the server, optimistic cards were too slow
-            } else {
-                // Check if we should revert based on defender capacity
+            if (cardsToRevert.length > 0) {
+                // Create revert animation for the cards that were genuinely too slow.
+                cardsToRevert.forEach((card: Card) => {
+                    const cardKey = getCardKey(card);
 
-                // Try multiple sources for defender hand size
-                const finalGameState = message.game || serverState;
+                    if (revertingCards.current.has(cardKey)) {
+                        return;
+                    }
 
-                // Use client game state if available (most accurate), otherwise fall back to message.game
-                const defenderHandSize = (finalGameState?.defender !== undefined ? (finalGameState.players?.[finalGameState.defender]?.hand_length ?? 0) : 0);
+                    revertingCards.current.add(cardKey);
 
-                const finalUncoveredAttacks = finalGameState?.table_battles?.filter((b: any) => !b.defense).length ?? 0;
+                    // Get where this card currently is visually
+                    const visualPosition = optimisticCardPositions.current.get(cardKey);
+                    const fromLocation = visualPosition?.location || 'table';
 
-                // Simple capacity check: Can defender handle all attacks?
-                const totalAttacks = finalUncoveredAttacks + myOptimisticAttackCovers.length;
-
-                if (totalAttacks > defenderHandSize) {
-                    // Create revert animation for my invalid optimistic cards
-                    myOptimisticAttackCovers.forEach((card: Card) => {
-                        const cardKey = getCardKey(card);
-
-                        if (revertingCards.current.has(cardKey)) {
-                            return;
-                        }
-
-                        revertingCards.current.add(cardKey);
-
-                        // Get where this card currently is visually
-                        const visualPosition = optimisticCardPositions.current.get(cardKey);
-                        const fromLocation = visualPosition?.location || 'table';
-
-                        revertEvents.push({
-                            type: 'revert',
-                            cards: [card],
-                            from_location: fromLocation as any,
-                            to_location: 'hand',
-                            player_id: myPlayerId,
-                            is_revert: true,
-                            message: 'Attack invalidated by earlier attack'
-                        });
-
-                        // Clear from optimistic tracking
-                        const cardEventString = createCardEventString('attack_pass', card, 'hand', 'table', myPlayerId);
-                        optimisticAnimations.current.delete(cardEventString);
+                    revertEvents.push({
+                        type: 'revert',
+                        cards: [card],
+                        from_location: fromLocation as any,
+                        to_location: 'hand',
+                        player_id: myPlayerId,
+                        is_revert: true,
+                        message: 'Attack invalidated by earlier attack'
                     });
-                } else {
+
+                    // Clear from optimistic tracking
+                    const cardEventString = createCardEventString('attack_pass', card, 'hand', 'table', myPlayerId);
+                    optimisticAnimations.current.delete(cardEventString);
+                });
+            }
+
+            if (cardsToMerge.length > 0) {
                     // Get my player ID
                     const myPlayerId = serverState.self?.player_id || user_id;
 
@@ -692,7 +691,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                     ].filter(Boolean);
 
                     // Check if any pass events in this message are from the current user
-                    const hasUserPass = message.events.some((evt: any) => 
+                    const hasUserPass = message.events.some((evt: any) =>
                         evt.type === 'attack_pass' && evt.player_id === user_id
                     );
 
@@ -705,7 +704,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                                 state.first_attacker = optimisticPassState.current.first_attacker;
                             }
 
-                            myOptimisticAttackCovers.forEach((optCard: Card) => {
+                            cardsToMerge.forEach((optCard: Card) => {
                                 const alreadyPresent = state.table_battles.some((b: any) =>
                                     (b.attack.suit === optCard.suit && b.attack.value === optCard.value) ||
                                     (b.defense && b.defense.suit === optCard.suit && b.defense.value === optCard.value)
@@ -757,7 +756,6 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                         }
                     });
                 }
-            } // End of else block for capacity check
         }
 
         return { revertEvents, passIsInvalid };
