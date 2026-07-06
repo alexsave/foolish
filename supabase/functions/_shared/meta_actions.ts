@@ -9,6 +9,7 @@
 import { ExecutionParams, broadcastToGameUser } from './utils.ts';
 import { ANIMATION_EVENT_TYPE, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY, SERVER_EVENT_TYPE, AnimationEvent, Game } from './types.ts';
 import { start_game, cloneGame, verify_player_in_game } from './common_utils.ts';
+import { MAX_PLAYERS } from './constants.ts';
 import { handleRearrangeHand as applyRearrangeHand } from './actions/rearrange.ts';
 import { createClient } from 'jsr:@supabase/supabase-js';
 
@@ -54,6 +55,13 @@ export async function handleAddBot({ body, game, user }: ExecutionParams): Promi
 
     if (game.status !== GAME_STATUS.WAITING) {
         throw new Error(`Game ${game_id} is not waiting for players`);
+    }
+
+    // Cap the lobby at the engine's player limit. Without this a client can
+    // flood add-bot (the roster has dozens of bots) into an oversized lobby;
+    // starting it then deals more hands than the deck holds and crashes.
+    if (game.players.length >= MAX_PLAYERS) {
+        throw new Error(`Game is full (max ${MAX_PLAYERS} players)`);
     }
 
     const { data: allBots, error } = await supabaseClient.from('bots').select('*');
@@ -197,6 +205,9 @@ function handleJoin({ user, user_name, body, game }: ExecutionParams): Result {
     }
     if (game.players.some(p => p.player_id === user_id)) {
         throw new Error(`Player ${user_id} is already in game ${game_id}`);
+    }
+    if (game.players.length >= MAX_PLAYERS) {
+        throw new Error(`Game is full (max ${MAX_PLAYERS} players)`);
     }
 
     game.players.push({

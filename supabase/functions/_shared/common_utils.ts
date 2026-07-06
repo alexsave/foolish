@@ -1,6 +1,6 @@
 import { Card, Game, PersonalGame, PLAYER_STATUS, PrivatePlayer, PublicPlayer, GAME_STATUS, PublicGame, LOG_TYPE, AnimationEvent, ANIMATION_EVENT_TYPE, Battle, LogCardPair } from "./types.ts";
 import { GameLog, UnsavedGameLog } from './types.ts';
-import { ACE_VALUE, CARDS_PER_PLAYER, SUITS, VALUE_MAP, SUIT_MAP } from './constants.ts';
+import { ACE_VALUE, CARDS_PER_PLAYER, SUITS, VALUE_MAP, SUIT_MAP, MAX_PLAYERS } from './constants.ts';
 import { kernelStartGame, kernelRefill } from './wasm/engine.ts';
 
 // Fast deep clone for Game objects - avoids expensive JSON.parse(JSON.stringify())
@@ -268,6 +268,12 @@ export const start_game = (game: Game): AnimationEvent[] => {
     // Guard against starting game if it's already over
     if (game.status === GAME_STATUS.GAME_OVER) {
         return [];
+    }
+    // Defense in depth: the lobby caps players at MAX_PLAYERS, but never deal
+    // an oversized lobby — more hands than the deck holds leaves a player with
+    // no cards and crashes the deal. Reject cleanly instead.
+    if (game.players.length > MAX_PLAYERS) {
+        throw new Error(`Cannot start a game with ${game.players.length} players (max ${MAX_PLAYERS})`);
     }
     return kernelStartGame(game);
 }

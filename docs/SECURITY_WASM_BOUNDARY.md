@@ -68,3 +68,49 @@ corruption. "The engine defends itself regardless of its caller."
 - Raw linear-memory injection (writing `g_io` bytes directly, bypassing
   `marshalGame`) is out of scope: an attacker with arbitrary write access to
   the module's memory has already escaped the sandbox.
+
+---
+
+# Adversarial review: the TypeScript production layer
+
+A second pass targeting the endpoints a malicious client actually reaches
+(`action`, `meta`), driven through the real dispatch + CAS commit against
+real Postgres, plus rapid-fire concurrency.
+
+## Finding: unbounded lobby → oversized-game crash (fixed)
+
+`handleAddBot` and `handleJoin` had **no player-count cap**. The bot roster
+holds dozens of bots; a joined human sits in `IDLE` status, which blocks
+add-bot's auto-start-at-2-ready — so a client could flood `add-bot` into a
+30-40 player lobby. Starting it then deals `6 × N` hands from a 52-card deck,
+runs the deck dry mid-deal, and **crashes** (`Cannot read properties of
+undefined (reading 'status')`, a 500-class error) with card conservation
+broken. Reachable through the production `meta` endpoint by any lobby member.
+
+**Fix** (lobby-path only, zero gameplay perf impact):
+- `handleAddBot` / `handleJoin` reject once `players.length >= MAX_PLAYERS`.
+- `start_game` rejects an oversized game defensively (protects any
+  pre-existing corrupt/oversized row), rather than crashing the deal.
+
+## What held up (no change needed — good news)
+
+- **200-way concurrent submits** against one game version through the CAS
+  commit: card conservation holds; exactly the winners apply, the rest
+  reject. No duplication/loss under the race.
+- **Rapid full-game self-play** with stale/duplicate submits fired
+  concurrently every ply: conserved throughout.
+- **Concurrent add-bot burst** (30 at once): the lock serializes them, the
+  cap holds across the whole burst, no duplicate players.
+- **Hostile meta payloads** — `game_id`/`bot_id`/`player_id` as objects,
+  arrays, SQL-injection strings, `__proto__`/`constructor` types, a
+  100k-char name, a throwing `toString()`: all rejected cleanly, no crash
+  (parameterized queries + the JSON boundary shrug them off).
+- **Numeric edge-case cards** — `Infinity`/`-Infinity`/`NaN`/`1e300`,
+  fractional suits/values, `-0`, `valueOf` objects, a 10k-char extra field:
+  rejected or applied cleanly, conservation intact (and the kernel-boundary
+  card sanitizer from the WASM pass backs this up).
+- **exit kicking any lobby player by id** is intended lobby management (not
+  a bug); the test confirms it only removes the named player and can't be
+  turned into corruption.
+
+Regression coverage: `e2e/adversarial_ts_layer.test.ts`.
