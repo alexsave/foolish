@@ -161,9 +161,32 @@ Game *solve_scratch_child(int depth);
 // static for all families: rollouts never nest, and keeping it OFF the wasm
 // shadow stack removes a 332KB stack local — the overflow class the CI
 // trap-first stack caught. _Thread_local for the native OMP eval.
+// It ALIASES the solver move slots (a union in cordite_sim.c): a leaf solve
+// runs at the top of a rollout ply, before that ply's enumeration, and the
+// rollout list is consumed before the next ply — never both live at once.
 LegalMoves *rollout_moves_scratch(void);
 // memcpy the prefix and turn the log array into a sinkhole (see above).
 void  solve_clone_prefix(Game *dst, const Game *src);
 SolveMoves *solve_scratch_mv(void);
+
+// Solver ROOT slot: every *_leaf_solve / root-solve / struct-solve-test
+// entry clones the position into a root, rearranges hands, and never appends
+// a log to it (only children are applied to), so one shared prefix-sized
+// slot serves them all — a solve completes before any other solve starts,
+// exactly like the child/move scratch above. Replaces per-call stack Games
+// (sizeof(Game) each — the same overflow class as the rollout move buffer).
+Game *solve_scratch_root(void);
+// Prefix copy + num_logs = 0 ("no history"), matching what every solver
+// entry did after its full/lite clone. A prefix-sized root must keep
+// num_logs BELOW capacity (unlike the child sinkhole): lite clones read
+// `src->num_logs` entries from the source's log array, and 0 keeps any such
+// read inside the slot.
+void  solve_clone_root(Game *dst, const Game *src);
+
+// Difftest slow-rollout slot (CD/SX/OG_DIFFTEST research modes): the "slow"
+// game a difftest rollout replays on. One shared copy — difftests run one
+// family at a time and the fast rollout completes before the slow one
+// starts.
+Game *rollout_scratch_diff(void);
 
 #endif

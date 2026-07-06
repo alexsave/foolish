@@ -691,9 +691,8 @@ static int og_leaf_solve(const Game *g) {
     }
     if (opp < 0) return -1;
 
-    Game root;
-    og_lite_clone(&root, g);
-    root.num_logs = 0;   // solver never reads history
+    Game *root = solve_scratch_root();
+    solve_clone_root(root, g);
 
     Solver S;
     S.budget  = og_leaf_budget;
@@ -703,7 +702,7 @@ static int og_leaf_solve(const Game *g) {
 
     // Null window around 0: only the sign matters (true values are ±(1000-d)
     // for decided games), and the narrow window maximizes pruning.
-    int v = og_solve(&S, &root, -1, 1, 0);
+    int v = og_solve(&S, root, -1, 1, 0);
     if (S.aborted || v == 0) return -1;
     return (v > 0) ? opp : me;
 }
@@ -804,9 +803,9 @@ static int og_rollout(Game *g, int my_idx, int max_turns) {
         uint32_t rng0 = game_rng_get();
         int fast = og_simulate_fast(g, my_idx, max_turns);
         game_rng_set(rng0);
-        Game slow_g;
-        og_lite_clone(&slow_g, g);
-        int slow = og_simulate(&slow_g, my_idx, max_turns);
+        Game *slow_g = rollout_scratch_diff();
+        og_lite_clone(slow_g, g);
+        int slow = og_simulate(slow_g, my_idx, max_turns);
         og_diff_total++;
         if (fast != slow) {
             og_diff_mismatch++;
@@ -858,14 +857,13 @@ static int og_try_endgame_solve(const Game *g, int bot_idx,
 
     if (!og_solver_ready()) return -1;
 
-    Game root;
-    game_clone(&root, g);
-    root.num_logs = 0;
+    Game *root = solve_scratch_root();
+    solve_clone_root(root, g);
     for (int k = 0; k < B->pinned_n[opp]; k++) {
-        root.players[opp].hand[k] = B->pinned[opp][k];
+        root->players[opp].hand[k] = B->pinned[opp][k];
     }
     for (int k = 0; k < B->n; k++) {
-        root.players[opp].hand[B->pinned_n[opp] + k] = B->pool[k];
+        root->players[opp].hand[B->pinned_n[opp] + k] = B->pool[k];
     }
 
     // Fast path: solve on the compact bitboard engine (transposition table +
@@ -875,7 +873,7 @@ static int og_try_endgame_solve(const Game *g, int bot_idx,
     // OG_NO_BBSOLVE=1 falls back to the struct solver for A/B.
     bool bbsolve = !og_flag("OG_NO_BBSOLVE");
     SimState root_sim;
-    if (bbsolve) cd_sim_from_game(&root_sim, &root);
+    if (bbsolve) cd_sim_from_game(&root_sim, root);
     cd_sim_solve_reset();
 
     Solver S;
@@ -904,11 +902,12 @@ static int og_try_endgame_solve(const Game *g, int bot_idx,
             v = cd_sim_solve_d(&child, bot_idx, alpha, 2000, &budget, 1, &aborted_i);
             if (budget <= 0) return -1;   // shared budget drained: no claims
         } else {
-            Game child;
-            og_lite_clone(&child, &root);
-            if (!og_apply(&child, bot_idx, &moves->moves[i])) continue;
+            // Slot 0 is free here: og_solve starts the recursion at depth 1.
+            Game *child = solve_scratch_child(0);
+            solve_clone_prefix(child, root);
+            if (!og_apply(child, bot_idx, &moves->moves[i])) continue;
             S.aborted = false;
-            v = og_solve(&S, &child, alpha, 2000, 1);
+            v = og_solve(&S, child, alpha, 2000, 1);
             aborted_i = S.aborted;
             if (S.budget <= 0) return -1;
         }
@@ -934,11 +933,11 @@ static int og_try_endgame_solve(const Game *g, int bot_idx,
             v = cd_sim_solve_d(&child, bot_idx, -1, 0, &budget, 1, &aborted_i);
             if (budget <= 0) aborted_i = 1;
         } else {
-            Game child;
-            og_lite_clone(&child, &root);
-            if (!og_apply(&child, bot_idx, &moves->moves[i])) continue;
+            Game *child = solve_scratch_child(0);
+            solve_clone_prefix(child, root);
+            if (!og_apply(child, bot_idx, &moves->moves[i])) continue;
             S.aborted = false;
-            v = og_solve(&S, &child, -1, 0, 1);
+            v = og_solve(&S, child, -1, 0, 1);
             aborted_i = (S.budget <= 0) || S.aborted;
         }
         if (aborted_i) continue;   // unknown
