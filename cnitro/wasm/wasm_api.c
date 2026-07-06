@@ -52,8 +52,21 @@ static int g_snap_tags[MAX_SNAPS];
 static int g_snap_aux[MAX_SNAPS];
 static int g_n_snaps;
 static LegalMoves g_moves;
+// TS writes (suit,value) BYTE PAIRS into the raw buffers; decode_in_cards
+// converts them to the in-memory Card (a one-byte bitfield since the Card
+// pack — raw TS bytes can no longer alias Card[] directly).
+static unsigned char g_in_raw_a[MAX_IN_CARDS * 2];
+static unsigned char g_in_raw_b[MAX_IN_CARDS * 2];
 static Card g_in_a[MAX_IN_CARDS];   // action cards (attack/pass/cover covers)
 static Card g_in_b[MAX_IN_CARDS];   // cover: the attack cards being covered
+
+static void decode_in_cards(const unsigned char *raw, Card *out, int n) {
+    if (n > MAX_IN_CARDS) n = MAX_IN_CARDS;
+    for (int i = 0; i < n; i++) {
+        out[i].suit  = (int8_t)raw[i * 2];
+        out[i].value = (int8_t)raw[i * 2 + 1];
+    }
+}
 
 unsigned char *wasm_io_ptr(void) { return g_io; }
 int wasm_io_cap(void) { return IO_CAP; }
@@ -65,8 +78,8 @@ Game *wasm_game_ptr_internal(void) { return &g_game; }
 LegalMoves *wasm_moves_ptr_internal(void) { return &g_moves; }
 
 // Card input buffers: TS writes (suit,value) byte pairs.
-unsigned char *wasm_cards_a_ptr(void) { return (unsigned char *)g_in_a; }
-unsigned char *wasm_cards_b_ptr(void) { return (unsigned char *)g_in_b; }
+unsigned char *wasm_cards_a_ptr(void) { return g_in_raw_a; }
+unsigned char *wasm_cards_b_ptr(void) { return g_in_raw_b; }
 
 // ---------- snapshot hook -------------------------------------------------
 
@@ -284,16 +297,20 @@ int wasm_start_game(void) {
 
 int wasm_attack(int player_idx, int n_cards) {
     begin_action();
+    decode_in_cards(g_in_raw_a, g_in_a, n_cards);
     return handle_attack(&g_game, player_idx, g_in_a, n_cards) ? 1 : 0;
 }
 
 int wasm_cover(int player_idx, int n) {
     begin_action();
+    decode_in_cards(g_in_raw_a, g_in_a, n);
+    decode_in_cards(g_in_raw_b, g_in_b, n);
     return handle_cover(&g_game, player_idx, g_in_a, g_in_b, n) ? 1 : 0;
 }
 
 int wasm_pass(int player_idx, int n_cards) {
     begin_action();
+    decode_in_cards(g_in_raw_a, g_in_a, n_cards);
     return handle_pass(&g_game, player_idx, g_in_a, n_cards) ? 1 : 0;
 }
 
