@@ -1630,22 +1630,23 @@ void solve_clone_root(Game *dst, const Game *src) {
     dst->num_logs = 0;   // solver never reads history; keeps lite reads in-slot
 }
 
-// Difftest slow-rollout game (CD/SX/OG_DIFFTEST research modes). Unlike the
-// solver slots this needs a real log array: the slow rollout appends logs
-// its policies read back (espresso's discard memory). One shared copy —
-// difftests run one family at a time, fast rollout before slow.
-static _Thread_local Game rollout_diff_game;
-
-Game *rollout_scratch_diff(void) { return &rollout_diff_game; }
-
 // Sampled-world scratch (see cordite_sim.h). Was one world/trial pair PER
-// family — 3 identical pairs of write-only-between-decisions state.
-static _Thread_local Game world_game, trial_game;
+// family — 3 identical pairs of write-only-between-decisions state. The
+// difftest slow-rollout game is world-shaped too (a rollout clone of the
+// trial): all three become short-log slots under WORLD_LOG_CAP.
+#if WORLD_LOG_CAP > 0
+#define WORLD_SLOT_BYTES (offsetof(Game, logs) + (size_t)WORLD_LOG_CAP * sizeof(GameLog))
+#else
+#define WORLD_SLOT_BYTES sizeof(Game)
+#endif
+typedef struct { _Alignas(16) unsigned char bytes[WORLD_SLOT_BYTES]; } WorldSlot;
+static _Thread_local WorldSlot world_slot, trial_slot, diff_slot;
 static _Thread_local SimState world_sim_s, trial_sim_s;
 static _Thread_local bool forced_loss_flags[MAX_LEGAL_MOVES];
 
-Game     *world_scratch_game(void)  { return &world_game; }
-Game     *trial_scratch_game(void)  { return &trial_game; }
+Game     *world_scratch_game(void)  { return (Game *)world_slot.bytes; }
+Game     *trial_scratch_game(void)  { return (Game *)trial_slot.bytes; }
+Game     *rollout_scratch_diff(void){ return (Game *)diff_slot.bytes; }
 SimState *world_scratch_sim(void)   { return &world_sim_s; }
 SimState *trial_scratch_sim(void)   { return &trial_sim_s; }
 bool     *forced_loss_scratch(void) { return forced_loss_flags; }

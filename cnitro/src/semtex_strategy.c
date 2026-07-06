@@ -496,15 +496,24 @@ static _Thread_local int sx_full_logs = 0;   // SX_FULL_LOGS=1: bp-style worlds
 static void sx_sample_world(Game *g_out, const Game *g_in, int my_idx,
                             const Belief *B, uint32_t seed,
                             bool apply_voids, bool apply_floors) {
-    if (sx_full_logs) {
+    // SX_FULL_LOGS (research, bp-style worlds) needs the whole log array —
+    // only possible when the world slot is full-size (WORLD_LOG_CAP == 0,
+    // every native build); under short slots it degrades to the filter.
+    if (sx_full_logs && WORLD_LOG_CAP == 0) {
         game_clone(g_out, g_in);
     } else {
         memcpy(g_out, g_in, offsetof(Game, logs));
         int nl = 0;
         for (int i = 0; i < g_in->num_logs; i++) {
-            if (g_in->logs[i].log_type == LOG_DISCARD) g_out->logs[nl++] = g_in->logs[i];
+            if (g_in->logs[i].log_type != LOG_DISCARD) continue;
+            if (WORLD_LOG_CAP > 0 && nl >= WORLD_LOG_CAP) break;  // crafted states only
+            g_out->logs[nl++] = g_in->logs[i];
         }
         g_out->num_logs = nl;
+        // Mark short slots so log_alloc applies the same discard filter to
+        // rollout appends (see game.h); 0 on native keeps full capacity.
+        g_out->log_cap  = WORLD_LOG_CAP;
+        g_out->log_virt = (int16_t)nl;
     }
 
     for (int i = 0; i < g_in->num_players; i++) {

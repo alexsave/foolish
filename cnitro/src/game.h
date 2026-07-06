@@ -18,7 +18,12 @@
                                   // simultaneous attacks).
 #endif
 #define MAX_DECK       64         // 36 for 2p, with slack.
-#define MAX_LOGS       512        // long games never approach this.
+#ifndef MAX_LOGS
+#define MAX_LOGS       512        // build parameter; long games never
+                                  // approach this. The session-log importers
+                                  // (bots.wasm, TS MAX_KERNEL_LOGS) assume
+                                  // 512 — only log-free builds may shrink it.
+#endif
 
 #define LOG_GAME_START      0
 #define LOG_ATTACK          1
@@ -100,6 +105,17 @@ typedef struct {
     // good_players: bitmask of player indices that have said good.
     uint32_t good_players_mask;
     bool     has_good_timestamp;
+
+    // Log storage control for SHORT-log instances (sampled-world slots whose
+    // logs[] array is allocated smaller than MAX_LOGS — see WORLD_LOG_CAP in
+    // cordite_sim.h). 0 (the default everywhere else) = full MAX_LOGS
+    // capacity, byte-identical behavior to before these fields existed.
+    // When log_cap > 0, log_alloc keeps ONLY LOG_DISCARD entries (the one
+    // log type any rollout policy reads back) up to log_cap, and log_virt
+    // counts every append — kept or filtered — so the MAX_LOGS capacity
+    // cliff lands on exactly the same append as a full-size instance.
+    int16_t  log_cap;
+    int16_t  log_virt;
 
     // Logs (append-only).
     int      num_logs;

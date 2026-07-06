@@ -193,8 +193,21 @@ Game *rollout_scratch_diff(void);
 // mirrors and the root-move forced-loss flags) for all MC families —
 // exactly one family choose runs per decision (single dispatch; families
 // never nest each other), the same invariant as the solver scratch above.
-// Fully rewritten per sample/trial. Full-size Games, NOT prefix slots:
-// trials accumulate rollout logs that espresso's discard memory reads back.
+// Fully rewritten per sample/trial.
+//
+// WORLD_LOG_CAP (build parameter) sizes these slots' log arrays. 0 (native
+// default) = full sizeof(Game) — the research full-log world modes
+// (CD/SX_FULL_LOGS) need the whole array. >0 (wasm: 40) = short slots that
+// store only that many logs; the *_sample_world writers then mark the slot
+// with Game.log_cap, and log_alloc keeps only LOG_DISCARD appends — the one
+// log type any rollout policy reads back (espresso's discard memory), the
+// same filter the samplers already apply — with drop timing identical to a
+// full array (see log_virt in game.h). 40 covers every reachable discard
+// count: each LOG_DISCARD retires >= 2 cards for good, so <= 32 can ever
+// exist at MAX_DECK=64.
+#ifndef WORLD_LOG_CAP
+#define WORLD_LOG_CAP 0
+#endif
 Game     *world_scratch_game(void);
 Game     *trial_scratch_game(void);
 SimState *world_scratch_sim(void);

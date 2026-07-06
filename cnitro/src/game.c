@@ -121,8 +121,22 @@ int game_done(const Game *g) {
 // ---------- Logs -------------------------------------------------------
 
 static GameLog *log_alloc(Game *g, int log_type, int player_idx) {
-    if (g->num_logs >= MAX_LOGS) {
+    bool drop;
+    if (g->log_cap > 0) {
+        // Short-log instance (sampled-world slot, see game.h): keep only
+        // LOG_DISCARD entries, and only while a full-size instance would
+        // still have kept the append (log_virt mirrors what num_logs would
+        // be if every append had landed) — so espresso's discard memory
+        // sees the exact same discard set as before.
+        int virt = g->log_virt;
+        if (virt < MAX_LOGS) g->log_virt = (int16_t)(virt + 1);
+        drop = virt >= MAX_LOGS || log_type != LOG_DISCARD
+            || g->num_logs >= g->log_cap;
+    } else {
         // Should never happen at MAX_LOGS=512 for sane games. Drop silently.
+        drop = g->num_logs >= MAX_LOGS;
+    }
+    if (drop) {
         static GameLog scratch;
         memset(&scratch, 0, sizeof(scratch));
         scratch.log_type = log_type;
