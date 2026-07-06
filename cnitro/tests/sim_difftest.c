@@ -28,7 +28,7 @@ static void game_fingerprint(const Game *g, uint64_t *hand, int *def, int *fa,
     *cov = 0;
     for (int i = 0; i < g->num_battles; i++) {
         atk[i] = card_id_of(g->table_battles[i].attack);
-        if (g->table_battles[i].has_defense) {
+        if (!card_is_none(g->table_battles[i].defense)) {
             dfn[i] = card_id_of(g->table_battles[i].defense);
             *cov |= (1u << i);
         }
@@ -86,7 +86,7 @@ int main(int argc, char **argv) {
             uint32_t rng = game_rng_get();
             int dbg_power = g.power_suit, dbg_nb = g.num_battles;
             int dbg_atk[24], dbg_atkv[24], dbg_def[24], dbg_cov[24], dbg_defcnt=g.players[g.defender].hand_count;
-            for (int i=0;i<g.num_battles;i++){dbg_atkv[i]=g.table_battles[i].attack.value; dbg_atk[i]=g.table_battles[i].attack.suit; dbg_cov[i]=g.table_battles[i].has_defense; dbg_def[i]=g.table_battles[i].has_defense?g.table_battles[i].defense.value:-1;}
+            for (int i=0;i<g.num_battles;i++){dbg_atkv[i]=g.table_battles[i].attack.value; dbg_atk[i]=g.table_battles[i].attack.suit; dbg_cov[i]=!card_is_none(g.table_battles[i].defense); dbg_def[i]=!card_is_none(g.table_battles[i].defense)?g.table_battles[i].defense.value:-1;}
 
             int who_s = struct_step(&g);          // advances g
             game_rng_set(rng);

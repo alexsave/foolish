@@ -20,6 +20,7 @@ import { BOTS_WASM_B64 } from './bots_wasm.ts';
 import {
     EngineExports, __LOG_TYPE_TO_INT, __MOVE_TYPE, __adoptEngine,
     __decodeBase64, __marshalGame, __mem, __pooledCard, __setResident,
+    __wireLogCard, __cardFromWire,
 } from './engine.ts';
 
 interface BotsExports extends EngineExports {
@@ -84,9 +85,9 @@ export function __setBotSeedSource(fn: (() => number) | null): void { seedSource
 
 // Session log marshal-in — wire layout of cnitro/wasm/wasm_bots_api.c
 // wasm_import_logs (u16 count; per log: i8 type, i8 player seat, i8
-// defender_index, u8 num_pairs, num_pairs x (i8 ps, i8 pv, i8 ts, i8 tv,
-// u8 has_target)). Hidden cards travel as {-1,-1}, exactly how the log
-// store keeps them — the belief-based bots (cordite, fulminate) read these.
+// defender_index, u8 num_pairs, num_pairs x (u8 primary, u8 target) 1-byte
+// wire cards). Hidden cards travel as 0xFE ({-1,-1} in the log store) — the
+// belief-based bots (cordite, fulminate) read these.
 const MAX_KERNEL_LOGS = 512;   // MAX_LOGS in cnitro/src/game.h
 const MAX_KERNEL_PAIRS = 64;   // MAX_LOG_PAIRS in the wasm build
 
@@ -115,11 +116,10 @@ function importLogs(ex: BotsExports, game: Game): void {
         buf[q++] = np;
         for (let j = 0; j < np; j++) {
             const p = pairs[j];
-            buf[q++] = (p.primary?.suit ?? -1) & 0xff;
-            buf[q++] = (p.primary?.value ?? -1) & 0xff;
-            buf[q++] = (p.target?.suit ?? -1) & 0xff;
-            buf[q++] = (p.target?.value ?? -1) & 0xff;
-            buf[q++] = p.target !== null && p.target !== undefined ? 1 : 0;
+            // missing primary encodes as the hidden card, matching the old
+            // (-1,-1) bytes; missing target is the in-band "no card".
+            buf[q++] = p.primary ? __wireLogCard(p.primary) : 0xfe;
+            buf[q++] = __wireLogCard(p.target);
         }
     }
     ex.wasm_import_logs();
@@ -217,10 +217,10 @@ export function wasmChooseMoveDirect(
     const k = buf[q++];
     if (type === 'pickup' || type === 'good' || type === 'wait') return { type };
     const cards = new Array(k);
-    for (let j = 0; j < k; j++) { cards[j] = __pooledCard(buf[q], buf[q + 1]); q += 2; }
+    for (let j = 0; j < k; j++) cards[j] = __cardFromWire(buf[q++]);
     if (type === 'cover') {
         const attacks = new Array(k);
-        for (let j = 0; j < k; j++) { attacks[j] = __pooledCard(buf[q], buf[q + 1]); q += 2; }
+        for (let j = 0; j < k; j++) attacks[j] = __cardFromWire(buf[q++]);
         return { type, cards, attack_cards: attacks };
     }
     return { type, cards };

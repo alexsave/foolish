@@ -63,7 +63,9 @@ build/cnitro_distill: $(CORE_OBJ) build/main_distill.o
 build/cnitro_gen: $(CORE_OBJ) build/main_gen.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
-build/tests.o: tests/tests.c
+# Same blanket header dependency as src objects: a struct-layout change must
+# rebuild the tests or the binary mixes layouts (observed: 1-byte Card pack).
+build/tests.o: tests/tests.c $(wildcard src/*.h)
 	@mkdir -p build
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -111,11 +113,18 @@ WASM_FLAGS := --target=wasm32 -O3 -nostdlib -ffreestanding -mbulk-memory \
               -isystem wasm/include -Isrc -D_Thread_local= -DMAX_LOG_PAIRS=64 \
               -DMAX_LEGAL_MOVES=4096 -DMAX_MOVE_CARDS=40 -DMAX_BATTLES=64 \
               -Wall -Wextra -Wno-unused-parameter \
-              -Wl,--no-entry -Wl,--export-all -Wl,-z,stack-size=1048576 -Wl,--stack-first
+              -Wl,--no-entry -Wl,--export-all -Wl,-z,stack-size=524288 -Wl,--stack-first
+
+# The rules module's move buffer only feeds the exported menu — production
+# validation is direct rule-checking, and production menus/bot enumeration
+# run on the adopted bots instance (engine slot adoption, see engine.ts).
+# 1024 covers every menu the parity/fuzz suites produce; the bots module
+# keeps the native 4096 for bot candidate lists.
+WASM_RULES_FLAGS := $(filter-out -DMAX_LEGAL_MOVES=4096,$(WASM_FLAGS)) -DMAX_LEGAL_MOVES=1024
 
 build/rules.wasm: src/game.c src/legal.c wasm/wasm_api.c src/game.h src/legal.h src/card.h
 	@mkdir -p build
-	$(WASM_CC) $(WASM_FLAGS) src/game.c src/legal.c wasm/wasm_api.c -o $@
+	$(WASM_CC) $(WASM_RULES_FLAGS) src/game.c src/legal.c wasm/wasm_api.c -o $@
 
 # Regenerates the base64 module the TS side imports (works unchanged in
 # Deno edge functions, Node and browsers — no asset pipeline needed).

@@ -14,6 +14,7 @@
 // struct copies to them on wasm32).
 
 #include "game.h"
+#include "wire.h"
 #include "legal.h"
 
 // ---------- minimal libc ------------------------------------------------
@@ -35,7 +36,16 @@ void *memset(void *dst, int c, size_t n) {
 
 // ---------- shared buffers ----------------------------------------------
 
-#define IO_CAP (768 * 1024)
+// Sized by the widest export: the chunked legal-move export (up to
+// MOVES_CHUNK=4000 moves x 82B in the bots module; the rules module's
+// smaller MAX_LEGAL_MOVES bounds the whole list well below that) — the
+// log export (~68KB worst case) fits under either. Derives from the move
+// cap so the rules module doesn't pay the bots module's buffer.
+#if MAX_LEGAL_MOVES >= 4000
+#define IO_CAP (384 * 1024)
+#else
+#define IO_CAP (128 * 1024)
+#endif
 #define MAX_SNAPS 48
 #define MAX_IN_CARDS 128
 
@@ -52,21 +62,31 @@ static int g_snap_tags[MAX_SNAPS];
 static int g_snap_aux[MAX_SNAPS];
 static int g_n_snaps;
 static LegalMoves g_moves;
+// TS writes 1-byte wire cards into the raw buffers; decode_in_cards
+// converts (and clamps) them to the in-memory Card.
+static unsigned char g_in_raw_a[MAX_IN_CARDS];
+static unsigned char g_in_raw_b[MAX_IN_CARDS];
 static Card g_in_a[MAX_IN_CARDS];   // action cards (attack/pass/cover covers)
 static Card g_in_b[MAX_IN_CARDS];   // cover: the attack cards being covered
+
+static void decode_in_cards(const unsigned char *raw, Card *out, int n) {
+    if (n > MAX_IN_CARDS) n = MAX_IN_CARDS;
+    for (int i = 0; i < n; i++) out[i] = card_from_wire_state(raw[i]);
+}
 
 unsigned char *wasm_io_ptr(void) { return g_io; }
 int wasm_io_cap(void) { return IO_CAP; }
 
 // For sibling bridge units (wasm_bots_api.c) that operate on the same
-// working game and scratch move list (LegalMoves is ~20MB at the wasm build's
-// MAX_LEGAL_MOVES — not worth a second copy).
+// working game and scratch move list (LegalMoves is ~330KB at the wasm
+// build's MAX_LEGAL_MOVES=4096 with 1-byte cards — still not worth a
+// second copy).
 Game *wasm_game_ptr_internal(void) { return &g_game; }
 LegalMoves *wasm_moves_ptr_internal(void) { return &g_moves; }
 
-// Card input buffers: TS writes (suit,value) byte pairs.
-unsigned char *wasm_cards_a_ptr(void) { return (unsigned char *)g_in_a; }
-unsigned char *wasm_cards_b_ptr(void) { return (unsigned char *)g_in_b; }
+// Card input buffers: TS writes 1-byte wire cards.
+unsigned char *wasm_cards_a_ptr(void) { return g_in_raw_a; }
+unsigned char *wasm_cards_b_ptr(void) { return g_in_raw_b; }
 
 // ---------- snapshot hook -------------------------------------------------
 
@@ -93,11 +113,11 @@ int wasm_reject_reason(void) { return engine_last_reject; }
 //   u8  status            u8  num_players     i8 power_suit
 //   i8  first_attacker    i8  defender
 //   u16 discard_pile_length
-//   u8  has_flipped       i8 flipped_suit     i8 flipped_value
+//   u8  has_flipped       u8 flipped wire-card
 //   u32 good_players_mask u8 has_good_timestamp
-//   u16 deck_count,   deck_count x (i8 suit, i8 value)
-//   u8  num_battles,  num_battles x (i8 as, i8 av, i8 ds, i8 dv, u8 has_def)
-//   num_players x (u8 status, u8 awaiting, u8 hand_count, hand x (i8,i8))
+//   u16 deck_count,   deck_count x u8 wire-card
+//   u8  num_battles,  num_battles x (u8 attack, u8 defense; 0xFF = uncovered)
+//   num_players x (u8 status, u8 awaiting, u8 hand_count, hand x u8 wire-card)
 //   u8  num_eliminated, num_eliminated x i8
 
 static int put_state(const Game *g, unsigned char *p) {
@@ -110,8 +130,7 @@ static int put_state(const Game *g, unsigned char *p) {
     *q++ = (unsigned char)(g->discard_pile_length & 0xff);
     *q++ = (unsigned char)((g->discard_pile_length >> 8) & 0xff);
     *q++ = (unsigned char)(g->has_flipped ? 1 : 0);
-    *q++ = (unsigned char)g->flipped.suit;
-    *q++ = (unsigned char)g->flipped.value;
+    *q++ = wire_from_card(g->flipped);
     *q++ = (unsigned char)(g->good_players_mask & 0xff);
     *q++ = (unsigned char)((g->good_players_mask >> 8) & 0xff);
     *q++ = (unsigned char)((g->good_players_mask >> 16) & 0xff);
@@ -119,28 +138,19 @@ static int put_state(const Game *g, unsigned char *p) {
     *q++ = (unsigned char)(g->has_good_timestamp ? 1 : 0);
     *q++ = (unsigned char)(g->deck_count & 0xff);
     *q++ = (unsigned char)((g->deck_count >> 8) & 0xff);
-    for (int i = 0; i < g->deck_count; i++) {
-        *q++ = (unsigned char)g->deck[i].suit;
-        *q++ = (unsigned char)g->deck[i].value;
-    }
+    for (int i = 0; i < g->deck_count; i++) *q++ = wire_from_card(g->deck[i]);
     *q++ = (unsigned char)g->num_battles;
     for (int i = 0; i < g->num_battles; i++) {
         const Battle *b = &g->table_battles[i];
-        *q++ = (unsigned char)b->attack.suit;
-        *q++ = (unsigned char)b->attack.value;
-        *q++ = (unsigned char)b->defense.suit;
-        *q++ = (unsigned char)b->defense.value;
-        *q++ = (unsigned char)(b->has_defense ? 1 : 0);
+        *q++ = wire_from_card(b->attack);
+        *q++ = wire_from_card(b->defense);
     }
     for (int i = 0; i < g->num_players; i++) {
         const Player *pl = &g->players[i];
         *q++ = (unsigned char)pl->status;
         *q++ = (unsigned char)(pl->awaiting_attack ? 1 : 0);
         *q++ = (unsigned char)pl->hand_count;
-        for (int j = 0; j < pl->hand_count; j++) {
-            *q++ = (unsigned char)pl->hand[j].suit;
-            *q++ = (unsigned char)pl->hand[j].value;
-        }
+        for (int j = 0; j < pl->hand_count; j++) *q++ = wire_from_card(pl->hand[j]);
     }
     *q++ = (unsigned char)g->num_eliminated;
     for (int i = 0; i < g->num_eliminated; i++) *q++ = (unsigned char)g->elimination_order[i];
@@ -180,9 +190,16 @@ static void get_state(Game *g, const unsigned char *p) {
     g->defender = (int8_t)*q++;
     g->discard_pile_length = (int16_t)(q[0] | (q[1] << 8)); q += 2;
     g->has_flipped = (*q++ != 0);
-    g->flipped.suit = (int8_t)*q++;
-    g->flipped.value = (int8_t)*q++;
-    if (g->has_flipped) clamp_card(&g->flipped);
+    // When there is no flip (TS flipped === null), the old 2-byte wire left
+    // g->flipped as the unclamped {0,0} bytes — and semtex-family belief code
+    // reads g->flipped unguarded when the flip log is reached after the card
+    // was drawn, where {0,0} acts as a harmless never-matches pin. Preserve
+    // that exact value; card_from_wire_state can only produce real cards.
+    {
+        unsigned char fw = *q++;
+        if (g->has_flipped) g->flipped = card_from_wire_state(fw);
+        else { g->flipped.suit = 0; g->flipped.value = 0; }
+    }
     g->good_players_mask = (uint32_t)q[0] | ((uint32_t)q[1] << 8)
         | ((uint32_t)q[2] << 16) | ((uint32_t)q[3] << 24);
     q += 4;
@@ -190,23 +207,15 @@ static void get_state(Game *g, const unsigned char *p) {
     g->deck_count = (int16_t)(q[0] | (q[1] << 8)); q += 2;
     if (g->deck_count < 0) g->deck_count = 0;
     if (g->deck_count > MAX_DECK) g->deck_count = MAX_DECK;
-    for (int i = 0; i < g->deck_count; i++) {
-        g->deck[i].suit = (int8_t)*q++;
-        g->deck[i].value = (int8_t)*q++;
-        clamp_card(&g->deck[i]);
-    }
+    for (int i = 0; i < g->deck_count; i++) g->deck[i] = card_from_wire_state(*q++);
     g->num_battles = (int8_t)*q++;
     if (g->num_battles < 0) g->num_battles = 0;
     if (g->num_battles > MAX_BATTLES) g->num_battles = MAX_BATTLES;
     for (int i = 0; i < g->num_battles; i++) {
         Battle *b = &g->table_battles[i];
-        b->attack.suit = (int8_t)*q++;
-        b->attack.value = (int8_t)*q++;
-        b->defense.suit = (int8_t)*q++;
-        b->defense.value = (int8_t)*q++;
-        b->has_defense = (*q++ != 0);
-        clamp_card(&b->attack);
-        clamp_card(&b->defense);
+        b->attack = card_from_wire_state(*q++);
+        unsigned char db = *q++;
+        b->defense = (db == WIRE_CARD_NONE) ? CARD_NONE : card_from_wire_state(db);
     }
     for (int i = 0; i < g->num_players; i++) {
         Player *pl = &g->players[i];
@@ -216,9 +225,7 @@ static void get_state(Game *g, const unsigned char *p) {
         if (pl->hand_count < 0) pl->hand_count = 0;
         if (pl->hand_count > MAX_HAND_SIZE) pl->hand_count = MAX_HAND_SIZE;
         for (int j = 0; j < pl->hand_count; j++) {
-            pl->hand[j].suit = (int8_t)*q++;
-            pl->hand[j].value = (int8_t)*q++;
-            clamp_card(&pl->hand[j]);
+            pl->hand[j] = card_from_wire_state(*q++);
         }
     }
     g->num_eliminated = (int8_t)*q++;
@@ -236,7 +243,8 @@ int wasm_export_state(void) { return put_state(&g_game, g_io); }
 
 // ---------- logs -----------------------------------------------------------
 // u16 num_logs, then per log: i8 type, i8 player_idx, i8 defender_index,
-// u8 num_pairs, num_pairs x (i8 ps, i8 pv, i8 ts, i8 tv, u8 has_target)
+// u8 num_pairs, num_pairs x (u8 primary, u8 target) — wire cards, target
+// 0xFF when the pair has none, 0xFE for the hidden card
 
 int wasm_export_logs(void) {
     unsigned char *q = g_io;
@@ -250,11 +258,8 @@ int wasm_export_logs(void) {
         *q++ = (unsigned char)l->num_pairs;
         for (int j = 0; j < l->num_pairs; j++) {
             const LogPair *pr = &l->pairs[j];
-            *q++ = (unsigned char)pr->primary.suit;
-            *q++ = (unsigned char)pr->primary.value;
-            *q++ = (unsigned char)pr->target.suit;
-            *q++ = (unsigned char)pr->target.value;
-            *q++ = (unsigned char)(pr->has_target ? 1 : 0);
+            *q++ = wire_from_card(pr->primary);
+            *q++ = wire_from_card(pr->target);
         }
     }
     return (int)(q - g_io);
@@ -284,16 +289,20 @@ int wasm_start_game(void) {
 
 int wasm_attack(int player_idx, int n_cards) {
     begin_action();
+    decode_in_cards(g_in_raw_a, g_in_a, n_cards);
     return handle_attack(&g_game, player_idx, g_in_a, n_cards) ? 1 : 0;
 }
 
 int wasm_cover(int player_idx, int n) {
     begin_action();
+    decode_in_cards(g_in_raw_a, g_in_a, n);
+    decode_in_cards(g_in_raw_b, g_in_b, n);
     return handle_cover(&g_game, player_idx, g_in_a, g_in_b, n) ? 1 : 0;
 }
 
 int wasm_pass(int player_idx, int n_cards) {
     begin_action();
+    decode_in_cards(g_in_raw_a, g_in_a, n_cards);
     return handle_pass(&g_game, player_idx, g_in_a, n_cards) ? 1 : 0;
 }
 
@@ -330,8 +339,8 @@ int wasm_can_cover(int as, int av, int ds, int dv, int power_suit) {
 }
 
 // ---------- legal moves --------------------------------------------------------
-// u32 n, then per move: u8 type, u8 n_cards, n_cards x (i8,i8) cards,
-// n_cards x (i8,i8) attack_cards (zeroed for non-cover moves).
+// u32 n, then per move: u8 type, u8 n_cards, n_cards x u8 wire-card cards,
+// n_cards x u8 wire-card attack_cards (zeroed for non-cover moves).
 
 int wasm_legal_moves(int bot_idx) {
     calculate_legal_moves(&g_game, bot_idx, &g_moves);
@@ -355,14 +364,8 @@ int wasm_export_moves(int start, int max_moves) {
         const LegalMove *m = &g_moves.moves[i];
         *q++ = (unsigned char)m->type;
         *q++ = (unsigned char)m->n_cards;
-        for (int j = 0; j < m->n_cards; j++) {
-            *q++ = (unsigned char)m->cards[j].suit;
-            *q++ = (unsigned char)m->cards[j].value;
-        }
-        for (int j = 0; j < m->n_cards; j++) {
-            *q++ = (unsigned char)m->attack_cards[j].suit;
-            *q++ = (unsigned char)m->attack_cards[j].value;
-        }
+        for (int j = 0; j < m->n_cards; j++) *q++ = wire_from_card(m->cards[j]);
+        for (int j = 0; j < m->n_cards; j++) *q++ = wire_from_card(m->attack_cards[j]);
     }
     return (int)(q - g_io);
 }

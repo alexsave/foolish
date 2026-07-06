@@ -11,6 +11,7 @@
 //     pick — only the CHOSEN move crosses back to JS, never the full list.
 
 #include "game.h"
+#include "wire.h"
 #include "legal.h"
 #include "strategy.h"
 #include <string.h>
@@ -123,9 +124,8 @@ void wasm_clearenv(void) { g_env_n = 0; }
 // ---------- log import -----------------------------------------------------
 // Same wire layout wasm_api.c exports: u16 count, then per log
 // (i8 type, i8 player_idx, i8 defender_index, u8 num_pairs,
-//  num_pairs x (i8 ps, i8 pv, i8 ts, i8 tv, u8 has_target)).
-// Cordite's belief reads these; hidden cards arrive as {-1,-1} exactly as the
-// production log store keeps them.
+//  num_pairs x (u8 primary, u8 target) — 1-byte wire cards).
+// Cordite's belief reads these; hidden cards arrive as 0xFE ({-1,-1}).
 
 extern Game *wasm_game_ptr_internal(void);
 
@@ -146,13 +146,10 @@ void wasm_import_logs(void) {
         for (int j = 0; j < np; j++) {
             if (l->num_pairs < MAX_LOG_PAIRS) {
                 LogPair *p = &l->pairs[l->num_pairs++];
-                p->primary.suit = (int8_t)q[0];
-                p->primary.value = (int8_t)q[1];
-                p->target.suit = (int8_t)q[2];
-                p->target.value = (int8_t)q[3];
-                p->has_target = q[4] != 0;
+                p->primary = card_from_wire_pair(q[0]);
+                p->target  = card_from_wire_pair(q[1]);
             }
-            q += 5;
+            q += 2;
         }
     }
 }
@@ -230,13 +227,7 @@ int wasm_choose_move(int strat, int bot_idx) {
     unsigned char *out = wasm_io_ptr();
     *out++ = (unsigned char)m->type;
     *out++ = (unsigned char)m->n_cards;
-    for (int i = 0; i < m->n_cards; i++) {
-        *out++ = (unsigned char)m->cards[i].suit;
-        *out++ = (unsigned char)m->cards[i].value;
-    }
-    for (int i = 0; i < m->n_cards; i++) {
-        *out++ = (unsigned char)m->attack_cards[i].suit;
-        *out++ = (unsigned char)m->attack_cards[i].value;
-    }
+    for (int i = 0; i < m->n_cards; i++) *out++ = wire_from_card(m->cards[i]);
+    for (int i = 0; i < m->n_cards; i++) *out++ = wire_from_card(m->attack_cards[i]);
     return idx;
 }

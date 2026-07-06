@@ -23,7 +23,7 @@ static inline int card_score(Card c, int power_suit) {
 static int compute_total_card_count(const Game *g) {
     int table = 0;
     for (int i = 0; i < g->num_battles; i++) {
-        table += 1 + (g->table_battles[i].has_defense ? 1 : 0);
+        table += 1 + (!card_is_none(g->table_battles[i].defense) ? 1 : 0);
     }
     int hands = 0;
     for (int i = 0; i < g->num_players; i++) hands += g->players[i].hand_count;
@@ -159,7 +159,7 @@ bool handwritten_rollout_choose(const Game *g, int bot_idx, LegalMove *out) {
     int defender_cards = g->players[g->defender].hand_count;
     int uncovered = 0;
     for (int i = 0; i < g->num_battles; i++)
-        if (!g->table_battles[i].has_defense) uncovered++;
+        if (!!card_is_none(g->table_battles[i].defense)) uncovered++;
 
     // ---------- Attacker: first attack ----------------------------------
     if (first_attack && is_first_attacker) {
@@ -223,7 +223,7 @@ bool handwritten_rollout_choose(const Game *g, int bot_idx, LegalMove *out) {
         // greedy cover (calc_cover_moves_greedy) and the full-cover test.
         Card uc[MAX_BATTLES];
         for (int i = 0, j = 0; i < g->num_battles; i++)
-            if (!g->table_battles[i].has_defense) uc[j++] = g->table_battles[i].attack;
+            if (!!card_is_none(g->table_battles[i].defense)) uc[j++] = g->table_battles[i].attack;
 
         // Pass branch takes priority in handwritten only AFTER attacks; for a
         // defender there are no attack moves, so order is: (lite) cover move
@@ -311,7 +311,7 @@ bool handwritten_rollout_choose(const Game *g, int bot_idx, LegalMove *out) {
         bool table_values[16] = { false };
         for (int i = 0; i < g->num_battles; i++) {
             table_values[g->table_battles[i].attack.value] = true;
-            if (g->table_battles[i].has_defense)
+            if (!card_is_none(g->table_battles[i].defense))
                 table_values[g->table_battles[i].defense.value] = true;
         }
         int cap = defender_cards - uncovered;   // max k via emit_attack guard
@@ -417,7 +417,7 @@ int handwritten_strategy_choose(const Game *g, int bot_idx,
     if (n_covers > 0) {
         int uncovered = 0;
         for (int i = 0; i < g->num_battles; i++) {
-            if (!g->table_battles[i].has_defense) uncovered++;
+            if (!!card_is_none(g->table_battles[i].defense)) uncovered++;
         }
         int full[MAX_LEGAL_MOVES]; int n_full = 0;
         for (int i = 0; i < n_covers; i++) {

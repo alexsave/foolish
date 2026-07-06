@@ -173,7 +173,7 @@ static void bp_build_belief(const Game *g, int bot_idx, Belief *B) {
                     Card c = L->pairs[k].primary;
                     if (tbl_n < (int)(sizeof(tbl) / sizeof(tbl[0]))) tbl[tbl_n++] = c;
                     if (p >= 0 && p != bot_idx) bp_pinned_remove(B, p, c);
-                    if (L->pairs[k].has_target) {
+                    if (!card_is_none(L->pairs[k].target)) {
                         for (int q = 0; q < unc_n; q++) {
                             if (card_eq(unc[q], L->pairs[k].target)) {
                                 unc[q] = unc[--unc_n];
@@ -234,7 +234,7 @@ static void bp_build_belief(const Game *g, int bot_idx, Belief *B) {
     for (int j = 0; j < bot->hand_count; j++) known[kn++] = bot->hand[j];
     for (int i = 0; i < g->num_battles; i++) {
         known[kn++] = g->table_battles[i].attack;
-        if (g->table_battles[i].has_defense) known[kn++] = g->table_battles[i].defense;
+        if (!card_is_none(g->table_battles[i].defense)) known[kn++] = g->table_battles[i].defense;
     }
     if (g->has_flipped) known[kn++] = g->flipped;
     for (int i = 0; i < disc_n && kn < 160; i++) known[kn++] = discards[i];

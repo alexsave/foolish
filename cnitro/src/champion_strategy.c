@@ -169,7 +169,7 @@ static bool should_give_up_basic(const Game *g, const Player *bot) {
     int undefendable = 0;
 
     for (int b = 0; b < g->num_battles; b++) {
-        if (g->table_battles[b].has_defense) continue;   // uncovered only
+        if (!card_is_none(g->table_battles[b].defense)) continue;   // uncovered only
         uncovered++;
         Card attack = g->table_battles[b].attack;
         bool has_trump_opt = false;
@@ -305,7 +305,7 @@ static int select_defense_move(const Game *g, int bot_idx, const LegalMoves *mov
 
     int uncovered = 0;
     for (int b = 0; b < g->num_battles; b++) {
-        if (!g->table_battles[b].has_defense) uncovered++;
+        if (!!card_is_none(g->table_battles[b].defense)) uncovered++;
     }
 
     // Conservative give-up decision (only evaluated with uncovered attacks).

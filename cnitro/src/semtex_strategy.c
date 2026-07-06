@@ -318,7 +318,7 @@ static void sx_build_belief(const Game *g, int bot_idx, Belief *B) {
                         sx_floor_check(B, g, p, c);
                         sx_pinned_remove(B, p, c);
                     }
-                    if (L->pairs[k].has_target) {
+                    if (!card_is_none(L->pairs[k].target)) {
                         for (int q = 0; q < unc_n; q++) {
                             if (card_eq(unc[q], L->pairs[k].target)) {
                                 unc[q] = unc[--unc_n];
@@ -444,7 +444,7 @@ static void sx_build_belief(const Game *g, int bot_idx, Belief *B) {
     for (int j = 0; j < bot->hand_count; j++) known[kn++] = bot->hand[j];
     for (int i = 0; i < g->num_battles; i++) {
         known[kn++] = g->table_battles[i].attack;
-        if (g->table_battles[i].has_defense) known[kn++] = g->table_battles[i].defense;
+        if (!card_is_none(g->table_battles[i].defense)) known[kn++] = g->table_battles[i].defense;
     }
     if (g->has_flipped) known[kn++] = g->flipped;
     for (int i = 0; i < disc_n && kn < 160; i++) known[kn++] = discards[i];
@@ -737,13 +737,13 @@ static int sx_simulate(Game *g, int my_idx, int max_turns) {
         bool acted = false;
         for (int pi = 0; pi < g->num_players; pi++) {
             if (!should_bot_act(g, pi)) continue;
-            LegalMoves moves;
-            calculate_legal_moves_lite(g, pi, &moves);
-            if (moves.n == 0) continue;
+            LegalMoves *moves = rollout_moves_scratch();
+            calculate_legal_moves_lite(g, pi, moves);
+            if (moves->n == 0) continue;
             StrategyFn fn = sx_rollout_for(g);
-            int idx = fn(g, pi, &moves, NULL);
-            if (idx < 0 || idx >= moves.n) continue;
-            if (sx_apply(g, pi, &moves.moves[idx])) { acted = true; break; }
+            int idx = fn(g, pi, moves, NULL);
+            if (idx < 0 || idx >= moves->n) continue;
+            if (sx_apply(g, pi, &moves->moves[idx])) { acted = true; break; }
         }
         if (!acted) break;
     }

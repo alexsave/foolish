@@ -127,7 +127,7 @@ static void calc_regular_attack_moves(const Game *g, const Player *p, LegalMoves
     for (int i = 0; i < g->num_battles; i++) {
         int av = g->table_battles[i].attack.value;
         if (av >= 1 && av <= ACE_VALUE) table_values[av] = true;
-        if (g->table_battles[i].has_defense) {
+        if (!card_is_none(g->table_battles[i].defense)) {
             int dv = g->table_battles[i].defense.value;
             if (dv >= 1 && dv <= ACE_VALUE) table_values[dv] = true;
         }
@@ -141,7 +141,7 @@ static void calc_regular_attack_moves(const Game *g, const Player *p, LegalMoves
     if (vn == 0) return;
     int defender_cards = g->players[g->defender].hand_count;
     int uncovered = 0;
-    for (int i = 0; i < g->num_battles; i++) if (!g->table_battles[i].has_defense) uncovered++;
+    for (int i = 0; i < g->num_battles; i++) if (!!card_is_none(g->table_battles[i].defense)) uncovered++;
     Card buf[MAX_MOVE_CARDS];
     // Combos wider than a LegalMove can hold are dropped (documented cap;
     // also prevents buf overflow when a post-pickup hand is huge).
@@ -228,7 +228,7 @@ static void calc_cover_moves(const Game *g, const Player *defender, LegalMoves *
     int uncovered_battles[MAX_BATTLES];
     int n_uncovered = 0;
     for (int i = 0; i < g->num_battles; i++) {
-        if (!g->table_battles[i].has_defense) uncovered_battles[n_uncovered++] = i;
+        if (!!card_is_none(g->table_battles[i].defense)) uncovered_battles[n_uncovered++] = i;
     }
     if (n_uncovered == 0) return;
 
@@ -258,7 +258,7 @@ static void calc_cover_moves(const Game *g, const Player *defender, LegalMoves *
 
 static void calc_pass_moves(const Game *g, const Player *defender, LegalMoves *out) {
     bool any_covered = false;
-    for (int i = 0; i < g->num_battles; i++) if (g->table_battles[i].has_defense) any_covered = true;
+    for (int i = 0; i < g->num_battles; i++) if (!card_is_none(g->table_battles[i].defense)) any_covered = true;
     if (any_covered) return;
     if (g->num_battles == 0) return;
 
@@ -297,7 +297,7 @@ static void calc_cover_moves_greedy(const Game *g, const Player *defender, Legal
     Card uncovered[MAX_BATTLES];
     int n_uncovered = 0;
     for (int i = 0; i < g->num_battles; i++) {
-        if (!g->table_battles[i].has_defense) uncovered[n_uncovered++] = g->table_battles[i].attack;
+        if (!!card_is_none(g->table_battles[i].defense)) uncovered[n_uncovered++] = g->table_battles[i].attack;
     }
     if (n_uncovered == 0) return;
     if (n_uncovered > MAX_MOVE_CARDS) return; // can't fit in one LegalMove
@@ -340,7 +340,7 @@ void calculate_legal_moves(const Game *g, int bot_idx, LegalMoves *out) {
     bool is_first_attacker = (bot_idx == g->first_attacker);
     bool first_attack = (g->num_battles == 0);
     bool all_covered = (g->num_battles > 0);
-    for (int i = 0; i < g->num_battles; i++) if (!g->table_battles[i].has_defense) all_covered = false;
+    for (int i = 0; i < g->num_battles; i++) if (!!card_is_none(g->table_battles[i].defense)) all_covered = false;
 
     if (first_attack && is_first_attacker) {
         calc_first_attack_moves(g, p, out);
@@ -374,7 +374,7 @@ void calculate_legal_moves_lite(const Game *g, int bot_idx, LegalMoves *out) {
     bool is_first_attacker = (bot_idx == g->first_attacker);
     bool first_attack = (g->num_battles == 0);
     bool all_covered = (g->num_battles > 0);
-    for (int i = 0; i < g->num_battles; i++) if (!g->table_battles[i].has_defense) all_covered = false;
+    for (int i = 0; i < g->num_battles; i++) if (!!card_is_none(g->table_battles[i].defense)) all_covered = false;
 
     if (first_attack && is_first_attacker) {
         calc_first_attack_moves(g, p, out);

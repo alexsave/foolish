@@ -31,13 +31,27 @@ static inline int min_value_for(int num_players) {
 // Back-compat alias: existing call sites used MIN_VALUE_2P.
 #define MIN_VALUE_2P MIN_VALUE_SMALL
 
+// ONE byte, not two: suit lives in 3 signed bits (-4..3 — real suits 0..3
+// plus the -1 hidden-card sentinel), value in 5 signed bits (-16..15 — real
+// values 1..13 plus -1). Bitfields keep the `.suit`/`.value` access syntax
+// unchanged across ~490 call sites while halving every Card array (hands,
+// battles, log pairs, legal moves — the bulk of the wasm modules' memory).
+// The wasm IO marshal reads/writes the FIELDS, so the wire layout stays
+// independent of this in-memory representation.
 typedef struct {
-    int8_t suit;
-    int8_t value;
+    int8_t suit  : 3;
+    int8_t value : 5;
 } Card;
+_Static_assert(sizeof(Card) == 1, "Card must pack into one byte");
 
 static inline bool card_eq(Card a, Card b) {
     return a.suit == b.suit && a.value == b.value;
 }
+
+// "No card" sentinel: replaces the has_defense/has_target booleans (an
+// uncovered battle stores CARD_NONE as its defense; a single-card log pair
+// stores CARD_NONE as its target). Distinct from the -1/-1 hidden card.
+#define CARD_NONE ((Card){ .suit = -2, .value = -2 })
+static inline bool card_is_none(Card c) { return c.suit == -2 && c.value == -2; }
 
 #endif

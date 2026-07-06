@@ -98,7 +98,7 @@ void cd_sim_from_game(SimState *s, const Game *g) {
     for (int i = 0; i < g->num_battles; i++) {
         s->atk[i] = (uint8_t)card_id(g->table_battles[i].attack);
         s->table_vmask |= VALUE_MASK[id_value(s->atk[i])];
-        if (g->table_battles[i].has_defense) {
+        if (!card_is_none(g->table_battles[i].defense)) {
             s->def[i] = (uint8_t)card_id(g->table_battles[i].defense);
             s->covered_mask |= (1ull << i);
             s->table_vmask |= VALUE_MASK[id_value(s->def[i])];
@@ -1602,3 +1602,6 @@ void solve_clone_prefix(Game *dst, const Game *src) {
 }
 
 SolveMoves *solve_scratch_mv(void) { return solve_mv_scratch; }
+
+static _Thread_local LegalMoves rollout_moves;
+LegalMoves *rollout_moves_scratch(void) { return &rollout_moves; }

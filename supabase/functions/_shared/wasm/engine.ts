@@ -147,6 +147,28 @@ function pooledCard(rawSuit: number, rawValue: number): Card {
     return { suit: s, value: v };
 }
 
+// 1-byte wire cards (mirrors cnitro/wasm/wire.h): 0..51 = suit*13+(value-1),
+// 0xFE the hidden card, 0xFF no card. Encoding reproduces the old 2-byte
+// path's semantics exactly: int8 wrap (hostile Infinity/NaN suits wrapped
+// through `& 0xff` + i8) then the kernel clamp (suit 0..3, value 1..13).
+export const WIRE_HIDDEN = 0xfe;
+export const WIRE_NONE = 0xff;
+function wireStateCard(c: Card): number {
+    let s = i8(c.suit & 0xff), v = i8(c.value & 0xff);
+    if (s === -1 && v === -1) return WIRE_HIDDEN;
+    if (s < 0) s = 0; else if (s > 3) s = 3;
+    if (v < 1) v = 1; else if (v > 13) v = 13;
+    return s * 13 + (v - 1);
+}
+function wireLogCard(c: Card | null | undefined): number {
+    if (!c) return WIRE_NONE;
+    return wireStateCard(c);
+}
+function cardFromWire(b: number): Card {
+    if (b === WIRE_HIDDEN) return HIDDEN_CARD;
+    return CARD_POOL[b <= 51 ? b : 51];
+}
+
 // ---------------------------------------------------------------------------
 // Marshaling: TS Game <-> kernel byte layout (see wasm_api.c)
 // ---------------------------------------------------------------------------
@@ -228,8 +250,7 @@ function marshalGame(ex: EngineExports, game: Game): void {
     buf[q++] = game.discard_pile_length & 0xff;
     buf[q++] = (game.discard_pile_length >> 8) & 0xff;
     buf[q++] = game.flipped ? 1 : 0;
-    buf[q++] = (game.flipped?.suit ?? 0) & 0xff;
-    buf[q++] = (game.flipped?.value ?? 0) & 0xff;
+    buf[q++] = game.flipped ? wireStateCard(game.flipped) : 0;
     let mask = 0;
     for (const pid of game.good_players ?? []) {
         const s = game.players.findIndex(p => p.player_id === pid);
@@ -242,20 +263,17 @@ function marshalGame(ex: EngineExports, game: Game): void {
     buf[q++] = game.good_timestamp !== null && game.good_timestamp !== undefined ? 1 : 0;
     buf[q++] = game.deck.length & 0xff;
     buf[q++] = (game.deck.length >> 8) & 0xff;
-    for (const c of game.deck) { buf[q++] = c.suit & 0xff; buf[q++] = c.value & 0xff; }
+    for (const c of game.deck) buf[q++] = wireStateCard(c);
     buf[q++] = game.table_battles.length;
     for (const b of game.table_battles) {
-        buf[q++] = b.attack.suit & 0xff;
-        buf[q++] = b.attack.value & 0xff;
-        buf[q++] = (b.defense?.suit ?? 0) & 0xff;
-        buf[q++] = (b.defense?.value ?? 0) & 0xff;
-        buf[q++] = b.defense ? 1 : 0;
+        buf[q++] = wireStateCard(b.attack);
+        buf[q++] = b.defense ? wireStateCard(b.defense) : WIRE_NONE;
     }
     for (const p of game.players) {
         buf[q++] = P_STATUS_TO_INT[p.status] ?? 0;
         buf[q++] = p.awaiting_attack ? 1 : 0;
         buf[q++] = p.hand.length;
-        for (const c of p.hand) { buf[q++] = c.suit & 0xff; buf[q++] = c.value & 0xff; }
+        for (const c of p.hand) buf[q++] = wireStateCard(c);
     }
     buf[q++] = game.elimination_order.length;
     for (const pid of game.elimination_order) {
@@ -289,19 +307,18 @@ function parseState(buf: Uint8Array, q: number): KernelState {
     const defender = i8(buf[q++]);
     const discard = buf[q] | (buf[q + 1] << 8); q += 2;
     const hasFlipped = buf[q++] !== 0;
-    const fs = i8(buf[q++]), fv = i8(buf[q++]);
+    const flippedWire = buf[q++];
     const goodMask = buf[q] | (buf[q + 1] << 8) | (buf[q + 2] << 16) | (buf[q + 3] << 24); q += 4;
     const hasGoodTs = buf[q++] !== 0;
     const deckN = buf[q] | (buf[q + 1] << 8); q += 2;
     const deck: Card[] = new Array(deckN);
-    for (let i = 0; i < deckN; i++) { deck[i] = pooledCard(buf[q], buf[q + 1]); q += 2; }
+    for (let i = 0; i < deckN; i++) deck[i] = cardFromWire(buf[q++]);
     const nBattles = buf[q++];
     const battles: Battle[] = [];
     for (let i = 0; i < nBattles; i++) {
-        const attack = pooledCard(buf[q], buf[q + 1]);
-        const defense = buf[q + 4] !== 0 ? pooledCard(buf[q + 2], buf[q + 3]) : null;
-        battles.push({ attack, defense });
-        q += 5;
+        const attack = cardFromWire(buf[q++]);
+        const dw = buf[q++];
+        battles.push({ attack, defense: dw === WIRE_NONE ? null : cardFromWire(dw) });
     }
     const players: KernelState['players'] = [];
     for (let i = 0; i < numPlayers; i++) {
@@ -309,7 +326,7 @@ function parseState(buf: Uint8Array, q: number): KernelState {
         const awaiting = buf[q++] !== 0;
         const handN = buf[q++];
         const hand: Card[] = new Array(handN);
-        for (let j = 0; j < handN; j++) { hand[j] = pooledCard(buf[q], buf[q + 1]); q += 2; }
+        for (let j = 0; j < handN; j++) hand[j] = cardFromWire(buf[q++]);
         players.push({ status: pStatus, awaiting, hand });
     }
     const elimN = buf[q++];
@@ -317,7 +334,7 @@ function parseState(buf: Uint8Array, q: number): KernelState {
     for (let i = 0; i < elimN; i++) elimination.push(i8(buf[q++]));
     return {
         status, numPlayers, powerSuit, firstAttacker, defender, discard,
-        flipped: hasFlipped ? pooledCard(fs, fv) : null,
+        flipped: hasFlipped ? cardFromWire(flippedWire) : null,
         goodMask, hasGoodTs, deck, battles, players, elimination,
     };
 }
@@ -339,10 +356,9 @@ function parseLogs(buf: Uint8Array, q: number): KernelLog[] {
         const nPairs = buf[q++];
         const pairs: KernelLog['pairs'] = [];
         for (let j = 0; j < nPairs; j++) {
-            const primary = pooledCard(buf[q], buf[q + 1]);
-            const target = buf[q + 4] !== 0 ? pooledCard(buf[q + 2], buf[q + 3]) : null;
-            pairs.push({ primary, target });
-            q += 5;
+            const primary = cardFromWire(buf[q++]);
+            const tw = buf[q++];
+            pairs.push({ primary, target: tw === WIRE_NONE ? null : cardFromWire(tw) });
         }
         logs.push({ type, playerIdx, defenderIndex, pairs });
     }
@@ -465,10 +481,7 @@ interface KernelRun {
 
 function writeCards(ex: EngineExports, ptr: number, cards: Card[]): void {
     const buf = mem(ex);
-    for (let i = 0; i < cards.length; i++) {
-        buf[ptr + i * 2] = cards[i].suit & 0xff;
-        buf[ptr + i * 2 + 1] = cards[i].value & 0xff;
-    }
+    for (let i = 0; i < cards.length; i++) buf[ptr + i] = wireStateCard(cards[i]);
 }
 
 type KernelAction =
@@ -937,7 +950,7 @@ export function kernelCanCover(attack: Card, defense: Card, powerSuit: number): 
     return engine().wasm_can_cover(attack.suit, attack.value, defense.suit, defense.value, powerSuit) !== 0;
 }
 
-const MOVES_CHUNK = 4000; // ≤ IO buffer at the widest possible move size
+const MOVES_CHUNK = 4000; // 4000 x (2 + 2x40 wire cards) = 328KB ≤ the 384KB IO buffer
 
 export function kernelLegalMoves(game: Game, player_id: string): { type: string; cards?: Card[]; attack_cards?: Card[] }[] {
     const seat = game.players.findIndex(p => p.player_id === player_id);
@@ -956,18 +969,18 @@ export function kernelLegalMoves(game: Game, player_id: string): { type: string;
             const type = MOVE_TYPE[buf[q++]];
             const k = buf[q++];
             if (type === 'pickup' || type === 'good' || type === 'wait') {
-                q += k * 4;
+                q += k * 2;
                 moves.push({ type });
                 continue;
             }
             const cards: Card[] = new Array(k);
-            for (let j = 0; j < k; j++) { cards[j] = pooledCard(buf[q], buf[q + 1]); q += 2; }
+            for (let j = 0; j < k; j++) cards[j] = cardFromWire(buf[q++]);
             if (type === 'cover') {
                 const attacks: Card[] = new Array(k);
-                for (let j = 0; j < k; j++) { attacks[j] = pooledCard(buf[q], buf[q + 1]); q += 2; }
+                for (let j = 0; j < k; j++) attacks[j] = cardFromWire(buf[q++]);
                 moves.push({ type, cards, attack_cards: attacks });
             } else {
-                q += k * 2;
+                q += k;
                 moves.push({ type, cards });
             }
         }
@@ -990,3 +1003,4 @@ export const __LOG_TYPE_TO_INT: Map<string, number> = new Map(
     LOG_TYPE_FROM_INT.map((t, i) => [t, i]),
 );
 export { pooledCard as __pooledCard, MOVE_TYPE as __MOVE_TYPE };
+export { wireLogCard as __wireLogCard, cardFromWire as __cardFromWire };
