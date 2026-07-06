@@ -104,6 +104,20 @@ static _Thread_local int nv_bbleaf_cards2 = 8;
 // default — pure evidence, no downside). NV_PROFILE: weak-seat detection +
 // LOOSE rollout model for profiled seats.
 static _Thread_local int nv_adapt = 1;
+// NV_PEEK (default 1): evaluate each candidate with a PREDICTED-ORDER trial
+// instead of shuffled-deck worlds. The engine's future draws are a
+// deterministic function of the current RNG state and the number of
+// game_random() consumptions before each draw; cordite-family opponents
+// consume zero net RNG (they save/restore), so a trial that replicates the
+// harness loop exactly — same eligible-actor shuffles, RNG-NEUTRAL
+// handwritten stand-ins (choice computed, stream restored), live RNG for
+// draw_card — draws the EXACT cards the real game will draw for as long as
+// the predicted moves match reality, and decays into an ordinary random
+// order after a divergence. Alignment holds vs cordite/semtex/octogen and
+// random-strategy seats (private RNG); it does NOT hold vs espresso or
+// handwritten seats (they consume game RNG they never restore).
+static _Thread_local int nv_peek = 1;
+static _Thread_local int nv_peek_trials = 3;   // trials averaged per candidate
 // Void world-mixture: voids applied in (mod-1)/mod of sampled worlds
 // (cordite: 3 of 4). A softer mixture hedges between heuristic-family
 // opponents (voids true) and MC/human strategic pickups (voids misleading).
@@ -947,6 +961,55 @@ static int nv_try_endgame_solve(const Game *g, int bot_idx,
     return -1;
 }
 
+// ---------- predicted-order peek trial (NV_PEEK) ---------------------------
+
+// Play the future out on a full Game clone, replicating the REAL harness
+// loop move-for-move: the same eligible-actor shuffle (consuming the live
+// game RNG exactly as the harness will), actors chosen the same way, and
+// draw_card consuming the live stream — so the cards drawn are the cards
+// the real game will draw while the move prediction holds. All seats
+// (including ours after the root move) are played by an RNG-NEUTRAL
+// handwritten stand-in: the choice is computed, then the stream is restored,
+// matching the zero net consumption of cordite-family opponents.
+// Returns my finish position 1..N, or 0 if unterminated.
+static int nv_peek_trial(const Game *g_in, int my_idx, const LegalMove *root_m,
+                         uint32_t live_rng) {
+    static _Thread_local Game g;
+    game_clone(&g, g_in);
+    game_rng_set(live_rng);
+    if (!nv_apply(&g, my_idx, root_m)) return 0;
+
+    int iters = 0;
+    while (game_done(&g) < 0 && iters++ < 4000) {
+        int elig[MAX_PLAYERS]; int n_e = 0;
+        for (int i = 0; i < g.num_players; i++)
+            if (should_bot_act(&g, i)) elig[n_e++] = i;
+        if (n_e == 0) break;
+        for (int i = n_e - 1; i > 0; i--) {   // the harness shuffle, verbatim
+            int j = (int)(game_random() * (i + 1));
+            if (j < 0) j = 0; if (j > i) j = i;
+            int t = elig[i]; elig[i] = elig[j]; elig[j] = t;
+        }
+        bool acted = false;
+        for (int k = 0; k < n_e; k++) {
+            int pi = elig[k];
+            LegalMoves moves;
+            calculate_legal_moves(&g, pi, &moves);
+            if (moves.n == 0) continue;
+            uint32_t r = game_rng_get();   // RNG-neutral stand-in
+            int idx = handwritten_strategy_choose(&g, pi, &moves, NULL);
+            game_rng_set(r);
+            if (idx < 0 || idx >= moves.n) continue;
+            if (nv_apply(&g, pi, &moves.moves[idx])) { acted = true; break; }
+        }
+        if (!acted) break;
+    }
+    if (game_done(&g) < 0) return 0;
+    for (int i = 0; i < g.num_eliminated; i++)
+        if (g.elimination_order[i] == my_idx) return i + 1;
+    return g.num_players;
+}
+
 // ---------- candidate selection -------------------------------------------
 
 #define NV_MAX_CANDS 26
@@ -1135,6 +1198,8 @@ int novichok_strategy_choose(const Game *g, int bot_idx,
         nv_no_fastroll = nv_flag("NV_NO_FASTROLL");
         nv_bbleaf = nv_env_int("NV_BBLEAF", 2);
         nv_adapt = nv_env_int("NV_ADAPT", 0);   // nothing to infer: worlds are true
+        nv_peek = nv_env_int("NV_PEEK", 1);
+        nv_peek_trials = nv_env_int("NV_PEEK_TRIALS", 3);
         nv_void_mod = nv_env_int("NV_VOID_MOD", 4);
         if (nv_void_mod < 2) nv_void_mod = 2;
         nv_profile = nv_env_int("NV_PROFILE", 0);
@@ -1190,6 +1255,33 @@ int novichok_strategy_choose(const Game *g, int bot_idx,
     }
     if (C.n == 0) { game_rng_set(saved_rng); return 0; }
     if (C.n == 1) { game_rng_set(saved_rng); return C.idx[0]; }
+
+    // NV_PEEK: predicted-order trials replace the shuffled-world MC. Trial 0
+    // starts from the LIVE RNG state (the real future while predictions
+    // hold); trials t>0 pre-advance the stream by t draws — nearby orders
+    // that hedge prediction decay after a move divergence. CRN: candidates
+    // share each trial's start state. Ties keep the cheapest-first order.
+    if (nv_peek) {
+        int best = -1;
+        double best_v = 1e30;
+        for (int ci = 0; ci < C.n; ci++) {
+            double sum = 0;
+            int ns = 0;
+            for (int t = 0; t < nv_peek_trials; t++) {
+                game_rng_set(saved_rng);
+                for (int a = 0; a < t; a++) (void)game_random();
+                uint32_t st = game_rng_get();
+                int fp = nv_peek_trial(g, bot_idx, &moves->moves[C.idx[ci]], st);
+                if (fp == 0) fp = g->num_players;
+                sum += (double)fp;
+                ns++;
+            }
+            double v = sum / (double)ns;
+            if (v < best_v) { best_v = v; best = ci; }
+        }
+        game_rng_set(saved_rng);
+        return best >= 0 ? C.idx[best] : 0;
+    }
 
     int W1, W2, W3;
     nv_params(g->num_players, &W1, &W2, &W3);
