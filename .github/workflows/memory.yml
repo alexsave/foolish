@@ -45,12 +45,16 @@ jobs:
         run: cp -r e2e/edge_memtest supabase/functions/memtest
 
       - name: Start local stack (db + edge runtime)
-        # The base gameplay schema lives in seed.sql (see e2e/README): on a
-        # fresh DB the migrations reference tables that don't exist yet, so
-        # `supabase start` fails applying them. This job needs no migrations
-        # (memtest is DB-free) — park them for the run.
+        # memtest is DB-free, but `supabase start` still applies migrations and
+        # seed.sql, and neither works on a fresh DB: the base gameplay schema
+        # lives in seed.sql (see e2e/README) so migrations reference tables
+        # that don't exist yet, and seed.sql itself expects the e2e platform
+        # shims (e2e/schema.sql) that the e2e harness applies first. Park the
+        # migrations and truncate seed.sql for this run — seeding an empty
+        # file is a no-op on every CLI version, and config.toml stays intact.
         run: |
           mv supabase/migrations /tmp/parked-migrations
+          : > supabase/seed.sql
           supabase start -x studio,imgproxy,inbucket
 
       - name: Serve functions
