@@ -48,6 +48,8 @@ export const STRAT = {
     ultimate_champion: 12,
     hacker: 13,
     fulminate: 14,
+    semtex: 18,
+    octogen: 20,
 } as const;
 
 let exportsCache: BotsExports | null = null;

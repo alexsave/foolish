@@ -79,11 +79,44 @@ void cd_sim_from_game(SimState *s, const Game *g);
 // and each candidate just clones the SimState.
 int cd_sim_apply_root_move(SimState *s, int p_idx, const LegalMove *m);
 
+// Forced-draw queue (novichok NV_PEEK=2 refill pinning): the next n sim_draw
+// calls return exactly these card ids in order (spliced out of the deck by id,
+// no RNG consumed) instead of random picks; a miss (id not in the deck) drops
+// the remainder of the queue and reverts to random draws. Thread-local; call
+// with n=0 (ids may be NULL) to clear. Callers arm it immediately before the
+// root-move apply whose refill they are pinning.
+void cd_sim_set_forced_draws(const uint8_t *ids, int n);
+
 // Roll the world forward under the handwritten rollout policy; returns
 // my_idx's finish position (1..N), or 0 if it didn't terminate. Mirrors
 // cd_simulate's early-exit-on-elimination semantics. `early_exit` matches
 // !cd_no_earlyexit.
 int  cd_sim_playout(SimState *s, int my_idx, int max_turns, int early_exit);
+
+// As cd_sim_playout, but small 2-player deck-empty endgames are resolved
+// exactly by the bitboard solver (sign-only null window, `leaf_budget` nodes,
+// positions with <= `leaf_cards` cards) instead of played out by the policy.
+// One attempt per playout; unresolved solves fall back to policy play.
+int  cd_sim_playout_leaf(SimState *s, int my_idx, int max_turns, int early_exit,
+                         int leaf_cards, long leaf_budget);
+
+// Per-seat rollout policies (cd_sim_playout_pol's pol[] values).
+#define CD_POL_HW    0   // handwritten (the default rollout model)
+#define CD_POL_LOOSE 1   // weak random-ish opponent model (profiled-weak seats)
+#define CD_POL_MCDEF 2   // MC-defender model: strategic trump-saving pickups
+                         // half the time (proven-strategic seats, octogen)
+
+// Playout where seat p plays pol[p] (NULL = all handwritten), with optional
+// exact leaf endgames when leaf_cards > 0. Superset of cd_sim_playout_leaf.
+int  cd_sim_playout_pol(SimState *s, int my_idx, int max_turns, int early_exit,
+                        int leaf_cards, long leaf_budget, const uint8_t *pol);
+
+// Reply-tournament playout (octogen): the first opponent decision is chosen
+// by search over their full legal reply set (up to reply_cap playouts; the
+// opponent takes the reply best for THEM). Returns my finish position.
+int  cd_sim_playout_reply(SimState *s, int my_idx, int max_turns,
+                          int leaf_cards, long leaf_budget,
+                          const uint8_t *pol, int reply_cap);
 
 // Exact 2-player deck-empty endgame solver on the bitboard state. Returns the
 // value of position `s` from `me`'s perspective in [-1000,1000] (positive = me

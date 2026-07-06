@@ -18,12 +18,14 @@
 #include "../src/legal.h"
 #include "../src/strategy.h"
 #include "../src/cli_util.h"
+#include "../src/cordite_sim.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <time.h>
+#include <math.h>
 
 static double wall_secs(void) {
     struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -51,6 +53,12 @@ static int dispatch_choose(int strat, const Game *g, int pi, const LegalMoves *m
         case STRAT_HACKER:      return hacker_strategy_choose(g, pi, moves, NULL);
         case STRAT_FULMINATE:   return fulminate_strategy_choose(g, pi, moves, NULL);
         case STRAT_DISTILLED:   return distilled_strategy_choose(g, pi, moves, NULL);
+        case STRAT_SEMTEX:      return semtex_strategy_choose(g, pi, moves, NULL);
+        case STRAT_SEMTEX_ORACLE: return semtex_oracle_strategy_choose(g, pi, moves, NULL);
+        case STRAT_OCTOGEN:     return octogen_strategy_choose(g, pi, moves, NULL);
+        case STRAT_OCTOGEN_ORACLE: return octogen_oracle_strategy_choose(g, pi, moves, NULL);
+        case STRAT_TORPEX:      return torpex_strategy_choose(g, pi, moves, NULL);
+        case STRAT_NOVICHOK:    return novichok_strategy_choose(g, pi, moves, NULL);
         default:                return -1;
     }
 }
@@ -75,6 +83,13 @@ static void format_card_list(const Card *cards, int n, char *buf, size_t buflen)
 
 // Verbose variant of play_one: prints every move with player, type, cards.
 static int play_one_verbose(uint32_t seed, int n_players, int protagonist, int opp) {
+    // Cold solver TT per game: semtex/octogen leaf solving persists the TT
+    // across the worlds of a decision (sound: exact fingerprints), but
+    // letting it persist ACROSS GAMES couples the two games of a --control
+    // pair (game B inherits game A's warmth; budget-dependent solves then
+    // differ) — measured as 5/200 phantom divergences between bit-identical
+    // strategies at pc2, an anti-hero artifact in every pc2 paired cell.
+    cd_sim_solve_reset();
     game_set_seed(seed ? seed : 1);
     random_strategy_set_seed(seed ? seed : 1);
     Game g; memset(&g, 0, sizeof(g));
@@ -155,9 +170,112 @@ static int play_one_verbose(uint32_t seed, int n_players, int protagonist, int o
     return g.num_players;
 }
 
+// Audit variant of play_one: plays the game normally (protagonist at seat 0),
+// but at every seat-0 decision with >1 legal move ALSO queries the oracle
+// (semtex with 6x worlds + wider candidate survival) and reports
+// disagreements. Both strategies save/restore the game RNG internally, so
+// the trajectory is identical to a normal game; the oracle is a pure probe.
+// A disagreement marks a compute-limited decision; unanimous decisions in a
+// lost game are model-limited or unavoidable.
+static void fmt_move(const LegalMove *m, char *buf, size_t n) {
+    const char *mt =
+        m->type == MOVE_ATTACK ? "ATTACK" :
+        m->type == MOVE_COVER  ? "COVER"  :
+        m->type == MOVE_PASS   ? "PASS"   :
+        m->type == MOVE_PICKUP ? "PICKUP" :
+        m->type == MOVE_GOOD   ? "GOOD"   : "?";
+    char cbuf[128]; format_card_list(m->cards, m->n_cards, cbuf, sizeof(cbuf));
+    snprintf(buf, n, "%s[%s]", mt, cbuf);
+}
+
+static int play_one_audit(uint32_t seed, int n_players, int protagonist, int opp,
+                          int *n_dec, int *n_disagree) {
+    // Cold solver TT per game: semtex/octogen leaf solving persists the TT
+    // across the worlds of a decision (sound: exact fingerprints), but
+    // letting it persist ACROSS GAMES couples the two games of a --control
+    // pair (game B inherits game A's warmth; budget-dependent solves then
+    // differ) — measured as 5/200 phantom divergences between bit-identical
+    // strategies at pc2, an anti-hero artifact in every pc2 paired cell.
+    cd_sim_solve_reset();
+    game_set_seed(seed ? seed : 1);
+    random_strategy_set_seed(seed ? seed : 1);
+    Game g; memset(&g, 0, sizeof(g));
+    g.num_players = (int8_t)n_players;
+    for (int i = 0; i < n_players; i++) {
+        g.players[i].status = PLAYER_STATUS_READY;
+        g.players[i].strategy_key = (int8_t)((i == 0) ? protagonist : opp);
+        snprintf(g.players[i].player_id, sizeof(g.players[i].player_id), "p%d", i);
+    }
+    start_game(&g);
+
+    int iters = 0, step = 0;
+    while (game_done(&g) < 0 && iters++ < 4000) {
+        int elig[MAX_PLAYERS]; int n_e = 0;
+        for (int i = 0; i < g.num_players; i++) if (should_bot_act(&g, i)) elig[n_e++] = i;
+        if (n_e == 0) break;
+        for (int i = n_e - 1; i > 0; i--) {
+            int j = (int)(game_random() * (i + 1));
+            if (j < 0) j = 0; if (j > i) j = i;
+            int t = elig[i]; elig[i] = elig[j]; elig[j] = t;
+        }
+        bool acted = false;
+        for (int k = 0; k < n_e; k++) {
+            int pi = elig[k];
+            LegalMoves moves;
+            calculate_legal_moves(&g, pi, &moves);
+            if (moves.n == 0) continue;
+            int idx = dispatch_choose(g.players[pi].strategy_key, &g, pi, &moves);
+            if (idx < 0 || idx >= moves.n) continue;
+            step++;
+            if (pi == 0 && moves.n > 1) {
+                (*n_dec)++;
+                int oidx = semtex_oracle_strategy_choose(&g, pi, &moves, NULL);
+                if (oidx >= 0 && oidx < moves.n && oidx != idx) {
+                    (*n_disagree)++;
+                    int in_c = 0;
+                    for (int q = 0; q < g.num_players; q++)
+                        if (g.players[q].status == PLAYER_STATUS_IN) in_c++;
+                    char mb[160], ob[160];
+                    fmt_move(&moves.moves[idx], mb, sizeof(mb));
+                    fmt_move(&moves.moves[oidx], ob, sizeof(ob));
+                    printf("  DISAGREE seed=%u step=%d deck=%d in=%d role=%s hand=%d "
+                           "moves=%d  played=%s  oracle=%s\n",
+                           seed, step, g.deck_count, in_c,
+                           (g.defender == 0) ? "def" : "att",
+                           g.players[0].hand_count, moves.n, mb, ob);
+                }
+            }
+            const LegalMove *m = &moves.moves[idx];
+            bool ok = false;
+            switch (m->type) {
+                case MOVE_ATTACK: ok = handle_attack(&g, pi, m->cards, m->n_cards); break;
+                case MOVE_COVER:  ok = handle_cover (&g, pi, m->cards, m->attack_cards, m->n_cards); break;
+                case MOVE_PASS:   ok = handle_pass  (&g, pi, m->cards, m->n_cards); break;
+                case MOVE_PICKUP: ok = handle_pickup(&g, pi); break;
+                case MOVE_GOOD:   ok = handle_good  (&g, pi); break;
+                default: break;
+            }
+            if (ok) { acted = true; break; }
+        }
+        if (!acted) break;
+    }
+    if (game_done(&g) < 0) return -1;
+    for (int i = 0; i < g.num_eliminated; i++) {
+        if (g.elimination_order[i] == 0) return i + 1;
+    }
+    return g.num_players;
+}
+
 // Play one game. Returns seat-0 finish position (1..N). Position N == durak.
 // -1 if the game aborted incomplete.
 static int play_one(uint32_t seed, int n_players, int protagonist, int opp) {
+    // Cold solver TT per game: semtex/octogen leaf solving persists the TT
+    // across the worlds of a decision (sound: exact fingerprints), but
+    // letting it persist ACROSS GAMES couples the two games of a --control
+    // pair (game B inherits game A's warmth; budget-dependent solves then
+    // differ) — measured as 5/200 phantom divergences between bit-identical
+    // strategies at pc2, an anti-hero artifact in every pc2 paired cell.
+    cd_sim_solve_reset();
     game_set_seed(seed ? seed : 1);
     random_strategy_set_seed(seed ? seed : 1);
     Game g; memset(&g, 0, sizeof(g));
@@ -232,6 +350,166 @@ int main(int argc, char **argv) {
                strat_str, opp_str, seed, n);
         int fp = play_one_verbose((uint32_t)seed, n, protagonist, opp);
         printf("\nseat-0 finish position: %d (1=winner, %d=durak)\n", fp, n);
+        return 0;
+    }
+
+    // Replay-seeds path: --replay-seeds=<file> ("seed" or "pc seed ..."
+    // lines) — play each seed once with the chosen protagonist and print the
+    // finish position. For rescue-rate comparisons over a fixed loss set.
+    const char *replay_file = get_arg(argc, argv, "replay-seeds", NULL);
+    if (replay_file) {
+        int n = atoi(pcs);
+        if (n < 2) n = 2;
+        FILE *f = fopen(replay_file, "r");
+        if (!f) { fprintf(stderr, "cannot open %s\n", replay_file); return 2; }
+        char line[256];
+        long sum = 0; int cnt = 0, wins = 0;
+        while (fgets(line, sizeof(line), f)) {
+            unsigned pc_l, seed_l;
+            if (sscanf(line, "%u %u", &pc_l, &seed_l) == 2) {
+                if ((int)pc_l != n) continue;
+            } else if (sscanf(line, "%u", &seed_l) == 1) {
+                /* bare seed */
+            } else continue;
+            int fp = play_one(seed_l, n, protagonist, opp);
+            printf("seed=%u finish=%d\n", seed_l, fp);
+            if (fp > 0) { sum += fp; cnt++; wins += (fp == 1); }
+        }
+        fclose(f);
+        printf("=== REPLAY SUMMARY (%s): %d games mean=%.3f win=%.1f%% ===\n",
+               strat_str, cnt, cnt ? (double)sum / cnt : 0.0,
+               cnt ? 100.0 * wins / cnt : 0.0);
+        return 0;
+    }
+
+    // Oracle-audit path: --audit=<seed> or --audit-seeds=<file> (one seed per
+    // line, or "pc seed ..." lines from --dump). Plays each game normally and
+    // reports every seat-0 decision where the 6x-budget oracle disagrees.
+    const char *audit_one = get_arg(argc, argv, "audit", NULL);
+    const char *audit_file = get_arg(argc, argv, "audit-seeds", NULL);
+    if (audit_one || audit_file) {
+        int n = atoi(pcs);
+        if (n < 2) n = 2;
+        long tot_dec = 0, tot_dis = 0;
+        int n_games = 0;
+        if (audit_one) {
+            int nd = 0, nx = 0;
+            int fp = play_one_audit((uint32_t)atoi(audit_one), n, protagonist, opp, &nd, &nx);
+            printf("seed=%s finish=%d decisions=%d disagreements=%d\n",
+                   audit_one, fp, nd, nx);
+            tot_dec += nd; tot_dis += nx; n_games++;
+        } else {
+            FILE *f = fopen(audit_file, "r");
+            if (!f) { fprintf(stderr, "cannot open %s\n", audit_file); return 2; }
+            char line[256];
+            while (fgets(line, sizeof(line), f)) {
+                unsigned pc_l, seed_l;
+                // accept both "seed" and "pc seed hero ctrl" formats
+                if (sscanf(line, "%u %u", &pc_l, &seed_l) == 2) {
+                    if ((int)pc_l != n) continue;
+                } else if (sscanf(line, "%u", &seed_l) == 1) {
+                    /* bare seed */
+                } else continue;
+                int nd = 0, nx = 0;
+                int fp = play_one_audit(seed_l, n, protagonist, opp, &nd, &nx);
+                printf("seed=%u finish=%d decisions=%d disagreements=%d\n",
+                       seed_l, fp, nd, nx);
+                tot_dec += nd; tot_dis += nx; n_games++;
+            }
+            fclose(f);
+        }
+        printf("=== AUDIT SUMMARY: %d games, %ld seat-0 decisions, %ld oracle "
+               "disagreements (%.1f%%) ===\n", n_games, tot_dec, tot_dis,
+               tot_dec ? 100.0 * tot_dis / tot_dec : 0.0);
+        return 0;
+    }
+
+    // Paired A/B path: --control=<strategy> plays every seed TWICE on the
+    // same deal — protagonist at seat 0, then the control bot at seat 0 —
+    // with the same opponents, and reports the PAIRED finish-position delta
+    // (mean diff +- SE, win rates, better/worse/equal counts). Same-deal
+    // pairing cancels most deal luck, so a significant delta needs far fewer
+    // games than two independent runs.
+    const char *control_str = get_arg(argc, argv, "control", NULL);
+    if (control_str) {
+        int control = parse_strategy(control_str);
+        if (control < 0) { fprintf(stderr, "unknown control '%s'\n", control_str); return 2; }
+        int games  = parse_int(get_arg(argc, argv, "games", "200"), 200);
+        uint32_t seed0 = (uint32_t)parse_int(get_arg(argc, argv, "seed-start", "200001"), 200001);
+        // --dump=<file>: append one "pc seed hero_fp ctrl_fp" line per pair,
+        // so regression seeds (hero worse than control) can be replayed and
+        // diffed move-by-move (--inspect=<seed>) for loss analysis.
+        const char *dump_path = get_arg(argc, argv, "dump", NULL);
+        printf("=== PAIRED %s vs control %s @ %s tables ===  games_per_pc=%d  seed_start=%u\n",
+               strat_str, control_str, opp_str, games, seed0);
+        printf("\n  pc  mean_hero  mean_ctrl  diff+-SE      win_hero  win_ctrl  h<c/h>c/eq\n");
+        const char *q = pcs;
+        while (*q) {
+            int n = atoi(q);
+            while (*q && *q != ',') q++;
+            if (*q == ',') q++;
+            if (n < 2 || n > MAX_PLAYERS) continue;
+            long hero_sum = 0, ctrl_sum = 0;
+            long hero_win = 0, ctrl_win = 0;
+            long better = 0, worse = 0, equal = 0;
+            double dsum = 0, dsum2 = 0;
+            int valid = 0;
+            int8_t *fh_arr = malloc((size_t)games), *fc_arr = malloc((size_t)games);
+            struct timespec pt0; clock_gettime(CLOCK_MONOTONIC, &pt0);
+            if (games > 0) {   // warm lazy shared state single-threaded
+                int fh = play_one(seed0, n, protagonist, opp);
+                int fc = play_one(seed0, n, control, opp);
+                fh_arr[0] = (int8_t)fh; fc_arr[0] = (int8_t)fc;
+                if (fh >= 0 && fc >= 0) {
+                    hero_sum += fh; ctrl_sum += fc;
+                    hero_win += (fh == 1); ctrl_win += (fc == 1);
+                    double d = (double)fh - (double)fc;
+                    dsum += d; dsum2 += d * d;
+                    better += (d < 0); worse += (d > 0); equal += (d == 0);
+                    valid++;
+                }
+            }
+            #pragma omp parallel for schedule(dynamic) \
+                reduction(+:hero_sum,ctrl_sum,hero_win,ctrl_win,better,worse,equal,dsum,dsum2,valid)
+            for (int gi = 1; gi < games; gi++) {
+                int fh = play_one(seed0 + (uint32_t)gi, n, protagonist, opp);
+                int fc = play_one(seed0 + (uint32_t)gi, n, control, opp);
+                fh_arr[gi] = (int8_t)fh; fc_arr[gi] = (int8_t)fc;
+                if (fh < 0 || fc < 0) continue;
+                hero_sum += fh; ctrl_sum += fc;
+                hero_win += (fh == 1); ctrl_win += (fc == 1);
+                double d = (double)fh - (double)fc;
+                dsum += d; dsum2 += d * d;
+                better += (d < 0); worse += (d > 0); equal += (d == 0);
+                valid++;
+            }
+            if (dump_path) {
+                FILE *df = fopen(dump_path, "a");
+                if (df) {
+                    for (int gi = 0; gi < games; gi++) {
+                        fprintf(df, "%d %u %d %d\n", n, seed0 + (uint32_t)gi,
+                                (int)fh_arr[gi], (int)fc_arr[gi]);
+                    }
+                    fclose(df);
+                }
+            }
+            free(fh_arr); free(fc_arr);
+            {
+                struct timespec pt1; clock_gettime(CLOCK_MONOTONIC, &pt1);
+                double dt = (pt1.tv_sec - pt0.tv_sec) + (pt1.tv_nsec - pt0.tv_nsec) * 1e-9;
+                fprintf(stderr, "    [pc=%d] %d pairs  t=%.1fs  rate=%.1f pairs/s\n",
+                        n, valid, dt, valid / (dt > 0 ? dt : 1.0));
+            }
+            if (!valid) continue;
+            double mean_d = dsum / valid;
+            double var_d  = (dsum2 - dsum * dsum / valid) / (valid > 1 ? valid - 1 : 1);
+            double se_d   = sqrt(var_d / valid);
+            printf("  %2d  %9.3f  %9.3f  %+.3f+-%.3f  %7.1f%%  %7.1f%%  %ld/%ld/%ld\n",
+                   n, (double)hero_sum / valid, (double)ctrl_sum / valid,
+                   mean_d, se_d,
+                   100.0 * hero_win / valid, 100.0 * ctrl_win / valid,
+                   better, worse, equal);
+        }
         return 0;
     }
 

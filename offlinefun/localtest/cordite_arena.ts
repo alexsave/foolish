@@ -38,6 +38,8 @@ function runWorker(): void {
 
         if (process.env.CD_WORLDMUL) (globalThis as any).CD_WORLDMUL = Number(process.env.CD_WORLDMUL);
         if (process.env.CD_NO_SOLVE) (globalThis as any).CD_NO_SOLVE = true;
+        if (process.env.SEMTEX_NO_PROFILE) (globalThis as any).SEMTEX_NO_PROFILE = true;
+        if (process.env.SEMTEX_NO_ADAPT) (globalThis as any).SEMTEX_NO_ADAPT = true;
         if (process.env.CD_NO_FASTROLL) (globalThis as any).CD_NO_FASTROLL = true;
         const maxms = process.env.CD_MAXMS ? Number(process.env.CD_MAXMS) : 0;
 

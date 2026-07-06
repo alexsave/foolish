@@ -76,6 +76,12 @@ export const BOT_STRATEGIES: Map<string, BotStrategy> = new Map<string, BotStrat
     ['cordite', new WasmBotStrategy('cordite', STRAT.cordite, { env: { CD_BUDGET: 'prod', CD_RACE: '1', CD_RACE_C: '75' }, logs: true })],
     ['cordite_max', new WasmBotStrategy('cordite_max', STRAT.cordite, { env: { CD_BUDGET: 'max', CD_RACE: '1', CD_RACE_C: '75' }, logs: true })],
     ['fulminate', new WasmBotStrategy('fulminate', STRAT.fulminate, { env: { CD_BUDGET: 'prod', CD_RACE: '1', CD_RACE_C: '75' }, logs: true })],
+    // Self-budgeted C brains — no env knobs. The _max keys alias the base
+    // strategy until a kernel-side max-budget knob exists (TODO).
+    ['semtex', new WasmBotStrategy('semtex', STRAT.semtex, { logs: true })],
+    ['octogen', new WasmBotStrategy('octogen', STRAT.octogen, { logs: true })],
+    ['semtex_max', new WasmBotStrategy('semtex_max', STRAT.semtex, { logs: true })],
+    ['octogen_max', new WasmBotStrategy('octogen_max', STRAT.octogen, { logs: true })],
 ]);
 
 // Lazy-load GPT strategy to avoid requiring API key at module load time

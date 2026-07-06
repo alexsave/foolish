@@ -156,8 +156,45 @@ static inline uint64_t sim_table_value_mask(const SimState *s) {
     return s->table_vmask;
 }
 
+// Forced-draw queue (see cordite_sim.h): pins the next draws to exact card
+// ids. Used by novichok's refill pinning, where the true refill cards after a
+// battle-ending root move are a deterministic function of the live RNG state.
+static _Thread_local uint8_t sim_forced_q[32];
+static _Thread_local int sim_forced_n = 0;
+static _Thread_local int sim_forced_i = 0;
+
+void cd_sim_set_forced_draws(const uint8_t *ids, int n) {
+    if (n > (int)sizeof(sim_forced_q)) n = (int)sizeof(sim_forced_q);
+    for (int i = 0; i < n; i++) sim_forced_q[i] = ids[i];
+    sim_forced_n = n;
+    sim_forced_i = 0;
+}
+
 // draw one card id, mirroring draw_card (deck array splice + flipped fallback).
 static int sim_draw(SimState *s, int *out) {
+    if (sim_forced_i < sim_forced_n) {
+        uint8_t want = sim_forced_q[sim_forced_i];
+        if (s->deck_n == 0) {
+            // The engine's draw here is RNG-free (flipped fallback); the
+            // pinned id is that same flipped card when states match.
+            sim_forced_i = sim_forced_n;
+            if (!s->has_flipped) return 0;
+            *out = s->flipped_id;
+            s->has_flipped = 0;
+            return 1;
+        }
+        for (int i = 0; i < s->deck_n; i++) {
+            if (s->deck[i] == want) {
+                for (int j = i + 1; j < s->deck_n; j++) s->deck[j - 1] = s->deck[j];
+                s->deck_n--;
+                s->deck_count = s->deck_n;
+                sim_forced_i++;
+                *out = want;
+                return 1;
+            }
+        }
+        sim_forced_i = sim_forced_n;   // divergence: rest of queue is stale
+    }
     if (s->deck_n == 0) {
         if (!s->has_flipped) return 0;
         *out = s->flipped_id;
@@ -1116,6 +1153,392 @@ int cd_sim_one_step(SimState *s) {
         return pi;
     }
     return -1;
+}
+
+// ---------- per-seat-policy playout (semtex) -----------------------------
+// POL_HW seats play the handwritten policy. POL_LOOSE seats play a weak
+// "random-ish" opponent model: random attack leads (no lowest-first), random
+// covers instead of cheapest (burning trumps freely), occasional needless
+// pickups, and no trump conservation. Rolling a profiled-weak seat out with
+// this model instead of handwritten is the fulminate lever: value estimates
+// against weak opponents stop assuming they play well.
+
+// Uniformly random set bit of `mask` (consumes one game_random() draw).
+static int sim_random_card(uint64_t mask) {
+    int n = popcnt64(mask);
+    if (!n) return -1;
+    int k = (int)(game_random() * n);
+    if (k < 0) k = 0;
+    if (k >= n) k = n - 1;
+    while (k--) mask &= mask - 1;
+    return ctz64(mask);
+}
+
+static int sim_loose_move(SimState *s, int p, SimMove *out) {
+    int power = s->power_suit;
+    int first = (s->num_battles == 0);
+    int is_def = (p == s->defender);
+
+    if (is_def && s->num_battles > 0) {
+        // Occasional needless pickup (weak players give up early).
+        if (game_random() < 0.10) { out->type = MV_PICKUP; out->n = 0; return 1; }
+        // Pass half the time it's available, with a random matching card.
+        SimMove pm;
+        if (sim_pass_move(s, p, power, &pm)) {
+            if (game_random() < 0.5) {
+                int v0 = id_value(s->atk[0]);
+                int id = sim_random_card(s->hand[p] & VALUE_MASK[v0]);
+                if (id >= 0) pm.cards[0] = (uint8_t)id;
+                *out = pm;
+                return 1;
+            }
+        }
+        // Random cover per battle (not cheapest — wasteful trumping included).
+        uint64_t avail = s->hand[p];
+        int n = 0;
+        for (int i = 0; i < s->num_battles; i++) {
+            if (s->covered_mask & (1ull << i)) continue;
+            uint64_t cov = 0, a = avail;
+            while (a) {
+                int id = ctz64(a); a &= a - 1;
+                if (id_can_cover(s->atk[i], id, power)) cov |= 1ull << id;
+            }
+            int pick = sim_random_card(cov);
+            if (pick < 0) { out->type = MV_PICKUP; out->n = 0; return 1; }
+            avail &= ~(1ull << pick);
+            out->cards[n] = (uint8_t)pick;
+            out->battle[n] = i;
+            n++;
+        }
+        out->type = MV_COVER; out->n = n;
+        return 1;
+    }
+
+    int can_attack = first ? (p == s->first_attacker)
+                           : (!is_def && !(s->good_mask & (1u << p)));
+    if (can_attack) {
+        if (first) {
+            if (sim_hand_count(s, s->defender) >= 1) {
+                int id = sim_random_card(s->hand[p]);
+                if (id >= 0) {
+                    out->type = MV_ATTACK; out->n = 1; out->cards[0] = (uint8_t)id;
+                    return 1;
+                }
+            }
+        } else {
+            int uncovered = sim_count_uncovered(s);
+            int defcap = sim_hand_count(s, s->defender) - uncovered;
+            uint64_t tv = sim_table_value_mask(s) & s->hand[p];
+            if (defcap >= 1 && tv && game_random() < 0.6) {
+                int id = sim_random_card(tv);
+                out->type = MV_ATTACK; out->n = 1; out->cards[0] = (uint8_t)id;
+                return 1;
+            }
+            out->type = MV_GOOD; out->n = 0;
+            return 1;
+        }
+    }
+    if (!is_def && s->num_battles > 0 && !(s->good_mask & (1u << p))) {
+        out->type = MV_GOOD; out->n = 0;
+        return 1;
+    }
+    return 0;
+}
+
+// MC-defender model (CD_POL_MCDEF): handwritten EXCEPT the defender's
+// cover decision — when the greedy full cover would spend a trump while the
+// deck is still alive, the seat picks up instead half the time. Handwritten
+// NEVER picks up while holding a full cover, but MC bots (cordite/semtex)
+// and thinking humans do it constantly to protect trumps — the same
+// behavior the mc_tell belief evidence detects. Rolling proven-strategic
+// seats out with this model instead of pure handwritten removes that bias
+// from every value estimate at zero extra playout cost.
+static int sim_mcdef_move(SimState *s, int p, SimMove *out) {
+    if (p == s->defender && s->num_battles > 0 && !sim_all_covered(s)
+        && (s->deck_n > 0 || s->has_flipped)) {
+        SimMove pm;
+        if (sim_pass_move(s, p, s->power_suit, &pm)) { *out = pm; return 1; }
+        SimMove cm;
+        if (sim_greedy_full_cover(s, p, s->power_suit, &cm)) {
+            int trumps = 0;
+            for (int i = 0; i < cm.n; i++)
+                if (id_suit(cm.cards[i]) == s->power_suit) trumps++;
+            if (trumps > 0 && game_random() < 0.5) {
+                out->type = MV_PICKUP; out->n = 0;
+                return 1;
+            }
+            *out = cm;
+            return 1;
+        }
+        out->type = MV_PICKUP; out->n = 0;
+        return 1;
+    }
+    return sim_handwritten_move(s, p, out);
+}
+
+// Playout where each seat plays its own policy (pol[p] = CD_POL_*), with
+// optional exact leaf endgames (leaf_cards > 0). pol == NULL means all
+// handwritten, matching cd_sim_playout_leaf / cd_sim_playout exactly.
+int cd_sim_playout_pol(SimState *s, int my_idx, int max_turns, int early_exit,
+                       int leaf_cards, long leaf_budget, const uint8_t *pol) {
+    int turns = 0;
+    int leaf_tried = 0;
+    while (sim_done(s) < 0 && turns++ < max_turns) {
+        if (early_exit && s->status_p[my_idx] != PLAYER_STATUS_IN) {
+            for (int i = 0; i < s->num_eliminated; i++)
+                if (s->elim_order[i] == my_idx) return i + 1;
+            break;
+        }
+        if (leaf_cards > 0 && !leaf_tried && s->deck_n == 0 && !s->has_flipped) {
+            int a = -1, b = -1;
+            for (int i = 0; i < s->num_players; i++) {
+                if (s->status_p[i] != PLAYER_STATUS_IN) continue;
+                if (a < 0) a = i; else if (b < 0) b = i; else { b = -2; break; }
+            }
+            if (a >= 0 && b >= 0) {
+                int total = __builtin_popcountll(s->hand[a])
+                          + __builtin_popcountll(s->hand[b]);
+                for (int i = 0; i < s->num_battles; i++)
+                    total += 1 + ((s->covered_mask >> i) & 1);
+                if (total <= leaf_cards) {
+                    leaf_tried = 1;
+                    int aborted = 0;
+                    long budget = leaf_budget;
+                    int v = cd_sim_solve_d(s, a, -1, 1, &budget, 0, &aborted);
+                    if (!aborted && v != 0) {
+                        int loser = (v < 0) ? a : b;
+                        int np = s->num_players;
+                        if (my_idx == loser) return np;
+                        if (my_idx == a || my_idx == b) return np - 1;
+                        for (int i = 0; i < s->num_eliminated; i++)
+                            if (s->elim_order[i] == my_idx) return i + 1;
+                        return np - 1;
+                    }
+                }
+            }
+        }
+        int acted = 0;
+        for (int pi = 0; pi < s->num_players; pi++) {
+            if (!sim_should_act(s, pi)) continue;
+            SimMove m;
+            int got = (pol && pol[pi] == CD_POL_LOOSE)
+                    ? sim_loose_move(s, pi, &m)
+                    : (pol && pol[pi] == CD_POL_MCDEF)
+                    ? sim_mcdef_move(s, pi, &m)
+                    : sim_handwritten_move(s, pi, &m);
+            if (!got) continue;
+            sim_apply(s, pi, &m);
+            acted = 1;
+            break;
+        }
+        if (!acted) break;
+    }
+    if (sim_done(s) < 0) return 0;
+    for (int i = 0; i < s->num_eliminated; i++)
+        if (s->elim_order[i] == my_idx) return i + 1;
+    return s->num_players;
+}
+
+// ---------- reply-tournament playout (octogen) ---------------------------
+// The FIRST opponent decision of the playout is chosen by SEARCH instead of
+// the rollout policy: enumerate the actor's full legal reply set (the
+// solver's bitboard move-gen), play each candidate reply out to completion,
+// and let the opponent take the reply with the best outcome FOR THEM (their
+// own finish position; ties -> the cheapest-ranked reply, matching the
+// cheap-first convention). Returns MY finish under that reply. This models
+// "the opponent punishes this move" one ply deep — the classic determinized-
+// MC blind spot where a fixed rollout policy never plays the refutation.
+// Cost: up to reply_cap full playouts instead of one, so callers use it only
+// on late-stage (few-candidate) worlds.
+
+// Rank key for pruning oversized reply sets: same family ordering cordite's
+// candidate picker uses (attacks max-cards-cheapest, covers cheapest,
+// passes cheapest, then good/pickup — which are always kept).
+static double sol_rank_key(const SolMove *m, int power) {
+    switch (m->type) {
+        case MV_ATTACK: {
+            int sum = 0;
+            for (int i = 0; i < m->n; i++) sum += id_score(m->cards[i], power);
+            return -(double)m->n * 10000.0 + (double)sum;
+        }
+        case MV_COVER: {
+            double prod = 1.0;
+            for (int i = 0; i < m->n; i++) prod *= (double)id_score(m->cards[i], power);
+            return 100000.0 + prod;
+        }
+        case MV_PASS: {
+            int sum = 0;
+            for (int i = 0; i < m->n; i++) sum += id_score(m->cards[i], power);
+            return 200000.0 + (double)sum;
+        }
+        case MV_GOOD:   return 300000.0;
+        default:        return 300001.0;   // MV_PICKUP
+    }
+}
+
+// Finish position of `p` after a TERMINATED playout: eliminated players by
+// slot, the one remaining IN player (the durak) gets N.
+static int sim_pos_of(const SimState *s, int p) {
+    for (int i = 0; i < s->num_eliminated; i++)
+        if (s->elim_order[i] == p) return i + 1;
+    return s->num_players;
+}
+
+extern uint32_t game_rng_get(void);
+extern void game_rng_set(uint32_t s);
+
+int cd_sim_playout_reply(SimState *s, int my_idx, int max_turns,
+                         int leaf_cards, long leaf_budget,
+                         const uint8_t *pol, int reply_cap) {
+    // Advance with the policy while it is still MY move (or forced steps),
+    // for a handful of plies, until the DEFENDER's reply to the attack
+    // surfaces. Only the defender's cover/pass/pickup decision is searched:
+    // the defender makes that choice from information they genuinely have
+    // (their own hand + the visible attack), so the in-world best reply is a
+    // realistic model of their actual play. Searching OTHER reply types
+    // (e.g. an opponent's next attack) uses the sampled hidden cards the
+    // real opponent cannot see — paranoid distortion, measured harmful.
+    for (int guard = 0; guard < 8; guard++) {
+        if (sim_done(s) >= 0)
+            return cd_sim_playout_pol(s, my_idx, max_turns, 1,
+                                      leaf_cards, leaf_budget, pol);
+        int actor = -1;
+        for (int pi = 0; pi < s->num_players; pi++)
+            if (sim_should_act(s, pi)) { actor = pi; break; }
+        if (actor < 0) break;
+        if (actor != my_idx && actor == s->defender && s->num_battles > 0) {
+            // The reply decision. Enumerate + tournament.
+            SolMove buf[CD_SIM_SOLVE_MAX_MOVES];
+            int n = sim_gen_moves(s, actor, buf, CD_SIM_SOLVE_MAX_MOVES);
+            if (n <= 1) {
+                if (n == 1) sim_apply_sol(s, actor, &buf[0]);
+                else break;   // no reply moves: defer to the policy playout
+                continue;
+            }
+            // Rank cheap-first; keep the top reply_cap.
+            int order[CD_SIM_SOLVE_MAX_MOVES];
+            double key[CD_SIM_SOLVE_MAX_MOVES];
+            for (int i = 0; i < n; i++) {
+                order[i] = i;
+                key[i] = sol_rank_key(&buf[i], s->power_suit);
+            }
+            for (int i = 1; i < n; i++) {   // insertion sort, small n
+                int oi = order[i]; double ki = key[oi];
+                int j = i - 1;
+                while (j >= 0 && key[order[j]] > ki) { order[j+1] = order[j]; j--; }
+                order[j+1] = oi;
+            }
+            // Keep the top reply_cap cheap-first replies, but PICKUP and
+            // GOOD (which rank last) are always searched — "just take the
+            // cards" is the defender's most realistic fallback and must not
+            // be pruned by a large cover-combination set.
+            int kept_idx[CD_SIM_SOLVE_MAX_MOVES];
+            int kept = 0;
+            for (int k = 0; k < n && kept < reply_cap; k++) {
+                uint8_t t = buf[order[k]].type;
+                if (t == MV_PICKUP || t == MV_GOOD) continue;   // added below
+                kept_idx[kept++] = order[k];
+            }
+            for (int i = 0; i < n; i++) {
+                uint8_t t = buf[i].type;
+                if (t == MV_PICKUP || t == MV_GOOD) kept_idx[kept++] = i;
+            }
+            uint32_t rng0 = game_rng_get();
+            int best_actor_pos = 1 << 20;
+            int best_my_pos = -1;
+            for (int k = 0; k < kept; k++) {
+                SimState trial = *s;
+                game_rng_set(rng0);   // CRN across replies
+                sim_apply_sol(&trial, actor, &buf[kept_idx[k]]);
+                // Full playout, NO early exit: both finishes are needed.
+                (void)cd_sim_playout_pol(&trial, my_idx, max_turns, 0,
+                                         leaf_cards, leaf_budget, pol);
+                if (sim_done(&trial) < 0) continue;   // unterminated: skip
+                int ap = sim_pos_of(&trial, actor);
+                if (ap < best_actor_pos) {
+                    best_actor_pos = ap;
+                    best_my_pos = sim_pos_of(&trial, my_idx);
+                }
+            }
+            if (best_my_pos > 0) return best_my_pos;
+            break;   // tournament failed entirely: policy playout below
+        }
+        // My move, or a non-defender opponent decision: one policy step.
+        SimMove m;
+        int got = (pol && pol[actor] == CD_POL_LOOSE)
+                ? sim_loose_move(s, actor, &m)
+                : (pol && pol[actor] == CD_POL_MCDEF)
+                ? sim_mcdef_move(s, actor, &m)
+                : sim_handwritten_move(s, actor, &m);
+        if (!got) break;
+        sim_apply(s, actor, &m);
+    }
+    return cd_sim_playout_pol(s, my_idx, max_turns, 1,
+                              leaf_cards, leaf_budget, pol);
+}
+
+// As cd_sim_playout, but resolves small 2-player deck-empty endgames exactly
+// with the bitboard solver instead of finishing them with policy play (one
+// attempt per playout; a failed solve falls back to the policy for good).
+// The TT is NOT cleared between leaf calls: entries are keyed on a full
+// 64-bit position fingerprint, so worlds can share it, and values are
+// depth-rebased so cross-call reuse reads back correctly. Used by semtex —
+// against near-perfect endgame players (cordite itself) modeling the endgame
+// as exact beats modeling it as handwritten play.
+int cd_sim_playout_leaf(SimState *s, int my_idx, int max_turns, int early_exit,
+                        int leaf_cards, long leaf_budget) {
+    int turns = 0;
+    int leaf_tried = 0;
+    while (sim_done(s) < 0 && turns++ < max_turns) {
+        if (early_exit && s->status_p[my_idx] != PLAYER_STATUS_IN) {
+            for (int i = 0; i < s->num_eliminated; i++)
+                if (s->elim_order[i] == my_idx) return i + 1;
+            break;
+        }
+        if (!leaf_tried && s->deck_n == 0 && !s->has_flipped) {
+            int a = -1, b = -1;
+            for (int i = 0; i < s->num_players; i++) {
+                if (s->status_p[i] != PLAYER_STATUS_IN) continue;
+                if (a < 0) a = i; else if (b < 0) b = i; else { b = -2; break; }
+            }
+            if (a >= 0 && b >= 0) {
+                int total = __builtin_popcountll(s->hand[a])
+                          + __builtin_popcountll(s->hand[b]);
+                for (int i = 0; i < s->num_battles; i++)
+                    total += 1 + ((s->covered_mask >> i) & 1);
+                if (total <= leaf_cards) {
+                    leaf_tried = 1;
+                    int aborted = 0;
+                    long budget = leaf_budget;
+                    // Sign-only null window: who is the durak?
+                    int v = cd_sim_solve_d(s, a, -1, 1, &budget, 0, &aborted);
+                    if (!aborted && v != 0) {
+                        int loser = (v < 0) ? a : b;
+                        int np = s->num_players;
+                        if (my_idx == loser) return np;
+                        if (my_idx == a || my_idx == b) return np - 1;
+                        for (int i = 0; i < s->num_eliminated; i++)
+                            if (s->elim_order[i] == my_idx) return i + 1;
+                        return np - 1;   // unreachable; defensive
+                    }
+                }
+            }
+        }
+        int acted = 0;
+        for (int pi = 0; pi < s->num_players; pi++) {
+            if (!sim_should_act(s, pi)) continue;
+            SimMove m;
+            if (!sim_handwritten_move(s, pi, &m)) continue;
+            sim_apply(s, pi, &m);
+            acted = 1;
+            break;
+        }
+        if (!acted) break;
+    }
+    if (sim_done(s) < 0) return 0;
+    for (int i = 0; i < s->num_eliminated; i++)
+        if (s->elim_order[i] == my_idx) return i + 1;
+    return s->num_players;
 }
 
 int cd_sim_playout(SimState *s, int my_idx, int max_turns, int early_exit) {

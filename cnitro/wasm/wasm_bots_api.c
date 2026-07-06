@@ -219,6 +219,8 @@ int wasm_choose_move(int strat, int bot_idx) {
         case STRAT_FULMINATE:         fn = fulminate_strategy_choose; break;
         case STRAT_ESPRESSO_PROD:     fn = espresso_prod_strategy_choose; break;
         case STRAT_HANDWRITTEN_PROD:  fn = handwritten_prod_strategy_choose; break;
+        case STRAT_SEMTEX:            fn = semtex_strategy_choose; break;
+        case STRAT_OCTOGEN:           fn = octogen_strategy_choose; break;
         default:                      fn = random_strategy_choose; break;
     }
     int idx = fn(g, bot_idx, lm, 0);

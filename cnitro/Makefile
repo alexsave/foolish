@@ -32,11 +32,13 @@ CORE_SRC := src/game.c src/legal.c src/random_strategy.c src/espresso_strategy.c
             src/ultimate_champion_strategy.c src/hacker_strategy.c \
             src/fulminate_strategy.c src/espresso_prod_strategy.c \
             src/handwritten_prod_strategy.c src/distill_feat.c \
-            src/distilled_strategy.c
+            src/distilled_strategy.c src/semtex_strategy.c \
+            src/octogen_strategy.c src/torpex_strategy.c \
+            src/torpex_value.c src/novichok_strategy.c
 CORE_OBJ := $(CORE_SRC:src/%.c=build/%.o)
 
 .PHONY: all clean tests
-all: build/cnitro_eval build/cnitro_elo build/cnitro_replay build/cnitro_showcase build/cnitro_tests
+all: build/cnitro_eval build/cnitro_elo build/cnitro_replay build/cnitro_showcase build/cnitro_tests build/cnitro_gen
 
 # Generic compile rule for sources under src/ (build/%.o: src/%.c).
 # Blanket header dependency: a struct-layout change in any header must
@@ -57,6 +59,8 @@ build/cnitro_showcase: $(CORE_OBJ) build/main_showcase.o
 build/cnitro_tests: $(CORE_OBJ) build/tests.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 build/cnitro_distill: $(CORE_OBJ) build/main_distill.o
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+build/cnitro_gen: $(CORE_OBJ) build/main_gen.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 build/tests.o: tests/tests.c
@@ -125,7 +129,8 @@ WASM_BOT_SRC := src/game.c src/legal.c src/random_strategy.c \
                 src/simple_heuristic_strategy.c src/champion_strategy.c \
                 src/ultimate_champion_strategy.c src/hacker_strategy.c \
                 src/fulminate_strategy.c src/espresso_prod_strategy.c \
-                src/handwritten_prod_strategy.c wasm/wasm_api.c wasm/wasm_bots_api.c
+                src/handwritten_prod_strategy.c src/semtex_strategy.c \
+                src/octogen_strategy.c wasm/wasm_api.c wasm/wasm_bots_api.c
 
 build/bots.wasm: $(WASM_BOT_SRC) src/game.h src/legal.h src/card.h src/strategy.h
 	@mkdir -p build
