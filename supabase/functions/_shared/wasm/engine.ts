@@ -37,6 +37,7 @@ interface EngineExports {
     wasm_set_seed(s: number): void;
     wasm_reject_reason(): number;
     wasm_io_ptr(): number;
+    wasm_io_cap(): number;
     wasm_cards_a_ptr(): number;
     wasm_cards_b_ptr(): number;
     wasm_import_state(): void;
@@ -950,7 +951,11 @@ export function kernelCanCover(attack: Card, defense: Card, powerSuit: number): 
     return engine().wasm_can_cover(attack.suit, attack.value, defense.suit, defense.value, powerSuit) !== 0;
 }
 
-const MOVES_CHUNK = 4000; // 4000 x (2 + 2x40 wire cards) = 328KB ≤ the 384KB IO buffer
+// Worst-case wire bytes for one exported move: type + n + 2 x MAX_MOVE_CARDS
+// wire cards (cnitro's wasm build pins MAX_MOVE_CARDS=40). The chunk size
+// derives from the kernel's actual IO capacity so the two can't drift apart;
+// the kernel clamps defensively on its side too (wasm_export_moves).
+const MOVE_WIRE_MAX = 2 + 2 * 40;
 
 export function kernelLegalMoves(game: Game, player_id: string): { type: string; cards?: Card[]; attack_cards?: Card[] }[] {
     const seat = game.players.findIndex(p => p.player_id === player_id);
@@ -959,9 +964,10 @@ export function kernelLegalMoves(game: Game, player_id: string): { type: string;
     marshalGame(ex, game);
     const total = ex.wasm_legal_moves(seat);
     const base = ex.wasm_io_ptr();
+    const chunk = Math.floor((ex.wasm_io_cap() - 4) / MOVE_WIRE_MAX);
     const moves: { type: string; cards?: Card[]; attack_cards?: Card[] }[] = [];
-    for (let start = 0; start < total; start += MOVES_CHUNK) {
-        ex.wasm_export_moves(start, MOVES_CHUNK);
+    for (let start = 0; start < total; start += chunk) {
+        ex.wasm_export_moves(start, chunk);
         const buf = mem(ex);
         let q = base;
         const n = buf[q] | (buf[q + 1] << 8) | (buf[q + 2] << 16) | (buf[q + 3] << 24); q += 4;

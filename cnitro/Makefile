@@ -124,7 +124,13 @@ WASM_FLAGS := --target=wasm32 -O3 -nostdlib -ffreestanding -mbulk-memory \
 # run on the adopted bots instance (engine slot adoption, see engine.ts).
 # 1024 covers every menu the parity/fuzz suites produce; the bots module
 # keeps the native 4096 for bot candidate lists.
-WASM_RULES_FLAGS := $(filter-out -DMAX_LEGAL_MOVES=4096,$(WASM_FLAGS)) -DMAX_LEGAL_MOVES=1024
+# MAX_LOGS=128: the rules module never imports session logs (that is
+# wasm_import_logs, bots-only) and each marshal restarts num_logs at 0, so
+# g_game only ever holds ONE action's logs — hard worst ~76 (a 64-cover
+# round's discard + draws + transitions). The bots module MUST keep 512:
+# its belief imports the whole session log (TS MAX_KERNEL_LOGS mirror).
+WASM_RULES_FLAGS := $(filter-out -DMAX_LEGAL_MOVES=4096,$(WASM_FLAGS)) \
+                    -DMAX_LEGAL_MOVES=1024 -DMAX_LOGS=128
 
 build/rules.wasm: src/game.c src/legal.c wasm/wasm_api.c src/game.h src/legal.h src/card.h
 	@mkdir -p build

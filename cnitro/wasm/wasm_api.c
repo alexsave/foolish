@@ -36,16 +36,14 @@ void *memset(void *dst, int c, size_t n) {
 
 // ---------- shared buffers ----------------------------------------------
 
-// Sized by the widest export: the chunked legal-move export (up to
-// MOVES_CHUNK=4000 moves x 82B in the bots module; the rules module's
-// smaller MAX_LEGAL_MOVES bounds the whole list well below that) — the
-// log export (~68KB worst case) fits under either. Derives from the move
-// cap so the rules module doesn't pay the bots module's buffer.
-#if MAX_LEGAL_MOVES >= 4000
-#define IO_CAP (384 * 1024)
-#else
-#define IO_CAP (128 * 1024)
-#endif
+// Sized by the widest export, which is the LOG export worst case:
+// 2 + MAX_LOGS x (4 + MAX_LOG_PAIRS x 2) = 67,586B at the production
+// 512/64 — written unchecked by wasm_export_logs, so IO_CAP must clear it.
+// 72KB leaves ~6KB of headroom over that; everything else is far smaller
+// (state export <1KB, env strings, the chosen move). The legal-move export
+// is CHUNKED (wasm_export_moves) and clamps its chunk to the buffer, so it
+// no longer sizes IO_CAP — the TS side derives its chunk from wasm_io_cap.
+#define IO_CAP (72 * 1024)
 #define MAX_SNAPS 48
 #define MAX_IN_CARDS 128
 
@@ -155,18 +153,6 @@ static int put_state(const Game *g, unsigned char *p) {
     *q++ = (unsigned char)g->num_eliminated;
     for (int i = 0; i < g->num_eliminated; i++) *q++ = (unsigned char)g->elimination_order[i];
     return (int)(q - p);
-}
-
-// Keep a card in the representable space (suit 0..3, value 1..ACE_VALUE) so
-// card_id = suit*13 + value-1 is always a valid 0..51 index — the bot
-// bitboards do `1ull << card_id`, which is undefined for an out-of-range id,
-// and the legal-move enumerator indexes value-keyed arrays. Identity on every
-// real card (all in range); only a malformed/corrupt state is ever touched.
-// Slots gated by has_flipped/has_defense (never read when unset) are clamped
-// too, harmlessly. Runs once per marshal — off the rollout hot path.
-static inline void clamp_card(Card *c) {
-    if (c->suit < 0) c->suit = 0; else if (c->suit > 3) c->suit = 3;
-    if (c->value < 1) c->value = 1; else if (c->value > ACE_VALUE) c->value = ACE_VALUE;
 }
 
 static void get_state(Game *g, const unsigned char *p) {
@@ -355,6 +341,11 @@ int wasm_legal_moves(int bot_idx) {
 // `max_moves` moves starting at `start`. Header: u32 moves written; the
 // caller loops until it has wasm_legal_moves() total.
 int wasm_export_moves(int start, int max_moves) {
+    // Defensive clamp to the buffer: a caller with a stale chunk size gets a
+    // short (but well-formed) chunk instead of an overflow into g_game. The
+    // worst-case wire move is 2 + 2 x MAX_MOVE_CARDS bytes.
+    int fit = (IO_CAP - 4) / (2 + 2 * MAX_MOVE_CARDS);
+    if (max_moves > fit) max_moves = fit;
     unsigned char *q = g_io;
     int end = start + max_moves;
     if (end > g_moves.n) end = g_moves.n;
