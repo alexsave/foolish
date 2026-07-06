@@ -24,7 +24,7 @@ CORE_SRC := src/game.c src/legal.c src/random_strategy.c src/espresso_strategy.c
             src/firecracker_strategy.c src/gunpowder_strategy.c \
             src/blackpowder_strategy.c src/cordite_strategy.c \
             src/cordite_sim.c src/astrolite_strategy.c src/semtex_strategy.c src/octogen_strategy.c \
-            src/torpex_strategy.c src/torpex_value.c
+            src/torpex_strategy.c src/torpex_value.c src/novichok_strategy.c
 CORE_OBJ := $(CORE_SRC:src/%.c=build/%.o)
 
 .PHONY: all clean tests
