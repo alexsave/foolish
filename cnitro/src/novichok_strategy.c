@@ -104,7 +104,8 @@ static _Thread_local int nv_bbleaf_cards2 = 8;
 // default — pure evidence, no downside). NV_PROFILE: weak-seat detection +
 // LOOSE rollout model for profiled seats.
 static _Thread_local int nv_adapt = 1;
-// NV_PEEK (default 1): evaluate each candidate with a PREDICTED-ORDER trial
+// NV_PEEK (default 0 — measured WORSE than the hands-only cheat, see
+// NOVICHOK.md): evaluate each candidate with a PREDICTED-ORDER trial
 // instead of shuffled-deck worlds. The engine's future draws are a
 // deterministic function of the current RNG state and the number of
 // game_random() consumptions before each draw; cordite-family opponents
@@ -116,7 +117,11 @@ static _Thread_local int nv_adapt = 1;
 // order after a divergence. Alignment holds vs cordite/semtex/octogen and
 // random-strategy seats (private RNG); it does NOT hold vs espresso or
 // handwritten seats (they consume game RNG they never restore).
-static _Thread_local int nv_peek = 1;
+// Measured (paired vs octogen @ cordite pc2, seeds 980001): peek-3 +0.180,
+// peek-24 +0.127 vs hands-only +0.035 — the prediction is exact only until
+// the first move divergence, and a handful of near-order trials carries far
+// more variance than a few hundred shuffled worlds. Off by default.
+static _Thread_local int nv_peek = 0;
 static _Thread_local int nv_peek_trials = 3;   // trials averaged per candidate
 // Void world-mixture: voids applied in (mod-1)/mod of sampled worlds
 // (cordite: 3 of 4). A softer mixture hedges between heuristic-family
