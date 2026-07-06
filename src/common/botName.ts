@@ -20,3 +20,12 @@ const BOT_USERNAME_PREFIX = '%';
 export const usernameUsesReservedPrefix = (name: string | null | undefined): boolean =>
     !!name && name.includes(BOT_USERNAME_PREFIX);
 
+// A stored name (bots.nickname, replay-extras seat name) belongs to a bot iff
+// it carries the prefix — sound because of the reservation above.
+export const isBotName = (name: string): boolean =>
+    name.startsWith(BOT_USERNAME_PREFIX);
+
+// Bots render with an icon, so drop the prefix for display.
+export const botDisplayName = (name: string): string =>
+    isBotName(name) ? name.slice(BOT_USERNAME_PREFIX.length) : name;
+

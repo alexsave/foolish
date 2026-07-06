@@ -67,7 +67,7 @@ export const TableBattles = () => {
         emptyDropZones = cardsToUse.length;
     }
 
-    return <div style={{
+    return <div data-table-container style={{
         display: 'flex',
         flexWrap: 'wrap',
         justifyContent: 'center',

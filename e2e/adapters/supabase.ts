@@ -29,7 +29,9 @@ type Result = { data: any; error: any };
 const ok = (data: any): Result => ({ data, error: null });
 
 // Build the nested object loadCompleteGame expects from its PostgREST embed:
-//   games row + game_decks(object) + player_hands[] + bot_hands[].bots + game_logs[]
+//   games row + game_decks(object) + player_hands[] + bot_hands[].bots.
+// No game_logs: the production select doesn't embed them (logs are loaded
+// lazily, only at game end), so the shim shouldn't pay for them either.
 async function loadGamesEmbed(id: string): Promise<Result> {
     const c = await pool.connect();
     try {
@@ -41,17 +43,15 @@ async function loadGamesEmbed(id: string): Promise<Result> {
         const bh = (await c.query(
             `SELECT bh.bot_id, bh.hand, bh.awaiting_attack, jsonb_build_object('strategy_key', b.strategy_key) AS bots
              FROM bot_hands bh JOIN bots b ON b.id = bh.bot_id WHERE bh.game_id=$1`, [id])).rows;
-        const logs = (await c.query(
-            'SELECT id, game_id, log_type, player_id, card_pairs, defender_index, created_at FROM game_logs WHERE game_id=$1', [id])).rows;
         await c.query('COMMIT');
-        return ok({ ...g, game_decks: deck, player_hands: ph, bot_hands: bh, game_logs: logs });
+        return ok({ ...g, game_decks: deck, player_hands: ph, bot_hands: bh });
     } catch (e) {
         try { await c.query('ROLLBACK'); } catch { /* */ }
         return { data: null, error: e };
     } finally { c.release(); }
 }
 
-interface Filter { col: string; op: 'eq' | 'in'; val: any }
+interface Filter { col: string; op: 'eq' | 'in' | 'lt'; val: any }
 
 class QueryBuilder implements PromiseLike<Result> {
     private filters: Filter[] = [];
@@ -59,7 +59,7 @@ class QueryBuilder implements PromiseLike<Result> {
     private op: 'select' | 'insert' | 'upsert' | 'update' | 'delete' = 'select';
     private rows: any[] = [];
     private upsertOpts: { onConflict?: string; ignoreDuplicates?: boolean } = {};
-    private orderCol?: string; private orderAsc = true; private limitN?: number;
+    private orders: { col: string; asc: boolean }[] = []; private limitN?: number;
     private wantSingle = false;
 
     constructor(private table: string) {}
@@ -71,7 +71,9 @@ class QueryBuilder implements PromiseLike<Result> {
     delete() { this.op = 'delete'; return this; }
     eq(col: string, val: any) { this.filters.push({ col, op: 'eq', val }); return this; }
     in(col: string, val: any[]) { this.filters.push({ col, op: 'in', val }); return this; }
-    order(col: string, opts: any = {}) { this.orderCol = col; this.orderAsc = opts.ascending !== false; return this; }
+    lt(col: string, val: any) { this.filters.push({ col, op: 'lt', val }); return this; }
+    // supabase-js appends on repeated .order() calls; mirror that
+    order(col: string, opts: any = {}) { this.orders.push({ col, asc: opts.ascending !== false }); return this; }
     limit(n: number) { this.limitN = n; return this; }
     single() { this.wantSingle = true; return this; }
     maybeSingle() { this.wantSingle = true; return this; }
@@ -80,7 +82,8 @@ class QueryBuilder implements PromiseLike<Result> {
         if (this.filters.length === 0) return '';
         const parts = this.filters.map((f) => {
             if (f.op === 'in') { params.push(f.val); return `${f.col} = ANY($${params.length})`; }
-            params.push(f.val); return `${f.col} = $${params.length}`;
+            params.push(f.val);
+            return f.op === 'lt' ? `${f.col} < $${params.length}` : `${f.col} = $${params.length}`;
         });
         return ' WHERE ' + parts.join(' AND ');
     }
@@ -95,7 +98,7 @@ class QueryBuilder implements PromiseLike<Result> {
             if (this.op === 'select') {
                 const params: any[] = [];
                 let sql = `SELECT ${this.selectCols === '*' ? '*' : this.selectCols} FROM ${this.table}${this.where(params)}`;
-                if (this.orderCol) sql += ` ORDER BY ${this.orderCol} ${this.orderAsc ? 'ASC' : 'DESC'}`;
+                if (this.orders.length > 0) sql += ` ORDER BY ${this.orders.map((o) => `${o.col} ${o.asc ? 'ASC' : 'DESC'}`).join(', ')}`;
                 if (this.limitN != null) sql += ` LIMIT ${this.limitN}`;
                 const r = await pool.query(sql, params);
                 if (this.wantSingle) {
@@ -186,7 +189,9 @@ export const createClient = (_url?: string, _key?: string) => ({
     rpc: async (name: string, params: Record<string, any> = {}): Promise<Result> => {
         try {
             const keys = Object.keys(params);
-            const placeholders = keys.map((_k, i) => `$${i + 1}`).join(',');
+            // Named-argument call, like PostgREST: defaulted params may be
+            // omitted and the caller's key order can't silently misbind.
+            const placeholders = keys.map((k, i) => `${k} => $${i + 1}`).join(',');
             const vals = keys.map((k) => { const v = params[k]; return v !== null && typeof v === 'object' ? JSON.stringify(v) : v; });
             const r = await pool.query(`SELECT ${name}(${placeholders}) AS result`, vals);
             return ok(r.rows[0]?.result ?? null);

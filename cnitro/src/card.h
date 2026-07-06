@@ -12,13 +12,16 @@
 #define SUIT_DIAMONDS 3
 #define NUM_SUITS     4
 
-// Card values: 1..13 (Ace=13). 2..5 player games use the 36-card deck
-// (values 5..A); 6..8 player games use the full 52-card deck (values 1..A).
-// Mirrors `refill_deck` in supabase/.../common_utils.ts (`startValue = 1`
-// for 5+ players in TS, threshold tightened to 6+ here per project owner).
+// Card values: 1..13 (Ace=13). THE deck rule, settled: 2..5 players use the
+// 36-card deck (values 5..A); 6..8 players use the full 52-card deck
+// (values 1..A). This is the single source of truth for every deployment —
+// the WASM production server, the cnitro arena, and the replay projection
+// (runReplay in _shared/replay/core.ts, a living spec that mirrors this).
+// Historical 5-player replays encoded under the old 5+ → 52 rule no longer
+// decode; accepted when the rule was settled.
 #define ACE_VALUE         13
-#define MIN_VALUE_SMALL   5  // 2..5 player Durak
-#define MIN_VALUE_LARGE   1  // 6..8 player Durak: full deck
+#define MIN_VALUE_SMALL   5  // small-deck Durak (36 cards)
+#define MIN_VALUE_LARGE   1  // full-deck Durak (52 cards)
 #define CARDS_PER_PLAYER  6
 
 static inline int min_value_for(int num_players) {

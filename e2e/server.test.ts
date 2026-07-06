@@ -125,6 +125,37 @@ test('every broadcast carries a monotonically non-decreasing games.version (the 
     }
 });
 
+test('every finished game gets a replay snapshot and its logs wiped (log order is deterministic)', async () => {
+    // Regression check for the replay-desync glitch: a move's cascade stamps
+    // several logs in the same millisecond, and ordering the session by
+    // created_at alone returned those ties in arbitrary order — the encoder then
+    // threw "replay desync: logged attack not in menu" and finished games kept
+    // raw logs instead of a snapshot (~1 in 5 games). The fix orders by
+    // (created_at, seq). Several games make a regression's tie-scramble likely.
+    let finished = 0;
+    for (let round = 0; round < 6; round++) {
+        await resetDb();
+        const { gameId } = await newGame(1, 2);
+        let steps = 0;
+        while (steps < 600) {
+            const g = await loadGame(gameId);
+            if (g.status !== 'playing') break;
+            const moves = legalMovesFor(g);
+            if (moves.length === 0) break;
+            try { await executeWithGameLock(gameId, async (gg) => ({ game: gg, events: applyPlayerMove(gg, pick(moves)) }), `s${steps}`, true); } catch { /* stale */ }
+            steps++;
+        }
+        const g = await loadGame(gameId);
+        if (g.status !== 'game_over') continue;
+        finished++;
+        const snaps = await pgPool.query('SELECT moves FROM game_snapshots WHERE game_id=$1', [gameId]);
+        assert.equal(snaps.rowCount, 1, `finished game ${gameId} has no replay snapshot — the encoder desynced (check log ordering)`);
+        const logs = await pgPool.query('SELECT COUNT(*)::int AS n FROM game_logs WHERE game_id=$1', [gameId]);
+        assert.equal(logs.rows[0].n, 0, `finished game ${gameId} kept ${logs.rows[0].n} raw logs — snapshot should have replaced them`);
+    }
+    assert.ok(finished >= 2, `expected at least 2 finished games, got ${finished}`);
+});
+
 test('CAS serializes concurrent moves without losing or duplicating a card', async () => {
     const { gameId, botIds } = await newGame(3, 1);
     let steps = 0;

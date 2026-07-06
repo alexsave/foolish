@@ -1,6 +1,7 @@
 import { Card, Game, PersonalGame, PLAYER_STATUS, PrivatePlayer, PublicPlayer, GAME_STATUS, PublicGame, LOG_TYPE, AnimationEvent, ANIMATION_EVENT_TYPE, Battle, LogCardPair } from "./types.ts";
 import { GameLog, UnsavedGameLog } from './types.ts';
-import { ACE_VALUE, CARDS_PER_PLAYER, SUITS, VALUE_MAP, SUIT_MAP } from './constants.ts';
+import { ACE_VALUE, CARDS_PER_PLAYER, SUITS, VALUE_MAP, SUIT_MAP, MAX_PLAYERS } from './constants.ts';
+import { kernelStartGame, kernelRefill } from './wasm/engine.ts';
 
 // Fast deep clone for Game objects - avoids expensive JSON.parse(JSON.stringify())
 const cloneCard = (card: Card): Card => ({ suit: card.suit, value: card.value });
@@ -126,85 +127,17 @@ export const verify_cards_in_players_hand = (player: PrivatePlayer, cards: Card[
     }
 }
 
-export const no_cards_left = (game: Game) => {
-    return game.deck.length === 0 && game.flipped === null;
-}
 
-export const refill_deck = (players: number): Card[] => {
-    const deck: Card[] = [];
-    // Start at 6 vs 2
-    const startValue = players > 4 ? 1 : 5;
-    for (let i = 0; i < SUITS.length; i++) {
-        for (let j = startValue; j <= ACE_VALUE; j++) {
-            deck.push({ suit: SUITS[i], value: j });
-        }
-    }
-    return deck;
-}
 
-// Temporary: Seeded RNG for deterministic testing
+// Dealing, drawing and first-attacker selection live in the C kernel
+// (cnitro/src/game.c): per-draw random splice, non-Ace trump flip,
+// lowest-trump-holder attacks first. The old TS helpers (draw, refill_deck,
+// no_cards_left, seededRandom, set_positions, initialize_hands,
+// determine_lowest_power_index) were deleted with it — nothing outside this
+// file imported them.
 
-let seed = 1237;
-export function seededRandom() {
-    seed = (seed * 1664525 + 1013904223) % 4294967296;
-    return seed / 4294967296;
-}
-
-export const draw = (game: Game): Card | null => {
-    if (game.deck.length === 0) {
-        if (game.flipped === null) {
-            return null;
-        }
-        const copy: Card = game.flipped;
-        game.flipped = null;
-        return copy;
-    }
-    // TEMP: Use seeded random for deterministic testing
-    const index = Math.floor(Math.random() * game.deck.length);
-    // const index = Math.floor(Math.random() * game.deck.length);
-    const card = game.deck.splice(index, 1)[0];
-    return card;
-};
-
-const determine_lowest_power_index = (game: Game): number => {
-    let lowestPowerValue = ACE_VALUE + 1;
-    let lowestPowerPlayer = -1;
-    for (let i = 0; i < game.players.length; i++) {
-        const hand = game.players[i].hand;
-        for (let j = 0; j < hand.length; j++) {
-            let card = hand[j];
-            if (card.suit === game.power_suit) {
-                if (card.value < lowestPowerValue) {
-                    lowestPowerValue = card.value;
-                    lowestPowerPlayer = i;
-                }
-            }
-        }
-    }
-    if (lowestPowerPlayer === -1) {
-        lowestPowerPlayer = Math.floor(Math.random() * game.players.length);
-    }
-    return lowestPowerPlayer;
-}
-
-export const set_positions = (game: Game) => {
-    game.defender = (game.first_attacker + 1) % game.players.length;
-}
-
-const initialize_hands = (game: Game): Card[][] => {
-    const result: Card[][] = [];
-    for (let j = 0; j < game.players.length; j++) {
-        result.push([]);
-    }
-    for (let i = 0; i < CARDS_PER_PLAYER; i++) {
-        for (let j = 0; j < game.players.length; j++) {
-            const c = draw(game)!;
-            result[j].push(c);
-        }
-    }
-    return result;
-}
-
+// Thin projection kept for synchronous use; the kernel counterpart is
+// game_done in cnitro/src/game.c (e2e/wasm_engine.test.ts polices parity).
 export const game_done = (game: Game): string | null => {
     // only one 1 left, everyone else is out
     const in_players = game.players.filter(player => player.status === PLAYER_STATUS.IN);
@@ -315,245 +248,34 @@ export const calculateGameRankings = (game: Game): string[] => {
     return rankings;
 };
 
-// Pure refill logic without side effects (no broadcasting, no async check_win)
-
-// Refill logic that creates animation events for cards drawn.
-// Note: canonical Durak rules say the defender draws last (and never first).
-// We intentionally deviate: defender draws in clockwise rotation slot, and
-// draws first when their hand was emptied on a clean cover.
+// Refill logic — lives in the C kernel (cnitro/src/game.c
+// refill_player_hands), compiled to WASM. The kernel keeps the deliberate
+// deviation from canonical Durak: the defender draws in clockwise rotation
+// slot, and draws FIRST when their hand was emptied on a clean cover.
+// Exported for API compatibility; the action handlers run refill inside
+// their kernel transition.
 export const refillPlayerHandsWithEvents = (game: Game): { refillEvents: any[], drawLogs: any[] } => {
-    const refillEvents: any[] = [];
-    const drawLogs: any[] = []; // Track draw events for game logs
-
-    // If no cards left in deck, still need to mark players with 0 cards as OUT
-    if (no_cards_left(game)) {
-        // Check all players and mark those with 0 cards as OUT
-        for (let i = 0; i < game.players.length; i++) {
-            const player = game.players[i];
-            if (player.hand.length === 0 && player.status === PLAYER_STATUS.IN) {
-                player.status = PLAYER_STATUS.OUT;
-                player.awaiting_attack = false;
-                game.elimination_order.push(player.player_id);
-            }
-        }
-        return { refillEvents, drawLogs };
-    }
-
-    // If the deck was already empty, defending should've gotten them a win
-    // most importantly, check if defender cleared their hand
-    const defenseHand = game.players[game.defender].hand;
-    if (defenseHand.length === 0) {
-        // they draw first
-        const defenderInitialHandSize = defenseHand.length;
-        const drawnCards: Card[] = [];
-        
-        while (defenseHand.length < CARDS_PER_PLAYER) {
-            const isFlippedNext = game.deck.length === 0 && game.flipped !== null;
-            const c = draw(game);
-            if (c === null) {
-                break;
-            }
-            defenseHand.push(c);
-            
-            // Track drawn cards: known if it was the flipped card, unknown otherwise
-            drawnCards.push(isFlippedNext ? c : { suit: -1, value: -1 });
-        }
-        
-        // Add refill event for defender if they drew cards
-        const defenderCardsDrawn = defenseHand.length - defenderInitialHandSize;
-        if (defenderCardsDrawn > 0) {
-            const actualCardsDrawn = defenseHand.slice(-defenderCardsDrawn);
-            refillEvents.push({
-                type: 'refill',
-                player_id: game.players[game.defender].player_id,
-                cards: actualCardsDrawn,
-                from_location: 'deck',
-                to_location: 'hand',
-                message: `${game.players[game.defender].name} drew ${defenderCardsDrawn} cards`,
-                game_state: cloneGame(game)
-            });
-
-            // Add draw log
-            drawLogs.push({
-                player_id: game.players[game.defender].player_id,
-                cards: drawnCards
-            });
-        }
-    }
-
-    // Then go around starting from firstAttacker
-    let pIndex = game.first_attacker;
-    const visited = new Set<number>();
-    do {
-        // Bail when we'd revisit — first_attacker may be marked OUT inside
-        // the body, in which case get_next_player_index never returns it.
-        if (visited.has(pIndex)) break;
-        visited.add(pIndex);
-        const hand = game.players[pIndex].hand;
-        const initialHandSize = hand.length;
-        const drawnCards: Card[] = [];
-
-        while (hand.length < CARDS_PER_PLAYER) {
-            const isFlippedNext = game.deck.length === 0 && game.flipped !== null;
-            const c = draw(game);
-            if (c === null) {
-                break;
-            }
-            hand.push(c);
-            
-            // Track drawn cards: known if it was the flipped card, unknown otherwise
-            drawnCards.push(isFlippedNext ? c : { suit: -1, value: -1 });
-        }
-        
-        // Add refill event for this player if they drew cards
-        const cardsDrawn = hand.length - initialHandSize;
-        if (cardsDrawn > 0) {
-            const actualCardsDrawn = hand.slice(-cardsDrawn);
-            refillEvents.push({
-                type: 'refill',
-                player_id: game.players[pIndex].player_id,
-                cards: actualCardsDrawn,
-                from_location: 'deck',
-                to_location: 'hand',
-                message: `${game.players[pIndex].name} drew ${cardsDrawn} cards`,
-                game_state: cloneGame(game)
-            });
-
-            // Add draw log
-            drawLogs.push({
-                player_id: game.players[pIndex].player_id,
-                cards: drawnCards
-            });
-        }
-        
-        // Check if player has no cards and should be marked as OUT
-        if (hand.length === 0 && game.players[pIndex].status === PLAYER_STATUS.IN) {
-            game.players[pIndex].status = PLAYER_STATUS.OUT;
-            game.players[pIndex].awaiting_attack = false;
-            game.elimination_order.push(game.players[pIndex].player_id);
-        }
-        
-        pIndex = get_next_player_index(game, pIndex);
-    } while (pIndex !== game.first_attacker);
-    
-    return { refillEvents, drawLogs };
+    return kernelRefill(game);
 };
 
-
-
-// Stats the game with all the animations
+// Starts the game with all the animations. The deal/flip/first-attacker
+// rules live in the C kernel (cnitro/src/game.c start_game): player-major
+// deal, non-Ace trump flip (Aces pushed back and redrawn), lowest-trump
+// holder attacks first. The event stream (MAGIC → per-player DEAL → FLIPPED →
+// DEFENDER_MOVE → MAGIC) is reconstructed from kernel snapshots, identical
+// to the old TS implementation (verified by the differential parity harness).
 export const start_game = (game: Game): AnimationEvent[] => {
     // Guard against starting game if it's already over
     if (game.status === GAME_STATUS.GAME_OVER) {
         return [];
     }
-
-    const events: AnimationEvent[] = [];
-
-    // Log game start - marks the beginning of this play session
-    addLog(game, {
-        game_id: game.id,
-        log_type: LOG_TYPE.GAME_START,
-        player_id: null, // System event
-        card_pairs: [],
-        defender_index: null
-    });
-
-    // This is the game entry
-    game.status = GAME_STATUS.PLAYING;
-    game.players.forEach(player => {
-        player.status = PLAYER_STATUS.IN;
-    });
-
-    game.deck = refill_deck(game.players.length);
-    game.elimination_order = []; // Initialize elimination order tracking
-    game.good_timestamp = null; // Initialize good timestamp
-    game.good_players = []; // Initialize good players list
-
-    // Lead with a transition into the PLAYING view with empty hands, so the
-    // client switches from Lobby to GameDisplay before the first DEAL fires.
-    events.push({
-        type: ANIMATION_EVENT_TYPE.MAGIC_TRANSITION,
-        message: `All players ready - starting game!`,
-        game_state: cloneGame(game)
-    });
-
-    // Draw and emit per player so each DEAL snapshot reflects the deck
-    // drained by exactly that player's batch (deck: 36 → 30 → 24 → ...).
-    // initialize_hands() can't be used here because it drains the full
-    // 6×N cards up front, baking a post-deal deck count into every snapshot.
-    for (let i = 0; i < game.players.length; i++) {
-        const hand: Card[] = [];
-        for (let k = 0; k < CARDS_PER_PLAYER; k++) {
-            hand.push(draw(game)!);
-        }
-        game.players[i].hand = hand;
-        events.push({
-            type: ANIMATION_EVENT_TYPE.DEAL,
-            player_id: game.players[i].player_id,
-            cards: hand,
-            from_location: 'deck',
-            to_location: 'hand',
-            game_state: cloneGame(game)
-        });
+    // Defense in depth: the lobby caps players at MAX_PLAYERS, but never deal
+    // an oversized lobby — more hands than the deck holds leaves a player with
+    // no cards and crashes the deal. Reject cleanly instead.
+    if (game.players.length > MAX_PLAYERS) {
+        throw new Error(`Cannot start a game with ${game.players.length} players (max ${MAX_PLAYERS})`);
     }
-
-    let flipped_card = draw(game);
-    while (flipped_card!.value === ACE_VALUE) {
-        // move back to deck
-        game.deck.push(flipped_card!);
-        flipped_card = draw(game);
-    }
-    game.flipped = flipped_card;
-    game.power_suit = game.flipped!.suit;
-
-    // Add flipped card animation AFTER deal animations
-    events.push({
-        type: ANIMATION_EVENT_TYPE.FLIPPED,
-        cards: [game.flipped!],
-        from_location: 'deck',
-        to_location: 'flipped',
-        game_state: cloneGame(game)
-    });
-
-    const lowest_power_index = determine_lowest_power_index(game);
-    game.first_attacker = lowest_power_index;
-    set_positions(game);
-
-    // Add animation event for defender position
-    if (game.players[game.defender]) {
-        events.push({
-            type: ANIMATION_EVENT_TYPE.DEFENDER_MOVE,
-            player_id: game.players[game.defender].player_id,
-            game_state: cloneGame(game)
-        });
-    }
-
-    // First attacker notification will be included in the start game animation sequence
-    events.push({
-        type: ANIMATION_EVENT_TYPE.MAGIC_TRANSITION,
-        message: `Player ${game.players[lowest_power_index].name} is the first attacker, wait for them to attack`,
-        game_state: cloneGame(game)
-    });
-
-    // Send private messages to players (these don't go through animation events)
-    // I have not once actually seen this so I'm removing it
-    /*for (let i = 0; i < game.players.length; i++) {
-        const hand = game.players[i].hand;
-        if (i === game.first_attacker) {
-            await broadcastToGameUser(game, 'private_message', {
-                type: PRIVATE_EVENT_TYPE.REQUEST_FIRST_ATTACK,
-                message: `Please choose an attack. Options are ${hand.map(card => cardDisplay(card)).join(', ')}`
-            }, game.players[i].player_id);
-        } else {
-            await broadcastToGameUser(game, 'private_message', {
-                type: PRIVATE_EVENT_TYPE.PLAYER_HAND,
-                message: `Player ${game.players[i].name} hand ${hand.map(card => cardDisplay(card)).join(', ')}`
-            }, game.players[i].player_id);
-        }
-    }*/
-
-    return events;
+    return kernelStartGame(game);
 }
 
 // Helper function to add a log to the game's pending logs

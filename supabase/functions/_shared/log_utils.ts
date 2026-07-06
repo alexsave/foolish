@@ -5,52 +5,9 @@ import type { SupabaseClient } from 'jsr:@supabase/supabase-js';
 // GAME LOG UTILITIES
 // =============================================================================
 
-// Internal function to save logs to database
-// Should only be called from saveCompleteGame to ensure atomicity
-export const saveGameLogs = async (supabaseClient: SupabaseClient, game_id: string, logs: GameLog[]): Promise<void> => {
-    if (logs.length === 0) {
-        return;
-    }
-
-    try {
-        // Filter to only new logs (created within the last 10 minutes)
-        // Due to Supabase function runtime limits, we can't be saving logs older than 10 minutes
-        // This means logs older than 10 minutes must have been loaded from the database
-        const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
-        const newLogs = logs.filter(log => new Date(log.created_at) > tenMinutesAgo);
-
-        if (newLogs.length === 0) {
-            console.log(`[LOG] No new logs to save for game ${game_id} (all logs older than 10 minutes)`);
-            return;
-        }
-
-        const logsToUpsert = newLogs.map(log => ({
-            id: log.id,
-            game_id: log.game_id,
-            log_type: log.log_type,
-            player_id: log.player_id,
-            card_pairs: log.card_pairs,
-            defender_index: log.defender_index,
-            created_at: log.created_at
-        }));
-
-        // Use upsert with onConflict to ignore existing logs
-        const { error } = await supabaseClient
-            .from('game_logs')
-            .upsert(logsToUpsert, { onConflict: 'id', ignoreDuplicates: true });
-
-        if (error) {
-            console.error('Error saving game logs:', error);
-            throw error; // Propagate error to fail the entire save operation
-        }
-
-        console.log(`[LOG] Successfully saved ${newLogs.length} new log(s) for game ${game_id}`);
-    } catch (error) {
-        console.error('Error in saveGameLogs:', error);
-        throw error; // Ensure transaction-like behavior
-    }
-};
-
+// (saveGameLogs is gone: a move's logs now ride inside the commit_game RPC —
+// same transaction as the version-gated state write. See migration
+// 20260702100000 and commitGame in utils.ts.)
 
 // Delete EVERY log row for a game — all sessions, not just the current one.
 // Called at game end after the session has been encoded into game_snapshots
@@ -77,12 +34,18 @@ export const wipeAllGameLogs = async (supabaseClient: SupabaseClient, game_id: s
 // here on demand instead of on every move.
 export const loadCurrentSessionLogs = async (supabaseClient: SupabaseClient, game_id: string): Promise<GameLog[]> => {
     try {
-        // Get all logs for this game ordered by creation time
+        // Get all logs for this game ordered by creation time. created_at alone
+        // is NOT a total order: it has ms precision and a single move's cascade
+        // (attack → player_out → defender_change → draw…) stamps several logs in
+        // the same millisecond, so ties come back in arbitrary order and the
+        // replay encoder desyncs ("logged attack not in menu"). seq (insert
+        // order, see migration 20260701120000) breaks the ties exactly.
         const { data: allLogs, error } = await supabaseClient
             .from('game_logs')
             .select('*')
             .eq('game_id', game_id)
-            .order('created_at', { ascending: true });
+            .order('created_at', { ascending: true })
+            .order('seq', { ascending: true });
 
         if (error) {
             console.error('Error loading game logs:', error);

@@ -707,7 +707,7 @@ export function runReplay(
   firstAttacker: number,
   source: InfoSource | null,
 ): Model {
-  const deckSize = n > 4 ? 52 : 36;
+  const deckSize = n >= 6 ? 52 : 36;
   const lowest = deckSize === 52 ? 1 : 5;
 
   const m: Model = {
@@ -951,7 +951,7 @@ export function runReplay(
 /* ------------------------- header & shared exports ------------------------ */
 
 export function trumpAlphabet(n: number): number[] {
-  const lowest = n > 4 ? 1 : 5;
+  const lowest = n >= 6 ? 1 : 5;
   const out: number[] = [];
   for (let suit = 0; suit < 4; suit++) {
     for (let v = lowest; v < ACE_VALUE; v++) out.push(suit * 13 + (v - 1));

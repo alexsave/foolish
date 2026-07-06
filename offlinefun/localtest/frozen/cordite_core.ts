@@ -97,8 +97,8 @@ const canCoverInt = (attack: number, defense: number, power: number): boolean =>
 const cardScore = (c: number, power: number): number =>
     (c & 15) + ((c >> 4) === power ? 1000 : 0);
 
-// Deck floor: mirrors common_utils.refill_deck (players > 4 → full 52).
-export const minValueFor = (numPlayers: number): number => (numPlayers > 4 ? 1 : 5);
+// Deck floor: mirrors the kernel's min_value_for (6+ players → full 52).
+export const minValueFor = (numPlayers: number): number => (numPlayers >= 6 ? 1 : 5);
 
 // ---------- RNG ---------------------------------------------------------
 
@@ -1240,7 +1240,7 @@ const espressoChoose = (g: SimGame, pIdx: number, moves: SimMove[]): number => {
             }
             if (g.flipped !== NONE) known.add(g.flipped);
             for (const c of g.discards) known.add(c);
-            const startV = g.numPlayers > 4 ? 1 : 5;
+            const startV = g.numPlayers >= 6 ? 1 : 5;
             const still: number[] = [];
             for (let suit = 0; suit < 4; suit++) {
                 for (let v = startV; v <= 14; v++) {     // TS uses 14 — kept verbatim

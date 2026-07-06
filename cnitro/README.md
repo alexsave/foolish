@@ -1,13 +1,35 @@
 # cnitro — pure-C Durak engine + bot arena
 
-Self-contained C port of the Russian Durak engine and its heuristic /
-Monte-Carlo bots. Native code so we can simulate and evaluate millions of
-games without crossing the language boundary into the TS server.
+Self-contained C implementation of the Russian Durak engine and its
+heuristic / Monte-Carlo bots. Native code so we can simulate and evaluate
+millions of games without crossing the language boundary into the TS server.
 
-The engine and legal-move enumeration mirror
-`supabase/functions/_shared/{common_utils,actions/*}.ts` exactly, so a game
-played here is a legal game on the production server (the replay codec on the
-TS side round-trips C-played games unchanged).
+**The kernel here IS the production rules engine.** `game.c` + `legal.c`
+compile to WebAssembly (`make wasm`) and run every live move: the TS files in
+`supabase/functions/_shared/actions/` are thin bridges over this code (see
+`wasm/wasm_api.c` and `_shared/wasm/engine.ts`). The old TS rule
+implementations were deleted after a differential harness proved the two
+engines byte-identical across ~100k mirrored actions. The deck rule is
+settled and hardcoded in `card.h`: 2..5 players → 36 cards, 6+ → 52,
+everywhere (historical 5-player replays encoded under the old 5+ → 52 rule
+no longer decode). Log/battle/move capacities remain build parameters
+(`-DMAX_LOG_PAIRS=64 -DMAX_BATTLES=64 -DMAX_LEGAL_MOVES=65536` for
+production). The kernel fires `engine_snap_hook` at the exact points the old
+TS handlers captured animation snapshots — a NULL no-op for native builds.
+
+**The bots here are ALSO the production bots.** `make wasm-bots` compiles the
+kernel plus every `*_strategy.c` plus a choose-move bridge
+(`wasm/wasm_bots_api.c`) into `bots.wasm`
+(`_shared/wasm/bots_wasm.ts`, dispatched by `_shared/wasm/bots.ts`). The
+production bot names map to exact C mirrors of the retired TS strategies —
+`e2e/bot_parity.test.ts` proves move-for-move equality against the frozen TS
+oracles. Two bots exist in a `_prod` variant (`espresso_prod`,
+`handwritten_prod`): the un-suffixed arena versions drifted slightly from
+the TS originals and are frozen because cordite's rollout policy (and its
+`cordite_sim.c` bitboard mirror) was tuned against them. `CD_BUDGET=prod|max`
+selects the deployed cordite world/pruning budgets (the arena default stays
+the C-tuned budget); `fulminate` is cordite + per-seat opponent profiling
+(the TS design ported back, bit-for-bit cordite when profiling is off).
 
 ## What's here
 
@@ -26,6 +48,11 @@ Bots (weakest → strongest):
 - `blackpowder` — belief-constrained determinized MC + exact endgame.
 - `cordite` — blackpowder's successor; ELO #1, beats every other bot at
   every player count. See `CORDITE.md` (and `BLACKPOWDER.md`).
+- `fulminate` — cordite + in-game per-seat opponent profiling (skews each
+  profiled seat's rollout policy toward its best-fit archetype).
+- Production TS mirrors: `simple_heuristic`, `champion`, `ultimate_champion`,
+  `hacker`, `espresso_prod`, `handwritten_prod` — exact move-for-move ports
+  of the (now retired) TS bots, verified by `e2e/bot_parity.test.ts`.
 
 Each strategy uses its own deterministic LCG (seeded per game) so a given
 seed reproduces the same play run-to-run.

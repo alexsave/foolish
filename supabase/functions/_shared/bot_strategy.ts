@@ -1,34 +1,87 @@
-import { Card, Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS } from './types.ts';
-import { canCover, card_comp, get_next_player_index } from './common_utils.ts';
+import { Game } from './types.ts';
+import { kernelLegalMoves } from './wasm/engine.ts';
+import { STRAT, wasmChooseMove, wasmChooseMoveDirect } from './wasm/bots.ts';
 import { BotStrategy, LegalMove } from './bot_interfaces.ts';
-import { RandomBotStrategy } from './strategies/random_strategy.ts';
-import { HandwrittenBotStrategy } from './strategies/handwritten_strategy.ts';
-import { SimpleHeuristicStrategy } from './strategies/simple_heuristic_strategy.ts';
-import { UltimateChampionStrategy } from './strategies/ultimate_champion_strategy.ts';
-import { ChampionStrategy } from './strategies/champion_strategy.ts';
-import { HackerStrategy } from './strategies/hacker_strategy.ts';
 import { GPTBotStrategy } from './strategies/gpt_strategy.ts';
-import { EspressoStrategy } from './strategies/espresso_strategy.ts';
 import { NitroStrategy } from './strategies/nitro_strategy.ts';
-import { CorditeStrategy, CorditeMaxStrategy } from './strategies/cordite_strategy.ts';
-import { FulminateStrategy } from './strategies/fulminate_strategy.ts';
 
 // Re-export interfaces for backwards compatibility
 export type { BotStrategy, LegalMove };
 
-// Strategy registry
+// Every algorithmic bot runs inside the C kernel (cnitro/src/*_strategy.c
+// compiled to bots.wasm) — single source of truth for bot play, same as the
+// rules. This adapter marshals the game in, lets the kernel enumerate legal
+// moves and choose, and maps the returned index onto the caller's list (the
+// orderings are identical: both come from the kernel's enumerator).
+//
+// The two remaining TS-brained strategies are deliberate exceptions:
+//   - gpt/console: I/O-bound adapters (LLM calls, stdin), not game logic.
+//   - nitro: the experimental transformer NN (nitro_nn.ts + JSON weights) —
+//     a research artifact that plateaued below cordite (see README); porting
+//     an NN runtime to freestanding C isn't worth it unless it ever wins.
+export class WasmBotStrategy implements BotStrategy {
+    readonly name: string;
+    private strat: number;
+    private env?: Record<string, string>;
+    // Only the belief/memory bots read the session log; skipping the log
+    // marshal for the rest removes the hottest TS frame of a bot turn.
+    private logs: boolean;
+
+    constructor(name: string, strat: number, opts: { env?: Record<string, string>; logs?: boolean } = {}) {
+        this.name = name;
+        this.strat = strat;
+        this.env = opts.env;
+        this.logs = opts.logs ?? false;
+    }
+
+    chooseMove(game: Game, botPlayerId: string, legalMoves: LegalMove[]): Promise<LegalMove> {
+        try {
+            const idx = wasmChooseMove(game, botPlayerId, this.strat, { env: this.env, logs: this.logs });
+            if (idx >= 0 && idx < legalMoves.length) {
+                return Promise.resolve(legalMoves[idx]);
+            }
+        } catch (error) {
+            console.error(`[${this.name}] kernel chooseMove failed, falling back to first legal move:`, error);
+        }
+        return Promise.resolve(legalMoves[0]);
+    }
+
+    // Fast path for the bot loop: the kernel enumerates AND picks in one
+    // call and only the chosen move crosses back — no TS-side move-list
+    // materialization. null = no legal moves. Falls back to the list path
+    // in processBotAction on error.
+    chooseMoveDirect(game: Game, botPlayerId: string): LegalMove | null {
+        return wasmChooseMoveDirect(game, botPlayerId, this.strat, { env: this.env, logs: this.logs });
+    }
+}
+
+// Strategy registry. CD_BUDGET selects the kernel cordite's world/pruning
+// budget: 'prod' mirrors the deployed v2.4 player-count-aware budget,
+// 'max' the larger cordite_max tier (see cnitro/src/cordite_strategy.c).
 export const BOT_STRATEGIES: Map<string, BotStrategy> = new Map<string, BotStrategy>([
-    ['random', new RandomBotStrategy()],
-    ['handwritten', new HandwrittenBotStrategy()],
-    ['simple_heuristic', new SimpleHeuristicStrategy()],
-    ['ultimate_champion', new UltimateChampionStrategy()],
-    ['champion', new ChampionStrategy()],
-    ['hacker', new HackerStrategy()],
-    ['espresso', new EspressoStrategy()],
+    ['random', new WasmBotStrategy('random', STRAT.random)],
+    ['handwritten', new WasmBotStrategy('handwritten', STRAT.handwritten)],
+    ['simple_heuristic', new WasmBotStrategy('simple_heuristic', STRAT.simple_heuristic)],
+    ['ultimate_champion', new WasmBotStrategy('ultimate_champion', STRAT.ultimate_champion)],
+    ['champion', new WasmBotStrategy('champion', STRAT.champion)],
+    ['hacker', new WasmBotStrategy('hacker', STRAT.hacker)],
+    // logs: espresso's discard memory reads LOG_DISCARD; cordite/fulminate
+    // build their belief from the full public log.
+    ['espresso', new WasmBotStrategy('espresso', STRAT.espresso, { logs: true })],
     ['nitro', new NitroStrategy()],
-    ['cordite', new CorditeStrategy()],
-    ['cordite_max', new CorditeMaxStrategy()],
-    ['fulminate', new FulminateStrategy()],
+    // CD_RACE stops a deliberation early once the leading candidate is
+    // statistically separated (validated strength-neutral at C=75: pc4x800
+    // identical, pc2/pc6 within noise; landslide decisions finish in ~50
+    // worlds instead of ~900).
+    ['cordite', new WasmBotStrategy('cordite', STRAT.cordite, { env: { CD_BUDGET: 'prod', CD_RACE: '1', CD_RACE_C: '75' }, logs: true })],
+    ['cordite_max', new WasmBotStrategy('cordite_max', STRAT.cordite, { env: { CD_BUDGET: 'max', CD_RACE: '1', CD_RACE_C: '75' }, logs: true })],
+    ['fulminate', new WasmBotStrategy('fulminate', STRAT.fulminate, { env: { CD_BUDGET: 'prod', CD_RACE: '1', CD_RACE_C: '75' }, logs: true })],
+    // Self-budgeted C brains — no env knobs. The _max keys alias the base
+    // strategy until a kernel-side max-budget knob exists (TODO).
+    ['semtex', new WasmBotStrategy('semtex', STRAT.semtex, { logs: true })],
+    ['octogen', new WasmBotStrategy('octogen', STRAT.octogen, { logs: true })],
+    ['semtex_max', new WasmBotStrategy('semtex_max', STRAT.semtex, { logs: true })],
+    ['octogen_max', new WasmBotStrategy('octogen_max', STRAT.octogen, { logs: true })],
 ]);
 
 // Lazy-load GPT strategy to avoid requiring API key at module load time
@@ -55,7 +108,7 @@ export function getBotStrategy(strategyKey: string): BotStrategy {
         }
         return gptStrategyInstance;
     }
-    
+
     const strategy = BOT_STRATEGIES.get(strategyKey);
     if (!strategy) {
         // Fall back to random strategy if unknown
@@ -64,311 +117,13 @@ export function getBotStrategy(strategyKey: string): BotStrategy {
     return strategy;
 }
 
-// Calculate all legal moves for a bot given current game state
+// Calculate all legal moves for a bot given current game state.
+// The enumeration lives in the C kernel (cnitro/src/legal.c
+// calculate_legal_moves), compiled to WASM, preserving the exact move
+// ordering of the old TS enumerator (verified move-for-move by the
+// differential parity harness). One deliberate change: the kernel caps the
+// list at 65,536 moves (in enumeration order) where the TS version could
+// blow up into millions of combinatorial cover combos and exhaust memory.
 export function calculateLegalMoves(game: Game, botPlayerId: string): LegalMove[] {
-    const moves: LegalMove[] = [];
-    
-    // Find the bot player
-    const botPlayer = game.players.find(p => p.player_id === botPlayerId);
-    if (!botPlayer) {
-        return moves;
-    }
-    
-    const botIndex = game.players.indexOf(botPlayer);
-    const isDefender = botIndex === game.defender;
-    const isFirstAttacker = botIndex === game.first_attacker;
-    
-    // Game state specific moves based on logical conditions
-    if (game.status === GAME_STATUS.PLAYING) {
-        const isFirstAttack = game.table_battles.length === 0;
-        // Note: every() returns true for empty arrays, so check length first
-        const allAttacksCovered = game.table_battles.length > 0 && 
-            game.table_battles.every(battle => battle.defense !== null);
-        
-        if (isFirstAttack && isFirstAttacker) {
-            // Bot is first attacker - MUST attack, cannot say "good" with empty table
-            const attackMoves = calculateFirstAttackMoves(game, botPlayer);
-            // moves.push(...arr) hits V8's max-args limit when arr is millions long (combinatorial explosion).
-            for (const m of attackMoves) moves.push(m);
-        } else if (isDefender && game.table_battles.length > 0) {
-            // Bot is defender - can cover, pickup, pass, and optionally wait
-            const coverMoves = calculateCoverMoves(game, botPlayer);
-            for (const m of coverMoves) moves.push(m);
-            
-            // Can only pickup if there are uncovered attacks (don't allow pickup when all covered!)
-            if (!allAttacksCovered) {
-                moves.push({ type: 'pickup' });
-            }
-            
-            // Note: No "wait" move needed - if all attacks are covered, shouldBotActCore returns false
-            // and the defender won't be asked to act at all
-            
-            // Can pass if all attacks are same value and bot has that value
-            const passMoves = calculatePassMoves(game, botPlayer);
-            for (const m of passMoves) moves.push(m);
-        } else if (!isDefender && game.table_battles.length > 0) {
-            // Bot is attacker - can attack with cards on table or say "good"
-            const hasPlayerSaidGood = game.good_players?.includes(botPlayerId) || false;
-            
-            // Can only attack if haven't said "good" yet
-            if (!hasPlayerSaidGood) {
-                const attackMoves = calculateRegularAttackMoves(game, botPlayer);
-                for (const m of attackMoves) moves.push(m);
-            }
-            
-            // Can say "good" to signal they're done attacking (even if attacks aren't all covered)
-            // This allows attackers to voluntarily stop attacking
-            if (!hasPlayerSaidGood) {
-                moves.push({ type: 'good' });
-            }
-        }
-    }
-    
-    return moves;
+    return kernelLegalMoves(game, botPlayerId) as LegalMove[];
 }
-
-// Calculate first attack moves (must play cards of same value)
-function calculateFirstAttackMoves(game: Game, botPlayer: PrivatePlayer): LegalMove[] {
-    const moves: LegalMove[] = [];
-    const hand = botPlayer.hand;
-    
-    // Group cards by value
-    const valueGroups = new Map<number, Card[]>();
-    hand.forEach(card => {
-        if (!valueGroups.has(card.value)) {
-            valueGroups.set(card.value, []);
-        }
-        valueGroups.get(card.value)!.push(card);
-    });
-    
-    // For each value, generate all possible combinations (1 to all cards of that value)
-    valueGroups.forEach((cards, value) => {
-        // Generate all possible combinations (1 to all cards of this value)
-        for (let i = 1; i <= cards.length; i++) {
-            const combinations = getCombinations(cards, i);
-            combinations.forEach(combo => {
-                // Check if defender has enough cards to cover
-                const defenderCards = game.players[game.defender].hand.length;
-                const uncoveredCards = game.table_battles.filter(b => b.defense === null).length;
-                
-                if (uncoveredCards + combo.length <= defenderCards) {
-                    moves.push({ type: 'attack', cards: combo });
-                }
-            });
-        }
-    });
-    
-    return moves;
-}
-
-// Calculate regular attack moves (must match values on table)
-function calculateRegularAttackMoves(game: Game, botPlayer: PrivatePlayer): LegalMove[] {
-    const moves: LegalMove[] = [];
-    const hand = botPlayer.hand;
-    
-    // Get all values currently on the table
-    const tableValues = new Set<number>();
-    game.table_battles.forEach(battle => {
-        tableValues.add(battle.attack.value);
-        if (battle.defense) {
-            tableValues.add(battle.defense.value);
-        }
-    });
-    
-    // Find cards that match table values
-    const validCards = hand.filter(card => tableValues.has(card.value));
-    
-    // If no valid cards, return empty array (bot will be skipped)
-    if (validCards.length === 0) {
-        return moves;
-    }
-    
-    // Generate all possible combinations of valid cards
-    for (let i = 1; i <= validCards.length; i++) {
-        const combinations = getCombinations(validCards, i);
-        combinations.forEach(combo => {
-            // Check if defender has enough cards to cover
-            const defenderCards = game.players[game.defender].hand.length;
-            const uncoveredCards = game.table_battles.filter(b => b.defense === null).length;
-            
-            if (uncoveredCards + combo.length <= defenderCards) {
-                moves.push({ type: 'attack', cards: combo });
-            }
-        });
-    }
-    
-    return moves;
-}
-
-// Calculate cover moves (can cover multiple attacks in various combinations)
-function calculateCoverMoves(game: Game, botPlayer: PrivatePlayer): LegalMove[] {
-    const moves: LegalMove[] = [];
-    const hand = botPlayer.hand;
-    
-    // Find uncovered attacks
-    const uncoveredAttacks = game.table_battles.filter(battle => battle.defense === null);
-    
-    if (uncoveredAttacks.length === 0) {
-        return moves;
-    }
-    
-    // For each uncovered attack, find all cards that can cover it
-    const coverOptions: Map<number, Card[]> = new Map();
-    uncoveredAttacks.forEach((battle, index) => {
-        const attackCard = battle.attack;
-        const validCovers = hand.filter(card => canCover(attackCard, card, game.power_suit));
-        if (validCovers.length > 0) {
-            coverOptions.set(index, validCovers);
-        }
-    });
-    
-    // Generate all possible combinations of covering attacks
-    // This includes covering 1 attack, 2 attacks, ..., all attacks
-    for (let numToCover = 1; numToCover <= uncoveredAttacks.length; numToCover++) {
-        const attackIndexCombos = getCombinations(
-            Array.from({ length: uncoveredAttacks.length }, (_, i) => i),
-            numToCover
-        );
-        
-        attackIndexCombos.forEach(attackIndices => {
-            // Check if we can cover all these attacks
-            const canCoverAll = attackIndices.every(index => coverOptions.has(index));
-            if (!canCoverAll) return;
-            
-            // Generate all combinations of cards to cover these attacks
-            const coverCardCombos = generateCoverCombinations(
-                attackIndices.map(index => ({
-                    attackIndex: index,
-                    attackCard: uncoveredAttacks[index].attack,
-                    coverCards: coverOptions.get(index)!
-                }))
-            );
-            
-            coverCardCombos.forEach(combo => {
-                moves.push({
-                    type: 'cover',
-                    cards: combo.coverCards,
-                    attack_cards: combo.attackCards
-                });
-            });
-        });
-    }
-    
-    return moves;
-}
-
-// Helper function to generate all combinations of covering specific attacks
-function generateCoverCombinations(
-    attackCoverPairs: Array<{ attackIndex: number, attackCard: Card, coverCards: Card[] }>
-): Array<{ coverCards: Card[], attackCards: Card[] }> {
-    if (attackCoverPairs.length === 0) {
-        return [{ coverCards: [], attackCards: [] }];
-    }
-    
-    const [first, ...rest] = attackCoverPairs;
-    const restCombinations = generateCoverCombinations(rest);
-    const result: Array<{ coverCards: Card[], attackCards: Card[] }> = [];
-    
-    // For each card that can cover the first attack
-    first.coverCards.forEach(coverCard => {
-        // For each combination of the rest
-        restCombinations.forEach(restCombo => {
-            // Make sure we don't use the same card twice
-            if (!restCombo.coverCards.some(card => card_comp(card, coverCard))) {
-                result.push({
-                    coverCards: [coverCard, ...restCombo.coverCards],
-                    attackCards: [first.attackCard, ...restCombo.attackCards]
-                });
-            }
-        });
-    });
-    
-    return result;
-}
-
-// Calculate pass moves
-function calculatePassMoves(game: Game, botPlayer: PrivatePlayer): LegalMove[] {
-    const moves: LegalMove[] = [];
-    const hand = botPlayer.hand;
-    
-    // Can only pass if ALL attacks are uncovered (no covered battles)
-    // This matches the validation in pass.ts: if (game.table_battles.some(battle => battle.defense !== null))
-    const hasCoveredBattles = game.table_battles.some(battle => battle.defense !== null);
-    
-    if (hasCoveredBattles) {
-        // Cannot pass if any battle is covered
-        return moves;
-    }
-    
-    // All battles must be uncovered at this point
-    if (game.table_battles.length === 0) {
-        return moves;
-    }
-    
-    // Check if all attacks have same value
-    const firstValue = game.table_battles[0].attack.value;
-    const allSameValue = game.table_battles.every(battle => battle.attack.value === firstValue);
-    
-    if (allSameValue) {
-        // Find cards with the same value
-        const matchingCards = hand.filter(card => card.value === firstValue);
-        
-        if (matchingCards.length > 0) {
-            // Get next player index using the same logic as pass validation
-            const nextPlayerIndex = get_next_player_index(game, game.defender);
-            const nextPlayer = game.players[nextPlayerIndex];
-            
-            // Generate all possible combinations of matching cards (1 to all matching cards)
-            for (let i = 1; i <= matchingCards.length; i++) {
-                const combinations = getCombinations(matchingCards, i);
-                
-                combinations.forEach(combo => {
-                    // Check if next player has enough cards to cover all attacks
-                    // This matches pass validation: next_player.hand.length < cards.length + game.table_battles.length
-                    const totalCardsAfterPass = combo.length + game.table_battles.length;
-                    
-                    if (nextPlayer.hand.length >= totalCardsAfterPass) {
-                        moves.push({
-                            type: 'pass',
-                            cards: combo
-                        });
-                    }
-                });
-            }
-        }
-    }
-    
-    return moves;
-}
-
-// Helper function to check if there are players still attacking
-function hasPlayersStillAttacking(game: Game): boolean {
-    // Use the same logic as auto-transition in bot_actions.ts
-    const playable_players = game.players.filter(player =>
-        player.player_id !== game.players[game.defender].player_id &&
-        player.status !== PLAYER_STATUS.OUT &&
-        player.hand.some(card => game.table_battles.some(battle => battle.attack.value === card.value || (battle.defense && battle.defense.value === card.value))) &&
-        !(game.good_players?.includes(player.player_id))); // Exclude players who have said "good"
-    
-    return playable_players.length > 0;
-}
-
-// Helper function to generate combinations
-function getCombinations<T>(array: T[], size: number): T[][] {
-    if (size === 0) return [[]];
-    if (size > array.length) return [];
-    
-    const result: T[][] = [];
-    
-    for (let i = 0; i <= array.length - size; i++) {
-        const first = array[i];
-        const rest = getCombinations(array.slice(i + 1), size - 1);
-        
-        rest.forEach(combo => {
-            result.push([first, ...combo]);
-        });
-    }
-    
-    return result;
-} 
-

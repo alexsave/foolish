@@ -15,15 +15,13 @@ import { Text } from "./Text";
 import { useLocalization } from "../contexts/LocalizationContext";
 import { SovietIcon } from "./SovietIcon";
 import { useStyles } from "../contexts/StyleContext";
+import { botDisplayName } from "../common/botName";
 
 interface BotOption {
     id: string;
     nickname: string;
     strategy_key: string;
 }
-
-// Bot nicknames carry a reserved '%' prefix (replay-codec recovery); strip it for display.
-const botDisplayName = (nickname: string) => nickname.replace(/^%/, '');
 
 interface PlayerCardProps {
     player: PublicPlayer;
@@ -108,6 +106,12 @@ export const Lobby = () => {
     const [allBots, setAllBots] = useState<BotOption[]>([]);
     const [selectedBotIndex, setSelectedBotIndex] = useState(0);
     const [pendingBotRealIds, setPendingBotRealIds] = useState<Set<string>>(new Set());
+    // Whether the bot roster fetch has finished (regardless of success), and
+    // whether the user pressed "Add Bot" before it did. Together they let a click
+    // that lands during the load resolve to a SPECIFIC bot instead of falling
+    // through to the server's random pick (bot_id omitted).
+    const [rosterLoaded, setRosterLoaded] = useState(false);
+    const [pendingAdd, setPendingAdd] = useState(false);
 
     // Bots the picker can still add: the roster minus those already seated and
     // those added optimistically this session (server not yet caught up).
@@ -122,6 +126,9 @@ export const Lobby = () => {
     const rearrangeTimerRef = useRef<NodeJS.Timeout | null>(null);
     const pendingReadyRef = useRef<boolean>(false);
     const inputRef = useRef<HTMLInputElement>(null);
+    // Latest handleAddBot, so the deferred-add effect (declared before the early
+    // return, above handleAddBot) can invoke it without a hoisting dance.
+    const addBotFnRef = useRef<((bot?: BotOption) => void) | null>(null);
 
     useEffect(() => {
         if (game?.players) {
@@ -210,11 +217,30 @@ export const Lobby = () => {
             .select('id, nickname, strategy_key')
             .order('created_at', { ascending: false })
             .then(({ data, error }) => {
-                if (cancelled || error || !data) return;
-                setAllBots(data.filter((b: BotOption) => b.strategy_key !== STRATEGY_KEY.GPT));
+                if (cancelled) return;
+                if (!error && data) {
+                    setAllBots(data.filter((b: BotOption) => b.strategy_key !== STRATEGY_KEY.GPT));
+                }
+                // Mark the roster settled even on error, so a deferred add doesn't
+                // wait forever — it falls back to the server's pick only when the
+                // roster genuinely yielded nothing to choose from.
+                setRosterLoaded(true);
             });
         return () => { cancelled = true; };
     }, []);
+
+    // A click on "Add Bot" that happened before the roster loaded was parked
+    // (pendingAdd) rather than sent as a bot_id-less (random) request. Once the
+    // roster is in, add the bot the picker now points at — a SPECIFIC bot.
+    useEffect(() => {
+        if (!pendingAdd || !rosterLoaded) return;
+        setPendingAdd(false);
+        const bot = selectableBots.length > 0
+            ? selectableBots[((selectedBotIndex % selectableBots.length) + selectableBots.length) % selectableBots.length]
+            : undefined;
+        addBotFnRef.current?.(bot);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [pendingAdd, rosterLoaded, selectableBots, selectedBotIndex]);
 
     useEffect(() => {
         const handleMouseMove = (e: MouseEvent | Touch) => {
@@ -389,7 +415,9 @@ export const Lobby = () => {
             setLocalPlayerOrder(prev => prev.filter(p => p.player_id !== optimisticId));
         });
     };
-    
+    // Keep the deferred-add effect pointed at the current handleAddBot closure.
+    addBotFnRef.current = handleAddBot;
+
     const handleRemovePlayer = (playerId: string, isBot: boolean) => {
         if (!game_id) return;
         setLocalPlayerOrder(prev => prev.filter(p => p.player_id !== playerId));
@@ -532,7 +560,13 @@ export const Lobby = () => {
                     )}
                     <div
                         className="btn-add-bot"
-                        onClick={() => handleAddBot(selectedBot ?? undefined)}
+                        onClick={() => {
+                            if (selectedBot) handleAddBot(selectedBot);
+                            // Roster still loading: park the intent so the effect
+                            // adds a specific bot once it arrives — never a random one.
+                            else if (!rosterLoaded) setPendingAdd(true);
+                            else handleAddBot();
+                        }}
                         style={useWoodTexture ? buttonTextureStyle : undefined}
                     >
                         {useWoodTexture && <div className="btn-add-bot__texture" style={buttonTextureStyle} />}

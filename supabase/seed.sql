@@ -117,9 +117,12 @@ CREATE TABLE chat_messages (
   created_at TIMESTAMP DEFAULT NOW()
 );
 
--- User ELO ratings table
+-- User ELO ratings table. Also carries the (immutable) username so the
+-- publicly-readable rating rows can be rendered as a leaderboard without
+-- touching auth.users — see migration 20260702090000_leaderboard_usernames.
 CREATE TABLE user_elo_ratings (
   user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  username TEXT,
   elo_rating INTEGER NOT NULL DEFAULT 1000,
   previous_elo INTEGER NOT NULL DEFAULT 1000,
   games_played INTEGER NOT NULL DEFAULT 0,
@@ -155,12 +158,8 @@ CREATE TABLE bot_hands (
 -- games.version (optimistic CAS via the commit_game RPC) and the games.bot_lease_*
 -- columns (auto-expiring bot-loop lease). See migration 20260616030000.
 
--- Auto discard locks table - Simple table-based locking for auto-discard monitoring
-CREATE TABLE auto_discard_locks (
-  game_id TEXT PRIMARY KEY REFERENCES games(id) ON DELETE CASCADE,
-  lock_id TEXT NOT NULL, -- Random ID to verify lock ownership
-  acquired_at TIMESTAMP DEFAULT NOW()
-);
+-- (auto_discard_locks removed — it backed the 60s all-good auto-discard, which
+-- is disabled in actions/good.ts; see migration 20260702090000.)
 
 -- Game logs table - Log all game actions for bot memory and game history
 -- This allows bots to track which cards have been played and infer information about opponent hands
@@ -171,7 +170,11 @@ CREATE TABLE game_logs (
   player_id TEXT, -- Player who performed the action (null for system events like discard/defender_change)
   card_pairs JSONB NOT NULL DEFAULT '[]'::jsonb, -- Array of {primary: Card, target?: Card} - target only used for COVER
   defender_index INTEGER, -- For defender_change events, the new defender index
-  created_at TIMESTAMP DEFAULT NOW()
+  created_at TIMESTAMP DEFAULT NOW(),
+  -- Insert-order tie-breaker: created_at only has ms precision and one move's
+  -- cascade logs share a millisecond, so the replay encoder orders the session
+  -- by (created_at, seq). See migration 20260701120000.
+  seq BIGSERIAL
 );
 
 -- Game snapshots - one row per finished session: the complete game compressed
@@ -204,14 +207,14 @@ CREATE INDEX idx_chat_messages_game_id ON chat_messages(game_id);
 CREATE INDEX idx_chat_messages_user_id ON chat_messages(user_id);
 CREATE INDEX idx_chat_messages_created_at ON chat_messages(created_at);
 CREATE INDEX idx_games_updated_at ON games(updated_at);
+-- bot-heartbeat SCAN (every 10s): status='playing' + updated_at window
+CREATE INDEX idx_games_playing_updated_at ON games(updated_at) WHERE status = 'playing';
 CREATE INDEX idx_user_elo_ratings_user_id ON user_elo_ratings(user_id);
 CREATE INDEX idx_user_elo_ratings_elo_rating ON user_elo_ratings(elo_rating);
 CREATE INDEX idx_bots_strategy_key ON bots(strategy_key);
 CREATE INDEX idx_bots_elo_rating ON bots(elo_rating);
 CREATE INDEX idx_bot_hands_game_id ON bot_hands(game_id);
 CREATE INDEX idx_bot_hands_bot_id ON bot_hands(bot_id);
-CREATE INDEX idx_auto_discard_locks_game_id ON auto_discard_locks(game_id);
-CREATE INDEX idx_auto_discard_locks_acquired_at ON auto_discard_locks(acquired_at);
 CREATE INDEX idx_game_logs_game_id ON game_logs(game_id);
 CREATE INDEX idx_game_logs_log_type ON game_logs(log_type);
 CREATE INDEX idx_game_logs_player_id ON game_logs(player_id);
@@ -231,7 +234,6 @@ ALTER TABLE chat_messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_elo_ratings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bots ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bot_hands ENABLE ROW LEVEL SECURITY;
-ALTER TABLE auto_discard_locks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE game_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE game_snapshots ENABLE ROW LEVEL SECURITY;
 
@@ -320,10 +322,6 @@ CREATE POLICY "Only service role can delete bots" ON bots
 CREATE POLICY "Only service role can access bot hands" ON bot_hands
   FOR ALL USING ((select auth.role()) = 'service_role');
 
--- Auto discard locks: ONLY service role can access (edge functions only)
-CREATE POLICY "Only service role can access auto discard locks" ON auto_discard_locks
-  FOR ALL USING ((select auth.role()) = 'service_role');
-
 -- Game logs: ONLY service role can write, but can be read for analysis
 -- Bots and advanced strategies can read these logs to make better decisions
 CREATE POLICY "Service role can insert logs" ON game_logs
@@ -389,9 +387,9 @@ SET search_path = ''
 LANGUAGE plpgsql
 AS $$
 BEGIN
-  INSERT INTO public.user_elo_ratings (user_id, elo_rating, games_played)
-  VALUES (NEW.id, 1000, 0)
-  ON CONFLICT (user_id) DO NOTHING;
+  INSERT INTO public.user_elo_ratings (user_id, elo_rating, games_played, username)
+  VALUES (NEW.id, 1000, 0, NEW.raw_user_meta_data->>'username')
+  ON CONFLICT (user_id) DO UPDATE SET username = EXCLUDED.username;
   RETURN NEW;
 END;
 $$;
@@ -437,10 +435,13 @@ CREATE TRIGGER handle_chat_messages_changes
   FOR EACH ROW
   EXECUTE FUNCTION chat_messages_changes();
 
--- Trigger to create default ELO rating for new users
+-- Trigger to create default ELO rating for new users. Also fires on metadata
+-- UPDATE: the app has no rename flow, but GoTrue's updateUser (and the admin
+-- dashboard) can change raw_user_meta_data, and the denormalized
+-- user_elo_ratings.username copy must follow.
 DROP TRIGGER IF EXISTS handle_new_user_elo_rating ON auth.users;
 CREATE TRIGGER handle_new_user_elo_rating
-  AFTER INSERT
+  AFTER INSERT OR UPDATE OF raw_user_meta_data
   ON auth.users
   FOR EACH ROW
   EXECUTE FUNCTION create_default_elo_rating();
@@ -485,7 +486,8 @@ CREATE OR REPLACE FUNCTION commit_game(
   p_game             JSONB,
   p_deck             JSONB,
   p_hands            JSONB,
-  p_bot_hands        JSONB
+  p_bot_hands        JSONB,
+  p_logs             JSONB DEFAULT NULL
 ) RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -531,6 +533,23 @@ BEGIN
     FROM jsonb_array_elements(p_bot_hands) AS b
     ON CONFLICT (game_id, bot_id) DO UPDATE
       SET hand = EXCLUDED.hand, awaiting_attack = EXCLUDED.awaiting_attack, updated_at = now();
+  END IF;
+
+  -- This move's logs, atomic with the state they describe (see migration
+  -- 20260702100000). Array order is preserved by jsonb_array_elements, so
+  -- game_logs.seq keeps the emit order the replay encoder depends on.
+  -- ON CONFLICT keeps the write idempotent for retried requests.
+  IF p_logs IS NOT NULL AND jsonb_array_length(p_logs) > 0 THEN
+    INSERT INTO game_logs (id, game_id, log_type, player_id, card_pairs, defender_index, created_at)
+    SELECT (l->>'id')::uuid,
+           p_game_id,
+           (l->>'log_type')::log_type,
+           l->>'player_id',
+           COALESCE(l->'card_pairs', '[]'::jsonb),
+           (l->>'defender_index')::int,
+           (l->>'created_at')::timestamp
+    FROM jsonb_array_elements(p_logs) AS l
+    ON CONFLICT (id) DO NOTHING;
   END IF;
 
   RETURN jsonb_build_object('status', 'ok', 'version', v_new_version);
@@ -792,7 +811,30 @@ INSERT INTO bots (nickname, strategy_key) VALUES
 -- Cordite Max (same brain, larger sampled-world budget, <2s per decision)
 ('Cordite Max 1', 'cordite_max'),
 ('Cordite Max 2', 'cordite_max'),
-('Cordite Max 3', 'cordite_max');
+('Cordite Max 3', 'cordite_max'),
+
+-- Semtex (cordite's successor: exact leaf endgames in rollouts, extended
+-- exact-solve window, per-seat MC-tells + opponent profiling — beats cordite
+-- head-to-head and exploits weak opponents harder; see cnitro/SEMTEX.md)
+('Semtex 1', 'semtex'),
+('Semtex 2', 'semtex'),
+('Semtex 3', 'semtex'),
+
+-- Semtex Max (same brain, cordite_max world budget)
+('Semtex Max 1', 'semtex_max'),
+('Semtex Max 2', 'semtex_max'),
+('Semtex Max 3', 'semtex_max'),
+
+-- Octogen (semtex + extended exact-solve window; provably never worse than
+-- semtex, strictly better in deep heads-up endgames — see cnitro/OCTOGEN.md)
+('Octogen 1', 'octogen'),
+('Octogen 2', 'octogen'),
+('Octogen 3', 'octogen'),
+
+-- Octogen Max (same brain, semtex_max world budget)
+('Octogen Max 1', 'octogen_max'),
+('Octogen Max 2', 'octogen_max'),
+('Octogen Max 3', 'octogen_max');
 
 -- Bots carry the reserved '%' prefix so bot-vs-human is recoverable from the
 -- name-only replay codec. Done as an UPDATE (rather than prefixing every literal

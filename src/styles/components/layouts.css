@@ -768,6 +768,17 @@
   color: var(--color-text-muted);
 }
 
+/* ===== Leaderboard ===== */
+.leaderboard__tab--active {
+  border: 3px solid var(--color-success);
+}
+
+/* The Soviet theme repaints every .btn-wood border black (buttons.css) at
+   higher specificity; keep the selected tab distinguishable there too. */
+[data-theme="soviet"] .btn-wood.leaderboard__tab--active {
+  border-color: var(--color-success);
+}
+
 /* =================================================================
    SOVIET THEME Layout Overrides
    ================================================================= */

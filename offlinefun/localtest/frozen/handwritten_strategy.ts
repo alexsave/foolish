@@ -1,6 +1,6 @@
-import { Card, Game, PrivatePlayer } from '../types.ts';
-import { BotStrategy, LegalMove } from '../bot_interfaces.ts';
-import { canCover, card_comp } from '../common_utils.ts';
+import { Card, Game, PrivatePlayer } from '../../../supabase/functions/_shared/types.ts';
+import { BotStrategy, LegalMove } from '../../../supabase/functions/_shared/bot_interfaces.ts';
+import { canCover, card_comp } from '../../../supabase/functions/_shared/common_utils.ts';
 
 // Handwritten strategy - never done attacking, always attack with as many cards as possible
 // Replicates the logic from aiDefend() and chooseAttack() functions

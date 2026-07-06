@@ -9,11 +9,14 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#define MAX_PLAYERS    8          // 2..8 players. 6..8 players use the full
-                                  // 52-card deck (values 2..A); 2..5 players
-                                  // use the 36-card deck (values 5..A).
+#define MAX_PLAYERS    8          // 2..8 players; deck size boundary is
+                                  // configurable (see card.h).
 #define MAX_HAND_SIZE  64         // generous; pickup can stack many cards.
-#define MAX_BATTLES    32         // enough for any reasonable round.
+#ifndef MAX_BATTLES
+#define MAX_BATTLES    32         // build parameter; WASM uses 64 (a defender
+                                  // holding 33+ cards can legally face 33+
+                                  // simultaneous attacks).
+#endif
 #define MAX_DECK       64         // 36 for 2p, with slack.
 #define MAX_LOGS       512        // long games never approach this.
 
@@ -45,7 +48,14 @@ typedef struct {
 
 // Each pair has a primary card and an optional target card. For COVER, target
 // is the attack card the cover defends; otherwise unused.
+//
+// Capacity is a build parameter: the native arena keeps the compact 16 (its
+// Game struct is memcpy-cloned in Monte-Carlo hot loops), while the WASM
+// production build uses 64 (-DMAX_LOG_PAIRS=64) because the TS engine logs
+// every card of a big pickup/discard and the replay codec needs them all.
+#ifndef MAX_LOG_PAIRS
 #define MAX_LOG_PAIRS 16
+#endif
 typedef struct {
     Card  primary;
     Card  target;
@@ -117,6 +127,63 @@ void     game_rng_set(uint32_t s);
 void     random_strategy_set_seed(uint32_t s);
 double   random_strategy_random(void);
 
+// ---------- Engine observation hooks ------------------------------------
+//
+// Optional callback fired at exactly the points where the production TS
+// server captured an intermediate game-state snapshot for an animation
+// event (see actions/*.ts). NULL (the default) costs nothing; the WASM
+// bridge installs one to reconstruct the TS AnimationEvent stream from C
+// transitions. `aux` is the acting/affected player index, or the battle
+// index for ENGINE_HOOK_COVER.
+
+#define ENGINE_HOOK_ATTACK           1
+#define ENGINE_HOOK_OUT              2
+#define ENGINE_HOOK_COVER            3
+#define ENGINE_HOOK_DISCARD          4
+#define ENGINE_HOOK_DRAW             5
+#define ENGINE_HOOK_DEFENDER_MOVE    6
+#define ENGINE_HOOK_PASS             7
+#define ENGINE_HOOK_PICKUP           8
+#define ENGINE_HOOK_MAGIC_TRANSITION 9
+#define ENGINE_HOOK_TRASH            10
+#define ENGINE_HOOK_START_MAGIC      11
+#define ENGINE_HOOK_DEAL             12
+#define ENGINE_HOOK_FLIPPED          13
+#define ENGINE_HOOK_START_DEFENDER   14
+
+extern void (*engine_snap_hook)(const Game *g, int tag, int aux);
+
+// ---------- Rejection reasons --------------------------------------------
+//
+// Why the last handle_* / validation returned false. The TS bridge maps
+// these to the exact production error messages; native callers may ignore
+// them. Reset to ENGINE_REJECT_NONE at the top of every handler.
+
+#define ENGINE_REJECT_NONE                0
+#define ENGINE_REJECT_NOT_PLAYING         1
+#define ENGINE_REJECT_EMPTY               2
+#define ENGINE_REJECT_IS_DEFENDER         3
+#define ENGINE_REJECT_NOT_DEFENDER        4
+#define ENGINE_REJECT_NOT_IN_HAND         5
+#define ENGINE_REJECT_DUPLICATES          6
+#define ENGINE_REJECT_NOT_SAME_VALUE      7
+#define ENGINE_REJECT_NOT_FIRST_ATTACKER  8
+#define ENGINE_REJECT_VALUE_NOT_ON_TABLE  9
+#define ENGINE_REJECT_DEFENDER_CAPACITY   10
+#define ENGINE_REJECT_NO_UNCOVERED        11
+#define ENGINE_REJECT_ATTACK_NOT_ON_TABLE 12
+#define ENGINE_REJECT_CANNOT_COVER        13
+#define ENGINE_REJECT_NO_TABLE_CARDS      14
+#define ENGINE_REJECT_COVER_PRESENT       15
+#define ENGINE_REJECT_PASS_VALUES         16
+#define ENGINE_REJECT_PASS_CAPACITY       17
+#define ENGINE_REJECT_NOT_IN_STATUS       18
+#define ENGINE_REJECT_ALREADY_GOOD        19
+#define ENGINE_REJECT_FIRST_MUST_ATTACK   20
+#define ENGINE_REJECT_PASS_OVERFLOW       21
+
+extern int engine_last_reject;
+
 // ---------- Helpers -----------------------------------------------------
 
 bool can_cover(Card attack, Card defense, int power_suit);
@@ -139,5 +206,10 @@ bool handle_good(Game *g, int player_idx);
 // ---------- Loop helpers ------------------------------------------------
 
 bool should_bot_act(const Game *g, int bot_idx);
+
+// Public entries for the two round-lifecycle phases the TS server also
+// exposed standalone (executeRoundTransition / refillPlayerHandsWithEvents).
+void engine_run_round_transition(Game *g);
+void engine_run_refill(Game *g);
 
 #endif

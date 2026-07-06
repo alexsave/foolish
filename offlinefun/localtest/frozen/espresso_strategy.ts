@@ -1,6 +1,6 @@
-import { Card, Game, PrivatePlayer, LOG_TYPE, PLAYER_STATUS } from '../types.ts';
-import { BotStrategy, LegalMove } from '../bot_interfaces.ts';
-import { canCover } from '../common_utils.ts';
+import { Card, Game, PrivatePlayer, LOG_TYPE, PLAYER_STATUS } from '../../../supabase/functions/_shared/types.ts';
+import { BotStrategy, LegalMove } from '../../../supabase/functions/_shared/bot_interfaces.ts';
+import { canCover } from '../../../supabase/functions/_shared/common_utils.ts';
 import { HandwrittenBotStrategy } from './handwritten_strategy.ts';
 
 // Espresso — perfect-info strategy.
@@ -532,7 +532,7 @@ export class EspressoStrategy implements BotStrategy {
     }
 
     private getDeckCards(game: Game): Card[] {
-        const startValue = game.players.length > 4 ? 1 : 5;
+        const startValue = game.players.length >= 6 ? 1 : 5;
         const known = new Set<string>();
         for (const p of game.players) for (const c of p.hand) known.add(cardKey(c));
         for (const b of game.table_battles) {

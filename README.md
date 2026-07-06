@@ -11,6 +11,13 @@ from-scratch game-playing neural net, an information-theoretic replay codec, and
 a fully procedural, offline-capable renderer. See
 [The four projects under the hood](#the-four-projects-under-the-hood).
 
+Feature analysis and what's next: see [ROADMAP.md](ROADMAP.md) — a full
+gap review with priorities. The two P0 items are shipped: a global
+**leaderboard** (`/leaderboard`, humans and bots on one Elo ladder) and
+**match history with a replay gallery** (`/history`, every finished game
+decoded from its snapshot, re-watchable forever). Screenshots in
+[`docs/screenshots/`](docs/screenshots/).
+
 ---
 
 ## Quick start
@@ -49,7 +56,8 @@ Deploys to Vercel with zero config — Vercel auto-detects Next.js and serves th
 
 ```
 src/                      Next.js web client (App Router)
-  app/                    routes — /, /about, /tutorial, /dashboard, /:game_id
+  app/                    routes — /, /about, /tutorial, /dashboard, /:game_id,
+                          /leaderboard (Elo ladder), /history (past games + replays)
   components/             UI, incl. GameDisplay/* (board, cards, animations)
   contexts/               game state, auth, realtime, drag, animation, theme, i18n
   state/                  realtime animation feed + client reconciliation
@@ -61,29 +69,71 @@ src/                      Next.js web client (App Router)
 supabase/
   functions/              edge functions: create/join/attack/cover/pass/pickup/
                           good/exit/start/continue/add-bot/bot_bump/meta/...
-  functions/_shared/      single source of truth: rules, types, actions,
-                          replay codec, bot strategies
+  functions/_shared/      types, actions, replay codec, and the WASM bridges
+                          to the C kernel (rules + bot brains)
   migrations/             schema, incl. CAS concurrency + bot-lease heartbeat
   seed.sql                seeds the bot roster (Cordite, Espresso, Handwritten, …)
 
 cnitro/                   pure-C Durak engine + bot arena  ← project 1
 offlinefun/               offline/PWA layer + ML experiments (NEAT, nitro)  ← projects 2 & 4
 e2e/                      full-stack test suite (real server code, real Postgres)
-docs/                     design / refactor notes
+docs/                     design / refactor notes; ARCHITECTURE_REVIEW.md is the
+                          latest full audit (server flow, client data flow,
+                          fixed glitches, ranked improvement backlog)
 ```
 
-### Shared code (`@shared`)
+### Shared code (`@shared`) and the C rules kernel
 
-The game rules, types, constants, action handlers and the replay codec are
-shared between the web client and the Supabase edge functions, with a **single
-source of truth**: `supabase/functions/_shared/`. The client imports it via the
-`@shared/*` path alias (see `tsconfig.json`), e.g.
-`import { Card } from '@shared/types.ts'`.
+**The game rules have one implementation: C.** The kernel in
+`cnitro/src/game.c` + `legal.c` (state transitions, legality, legal-move
+enumeration, dealing/refill, the log stream) is compiled to WebAssembly
+(`cd cnitro && make wasm`) and embedded as base64 in
+`supabase/functions/_shared/wasm/rules_wasm.ts`, so the same 29 KB module
+loads with zero asset plumbing in Deno edge functions, Node (tests, offline
+sims) and browsers. The TS files in `_shared/actions/` and parts of
+`common_utils.ts` are now thin bridges: they marshal the `Game` object into
+the kernel, run the action, and reconstruct the exact TS API surface —
+mutated state, `game_logs`, error messages, and the AnimationEvent stream
+with its per-step snapshots (the kernel fires a hook at every point the old
+TS handlers captured one). Before the TS implementations were deleted, a
+differential harness replayed ~100k mirrored actions plus ~30k adversarial
+probes through both engines with identical seeds and byte-compared states,
+logs, events and rejection messages: zero divergence. `e2e/wasm_engine.test.ts`
+keeps policing the seams.
 
-The imports keep Deno's required `.ts` extensions (enabled for the client by
-`allowImportingTsExtensions`, resolved by Turbopack), so the same files load
-unmodified in both Deno and Next. This replaced an older `copy-common.sh` script
-that duplicated files into `src/` and let them drift.
+**The bot brains are C too.** Every algorithmic strategy (`random`,
+`espresso`, `handwritten`, `simple_heuristic`, `champion`,
+`ultimate_champion`, `hacker`, `cordite`, `cordite_max`, `fulminate`) lives
+in `cnitro/src/*_strategy.c` and ships as a second module, `bots.wasm`
+(`make wasm-bots` → `_shared/wasm/bots_wasm.ts`, ~150 KB): the rules kernel
+plus all bots plus a choose-move bridge. A bot turn marshals the game in
+once and the kernel enumerates legal moves and picks one — only the chosen
+index crosses back to TS (`_shared/wasm/bots.ts`,
+`WasmBotStrategy` in `bot_strategy.ts`). The seven heuristic bots are
+**exact behavioral mirrors** of the TS originals — `e2e/bot_parity.test.ts`
+proves the kernel picks the identical move on every decision of thousands
+of seeded games (RNG streams pinned on both sides); the retired TS sources
+are frozen as oracles in `offlinefun/localtest/frozen/`. cordite/fulminate
+run the C originals directly (the TS versions were ports of them), at the
+production world budget via the `CD_BUDGET` knob — roughly **15× faster**
+per decision than the TS implementation at 4 players (bitboard rollouts +
+no GC; a wasm tick-profile pass then took another ~1.5× out of the rollout
+inner loops: cached table-value mask, O(1) greedy-cover pick, wasm
+bulk-memory copies). The extra speed is banked as latency, not strength:
+world-budget sweeps show the deployed budget already sits at the
+saturation knee (2×/4× worlds moved win rate 40.0%→40.0%→39.0% at pc4,
+26%→25% at pc6 over 400 seeded games each). The only TS-brained
+strategies left are the non-algorithmic ones: `gpt` (LLM adapter) and the
+experimental `nitro` NN.
+
+Types, constants, the replay codec, meta/lobby actions, and the I/O layer
+(DB, broadcast, bot loop) remain TS in `supabase/functions/_shared/`, shared
+between client and edge functions via the `@shared/*` path alias (see
+`tsconfig.json`) with Deno-style `.ts` extensions, as before. A few thin,
+kernel-mirrored projections (`canCover`, `game_done`,
+`get_next_player_index`, `shouldBotActCore`) stay in TS for the client's
+synchronous use — parity-tested against the kernel, never independently
+evolved.
 
 ### How the game runs
 
@@ -121,19 +171,23 @@ games flow between them: a match simulated in native C can be replayed in the
 browser, shared as a QR code, and re-fought by a Monte-Carlo bot that provably
 never cheats.
 
-### 1. `cnitro/` — a pure-C Durak engine and bot arena
+### 1. `cnitro/` — the C Durak engine (now THE engine) and bot arena
 
-A self-contained C port of the engine whose job is to simulate **millions of
-games** and evaluate bots without paying the TS language-boundary cost. It mirrors
-`supabase/functions/_shared/` exactly, so a game played in C is a legal game on the
-production server. It ships a full bot ladder — `random` → `espresso`/`handwritten`
+A self-contained C engine whose job began as simulating **millions of games**
+to evaluate bots without the TS language-boundary cost — and which is now the
+**production rules engine itself**: its kernel (`game.c` + `legal.c`) compiles
+to WebAssembly and executes every live move on the server (see
+[Shared code and the C rules kernel](#shared-code-shared-and-the-c-rules-kernel)).
+A game played in C isn't just *legal* on the production server — it runs the
+same machine code path. It ships a full bot ladder — `random` → `espresso`/`handwritten`
 → `robusta`/`firecracker`/`gunpowder` → `blackpowder` → **`cordite`** (ELO #1, beats
 every other bot at every player count) — plus tools for head-to-head evals, a
 mixed-pool ELO arena, and seeded move-by-move replays. Cordite is a
 **belief-constrained determinized Monte-Carlo** player with an exact endgame solver
 that derives hidden information by deduction rather than peeking, under a strict
-**no-LLM / no-cheating** contract. It's ported back to TypeScript and runs as the
-live `cordite` / `cordite_max` bots. See `cnitro/README.md`, `cnitro/CORDITE.md`,
+**no-LLM / no-cheating** contract. It runs live as the `cordite` /
+`cordite_max` / `fulminate` bots — the C implementation itself, compiled into
+`bots.wasm`. See `cnitro/README.md`, `cnitro/CORDITE.md`,
 `cnitro/BLACKPOWDER.md`, and `cnitro/CORDITE_RESEARCH.md`.
 
 ```bash
