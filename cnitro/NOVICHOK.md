@@ -2,16 +2,26 @@
 
 Named after something that should never be used in battle by any means.
 Novichok is octogen (the strongest honest bot) with the honesty removed: it
-reads every hidden hand, and optionally predicts the deck order itself from
-the engine's RNG determinism. It exists to answer one question — *what eval
-values can the session's strongest architecture achieve if it is allowed to
-cheat?* — and the answer turned out to be the most interesting negative
-result of the session:
+reads every hidden hand, solves endgames on the true state, and exploits
+the engine's RNG determinism to know, exactly, the cards the next refill
+will deal. It exists to answer one question — *what eval values can the
+session's strongest architecture achieve if it is allowed to cheat?* — and
+it ended up answering three more interesting ones:
 
-> **Perfect information makes the bot BETTER against weak opponents and
-> WORSE against strong MC opponents.** Belief-spread world sampling is not
-> just an information-recovery device — it is model-error smoothing, and a
-> cheater gives that smoothing up.
+1. **"Knowing the deck order" is not one thing.** This engine has no
+   pre-shuffled order to peek at — each draw picks a random index from the
+   remaining deck at draw time, so the order is *created* by the RNG
+   stream, entangled with every future move by every player. Order
+   knowledge is only well-defined over spans with no intervening
+   decisions.
+2. **Where the order IS provable, using it wins everywhere.** Exact refill
+   pinning (below) measured better-or-equal than the plain hands cheat in
+   every cell, every field, every player count.
+3. **Belief-averaging is opponent-model error smoothing.** At 3+ player MC
+   tables, even the full cheat stays below honest octogen: sharp
+   true-hand worlds re-run the same wrong prediction of strong opponents'
+   moves in every rollout, while the honest bot's belief-spread worlds
+   decorrelate that error and average it down.
 
 Novichok is C-only, never registered in TS/production seeds, and (like
 espresso's hand-peek) exists purely as a benchmark ceiling probe.
@@ -20,123 +30,171 @@ espresso's hand-peek) exists purely as a benchmark ceiling probe.
 
 Starting from a verbatim octogen copy (`nv_` namespace):
 
-1. **True-hand worlds** (`nv_sample_world`): instead of building a belief
-   (pins, voids, rank floors, MC-tells) and sampling hidden hands from it,
-   every "sampled" world keeps the real hands from the live `Game` and only
-   shuffles the deck. All belief machinery is bypassed (`nv_no_floors=1`,
-   `nv_no_voids=1`, `NV_ADAPT=0` — there is nothing left to infer).
+1. **True-hand worlds** (`nv_sample_world`): every "sampled" world keeps
+   the real hands from the live `Game` and only shuffles the deck. All
+   belief machinery (pins, voids, rank floors, MC-tells) is bypassed —
+   there is nothing left to infer.
 2. **Exact root solves on truth**: the deck-empty endgame solver runs on a
-   direct `game_clone` of the live state instead of a deduced
-   reconstruction — within the solve window (`NV_SOLVE_CARDS=28`) novichok
-   plays *provably* perfectly against the actual hands.
-3. **`NV_PEEK` (off by default — measured worse, see below)**: the game
-   RNG is deterministic per seed and cordite-family bots consume zero net
-   game-RNG (they save/restore around their own sampling). A trial that
-   replicates the harness loop exactly — the same eligible-actor shuffle
-   consuming the live RNG stream, RNG-neutral handwritten stand-ins for
-   every seat, `draw_card` on the live stream — therefore draws the EXACT
-   cards the real game will draw, for as long as the predicted moves match
-   reality. `NV_PEEK=1` replaces the shuffled-world MC with an average over
-   `NV_PEEK_TRIALS` such predicted-order trials (trial *t* pre-advances the
-   stream by *t* draws to hedge prediction decay).
+   direct clone of the live state; within the solve window
+   (`NV_SOLVE_CARDS=28`) novichok plays *provably* perfectly against the
+   actual hands.
+3. **Exact refill pinning** (`NV_PEEK=2`, the default): the game RNG is
+   deterministic, and `refill_player_hands` runs *synchronously inside*
+   the battle-ending move handlers — no other actor decides anything
+   between our move and its refill. So for every candidate move that ends
+   the battle, the exact refill cards are a deterministic function of the
+   live RNG state, with zero prediction risk, against any opponent.
+   Novichok probe-applies each candidate once on a clone with the live
+   stream, records the drawn cards, and force-feeds that sequence to the
+   sim's refill (`cd_sim_set_forced_draws`) in every sampled world: exact
+   near-horizon knowledge, full shuffled-world smoothing beyond it.
+   Heads-up this is devastating in principle — the pinned refill IS the
+   opponent's exact next hand, so the next battle's worlds are all-true.
 
-Everything else — the 3-stage MC, rollout policies, cheapest-first
-tie-break, 8-card exact rollout leaves heads-up, octogen's 400k/250k
-solver budgets and 24-card avoidance gate — is octogen, unchanged.
+`NV_PEEK=1` is the failed first design, kept for the record: whole-game
+trials that replicate the harness loop (same eligible-actor shuffle
+consuming the live stream, RNG-neutral handwritten stand-ins, live-stream
+draws), predicting the *entire* future draw order. The prediction is exact
+only until the first move where a real opponent diverges from the
+stand-in — see the findings.
 
 ## Headline results
 
-All cells are paired same-deal runs, `novichok` as hero vs `octogen` as
-control, seeds from 980001. `diff` is hero−control mean placement:
-**negative = the cheat helps, positive = the cheat hurts.**
+All cells are paired same-deal runs, `novichok` (default config) as hero
+vs `octogen` as control, seeds from 980001. `diff` is hero−control mean
+placement: **negative = the cheat beats the honest apex.**
 
 | tables (opp in every other seat) | pc | pairs | diff ± SE | win nv | win og |
 |---|---|---|---|---|---|
 | handwritten | 2 | 300 | **−0.073 ± 0.020** | 97.3% | 90.0% |
-| handwritten | 3 | 200 | **−0.325 ± 0.052** | 87.5% | 64.0% |
-| handwritten | 4 | 150 | **−0.163 ± 0.067** | 48.7% | 37.7% |
-| handwritten | 6 | 150 | −0.280 ± 0.151 | 31.3% | 25.3% |
-| handwritten | 8 | 150 | −0.207 ± 0.186 | 14.7% | 16.0% |
-| espresso | 2 | 200 | +0.055 ± 0.044 | 75.0% | 80.5% |
-| espresso | 4 | 150 | **−0.300 ± 0.094** | 51.3% | 35.3% |
-| random | 2 | 200 | +0.005 ± 0.013 | 98.0% | 98.5% |
-| cordite | 2 | 200 | +0.035 ± 0.047 | 59.0% | 62.5% |
-| cordite | 3 | 150 | **+0.287 ± 0.089** | 25.3% | 38.0% |
-| cordite | 4 | 200 | +0.155 ± 0.100 | 15.0% | 20.0% |
-| cordite | 6 | 150 | +0.347 ± 0.187 | 14.0% | 14.7% |
-| cordite | 8 | 150 | −0.060 ± 0.227 | 16.0% | 8.7% |
-| octogen | 2 | 100 | **+0.220 ± 0.066** | 26.0% | 48.0% |
-| octogen | 4 | 100 | **+0.320 ± 0.155** | 17.0% | 26.0% |
+| handwritten | 3 | 200 | **−0.175 ± 0.056** | 78.0% | 64.0% |
+| handwritten | 4 | 150 | **−0.213 ± 0.100** | 54.0% | 35.3% |
+| handwritten | 6 | 150 | −0.093 ± 0.151 | 29.3% | 25.3% |
+| handwritten | 8 | 150 | +0.167 ± 0.183 | 12.7% | 16.0% |
+| espresso | 2 | 200 | −0.030 ± 0.040 | 83.5% | 80.5% |
+| espresso | 4 | 150 | **−0.220 ± 0.107** | 54.0% | 35.3% |
+| random | 2 | 200 | −0.005 ± 0.011 | 99.0% | 98.5% |
+| random | 3 | 200 | −0.025 ± 0.038 | 87.0% | 84.0% |
+| random | 4 | 200 | +0.035 ± 0.057 | 68.5% | 70.0% |
+| random | 6 | 150 | +0.240 ± 0.106 | 48.0% | 61.3% |
+| random | 8 | 150 | +0.160 ± 0.164 | 36.0% | 32.7% |
+| cordite | 2 | 200 | −0.010 ± 0.048 | 63.5% | 62.5% |
+| cordite | 3 | 150 | +0.173 ± 0.095 | 28.7% | 38.0% |
+| cordite | 4 | 200 | +0.150 ± 0.103 | 15.5% | 20.0% |
+| cordite | 6 | 150 | +0.267 ± 0.185 | 11.3% | 14.7% |
+| cordite | 8 | 150 | +0.467 ± 0.207 | 8.7% | 8.7% |
+| octogen | 2 | 100 | −0.050 ± 0.069 | 53.0% | 48.0% |
+| octogen | 4 | 100 | +0.090 ± 0.171 | 22.0% | 26.0% |
 
-Two clean regimes:
+Raw eval values (400 games each): vs handwritten heads-up **97.2% wins,
+mean placement 1.028**; vs random heads-up **98.2% / 1.018** — the biggest
+numbers any bot in this repo has posted.
 
-- **Heuristic fields (handwritten, espresso at 3+, random)**: the cheat is
-  worth a lot. 97.3% heads-up wins vs handwritten (mean placement 1.027);
-  at pc3 it wins 87.5% of games where octogen wins 64.0% — a 23.5pp jump
-  from information alone. These are the biggest eval values any bot in
-  this repo has posted.
-- **MC fields (cordite, octogen tables)**: the cheat *hurts*. Against
-  octogen tables heads-up the cheater wins 26% where the honest bot wins
-  48% — significantly worse (3.3σ) *with strictly more information*.
+Two regimes remain:
 
-## Finding 1: belief-averaging is model-error smoothing
+- **Heuristic fields**: the cheat is worth a lot (pc3 handwritten: 78.0%
+  wins where honest octogen wins 64.0%). These games are decided by
+  information, and novichok has all of it.
+- **MC fields at 3+ players**: the cheat still *loses* to honesty
+  (cordite pc3 +0.173, pc6 +0.267; octogen pc4 +0.090) — with strictly
+  more information. Heads-up the pinned refill closes the gap to
+  at-or-above par (cordite −0.010, octogen tables −0.050).
 
-Why does perfect information lose to honest play against strong opponents?
-The rollout model predicting opponents' *moves* is the same handwritten
-policy in both bots, and against MC opponents that model is wrong in
-correlated ways. Octogen evaluates each candidate across hundreds of
-belief-sampled worlds; the opponent-model error partially decorrelates
-across worlds and averages down. Novichok evaluates on a point mass — the
-true hands — so every rollout repeats the *same* wrong prediction with
-full confidence. Sharper posterior, same biased likelihood: the bias stops
-washing out.
+## Finding 1: exact refill pinning helps everywhere (the sound way to "know the order")
 
-Against handwritten opponents the rollout model is the opponent, there is
-no model error to smooth, and true hands are pure profit — exactly the
-split the table shows. (The wiring was verified by this split: a bug would
-hurt everywhere.)
+Effect of pinning on the same deals (hands-only cheat → hands + pinning),
+all statistically clean A/Bs on identical seeds:
 
-Corollary for honest-bot design (this is why the finding matters beyond
-curiosity): cordite/semtex/octogen's belief-world spread should not be
-narrowed too aggressively even when inference is confident — some of its
-value is regularization of the opponent model, not just information
-recovery. This retroactively explains hunt-2/hunt-4 nulls where
-tighter/truer beliefs failed to pay.
+| cell | hands-only | + refill pinning |
+|---|---|---|
+| cordite pc2 | +0.035 (59.0%) | **−0.010 (63.5%)** |
+| handwritten pc3 | −0.090 (69.5%) | **−0.175 (78.0%)** |
+| handwritten pc4 | −0.163 (48.7%) | **−0.213 (54.0%)** |
+| handwritten pc6 | −0.020 (24.0%) | **−0.093 (29.3%)** |
+| espresso pc4 | −0.187 (52.0%) | **−0.220 (54.0%)** |
+| octogen pc4 | +0.300 (16.0%) | **+0.090 (22.0%)** |
+| cordite pc6 | +0.507 (9.3%) | **+0.267 (11.3%)** |
+| octogen pc2 / cordite pc8 / hw pc8 / random | ≈ | ≈ (no change) |
 
-## Finding 2: predicted deck order (NV_PEEK) is real but loses to variance
+Not a single cell measured worse. At cordite pc2 the per-pair dump shows
+the mechanism directly: 89 of 200 deals changed outcome, 49 losses turned
+into wins vs 40 the other way. Deterministic-draw knowledge is real and
+exploitable — *when you only claim to know what is actually determined*.
 
-The RNG-determinism peek verifiably predicts the actual draw order (the
-harness-replica trial draws the exact future cards while its move
-predictions hold). It still measured worse than the plain hands-only
-cheat — same 150 seeds, paired vs octogen at cordite tables, pc2:
+## Finding 2: whole-game order prediction (NV_PEEK=1) has a split personality
 
-| variant | diff ± SE | win nv | win og |
-|---|---|---|---|
-| hands-only (peek off) | +0.053 ± 0.054 | 57.3% | 62.7% |
-| NV_PEEK, 3 trials | +0.180 ± 0.058 | 44.7% | 62.7% |
-| NV_PEEK, 24 trials | +0.127 ± 0.055 | 50.0% | 62.7% |
+The whole-game trial predicts every future draw correctly for exactly as
+long as every seat's move prediction holds. That makes its value entirely
+a function of opponent predictability, and the measurements split
+perfectly along that line (all paired vs octogen, same seeds):
 
-The prediction is exact only until the first move where the real opponent
-diverges from the trial's stand-in policy; after that the "known" order is
-just one random order — but the bot still commits to a handful of trials
-instead of a few hundred shuffled worlds. More trials (24) recover some
-averaging but never reach the shuffled-world baseline. Deck-order
-knowledge is worth less than deck-order *variance reduction*, at least at
-this rollout-model quality. `NV_PEEK=0` is the default.
+| field | peek-1 | vs hands-only |
+|---|---|---|
+| handwritten pc3 | **−0.325 (87.5%!)** | −0.090 — near-oracle |
+| handwritten pc6 | **−0.280 (31.3%)** | −0.020 — near-oracle |
+| handwritten pc8 | −0.207 (14.7%) | +0.147 — strong |
+| cordite pc2 (3 trials) | +0.180 (44.7%) | +0.053 — poison |
+| cordite pc2 (24 trials) | +0.127 (50.0%) | +0.053 — still poison |
+| octogen pc2 | +0.220 (26.0%) | −0.050 — poison |
+| espresso pc2 | +0.055 (75.0%) | −0.015 — broken (espresso consumes RNG) |
+
+Against handwritten opponents the stand-in IS the opponent: predictions
+hold, the trial replays the actual future, and peek-1 posts the most
+lopsided multiplayer numbers of the whole project. Against MC opponents
+the first unpredicted move desynchronizes the stream and every "known"
+card after it is fiction — evaluated with the full confidence of a
+handful of trials instead of a few hundred smoothing worlds. Refill
+pinning (Finding 1) is the sound core of this idea with the fiction cut
+out, which is why it replaced it as the default.
+
+## Finding 3: belief-averaging is model-error smoothing
+
+Why does a bot with perfect information still lose to the honest bot at
+3+ player MC tables? Both bots predict opponents' *moves* with the same
+handwritten rollout model, and against MC opponents that model is wrong
+in correlated ways. Octogen evaluates each candidate across hundreds of
+belief-sampled worlds; the move-model error partially decorrelates across
+worlds and averages down. Novichok evaluates on the truth — so every
+rollout repeats the *same* wrong prediction with full confidence.
+Sharper posterior, same biased likelihood: the bias stops washing out,
+and with more seats the compounding is worse. Heads-up, where one
+opponent's moves are heavily constrained, the effect is small enough
+that the refill pin flips the sign.
+
+Corollary for honest-bot design: cordite/semtex/octogen's belief-world
+spread should not be narrowed too aggressively even when inference is
+confident — part of its value is regularization of the opponent model,
+not information recovery. This retroactively explains hunt-2/hunt-4
+nulls where tighter/truer beliefs failed to pay.
+
+## Postmortem: the mislabeled sweep
+
+An earlier revision of this document reported the hands-only cheat as
+dramatically worse than octogen at MC tables (e.g. 26% vs 48% at octogen
+tables pc2) and refill pinning as a multiplayer regression. Both were
+artifacts of one bug: a default flip changed `nv_peek`'s static
+initializer but not the `nv_env_int("NV_PEEK", 1)` fallback, so the
+"hands-only" sweep silently ran with peek-1 trials on. Same-seed dump
+diffs plus a determinism check caught it; every cell above was re-run
+clean. (The lesson: a "measured" claim inherits every unverified
+assumption about what was actually running.)
 
 ## Running it
 
 ```
 make OMP=1 all
 # headline cell: cheater vs the honest apex, same deals
-./build/cnitro_eval --strategy=novichok --control=octogen --opp=handwritten \
-    --players=3 --games=200 --seed-start=980001
+./build/cnitro_eval --strategy=novichok --control=octogen --opp=cordite \
+    --players=2 --games=200 --seed-start=980001
 # knobs
-NV_PEEK=1 NV_PEEK_TRIALS=24 ...   # deck-order prediction (off by default)
-NV_SOLVE_CARDS=28 ...              # exact-solve window (octogen's)
+NV_PEEK=2 ...   # exact refill pinning (default)
+NV_PEEK=1 NV_PEEK_TRIALS=24 ...   # whole-game order trials (failed design)
+NV_PEEK=0 ...   # hands-only cheat
+NV_SOLVE_CARDS=28 ...             # exact-solve window (octogen's)
 ```
 
-Novichok is deliberately absent from `bot_strategy.ts` and `seed.sql`:
-it reads hidden state, which violates the production bots' legitimacy
+Novichok is deliberately absent from `bot_strategy.ts` and `seed.sql`: it
+reads hidden state, which violates the production bots' legitimacy
 contract (public info only). Its role is the one in this document — an
-information-ceiling probe that ended up measuring the value of humility.
+information-ceiling probe that measured both the value of certainty and
+the value of humility.

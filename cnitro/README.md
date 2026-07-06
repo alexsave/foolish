@@ -44,10 +44,12 @@ Bots (weakest → strongest):
   roughly cordite-equal).
 - `novichok` — octogen allowed to cheat (research/benchmark, C-only,
   never deployed): true-hand worlds, exact root solves on the real state,
-  optional RNG-determinism deck-order prediction. Posts the repo's biggest
-  eval values vs heuristic fields but is measurably WORSE than honest
-  octogen vs MC fields — belief-averaging turns out to be opponent-model
-  error smoothing, not just information recovery. See `NOVICHOK.md`.
+  and exact refill pinning from the engine's RNG determinism (the sound
+  slice of "knowing the deck order" — better-or-equal in every measured
+  cell). Posts the repo's biggest eval values vs heuristic fields; at 3+
+  player MC tables even the full cheat stays below honest octogen —
+  belief-averaging is opponent-model error smoothing, not just
+  information recovery. See `NOVICHOK.md`.
 
 Each strategy uses its own deterministic LCG (seeded per game) so a given
 seed reproduces the same play run-to-run.

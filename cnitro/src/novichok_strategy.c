@@ -129,9 +129,12 @@ static _Thread_local int nv_adapt = 1;
 // function of the live RNG state — zero prediction risk. Each candidate is
 // probe-applied once on a full clone with the live stream; the recorded
 // draw sequence is force-fed to the sim's refill in every sampled world.
-// Measured vs hands-only on the same 200 deals @ cordite pc2: win 59.0% ->
-// 63.5%, diff vs octogen +0.035 -> -0.010 (first at-or-above-octogen MC
-// cell); no cell measured worse. Sound order-knowledge helps; peek-1's
+// Measured vs the clean hands-only baseline on the same deals, pinning is
+// better-or-equal in EVERY cell, all fields, all player counts (biggest:
+// cordite pc2 59.0% -> 63.5% win, handwritten pc3 69.5% -> 78.0%, octogen
+// pc4 16% -> 22%; never a worse cell). Heads-up the pinned refill IS the
+// opponent's exact next hand, so the next battle's worlds are all-true.
+// Sound order-knowledge helps wherever the order is provable; peek-1's
 // whole-game trials were the wrong harness for it.
 static _Thread_local int nv_peek = 2;
 static _Thread_local int nv_peek_trials = 3;   // trials averaged per candidate
@@ -1309,7 +1312,8 @@ int novichok_strategy_choose(const Game *g, int bot_idx,
     // deck's later order keeps the full shuffled-world smoothing.
     static _Thread_local uint8_t nv_forced_ids[NV_MAX_CANDS][32];
     static _Thread_local int     nv_forced_n[NV_MAX_CANDS];
-    if (nv_peek == 2) {
+    const int peek2_on = (nv_peek == 2);
+    if (peek2_on) {
         static _Thread_local Game probe;
         for (int ci = 0; ci < C.n; ci++) {
             nv_forced_n[ci] = 0;
@@ -1382,7 +1386,7 @@ int novichok_strategy_choose(const Game *g, int bot_idx,
                     if (!alive[ci]) continue;
                     trial_sim = world_sim;              // cheap struct copy
                     game_rng_set(sim_rng);              // identical stream
-                    if (nv_peek == 2 && nv_forced_n[ci] > 0)
+                    if (peek2_on && nv_forced_n[ci] > 0)
                         cd_sim_set_forced_draws(nv_forced_ids[ci], nv_forced_n[ci]);
                     int fp;
                     if (!cd_sim_apply_root_move(&trial_sim, bot_idx,
@@ -1397,7 +1401,7 @@ int novichok_strategy_choose(const Game *g, int bot_idx,
                            : cd_sim_playout(&trial_sim, bot_idx, 600, !nv_no_earlyexit);
                         if (fp == 0) fp = g->num_players;
                     }
-                    if (nv_peek == 2) cd_sim_set_forced_draws(NULL, 0);
+                    if (peek2_on) cd_sim_set_forced_draws(NULL, 0);
                     score[ci] += (double)fp;
                     nsim[ci]++;
                 }
