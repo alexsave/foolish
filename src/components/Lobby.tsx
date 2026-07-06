@@ -15,15 +15,13 @@ import { Text } from "./Text";
 import { useLocalization } from "../contexts/LocalizationContext";
 import { SovietIcon } from "./SovietIcon";
 import { useStyles } from "../contexts/StyleContext";
+import { botDisplayName } from "../common/botName";
 
 interface BotOption {
     id: string;
     nickname: string;
     strategy_key: string;
 }
-
-// Bot nicknames carry a reserved '%' prefix (replay-codec recovery); strip it for display.
-const botDisplayName = (nickname: string) => nickname.replace(/^%/, '');
 
 interface PlayerCardProps {
     player: PublicPlayer;

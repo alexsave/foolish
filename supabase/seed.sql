@@ -117,9 +117,12 @@ CREATE TABLE chat_messages (
   created_at TIMESTAMP DEFAULT NOW()
 );
 
--- User ELO ratings table
+-- User ELO ratings table. Also carries the (immutable) username so the
+-- publicly-readable rating rows can be rendered as a leaderboard without
+-- touching auth.users — see migration 20260702090000_leaderboard_usernames.
 CREATE TABLE user_elo_ratings (
   user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  username TEXT,
   elo_rating INTEGER NOT NULL DEFAULT 1000,
   previous_elo INTEGER NOT NULL DEFAULT 1000,
   games_played INTEGER NOT NULL DEFAULT 0,
@@ -384,9 +387,9 @@ SET search_path = ''
 LANGUAGE plpgsql
 AS $$
 BEGIN
-  INSERT INTO public.user_elo_ratings (user_id, elo_rating, games_played)
-  VALUES (NEW.id, 1000, 0)
-  ON CONFLICT (user_id) DO NOTHING;
+  INSERT INTO public.user_elo_ratings (user_id, elo_rating, games_played, username)
+  VALUES (NEW.id, 1000, 0, NEW.raw_user_meta_data->>'username')
+  ON CONFLICT (user_id) DO UPDATE SET username = EXCLUDED.username;
   RETURN NEW;
 END;
 $$;
@@ -432,10 +435,13 @@ CREATE TRIGGER handle_chat_messages_changes
   FOR EACH ROW
   EXECUTE FUNCTION chat_messages_changes();
 
--- Trigger to create default ELO rating for new users
+-- Trigger to create default ELO rating for new users. Also fires on metadata
+-- UPDATE: the app has no rename flow, but GoTrue's updateUser (and the admin
+-- dashboard) can change raw_user_meta_data, and the denormalized
+-- user_elo_ratings.username copy must follow.
 DROP TRIGGER IF EXISTS handle_new_user_elo_rating ON auth.users;
 CREATE TRIGGER handle_new_user_elo_rating
-  AFTER INSERT
+  AFTER INSERT OR UPDATE OF raw_user_meta_data
   ON auth.users
   FOR EACH ROW
   EXECUTE FUNCTION create_default_elo_rating();
