@@ -115,7 +115,7 @@ test('bots.wasm memory is bounded and flat across all MC bot families', async ()
     const afterFirst = wasmTotal();
     // 150MB external is the edge budget; rules+bots plus scratch must sit
     // far below it so JS buffers/fetch bodies have room.
-    assert.ok(afterFirst <= 100 * 1048576,
+    assert.ok(afterFirst <= 48 * 1048576,
         `wasm memory after one game is ${(afterFirst / 1048576) | 0}MB; budget regression`);
 
     // Every further family and game must reuse the SAME scratch: exactly flat.

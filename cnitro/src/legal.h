@@ -41,6 +41,13 @@ typedef struct {
 
 void calculate_legal_moves(const Game *g, int bot_idx, LegalMoves *out);
 
+// Scoped output cap: generation appends (and the combinatorial recursions
+// prune) at `cap` moves instead of MAX_LEGAL_MOVES, so callers may enumerate
+// into buffers with fewer than MAX_LEGAL_MOVES slots (the solver scratch).
+// 0 or out-of-range resets to MAX_LEGAL_MOVES. Thread-local; set immediately
+// around the calculate_legal_moves call and reset after.
+void legal_set_move_cap(int cap);
+
 // Faster variant for use inside Monte Carlo simulations where every player
 // plays a deterministic policy (handwritten). Skips the combinatorial cover
 // enumeration — emits one greedy lowest-cost full-cover move instead, which

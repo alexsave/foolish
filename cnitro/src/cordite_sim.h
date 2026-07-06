@@ -139,7 +139,19 @@ void cd_sim_solve_reset(void);
 // static lands in BSS — stable initial memory, zero runtime growth.
 // _Thread_local keeps the native OMP eval race-free; wasm strips it.
 #define SOLVE_SCRATCH_DEPTH 48
+// Move-list slots hold 100 moves, not MAX_LEGAL_MOVES: all three families
+// abort any solve node whose move count exceeds 96 (*_SOLVE_MAX_MOVES), so
+// generation is capped just ABOVE that threshold (legal_set_move_cap) — a
+// node with <= 96 moves enumerates identically, and one with more saturates
+// at 100, still > 96, so the abort fires exactly as it did with full-size
+// buffers. Full-size lists were 30MB of the 41MB wasm static footprint.
+#define SOLVE_SCRATCH_MOVES 100
+typedef struct {
+    int       n;
+    LegalMove moves[SOLVE_SCRATCH_MOVES];
+} SolveMoves;
+_Static_assert(SOLVE_SCRATCH_MOVES <= MAX_LEGAL_MOVES, "cap must fit the generator's own bound");
 Game       *solve_scratch_child(void);
-LegalMoves *solve_scratch_mv(void);
+SolveMoves *solve_scratch_mv(void);
 
 #endif

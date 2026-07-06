@@ -453,11 +453,11 @@ typedef struct {
     bool aborted;
     int  me;
     Game       *child;   // [CD_SOLVE_MAX_DEPTH]
-    LegalMoves *mv;      // [CD_SOLVE_MAX_DEPTH]
+    SolveMoves *mv;      // [CD_SOLVE_MAX_DEPTH]
 } Solver;
 
 static _Thread_local Game       *cd_solver_child = NULL;
-static _Thread_local LegalMoves *cd_solver_mv = NULL;
+static _Thread_local SolveMoves *cd_solver_mv = NULL;
 
 _Static_assert(CD_SOLVE_MAX_DEPTH <= SOLVE_SCRATCH_DEPTH,
                "shared solver scratch shallower than this family's depth");
@@ -488,8 +488,13 @@ static int cd_solve(Solver *S, const Game *g, int alpha, int beta, int depth) {
     }
     if (actor < 0) return 0;
 
-    LegalMoves *mv = &S->mv[depth];
-    calculate_legal_moves(g, actor, mv);
+    SolveMoves *mv = &S->mv[depth];
+    // Bounded generation into the compact scratch slot (see SOLVE_SCRATCH_MOVES
+    // in cordite_sim.h): the cast is safe because SolveMoves shares LegalMoves'
+    // leading layout and the cap keeps writes within its {n, moves[]} bounds.
+    legal_set_move_cap(SOLVE_SCRATCH_MOVES);
+    calculate_legal_moves(g, actor, (LegalMoves *)mv);
+    legal_set_move_cap(0);
     if (mv->n == 0) return 0;
     if (mv->n > CD_SOLVE_MAX_MOVES) { S->aborted = true; return 0; }
 

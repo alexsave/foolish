@@ -5,12 +5,21 @@
 #include "legal.h"
 #include <string.h>
 
-// Append a move; silently drops past MAX_LEGAL_MOVES. The slot is NOT
-// zeroed: every consumer reads cards[]/attack_cards[] bounded by n_cards
-// (set by the caller), and clearing the full struct was a measurable cost
-// at tens of thousands of moves per enumeration.
+// Output cap (see legal_set_move_cap in legal.h): defaults to the full
+// MAX_LEGAL_MOVES; the endgame solvers lower it around their movegen calls
+// so they can enumerate into compact scratch buffers.
+static _Thread_local int g_move_cap = MAX_LEGAL_MOVES;
+
+void legal_set_move_cap(int cap) {
+    g_move_cap = (cap > 0 && cap <= MAX_LEGAL_MOVES) ? cap : MAX_LEGAL_MOVES;
+}
+
+// Append a move; silently drops past the cap (MAX_LEGAL_MOVES by default).
+// The slot is NOT zeroed: every consumer reads cards[]/attack_cards[] bounded
+// by n_cards (set by the caller), and clearing the full struct was a
+// measurable cost at tens of thousands of moves per enumeration.
 static LegalMove *push_move(LegalMoves *out) {
-    if (out->n >= MAX_LEGAL_MOVES) return NULL;
+    if (out->n >= g_move_cap) return NULL;
     LegalMove *m = &out->moves[out->n++];
     m->n_cards = 0;
     return m;
@@ -38,7 +47,7 @@ static void combinations_attack(const Card *arr, int n, int start, int k,
     // holds no duplicates) drives ~2^n recursion while push_move silently
     // drops past the cap: an unbounded hang. Mirrors emit_cover_combo's
     // guard. One compare per node; real hands recurse a handful of levels.
-    if (out->n >= MAX_LEGAL_MOVES) return;
+    if (out->n >= g_move_cap) return;
     if (depth == k) {
         emit_attack(out, buf, k, defender_cards, uncovered);
         return;
@@ -63,7 +72,7 @@ static void emit_pass(LegalMoves *out, const Card *combo, int k,
 static void combinations_pass(const Card *arr, int n, int start, int k,
                               Card *buf, int depth,
                               LegalMoves *out, int next_player_cards, int n_battles) {
-    if (out->n >= MAX_LEGAL_MOVES) return;   // same anti-blowup guard as attack
+    if (out->n >= g_move_cap) return;   // same anti-blowup guard as attack
     if (depth == k) {
         emit_pass(out, buf, k, next_player_cards, n_battles);
         return;
@@ -165,7 +174,7 @@ typedef struct {
 static void emit_cover_combo(LegalMoves *out,
                              const CoverOption *const *opts, int n_opts,
                              int *chosen_idx, int depth, bool *used) {
-    if (out->n >= MAX_LEGAL_MOVES) return;  // early-exit; combinatorial blowup otherwise
+    if (out->n >= g_move_cap) return;  // early-exit; combinatorial blowup otherwise
     if (depth == n_opts) {
         LegalMove *m = push_move(out);
         if (!m) return;
