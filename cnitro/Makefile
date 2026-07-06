@@ -132,9 +132,19 @@ WASM_BOT_SRC := src/game.c src/legal.c src/random_strategy.c \
                 src/handwritten_prod_strategy.c src/semtex_strategy.c \
                 src/octogen_strategy.c wasm/wasm_api.c wasm/wasm_bots_api.c
 
+# The bot module keeps the native MAX_LEGAL_MOVES (4096), NOT the rules
+# module's hardened 65536: the MC bots' endgame solvers lazily malloc
+# 48 * sizeof(LegalMoves) each (cordite, semtex, octogen), which at 65536
+# moves is ~258MB per bot family on the no-free bump allocator — over the
+# 256MB edge-function isolate limit (observed as "Memory limit exceeded" in
+# production). At 4096 the same arrays are ~16.5MB per family, and legal.c
+# clamps move generation at the cap either way, so hostile states stay safe;
+# 4096 is also what every native build (arena, difftests, eval) runs with.
+WASM_BOT_FLAGS := $(filter-out -DMAX_LEGAL_MOVES=65536,$(WASM_FLAGS)) -DMAX_LEGAL_MOVES=4096
+
 build/bots.wasm: $(WASM_BOT_SRC) src/game.h src/legal.h src/card.h src/strategy.h
 	@mkdir -p build
-	$(WASM_CC) $(WASM_FLAGS) $(WASM_BOT_SRC) -o $@
+	$(WASM_CC) $(WASM_BOT_FLAGS) $(WASM_BOT_SRC) -o $@
 
 wasm-bots: build/bots.wasm
 	node wasm/embed.mjs build/bots.wasm ../supabase/functions/_shared/wasm/bots_wasm.ts BOTS_WASM_B64
