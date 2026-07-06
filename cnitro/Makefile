@@ -101,9 +101,15 @@ WASM_CC    ?= clang
 # "table index out of bounds"; caught by the fuzz suite). No -ffast-math
 # either: wasm float semantics must stay IEEE-identical to the TS oracles
 # the parity suite compares against.
+# MAX_LEGAL_MOVES=4096 matches every native build (arena, difftests, eval).
+# The rules module briefly shipped 65536 "for hardening", but action
+# validation is direct rule-checking (handle_*), NOT enumeration membership —
+# the buffer only feeds the exported move MENU, where the legal.c cap guards
+# already stop combinatorial blowups safely at any value. 65536 cost 10.9MB
+# of the module's 12MB for zero correctness benefit.
 WASM_FLAGS := --target=wasm32 -O3 -nostdlib -ffreestanding -mbulk-memory \
               -isystem wasm/include -Isrc -D_Thread_local= -DMAX_LOG_PAIRS=64 \
-              -DMAX_LEGAL_MOVES=65536 -DMAX_MOVE_CARDS=40 -DMAX_BATTLES=64 \
+              -DMAX_LEGAL_MOVES=4096 -DMAX_MOVE_CARDS=40 -DMAX_BATTLES=64 \
               -Wall -Wextra -Wno-unused-parameter \
               -Wl,--no-entry -Wl,--export-all -Wl,-z,stack-size=1048576
 
@@ -132,15 +138,7 @@ WASM_BOT_SRC := src/game.c src/legal.c src/random_strategy.c \
                 src/handwritten_prod_strategy.c src/semtex_strategy.c \
                 src/octogen_strategy.c wasm/wasm_api.c wasm/wasm_bots_api.c
 
-# The bot module keeps the native MAX_LEGAL_MOVES (4096), NOT the rules
-# module's hardened 65536: the MC bots' endgame solvers lazily malloc
-# 48 * sizeof(LegalMoves) each (cordite, semtex, octogen), which at 65536
-# moves is ~258MB per bot family on the no-free bump allocator — over the
-# 256MB edge-function isolate limit (observed as "Memory limit exceeded" in
-# production). At 4096 the same arrays are ~16.5MB per family, and legal.c
-# clamps move generation at the cap either way, so hostile states stay safe;
-# 4096 is also what every native build (arena, difftests, eval) runs with.
-WASM_BOT_FLAGS := $(filter-out -DMAX_LEGAL_MOVES=65536,$(WASM_FLAGS)) -DMAX_LEGAL_MOVES=4096
+WASM_BOT_FLAGS := $(WASM_FLAGS)
 
 build/bots.wasm: $(WASM_BOT_SRC) src/game.h src/legal.h src/card.h src/strategy.h
 	@mkdir -p build

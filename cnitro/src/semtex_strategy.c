@@ -582,21 +582,18 @@ typedef struct {
     long budget;
     bool aborted;
     int  me;
-    Game       *child;   // [SX_SOLVE_MAX_DEPTH]
     SolveMoves *mv;      // [SX_SOLVE_MAX_DEPTH]
 } Solver;
 
-static _Thread_local Game       *sx_solver_child = NULL;
 static _Thread_local SolveMoves *sx_solver_mv = NULL;
 
 _Static_assert(SX_SOLVE_MAX_DEPTH <= SOLVE_SCRATCH_DEPTH,
                "shared solver scratch shallower than this family's depth");
 static bool sx_solver_ready(void) {
-    if (!sx_solver_child) {
-        sx_solver_child = solve_scratch_child();
-        sx_solver_mv    = solve_scratch_mv();
+    if (!sx_solver_mv) {
+        sx_solver_mv = solve_scratch_mv();
     }
-    return sx_solver_child && sx_solver_mv;
+    return sx_solver_mv != NULL;
 }
 
 // Value in [-1000, 1000] from `me`'s perspective: positive = me escaping,
@@ -631,8 +628,8 @@ static int sx_solve(Solver *S, const Game *g, int alpha, int beta, int depth) {
     bool maximizing = (actor == S->me);
     int best = maximizing ? -2000 : 2000;
     for (int i = 0; i < mv->n; i++) {
-        Game *child = &S->child[depth];
-        sx_lite_clone(child, g);
+        Game *child = solve_scratch_child(depth);
+        solve_clone_prefix(child, g);
         if (!sx_apply(child, actor, &mv->moves[i])) continue;
         int v = sx_solve(S, child, alpha, beta, depth + 1);
         if (S->aborted) return 0;
@@ -677,7 +674,6 @@ static int sx_leaf_solve(const Game *g) {
     S.budget  = sx_leaf_budget;
     S.aborted = false;
     S.me      = me;
-    S.child   = sx_solver_child;
     S.mv      = sx_solver_mv;
 
     // Null window around 0: only the sign matters (true values are ±(1000-d)
@@ -861,7 +857,6 @@ static int sx_try_endgame_solve(const Game *g, int bot_idx,
     S.budget  = SX_SOLVE_BUDGET;
     S.aborted = false;
     S.me      = bot_idx;
-    S.child   = sx_solver_child;
     S.mv      = sx_solver_mv;
     long win_budget   = bbsolve ? (long)sx_bb_win_budget   : SX_SOLVE_BUDGET;
     long avoid_budget = bbsolve ? (long)sx_bb_avoid_budget : SX_AVOID_BUDGET;

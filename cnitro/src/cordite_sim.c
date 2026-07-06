@@ -1585,8 +1585,20 @@ int cd_sim_playout(SimState *s, int my_idx, int max_turns, int early_exit) {
 // bump allocator never frees, so per-family mallocs accumulated; a single
 // static copy is the whole footprint, paid once at instantiation.
 // ---------------------------------------------------------------------------
-static _Thread_local Game       solve_child_scratch[SOLVE_SCRATCH_DEPTH];
+#define SOLVE_CHILD_STRIDE (((size_t)offsetof(Game, logs) + 15u) & ~(size_t)15u)
+static _Thread_local unsigned char solve_child_scratch[SOLVE_SCRATCH_DEPTH * SOLVE_CHILD_STRIDE]
+    __attribute__((aligned(16)));
 static _Thread_local SolveMoves solve_mv_scratch[SOLVE_SCRATCH_DEPTH];
 
-Game       *solve_scratch_child(void) { return solve_child_scratch; }
-SolveMoves *solve_scratch_mv(void)    { return solve_mv_scratch; }
+Game *solve_scratch_child(int depth) {
+    return (Game *)(solve_child_scratch + (size_t)depth * SOLVE_CHILD_STRIDE);
+}
+
+void solve_clone_prefix(Game *dst, const Game *src) {
+    memcpy(dst, src, offsetof(Game, logs));
+    // Sinkhole: log_alloc sees a full array and drops appends into its own
+    // static scratch, so nothing ever writes past the prefix-sized slot.
+    dst->num_logs = MAX_LOGS;
+}
+
+SolveMoves *solve_scratch_mv(void) { return solve_mv_scratch; }

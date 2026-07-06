@@ -607,21 +607,18 @@ typedef struct {
     long budget;
     bool aborted;
     int  me;
-    Game       *child;   // [OG_SOLVE_MAX_DEPTH]
     SolveMoves *mv;      // [OG_SOLVE_MAX_DEPTH]
 } Solver;
 
-static _Thread_local Game       *og_solver_child = NULL;
 static _Thread_local SolveMoves *og_solver_mv = NULL;
 
 _Static_assert(OG_SOLVE_MAX_DEPTH <= SOLVE_SCRATCH_DEPTH,
                "shared solver scratch shallower than this family's depth");
 static bool og_solver_ready(void) {
-    if (!og_solver_child) {
-        og_solver_child = solve_scratch_child();
-        og_solver_mv    = solve_scratch_mv();
+    if (!og_solver_mv) {
+        og_solver_mv = solve_scratch_mv();
     }
-    return og_solver_child && og_solver_mv;
+    return og_solver_mv != NULL;
 }
 
 // Value in [-1000, 1000] from `me`'s perspective: positive = me escaping,
@@ -656,8 +653,8 @@ static int og_solve(Solver *S, const Game *g, int alpha, int beta, int depth) {
     bool maximizing = (actor == S->me);
     int best = maximizing ? -2000 : 2000;
     for (int i = 0; i < mv->n; i++) {
-        Game *child = &S->child[depth];
-        og_lite_clone(child, g);
+        Game *child = solve_scratch_child(depth);
+        solve_clone_prefix(child, g);
         if (!og_apply(child, actor, &mv->moves[i])) continue;
         int v = og_solve(S, child, alpha, beta, depth + 1);
         if (S->aborted) return 0;
@@ -702,7 +699,6 @@ static int og_leaf_solve(const Game *g) {
     S.budget  = og_leaf_budget;
     S.aborted = false;
     S.me      = me;
-    S.child   = og_solver_child;
     S.mv      = og_solver_mv;
 
     // Null window around 0: only the sign matters (true values are ±(1000-d)
@@ -886,7 +882,6 @@ static int og_try_endgame_solve(const Game *g, int bot_idx,
     S.budget  = OG_SOLVE_BUDGET;
     S.aborted = false;
     S.me      = bot_idx;
-    S.child   = og_solver_child;
     S.mv      = og_solver_mv;
     long win_budget   = bbsolve ? (long)og_bb_win_budget   : OG_SOLVE_BUDGET;
     long avoid_budget = bbsolve ? (long)og_bb_avoid_budget : OG_AVOID_BUDGET;

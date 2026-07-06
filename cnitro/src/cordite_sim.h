@@ -151,7 +151,13 @@ typedef struct {
     LegalMove moves[SOLVE_SCRATCH_MOVES];
 } SolveMoves;
 _Static_assert(SOLVE_SCRATCH_MOVES <= MAX_LEGAL_MOVES, "cap must fit the generator's own bound");
-Game       *solve_scratch_child(void);
+// Child slots hold only the log-free PREFIX of Game: solve_clone_prefix
+// marks the clone's log array "full" (num_logs = MAX_LOGS), so log_alloc
+// drops every append into its static scratch — solver children never read
+// logs, and full-size Games were 7.7MB of scratch for write-only data.
+Game *solve_scratch_child(int depth);
+// memcpy the prefix and turn the log array into a sinkhole (see above).
+void  solve_clone_prefix(Game *dst, const Game *src);
 SolveMoves *solve_scratch_mv(void);
 
 #endif

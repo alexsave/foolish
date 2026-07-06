@@ -452,21 +452,18 @@ typedef struct {
     long budget;
     bool aborted;
     int  me;
-    Game       *child;   // [CD_SOLVE_MAX_DEPTH]
     SolveMoves *mv;      // [CD_SOLVE_MAX_DEPTH]
 } Solver;
 
-static _Thread_local Game       *cd_solver_child = NULL;
 static _Thread_local SolveMoves *cd_solver_mv = NULL;
 
 _Static_assert(CD_SOLVE_MAX_DEPTH <= SOLVE_SCRATCH_DEPTH,
                "shared solver scratch shallower than this family's depth");
 static bool cd_solver_ready(void) {
-    if (!cd_solver_child) {
-        cd_solver_child = solve_scratch_child();
-        cd_solver_mv    = solve_scratch_mv();
+    if (!cd_solver_mv) {
+        cd_solver_mv = solve_scratch_mv();
     }
-    return cd_solver_child && cd_solver_mv;
+    return cd_solver_mv != NULL;
 }
 
 // Value in [-1000, 1000] from `me`'s perspective: positive = me escaping,
@@ -501,8 +498,8 @@ static int cd_solve(Solver *S, const Game *g, int alpha, int beta, int depth) {
     bool maximizing = (actor == S->me);
     int best = maximizing ? -2000 : 2000;
     for (int i = 0; i < mv->n; i++) {
-        Game *child = &S->child[depth];
-        cd_lite_clone(child, g);
+        Game *child = solve_scratch_child(depth);
+        solve_clone_prefix(child, g);
         if (!cd_apply(child, actor, &mv->moves[i])) continue;
         int v = cd_solve(S, child, alpha, beta, depth + 1);
         if (S->aborted) return 0;
@@ -532,7 +529,6 @@ int cd_struct_solve_test(const Game *g, int me, int alpha, int beta,
     S.budget = budget;
     S.aborted = false;
     S.me = me;
-    S.child = cd_solver_child;
     S.mv = cd_solver_mv;
     int v = cd_solve(&S, &root, alpha, beta, 0);
     if (aborted) *aborted = S.aborted;
@@ -566,7 +562,6 @@ static int cd_leaf_solve(const Game *g) {
     S.budget  = cd_leaf_budget;
     S.aborted = false;
     S.me      = me;
-    S.child   = cd_solver_child;
     S.mv      = cd_solver_mv;
 
     // Null window around 0: only the sign matters (true values are ±(1000-d)
@@ -1113,7 +1108,6 @@ static int cd_try_endgame_solve(const Game *g, int bot_idx,
     S.budget  = CD_SOLVE_BUDGET;
     S.aborted = false;
     S.me      = bot_idx;
-    S.child   = cd_solver_child;
     S.mv      = cd_solver_mv;
     long win_budget   = bbsolve ? (long)cd_bb_win_budget   : CD_SOLVE_BUDGET;
     long avoid_budget = bbsolve ? (long)cd_bb_avoid_budget : CD_AVOID_BUDGET;
