@@ -112,12 +112,16 @@ WASM_CC    ?= clang
 # WORLD_LOG_CAP=40: sampled-world/trial/difftest Game slots keep a 40-entry
 # discard-only log instead of the full 512 (see cordite_sim.h) — the research
 # full-log world modes stay native-only. 3 x 61KB per bots.wasm instance.
+# Stack 256KB: with every sizeof(Game)/sizeof(LegalMoves) local moved into
+# shared scratch, the deepest real path is the bitboard solver's 48-frame
+# recursion (~1.5KB/frame) — 256KB is ~3x that worst case. --stack-first
+# keeps any regression a loud trap, and CI's mem job runs unpinned games.
 WASM_FLAGS := --target=wasm32 -O3 -nostdlib -ffreestanding -mbulk-memory \
               -isystem wasm/include -Isrc -D_Thread_local= -DMAX_LOG_PAIRS=64 \
               -DMAX_LEGAL_MOVES=4096 -DMAX_MOVE_CARDS=40 -DMAX_BATTLES=64 \
               -DWORLD_LOG_CAP=40 \
               -Wall -Wextra -Wno-unused-parameter \
-              -Wl,--no-entry -Wl,--export-all -Wl,-z,stack-size=524288 -Wl,--stack-first
+              -Wl,--no-entry -Wl,--export-all -Wl,-z,stack-size=262144 -Wl,--stack-first
 
 # The rules module's move buffer only feeds the exported menu — production
 # validation is direct rule-checking, and production menus/bot enumeration
@@ -129,8 +133,11 @@ WASM_FLAGS := --target=wasm32 -O3 -nostdlib -ffreestanding -mbulk-memory \
 # g_game only ever holds ONE action's logs — hard worst ~76 (a 64-cover
 # round's discard + draws + transitions). The bots module MUST keep 512:
 # its belief imports the whole session log (TS MAX_KERNEL_LOGS mirror).
+# Stack 128KB: no solver, no rollouts — the deepest rules path is the cover
+# enumeration (~45KB measured worst); 128KB is ~3x that. The trailing
+# -z stack-size overrides the shared flags' 256KB (last one wins in wasm-ld).
 WASM_RULES_FLAGS := $(filter-out -DMAX_LEGAL_MOVES=4096,$(WASM_FLAGS)) \
-                    -DMAX_LEGAL_MOVES=1024 -DMAX_LOGS=128
+                    -DMAX_LEGAL_MOVES=1024 -DMAX_LOGS=128 -Wl,-z,stack-size=131072
 
 build/rules.wasm: src/game.c src/legal.c wasm/wasm_api.c src/game.h src/legal.h src/card.h
 	@mkdir -p build
