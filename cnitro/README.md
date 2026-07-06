@@ -42,6 +42,12 @@ Bots (weakest → strongest):
   See `TORPEX.md`.
 - `astrolite` — cordite + defender card-management levers (research;
   roughly cordite-equal).
+- `novichok` — octogen allowed to cheat (research/benchmark, C-only,
+  never deployed): true-hand worlds, exact root solves on the real state,
+  optional RNG-determinism deck-order prediction. Posts the repo's biggest
+  eval values vs heuristic fields but is measurably WORSE than honest
+  octogen vs MC fields — belief-averaging turns out to be opponent-model
+  error smoothing, not just information recovery. See `NOVICHOK.md`.
 
 Each strategy uses its own deterministic LCG (seeded per game) so a given
 seed reproduces the same play run-to-run.
