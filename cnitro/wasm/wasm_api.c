@@ -69,8 +69,9 @@ unsigned char *wasm_io_ptr(void) { return g_io; }
 int wasm_io_cap(void) { return IO_CAP; }
 
 // For sibling bridge units (wasm_bots_api.c) that operate on the same
-// working game and scratch move list (LegalMoves is ~20MB at the wasm build's
-// MAX_LEGAL_MOVES — not worth a second copy).
+// working game and scratch move list (LegalMoves is ~330KB at the wasm
+// build's MAX_LEGAL_MOVES=4096 with 1-byte cards — still not worth a
+// second copy).
 Game *wasm_game_ptr_internal(void) { return &g_game; }
 LegalMoves *wasm_moves_ptr_internal(void) { return &g_moves; }
 
