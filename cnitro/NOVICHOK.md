@@ -167,6 +167,51 @@ confident — part of its value is regularization of the opponent model,
 not information recovery. This retroactively explains hunt-2/hunt-4
 nulls where tighter/truer beliefs failed to pay.
 
+## Finding 4: predicting moves by SEARCH doesn't rescue the cheater (NV_REPLY)
+
+If unpredicted moves are the problem, why not predict them better? Novichok
+knows the exact hands, so the opponent's legal move set is fully known —
+the one place a bot can predict moves by *searching* instead of guessing.
+`NV_REPLY=1` does exactly that (octogen's hunt-4 reply tournament: the
+first opponent decision in each playout is chosen by search over their
+full legal reply set, best-for-them). For the honest bot this measured
+null because "best reply vs a guessed hand" sharpens noise; on novichok's
+TRUE worlds that objection vanishes. Measured anyway (same seeds, vs the
+pinning default):
+
+| cell | default (pin) | + reply search |
+|---|---|---|
+| cordite pc2 | −0.010 (63.5%) | −0.005 (63.0%) — null, 2x cost |
+| octogen pc2 | −0.050 (53.0%) | −0.020 (50.0%) — null |
+| cordite pc3 | +0.173 (28.7%) | +0.287 (30.0%) — null/worse |
+| handwritten pc3 | −0.175 (78.0%) | **−0.085 (71.5%) — harmful** |
+
+Three reasons, in increasing order of depth:
+
+1. **Strong opponents are belief-rational, not truth-rational.** Cordite's
+   actual move maximizes against *its belief*, not against the true hands.
+   Heads-up its beliefs are good, so truth-best and belief-best usually
+   coincide — but there the handwritten stand-in usually coincides too.
+   The searched reply only differs where prediction was already hard, and
+   there it predicts the wrong quantity.
+2. **One ply of exactness doesn't survive the horizon.** Only the first
+   opponent decision is searched; everything after reverts to the
+   handwritten model, and the searched reply itself is *evaluated* by
+   those model-driven playouts — the yardstick is still wrong.
+3. **Against weak opponents it's paranoia.** Handwritten seats never play
+   their best reply; defending against it forfeits real exploitation
+   (the pc3 harm above — the classic paranoid-search failure).
+
+The logical endpoint of this road is running the opponent's *literal
+decision code* as the move model (their choice is deterministic given the
+public state and their strategy RNG). That is a perfect oracle in
+principle — and a compute explosion in practice: one cordite call costs
+as much as a whole novichok decision, so predicting replies to every
+candidate multiplies decision cost by ~candidates × replies. At equal
+wall-clock that trade (better model, fewer worlds) is the same one that
+measured negative in every form this session. `NV_REPLY` stays off by
+default, documented as the measured boundary of "just predict more moves."
+
 ## Postmortem: the mislabeled sweep
 
 An earlier revision of this document reported the hands-only cheat as
@@ -190,6 +235,7 @@ make OMP=1 all
 NV_PEEK=2 ...   # exact refill pinning (default)
 NV_PEEK=1 NV_PEEK_TRIALS=24 ...   # whole-game order trials (failed design)
 NV_PEEK=0 ...   # hands-only cheat
+NV_REPLY=1 NV_REPLY_CAP=6 ...     # true-state best-reply search (measured null)
 NV_SOLVE_CARDS=28 ...             # exact-solve window (octogen's)
 ```
 

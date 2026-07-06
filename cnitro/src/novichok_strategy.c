@@ -138,6 +138,17 @@ static _Thread_local int nv_adapt = 1;
 // whole-game trials were the wrong harness for it.
 static _Thread_local int nv_peek = 2;
 static _Thread_local int nv_peek_trials = 3;   // trials averaged per candidate
+// NV_REPLY: the first opponent decision in each playout is chosen by search
+// over their legal replies (cd_sim_playout_reply, octogen's hunt-4 lever)
+// instead of assumed from the handwritten rollout policy. For the HONEST bot
+// this measured null — the opponent's "best reply" computed against a
+// guessed hand sharpens noise. Novichok's worlds are TRUE, so the searched
+// reply is the real best response: the one place the cheater can predict
+// moves by searching rather than guessing. NV_REPLY_STAGE: first MC stage
+// (0-2) that uses the tournament. NV_REPLY_CAP: replies searched per world.
+static _Thread_local int nv_reply = 0;
+static _Thread_local int nv_reply_cap = 6;
+static _Thread_local int nv_reply_stage = 2;
 // Void world-mixture: voids applied in (mod-1)/mod of sampled worlds
 // (cordite: 3 of 4). A softer mixture hedges between heuristic-family
 // opponents (voids true) and MC/human strategic pickups (voids misleading).
@@ -1220,6 +1231,9 @@ int novichok_strategy_choose(const Game *g, int bot_idx,
         nv_adapt = nv_env_int("NV_ADAPT", 0);   // nothing to infer: worlds are true
         nv_peek = nv_env_int("NV_PEEK", 2);
         nv_peek_trials = nv_env_int("NV_PEEK_TRIALS", 3);
+        nv_reply = nv_env_int("NV_REPLY", 0);
+        nv_reply_cap = nv_env_int("NV_REPLY_CAP", 6);
+        nv_reply_stage = nv_env_int("NV_REPLY_STAGE", 2);
         nv_void_mod = nv_env_int("NV_VOID_MOD", 4);
         if (nv_void_mod < 2) nv_void_mod = 2;
         nv_profile = nv_env_int("NV_PROFILE", 0);
@@ -1382,6 +1396,7 @@ int novichok_strategy_choose(const Game *g, int bot_idx,
 
             if (fast_path) {
                 cd_sim_from_game(&world_sim, &world);   // convert world ONCE
+                bool reply_stage = nv_reply && stage >= nv_reply_stage;
                 for (int ci = 0; ci < C.n; ci++) {
                     if (!alive[ci]) continue;
                     trial_sim = world_sim;              // cheap struct copy
@@ -1392,6 +1407,12 @@ int novichok_strategy_choose(const Game *g, int bot_idx,
                     if (!cd_sim_apply_root_move(&trial_sim, bot_idx,
                                                 &moves->moves[C.idx[ci]])) {
                         fp = g->num_players;
+                    } else if (reply_stage) {
+                        fp = cd_sim_playout_reply(&trial_sim, bot_idx, 600,
+                                                  nv_bbleaf_on ? nv_bbleaf_cards_eff : 0,
+                                                  nv_bbleaf_budget, nv_polmap,
+                                                  nv_reply_cap);
+                        if (fp == 0) fp = g->num_players;
                     } else {
                         fp = (nv_bbleaf_on || nv_polmap)
                            ? cd_sim_playout_pol(&trial_sim, bot_idx, 600,
