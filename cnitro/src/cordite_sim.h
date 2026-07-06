@@ -189,4 +189,16 @@ void  solve_clone_root(Game *dst, const Game *src);
 // starts.
 Game *rollout_scratch_diff(void);
 
+// Sampled-world scratch: ONE world/trial Game pair (plus their SimState
+// mirrors and the root-move forced-loss flags) for all MC families —
+// exactly one family choose runs per decision (single dispatch; families
+// never nest each other), the same invariant as the solver scratch above.
+// Fully rewritten per sample/trial. Full-size Games, NOT prefix slots:
+// trials accumulate rollout logs that espresso's discard memory reads back.
+Game     *world_scratch_game(void);
+Game     *trial_scratch_game(void);
+SimState *world_scratch_sim(void);
+SimState *trial_scratch_sim(void);
+bool     *forced_loss_scratch(void);   // [MAX_LEGAL_MOVES]
+
 #endif
