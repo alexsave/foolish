@@ -459,10 +459,12 @@ typedef struct {
 static _Thread_local Game       *cd_solver_child = NULL;
 static _Thread_local LegalMoves *cd_solver_mv = NULL;
 
+_Static_assert(CD_SOLVE_MAX_DEPTH <= SOLVE_SCRATCH_DEPTH,
+               "shared solver scratch shallower than this family's depth");
 static bool cd_solver_ready(void) {
     if (!cd_solver_child) {
-        cd_solver_child = malloc(sizeof(Game) * CD_SOLVE_MAX_DEPTH);
-        cd_solver_mv    = malloc(sizeof(LegalMoves) * CD_SOLVE_MAX_DEPTH);
+        cd_solver_child = solve_scratch_child();
+        cd_solver_mv    = solve_scratch_mv();
     }
     return cd_solver_child && cd_solver_mv;
 }

@@ -1579,3 +1579,14 @@ int cd_sim_playout(SimState *s, int my_idx, int max_turns, int early_exit) {
         if (s->elim_order[i] == my_idx) return i + 1;
     return s->num_players;
 }
+
+// ---------------------------------------------------------------------------
+// Shared struct-solver scratch (see cordite_sim.h). BSS, not malloc: the wasm
+// bump allocator never frees, so per-family mallocs accumulated; a single
+// static copy is the whole footprint, paid once at instantiation.
+// ---------------------------------------------------------------------------
+static _Thread_local Game       solve_child_scratch[SOLVE_SCRATCH_DEPTH];
+static _Thread_local LegalMoves solve_mv_scratch[SOLVE_SCRATCH_DEPTH];
+
+Game       *solve_scratch_child(void) { return solve_child_scratch; }
+LegalMoves *solve_scratch_mv(void)    { return solve_mv_scratch; }

@@ -129,4 +129,17 @@ int  cd_sim_solve_d(SimState *s, int me, int alpha, int beta, long *budget,
                     int depth0, int *aborted);
 void cd_sim_solve_reset(void);
 
+// Shared struct-solver scratch (child states + move lists, indexed by depth),
+// ONE copy for all MC families (cordite/semtex/octogen). Safe to share: one
+// bot family runs per decision, an exact solve completes before any other
+// solve starts (rollout leaf-solves are sequential, never nested inside
+// another solve), and recursion indexes by depth. Per-family lazy mallocs
+// tripled the wasm footprint (3 x 48 x sizeof(LegalMoves) on the no-free bump
+// allocator), which blew the edge isolate's 150MB external budget; a shared
+// static lands in BSS — stable initial memory, zero runtime growth.
+// _Thread_local keeps the native OMP eval race-free; wasm strips it.
+#define SOLVE_SCRATCH_DEPTH 48
+Game       *solve_scratch_child(void);
+LegalMoves *solve_scratch_mv(void);
+
 #endif
