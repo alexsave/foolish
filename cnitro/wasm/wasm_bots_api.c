@@ -31,7 +31,11 @@ void *malloc(size_t n) {
     unsigned long need = align16(n);
     unsigned char *cur_end = (unsigned char *)(__builtin_wasm_memory_size(0) * 65536ul);
     while (g_brk + need > cur_end) {
-        unsigned long grow_pages = (need + 65535ul) / 65536ul + 16ul;
+        // +2 pages of slack, not more: the production bots make exactly ONE
+        // allocation (the 1MB transposition table) — a fat headroom just
+        // inflates every worker's linear memory for nothing, and the edge
+        // budget charges buffer SIZE, not touched pages.
+        unsigned long grow_pages = (need + 65535ul) / 65536ul + 2ul;
         if (__builtin_wasm_memory_grow(0, grow_pages) == (unsigned long)-1) return 0;
         cur_end = (unsigned char *)(__builtin_wasm_memory_size(0) * 65536ul);
     }
