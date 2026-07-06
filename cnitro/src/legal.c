@@ -33,6 +33,12 @@ static void emit_attack(LegalMoves *out, const Card *combo, int k,
 static void combinations_attack(const Card *arr, int n, int start, int k,
                                 Card *buf, int depth,
                                 LegalMoves *out, int defender_cards, int uncovered) {
+    // Prune once the cap is hit — otherwise a hand carrying many same-value
+    // cards (only reachable via a malformed/corrupt state, since a real hand
+    // holds no duplicates) drives ~2^n recursion while push_move silently
+    // drops past the cap: an unbounded hang. Mirrors emit_cover_combo's
+    // guard. One compare per node; real hands recurse a handful of levels.
+    if (out->n >= MAX_LEGAL_MOVES) return;
     if (depth == k) {
         emit_attack(out, buf, k, defender_cards, uncovered);
         return;
@@ -57,6 +63,7 @@ static void emit_pass(LegalMoves *out, const Card *combo, int k,
 static void combinations_pass(const Card *arr, int n, int start, int k,
                               Card *buf, int depth,
                               LegalMoves *out, int next_player_cards, int n_battles) {
+    if (out->n >= MAX_LEGAL_MOVES) return;   // same anti-blowup guard as attack
     if (depth == k) {
         emit_pass(out, buf, k, next_player_cards, n_battles);
         return;
@@ -79,29 +86,48 @@ static void calc_first_attack_moves(const Game *g, const Player *p, LegalMoves *
     Card buf[MAX_MOVE_CARDS];
     for (int i = 0; i < p->hand_count; i++) {
         int v = p->hand[i].value;
+        // Guard the seen[] index: a real card value is 1..13, but a
+        // malformed state can carry anything an int8 holds — an unguarded
+        // seen[v] is an out-of-bounds stack access. Skip impossible values.
+        if (v < 1 || v > ACE_VALUE) continue;
         if (seen[v]) continue;
         seen[v] = true;
         Card group[MAX_MOVE_CARDS];
         int gn = 0;
-        for (int j = 0; j < p->hand_count; j++) {
+        for (int j = 0; j < p->hand_count && gn < MAX_MOVE_CARDS; j++) {
             if (p->hand[j].value == v) group[gn++] = p->hand[j];
         }
-        for (int k = 1; k <= gn; k++) {
+        // Bound k by defender capacity: emit_attack drops any k where
+        // defender_cards < k (uncovered is 0 on a first attack), so combos
+        // above that never enter the move list — but WITHOUT this bound the
+        // recursion still explores all C(gn,k) subsets only to reject them at
+        // the leaf, a ~2^gn hang on a many-same-value (corrupt) hand. Same
+        // move set, no doomed recursion.
+        int k_max = gn < defender_cards ? gn : defender_cards;
+        for (int k = 1; k <= k_max; k++) {
             combinations_attack(group, gn, 0, k, buf, 0, out, defender_cards, 0);
         }
     }
 }
 
 static void calc_regular_attack_moves(const Game *g, const Player *p, LegalMoves *out) {
+    // Bound every table_values[] index by the card value: a malformed state
+    // can carry out-of-range values that would otherwise index this
+    // 16-entry stack array out of bounds. Real values are 1..ACE_VALUE.
     bool table_values[16] = { false };
     for (int i = 0; i < g->num_battles; i++) {
-        table_values[g->table_battles[i].attack.value] = true;
-        if (g->table_battles[i].has_defense) table_values[g->table_battles[i].defense.value] = true;
+        int av = g->table_battles[i].attack.value;
+        if (av >= 1 && av <= ACE_VALUE) table_values[av] = true;
+        if (g->table_battles[i].has_defense) {
+            int dv = g->table_battles[i].defense.value;
+            if (dv >= 1 && dv <= ACE_VALUE) table_values[dv] = true;
+        }
     }
     Card valid[MAX_HAND_SIZE];
     int vn = 0;
     for (int i = 0; i < p->hand_count; i++) {
-        if (table_values[p->hand[i].value]) valid[vn++] = p->hand[i];
+        int v = p->hand[i].value;
+        if (v >= 1 && v <= ACE_VALUE && table_values[v]) valid[vn++] = p->hand[i];
     }
     if (vn == 0) return;
     int defender_cards = g->players[g->defender].hand_count;
@@ -111,6 +137,12 @@ static void calc_regular_attack_moves(const Game *g, const Player *p, LegalMoves
     // Combos wider than a LegalMove can hold are dropped (documented cap;
     // also prevents buf overflow when a post-pickup hand is huge).
     int k_max = vn < MAX_MOVE_CARDS ? vn : MAX_MOVE_CARDS;
+    // Also bound k by remaining defender capacity: emit_attack drops any k
+    // with defender_cards < uncovered + k, so wider combos never reach the
+    // move list — bounding here avoids the doomed ~2^vn recursion on a
+    // many-same-value (corrupt) hand. Same emitted set.
+    int cap = defender_cards - uncovered;
+    if (cap < k_max) k_max = cap;
     for (int k = 1; k <= k_max; k++) {
         combinations_attack(valid, vn, 0, k, buf, 0, out, defender_cards, uncovered);
     }
@@ -235,7 +267,15 @@ static void calc_pass_moves(const Game *g, const Player *defender, LegalMoves *o
     int next_cards = g->players[next].hand_count;
 
     Card buf[MAX_MOVE_CARDS];
-    for (int k = 1; k <= mn; k++) {
+    // Bound k by (a) the buf capacity — combinations_pass writes buf[0..k-1],
+    // so k > MAX_MOVE_CARDS overflows it on a corrupt oversized hand — and
+    // (b) the next player's capacity, since emit_pass drops any k with
+    // next_cards < k + n_battles (those combos never reach the list). Without
+    // (b) the recursion explores ~2^mn doomed subsets. Same emitted set.
+    int k_max = mn < MAX_MOVE_CARDS ? mn : MAX_MOVE_CARDS;
+    int cap = next_cards - g->num_battles;
+    if (cap < k_max) k_max = cap;
+    for (int k = 1; k <= k_max; k++) {
         combinations_pass(matching, mn, 0, k, buf, 0, out, next_cards, g->num_battles);
     }
 }

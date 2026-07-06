@@ -147,6 +147,18 @@ static int put_state(const Game *g, unsigned char *p) {
     return (int)(q - p);
 }
 
+// Keep a card in the representable space (suit 0..3, value 1..ACE_VALUE) so
+// card_id = suit*13 + value-1 is always a valid 0..51 index — the bot
+// bitboards do `1ull << card_id`, which is undefined for an out-of-range id,
+// and the legal-move enumerator indexes value-keyed arrays. Identity on every
+// real card (all in range); only a malformed/corrupt state is ever touched.
+// Slots gated by has_flipped/has_defense (never read when unset) are clamped
+// too, harmlessly. Runs once per marshal — off the rollout hot path.
+static inline void clamp_card(Card *c) {
+    if (c->suit < 0) c->suit = 0; else if (c->suit > 3) c->suit = 3;
+    if (c->value < 1) c->value = 1; else if (c->value > ACE_VALUE) c->value = ACE_VALUE;
+}
+
 static void get_state(Game *g, const unsigned char *p) {
     const unsigned char *q = p;
     // No full-struct memset: the Game is ~200 KB (mostly log capacity) and
@@ -155,6 +167,14 @@ static void get_state(Game *g, const unsigned char *p) {
     // reset at the end.
     g->status = (int8_t)*q++;
     g->num_players = (int8_t)*q++;
+    // Defense-in-depth: every count below is used directly as a loop bound
+    // into a fixed-size array. The TS layer only ever marshals valid states,
+    // but the kernel is the single source of truth and must never corrupt
+    // memory on a malformed/corrupt input — clamp each count to its array
+    // capacity. Off the hot path (get_state runs once per marshal, not in
+    // the rollout, which clones the already-imported game).
+    if (g->num_players < 0) g->num_players = 0;
+    if (g->num_players > MAX_PLAYERS) g->num_players = MAX_PLAYERS;
     g->power_suit = (int8_t)*q++;
     g->first_attacker = (int8_t)*q++;
     g->defender = (int8_t)*q++;
@@ -162,16 +182,22 @@ static void get_state(Game *g, const unsigned char *p) {
     g->has_flipped = (*q++ != 0);
     g->flipped.suit = (int8_t)*q++;
     g->flipped.value = (int8_t)*q++;
+    if (g->has_flipped) clamp_card(&g->flipped);
     g->good_players_mask = (uint32_t)q[0] | ((uint32_t)q[1] << 8)
         | ((uint32_t)q[2] << 16) | ((uint32_t)q[3] << 24);
     q += 4;
     g->has_good_timestamp = (*q++ != 0);
     g->deck_count = (int16_t)(q[0] | (q[1] << 8)); q += 2;
+    if (g->deck_count < 0) g->deck_count = 0;
+    if (g->deck_count > MAX_DECK) g->deck_count = MAX_DECK;
     for (int i = 0; i < g->deck_count; i++) {
         g->deck[i].suit = (int8_t)*q++;
         g->deck[i].value = (int8_t)*q++;
+        clamp_card(&g->deck[i]);
     }
     g->num_battles = (int8_t)*q++;
+    if (g->num_battles < 0) g->num_battles = 0;
+    if (g->num_battles > MAX_BATTLES) g->num_battles = MAX_BATTLES;
     for (int i = 0; i < g->num_battles; i++) {
         Battle *b = &g->table_battles[i];
         b->attack.suit = (int8_t)*q++;
@@ -179,18 +205,25 @@ static void get_state(Game *g, const unsigned char *p) {
         b->defense.suit = (int8_t)*q++;
         b->defense.value = (int8_t)*q++;
         b->has_defense = (*q++ != 0);
+        clamp_card(&b->attack);
+        clamp_card(&b->defense);
     }
     for (int i = 0; i < g->num_players; i++) {
         Player *pl = &g->players[i];
         pl->status = (int8_t)*q++;
         pl->awaiting_attack = (*q++ != 0);
         pl->hand_count = (int8_t)*q++;
+        if (pl->hand_count < 0) pl->hand_count = 0;
+        if (pl->hand_count > MAX_HAND_SIZE) pl->hand_count = MAX_HAND_SIZE;
         for (int j = 0; j < pl->hand_count; j++) {
             pl->hand[j].suit = (int8_t)*q++;
             pl->hand[j].value = (int8_t)*q++;
+            clamp_card(&pl->hand[j]);
         }
     }
     g->num_eliminated = (int8_t)*q++;
+    if (g->num_eliminated < 0) g->num_eliminated = 0;
+    if (g->num_eliminated > MAX_PLAYERS) g->num_eliminated = MAX_PLAYERS;
     for (int i = 0; i < g->num_eliminated; i++) g->elimination_order[i] = (int8_t)*q++;
     g->num_logs = 0;
 }
