@@ -1,13 +1,13 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { useServer } from "../../contexts/ServerContext";
+import { useServerActions } from "../../contexts/ServerContext";
 import { TexturedSurface } from "../TexturedSurface";
 import { Text } from "../Text";
 import { useLocalization } from "../../contexts/LocalizationContext";
 
 export const JoinGameForm: React.FC = () => {
     const [gameId, setGameId] = useState<string>('');
-    const { joinGame } = useServer();
+    const { joinGame } = useServerActions();
     const router = useRouter();
     const { t } = useLocalization();
 

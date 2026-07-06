@@ -1,0 +1,17 @@
+-- game_logs.seq: a deterministic tie-breaker for log ordering.
+--
+-- created_at is stamped client-side (addLog → new Date().toISOString()) with
+-- millisecond precision, and one move's cascade (attack → player_out →
+-- defender_change → draw…) emits several logs inside the same millisecond.
+-- ORDER BY created_at alone therefore returns tied rows in arbitrary order
+-- (Postgres sorts are not stable), which scrambles the action stream that the
+-- end-of-game replay encoder consumes — surfacing as
+-- "[REPLAY] Snapshot failed … replay desync: logged attack not in menu" and a
+-- finished game keeping its raw logs instead of a snapshot.
+--
+-- seq is assigned in insert order: saveGameLogs upserts each move's logs as one
+-- array in emit order, and moves commit serially through the games.version CAS,
+-- so ORDER BY (created_at, seq) reproduces the exact action sequence.
+-- (Rows existing before this migration get seq in table order — no worse than
+-- the arbitrary tie order they had before.)
+ALTER TABLE game_logs ADD COLUMN seq BIGSERIAL;

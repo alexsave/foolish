@@ -11,8 +11,9 @@ import { handleGood } from './actions/good.ts';
 import { AnimationEvent } from './types.ts';
 import { cardDisplay } from './common_utils.ts';
 
-// Process a single bot's action
-export const processBotAction = async (game: Game, bot: PrivatePlayer): Promise<false | { events: AnimationEvent[], moveType: string }> => {
+// Process a single bot's action. Returns the chosen move too, so the caller
+// can replay it cheaply if its CAS commit conflicts (see bot_actions.ts).
+export const processBotAction = async (game: Game, bot: PrivatePlayer): Promise<false | { events: AnimationEvent[], moveType: string, move: LegalMove }> => {
     try {
         const botActionStartTime = Date.now();
         
@@ -55,7 +56,7 @@ export const processBotAction = async (game: Game, bot: PrivatePlayer): Promise<
 
         const totalBotActionTime = Date.now() - botActionStartTime;
         //console.log(`[TIMING] Total bot action time for ${bot.name}: ${totalBotActionTime}ms`);
-        return { events: actionEvents, moveType: chosenMove.type };
+        return { events: actionEvents, moveType: chosenMove.type, move: chosenMove };
 
     } catch (error) {
         console.error(`Error processing bot action for ${bot.name}:`, error);
@@ -114,15 +115,6 @@ export const executeBotMove = (game: Game, bot: PrivatePlayer, move: LegalMove):
 
             //console.log(`[TIMING] Action handler (${move.type}) completed in ${Date.now() - actionHandlerStart}ms`);
             //console.log(`Bot ${bot.name} performed ${move.type} action`);
-
-            // Add all events from the action to the animation manager
-            const addEventsStart = Date.now();
-            for (const event of actionEvents) {
-                // FUCK. i don't know what to do with this.
-                // TODO uncomment and return up to bot_actions.ts
-                // animationEvents.addEvent(event);
-            }
-            //console.log(`[TIMING] Adding ${actionEvents.length} events took ${Date.now() - addEventsStart}ms`);
 
         } catch (error) {
             // Handle validation failures gracefully (e.g., due to race conditions)

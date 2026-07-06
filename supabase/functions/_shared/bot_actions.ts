@@ -1,8 +1,8 @@
 import { PrivatePlayer, AnimationEvent, GAME_STATUS, PLAYER_STATUS, GAME_MOVE_TYPE } from './types.ts';
 import { executeWithGameLock } from './utils.ts';
-import { calculateLegalMoves } from './bot_strategy.ts';
+import { calculateLegalMoves, LegalMove } from './bot_strategy.ts';
 import { createClient } from 'jsr:@supabase/supabase-js';
-import { processBotAction, shouldBotActCore } from './pure_bot_actions.ts';
+import { processBotAction, executeBotMove, shouldBotActCore } from './pure_bot_actions.ts';
 
 const supabaseClient = createClient(
     Deno.env.get('SUPABASE_URL') || '',
@@ -37,9 +37,6 @@ const WALL_CEILING_MS = 120_000;
 // hard-killed loop blocks its game only until this expires (it was renewed <1 cycle
 // ago), so recovery is fast even though loops can run long.
 const BOT_LEASE_TTL_MS = 25_000;
-
-// Global variable to track current bot processing delay
-let currentBotDelay = BOT_PROCESSING_DELAY_WITH_HUMANS;
 
 // Claim the bot-loop lease atomically (replaces the bot_locks baton). The RPC
 // returns a token if no live lease exists, else null. Auto-expiring → nothing to
@@ -152,6 +149,20 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
 
     let botProcessed = false;
     let actionEvents: AnimationEvent[] = [];
+    // Pacing for THIS cycle, derived from THIS game's players. Must not be
+    // module state: one warm isolate can drive several games (heartbeat SCAN),
+    // and a bots-only game writing 300ms there leaked into a concurrent
+    // humans game expecting 3000ms, and vice versa.
+    let cycleDelay = BOT_PROCESSING_DELAY_WITH_HUMANS;
+    // Strategy decisions carried across CAS attempts within this cycle. On a
+    // version conflict executeWithGameLock re-runs the whole operation; without
+    // this a bot recomputes its move from scratch each attempt — for cordite's
+    // Monte-Carlo search that can be seconds of CPU, and up to 5 attempts blows
+    // the ~2s budget and gets the isolate killed holding the lease. A cached
+    // move is replayed iff it is still LEGAL in the reloaded state (a legal,
+    // slightly-stale choice beats a CPU kill); otherwise we recompute.
+    const movesFromFailedAttempts = new Map<string, LegalMove>();
+    const canonMove = (m: LegalMove) => JSON.stringify({ t: m.type, c: m.cards ?? null, a: m.attack_cards ?? null });
 
     // Do everything within a single lock: find eligible bots, choose one, execute action
     try {
@@ -167,16 +178,11 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
             actionEvents = [];
             botProcessed = false;
             const lockWorkStartTime = Date.now();
-            // Update global delay based on whether humans are still playing
+            // Pacing based on whether humans are still playing in THIS game
             const humanPlayersStillIn = game.players.filter(player =>
                 !player.is_ai && player.status === PLAYER_STATUS.IN
             ).length;
-
-            const newDelay = humanPlayersStillIn > 0 ? BOT_PROCESSING_DELAY_WITH_HUMANS : BOT_PROCESSING_DELAY_BOTS_ONLY;
-            if (newDelay !== currentBotDelay) {
-                console.log(`Bot delay changed from ${currentBotDelay}ms to ${newDelay}ms (humans in game: ${humanPlayersStillIn})`);
-                currentBotDelay = newDelay;
-            }
+            cycleDelay = humanPlayersStillIn > 0 ? BOT_PROCESSING_DELAY_WITH_HUMANS : BOT_PROCESSING_DELAY_BOTS_ONLY;
 
             // Capture game state for broadcasting later
             // Only process bot actions if game is in a state where bots can act
@@ -239,8 +245,30 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
                     console.log(`[ACTION] Trying bot ${selectedBot.bot.name} from ${eligibleBots.length} eligible bots`);
                     const actionStartTime = Date.now();
 
-                    // Try to process this bot's action
-                    const botActionResult = await processBotAction(game, selectedBot.bot);
+                    // Replay a move computed in a failed CAS attempt if it is
+                    // still legal against the reloaded state; else run the
+                    // strategy and remember its choice for a possible retry.
+                    let botActionResult: false | { events: AnimationEvent[]; moveType: string } = false;
+                    const cached = movesFromFailedAttempts.get(selectedBot.bot.player_id);
+                    if (cached) {
+                        const stillLegal = calculateLegalMoves(game, selectedBot.bot.player_id)
+                            .some((m) => canonMove(m) === canonMove(cached));
+                        if (stillLegal) {
+                            const cachedEvents = executeBotMove(game, selectedBot.bot, cached);
+                            if (cachedEvents) {
+                                console.log(`[ACTION] Replayed ${selectedBot.bot.name}'s cached ${cached.type} from a conflicted attempt`);
+                                botActionResult = { events: cachedEvents, moveType: cached.type };
+                            }
+                        }
+                        if (!botActionResult) movesFromFailedAttempts.delete(selectedBot.bot.player_id);
+                    }
+                    if (!botActionResult) {
+                        const fresh = await processBotAction(game, selectedBot.bot);
+                        if (fresh) {
+                            movesFromFailedAttempts.set(selectedBot.bot.player_id, fresh.move);
+                            botActionResult = fresh;
+                        }
+                    }
 
                     const actionDuration = Date.now() - actionStartTime;
                     // Feed the CPU predictor (count every attempt — failed ones burn CPU too).
@@ -307,15 +335,15 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
     if (botProcessed) {
         // Skip pacing when there are no humans watching AND this cycle produced no
         // animations — bots churning through silent goods shouldn't feel padded.
-        const skipDelay = actionEvents.length === 0 && currentBotDelay === BOT_PROCESSING_DELAY_BOTS_ONLY;
+        const skipDelay = actionEvents.length === 0 && cycleDelay === BOT_PROCESSING_DELAY_BOTS_ONLY;
 
         if (skipDelay) {
-            console.log(`[CYCLE ${cycle}] Cycle took ${totalCycleTime}ms, skipping ${currentBotDelay}ms delay (no events, no humans)`);
-        } else if (currentBotDelay > 0) {
-            console.log(`[CYCLE ${cycle}] Cycle took ${totalCycleTime}ms, waiting ${currentBotDelay}ms to maintain ${currentBotDelay}ms interval`);
-            await new Promise(resolve => setTimeout(resolve, currentBotDelay));
+            console.log(`[CYCLE ${cycle}] Cycle took ${totalCycleTime}ms, skipping ${cycleDelay}ms delay (no events, no humans)`);
+        } else if (cycleDelay > 0) {
+            console.log(`[CYCLE ${cycle}] Cycle took ${totalCycleTime}ms, waiting ${cycleDelay}ms to maintain ${cycleDelay}ms interval`);
+            await new Promise(resolve => setTimeout(resolve, cycleDelay));
         } else {
-            console.log(`[CYCLE ${cycle}] Cycle took ${totalCycleTime}ms (>= ${currentBotDelay}ms target), continuing immediately`);
+            console.log(`[CYCLE ${cycle}] Cycle took ${totalCycleTime}ms (>= ${cycleDelay}ms target), continuing immediately`);
         }
 
         return await processBotActions(game_id, cycle + 1, loopStartTime, cpu, leaseToken);

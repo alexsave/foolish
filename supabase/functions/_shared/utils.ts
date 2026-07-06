@@ -12,7 +12,7 @@ import type { User } from 'jsr:@supabase/supabase-js';
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { getAuthenticatedUser } from './auth.ts';
-import { saveGameLogs, cleanupOldGameLogs, wipeAllGameLogs, loadCurrentSessionLogs } from './log_utils.ts';
+import { cleanupOldGameLogs, wipeAllGameLogs, loadCurrentSessionLogs } from './log_utils.ts';
 // NOTE: bot_actions (→ the entire bot-strategy stack: cordite's ~127KB Monte-Carlo
 // engine, nitro, etc.) and the replay codec are imported LAZILY at their use sites
 // below, NOT statically. wrap400 is imported by every edge function, so a static
@@ -42,7 +42,7 @@ const supabaseClient = createClient(
 // is held, so nothing can leak or freeze. On conflict we reload and redo.
 // (Name kept as executeWithGameLock so callers are unchanged; it no longer locks.)
 // ============================================================================
-export const executeWithGameLock = async (game_id: string, operation: (game: Game) => Promise<{ game: Game, events: AnimationEvent[] }>, reqId: string = 'unknown', mootIfGameOver: boolean = false): Promise<{ game: Game, events: AnimationEvent[] }> => {
+export const executeWithGameLock = async (game_id: string, operation: (game: Game) => Promise<{ game: Game, events: AnimationEvent[], deleted?: boolean }>, reqId: string = 'unknown', mootIfGameOver: boolean = false): Promise<{ game: Game, events: AnimationEvent[], deleted?: boolean }> => {
     const MAX_ATTEMPTS = 5;
 
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -63,6 +63,15 @@ export const executeWithGameLock = async (game_id: string, operation: (game: Gam
 
         const result = await operation(loadedGame);
 
+        // The operation deleted the game row itself (last player exiting the
+        // lobby). There is nothing left to CAS against — committing would report
+        // a spurious `conflict`, and the retry's reload would throw "not found",
+        // turning a successful teardown into a 400.
+        if (result.deleted) {
+            console.log(`[${reqId}][TXN] game ${game_id} deleted by operation — skipping commit`);
+            return result;
+        }
+
         // Pure end-of-game detection: sets GAME_OVER + player statuses in memory,
         // no DB writes — so the committed state below is already final.
         const game_ended = check_win_sync(result.game);
@@ -80,31 +89,21 @@ export const executeWithGameLock = async (game_id: string, operation: (game: Gam
         // End-of-game one-time side effects (ELO + replay snapshot + log wipe),
         // run exactly once — only the winning commit reaches here. This MUST run
         // before the broadcast: it pushes the MAGIC_TRANSITION event and the final
-        // state the broadcast carries. The ending move's own logs are persisted
-        // first so finalizeEndedGame can load the COMPLETE session for the replay
-        // snapshot (logs are now lazy — not held in memory across the game).
+        // state the broadcast carries. The ending move's own logs were committed
+        // atomically with the final state above, so finalizeEndedGame loads the
+        // COMPLETE session for the replay snapshot.
         if (game_ended) {
-            if (result.game.logs.length > 0) {
-                await saveGameLogs(supabaseClient, game_id, result.game.logs);
-            }
             await finalizeEndedGame(result.game);
             result.events.push({ type: ANIMATION_EVENT_TYPE.MAGIC_TRANSITION, game_state: result.game });
         }
 
-        // Broadcast AFTER the durable commit (fire-and-forget). For a normal move we
-        // do this BEFORE persisting logs: the opponent's animation should not wait on
-        // an append-only, UUID-keyed (idempotent) log write that can't affect game
-        // state. The fence is the version, not the log table.
+        // Broadcast AFTER the durable commit (fire-and-forget). The move's logs
+        // were part of the commit itself (commit_game p_logs) — there is no
+        // separate log write left on this path; the fence is the version.
         if (result.events.length > 0) {
             console.log(`[${reqId}][TXN] Broadcasting ${result.events.length} events after commit`);
             broadcastAnimationEvents(result.game, result.events, reqId).catch(err =>
                 console.error(`[${reqId}] Error broadcasting events:`, err));
-        }
-
-        // Persist this move's logs AFTER kicking off the broadcast (skipped when the
-        // game ended — finalizeEndedGame already saved + snapshotted + wiped above).
-        if (!game_ended && result.game.logs.length > 0) {
-            await saveGameLogs(supabaseClient, game_id, result.game.logs);
         }
 
         return result;
@@ -226,32 +225,40 @@ interface BroadcastMessage { topic: string; event: string; payload: any; }
 const broadcastMessages = async (messages: BroadcastMessage[], reqId: string = 'unknown'): Promise<void> => {
     if (messages.length === 0) return;
     const start = Date.now();
-    try {
-        const response = await fetch(REALTIME_BROADCAST_URL, {
-            method: 'POST',
-            headers: {
-                apikey: REALTIME_BROADCAST_KEY,
-                Authorization: `Bearer ${REALTIME_BROADCAST_KEY}`,
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                messages: messages.map(m => ({
-                    topic: m.topic,
-                    event: m.event,
-                    payload: m.payload,
-                    private: true,
-                })),
-            }),
-        });
-        // Realtime returns 202 Accepted on success.
-        if (response.status !== 202) {
+    // One retry on failure: the whole path is fire-and-forget (a dropped
+    // broadcast only surfaces as a missed animation until the next event's
+    // versioned state supersedes it), so a single cheap re-send covers the
+    // transient Realtime hiccup without adding meaningful tail latency.
+    // Duplicate delivery is safe — clients dedup by sequence_id and drop
+    // stale versions.
+    for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+            const response = await fetch(REALTIME_BROADCAST_URL, {
+                method: 'POST',
+                headers: {
+                    apikey: REALTIME_BROADCAST_KEY,
+                    Authorization: `Bearer ${REALTIME_BROADCAST_KEY}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    messages: messages.map(m => ({
+                        topic: m.topic,
+                        event: m.event,
+                        payload: m.payload,
+                        private: true,
+                    })),
+                }),
+            });
+            // Realtime returns 202 Accepted on success.
+            if (response.status === 202) {
+                await response.body?.cancel();
+                break;
+            }
             const text = await response.text().catch(() => response.statusText);
-            console.error(`[${reqId}][BROADCAST] REST broadcast failed: ${response.status} ${text}`);
-        } else {
-            await response.body?.cancel();
+            console.error(`[${reqId}][BROADCAST] REST broadcast failed (attempt ${attempt}): ${response.status} ${text}`);
+        } catch (err) {
+            console.error(`[${reqId}][BROADCAST] REST broadcast error (attempt ${attempt}):`, err);
         }
-    } catch (err) {
-        console.error(`[${reqId}][BROADCAST] REST broadcast error:`, err);
     }
     console.log(`[${reqId}][BROADCAST] batched ${messages.length} message(s) in ${Date.now() - start}ms`);
 };
@@ -393,10 +400,12 @@ export const wrap400 = (execute: (params: ExecutionParams) => Promise<{ game: Ga
             }
 
             // Background bot loop, scheduled AFTER preparing the response (non-blocking).
-            if (game_id && run_bots) {
+            // Gated on the game actually PLAYING: a lobby action, a deleted game, or a
+            // just-finished game has no bot to drive, and `bump` (membership-free by
+            // design, spectators nudge stalled games) shouldn't be able to spin the
+            // loop on non-live games either.
+            if (game_id && run_bots && result?.status === GAME_STATUS.PLAYING) {
                 console.log(`[${reqId}][WRAP400] Starting background bot loop`);
-                // TODO: not quite. Only after start/attack/cover/pass/pickup/good
-                // todo add validation before kicking this off
                 //
                 // CRITICAL: this runs AFTER the HTTP response is sent. Without
                 // EdgeRuntime.waitUntil the runtime reaps the isolate ~15s later —
@@ -580,6 +589,24 @@ export const commitGame = async (
 ): Promise<{ status: 'ok' | 'conflict'; version?: number }> => {
     const publicGame: PublicGame = gameToPublicGame(game);
 
+    // This move's logs ride in the SAME transaction as the version-gated
+    // commit (migration 20260702100000): one round-trip instead of a commit +
+    // separate saveGameLogs, and the logs can never be durably out of sync
+    // with the state they describe. The 10-minute guard mirrors the old
+    // saveGameLogs filter: anything older was loaded from the DB, not
+    // produced by this move.
+    const tenMinutesAgo = Date.now() - 10 * 60 * 1000;
+    const freshLogs = game.logs.filter(log => new Date(log.created_at).getTime() > tenMinutesAgo)
+        .map(log => ({
+            id: log.id,
+            game_id: log.game_id,
+            log_type: log.log_type,
+            player_id: log.player_id,
+            card_pairs: log.card_pairs,
+            defender_index: log.defender_index,
+            created_at: log.created_at,
+        }));
+
     const humanHands = game.players
         .filter(player => !player.is_ai)
         .map(player => ({
@@ -603,6 +630,7 @@ export const commitGame = async (
         p_deck: game.deck,
         p_hands: humanHands,
         p_bot_hands: botHands,
+        p_logs: freshLogs.length > 0 ? freshLogs : null,
     });
 
     if (error) {
@@ -665,8 +693,11 @@ const check_win_sync = (game: Game): boolean => {
 // the old check_win_async; its check_win_sync half now runs BEFORE the commit so
 // the committed state already reflects GAME_OVER.
 const finalizeEndedGame = async (game: Game): Promise<void> => {
-    // Update ELO ratings
-    await updateEloRatings(game);
+    // ELO and the replay snapshot touch disjoint tables and don't read each
+    // other's writes — run them concurrently instead of serially, since both
+    // sit on the game-end critical path before the final broadcast.
+    // updateEloRatings never throws (it swallows its own errors).
+    const eloPromise = updateEloRatings(game);
 
     // Logs are loaded lazily, so game.logs holds only the FINAL move's logs here.
     // The replay snapshot needs the whole session, so load it from the DB (the
@@ -726,6 +757,8 @@ const finalizeEndedGame = async (game: Game): Promise<void> => {
             console.error(`Error cleaning up old logs for game ${game.id}:`, err);
         });
     }
+
+    await eloPromise;
 }
 
 
@@ -735,60 +768,6 @@ const finalizeEndedGame = async (game: Game): Promise<void> => {
 
 
 
-// Get or create ELO rating for a user
-const getOrCreateEloRating = async (userId: string): Promise<UserEloRating> => {
-    const { data, error } = await supabaseClient
-        .from('user_elo_ratings')
-        .select('*')
-        .eq('user_id', userId)
-        .single();
-
-    if (error && error.code === 'PGRST116') {
-        // User doesn't have ELO rating, create one
-        const newRating = {
-            user_id: userId,
-            elo_rating: 1000,
-            games_played: 0
-        };
-
-        const { data: insertData, error: insertError } = await supabaseClient
-            .from('user_elo_ratings')
-            .insert(newRating)
-            .select()
-            .single();
-
-        if (insertError) {
-            console.error('Error creating ELO rating:', insertError);
-            throw new Error('Failed to create ELO rating');
-        }
-
-        return insertData;
-    }
-
-    if (error) {
-        console.error('Error fetching ELO rating:', error);
-        throw new Error('Failed to fetch ELO rating');
-    }
-
-    return data;
-};
-
-// Get ELO rating for a bot
-const getBotEloRating = async (botId: string): Promise<{ elo_rating: number, games_played: number, nickname: string, strategy_key: string }> => {
-    const { data, error } = await supabaseClient
-        .from('bots')
-        .select('elo_rating, games_played, nickname, strategy_key')
-        .eq('id', botId)
-        .single();
-
-    if (error) {
-        console.error('Error fetching bot ELO rating:', error);
-        throw new Error('Failed to fetch bot ELO rating');
-    }
-
-    return data;
-};
-
 // Update ELO ratings for all players after game completion
 const updateEloRatings = async (game: Game): Promise<void> => {
     if (game.players.length < 2) {
@@ -796,22 +775,43 @@ const updateEloRatings = async (game: Game): Promise<void> => {
     }
 
     try {
-        // Get all player ELO ratings (both human and bot)
+        // Load all player ELO ratings in TWO batched selects (one per table)
+        // instead of one round-trip per player — this runs on the game-ending
+        // hot path, before the final broadcast is pushed.
         const playerRatings = new Map<string, { elo_rating: number, games_played: number }>();
         const botData = new Map<string, { elo_rating: number, games_played: number, nickname: string, strategy_key: string }>();
-        const humanPlayers: string[] = [];
-        const botPlayers: string[] = [];
+        const humanPlayers: string[] = game.players.filter(p => !p.is_ai).map(p => p.player_id);
+        const botPlayers: string[] = game.players.filter(p => p.is_ai).map(p => p.player_id);
 
-        for (const player of game.players) {
-            if (player.is_ai) {
-                const botInfo = await getBotEloRating(player.player_id);
-                playerRatings.set(player.player_id, botInfo);
-                botData.set(player.player_id, botInfo);
-                botPlayers.push(player.player_id);
-            } else {
-                const rating = await getOrCreateEloRating(player.player_id);
-                playerRatings.set(player.player_id, rating);
-                humanPlayers.push(player.player_id);
+        if (botPlayers.length > 0) {
+            const { data, error } = await supabaseClient
+                .from('bots')
+                .select('id, elo_rating, games_played, nickname, strategy_key')
+                .in('id', botPlayers);
+            if (error || !data || data.length !== botPlayers.length) {
+                console.error('Error fetching bot ELO ratings:', error ?? `expected ${botPlayers.length} bots, got ${data?.length ?? 0}`);
+                throw new Error('Failed to fetch bot ELO ratings');
+            }
+            for (const row of data) {
+                playerRatings.set(row.id, row);
+                botData.set(row.id, row);
+            }
+        }
+
+        if (humanPlayers.length > 0) {
+            const { data, error } = await supabaseClient
+                .from('user_elo_ratings')
+                .select('*')
+                .in('user_id', humanPlayers);
+            if (error) {
+                console.error('Error fetching ELO ratings:', error);
+                throw new Error('Failed to fetch ELO ratings');
+            }
+            const existing = new Map((data ?? []).map((r: UserEloRating) => [r.user_id, r]));
+            for (const id of humanPlayers) {
+                // A first-time player has no row yet; start them at the base
+                // rating — the batched upsert below creates the row.
+                playerRatings.set(id, existing.get(id) ?? { elo_rating: 1000, games_played: 0 });
             }
         }
 

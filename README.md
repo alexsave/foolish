@@ -69,7 +69,9 @@ supabase/
 cnitro/                   pure-C Durak engine + bot arena  ← project 1
 offlinefun/               offline/PWA layer + ML experiments (NEAT, nitro)  ← projects 2 & 4
 e2e/                      full-stack test suite (real server code, real Postgres)
-docs/                     design / refactor notes
+docs/                     design / refactor notes; ARCHITECTURE_REVIEW.md is the
+                          latest full audit (server flow, client data flow,
+                          fixed glitches, ranked improvement backlog)
 ```
 
 ### Shared code (`@shared`) and the C rules kernel

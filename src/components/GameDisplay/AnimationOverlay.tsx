@@ -60,7 +60,7 @@ export const AnimationOverlay = () => {
     };
 
     // Helper function to find element by data attributes with retry logic
-    const findElementByLocation = (location: string, playerId?: string, cardSuit?: number, cardValue?: number, battleIndex?: number, retryCount = 0): HTMLElement | null => {
+    const findElementByLocation = (location: string, playerId?: string, cardSuit?: number, cardValue?: number, battleIndex?: number): HTMLElement | null => {
         // For table destinations, try specific targeting first
         if (location === 'table') {
             // If we have a battle index, try to find the specific battle container
@@ -97,17 +97,7 @@ export const AnimationOverlay = () => {
             generalSelector += `[data-player-id="${playerId}"]`;
         }
         
-        const element = document.querySelector(generalSelector) as HTMLElement | null;
-        
-        // If element not found and we haven't retried too many times, try again after a short delay
-        if (!element && retryCount < 3) {
-            setTimeout(() => {
-                return findElementByLocation(location, playerId, cardSuit, cardValue, battleIndex, retryCount + 1);
-            }, 50);
-            return null;
-        }
-        
-        return element;
+        return document.querySelector(generalSelector) as HTMLElement | null;
     };
 
     // Helper function to create invisible placeholders and measure their positions
@@ -133,8 +123,13 @@ export const AnimationOverlay = () => {
                 return cached;
             }
 
-            // Find the table battles container
-            const tableBattlesElement = document.querySelector('[data-location="table"]')?.parentElement;
+            // Find the table battles container. The container itself is tagged
+            // (data-table-container) so this also works when the table is EMPTY —
+            // an opponent's first attack of a bout used to find no
+            // [data-location="table"] child at all and fall back to a generic
+            // center position instead of the real first slot.
+            const tableBattlesElement = (document.querySelector('[data-table-container]')
+                ?? document.querySelector('[data-location="table"]')?.parentElement) as HTMLElement | null;
             if (!tableBattlesElement) return positions;
 
             // Create invisible placeholder battle containers
@@ -187,6 +182,40 @@ export const AnimationOverlay = () => {
         }
         
         return positions;
+    };
+
+    // Measure where cards ENTERING the local player's hand will actually land.
+    // The rendered hand appends new cards at the END (displayedHand), but the
+    // old targeting picked querySelector's FIRST hand-card match — so drawn
+    // cards flew toward the leftmost card instead of their landing slot. Same
+    // placeholder trick as the table slots: append invisible flex items with a
+    // real card's flex geometry, reflow, measure, remove — the measured spots
+    // include the squeeze the incoming cards cause. Returns [] for players
+    // without a per-card hand in the DOM (opponents' mini-hands).
+    const measureHandSlotPositions = (count: number, playerId?: string): { x: number; y: number }[] => {
+        if (!playerId) return [];
+        const container = document.querySelector(`[data-hand-container][data-player-id="${playerId}"]`) as HTMLElement | null;
+        if (!container) return [];
+
+        const placeholders: HTMLElement[] = [];
+        for (let i = 0; i < count; i++) {
+            const ph = document.createElement('div');
+            // Same flex-item geometry as a hand card (ActionButtons): the
+            // measured layout matches the hand once the drawn cards commit.
+            ph.style.cssText = 'flex:1 1 0;min-width:20px;max-width:50px;height:70px;visibility:hidden;pointer-events:none;';
+            ph.setAttribute('data-placeholder', 'true');
+            container.appendChild(ph);
+            placeholders.push(ph);
+        }
+        // Force layout and measure (intentional unused read).
+        // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+        container.offsetHeight;
+        const out = placeholders.map(ph => {
+            const rect = ph.getBoundingClientRect();
+            return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+        });
+        placeholders.forEach(ph => ph.remove());
+        return out;
     };
 
     // Helper function to get fallback positions when elements aren't found
@@ -267,7 +296,13 @@ export const AnimationOverlay = () => {
             } else {
                 // Render individual CardFaces for normal cards
                 const newAnimatedCards: AnimatedCard[] = [];
-                
+
+                // Cards entering the local hand land at its END — measure those
+                // slots once for the whole batch (deal/refill/pickup).
+                const handSlots = to_location === 'hand'
+                    ? measureHandSlotPositions(cards.length, player_id)
+                    : [];
+
                 // For cover animations, keep track of which attack cards have been targeted
                 const targetedAttackCards = new Set<string>();
 
@@ -392,22 +427,37 @@ export const AnimationOverlay = () => {
                     } else {
                         // Handle all other destination types
                         if (to_location === 'hand') {
-                            destinationElement = findElementByLocation('hand', player_id);
-                        } else if (to_location === 'discard') {
-                            destinationElement = findElementByLocation('discard');
-                        }
-
-                        if (destinationElement) {
-                            endPos = getElementPosition(destinationElement);
+                            // Precisely measured landing slot for the local hand;
+                            // opponents' mini-hands fall through to their container.
+                            const slot = handSlots[index];
+                            if (slot) {
+                                endPos = slot;
+                            } else {
+                                destinationElement = findElementByLocation('hand', player_id);
+                                endPos = destinationElement
+                                    ? getElementPosition(destinationElement)
+                                    : getFallbackPosition('hand', player_id);
+                            }
                         } else {
-                            endPos = getFallbackPosition(to_location || 'table', player_id);
+                            if (to_location === 'discard') {
+                                destinationElement = findElementByLocation('discard');
+                            }
+                            endPos = destinationElement
+                                ? getElementPosition(destinationElement)
+                                : getFallbackPosition(to_location || 'table', player_id);
                         }
                     }
 
-                    // Small offset for stacking if multiple cards go to same area
-                    const stackOffset = index * 3;
-                    endPos.x += stackOffset;
-                    endPos.y += stackOffset;
+                    // Small offset so simultaneous cards into the same UNMEASURED
+                    // area don't fully overlap; measured targets (table slots, hand
+                    // slots) are exact — offsetting them would re-introduce drift.
+                    const preciselyMeasured = (to_location === 'hand' && handSlots[index] !== undefined) ||
+                        (type === 'attack_pass' && measuredPositions.get(`${index}`) !== undefined);
+                    if (!preciselyMeasured) {
+                        const stackOffset = index * 3;
+                        endPos.x += stackOffset;
+                        endPos.y += stackOffset;
+                    }
 
                     newAnimatedCards.push({
                         id: `${card.suit}-${card.value}-${player_id}-${Date.now()}-${index}`,
