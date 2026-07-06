@@ -156,6 +156,12 @@ _Static_assert(SOLVE_SCRATCH_MOVES <= MAX_LEGAL_MOVES, "cap must fit the generat
 // drops every append into its static scratch — solver children never read
 // logs, and full-size Games were 7.7MB of scratch for write-only data.
 Game *solve_scratch_child(int depth);
+// Shared struct-rollout move buffer (full LegalMoves: rollout policies pick
+// among the complete lite enumeration, so capping would change play). One
+// static for all families: rollouts never nest, and keeping it OFF the wasm
+// shadow stack removes a 332KB stack local — the overflow class the CI
+// trap-first stack caught. _Thread_local for the native OMP eval.
+LegalMoves *rollout_moves_scratch(void);
 // memcpy the prefix and turn the log array into a sinkhole (see above).
 void  solve_clone_prefix(Game *dst, const Game *src);
 SolveMoves *solve_scratch_mv(void);

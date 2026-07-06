@@ -36,7 +36,16 @@ void *memset(void *dst, int c, size_t n) {
 
 // ---------- shared buffers ----------------------------------------------
 
+// Sized by the widest export: the chunked legal-move export (up to
+// MOVES_CHUNK=4000 moves x 82B in the bots module; the rules module's
+// smaller MAX_LEGAL_MOVES bounds the whole list well below that) — the
+// log export (~68KB worst case) fits under either. Derives from the move
+// cap so the rules module doesn't pay the bots module's buffer.
+#if MAX_LEGAL_MOVES >= 4000
 #define IO_CAP (384 * 1024)
+#else
+#define IO_CAP (128 * 1024)
+#endif
 #define MAX_SNAPS 48
 #define MAX_IN_CARDS 128
 

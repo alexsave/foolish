@@ -762,13 +762,13 @@ static int og_simulate(Game *g, int my_idx, int max_turns) {
         bool acted = false;
         for (int pi = 0; pi < g->num_players; pi++) {
             if (!should_bot_act(g, pi)) continue;
-            LegalMoves moves;
-            calculate_legal_moves_lite(g, pi, &moves);
-            if (moves.n == 0) continue;
+            LegalMoves *moves = rollout_moves_scratch();
+            calculate_legal_moves_lite(g, pi, moves);
+            if (moves->n == 0) continue;
             StrategyFn fn = og_rollout_for(g);
-            int idx = fn(g, pi, &moves, NULL);
-            if (idx < 0 || idx >= moves.n) continue;
-            if (og_apply(g, pi, &moves.moves[idx])) { acted = true; break; }
+            int idx = fn(g, pi, moves, NULL);
+            if (idx < 0 || idx >= moves->n) continue;
+            if (og_apply(g, pi, &moves->moves[idx])) { acted = true; break; }
         }
         if (!acted) break;
     }

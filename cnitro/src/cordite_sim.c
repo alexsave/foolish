@@ -1602,3 +1602,6 @@ void solve_clone_prefix(Game *dst, const Game *src) {
 }
 
 SolveMoves *solve_scratch_mv(void) { return solve_mv_scratch; }
+
+static _Thread_local LegalMoves rollout_moves;
+LegalMoves *rollout_moves_scratch(void) { return &rollout_moves; }

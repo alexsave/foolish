@@ -979,26 +979,26 @@ static int cd_simulate(Game *g, int my_idx, int max_turns) {
         bool acted = false;
         for (int pi = 0; pi < g->num_players; pi++) {
             if (!should_bot_act(g, pi)) continue;
-            // Static, not stack: LegalMoves is ~10MB at the wasm build's
-            // MAX_LEGAL_MOVES and the wasm stack is 1MB — a stack instance
-            // traps the module the moment a rollout reaches this ply loop.
-            // Consumed fully before the next iteration, so one per thread.
-            static _Thread_local LegalMoves moves;
-            calculate_legal_moves_lite(g, pi, &moves);
-            if (moves.n == 0) continue;
+            // Shared scratch, not stack: a full LegalMoves on the wasm
+            // shadow stack traps the module (CI-observed); consumed fully
+            // before the next iteration, and rollouts never nest, so the
+            // one cross-family buffer suffices.
+            LegalMoves *moves = rollout_moves_scratch();
+            calculate_legal_moves_lite(g, pi, moves);
+            if (moves->n == 0) continue;
             int idx;
             if (cd_seat_policy_dev && cd_seat_policy[pi] != CORDITE_POL_HANDWRITTEN) {
                 // fulminate: a profiled seat with a non-default sampled policy
                 // plays with its archetype chooser on the lite move set
                 // (cordite_core.ts simulate(), lines 2095-2101). Seats mapped
                 // to POL_HANDWRITTEN keep cordite's exact existing dispatch.
-                idx = cd_arch_choose(cd_seat_policy[pi], g, pi, &moves);
+                idx = cd_arch_choose(cd_seat_policy[pi], g, pi, moves);
             } else {
                 StrategyFn fn = cd_rollout_for(g);
-                idx = fn(g, pi, &moves, NULL);
+                idx = fn(g, pi, moves, NULL);
             }
-            if (idx < 0 || idx >= moves.n) continue;
-            if (cd_apply(g, pi, &moves.moves[idx])) { acted = true; break; }
+            if (idx < 0 || idx >= moves->n) continue;
+            if (cd_apply(g, pi, &moves->moves[idx])) { acted = true; break; }
         }
         if (!acted) break;
     }
