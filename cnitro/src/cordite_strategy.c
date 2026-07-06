@@ -244,7 +244,7 @@ static void cd_build_belief(const Game *g, int bot_idx, Belief *B) {
                         cd_floor_check(B, g, p, c);
                         cd_pinned_remove(B, p, c);
                     }
-                    if (L->pairs[k].has_target) {
+                    if (!card_is_none(L->pairs[k].target)) {
                         for (int q = 0; q < unc_n; q++) {
                             if (card_eq(unc[q], L->pairs[k].target)) {
                                 unc[q] = unc[--unc_n];
@@ -314,7 +314,7 @@ static void cd_build_belief(const Game *g, int bot_idx, Belief *B) {
     for (int j = 0; j < bot->hand_count; j++) known[kn++] = bot->hand[j];
     for (int i = 0; i < g->num_battles; i++) {
         known[kn++] = g->table_battles[i].attack;
-        if (g->table_battles[i].has_defense) known[kn++] = g->table_battles[i].defense;
+        if (!card_is_none(g->table_battles[i].defense)) known[kn++] = g->table_battles[i].defense;
     }
     if (g->has_flipped) known[kn++] = g->flipped;
     for (int i = 0; i < disc_n && kn < 160; i++) known[kn++] = discards[i];
@@ -693,7 +693,7 @@ static bool cd_sh_give_up(const Game *g, int p_idx) {
     Card unc[MAX_BATTLES];
     int un = 0;
     for (int i = 0; i < g->num_battles; i++) {
-        if (!g->table_battles[i].has_defense) unc[un++] = g->table_battles[i].attack;
+        if (!!card_is_none(g->table_battles[i].defense)) unc[un++] = g->table_battles[i].attack;
     }
     if (un == 0) return false;
     int defendable = 0, trumps_needed = 0;

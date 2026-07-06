@@ -136,7 +136,7 @@ static bool should_give_up_basic(const Game *g, const Player *bot) {
     // uncoveredAttacks = table_battles with defense === null.
     int uncovered = 0;
     for (int i = 0; i < g->num_battles; i++) {
-        if (!g->table_battles[i].has_defense) uncovered++;
+        if (!!card_is_none(g->table_battles[i].defense)) uncovered++;
     }
     if (uncovered == 0) return false;
 
@@ -145,7 +145,7 @@ static bool should_give_up_basic(const Game *g, const Player *bot) {
     int undefendable_attacks = 0;
 
     for (int i = 0; i < g->num_battles; i++) {
-        if (g->table_battles[i].has_defense) continue;
+        if (!card_is_none(g->table_battles[i].defense)) continue;
         Card attack = g->table_battles[i].attack;
 
         // trumpOptions: trump cards that canCover; keep only the min value.
@@ -274,7 +274,7 @@ static int select_defense_move(const Game *g, int bot_idx, const LegalMoves *mov
 
     int uncovered = 0;
     for (int i = 0; i < g->num_battles; i++) {
-        if (!g->table_battles[i].has_defense) uncovered++;
+        if (!!card_is_none(g->table_battles[i].defense)) uncovered++;
     }
     if (uncovered > 0) {
         if (ultimate_give_up_decision(g, bot)) {

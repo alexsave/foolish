@@ -233,7 +233,7 @@ static void fm_profile_seats(const Game *g, int bot_idx, FmSeatProfile *profiles
                     for (int k = 0; k < L->num_pairs; k++) {
                         Card cov = L->pairs[k].primary;
                         Card atk = L->pairs[k].target;
-                        if (fm_none(cov) || !L->pairs[k].has_target || fm_none(atk)) continue;
+                        if (fm_none(cov) || !!card_is_none(L->pairs[k].target) || fm_none(atk)) continue;
                         bool cov_trump = (cov.suit == power);
                         bool atk_trump = (atk.suit == power);
                         // (b) Wasteful trump cover of a VERY LOW (<=7)
@@ -248,7 +248,7 @@ static void fm_profile_seats(const Game *g, int bot_idx, FmSeatProfile *profiles
                     }
                 }
                 for (int k = 0; k < L->num_pairs; k++) {
-                    if (!L->pairs[k].has_target || fm_none(L->pairs[k].target)) continue;
+                    if (!!card_is_none(L->pairs[k].target) || fm_none(L->pairs[k].target)) continue;
                     for (int q = 0; q < bn; q++) {
                         if (card_eq(b_atk[q], L->pairs[k].target)) {
                             // indexOf: only the FIRST matching attack, and only

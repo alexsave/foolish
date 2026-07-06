@@ -42,8 +42,7 @@
 
 typedef struct {
     Card attack;
-    Card defense;     // {-1,-1} when uncovered
-    bool has_defense;
+    Card defense;     // CARD_NONE when uncovered
 } Battle;
 
 // Each pair has a primary card and an optional target card. For COVER, target
@@ -59,7 +58,6 @@ typedef struct {
 typedef struct {
     Card  primary;
     Card  target;
-    bool  has_target;
 } LogPair;
 
 typedef struct {

@@ -68,7 +68,7 @@ static void print_state(const Game *g) {
         for (int i = 0; i < g->num_battles; i++) {
             printf(" ");
             print_card(g->table_battles[i].attack, trump);
-            if (g->table_battles[i].has_defense) {
+            if (!card_is_none(g->table_battles[i].defense)) {
                 printf("/");
                 print_card(g->table_battles[i].defense, trump);
             } else printf("/_");

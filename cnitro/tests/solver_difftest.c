@@ -59,8 +59,8 @@ static void compare_at(const Game *g, int gi, int verbose) {
                 for (int i = 0; i < g->num_battles; i++)
                     fprintf(stderr, "  battle%d atk s%dv%d cov=%d%s\n", i,
                             g->table_battles[i].attack.suit, g->table_battles[i].attack.value,
-                            g->table_battles[i].has_defense,
-                            g->table_battles[i].has_defense ? "" : "");
+                            !card_is_none(g->table_battles[i].defense),
+                            !card_is_none(g->table_battles[i].defense) ? "" : "");
             }
         }
     }

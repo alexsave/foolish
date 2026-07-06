@@ -143,7 +143,7 @@ static int put_state(const Game *g, unsigned char *p) {
         *q++ = (unsigned char)b->attack.value;
         *q++ = (unsigned char)b->defense.suit;
         *q++ = (unsigned char)b->defense.value;
-        *q++ = (unsigned char)(b->has_defense ? 1 : 0);
+        *q++ = (unsigned char)(!card_is_none(b->defense) ? 1 : 0);
     }
     for (int i = 0; i < g->num_players; i++) {
         const Player *pl = &g->players[i];
@@ -217,9 +217,10 @@ static void get_state(Game *g, const unsigned char *p) {
         b->attack.value = (int8_t)*q++;
         b->defense.suit = (int8_t)*q++;
         b->defense.value = (int8_t)*q++;
-        b->has_defense = (*q++ != 0);
+        int has_def = (*q++ != 0);
         clamp_card(&b->attack);
         clamp_card(&b->defense);
+        if (!has_def) b->defense = CARD_NONE;
     }
     for (int i = 0; i < g->num_players; i++) {
         Player *pl = &g->players[i];
@@ -267,7 +268,7 @@ int wasm_export_logs(void) {
             *q++ = (unsigned char)pr->primary.value;
             *q++ = (unsigned char)pr->target.suit;
             *q++ = (unsigned char)pr->target.value;
-            *q++ = (unsigned char)(pr->has_target ? 1 : 0);
+            *q++ = (unsigned char)(!card_is_none(pr->target) ? 1 : 0);
         }
     }
     return (int)(q - g_io);

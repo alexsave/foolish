@@ -142,7 +142,7 @@ static void log_add_card(GameLog *l, Card c) {
     if (l->num_pairs >= MAX_LOG_PAIRS) return;
     LogPair *p = &l->pairs[l->num_pairs++];
     p->primary = c;
-    p->has_target = false;
+    p->target = CARD_NONE;
 }
 
 static void log_add_pair(GameLog *l, Card primary, Card target) {
@@ -150,7 +150,6 @@ static void log_add_pair(GameLog *l, Card primary, Card target) {
     LogPair *p = &l->pairs[l->num_pairs++];
     p->primary = primary;
     p->target = target;
-    p->has_target = true;
 }
 
 // ---------- Hand ops ---------------------------------------------------
@@ -354,14 +353,14 @@ static void refill_player_hands(Game *g) {
 
 static int count_uncovered(const Game *g) {
     int n = 0;
-    for (int i = 0; i < g->num_battles; i++) if (!g->table_battles[i].has_defense) n++;
+    for (int i = 0; i < g->num_battles; i++) if (!!card_is_none(g->table_battles[i].defense)) n++;
     return n;
 }
 
 static bool table_has_value(const Game *g, int v) {
     for (int i = 0; i < g->num_battles; i++) {
         if (g->table_battles[i].attack.value == v) return true;
-        if (g->table_battles[i].has_defense && g->table_battles[i].defense.value == v) return true;
+        if (!card_is_none(g->table_battles[i].defense) && g->table_battles[i].defense.value == v) return true;
     }
     return false;
 }
@@ -402,7 +401,7 @@ bool handle_attack(Game *g, int player_idx, const Card *cards, int n_cards) {
         hand_remove_card(p, cards[i]);
         Battle *b = &g->table_battles[g->num_battles++];
         b->attack = cards[i];
-        b->has_defense = false;
+        b->defense = CARD_NONE;
     }
 
     GameLog *l = log_alloc(g, LOG_ATTACK, player_idx);
@@ -464,7 +463,7 @@ bool handle_cover(Game *g, int player_idx,
     for (int i = 0; i < n; i++) {
         bool found = false;
         for (int j = 0; j < g->num_battles; j++) {
-            if (!g->table_battles[j].has_defense
+            if (!!card_is_none(g->table_battles[j].defense)
                 && card_eq(g->table_battles[j].attack, attack_cards[i])) {
                 found = true; break;
             }
@@ -485,14 +484,13 @@ bool handle_cover(Game *g, int player_idx,
         Card attack_card = attack_cards[i];
         int idx = -1;
         for (int j = 0; j < g->num_battles; j++) {
-            if (!g->table_battles[j].has_defense
+            if (!!card_is_none(g->table_battles[j].defense)
                 && card_eq(g->table_battles[j].attack, attack_card)) {
                 idx = j; break;
             }
         }
         if (idx < 0) REJECT(ENGINE_REJECT_ATTACK_NOT_ON_TABLE);
         g->table_battles[idx].defense = cover_card;
-        g->table_battles[idx].has_defense = true;
         hand_remove_card(def, cover_card);
 
         GameLog *l = log_alloc(g, LOG_COVER, player_idx);
@@ -509,7 +507,7 @@ bool handle_cover(Game *g, int player_idx,
         GameLog *l = log_alloc(g, LOG_DISCARD, -1);
         for (int i = 0; i < g->num_battles; i++) {
             log_add_card(l, g->table_battles[i].attack);
-            if (g->table_battles[i].has_defense) log_add_card(l, g->table_battles[i].defense);
+            if (!card_is_none(g->table_battles[i].defense)) log_add_card(l, g->table_battles[i].defense);
         }
 
         g->num_battles = 0;
@@ -544,7 +542,7 @@ bool handle_cover(Game *g, int player_idx,
 
     bool all_covered = (g->num_battles > 0);
     for (int i = 0; i < g->num_battles; i++) {
-        if (!g->table_battles[i].has_defense) { all_covered = false; break; }
+        if (!!card_is_none(g->table_battles[i].defense)) { all_covered = false; break; }
     }
     if (all_covered) {
         g->has_good_timestamp = true; // matches `game.good_timestamp = Date.now()`
@@ -578,7 +576,7 @@ bool handle_pass(Game *g, int player_idx, const Card *cards, int n_cards) {
         if (!hand_contains(def, cards[i])) REJECT(ENGINE_REJECT_NOT_IN_HAND);
     }
     if (g->num_battles == 0) REJECT(ENGINE_REJECT_NO_TABLE_CARDS);
-    for (int i = 0; i < g->num_battles; i++) if (g->table_battles[i].has_defense) REJECT(ENGINE_REJECT_COVER_PRESENT);
+    for (int i = 0; i < g->num_battles; i++) if (!card_is_none(g->table_battles[i].defense)) REJECT(ENGINE_REJECT_COVER_PRESENT);
     for (int i = 0; i < g->num_battles; i++) if (g->table_battles[i].attack.value != v) REJECT(ENGINE_REJECT_PASS_VALUES);
 
     int next = get_next_player_index(g, g->defender);
@@ -588,7 +586,7 @@ bool handle_pass(Game *g, int player_idx, const Card *cards, int n_cards) {
         hand_remove_card(def, cards[i]);
         Battle *b = &g->table_battles[g->num_battles++];
         b->attack = cards[i];
-        b->has_defense = false;
+        b->defense = CARD_NONE;
     }
 
     GameLog *l = log_alloc(g, LOG_PASS, player_idx);
@@ -638,7 +636,7 @@ bool handle_pickup(Game *g, int player_idx) {
         Battle *b = &g->table_battles[i];
         log_add_card(l, b->attack);
         def->hand[def->hand_count++] = b->attack;
-        if (b->has_defense) {
+        if (!card_is_none(b->defense)) {
             log_add_card(l, b->defense);
             def->hand[def->hand_count++] = b->defense;
         }
@@ -670,7 +668,7 @@ static void execute_round_transition(Game *g) {
     GameLog *l = log_alloc(g, LOG_DISCARD, -1);
     for (int i = 0; i < g->num_battles; i++) {
         log_add_card(l, g->table_battles[i].attack);
-        if (g->table_battles[i].has_defense) log_add_card(l, g->table_battles[i].defense);
+        if (!card_is_none(g->table_battles[i].defense)) log_add_card(l, g->table_battles[i].defense);
     }
     g->num_battles = 0;
     SNAP(g, ENGINE_HOOK_TRASH, -1);
@@ -712,7 +710,7 @@ bool handle_good(Game *g, int player_idx) {
 
     bool all_covered = (g->num_battles > 0);
     for (int i = 0; i < g->num_battles; i++) {
-        if (!g->table_battles[i].has_defense) { all_covered = false; break; }
+        if (!!card_is_none(g->table_battles[i].defense)) { all_covered = false; break; }
     }
     if (all_good && all_covered) execute_round_transition(g);
     return true;
@@ -731,7 +729,7 @@ bool should_bot_act(const Game *g, int bot_idx) {
     bool is_def = (bot_idx == g->defender);
     bool all_covered = (g->num_battles > 0);
     for (int i = 0; i < g->num_battles; i++) {
-        if (!g->table_battles[i].has_defense) { all_covered = false; break; }
+        if (!!card_is_none(g->table_battles[i].defense)) { all_covered = false; break; }
     }
     if (first_attack) return bot_idx == g->first_attacker;
     if (is_def) return !all_covered;

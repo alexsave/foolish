@@ -24,7 +24,7 @@ static inline int card_score(Card c, int power_suit) {
 static int compute_total_card_count(const Game *g) {
     int table = 0;
     for (int i = 0; i < g->num_battles; i++) {
-        table += 1 + (g->table_battles[i].has_defense ? 1 : 0);
+        table += 1 + (!card_is_none(g->table_battles[i].defense) ? 1 : 0);
     }
     int hands = 0;
     for (int i = 0; i < g->num_players; i++) hands += g->players[i].hand_count;
@@ -313,7 +313,7 @@ int espresso_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves
         // Pass-window: opponent exists AND every battle is uncovered.
         bool pass_window = (opp != NULL);
         for (int i = 0; i < g->num_battles; i++) {
-            if (g->table_battles[i].has_defense) { pass_window = false; break; }
+            if (!card_is_none(g->table_battles[i].defense)) { pass_window = false; break; }
         }
 
         int best = candidate_idx[0];
@@ -419,7 +419,7 @@ int espresso_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves
     for (int i = 0; i < moves->n; i++) if (moves->moves[i].type == MOVE_COVER) cover_idx[cnv++] = i;
     if (cnv > 0) {
         int uncovered = 0;
-        for (int i = 0; i < g->num_battles; i++) if (!g->table_battles[i].has_defense) uncovered++;
+        for (int i = 0; i < g->num_battles; i++) if (!!card_is_none(g->table_battles[i].defense)) uncovered++;
 
         // Full-cover moves only.
         int full_idx[MAX_LEGAL_MOVES]; int fn = 0;
@@ -435,7 +435,7 @@ int espresso_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves
             }
             for (int i = 0; i < g->num_battles; i++) {
                 known[kn++] = g->table_battles[i].attack;
-                if (g->table_battles[i].has_defense) known[kn++] = g->table_battles[i].defense;
+                if (!card_is_none(g->table_battles[i].defense)) known[kn++] = g->table_battles[i].defense;
             }
             if (g->has_flipped) known[kn++] = g->flipped;
             // Discard memory from logs.
@@ -467,7 +467,7 @@ int espresso_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves
             bool table_v[16] = { false };
             for (int i = 0; i < g->num_battles; i++) {
                 table_v[g->table_battles[i].attack.value] = true;
-                if (g->table_battles[i].has_defense) table_v[g->table_battles[i].defense.value] = true;
+                if (!card_is_none(g->table_battles[i].defense)) table_v[g->table_battles[i].defense.value] = true;
             }
             int all_opp_trumps = 0;
             for (int i = 0; i < g->num_players; i++) {

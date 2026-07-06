@@ -72,7 +72,7 @@ void distill_decision_reset(void) { df_cache.valid = 0; }
 static int df_uncovered(const Game *g) {
     int n = 0;
     for (int i = 0; i < g->num_battles; i++)
-        if (!g->table_battles[i].has_defense) n++;
+        if (!!card_is_none(g->table_battles[i].defense)) n++;
     return n;
 }
 

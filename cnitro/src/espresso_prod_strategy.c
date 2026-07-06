@@ -103,7 +103,7 @@ static inline int ep_card_score(Card c, int power_suit) {
 static int ep_total_card_count(const Game *g) {
     int table = 0;
     for (int i = 0; i < g->num_battles; i++) {
-        table += 1 + (g->table_battles[i].has_defense ? 1 : 0);
+        table += 1 + (!card_is_none(g->table_battles[i].defense) ? 1 : 0);
     }
     int hands = 0;
     for (int i = 0; i < g->num_players; i++) hands += g->players[i].hand_count;
@@ -438,7 +438,7 @@ static int ep_choose_1v1(const Game *g, int bot_idx, const LegalMoves *moves) {
         bool pass_window = (opp != NULL);
         if (pass_window) {
             for (int i = 0; i < g->num_battles; i++) {
-                if (g->table_battles[i].has_defense) { pass_window = false; break; }
+                if (!card_is_none(g->table_battles[i].defense)) { pass_window = false; break; }
             }
         }
         // inOpps / minOppHand / leader (first in-opponent at the minimum).
@@ -596,7 +596,7 @@ static int ep_choose_1v1(const Game *g, int bot_idx, const LegalMoves *moves) {
     if (any_cover) {
         int uncovered = 0;
         for (int i = 0; i < g->num_battles; i++)
-            if (!g->table_battles[i].has_defense) uncovered++;
+            if (!!card_is_none(g->table_battles[i].defense)) uncovered++;
         // fullCovers: attack_cards.length === uncovered (n_cards counts the
         // cover/attack pairs of a cover move).
         bool any_full = false;
@@ -622,7 +622,7 @@ static int ep_choose_1v1(const Game *g, int bot_idx, const LegalMoves *moves) {
             for (int i = 0; i < g->num_battles; i++) {
                 Card a = g->table_battles[i].attack;
                 known[a.suit][a.value] = true;
-                if (g->table_battles[i].has_defense) {
+                if (!card_is_none(g->table_battles[i].defense)) {
                     Card d = g->table_battles[i].defense;
                     known[d.suit][d.value] = true;
                 }
@@ -650,7 +650,7 @@ static int ep_choose_1v1(const Game *g, int bot_idx, const LegalMoves *moves) {
             bool table_v[EP_VAL_SLOTS] = { false };
             for (int i = 0; i < g->num_battles; i++) {
                 table_v[g->table_battles[i].attack.value] = true;
-                if (g->table_battles[i].has_defense)
+                if (!card_is_none(g->table_battles[i].defense))
                     table_v[g->table_battles[i].defense.value] = true;
             }
             int all_opp_trumps = 0;

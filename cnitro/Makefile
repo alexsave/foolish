@@ -63,7 +63,9 @@ build/cnitro_distill: $(CORE_OBJ) build/main_distill.o
 build/cnitro_gen: $(CORE_OBJ) build/main_gen.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
-build/tests.o: tests/tests.c
+# Same blanket header dependency as src objects: a struct-layout change must
+# rebuild the tests or the binary mixes layouts (observed: 1-byte Card pack).
+build/tests.o: tests/tests.c $(wildcard src/*.h)
 	@mkdir -p build
 	$(CC) $(CFLAGS) -c $< -o $@
 

@@ -138,7 +138,7 @@ static int play_one_verbose(uint32_t seed, int n_players, int protagonist, int o
             for (int b = 0; b < g.num_battles; b++) {
                 char ab[8], db[8] = {0};
                 format_card_short(g.table_battles[b].attack, ab, sizeof(ab));
-                if (g.table_battles[b].has_defense)
+                if (!card_is_none(g.table_battles[b].defense))
                     format_card_short(g.table_battles[b].defense, db, sizeof(db));
                 char piece[24];
                 snprintf(piece, sizeof(piece), "%s/%s ", ab, db[0] ? db : "_");

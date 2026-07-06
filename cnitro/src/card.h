@@ -48,4 +48,10 @@ static inline bool card_eq(Card a, Card b) {
     return a.suit == b.suit && a.value == b.value;
 }
 
+// "No card" sentinel: replaces the has_defense/has_target booleans (an
+// uncovered battle stores CARD_NONE as its defense; a single-card log pair
+// stores CARD_NONE as its target). Distinct from the -1/-1 hidden card.
+#define CARD_NONE ((Card){ .suit = -2, .value = -2 })
+static inline bool card_is_none(Card c) { return c.suit == -2 && c.value == -2; }
+
 #endif

@@ -150,7 +150,7 @@ void wasm_import_logs(void) {
                 p->primary.value = (int8_t)q[1];
                 p->target.suit = (int8_t)q[2];
                 p->target.value = (int8_t)q[3];
-                p->has_target = q[4] != 0;
+                if (q[4] == 0) p->target = CARD_NONE;
             }
             q += 5;
         }

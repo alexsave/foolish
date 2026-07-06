@@ -187,8 +187,8 @@ static void consider(const Game *g, int np, uint32_t seed, double score, const i
 }
 
 static void emit_pair(const LogPair *p) {
-    int ts = p->has_target ? p->target.suit  : -1;
-    int tv = p->has_target ? p->target.value : -1;
+    int ts = !card_is_none(p->target) ? p->target.suit  : -1;
+    int tv = !card_is_none(p->target) ? p->target.value : -1;
     printf("[%d,%d,%d,%d]", p->primary.suit, p->primary.value, ts, tv);
 }
 

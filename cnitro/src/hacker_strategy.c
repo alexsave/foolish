@@ -88,7 +88,7 @@ static bool should_strategically_give_up(const Game *g, const Player *bot) {
     int undefendable_count = 0;
 
     for (int b = 0; b < g->num_battles; b++) {
-        if (g->table_battles[b].has_defense) continue;
+        if (!card_is_none(g->table_battles[b].defense)) continue;
         n_uncovered++;
         Card attack = g->table_battles[b].attack;
         int cheapest = -1;   // first strict min, as in the TS reduce

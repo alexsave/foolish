@@ -70,7 +70,7 @@ int main(int argc, char **argv) {
                     }
                     if (!mm) for (int b = 0; b < gc.num_battles; b++) {
                         if (card_id_of(gc.table_battles[b].attack) != s.atk[b]) mm = 1;
-                        int cs = gc.table_battles[b].has_defense;
+                        int cs = !card_is_none(gc.table_battles[b].defense);
                         int cb = (s.covered_mask & (1ull << b)) != 0;
                         if (cs != cb) mm = 1;
                         if (cs && card_id_of(gc.table_battles[b].defense) != s.def[b]) mm = 1;

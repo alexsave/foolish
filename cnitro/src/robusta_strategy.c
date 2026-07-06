@@ -21,7 +21,7 @@ static inline int card_score(Card c, int power_suit) {
 static int compute_total_card_count(const Game *g) {
     int table = 0;
     for (int i = 0; i < g->num_battles; i++) {
-        table += 1 + (g->table_battles[i].has_defense ? 1 : 0);
+        table += 1 + (!card_is_none(g->table_battles[i].defense) ? 1 : 0);
     }
     int hands = 0;
     for (int i = 0; i < g->num_players; i++) hands += g->players[i].hand_count;
@@ -117,7 +117,7 @@ static void build_unseen_pool(const Game *g, int bot_idx, UnseenPool *u) {
     for (int j = 0; j < bot->hand_count; j++) known[kn++] = bot->hand[j];
     for (int i = 0; i < g->num_battles; i++) {
         known[kn++] = g->table_battles[i].attack;
-        if (g->table_battles[i].has_defense) known[kn++] = g->table_battles[i].defense;
+        if (!card_is_none(g->table_battles[i].defense)) known[kn++] = g->table_battles[i].defense;
     }
     if (g->has_flipped) known[kn++] = g->flipped;
     for (int i = 0; i < g->num_logs; i++) {
@@ -749,7 +749,7 @@ static int robusta_choose_multi(const Game *g, int bot_idx, const LegalMoves *mo
     for (int i = 0; i < moves->n; i++) if (moves->moves[i].type == MOVE_COVER) cover_idx[cnv++] = i;
     if (cnv > 0) {
         int uncovered = 0;
-        for (int i = 0; i < g->num_battles; i++) if (!g->table_battles[i].has_defense) uncovered++;
+        for (int i = 0; i < g->num_battles; i++) if (!!card_is_none(g->table_battles[i].defense)) uncovered++;
         int full_idx[MAX_LEGAL_MOVES]; int fn = 0;
         for (int i = 0; i < cnv; i++) {
             if (moves->moves[cover_idx[i]].n_cards == uncovered) full_idx[fn++] = cover_idx[i];
@@ -773,7 +773,7 @@ static int robusta_choose_multi(const Game *g, int bot_idx, const LegalMoves *mo
             bool table_v[16] = { false };
             for (int i = 0; i < g->num_battles; i++) {
                 table_v[g->table_battles[i].attack.value] = true;
-                if (g->table_battles[i].has_defense) table_v[g->table_battles[i].defense.value] = true;
+                if (!card_is_none(g->table_battles[i].defense)) table_v[g->table_battles[i].defense.value] = true;
             }
             int best = full_idx[0];
             double best_eval = -1e30; bool first = true;

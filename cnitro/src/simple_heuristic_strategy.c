@@ -45,7 +45,7 @@ static bool should_give_up(const Game *g, const Player *bot) {
     int attack_value_sum = 0;
 
     for (int i = 0; i < g->num_battles; i++) {
-        if (g->table_battles[i].has_defense) continue;  // defense !== null
+        if (!card_is_none(g->table_battles[i].defense)) continue;  // defense !== null
         Card attack = g->table_battles[i].attack;
         n_uncovered++;
         attack_value_sum += attack.value;

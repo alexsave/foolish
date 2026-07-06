@@ -100,7 +100,7 @@ static int sum_card_score(const LegalMove *m, int power) {
 static int compute_total_card_count(const Game *g) {
     int table = 0;
     for (int i = 0; i < g->num_battles; i++) {
-        table += 1 + (g->table_battles[i].has_defense ? 1 : 0);
+        table += 1 + (!card_is_none(g->table_battles[i].defense) ? 1 : 0);
     }
     int hands = 0;
     for (int i = 0; i < g->num_players; i++) hands += g->players[i].hand_count;
@@ -246,7 +246,7 @@ int handwritten_prod_strategy_choose(const Game *g, int bot_idx,
     {
         int uncovered = 0;
         for (int b = 0; b < g->num_battles; b++) {
-            if (!g->table_battles[b].has_defense) uncovered++;
+            if (!!card_is_none(g->table_battles[b].defense)) uncovered++;
         }
         // fullCoverMoves: attack_cards.length === uncovered; the enumerator
         // pairs one attack card per cover card, so that length is n_cards.
