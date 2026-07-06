@@ -12,6 +12,7 @@
 #include "game.h"
 #include "card.h"
 #include <string.h>
+#include <stddef.h>   // offsetof (solver clones skip the dead deck[] tail)
 #include <stdint.h>
 #include <stdlib.h>   // calloc/free for the solver transposition table
 
@@ -1080,7 +1081,13 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
     int applied = 0;
     SimState child;
     for (int i = 0; i < nm; i++) {
-        child = *s;
+        // Copy everything EXCEPT the deck[] tail: the solver only ever runs on
+        // deck-empty endgames (entered at deck_n==0 && !has_flipped) and nothing
+        // under it draws (sim_apply_sol never refills), so deck[] is dead here.
+        // Skipping the 64B tail shaves ~20% off this per-node clone — the single
+        // hottest memmove in the semtex/octogen/cordite MC profile. deck_n (=0)
+        // sits before deck[] and is still copied, so movegen sees a valid count.
+        memcpy(&child, s, offsetof(SimState, deck));
         sim_apply_sol(&child, actor, &moves[i]);
         applied = 1;
         int v = sim_solve_rec(S, &child, alpha, beta, depth + 1);
