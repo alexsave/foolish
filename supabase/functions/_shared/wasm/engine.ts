@@ -25,7 +25,7 @@ import {
     ANIMATION_EVENT_TYPE, LOG_TYPE, LogType, GAME_STATUS, PLAYER_STATUS,
 } from '../types.ts';
 import { VALUE_MAP, SUIT_MAP } from '../constants.ts';
-import { RULES_WASM_B64 } from './rules_wasm.ts';
+import { takeRULES_WASM_B64 } from './rules_wasm.ts';
 
 // ---------------------------------------------------------------------------
 // Instantiation
@@ -87,7 +87,7 @@ export function __kernelWasmMB(): number {
 
 function engine(): EngineExports {
     if (exportsCache) return exportsCache;
-    const module = new WebAssembly.Module(decodeBase64(RULES_WASM_B64) as BufferSource);
+    const module = new WebAssembly.Module(decodeBase64(takeRULES_WASM_B64()) as BufferSource);
     const instance = new WebAssembly.Instance(module, {});
     const ex = instance.exports as unknown as EngineExports;
     ex.wasm_init();
