@@ -111,7 +111,7 @@ WASM_FLAGS := --target=wasm32 -O3 -nostdlib -ffreestanding -mbulk-memory \
               -isystem wasm/include -Isrc -D_Thread_local= -DMAX_LOG_PAIRS=64 \
               -DMAX_LEGAL_MOVES=4096 -DMAX_MOVE_CARDS=40 -DMAX_BATTLES=64 \
               -Wall -Wextra -Wno-unused-parameter \
-              -Wl,--no-entry -Wl,--export-all -Wl,-z,stack-size=524288 -Wl,--stack-first
+              -Wl,--no-entry -Wl,--export-all -Wl,-z,stack-size=1048576 -Wl,--stack-first
 
 build/rules.wasm: src/game.c src/legal.c wasm/wasm_api.c src/game.h src/legal.h src/card.h
 	@mkdir -p build
