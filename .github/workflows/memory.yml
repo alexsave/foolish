@@ -1,0 +1,71 @@
+name: memory
+
+# Guards the 2026-07-06 production outage class: edge workers dying with
+# "Memory limit exceeded" on bot turns. Two layers:
+#   mem        — fast Node proxies (e2e/mem): embed parse cost under a capped
+#                old-space, and bots.wasm memory bounded + flat across all MC
+#                bot families.
+#   edge-serve — the gold-path repro: the REAL edge runtime (supabase
+#                functions serve) drives semtex/octogen/cordite/fulminate
+#                decisions via e2e/edge_memtest and must return 200 with no
+#                worker memory kill in the runtime logs.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  mem:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Memory regression suite
+        run: npm run test:mem
+
+  edge-serve:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Install the diagnostic function
+        run: cp -r e2e/edge_memtest supabase/functions/memtest
+
+      - name: Start local stack (db + edge runtime)
+        run: supabase start -x studio,imgproxy,inbucket
+
+      - name: Serve functions
+        run: |
+          supabase functions serve --no-verify-jwt > serve.log 2>&1 &
+          timeout 90 bash -c 'until curl -sf -o /dev/null "http://127.0.0.1:54321/functions/v1/memtest?games=0"; do sleep 2; done'
+
+      - name: Bot decisions under the real edge memory budget
+        run: |
+          set -e
+          for keys in semtex,octogen cordite,semtex fulminate,octogen; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:54321/functions/v1/memtest?keys=$keys&maxmoves=8")
+            echo "$keys -> $code"
+            [ "$code" = "200" ] || { echo "::error::$keys returned $code"; cat serve.log; exit 1; }
+          done
+          if grep -q "memory limit reached" serve.log; then
+            echo "::error::edge runtime reported a worker memory kill"
+            cat serve.log
+            exit 1
+          fi
+
+      - name: Runtime log tail (debug aid)
+        if: always()
+        run: tail -50 serve.log || true
