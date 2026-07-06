@@ -1410,7 +1410,7 @@ int cordite_strategy_choose(const Game *g, int bot_idx,
     if (cd_verify) cd_verify_belief(g, bot_idx, &B);
 
     // Exact endgame: take a proven win; mark proven losses for exclusion.
-    static _Thread_local bool forced_loss[MAX_LEGAL_MOVES];
+    bool *forced_loss = forced_loss_scratch();
     memset(forced_loss, 0, (size_t)moves->n * sizeof(bool));
     int n_safe = moves->n;
     int solved = cd_no_solve ? -1
@@ -1443,8 +1443,8 @@ int cordite_strategy_choose(const Game *g, int bot_idx,
     bool   alive[CD_MAX_CANDS];
     for (int i = 0; i < C.n; i++) alive[i] = true;
 
-    static _Thread_local Game world, trial;
-    static _Thread_local SimState world_sim, trial_sim;
+    Game *world = world_scratch_game(), *trial = trial_scratch_game();
+    SimState *world_sim = world_scratch_sim(), *trial_sim = trial_scratch_sim();
 
     // The fast bitboard path: convert each sampled WORLD to a compact SimState
     // ONCE, then each candidate just clones the SimState, applies its move on
@@ -1466,7 +1466,7 @@ int cordite_strategy_choose(const Game *g, int bot_idx,
             // world). Per-player distrust already cleared bogus constraints.
             bool use_voids  = (w & 3) != 3;
             bool use_floors = !cd_no_floors && (w % cd_floor_mod) == 0;
-            cd_sample_world(&world, g, bot_idx, &B, wseed, use_voids, use_floors);
+            cd_sample_world(world, g, bot_idx, &B, wseed, use_voids, use_floors);
             // fulminate: sample this world's per-seat rollout policies from
             // the installed posterior weights (cordite_core.ts:2749-2751),
             // seeded by the WORLD seed so the table is shared by every
@@ -1478,17 +1478,17 @@ int cordite_strategy_choose(const Game *g, int bot_idx,
             uint32_t sim_rng = cd_mix(wseed, 0x51AB1E5u);
 
             if (fast_path && !cd_seat_policy_dev) {
-                cd_sim_from_game(&world_sim, &world);   // convert world ONCE
+                cd_sim_from_game(world_sim, world);     // convert world ONCE
                 for (int ci = 0; ci < C.n; ci++) {
                     if (!alive[ci]) continue;
-                    trial_sim = world_sim;              // cheap struct copy
+                    *trial_sim = *world_sim;            // cheap struct copy
                     game_rng_set(sim_rng);              // identical stream
                     int fp;
-                    if (!cd_sim_apply_root_move(&trial_sim, bot_idx,
+                    if (!cd_sim_apply_root_move(trial_sim, bot_idx,
                                                 &moves->moves[C.idx[ci]])) {
                         fp = g->num_players;
                     } else {
-                        fp = cd_sim_playout(&trial_sim, bot_idx, 600, !cd_no_earlyexit);
+                        fp = cd_sim_playout(trial_sim, bot_idx, 600, !cd_no_earlyexit);
                         if (fp == 0) fp = g->num_players;
                     }
                     score[ci] += (double)fp;
@@ -1502,9 +1502,9 @@ int cordite_strategy_choose(const Game *g, int bot_idx,
 
             for (int ci = 0; ci < C.n; ci++) {
                 if (!alive[ci]) continue;
-                cd_lite_clone(&trial, &world);
+                cd_lite_clone(trial, world);
                 game_rng_set(sim_rng);   // identical stream for every move
-                if (!cd_apply(&trial, bot_idx, &moves->moves[C.idx[ci]])) {
+                if (!cd_apply(trial, bot_idx, &moves->moves[C.idx[ci]])) {
                     score[ci] += (double)g->num_players;
                     nsim[ci]++;
                     continue;
@@ -1515,8 +1515,8 @@ int cordite_strategy_choose(const Game *g, int bot_idx,
                 // also bypasses cd_rollout's CD_DIFFTEST comparison — the
                 // difftest is only meaningful with the override off.
                 int fp = cd_seat_policy_dev
-                       ? cd_simulate(&trial, bot_idx, 600)
-                       : cd_rollout(&trial, bot_idx, 600);
+                       ? cd_simulate(trial, bot_idx, 600)
+                       : cd_rollout(trial, bot_idx, 600);
                 if (fp == 0) fp = g->num_players;
                 score[ci] += (double)fp;
                 nsim[ci]++;

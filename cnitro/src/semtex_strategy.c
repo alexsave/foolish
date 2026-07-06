@@ -1154,7 +1154,7 @@ int semtex_strategy_choose(const Game *g, int bot_idx,
     }
 
     // Exact endgame: take a proven win; mark proven losses for exclusion.
-    static _Thread_local bool forced_loss[MAX_LEGAL_MOVES];
+    bool *forced_loss = forced_loss_scratch();
     memset(forced_loss, 0, (size_t)moves->n * sizeof(bool));
     int n_safe = moves->n;
     int solved = sx_no_solve ? -1
@@ -1187,8 +1187,8 @@ int semtex_strategy_choose(const Game *g, int bot_idx,
     bool   alive[SX_MAX_CANDS];
     for (int i = 0; i < C.n; i++) alive[i] = true;
 
-    static _Thread_local Game world, trial;
-    static _Thread_local SimState world_sim, trial_sim;
+    Game *world = world_scratch_game(), *trial = trial_scratch_game();
+    SimState *world_sim = world_scratch_sim(), *trial_sim = trial_scratch_sim();
 
     // The fast bitboard path: convert each sampled WORLD to a compact SimState
     // ONCE, then each candidate just clones the SimState, applies its move on
@@ -1210,26 +1210,26 @@ int semtex_strategy_choose(const Game *g, int bot_idx,
             // world). Per-player distrust already cleared bogus constraints.
             bool use_voids  = (w % sx_void_mod) != sx_void_mod - 1;
             bool use_floors = !sx_no_floors && (w % sx_floor_mod) == 0;
-            sx_sample_world(&world, g, bot_idx, &B, wseed, use_voids, use_floors);
+            sx_sample_world(world, g, bot_idx, &B, wseed, use_voids, use_floors);
             uint32_t sim_rng = sx_mix(wseed, 0x51AB1E5u);
 
             if (fast_path) {
-                cd_sim_from_game(&world_sim, &world);   // convert world ONCE
+                cd_sim_from_game(world_sim, world);     // convert world ONCE
                 for (int ci = 0; ci < C.n; ci++) {
                     if (!alive[ci]) continue;
-                    trial_sim = world_sim;              // cheap struct copy
+                    *trial_sim = *world_sim;            // cheap struct copy
                     game_rng_set(sim_rng);              // identical stream
                     int fp;
-                    if (!cd_sim_apply_root_move(&trial_sim, bot_idx,
+                    if (!cd_sim_apply_root_move(trial_sim, bot_idx,
                                                 &moves->moves[C.idx[ci]])) {
                         fp = g->num_players;
                     } else {
                         fp = (sx_bbleaf_on || sx_polmap)
-                           ? cd_sim_playout_pol(&trial_sim, bot_idx, 600,
+                           ? cd_sim_playout_pol(trial_sim, bot_idx, 600,
                                                 !sx_no_earlyexit,
                                                 sx_bbleaf_on ? sx_bbleaf_cards_eff : 0,
                                                 sx_bbleaf_budget, sx_polmap)
-                           : cd_sim_playout(&trial_sim, bot_idx, 600, !sx_no_earlyexit);
+                           : cd_sim_playout(trial_sim, bot_idx, 600, !sx_no_earlyexit);
                         if (fp == 0) fp = g->num_players;
                     }
                     score[ci] += (double)fp;
@@ -1240,14 +1240,14 @@ int semtex_strategy_choose(const Game *g, int bot_idx,
 
             for (int ci = 0; ci < C.n; ci++) {
                 if (!alive[ci]) continue;
-                sx_lite_clone(&trial, &world);
+                sx_lite_clone(trial, world);
                 game_rng_set(sim_rng);   // identical stream for every move
-                if (!sx_apply(&trial, bot_idx, &moves->moves[C.idx[ci]])) {
+                if (!sx_apply(trial, bot_idx, &moves->moves[C.idx[ci]])) {
                     score[ci] += (double)g->num_players;
                     nsim[ci]++;
                     continue;
                 }
-                int fp = sx_rollout(&trial, bot_idx, 600);
+                int fp = sx_rollout(trial, bot_idx, 600);
                 if (fp == 0) fp = g->num_players;
                 score[ci] += (double)fp;
                 nsim[ci]++;

@@ -1637,3 +1637,15 @@ void solve_clone_root(Game *dst, const Game *src) {
 static _Thread_local Game rollout_diff_game;
 
 Game *rollout_scratch_diff(void) { return &rollout_diff_game; }
+
+// Sampled-world scratch (see cordite_sim.h). Was one world/trial pair PER
+// family — 3 identical pairs of write-only-between-decisions state.
+static _Thread_local Game world_game, trial_game;
+static _Thread_local SimState world_sim_s, trial_sim_s;
+static _Thread_local bool forced_loss_flags[MAX_LEGAL_MOVES];
+
+Game     *world_scratch_game(void)  { return &world_game; }
+Game     *trial_scratch_game(void)  { return &trial_game; }
+SimState *world_scratch_sim(void)   { return &world_sim_s; }
+SimState *trial_scratch_sim(void)   { return &trial_sim_s; }
+bool     *forced_loss_scratch(void) { return forced_loss_flags; }
