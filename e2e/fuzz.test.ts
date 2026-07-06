@@ -194,8 +194,16 @@ test('targeted: forged cards and non-members are always rejected', async () => {
     const gameId = await freshGame();
     const g = await loadGame(gameId);
     const attacker = g.players[g.first_attacker].player_id;
-    // a card that does not exist in any hand
-    assert.throws(() => applyAction(g, { type: 'attack', player_id: attacker, cards: [{ suit: 99, value: 99 }] }), /not in/i, 'forged card rejected');
+    // A forged card = a real card the attacker does not hold. (An out-of-range
+    // {99,99} is WRONG here: the marshal clamp maps it onto the ace of
+    // diamonds, and on deals where the attacker holds that card the "forged"
+    // attack is legitimately legal — a 1-in-6 flake.)
+    const hand = g.players[g.first_attacker].hand as { suit: number; value: number }[];
+    let forged: { suit: number; value: number } | null = null;
+    for (let s = 0; s < 4 && !forged; s++)
+        for (let v = 5; v <= 13 && !forged; v++)
+            if (!hand.some((c) => c.suit === s && c.value === v)) forged = { suit: s, value: v };
+    assert.throws(() => applyAction(g, { type: 'attack', player_id: attacker, cards: [forged!] }), /not in/i, 'forged card rejected');
     // a player who isn't in the game
     assert.throws(() => applyAction(g, { type: 'attack', player_id: uuid(), cards: [g.players[g.first_attacker].hand[0]] }), /not in/i, 'non-member rejected');
 });
