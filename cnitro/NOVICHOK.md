@@ -90,6 +90,23 @@ Raw eval values (400 games each): vs handwritten heads-up **97.2% wins,
 mean placement 1.028**; vs random heads-up **98.2% / 1.018** — the biggest
 numbers any bot in this repo has posted.
 
+Raw side-by-side vs all-random tables (300 games, same seeds; baseline =
+random-vs-random expectation) — even against pure chaos, cheating buys
+nothing over honesty, and at pc6 the honest bot is clearly better:
+
+| pc | novichok (cheats) | octogen (honest) | baseline |
+|---|---|---|---|
+| 2 | 98.2% / 1.018 | 99.0% / 1.010 | 1.500 |
+| 3 | 86.0% / 1.143 | 85.7% / 1.143 | 2.000 |
+| 4 | 69.3% / 1.370 | 72.0% / 1.330 | 2.500 |
+| 6 | 52.3% / 1.777 | **61.7% / 1.573** | 3.500 |
+| 8 | 35.0% / 2.637 | 36.7% / 2.450 | 4.500 |
+
+Random players are the worst case for the shared rollout model (nothing
+predicts them), so the point mass on true hands amplifies model error
+most — belief-spread isn't just information recovery even when the
+opponents have no strategy at all.
+
 Two regimes remain:
 
 - **Heuristic fields**: the cheat is worth a lot (pc3 handwritten: 78.0%
