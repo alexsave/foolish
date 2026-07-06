@@ -59,6 +59,14 @@ void cd_sim_from_game(SimState *s, const Game *g);
 // and each candidate just clones the SimState.
 int cd_sim_apply_root_move(SimState *s, int p_idx, const LegalMove *m);
 
+// Forced-draw queue (novichok NV_PEEK=2 refill pinning): the next n sim_draw
+// calls return exactly these card ids in order (spliced out of the deck by id,
+// no RNG consumed) instead of random picks; a miss (id not in the deck) drops
+// the remainder of the queue and reverts to random draws. Thread-local; call
+// with n=0 (ids may be NULL) to clear. Callers arm it immediately before the
+// root-move apply whose refill they are pinning.
+void cd_sim_set_forced_draws(const uint8_t *ids, int n);
+
 // Roll the world forward under the handwritten rollout policy; returns
 // my_idx's finish position (1..N), or 0 if it didn't terminate. Mirrors
 // cd_simulate's early-exit-on-elimination semantics. `early_exit` matches

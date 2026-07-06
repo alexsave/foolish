@@ -104,8 +104,9 @@ static _Thread_local int nv_bbleaf_cards2 = 8;
 // default — pure evidence, no downside). NV_PROFILE: weak-seat detection +
 // LOOSE rollout model for profiled seats.
 static _Thread_local int nv_adapt = 1;
-// NV_PEEK (default 0 — measured WORSE than the hands-only cheat, see
-// NOVICHOK.md): evaluate each candidate with a PREDICTED-ORDER trial
+// NV_PEEK=1 (whole-game predicted-order trials — measured WORSE than the
+// hands-only cheat, kept as the documented failed design, see NOVICHOK.md):
+// evaluate each candidate with a PREDICTED-ORDER trial
 // instead of shuffled-deck worlds. The engine's future draws are a
 // deterministic function of the current RNG state and the number of
 // game_random() consumptions before each draw; cordite-family opponents
@@ -120,8 +121,19 @@ static _Thread_local int nv_adapt = 1;
 // Measured (paired vs octogen @ cordite pc2, seeds 980001): peek-3 +0.180,
 // peek-24 +0.127 vs hands-only +0.035 — the prediction is exact only until
 // the first move divergence, and a handful of near-order trials carries far
-// more variance than a few hundred shuffled worlds. Off by default.
-static _Thread_local int nv_peek = 0;
+// more variance than a few hundred shuffled worlds.
+// NV_PEEK=2 (refill pinning, the DEFAULT) keeps the full shuffled-world MC
+// and pins only what is PROVABLY determined: refill runs synchronously inside
+// the battle-ending move handlers (no strategy acts in between), so for any
+// candidate that ends the battle the exact refill cards are a deterministic
+// function of the live RNG state — zero prediction risk. Each candidate is
+// probe-applied once on a full clone with the live stream; the recorded
+// draw sequence is force-fed to the sim's refill in every sampled world.
+// Measured vs hands-only on the same 200 deals @ cordite pc2: win 59.0% ->
+// 63.5%, diff vs octogen +0.035 -> -0.010 (first at-or-above-octogen MC
+// cell); no cell measured worse. Sound order-knowledge helps; peek-1's
+// whole-game trials were the wrong harness for it.
+static _Thread_local int nv_peek = 2;
 static _Thread_local int nv_peek_trials = 3;   // trials averaged per candidate
 // Void world-mixture: voids applied in (mod-1)/mod of sampled worlds
 // (cordite: 3 of 4). A softer mixture hedges between heuristic-family
@@ -1203,7 +1215,7 @@ int novichok_strategy_choose(const Game *g, int bot_idx,
         nv_no_fastroll = nv_flag("NV_NO_FASTROLL");
         nv_bbleaf = nv_env_int("NV_BBLEAF", 2);
         nv_adapt = nv_env_int("NV_ADAPT", 0);   // nothing to infer: worlds are true
-        nv_peek = nv_env_int("NV_PEEK", 1);
+        nv_peek = nv_env_int("NV_PEEK", 2);
         nv_peek_trials = nv_env_int("NV_PEEK_TRIALS", 3);
         nv_void_mod = nv_env_int("NV_VOID_MOD", 4);
         if (nv_void_mod < 2) nv_void_mod = 2;
@@ -1266,7 +1278,7 @@ int novichok_strategy_choose(const Game *g, int bot_idx,
     // hold); trials t>0 pre-advance the stream by t draws — nearby orders
     // that hedge prediction decay after a move divergence. CRN: candidates
     // share each trial's start state. Ties keep the cheapest-first order.
-    if (nv_peek) {
+    if (nv_peek == 1) {
         int best = -1;
         double best_v = 1e30;
         for (int ci = 0; ci < C.n; ci++) {
@@ -1286,6 +1298,43 @@ int novichok_strategy_choose(const Game *g, int bot_idx,
         }
         game_rng_set(saved_rng);
         return best >= 0 ? C.idx[best] : 0;
+    }
+
+    // NV_PEEK=2: exact refill pinning. Probe-apply each candidate on a clone
+    // with the LIVE RNG stream; any LOG_DRAW entries it appends are the exact
+    // cards the real game will draw if this move is chosen (refill runs inside
+    // the move handler — no other actor's decision intervenes). Those ids are
+    // force-fed to the sim refill in every sampled world below, so battle-
+    // ending candidates are evaluated on the true post-refill hands while the
+    // deck's later order keeps the full shuffled-world smoothing.
+    static _Thread_local uint8_t nv_forced_ids[NV_MAX_CANDS][32];
+    static _Thread_local int     nv_forced_n[NV_MAX_CANDS];
+    if (nv_peek == 2) {
+        static _Thread_local Game probe;
+        for (int ci = 0; ci < C.n; ci++) {
+            nv_forced_n[ci] = 0;
+            nv_lite_clone(&probe, g);
+            game_rng_set(saved_rng);
+            int nl0 = probe.num_logs;
+            if (!nv_apply(&probe, bot_idx, &moves->moves[C.idx[ci]])) continue;
+            int n = 0;
+            for (int li = nl0; li < probe.num_logs; li++) {
+                const GameLog *l = &probe.logs[li];
+                if (l->log_type != LOG_DRAW) continue;
+                for (int cj = 0; cj < l->num_pairs && n < 32; cj++) {
+                    Card c = l->pairs[cj].primary;
+                    nv_forced_ids[ci][n++] = (uint8_t)(c.suit * 13 + (c.value - 1));
+                }
+            }
+            nv_forced_n[ci] = n;
+        }
+        game_rng_set(saved_rng);
+        if (nv_flag("NV_PEEK_DBG")) {
+            int npin = 0, tot = 0;
+            for (int ci = 0; ci < C.n; ci++) { if (nv_forced_n[ci]) npin++; tot += nv_forced_n[ci]; }
+            fprintf(stderr, "peek2: deck=%d cands=%d pinned=%d cards=%d\n",
+                    g->deck_count, C.n, npin, tot);
+        }
     }
 
     int W1, W2, W3;
@@ -1333,6 +1382,8 @@ int novichok_strategy_choose(const Game *g, int bot_idx,
                     if (!alive[ci]) continue;
                     trial_sim = world_sim;              // cheap struct copy
                     game_rng_set(sim_rng);              // identical stream
+                    if (nv_peek == 2 && nv_forced_n[ci] > 0)
+                        cd_sim_set_forced_draws(nv_forced_ids[ci], nv_forced_n[ci]);
                     int fp;
                     if (!cd_sim_apply_root_move(&trial_sim, bot_idx,
                                                 &moves->moves[C.idx[ci]])) {
@@ -1346,6 +1397,7 @@ int novichok_strategy_choose(const Game *g, int bot_idx,
                            : cd_sim_playout(&trial_sim, bot_idx, 600, !nv_no_earlyexit);
                         if (fp == 0) fp = g->num_players;
                     }
+                    if (nv_peek == 2) cd_sim_set_forced_draws(NULL, 0);
                     score[ci] += (double)fp;
                     nsim[ci]++;
                 }

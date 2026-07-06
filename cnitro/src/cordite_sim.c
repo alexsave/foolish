@@ -150,8 +150,45 @@ static inline uint64_t sim_table_value_mask(const SimState *s) {
     return m;
 }
 
+// Forced-draw queue (see cordite_sim.h): pins the next draws to exact card
+// ids. Used by novichok's refill pinning, where the true refill cards after a
+// battle-ending root move are a deterministic function of the live RNG state.
+static _Thread_local uint8_t sim_forced_q[32];
+static _Thread_local int sim_forced_n = 0;
+static _Thread_local int sim_forced_i = 0;
+
+void cd_sim_set_forced_draws(const uint8_t *ids, int n) {
+    if (n > (int)sizeof(sim_forced_q)) n = (int)sizeof(sim_forced_q);
+    for (int i = 0; i < n; i++) sim_forced_q[i] = ids[i];
+    sim_forced_n = n;
+    sim_forced_i = 0;
+}
+
 // draw one card id, mirroring draw_card (deck array splice + flipped fallback).
 static int sim_draw(SimState *s, int *out) {
+    if (sim_forced_i < sim_forced_n) {
+        uint8_t want = sim_forced_q[sim_forced_i];
+        if (s->deck_n == 0) {
+            // The engine's draw here is RNG-free (flipped fallback); the
+            // pinned id is that same flipped card when states match.
+            sim_forced_i = sim_forced_n;
+            if (!s->has_flipped) return 0;
+            *out = s->flipped_id;
+            s->has_flipped = 0;
+            return 1;
+        }
+        for (int i = 0; i < s->deck_n; i++) {
+            if (s->deck[i] == want) {
+                for (int j = i + 1; j < s->deck_n; j++) s->deck[j - 1] = s->deck[j];
+                s->deck_n--;
+                s->deck_count = s->deck_n;
+                sim_forced_i++;
+                *out = want;
+                return 1;
+            }
+        }
+        sim_forced_i = sim_forced_n;   // divergence: rest of queue is stale
+    }
     if (s->deck_n == 0) {
         if (!s->has_flipped) return 0;
         *out = s->flipped_id;
