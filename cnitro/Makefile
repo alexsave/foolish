@@ -23,7 +23,8 @@ ifeq ($(OMP),1)
 endif
 
 # The engine + all heuristic / Monte-Carlo bots. Linked into every binary.
-CORE_SRC := src/game.c src/legal.c src/replay.c src/random_strategy.c src/espresso_strategy.c \
+CORE_SRC := src/game.c src/legal.c src/replay.c src/view.c src/awire.c \
+            src/evwire.c src/random_strategy.c src/espresso_strategy.c \
             src/handwritten_strategy.c src/robusta_strategy.c \
             src/firecracker_strategy.c src/gunpowder_strategy.c \
             src/blackpowder_strategy.c src/cordite_strategy.c \
@@ -161,7 +162,9 @@ WASM_API_EXPORTS := \
   -Wl,--export=wasm_replay_io_ptr -Wl,--export=wasm_replay_io_cap \
   -Wl,--export=wasm_replay_encode -Wl,--export=wasm_replay_decode \
   -Wl,--export=wasm_replay_error_detail \
-  -Wl,--export=wasm_legal_moves -Wl,--export=wasm_export_moves
+  -Wl,--export=wasm_legal_moves -Wl,--export=wasm_export_moves \
+  -Wl,--export=wasm_apply_action -Wl,--export=wasm_finalize_win \
+  -Wl,--export=wasm_view_serialize -Wl,--export=wasm_events_serialize
 
 # bots.wasm exports the rules API above PLUS the bot bridge (wasm_bots_api.c).
 WASM_BOTS_API_EXPORTS := \
@@ -189,9 +192,12 @@ WASM_RULES_FLAGS := $(filter-out -DMAX_LEGAL_MOVES=4096,$(WASM_FLAGS)) \
 
 # Blanket header dependency, same rationale as the native objects: a header
 # edit must rebuild BOTH wasm modules or they ship divergent kernels.
-build/rules.wasm: src/game.c src/legal.c src/replay.c wasm/wasm_api.c $(wildcard src/*.h) $(wildcard wasm/*.h)
+WASM_RULES_SRC := src/game.c src/legal.c src/replay.c src/view.c src/awire.c \
+                  src/evwire.c wasm/wasm_api.c
+
+build/rules.wasm: $(WASM_RULES_SRC) $(wildcard src/*.h) $(wildcard wasm/*.h)
 	@mkdir -p build
-	$(WASM_CC) $(WASM_RULES_FLAGS) $(WASM_API_EXPORTS) src/game.c src/legal.c src/replay.c wasm/wasm_api.c -o $@
+	$(WASM_CC) $(WASM_RULES_FLAGS) $(WASM_API_EXPORTS) $(WASM_RULES_SRC) -o $@
 
 # Regenerates the base64 module the TS side imports (works unchanged in
 # Deno edge functions, Node and browsers — no asset pipeline needed).
@@ -211,9 +217,11 @@ WASM_GUARDS_FLAGS := --target=wasm32 -O3 -nostdlib -ffreestanding -mbulk-memory 
                      -Wall -Wextra -Wno-unused-parameter \
                      -Wl,--no-entry -Wl,--export-all -Wl,-z,stack-size=131072 -Wl,--stack-first
 
-build/guards.wasm: src/game.c wasm/wasm_guards_api.c $(wildcard src/*.h) $(wildcard wasm/*.h)
+WASM_GUARDS_SRC := src/game.c src/view.c src/awire.c wasm/wasm_guards_api.c
+
+build/guards.wasm: $(WASM_GUARDS_SRC) $(wildcard src/*.h) $(wildcard wasm/*.h)
 	@mkdir -p build
-	$(WASM_CC) $(WASM_GUARDS_FLAGS) src/game.c wasm/wasm_guards_api.c -o $@
+	$(WASM_CC) $(WASM_GUARDS_FLAGS) $(WASM_GUARDS_SRC) -o $@
 
 wasm-guards: build/guards.wasm
 	node wasm/embed.mjs build/guards.wasm ../supabase/functions/_shared/wasm/guards_wasm.ts GUARDS_WASM_B64
@@ -225,7 +233,8 @@ wasm-guards: build/guards.wasm
 # Note: the distilled strategy (research, strength-negative — see
 # CORDITE_RESEARCH.md) stays native-arena-only; it is deliberately NOT in the
 # production bot module.
-WASM_BOT_SRC := src/game.c src/legal.c src/replay.c src/random_strategy.c \
+WASM_BOT_SRC := src/game.c src/legal.c src/replay.c src/view.c src/awire.c \
+                src/evwire.c src/random_strategy.c \
                 src/espresso_strategy.c src/handwritten_strategy.c \
                 src/cordite_strategy.c src/cordite_sim.c \
                 src/simple_heuristic_strategy.c src/champion_strategy.c \

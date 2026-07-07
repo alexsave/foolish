@@ -69,6 +69,11 @@ interface EngineExports {
     wasm_replay_encode(len: number): number;
     wasm_replay_decode(len: number): number;
     wasm_replay_error_detail(): number;
+    // Packed wire pipeline (docs/PACKED_WIRE_CUTOVER.md)
+    wasm_apply_action(seat: number, wireLen: number): number;
+    wasm_finalize_win(aiMask: number): number;
+    wasm_view_serialize(viewer: number): number;
+    wasm_events_serialize(viewer: number, actor: number, ended: number): number;
 }
 
 function decodeBase64(b64: string): Uint8Array {
@@ -346,7 +351,7 @@ function marshalGame(ex: EngineExports, game: Game): void {
     ex.wasm_import_state();
 }
 
-interface KernelState {
+export interface KernelState {
     status: number;
     numPlayers: number;
     powerSuit: number;
@@ -402,7 +407,7 @@ function parseState(buf: Uint8Array, q: number): KernelState {
     };
 }
 
-interface KernelLog {
+export interface KernelLog {
     type: LogType;
     playerIdx: number;      // -1 = system
     defenderIndex: number;  // -1 = n/a
@@ -597,6 +602,118 @@ function appendLogs(game: Game, kernelLogs: KernelLog[], preFlipped: Card | null
             defender_index: kl.defenderIndex >= 0 ? kl.defenderIndex : null,
         } as GameLog);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Packed wire pipeline (docs/PACKED_WIRE_CUTOVER.md)
+//
+// The human-move hot path: state blob in, action wire applied, state blob +
+// per-viewer masked event streams out — no TS Game object anywhere. All
+// kernel work happens synchronously inside one call (the resident kernel
+// state is a module singleton; an `await` between load and export would let
+// a concurrently-handled request clobber it).
+// ---------------------------------------------------------------------------
+
+export interface PackedRunReject { ok: false; reason: number }
+export interface PackedRunOk {
+    ok: true;
+    fool: number;                     // fool seat, -1 while the game runs
+    ended: boolean;
+    stateBlob: Uint8Array;            // versioned durable blob, post-finalize
+    post: KernelState;                // for the JSONB public dual / roster columns
+    logs: KernelLog[];                // this action's kernel logs
+    preFlipped: Card | null;          // for the DRAW-log privacy rule
+    nEvents: number;
+    events: Map<number, Uint8Array>;  // viewer seat (-1 = spectator) -> evwire bytes
+}
+
+export function runPackedAction(
+    blob: Uint8Array, seat: number, wire: Uint8Array,
+    aiMask: number, humanSeats: number[],
+): PackedRunOk | PackedRunReject {
+    const ex = engine();
+    const base = ex.wasm_io_ptr();
+    const buf = mem(ex);
+
+    buf.set(blob, base);
+    if (!ex.wasm_state_deserialize(blob.length)) {
+        throw new Error(`Unreadable game state blob: format version ${blob[0]}, kernel reads ${ex.wasm_state_format_version()}`);
+    }
+    residentFor = null;
+    // The pre-action flipped card straight from the blob bytes (offsets: [0]
+    // version, [1..7] scalars, [8] has_flipped, [9] flipped wire card).
+    const preFlipped: Card | null = blob[8] !== 0 ? cardFromWire(blob[9]) : null;
+
+    // Same per-call reseed as runKernel — draws must stay unpredictable.
+    ex.wasm_set_seed(seedSource ? (seedSource() >>> 0) : ((Math.random() * 0xffffffff) >>> 0));
+
+    if (wire.length > 128) throw new Error('malformed action wire');
+    buf.set(wire, ex.wasm_cards_a_ptr());
+    const r = ex.wasm_apply_action(seat, wire.length);
+    if (r < 0) throw new Error('malformed action wire');
+    if (r === 0) return { ok: false, reason: ex.wasm_reject_reason() };
+
+    const fool = ex.wasm_finalize_win(aiMask >>> 0);
+    const ended = fool >= 0;
+
+    const blobLen = ex.wasm_state_serialize();
+    const stateBlob = mem(ex).slice(base, base + blobLen);
+    ex.wasm_export_state();
+    const post = parseState(mem(ex), base);
+    ex.wasm_export_logs();
+    const logs = parseLogs(mem(ex), base);
+
+    // Per-recipient event streams — serialized before anything else touches
+    // the kernel (the snapshots live in bridge statics).
+    const events = new Map<number, Uint8Array>();
+    let nEvents = 0;
+    for (const viewer of [...humanSeats, -1]) {
+        const len = ex.wasm_events_serialize(viewer, seat, ended ? 1 : 0);
+        if (len < 0) throw new Error('event stream serialization overflow');
+        const bytes = mem(ex).slice(base, base + len);
+        nEvents = bytes[3];
+        events.set(viewer, bytes);
+    }
+    return { ok: true, fool, ended, stateBlob, post, logs, preFlipped, nEvents, events };
+}
+
+// Materialize a full TS Game from a kernel state + roster columns — the cold
+// paths that still want the JS object (the commit's JSONB public dual, the
+// end-of-game ELO/replay finalize). Unlike deserializeGameState this takes
+// the acting player so the good_players insertion-order rule matches
+// applyStateToGame exactly.
+export function materializeKernelGame(post: KernelState, roster: RosterTemplate, actorId: string | null): Game {
+    const template = {
+        id: roster.id,
+        name: roster.name,
+        version: roster.version,
+        deck_length: roster.deck_length,
+        players: roster.players,
+    } as unknown as Game;
+    const game = stateToGame(post, template, roster.good_players, actorId, roster.good_timestamp ?? Date.now());
+    game.deck_length = game.deck.length;
+    return game;
+}
+
+// The DRAW-privacy log append, exported for the packed pipeline (the JSON
+// path reaches the same code through execute()).
+export function appendKernelLogs(game: Game, logs: KernelLog[], preFlipped: Card | null): void {
+    appendLogs(game, logs, preFlipped, game.flipped);
+}
+
+// Per-viewer masked view blob from a durable state blob — get_game's packed
+// response body. Synchronous single kernel section, same discipline as
+// runPackedAction.
+export function serializeViewBlob(blob: Uint8Array, viewerSeat: number): Uint8Array {
+    const ex = engine();
+    const base = ex.wasm_io_ptr();
+    mem(ex).set(blob, base);
+    if (!ex.wasm_state_deserialize(blob.length)) {
+        throw new Error(`Unreadable game state blob: format version ${blob[0]}, kernel reads ${ex.wasm_state_format_version()}`);
+    }
+    residentFor = null;
+    const len = ex.wasm_view_serialize(viewerSeat);
+    return mem(ex).slice(base, base + len);
 }
 
 // ---------------------------------------------------------------------------
