@@ -186,5 +186,36 @@ build/bots.wasm: $(WASM_BOT_SRC) $(wildcard src/*.h) $(wildcard wasm/*.h)
 wasm-bots: build/bots.wasm
 	node wasm/embed.mjs build/bots.wasm ../supabase/functions/_shared/wasm/bots_wasm.ts BOTS_WASM_B64
 
+# ---------------------------------------------------------------------------
+# Coverage gate (CI: ../.github/workflows/coverage.yml). Instruments the engine
+# with gcc --coverage, runs the committed unit suite + the difftests, and fails
+# if core-engine (game/legal/replay) LINE or BRANCH coverage regresses below the
+# floor. Uses gcc + gcovr (not clang/llvm-cov) so CI needs no llvm profile
+# runtime. Objects (and their .gcno/.gcda) land in covbuild/ where gcovr finds
+# them recursively. Tune the floors with COV_LINE_MIN / COV_BRANCH_MIN.
+COV_CC         ?= gcc
+COV_FLAGS      := -O0 -g --coverage -Isrc -Wno-unused-parameter -Wno-deprecated-declarations
+COV_LINE_MIN   ?= 90
+COV_BRANCH_MIN ?= 74
+COV_FILTERS    := --filter 'src/game\.c' --filter 'src/legal\.c' --filter 'src/replay\.c'
+
+.PHONY: coverage
+coverage:
+	rm -rf covbuild && mkdir -p covbuild
+	$(COV_CC) $(COV_FLAGS) $(CORE_SRC) tests/tests.c          -o covbuild/cnitro_tests    -lm
+	$(COV_CC) $(COV_FLAGS) $(CORE_SRC) tests/sim_difftest.c   -o covbuild/sim_difftest    -lm
+	$(COV_CC) $(COV_FLAGS) $(CORE_SRC) tests/apply_difftest.c -o covbuild/apply_difftest  -lm
+	$(COV_CC) $(COV_FLAGS) $(CORE_SRC) tests/solver_difftest.c -o covbuild/solver_difftest -lm
+	$(COV_CC) $(COV_FLAGS) $(CORE_SRC) tests/replay_difftest.c -o covbuild/replay_difftest -lm
+	./covbuild/cnitro_tests
+	./covbuild/sim_difftest 4 100
+	./covbuild/apply_difftest 4 50
+	./covbuild/solver_difftest 2 40 "" 5000
+	./covbuild/solver_difftest 3 40 "" 5000
+	./covbuild/solver_difftest 4 40 "" 5000
+	./covbuild/replay_difftest 10
+	gcovr --root . $(COV_FILTERS) --txt \
+	      --fail-under-line $(COV_LINE_MIN) --fail-under-branch $(COV_BRANCH_MIN)
+
 clean:
-	rm -rf build
+	rm -rf build covbuild
