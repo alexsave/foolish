@@ -14,6 +14,8 @@ import { start_game } from '../supabase/functions/_shared/game_lifecycle.ts';
 import { AnimationEvent } from '../supabase/functions/_shared/types.ts';
 import { legalMovesFor, applyPlayerMove } from './dispatch.ts';
 import { shouldDropStaleSequence, mergeTableBattles } from '../src/state/clientReconcile';
+import { decodeEventWire } from '../supabase/functions/_shared/wire/evwire.ts';
+import { base64ToBytes } from '../supabase/functions/_shared/wire/bytes.ts';
 
 const pick = <T>(a: T[]): T => a[Math.floor(Math.random() * a.length)];
 const tkeys = (bs: any[]) => bs.flatMap((b: any) => (b.defense ? [`${b.attack.suit}-${b.attack.value}`, `${b.defense.suit}-${b.defense.value}`] : [`${b.attack.suit}-${b.attack.value}`])).sort();
@@ -26,11 +28,15 @@ interface Bcast { version: number; eventTables: any[][]; finalTable: any[] }
 async function driveAndCapture(): Promise<{ stream: Bcast[]; serverFinalTable: any[] }> {
     const gameId = `r${uuid().slice(0, 6)}`;
     const human = uuid();
-    await seedGame(gameId, [
+    const seeded = [
         { id: human, name: 'Hero', is_ai: false, strategy_key: 'human' },
         { id: uuid(), name: 'B0', is_ai: true, strategy_key: 'random' },
         { id: uuid(), name: 'B1', is_ai: true, strategy_key: 'random' },
-    ]);
+    ];
+    await seedGame(gameId, seeded);
+    // The identity roster the client already holds when a broadcast arrives —
+    // exactly what it needs to decode the packed event wire.
+    const roster = { id: gameId, name: gameId, players: seeded.map((p) => ({ player_id: p.id, name: p.name, is_ai: p.is_ai })) };
     await executeWithGameLock(gameId, async (g) => ({ game: g, events: start_game(g) as AnimationEvent[] }), 'start', false);
 
     let steps = 0;
@@ -43,15 +49,22 @@ async function driveAndCapture(): Promise<{ stream: Bcast[]; serverFinalTable: a
         steps++;
     }
 
-    // The focus player's personalized channel.
+    // The focus player's personalized channel. Broadcasts are packed now
+    // ({t,s,v,b}); decode the base64 event wire with the REAL client decoder
+    // to recover the per-step snapshots + final game. preGood/prevGoodTs are
+    // dummies — this test only consumes table_battles and the version.
     const chan = `gu-${gameId}-${human}`;
     const stream: Bcast[] = broadcastLog
         .filter((b) => b.channel === chan && b.event === 'animation_events')
-        .map((b) => ({
-            version: b.payload.version as number,
-            eventTables: (b.payload.events as any[]).map((e) => e.game_state?.table_battles ?? []),
-            finalTable: b.payload.game?.table_battles ?? [],
-        }));
+        .map((b) => {
+            const decoded = decodeEventWire(base64ToBytes(b.payload.b), roster, { preGood: [], prevGoodTs: null });
+            assert.ok(decoded, `packed broadcast payload must decode (v=${b.payload.v})`);
+            return {
+                version: b.payload.v as number,
+                eventTables: decoded!.events.map((e) => e.game_state?.table_battles ?? []),
+                finalTable: decoded!.game?.table_battles ?? [],
+            };
+        });
     const serverFinalTable = (await loadCompleteGame(gameId)).table_battles;
     return { stream, serverFinalTable };
 }
