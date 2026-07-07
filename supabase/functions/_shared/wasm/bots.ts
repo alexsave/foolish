@@ -16,10 +16,10 @@
 
 import { Game } from '../types.ts';
 import { LegalMove } from '../bot_interfaces.ts';
-import { takeBOTS_WASM_B64 } from './bots_wasm.ts';
+import { loadWasmGz } from './wasm_asset.ts';
 import {
     EngineExports, __LOG_TYPE_TO_INT, __MOVE_TYPE, __adoptEngine,
-    __decodeBase64, __marshalGame, __mem, __pooledCard, __setResident,
+    __marshalGame, __mem, __pooledCard, __setResident,
     __wireLogCard, __cardFromWire,
 } from './engine.ts';
 
@@ -71,7 +71,7 @@ export function __ensureBots(): void { bots(); }
 
 function bots(): BotsExports {
     if (exportsCache) return exportsCache;
-    const module = new WebAssembly.Module(__decodeBase64(takeBOTS_WASM_B64()) as BufferSource);
+    const module = new WebAssembly.Module(loadWasmGz('bots') as BufferSource);
     const instance = new WebAssembly.Instance(module, {});
     const ex = instance.exports as unknown as BotsExports;
     ex.wasm_init();

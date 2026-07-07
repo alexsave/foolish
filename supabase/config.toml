@@ -276,3 +276,14 @@ s3_region = "env(S3_REGION)"
 s3_access_key = "env(S3_ACCESS_KEY)"
 # Configures AWS_SECRET_ACCESS_KEY for S3 bucket
 s3_secret_key = "env(S3_SECRET_KEY)"
+
+# bots.wasm ships as a gzip static asset (see _shared/wasm/wasm_asset.ts),
+# bundled into each bot-running function by `supabase functions deploy
+# --use-api` (no Docker). Only action/meta/bot-heartbeat load bots.ts; the
+# rules kernel stays a base64 embed (shared with the browser).
+[functions.action]
+static_files = [ "./functions/_shared/wasm/bots.wasm.gz" ]
+[functions.meta]
+static_files = [ "./functions/_shared/wasm/bots.wasm.gz" ]
+[functions.bot-heartbeat]
+static_files = [ "./functions/_shared/wasm/bots.wasm.gz" ]

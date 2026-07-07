@@ -49,4 +49,6 @@ jobs:
         run: supabase db push --linked --yes
 
       - name: Deploy edge functions
-        run: supabase functions deploy --project-ref "$SUPABASE_PROJECT_REF"
+        # --use-api: bundle server-side, no Docker. It DOES carry config.toml
+        # static_files (the kernel wasm .gz), verified against CLI 2.107.
+        run: supabase functions deploy --use-api --project-ref "$SUPABASE_PROJECT_REF"
