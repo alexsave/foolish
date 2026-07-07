@@ -1,0 +1,8 @@
+-- Baseline placeholder.
+--
+-- The hosted project (wngpfwmwkltonwosqflx) records version 20250628051540 in
+-- supabase_migrations.schema_migrations as its initial baseline, but no local
+-- migration file ever backed it. This empty placeholder makes the local
+-- migrations directory match the remote history so `supabase db push` stops
+-- rejecting the drift. It is already marked applied remotely, so its (empty)
+-- body never executes.
