@@ -66,12 +66,22 @@ jobs:
         run: |
           set -e
           for keys in semtex,octogen cordite,semtex fulminate,octogen; do
-            code=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:54321/functions/v1/memtest?keys=$keys&maxmoves=8")
-            echo "$keys -> $code"
+            body=$(curl -s -w $'\n%{http_code}' "http://127.0.0.1:54321/functions/v1/memtest?keys=$keys&maxmoves=8")
+            code=$(printf '%s' "$body" | tail -n1)
+            json=$(printf '%s' "$body" | sed '$d')
+            echo "$keys -> $code  $json"
             [ "$code" = "200" ] || { echo "::error::$keys returned $code"; cat serve.log; exit 1; }
+            # A green 200 is NOT enough: the diagnostic swallows a per-move
+            # exception (e.g. bots.wasm.gz static asset missing) and still
+            # returns ok:true with moves:0. Require REAL bot moves — that only
+            # happens if the kernel actually loaded and ran.
+            printf '%s' "$json" | grep -qE '"moves":[1-9]' \
+              || { echo "::error::$keys made 0 bot moves — bots.wasm never loaded (check the static-asset bundle)"; cat serve.log; exit 1; }
           done
-          if grep -q "memory limit reached" serve.log; then
-            echo "::error::edge runtime reported a worker memory kill"
+          # Catch the swallowed failure class directly in the runtime log:
+          # a memory kill, a missing gz asset, or any bot-processing throw.
+          if grep -qE "memory limit reached|path not found|Error processing bot action" serve.log; then
+            echo "::error::edge runtime logged a bot-processing failure (memory kill / missing asset / throw)"
             cat serve.log
             exit 1
           fi

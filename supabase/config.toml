@@ -287,3 +287,12 @@ static_files = [ "./functions/_shared/wasm/bots.wasm.gz" ]
 static_files = [ "./functions/_shared/wasm/bots.wasm.gz" ]
 [functions.bot-heartbeat]
 static_files = [ "./functions/_shared/wasm/bots.wasm.gz" ]
+# CI-only: the memory.yml edge-serve job copies e2e/edge_memtest to
+# functions/memtest and drives real bot decisions through the edge runtime.
+# It runs the SAME bot stack, so it needs the same static asset — without
+# this stanza `functions serve` never bundles bots.wasm.gz next to it and
+# every bot move dies with "path not found", which the diagnostic used to
+# swallow into a green 200. The memtest dir never exists at deploy time, so
+# this entry is inert for `functions deploy`.
+[functions.memtest]
+static_files = [ "./functions/_shared/wasm/bots.wasm.gz" ]
