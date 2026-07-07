@@ -26,6 +26,11 @@ import {
 } from '../types.ts';
 import { VALUE_MAP, SUIT_MAP } from '../constants.ts';
 import { takeRULES_WASM_B64 } from './rules_wasm.ts';
+// The rules embed is gzip+base64 (embed.mjs --gzip). gunzip is a vendored
+// pure-JS + SYNCHRONOUS inflate (relative import), so it works in the browser
+// (unlike node:zlib), keeps engine()'s sync instantiate (unlike async
+// DecompressionStream), and needs no npm/import-map on the Deno edge.
+import { gunzip } from './gunzip.ts';
 
 // ---------------------------------------------------------------------------
 // Instantiation
@@ -99,7 +104,7 @@ export function __kernelWasmMB(): number {
 // stays retryable instead of hitting 'already taken'.
 let pendingWasmBytes: Uint8Array | null = null;
 function rulesWasmBytes(): Uint8Array {
-    if (!pendingWasmBytes) pendingWasmBytes = decodeBase64(takeRULES_WASM_B64());
+    if (!pendingWasmBytes) pendingWasmBytes = gunzip(decodeBase64(takeRULES_WASM_B64()));
     return pendingWasmBytes;
 }
 

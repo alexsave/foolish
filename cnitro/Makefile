@@ -208,7 +208,7 @@ build/rules.wasm: src/game.c src/legal.c src/replay.c wasm/wasm_api.c $(wildcard
 # decode imports it), and browsers have no node:fs/node:zlib for the static-gz
 # loader. Only bots.wasm — server-only — ships as a gzip static asset (below).
 wasm: build/rules.wasm
-	node wasm/embed.mjs build/rules.wasm ../supabase/functions/_shared/wasm/rules_wasm.ts
+	node wasm/embed.mjs build/rules.wasm ../supabase/functions/_shared/wasm/rules_wasm.ts --gzip
 
 # Client-guards module: game.c ONLY — no legal.c enumeration, no replay.c
 # codec. It backs the browser's UI move-gates (validate-only) and optimistic
@@ -228,7 +228,7 @@ build/guards.wasm: src/game.c wasm/wasm_guards_api.c $(wildcard src/*.h) $(wildc
 	$(WASM_CC) $(WASM_GUARDS_FLAGS) src/game.c wasm/wasm_guards_api.c -o $@
 
 wasm-guards: build/guards.wasm
-	node wasm/embed.mjs build/guards.wasm ../supabase/functions/_shared/wasm/guards_wasm.ts GUARDS_WASM_B64
+	node wasm/embed.mjs build/guards.wasm ../supabase/functions/_shared/wasm/guards_wasm.ts GUARDS_WASM_B64 --gzip
 
 # Bot module: the rules kernel PLUS every algorithmic bot strategy and the
 # choose-move bridge. A superset of rules.wasm, loaded only where bots run
