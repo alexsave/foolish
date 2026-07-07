@@ -169,6 +169,16 @@ export function handleContinue({ user, game }: ExecutionParams): Result {
         throw new Error(`Game ${game.id} is not over`);
     }
 
+    // Determine the winner (first player who got out) / fool (last one still
+    // holding cards) from the FINISHED-game statuses, BEFORE the reset below
+    // clobbers them — otherwise every player is already READY/IDLE and both
+    // lookups miss, leaving the announcement stuck on the generic reset text.
+    const winner = game.players.find(p => p.status === PLAYER_STATUS.OUT);
+    const fool = game.players.find(p => p.status === PLAYER_STATUS.IN);
+    let message = `Game ${game.id} has been reset for another round`;
+    if (winner) message = `Player ${winner.name} won! Game reset for another round`;
+    else if (fool) message = `Player ${fool.name} was the fool! Game reset for another round`;
+
     game.status = GAME_STATUS.WAITING;
     game.players.forEach(player => {
         player.status = player.is_ai ? PLAYER_STATUS.READY : PLAYER_STATUS.IDLE;
@@ -185,12 +195,6 @@ export function handleContinue({ user, game }: ExecutionParams): Result {
     game.defender = 0;
     game.table_battles = [];
     game.elimination_order = [];
-
-    const winner = game.players.find(p => p.status === PLAYER_STATUS.OUT);
-    const fool = game.players.find(p => p.status === PLAYER_STATUS.IN);
-    let message = `Game ${game.id} has been reset for another round`;
-    if (winner) message = `Player ${winner.name} won! Game reset for another round`;
-    else if (fool) message = `Player ${fool.name} was the fool! Game reset for another round`;
 
     return { game, events: [{
         type: ANIMATION_EVENT_TYPE.MAGIC_TRANSITION,
