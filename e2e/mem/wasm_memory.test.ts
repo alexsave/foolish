@@ -25,41 +25,41 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 
-const EMBEDS = [
-    'supabase/functions/_shared/wasm/rules_wasm.ts',
-    'supabase/functions/_shared/wasm/bots_wasm.ts',
-];
-
-test('wasm embeds are single-line literals (no parse-time concat garbage)', () => {
-    for (const rel of EMBEDS) {
-        const src = readFileSync(resolve(rel), 'utf8');
-        // One literal: no `'...' +` continuation chains anywhere in the file.
-        assert.ok(!/'\s*\+/.test(src), `${rel} is chunk-concatenated; regenerate with cnitro/wasm/embed.mjs (single-line)`);
-        const lines = src.trimEnd().split('\n').length;
-        assert.ok(lines <= 12, `${rel} has ${lines} lines; expected a single-line embed`);
-    }
+// bots.wasm now ships as a gzip STATIC ASSET (bots.wasm.gz) — a real binary, so
+// concern #1 (parse-time concat blowup) is gone by construction for it. The
+// rules kernel is still a base64 embed (rules_wasm.ts) because engine.ts is
+// shared with the browser, which has no node:zlib — so it keeps the original
+// single-line-literal guard.
+test('bots.wasm ships as a small gzip static asset (not a base64 embed)', () => {
+    const buf = readFileSync(resolve('supabase/functions/_shared/wasm/bots.wasm.gz'));
+    assert.equal(buf[0], 0x1f, 'bots.wasm.gz is not gzip');
+    assert.equal(buf[1], 0x8b, 'bots.wasm.gz is not gzip');
+    assert.ok(buf.length < 80 * 1024, `bots.wasm.gz is ${(buf.length / 1024) | 0}KB; unexpectedly large`);
 });
 
-test('wasm embeds import inside a 64MB-old-space node (edge-worker budget proxy)', () => {
-    for (const rel of EMBEDS) {
-        const href = pathToFileURL(resolve(rel)).href;
-        // The chunked format needed ~300MB transient just to parse; the edge
-        // worker died on it. 64MB is far under that and comfortably above the
-        // legitimate cost (the decoded module is ~205KB).
-        execFileSync(process.execPath, [
-            '--max-old-space-size=64',
-            '--import', 'tsx',
-            '--input-type=module',
-            '-e', `await import(${JSON.stringify(href)});`,
-        ], {
-            stdio: 'pipe',
-            env: { ...process.env, TSX_TSCONFIG_PATH: 'e2e/tsconfig.json' },
-        });
-    }
+test('rules embed is a single-line literal (no parse-time concat garbage)', () => {
+    const rel = 'supabase/functions/_shared/wasm/rules_wasm.ts';
+    const src = readFileSync(resolve(rel), 'utf8');
+    assert.ok(!/'\s*\+/.test(src), `${rel} is chunk-concatenated; regenerate with cnitro/wasm/embed.mjs`);
+    assert.ok(src.trimEnd().split('\n').length <= 12, `${rel} is not a single-line embed`);
+});
+
+test('loading the bot kernel (read + gunzip + instantiate) fits a 64MB-old-space node', () => {
+    // The old base64 embed needed ~300MB transient just to PARSE; the gz static
+    // asset is read, inflated and instantiated at runtime. Do exactly that (the
+    // real load cost) in a node capped far below the edge worker budget. Pure
+    // built-ins, no tsx — so it measures the wasm cost, not transpile/interop.
+    const gzPath = resolve('supabase/functions/_shared/wasm/bots.wasm.gz');
+    execFileSync(process.execPath, [
+        '--max-old-space-size=64',
+        '-e',
+        `const {readFileSync}=require('node:fs');const {gunzipSync}=require('node:zlib');`
+        + `const w=new Uint8Array(gunzipSync(readFileSync(${JSON.stringify(gzPath)})));`
+        + `new WebAssembly.Instance(new WebAssembly.Module(w),{});`,
+    ], { stdio: 'pipe' });
 });
 
 test('bots.wasm memory is bounded and flat across all MC bot families', async () => {

@@ -212,6 +212,9 @@ build/rules.wasm: $(WASM_RULES_SRC) $(wildcard src/*.h) $(wildcard wasm/*.h)
 
 # Regenerates the base64 module the TS side imports (works unchanged in
 # Deno edge functions, Node and browsers — no asset pipeline needed).
+# rules stays a base64 embed: engine.ts is shared with the BROWSER (replay
+# decode imports it), and browsers have no node:fs/node:zlib for the static-gz
+# loader. Only bots.wasm — server-only — ships as a gzip static asset (below).
 wasm: build/rules.wasm
 	node wasm/embed.mjs build/rules.wasm ../supabase/functions/_shared/wasm/rules_wasm.ts
 
@@ -279,8 +282,11 @@ build/bots.wasm: $(WASM_BOT_SRC) $(wildcard src/*.h) $(wildcard wasm/*.h)
 	@mkdir -p build
 	$(WASM_CC) $(WASM_BOT_FLAGS) $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) $(WASM_BOT_SRC) -o $@
 
+# bots.wasm ships as a gzip STATIC ASSET (config.toml static_files + deploy
+# --use-api, no Docker) — a real 47KB binary, not a 155KB base64 .ts embed.
+# Loaded by _shared/wasm/wasm_asset.ts (server-only; bots never run in browser).
 wasm-bots: build/bots.wasm
-	node wasm/embed.mjs build/bots.wasm ../supabase/functions/_shared/wasm/bots_wasm.ts BOTS_WASM_B64
+	gzip -9 -c build/bots.wasm > ../supabase/functions/_shared/wasm/bots.wasm.gz
 
 # ---------------------------------------------------------------------------
 # Coverage gate (CI: ../.github/workflows/coverage.yml). Instruments the engine
