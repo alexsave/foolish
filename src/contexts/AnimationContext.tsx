@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
-import { Card, Game, GAME_STATUS, PLAYER_STATUS, PublicGame } from '@shared/types.ts';
+import { Card, Game, PublicGame } from '@shared/types.ts';
+import { shouldBotActCore } from '@shared/common_utils.ts';
 import { useServer, useServerActions } from './ServerContext';
 import { useAuth } from './AuthContext';
 import { useParams } from 'next/navigation';
@@ -103,61 +104,18 @@ const eventsSignature = (events: any[]): string =>
         })
         .join(';');
 
-// Check if any bot can possibly move in the current game state
+// Check if any bot can possibly move in the current game state. Turn
+// eligibility lives in ONE place — shouldBotActCore, the kernel-parity-
+// policed mirror of should_bot_act (a hand-rolled copy here used to count
+// a said-good attacker as movable while uncovered attacks remained, keeping
+// the poll-bump timer firing for nobody). shouldBotActCore only reads
+// fields PublicGame/PublicPlayer carry, hence the casts.
 const canBotMove = (game: PublicGame | undefined): boolean => {
-    if (!game || game.status !== GAME_STATUS.PLAYING) {
+    if (!game || !game.players || game.players.length === 0) {
         return false;
     }
-
-    const players = game.players;
-    if (!players || players.length === 0) {
-        return false;
-    }
-
-    const tableBattles = game.table_battles || [];
-    const tableIsEmpty = tableBattles.length === 0;
-    const hasUncoveredAttacks = tableBattles.some(b => !b.defense);
-    const allCovered = tableBattles.length > 0 && !hasUncoveredAttacks;
-    const goodPlayers = new Set(game.good_players || []);
-
-
-    // Case 1: Table is empty - only first_attacker can move
-    if (tableIsEmpty) {
-        const firstAttacker = players[game.first_attacker];
-        const result = firstAttacker?.is_ai === true;
-        return result;
-    }
-
-    // Case 2: Table has cards
-    const defender = players[game.defender];
-    const defenderIsBot = defender?.is_ai === true;
-
-    // Defender can move if there are uncovered attacks
-    if (defenderIsBot && hasUncoveredAttacks) {
-        return true;
-    }
-
-    // Attackers (non-defenders) can move if:
-    // 1. There are uncovered attacks they can add to, OR
-    // 2. All cards are covered but they haven't said "good" yet
-
-    // Check if any bot attacker hasn't said good yet
-    for (let i = 0; i < players.length; i++) {
-        if (i === game.defender) continue; // Skip defender
-        const player = players[i];
-        if (player.is_ai && player.status === PLAYER_STATUS.IN) {
-            // Bot attacker - check if they can still act
-            if (!allCovered) {
-                return true;
-            }
-            // All covered - can they say good?
-            if (!goodPlayers.has(player.player_id)) {
-                return true;
-            }
-        }
-    }
-
-    return false;
+    return game.players.some((player, i) =>
+        player.is_ai === true && shouldBotActCore(game as never, player as never, i));
 };
 
 export const AnimationProvider = ({ children }: { children: React.ReactNode }) => {
@@ -385,6 +343,9 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
         // Find MY optimistic cards (attacks, covers, pickups)
         const myOptimisticAttackCovers: Card[] = [];
+        // Which of those are COVERS — the defender-capacity revert rule only
+        // applies to attacks (see optimisticConflicts.ts).
+        const myOptimisticCoverKeys = new Set<string>();
         const myOptimisticPickups: Card[] = [];
 
         // Queue revert events for every still-pending optimistic attack/cover
@@ -426,6 +387,9 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                         parsedEvent.from_location === 'hand' &&
                         parsedEvent.to_location === 'table') {
                         myOptimisticAttackCovers.push(parsedEvent.card);
+                        if (parsedEvent.type === 'cover') {
+                            myOptimisticCoverKeys.add(getCardKey(parsedEvent.card));
+                        }
                     }
                     // Pickups (table → hand)
                     else if (parsedEvent.type === 'pickup' &&
@@ -456,8 +420,6 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             const finalGameState = message.game || serverState;
             const nextDefenderHandSize = finalGameState?.players?.[nextDefenderId]?.hand_length ?? 0;
 
-            const serverAttackCards = serverAttackPasses.reduce((sum: number, evt: any) => sum + (evt.cards?.length || 0), 0);
-
             const optimisticPassCards = Array.from(optimisticAnimations.current.keys())
                 .filter(key => {
                     try {
@@ -471,7 +433,12 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 })
                 .length;
 
-            const totalAttacksIfPassSucceeds = serverUncoveredAttacks + serverAttackCards + optimisticPassCards;
+            // Kernel PASS_CAPACITY mirror: the next defender must hold every
+            // table card plus the passed ones. serverUncoveredAttacks comes
+            // from the broadcast's FINAL game_state, which already contains
+            // the rival attack/pass cards — adding the events' card counts on
+            // top double-counted them and false-reverted legal passes.
+            const totalAttacksIfPassSucceeds = serverUncoveredAttacks + optimisticPassCards;
 
             if (totalAttacksIfPassSucceeds > nextDefenderHandSize) {
                 passIsInvalid = true;
@@ -538,10 +505,6 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             serverDefenderBefore !== serverDefenderAfter;
 
         if (myOptimisticAttackCovers.length > 0 && defenderChanged && serverAttackPasses[0]) {
-            // Get the pass event (the attack_pass event that caused defender to change)
-
-            const serverPassEvent = serverAttackPasses[0];
-
             const finalGameState = message.game || serverState;
             const newDefenderId = serverDefenderAfter; // After pass
 
@@ -561,17 +524,17 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 }
             }
 
-            // Check 2: Does the new defender have exactly enough cards for the table?
+            // Check 2: can the new defender still take our in-flight attacks?
             if (myOptimisticAttackCovers.length > 0 && newDefenderId !== undefined) {
                 const newDefenderHandSize = finalGameState?.players?.[newDefenderId]?.hand_length ?? 0;
-                const serverPassCards = serverPassEvent.cards?.length || 0;
 
-                // Total attacks the new defender will face = uncovered + pass cards
-                const totalAttacksAfterPass = serverUncoveredAttacks + serverPassCards;
+                // Kernel DEFENDER_CAPACITY mirror: uncovered + our cards must
+                // fit the new defender's hand. serverUncoveredAttacks is from
+                // the FINAL game_state, which already includes the passed
+                // cards — adding the pass event's count double-counted them.
+                const totalAttacksAfterPass = serverUncoveredAttacks + myOptimisticAttackCovers.length;
 
-
-                // If table is full (new defender has exactly enough cards), no more attacks allowed
-                if (totalAttacksAfterPass >= newDefenderHandSize) {
+                if (totalAttacksAfterPass > newDefenderHandSize) {
                     // Revert all optimistic attacks
                     revertOptimisticAttackCovers();
 
@@ -636,6 +599,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 serverTableCards,
                 message.events,
                 message.game || serverState,
+                myOptimisticCoverKeys,
             );
 
             // Cards that were accepted then swept off the table by this broadcast's

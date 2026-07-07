@@ -129,36 +129,8 @@ export const executeBotMove = (game: Game, bot: PrivatePlayer, move: LegalMove):
         return false;
     }
 }
-// Determine if a bot should act given current game state
-export const shouldBotActCore = (game: Game, bot: PrivatePlayer, botIndex: number): boolean => {
-    if (game.status !== GAME_STATUS.PLAYING) {
-        return false;
-    }
-
-    // Check if bot is out - they should never act
-    if (bot.status !== PLAYER_STATUS.IN) {
-        return false;
-    }
-
-    const isFirstAttack = game.table_battles.length === 0;
-    const isDefender = botIndex === game.defender;
-    // Note: every() returns true for empty arrays, so check length first
-    const allAttacksCovered = game.table_battles.length > 0 && 
-        game.table_battles.every(battle => battle.defense !== null);
-
-    if (isFirstAttack) {
-        // First attack: only first attacker can act
-        return botIndex === game.first_attacker;
-    }
-    
-    if (isDefender) {
-        // Defender can only act when there are uncovered attacks
-        // If all attacks are covered, defender just waits for attackers to add more or say "good"
-        return !allAttacksCovered;
-    }
-    
-    // Attacker is eligible iff they haven't said "good" yet. good_players is the single
-    // source of truth — awaiting_attack used to gate this too, but the two could drift out
-    // of sync and deadlock the round.
-    return !game.good_players?.includes(bot.player_id);
-}
+// Turn-eligibility projection: lives in common_utils.ts (a client-safe leaf
+// module — this file pulls the action handlers and bot strategies, i.e. both
+// wasm embeds, so the client must never import it). Re-exported here for the
+// server bot loop and existing test imports.
+export { shouldBotActCore } from './common_utils.ts';

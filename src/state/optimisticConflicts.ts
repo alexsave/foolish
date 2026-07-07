@@ -40,12 +40,18 @@ interface GameStateLike { defender?: number; players?: { hand_length?: number }[
  * @param serverTableCards         the authoritative table cards this broadcast shows
  * @param events                   the broadcast's animation events
  * @param finalGameState           the broadcast's final personalized game state (message.game || serverState)
+ * @param myOptimisticCoverKeys    getCardKey()s of the pending cards that are COVERS —
+ *                                 the defender-capacity rule applies only to attacks
+ *                                 (a cover is the defender's own play and has no
+ *                                 capacity rule in the kernel; counting covers here
+ *                                 used to false-revert legal in-flight covers)
  */
 export function resolveUnconfirmedAttackCovers(
     myOptimisticAttackCovers: Card[],
     serverTableCards: Card[],
     events: AnimEvent[],
     finalGameState: GameStateLike | null | undefined,
+    myOptimisticCoverKeys?: Set<string>,
 ): AttackCoverResolution {
     // Server already shows (some of) our cards on the table → accepted; this branch
     // does not apply and the cards are handled by the per-event dedup upstream.
@@ -79,14 +85,24 @@ export function resolveUnconfirmedAttackCovers(
     // false-reverts a LEGAL in-flight attack: the server accepts our attack only if
     // uncovered_after ≤ defenderHand, and uncovered_after = finalUncoveredAttacks + 1,
     // so a legal attack keeps totalAttacks ≤ defenderHandSize here.
+    //
+    // The rule is an ATTACK rule (cnitro/src/game.c handle_attack
+    // DEFENDER_CAPACITY): pending COVERS are the defender's own play and are
+    // excluded — they merge unless the sweep branch above already cleared them.
+    const pendingAttacks = myOptimisticCoverKeys
+        ? myOptimisticAttackCovers.filter((c) => !myOptimisticCoverKeys.has(getCardKey(c)))
+        : myOptimisticAttackCovers;
     const defenderHandSize = finalGameState?.defender !== undefined
         ? (finalGameState.players?.[finalGameState.defender]?.hand_length ?? 0)
         : 0;
     const finalUncoveredAttacks = finalGameState?.table_battles?.filter((b) => !b.defense).length ?? 0;
-    const totalAttacks = finalUncoveredAttacks + myOptimisticAttackCovers.length;
-    if (totalAttacks > defenderHandSize) {
-        // Attack invalidated by earlier attack → revert.
-        return { revert: [...myOptimisticAttackCovers], merge: [], clear: [] };
+    const totalAttacks = finalUncoveredAttacks + pendingAttacks.length;
+    if (pendingAttacks.length > 0 && totalAttacks > defenderHandSize) {
+        // Attack invalidated by earlier attack → revert (covers stay).
+        const pendingCovers = myOptimisticAttackCovers.filter(
+            (c) => myOptimisticCoverKeys?.has(getCardKey(c)),
+        );
+        return { revert: [...pendingAttacks], merge: pendingCovers, clear: [] };
     }
 
     // Defender can hold them → keep and merge into the incoming states.

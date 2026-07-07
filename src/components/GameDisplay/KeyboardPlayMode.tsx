@@ -51,6 +51,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useGame } from '../../contexts/GameContext';
 import { canCover } from '@shared/common_utils.ts';
 import { canAttack, canPass, canCoverCards } from '../../utils/gameValidation';
+import { findUnambiguousCover } from '../../utils/coverCombinations';
 
 type CoverTarget = { kind: 'cover'; attack: Card; battleIndex: number };
 type Target = CoverTarget | { kind: 'pass' };
@@ -268,9 +269,7 @@ export const KeyboardPlayMode = () => {
                     }
                     // defender: cover via the unambiguous mapping, else pass.
                     if (canCoverCards(g, selected)) {
-                        const uncoveredAttacks = (g.table_battles || [])
-                            .filter((b) => !b.defense).map((b) => b.attack);
-                        const mapping = findUnambiguousCoverMapping(selected, uncoveredAttacks, g.power_suit);
+                        const mapping = findUnambiguousCover(selected, g.table_battles || [], g.power_suit);
                         if (mapping) {
                             s.fire('cover', s.cover(mapping.coverCards, mapping.attackCards), true);
                             return;
@@ -430,44 +429,9 @@ export const KeyboardPlayMode = () => {
 };
 
 /* ------------------------------- helpers ----------------------------------- */
-// Mirror of ActionButtons' handleCoverClick mapping: returns a single
-// cover->attack assignment only when every valid permutation covers the SAME
-// set of attacks (i.e. the mapping is unambiguous); otherwise null.
-function findUnambiguousCoverMapping(
-    coverCards: Card[],
-    uncoveredAttacks: Card[],
-    powerSuit: Card['suit'],
-): { coverCards: Card[]; attackCards: Card[] } | null {
-    if (coverCards.length === 0 || coverCards.length > uncoveredAttacks.length) return null;
-
-    const generatePermutations = (arr: Card[], length: number): Card[][] => {
-        if (length === 1) return arr.map((item) => [item]);
-        const result: Card[][] = [];
-        for (let i = 0; i < arr.length; i++) {
-            const rest = arr.slice(0, i).concat(arr.slice(i + 1));
-            for (const subPerm of generatePermutations(rest, length - 1)) {
-                result.push([arr[i], ...subPerm]);
-            }
-        }
-        return result;
-    };
-
-    const combinations: { coverCards: Card[]; attackCards: Card[] }[] = [];
-    for (const attackPerm of generatePermutations(uncoveredAttacks, coverCards.length)) {
-        if (coverCards.every((c, i) => canCover(attackPerm[i], c, powerSuit))) {
-            combinations.push({ coverCards: [...coverCards], attackCards: [...attackPerm] });
-        }
-    }
-    if (combinations.length === 0) return null;
-
-    const key = (c: Card) => `${c.value}-${c.suit}`;
-    const firstSet = new Set(combinations[0].attackCards.map(key));
-    const sameSet = combinations.every((combo) => {
-        const set = new Set(combo.attackCards.map(key));
-        return set.size === firstSet.size && Array.from(set).every((s) => firstSet.has(s));
-    });
-    return sameSet ? combinations[0] : null;
-}
+// Cover->attack mapping resolution lives in ONE shared helper
+// (utils/coverCombinations.findUnambiguousCover); the local copy that used
+// to sit here was one of three behaviorally-identical implementations.
 
 function tableFullyCovered(g: PersonalGame): boolean {
     const b = g.table_battles || [];
