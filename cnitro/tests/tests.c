@@ -241,6 +241,496 @@ static void test_full_game_random(void) {
     CHECK(loser >= 0, "random vs random terminates");
 }
 
+// ===========================================================================
+// Reject-matrix & edge-path tests.
+//
+// Full random/handwritten games only ever submit LEGAL moves, so every
+// validation REJECT branch in the handlers — and a handful of end-of-round
+// success sub-branches — go unexercised by the game-playing tests above.
+// These drive each handler with a crafted state that trips one specific
+// branch, asserting both the false return and the exact engine_last_reject.
+// ===========================================================================
+
+static void setup_playing_2p(Game *g) {
+    memset(g, 0, sizeof(*g));
+    g->num_players = 2;
+    g->status = GAME_STATUS_PLAYING;
+    g->power_suit = SUIT_DIAMONDS;
+    g->first_attacker = 0;
+    g->defender = 1;
+    for (int i = 0; i < 2; i++) {
+        g->players[i].status = PLAYER_STATUS_IN;
+        snprintf(g->players[i].player_id, sizeof(g->players[i].player_id), "p%d", i);
+    }
+}
+
+// Fill the deck with `count` well-formed cards so a round-end refill draws
+// (avoids the no-cards elimination branch unless a test wants it).
+static void fill_deck(Game *g, int count) {
+    for (int i = 0; i < count; i++) {
+        g->deck[i].suit  = (int8_t)(i % NUM_SUITS);
+        g->deck[i].value = (int8_t)(MIN_VALUE_SMALL + (i % 9));
+    }
+    g->deck_count = (int16_t)count;
+    g->has_flipped = false;
+}
+
+#define CHECK_REJECT(call, code, msg) do { \
+    bool _r = (call); \
+    CHECK(!(_r) && engine_last_reject == (code), msg); \
+} while (0)
+
+static void test_attack_rejects(void) {
+    Card c7s = { SUIT_SPADES, 7 }, c7h = { SUIT_HEARTS, 7 }, c8c = { SUIT_CLUBS, 8 };
+    Card notin = { SUIT_DIAMONDS, 9 };
+
+    Game g; setup_playing_2p(&g);
+    g.players[0].hand[0] = c7s;
+    g.players[0].hand[1] = c7h;
+    g.players[0].hand[2] = c8c;
+    g.players[0].hand_count = 3;
+    g.players[1].hand_count = 6;
+
+    CHECK_REJECT(handle_attack(&g, 0, &c7s, 0), ENGINE_REJECT_EMPTY, "attack: empty");
+
+    g.status = GAME_STATUS_WAITING;
+    CHECK_REJECT(handle_attack(&g, 0, &c7s, 1), ENGINE_REJECT_NOT_PLAYING, "attack: not playing");
+    g.status = GAME_STATUS_PLAYING;
+
+    CHECK_REJECT(handle_attack(&g, 1, &c7s, 1), ENGINE_REJECT_IS_DEFENDER, "attack: is defender");
+    CHECK_REJECT(handle_attack(&g, 0, &notin, 1), ENGINE_REJECT_NOT_IN_HAND, "attack: not in hand");
+
+    Card dup[2] = { c7s, c7s };
+    CHECK_REJECT(handle_attack(&g, 0, dup, 2), ENGINE_REJECT_DUPLICATES, "attack: duplicates");
+
+    Card diff[2] = { c7s, c8c };
+    CHECK_REJECT(handle_attack(&g, 0, diff, 2), ENGINE_REJECT_NOT_SAME_VALUE, "attack: not same value");
+
+    // first attack by a non-first-attacker seat.
+    g.first_attacker = 1;
+    CHECK_REJECT(handle_attack(&g, 0, &c7s, 1), ENGINE_REJECT_NOT_FIRST_ATTACKER, "attack: not first attacker");
+    g.first_attacker = 0;
+
+    // regular (non-first) attack of a value not on the table.
+    g.num_battles = 1;
+    g.table_battles[0].attack = (Card){ SUIT_SPADES, 5 };
+    g.table_battles[0].defense = CARD_NONE;
+    CHECK_REJECT(handle_attack(&g, 0, &c8c, 1), ENGINE_REJECT_VALUE_NOT_ON_TABLE, "attack: value not on table");
+    g.num_battles = 0;
+
+    // defender can't absorb the attack (empty defender hand).
+    g.players[1].hand_count = 0;
+    CHECK_REJECT(handle_attack(&g, 0, &c7s, 1), ENGINE_REJECT_DEFENDER_CAPACITY, "attack: defender capacity");
+}
+
+static void test_cover_rejects_and_success(void) {
+    Card cov9 = { SUIT_SPADES, 9 }, cov6 = { SUIT_SPADES, 6 };
+    Card atk7 = { SUIT_SPADES, 7 };
+    Card notin = { SUIT_HEARTS, 10 }, atk_missing = { SUIT_CLUBS, 5 };
+
+    Game g; setup_playing_2p(&g);
+    g.num_battles = 1;
+    g.table_battles[0].attack = atk7;
+    g.table_battles[0].defense = CARD_NONE;
+    g.players[1].hand[0] = cov9;   // covers 7♠ (same suit, higher)
+    g.players[1].hand[1] = cov6;   // does NOT cover 7♠ (lower, same suit)
+    g.players[1].hand_count = 2;
+    g.players[0].hand_count = 6;
+
+    g.status = GAME_STATUS_WAITING;
+    CHECK_REJECT(handle_cover(&g, 1, &cov9, &atk7, 1), ENGINE_REJECT_NOT_PLAYING, "cover: not playing");
+    g.status = GAME_STATUS_PLAYING;
+
+    CHECK_REJECT(handle_cover(&g, 1, &cov9, &atk7, 0), ENGINE_REJECT_EMPTY, "cover: empty");
+
+    // No-uncovered takes priority over the not-defender check.
+    g.table_battles[0].defense = cov9;
+    CHECK_REJECT(handle_cover(&g, 1, &cov9, &atk7, 1), ENGINE_REJECT_NO_UNCOVERED, "cover: no uncovered");
+    g.table_battles[0].defense = CARD_NONE;
+
+    CHECK_REJECT(handle_cover(&g, 0, &cov9, &atk7, 1), ENGINE_REJECT_NOT_DEFENDER, "cover: not defender");
+    CHECK_REJECT(handle_cover(&g, 1, &notin, &atk7, 1), ENGINE_REJECT_NOT_IN_HAND, "cover: not in hand");
+
+    Card cov_dup[2] = { cov9, cov9 };
+    Card atk_two[2] = { atk7, atk7 };
+    CHECK_REJECT(handle_cover(&g, 1, cov_dup, atk_two, 2), ENGINE_REJECT_DUPLICATES, "cover: duplicate cover cards");
+
+    CHECK_REJECT(handle_cover(&g, 1, &cov9, &atk_missing, 1), ENGINE_REJECT_ATTACK_NOT_ON_TABLE, "cover: attack not on table");
+
+    // distinct covers in hand, duplicated attack card -> attack duplicates.
+    Card cov_two[2] = { cov9, cov6 };
+    CHECK_REJECT(handle_cover(&g, 1, cov_two, atk_two, 2), ENGINE_REJECT_DUPLICATES, "cover: duplicate attack cards");
+
+    CHECK_REJECT(handle_cover(&g, 1, &cov6, &atk7, 1), ENGINE_REJECT_CANNOT_COVER, "cover: cannot cover");
+
+    // Success: defender covers, hand not cleared -> all-covered branch.
+    bool ok = handle_cover(&g, 1, &cov9, &atk7, 1);
+    CHECK(ok, "cover: success returns true");
+    CHECK(card_eq(g.table_battles[0].defense, cov9), "cover: battle now covered");
+    CHECK(g.has_good_timestamp, "cover: all-covered sets good timestamp");
+}
+
+// Defender empties their hand on a cover: discard the table, refill from a
+// non-empty deck, advance the defender (the common end-of-round branch).
+static void test_cover_clears_hand_round_advance(void) {
+    Game g; setup_playing_2p(&g);
+    fill_deck(&g, 12);
+    g.num_battles = 1;
+    g.table_battles[0].attack = (Card){ SUIT_SPADES, 7 };
+    g.table_battles[0].defense = CARD_NONE;
+    g.players[1].hand[0] = (Card){ SUIT_SPADES, 9 };
+    g.players[1].hand_count = 1;   // the single cover card
+    g.players[0].hand[0] = (Card){ SUIT_HEARTS, 6 };
+    g.players[0].hand_count = 1;
+
+    Card cov9 = { SUIT_SPADES, 9 }, atk7 = { SUIT_SPADES, 7 };
+    bool ok = handle_cover(&g, 1, &cov9, &atk7, 1);
+    CHECK(ok, "cover-clear: success");
+    CHECK(g.num_battles == 0, "cover-clear: table discarded");
+    CHECK(g.discard_pile_length == 2, "cover-clear: two cards discarded");
+    CHECK(g.players[1].hand_count > 0, "cover-clear: defender refilled from deck");
+}
+
+// Defender empties their hand and the stock is empty too -> defender wins,
+// first_attacker is pushed out (the rarer end-of-round win sub-branch).
+static void test_cover_clears_hand_wins(void) {
+    Game g; setup_playing_2p(&g);
+    g.deck_count = 0; g.has_flipped = false;   // no stock: no refill possible
+    g.num_battles = 1;
+    g.table_battles[0].attack = (Card){ SUIT_SPADES, 7 };
+    g.table_battles[0].defense = CARD_NONE;
+    g.players[1].hand[0] = (Card){ SUIT_SPADES, 9 };
+    g.players[1].hand_count = 1;
+    g.players[0].hand[0] = (Card){ SUIT_HEARTS, 6 };
+    g.players[0].hand_count = 1;
+
+    Card cov9 = { SUIT_SPADES, 9 }, atk7 = { SUIT_SPADES, 7 };
+    bool ok = handle_cover(&g, 1, &cov9, &atk7, 1);
+    CHECK(ok, "cover-win: success");
+    CHECK(g.players[1].status == PLAYER_STATUS_OUT, "cover-win: defender out (empty, no stock)");
+    CHECK(g.num_eliminated >= 1, "cover-win: elimination recorded");
+}
+
+static void test_pass_rejects_and_success(void) {
+    Card p7h = { SUIT_HEARTS, 7 }, p8c = { SUIT_CLUBS, 8 };
+    Card notin = { SUIT_DIAMONDS, 9 };
+
+    Game g; setup_playing_2p(&g);
+    g.num_battles = 1;
+    g.table_battles[0].attack = (Card){ SUIT_SPADES, 7 };
+    g.table_battles[0].defense = CARD_NONE;
+    g.players[1].hand[0] = p7h;
+    g.players[1].hand_count = 1;
+    g.players[0].hand_count = 6;
+
+    g.status = GAME_STATUS_WAITING;
+    CHECK_REJECT(handle_pass(&g, 1, &p7h, 1), ENGINE_REJECT_NOT_PLAYING, "pass: not playing");
+    g.status = GAME_STATUS_PLAYING;
+
+    CHECK_REJECT(handle_pass(&g, 1, &p7h, 0), ENGINE_REJECT_EMPTY, "pass: empty");
+
+    Card mixed[2] = { p7h, p8c };
+    CHECK_REJECT(handle_pass(&g, 1, mixed, 2), ENGINE_REJECT_NOT_SAME_VALUE, "pass: not same value");
+
+    Card dup[2] = { p7h, p7h };
+    CHECK_REJECT(handle_pass(&g, 1, dup, 2), ENGINE_REJECT_DUPLICATES, "pass: duplicates");
+
+    CHECK_REJECT(handle_pass(&g, 0, &p7h, 1), ENGINE_REJECT_NOT_DEFENDER, "pass: not defender");
+    CHECK_REJECT(handle_pass(&g, 1, &notin, 1), ENGINE_REJECT_NOT_IN_HAND, "pass: not in hand");
+
+    // No table cards.
+    g.num_battles = 0;
+    CHECK_REJECT(handle_pass(&g, 1, &p7h, 1), ENGINE_REJECT_NO_TABLE_CARDS, "pass: no table cards");
+    g.num_battles = 1;
+
+    // A covered battle blocks passing.
+    g.table_battles[0].defense = (Card){ SUIT_SPADES, 9 };
+    CHECK_REJECT(handle_pass(&g, 1, &p7h, 1), ENGINE_REJECT_COVER_PRESENT, "pass: cover present");
+    g.table_battles[0].defense = CARD_NONE;
+
+    // Table value doesn't match the pass card.
+    g.table_battles[0].attack = (Card){ SUIT_SPADES, 8 };
+    CHECK_REJECT(handle_pass(&g, 1, &p7h, 1), ENGINE_REJECT_PASS_VALUES, "pass: values mismatch");
+    g.table_battles[0].attack = (Card){ SUIT_SPADES, 7 };
+
+    // Next player can't absorb the passed-to pile.
+    g.players[0].hand_count = 0;
+    CHECK_REJECT(handle_pass(&g, 1, &p7h, 1), ENGINE_REJECT_PASS_CAPACITY, "pass: capacity");
+
+    // Success: defender passes 7♥ to the next seat, who becomes defender.
+    g.players[0].hand_count = 6;
+    bool ok = handle_pass(&g, 1, &p7h, 1);
+    CHECK(ok, "pass: success returns true");
+    CHECK(g.defender == 0, "pass: defender advances to next seat");
+    CHECK(g.num_battles == 2, "pass: passed card joins the table");
+}
+
+static void test_pickup_rejects_and_success(void) {
+    Game g; setup_playing_2p(&g);
+    fill_deck(&g, 12);
+    g.num_battles = 1;
+    g.table_battles[0].attack = (Card){ SUIT_SPADES, 7 };
+    g.table_battles[0].defense = (Card){ SUIT_SPADES, 9 };
+    g.players[1].hand[0] = (Card){ SUIT_HEARTS, 6 };
+    g.players[1].hand_count = 1;
+    g.players[0].hand_count = 6;
+
+    g.status = GAME_STATUS_WAITING;
+    CHECK_REJECT(handle_pickup(&g, 1), ENGINE_REJECT_NOT_PLAYING, "pickup: not playing");
+    g.status = GAME_STATUS_PLAYING;
+
+    CHECK_REJECT(handle_pickup(&g, 0), ENGINE_REJECT_NOT_DEFENDER, "pickup: not defender");
+
+    g.num_battles = 0;
+    CHECK_REJECT(handle_pickup(&g, 1), ENGINE_REJECT_NO_TABLE_CARDS, "pickup: no table cards");
+    g.num_battles = 1;
+
+    // Success: defender scoops the (covered) battle into hand.
+    bool ok = handle_pickup(&g, 1);
+    CHECK(ok, "pickup: success returns true");
+    CHECK(g.num_battles == 0, "pickup: table cleared");
+    CHECK(g.players[1].hand_count >= 3, "pickup: attack+defense scooped (plus refill)");
+}
+
+static void test_good_rejects_and_success(void) {
+    // Leave the battle uncovered so a lone attacker's 'good' does NOT trigger
+    // the all-covered round transition (which would reset the good mask) — the
+    // transition itself is exercised by test_good_round_transition below.
+    Game g; setup_playing_2p(&g);
+    g.num_battles = 1;
+    g.table_battles[0].attack = (Card){ SUIT_SPADES, 7 };
+    g.table_battles[0].defense = CARD_NONE;  // uncovered
+    g.players[0].hand_count = 6;
+    g.players[1].hand_count = 6;
+
+    g.status = GAME_STATUS_WAITING;
+    CHECK_REJECT(handle_good(&g, 0), ENGINE_REJECT_NOT_PLAYING, "good: not playing");
+    g.status = GAME_STATUS_PLAYING;
+
+    g.players[0].status = PLAYER_STATUS_OUT;
+    CHECK_REJECT(handle_good(&g, 0), ENGINE_REJECT_NOT_IN_STATUS, "good: not IN");
+    g.players[0].status = PLAYER_STATUS_IN;
+
+    CHECK_REJECT(handle_good(&g, 1), ENGINE_REJECT_IS_DEFENDER, "good: is defender");
+
+    // First attacker cannot 'good' before opening the round.
+    g.num_battles = 0;
+    CHECK_REJECT(handle_good(&g, 0), ENGINE_REJECT_FIRST_MUST_ATTACK, "good: first must attack");
+    g.num_battles = 1;
+
+    // Success: the attacker says good; a repeat is rejected as already-good.
+    bool ok = handle_good(&g, 0);
+    CHECK(ok, "good: success returns true");
+    CHECK(g.good_players_mask & (1u << 0), "good: mask records the player");
+    CHECK_REJECT(handle_good(&g, 0), ENGINE_REJECT_ALREADY_GOOD, "good: already good");
+}
+
+// good by all attackers over a fully-covered table triggers the round
+// transition (discard + refill + defender rotation).
+static void test_good_round_transition(void) {
+    Game g; setup_playing_2p(&g);
+    fill_deck(&g, 12);
+    g.num_battles = 1;
+    g.table_battles[0].attack = (Card){ SUIT_SPADES, 7 };
+    g.table_battles[0].defense = (Card){ SUIT_SPADES, 9 };  // fully covered
+    g.players[0].hand[0] = (Card){ SUIT_HEARTS, 6 };
+    g.players[0].hand_count = 1;
+    g.players[1].hand[0] = (Card){ SUIT_CLUBS, 8 };
+    g.players[1].hand_count = 1;
+
+    bool ok = handle_good(&g, 0);
+    CHECK(ok, "good-transition: success");
+    CHECK(g.num_battles == 0, "good-transition: table discarded");
+    CHECK(g.discard_pile_length == 2, "good-transition: two cards trashed");
+    CHECK(g.defender == 0, "good-transition: defender rotates to old first-attacker's successor");
+}
+
+static void test_should_bot_act_edges(void) {
+    Game g; setup_playing_2p(&g);
+    g.status = GAME_STATUS_GAME_OVER;
+    CHECK(!should_bot_act(&g, 0), "should_bot_act: false when not playing");
+    g.status = GAME_STATUS_PLAYING;
+    g.players[0].status = PLAYER_STATUS_OUT;
+    CHECK(!should_bot_act(&g, 0), "should_bot_act: false when player not IN");
+}
+
+static void test_next_player_and_game_done_edges(void) {
+    Game g; setup_playing_2p(&g);
+    // Only one player left IN -> rotation is meaningless, returns current.
+    g.players[1].status = PLAYER_STATUS_OUT;
+    CHECK(get_next_player_index(&g, 0) == 0, "next_player: <=1 IN returns current");
+    // game_done: exactly one IN and the rest OUT -> that seat is the loser.
+    CHECK(game_done(&g) == 0, "game_done: last IN player reported");
+    setup_playing_2p(&g);
+    CHECK(game_done(&g) == -1, "game_done: -1 while two remain");
+}
+
+// A short-log instance (log_cap > 0, as used by the sampled-world Monte-Carlo
+// slots) keeps only LOG_DISCARD entries and drops everything else into a
+// throwaway scratch log — exercise both the kept and dropped paths.
+static void test_short_log_instance(void) {
+    Game g; setup_playing_2p(&g);
+    fill_deck(&g, 12);
+    g.log_cap = 4;      // short-log slot
+    g.log_virt = 0;
+    g.num_battles = 1;
+    g.table_battles[0].attack = (Card){ SUIT_SPADES, 7 };
+    g.table_battles[0].defense = (Card){ SUIT_SPADES, 9 };  // fully covered
+    g.players[0].hand[0] = (Card){ SUIT_HEARTS, 6 };
+    g.players[0].hand_count = 1;
+    g.players[1].hand[0] = (Card){ SUIT_CLUBS, 8 };
+    g.players[1].hand_count = 1;
+
+    int logs_before = g.num_logs;
+    bool ok = handle_good(&g, 0);   // GOOD (dropped) + DISCARD (kept) + DRAW/CHANGE (dropped)
+    CHECK(ok, "short-log: round transition succeeds");
+    CHECK(g.num_logs <= g.log_cap, "short-log: kept logs never exceed the cap");
+    CHECK(g.num_logs >= logs_before, "short-log: at least the discard was retained");
+    CHECK(g.log_virt > 0, "short-log: virtual counter advanced past dropped appends");
+}
+
+// ---- legal.c edge move-generation states -----------------------------------
+
+static void test_legal_not_playing(void) {
+    Game g; setup_playing_2p(&g);
+    g.status = GAME_STATUS_WAITING;
+    LegalMoves moves;
+    calculate_legal_moves(&g, 0, &moves);
+    CHECK(moves.n == 0, "legal: no moves when not playing");
+}
+
+static void test_legal_attacker_good_and_no_match(void) {
+    // Non-defender attacker whose hand shares no value with the table:
+    // no attack moves, but GOOD is still offered.
+    Game g; setup_playing_2p(&g);
+    g.num_battles = 1;
+    g.table_battles[0].attack = (Card){ SUIT_SPADES, 7 };
+    g.table_battles[0].defense = CARD_NONE;
+    g.players[0].hand[0] = (Card){ SUIT_HEARTS, 8 };
+    g.players[0].hand[1] = (Card){ SUIT_CLUBS, 9 };
+    g.players[0].hand_count = 2;
+    g.players[1].hand_count = 6;
+
+    LegalMoves moves;
+    calculate_legal_moves(&g, 0, &moves);
+    int n_good = 0, n_attack = 0;
+    for (int i = 0; i < moves.n; i++) {
+        if (moves.moves[i].type == MOVE_GOOD) n_good++;
+        if (moves.moves[i].type == MOVE_ATTACK) n_attack++;
+    }
+    CHECK(n_attack == 0, "legal: no attack when hand shares no table value");
+    CHECK(n_good == 1, "legal: GOOD offered to the attacker");
+
+    // Once that attacker has said good, they get no moves at all.
+    g.good_players_mask |= (1u << 0);
+    calculate_legal_moves(&g, 0, &moves);
+    CHECK(moves.n == 0, "legal: player who said good gets no moves");
+}
+
+static void test_legal_defender_cover_pickup_pass(void) {
+    // Uncovered same-value table + a matching-value defender card: the
+    // defender is offered COVER(s), PICKUP and PASS.
+    Game g; setup_playing_2p(&g);
+    g.num_battles = 1;
+    g.table_battles[0].attack = (Card){ SUIT_SPADES, 7 };
+    g.table_battles[0].defense = CARD_NONE;
+    g.players[1].hand[0] = (Card){ SUIT_SPADES, 9 };   // can cover
+    g.players[1].hand[1] = (Card){ SUIT_HEARTS, 7 };   // can pass (value 7)
+    g.players[1].hand_count = 2;
+    g.players[0].hand_count = 6;
+
+    LegalMoves moves;
+    calculate_legal_moves(&g, 1, &moves);
+    int n_cover = 0, n_pickup = 0, n_pass = 0;
+    for (int i = 0; i < moves.n; i++) {
+        if (moves.moves[i].type == MOVE_COVER)  n_cover++;
+        if (moves.moves[i].type == MOVE_PICKUP) n_pickup++;
+        if (moves.moves[i].type == MOVE_PASS)   n_pass++;
+    }
+    CHECK(n_cover >= 1, "legal: defender offered a cover");
+    CHECK(n_pickup == 1, "legal: defender offered pickup while uncovered");
+    CHECK(n_pass >= 1, "legal: defender offered a pass (matching value)");
+}
+
+static void test_legal_defender_all_covered(void) {
+    // Fully covered table: no cover targets, no pickup, no pass.
+    Game g; setup_playing_2p(&g);
+    g.num_battles = 1;
+    g.table_battles[0].attack = (Card){ SUIT_SPADES, 7 };
+    g.table_battles[0].defense = (Card){ SUIT_SPADES, 9 };
+    g.players[1].hand[0] = (Card){ SUIT_HEARTS, 7 };
+    g.players[1].hand_count = 1;
+    g.players[0].hand_count = 6;
+
+    LegalMoves moves;
+    calculate_legal_moves(&g, 1, &moves);
+    CHECK(moves.n == 0, "legal: defender has no moves on a fully-covered table");
+}
+
+static void test_legal_pass_blocked_variants(void) {
+    LegalMoves moves;
+    // Two uncovered attacks of DIFFERENT values -> pass is not offered.
+    Game g; setup_playing_2p(&g);
+    g.num_battles = 2;
+    g.table_battles[0].attack = (Card){ SUIT_SPADES, 7 }; g.table_battles[0].defense = CARD_NONE;
+    g.table_battles[1].attack = (Card){ SUIT_CLUBS, 8 };  g.table_battles[1].defense = CARD_NONE;
+    g.players[1].hand[0] = (Card){ SUIT_HEARTS, 7 };
+    g.players[1].hand[1] = (Card){ SUIT_HEARTS, 8 };
+    g.players[1].hand_count = 2;
+    g.players[0].hand_count = 6;
+    calculate_legal_moves(&g, 1, &moves);
+    int n_pass = 0;
+    for (int i = 0; i < moves.n; i++) if (moves.moves[i].type == MOVE_PASS) n_pass++;
+    CHECK(n_pass == 0, "legal: no pass across mixed-value attacks");
+
+    // Single uncovered attack, but defender holds no matching value -> no pass.
+    setup_playing_2p(&g);
+    g.num_battles = 1;
+    g.table_battles[0].attack = (Card){ SUIT_SPADES, 7 }; g.table_battles[0].defense = CARD_NONE;
+    g.players[1].hand[0] = (Card){ SUIT_HEARTS, 10 };
+    g.players[1].hand_count = 1;
+    g.players[0].hand_count = 6;
+    calculate_legal_moves(&g, 1, &moves);
+    n_pass = 0;
+    for (int i = 0; i < moves.n; i++) if (moves.moves[i].type == MOVE_PASS) n_pass++;
+    CHECK(n_pass == 0, "legal: no pass without a matching-value card");
+}
+
+static void test_legal_lite_greedy_cover(void) {
+    // The lite generator replaces cover enumeration with a single greedy full
+    // cover: one MOVE_COVER when the defender can fully cover, none otherwise.
+    Game g; setup_playing_2p(&g);
+    g.num_battles = 1;
+    g.table_battles[0].attack = (Card){ SUIT_SPADES, 7 }; g.table_battles[0].defense = CARD_NONE;
+    g.players[1].hand[0] = (Card){ SUIT_SPADES, 9 };
+    g.players[1].hand[1] = (Card){ SUIT_DIAMONDS, 5 };   // trump alternative
+    g.players[1].hand_count = 2;
+    g.players[0].hand_count = 6;
+
+    LegalMoves moves;
+    calculate_legal_moves_lite(&g, 1, &moves);
+    int n_cover = 0;
+    for (int i = 0; i < moves.n; i++) if (moves.moves[i].type == MOVE_COVER) n_cover++;
+    CHECK(n_cover == 1, "legal-lite: exactly one greedy cover");
+
+    // Uncoverable attack -> greedy emits no cover (still pickup).
+    setup_playing_2p(&g);
+    g.num_battles = 1;
+    g.table_battles[0].attack = (Card){ SUIT_SPADES, 12 }; g.table_battles[0].defense = CARD_NONE;
+    g.players[1].hand[0] = (Card){ SUIT_SPADES, 6 };   // lower, can't cover
+    g.players[1].hand_count = 1;
+    g.players[0].hand_count = 6;
+    calculate_legal_moves_lite(&g, 1, &moves);
+    n_cover = 0;
+    int n_pickup = 0;
+    for (int i = 0; i < moves.n; i++) {
+        if (moves.moves[i].type == MOVE_COVER)  n_cover++;
+        if (moves.moves[i].type == MOVE_PICKUP) n_pickup++;
+    }
+    CHECK(n_cover == 0, "legal-lite: no cover when defender can't fully cover");
+    CHECK(n_pickup == 1, "legal-lite: pickup still offered");
+}
+
 int main(void) {
     test_start_game();
     test_legal_first_attack();
@@ -249,6 +739,25 @@ int main(void) {
     test_full_game_random();
     test_full_game_handwritten();
     test_full_game_3p_handwritten();
+
+    // Reject-matrix & edge-path coverage.
+    test_attack_rejects();
+    test_cover_rejects_and_success();
+    test_cover_clears_hand_round_advance();
+    test_cover_clears_hand_wins();
+    test_pass_rejects_and_success();
+    test_pickup_rejects_and_success();
+    test_good_rejects_and_success();
+    test_good_round_transition();
+    test_short_log_instance();
+    test_should_bot_act_edges();
+    test_next_player_and_game_done_edges();
+    test_legal_not_playing();
+    test_legal_attacker_good_and_no_match();
+    test_legal_defender_cover_pickup_pass();
+    test_legal_defender_all_covered();
+    test_legal_pass_blocked_variants();
+    test_legal_lite_greedy_cover();
 
     printf("\n%d passed, %d failed\n", n_pass, n_fail);
     return n_fail > 0 ? 1 : 0;
