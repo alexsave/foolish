@@ -31,8 +31,12 @@ serve(async (req: Request): Promise<Response> => {
         if (!game_id) throw new Error('game_id is required');
 
         if (body.packed) {
+            // Only what the packed view needs — games.logs_packed grows all
+            // session and must never ride along on a state fetch.
             const { data, error } = await supabaseClient
-                .from('games').select('*').eq('id', game_id).single();
+                .from('games')
+                .select('id, name, status, version, state, players, good_players, good_timestamp')
+                .eq('id', game_id).single();
             if (!error && data) {
                 // buildPackedGameBytes returns null for lobbies (a WAITING
                 // game never loads from a blob — a stale one would serve the

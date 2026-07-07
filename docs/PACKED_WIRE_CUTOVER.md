@@ -145,6 +145,35 @@ envelope for a game it has not loaded (no `r`, no local roster) refetches
   `wasm_import_view` is exported and tested, though the client still
   marshals gates from the view model in this pass.
 
+## What a move actually costs now
+
+`e2e/bench_packed.ts` (per-move server COMPUTE, the part this cutover owns)
+and `e2e/bench_e2e_move.ts` (full path against real Postgres). Note that
+`bench_engine.ts` deliberately drives the LEGACY exports kept for offline
+tooling — it does not measure this pipeline.
+
+| per move, 4 players            | legacy JSON path | packed |
+|--------------------------------|------------------|--------|
+| server compute (apply + events + commit prep) | 45.9 µs | **14.8 µs (3.1×)** — kernel floor 9.7 µs |
+| end-to-end w/ real local Postgres (load + kernel + CAS + broadcast) | 8.3 ms | **5.1 ms** |
+
+The end-to-end residue is DB round trips, not compute. Two mitigations ship
+here: the per-move load selects only the columns the path reads (the packed
+session log GROWS all game and must never ride a state fetch), and a
+CAS-fenced per-isolate cache (`game_cache.ts`) skips the load entirely when
+this isolate wrote the previous state (the common case: consecutive human
+moves and the bot loop the move scheduled). A stale cache can only cost one
+conflict + reload — the version fence, not freshness, is what's trusted; a
+kernel REJECT computed from cached state is retried against a fresh load
+before it's surfaced (an apply self-corrects through the CAS; a reject never
+reaches it). On production Supabase the cache removes one of the two
+DB round trips per move (~1–15 ms each in-region — the dominant server cost;
+local-socket Postgres understates it).
+
+Perceived latency in the client is dominated by neither: ANIMATION_TIME is
+500 ms per animation step by design. The engine is idle waiting for the
+cards to fly.
+
 ## Closing the PostgREST side door
 
 Masking in the kernel is worthless if the raw blob is readable elsewhere:

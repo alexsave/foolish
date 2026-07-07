@@ -13,6 +13,7 @@ import {
 import { GAME_STATUS } from './types.ts';
 import { verify_player_in_game } from './common_utils.ts';
 import { ACTION_STATUS, AwireMove, decodeAction } from './wire/awire.ts';
+import { getCachedGame, invalidateCachedGame } from './game_cache.ts';
 
 export interface PackedActionOutcome {
     status: number;       // ACTION_STATUS.*
@@ -38,10 +39,29 @@ export async function executePackedAction(
     gameId: string, userId: string, wire: Uint8Array, reqId: string = 'packed',
 ): Promise<PackedActionOutcome> {
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-        const { data, error } = await supabaseClient
-            .from('games').select('*').eq('id', gameId).single();
-        if (error || !data) throw new Error(`Game ${gameId} not found`);
-        const row = data as GamesRow;
+        // The load: this isolate usually committed this game's previous state
+        // (the last human move, or the bot loop it scheduled), so the
+        // CAS-fenced cache skips the round-trip on the hot path — a stale
+        // entry surfaces as a commit conflict and the retry reloads fresh.
+        // The fresh load selects ONLY what this path reads; games.logs_packed
+        // in particular grows all session and must never ride along.
+        let row: GamesRow;
+        const cached = attempt === 1 ? getCachedGame(gameId) : undefined;
+        if (cached) {
+            row = {
+                id: gameId, name: cached.name, status: cached.status,
+                version: cached.version, state: cached.stateHex,
+                players: cached.players, good_players: cached.good_players,
+                good_timestamp: cached.good_timestamp,
+            };
+        } else {
+            const { data, error } = await supabaseClient
+                .from('games')
+                .select('id, name, status, version, state, players, good_players, good_timestamp')
+                .eq('id', gameId).single();
+            if (error || !data) throw new Error(`Game ${gameId} not found`);
+            row = data as GamesRow;
+        }
         const expectedVersion = row.version ?? 0;
 
         // End-game race: same moot rule as executeWithGameLock — a move that
@@ -79,6 +99,10 @@ export async function executePackedAction(
         const run = runPackedAction(hexToBytes(row.state), seat, wire, aiMask, humanSeats);
 
         if (!run.ok) {
+            // A rejection is only authoritative against FRESH state: an apply
+            // from a stale cache self-corrects through the CAS conflict, but
+            // a reject never reaches the CAS — so re-run once from the DB.
+            if (cached) { invalidateCachedGame(gameId); continue; }
             return { status: ACTION_STATUS.REJECTED, rejectCode: run.reason, version: expectedVersion, gameStatus: row.status };
         }
 
@@ -106,6 +130,9 @@ export async function executePackedAction(
             : null;
         const commit = await commitGame(game, expectedVersion, bytesToHex(run.stateBlob), logsHex);
         if (commit.status === 'conflict') {
+            // Someone else committed (another isolate, or a JS-path writer):
+            // whatever we believed about this game is stale.
+            invalidateCachedGame(gameId);
             if (attempt < MAX_ATTEMPTS) continue;
             throw new Error(`Could not commit game ${gameId} after ${MAX_ATTEMPTS} attempts — write contention`);
         }

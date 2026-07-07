@@ -756,6 +756,10 @@ export const commitGame = async (
     const res = data as { status: 'ok' | 'conflict'; version?: number };
     if (res.status === 'ok' && typeof res.version === 'number') {
         game.version = res.version; // keep the in-memory game's token current
+        // Keep the isolate's packed-state cache current (CAS-fenced — a stale
+        // entry can only cost a conflict+reload, never a wrong write).
+        const { noteCommittedGame } = await import('./game_cache.ts');
+        noteCommittedGame(game, res.version, p_state);
     }
     return res;
 };

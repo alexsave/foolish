@@ -52,7 +52,9 @@ serve(async (req: Request): Promise<Response> => {
             for (const id of gameIds) {
                 try {
                     const { data: row, error: rowErr } = await supabaseClient
-                        .from('games').select('*').eq('id', id).single();
+                        .from('games')
+                        .select('id, name, status, version, state, players, good_players, good_timestamp')
+                        .eq('id', id).single();
                     if (rowErr || !row) continue;
                     const packed = await buildPackedGameBytes(row, user.id);
                     if (packed) {

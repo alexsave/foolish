@@ -28,6 +28,7 @@ import { getTableCards, getCardKey } from '../src/utils/animationUtils';
 import { decodeEventWire } from '../supabase/functions/_shared/wire/evwire.ts';
 import { ViewRoster } from '../supabase/functions/_shared/wire/view.ts';
 import { base64ToBytes } from '../supabase/functions/_shared/wire/bytes.ts';
+import { __setKernelSeedSource } from '../supabase/functions/_shared/wasm/engine.ts';
 
 before(async () => { await applySchema(); });
 beforeEach(async () => { await resetDb(); });
@@ -113,6 +114,12 @@ test('SCENARIO A: a card still in flight is NOT reverted by a concurrent attack 
     // Hero's card. Hero's follow-up attack is a genuine LEGAL rank-match (computed
     // after Rival commits, exactly as the kernel would allow it), so a revert would
     // be wrong. Repeat across fresh games to sweep table/hand sizes.
+    // Pin the kernel deal seed: unpinned, roughly 1 run in 40 dealt twelve
+    // straight hands where the hero held no rank-matching follow-up, failing
+    // the `checked > 0` floor as a flake. This sequence is verified to
+    // produce matching deals and keeps the sweep deterministic.
+    let kseed = 0xa11ce;
+    __setKernelSeedSource(() => { kseed = (kseed * 48271) % 0x7fffffff; return kseed; });
     let checked = 0;
     for (let t = 0; t < 12; t++) {
         const gameId = `a${uuid().slice(0, 6)}`;
