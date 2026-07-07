@@ -21,6 +21,9 @@
 
 import { Card, PersonalGame, PublicPlayer, GAME_STATUS, PLAYER_STATUS } from '@shared/types.ts';
 import { takeGUARDS_WASM_B64 } from '@shared/wasm/guards_wasm.ts';
+// guards embed is gzip+base64 (embed.mjs --gzip); a vendored sync pure-JS
+// gunzip inflates it in the browser and keeps the sync instantiate path.
+import { gunzip } from '@shared/wasm/gunzip.ts';
 
 // ENGINE_REJECT_* — must match cnitro/src/game.h. 0 == legal.
 const REJECT_NONE = 0;
@@ -82,7 +85,7 @@ const WIRE_NONE = 0xff;
 const PLACEHOLDER = 0; // any real card; content is irrelevant for a redacted seat/deck
 
 function guardsBytes(): Uint8Array {
-  if (!pendingBytes) pendingBytes = decodeB64(takeGUARDS_WASM_B64());
+  if (!pendingBytes) pendingBytes = gunzip(decodeB64(takeGUARDS_WASM_B64()));
   return pendingBytes;
 }
 
