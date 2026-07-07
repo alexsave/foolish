@@ -530,7 +530,11 @@ export function deserializeGameState(bytes: Uint8Array, roster: RosterTemplate):
     } as unknown as Game;
     // actorId=null: a fresh load adds no new good-player; preGood carries the
     // stored insertion order so goodPlayersFromMask reproduces it exactly.
-    return stateToGame(ks, template, roster.good_players, null, roster.good_timestamp);
+    const game = stateToGame(ks, template, roster.good_players, null, roster.good_timestamp);
+    // deck lives in the blob, so deck_length is authoritative from it (the
+    // roster's is only a placeholder for stateToGame's template slot).
+    game.deck_length = game.deck.length;
+    return game;
 }
 
 // Apply a kernel state onto the live Game object in place (the handlers

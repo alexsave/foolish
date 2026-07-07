@@ -79,6 +79,7 @@ CREATE TABLE games (
   elimination_order JSONB NOT NULL DEFAULT '[]'::jsonb, -- Array of player_ids in order they were eliminated
   good_timestamp BIGINT, -- Timestamp in milliseconds when all attacks were covered, null if not all covered
   good_players JSONB NOT NULL DEFAULT '[]'::jsonb, -- Array of player_ids who have pressed 'good'
+  state TEXT, -- packed kernel state blob (hex): the volatile game state the server reconstructs from on load (wasm_state_serialize / engine.ts serializeGameState). Authoritative once a game is dealt; the hand/deck JSONB columns are a client-facing read-model dual-written alongside it. NULL for never-dealt (waiting) games.
   version BIGINT NOT NULL DEFAULT 0, -- optimistic-concurrency token (see commit_game RPC); replaces game_locks
   bot_lease_token UUID,              -- bot-loop lease holder token (replaces bot_locks)
   bot_lease_until TIMESTAMPTZ,       -- bot-loop lease expiry; auto-expiring, no finally-release needed
@@ -487,7 +488,8 @@ CREATE OR REPLACE FUNCTION commit_game(
   p_deck             JSONB,
   p_hands            JSONB,
   p_bot_hands        JSONB,
-  p_logs             JSONB DEFAULT NULL
+  p_logs             JSONB DEFAULT NULL,
+  p_state            TEXT  DEFAULT NULL   -- packed kernel state blob (hex); NULL leaves the column unchanged (never-dealt games)
 ) RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -504,7 +506,8 @@ BEGIN
     flipped = g.flipped, players = g.players, status = g.status, power_suit = g.power_suit,
     first_attacker = g.first_attacker, defender = g.defender, table_battles = g.table_battles,
     elimination_order = g.elimination_order, good_timestamp = g.good_timestamp,
-    good_players = g.good_players, updated_at = now(), version = version + 1
+    good_players = g.good_players, state = COALESCE(p_state, state),
+    updated_at = now(), version = version + 1
   WHERE id = p_game_id AND version = p_expected_version
   RETURNING version INTO v_new_version;
 
