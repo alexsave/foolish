@@ -161,6 +161,26 @@ build/rules.wasm: src/game.c src/legal.c src/replay.c wasm/wasm_api.c $(wildcard
 wasm: build/rules.wasm
 	node wasm/embed.mjs build/rules.wasm ../supabase/functions/_shared/wasm/rules_wasm.ts
 
+# Client-guards module: game.c ONLY — no legal.c enumeration, no replay.c
+# codec. It backs the browser's UI move-gates (validate-only) and optimistic
+# apply (see src/wasm/clientGuards.ts). The smallest kernel we ship: it exists
+# so the interactive client stops reimplementing the rules in TS (one engine,
+# not two). Same wire layout as rules.wasm; e2e asserts guards==rules parity.
+# Smaller caps than the rules module: the client never imports a session log
+# (each marshal starts fresh) and one optimistic move emits <64 logs.
+WASM_GUARDS_FLAGS := --target=wasm32 -O3 -nostdlib -ffreestanding -mbulk-memory \
+                     -isystem wasm/include -Isrc -D_Thread_local= \
+                     -DMAX_LOG_PAIRS=64 -DMAX_BATTLES=64 -DMAX_LOGS=64 \
+                     -Wall -Wextra -Wno-unused-parameter \
+                     -Wl,--no-entry -Wl,--export-all -Wl,-z,stack-size=131072 -Wl,--stack-first
+
+build/guards.wasm: src/game.c wasm/wasm_guards_api.c $(wildcard src/*.h) $(wildcard wasm/*.h)
+	@mkdir -p build
+	$(WASM_CC) $(WASM_GUARDS_FLAGS) src/game.c wasm/wasm_guards_api.c -o $@
+
+wasm-guards: build/guards.wasm
+	node wasm/embed.mjs build/guards.wasm ../supabase/functions/_shared/wasm/guards_wasm.ts GUARDS_WASM_B64
+
 # Bot module: the rules kernel PLUS every algorithmic bot strategy and the
 # choose-move bridge. A superset of rules.wasm, loaded only where bots run
 # (edge functions' bot turns, offline harnesses) so the pure rules path keeps
