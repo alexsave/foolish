@@ -1,0 +1,80 @@
+name: coverage
+
+# Code-quality gate: fails the build if test coverage of the game's core logic
+# regresses below a floor. Three scopes, each measured against the committed
+# test suites — deliberately EXCLUDING the bot-AI strategies (research code) and
+# the React UI components (no DOM test harness), so the gate tracks the logic
+# that must stay correct: the C rules engine, the server orchestration, and the
+# client move rules.
+#
+#   c-engine       game.c / legal.c / replay.c   (gcc --coverage + gcovr)
+#   server-ts      supabase/functions/_shared/*  minus strategies/durakai/wasm
+#   client-rules   src/utils/gameValidation + coverCombinations
+#
+# Floors live in cnitro/Makefile (COV_LINE_MIN/COV_BRANCH_MIN) and package.json
+# (coverage:check:*). Raise them as coverage climbs; never lower to make a red
+# build pass.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  c-engine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install gcovr
+        run: pipx install gcovr==8.6 || pip install --break-system-packages gcovr==8.6
+
+      - name: C engine coverage gate (game / legal / replay)
+        working-directory: cnitro
+        run: make coverage
+
+  server-client-ts:
+    runs-on: ubuntu-latest
+
+    # The e2e suite runs the REAL server orchestration (executeWithGameLock, the
+    # CAS commit_game / bot-lease plpgsql, the meta endpoint) against a real
+    # Postgres. Same connection defaults as validate.yml (e2e/adapters/supabase.ts):
+    # host 127.0.0.1, user/password/db = stress/stress/foolish.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: stress
+          POSTGRES_PASSWORD: stress
+          POSTGRES_DB: foolish
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U stress -d foolish"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      E2E_PGHOST: 127.0.0.1
+      E2E_PGPORT: 5432
+      E2E_PGUSER: stress
+      E2E_PGPASSWORD: stress
+      E2E_PGDATABASE: foolish
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run e2e suite under V8 coverage
+        run: npm run coverage:e2e
+
+      - name: Server + client coverage gate
+        run: npm run coverage:check
