@@ -73,7 +73,9 @@ export async function executePackedAction(
         // win -> serialize state + logs + every recipient's masked event
         // stream. Lazy import keeps the wasm embed off lobby-only cold starts.
         const { hexToBytes, bytesToHex } = await import('./replay/codec.ts');
-        const { runPackedAction, materializeKernelGame, appendKernelLogs } = await import('./wasm/engine.ts');
+        const { runPackedAction, materializeKernelGame } = await import('./wasm/engine.ts');
+        const { logsFromKernelExport } = await import('./wire/logwire.ts');
+        const { bytesToBareHex } = await import('./wire/bytes.ts');
         const run = runPackedAction(hexToBytes(row.state), seat, wire, aiMask, humanSeats);
 
         if (!run.ok) {
@@ -81,9 +83,9 @@ export async function executePackedAction(
         }
 
         // The single JS materialization: the commit's JSONB public dual (the
-        // roster/battles columns the heartbeat scan and lobby reads consume)
-        // plus this move's log rows. Bot strategy keys are only needed by the
-        // end-of-game finalize; patched there, cold path.
+        // roster/battles columns the heartbeat scan and lobby reads consume).
+        // Bot strategy keys are only needed by the end-of-game finalize;
+        // patched there, cold path.
         const game = materializeKernelGame(run.post, {
             id: row.id,
             name: row.name,
@@ -96,9 +98,13 @@ export async function executePackedAction(
             good_players: row.good_players || [],
             good_timestamp: row.good_timestamp || null,
         }, userId);
-        appendKernelLogs(game, run.logs, run.preFlipped);
 
-        const commit = await commitGame(game, expectedVersion, bytesToHex(run.stateBlob));
+        // This move's log records, kernel-masked, straight to the packed
+        // session-log column — the timestamp is the only thing TS adds.
+        const logsHex = run.logsWire.length > 2
+            ? bytesToBareHex(logsFromKernelExport(run.logsWire, Date.now()))
+            : null;
+        const commit = await commitGame(game, expectedVersion, bytesToHex(run.stateBlob), logsHex);
         if (commit.status === 'conflict') {
             if (attempt < MAX_ATTEMPTS) continue;
             throw new Error(`Could not commit game ${gameId} after ${MAX_ATTEMPTS} attempts — write contention`);

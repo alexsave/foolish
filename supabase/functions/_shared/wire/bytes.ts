@@ -23,6 +23,15 @@ export function base64ToBytes(b64: string): Uint8Array {
     return out;
 }
 
+// Bare hex (NO \x prefix) — the encoding of append-only hex columns
+// (games.logs_packed): appends must be plain string concatenation, which a
+// prefixed representation would corrupt. hexToBytes accepts both forms.
+export function bytesToBareHex(bytes: Uint8Array): string {
+    let out = '';
+    for (const b of bytes) out += b.toString(16).padStart(2, '0');
+    return out;
+}
+
 // Little-endian u32 (the version field of the packed HTTP envelopes).
 export function putU32(out: number[], v: number): void {
     out.push(v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >> 24) & 0xff);

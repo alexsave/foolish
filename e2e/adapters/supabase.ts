@@ -113,6 +113,19 @@ class QueryBuilder implements PromiseLike<Result> {
                 const r = await pool.query(sql, params);
                 return ok(r.rows);
             }
+            if (this.op === 'update') {
+                const params: any[] = [];
+                const row = this.rows[0] ?? {};
+                const sets = Object.keys(row).map((col) => {
+                    const v = row[col];
+                    params.push(v !== null && typeof v === 'object' ? JSON.stringify(v) : v);
+                    return `${col} = $${params.length}`;
+                });
+                if (sets.length === 0) return ok([]);
+                const sql = `UPDATE ${this.table} SET ${sets.join(', ')}${this.where(params)}${this.selectCols !== '*' ? ` RETURNING ${this.selectCols}` : ''}`;
+                const r = await pool.query(sql, params);
+                return ok(r.rows);
+            }
             // insert / upsert
             if (this.rows.length === 0) return ok([]);
             const cols = Array.from(new Set(this.rows.flatMap((row) => Object.keys(row))));

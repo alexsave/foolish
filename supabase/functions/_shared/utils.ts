@@ -6,7 +6,7 @@ import {
     game_done,
     other_player,
 } from './common_utils.ts';
-import { Card, Game, GAME_STATUS, PLAYER_STATUS, PersonalGame, PrivatePlayer, PublicGame, PlayerHand, UserEloRating, BotHand, AnimationEvent, PublicAnimationEvent, PersonalAnimationEvent, ANIMATION_EVENT_TYPE, GameLog, STRATEGY_KEY } from './types.ts';
+import { Card, Game, GAME_STATUS, PLAYER_STATUS, PersonalGame, PrivatePlayer, PublicGame, PlayerHand, UserEloRating, BotHand, AnimationEvent, PublicAnimationEvent, PersonalAnimationEvent, ANIMATION_EVENT_TYPE, GameLog, LOG_TYPE, STRATEGY_KEY } from './types.ts';
 import { createClient } from 'jsr:@supabase/supabase-js';
 import type { User } from 'jsr:@supabase/supabase-js';
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
@@ -612,26 +612,29 @@ export const commitGame = async (
     // The packed action path already holds the kernel-serialized blob for
     // this exact state — passing it skips the redundant re-marshal below.
     precomputedStateHex: string | null = null,
+    // ...and this move's already-packed logwire records (bare hex).
+    precomputedLogsHex: string | null = null,
 ): Promise<{ status: 'ok' | 'conflict'; version?: number }> => {
     const publicGame: PublicGame = gameToPublicGame(game);
 
     // This move's logs ride in the SAME transaction as the version-gated
-    // commit (migration 20260702100000): one round-trip instead of a commit +
-    // separate saveGameLogs, and the logs can never be durably out of sync
-    // with the state they describe. The 10-minute guard mirrors the old
-    // saveGameLogs filter: anything older was loaded from the DB, not
-    // produced by this move.
-    const tenMinutesAgo = Date.now() - 10 * 60 * 1000;
-    const freshLogs = game.logs.filter(log => new Date(log.created_at).getTime() > tenMinutesAgo)
-        .map(log => ({
-            id: log.id,
-            game_id: log.game_id,
-            log_type: log.log_type,
-            player_id: log.player_id,
-            card_pairs: log.card_pairs,
-            defender_index: log.defender_index,
-            created_at: log.created_at,
-        }));
+    // commit, appended to the packed session-log column (games.logs_packed,
+    // see wire/logwire.ts) — exactly-once by the version fence: a conflicted
+    // commit appends nothing and the retry recomputes from a fresh load.
+    // game.logs only ever holds THIS move's fresh records (loads start
+    // empty), already DRAW-masked by appendLogs. A GAME_START in the batch
+    // (start/continue) RESETS the column — the packed replacement for the
+    // old "current session = after the last GAME_START" scan.
+    let p_logs_packed: string | null = precomputedLogsHex;
+    let p_logs_reset = false;
+    if (p_logs_packed === null && game.logs.length > 0) {
+        const { encodeLogs } = await import('./wire/logwire.ts');
+        const { bytesToBareHex } = await import('./wire/bytes.ts');
+        const seatOf = (pid: string | null) =>
+            pid === null ? -1 : game.players.findIndex(p => p.player_id === pid);
+        p_logs_packed = bytesToBareHex(encodeLogs(game.logs, seatOf));
+        p_logs_reset = game.logs.some(l => l.log_type === LOG_TYPE.GAME_START);
+    }
 
     const humanHands = game.players
         .filter(player => !player.is_ai)
@@ -678,8 +681,10 @@ export const commitGame = async (
         p_deck: dealt ? null : game.deck,
         p_hands: dealt ? null : humanHands,
         p_bot_hands: dealt ? null : botHands,
-        p_logs: freshLogs.length > 0 ? freshLogs : null,
+        p_logs: null, // game_logs rows retired — the packed column is the log store
         p_state,
+        p_logs_packed,
+        p_logs_reset,
     });
 
     if (error) {
@@ -749,11 +754,28 @@ export const finalizeEndedGame = async (game: Game): Promise<void> => {
     const eloPromise = updateEloRatings(game);
 
     // Logs are loaded lazily, so game.logs holds only the FINAL move's logs here.
-    // The replay snapshot needs the whole session, so load it from the DB (the
-    // caller persisted this move's logs first, so the DB is complete). Fall back to
-    // the in-memory logs if the load returns nothing, so a transient read failure
-    // can't lose a snapshot it could otherwise still partially make.
-    const sessionLogs = await loadCurrentSessionLogs(supabaseClient, game.id);
+    // The replay snapshot needs the whole session: the packed session-log
+    // column (games.logs_packed — appended move-by-move under the commit
+    // version fence, so it is complete the moment the winning commit lands)
+    // is the source; decode is the ONE place session logs become JS objects.
+    // Legacy in-flight games (sessions started before the column existed)
+    // fall back to the game_logs rows, then to the in-memory final move.
+    let sessionLogs: GameLog[] = [];
+    try {
+        const { data } = await supabaseClient
+            .from('games').select('logs_packed').eq('id', game.id).single();
+        if (data?.logs_packed) {
+            const { decodeLogs } = await import('./wire/logwire.ts');
+            const { hexToBytes } = await import('./replay/codec.ts');
+            sessionLogs = decodeLogs(hexToBytes(data.logs_packed), game.id, game.players);
+        }
+    } catch (e) {
+        console.error(`[REPLAY] packed session log read failed for ${game.id}:`, e);
+    }
+    if (sessionLogs.length === 0 || sessionLogs[0].log_type !== LOG_TYPE.GAME_START) {
+        const legacy = await loadCurrentSessionLogs(supabaseClient, game.id);
+        if (legacy.length > 0) sessionLogs = legacy;
+    }
     const replayLogs = sessionLogs.length > 0 ? sessionLogs : game.logs;
 
     // Compress the finished session into a replay snapshot (game_snapshots
@@ -797,6 +819,11 @@ export const finalizeEndedGame = async (game: Game): Promise<void> => {
         if (snapError) throw snapError;
 
         await wipeAllGameLogs(supabaseClient, game.id);
+        // Retire the packed session log the same way (plain update — the
+        // session is over, and a `continue` reset replaces the column anyway).
+        const { error: retireError } = await supabaseClient
+            .from('games').update({ logs_packed: '' }).eq('id', game.id);
+        if (retireError) throw retireError;
         game.logs = [];
     } catch (error) {
         // Never break game completion over the snapshot; keep the logs as the

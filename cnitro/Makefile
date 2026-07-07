@@ -152,7 +152,8 @@ WASM_API_EXPORTS := \
   -Wl,--export=wasm_import_state -Wl,--export=wasm_export_state \
   -Wl,--export=wasm_state_serialize -Wl,--export=wasm_state_deserialize \
   -Wl,--export=wasm_state_format_version \
-  -Wl,--export=wasm_export_logs -Wl,--export=wasm_snap_count \
+  -Wl,--export=wasm_export_logs -Wl,--export=wasm_export_logs_masked \
+  -Wl,--export=wasm_snap_count \
   -Wl,--export=wasm_snap_tag -Wl,--export=wasm_snap_aux -Wl,--export=wasm_export_snapshot \
   -Wl,--export=wasm_start_game -Wl,--export=wasm_attack -Wl,--export=wasm_cover \
   -Wl,--export=wasm_pass -Wl,--export=wasm_pickup -Wl,--export=wasm_good \

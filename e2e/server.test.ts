@@ -153,6 +153,10 @@ test('every finished game gets a replay snapshot and its logs wiped (log order i
         assert.equal(snaps.rowCount, 1, `finished game ${gameId} has no replay snapshot — the encoder desynced (check log ordering)`);
         const logs = await pgPool.query('SELECT COUNT(*)::int AS n FROM game_logs WHERE game_id=$1', [gameId]);
         assert.equal(logs.rows[0].n, 0, `finished game ${gameId} kept ${logs.rows[0].n} raw logs — snapshot should have replaced them`);
+        // The packed session-log column (the snapshot's actual source since
+        // the logwire cutover) is retired the same way after a snapshot.
+        const packed = await pgPool.query('SELECT logs_packed FROM games WHERE id=$1', [gameId]);
+        assert.equal(packed.rows[0].logs_packed, '', `finished game ${gameId} kept its packed session log — snapshot should have retired it`);
     }
     assert.ok(finished >= 2, `expected at least 2 finished games, got ${finished}`);
 });

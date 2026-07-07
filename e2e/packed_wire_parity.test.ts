@@ -33,6 +33,7 @@ import { handleGood } from '../supabase/functions/_shared/actions/good.ts';
 import { encodeAction, AwireKindName } from '../supabase/functions/_shared/wire/awire.ts';
 import { encodeEventWire, decodeEventWire } from '../supabase/functions/_shared/wire/evwire.ts';
 import { parseMaskedState } from '../supabase/functions/_shared/wire/view.ts';
+import { encodeLogs, logsFromKernelExport, decodeLogs } from '../supabase/functions/_shared/wire/logwire.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 
@@ -156,6 +157,7 @@ test('packed C pipeline is byte-identical to the JS path + TS encoder across see
 
       const pre = structuredClone(game);
       const preGood = [...game.good_players];
+      const preLogCount = game.logs.length;
       moveSeed = (moveSeed * 48271 + mv + 1) >>> 0;
 
       // JS path (mutates `game`).
@@ -173,6 +175,25 @@ test('packed C pipeline is byte-identical to the JS path + TS encoder across see
       const jsBlob = serializeGameState(game);
       assert.equal(hexDiff(run.stateBlob, jsBlob), 'equal',
         `state blob parity (game ${g} move ${mv} ${kind})`);
+
+      // Session-log records: the kernel's DRAW-masked export must be
+      // byte-identical to the JS path's appendLogs output (which hides the
+      // same identities) once encoded through logwire with pinned clocks.
+      const FIXED_TS = 1_700_000_000_000;
+      const newLogs = game.logs.slice(preLogCount).map(l => ({ ...l, created_at: new Date(FIXED_TS).toISOString() }));
+      const seatOfPid = (pid: string | null) => pid === null ? -1 : game.players.findIndex(p => p.player_id === pid);
+      const jsLogBytes = encodeLogs(newLogs, seatOfPid);
+      const cLogBytes = logsFromKernelExport(run.logsWire, FIXED_TS);
+      assert.equal(hexDiff(cLogBytes, jsLogBytes), 'equal',
+        `logwire parity (game ${g} move ${mv} ${kind})`);
+      // ...and the decode round-trips to the same GameLog shapes.
+      const decodedLogs = decodeLogs(cLogBytes, game.id, game.players);
+      assert.equal(decodedLogs.length, newLogs.length, 'decoded log count');
+      decodedLogs.forEach((dl, i) => {
+        assert.equal(dl.log_type, newLogs[i].log_type, 'log type');
+        assert.equal(dl.player_id, newLogs[i].player_id, 'log player');
+        assert.deepEqual(dl.card_pairs, newLogs[i].card_pairs.map(p => ({ primary: p.primary, target: p.target ?? null })), 'log pairs (draws hidden)');
+      });
 
       // Event streams: byte-identical per recipient, leak-free, decodable.
       for (const viewer of [...humanSeats, -1]) {

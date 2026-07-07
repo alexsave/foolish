@@ -184,24 +184,45 @@ int wasm_state_format_version(void) { return STATE_FORMAT_VERSION; }
 // u8 num_pairs, num_pairs x (u8 primary, u8 target) — wire cards, target
 // 0xFF when the pair has none, 0xFE for the hidden card
 
-int wasm_export_logs(void) {
+// Pre-action flip state, captured by begin_action for the DRAW-privacy rule.
+static Card g_pre_flip;
+static int g_pre_has_flip;
+
+static int export_logs(int mask_draws) {
+    // The DRAW-privacy rule (the TS appendLogs convention, now kernel-side):
+    // drawn-card identities are hidden EXCEPT the flipped trump, whose draw
+    // is public. "The flip was drawn during this action" is the pre-action
+    // has_flipped (captured by begin_action) going false.
+    const int flip_drawn = g_pre_has_flip && !g_game.has_flipped;
     unsigned char *q = g_io;
     *q++ = (unsigned char)(g_game.num_logs & 0xff);
     *q++ = (unsigned char)((g_game.num_logs >> 8) & 0xff);
     for (int i = 0; i < g_game.num_logs; i++) {
         const GameLog *l = &g_game.logs[i];
+        const int hide = mask_draws && l->log_type == LOG_DRAW;
         *q++ = (unsigned char)l->log_type;
         *q++ = (unsigned char)l->player_idx;
         *q++ = (unsigned char)l->defender_index;
         *q++ = (unsigned char)l->num_pairs;
         for (int j = 0; j < l->num_pairs; j++) {
             const LogPair *pr = &l->pairs[j];
-            *q++ = wire_from_card(pr->primary);
+            if (hide && !(flip_drawn && card_eq(pr->primary, g_pre_flip))) {
+                *q++ = (unsigned char)WIRE_CARD_HIDDEN;
+            } else {
+                *q++ = wire_from_card(pr->primary);
+            }
             *q++ = wire_from_card(pr->target);
         }
     }
     return (int)(q - g_io);
 }
+
+int wasm_export_logs(void) { return export_logs(0); }
+
+// The durable/session variant: what leaves the kernel for storage and (via
+// the packed session log) other players' belief imports — draw identities
+// masked per the rule above. See docs/PACKED_WIRE_CUTOVER.md.
+int wasm_export_logs_masked(void) { return export_logs(1); }
 
 // ---------- snapshots -------------------------------------------------------
 
@@ -217,7 +238,11 @@ int wasm_export_snapshot(int i) {
 // Cards are read from the input buffers (byte pairs). Each action clears the
 // snapshot buffer first; on success the caller reads state/logs/snapshots.
 
-static void begin_action(void) { g_n_snaps = 0; }
+static void begin_action(void) {
+    g_n_snaps = 0;
+    g_pre_flip = g_game.flipped;
+    g_pre_has_flip = g_game.has_flipped ? 1 : 0;
+}
 
 int wasm_start_game(void) {
     begin_action();

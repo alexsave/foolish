@@ -70,6 +70,7 @@ interface EngineExports {
     wasm_replay_decode(len: number): number;
     wasm_replay_error_detail(): number;
     // Packed wire pipeline (docs/PACKED_WIRE_CUTOVER.md)
+    wasm_export_logs_masked(): number;
     wasm_apply_action(seat: number, wireLen: number): number;
     wasm_finalize_win(aiMask: number): number;
     wasm_view_serialize(viewer: number): number;
@@ -621,8 +622,7 @@ export interface PackedRunOk {
     ended: boolean;
     stateBlob: Uint8Array;            // versioned durable blob, post-finalize
     post: KernelState;                // for the JSONB public dual / roster columns
-    logs: KernelLog[];                // this action's kernel logs
-    preFlipped: Card | null;          // for the DRAW-log privacy rule
+    logsWire: Uint8Array;             // this action's kernel log export, DRAW-masked
     nEvents: number;
     events: Map<number, Uint8Array>;  // viewer seat (-1 = spectator) -> evwire bytes
 }
@@ -640,9 +640,6 @@ export function runPackedAction(
         throw new Error(`Unreadable game state blob: format version ${blob[0]}, kernel reads ${ex.wasm_state_format_version()}`);
     }
     residentFor = null;
-    // The pre-action flipped card straight from the blob bytes (offsets: [0]
-    // version, [1..7] scalars, [8] has_flipped, [9] flipped wire card).
-    const preFlipped: Card | null = blob[8] !== 0 ? cardFromWire(blob[9]) : null;
 
     // Same per-call reseed as runKernel — draws must stay unpredictable.
     ex.wasm_set_seed(seedSource ? (seedSource() >>> 0) : ((Math.random() * 0xffffffff) >>> 0));
@@ -660,8 +657,11 @@ export function runPackedAction(
     const stateBlob = mem(ex).slice(base, base + blobLen);
     ex.wasm_export_state();
     const post = parseState(mem(ex), base);
-    ex.wasm_export_logs();
-    const logs = parseLogs(mem(ex), base);
+    // The DRAW-privacy masking happens inside the kernel (it captured the
+    // pre-action flip in begin_action); these bytes go straight to the
+    // packed session-log column — no JS log objects on this path.
+    const logsLen = ex.wasm_export_logs_masked();
+    const logsWire = mem(ex).slice(base, base + logsLen);
 
     // Per-recipient event streams — serialized before anything else touches
     // the kernel (the snapshots live in bridge statics).
@@ -674,7 +674,7 @@ export function runPackedAction(
         nEvents = bytes[3];
         events.set(viewer, bytes);
     }
-    return { ok: true, fool, ended, stateBlob, post, logs, preFlipped, nEvents, events };
+    return { ok: true, fool, ended, stateBlob, post, logsWire, nEvents, events };
 }
 
 // Materialize a full TS Game from a kernel state + roster columns — the cold
@@ -693,12 +693,6 @@ export function materializeKernelGame(post: KernelState, roster: RosterTemplate,
     const game = stateToGame(post, template, roster.good_players, actorId, roster.good_timestamp ?? Date.now());
     game.deck_length = game.deck.length;
     return game;
-}
-
-// The DRAW-privacy log append, exported for the packed pipeline (the JSON
-// path reaches the same code through execute()).
-export function appendKernelLogs(game: Game, logs: KernelLog[], preFlipped: Card | null): void {
-    appendLogs(game, logs, preFlipped, game.flipped);
 }
 
 // Per-viewer masked view blob from a durable state blob — get_game's packed
