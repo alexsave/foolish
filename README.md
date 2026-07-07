@@ -5,11 +5,11 @@ and shareable replays. Built with [Next.js](https://nextjs.org) (App Router,
 React 19) and [Supabase](https://supabase.com) (Postgres + edge functions +
 realtime).
 
-It looks like a simple card game. It is not. Underneath the table sit four
-serious, self-contained engineering projects — a native-C bot research lab, a
-from-scratch game-playing neural net, an information-theoretic replay codec, and
-a fully procedural, offline-capable renderer. See
-[The four projects under the hood](#the-four-projects-under-the-hood).
+It looks like a simple card game. It is not. Underneath the table sit three
+serious, self-contained engineering projects — a native-C bot research lab, an
+information-theoretic replay codec, and a fully procedural, offline-capable
+renderer. See
+[The three projects under the hood](#the-three-projects-under-the-hood).
 
 Feature analysis and what's next: see [ROADMAP.md](ROADMAP.md) — a full
 gap review with priorities. The two P0 items are shipped: a global
@@ -61,10 +61,10 @@ src/                      Next.js web client (App Router)
   components/             UI, incl. GameDisplay/* (board, cards, animations)
   contexts/               game state, auth, realtime, drag, animation, theme, i18n
   state/                  realtime animation feed + client reconciliation
-  replay/                 client-side replay decode + playback  ← project 3
+  replay/                 client-side replay decode + playback  ← project 2
   backend/                Supabase client singleton
   localization/           en / ru / ko strings
-  utils/                  procedural rendering helpers (fractal, textures)  ← project 4
+  utils/                  procedural rendering helpers (fractal, textures)  ← project 3
 
 supabase/
   functions/              edge functions: create/join/attack/cover/pass/pickup/
@@ -75,7 +75,7 @@ supabase/
   seed.sql                seeds the bot roster (Cordite, Espresso, Handwritten, …)
 
 cnitro/                   pure-C Durak engine + bot arena  ← project 1
-offlinefun/               offline/PWA layer + ML experiments (NEAT, nitro)  ← projects 2 & 4
+offlinefun/               offline/PWA layer  ← project 3
 e2e/                      full-stack test suite (real server code, real Postgres)
 docs/                     design / refactor notes; ARCHITECTURE_REVIEW.md is the
                           latest full audit (server flow, client data flow,
@@ -123,8 +123,7 @@ bulk-memory copies). The extra speed is banked as latency, not strength:
 world-budget sweeps show the deployed budget already sits at the
 saturation knee (2×/4× worlds moved win rate 40.0%→40.0%→39.0% at pc4,
 26%→25% at pc6 over 400 seeded games each). The only TS-brained
-strategies left are the non-algorithmic ones: `gpt` (LLM adapter) and the
-experimental `nitro` NN.
+strategy left is the non-algorithmic `gpt` (LLM adapter).
 
 Types, constants, the replay codec, meta/lobby actions, and the I/O layer
 (DB, broadcast, bot loop) remain TS in `supabase/functions/_shared/`, shared
@@ -163,7 +162,7 @@ exploits. Setup and the full check matrix are in [`e2e/README.md`](e2e/README.md
 
 ---
 
-## The four projects under the hood
+## The three projects under the hood
 
 What makes this repo unusual isn't the card game — it's that one canonical
 ruleset is implemented and kept in lockstep across several engines, which lets
@@ -197,20 +196,7 @@ cd cnitro && make
     --pool=random,handwritten,espresso,robusta,firecracker,gunpowder,blackpowder,cordite
 ```
 
-### 2. The "nitro" ML track — a from-scratch game-playing neural net
-
-`supabase/functions/_shared/strategies/nitro_nn.ts` is a complete **transformer
-implemented in plain TypeScript** (embeddings, positional encoding, multi-layer
-single-head attention, LayerNorm, FFN) with no ML dependencies, serialized to
-`Float32Array` for fast in-browser inference. Trained-weight files are checked in.
-It features a canonical trump representation (suits rotated so trump is always
-suit 0) and atomic-action decomposition so training matches autoregressive
-inference. A separate NEAT neuroevolution experiment lives in `offlinefun/neat/`,
-and the full data → train → held-out-eval pipeline is in `offlinefun/localtest/`.
-Honest status: both ML tracks plateaued below the hand-written/MC ceiling and were
-superseded by Cordite — they remain in the tree as experiments, not as live bots.
-
-### 3. The replay codec — a whole game in a QR code
+### 2. The replay codec — a whole game in a QR code
 
 `cnitro/src/replay.c` (reached through `supabase/functions/_shared/replay/` and
 rendered by `src/replay/`) encodes a complete finished game into a single integer
@@ -226,7 +212,7 @@ verifies the round-trip byte-for-byte before persisting, and playback is a
 VHS-style transport that can even deduce and reveal the loser's never-played
 cards by complement.
 
-### 4. Procedural rendering + offline-first PWA
+### 3. Procedural rendering + offline-first PWA
 
 The client ships **zero texture image files** — every surface is computed in the
 browser and cached in IndexedDB: a Barnsley-fern IFS fractal on the card backs

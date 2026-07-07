@@ -14,7 +14,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { getAuthenticatedUser } from './auth.ts';
 import { cleanupOldGameLogs, wipeAllGameLogs, loadCurrentSessionLogs } from './log_utils.ts';
 // NOTE: bot_actions (→ the entire bot-strategy stack: cordite's ~127KB Monte-Carlo
-// engine, nitro, etc.) and the replay codec are imported LAZILY at their use sites
+// engine, etc.) and the replay codec are imported LAZILY at their use sites
 // below, NOT statically. wrap400 is imported by every edge function, so a static
 // import here would make cold starts of lightweight functions (create/join/start/
 // the lobby) transpile+evaluate that whole graph for nothing — the dominant cost
