@@ -132,7 +132,44 @@ WASM_FLAGS := --target=wasm32 -O3 -nostdlib -ffreestanding -mbulk-memory \
               -DMAX_LEGAL_MOVES=4096 -DMAX_MOVE_CARDS=28 -DMAX_BATTLES=64 \
               -DWORLD_LOG_CAP=40 \
               -Wall -Wextra -Wno-unused-parameter \
-              -Wl,--no-entry -Wl,--export-all -Wl,-z,stack-size=262144 -Wl,--stack-first
+              -Wl,--no-entry -Wl,--export-memory -Wl,-z,stack-size=262144 -Wl,--stack-first
+
+# Explicit export allow-list — only the memory (above) + wasm_* API the TS
+# bridge actually calls (engine.ts / bots.ts). This REPLACES -Wl,--export-all,
+# which exported every internal C symbol by name (41 in rules.wasm, 98 in
+# bots.wasm — solver scratch, difftest reporters, *_oracle_/*_old_ strategy
+# variants that production never calls) AND pinned each as a GC root, blocking
+# wasm-ld's dead-code elimination of the unreferenced ones. Explicit exports
+# shrink the name section and let the linker drop unreachable code.
+# NOTE: a NEW wasm_* entry point must be added here or the TS side won't see it
+# (the parity + e2e suites fail loudly on an omission).
+WASM_API_EXPORTS := \
+  -Wl,--export=wasm_io_ptr -Wl,--export=wasm_io_cap \
+  -Wl,--export=wasm_game_ptr_internal -Wl,--export=wasm_moves_ptr_internal \
+  -Wl,--export=wasm_cards_a_ptr -Wl,--export=wasm_cards_b_ptr \
+  -Wl,--export=wasm_init -Wl,--export=wasm_set_seed -Wl,--export=wasm_reject_reason \
+  -Wl,--export=wasm_import_state -Wl,--export=wasm_export_state \
+  -Wl,--export=wasm_state_serialize -Wl,--export=wasm_state_deserialize \
+  -Wl,--export=wasm_state_format_version \
+  -Wl,--export=wasm_export_logs -Wl,--export=wasm_snap_count \
+  -Wl,--export=wasm_snap_tag -Wl,--export=wasm_snap_aux -Wl,--export=wasm_export_snapshot \
+  -Wl,--export=wasm_start_game -Wl,--export=wasm_attack -Wl,--export=wasm_cover \
+  -Wl,--export=wasm_pass -Wl,--export=wasm_pickup -Wl,--export=wasm_good \
+  -Wl,--export=wasm_transition -Wl,--export=wasm_refill \
+  -Wl,--export=wasm_game_done -Wl,--export=wasm_should_act \
+  -Wl,--export=wasm_next_player -Wl,--export=wasm_can_cover \
+  -Wl,--export=wasm_replay_io_ptr -Wl,--export=wasm_replay_io_cap \
+  -Wl,--export=wasm_replay_encode -Wl,--export=wasm_replay_decode \
+  -Wl,--export=wasm_replay_error_detail \
+  -Wl,--export=wasm_legal_moves -Wl,--export=wasm_export_moves
+
+# bots.wasm exports the rules API above PLUS the bot bridge (wasm_bots_api.c).
+WASM_BOTS_API_EXPORTS := \
+  -Wl,--export=wasm_setenv_from_io -Wl,--export=wasm_clearenv \
+  -Wl,--export=wasm_import_logs -Wl,--export=wasm_clear_logs \
+  -Wl,--export=wasm_set_game_key -Wl,--export=wasm_import_strategy_keys \
+  -Wl,--export=wasm_set_strategy_seed -Wl,--export=wasm_reload_bot_flags \
+  -Wl,--export=wasm_choose_move
 
 # The rules module's move buffer only feeds the exported menu — production
 # validation is direct rule-checking, and production menus/bot enumeration
@@ -154,7 +191,7 @@ WASM_RULES_FLAGS := $(filter-out -DMAX_LEGAL_MOVES=4096,$(WASM_FLAGS)) \
 # edit must rebuild BOTH wasm modules or they ship divergent kernels.
 build/rules.wasm: src/game.c src/legal.c src/replay.c wasm/wasm_api.c $(wildcard src/*.h) $(wildcard wasm/*.h)
 	@mkdir -p build
-	$(WASM_CC) $(WASM_RULES_FLAGS) src/game.c src/legal.c src/replay.c wasm/wasm_api.c -o $@
+	$(WASM_CC) $(WASM_RULES_FLAGS) $(WASM_API_EXPORTS) src/game.c src/legal.c src/replay.c wasm/wasm_api.c -o $@
 
 # Regenerates the base64 module the TS side imports (works unchanged in
 # Deno edge functions, Node and browsers — no asset pipeline needed).
@@ -201,7 +238,7 @@ WASM_BOT_FLAGS := $(WASM_FLAGS)
 
 build/bots.wasm: $(WASM_BOT_SRC) $(wildcard src/*.h) $(wildcard wasm/*.h)
 	@mkdir -p build
-	$(WASM_CC) $(WASM_BOT_FLAGS) $(WASM_BOT_SRC) -o $@
+	$(WASM_CC) $(WASM_BOT_FLAGS) $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) $(WASM_BOT_SRC) -o $@
 
 wasm-bots: build/bots.wasm
 	node wasm/embed.mjs build/bots.wasm ../supabase/functions/_shared/wasm/bots_wasm.ts BOTS_WASM_B64
