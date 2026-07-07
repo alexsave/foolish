@@ -14,7 +14,8 @@
 
 import { registerBotStrategy } from '../../supabase/functions/_shared/bot_strategy.ts';
 import { createGame, normSeed, runBotsToCompletion } from './harness.ts';
-import { start_game, game_done } from '../../supabase/functions/_shared/common_utils.ts';
+import { game_done } from '../../supabase/functions/_shared/common_utils.ts';
+import { start_game } from '../../supabase/functions/_shared/game_lifecycle.ts';
 import { Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, STRATEGY_KEY, StrategyKey } from '../../supabase/functions/_shared/types.ts';
 import { EspressoStrategy } from './frozen/espresso_strategy.ts';
 import {

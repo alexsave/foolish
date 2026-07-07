@@ -348,10 +348,15 @@ unsigned char *wasm_replay_io_ptr(void) { return g_replay_io; }
 int wasm_replay_io_cap(void) { return REPLAY_IO_CAP; }
 
 // In-place: input is fully consumed before any output byte is written.
+// Defense in depth: the TS bridge already checks lengths against
+// wasm_replay_io_cap, but a hostile/stale caller must get a clean error,
+// never reads past the replay buffer.
 int wasm_replay_encode(int in_len) {
+    if (in_len < 0 || in_len > REPLAY_IO_CAP) return -REPLAY_ECAP;
     return replay_encode(g_replay_io, in_len, g_replay_io, REPLAY_IO_CAP);
 }
 int wasm_replay_decode(int in_len) {
+    if (in_len < 0 || in_len > REPLAY_IO_CAP) return -REPLAY_ECAP;
     return replay_decode(g_replay_io, in_len, g_replay_io, REPLAY_IO_CAP);
 }
 int wasm_replay_error_detail(void) { return replay_last_error_detail(); }

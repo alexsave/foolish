@@ -1,7 +1,10 @@
-import { Card, Game, PersonalGame, PLAYER_STATUS, PrivatePlayer, PublicPlayer, GAME_STATUS, PublicGame, LOG_TYPE, AnimationEvent, ANIMATION_EVENT_TYPE, Battle, LogCardPair } from "./types.ts";
+// NO import of ./wasm/engine.ts here: this module is shared with the CLIENT
+// (canCover, personalize_game, clone helpers), and a static engine import
+// would drag the embedded wasm base64 into every page bundle. The kernel-
+// delegating start_game lives in ./game_lifecycle.ts (server/tests only).
+import { Card, Game, PersonalGame, PLAYER_STATUS, PrivatePlayer, PublicPlayer, PublicGame, Battle, LogCardPair } from "./types.ts";
 import { GameLog, UnsavedGameLog } from './types.ts';
-import { ACE_VALUE, CARDS_PER_PLAYER, SUITS, VALUE_MAP, SUIT_MAP, MAX_PLAYERS } from './constants.ts';
-import { kernelStartGame, kernelRefill } from './wasm/engine.ts';
+import { VALUE_MAP, SUIT_MAP } from './constants.ts';
 
 // Fast deep clone for Game objects - avoids expensive JSON.parse(JSON.stringify())
 const cloneCard = (card: Card): Card => ({ suit: card.suit, value: card.value });
@@ -248,35 +251,12 @@ export const calculateGameRankings = (game: Game): string[] => {
     return rankings;
 };
 
-// Refill logic — lives in the C kernel (cnitro/src/game.c
-// refill_player_hands), compiled to WASM. The kernel keeps the deliberate
-// deviation from canonical Durak: the defender draws in clockwise rotation
-// slot, and draws FIRST when their hand was emptied on a clean cover.
-// Exported for API compatibility; the action handlers run refill inside
-// their kernel transition.
-export const refillPlayerHandsWithEvents = (game: Game): { refillEvents: any[], drawLogs: any[] } => {
-    return kernelRefill(game);
-};
-
-// Starts the game with all the animations. The deal/flip/first-attacker
-// rules live in the C kernel (cnitro/src/game.c start_game): player-major
-// deal, non-Ace trump flip (Aces pushed back and redrawn), lowest-trump
-// holder attacks first. The event stream (MAGIC → per-player DEAL → FLIPPED →
-// DEFENDER_MOVE → MAGIC) is reconstructed from kernel snapshots, identical
-// to the old TS implementation (verified by the differential parity harness).
-export const start_game = (game: Game): AnimationEvent[] => {
-    // Guard against starting game if it's already over
-    if (game.status === GAME_STATUS.GAME_OVER) {
-        return [];
-    }
-    // Defense in depth: the lobby caps players at MAX_PLAYERS, but never deal
-    // an oversized lobby — more hands than the deck holds leaves a player with
-    // no cards and crashes the deal. Reject cleanly instead.
-    if (game.players.length > MAX_PLAYERS) {
-        throw new Error(`Cannot start a game with ${game.players.length} players (max ${MAX_PLAYERS})`);
-    }
-    return kernelStartGame(game);
-}
+// Refill logic lives in the C kernel (cnitro/src/game.c refill_player_hands),
+// run inside the action handlers' kernel transitions; game start is the
+// kernel-delegating start_game in ./game_lifecycle.ts (kept out of this
+// module so the client bundle never pulls the wasm embed). The old TS
+// refillPlayerHandsWithEvents compatibility wrapper had no callers left and
+// was deleted with the split.
 
 // Helper function to add a log to the game's pending logs
 // This is what action handlers should call instead of saving directly to DB

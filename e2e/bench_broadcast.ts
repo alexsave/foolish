@@ -10,7 +10,7 @@
 import './harness.ts';
 import { applySchema, resetDb, seedGame, uuid, pgPool, broadcastLog, resetBroadcastLog } from './harness.ts';
 import { executeWithGameLock, broadcastAnimationEvents, loadCompleteGame } from '../supabase/functions/_shared/utils.ts';
-import { start_game } from '../supabase/functions/_shared/common_utils.ts';
+import { start_game } from '../supabase/functions/_shared/game_lifecycle.ts';
 import { AnimationEvent } from '../supabase/functions/_shared/types.ts';
 
 const HUMANS = Number(process.env.BENCH_HUMANS || 6);

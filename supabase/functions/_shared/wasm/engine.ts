@@ -90,13 +90,24 @@ export function __kernelWasmMB(): number {
     return mem ? Math.round(mem.buffer.byteLength / 1048576) : -1;
 }
 
+// The embed is take-once (a second take throws — see cnitro/wasm/embed.mjs),
+// so the decoded bytes are held here from first take until an instantiation
+// SUCCEEDS: a failed attempt (or a sync call racing an in-flight async one)
+// stays retryable instead of hitting 'already taken'.
+let pendingWasmBytes: Uint8Array | null = null;
+function rulesWasmBytes(): Uint8Array {
+    if (!pendingWasmBytes) pendingWasmBytes = decodeBase64(takeRULES_WASM_B64());
+    return pendingWasmBytes;
+}
+
 function engine(): EngineExports {
     if (exportsCache) return exportsCache;
-    const module = new WebAssembly.Module(decodeBase64(takeRULES_WASM_B64()) as BufferSource);
+    const module = new WebAssembly.Module(rulesWasmBytes() as BufferSource);
     const instance = new WebAssembly.Instance(module, {});
     const ex = instance.exports as unknown as EngineExports;
     ex.wasm_init();
     exportsCache = ex;
+    pendingWasmBytes = null;
     return ex;
 }
 
@@ -115,13 +126,22 @@ export function ensureEngineAsync(): Promise<void> {
     }
     if (!enginePromise) {
         enginePromise = WebAssembly
-            .instantiate(decodeBase64(takeRULES_WASM_B64()) as BufferSource, {})
+            .instantiate(rulesWasmBytes() as BufferSource, {})
             .then(({ instance }) => {
+                // bots.wasm may have adopted the engine slot while this was
+                // in flight — never clobber a live instance (its kernel may
+                // hold resident state the bot loop is about to consume).
+                if (exportsCache) return;
                 const ex = instance.exports as unknown as EngineExports;
                 ex.wasm_init();
                 exportsCache = ex;
                 memView = new Uint8Array(0);
                 residentFor = null;
+                pendingWasmBytes = null;
+            })
+            .catch((e) => {
+                enginePromise = null; // retryable: bytes are still cached
+                throw e;
             });
     }
     return enginePromise;
@@ -943,30 +963,21 @@ export function kernelRoundTransition(game: Game, reason: string): AnimationEven
     return execute(game, { kind: 'transition' }, null, { reason });
 }
 
-// refillPlayerHandsWithEvents compatibility: run the kernel refill and return
-// the same { refillEvents, drawLogs } shape the TS implementation produced.
-export function kernelRefill(game: Game): { refillEvents: AnimationEvent[]; drawLogs: { player_id: string; cards: Card[] }[] } {
-    const preFlipped = game.flipped;
-    const run = runKernel(game, { kind: 'refill' });
-    const events = buildEvents(game, run, {});
-    applyStateToGame(game, run.post!, null);
-    const flippedWasDrawn = preFlipped !== null && game.flipped === null;
-    const drawLogs = run.logs
-        .filter(l => l.type === LOG_TYPE.DRAW)
-        .map(l => ({
-            player_id: game.players[l.playerIdx].player_id,
-            cards: l.pairs.map(p =>
-                flippedWasDrawn && sameCard(p.primary, preFlipped!) ? p.primary : { suit: -1, value: -1 }),
-        }));
-    return { refillEvents: events, drawLogs };
-}
+// The old refillPlayerHandsWithEvents compatibility wrapper (kernelRefill)
+// was deleted with its last caller: the action handlers run refill inside
+// their kernel transitions (wasm_refill stays exported for tests/tools).
 
 // Kernel-side counterparts of the thin TS projections that stayed in
 // common_utils/pure_bot_actions for the client's synchronous use (canCover,
 // game_done, get_next_player_index, shouldBotActCore). Exported so tests can
 // police that the TS copies never drift from the kernel.
+// These are state READERS: clear the resident mark before marshaling (the
+// __setResident invariant — only the action executing a just-chosen move may
+// skip the marshal), same as kernelLegalMoves below. Their callers are
+// test-only today, but the invariant must hold for every reader.
 export function kernelGameDone(game: Game): string | null {
     const ex = engine();
+    residentFor = null;
     marshalGame(ex, game);
     const loser = ex.wasm_game_done();
     return loser >= 0 ? game.players[loser].player_id : null;
@@ -976,12 +987,14 @@ export function kernelShouldAct(game: Game, player_id: string): boolean {
     const seat = game.players.findIndex(p => p.player_id === player_id);
     if (seat < 0) return false;
     const ex = engine();
+    residentFor = null;
     marshalGame(ex, game);
     return ex.wasm_should_act(seat) !== 0;
 }
 
 export function kernelNextPlayer(game: Game, current: number): number {
     const ex = engine();
+    residentFor = null;
     marshalGame(ex, game);
     return ex.wasm_next_player(current);
 }
@@ -997,7 +1010,9 @@ export function kernelCanCover(attack: Card, defense: Card, powerSuit: number): 
 // a resident game state.
 // ---------------------------------------------------------------------------
 
-// Mirrors REPLAY_E* in replay.h; messages match the TS reference's throws.
+// Mirrors REPLAY_E* in replay.h. Messages match the TS reference's throws,
+// except the conservation desync (the reference interpolated the live
+// counts; the kernel reports only the code) and the C-side-only EINPUT/ECAP.
 function replayError(negCode: number, detail: number): Error {
     switch (-negCode) {
         case 1: return new Error(`unsupported replay format version ${detail}`);

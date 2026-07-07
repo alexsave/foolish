@@ -212,16 +212,19 @@ superseded by Cordite — they remain in the tree as experiments, not as live bo
 
 ### 3. The replay codec — a whole game in a QR code
 
-`src/replay/` and `supabase/functions/_shared/replay/` encode a complete finished
-game into a single integer using **rANS entropy coding**, then base32 it into a
-URL (`WWW.FOOLISH.CARDS/<code>`) chosen specifically to stay inside QR
-alphanumeric mode. One shared driver runs both encode and decode, derived events
-(deals, draws, discards) cost zero bits, hidden cards are encoded lazily with a
+`cnitro/src/replay.c` (reached through `supabase/functions/_shared/replay/` and
+rendered by `src/replay/`) encodes a complete finished game into a single integer
+using **rANS entropy coding**, then base32s it into a URL
+(`WWW.FOOLISH.CARDS/<code>`) chosen specifically to stay inside QR alphanumeric
+mode. One shared driver runs both encode and decode, derived events (deals,
+draws, discards) cost zero bits, hidden cards are encoded lazily with a
 hypergeometric model, and an optional blob packs player names + per-move timing
-spanning nanoseconds to weeks. The format is version-frozen (v2–v5), the server
+spanning nanoseconds to weeks. The rules projection lives in the same C kernel
+as the production game rules (the original TS implementation is frozen as a
+differential-test oracle), the format is version-frozen (v2–v5), the server
 verifies the round-trip byte-for-byte before persisting, and playback is a
-VHS-style transport that can even deduce and reveal the loser's never-played cards
-by complement.
+VHS-style transport that can even deduce and reveal the loser's never-played
+cards by complement.
 
 ### 4. Procedural rendering + offline-first PWA
 

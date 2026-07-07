@@ -111,6 +111,16 @@ function marshalInput(
   actions: Action[],
   logInt: Map<string, number>,
 ): Uint8Array {
+  // Explicit rejects instead of silent u16/u8 wrap-around: the kernel would
+  // reject the garbled stream anyway, but the failure must be attributable.
+  if (actions.length > 0xffff)
+    throw new Error(`replay: too many actions to encode (${actions.length})`);
+  for (const a of actions) {
+    // REPLAY_MAX_PAIRS in cnitro/src/replay.h: a real log's pairs are all
+    // distinct cards, so 52 covers every stream the engine can produce.
+    if (a.kind === "log" && a.log.card_pairs.length > 52)
+      throw new Error(`replay: log with ${a.log.card_pairs.length} card pairs`);
+  }
   let size = 5;
   for (const a of actions)
     size += 3 + (a.kind === "log" ? 2 * a.log.card_pairs.length : 0);

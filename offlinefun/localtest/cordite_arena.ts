@@ -27,7 +27,8 @@ function runWorker(): void {
     Promise.resolve().then(async () => {
         const { calculateLegalMoves } = await import('../../supabase/functions/_shared/bot_strategy.ts');
         const { shouldBotActCore, executeBotMove } = await import('../../supabase/functions/_shared/pure_bot_actions.ts');
-        const { start_game, game_done } = await import('../../supabase/functions/_shared/common_utils.ts');
+        const { game_done } = await import('../../supabase/functions/_shared/common_utils.ts');
+        const { start_game } = await import('../../supabase/functions/_shared/game_lifecycle.ts');
         const { getBotStrategy } = await import('../../supabase/functions/_shared/bot_strategy.ts');
         const { GAME_STATUS, PLAYER_STATUS } = await import('../../supabase/functions/_shared/types.ts');
 

@@ -9,10 +9,8 @@
 // Reports games/sec, actions/sec (an "action" = one accepted bot move), and
 // legal-move evaluations/sec — the three costs every server move and every
 // bot turn pays.
-import {
-  start_game,
-  game_done,
-} from '../supabase/functions/_shared/common_utils.ts';
+import { game_done } from '../supabase/functions/_shared/common_utils.ts';
+import { start_game } from '../supabase/functions/_shared/game_lifecycle.ts';
 import {
   Game,
   PrivatePlayer,

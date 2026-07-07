@@ -18,7 +18,8 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { start_game, game_done } from '../supabase/functions/_shared/common_utils.ts';
+import { game_done } from '../supabase/functions/_shared/common_utils.ts';
+import { start_game } from '../supabase/functions/_shared/game_lifecycle.ts';
 import { calculateLegalMoves, BotStrategy, LegalMove } from '../supabase/functions/_shared/bot_strategy.ts';
 import { shouldBotActCore, executeBotMove } from '../supabase/functions/_shared/pure_bot_actions.ts';
 import { STRAT, wasmChooseMove, wasmChooseMoveDirect, __setBotSeedSource } from '../supabase/functions/_shared/wasm/bots.ts';

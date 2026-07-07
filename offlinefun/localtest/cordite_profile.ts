@@ -8,7 +8,8 @@
 
 import { calculateLegalMoves } from '../../supabase/functions/_shared/bot_strategy.ts';
 import { shouldBotActCore, executeBotMove } from '../../supabase/functions/_shared/pure_bot_actions.ts';
-import { start_game, game_done } from '../../supabase/functions/_shared/common_utils.ts';
+import { game_done } from '../../supabase/functions/_shared/common_utils.ts';
+import { start_game } from '../../supabase/functions/_shared/game_lifecycle.ts';
 import { getBotStrategy } from '../../supabase/functions/_shared/bot_strategy.ts';
 import { Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS } from '../../supabase/functions/_shared/types.ts';
 import { CDPROF, cdProfReset } from './frozen/cordite_core.ts';

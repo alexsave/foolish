@@ -8,7 +8,8 @@
 //   --first-loss: stop at the first losing seed (default)
 
 import { registerBotStrategy } from '../../supabase/functions/_shared/bot_strategy.ts';
-import { start_game, game_done } from '../../supabase/functions/_shared/common_utils.ts';
+import { game_done } from '../../supabase/functions/_shared/common_utils.ts';
+import { start_game } from '../../supabase/functions/_shared/game_lifecycle.ts';
 import { STRATEGY_KEY, StrategyKey } from '../../supabase/functions/_shared/types.ts';
 import { EspressoStrategy } from './frozen/espresso_strategy.ts';
 import { NitroStrategy } from '../../supabase/functions/_shared/strategies/nitro_strategy.ts';

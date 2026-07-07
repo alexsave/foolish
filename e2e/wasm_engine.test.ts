@@ -15,9 +15,8 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  start_game, game_done, canCover, get_next_player_index, cloneGame,
-} from '../supabase/functions/_shared/common_utils.ts';
+import { game_done, canCover, get_next_player_index, cloneGame } from '../supabase/functions/_shared/common_utils.ts';
+import { start_game } from '../supabase/functions/_shared/game_lifecycle.ts';
 import { handleAttack } from '../supabase/functions/_shared/actions/attack.ts';
 import { calculateLegalMoves } from '../supabase/functions/_shared/bot_strategy.ts';
 import {

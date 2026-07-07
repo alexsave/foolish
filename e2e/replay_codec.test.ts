@@ -19,7 +19,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { start_game, game_done } from '../supabase/functions/_shared/common_utils.ts';
+import { game_done } from '../supabase/functions/_shared/common_utils.ts';
+import { start_game } from '../supabase/functions/_shared/game_lifecycle.ts';
 import {
   Game,
   GameLog,
@@ -228,6 +229,14 @@ async function roundTripGame(game: Game, np: number): Promise<void> {
   // the replay-screen view builder must fold the stream without desync
   const steps = buildReplaySteps(dec as any);
   assert.equal(steps.length, dec.logs.length + 1, 'view steps mismatch');
+
+  // the view's silent-refill-elimination mirror (view.ts marks emptied hands
+  // OUT without a PLAYER_OUT log, like the engine's refill) must agree with
+  // the decoder: at game end everyone but the fool is out
+  const lastStep = steps[steps.length - 1];
+  lastStep.players.forEach((p: { out: boolean }, s: number) => {
+    assert.equal(p.out, s !== dec.fool, `view out-flag mismatch at seat ${s}`);
+  });
 
   // extras (names + per-move timing) round-trip
   const unicodeNames = [

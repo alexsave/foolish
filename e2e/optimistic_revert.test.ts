@@ -20,7 +20,7 @@ import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { applySchema, resetDb, seedGame, uuid, pgPool, broadcastLog } from './harness.ts';
 import { executeWithGameLock, loadCompleteGame } from '../supabase/functions/_shared/utils.ts';
-import { start_game } from '../supabase/functions/_shared/common_utils.ts';
+import { start_game } from '../supabase/functions/_shared/game_lifecycle.ts';
 import { AnimationEvent, Card } from '../supabase/functions/_shared/types.ts';
 import { legalMovesFor, applyPlayerMove } from './dispatch.ts';
 import { resolveUnconfirmedAttackCovers } from '../src/state/optimisticConflicts';

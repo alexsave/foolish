@@ -8,7 +8,8 @@
 
 import { ExecutionParams, broadcastToGameUser } from './utils.ts';
 import { ANIMATION_EVENT_TYPE, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY, SERVER_EVENT_TYPE, AnimationEvent, Game } from './types.ts';
-import { start_game, cloneGame, verify_player_in_game } from './common_utils.ts';
+import { cloneGame, verify_player_in_game } from './common_utils.ts';
+import { start_game } from './game_lifecycle.ts';
 import { MAX_PLAYERS } from './constants.ts';
 import { handleRearrangeHand as applyRearrangeHand } from './actions/rearrange.ts';
 import { createClient } from 'jsr:@supabase/supabase-js';

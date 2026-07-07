@@ -2,7 +2,8 @@
 // Run 100 games with seed reset each game to seed=i. Print per-game iter & ms.
 import { calculateLegalMoves, registerBotStrategy } from '../../supabase/functions/_shared/bot_strategy.ts';
 import { shouldBotActCore, processBotAction } from '../../supabase/functions/_shared/pure_bot_actions.ts';
-import { start_game, game_done } from '../../supabase/functions/_shared/common_utils.ts';
+import { game_done } from '../../supabase/functions/_shared/common_utils.ts';
+import { start_game } from '../../supabase/functions/_shared/game_lifecycle.ts';
 import { Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, STRATEGY_KEY, StrategyKey } from '../../supabase/functions/_shared/types.ts';
 import { EspressoStrategy } from './frozen/espresso_strategy.ts';
 import { setRandomSeed } from './frozen/random_strategy.ts';

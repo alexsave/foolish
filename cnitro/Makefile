@@ -150,7 +150,9 @@ WASM_FLAGS := --target=wasm32 -O3 -nostdlib -ffreestanding -mbulk-memory \
 WASM_RULES_FLAGS := $(filter-out -DMAX_LEGAL_MOVES=4096,$(WASM_FLAGS)) \
                     -DMAX_LEGAL_MOVES=1024 -DMAX_LOGS=128 -Wl,-z,stack-size=131072
 
-build/rules.wasm: src/game.c src/legal.c src/replay.c wasm/wasm_api.c src/game.h src/legal.h src/card.h src/replay.h
+# Blanket header dependency, same rationale as the native objects: a header
+# edit must rebuild BOTH wasm modules or they ship divergent kernels.
+build/rules.wasm: src/game.c src/legal.c src/replay.c wasm/wasm_api.c $(wildcard src/*.h) $(wildcard wasm/*.h)
 	@mkdir -p build
 	$(WASM_CC) $(WASM_RULES_FLAGS) src/game.c src/legal.c src/replay.c wasm/wasm_api.c -o $@
 
@@ -177,7 +179,7 @@ WASM_BOT_SRC := src/game.c src/legal.c src/replay.c src/random_strategy.c \
 
 WASM_BOT_FLAGS := $(WASM_FLAGS)
 
-build/bots.wasm: $(WASM_BOT_SRC) src/game.h src/legal.h src/card.h src/strategy.h
+build/bots.wasm: $(WASM_BOT_SRC) $(wildcard src/*.h) $(wildcard wasm/*.h)
 	@mkdir -p build
 	$(WASM_CC) $(WASM_BOT_FLAGS) $(WASM_BOT_SRC) -o $@
 

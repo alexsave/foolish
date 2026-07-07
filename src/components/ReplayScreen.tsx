@@ -931,6 +931,7 @@ export const ReplayScreen = ({ code }: { code: string }) => {
     useEffect(() => {
         if (!mounted) return;
         let cancelled = false;
+        setResult(undefined); // a code change must not keep showing the old replay
         buildReplayData(code, gameId)
             .then((r) => { if (!cancelled) setResult(r); })
             .catch((e) => {

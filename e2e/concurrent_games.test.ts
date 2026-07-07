@@ -11,7 +11,7 @@ import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { applySchema, resetDb, seedGame, uuid, pgPool } from './harness.ts';
 import { executeWithGameLock, loadCompleteGame } from '../supabase/functions/_shared/utils.ts';
-import { start_game } from '../supabase/functions/_shared/common_utils.ts';
+import { start_game } from '../supabase/functions/_shared/game_lifecycle.ts';
 import { AnimationEvent } from '../supabase/functions/_shared/types.ts';
 import { legalMovesFor, applyPlayerMove, checkCardConservation } from './dispatch.ts';
 
