@@ -13,6 +13,8 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { getAuthenticatedUser } from './auth.ts';
 import { cleanupOldGameLogs, wipeAllGameLogs, loadCurrentSessionLogs } from './log_utils.ts';
+import { encodeEventWire } from './wire/evwire.ts';
+import { bytesToBase64 } from './wire/bytes.ts';
 // NOTE: bot_actions (→ the entire bot-strategy stack: cordite's ~127KB Monte-Carlo
 // engine, etc.) and the replay codec are imported LAZILY at their use sites
 // below, NOT statically. wrap400 is imported by every edge function, so a static
@@ -21,7 +23,7 @@ import { cleanupOldGameLogs, wipeAllGameLogs, loadCurrentSessionLogs } from './l
 // behind multi-second "create game" cold starts. They now load only when a bot
 // actually drives (the run_bots branch) or a game actually ends (finalizeEndedGame).
 
-const supabaseClient = createClient(
+export const supabaseClient = createClient(
     Deno.env.get('SUPABASE_URL') || '',
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
 );
@@ -133,73 +135,11 @@ const gameToPublicGame = (game: Game): PublicGame => {
     };
 };
 
-// Helper function to create PersonalGame from Game and player
-const gameToPersonalGame = (game: Game, player: PrivatePlayer): PersonalGame => {
-    return {
-        ...gameToPublicGame(game),
-        self: player
-    };
-};
-
-// Helper function to create card backs for sanitization
-const createCardBacks = (count: number): Card[] => {
-    return Array(count).fill({ suit: -1, value: -1 });
-};
-
-// Helper function to check if event should have cards sanitized
-const shouldSanitizeCards = (event: AnimationEvent): boolean => {
-    return (event.type === ANIMATION_EVENT_TYPE.REFILL || event.type === ANIMATION_EVENT_TYPE.DEAL) && !!event.cards;
-};
-
-// Convert server AnimationEvents to PublicAnimationEvents for spectators
-const convertToPublicAnimationEvents = (events: AnimationEvent[]): PublicAnimationEvent[] => {
-    return events.map(event => {
-        const publicEvent: PublicAnimationEvent = { ...event };
-
-        // Sanitize REFILL and DEAL events - hide all cards going to players' hands
-        if (shouldSanitizeCards(event)) {
-            publicEvent.cards = createCardBacks(event.cards!.length);
-        }
-
-        // Convert game_state from full Game to PublicGame
-        if (event.game_state) {
-            publicEvent.game_state = gameToPublicGame(event.game_state);
-        }
-
-        return publicEvent;
-    });
-};
-
-// Convert server AnimationEvents to PersonalAnimationEvents for a specific player
-const convertToPersonalAnimationEvents = (events: AnimationEvent[], forPlayerId: string): PersonalAnimationEvent[] => {
-    return events.map(event => {
-        const { game_state, ...baseEvent } = event;
-
-        const rawGameState: Game = event.game_state;
-
-        if (!rawGameState) {
-            throw new Error(`Game state not found in animation event, removing game_state from animation event`);
-        }
-
-        const baseGameState: PublicGame = gameToPublicGame(rawGameState);
-
-        const playerSelf = rawGameState.players.find(p => p.player_id === forPlayerId);
-        if (!playerSelf) {
-            throw new Error(`Player ${forPlayerId} not found in game state, removing game_state from animation event`);
-        }
-
-        const personalGameState: PersonalGame = { ...baseGameState, self: playerSelf };
-
-        if (shouldSanitizeCards(event) && event.player_id && event.player_id !== forPlayerId) {
-            baseEvent.cards = createCardBacks(event.cards!.length);
-        }
-
-        return {
-            ...baseEvent,
-            game_state: personalGameState
-        }
-    });
-};
+// Per-recipient personalization (the old convertToPersonal/Public converters
+// + gameToPersonalGame + card-back sanitization) moved into the packed event
+// wire: the C kernel masks its own streams (wasm_events_serialize) and the
+// TS encoder in wire/evwire.ts applies the identical rules for the JS-path
+// callers. See docs/PACKED_WIRE_CUTOVER.md.
 
 
 // Broadcast animation events to all players and spectators
@@ -220,9 +160,9 @@ const convertToPersonalAnimationEvents = (events: AnimationEvent[], forPlayerId:
 const REALTIME_BROADCAST_URL = `${Deno.env.get('SUPABASE_URL') || ''}/realtime/v1/api/broadcast`;
 const REALTIME_BROADCAST_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 
-interface BroadcastMessage { topic: string; event: string; payload: any; }
+export interface BroadcastMessage { topic: string; event: string; payload: any; }
 
-const broadcastMessages = async (messages: BroadcastMessage[], reqId: string = 'unknown'): Promise<void> => {
+export const broadcastMessages = async (messages: BroadcastMessage[], reqId: string = 'unknown'): Promise<void> => {
     if (messages.length === 0) return;
     const start = Date.now();
     // One retry on failure: the whole path is fire-and-forget (a dropped
@@ -263,6 +203,18 @@ const broadcastMessages = async (messages: BroadcastMessage[], reqId: string = '
     console.log(`[${reqId}][BROADCAST] batched ${messages.length} message(s) in ${Date.now() - start}ms`);
 };
 
+// Packed broadcast payload envelope: the whole personalized animation
+// sequence (events + per-step masked snapshots + the final state) crosses as
+// ONE kernel-format byte buffer, base64 inside the JSON envelope the
+// realtime API requires. `v` is the committed games.version — the client's
+// monotonic reorder-drop token; `s` the dedup sequence id.
+export const packedSequencePayload = (bytes: Uint8Array, version: number) => ({
+    t: 'as2',
+    s: crypto.randomUUID(),
+    v: version,
+    b: bytesToBase64(bytes),
+});
+
 export const broadcastAnimationEvents = async (game: Game, events: AnimationEvent[], reqId: string = 'unknown'): Promise<void> => {
     if (events.length === 0) {
         return;
@@ -271,45 +223,26 @@ export const broadcastAnimationEvents = async (game: Game, events: AnimationEven
     const broadcastTotalStart = Date.now();
     console.log(`[${reqId}][BROADCAST] broadcastAnimationEvents called for game ${game.id} with ${events.length} events`);
 
-    // Calculate base game state once (shared for all players) - removes private information
-    const baseGameStart = Date.now();
-    const baseGameState = gameToPublicGame(game);
-    console.log(`[${reqId}][BROADCAST] gameToPublicGame took ${Date.now() - baseGameStart}ms`);
-
-    // Build one message per recipient, then fire them all in a single batched
-    // POST (players are personalized; bots are skipped — they have no clients).
-    const humanPlayers = game.players.filter(player => !player.is_ai);
-    console.log(`[${reqId}][BROADCAST] Broadcasting to ${humanPlayers.length} human players + spectators (skipping ${game.players.length - humanPlayers.length} bots)`);
-
-    const messages: BroadcastMessage[] = humanPlayers.map(player => ({
-        topic: `gu-${game.id}-${player.player_id}`,
-        event: 'animation_events',
-        payload: {
-            type: 'animation_sequence',
-            events: convertToPersonalAnimationEvents(events, player.player_id),
-            sequence_id: crypto.randomUUID(),
-            timestamp: Date.now(),
-            // Committed games.version this sequence reflects. Broadcasts can arrive
-            // out of order under realtime latency; the client uses this monotonic
-            // token to drop any sequence at or below the newest it has already
-            // applied (no rubber-band).
-            version: game.version ?? 0,
-            game: gameToPersonalGame(game, player),
-        },
-    }));
-
-    // Public events to the spectator channel.
+    // One message per recipient (bots are skipped — they have no clients),
+    // each a fully-masked packed stream from the TS event-wire encoder —
+    // byte-identical to what the kernel's wasm_events_serialize emits on the
+    // packed action path, parity-tested in e2e.
+    const version = game.version ?? 0;
+    const messages: BroadcastMessage[] = [];
+    for (let seat = 0; seat < game.players.length; seat++) {
+        const player = game.players[seat];
+        if (player.is_ai) continue;
+        messages.push({
+            topic: `gu-${game.id}-${player.player_id}`,
+            event: 'animation_events',
+            payload: packedSequencePayload(encodeEventWire(events, game, seat, -1), version),
+        });
+    }
+    // Public (fully masked) stream to the spectator channel.
     messages.push({
         topic: `game-${game.id}`,
         event: 'animation_events',
-        payload: {
-            type: 'animation_sequence',
-            events: convertToPublicAnimationEvents(events),
-            sequence_id: crypto.randomUUID(),
-            timestamp: Date.now(),
-            version: game.version ?? 0,
-            game: baseGameState,
-        },
+        payload: packedSequencePayload(encodeEventWire(events, game, -1, -1), version),
     });
 
     await broadcastMessages(messages, reqId);
@@ -324,7 +257,30 @@ export interface ExecutionParams {
     reqId: string;
 }
 
-export const wrap400 = (execute: (params: ExecutionParams) => Promise<{ game: Game, events: AnimationEvent[] }>, run_bots: boolean = false, mootIfGameOver: boolean = false) => {
+// Fire-and-forget bot drive AFTER the HTTP response (see the CRITICAL note
+// at the call site below): EdgeRuntime.waitUntil keeps the isolate alive
+// until the loop settles; the strategy stack is lazily imported so
+// lightweight functions never pay for it. Shared by the JSON path (wrap400)
+// and the packed action path.
+export const scheduleBotLoop = (game_id: string, reqId: string): void => {
+    const botLoop = import('./bot_actions.ts')
+        .then(m => m.lockedBotLoop(game_id))
+        .catch(err => console.error(`[${reqId}] bot loop error:`, err));
+    const er = (globalThis as any).EdgeRuntime;
+    if (er && typeof er.waitUntil === 'function') {
+        er.waitUntil(botLoop);
+    }
+};
+
+export const wrap400 = (
+    execute: (params: ExecutionParams) => Promise<{ game: Game, events: AnimationEvent[] }>,
+    run_bots: boolean = false,
+    mootIfGameOver: boolean = false,
+    // Packed-request escape hatch: when set and the request body is
+    // application/octet-stream, the whole request is delegated here after
+    // CORS + auth (the `action` function's binary fast path).
+    binary: ((req: Request, user: User, reqId: string) => Promise<Response>) | null = null,
+) => {
     const handler = async (req: Request): Promise<Response> => {
         // Generate unique request ID (short hash from crypto)
         const reqId = crypto.randomUUID().split('-')[0];
@@ -345,6 +301,12 @@ export const wrap400 = (execute: (params: ExecutionParams) => Promise<{ game: Ga
             const authStart = Date.now();
             const user: User = await getAuthenticatedUser(req);
             console.log(`[${reqId}][WRAP400] Authentication took ${Date.now() - authStart}ms`);
+
+            // Packed (binary) request: everything after auth is the packed
+            // pipeline's business — no JSON parsing, no JS Game.
+            if (binary && (req.headers.get('content-type') || '').includes('application/octet-stream')) {
+                return await binary(req, user, reqId);
+            }
 
             // Get user name from email
             const user_name = user.user_metadata.username;
@@ -417,15 +379,7 @@ export const wrap400 = (execute: (params: ExecutionParams) => Promise<{ game: Ga
                 // baton and it leaks for the full stale window, freezing the game
                 // (confirmed by T1 diagnostics: loops died at ~15s with no
                 // released_clean). waitUntil keeps the worker alive until it settles.
-                // Lazy import: only now (a real bot drive) do we pull in the bot
-                // strategy stack. Lightweight functions never load it.
-                const botLoop = import('./bot_actions.ts')
-                    .then(m => m.lockedBotLoop(game_id))
-                    .catch(err => console.error(`[${reqId}] bot loop error:`, err));
-                const er = (globalThis as any).EdgeRuntime;
-                if (er && typeof er.waitUntil === 'function') {
-                    er.waitUntil(botLoop);
-                }
+                scheduleBotLoop(game_id, reqId);
             }
 
             // Create standardized response and return immediately
@@ -631,6 +585,9 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
 export const commitGame = async (
     game: Game,
     expectedVersion: number,
+    // The packed action path already holds the kernel-serialized blob for
+    // this exact state — passing it skips the redundant re-marshal below.
+    precomputedStateHex: string | null = null,
 ): Promise<{ status: 'ok' | 'conflict'; version?: number }> => {
     const publicGame: PublicGame = gameToPublicGame(game);
 
@@ -674,8 +631,8 @@ export const commitGame = async (
     // leaving any prior blob untouched. Lazy imports so create/lobby cold
     // starts never pull the rules-wasm embed (same discipline as the bot/
     // replay lazy imports at the top of this file).
-    let p_state: string | null = null;
-    if (game.status === GAME_STATUS.PLAYING || game.status === GAME_STATUS.GAME_OVER) {
+    let p_state: string | null = precomputedStateHex;
+    if (p_state === null && (game.status === GAME_STATUS.PLAYING || game.status === GAME_STATUS.GAME_OVER)) {
         const { serializeGameState } = await import('./wasm/engine.ts');
         const { bytesToHex } = await import('./replay/codec.ts');
         p_state = bytesToHex(serializeGameState(game));
@@ -760,7 +717,7 @@ const check_win_sync = (game: Game): boolean => {
 // fires exactly once (only the winning CAS commit reaches it). This is the tail of
 // the old check_win_async; its check_win_sync half now runs BEFORE the commit so
 // the committed state already reflects GAME_OVER.
-const finalizeEndedGame = async (game: Game): Promise<void> => {
+export const finalizeEndedGame = async (game: Game): Promise<void> => {
     // ELO and the replay snapshot touch disjoint tables and don't read each
     // other's writes — run them concurrently instead of serially, since both
     // sit on the game-end critical path before the final broadcast.
