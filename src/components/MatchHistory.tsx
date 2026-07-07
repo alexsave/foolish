@@ -106,7 +106,7 @@ export const MatchHistory: React.FC = () => {
                         const extrasCode = extrasBytes && extrasBytes.length > 0
                             ? base32Encode(extrasBytes)
                             : null;
-                        const d = decodeReplay(bytesToBigint(movesBytes));
+                        const d = await decodeReplay(bytesToBigint(movesBytes));
 
                         let names: string[] | null = null;
                         let durationSec: number | null = null;

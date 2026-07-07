@@ -16,6 +16,7 @@
 #include "game.h"
 #include "wire.h"
 #include "legal.h"
+#include "replay.h"
 
 // ---------- minimal libc ------------------------------------------------
 
@@ -327,6 +328,33 @@ int wasm_can_cover(int as, int av, int ds, int dv, int power_suit) {
     Card a = { (int8_t)as, (int8_t)av }, d = { (int8_t)ds, (int8_t)dv };
     return can_cover(a, d, power_suit) ? 1 : 0;
 }
+
+// ---------- replay codec ----------------------------------------------------
+// One call per direction, through a dedicated buffer (the shared g_io is
+// sized for single-action exports; a whole decoded game stream is bigger).
+// Formats are documented in replay.h. Both entries return bytes written or
+// a negative REPLAY_E* code; wasm_replay_error_detail carries the message
+// parameter (unsupported version, menu size).
+//
+// 2MB: decode's worst CONFORMING stream is far smaller (~50KB for a monster
+// game); the ceiling only matters for hostile integers, which fail with a
+// clean REPLAY_ECAP instead of unbounded growth (the TS reference grew an
+// unbounded array there).
+
+#define REPLAY_IO_CAP (2 * 1024 * 1024)
+static unsigned char g_replay_io[REPLAY_IO_CAP];
+
+unsigned char *wasm_replay_io_ptr(void) { return g_replay_io; }
+int wasm_replay_io_cap(void) { return REPLAY_IO_CAP; }
+
+// In-place: input is fully consumed before any output byte is written.
+int wasm_replay_encode(int in_len) {
+    return replay_encode(g_replay_io, in_len, g_replay_io, REPLAY_IO_CAP);
+}
+int wasm_replay_decode(int in_len) {
+    return replay_decode(g_replay_io, in_len, g_replay_io, REPLAY_IO_CAP);
+}
+int wasm_replay_error_detail(void) { return replay_last_error_detail(); }
 
 // ---------- legal moves --------------------------------------------------------
 // u32 n, then per move: u8 type, u8 n_cards, n_cards x u8 wire-card cards,

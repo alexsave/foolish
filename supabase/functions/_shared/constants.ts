@@ -28,4 +28,12 @@ export const VALUE_MAP = [
 ];
 
 export const ACE_VALUE = 13;
-export const MAX_PLAYERS = 8; 
+export const MAX_PLAYERS = 8;
+
+// THE deck rule, settled (mirror of cnitro/src/card.h min_value_for — the
+// kernel is authoritative): 2..5 players play the 36-card deck (values
+// 5..A), 6..8 players the full 52-card deck (2..A). Derive deck size and
+// the lowest value from these helpers — never inline `n >= 6 ? 52 : 36`.
+export const minValueFor = (numPlayers: number): number => (numPlayers >= 6 ? 1 : 5);
+export const deckSizeFor = (numPlayers: number): number =>
+    4 * (ACE_VALUE - minValueFor(numPlayers) + 1);

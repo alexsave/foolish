@@ -722,7 +722,7 @@ const finalizeEndedGame = async (game: Game): Promise<void> => {
         const { encodeExtras, moveTimesFromLogs } = await import('./replay/extras.ts');
         const { base32Decode, bytesToHex } = await import('./replay/codec.ts');
 
-        const { encoded } = verifyRoundTrip({
+        const { encoded } = await verifyRoundTrip({
             playerIds: game.players.map(player => player.player_id),
             logs: replayLogs,
             flipped: game.flipped,

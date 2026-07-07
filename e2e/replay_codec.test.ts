@@ -34,7 +34,9 @@ import { calculateLegalMoves } from '../supabase/functions/_shared/bot_strategy.
 import { ReplayInput, SeatLog, DecodedReplay, INFO_TYPES } from '../supabase/functions/_shared/replay/core.ts';
 import { encodeReplay, verifyRoundTrip } from '../supabase/functions/_shared/replay/encode.ts';
 import { decodeReplay } from '../supabase/functions/_shared/replay/decode.ts';
-import { urlToGame, base64Decode, bytesToBigint } from '../supabase/functions/_shared/replay/codec.ts';
+import { urlToGame, base64Decode, bytesToBigint, codeToGame } from '../supabase/functions/_shared/replay/codec.ts';
+import { oracleEncodeReplay, oracleDecodeReplay } from './replay_ts_oracle.ts';
+import { TUTORIAL_MOVES_CODE } from '../src/components/tutorialGame.ts';
 import {
   encodeExtras,
   encodeExtrasFromGaps,
@@ -151,6 +153,31 @@ function normDecoded(d: DecodedReplay): SeatLog[] {
     }));
 }
 
+// kernel-vs-oracle comparisons keep GOODs: the two implementations must agree
+// on the FULL reconstructed stream, not just the info-bearing subset.
+function normFull(d: DecodedReplay): SeatLog[] {
+  return d.logs.map((l) => ({
+    log_type: l.log_type,
+    seat: l.seat,
+    card_pairs: l.card_pairs.map((p) => ({
+      primary: { suit: p.primary.suit, value: p.primary.value },
+      target: p.target ? { suit: p.target.suit, value: p.target.value } : null,
+    })),
+    defender_index: l.defender_index ?? null,
+  }));
+}
+
+/** Production (kernel) decode must exactly match the frozen TS oracle. */
+function assertKernelMatchesOracle(dec: DecodedReplay, oDec: DecodedReplay): void {
+  assert.equal(diffStreams(normFull(oDec), normFull(dec)), null, 'kernel/oracle stream mismatch');
+  assert.deepEqual(dec.eliminationOrder, oDec.eliminationOrder, 'kernel/oracle elimination mismatch');
+  assert.equal(dec.fool, oDec.fool, 'kernel/oracle fool mismatch');
+  assert.equal(dec.discardPileLength, oDec.discardPileLength, 'kernel/oracle discard mismatch');
+  assert.equal(dec.playerCount, oDec.playerCount, 'kernel/oracle player count mismatch');
+  assert.equal(dec.firstAttacker, oDec.firstAttacker, 'kernel/oracle first attacker mismatch');
+  assert.deepEqual(dec.trumpCard, { ...oDec.trumpCard }, 'kernel/oracle trump mismatch');
+}
+
 function diffStreams(a: SeatLog[], b: SeatLog[]): string | null {
   const ja = a.map((l) => JSON.stringify(l));
   const jb = b.map((l) => JSON.stringify(l));
@@ -164,13 +191,19 @@ function diffStreams(a: SeatLog[], b: SeatLog[]): string | null {
 }
 
 // Full encode -> serialize -> decode -> verify pipeline for one finished game.
-function roundTripGame(game: Game, np: number): void {
+async function roundTripGame(game: Game, np: number): Promise<void> {
   const input: ReplayInput = {
     playerIds: game.players.map((p) => p.player_id),
     logs: game.logs,
     flipped: game.flipped,
   };
-  const enc = encodeReplay(input);
+  const enc = await encodeReplay(input);
+
+  // the kernel encoder must be BYTE-IDENTICAL to the frozen TS oracle — this
+  // is the wire-format guarantee for existing snapshots and shared URLs
+  const oEnc = oracleEncodeReplay(input);
+  assert.equal(enc.x, oEnc.x, 'kernel/oracle encode mismatch');
+  assert.equal(enc.base32, oEnc.base32, 'kernel/oracle base32 mismatch');
 
   // decode through every serialization layer
   const xUrl = urlToGame(enc.url);
@@ -178,7 +211,8 @@ function roundTripGame(game: Game, np: number): void {
   assert.equal(xUrl, enc.x, 'serialization round-trip mismatch (url)');
   assert.equal(xB64, enc.x, 'serialization round-trip mismatch (base64)');
 
-  const dec = decodeReplay(enc.x);
+  const dec = await decodeReplay(enc.x);
+  assertKernelMatchesOracle(dec, oracleDecodeReplay(enc.x));
   assert.equal(diffStreams(normOriginal(game), normDecoded(dec)), null, 'stream mismatch');
 
   // elimination order / fool / discard must match too
@@ -189,7 +223,7 @@ function roundTripGame(game: Game, np: number): void {
   assert.equal(game.discard_pile_length, dec.discardPileLength, 'discard pile mismatch');
 
   // the public verifier used by the UI must agree
-  verifyRoundTrip(input);
+  await verifyRoundTrip(input);
 
   // the replay-screen view builder must fold the stream without desync
   const steps = buildReplaySteps(dec as any);
@@ -249,6 +283,33 @@ function roundTripGame(game: Game, np: number): void {
 // Owns the replay validation scenarios; the fast runner
 // (e2e/validation/replay_validation.test.ts) imports `registerReplayValidation`.
 export function registerReplayValidation(): void {
+  // The tutorial ships a frozen v5 integer baked into the client; it decoding
+  // identically under the kernel and the TS oracle proves stored snapshots
+  // and shared URLs survive the port.
+  test('frozen tutorial replay decodes identically via kernel and oracle', async () => {
+    const x = codeToGame(TUTORIAL_MOVES_CODE);
+    const dec = await decodeReplay(x);
+    assertKernelMatchesOracle(dec, oracleDecodeReplay(x));
+    assert.ok(dec.logs.length > 0, 'tutorial replay has events');
+  });
+
+  test('kernel decode rejects garbage and future versions cleanly', async () => {
+    // version 6 header: the smallest integer whose version field is not 5
+    await assert.rejects(
+      () => decodeReplay(6n),
+      /unsupported replay format version 6/,
+    );
+    // random bytes: must terminate — either a clean throw or (by chance) a
+    // well-formed decode, never a hang or a malformed structure
+    const junk = new Uint8Array(64);
+    for (let i = 0; i < junk.length; i++) junk[i] = (i * 37 + 11) & 0xff;
+    try {
+      const d = await decodeReplay(bytesToBigint(junk));
+      assert.ok(Array.isArray(d.logs));
+    } catch {
+      // expected: a clean rejection
+    }
+  });
   // Scale-free timing self-test: the same 1-byte/move curve must hold from
   // nanosecond simulation steps to multi-week correspondence gaps.
   test('replay extras: time scale holds from 1ns to 1 week units', () => {
@@ -273,7 +334,7 @@ export function registerReplayValidation(): void {
         const game = await playRandomGame(np, (g % 2 === 0 ? 'random' : 'handwritten') as StrategyKey);
         if (!game) continue;
         played++;
-        roundTripGame(game, np);
+        await roundTripGame(game, np);
       }
     }
     assert.ok(played > 0, 'at least one short game completed');
@@ -298,7 +359,7 @@ if (!process.env.VALIDATION_ONLY) test(`replay codec round-trips engine-played g
         continue;
       }
       totalGames++;
-      roundTripGame(game, np);
+      await roundTripGame(game, np);
     }
   }
   assert.ok(totalGames > 0, `no games completed (stalled=${stalled})`);

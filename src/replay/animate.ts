@@ -17,6 +17,7 @@
  * ========================================================================== */
 
 import { Card, LOG_TYPE } from '@shared/types.ts';
+import { CARDS_PER_PLAYER, deckSizeFor } from '@shared/constants.ts';
 import {
     AnimationSequenceMessage,
     FeedAnimationEvent,
@@ -45,7 +46,7 @@ export function preDealGame(
     gameId: string,
     names?: string[] | null,
 ): ReplayGameState {
-    const deckSize = d.playerCount >= 6 ? 52 : 36;
+    const deckSize = deckSizeFor(d.playerCount);
     const base = stepToGame(d, step0, gameId, names);
     return {
         ...base,
@@ -64,7 +65,7 @@ export function buildReplaySequences(
     names?: string[] | null,
 ): AnimationSequenceMessage[] {
     const n = d.playerCount;
-    const deckSize = n >= 6 ? 52 : 36;
+    const deckSize = deckSizeFor(n);
     const games = steps.map((s) => stepToGame(d, s, gameId, names));
 
     const sequences: AnimationSequenceMessage[] = [];

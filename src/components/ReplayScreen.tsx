@@ -890,6 +890,33 @@ const ReplayStage = ({ decoded, steps, sequences, reverses, gameId, names, times
     );
 };
 
+const buildReplayData = async (code: string, gameId: string) => {
+    const { moves, extras: extrasCode } = splitReplayCode(code);
+    const decoded = await decodeReplay(codeToGame(moves));
+    const steps = buildReplaySteps(decoded);
+
+    // extras (names + timing) are decoration: a malformed blob never
+    // breaks the replay itself
+    let extras: ReplayExtras = { names: null, startTime: null, moveGaps: null };
+    if (extrasCode) {
+        try {
+            const moveCount = decoded.logs.filter((l) =>
+                INFO_TYPES.includes(l.log_type),
+            ).length;
+            extras = decodeExtras(extrasCode, decoded.playerCount, moveCount);
+        } catch (e) {
+            console.error('Replay extras ignored:', e);
+        }
+    }
+
+    const names = extras.names;
+    const sequences = buildReplaySequences(decoded, steps, gameId, names);
+    const reverses = buildReverseSequences(decoded, steps, gameId, names, sequences);
+    const initial = preDealGame(decoded, steps[0], gameId, names);
+    const times = stepTimes(steps, extras.startTime, extras.moveGaps);
+    return { decoded, steps, sequences, reverses, initial, names, times };
+};
+
 export const ReplayScreen = ({ code }: { code: string }) => {
     // Client-only: the game display reads window dimensions during render
     // (DefenderShield), so skip SSR/prerender entirely.
@@ -898,40 +925,22 @@ export const ReplayScreen = ({ code }: { code: string }) => {
 
     const gameId = code.toLowerCase();
 
-    const result = useMemo(() => {
-        if (!mounted) return null;
-        try {
-            const { moves, extras: extrasCode } = splitReplayCode(code);
-            const decoded = decodeReplay(codeToGame(moves));
-            const steps = buildReplaySteps(decoded);
-
-            // extras (names + timing) are decoration: a malformed blob never
-            // breaks the replay itself
-            let extras: ReplayExtras = { names: null, startTime: null, moveGaps: null };
-            if (extrasCode) {
-                try {
-                    const moveCount = decoded.logs.filter((l) =>
-                        INFO_TYPES.includes(l.log_type),
-                    ).length;
-                    extras = decodeExtras(extrasCode, decoded.playerCount, moveCount);
-                } catch (e) {
-                    console.error('Replay extras ignored:', e);
-                }
-            }
-
-            const names = extras.names;
-            const sequences = buildReplaySequences(decoded, steps, gameId, names);
-            const reverses = buildReverseSequences(decoded, steps, gameId, names, sequences);
-            const initial = preDealGame(decoded, steps[0], gameId, names);
-            const times = stepTimes(steps, extras.startTime, extras.moveGaps);
-            return { decoded, steps, sequences, reverses, initial, names, times };
-        } catch (e) {
-            console.error('Replay decode failed:', e);
-            return null;
-        }
+    // Async: decodeReplay runs in the rules kernel, which the browser must
+    // compile asynchronously. undefined = still decoding, null = failed.
+    const [result, setResult] = useState<Awaited<ReturnType<typeof buildReplayData>> | null | undefined>(undefined);
+    useEffect(() => {
+        if (!mounted) return;
+        let cancelled = false;
+        buildReplayData(code, gameId)
+            .then((r) => { if (!cancelled) setResult(r); })
+            .catch((e) => {
+                console.error('Replay decode failed:', e);
+                if (!cancelled) setResult(null);
+            });
+        return () => { cancelled = true; };
     }, [code, gameId, mounted]);
 
-    if (!mounted) {
+    if (!mounted || result === undefined) {
         return null;
     }
 

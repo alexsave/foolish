@@ -16,6 +16,7 @@ import {
     GAME_STATUS,
     PLAYER_STATUS,
 } from '@shared/types.ts';
+import { CARDS_PER_PLAYER, deckSizeFor, minValueFor } from '@shared/constants.ts';
 import { DecodedReplay } from '@shared/replay/core.ts';
 
 interface ReplaySeatView {
@@ -61,22 +62,22 @@ const sameCard = (a: Card, b: Card) => a.suit === b.suit && a.value === b.value;
 
 export function buildReplaySteps(d: DecodedReplay): ReplayStep[] {
     const n = d.playerCount;
-    const deckSize = n >= 6 ? 52 : 36;
+    const deckSize = deckSizeFor(n);
 
-    const hidden: number[] = new Array(n).fill(6);
+    const hidden: number[] = new Array(n).fill(CARDS_PER_PLAYER);
     // shared-reference slots: snapshots keep references to these objects, so
     // an identity assigned when the card is finally played becomes visible in
     // every EARLIER snapshot that held the slot (see materialization below)
     type Slot = { identity: Card | null };
     const slots: Slot[][] = Array.from({ length: n }, () =>
-        Array.from({ length: 6 }, () => ({ identity: null })),
+        Array.from({ length: CARDS_PER_PLAYER }, () => ({ identity: null })),
     );
     const slotRefs: Slot[][][] = []; // per step, per seat
     const known: Card[][] = Array.from({ length: n }, () => []);
     const out: boolean[] = new Array(n).fill(false);
     const goods = new Set<number>();
     let battles: { attack: Card; defense: Card | null }[] = [];
-    let deckCount = deckSize - 6 * n - 1;
+    let deckCount = deckSize - CARDS_PER_PLAYER * n - 1;
     let flipped: Card | null = d.trumpCard;
     let discard = 0;
     let defender = (d.firstAttacker + 1) % n;
@@ -260,7 +261,7 @@ export function buildReplaySteps(d: DecodedReplay): ReplayStep[] {
             }
         }
         if (d.trumpCard.suit >= 0) seen.add(ckey(d.trumpCard));
-        const startValue = deckSize === 52 ? 1 : 5;
+        const startValue = minValueFor(n);
         const leftover: Card[] = [];
         for (let suit = 0; suit < 4; suit++)
             for (let v = startValue; v <= 13; v++)

@@ -23,7 +23,7 @@ ifeq ($(OMP),1)
 endif
 
 # The engine + all heuristic / Monte-Carlo bots. Linked into every binary.
-CORE_SRC := src/game.c src/legal.c src/random_strategy.c src/espresso_strategy.c \
+CORE_SRC := src/game.c src/legal.c src/replay.c src/random_strategy.c src/espresso_strategy.c \
             src/handwritten_strategy.c src/robusta_strategy.c \
             src/firecracker_strategy.c src/gunpowder_strategy.c \
             src/blackpowder_strategy.c src/cordite_strategy.c \
@@ -80,11 +80,16 @@ build/apply_difftest: tests/apply_difftest.c $(CORE_OBJ)
 	$(CC) $(CFLAGS) tests/apply_difftest.c $(CORE_OBJ) -o $@ $(LDFLAGS)
 build/solver_difftest: tests/solver_difftest.c $(CORE_OBJ)
 	$(CC) $(CFLAGS) tests/solver_difftest.c $(CORE_OBJ) -o $@ $(LDFLAGS)
-difftests: build/sim_difftest build/apply_difftest build/solver_difftest
+# Replay-codec round trip against real engine games (native mirror of
+# e2e/replay_codec.test.ts; also part of `make difftests`).
+build/replay_difftest: tests/replay_difftest.c $(CORE_OBJ)
+	$(CC) $(CFLAGS) tests/replay_difftest.c $(CORE_OBJ) -o $@ $(LDFLAGS)
+difftests: build/sim_difftest build/apply_difftest build/solver_difftest build/replay_difftest
 	./build/sim_difftest 4 1000 && ./build/apply_difftest 4 200 && \
 	./build/solver_difftest 2 40 "" 200000 && \
 	./build/solver_difftest 3 40 "" 200000 && \
-	./build/solver_difftest 4 40 "" 200000
+	./build/solver_difftest 4 40 "" 200000 && \
+	./build/replay_difftest 40
 
 # ---------------------------------------------------------------------------
 # WebAssembly rules kernel: game.c + legal.c + the wasm bridge, compiled
@@ -145,9 +150,9 @@ WASM_FLAGS := --target=wasm32 -O3 -nostdlib -ffreestanding -mbulk-memory \
 WASM_RULES_FLAGS := $(filter-out -DMAX_LEGAL_MOVES=4096,$(WASM_FLAGS)) \
                     -DMAX_LEGAL_MOVES=1024 -DMAX_LOGS=128 -Wl,-z,stack-size=131072
 
-build/rules.wasm: src/game.c src/legal.c wasm/wasm_api.c src/game.h src/legal.h src/card.h
+build/rules.wasm: src/game.c src/legal.c src/replay.c wasm/wasm_api.c src/game.h src/legal.h src/card.h src/replay.h
 	@mkdir -p build
-	$(WASM_CC) $(WASM_RULES_FLAGS) src/game.c src/legal.c wasm/wasm_api.c -o $@
+	$(WASM_CC) $(WASM_RULES_FLAGS) src/game.c src/legal.c src/replay.c wasm/wasm_api.c -o $@
 
 # Regenerates the base64 module the TS side imports (works unchanged in
 # Deno edge functions, Node and browsers — no asset pipeline needed).
@@ -161,7 +166,7 @@ wasm: build/rules.wasm
 # Note: the distilled strategy (research, strength-negative — see
 # CORDITE_RESEARCH.md) stays native-arena-only; it is deliberately NOT in the
 # production bot module.
-WASM_BOT_SRC := src/game.c src/legal.c src/random_strategy.c \
+WASM_BOT_SRC := src/game.c src/legal.c src/replay.c src/random_strategy.c \
                 src/espresso_strategy.c src/handwritten_strategy.c \
                 src/cordite_strategy.c src/cordite_sim.c \
                 src/simple_heuristic_strategy.c src/champion_strategy.c \

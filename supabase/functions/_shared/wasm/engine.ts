@@ -61,6 +61,11 @@ interface EngineExports {
     wasm_can_cover(as: number, av: number, ds: number, dv: number, ps: number): number;
     wasm_legal_moves(i: number): number;
     wasm_export_moves(start: number, max: number): number;
+    wasm_replay_io_ptr(): number;
+    wasm_replay_io_cap(): number;
+    wasm_replay_encode(len: number): number;
+    wasm_replay_decode(len: number): number;
+    wasm_replay_error_detail(): number;
 }
 
 function decodeBase64(b64: string): Uint8Array {
@@ -93,6 +98,33 @@ function engine(): EngineExports {
     ex.wasm_init();
     exportsCache = ex;
     return ex;
+}
+
+// Async preload — the path browser code must take before any kernel call:
+// Chrome caps synchronous WebAssembly compilation on the main thread at a
+// few KB, far below this module. Server runtimes (Deno edge, Node tests)
+// keep the sync engine() they always used; the replay decode path awaits
+// this first so the SAME decode code runs on both sides of the wire.
+let enginePromise: Promise<void> | null = null;
+export function ensureEngineAsync(): Promise<void> {
+    if (exportsCache) return Promise.resolve();
+    if (typeof document === 'undefined') {
+        // Not a browser main thread: the sync path is allowed and cheaper.
+        engine();
+        return Promise.resolve();
+    }
+    if (!enginePromise) {
+        enginePromise = WebAssembly
+            .instantiate(decodeBase64(takeRULES_WASM_B64()) as BufferSource, {})
+            .then(({ instance }) => {
+                const ex = instance.exports as unknown as EngineExports;
+                ex.wasm_init();
+                exportsCache = ex;
+                memView = new Uint8Array(0);
+                residentFor = null;
+            });
+    }
+    return enginePromise;
 }
 
 // The bots module (bots.wasm) embeds this same kernel plus the strategies.
@@ -958,6 +990,61 @@ export function kernelCanCover(attack: Card, defense: Card, powerSuit: number): 
     return engine().wasm_can_cover(attack.suit, attack.value, defense.suit, defense.value, powerSuit) !== 0;
 }
 
+// ---------------------------------------------------------------------------
+// Replay codec (cnitro/src/replay.c) — the format-v5 rules projection runs in
+// the kernel; TS only moves bytes. Formats are documented in replay.h. The
+// replay buffers are separate from the game IO, so these calls never disturb
+// a resident game state.
+// ---------------------------------------------------------------------------
+
+// Mirrors REPLAY_E* in replay.h; messages match the TS reference's throws.
+function replayError(negCode: number, detail: number): Error {
+    switch (-negCode) {
+        case 1: return new Error(`unsupported replay format version ${detail}`);
+        case 2: return new Error('invalid replay: leftover data after game end');
+        case 3: return new Error('invalid replay: no single fool');
+        case 4: return new Error('replay guard: too many events');
+        case 5: return new Error('replay desync: no legal moves');
+        case 6: return new Error('replay desync: conservation');
+        case 7: return new Error('replay desync: known card');
+        case 8: return new Error('replay desync: fresh card');
+        case 9: return new Error('replay desync: hidden count');
+        case 10: return new Error('replay desync: no fresh card');
+        case 11: return new Error('replay desync: fresh card not feasible');
+        case 12: return new Error(
+            `replay desync: logged ${LOG_TYPE_FROM_INT[detail >> 16] ?? (detail >> 16)} not in menu of ${detail & 0xffff}`);
+        case 13: return new Error('replay desync: round end not in menu');
+        case 14: return new Error('replay desync: attack continuation');
+        case 15: return new Error('replay desync: pass continuation');
+        case 16: return new Error('incomplete game: logs ended before the fool was known');
+        case 17: return new Error('replay desync: logs continue after the game ended');
+        case 18: return new Error('empty menu');
+        case 19: return new Error('encode: chosen index out of range');
+        case 20: return new Error('trump not in alphabet');
+        case 21: return new Error('replay: malformed encode input');
+        case 22: return new Error('replay: capacity exceeded');
+        default: return new Error(`replay kernel error ${negCode}`);
+    }
+}
+
+function kernelReplayRun(input: Uint8Array, encode: boolean): Uint8Array {
+    const ex = engine();
+    if (input.length > ex.wasm_replay_io_cap()) throw new Error('replay: capacity exceeded');
+    const base = ex.wasm_replay_io_ptr();
+    mem(ex).set(input, base);
+    const r = encode ? ex.wasm_replay_encode(input.length) : ex.wasm_replay_decode(input.length);
+    if (r < 0) throw replayError(r, ex.wasm_replay_error_detail());
+    return mem(ex).slice(base, base + r);
+}
+
+export function kernelReplayEncode(input: Uint8Array): Uint8Array {
+    return kernelReplayRun(input, true);
+}
+
+export function kernelReplayDecode(integerBytes: Uint8Array): Uint8Array {
+    return kernelReplayRun(integerBytes, false);
+}
+
 // Worst-case wire bytes for one exported move: type + n + 2 x MAX_MOVE_CARDS
 // wire cards (cnitro's wasm build pins MAX_MOVE_CARDS=28). The chunk size
 // derives from the kernel's actual IO capacity so the two can't drift apart;
@@ -1026,3 +1113,4 @@ export const __LOG_TYPE_TO_INT: Map<string, number> = new Map(
 );
 export { pooledCard as __pooledCard, MOVE_TYPE as __MOVE_TYPE };
 export { wireLogCard as __wireLogCard, cardFromWire as __cardFromWire };
+export { LOG_TYPE_FROM_INT as __LOG_TYPE_FROM_INT };

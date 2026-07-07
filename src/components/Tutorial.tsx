@@ -415,33 +415,42 @@ const IntroCard = ({ onStart, onSkip }: { onStart: () => void; onSkip: () => voi
 };
 
 /* --------------------------------- root ------------------------------------ */
+const buildTutorialData = async () => {
+    const decoded = await decodeReplay(codeToGame(TUTORIAL_MOVES_CODE));
+    const steps = buildReplaySteps(decoded);
+    const names = TUTORIAL_NAMES.slice(0, decoded.playerCount);
+    const withSelf = mkWithSelf(decoded.powerSuit);
+    const sequences = buildReplaySequences(decoded, steps, GAME_ID, names).map((seq) => ({
+        ...seq,
+        game: withSelf(seq.game as ReplayGameState),
+        events: seq.events.map((e) => ({ ...e, game_state: withSelf(e.game_state as ReplayGameState) })),
+    }));
+    const initial = withSelf(preDealGame(decoded, steps[0], GAME_ID, names) as ReplayGameState);
+    return { decoded, steps, sequences, initial, names };
+};
+
 export const Tutorial = () => {
     const router = useRouter();
     const [mounted, setMounted] = useState(false);
     const [started, setStarted] = useState(false);
     useEffect(() => setMounted(true), []);
 
-    const data = useMemo(() => {
-        if (!mounted) return null;
-        try {
-            const decoded = decodeReplay(codeToGame(TUTORIAL_MOVES_CODE));
-            const steps = buildReplaySteps(decoded);
-            const names = TUTORIAL_NAMES.slice(0, decoded.playerCount);
-            const withSelf = mkWithSelf(decoded.powerSuit);
-            const sequences = buildReplaySequences(decoded, steps, GAME_ID, names).map((seq) => ({
-                ...seq,
-                game: withSelf(seq.game as ReplayGameState),
-                events: seq.events.map((e) => ({ ...e, game_state: withSelf(e.game_state as ReplayGameState) })),
-            }));
-            const initial = withSelf(preDealGame(decoded, steps[0], GAME_ID, names) as ReplayGameState);
-            return { decoded, steps, sequences, initial, names };
-        } catch (e) {
-            console.error('Tutorial decode failed:', e);
-            return null;
-        }
+    // Async: decodeReplay runs in the rules kernel, which the browser must
+    // compile asynchronously. undefined = still decoding, null = failed.
+    const [data, setData] = useState<Awaited<ReturnType<typeof buildTutorialData>> | null | undefined>(undefined);
+    useEffect(() => {
+        if (!mounted) return;
+        let cancelled = false;
+        buildTutorialData()
+            .then((d) => { if (!cancelled) setData(d); })
+            .catch((e) => {
+                console.error('Tutorial decode failed:', e);
+                if (!cancelled) setData(null);
+            });
+        return () => { cancelled = true; };
     }, [mounted]);
 
-    if (!mounted) return null;
+    if (!mounted || data === undefined) return null;
 
     const tutorialAuth = {
         user_id: SELF_ID, username: 'You', loading: false,

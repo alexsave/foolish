@@ -1,4 +1,6 @@
 import { Game, GameLog, LOG_TYPE, Card } from '../types.ts';
+import { canCover } from '../common_utils.ts';
+import { minValueFor } from '../constants.ts';
 
 /**
  * Tracks card locations and probabilities based on game logs
@@ -60,14 +62,11 @@ export class CardTracker {
         return `${card.suit}-${card.value}`;
     }
     
-    /** Get the minimum card value based on total cards in game */
+    /** Get the minimum card value for this game's deck */
     public getMinCardValue(): number {
-        // Calculate total cards from public info
-        // 36 cards = values 5-13 (6-A), 52 cards = values 1-13 (2-A)
-        const totalCards = this.game.discard_pile_length + this.game.deck.length + 
-            (this.game.flipped ? 1 : 0) + 
-            this.game.players.reduce((sum, p) => sum + p.hand.length, 0);
-        return totalCards <= 36 ? 5 : 1;
+        // THE deck rule is player-count based (constants.ts minValueFor,
+        // mirroring the kernel's min_value_for) — not inferred from counts.
+        return minValueFor(this.game.players.length);
     }
     
     private readonly ACE_VALUE = 13;
@@ -250,16 +249,10 @@ export class CardTracker {
         return Math.min(1, canCoverCount * playerHandSize / unknownCards);
     }
     
+    // THE beats rule — delegate to the shared (kernel-parity-policed)
+    // canCover instead of keeping a private re-implementation.
     private canCover(attack: Card, defense: Card): boolean {
-        const trumpSuit = this.game.power_suit;
-        
-        // Trump always beats non-trump
-        if (defense.suit === trumpSuit && attack.suit !== trumpSuit) return true;
-        
-        // Same suit, higher value
-        if (defense.suit === attack.suit && defense.value > attack.value) return true;
-        
-        return false;
+        return canCover(attack, defense, this.game.power_suit);
     }
     
     /**

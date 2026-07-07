@@ -91,7 +91,7 @@ const playOne = async (seed: number): Promise<Game | null> => {
             logs: g.logs,
             flipped: g.flipped,
         };
-        const { encoded } = verifyRoundTrip(input as never);
+        const { encoded } = await verifyRoundTrip(input as never);
         const names = g.players.map(p => p.name!);
         const extras = encodeExtras(names, moveTimesFromLogs(g.logs as never));
         const full = joinReplayCode(encoded.base32, extras);
