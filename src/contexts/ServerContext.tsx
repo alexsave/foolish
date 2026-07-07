@@ -25,28 +25,10 @@ const applyOptimisticOverlay = (g: PersonalGame): void => {
 const ServerActionsContext = createContext<ServerActionsType | null>(null);
 const ServerStateContext = createContext<ServerStateType | null>(null);
 
-const handsQuery =
-    `game_id,
-hand,
-awaiting_attack,
-games!inner (
-    defender,
-    deck_length,
-    first_attacker,
-    flipped,
-    id,
-    name,
-    players,
-    power_suit,
-    status,
-    table_battles,
-    discard_pile_length,
-    updated_at,
-    elimination_order,
-    good_timestamp,
-    good_players,
-    version
-)`;
+// (The old `handsQuery` PostgREST projection is gone: the client no longer
+// reads player_hands/games directly — game state is fetched, already
+// personalized from the packed kernel blob, via the get_game / get_my_games
+// edge functions. See docs/STATE_BLOB_CUTOVER.md.)
 
 // for now we'll just use a fake auth impl
 // this will be kinda similar to client.js
@@ -465,77 +447,42 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
     const loadGameInternal = async (gameId: string): Promise<{ game_id: string }> => {
         try {
-            // First try to get game data if user is a player (only if user_id exists)
-            const user_id = userIdRef.current;
-            if (user_id) {
-                const { data: playerData, error: playerError } = await supabase
-                    .from('player_hands')
-                    .select(handsQuery)
-                    .eq('game_id', gameId)
-                    .eq('player_id', user_id)
-                    .single();
-
-                if (playerError) {
-                }
-
-                if (playerData && !playerError) {
-                    // User is in the game - return personalized data
-                    const game = playerData.games as unknown as PublicGame;
-
-                    const selfPlayer = game.players.find((player) => player.player_id === user_id);
-
-                    if (selfPlayer) {
-                        const personalizedGame: PersonalGame = {
-                            ...game,
-                            self: {
-                                ...selfPlayer,
-                                player_id: user_id,
-                                hand: playerData.hand,
-                                awaiting_attack: playerData.awaiting_attack,
-                                strategy_key: STRATEGY_KEY.HUMAN
-                            }
-                        };
-
-                        // Re-apply the local player's unconfirmed optimistic cards onto
-                        // the authoritative state so a reconnect resync doesn't make a
-                        // just-played card vanish-then-reappear (Q7). No-op on a normal
-                        // load (nothing optimistic pending).
-                        applyOptimisticOverlay(personalizedGame);
-
-                        setGames(prev => ({ ...prev, [gameId]: mergeGameData(gameId, personalizedGame, prev) }));
-                        joinOrSubscribe(personalizedGame);
-
-                        // Trigger bot loop only if there are AI players in the game
-                        // Fire and forget - don't block UI rendering
-                        if (game.players.some(player => player.is_ai)) {
-                            supabase.functions.invoke('action', { body: { game_id: gameId, type: 'bump' } }).catch(botError => {
-                            });
-                        }
-
-                        return { game_id: gameId };
-                    }
-                }
+            // The volatile game state lives in the packed kernel blob, which
+            // only the server unpacks — so fetch the caller's personalized view
+            // from the get_game edge function instead of reading games /
+            // player_hands directly. get_game returns a PersonalGame (with
+            // `self`) if the caller is a player, or a PublicGame if a spectator.
+            const { data, error } = await supabase.functions.invoke('get_game', {
+                body: { game_id: gameId },
+            });
+            // Personalized view: has `self` for a player, no `self` for a
+            // spectator (self stays null). Typed loosely like the old direct
+            // reads — PersonalGame.self is non-null in the type but null at
+            // runtime for spectators.
+            const fetched: any = data;
+            if (error || !fetched || fetched.error) {
+                throw new Error(fetched?.error || `Game ${gameId} not found`);
             }
 
-            // User is not in the game - try to get public game data for spectating
-            const { data: publicData, error: publicError } = await supabase
-                .from('games')
-                .select('*')
-                .eq('id', gameId)
-                .single();
+            const game: PersonalGame = { ...fetched, self: fetched.self ?? null };
 
-            if (publicError) {
-                throw new Error(`Game ${gameId} not found`);
+            if (game.self) {
+                // Re-apply the local player's unconfirmed optimistic cards onto
+                // the authoritative state so a reconnect resync doesn't make a
+                // just-played card vanish-then-reappear (Q7). No-op on a normal
+                // load (nothing optimistic pending).
+                applyOptimisticOverlay(game);
             }
 
-            // Create public game for spectating
-            const publicGame: PersonalGame = {
-                ...publicData,
-                self: null // No self data for spectators
-            };
+            setGames(prev => ({ ...prev, [gameId]: mergeGameData(gameId, game, prev) }));
+            joinOrSubscribe(game);
 
-            setGames(prev => ({ ...prev, [gameId]: mergeGameData(gameId, publicGame, prev) }));
-            joinOrSubscribe(publicGame);
+            // Trigger the bot loop only if the caller is a player in a game with
+            // AI players. Fire and forget - don't block UI rendering.
+            if (game.self && game.players.some(player => player.is_ai)) {
+                supabase.functions.invoke('action', { body: { game_id: gameId, type: 'bump' } }).catch(() => { });
+            }
+
             return { game_id: gameId };
 
         } catch (error) {
@@ -974,36 +921,21 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 return;
             }
 
-            // Direct SQL query that respects RLS policies
-            // Join player_hands (user can only see their own) with games (public data)
-            const { data, error } = await supabase
-                .from('player_hands')
-                .select(handsQuery)
-                .eq('player_id', user_id)
-                .order('games(updated_at)', { ascending: false });
+            // The caller's games, already personalized by the server from each
+            // game's packed blob (get_my_games). player_hands is no longer read
+            // directly — it only serves as the server-side membership index now.
+            const { data, error } = await supabase.functions.invoke('get_my_games', { body: {} });
+            const payload: any = data;
 
-            if (error) {
-                console.error('Error fetching user games:', error);
+            if (error || !payload || payload.error) {
+                console.error('Error fetching user games:', error || payload?.error);
                 return;
             }
 
             const games: { [key: string]: PersonalGame } = {};
-
-            for (const playerHand of data) {
-                try {
-                    // Fuck you I know this will be a public game type
-                    const game = playerHand.games as unknown as PublicGame;
-                    const selfPlayer = game.players.find((player) => player.player_id === user_id);
-                    if (!selfPlayer) {
-                        continue;
-                    }
-                    games[game.id] = {
-                        ...game,
-                        self: { ...selfPlayer, player_id: user_id, hand: playerHand.hand, awaiting_attack: playerHand.awaiting_attack, strategy_key: STRATEGY_KEY.HUMAN }// as unknown as PrivatePlayer
-                    };
-                } catch (gameError) {
-                    // ignore individual game errors
-                }
+            for (const fetched of (payload.games ?? [])) {
+                const game: PersonalGame = { ...fetched, self: fetched.self ?? null };
+                games[game.id] = game;
             }
 
             setGames(prev => ({ ...prev, ...games }));
