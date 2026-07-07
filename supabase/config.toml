@@ -276,3 +276,23 @@ s3_region = "env(S3_REGION)"
 s3_access_key = "env(S3_ACCESS_KEY)"
 # Configures AWS_SECRET_ACCESS_KEY for S3 bucket
 s3_secret_key = "env(S3_SECRET_KEY)"
+
+# bots.wasm ships as a raw gzip static asset (see _shared/wasm/wasm_asset.ts),
+# bundled into each bot-running function by `supabase functions deploy
+# --use-api` (no Docker). rules/guards inflate from gzip+base64 embeds via the
+# vendored _shared/wasm/gunzip.ts (relative import — no import_map needed).
+[functions.action]
+static_files = [ "./functions/_shared/wasm/bots.wasm.gz" ]
+[functions.meta]
+static_files = [ "./functions/_shared/wasm/bots.wasm.gz" ]
+[functions.bot-heartbeat]
+static_files = [ "./functions/_shared/wasm/bots.wasm.gz" ]
+# CI-only: the memory.yml edge-serve job copies e2e/edge_memtest to
+# functions/memtest and drives real bot decisions through the edge runtime.
+# It runs the SAME bot stack, so it needs the same static asset — without
+# this stanza `functions serve` never bundles bots.wasm.gz next to it and
+# every bot move dies with "path not found", which the diagnostic used to
+# swallow into a green 200. The memtest dir never exists at deploy time, so
+# this entry is inert for `functions deploy`.
+[functions.memtest]
+static_files = [ "./functions/_shared/wasm/bots.wasm.gz" ]

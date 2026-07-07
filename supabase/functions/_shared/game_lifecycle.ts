@@ -6,7 +6,7 @@
 
 import { Game, GAME_STATUS, AnimationEvent } from './types.ts';
 import { MAX_PLAYERS } from './constants.ts';
-import { kernelStartGame } from './wasm/engine.ts';
+import { applyKernelStateToGame, kernelStartGame, PackedRunOk, runPackedStart } from './wasm/engine.ts';
 
 // Starts the game with all the animations. The deal/flip/first-attacker
 // rules live in the C kernel (cnitro/src/game.c start_game): player-major
@@ -26,4 +26,22 @@ export const start_game = (game: Game): AnimationEvent[] => {
         throw new Error(`Cannot start a game with ${game.players.length} players (max ${MAX_PLAYERS})`);
     }
     return kernelStartGame(game);
+}
+
+// The packed twin (docs/PACKED_WIRE_CUTOVER.md): the deal already ran in the
+// kernel; now its outputs stay bytes too — durable blob, masked log records,
+// per-viewer DEAL/FLIPPED event streams — instead of JS AnimationEvents the
+// TS encoder would re-pack. `game` is updated in place from the kernel state.
+// Only for callers whose recipients already know the ROSTER (handleStart's
+// all-ready branch); a start bundled with a roster change (add-bot
+// auto-start) stays on the JS path, whose broadcast carries the
+// self-describing roster extras.
+export const start_game_packed = (game: Game): PackedRunOk => {
+    if (game.players.length > MAX_PLAYERS) {
+        throw new Error(`Cannot start a game with ${game.players.length} players (max ${MAX_PLAYERS})`);
+    }
+    const humanSeats = game.players.map((_, i) => i).filter(i => !game.players[i].is_ai);
+    const run = runPackedStart(game, humanSeats);
+    applyKernelStateToGame(game, run.post, null);
+    return run;
 }

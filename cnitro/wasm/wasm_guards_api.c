@@ -16,6 +16,8 @@
 
 #include "game.h"
 #include "wire.h"
+#include "view.h"
+#include "awire.h"
 
 // ---------- minimal libc ------------------------------------------------
 void *memcpy(void *dst, const void *src, size_t n) { __builtin_memcpy(dst, src, n); return dst; }
@@ -70,100 +72,33 @@ void wasm_set_seed(unsigned int s) { game_set_seed(s); }
 int wasm_reject_reason(void) { return engine_last_reject; }
 
 // ---------- state (de)serialization ---------------------------------------
-// Byte layout MUST match wasm/wasm_api.c put_state/get_state and the TS
-// marshalGame/readState in engine.ts. See wasm_api.c for the field-by-field
-// documentation.
+// Byte layout MUST match wasm/wasm_api.c and the TS marshalGame/readState in
+// engine.ts — guaranteed by construction now: both bridges call the single
+// implementation in src/view.c. See wasm_api.c for the field-by-field doc.
 
 static int put_state(const Game *g, unsigned char *p) {
-    unsigned char *q = p;
-    *q++ = (unsigned char)g->status;
-    *q++ = (unsigned char)g->num_players;
-    *q++ = (unsigned char)g->power_suit;
-    *q++ = (unsigned char)g->first_attacker;
-    *q++ = (unsigned char)g->defender;
-    *q++ = (unsigned char)(g->discard_pile_length & 0xff);
-    *q++ = (unsigned char)((g->discard_pile_length >> 8) & 0xff);
-    *q++ = (unsigned char)(g->has_flipped ? 1 : 0);
-    *q++ = wire_from_card(g->flipped);
-    *q++ = (unsigned char)(g->good_players_mask & 0xff);
-    *q++ = (unsigned char)((g->good_players_mask >> 8) & 0xff);
-    *q++ = (unsigned char)((g->good_players_mask >> 16) & 0xff);
-    *q++ = (unsigned char)((g->good_players_mask >> 24) & 0xff);
-    *q++ = (unsigned char)(g->has_good_timestamp ? 1 : 0);
-    *q++ = (unsigned char)(g->deck_count & 0xff);
-    *q++ = (unsigned char)((g->deck_count >> 8) & 0xff);
-    for (int i = 0; i < g->deck_count; i++) *q++ = wire_from_card(g->deck[i]);
-    *q++ = (unsigned char)g->num_battles;
-    for (int i = 0; i < g->num_battles; i++) {
-        const Battle *b = &g->table_battles[i];
-        *q++ = wire_from_card(b->attack);
-        *q++ = wire_from_card(b->defense);
-    }
-    for (int i = 0; i < g->num_players; i++) {
-        const Player *pl = &g->players[i];
-        *q++ = (unsigned char)pl->status;
-        *q++ = (unsigned char)(pl->awaiting_attack ? 1 : 0);
-        *q++ = (unsigned char)pl->hand_count;
-        for (int j = 0; j < pl->hand_count; j++) *q++ = wire_from_card(pl->hand[j]);
-    }
-    *q++ = (unsigned char)g->num_eliminated;
-    for (int i = 0; i < g->num_eliminated; i++) *q++ = (unsigned char)g->elimination_order[i];
-    return (int)(q - p);
+    return state_put(g, VIEW_UNMASKED, p);
 }
 
 static void get_state(Game *g, const unsigned char *p) {
-    const unsigned char *q = p;
-    g->status = (int8_t)*q++;
-    g->num_players = (int8_t)*q++;
-    if (g->num_players < 0) g->num_players = 0;
-    if (g->num_players > MAX_PLAYERS) g->num_players = MAX_PLAYERS;
-    g->power_suit = (int8_t)*q++;
-    g->first_attacker = (int8_t)*q++;
-    g->defender = (int8_t)*q++;
-    g->discard_pile_length = (int16_t)(q[0] | (q[1] << 8)); q += 2;
-    g->has_flipped = (*q++ != 0);
-    {
-        unsigned char fw = *q++;
-        if (g->has_flipped) g->flipped = card_from_wire_state(fw);
-        else { g->flipped.suit = 0; g->flipped.value = 0; }
-    }
-    g->good_players_mask = (uint32_t)q[0] | ((uint32_t)q[1] << 8)
-        | ((uint32_t)q[2] << 16) | ((uint32_t)q[3] << 24);
-    q += 4;
-    g->has_good_timestamp = (*q++ != 0);
-    g->deck_count = (int16_t)(q[0] | (q[1] << 8)); q += 2;
-    if (g->deck_count < 0) g->deck_count = 0;
-    if (g->deck_count > MAX_DECK) g->deck_count = MAX_DECK;
-    for (int i = 0; i < g->deck_count; i++) g->deck[i] = card_from_wire_state(*q++);
-    g->num_battles = (int8_t)*q++;
-    if (g->num_battles < 0) g->num_battles = 0;
-    if (g->num_battles > MAX_BATTLES) g->num_battles = MAX_BATTLES;
-    for (int i = 0; i < g->num_battles; i++) {
-        Battle *b = &g->table_battles[i];
-        b->attack = card_from_wire_state(*q++);
-        unsigned char db = *q++;
-        b->defense = (db == WIRE_CARD_NONE) ? CARD_NONE : card_from_wire_state(db);
-    }
-    for (int i = 0; i < g->num_players; i++) {
-        Player *pl = &g->players[i];
-        pl->status = (int8_t)*q++;
-        pl->awaiting_attack = (*q++ != 0);
-        pl->hand_count = (int8_t)*q++;
-        if (pl->hand_count < 0) pl->hand_count = 0;
-        if (pl->hand_count > MAX_HAND_SIZE) pl->hand_count = MAX_HAND_SIZE;
-        for (int j = 0; j < pl->hand_count; j++) pl->hand[j] = card_from_wire_state(*q++);
-    }
-    g->num_eliminated = (int8_t)*q++;
-    if (g->num_eliminated < 0) g->num_eliminated = 0;
-    if (g->num_eliminated > MAX_PLAYERS) g->num_eliminated = MAX_PLAYERS;
-    for (int i = 0; i < g->num_eliminated; i++) g->elimination_order[i] = (int8_t)*q++;
-    g->num_logs = 0;
-    g->log_cap = 0;
-    g->log_virt = 0;
+    state_get(g, p, 0);
 }
 
 void wasm_import_state(void) { get_state(&g_game, g_io); }
 int  wasm_export_state(void) { return put_state(&g_game, g_io); }
+
+// Import a server-produced MASKED view blob ([VIEW_FORMAT_VERSION | viewer |
+// masked put_state], docs/PACKED_WIRE_CUTOVER.md) as the resident game —
+// hidden cards decode to the same {0,1} placeholder the JS marshal always
+// wrote for redacted cards, so gates behave identically either way. Returns
+// 1 on success, 0 on an unknown version byte (caller must treat the blob as
+// unreadable, never as an empty game).
+int wasm_import_view(int len) {
+    if (len < 2) return 0;
+    if (g_io[0] != VIEW_FORMAT_VERSION) return 0;
+    state_get(&g_game, g_io + 2, 1);
+    return 1;
+}
 
 // ---------- logs (for optimistic-apply animation events) --------------------
 int wasm_export_logs(void) {
@@ -234,6 +169,25 @@ int wasm_validate_pass(int player_idx, int n_cards) {
 int wasm_validate_pickup(int player_idx) { return validate_run(3, player_idx, 0); }
 int wasm_validate_good(int player_idx)   { return validate_run(4, player_idx, 0); }
 
+// ---------- action wire (the packed request body) ----------------------------
+// The browser builds ONE awire buffer per move (src/awire.h) and uses it for
+// the local gate, the optimistic apply, AND the POST body — the bytes the
+// server kernel applies are bit-identical to the bytes validated here.
+// AWIRE_* kinds deliberately match validate_run's kind codes.
+
+// Returns 0 legal, ENGINE_REJECT_* code, or -1 malformed wire.
+int wasm_validate_action(int player_idx, int wire_len) {
+    AwireAction a;
+    if (wire_len < 0 || wire_len > MAX_IN_CARDS) return -1;
+    if (!awire_decode(g_in_raw_a, wire_len, &a)) return -1;
+    memcpy(g_in_a, a.cards, sizeof(Card) * (size_t)a.n);
+    memcpy(g_in_b, a.attacks, sizeof(Card) * (size_t)a.n);
+    return validate_run(a.kind, player_idx, a.n);
+}
+
+// The optimistic apply from the same wire lives after begin_action below
+// (wasm_apply_action).
+
 // ---------- apply (optimistic prediction) -----------------------------------
 // Mutate the resident game; the caller then reads wasm_export_state (predicted
 // state), wasm_export_logs and the snapshots (animation events). Returns 1 on
@@ -259,6 +213,25 @@ int wasm_pass(int player_idx, int n_cards) {
 }
 int wasm_pickup(int player_idx) { begin_action(); return handle_pickup(&g_game, player_idx) ? 1 : 0; }
 int wasm_good(int player_idx)   { begin_action(); return handle_good(&g_game, player_idx) ? 1 : 0; }
+
+// Optimistic apply from an awire buffer (input buffer A) — the same bytes
+// wasm_validate_action gated and the POST body carries. Returns 1 applied,
+// 0 rejected, -1 malformed (resident state untouched on a clean early
+// reject).
+int wasm_apply_action(int player_idx, int wire_len) {
+    AwireAction a;
+    if (wire_len < 0 || wire_len > MAX_IN_CARDS) return -1;
+    if (!awire_decode(g_in_raw_a, wire_len, &a)) return -1;
+    begin_action();
+    switch (a.kind) {
+        case AWIRE_ATTACK: return handle_attack(&g_game, player_idx, a.cards, a.n) ? 1 : 0;
+        case AWIRE_COVER:  return handle_cover(&g_game, player_idx, a.cards, a.attacks, a.n) ? 1 : 0;
+        case AWIRE_PASS:   return handle_pass(&g_game, player_idx, a.cards, a.n) ? 1 : 0;
+        case AWIRE_PICKUP: return handle_pickup(&g_game, player_idx) ? 1 : 0;
+        case AWIRE_GOOD:   return handle_good(&g_game, player_idx) ? 1 : 0;
+        default:           return -1;
+    }
+}
 
 // ---------- pure projections (the ex-TS duplicates) -------------------------
 int wasm_game_done(void)   { return game_done(&g_game); }

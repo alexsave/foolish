@@ -21,6 +21,9 @@
 
 import { Card, PersonalGame, PublicPlayer, GAME_STATUS, PLAYER_STATUS } from '@shared/types.ts';
 import { takeGUARDS_WASM_B64 } from '@shared/wasm/guards_wasm.ts';
+// guards embed is gzip+base64 (embed.mjs --gzip); a vendored sync pure-JS
+// gunzip inflates it in the browser and keeps the sync instantiate path.
+import { gunzip } from '@shared/wasm/gunzip.ts';
 
 // ENGINE_REJECT_* — must match cnitro/src/game.h. 0 == legal.
 const REJECT_NONE = 0;
@@ -37,12 +40,16 @@ interface GuardsExports {
   wasm_validate_cover(seat: number, n: number): number;
   wasm_validate_pass(seat: number, n: number): number;
   wasm_validate_pickup(seat: number): number;
-  wasm_validate_good(seat: number): number;
   wasm_attack(seat: number, n: number): number;
   wasm_cover(seat: number, n: number): number;
   wasm_pass(seat: number, n: number): number;
   wasm_pickup(seat: number): number;
-  wasm_good(seat: number): number;
+  // Action-wire VALIDATE entry (docs/PACKED_WIRE_CUTOVER.md): reads the awire
+  // bytes from the cards_a buffer. 0 legal | ENGINE_REJECT_* | -1 malformed.
+  // It judges all five move kinds, so there's no separate wasm_validate_good.
+  // (The awire APPLY entry wasm_apply_action + wasm_good are not exported by
+  // the guards build — no caller reaches them; see the Makefile export list.)
+  wasm_validate_action(seat: number, wireLen: number): number;
   wasm_next_player(cur: number): number;
   wasm_game_done(): number;
   wasm_can_cover(as: number, av: number, ds: number, dv: number, ps: number): number;
@@ -75,7 +82,7 @@ const WIRE_NONE = 0xff;
 const PLACEHOLDER = 0; // any real card; content is irrelevant for a redacted seat/deck
 
 function guardsBytes(): Uint8Array {
-  if (!pendingBytes) pendingBytes = decodeB64(takeGUARDS_WASM_B64());
+  if (!pendingBytes) pendingBytes = gunzip(decodeB64(takeGUARDS_WASM_B64()));
   return pendingBytes;
 }
 
@@ -285,6 +292,26 @@ export interface OptimisticMove {
   type: 'attack' | 'cover' | 'pass' | 'pickup';
   cards?: Card[];
   attack_cards?: Card[];
+}
+
+// -------------------------------------------------------------------------
+// Wire-based entry points. The client builds ONE awire buffer per move
+// (@shared/wire/awire.ts encodeAction) and uses it for the gate, the
+// optimistic apply AND the POST body — the kernel judging the move here
+// decodes the exact bytes the server kernel will apply.
+// -------------------------------------------------------------------------
+
+// 0 = legal; else the ENGINE_REJECT_* code, or -1 for a malformed wire. The
+// awire APPLY counterpart (applyMoveWire → wasm_apply_action) was removed with
+// its export: no caller reached it, and optimistic apply goes through the
+// per-move applyMove below (kernel) / the TS overlay (prod). Revive it by
+// re-exporting wasm_apply_action in the Makefile if the client ever moves the
+// optimistic overlay onto the awire path.
+export function validateActionWire(g: PersonalGame, wire: Uint8Array): number {
+  const e = ensure();
+  marshal(g);
+  bytes().set(wire, e.wasm_cards_a_ptr());
+  return e.wasm_validate_action(seatOfSelf(g), wire.length);
 }
 
 export function applyMove(g: PersonalGame, move: OptimisticMove): PersonalGame | null {

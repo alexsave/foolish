@@ -4,6 +4,7 @@ import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { getAuthenticatedUser } from "../_shared/auth.ts";
 import { loadCompleteGame } from "../_shared/utils.ts";
 import { personalize_game } from "../_shared/common_utils.ts";
+import { encodeGamesList, GamesListEntry } from "../_shared/wire/view.ts";
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
 // Read-only list of the caller's games, personalized. Replaces the client's
@@ -38,8 +39,42 @@ serve(async (req: Request): Promise<Response> => {
             .map((r: any) => r.game_id)
             .filter((id: string) => (seen.has(id) ? false : (seen.add(id), true)));
 
-        // Each game reconstructs from its blob; a game that fails to load (mid
-        // teardown, etc.) is skipped rather than failing the whole list.
+        let body: any = {};
+        try { body = await req.json(); } catch { /* empty body */ }
+
+        // Packed list (docs/PACKED_WIRE_CUTOVER.md): each dealt game rides as
+        // the caller's kernel-masked view blob; lobbies/legacy rows as
+        // byte-wrapped personalize_game JSON. One binary response, decoded at
+        // the client's render boundary.
+        if (body.packed) {
+            const { buildPackedGameBytes } = await import('../_shared/packed_game.ts');
+            const entries: GamesListEntry[] = [];
+            for (const id of gameIds) {
+                try {
+                    const { data: row, error: rowErr } = await supabaseClient
+                        .from('games')
+                        .select('id, name, status, version, state, players, good_players, good_timestamp')
+                        .eq('id', id).single();
+                    if (rowErr || !row) continue;
+                    const packed = await buildPackedGameBytes(row, user.id);
+                    if (packed) {
+                        entries.push({ kind: 1, bytes: packed });
+                    } else {
+                        const json = personalize_game(await loadCompleteGame(id), user.id);
+                        entries.push({ kind: 0, bytes: new TextEncoder().encode(JSON.stringify(json)) });
+                    }
+                } catch (e) {
+                    console.error(`[get_my_games] skipping ${id}:`, (e as Error).message);
+                }
+            }
+            return new Response(encodeGamesList(entries) as unknown as BodyInit, {
+                headers: { ...corsHeaders, 'Content-Type': 'application/octet-stream' },
+            });
+        }
+
+        // Legacy JSON list. Each game reconstructs from its blob; a game that
+        // fails to load (mid teardown, etc.) is skipped rather than failing
+        // the whole list.
         const games = [];
         for (const id of gameIds) {
             try {

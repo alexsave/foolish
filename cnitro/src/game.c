@@ -379,6 +379,25 @@ static bool table_has_value(const Game *g, int v) {
     return false;
 }
 
+// Shared move-validation predicates. Pure (no state mutation, no reject
+// side-effect): each handler keeps its own REJECT at its own call site, so
+// the per-handler reject-code ORDER — a tested parity contract vs the old TS
+// validators — is untouched. Factored out so attack/cover/pass don't each
+// inline their own copy of these sweeps (-Oz keeps them as one shared func).
+static bool all_in_hand(const Player *p, const Card *c, int n) {
+    for (int i = 0; i < n; i++) if (!hand_contains(p, c[i])) return false;
+    return true;
+}
+static bool has_dup(const Card *c, int n) {
+    for (int i = 0; i < n; i++)
+        for (int j = i + 1; j < n; j++) if (card_eq(c[i], c[j])) return true;
+    return false;
+}
+static bool all_same_value(const Card *c, int n) {
+    for (int i = 1; i < n; i++) if (c[i].value != c[0].value) return false;
+    return true;
+}
+
 bool handle_attack(Game *g, int player_idx, const Card *cards, int n_cards) {
     engine_last_reject = ENGINE_REJECT_NONE;
     if (n_cards <= 0) REJECT(ENGINE_REJECT_EMPTY);
@@ -389,16 +408,12 @@ bool handle_attack(Game *g, int player_idx, const Card *cards, int n_cards) {
     // first, then the duplicate sweep, so multi-fault inputs reject for the
     // same reason on both engines.
     Player *p = &g->players[player_idx];
-    for (int i = 0; i < n_cards; i++) {
-        if (!hand_contains(p, cards[i])) REJECT(ENGINE_REJECT_NOT_IN_HAND);
-    }
-    for (int i = 0; i < n_cards; i++) {
-        for (int j = i + 1; j < n_cards; j++) if (card_eq(cards[i], cards[j])) REJECT(ENGINE_REJECT_DUPLICATES);
-    }
+    if (!all_in_hand(p, cards, n_cards)) REJECT(ENGINE_REJECT_NOT_IN_HAND);
+    if (has_dup(cards, n_cards)) REJECT(ENGINE_REJECT_DUPLICATES);
 
     bool first_attack = (g->num_battles == 0);
     if (first_attack) {
-        for (int i = 1; i < n_cards; i++) if (cards[i].value != cards[0].value) REJECT(ENGINE_REJECT_NOT_SAME_VALUE);
+        if (!all_same_value(cards, n_cards)) REJECT(ENGINE_REJECT_NOT_SAME_VALUE);
         if (player_idx != g->first_attacker) REJECT(ENGINE_REJECT_NOT_FIRST_ATTACKER);
     } else {
         for (int i = 0; i < n_cards; i++) {
@@ -462,12 +477,8 @@ bool handle_cover(Game *g, int player_idx,
     if (player_idx != g->defender) REJECT(ENGINE_REJECT_NOT_DEFENDER);
 
     Player *def = &g->players[player_idx];
-    for (int i = 0; i < n; i++) {
-        if (!hand_contains(def, cover_cards[i])) REJECT(ENGINE_REJECT_NOT_IN_HAND);
-    }
-    for (int i = 0; i < n; i++) {
-        for (int j = i + 1; j < n; j++) if (card_eq(cover_cards[i], cover_cards[j])) REJECT(ENGINE_REJECT_DUPLICATES);
-    }
+    if (!all_in_hand(def, cover_cards, n)) REJECT(ENGINE_REJECT_NOT_IN_HAND);
+    if (has_dup(cover_cards, n)) REJECT(ENGINE_REJECT_DUPLICATES);
 
     // Each attack card must be on the table & uncovered — matched by EXACT
     // card (suit+value), not just value. The value-only lookup let a request
@@ -484,9 +495,7 @@ bool handle_cover(Game *g, int player_idx,
         }
         if (!found) REJECT(ENGINE_REJECT_ATTACK_NOT_ON_TABLE);
     }
-    for (int i = 0; i < n; i++) {
-        for (int j = i + 1; j < n; j++) if (card_eq(attack_cards[i], attack_cards[j])) REJECT(ENGINE_REJECT_DUPLICATES);
-    }
+    if (has_dup(attack_cards, n)) REJECT(ENGINE_REJECT_DUPLICATES);
     for (int i = 0; i < n; i++) {
         if (!can_cover(attack_cards[i], cover_cards[i], g->power_suit)) REJECT(ENGINE_REJECT_CANNOT_COVER);
     }
@@ -579,16 +588,12 @@ bool handle_pass(Game *g, int player_idx, const Card *cards, int n_cards) {
     // TS validatePass priority: same-value → duplicates → defender →
     // in-hand → table-nonempty → cover-present → values-match → capacity.
     int v = cards[0].value;
-    for (int i = 1; i < n_cards; i++) if (cards[i].value != v) REJECT(ENGINE_REJECT_NOT_SAME_VALUE);
-    for (int i = 0; i < n_cards; i++) {
-        for (int j = i + 1; j < n_cards; j++) if (card_eq(cards[i], cards[j])) REJECT(ENGINE_REJECT_DUPLICATES);
-    }
+    if (!all_same_value(cards, n_cards)) REJECT(ENGINE_REJECT_NOT_SAME_VALUE);
+    if (has_dup(cards, n_cards)) REJECT(ENGINE_REJECT_DUPLICATES);
     if (player_idx != g->defender) REJECT(ENGINE_REJECT_NOT_DEFENDER);
 
     Player *def = &g->players[player_idx];
-    for (int i = 0; i < n_cards; i++) {
-        if (!hand_contains(def, cards[i])) REJECT(ENGINE_REJECT_NOT_IN_HAND);
-    }
+    if (!all_in_hand(def, cards, n_cards)) REJECT(ENGINE_REJECT_NOT_IN_HAND);
     if (g->num_battles == 0) REJECT(ENGINE_REJECT_NO_TABLE_CARDS);
     for (int i = 0; i < g->num_battles; i++) if (!card_is_none(g->table_battles[i].defense)) REJECT(ENGINE_REJECT_COVER_PRESENT);
     for (int i = 0; i < g->num_battles; i++) if (g->table_battles[i].attack.value != v) REJECT(ENGINE_REJECT_PASS_VALUES);

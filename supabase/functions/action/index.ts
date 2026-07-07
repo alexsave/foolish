@@ -1,12 +1,39 @@
-import { wrap400, ExecutionParams } from "../_shared/utils.ts";
+import { wrap400, ExecutionParams, scheduleBotLoop } from "../_shared/utils.ts";
 import { handleAttack } from "../_shared/actions/attack.ts";
 import { handleCover } from "../_shared/actions/cover.ts";
 import { handlePass } from "../_shared/actions/pass.ts";
 import { handlePickup } from "../_shared/actions/pickup.ts";
 import { handleGood } from "../_shared/actions/good.ts";
 import { verify_player_in_game } from "../_shared/common_utils.ts";
+import { corsHeaders } from "../_shared/cors.ts";
+import { GAME_STATUS } from "../_shared/types.ts";
+import { ACTION_STATUS, decodeActionRequest, encodeActionResponse } from "../_shared/wire/awire.ts";
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
+
+// Packed fast path (docs/PACKED_WIRE_CUTOVER.md): the request body is the
+// binary envelope [fmt | gid_len | game id | action wire] — the exact wire
+// the client's guards.wasm validated. No JSON anywhere: the response is
+// [fmt | status | reject_code | u32 version].
+const packedAction = async (req: Request, user: { id: string }, reqId: string): Promise<Response> => {
+    const body = new Uint8Array(await req.arrayBuffer());
+    const parsed = decodeActionRequest(body);
+    if (!parsed) {
+        return new Response(JSON.stringify({ error: 'malformed action request' }), {
+            status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+    }
+    const { executePackedAction } = await import('../_shared/packed_action.ts');
+    const out = await executePackedAction(parsed.gameId, user.id, parsed.wire, reqId);
+    // Same bot nudge as the JSON path: an APPLIED human move wakes the bots.
+    // (A rejection never did on the legacy path — it threw before run_bots.)
+    if (out.status === ACTION_STATUS.APPLIED && out.gameStatus === GAME_STATUS.PLAYING) {
+        scheduleBotLoop(parsed.gameId, reqId);
+    }
+    return new Response(encodeActionResponse(out.status, out.rejectCode, out.version) as unknown as BodyInit, {
+        headers: { ...corsHeaders, 'Content-Type': 'application/octet-stream' },
+    });
+};
 
 // Unified game endpoint. Replaces the five per-move edge functions (attack /
 // cover / pass / pickup / good) AND the standalone bot_bump function with ONE
@@ -54,4 +81,4 @@ wrap400(async ({ user, body, game }: ExecutionParams) => {
     }
 
     return { game, events };
-}, true, true); // run_bots=true; mootIfGameOver=true (a move that lost the end-game race is a no-op, not a 400)
+}, true, true, packedAction); // run_bots=true; mootIfGameOver=true (a move that lost the end-game race is a no-op, not a 400)

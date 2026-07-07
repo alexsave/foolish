@@ -17,6 +17,9 @@
 #include "wire.h"
 #include "legal.h"
 #include "replay.h"
+#include "view.h"
+#include "awire.h"
+#include "evwire.h"
 
 // ---------- minimal libc ------------------------------------------------
 
@@ -118,112 +121,17 @@ int wasm_reject_reason(void) { return engine_last_reject; }
 //   u8  num_battles,  num_battles x (u8 attack, u8 defense; 0xFF = uncovered)
 //   num_players x (u8 status, u8 awaiting, u8 hand_count, hand x u8 wire-card)
 //   u8  num_eliminated, num_eliminated x i8
+//
+// The implementation is single-sourced in src/view.c (state_put/state_get),
+// shared with the guards bridge and with the per-viewer MASKED serialization
+// (deck + other hands as WIRE_CARD_HIDDEN) the packed wire pipeline uses.
 
 static int put_state(const Game *g, unsigned char *p) {
-    unsigned char *q = p;
-    *q++ = (unsigned char)g->status;
-    *q++ = (unsigned char)g->num_players;
-    *q++ = (unsigned char)g->power_suit;
-    *q++ = (unsigned char)g->first_attacker;
-    *q++ = (unsigned char)g->defender;
-    *q++ = (unsigned char)(g->discard_pile_length & 0xff);
-    *q++ = (unsigned char)((g->discard_pile_length >> 8) & 0xff);
-    *q++ = (unsigned char)(g->has_flipped ? 1 : 0);
-    *q++ = wire_from_card(g->flipped);
-    *q++ = (unsigned char)(g->good_players_mask & 0xff);
-    *q++ = (unsigned char)((g->good_players_mask >> 8) & 0xff);
-    *q++ = (unsigned char)((g->good_players_mask >> 16) & 0xff);
-    *q++ = (unsigned char)((g->good_players_mask >> 24) & 0xff);
-    *q++ = (unsigned char)(g->has_good_timestamp ? 1 : 0);
-    *q++ = (unsigned char)(g->deck_count & 0xff);
-    *q++ = (unsigned char)((g->deck_count >> 8) & 0xff);
-    for (int i = 0; i < g->deck_count; i++) *q++ = wire_from_card(g->deck[i]);
-    *q++ = (unsigned char)g->num_battles;
-    for (int i = 0; i < g->num_battles; i++) {
-        const Battle *b = &g->table_battles[i];
-        *q++ = wire_from_card(b->attack);
-        *q++ = wire_from_card(b->defense);
-    }
-    for (int i = 0; i < g->num_players; i++) {
-        const Player *pl = &g->players[i];
-        *q++ = (unsigned char)pl->status;
-        *q++ = (unsigned char)(pl->awaiting_attack ? 1 : 0);
-        *q++ = (unsigned char)pl->hand_count;
-        for (int j = 0; j < pl->hand_count; j++) *q++ = wire_from_card(pl->hand[j]);
-    }
-    *q++ = (unsigned char)g->num_eliminated;
-    for (int i = 0; i < g->num_eliminated; i++) *q++ = (unsigned char)g->elimination_order[i];
-    return (int)(q - p);
+    return state_put(g, VIEW_UNMASKED, p);
 }
 
 static void get_state(Game *g, const unsigned char *p) {
-    const unsigned char *q = p;
-    // No full-struct memset: the Game is ~200 KB (mostly log capacity) and
-    // every read in the kernel is bounded by the counts set below, so
-    // clearing the unused array tails would only burn time. num_logs is
-    // reset at the end.
-    g->status = (int8_t)*q++;
-    g->num_players = (int8_t)*q++;
-    // Defense-in-depth: every count below is used directly as a loop bound
-    // into a fixed-size array. The TS layer only ever marshals valid states,
-    // but the kernel is the single source of truth and must never corrupt
-    // memory on a malformed/corrupt input — clamp each count to its array
-    // capacity. Off the hot path (get_state runs once per marshal, not in
-    // the rollout, which clones the already-imported game).
-    if (g->num_players < 0) g->num_players = 0;
-    if (g->num_players > MAX_PLAYERS) g->num_players = MAX_PLAYERS;
-    g->power_suit = (int8_t)*q++;
-    g->first_attacker = (int8_t)*q++;
-    g->defender = (int8_t)*q++;
-    g->discard_pile_length = (int16_t)(q[0] | (q[1] << 8)); q += 2;
-    g->has_flipped = (*q++ != 0);
-    // When there is no flip (TS flipped === null), the old 2-byte wire left
-    // g->flipped as the unclamped {0,0} bytes — and semtex-family belief code
-    // reads g->flipped unguarded when the flip log is reached after the card
-    // was drawn, where {0,0} acts as a harmless never-matches pin. Preserve
-    // that exact value; card_from_wire_state can only produce real cards.
-    {
-        unsigned char fw = *q++;
-        if (g->has_flipped) g->flipped = card_from_wire_state(fw);
-        else { g->flipped.suit = 0; g->flipped.value = 0; }
-    }
-    g->good_players_mask = (uint32_t)q[0] | ((uint32_t)q[1] << 8)
-        | ((uint32_t)q[2] << 16) | ((uint32_t)q[3] << 24);
-    q += 4;
-    g->has_good_timestamp = (*q++ != 0);
-    g->deck_count = (int16_t)(q[0] | (q[1] << 8)); q += 2;
-    if (g->deck_count < 0) g->deck_count = 0;
-    if (g->deck_count > MAX_DECK) g->deck_count = MAX_DECK;
-    for (int i = 0; i < g->deck_count; i++) g->deck[i] = card_from_wire_state(*q++);
-    g->num_battles = (int8_t)*q++;
-    if (g->num_battles < 0) g->num_battles = 0;
-    if (g->num_battles > MAX_BATTLES) g->num_battles = MAX_BATTLES;
-    for (int i = 0; i < g->num_battles; i++) {
-        Battle *b = &g->table_battles[i];
-        b->attack = card_from_wire_state(*q++);
-        unsigned char db = *q++;
-        b->defense = (db == WIRE_CARD_NONE) ? CARD_NONE : card_from_wire_state(db);
-    }
-    for (int i = 0; i < g->num_players; i++) {
-        Player *pl = &g->players[i];
-        pl->status = (int8_t)*q++;
-        pl->awaiting_attack = (*q++ != 0);
-        pl->hand_count = (int8_t)*q++;
-        if (pl->hand_count < 0) pl->hand_count = 0;
-        if (pl->hand_count > MAX_HAND_SIZE) pl->hand_count = MAX_HAND_SIZE;
-        for (int j = 0; j < pl->hand_count; j++) {
-            pl->hand[j] = card_from_wire_state(*q++);
-        }
-    }
-    g->num_eliminated = (int8_t)*q++;
-    if (g->num_eliminated < 0) g->num_eliminated = 0;
-    if (g->num_eliminated > MAX_PLAYERS) g->num_eliminated = MAX_PLAYERS;
-    for (int i = 0; i < g->num_eliminated; i++) g->elimination_order[i] = (int8_t)*q++;
-    g->num_logs = 0;
-    // The resident game always has a full-size log array; only sampled-world
-    // slots ever set log_cap (see game.h). Re-pin defensively per marshal.
-    g->log_cap = 0;
-    g->log_virt = 0;
+    state_get(g, p, 0);
 }
 
 // TS -> C: parse the IO buffer into the working game.
@@ -276,24 +184,45 @@ int wasm_state_format_version(void) { return STATE_FORMAT_VERSION; }
 // u8 num_pairs, num_pairs x (u8 primary, u8 target) — wire cards, target
 // 0xFF when the pair has none, 0xFE for the hidden card
 
-int wasm_export_logs(void) {
+// Pre-action flip state, captured by begin_action for the DRAW-privacy rule.
+static Card g_pre_flip;
+static int g_pre_has_flip;
+
+static int export_logs(int mask_draws) {
+    // The DRAW-privacy rule (the TS appendLogs convention, now kernel-side):
+    // drawn-card identities are hidden EXCEPT the flipped trump, whose draw
+    // is public. "The flip was drawn during this action" is the pre-action
+    // has_flipped (captured by begin_action) going false.
+    const int flip_drawn = g_pre_has_flip && !g_game.has_flipped;
     unsigned char *q = g_io;
     *q++ = (unsigned char)(g_game.num_logs & 0xff);
     *q++ = (unsigned char)((g_game.num_logs >> 8) & 0xff);
     for (int i = 0; i < g_game.num_logs; i++) {
         const GameLog *l = &g_game.logs[i];
+        const int hide = mask_draws && l->log_type == LOG_DRAW;
         *q++ = (unsigned char)l->log_type;
         *q++ = (unsigned char)l->player_idx;
         *q++ = (unsigned char)l->defender_index;
         *q++ = (unsigned char)l->num_pairs;
         for (int j = 0; j < l->num_pairs; j++) {
             const LogPair *pr = &l->pairs[j];
-            *q++ = wire_from_card(pr->primary);
+            if (hide && !(flip_drawn && card_eq(pr->primary, g_pre_flip))) {
+                *q++ = (unsigned char)WIRE_CARD_HIDDEN;
+            } else {
+                *q++ = wire_from_card(pr->primary);
+            }
             *q++ = wire_from_card(pr->target);
         }
     }
     return (int)(q - g_io);
 }
+
+int wasm_export_logs(void) { return export_logs(0); }
+
+// The durable/session variant: what leaves the kernel for storage and (via
+// the packed session log) other players' belief imports — draw identities
+// masked per the rule above. See docs/PACKED_WIRE_CUTOVER.md.
+int wasm_export_logs_masked(void) { return export_logs(1); }
 
 // ---------- snapshots -------------------------------------------------------
 
@@ -309,7 +238,11 @@ int wasm_export_snapshot(int i) {
 // Cards are read from the input buffers (byte pairs). Each action clears the
 // snapshot buffer first; on success the caller reads state/logs/snapshots.
 
-static void begin_action(void) { g_n_snaps = 0; }
+static void begin_action(void) {
+    g_n_snaps = 0;
+    g_pre_flip = g_game.flipped;
+    g_pre_has_flip = g_game.has_flipped ? 1 : 0;
+}
 
 int wasm_start_game(void) {
     begin_action();
@@ -355,6 +288,94 @@ int wasm_transition(void) {
 int wasm_refill(void) {
     begin_action();
     engine_run_refill(&g_game);
+    return 1;
+}
+
+// ---------- packed wire pipeline (docs/PACKED_WIRE_CUTOVER.md) --------------
+//
+// One call per client move: the action-wire bytes the browser validated with
+// guards.wasm are applied verbatim. Wire is read from input buffer A (it is
+// at most 2 + 2*AWIRE_MAX_CARDS = 58 bytes, well under MAX_IN_CARDS).
+// Returns 1 applied, 0 rejected (wasm_reject_reason), -1 malformed wire.
+int wasm_apply_action(int player_idx, int wire_len) {
+    AwireAction a;
+    if (wire_len < 0 || wire_len > MAX_IN_CARDS) return -1;
+    if (!awire_decode(g_in_raw_a, wire_len, &a)) return -1;
+    begin_action();
+    switch (a.kind) {
+        case AWIRE_ATTACK: return handle_attack(&g_game, player_idx, a.cards, a.n) ? 1 : 0;
+        case AWIRE_COVER:  return handle_cover(&g_game, player_idx, a.cards, a.attacks, a.n) ? 1 : 0;
+        case AWIRE_PASS:   return handle_pass(&g_game, player_idx, a.cards, a.n) ? 1 : 0;
+        case AWIRE_PICKUP: return handle_pickup(&g_game, player_idx) ? 1 : 0;
+        case AWIRE_GOOD:   return handle_good(&g_game, player_idx) ? 1 : 0;
+        default:           return -1; // unreachable: awire_decode bounds kind
+    }
+}
+
+// The TS check_win_sync, kernel-side: if the game is done, set GAME_OVER and
+// park every seat (bots READY, humans IDLE — the ai seat bitmask is the one
+// fact the kernel doesn't model). Returns the fool's seat, or -1 if the game
+// is not over (state untouched).
+int wasm_finalize_win(unsigned int ai_mask) {
+    const int fool = game_done(&g_game);
+    if (fool < 0) return -1;
+    g_game.status = GAME_STATUS_GAME_OVER;
+    for (int i = 0; i < g_game.num_players; i++) {
+        g_game.players[i].status = (ai_mask >> i) & 1u
+            ? PLAYER_STATUS_READY : PLAYER_STATUS_IDLE;
+    }
+    return fool;
+}
+
+// Per-viewer masked view blob: [VIEW_FORMAT_VERSION | viewer | masked
+// put_state]. viewer < 0 = spectator. This is what get_game returns and what
+// the client imports — other hands and the deck never leave as real bytes.
+int wasm_view_serialize(int viewer) {
+    const int v = viewer < 0 ? VIEW_SPECTATOR : viewer;
+    g_io[0] = (unsigned char)VIEW_FORMAT_VERSION;
+    g_io[1] = viewer < 0 ? 0xFFu : (unsigned char)viewer;
+    return 2 + state_put(&g_game, v, g_io + 2);
+}
+
+// Per-viewer packed animation sequence (evwire.h) for the resident game's
+// last action: hook snapshots + fresh logs + the current (post-action,
+// post-finalize) state as the trailer. Call once per recipient BEFORE any
+// other kernel call disturbs the snapshots. Returns length, or -1 on
+// overflow/corrupt input.
+int wasm_events_serialize(int viewer, int actor, int append_final_transition) {
+    EvSnap refs[MAX_SNAPS];
+    for (int i = 0; i < g_n_snaps; i++) {
+        // put_state/state_put only read prefix fields, which is exactly what
+        // a snapshot slot holds.
+        refs[i].g = (const Game *)(const void *)g_snaps[i].bytes;
+        refs[i].tag = g_snap_tags[i];
+        refs[i].aux = g_snap_aux[i];
+    }
+    return evwire_serialize(refs, g_n_snaps, g_game.logs, g_game.num_logs,
+                            &g_game, viewer < 0 ? VIEW_SPECTATOR : viewer,
+                            actor, append_final_transition, g_io, IO_CAP);
+}
+
+// Reorder a seat's own hand to the given index order — the rearrange-hand
+// meta action, validated in the kernel. Indices are single bytes in input
+// buffer A. The permutation check is load-bearing (see actions/rearrange.ts
+// history): n must equal the hand count, every index in range, and each used
+// EXACTLY once — otherwise a hostile payload mints duplicate cards. Returns
+// 1 applied, 0 invalid (state untouched).
+int wasm_rearrange_hand(int seat, int n) {
+    if (seat < 0 || seat >= g_game.num_players) return 0;
+    Player *pl = &g_game.players[seat];
+    if (n != pl->hand_count || n < 0 || n > MAX_HAND_SIZE) return 0;
+    unsigned char seen[MAX_HAND_SIZE];
+    Card out[MAX_HAND_SIZE];
+    for (int i = 0; i < n; i++) seen[i] = 0;
+    for (int i = 0; i < n; i++) {
+        const unsigned char idx = g_in_raw_a[i];
+        if (idx >= (unsigned char)n || seen[idx]) return 0;
+        seen[idx] = 1;
+        out[i] = pl->hand[idx];
+    }
+    for (int i = 0; i < n; i++) pl->hand[i] = out[i];
     return 1;
 }
 

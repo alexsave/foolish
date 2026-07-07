@@ -80,6 +80,7 @@ CREATE TABLE games (
   good_timestamp BIGINT, -- Timestamp in milliseconds when all attacks were covered, null if not all covered
   good_players JSONB NOT NULL DEFAULT '[]'::jsonb, -- Array of player_ids who have pressed 'good'
   state TEXT, -- packed kernel state blob (hex): the volatile game state the server reconstructs from on load (wasm_state_serialize / engine.ts serializeGameState). Authoritative once a game is dealt; the hand/deck JSONB columns are a client-facing read-model dual-written alongside it. NULL for never-dealt (waiting) games.
+  logs_packed TEXT, -- packed session log stream (BARE hex, no \\x prefix — appended by plain concat): kernel log records + u48 timestamps, DRAW identities pre-masked. Replaces game_logs rows; see wire/logwire.ts and migration 20260707150000.
   version BIGINT NOT NULL DEFAULT 0, -- optimistic-concurrency token (see commit_game RPC); replaces game_locks
   bot_lease_token UUID,              -- bot-loop lease holder token (replaces bot_locks)
   bot_lease_until TIMESTAMPTZ,       -- bot-loop lease expiry; auto-expiring, no finally-release needed
@@ -246,6 +247,19 @@ ALTER TABLE game_snapshots ENABLE ROW LEVEL SECURITY;
 -- This allows users to join games or spectate without being in the game first
 CREATE POLICY "Anyone can view games" ON games
   FOR SELECT USING (true);
+
+-- ...but NOT the packed kernel state blob: games.state is the UNMASKED
+-- volatile state (every hand + the deck order). Clients receive a
+-- per-viewer MASKED view through the get_game edge function instead
+-- (docs/PACKED_WIRE_CUTOVER.md); column-level grants keep the blob (and
+-- the bot-lease bookkeeping) service-role-only, since RLS cannot hide a
+-- column. Mirrors migration 20260707140000_hide_state_blob.sql.
+REVOKE SELECT ON public.games FROM anon, authenticated;
+GRANT SELECT (
+  id, name, deck_length, discard_pile_length, flipped, players, status,
+  power_suit, first_attacker, defender, table_battles, elimination_order,
+  good_timestamp, good_players, version, created_at, updated_at
+) ON public.games TO anon, authenticated;
 
 CREATE POLICY "Authenticated users can create games" ON games
   FOR INSERT WITH CHECK (
@@ -488,8 +502,10 @@ CREATE OR REPLACE FUNCTION commit_game(
   p_deck             JSONB,
   p_hands            JSONB,
   p_bot_hands        JSONB,
-  p_logs             JSONB DEFAULT NULL,
-  p_state            TEXT  DEFAULT NULL   -- packed kernel state blob (hex); NULL leaves the column unchanged (never-dealt games)
+  p_logs             JSONB   DEFAULT NULL,  -- legacy skew window only; new code passes NULL
+  p_state            TEXT    DEFAULT NULL,  -- packed kernel state blob (hex); NULL leaves the column unchanged (never-dealt games)
+  p_logs_packed      TEXT    DEFAULT NULL,  -- this move's logwire records (bare hex), appended under the version fence
+  p_logs_reset       BOOLEAN DEFAULT FALSE  -- session reset (GAME_START in the records): replace instead of append
 ) RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -506,7 +522,18 @@ BEGIN
     flipped = g.flipped, players = g.players, status = g.status, power_suit = g.power_suit,
     first_attacker = g.first_attacker, defender = g.defender, table_battles = g.table_battles,
     elimination_order = g.elimination_order, good_timestamp = g.good_timestamp,
-    good_players = g.good_players, state = COALESCE(p_state, state),
+    good_players = g.good_players,
+    -- A WAITING commit is the `continue` reset (or a lobby op): the finished
+    -- session's volatile state must NOT survive into the new lobby. A stale
+    -- blob desyncs from the mutable lobby roster (seat-count mismatches brick
+    -- every subsequent load) and leaks the previous session's hands through
+    -- the blob-authoritative loaders. COALESCE alone never cleared it.
+    state = CASE WHEN g.status = 'waiting' THEN NULL ELSE COALESCE(p_state, state) END,
+    logs_packed = CASE
+      WHEN p_logs_reset THEN COALESCE(p_logs_packed, '')
+      WHEN g.status = 'waiting' THEN ''
+      ELSE COALESCE(logs_packed, '') || COALESCE(p_logs_packed, '')
+    END,
     updated_at = now(), version = version + 1
   WHERE id = p_game_id AND version = p_expected_version
   RETURNING version INTO v_new_version;

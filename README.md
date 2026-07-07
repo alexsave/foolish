@@ -136,14 +136,24 @@ evolved.
 
 ### How the game runs
 
-Each move is an edge function (`attack`, `cover`, `pass`, `pickup`, `good`, …)
-that validates and applies the action under an optimistic-concurrency commit
-(`commit_game`, a compare-and-swap on a version counter — the older advisory-lock
-tables were dropped, see `supabase/migrations/`). State changes broadcast over
-Supabase Realtime as **animation events** on per-player channels (you see your own
-hand; everyone else sees card backs) plus a public spectator channel. The client
-reconciles authoritative broadcasts against its optimistic overlay in
-`src/state/clientReconcile.ts`.
+**Game state is a C buffer end to end** (see
+[`docs/PACKED_WIRE_CUTOVER.md`](docs/PACKED_WIRE_CUTOVER.md)): a move leaves
+the browser as a packed action wire — the exact bytes the client's
+guards.wasm validated — POSTed as a binary body to the unified `action` edge
+function. The server maps the caller to a seat and hands the bytes to the
+kernel: **one synchronous WASM section** loads the persisted state blob,
+validates + applies the move, finalizes a win, and emits the new blob plus a
+**per-recipient masked animation stream** — the "you only see your own hand"
+personalization is computed by the C kernel (`cnitro/src/view.c`), not
+TypeScript. The blob commits under an optimistic-concurrency CAS
+(`commit_game`, a compare-and-swap on a version counter), then the packed
+streams broadcast over Supabase Realtime (base64 in a tiny JSON envelope) on
+per-player channels plus a public spectator channel. The client decodes the
+buffer back to JS **only at the React render boundary** and reconciles
+against its optimistic overlay in `src/state/clientReconcile.ts`. Paths that
+still run on JS game objects (the bot loop, lobby/meta actions) encode to
+the same wire at the broadcast edge — an e2e parity suite proves the C and
+TS emissions byte-identical, so the client sees exactly one format.
 
 Bots are real players. They're seeded as rows in `seed.sql` with a `strategy_key`,
 driven by a leased background loop (`bot_bump` + a Postgres heartbeat cron that

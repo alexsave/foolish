@@ -22,6 +22,12 @@ DO $$ BEGIN CREATE ROLE anon; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE ROLE authenticated; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE ROLE service_role; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
+-- Real Supabase grants client roles USAGE on public; the recreated schema
+-- here is owner-only by default. Without this, SET ROLE authenticated can't
+-- even resolve table names — and the column-grant test (packed_review_gaps)
+-- would pass vacuously instead of proving the games.state REVOKE works.
+GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+
 -- auth: GoTrue's users table (the FK target + raw_user_meta_data the
 -- enforce_username_not_bot trigger reads) and the uid()/role() the policies call.
 CREATE TABLE auth.users (

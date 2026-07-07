@@ -26,6 +26,11 @@ import {
 } from '../types.ts';
 import { VALUE_MAP, SUIT_MAP } from '../constants.ts';
 import { takeRULES_WASM_B64 } from './rules_wasm.ts';
+// The rules embed is gzip+base64 (embed.mjs --gzip). gunzip is a vendored
+// pure-JS + SYNCHRONOUS inflate (relative import), so it works in the browser
+// (unlike node:zlib), keeps engine()'s sync instantiate (unlike async
+// DecompressionStream), and needs no npm/import-map on the Deno edge.
+import { gunzip } from './gunzip.ts';
 
 // ---------------------------------------------------------------------------
 // Instantiation
@@ -69,6 +74,13 @@ interface EngineExports {
     wasm_replay_encode(len: number): number;
     wasm_replay_decode(len: number): number;
     wasm_replay_error_detail(): number;
+    // Packed wire pipeline (docs/PACKED_WIRE_CUTOVER.md)
+    wasm_export_logs_masked(): number;
+    wasm_apply_action(seat: number, wireLen: number): number;
+    wasm_finalize_win(aiMask: number): number;
+    wasm_view_serialize(viewer: number): number;
+    wasm_events_serialize(viewer: number, actor: number, ended: number): number;
+    wasm_rearrange_hand(seat: number, n: number): number;
 }
 
 function decodeBase64(b64: string): Uint8Array {
@@ -99,7 +111,7 @@ export function __kernelWasmMB(): number {
 // stays retryable instead of hitting 'already taken'.
 let pendingWasmBytes: Uint8Array | null = null;
 function rulesWasmBytes(): Uint8Array {
-    if (!pendingWasmBytes) pendingWasmBytes = decodeBase64(takeRULES_WASM_B64());
+    if (!pendingWasmBytes) pendingWasmBytes = gunzip(decodeBase64(takeRULES_WASM_B64()));
     return pendingWasmBytes;
 }
 
@@ -346,7 +358,7 @@ function marshalGame(ex: EngineExports, game: Game): void {
     ex.wasm_import_state();
 }
 
-interface KernelState {
+export interface KernelState {
     status: number;
     numPlayers: number;
     powerSuit: number;
@@ -402,7 +414,7 @@ function parseState(buf: Uint8Array, q: number): KernelState {
     };
 }
 
-interface KernelLog {
+export interface KernelLog {
     type: LogType;
     playerIdx: number;      // -1 = system
     defenderIndex: number;  // -1 = n/a
@@ -597,6 +609,179 @@ function appendLogs(game: Game, kernelLogs: KernelLog[], preFlipped: Card | null
             defender_index: kl.defenderIndex >= 0 ? kl.defenderIndex : null,
         } as GameLog);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Packed wire pipeline (docs/PACKED_WIRE_CUTOVER.md)
+//
+// The human-move hot path: state blob in, action wire applied, state blob +
+// per-viewer masked event streams out — no TS Game object anywhere. All
+// kernel work happens synchronously inside one call (the resident kernel
+// state is a module singleton; an `await` between load and export would let
+// a concurrently-handled request clobber it).
+// ---------------------------------------------------------------------------
+
+export interface PackedRunReject { ok: false; reason: number }
+export interface PackedRunOk {
+    ok: true;
+    fool: number;                     // fool seat, -1 while the game runs
+    ended: boolean;
+    stateBlob: Uint8Array;            // versioned durable blob, post-finalize
+    post: KernelState;                // for the JSONB public dual / roster columns
+    logsWire: Uint8Array;             // this action's kernel log export, DRAW-masked
+    nEvents: number;
+    events: Map<number, Uint8Array>;  // viewer seat (-1 = spectator) -> evwire bytes
+}
+
+export function runPackedAction(
+    blob: Uint8Array, seat: number, wire: Uint8Array,
+    aiMask: number, humanSeats: number[],
+): PackedRunOk | PackedRunReject {
+    const ex = engine();
+    mem(ex).set(blob, ex.wasm_io_ptr());
+    if (!ex.wasm_state_deserialize(blob.length)) {
+        throw new Error(`Unreadable game state blob: format version ${blob[0]}, kernel reads ${ex.wasm_state_format_version()}`);
+    }
+    residentFor = null;
+    return packedActionCore(ex, seat, wire, aiMask, humanSeats);
+}
+
+// Same pipeline from a JS Game instead of a blob — the bot loop's entry: a
+// kernel-brained bot that just chose a move left the resident state valid
+// (wasmChooseMove's marshal-skip contract), so this marshal is usually free;
+// a cached-replay or gpt move pays one normal marshal. Everything after the
+// import is identical to the blob path.
+export function runPackedGameAction(
+    game: Game, seat: number, wire: Uint8Array,
+    aiMask: number, humanSeats: number[],
+): PackedRunOk | PackedRunReject {
+    const ex = engine();
+    marshalGame(ex, game);
+    return packedActionCore(ex, seat, wire, aiMask, humanSeats);
+}
+
+function packedActionCore(
+    ex: EngineExports, seat: number, wire: Uint8Array,
+    aiMask: number, humanSeats: number[],
+): PackedRunOk | PackedRunReject {
+    const buf = mem(ex);
+
+    // Same per-call reseed as runKernel — draws must stay unpredictable.
+    ex.wasm_set_seed(seedSource ? (seedSource() >>> 0) : ((Math.random() * 0xffffffff) >>> 0));
+
+    if (wire.length > 128) throw new Error('malformed action wire');
+    buf.set(wire, ex.wasm_cards_a_ptr());
+    const r = ex.wasm_apply_action(seat, wire.length);
+    if (r < 0) throw new Error('malformed action wire');
+    if (r === 0) return { ok: false, reason: ex.wasm_reject_reason() };
+
+    const fool = ex.wasm_finalize_win(aiMask >>> 0);
+    return exportPackedProducts(ex, seat, fool, humanSeats);
+}
+
+// The export tail every packed mutation shares: durable blob + public-dual
+// state + masked log records + per-recipient event streams, all read out of
+// the resident kernel synchronously.
+function exportPackedProducts(
+    ex: EngineExports, actorSeat: number, fool: number, humanSeats: number[],
+): PackedRunOk {
+    const base = ex.wasm_io_ptr();
+    const ended = fool >= 0;
+
+    const blobLen = ex.wasm_state_serialize();
+    const stateBlob = mem(ex).slice(base, base + blobLen);
+    ex.wasm_export_state();
+    const post = parseState(mem(ex), base);
+    // The DRAW-privacy masking happens inside the kernel (it captured the
+    // pre-action flip in begin_action); these bytes go straight to the
+    // packed session-log column — no JS log objects on this path.
+    const logsLen = ex.wasm_export_logs_masked();
+    const logsWire = mem(ex).slice(base, base + logsLen);
+
+    // Per-recipient event streams — serialized before anything else touches
+    // the kernel (the snapshots live in bridge statics).
+    const events = new Map<number, Uint8Array>();
+    let nEvents = 0;
+    for (const viewer of [...humanSeats, -1]) {
+        const len = ex.wasm_events_serialize(viewer, actorSeat, ended ? 1 : 0);
+        if (len < 0) throw new Error('event stream serialization overflow');
+        const bytes = mem(ex).slice(base, base + len);
+        nEvents = bytes[3];
+        events.set(viewer, bytes);
+    }
+    return { ok: true, fool, ended, stateBlob, post, logsWire, nEvents, events };
+}
+
+// The game start (deal/flip/first-attacker) as a packed mutation — the
+// fattest broadcast in the game goes kernel-native. A start can't end the
+// game and has no acting seat (system event).
+export function runPackedStart(game: Game, humanSeats: number[]): PackedRunOk {
+    const ex = engine();
+    marshalGame(ex, game);
+    ex.wasm_set_seed(seedSource ? (seedSource() >>> 0) : ((Math.random() * 0xffffffff) >>> 0));
+    ex.wasm_start_game();
+    return exportPackedProducts(ex, -1, -1, humanSeats);
+}
+
+// Kernel-validated hand rearrange (the permutation check that prevents
+// duplicate-card minting lives in wasm_rearrange_hand). Emits no events and
+// no logs — only the reordered durable blob. Returns null on an invalid
+// permutation (resident state untouched).
+export function runPackedRearrange(
+    game: Game, seat: number, indices: number[],
+): { stateBlob: Uint8Array; post: KernelState } | null {
+    const ex = engine();
+    marshalGame(ex, game);
+    if (indices.length > 128) return null;
+    const buf = mem(ex);
+    const ptr = ex.wasm_cards_a_ptr();
+    for (let i = 0; i < indices.length; i++) buf[ptr + i] = indices[i] & 0xff;
+    if (!ex.wasm_rearrange_hand(seat, indices.length)) return null;
+    const base = ex.wasm_io_ptr();
+    const blobLen = ex.wasm_state_serialize();
+    const stateBlob = mem(ex).slice(base, base + blobLen);
+    ex.wasm_export_state();
+    return { stateBlob, post: parseState(mem(ex), base) };
+}
+
+// Materialize a full TS Game from a kernel state + roster columns — the cold
+// paths that still want the JS object (the commit's JSONB public dual, the
+// end-of-game ELO/replay finalize). Unlike deserializeGameState this takes
+// the acting player so the good_players insertion-order rule matches
+// applyStateToGame exactly.
+export function materializeKernelGame(post: KernelState, roster: RosterTemplate, actorId: string | null): Game {
+    const template = {
+        id: roster.id,
+        name: roster.name,
+        version: roster.version,
+        deck_length: roster.deck_length,
+        players: roster.players,
+    } as unknown as Game;
+    const game = stateToGame(post, template, roster.good_players, actorId, roster.good_timestamp ?? Date.now());
+    game.deck_length = game.deck.length;
+    return game;
+}
+
+// In-place kernel-state apply for callers that hold references to the Game
+// (the bot loop mutates one shared object across its cycle) — the packed
+// counterpart of what execute() does after a JSON-path action.
+export function applyKernelStateToGame(game: Game, post: KernelState, actorId: string | null): void {
+    applyStateToGame(game, post, actorId);
+}
+
+// Per-viewer masked view blob from a durable state blob — get_game's packed
+// response body. Synchronous single kernel section, same discipline as
+// runPackedAction.
+export function serializeViewBlob(blob: Uint8Array, viewerSeat: number): Uint8Array {
+    const ex = engine();
+    const base = ex.wasm_io_ptr();
+    mem(ex).set(blob, base);
+    if (!ex.wasm_state_deserialize(blob.length)) {
+        throw new Error(`Unreadable game state blob: format version ${blob[0]}, kernel reads ${ex.wasm_state_format_version()}`);
+    }
+    residentFor = null;
+    const len = ex.wasm_view_serialize(viewerSeat);
+    return mem(ex).slice(base, base + len);
 }
 
 // ---------------------------------------------------------------------------

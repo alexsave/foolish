@@ -52,9 +52,9 @@ export function registerServerValidation(): void {
         assert.ok(evts.length > 0, 'expected broadcasts');
         const perChannel = new Map<string, number[]>();
         for (const e of evts) {
-            assert.equal(typeof e.payload.version, 'number', 'broadcast carries a numeric version');
+            assert.equal(typeof e.payload.v, 'number', 'packed broadcast carries a numeric version (payload.v)');
             if (!perChannel.has(e.channel)) perChannel.set(e.channel, []);
-            perChannel.get(e.channel)!.push(e.payload.version);
+            perChannel.get(e.channel)!.push(e.payload.v);
         }
         for (const [chan, vs] of perChannel)
             for (let i = 1; i < vs.length; i++) assert.ok(vs[i] > vs[i - 1], `versions not increasing on ${chan}: ${vs.join(',')}`);
@@ -108,15 +108,16 @@ test('every broadcast carries a monotonically non-decreasing games.version (the 
         try { await executeWithGameLock(gameId, async (gg) => ({ game: gg, events: applyPlayerMove(gg, pick(moves)) }), `s${steps}`, true); } catch { /* */ }
         steps++;
     }
-    // Each animation_events broadcast must carry a numeric version; per recipient
-    // channel, versions must be strictly increasing in emission order.
+    // Each animation_events broadcast must carry a numeric version (the packed
+    // payload's `v`); per recipient channel, versions must be strictly
+    // increasing in emission order.
     const evts = broadcastLog.filter((b) => b.event === 'animation_events');
     assert.ok(evts.length > 0, 'expected broadcasts');
     const perChannel = new Map<string, number[]>();
     for (const e of evts) {
-        assert.equal(typeof e.payload.version, 'number', 'broadcast payload must carry a version');
+        assert.equal(typeof e.payload.v, 'number', 'broadcast payload must carry a version (payload.v)');
         if (!perChannel.has(e.channel)) perChannel.set(e.channel, []);
-        perChannel.get(e.channel)!.push(e.payload.version);
+        perChannel.get(e.channel)!.push(e.payload.v);
     }
     for (const [chan, versions] of perChannel) {
         for (let i = 1; i < versions.length; i++) {
@@ -152,6 +153,10 @@ test('every finished game gets a replay snapshot and its logs wiped (log order i
         assert.equal(snaps.rowCount, 1, `finished game ${gameId} has no replay snapshot — the encoder desynced (check log ordering)`);
         const logs = await pgPool.query('SELECT COUNT(*)::int AS n FROM game_logs WHERE game_id=$1', [gameId]);
         assert.equal(logs.rows[0].n, 0, `finished game ${gameId} kept ${logs.rows[0].n} raw logs — snapshot should have replaced them`);
+        // The packed session-log column (the snapshot's actual source since
+        // the logwire cutover) is retired the same way after a snapshot.
+        const packed = await pgPool.query('SELECT logs_packed FROM games WHERE id=$1', [gameId]);
+        assert.equal(packed.rows[0].logs_packed, '', `finished game ${gameId} kept its packed session log — snapshot should have retired it`);
     }
     assert.ok(finished >= 2, `expected at least 2 finished games, got ${finished}`);
 });

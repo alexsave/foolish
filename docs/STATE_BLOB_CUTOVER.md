@@ -81,7 +81,12 @@ exercised.** After deploying (edge functions + migration
   carry a blob and (b) the membership index is moved off `player_hands` (e.g. a
   `game_players` table or a `games.player_ids uuid[]`).
 
-## The payoff path (separate client-WASM work in flight)
+## The payoff path — SHIPPED (see PACKED_WIRE_CUTOVER.md)
+
+The plan below has landed: `get_game` returns the kernel-masked packed blob,
+actions POST binary wire bodies, broadcasts carry packed per-viewer event
+streams, and the mask is computed inside the kernel (`cnitro/src/view.c`).
+Kept for history:
 
 Once the client runs the rules kernel in-browser, **`get_game` stops returning
 JSON and returns a per-player *masked* packed blob**, which the client unpacks

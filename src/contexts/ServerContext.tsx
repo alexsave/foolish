@@ -8,6 +8,9 @@ import { get_next_player_index, card_comp } from '@shared/common_utils.ts';
 import { ANIMATION_TIME } from '../constants/constants';
 import { optimisticOverlay } from '../state/optimisticOverlay';
 import { cardKey, mergeHandOrder, reconcileHandMemory, displayedHand, mergeTableBattles, applyOverlayEntries } from '../state/clientReconcile';
+import { ACTION_STATUS, decodeActionResponse, encodeAction, encodeActionRequest } from '@shared/wire/awire.ts';
+import { decodePackedGame, decodePackedGamesList } from '@shared/wire/view.ts';
+import { rejectMessage } from '../wasm/rejectMessages';
 
 // Re-apply the local player's unconfirmed optimistic table cards onto an
 // authoritatively-loaded game (reconnect resync), so a just-played card doesn't
@@ -447,24 +450,37 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
     const loadGameInternal = async (gameId: string): Promise<{ game_id: string }> => {
         try {
-            // The volatile game state lives in the packed kernel blob, which
-            // only the server unpacks — so fetch the caller's personalized view
-            // from the get_game edge function instead of reading games /
-            // player_hands directly. get_game returns a PersonalGame (with
-            // `self`) if the caller is a player, or a PublicGame if a spectator.
+            // The volatile game state lives in the packed kernel blob. With
+            // packed:true a DEALT game comes back as binary (roster JSON +
+            // the caller's kernel-masked view blob) that materializes into a
+            // PersonalGame right here — the render boundary; a lobby / legacy
+            // row falls back to the old personalize_game JSON. functions-js
+            // hands octet-stream responses over as a Blob, JSON as a parsed
+            // object, so the response type is the format switch.
             const { data, error } = await supabase.functions.invoke('get_game', {
-                body: { game_id: gameId },
+                body: { game_id: gameId, packed: true },
             });
-            // Personalized view: has `self` for a player, no `self` for a
-            // spectator (self stays null). Typed loosely like the old direct
-            // reads — PersonalGame.self is non-null in the type but null at
-            // runtime for spectators.
-            const fetched: any = data;
-            if (error || !fetched || fetched.error) {
-                throw new Error(fetched?.error || `Game ${gameId} not found`);
-            }
 
-            const game: PersonalGame = { ...fetched, self: fetched.self ?? null };
+            let game: PersonalGame;
+            if (!error && typeof Blob !== 'undefined' && data instanceof Blob) {
+                const decoded = decodePackedGame(new Uint8Array(await data.arrayBuffer()));
+                if (!decoded) {
+                    throw new Error(`Game ${gameId}: unreadable packed game response`);
+                }
+                // decodePackedGame stamps game.version from the envelope; a
+                // spectator gets no `self` (null below), same as the JSON path.
+                game = { ...(decoded.game as PersonalGame), self: (decoded.game as PersonalGame).self ?? null };
+            } else {
+                // Legacy JSON: has `self` for a player, no `self` for a
+                // spectator (self stays null). Typed loosely like the old
+                // direct reads — PersonalGame.self is non-null in the type but
+                // null at runtime for spectators.
+                const fetched: any = data;
+                if (error || !fetched || fetched.error) {
+                    throw new Error(fetched?.error || `Game ${gameId} not found`);
+                }
+                game = { ...fetched, self: fetched.self ?? null };
+            }
 
             if (game.self) {
                 // Re-apply the local player's unconfirmed optimistic cards onto
@@ -567,18 +583,16 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         }
     };
 
-    const attack = useCallback((cards: Card[], applyOptimistic: () => boolean = () => true): Promise<{ game_id: string }> => {
+    const attack = useCallback((cards: Card[], applyOptimistic: () => boolean = () => true, wire?: Uint8Array): Promise<{ game_id: string }> => {
         // The game this move targets: captured ONCE at tap time, so the deferred
         // optimistic patch below applies to the same game the request went to
         // even if the user navigates during the animation.
         const gid = activeGameIdRef.current!;
         // Fire the server request FIRST — the server is authoritative and rejects an
-        // illegal move, so the round-trip isn't gated on local validation.
-        const promise = invokeGameFunctions('action', {
-            type: 'attack',
-            game_id: gid,
-            cards: cards,
-        });
+        // illegal move, so the round-trip isn't gated on local validation. The body
+        // is the packed awire buffer: the caller-supplied bytes (already validated
+        // against guards.wasm) or a fresh encode for direct callers.
+        const promise = invokePackedAction(gid, wire ?? encodeAction({ kind: 'attack', cards }));
 
         // Optimistic game state update after animation completes — but only if the
         // caller's validation (evaluated by ANIMATION_TIME, when this fires) agrees the
@@ -610,14 +624,10 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    const pass = useCallback((cards: Card[], applyOptimistic: () => boolean = () => true): Promise<{ game_id: string }> => {
+    const pass = useCallback((cards: Card[], applyOptimistic: () => boolean = () => true, wire?: Uint8Array): Promise<{ game_id: string }> => {
         const gid = activeGameIdRef.current!; // see attack
         // Server request first (see attack); optimistic patch gated on validity.
-        const promise = invokeGameFunctions('action', {
-            type: 'pass',
-            game_id: gid,
-            cards: cards,
-        });
+        const promise = invokePackedAction(gid, wire ?? encodeAction({ kind: 'pass', cards }));
 
         // Optimistic game state update after animation completes. Derived inside
         // the updater from prev — see attack for why the closure state is stale.
@@ -644,13 +654,10 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    const pickup = useCallback((applyOptimistic: () => boolean = () => true): Promise<{ game_id: string }> => {
+    const pickup = useCallback((applyOptimistic: () => boolean = () => true, wire?: Uint8Array): Promise<{ game_id: string }> => {
         const gid = activeGameIdRef.current!; // see attack
         // Server request first (see attack); optimistic patch gated on validity.
-        const promise = invokeGameFunctions('action', {
-            type: 'pickup',
-            game_id: gid,
-        });
+        const promise = invokePackedAction(gid, wire ?? encodeAction({ kind: 'pickup' }));
 
         // Optimistic game state update after animation completes. Derived inside
         // the updater from prev — see attack for why the closure state is stale.
@@ -703,15 +710,11 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    const cover = useCallback((coverCards: Card[], attackCards: Card[], applyOptimistic: () => boolean = () => true): Promise<{ game_id: string }> => {
+    const cover = useCallback((coverCards: Card[], attackCards: Card[], applyOptimistic: () => boolean = () => true, wire?: Uint8Array): Promise<{ game_id: string }> => {
         const gid = activeGameIdRef.current!; // see attack
         // Server request first (see attack); optimistic patch gated on validity.
-        const promise = invokeGameFunctions('action', {
-            type: 'cover',
-            game_id: gid,
-            cover_cards: coverCards,
-            attack_cards: attackCards,
-        });
+        const promise = invokePackedAction(gid,
+            wire ?? encodeAction({ kind: 'cover', cards: coverCards, attack_cards: attackCards }));
 
         // Optimistic game state update after animation completes. Derived inside
         // the updater from prev — see attack for why the closure state is stale.
@@ -749,10 +752,9 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     }, []);
 
     const good = useCallback((): Promise<{ game_id: string }> => {
-        return invokeGameFunctions('action', {
-            type: 'good',
-            game_id: activeGameIdRef.current!,
-        });
+        // Packed like the other moves; `good` has no optimistic patch. MOOT
+        // (the game ended under us) resolves as success, same as before.
+        return invokePackedAction(activeGameIdRef.current!, encodeAction({ kind: 'good' }));
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
@@ -921,20 +923,33 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 return;
             }
 
-            // The caller's games, already personalized by the server from each
-            // game's packed blob (get_my_games). player_hands is no longer read
-            // directly — it only serves as the server-side membership index now.
-            const { data, error } = await supabase.functions.invoke('get_my_games', { body: {} });
-            const payload: any = data;
+            // The caller's games as one packed binary list: each dealt game
+            // is the kernel-masked view blob (+ identity roster JSON), each
+            // lobby a byte-wrapped personalize_game JSON — materialized right
+            // here at the render boundary (docs/PACKED_WIRE_CUTOVER.md). A
+            // JSON response (legacy server) still parses through the old path.
+            const { data, error } = await supabase.functions.invoke('get_my_games', { body: { packed: true } });
 
-            if (error || !payload || payload.error) {
-                console.error('Error fetching user games:', error || payload?.error);
-                return;
+            let list: any[] = [];
+            if (!error && typeof Blob !== 'undefined' && data instanceof Blob) {
+                const decoded = decodePackedGamesList(new Uint8Array(await data.arrayBuffer()));
+                if (!decoded) {
+                    console.error('Error fetching user games: unreadable packed list');
+                    return;
+                }
+                list = decoded;
+            } else {
+                const payload: any = data;
+                if (error || !payload || payload.error) {
+                    console.error('Error fetching user games:', error || payload?.error);
+                    return;
+                }
+                list = payload.games ?? [];
             }
 
             const games: { [key: string]: PersonalGame } = {};
-            for (const fetched of (payload.games ?? [])) {
-                const game: PersonalGame = { ...fetched, self: fetched.self ?? null };
+            for (const fetched of list) {
+                const game: PersonalGame = { ...fetched, self: (fetched as any).self ?? null };
                 games[game.id] = game;
             }
 
@@ -976,6 +991,41 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             throw error;
         }
     }
+
+    // The packed move transport (docs/PACKED_WIRE_CUTOVER.md): POST the awire
+    // bytes — the exact buffer guards.wasm validated — wrapped in the binary
+    // request envelope. functions-js only passes a body through with
+    // Content-Type: application/octet-stream when it is a Blob or an
+    // ArrayBuffer (a Uint8Array would be JSON.stringified — see
+    // @supabase/functions-js FunctionsClient.invoke), so the envelope rides in
+    // a Blob; octet-stream responses come back as a Blob too.
+    // 'bump' and all meta ops stay JSON via invokeGameFunctions.
+    const invokePackedAction = async (gameId: string, wire: Uint8Array): Promise<{ game_id: string }> => {
+        const req = encodeActionRequest(gameId, wire);
+        // Cast: encodeActionRequest builds a fresh, non-shared buffer; TS just
+        // types Uint8Array over ArrayBufferLike, which BlobPart rejects.
+        const { data, error } = await supabase.functions.invoke('action', { body: new Blob([req as Uint8Array<ArrayBuffer>]) });
+        if (error) {
+            throw error;
+        }
+        let bytes: Uint8Array | null = null;
+        if (typeof Blob !== 'undefined' && data instanceof Blob) {
+            bytes = new Uint8Array(await data.arrayBuffer());
+        } else if (data instanceof ArrayBuffer) {
+            bytes = new Uint8Array(data);
+        }
+        const resp = bytes ? decodeActionResponse(bytes) : null;
+        if (!resp) {
+            throw new Error('Invalid response from action: unreadable packed response');
+        }
+        if (resp.status === ACTION_STATUS.REJECTED) {
+            // Console-only diagnostics: callers revert the optimistic state.
+            throw new Error(rejectMessage(resp.rejectCode));
+        }
+        // APPLIED — or MOOT (the move lost the end-game race, a no-op): both
+        // resolve as success, mirroring the old JSON path's data.id check.
+        return { game_id: gameId };
+    };
 
     const updateGameState = useCallback((gameId: string, gameState: any) => {
         setGames(prev => ({ ...prev, [gameId]: mergeGameData(gameId, gameState, prev) }));
@@ -1036,10 +1086,13 @@ interface ServerActionsType {
     // The optional `applyOptimistic` thunk gates the deferred optimistic local-state
     // patch: callers fire the request before validating, then have the patch apply
     // only if validation passed (evaluated at ANIMATION_TIME). Defaults to always-on.
-    attack: (cards: Card[], applyOptimistic?: () => boolean) => Promise<{ game_id: string }>;
-    pass: (cards: Card[], applyOptimistic?: () => boolean) => Promise<{ game_id: string }>;
-    pickup: (applyOptimistic?: () => boolean) => Promise<{ game_id: string }>;
-    cover: (coverCards: Card[], attackCards: Card[], applyOptimistic?: () => boolean) => Promise<{ game_id: string }>;
+    // The optional `wire` is the move's awire buffer (encodeAction) — passed by
+    // callers that already validated those bytes so the POST body is bit-identical;
+    // encoded on the spot when absent.
+    attack: (cards: Card[], applyOptimistic?: () => boolean, wire?: Uint8Array) => Promise<{ game_id: string }>;
+    pass: (cards: Card[], applyOptimistic?: () => boolean, wire?: Uint8Array) => Promise<{ game_id: string }>;
+    pickup: (applyOptimistic?: () => boolean, wire?: Uint8Array) => Promise<{ game_id: string }>;
+    cover: (coverCards: Card[], attackCards: Card[], applyOptimistic?: () => boolean, wire?: Uint8Array) => Promise<{ game_id: string }>;
     good: () => Promise<{ game_id: string }>;
     sendMessage: (message: string) => Promise<void>;
     getUserGames: () => Promise<void>;

@@ -215,6 +215,10 @@ export const personalize_game = (game: Game, player_id: string): PersonalGame | 
         const personalGame: PersonalGame = {
             id: game.id,
             name: game.name,
+            // The optimistic-concurrency token: authoritative REST loads seed
+            // the client's broadcast reorder-drop gate from it (the packed
+            // responses carry it in their envelope).
+            version: game.version,
             deck_length: game.deck.length,
             discard_pile_length: game.discard_pile_length,
             flipped: game.flipped,
@@ -234,6 +238,7 @@ export const personalize_game = (game: Game, player_id: string): PersonalGame | 
         const publicGame: PublicGame = {
             id: game.id,
             name: game.name,
+            version: game.version,
             deck_length: game.deck.length,
             discard_pile_length: game.discard_pile_length,
             flipped: game.flipped,

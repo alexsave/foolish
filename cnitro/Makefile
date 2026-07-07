@@ -23,7 +23,8 @@ ifeq ($(OMP),1)
 endif
 
 # The engine + all heuristic / Monte-Carlo bots. Linked into every binary.
-CORE_SRC := src/game.c src/legal.c src/replay.c src/random_strategy.c src/espresso_strategy.c \
+CORE_SRC := src/game.c src/legal.c src/replay.c src/view.c src/awire.c \
+            src/evwire.c src/random_strategy.c src/espresso_strategy.c \
             src/handwritten_strategy.c src/robusta_strategy.c \
             src/firecracker_strategy.c src/gunpowder_strategy.c \
             src/blackpowder_strategy.c src/cordite_strategy.c \
@@ -99,13 +100,22 @@ difftests: build/sim_difftest build/apply_difftest build/solver_difftest build/r
 # strips TLS (single-threaded module); the bridge sets the production
 # deck-size boundary at init (see card.h).
 WASM_CC    ?= clang
+# Optimize for SIZE (-Oz), not speed (-O3). Measured: -Oz cuts every module
+# ~40% (bots 194->116KB, rules 49->27KB, guards 20->12KB embedded b64 drops
+# ~105KB) for ~0 warm-perf cost — cordite's hot loop is bitboard popcount/ctz
+# that both opt levels compile identically, and V8's TurboFan re-optimizes the
+# hot functions the same way regardless. On the edge it's also FASTER cold: a
+# smaller module means ~2x quicker TurboFan compile and far less base64 to
+# decode per worker (short-lived invocations never tier up, so -O3's inlining
+# only bloats Liftoff). Override for a warm-latency regime: `make WASM_OPT=-O3`.
+WASM_OPT   ?= -Oz
 # -mbulk-memory: memcpy/memset (incl. clang-lowered struct copies) become the
 # wasm memory.copy/memory.fill instructions, which every 2020+ runtime (V8,
 # JSC, SpiderMonkey, Deno edge) executes as native memmove — the hand-rolled
 # word-loop shim showed up at ~5% of cordite's wasm profile.
-# -O3 (but NO -flto: wasm-ld LTO corrupts the indirect-function table for
-# the address-taken hook/strategy pointers — engine_snap_hook calls trap with
-# "table index out of bounds"; caught by the fuzz suite). No -ffast-math
+# NO -flto: wasm-ld LTO corrupts the indirect-function table for the
+# address-taken hook/strategy pointers — engine_snap_hook calls trap with
+# "table index out of bounds"; caught by the fuzz suite. No -ffast-math
 # either: wasm float semantics must stay IEEE-identical to the TS oracles
 # the parity suite compares against.
 # MAX_LEGAL_MOVES=4096 matches every native build (arena, difftests, eval).
@@ -127,7 +137,7 @@ WASM_CC    ?= clang
 # (2n <= 52) — so 28 emits the identical move set for every real game (the
 # production deck is 36). Only corrupt/hostile marshaled states (duplicate
 # cards) could enumerate wider moves, which the caps drop by design.
-WASM_FLAGS := --target=wasm32 -O3 -nostdlib -ffreestanding -mbulk-memory \
+WASM_FLAGS := --target=wasm32 $(WASM_OPT) -nostdlib -ffreestanding -mbulk-memory \
               -isystem wasm/include -Isrc -D_Thread_local= -DMAX_LOG_PAIRS=64 \
               -DMAX_LEGAL_MOVES=4096 -DMAX_MOVE_CARDS=28 -DMAX_BATTLES=64 \
               -DWORLD_LOG_CAP=40 \
@@ -151,7 +161,8 @@ WASM_API_EXPORTS := \
   -Wl,--export=wasm_import_state -Wl,--export=wasm_export_state \
   -Wl,--export=wasm_state_serialize -Wl,--export=wasm_state_deserialize \
   -Wl,--export=wasm_state_format_version \
-  -Wl,--export=wasm_export_logs -Wl,--export=wasm_snap_count \
+  -Wl,--export=wasm_export_logs -Wl,--export=wasm_export_logs_masked \
+  -Wl,--export=wasm_snap_count \
   -Wl,--export=wasm_snap_tag -Wl,--export=wasm_snap_aux -Wl,--export=wasm_export_snapshot \
   -Wl,--export=wasm_start_game -Wl,--export=wasm_attack -Wl,--export=wasm_cover \
   -Wl,--export=wasm_pass -Wl,--export=wasm_pickup -Wl,--export=wasm_good \
@@ -161,7 +172,10 @@ WASM_API_EXPORTS := \
   -Wl,--export=wasm_replay_io_ptr -Wl,--export=wasm_replay_io_cap \
   -Wl,--export=wasm_replay_encode -Wl,--export=wasm_replay_decode \
   -Wl,--export=wasm_replay_error_detail \
-  -Wl,--export=wasm_legal_moves -Wl,--export=wasm_export_moves
+  -Wl,--export=wasm_legal_moves -Wl,--export=wasm_export_moves \
+  -Wl,--export=wasm_apply_action -Wl,--export=wasm_finalize_win \
+  -Wl,--export=wasm_view_serialize -Wl,--export=wasm_events_serialize \
+  -Wl,--export=wasm_rearrange_hand
 
 # bots.wasm exports the rules API above PLUS the bot bridge (wasm_bots_api.c).
 WASM_BOTS_API_EXPORTS := \
@@ -189,14 +203,20 @@ WASM_RULES_FLAGS := $(filter-out -DMAX_LEGAL_MOVES=4096,$(WASM_FLAGS)) \
 
 # Blanket header dependency, same rationale as the native objects: a header
 # edit must rebuild BOTH wasm modules or they ship divergent kernels.
-build/rules.wasm: src/game.c src/legal.c src/replay.c wasm/wasm_api.c $(wildcard src/*.h) $(wildcard wasm/*.h)
+WASM_RULES_SRC := src/game.c src/legal.c src/replay.c src/view.c src/awire.c \
+                  src/evwire.c wasm/wasm_api.c
+
+build/rules.wasm: $(WASM_RULES_SRC) $(wildcard src/*.h) $(wildcard wasm/*.h)
 	@mkdir -p build
-	$(WASM_CC) $(WASM_RULES_FLAGS) $(WASM_API_EXPORTS) src/game.c src/legal.c src/replay.c wasm/wasm_api.c -o $@
+	$(WASM_CC) $(WASM_RULES_FLAGS) $(WASM_API_EXPORTS) $(WASM_RULES_SRC) -o $@
 
 # Regenerates the base64 module the TS side imports (works unchanged in
 # Deno edge functions, Node and browsers — no asset pipeline needed).
+# rules stays a base64 embed: engine.ts is shared with the BROWSER (replay
+# decode imports it), and browsers have no node:fs/node:zlib for the static-gz
+# loader. Only bots.wasm — server-only — ships as a gzip static asset (below).
 wasm: build/rules.wasm
-	node wasm/embed.mjs build/rules.wasm ../supabase/functions/_shared/wasm/rules_wasm.ts
+	node wasm/embed.mjs build/rules.wasm ../supabase/functions/_shared/wasm/rules_wasm.ts --gzip
 
 # Client-guards module: game.c ONLY — no legal.c enumeration, no replay.c
 # codec. It backs the browser's UI move-gates (validate-only) and optimistic
@@ -205,18 +225,46 @@ wasm: build/rules.wasm
 # not two). Same wire layout as rules.wasm; e2e asserts guards==rules parity.
 # Smaller caps than the rules module: the client never imports a session log
 # (each marshal starts fresh) and one optimistic move emits <64 logs.
-WASM_GUARDS_FLAGS := --target=wasm32 -O3 -nostdlib -ffreestanding -mbulk-memory \
+WASM_GUARDS_FLAGS := --target=wasm32 $(WASM_OPT) -nostdlib -ffreestanding -mbulk-memory \
                      -isystem wasm/include -Isrc -D_Thread_local= \
                      -DMAX_LOG_PAIRS=64 -DMAX_BATTLES=64 -DMAX_LOGS=64 \
                      -Wall -Wextra -Wno-unused-parameter \
-                     -Wl,--no-entry -Wl,--export-all -Wl,-z,stack-size=131072 -Wl,--stack-first
+                     -Wl,--no-entry -Wl,--export-memory -Wl,-z,stack-size=131072 -Wl,--stack-first
 
-build/guards.wasm: src/game.c wasm/wasm_guards_api.c $(wildcard src/*.h) $(wildcard wasm/*.h)
+# Explicit export allow-list, same rationale as WASM_API_EXPORTS (this
+# replaced --export-all here too: it pinned every internal symbol as a GC
+# root and bloated the name section). A NEW wasm_* guards entry point must be
+# added here or the browser bridge won't see it (clientGuards.ts fails loudly).
+# Trimmed to the roots LIVE client code + the guards tests actually reach
+# (see e2e/client_guards.test.ts). Everything dropped here — the snapshot /
+# log-readout exports, wasm_set_seed/io_cap/reject_reason, the awire-apply
+# entry (wasm_apply_action), and the good-move entries (wasm_good /
+# wasm_validate_good, subsumed by wasm_validate_action which handles all five
+# kinds) — was reachable from NO caller in src/ or e2e/, so rooting it only
+# bloated the shipped module. Re-add an export line to revive a capability;
+# the C stays in game.c / wasm_guards_api.c. The kept wasm_attack..pickup +
+# wasm_export_state are dormant in prod (the TS overlay does optimistic play)
+# but guarded by the applyMove prediction test, so they stay.
+WASM_GUARDS_EXPORTS := \
+  -Wl,--export=wasm_io_ptr \
+  -Wl,--export=wasm_cards_a_ptr -Wl,--export=wasm_cards_b_ptr \
+  -Wl,--export=wasm_init \
+  -Wl,--export=wasm_import_state -Wl,--export=wasm_export_state \
+  -Wl,--export=wasm_validate_attack -Wl,--export=wasm_validate_cover \
+  -Wl,--export=wasm_validate_pass -Wl,--export=wasm_validate_pickup \
+  -Wl,--export=wasm_validate_action \
+  -Wl,--export=wasm_attack -Wl,--export=wasm_cover -Wl,--export=wasm_pass \
+  -Wl,--export=wasm_pickup \
+  -Wl,--export=wasm_game_done -Wl,--export=wasm_next_player -Wl,--export=wasm_can_cover
+
+WASM_GUARDS_SRC := src/game.c src/view.c src/awire.c wasm/wasm_guards_api.c
+
+build/guards.wasm: $(WASM_GUARDS_SRC) $(wildcard src/*.h) $(wildcard wasm/*.h)
 	@mkdir -p build
-	$(WASM_CC) $(WASM_GUARDS_FLAGS) src/game.c wasm/wasm_guards_api.c -o $@
+	$(WASM_CC) $(WASM_GUARDS_FLAGS) $(WASM_GUARDS_EXPORTS) $(WASM_GUARDS_SRC) -o $@
 
 wasm-guards: build/guards.wasm
-	node wasm/embed.mjs build/guards.wasm ../supabase/functions/_shared/wasm/guards_wasm.ts GUARDS_WASM_B64
+	node wasm/embed.mjs build/guards.wasm ../supabase/functions/_shared/wasm/guards_wasm.ts GUARDS_WASM_B64 --gzip
 
 # Bot module: the rules kernel PLUS every algorithmic bot strategy and the
 # choose-move bridge. A superset of rules.wasm, loaded only where bots run
@@ -225,7 +273,8 @@ wasm-guards: build/guards.wasm
 # Note: the distilled strategy (research, strength-negative — see
 # CORDITE_RESEARCH.md) stays native-arena-only; it is deliberately NOT in the
 # production bot module.
-WASM_BOT_SRC := src/game.c src/legal.c src/replay.c src/random_strategy.c \
+WASM_BOT_SRC := src/game.c src/legal.c src/replay.c src/view.c src/awire.c \
+                src/evwire.c src/random_strategy.c \
                 src/espresso_strategy.c src/handwritten_strategy.c \
                 src/cordite_strategy.c src/cordite_sim.c \
                 src/simple_heuristic_strategy.c src/champion_strategy.c \
@@ -240,8 +289,11 @@ build/bots.wasm: $(WASM_BOT_SRC) $(wildcard src/*.h) $(wildcard wasm/*.h)
 	@mkdir -p build
 	$(WASM_CC) $(WASM_BOT_FLAGS) $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) $(WASM_BOT_SRC) -o $@
 
+# bots.wasm ships as a gzip STATIC ASSET (config.toml static_files + deploy
+# --use-api, no Docker) — a real 47KB binary, not a 155KB base64 .ts embed.
+# Loaded by _shared/wasm/wasm_asset.ts (server-only; bots never run in browser).
 wasm-bots: build/bots.wasm
-	node wasm/embed.mjs build/bots.wasm ../supabase/functions/_shared/wasm/bots_wasm.ts BOTS_WASM_B64
+	gzip -9 -c build/bots.wasm > ../supabase/functions/_shared/wasm/bots.wasm.gz
 
 # ---------------------------------------------------------------------------
 # Coverage gate (CI: ../.github/workflows/coverage.yml). Instruments the engine

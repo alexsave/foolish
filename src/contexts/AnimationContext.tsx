@@ -6,7 +6,10 @@ import { useAuth } from './AuthContext';
 import { useParams } from 'next/navigation';
 import supabase from '../backend/Connector';
 import { ANIMATION_TIME } from '../constants/constants';
-import { validateAttack, validatePass, validatePickup, validateCover, nextDefenderIndex } from '../utils/gameValidation';
+import { validateActionWire, nextDefenderIndex } from '../utils/gameValidation';
+import { encodeAction } from '@shared/wire/awire.ts';
+import { decodeEventWire } from '@shared/wire/evwire.ts';
+import { base64ToBytes } from '@shared/wire/bytes.ts';
 import { getTableCards, cardsIntersection, getCardKeyPlayerId, createCardEventString, getCardKey } from '../utils/animationUtils';
 import { animationFeed } from '../state/animationFeed';
 import { staleOptimisticKeysOnTable } from '../state/optimisticAnimation';
@@ -159,6 +162,10 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
     // Ref to track current game state (avoids stale closure in interval)
     const currentGameRef = useRef<typeof games[string] | undefined>(undefined);
+    // All loaded games, ref-mirrored for the feed subscription callback (the
+    // packed-envelope decode needs the roster of the game the message names,
+    // not the possibly-stale `games` closure the effect captured).
+    const gamesRef = useRef(games);
 
     // Keep track of processed sequence IDs and event content to avoid duplicates
     const processedSequenceIds = useRef<Set<string>>(new Set());
@@ -222,6 +229,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     // Keep currentGameRef in sync with latest game state
     useEffect(() => {
         currentGameRef.current = url_game_id ? games[url_game_id] : undefined;
+        gamesRef.current = games;
     }, [url_game_id, games]);
 
     // Start bot bump timer when component mounts and game is loaded
@@ -725,8 +733,107 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         return { revertEvents, passIsInvalid };
     }
 
+    // Packed envelopes we can't decode (unknown game, corrupt bytes, roster
+    // desync): refetch the authoritative state once instead of dropping
+    // silently forever. The refetch re-checks the landed version against the
+    // broadcast's — a load that was already in flight when the broadcast
+    // committed can return an OLDER state (its read predates the commit), so
+    // one more load is chained in that case.
+    const packedRefetchInFlight = useRef<Set<string>>(new Set());
+    const refetchForEnvelope = (gid: string | undefined, minVersion: number | undefined) => {
+        if (!gid || packedRefetchInFlight.current.has(gid)) return;
+        packedRefetchInFlight.current.add(gid);
+        serverActions.loadGame(gid)
+            .then(() => {
+                const landed = gamesRef.current[gid];
+                if (landed && minVersion !== undefined && (landed.version ?? 0) < minVersion) {
+                    return serverActions.loadGame(gid);
+                }
+            })
+            .catch(() => { /* resubscribe resync covers persistent failures */ })
+            .finally(() => packedRefetchInFlight.current.delete(gid));
+    };
+
+    // Packed broadcast envelope {t:'as2', s, v, b, game_id, r?, m?} -> the
+    // legacy sequence shape (docs/PACKED_WIRE_CUTOVER.md). This is the
+    // client's render-boundary materialization for live broadcasts: the
+    // evwire bytes become JS events/games right here and the EXISTING
+    // pipeline (version gate, dedup, optimistic-conflict resolution) runs
+    // unchanged on the result.
+    //
+    // The roster comes from the envelope (`r`) when present — the JS-encoded
+    // lobby/meta broadcasts carry it because those are exactly the actions
+    // that CHANGE the roster (join/exit/add-bot/rearrange), which a local
+    // stale roster can't decode correctly. Kernel-encoded human moves carry
+    // no `r` (a move can't change identities) and fall back to the loaded
+    // game. `m` carries the original message strings for the same broadcasts
+    // (their MAGIC_TRANSITIONs are arbitrary text the fixed message codes
+    // can't reconstruct).
+    const decodePackedEnvelope = (m: any): any | null => {
+        if (typeof m.b !== 'string') return null;
+        const gid = typeof m.game_id === 'string' ? m.game_id : url_game_id;
+        const g = gid ? gamesRef.current[gid] : undefined;
+        let roster: { id: string; name: string; players: { player_id: string; name: string; is_ai: boolean }[] };
+        if (m.r && Array.isArray(m.r.players)) {
+            roster = { id: gid ?? m.r.name, name: m.r.name ?? g?.name ?? '', players: m.r.players };
+        } else if (g && g.players && g.players.length > 0) {
+            roster = {
+                id: g.id,
+                name: g.name,
+                players: g.players.map(p => ({ player_id: p.player_id, name: p.name, is_ai: p.is_ai })),
+            };
+        } else {
+            // No way to name the seats: fetch the authoritative state and
+            // drop this sequence.
+            refetchForEnvelope(gid, typeof m.v === 'number' ? m.v : undefined);
+            return null;
+        }
+        const ctx = {
+            preGood: g?.good_players ?? [],
+            prevGoodTs: g?.good_timestamp ?? null,
+        };
+        let decoded;
+        try {
+            decoded = decodeEventWire(base64ToBytes(m.b), roster, ctx);
+        } catch (e) {
+            console.error('packed animation envelope decode failed:', e);
+            decoded = null;
+        }
+        // Undecodable bytes, or events naming seats beyond the roster we
+        // decoded with (the roster changed while this client was away —
+        // e.g. a bot was added and the game started): the local roster is
+        // stale. Refetch and drop; the load carries the fresh roster.
+        const seatOutOfRange = decoded?.events.some((ev: any) =>
+            ev.game_state && ev.game_state.players.length > roster.players.length);
+        if (!decoded || seatOutOfRange) {
+            refetchForEnvelope(gid, typeof m.v === 'number' ? m.v : undefined);
+            return null;
+        }
+        // Envelope-carried message strings are authoritative where present
+        // (null = the event had no message).
+        if (Array.isArray(m.m)) {
+            decoded.events.forEach((ev: any, i: number) => {
+                const s = m.m[i];
+                if (s == null) delete ev.message;
+                else ev.message = s;
+            });
+        }
+        return {
+            type: 'animation_sequence',
+            sequence_id: m.s,
+            timestamp: Date.now(),
+            version: m.v,
+            events: decoded.events,
+            game: decoded.game,
+        };
+    };
+
     // Handle animation messages from real-time channel
     const handleAnimationMessage = (message: any) => {
+        if (message && message.t === 'as2') {
+            message = decodePackedEnvelope(message);
+            if (!message) return;
+        }
         if (!message.events || !Array.isArray(message.events)) {
             return;
         }
@@ -1318,17 +1425,22 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
         const game = games[game_id];
 
+        // Build the awire bytes ONCE per move: the exact buffer guards.wasm
+        // validates below is what travels as the binary POST body.
+        const wire = encodeAction({ kind: 'attack', cards });
+
         // 1. Send the request BEFORE validating — the server is authoritative and
         //    rejects illegal moves, so we don't block the round-trip on local
         //    validation. `valid` is captured by the server method's deferred
         //    optimistic patch (applied only if still valid) and gates the optimistic
         //    animation below.
         let valid = true;
-        const serverPromise = serverActions.attack(cards, () => valid);
+        const serverPromise = serverActions.attack(cards, () => valid, wire);
 
-        // 2. Validate locally; only add optimistic feedback if the move is legal.
+        // 2. Validate the SAME wire bytes locally; only add optimistic feedback
+        //    if the move is legal.
         try {
-            validateAttack(game, cards);
+            validateActionWire(game, wire);
         } catch {
             valid = false;
         }
@@ -1391,13 +1503,17 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
         const game = games[game_id];
 
+        // One awire buffer for the gate + the POST body (see attack).
+        const wire = encodeAction({ kind: 'pass', cards });
+
         // 1. Send the request BEFORE validating (server is authoritative; see attack).
         let valid = true;
-        const serverPromise = serverActions.pass(cards, () => valid);
+        const serverPromise = serverActions.pass(cards, () => valid, wire);
 
-        // 2. Validate locally; only add optimistic feedback if the move is legal.
+        // 2. Validate the same wire bytes locally; only add optimistic feedback
+        //    if the move is legal.
         try {
-            validatePass(game, cards);
+            validateActionWire(game, wire);
         } catch {
             valid = false;
         }
@@ -1464,13 +1580,17 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         const game = games[game_id];
         const allTableCards = getTableCards(game);
 
+        // One awire buffer for the gate + the POST body (see attack).
+        const wire = encodeAction({ kind: 'pickup' });
+
         // 1. Send the request BEFORE validating (server is authoritative; see attack).
         let valid = true;
-        const serverPromise = serverActions.pickup(() => valid);
+        const serverPromise = serverActions.pickup(() => valid, wire);
 
-        // 2. Validate locally; only add optimistic feedback if the move is legal.
+        // 2. Validate the same wire bytes locally; only add optimistic feedback
+        //    if the move is legal.
         try {
-            validatePickup(game);
+            validateActionWire(game, wire);
         } catch {
             valid = false;
         }
@@ -1525,13 +1645,19 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
         const game = games[game_id];
 
+        // One awire buffer for the gate + the POST body (see attack). A
+        // mismatched cover/attack pairing throws here (a client bug, not a
+        // race) — the caller sees a rejected promise, same as a server reject.
+        const wire = encodeAction({ kind: 'cover', cards: coverCards, attack_cards: attackCards });
+
         // 1. Send the request BEFORE validating (server is authoritative; see attack).
         let valid = true;
-        const serverPromise = serverActions.cover(coverCards, attackCards, () => valid);
+        const serverPromise = serverActions.cover(coverCards, attackCards, () => valid, wire);
 
-        // 2. Validate locally; only add optimistic feedback if the move is legal.
+        // 2. Validate the same wire bytes locally; only add optimistic feedback
+        //    if the move is legal.
         try {
-            validateCover(game, coverCards, attackCards);
+            validateActionWire(game, wire);
         } catch {
             valid = false;
         }

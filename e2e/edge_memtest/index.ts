@@ -22,13 +22,12 @@ serve(async (req: Request) => {
             return m ? `heap=${(m.heapUsed / 1048576) | 0}/${(m.heapTotal / 1048576) | 0}MB ext=${(m.external / 1048576) | 0}MB` : 'n/a';
         } catch { return 'n/a'; }
     };
-    const steps = (url.searchParams.get('steps') ?? 'types,constants,engine,common_utils,bots_b64,bots,bot_strategy,pure_bot_actions').split(',');
+    const steps = (url.searchParams.get('steps') ?? 'types,constants,engine,common_utils,bots,bot_strategy,pure_bot_actions').split(',');
     const MODS: Record<string, string> = {
         types: '../_shared/types.ts',
         constants: '../_shared/constants.ts',
         engine: '../_shared/wasm/engine.ts',
         common_utils: '../_shared/common_utils.ts',
-        bots_b64: '../_shared/wasm/bots_wasm.ts',
         bots: '../_shared/wasm/bots.ts',
         bot_strategy: '../_shared/bot_strategy.ts',
         pure_bot_actions: '../_shared/pure_bot_actions.ts',

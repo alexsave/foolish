@@ -1,10 +1,13 @@
-import { PrivatePlayer, AnimationEvent, GAME_STATUS, PLAYER_STATUS, GAME_MOVE_TYPE } from './types.ts';
-import { executeWithGameLock } from './utils.ts';
+import { PrivatePlayer, GAME_STATUS, PLAYER_STATUS, GAME_MOVE_TYPE } from './types.ts';
+import { executeWithGameLock, PackedOpProducts } from './utils.ts';
 import { calculateLegalMoves, LegalMove } from './bot_strategy.ts';
 import { createClient } from 'jsr:@supabase/supabase-js';
-import { processBotAction, executeBotMove, shouldBotActCore } from './pure_bot_actions.ts';
+import { processBotActionPacked, executeBotMovePacked, shouldBotActCore, PackedBotMove } from './pure_bot_actions.ts';
 import { __botsWasmMB, __ensureBots } from './wasm/bots.ts';
 import { __kernelWasmMB } from './wasm/engine.ts';
+import { bytesToHex } from './replay/codec.ts';
+import { bytesToBareHex } from './wire/bytes.ts';
+import { logsFromKernelExport } from './wire/logwire.ts';
 
 // One-line memory snapshot against the edge limits (150MB heap + 150MB
 // external, where wasm linear memory counts as external). Logged around every
@@ -167,7 +170,16 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
     console.log(`[CYCLE ${cycle}] Starting bot processing for game ${game_id}`);
 
     let botProcessed = false;
-    let actionEvents: AnimationEvent[] = [];
+    // The cycle's kernel products (docs/PACKED_WIRE_CUTOVER.md): every bot
+    // move applies inside the kernel, so the commit takes the last move's
+    // state blob, the concatenated logwire records of every bundled move,
+    // and the (single — bundled passives are zero-event by definition)
+    // per-viewer event streams. No JS AnimationEvents on this path.
+    let packedStateHex: string | null = null;
+    let packedLogsHex = '';
+    let packedEnded = false;
+    let packedNEvents = 0;
+    let packedEvents: Map<number, Uint8Array> | null = null;
     // Pacing for THIS cycle, derived from THIS game's players. Must not be
     // module state: one warm isolate can drive several games (heartbeat SCAN),
     // and a bots-only game writing 300ms there leaked into a concurrent
@@ -191,10 +203,14 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
         const { game } = await executeWithGameLock(game_id, async (game) => {
             console.log(`[TIMING] Lock acquired in ${Date.now() - lockStartTime}ms`);
             // CRITICAL: executeWithGameLock re-invokes this operation on a CAS
-            // conflict. actionEvents/botProcessed live in the OUTER (cycle) scope, so
-            // without resetting them here a retried bot move would push its events a
-            // SECOND time → the duplicate animation on the client. Reset per attempt.
-            actionEvents = [];
+            // conflict. The packed accumulators/botProcessed live in the OUTER
+            // (cycle) scope, so without resetting them here a retried bot move
+            // would append its logs/events a SECOND time. Reset per attempt.
+            packedStateHex = null;
+            packedLogsHex = '';
+            packedEnded = false;
+            packedNEvents = 0;
+            packedEvents = null;
             botProcessed = false;
             const lockWorkStartTime = Date.now();
             // Pacing based on whether humans are still playing in THIS game
@@ -267,23 +283,23 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
                     // Replay a move computed in a failed CAS attempt if it is
                     // still legal against the reloaded state; else run the
                     // strategy and remember its choice for a possible retry.
-                    let botActionResult: false | { events: AnimationEvent[]; moveType: string } = false;
+                    let botActionResult: false | PackedBotMove = false;
                     const cached = movesFromFailedAttempts.get(selectedBot.bot.player_id);
                     if (cached) {
                         const stillLegal = calculateLegalMoves(game, selectedBot.bot.player_id)
                             .some((m) => canonMove(m) === canonMove(cached));
                         if (stillLegal) {
-                            const cachedEvents = executeBotMove(game, selectedBot.bot, cached);
-                            if (cachedEvents) {
+                            const replayed = executeBotMovePacked(game, selectedBot.bot, cached);
+                            if (replayed) {
                                 console.log(`[ACTION] Replayed ${selectedBot.bot.name}'s cached ${cached.type} from a conflicted attempt`);
-                                botActionResult = { events: cachedEvents, moveType: cached.type };
+                                botActionResult = replayed;
                             }
                         }
                         if (!botActionResult) movesFromFailedAttempts.delete(selectedBot.bot.player_id);
                     }
                     if (!botActionResult) {
                         console.log(`[MEM] before ${selectedBot.bot.name} (${selectedBot.bot.strategy_key}): ${memLine()}`);
-                        const fresh = await processBotAction(game, selectedBot.bot);
+                        const fresh = await processBotActionPacked(game, selectedBot.bot);
                         console.log(`[MEM] after  ${selectedBot.bot.name} (${selectedBot.bot.strategy_key}): ${memLine()}`);
                         if (fresh) {
                             movesFromFailedAttempts.set(selectedBot.bot.player_id, fresh.move);
@@ -297,16 +313,30 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
                     cpu.decisions += 1;
                     if (actionDuration > cpu.maxMs) cpu.maxMs = actionDuration;
                     if (botActionResult) {
-                        actionEvents.push(...(botActionResult.events as unknown as AnimationEvent[]));
+                        const moveEvents = botActionResult.run?.nEvents ?? 0;
+                        if (botActionResult.run) {
+                            const r = botActionResult.run;
+                            // Bundle: the logwire records concatenate; the
+                            // state blob is cumulative so the last one wins;
+                            // at most one bundled move carries events
+                            // (passives only bundle when they have none).
+                            packedLogsHex += bytesToBareHex(logsFromKernelExport(r.logsWire, Date.now()));
+                            packedStateHex = bytesToHex(r.stateBlob);
+                            packedEnded = r.ended;
+                            if (r.nEvents > 0) {
+                                packedEvents = r.events;
+                                packedNEvents = r.nEvents;
+                            }
+                        }
 
                         const isPassiveAction = botActionResult.moveType === GAME_MOVE_TYPE.GOOD || botActionResult.moveType === GAME_MOVE_TYPE.WAIT;
-                        
+
                         console.log(`[ACTION] ✓ Bot ${selectedBot.bot.name} completed ${botActionResult.moveType} action in ${actionDuration}ms`);
-                        
+
                         // For passive actions (good/wait) without animations, continue to try more bots
                         // This bundles multiple passive actions together for snappier feel
                         // Exception: if good causes round transition, it will have events (animations)
-                        if (isPassiveAction && botActionResult.events.length === 0) {
+                        if (isPassiveAction && moveEvents === 0) {
                             console.log(`[ACTION] Passive action without animations, bundling with next bot action`);
                             anyPassiveProcessed = true;
                             continue;
@@ -337,7 +367,14 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
             }
 
             console.log(`[TIMING] Lock work completed in ${Date.now() - lockWorkStartTime}ms`);
-            return { game, events: actionEvents };
+            const packed: PackedOpProducts | undefined = packedStateHex ? {
+                ended: packedEnded,
+                stateHex: packedStateHex,
+                logsHex: packedLogsHex || null,
+                nEvents: packedNEvents,
+                events: packedEvents ?? new Map<number, Uint8Array>(),
+            } : undefined;
+            return { game, events: [], packed };
         }, reqId);
 
 
@@ -356,7 +393,7 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
     if (botProcessed) {
         // Skip pacing when there are no humans watching AND this cycle produced no
         // animations — bots churning through silent goods shouldn't feel padded.
-        const skipDelay = actionEvents.length === 0 && cycleDelay === BOT_PROCESSING_DELAY_BOTS_ONLY;
+        const skipDelay = packedNEvents === 0 && cycleDelay === BOT_PROCESSING_DELAY_BOTS_ONLY;
 
         if (skipDelay) {
             console.log(`[CYCLE ${cycle}] Cycle took ${totalCycleTime}ms, skipping ${cycleDelay}ms delay (no events, no humans)`);

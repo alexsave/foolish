@@ -25,16 +25,26 @@ import { AnimationEvent, Card } from '../supabase/functions/_shared/types.ts';
 import { legalMovesFor, applyPlayerMove } from './dispatch.ts';
 import { resolveUnconfirmedAttackCovers } from '../src/state/optimisticConflicts';
 import { getTableCards, getCardKey } from '../src/utils/animationUtils';
+import { decodeEventWire } from '../supabase/functions/_shared/wire/evwire.ts';
+import { ViewRoster } from '../supabase/functions/_shared/wire/view.ts';
+import { base64ToBytes } from '../supabase/functions/_shared/wire/bytes.ts';
+import { __setKernelSeedSource } from '../supabase/functions/_shared/wasm/engine.ts';
 
 before(async () => { await applySchema(); });
 beforeEach(async () => { await resetDb(); });
 
 const sameCard = (a: Card, b: Card) => a.suit === b.suit && a.value === b.value;
 
-// The broadcasts the given player's client would have received, newest last.
-function streamFor(gameId: string, playerId: string) {
+// The broadcasts the given player's client would have received, newest last —
+// packed {t,s,v,b} payloads decoded with the REAL client decoder into the
+// {events, game} shape the animation pipeline consumes. preGood/prevGoodTs
+// are dummies: these tests only look at events/cards/tables, never at
+// good_players order or good_timestamp.
+function streamFor(gameId: string, playerId: string, roster: ViewRoster) {
     const chan = `gu-${gameId}-${playerId}`;
-    return broadcastLog.filter((b: any) => b.channel === chan && b.event === 'animation_events').map((b: any) => b.payload);
+    return broadcastLog
+        .filter((b: any) => b.channel === chan && b.event === 'animation_events')
+        .map((b: any) => decodeEventWire(base64ToBytes(b.payload.b), roster, { preGood: [], prevGoodTs: null })!);
 }
 
 // AnimationContext's inputs to the decision, pulled out of a raw broadcast exactly
@@ -51,19 +61,21 @@ async function startTwoHumanGame() {
     const gameId = `o${uuid().slice(0, 6)}`;
     const hero = uuid();
     const rival = uuid();
-    await seedGame(gameId, [
+    const seeded = [
         { id: hero, name: 'Hero', is_ai: false, strategy_key: 'human' },
         { id: rival, name: 'Rival', is_ai: false, strategy_key: 'human' },
-    ]);
+    ];
+    await seedGame(gameId, seeded);
+    const roster: ViewRoster = { id: gameId, name: gameId, players: seeded.map((p) => ({ player_id: p.id, name: p.name, is_ai: p.is_ai })) };
     await executeWithGameLock(gameId, async (g) => ({ game: g, events: start_game(g) as AnimationEvent[] }), 'start', false);
     const g = await loadCompleteGame(gameId);
     const attackerId = g.players[g.first_attacker].player_id;
     const defenderId = g.players[g.defender].player_id;
-    return { gameId, hero, rival, attackerId, defenderId };
+    return { gameId, hero, rival, attackerId, defenderId, roster };
 }
 
 test('SCENARIO B: a card the defender picks up is NOT reverted to my hand', async () => {
-    const { gameId, attackerId, defenderId } = await startTwoHumanGame();
+    const { gameId, attackerId, defenderId, roster } = await startTwoHumanGame();
 
     // 1. The attacker plays ONE attack — this is the card they "put down".
     let g = await loadCompleteGame(gameId);
@@ -79,7 +91,7 @@ test('SCENARIO B: a card the defender picks up is NOT reverted to my hand', asyn
     await executeWithGameLock(gameId, async (gg) => ({ game: gg, events: applyPlayerMove(gg, pickupMove!) }), 'pickup', false);
 
     // 3. The pickup broadcast the attacker's client receives.
-    const stream = streamFor(gameId, attackerId);
+    const stream = streamFor(gameId, attackerId, roster);
     const pickupBcast = stream.find((p) => p.events.some((e: any) => e.type === 'pickup'));
     assert.ok(pickupBcast, 'attacker should receive a pickup broadcast');
     const pickupEvent = pickupBcast.events.find((e: any) => e.type === 'pickup');
@@ -102,17 +114,25 @@ test('SCENARIO A: a card still in flight is NOT reverted by a concurrent attack 
     // Hero's card. Hero's follow-up attack is a genuine LEGAL rank-match (computed
     // after Rival commits, exactly as the kernel would allow it), so a revert would
     // be wrong. Repeat across fresh games to sweep table/hand sizes.
+    // Pin the kernel deal seed: unpinned, roughly 1 run in 40 dealt twelve
+    // straight hands where the hero held no rank-matching follow-up, failing
+    // the `checked > 0` floor as a flake. This sequence is verified to
+    // produce matching deals and keeps the sweep deterministic.
+    let kseed = 0xa11ce;
+    __setKernelSeedSource(() => { kseed = (kseed * 48271) % 0x7fffffff; return kseed; });
     let checked = 0;
     for (let t = 0; t < 12; t++) {
         const gameId = `a${uuid().slice(0, 6)}`;
         const p0 = uuid();
         const p1 = uuid();
         const p2 = uuid();
-        await seedGame(gameId, [
+        const seeded = [
             { id: p0, name: 'A0', is_ai: false, strategy_key: 'human' },
             { id: p1, name: 'A1', is_ai: false, strategy_key: 'human' },
             { id: p2, name: 'A2', is_ai: false, strategy_key: 'human' },
-        ]);
+        ];
+        await seedGame(gameId, seeded);
+        const roster: ViewRoster = { id: gameId, name: gameId, players: seeded.map((p) => ({ player_id: p.id, name: p.name, is_ai: p.is_ai })) };
         await executeWithGameLock(gameId, async (g) => ({ game: g, events: start_game(g) as AnimationEvent[] }), 'start', false);
 
         let g = await loadCompleteGame(gameId);
@@ -135,7 +155,7 @@ test('SCENARIO A: a card still in flight is NOT reverted by a concurrent attack 
         const heroCard: Card = heroAttack.move.cards![0];
 
         // The concurrent broadcast Hero's client sees while its own attack is pending.
-        const rivalBcast = streamFor(gameId, heroId).find((p) => p.events.some((e: any) => e.type === 'attack_pass'));
+        const rivalBcast = streamFor(gameId, heroId, roster).find((p) => p.events.some((e: any) => e.type === 'attack_pass'));
         if (!rivalBcast) continue;
 
         const { serverTableCards, events, finalGameState } = decisionInputs(rivalBcast);
