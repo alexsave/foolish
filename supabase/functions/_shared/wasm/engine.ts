@@ -42,6 +42,9 @@ interface EngineExports {
     wasm_cards_b_ptr(): number;
     wasm_import_state(): void;
     wasm_export_state(): number;
+    wasm_state_serialize(): number;
+    wasm_state_deserialize(len: number): number;
+    wasm_state_format_version(): number;
     wasm_export_logs(): number;
     wasm_snap_count(): number;
     wasm_snap_tag(i: number): number;
@@ -461,6 +464,73 @@ function stateToGame(ks: KernelState, template: Game, preGood: string[], actorId
         logs: [],
         version: template.version,
     };
+}
+
+// ---------------------------------------------------------------------------
+// Durable state codec (persisted as games.state bytea).
+//
+// serializeGameState packs a Game into the kernel's VERSIONED persist blob
+// (put_state + a leading format-version byte). The blob carries only the
+// volatile state (positions, deck, battles, per-seat hands/status, good-mask,
+// elimination) — NOT seat identity (player_id/name/strategy_key/is_ai) nor the
+// two presentation fields the kernel doesn't model (good_players insertion
+// ORDER, good_timestamp wall-clock VALUE). Those are stable/tiny and live in
+// the row's roster columns, reattached on the way out via the same
+// stateToGame the action path already uses. This is exactly the
+// KernelState-vs-template split parseState/stateToGame were built around.
+// ---------------------------------------------------------------------------
+
+// The identity + presentation fields the blob omits; supplied from the row's
+// roster columns when decoding.
+export interface RosterTemplate {
+    id: string;
+    name: string;
+    version?: number;
+    deck_length: number;
+    players: { player_id: string; name: string; is_ai: boolean; strategy_key: string }[];
+    good_players: string[];
+    good_timestamp: number | null;
+}
+
+// Format version this build's kernel reads/writes (asserts the loaded embed
+// matches what the TS side expects; surfaced for callers/tests).
+export function stateFormatVersion(): number { return engine().wasm_state_format_version(); }
+
+// Game -> versioned blob. The bytes are copied out of wasm linear memory, so
+// they stay valid across later kernel calls / memory growth.
+export function serializeGameState(game: Game): Uint8Array {
+    const ex = engine();
+    marshalGame(ex, game);              // load `game` into the kernel's working state
+    const len = ex.wasm_state_serialize(); // write [version | put_state] into g_io
+    const base = ex.wasm_io_ptr();
+    return mem(ex).slice(base, base + len);
+}
+
+// Versioned blob + roster columns -> full Game. Throws (never silently yields
+// an empty game) if the blob's version byte is one this kernel can't read.
+export function deserializeGameState(bytes: Uint8Array, roster: RosterTemplate): Game {
+    const ex = engine();
+    const base = ex.wasm_io_ptr();
+    mem(ex).set(bytes, base);
+    if (!ex.wasm_state_deserialize(bytes.length)) {
+        throw new Error(
+            `Unreadable game state blob for ${roster.id}: format version ` +
+            `${bytes[0]}, kernel reads ${ex.wasm_state_format_version()}`);
+    }
+    // g_game now holds the loaded state, but no TS Game object owns it yet.
+    residentFor = null;
+    ex.wasm_export_state();
+    const ks = parseState(mem(ex), base);
+    const template = {
+        id: roster.id,
+        name: roster.name,
+        version: roster.version,
+        deck_length: roster.deck_length,
+        players: roster.players,
+    } as unknown as Game;
+    // actorId=null: a fresh load adds no new good-player; preGood carries the
+    // stored insertion order so goodPlayersFromMask reproduces it exactly.
+    return stateToGame(ks, template, roster.good_players, null, roster.good_timestamp);
 }
 
 // Apply a kernel state onto the live Game object in place (the handlers
