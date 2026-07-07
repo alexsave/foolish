@@ -101,12 +101,26 @@ export interface DecodedSequence {
 // version (callers must treat the payload as unreadable, never as empty).
 export function decodeEventWire(buf: Uint8Array, roster: ViewRoster, ctx: ViewDecodeCtx): DecodedSequence | null {
     if (buf.length < 4 || buf[0] !== EVWIRE_FORMAT_VERSION) return null;
+    try {
+        return decodeEventWireInner(buf, roster, ctx);
+    } catch {
+        // Truncated/corrupt payload (parseMaskedState throws RangeError, and
+        // the bounds guards below do too): unreadable, never a partial parse.
+        return null;
+    }
+}
+
+function decodeEventWireInner(buf: Uint8Array, roster: ViewRoster, ctx: ViewDecodeCtx): DecodedSequence {
+    const need = (at: number, n: number) => {
+        if (at + n > buf.length) throw new RangeError(`evwire: truncated at ${at}+${n}/${buf.length}`);
+    };
     const viewerSeat = buf[1] === EVW_SEAT_NONE ? -1 : buf[1];
     const actorSeat = buf[2] === EVW_SEAT_NONE ? -1 : buf[2];
     const nEvents = buf[3];
     let q = 4;
     const events: DecodedEvent[] = [];
     for (let i = 0; i < nEvents; i++) {
+        need(q, 7);
         const type = EVENT_TYPE_FROM_INT[buf[q++]];
         const seat = buf[q++];
         const msg = buf[q++];
@@ -114,6 +128,7 @@ export function decodeEventWire(buf: Uint8Array, roster: ViewRoster, ctx: ViewDe
         const toLoc = buf[q++];
         const flags = buf[q++];
         const nCards = buf[q++];
+        need(q, nCards + (flags & 1 ? 1 : 0) + (flags & 2 ? 1 : 0) + 2);
         const cards: Card[] = [];
         for (let j = 0; j < nCards; j++) cards.push(cardFromWireByte(buf[q++]));
         let target: Card | null = null;
@@ -121,6 +136,7 @@ export function decodeEventWire(buf: Uint8Array, roster: ViewRoster, ctx: ViewDe
         if (flags & 1) target = cardFromWireByte(buf[q++]);
         if (flags & 2) battle = buf[q++];
         const snapLen = buf[q] | (buf[q + 1] << 8); q += 2;
+        need(q, snapLen);
         const { state } = parseMaskedState(buf, q); q += snapLen;
 
         const ev: DecodedEvent = {
@@ -144,7 +160,9 @@ export function decodeEventWire(buf: Uint8Array, roster: ViewRoster, ctx: ViewDe
         if (message !== undefined) ev.message = message;
         events.push(ev);
     }
+    need(q, 2);
     const finalLen = buf[q] | (buf[q + 1] << 8); q += 2;
+    need(q, finalLen);
     const { state: finalState } = parseMaskedState(buf, q);
     return {
         viewerSeat, actorSeat, events,
@@ -189,6 +207,9 @@ const sanitizedType = (t: string) =>
 export function encodeEventWire(
     events: AnimationEvent[], finalGame: Game, viewerSeat: number, actorSeat: number,
 ): Uint8Array {
+    // Mirror the C side's hard cap (evwire_serialize returns -1 past 255);
+    // silent & 0xff truncation would desync the stream.
+    if (events.length > 255) throw new Error(`evwire: ${events.length} events exceeds the wire cap of 255`);
     const out: number[] = [
         EVWIRE_FORMAT_VERSION,
         viewerSeat < 0 ? EVW_SEAT_NONE : viewerSeat,

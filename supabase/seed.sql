@@ -247,6 +247,19 @@ ALTER TABLE game_snapshots ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Anyone can view games" ON games
   FOR SELECT USING (true);
 
+-- ...but NOT the packed kernel state blob: games.state is the UNMASKED
+-- volatile state (every hand + the deck order). Clients receive a
+-- per-viewer MASKED view through the get_game edge function instead
+-- (docs/PACKED_WIRE_CUTOVER.md); column-level grants keep the blob (and
+-- the bot-lease bookkeeping) service-role-only, since RLS cannot hide a
+-- column. Mirrors migration 20260707140000_hide_state_blob.sql.
+REVOKE SELECT ON public.games FROM anon, authenticated;
+GRANT SELECT (
+  id, name, deck_length, discard_pile_length, flipped, players, status,
+  power_suit, first_attacker, defender, table_battles, elimination_order,
+  good_timestamp, good_players, version, created_at, updated_at
+) ON public.games TO anon, authenticated;
+
 CREATE POLICY "Authenticated users can create games" ON games
   FOR INSERT WITH CHECK (
     (select auth.role()) = 'authenticated'

@@ -208,11 +208,25 @@ export const broadcastMessages = async (messages: BroadcastMessage[], reqId: str
 // ONE kernel-format byte buffer, base64 inside the JSON envelope the
 // realtime API requires. `v` is the committed games.version — the client's
 // monotonic reorder-drop token; `s` the dedup sequence id.
-export const packedSequencePayload = (bytes: Uint8Array, version: number) => ({
+//
+// `extra.r` (roster) and `extra.m` (per-event message strings) ride along on
+// the JS-encoded paths only: lobby/meta actions are the one place the ROSTER
+// itself changes (join/exit/add-bot/rearrange), and their MAGIC_TRANSITION
+// messages are arbitrary strings the fixed evwire message codes can't
+// reconstruct. The kernel-encoded human-move path never sets them — a move
+// can't change identities, and its messages rebuild from codes.
+export interface PackedPayloadExtra {
+    r?: { name: string; players: { player_id: string; name: string; is_ai: boolean }[] };
+    m?: (string | null)[];
+}
+
+export const packedSequencePayload = (bytes: Uint8Array, version: number, extra?: PackedPayloadExtra) => ({
     t: 'as2',
     s: crypto.randomUUID(),
     v: version,
     b: bytesToBase64(bytes),
+    ...(extra?.r ? { r: extra.r } : {}),
+    ...(extra?.m ? { m: extra.m } : {}),
 });
 
 export const broadcastAnimationEvents = async (game: Game, events: AnimationEvent[], reqId: string = 'unknown'): Promise<void> => {
@@ -228,6 +242,16 @@ export const broadcastAnimationEvents = async (game: Game, events: AnimationEven
     // byte-identical to what the kernel's wasm_events_serialize emits on the
     // packed action path, parity-tested in e2e.
     const version = game.version ?? 0;
+    // Self-describing extras (see PackedPayloadExtra): this JS path carries
+    // the lobby/meta actions where the roster itself changes, so recipients
+    // must not depend on an already-loaded (possibly stale) roster to decode.
+    const extra: PackedPayloadExtra = {
+        r: {
+            name: game.name,
+            players: game.players.map(p => ({ player_id: p.player_id, name: p.name, is_ai: p.is_ai })),
+        },
+        m: events.map(e => e.message ?? null),
+    };
     const messages: BroadcastMessage[] = [];
     for (let seat = 0; seat < game.players.length; seat++) {
         const player = game.players[seat];
@@ -235,14 +259,14 @@ export const broadcastAnimationEvents = async (game: Game, events: AnimationEven
         messages.push({
             topic: `gu-${game.id}-${player.player_id}`,
             event: 'animation_events',
-            payload: packedSequencePayload(encodeEventWire(events, game, seat, -1), version),
+            payload: packedSequencePayload(encodeEventWire(events, game, seat, -1), version, extra),
         });
     }
     // Public (fully masked) stream to the spectator channel.
     messages.push({
         topic: `game-${game.id}`,
         event: 'animation_events',
-        payload: packedSequencePayload(encodeEventWire(events, game, -1, -1), version),
+        payload: packedSequencePayload(encodeEventWire(events, game, -1, -1), version, extra),
     });
 
     await broadcastMessages(messages, reqId);

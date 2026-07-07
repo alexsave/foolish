@@ -733,27 +733,53 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         return { revertEvents, passIsInvalid };
     }
 
-    // Packed broadcast envelope {t:'as2', s, v, b, game_id} -> the legacy
-    // sequence shape (docs/PACKED_WIRE_CUTOVER.md). This is the client's
-    // render-boundary materialization for live broadcasts: the evwire bytes
-    // become JS events/games right here and the EXISTING pipeline (version
-    // gate, dedup, optimistic-conflict resolution) runs unchanged on the
-    // result. Returns null when the message must be dropped (no loaded
-    // roster for that game, or undecodable bytes) — the resync path covers
-    // those.
+    // Packed envelopes for games we haven't loaded yet: refetch once instead
+    // of dropping silently forever (the authoritative load supersedes the
+    // dropped sequence — its version is at least the broadcast's).
+    const packedRefetchInFlight = useRef<Set<string>>(new Set());
+
+    // Packed broadcast envelope {t:'as2', s, v, b, game_id, r?, m?} -> the
+    // legacy sequence shape (docs/PACKED_WIRE_CUTOVER.md). This is the
+    // client's render-boundary materialization for live broadcasts: the
+    // evwire bytes become JS events/games right here and the EXISTING
+    // pipeline (version gate, dedup, optimistic-conflict resolution) runs
+    // unchanged on the result.
+    //
+    // The roster comes from the envelope (`r`) when present — the JS-encoded
+    // lobby/meta broadcasts carry it because those are exactly the actions
+    // that CHANGE the roster (join/exit/add-bot/rearrange), which a local
+    // stale roster can't decode correctly. Kernel-encoded human moves carry
+    // no `r` (a move can't change identities) and fall back to the loaded
+    // game. `m` carries the original message strings for the same broadcasts
+    // (their MAGIC_TRANSITIONs are arbitrary text the fixed message codes
+    // can't reconstruct).
     const decodePackedEnvelope = (m: any): any | null => {
         if (typeof m.b !== 'string') return null;
         const gid = typeof m.game_id === 'string' ? m.game_id : url_game_id;
         const g = gid ? gamesRef.current[gid] : undefined;
-        if (!g || !g.players || g.players.length === 0) return null;
-        const roster = {
-            id: g.id,
-            name: g.name,
-            players: g.players.map(p => ({ player_id: p.player_id, name: p.name, is_ai: p.is_ai })),
-        };
+        let roster: { id: string; name: string; players: { player_id: string; name: string; is_ai: boolean }[] };
+        if (m.r && Array.isArray(m.r.players)) {
+            roster = { id: gid ?? m.r.name, name: m.r.name ?? g?.name ?? '', players: m.r.players };
+        } else if (g && g.players && g.players.length > 0) {
+            roster = {
+                id: g.id,
+                name: g.name,
+                players: g.players.map(p => ({ player_id: p.player_id, name: p.name, is_ai: p.is_ai })),
+            };
+        } else {
+            // No way to name the seats: fetch the authoritative state once
+            // and drop this sequence — the load lands a version >= this one.
+            if (gid && !packedRefetchInFlight.current.has(gid)) {
+                packedRefetchInFlight.current.add(gid);
+                serverActions.loadGame(gid)
+                    .catch(() => { /* resubscribe resync covers persistent failures */ })
+                    .finally(() => packedRefetchInFlight.current.delete(gid));
+            }
+            return null;
+        }
         const ctx = {
-            preGood: g.good_players ?? [],
-            prevGoodTs: g.good_timestamp ?? null,
+            preGood: g?.good_players ?? [],
+            prevGoodTs: g?.good_timestamp ?? null,
         };
         let decoded;
         try {
@@ -763,6 +789,15 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             return null;
         }
         if (!decoded) return null;
+        // Envelope-carried message strings are authoritative where present
+        // (null = the event had no message).
+        if (Array.isArray(m.m)) {
+            decoded.events.forEach((ev: any, i: number) => {
+                const s = m.m[i];
+                if (s == null) delete ev.message;
+                else ev.message = s;
+            });
+        }
         return {
             type: 'animation_sequence',
             sequence_id: m.s,

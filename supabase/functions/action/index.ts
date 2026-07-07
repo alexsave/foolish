@@ -7,7 +7,7 @@ import { handleGood } from "../_shared/actions/good.ts";
 import { verify_player_in_game } from "../_shared/common_utils.ts";
 import { corsHeaders } from "../_shared/cors.ts";
 import { GAME_STATUS } from "../_shared/types.ts";
-import { decodeActionRequest, encodeActionResponse } from "../_shared/wire/awire.ts";
+import { ACTION_STATUS, decodeActionRequest, encodeActionResponse } from "../_shared/wire/awire.ts";
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 
@@ -25,8 +25,11 @@ const packedAction = async (req: Request, user: { id: string }, reqId: string): 
     }
     const { executePackedAction } = await import('../_shared/packed_action.ts');
     const out = await executePackedAction(parsed.gameId, user.id, parsed.wire, reqId);
-    // Same bot nudge as the JSON path: a human move wakes the bots.
-    if (out.gameStatus === GAME_STATUS.PLAYING) scheduleBotLoop(parsed.gameId, reqId);
+    // Same bot nudge as the JSON path: an APPLIED human move wakes the bots.
+    // (A rejection never did on the legacy path — it threw before run_bots.)
+    if (out.status === ACTION_STATUS.APPLIED && out.gameStatus === GAME_STATUS.PLAYING) {
+        scheduleBotLoop(parsed.gameId, reqId);
+    }
     return new Response(encodeActionResponse(out.status, out.rejectCode, out.version) as unknown as BodyInit, {
         headers: { ...corsHeaders, 'Content-Type': 'application/octet-stream' },
     });

@@ -51,9 +51,15 @@ export interface ViewState {
 const i8 = (b: number) => (b > 127 ? b - 256 : b);
 
 // Parse one masked put_state payload starting at `off`; returns the state
-// and the offset just past it.
+// and the offset just past it. Throws RangeError on a truncated buffer —
+// wrap callers that receive untrusted/corruptible bytes (decodeEventWire and
+// decodePackedGame catch and surface null).
 export function parseMaskedState(buf: Uint8Array, off: number): { state: ViewState; end: number } {
     let q = off;
+    const need = (n: number) => {
+        if (q + n > buf.length) throw new RangeError(`view: truncated state payload at ${q}+${n}/${buf.length}`);
+    };
+    need(17); // the fixed-size header through deck_count
     const status = buf[q++];
     const numPlayers = buf[q++];
     const powerSuit = i8(buf[q++]);
@@ -65,8 +71,10 @@ export function parseMaskedState(buf: Uint8Array, off: number): { state: ViewSta
     const goodMask = (buf[q] | (buf[q + 1] << 8) | (buf[q + 2] << 16) | (buf[q + 3] << 24)) >>> 0; q += 4;
     const hasGoodTs = buf[q++] !== 0;
     const deckLen = buf[q] | (buf[q + 1] << 8); q += 2;
+    need(deckLen + 1);
     q += deckLen; // masked deck bytes carry no information beyond the count
     const nBattles = buf[q++];
+    need(nBattles * 2 + 1);
     const battles: Battle[] = [];
     for (let i = 0; i < nBattles; i++) {
         const attack = cardFromWireByte(buf[q++]);
@@ -75,9 +83,11 @@ export function parseMaskedState(buf: Uint8Array, off: number): { state: ViewSta
     }
     const players: ViewState['players'] = [];
     for (let i = 0; i < numPlayers; i++) {
+        need(3);
         const pStatus = buf[q++];
         const awaiting = buf[q++] !== 0;
         const handN = buf[q++];
+        need(handN + 1);
         const hand: (Card | null)[] = new Array(handN);
         for (let j = 0; j < handN; j++) {
             const b = buf[q++];
@@ -86,6 +96,7 @@ export function parseMaskedState(buf: Uint8Array, off: number): { state: ViewSta
         players.push({ status: pStatus, awaiting, hand });
     }
     const elimN = buf[q++];
+    need(elimN);
     const elimination: number[] = [];
     for (let i = 0; i < elimN; i++) elimination.push(i8(buf[q++]));
     return {
@@ -213,11 +224,18 @@ export function decodePackedGame(
     const seat = isPlayer ? buf[2] : -1;
     const version = (buf[3] | (buf[4] << 8) | (buf[5] << 16) | (buf[6] << 24)) >>> 0;
     const rosterLen = buf[7] | (buf[8] << 8);
-    const roster = JSON.parse(new TextDecoder().decode(buf.subarray(9, 9 + rosterLen))) as PackedGameRoster;
+    if (9 + rosterLen + 2 > buf.length) return null;
+    let roster: PackedGameRoster;
+    let state: ViewState;
     let q = 9 + rosterLen;
-    const viewLen = buf[q] | (buf[q + 1] << 8); q += 2;
-    if (buf[q] !== VIEW_FORMAT_VERSION) return null;
-    const { state } = parseMaskedState(buf, q + 2); // skip [fmt | viewer]
+    try {
+        roster = JSON.parse(new TextDecoder().decode(buf.subarray(9, 9 + rosterLen))) as PackedGameRoster;
+        const viewLen = buf[q] | (buf[q + 1] << 8); q += 2;
+        if (q + viewLen > buf.length || buf[q] !== VIEW_FORMAT_VERSION) return null;
+        ({ state } = parseMaskedState(buf, q + 2)); // skip [fmt | viewer]
+    } catch {
+        return null; // truncated/corrupt payload — caller treats as unreadable
+    }
     const game = viewToGame(state, roster, seat, {
         preGood: roster.good_players ?? [],
         prevGoodTs: roster.good_timestamp ?? null,
@@ -249,6 +267,8 @@ export function writeMaskedState(game: Game, viewerSeat: number, out: number[]):
     let mask = 0;
     for (const pid of game.good_players ?? []) {
         const s = game.players.findIndex(p => p.player_id === pid);
+        // The s >= 0 guard is load-bearing: 1 << -1 is 1 << 31 in JS and
+        // would phantom-set seat 31 for a good entry whose player left.
         if (s >= 0) mask |= 1 << s;
     }
     out.push(mask & 0xff, (mask >> 8) & 0xff, (mask >> 16) & 0xff, (mask >> 24) & 0xff);

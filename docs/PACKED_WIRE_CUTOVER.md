@@ -83,6 +83,17 @@ Realtime payload: `{ t:'as2', s: sequence_id, v: version, b: base64(evwire) }`
 on the same `gu-<game>-<player>` / `game-<game>` topics. A move that produces
 zero events (a plain `good`) still broadcasts nothing — unchanged.
 
+JS-encoded broadcasts (lobby/meta + bot moves) additionally carry
+`r: { name, players: [{player_id, name, is_ai}] }` and `m: (string|null)[]`
+— the roster, because join/exit/add-bot/rearrange are exactly the actions
+that CHANGE it (a client's loaded roster is stale by definition when they
+apply), and the original per-event message strings, because meta
+MAGIC_TRANSITIONs carry arbitrary text the fixed message codes cannot
+reconstruct. Kernel-encoded human moves never set them: a move cannot change
+identities, and its messages rebuild from codes. A client receiving a packed
+envelope for a game it has not loaded (no `r`, no local roster) refetches
+`get_game` once and drops the sequence — the load lands a newer version.
+
 ## What runs where after the cut-over
 
 - **rules.wasm** (server): `wasm_apply_action` (awire in, one call),
@@ -106,6 +117,15 @@ zero events (a plain `good`) still broadcasts nothing — unchanged.
 - `get_my_games` (dashboard listing) still returns personalize_game JSON.
 - `hand_rearranged` private message unchanged.
 - Replay pipeline unchanged (already kernel-encoded at game end).
+
+## Closing the PostgREST side door
+
+Masking in the kernel is worthless if the raw blob is readable elsewhere:
+the `games.state` column holds the UNMASKED state, and the pre-existing
+"Anyone can view games" RLS policy exposed it to any client via PostgREST.
+Migration `20260707140000_hide_state_blob.sql` (mirrored in seed.sql)
+switches `games` to column-level SELECT grants — everything except `state`
+and the bot-lease columns. RLS cannot hide a column; grants can.
 
 ## Live verification checklist (needs a real Supabase stack; same drill as
 STATE_BLOB_CUTOVER.md — the dev container cannot run edge functions)
