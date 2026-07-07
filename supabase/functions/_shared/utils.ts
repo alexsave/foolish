@@ -515,6 +515,30 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
         } as PrivatePlayer;
     });
 
+    // Blob-authoritative load: once a game is dealt, the whole volatile state
+    // (hands, deck, battles, positions, statuses, good-mask, elimination) lives
+    // in the packed kernel blob. Reconstruct from it — identity/strategy come
+    // from the roster we just built, presentation (good order/timestamp) from
+    // the columns — instead of re-parsing the JSONB hand joins. Never-dealt
+    // (WAITING) games have no blob and fall through to the JSONB assembly below
+    // (which also covers any legacy row committed before this column existed).
+    // Lazy import so lobby-only loads never pull the rules-wasm embed.
+    if (data.state) {
+        const { deserializeGameState } = await import('./wasm/engine.ts');
+        const { hexToBytes } = await import('./replay/codec.ts');
+        return deserializeGameState(hexToBytes(data.state), {
+            id: data.id,
+            name: data.name,
+            version: data.version ?? 0,
+            deck_length: 0, // derived from the blob's deck inside deserializeGameState
+            players: players.map(p => ({
+                player_id: p.player_id, name: p.name, is_ai: p.is_ai, strategy_key: p.strategy_key,
+            })),
+            good_players: data.good_players || [],
+            good_timestamp: data.good_timestamp || null,
+        });
+    }
+
     // Logs are loaded LAZILY (not here). Game logic never reads historical logs —
     // handlers only APPEND via addLog, and the per-move response/broadcast strip
     // logs entirely (gameToPublicGame / personalize_game). The only consumer of the
@@ -627,6 +651,19 @@ export const commitGame = async (
             awaiting_attack: player.awaiting_attack,
         }));
 
+    // Packed kernel state blob (hex) — the server's authoritative VOLATILE
+    // state on reload (see loadCompleteGame). Only meaningful once the game is
+    // dealt; a lobby (WAITING) commit passes null and commit_game COALESCEs it,
+    // leaving any prior blob untouched. Lazy imports so create/lobby cold
+    // starts never pull the rules-wasm embed (same discipline as the bot/
+    // replay lazy imports at the top of this file).
+    let p_state: string | null = null;
+    if (game.status === GAME_STATUS.PLAYING || game.status === GAME_STATUS.GAME_OVER) {
+        const { serializeGameState } = await import('./wasm/engine.ts');
+        const { bytesToHex } = await import('./replay/codec.ts');
+        p_state = bytesToHex(serializeGameState(game));
+    }
+
     const { data, error } = await supabaseClient.rpc('commit_game', {
         p_game_id: game.id,
         p_expected_version: expectedVersion,
@@ -635,6 +672,7 @@ export const commitGame = async (
         p_hands: humanHands,
         p_bot_hands: botHands,
         p_logs: freshLogs.length > 0 ? freshLogs : null,
+        p_state,
     });
 
     if (error) {
