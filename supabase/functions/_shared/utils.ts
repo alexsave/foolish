@@ -536,7 +536,7 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
     if (data.state) {
         const { deserializeGameState } = await import('./wasm/engine.ts');
         const { hexToBytes } = await import('./replay/codec.ts');
-        return deserializeGameState(hexToBytes(data.state), {
+        const game = deserializeGameState(hexToBytes(data.state), {
             id: data.id,
             name: data.name,
             version: data.version ?? 0,
@@ -547,6 +547,13 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
             good_players: data.good_players || [],
             good_timestamp: data.good_timestamp || null,
         });
+        // Game-level status is COLUMN-authoritative, not blob-sourced: it's the
+        // queryable field the heartbeat scan and the end-game moot-check gate
+        // on, and it can be set outside the kernel (a concurrent finish, an
+        // admin/teardown UPDATE). The blob's copy is redundant — trust the
+        // column so a column-only status change is never masked by a stale blob.
+        game.status = data.status;
+        return game;
     }
 
     // Logs are loaded LAZILY (not here). Game logic never reads historical logs —
