@@ -24,13 +24,15 @@ const c = (suit: number, value: number): Card => ({ suit, value });
 
 // Minimal PersonalGame; nextDefenderIndex/canPass read players[].status,
 // players[].hand_length, defender, and table_battles.
-function makeGame(defender: number, specs: Spec[], table: PersonalGame['table_battles']): PersonalGame {
+function makeGame(defender: number, specs: Spec[], table: PersonalGame['table_battles'], selfCards: Card[] = []): PersonalGame {
     const players: PublicPlayer[] = specs.map((s, i) => ({
         player_id: `P${i}`, name: `P${i}`,
         status: s.status === 'out' ? PLAYER_STATUS.OUT : PLAYER_STATUS.IN,
         hand_length: s.hand_length, is_ai: false,
     }));
-    const self: PrivatePlayer = { ...players[defender], hand: [], awaiting_attack: false, strategy_key: STRATEGY_KEY.HUMAN };
+    // self is the local player = the defender; it must actually HOLD the cards
+    // it passes (the kernel checks hand membership — the old TS canPass didn't).
+    const self: PrivatePlayer = { ...players[defender], hand: selfCards, hand_length: selfCards.length, awaiting_attack: false, strategy_key: STRATEGY_KEY.HUMAN };
     return {
         id: 'g', name: 'g', deck_length: 0, discard_pile_length: 0, flipped: null,
         players, status: GAME_STATUS.PLAYING, power_suit: 0, first_attacker: 0, defender,
@@ -69,7 +71,7 @@ export function registerClientRulesValidation(): void {
         // would face 3 cards but holds only 1.
         const g = makeGame(0,
             [{ status: 'in', hand_length: 3 }, { status: 'in', hand_length: 1 }, { status: 'in', hand_length: 5 }],
-            [{ attack: c(1, 7), defense: null }, { attack: c(2, 7), defense: null }]);
+            [{ attack: c(1, 7), defense: null }, { attack: c(2, 7), defense: null }], [c(0, 7)]);
         // The deleted keyboard logic WOULD have offered this illegal pass...
         assert.equal(oldKeyboardCanPass(g, [c(0, 7)]), true, 'documents the bug: old keyboard logic allowed it');
         // ...the shared canPass the keyboard now uses correctly rejects it.
@@ -79,7 +81,7 @@ export function registerClientRulesValidation(): void {
     test('canPass is TRUE for a legal pass the keyboard should offer', () => {
         const g = makeGame(0,
             [{ status: 'in', hand_length: 3 }, { status: 'in', hand_length: 4 }, { status: 'in', hand_length: 5 }],
-            [{ attack: c(1, 7), defense: null }]);
+            [{ attack: c(1, 7), defense: null }], [c(0, 7)]);
         assert.equal(canPass(g, [c(0, 7)]), true);
     });
 
@@ -87,7 +89,7 @@ export function registerClientRulesValidation(): void {
         // defender seat 1, seat 2 OUT (0 cards), real next defender seat 0 has room.
         const g = makeGame(1,
             [{ status: 'in', hand_length: 5 }, { status: 'in', hand_length: 4 }, { status: 'out', hand_length: 0 }],
-            [{ attack: c(3, 8), defense: null }, { attack: c(2, 8), defense: null }]);
+            [{ attack: c(3, 8), defense: null }, { attack: c(2, 8), defense: null }], [c(0, 8)]);
         assert.equal(canPass(g, [c(0, 8)]), true, 'must look past the out seat to seat 0 (room for 3)');
     });
 }

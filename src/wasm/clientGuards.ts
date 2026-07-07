@@ -51,6 +51,9 @@ interface GuardsExports {
 let ex: GuardsExports | null = null;
 let loading: Promise<void> | null = null;
 let residentFor: PersonalGame | null = null;
+// Held from first take until an instantiation SUCCEEDS, so a sync fallback can
+// still run after an async attempt decoded the (take-once) embed.
+let pendingBytes: Uint8Array | null = null;
 
 const G_STATUS: Record<string, number> = {
   [GAME_STATUS.WAITING]: 0, [GAME_STATUS.PLAYING]: 1, [GAME_STATUS.GAME_OVER]: 2,
@@ -71,18 +74,31 @@ function wireCard(c: Card): number {
 const WIRE_NONE = 0xff;
 const PLACEHOLDER = 0; // any real card; content is irrelevant for a redacted seat/deck
 
+function guardsBytes(): Uint8Array {
+  if (!pendingBytes) pendingBytes = decodeB64(takeGUARDS_WASM_B64());
+  return pendingBytes;
+}
+
+function adopt(e: GuardsExports): void {
+  e.wasm_init();
+  ex = e;
+  pendingBytes = null;
+  residentFor = null;
+}
+
 // -------------------------------------------------------------------------
-// Load: instantiate once. MUST be awaited (behind the game loading screen)
-// before any synchronous gate is called.
+// Load. In a BROWSER, await initClientGuards() once at game-load (behind the
+// loading screen) — Chrome caps synchronous main-thread wasm compilation, so
+// the async path is mandatory there. In Node / SSR / tests the gates fall back
+// to a synchronous instantiate on first use (23KB compiles instantly off the
+// main thread), so callers need not await. Mirrors engine.ts.
 // -------------------------------------------------------------------------
 export function initClientGuards(): Promise<void> {
   if (ex) return Promise.resolve();
   if (!loading) {
-    loading = WebAssembly.instantiate(decodeB64(takeGUARDS_WASM_B64()), {}).then(({ instance }) => {
-      const e = instance.exports as unknown as GuardsExports;
-      e.wasm_init();
-      ex = e;
-    }).catch((err) => { loading = null; throw err; });
+    loading = WebAssembly.instantiate(guardsBytes() as BufferSource, {})
+      .then(({ instance }) => { if (!ex) adopt(instance.exports as unknown as GuardsExports); })
+      .catch((err) => { loading = null; throw err; });
   }
   return loading;
 }
@@ -153,13 +169,16 @@ function marshal(g: PersonalGame): void {
     const p = g.players[s] as PublicPlayer;
     buf[q++] = P_STATUS[p.status] ?? 0;
     buf[q++] = (p as any).awaiting_attack ? 1 : 0;
-    const len = p.hand_length ?? 0;
-    buf[q++] = len & 0xff;
-    if (s === selfSeat && g.self?.hand) {
-      for (const c of g.self.hand) buf[q++] = wireCard(c);
-    } else {
-      for (let i = 0; i < len; i++) buf[q++] = PLACEHOLDER; // redacted opponent
-    }
+    // The written hand_count MUST equal the number of cards we actually write,
+    // or the wire desyncs. For self we write its real hand; for opponents we
+    // write hand_length placeholders (they read by count only). In a live game
+    // self.hand.length === self.hand_length; they can differ only in synthetic
+    // fixtures, where the real cards win.
+    const selfHand = (s === selfSeat && g.self?.hand) ? g.self.hand : null;
+    const count = selfHand ? selfHand.length : (p.hand_length ?? 0);
+    buf[q++] = count & 0xff;
+    if (selfHand) for (const c of selfHand) buf[q++] = wireCard(c);
+    else for (let i = 0; i < count; i++) buf[q++] = PLACEHOLDER; // redacted opponent
   }
   const elim = g.elimination_order ?? [];
   buf[q++] = elim.length;
@@ -178,8 +197,17 @@ function writeCards(ptr: number, cards: Card[]): void {
 }
 
 function ensure(): GuardsExports {
-  if (!ex) throw new Error('clientGuards not initialized — await initClientGuards() at game load');
-  return ex;
+  if (ex) return ex;
+  // Synchronous fallback (Node / SSR / tests). In a browser main thread this
+  // throws for a >4KB module; the app must await initClientGuards() at mount.
+  try {
+    const instance = new WebAssembly.Instance(new WebAssembly.Module(guardsBytes() as BufferSource));
+    adopt(instance.exports as unknown as GuardsExports);
+    return ex!;
+  } catch (e) {
+    throw new Error('clientGuards not initialized — await initClientGuards() at game load ('
+      + (e as Error).message + ')');
+  }
 }
 
 // -------------------------------------------------------------------------
@@ -233,3 +261,113 @@ export function gameDone(g: PersonalGame): number {
   marshal(g);
   return e.wasm_game_done(); // seat index of the loser, or -1
 }
+
+// -------------------------------------------------------------------------
+// Optimistic apply: run a SELF move through the mutating kernel and read back
+// the PREDICTED next state — the authoritative rules applied client-side, so
+// the overlay never diverges from the server's own transition (e.g. the
+// eliminated-seat defender rotation the hand-rolled TS optimistic path got
+// wrong). Returns null if the kernel rejects the move.
+//
+// Caveat (by design): any cards DRAWN from the stock during the move (a
+// round-ending cover/pickup that triggers a refill) are unknown to the client
+// and come back as placeholders; the authoritative server broadcast supplies
+// the real draws. The common case (attack / cover / pass mid-bout) draws
+// nothing and predicts exactly.
+// -------------------------------------------------------------------------
+const G_STATUS_FROM = [GAME_STATUS.WAITING, GAME_STATUS.PLAYING, GAME_STATUS.GAME_OVER] as const;
+const P_STATUS_FROM = [PLAYER_STATUS.IDLE, PLAYER_STATUS.READY, PLAYER_STATUS.IN, PLAYER_STATUS.OUT] as const;
+const cardFromWire = (b: number): Card => b === 0xfe
+  ? { suit: -1, value: -1 }
+  : { suit: Math.floor((b <= 51 ? b : 51) / 13), value: (b <= 51 ? b : 51) % 13 + 1 };
+
+export interface OptimisticMove {
+  type: 'attack' | 'cover' | 'pass' | 'pickup';
+  cards?: Card[];
+  attack_cards?: Card[];
+}
+
+export function applyMove(g: PersonalGame, move: OptimisticMove): PersonalGame | null {
+  const e = ensure();
+  marshal(g);
+  const seat = seatOfSelf(g);
+  let ok = 0;
+  switch (move.type) {
+    case 'attack': writeCards(e.wasm_cards_a_ptr(), move.cards!); ok = e.wasm_attack(seat, move.cards!.length); break;
+    case 'pass':   writeCards(e.wasm_cards_a_ptr(), move.cards!); ok = e.wasm_pass(seat, move.cards!.length); break;
+    case 'cover':
+      writeCards(e.wasm_cards_a_ptr(), move.cards!);
+      writeCards(e.wasm_cards_b_ptr(), move.attack_cards!);
+      ok = e.wasm_cover(seat, move.cards!.length); break;
+    case 'pickup': ok = e.wasm_pickup(seat); break;
+  }
+  residentFor = null; // apply mutated the resident game
+  if (!ok) return null;
+  e.wasm_export_state();
+  return readState(g, seat);
+}
+
+// Parse the kernel's exported state (put_state layout) back into a PersonalGame,
+// borrowing player identity (ids/names) from the pre-move template.
+function readState(template: PersonalGame, selfSeat: number): PersonalGame {
+  const buf = bytes();
+  let q = ex!.wasm_io_ptr();
+  const u8 = () => buf[q++];
+  const i8v = () => i8(buf[q++]);
+
+  const status = G_STATUS_FROM[u8()] ?? GAME_STATUS.PLAYING;
+  const np = u8();
+  const power_suit = i8v();
+  const first_attacker = i8v();
+  const defender = i8v();
+  const discard = u8() | (u8() << 8);
+  const hasFlipped = u8() !== 0;
+  const flippedWire = u8();
+  const flipped = hasFlipped ? cardFromWire(flippedWire) : null;
+  const mask = u8() | (u8() << 8) | (u8() << 16) | (u8() << 24);
+  const hasGoodTs = u8() !== 0;
+  const deckLen = u8() | (u8() << 8);
+  q += deckLen; // deck cards are placeholders to the client
+  const nb = u8();
+  const table_battles = [];
+  for (let i = 0; i < nb; i++) {
+    const attack = cardFromWire(u8());
+    const dw = u8();
+    table_battles.push({ attack, defense: dw === WIRE_NONE ? null : cardFromWire(dw) });
+  }
+  const players = template.players.map((p) => ({ ...p }));
+  let selfHand: Card[] = template.self?.hand ?? [];
+  for (let s = 0; s < np; s++) {
+    const st = P_STATUS_FROM[u8()] ?? p_status_default;
+    const awaiting = u8() !== 0;
+    const hc = u8();
+    const cards: Card[] = [];
+    for (let j = 0; j < hc; j++) cards.push(cardFromWire(u8()));
+    if (players[s]) {
+      (players[s] as any).status = st;
+      (players[s] as any).awaiting_attack = awaiting;
+      (players[s] as any).hand_length = hc;
+    }
+    if (s === selfSeat) selfHand = cards; // self's cards are real
+  }
+  const nElim = u8();
+  const elimination_order: string[] = [];
+  for (let i = 0; i < nElim; i++) {
+    const s = i8(buf[q++]);
+    if (template.players[s]) elimination_order.push(template.players[s].player_id);
+  }
+  const good_players: string[] = [];
+  for (let s = 0; s < np; s++) if (mask & (1 << s)) good_players.push(template.players[s].player_id);
+
+  return {
+    ...template,
+    status, power_suit, first_attacker, defender,
+    discard_pile_length: discard, flipped, deck_length: deckLen,
+    good_timestamp: hasGoodTs ? (template.good_timestamp ?? Date.now()) : null,
+    good_players, elimination_order,
+    table_battles: table_battles as PersonalGame['table_battles'],
+    players: players as PersonalGame['players'],
+    self: { ...template.self, hand: selfHand, hand_length: selfHand.length },
+  };
+}
+const p_status_default = PLAYER_STATUS.IN;

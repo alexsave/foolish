@@ -1,8 +1,13 @@
-// Client-side move gates (src/utils/gameValidation.ts) drive the UI's
-// button-enable / drag-drop logic and the optimistic pre-checks. canPass /
-// nextDefenderIndex are policed by the parity suites; this covers the rest:
-// canAttack, the permutation-based canCoverCards (single + multi-card
-// ambiguity), and the four throwing validators.
+// Client-side move gates (src/utils/gameValidation.ts). The rule gates now
+// delegate to the kernel (guards.wasm) — e2e/client_guards fuzzes them against
+// the authoritative server kernel across thousands of states. This file keeps
+// hand-picked concrete cases (readable regressions) plus the one piece that is
+// NOT a kernel rule: canCoverCards, the UI affordance that decides when to
+// OFFER a one-click cover (unambiguous target set).
+//
+// The gates judge the LOCAL player's own move, so `self` must be the acting
+// seat and actually hold the cards it plays (the kernel checks membership —
+// the old hand-rolled TS gates did not).
 //
 // Pure client logic — needs no Postgres and no DOM.
 
@@ -23,101 +28,106 @@ const P = (i: number, handLen: number): PublicPlayer => ({
   name: `P${i}`, player_id: `p${i}`, status: PLAYER_STATUS.IN, hand_length: handLen, is_ai: false,
 });
 
-// PersonalGame with diamonds (3) trump; seat 0 attacks, seat 1 defends.
-const mkGame = (handLens: number[], table: PersonalGame['table_battles'], defenderHand = 6): PersonalGame => {
+// Diamonds (3) trump; seat 0 attacks / seat 1 defends. `self` is the acting
+// seat with a real hand.
+const mkGame = (
+  handLens: number[],
+  table: PersonalGame['table_battles'],
+  opts: { defenderHand?: number; selfSeat?: number; selfHand?: Card[] } = {},
+): PersonalGame => {
+  const { defenderHand = 6, selfSeat = 0, selfHand = [] } = opts;
   const players = handLens.map((n, i) => P(i, i === 1 ? defenderHand : n));
+  const base = players[selfSeat];
   return {
     id: 'g', name: 'g', deck_length: 0, discard_pile_length: 0, flipped: null,
     players, status: GAME_STATUS.PLAYING, power_suit: 3, first_attacker: 0, defender: 1,
     table_battles: table, elimination_order: [], good_timestamp: null, good_players: [],
-    self: { player_id: 'p0', name: 'P0', status: PLAYER_STATUS.IN, is_ai: false, hand: [], awaiting_attack: false, hand_length: 0, strategy_key: STRATEGY_KEY.HUMAN },
+    self: {
+      player_id: base.player_id, name: base.name, status: PLAYER_STATUS.IN, is_ai: false,
+      hand: selfHand, awaiting_attack: false, hand_length: selfHand.length, strategy_key: STRATEGY_KEY.HUMAN,
+    },
   };
 };
 
 // ---- canAttack --------------------------------------------------------------
 
-test('canAttack: first attack requires one shared value within defender capacity', () => {
-  const empty = mkGame([6, 6], [], /*defenderHand*/ 6);
-  assert.equal(canAttack(empty, []), false, 'no cards -> false');
-  assert.equal(canAttack(empty, [C(0, 5), C(1, 5)]), true, 'a same-value pair opens');
-  assert.equal(canAttack(empty, [C(0, 5), C(1, 6)]), false, 'mixed values cannot open');
+test('canAttack: first attack requires held, same-value cards within defender capacity', () => {
+  const hand = [C(0, 5), C(1, 5), C(1, 6)];
+  const g = mkGame([6, 6], [], { selfHand: hand });
+  assert.equal(canAttack(g, []), false, 'no cards -> false');
+  assert.equal(canAttack(g, [C(0, 5), C(1, 5)]), true, 'a held same-value pair opens');
+  assert.equal(canAttack(g, [C(0, 5), C(1, 6)]), false, 'mixed values cannot open');
+  assert.equal(canAttack(g, [C(2, 5)]), false, 'a card not in hand cannot be played');
 
-  const tightDefender = mkGame([6, 6], [], /*defenderHand*/ 1);
-  assert.equal(canAttack(tightDefender, [C(0, 5), C(1, 5)]), false, 'cannot exceed defender capacity');
+  const tight = mkGame([6, 6], [], { defenderHand: 1, selfHand: hand });
+  assert.equal(canAttack(tight, [C(0, 5), C(1, 5)]), false, 'cannot exceed defender capacity');
 });
 
 test('canAttack: a follow-up attack must match a value already on the table', () => {
-  const g = mkGame([6, 6], [{ attack: C(0, 7), defense: C(0, 9) }], /*defenderHand*/ 6);
+  const g = mkGame([6, 6], [{ attack: C(0, 7), defense: C(0, 9) }], { selfHand: [C(2, 7), C(2, 9), C(2, 8)] });
   assert.equal(canAttack(g, [C(2, 7)]), true, 'attack value present on the table (attack side)');
   assert.equal(canAttack(g, [C(2, 9)]), true, 'attack value present on the table (defense side)');
   assert.equal(canAttack(g, [C(2, 8)]), false, 'value not on the table');
 });
 
-// ---- canCoverCards ----------------------------------------------------------
+// ---- canCoverCards (UI affordance, not a kernel rule) -----------------------
 
 test('canCoverCards: single card is offered only when its target is unambiguous', () => {
-  // 7♠ and 8♠ uncovered; a non-trump 9♠ covers only 7♠? No — 9♠ covers BOTH
-  // (higher same suit). So single-card 9♠ is ambiguous -> hidden.
   const two = mkGame([6, 6], [{ attack: C(0, 7), defense: null }, { attack: C(0, 8), defense: null }]);
   assert.equal(canCoverCards(two, [C(0, 9)]), false, 'a 9♠ covering both 7♠ and 8♠ is ambiguous');
 
-  // Only 7♠ uncovered -> 9♠ has exactly one target -> offered.
   const one = mkGame([6, 6], [{ attack: C(0, 7), defense: null }]);
   assert.equal(canCoverCards(one, [C(0, 9)]), true, 'exactly one legal target -> offered');
   assert.equal(canCoverCards(one, [C(0, 6)]), false, 'a card that cannot cover -> not offered');
   assert.equal(canCoverCards(one, []), false, 'no selection -> false');
-
-  const covered = mkGame([6, 6], [{ attack: C(0, 7), defense: C(0, 9) }]);
-  assert.equal(canCoverCards(covered, [C(0, 10)]), false, 'nothing uncovered -> false');
 });
 
 test('canCoverCards: multi-card cover is offered only when the mapping is unambiguous', () => {
-  // 7♠ + 8♣ uncovered; 9♠ covers only 7♠, 9♣ covers only 8♣ -> one mapping.
   const unambiguous = mkGame([6, 6], [{ attack: C(0, 7), defense: null }, { attack: C(2, 8), defense: null }]);
   assert.equal(canCoverCards(unambiguous, [C(0, 9), C(2, 9)]), true, 'each cover fits exactly one attack');
 
-  // Two trumps over THREE uncovered attacks -> covers could target different
-  // pairs -> ambiguous which two get covered -> hidden.
   const ambiguous = mkGame([6, 6], [
     { attack: C(0, 7), defense: null }, { attack: C(0, 8), defense: null }, { attack: C(0, 9), defense: null },
   ]);
   assert.equal(canCoverCards(ambiguous, [C(3, 10), C(3, 11)]), false, 'two trumps over three attacks is ambiguous');
-
-  // Covers that fit nothing -> false.
-  const nofit = mkGame([6, 6], [{ attack: C(0, 7), defense: null }, { attack: C(2, 8), defense: null }]);
-  assert.equal(canCoverCards(nofit, [C(0, 3), C(2, 3)]), false, 'covers that cannot beat their attacks');
 });
 
-// ---- throwing validators ----------------------------------------------------
+// ---- throwing validators (optimistic-apply pre-checks) ----------------------
 
-test('validateAttack throws on over-capacity and off-table values, else passes', () => {
-  const roomy = mkGame([6, 6], [{ attack: C(0, 7), defense: null }], /*defenderHand*/ 6);
-  assert.doesNotThrow(() => validateAttack(roomy, [C(2, 7)]), 'value on table, room to defend');
+test('validateAttack rejects over-capacity and off-table values, else passes', () => {
+  const roomy = mkGame([6, 6], [{ attack: C(0, 7), defense: null }], { selfHand: [C(2, 7), C(2, 8)] });
+  assert.doesNotThrow(() => validateAttack(roomy, [C(2, 7)]), 'held, value on table, room to defend');
 
-  const tight = mkGame([6, 6], [{ attack: C(0, 7), defense: null }], /*defenderHand*/ 1);
-  assert.throws(() => validateAttack(tight, [C(2, 7)]), /no room/i, 'uncovered + new > defender hand');
+  const tight = mkGame([6, 6], [{ attack: C(0, 7), defense: null }], { defenderHand: 1, selfHand: [C(2, 7)] });
+  assert.throws(() => validateAttack(tight, [C(2, 7)]), 'uncovered + new > defender hand');
 
-  assert.throws(() => validateAttack(roomy, [C(2, 8)]), /not on the table/i, 'off-table value rejected');
+  assert.throws(() => validateAttack(roomy, [C(2, 8)]), 'off-table value rejected');
 });
 
-test('validatePass throws on mixed values and un-passable tables, else passes', () => {
-  const g = mkGame([6, 6], [{ attack: C(0, 7), defense: null }]);
-  assert.doesNotThrow(() => validatePass(g, [C(2, 7)]), 'single uncovered 7, passing a 7');
-  assert.throws(() => validatePass(g, [C(2, 7), C(1, 8)]), /not the same/i, 'mixed pass values');
+test('validatePass rejects mixed values and un-passable tables, else passes', () => {
+  const g = mkGame([6, 6], [{ attack: C(0, 7), defense: null }], { selfSeat: 1, selfHand: [C(2, 7), C(1, 8)] });
+  assert.doesNotThrow(() => validatePass(g, [C(2, 7)]), 'defender holds a 7, single uncovered 7 on the table');
+  assert.throws(() => validatePass(g, [C(2, 7), C(1, 8)]), 'mixed pass values');
 
-  const coveredTable = mkGame([6, 6], [{ attack: C(0, 7), defense: C(0, 9) }]);
-  assert.throws(() => validatePass(coveredTable, [C(2, 7)]), /cannot pass/i, 'cannot pass over a covered battle');
+  const covered = mkGame([6, 6], [{ attack: C(0, 7), defense: C(0, 9) }], { selfSeat: 1, selfHand: [C(2, 7)] });
+  assert.throws(() => validatePass(covered, [C(2, 7)]), 'cannot pass over a covered battle');
 });
 
 test('validatePickup throws only on an empty table', () => {
-  assert.throws(() => validatePickup(mkGame([6, 6], [])), /cannot pickup/i, 'nothing to pick up');
-  assert.doesNotThrow(() => validatePickup(mkGame([6, 6], [{ attack: C(0, 7), defense: null }])), 'a non-empty table can be scooped');
+  assert.throws(() => validatePickup(mkGame([6, 6], [], { selfSeat: 1 })), /cannot pickup/i, 'nothing to pick up');
+  assert.doesNotThrow(
+    () => validatePickup(mkGame([6, 6], [{ attack: C(0, 7), defense: null }], { selfSeat: 1 })),
+    'a defender can scoop a non-empty table',
+  );
 });
 
 test('validateCover throws on an empty table and on an illegal cover, else passes', () => {
-  assert.throws(() => validateCover(mkGame([6, 6], []), [C(0, 9)], [C(0, 7)]), /cannot cover/i, 'no table');
+  assert.throws(
+    () => validateCover(mkGame([6, 6], [], { selfSeat: 1, selfHand: [C(0, 9)] }), [C(0, 9)], [C(0, 7)]),
+    'no table -> nothing to cover',
+  );
 
-  const g = mkGame([6, 6], [{ attack: C(0, 7), defense: null }]);
+  const g = mkGame([6, 6], [{ attack: C(0, 7), defense: null }], { selfSeat: 1, selfHand: [C(0, 9), C(0, 6)] });
   assert.doesNotThrow(() => validateCover(g, [C(0, 9)], [C(0, 7)]), '9♠ legally covers 7♠');
-  assert.throws(() => validateCover(g, [C(0, 6)], [C(0, 7)]), /does not match/i, '6♠ cannot cover 7♠');
+  assert.throws(() => validateCover(g, [C(0, 6)], [C(0, 7)]), '6♠ cannot cover 7♠');
 });

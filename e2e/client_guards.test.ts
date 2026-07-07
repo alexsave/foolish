@@ -14,17 +14,17 @@ import assert from 'node:assert/strict';
 
 import {
   initClientGuards, guardsReady, guardsMemBytes, canAttack, canPass, canCover, canPickup,
-  canCoverPair, nextPlayerIndex, gameDone,
+  canCoverPair, nextPlayerIndex, gameDone, applyMove,
 } from '../src/wasm/clientGuards.ts';
 import { start_game } from '../supabase/functions/_shared/game_lifecycle.ts';
 import { calculateLegalMoves } from '../supabase/functions/_shared/bot_strategy.ts';
 import { shouldBotActCore, processBotAction } from '../supabase/functions/_shared/pure_bot_actions.ts';
 import {
-  personalize_game, game_done, canCover as tsCanCover, get_next_player_index,
+  personalize_game, game_done, canCover as tsCanCover, get_next_player_index, cloneGame,
 } from '../supabase/functions/_shared/common_utils.ts';
 import {
   kernelValidateAttack, kernelValidatePass, kernelValidateCover, kernelValidatePickup,
-  kernelNextPlayer, kernelCanCover,
+  kernelNextPlayer, kernelCanCover, kernelAttack, kernelPass,
 } from '../supabase/functions/_shared/wasm/engine.ts';
 import {
   Game, PersonalGame, PrivatePlayer, Card, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY,
@@ -109,6 +109,47 @@ test('client gates == authoritative kernel across random games (2..6 players)', 
 
   assert.ok(legalChecks > 300, `enough legal-move comparisons (${legalChecks})`);
   console.error(`[client-guards] legal=${legalChecks} illegal=${illegalChecks} projection=${projectionChecks}`);
+});
+
+test('optimistic applyMove predicts the kernel post-state for attack/pass (no draws)', async () => {
+  const ck = (c: Card) => `${c.suit}:${c.value}`;
+  const bkey = (b: { attack: Card; defense: Card | null }) => `${ck(b.attack)}/${b.defense ? ck(b.defense) : '-'}`;
+  let checked = 0;
+
+  for (let np = 2; np <= 5; np++) {
+    const g = mkGame(np);
+    start_game(g);
+    let guard = 0;
+    while (game_done(g) === null && ++guard < 200) {
+      for (let seat = 0; seat < np; seat++) {
+        const p = g.players[seat];
+        if (p.status !== PLAYER_STATUS.IN) continue;
+        for (const m of calculateLegalMoves(g, p.player_id)) {
+          if (m.type !== 'attack' && m.type !== 'pass') continue; // these draw nothing -> exact prediction
+          const predicted = applyMove(personalFor(g, seat), { type: m.type, cards: m.cards });
+          assert.ok(predicted, `${m.type} predicted, not rejected`);
+          const sg = cloneGame(g);
+          if (m.type === 'attack') kernelAttack(sg, p.player_id, m.cards!);
+          else kernelPass(sg, p.player_id, m.cards!);
+
+          assert.deepEqual(predicted!.table_battles.map(bkey), sg.table_battles.map(bkey), 'predicted table == kernel table');
+          assert.equal(predicted!.defender, sg.defender, 'predicted defender == kernel defender');
+          assert.deepEqual(
+            predicted!.self.hand.map(ck).sort(), sg.players[seat].hand.map(ck).sort(),
+            'predicted self hand == kernel self hand');
+          for (let s = 0; s < np; s++) {
+            assert.equal(predicted!.players[s].hand_length, sg.players[s].hand.length, `seat ${s} hand_length`);
+          }
+          checked++;
+        }
+      }
+      const actor = g.players.find((pp, i) => shouldBotActCore(g, pp, i) && calculateLegalMoves(g, pp.player_id).length > 0);
+      if (!actor) break;
+      await processBotAction(g, actor);
+    }
+  }
+  assert.ok(checked > 50, `enough applyMove comparisons (${checked})`);
+  console.error(`[client-guards] applyMove predictions verified=${checked}`);
 });
 
 test('canCoverPair matches the kernel and the old TS primitive over the full card cross-product', () => {
