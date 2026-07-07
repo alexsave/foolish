@@ -72,7 +72,12 @@ export const DragProvider = ({ children }: { children: React.ReactNode }) => {
             if (tableCardUnderCursor && !tableCardUnderCursor.defense) {
                 // Dragging to an uncovered attack card
                 if (cardsToUse.length === 1) {
-                    // Single card cover - existing logic
+                    // Single card cover — only if it actually beats the
+                    // target (the kernel rejects CANNOT_COVER; without this
+                    // check an illegal drop fired a doomed request)
+                    if (!canCover(tableCardUnderCursor.attack, cardsToUse[0], game.power_suit)) {
+                        return { type: 'invalid' as const };
+                    }
                     return { type: 'cover' as const, targetCard: tableCardUnderCursor.attack };
                 } else {
                     // Multi-card cover - check if unambiguous

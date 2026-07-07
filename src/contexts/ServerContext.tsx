@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { Card, PersonalGame, PublicGame, GAME_STATUS, STRATEGY_KEY } from '@shared/types.ts';
+import { Card, PersonalGame, PublicGame, GAME_STATUS, PLAYER_STATUS, STRATEGY_KEY } from '@shared/types.ts';
 import supabase from '../backend/Connector';
 import { useParams } from 'next/navigation';
 import { useAuth } from './AuthContext';
@@ -713,8 +713,20 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 const g: PersonalGame = prev[gid];
                 if (!g) return prev;
 
-                const next_first_attacker = get_next_player_index(g, g.defender);
-                const next_defender = get_next_player_index(g, next_first_attacker);
+                // The kernel rotates AFTER refill_player_hands, which can
+                // eliminate a hand-emptied seat when the stock runs dry — a
+                // pre-refill rotation would then point at a seat the kernel
+                // skips. The rotation is exact iff no OTHER in-play seat can
+                // be eliminated by the refill (they all still hold cards; we
+                // are the picker and gain the table cards). Otherwise leave
+                // the seats to the authoritative broadcast.
+                const selfIndex = g.players.findIndex(p => p.player_id === g.self?.player_id);
+                const rotationIsExact = g.players.every((p, i) =>
+                    i === selfIndex || p.status !== PLAYER_STATUS.IN || (p.hand_length ?? 0) > 0);
+                const next_first_attacker = rotationIsExact
+                    ? get_next_player_index(g, g.defender) : g.first_attacker;
+                const next_defender = rotationIsExact
+                    ? get_next_player_index(g, next_first_attacker) : g.defender;
 
                 // Collect all cards from the table (both attacks and defenses)
                 const allTableCards = g.table_battles.flatMap(battle =>

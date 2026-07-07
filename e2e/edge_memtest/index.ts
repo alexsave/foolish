@@ -42,6 +42,9 @@ serve(async (req: Request) => {
         console.log(`[memtest] imported ${s} in ${Date.now() - ts}ms ${mem()}`);
     }
     const cu = await import('../_shared/common_utils.ts');
+    // start_game split out of common_utils (client-bundle hygiene) — see
+    // _shared/game_lifecycle.ts.
+    const gl = await import('../_shared/game_lifecycle.ts');
     const pba = await import('../_shared/pure_bot_actions.ts');
     console.log(`[memtest] import done in ${Date.now() - t0}ms ${mem()}`);
 
@@ -57,7 +60,7 @@ serve(async (req: Request) => {
             good_timestamp: null, good_players: [],
         };
         // deno-lint-ignore no-explicit-any
-        cu.start_game(g as any);
+        gl.start_game(g as any);
         const maxMoves = Number(url.searchParams.get('maxmoves') ?? '1000000');
         let guard = 0, moves = 0;
         // deno-lint-ignore no-explicit-any

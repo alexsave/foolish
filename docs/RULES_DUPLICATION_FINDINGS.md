@@ -16,48 +16,41 @@ policed by `e2e/wasm_engine.test.ts`. The remaining second-sources are in the
 **client's UI-affordance / optimistic layer**, which is unpoliced except for
 two `canPass` scenarios.
 
-## Confirmed, still open — client second-sources (candidates for follow-up)
+## Client second-sources — FIXED in the follow-up pass
 
-Ranked by user-visible consequence. The server always re-validates, so none
-of these can corrupt state — they cause phantom buttons, rejected requests,
-or optimistic flicker, and they can silently drift when kernel rules change.
+All of these were fixed and are now policed by `e2e/attack_cover_parity.test.ts`
+(the pass_parity pattern extended to attack/cover; ~140k attack + ~21k cover
+checks per run against the kernel validators, mutation-tested to confirm it
+catches the original first-attacker bug):
 
-1. **`src/utils/gameValidation.ts` `canAttack`/`validateAttack` omit the
-   first-attacker restriction** — on an empty table every non-defender gets a
-   live Attack button; the kernel rejects with NOT_FIRST_ATTACKER
-   (`game.c` `handle_attack`). Phantom affordance, request always fails.
-2. **`src/state/optimisticConflicts.ts:86` applies the attack
-   DEFENDER_CAPACITY rule to pending COVER cards** — the pending array mixes
-   attacks and covers, so legal in-flight covers can be false-reverted
-   (flicker) when an unrelated broadcast lands. Covers have no capacity rule
-   in the kernel.
-3. **`src/contexts/ServerContext.tsx:716` optimistic pickup rotation** runs
-   `get_next_player_index` on pre-refill statuses; the kernel rotates *after*
-   `refill_player_hands`, which can eliminate seats — the optimistic
-   defender/first_attacker can point at a seat the kernel skips.
-4. **`src/contexts/AnimationContext.tsx:150` `canBotMove`** is an accidental
-   second implementation of `should_bot_act` that ignores `good_players`
-   while uncovered attacks remain (spurious poll bumps). Fix: call
-   `shouldBotActCore` (already the policed mirror).
-5. **`src/contexts/AnimationContext.tsx:474` pass-conflict check
-   double-counts** server attack cards (they are already in the last event's
-   `game_state`), so a legal in-flight pass can be reverted early.
-6. **`src/utils/gameValidation.ts:168` `validatePass`** misses the kernel's
-   PASS_CAPACITY and empty-table rejects; **`:188` `validateCover`** misses
-   the exact-match-uncovered/duplicate checks (the defender double-tap gap
-   the kernel fixed persists client-side within the optimistic window).
-7. **`src/contexts/DragContext.tsx:76`** single-card cover drop onto a battle
-   skips `canCover` — an illegal drop fires a kernel-rejected request.
-8. **Cover-mapping logic exists in three copies** (verified behaviorally
-   equivalent today): `src/utils/coverCombinations.ts`,
-   `gameValidation.canCoverCards`, `KeyboardPlayMode.findUnambiguousCoverMapping`.
-   Consolidate to one before they drift.
-9. **Good affordance stricter than kernel** (`ActionButtons.tsx:147`): the
-   client only offers Good when everything is covered; `handle_good` accepts
-   it with uncovered attacks. Minor missing affordance, deliberate-looking.
+1. **`gameValidation.ts` `canAttack`/`validateAttack`** now enforce the
+   first-attacker restriction on an empty table (was: every non-defender got
+   a live Attack button the kernel would reject with NOT_FIRST_ATTACKER).
+2. **`optimisticConflicts.ts`** no longer applies the attack
+   DEFENDER_CAPACITY rule to pending COVER cards (covers are the defender's
+   own play; counting them false-reverted legal in-flight covers).
+3. **`ServerContext.tsx` optimistic pickup rotation** is now skipped when a
+   refill could eliminate a seat (any other IN player with an empty hand);
+   in that case the authoritative broadcast supplies the rotation. When no
+   elimination is possible the pre-refill rotation is exact and kept.
+4. **`AnimationContext.tsx` `canBotMove`** now delegates to
+   `shouldBotActCore` (moved into client-safe `common_utils.ts`; re-exported
+   from `pure_bot_actions.ts` whose heavy imports must never reach the
+   client bundle).
+5. **`AnimationContext.tsx` pass-conflict checks** no longer double-count
+   the broadcast's attack/pass cards (the final `game_state` already
+   contains them); both branches now mirror the kernel capacity rules.
+6. **`validatePass`** now mirrors PASS_CAPACITY + the empty-table reject;
+   **`validateCover`** now mirrors exact-match-uncovered + duplicate-target
+   (the client side of the defender double-tap gap).
+7. **`DragContext.tsx`** single-card cover drops are gated on `canCover`.
+8. **Cover-mapping logic** consolidated to `coverCombinations.ts`
+   (`canCoverCards` delegates; KeyboardPlayMode's local copy deleted).
 
-Suggested policing: extend the `pass_parity` three-oracle fuzz pattern to
-attack/cover (`canAttack`/`canCoverCards`/`validate*` vs `kernelLegalMoves`).
+Still open (deliberate): **Good affordance stricter than kernel**
+(`ActionButtons.tsx`): the client only offers Good when everything is
+covered; `handle_good` accepts it with uncovered attacks. Kept as-is — the
+restrictive affordance reads as intended UX, not drift.
 
 ## Confirmed heuristic-layer duplication (deliberate, advisory-only)
 
