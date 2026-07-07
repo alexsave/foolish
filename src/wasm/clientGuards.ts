@@ -40,19 +40,16 @@ interface GuardsExports {
   wasm_validate_cover(seat: number, n: number): number;
   wasm_validate_pass(seat: number, n: number): number;
   wasm_validate_pickup(seat: number): number;
-  wasm_validate_good(seat: number): number;
   wasm_attack(seat: number, n: number): number;
   wasm_cover(seat: number, n: number): number;
   wasm_pass(seat: number, n: number): number;
   wasm_pickup(seat: number): number;
-  wasm_good(seat: number): number;
-  // Action-wire entry points (docs/PACKED_WIRE_CUTOVER.md): both read the
-  // awire bytes from the cards_a buffer. validate: 0 legal | ENGINE_REJECT_*
-  // | -1 malformed. apply: 1 applied | 0 rejected | -1 malformed.
+  // Action-wire VALIDATE entry (docs/PACKED_WIRE_CUTOVER.md): reads the awire
+  // bytes from the cards_a buffer. 0 legal | ENGINE_REJECT_* | -1 malformed.
+  // It judges all five move kinds, so there's no separate wasm_validate_good.
+  // (The awire APPLY entry wasm_apply_action + wasm_good are not exported by
+  // the guards build — no caller reaches them; see the Makefile export list.)
   wasm_validate_action(seat: number, wireLen: number): number;
-  wasm_apply_action(seat: number, wireLen: number): number;
-  // Masked view blob import (declared for completeness; unused in this pass).
-  wasm_import_view(len: number): number;
   wasm_next_player(cur: number): number;
   wasm_game_done(): number;
   wasm_can_cover(as: number, av: number, ds: number, dv: number, ps: number): number;
@@ -304,27 +301,17 @@ export interface OptimisticMove {
 // decodes the exact bytes the server kernel will apply.
 // -------------------------------------------------------------------------
 
-// 0 = legal; else the ENGINE_REJECT_* code, or -1 for a malformed wire.
+// 0 = legal; else the ENGINE_REJECT_* code, or -1 for a malformed wire. The
+// awire APPLY counterpart (applyMoveWire → wasm_apply_action) was removed with
+// its export: no caller reached it, and optimistic apply goes through the
+// per-move applyMove below (kernel) / the TS overlay (prod). Revive it by
+// re-exporting wasm_apply_action in the Makefile if the client ever moves the
+// optimistic overlay onto the awire path.
 export function validateActionWire(g: PersonalGame, wire: Uint8Array): number {
   const e = ensure();
   marshal(g);
   bytes().set(wire, e.wasm_cards_a_ptr());
   return e.wasm_validate_action(seatOfSelf(g), wire.length);
-}
-
-// Optimistic apply straight from the awire bytes — same predicted-state
-// semantics (and drawn-cards-as-placeholders caveat) as applyMove below.
-// Null on reject or malformed wire.
-export function applyMoveWire(g: PersonalGame, wire: Uint8Array): PersonalGame | null {
-  const e = ensure();
-  marshal(g);
-  const seat = seatOfSelf(g);
-  bytes().set(wire, e.wasm_cards_a_ptr());
-  const ok = e.wasm_apply_action(seat, wire.length);
-  residentFor = null; // apply mutated (or may have partially advanced) the resident game
-  if (ok !== 1) return null;
-  e.wasm_export_state();
-  return readState(g, seat);
 }
 
 export function applyMove(g: PersonalGame, move: OptimisticMove): PersonalGame | null {

@@ -235,19 +235,26 @@ WASM_GUARDS_FLAGS := --target=wasm32 $(WASM_OPT) -nostdlib -ffreestanding -mbulk
 # replaced --export-all here too: it pinned every internal symbol as a GC
 # root and bloated the name section). A NEW wasm_* guards entry point must be
 # added here or the browser bridge won't see it (clientGuards.ts fails loudly).
+# Trimmed to the roots LIVE client code + the guards tests actually reach
+# (see e2e/client_guards.test.ts). Everything dropped here — the snapshot /
+# log-readout exports, wasm_set_seed/io_cap/reject_reason, the awire-apply
+# entry (wasm_apply_action), and the good-move entries (wasm_good /
+# wasm_validate_good, subsumed by wasm_validate_action which handles all five
+# kinds) — was reachable from NO caller in src/ or e2e/, so rooting it only
+# bloated the shipped module. Re-add an export line to revive a capability;
+# the C stays in game.c / wasm_guards_api.c. The kept wasm_attack..pickup +
+# wasm_export_state are dormant in prod (the TS overlay does optimistic play)
+# but guarded by the applyMove prediction test, so they stay.
 WASM_GUARDS_EXPORTS := \
-  -Wl,--export=wasm_io_ptr -Wl,--export=wasm_io_cap \
+  -Wl,--export=wasm_io_ptr \
   -Wl,--export=wasm_cards_a_ptr -Wl,--export=wasm_cards_b_ptr \
-  -Wl,--export=wasm_init -Wl,--export=wasm_set_seed -Wl,--export=wasm_reject_reason \
+  -Wl,--export=wasm_init \
   -Wl,--export=wasm_import_state -Wl,--export=wasm_export_state \
-  -Wl,--export=wasm_import_view -Wl,--export=wasm_export_logs \
-  -Wl,--export=wasm_snap_count -Wl,--export=wasm_snap_tag \
-  -Wl,--export=wasm_snap_aux -Wl,--export=wasm_export_snapshot \
   -Wl,--export=wasm_validate_attack -Wl,--export=wasm_validate_cover \
   -Wl,--export=wasm_validate_pass -Wl,--export=wasm_validate_pickup \
-  -Wl,--export=wasm_validate_good -Wl,--export=wasm_validate_action \
+  -Wl,--export=wasm_validate_action \
   -Wl,--export=wasm_attack -Wl,--export=wasm_cover -Wl,--export=wasm_pass \
-  -Wl,--export=wasm_pickup -Wl,--export=wasm_good -Wl,--export=wasm_apply_action \
+  -Wl,--export=wasm_pickup \
   -Wl,--export=wasm_game_done -Wl,--export=wasm_next_player -Wl,--export=wasm_can_cover
 
 WASM_GUARDS_SRC := src/game.c src/view.c src/awire.c wasm/wasm_guards_api.c
