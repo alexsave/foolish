@@ -99,13 +99,22 @@ difftests: build/sim_difftest build/apply_difftest build/solver_difftest build/r
 # strips TLS (single-threaded module); the bridge sets the production
 # deck-size boundary at init (see card.h).
 WASM_CC    ?= clang
+# Optimize for SIZE (-Oz), not speed (-O3). Measured: -Oz cuts every module
+# ~40% (bots 194->116KB, rules 49->27KB, guards 20->12KB embedded b64 drops
+# ~105KB) for ~0 warm-perf cost — cordite's hot loop is bitboard popcount/ctz
+# that both opt levels compile identically, and V8's TurboFan re-optimizes the
+# hot functions the same way regardless. On the edge it's also FASTER cold: a
+# smaller module means ~2x quicker TurboFan compile and far less base64 to
+# decode per worker (short-lived invocations never tier up, so -O3's inlining
+# only bloats Liftoff). Override for a warm-latency regime: `make WASM_OPT=-O3`.
+WASM_OPT   ?= -Oz
 # -mbulk-memory: memcpy/memset (incl. clang-lowered struct copies) become the
 # wasm memory.copy/memory.fill instructions, which every 2020+ runtime (V8,
 # JSC, SpiderMonkey, Deno edge) executes as native memmove — the hand-rolled
 # word-loop shim showed up at ~5% of cordite's wasm profile.
-# -O3 (but NO -flto: wasm-ld LTO corrupts the indirect-function table for
-# the address-taken hook/strategy pointers — engine_snap_hook calls trap with
-# "table index out of bounds"; caught by the fuzz suite). No -ffast-math
+# NO -flto: wasm-ld LTO corrupts the indirect-function table for the
+# address-taken hook/strategy pointers — engine_snap_hook calls trap with
+# "table index out of bounds"; caught by the fuzz suite. No -ffast-math
 # either: wasm float semantics must stay IEEE-identical to the TS oracles
 # the parity suite compares against.
 # MAX_LEGAL_MOVES=4096 matches every native build (arena, difftests, eval).
@@ -127,7 +136,7 @@ WASM_CC    ?= clang
 # (2n <= 52) — so 28 emits the identical move set for every real game (the
 # production deck is 36). Only corrupt/hostile marshaled states (duplicate
 # cards) could enumerate wider moves, which the caps drop by design.
-WASM_FLAGS := --target=wasm32 -O3 -nostdlib -ffreestanding -mbulk-memory \
+WASM_FLAGS := --target=wasm32 $(WASM_OPT) -nostdlib -ffreestanding -mbulk-memory \
               -isystem wasm/include -Isrc -D_Thread_local= -DMAX_LOG_PAIRS=64 \
               -DMAX_LEGAL_MOVES=4096 -DMAX_MOVE_CARDS=28 -DMAX_BATTLES=64 \
               -DWORLD_LOG_CAP=40 \
@@ -205,7 +214,7 @@ wasm: build/rules.wasm
 # not two). Same wire layout as rules.wasm; e2e asserts guards==rules parity.
 # Smaller caps than the rules module: the client never imports a session log
 # (each marshal starts fresh) and one optimistic move emits <64 logs.
-WASM_GUARDS_FLAGS := --target=wasm32 -O3 -nostdlib -ffreestanding -mbulk-memory \
+WASM_GUARDS_FLAGS := --target=wasm32 $(WASM_OPT) -nostdlib -ffreestanding -mbulk-memory \
                      -isystem wasm/include -Isrc -D_Thread_local= \
                      -DMAX_LOG_PAIRS=64 -DMAX_BATTLES=64 -DMAX_LOGS=64 \
                      -Wall -Wextra -Wno-unused-parameter \
