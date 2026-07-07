@@ -180,6 +180,14 @@ export function wasmChooseMove(
     const seat = game.players.findIndex(p => p.player_id === playerId);
     if (seat < 0) return -1;
     const ex = bots();
+    // A choose is a state READER and must reflect the game object EXACTLY as it
+    // is right now. Never let it consume a resident mark left by a prior
+    // decision: the bot loop reuses one game object across decisions and mutates
+    // it out-of-band (state reload on a CAS conflict, round-transition refill,
+    // passive-action bundling), so a stale resident kernel state can differ from
+    // the live object — e.g. an already-dead deck still reading as alive, which
+    // silently gates off the exact endgame solver. Force a fresh marshal.
+    __setResident(null);
     __marshalGame(ex, game);
     // Per-game bot memory (espresso's discard set was keyed by game id in
     // TS): FNV-1a of game.id, so a new game resets, the same game resumes.

@@ -109,9 +109,16 @@ export function __adoptEngine(ex: EngineExports): void {
 // game object. Marking the object resident lets that next marshal be
 // skipped — the kernel state is byte-identical to what a fresh marshal
 // would rebuild (choose is read-only; imported logs are cleared kernel-side
-// so the action logs from zero exactly like after wasm_import_state). ANY
-// marshal clears the mark, so the window is strictly choose -> next kernel
-// call on the same object.
+// so the action logs from zero exactly like after wasm_import_state).
+//
+// SAFETY: the mark is only valid if the object is UNCHANGED between the choose
+// and the action. The bot loop, however, reuses one game object and can mutate
+// it between decisions (state reload on a CAS conflict, refill, passive
+// bundling). So the skip must be consumed ONLY by the action executing the
+// just-chosen move: every state READER (wasmChooseMove, kernelLegalMoves)
+// clears the mark before marshaling and thus always rebuilds from the live
+// object. ANY marshal also clears the mark, keeping the window to a single
+// kernel call.
 let residentFor: Game | null = null;
 export function __setResident(g: Game | null): void { residentFor = g; }
 
@@ -963,6 +970,11 @@ export function kernelLegalMoves(game: Game, player_id: string): { type: string;
     const seat = game.players.findIndex(p => p.player_id === player_id);
     if (seat < 0) return [];
     const ex = engine();
+    // Enumeration is a state READER: force a fresh marshal so it can never
+    // consume a resident mark left by a prior decision on a since-mutated game
+    // object (see __setResident). Only the action executing a just-chosen move
+    // may skip the marshal.
+    residentFor = null;
     marshalGame(ex, game);
     const total = ex.wasm_legal_moves(seat);
     const base = ex.wasm_io_ptr();
