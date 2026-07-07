@@ -38,15 +38,31 @@ export function applyPlayerMove(game: Game, pm: PlayerMove): AnimationEvent[] {
 // no duplicates, no card-backs.
 const key = (c: { suit: number; value: number }) => `${c.suit}:${c.value}`;
 export async function checkCardConservation(gameId: string): Promise<{ ok: boolean; detail: string }> {
-    const g = (await pgPool.query('SELECT players, table_battles, discard_pile_length, flipped FROM games WHERE id=$1', [gameId])).rows[0];
-    const deck = (await pgPool.query('SELECT deck FROM game_decks WHERE game_id=$1', [gameId])).rows[0]?.deck ?? [];
-    const ph = (await pgPool.query('SELECT hand FROM player_hands WHERE game_id=$1', [gameId])).rows;
-    const bh = (await pgPool.query('SELECT hand FROM bot_hands WHERE game_id=$1', [gameId])).rows;
+    const g = (await pgPool.query('SELECT players, table_battles, discard_pile_length, flipped, state FROM games WHERE id=$1', [gameId])).rows[0];
 
     const live: { suit: number; value: number }[] = [];
-    for (const c of deck) live.push(c);
+    // Deck + per-seat hands live in the packed kernel blob once the game is
+    // dealt (commit_game no longer writes the hand/deck tables during play —
+    // see commitGame). Reconstruct from the blob; fall back to the tables for
+    // never-dealt / legacy rows that predate the blob column.
+    if (g.state) {
+        const { deserializeGameState } = await import('../supabase/functions/_shared/wasm/engine.ts');
+        const { hexToBytes } = await import('../supabase/functions/_shared/replay/codec.ts');
+        const game = deserializeGameState(hexToBytes(g.state), {
+            id: gameId, name: '', version: 0, deck_length: 0,
+            players: (g.players ?? []).map((p: any) => ({ player_id: p.player_id, name: p.name, is_ai: p.is_ai, strategy_key: 'human' })),
+            good_players: [], good_timestamp: null,
+        });
+        for (const c of game.deck) live.push(c);
+        for (const p of game.players) for (const c of p.hand) live.push(c);
+    } else {
+        const deck = (await pgPool.query('SELECT deck FROM game_decks WHERE game_id=$1', [gameId])).rows[0]?.deck ?? [];
+        const ph = (await pgPool.query('SELECT hand FROM player_hands WHERE game_id=$1', [gameId])).rows;
+        const bh = (await pgPool.query('SELECT hand FROM bot_hands WHERE game_id=$1', [gameId])).rows;
+        for (const c of deck) live.push(c);
+        for (const r of [...ph, ...bh]) for (const c of (r.hand ?? [])) live.push(c);
+    }
     if (g.flipped) live.push(g.flipped);
-    for (const r of [...ph, ...bh]) for (const c of (r.hand ?? [])) live.push(c);
     for (const b of (g.table_battles ?? [])) { live.push(b.attack); if (b.defense) live.push(b.defense); }
 
     const seen = new Map<string, number>();

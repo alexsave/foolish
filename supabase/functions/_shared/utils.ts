@@ -484,22 +484,32 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
         throw new Error(`Game ${game_id} not found`);
     }
 
+    // Bot strategy keys come from the bots table (stable identity), NOT the
+    // hand tables — since commit_game stopped writing bot_hands during play, a
+    // dealt bot may have no bot_hands row, so the old join-based lookup would
+    // miss its strategy_key (and its hand). One small lookup, only when bots
+    // are present. The hands themselves are irrelevant on the blob path (the
+    // blob is authoritative); the JSONB values below only feed the legacy
+    // no-blob fallback, so they default to empty rather than throwing.
+    const botIds: string[] = data.players.filter((p: any) => p.is_ai).map((p: any) => p.player_id);
+    const stratByBot = new Map<string, string>();
+    if (botIds.length > 0) {
+        const { data: botRows } = await supabaseClient.from('bots').select('id, strategy_key').in('id', botIds);
+        for (const b of botRows ?? []) stratByBot.set(b.id, b.strategy_key);
+    }
+
     const players: PrivatePlayer[] = data.players.map((player: any) => {
-        let hand, awaiting_attack, strategy_key;
+        let hand: Card[], awaiting_attack: boolean, strategy_key: string;
 
         if (player.is_ai) {
-            // Look up in bot_hands table
-            const botHand = data.bot_hands.find(hand => hand.bot_id === player.player_id)!;
-            if (botHand) {
-                hand = botHand.hand;
-                awaiting_attack = botHand.awaiting_attack;
-                strategy_key = botHand.bots.strategy_key;
-            }
+            const botHand = data.bot_hands.find((h: any) => h.bot_id === player.player_id);
+            hand = botHand?.hand ?? [];
+            awaiting_attack = botHand?.awaiting_attack ?? false;
+            strategy_key = stratByBot.get(player.player_id) ?? botHand?.bots?.strategy_key ?? STRATEGY_KEY.RANDOM;
         } else {
-            // Look up in player_hands table
-            const playerHand = data.player_hands.find(hand => hand.player_id === player.player_id)!;
-            hand = playerHand.hand;
-            awaiting_attack = playerHand.awaiting_attack;
+            const playerHand = data.player_hands.find((h: any) => h.player_id === player.player_id);
+            hand = playerHand?.hand ?? [];
+            awaiting_attack = playerHand?.awaiting_attack ?? false;
             strategy_key = STRATEGY_KEY.HUMAN;
         }
 
@@ -664,13 +674,22 @@ export const commitGame = async (
         p_state = bytesToHex(serializeGameState(game));
     }
 
+    // Once the game is dealt (p_state present), the packed blob is the sole
+    // authoritative store of the volatile state — the per-hand JSONB tables are
+    // NOT written anymore (that's the cut-over win: no JSONB hand serialization
+    // per move). They're still written while the game is a lobby (p_state null)
+    // so player_hands keeps doubling as the player<->game membership index that
+    // get_my_games reads, and so the pre-deal WAITING load path (which has no
+    // blob) still finds its rows. game_decks likewise: the deck lives in the
+    // blob once dealt.
+    const dealt = p_state !== null;
     const { data, error } = await supabaseClient.rpc('commit_game', {
         p_game_id: game.id,
         p_expected_version: expectedVersion,
         p_game: publicGame,
-        p_deck: game.deck,
-        p_hands: humanHands,
-        p_bot_hands: botHands,
+        p_deck: dealt ? null : game.deck,
+        p_hands: dealt ? null : humanHands,
+        p_bot_hands: dealt ? null : botHands,
         p_logs: freshLogs.length > 0 ? freshLogs : null,
         p_state,
     });
