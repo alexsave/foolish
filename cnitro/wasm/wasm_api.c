@@ -232,6 +232,45 @@ void wasm_import_state(void) { get_state(&g_game, g_io); }
 // C -> TS: serialize the working game into the IO buffer; returns length.
 int wasm_export_state(void) { return put_state(&g_game, g_io); }
 
+// ---------- durable state codec (versioned) -------------------------------
+//
+// put_state/get_state above are the TRANSIENT request-scoped IO format: they
+// never outlive one edge-function call, so they carry no version. This pair is
+// the ONLY state format written to durable storage (games.state bytea). It is
+// put_state's exact byte layout with a leading 1-byte format version, so a
+// future kernel-layout change becomes an explicit decode branch here instead
+// of silently misreading every persisted game — the same discipline the
+// replay codec (replay.h v2..v5) already applies to its persisted integers.
+//
+// It carries the VOLATILE game state only (positions, deck, battles, per-seat
+// hands/status, good-mask, elimination). Seat identity (player_id/name/
+// strategy_key/is_ai) is stable across a game and lives in a separate roster
+// column, reattached TS-side — exactly the split parseState/stateToGame
+// already assume (KernelState + template).
+#define STATE_FORMAT_VERSION 1
+
+// Serialize the working game into g_io as a versioned durable blob; returns
+// the byte length (>=1).
+int wasm_state_serialize(void) {
+    g_io[0] = (unsigned char)STATE_FORMAT_VERSION;
+    return 1 + put_state(&g_game, g_io + 1);
+}
+
+// Load a versioned durable blob (already written into g_io) back into the
+// working game. Returns 1 on success, 0 if the leading version byte is one
+// this kernel does not understand (caller must treat as unreadable, never as
+// an empty game).
+int wasm_state_deserialize(int len) {
+    if (len < 1) return 0;
+    if (g_io[0] != STATE_FORMAT_VERSION) return 0;
+    get_state(&g_game, g_io + 1);
+    return 1;
+}
+
+// The version this kernel writes — lets the TS bridge assert the embed it
+// loaded matches the format it expects without hardcoding the number twice.
+int wasm_state_format_version(void) { return STATE_FORMAT_VERSION; }
+
 // ---------- logs -----------------------------------------------------------
 // u16 num_logs, then per log: i8 type, i8 player_idx, i8 defender_index,
 // u8 num_pairs, num_pairs x (u8 primary, u8 target) — wire cards, target
