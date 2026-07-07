@@ -1,0 +1,52 @@
+name: deploy
+
+# Ships the Supabase backend on every merge to main: applies pending database
+# migrations, then deploys the edge functions. Migrations run FIRST so new
+# schema is in place before the new function code that depends on it (the
+# expand-then-deploy order; additive migrations keep the currently-live
+# functions working during the window).
+#
+# Required repository secrets (Settings > Secrets and variables > Actions):
+#   SUPABASE_ACCESS_TOKEN  - personal access token from
+#                            https://supabase.com/dashboard/account/tokens
+#   SUPABASE_DB_PASSWORD   - the project's database password (used by
+#                            `supabase link` / `db push` non-interactively)
+# The project ref is public (it's in the project URL), so it lives inline below.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/**'
+  workflow_dispatch: {}
+
+# Never let two deploys race; queue instead of cancelling a push mid-flight.
+concurrency:
+  group: supabase-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      SUPABASE_PROJECT_REF: wngpfwmwkltonwosqflx
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Link project
+        run: supabase link --project-ref "$SUPABASE_PROJECT_REF"
+
+      - name: Apply database migrations
+        run: supabase db push --linked --yes
+
+      - name: Deploy edge functions
+        run: supabase functions deploy --project-ref "$SUPABASE_PROJECT_REF"
