@@ -7,3 +7,7 @@ build_prof/
 *.trace
 gmon.out
 *.gcda
+*.gcno
+*.profraw
+*.profdata
+covbuild/

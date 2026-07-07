@@ -52,3 +52,6 @@ next.config.js
 # Local Claude Code agent worktrees
 .claude/
 isolate-*.log
+
+# Coverage artifacts
+.v8cov/
