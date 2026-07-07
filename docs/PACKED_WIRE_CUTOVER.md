@@ -109,14 +109,41 @@ envelope for a game it has not loaded (no `r`, no local roster) refetches
 - **TS client**: builds awire bytes from the DOM selection, decodes evwire and
   the view blob into `PersonalGame` **only at the render boundary**.
 
-## Kept on the JS path (encode-at-the-edge, follow-ups)
+## The follow-up conversions (landed)
 
-- Bot loop and meta/lobby actions still mutate JS Games internally; their
-  broadcasts are encoded to evwire by the TS encoder so the client sees one
-  format. Converting the bot loop to resident-kernel apply is the next step.
-- `get_my_games` (dashboard listing) still returns personalize_game JSON.
-- `hand_rearranged` private message unchanged.
-- Replay pipeline unchanged (already kernel-encoded at game end).
+- **Session log = packed byte column** (`games.logs_packed`, "logwire"):
+  kernel log records + u48 timestamps, DRAW identities masked IN the kernel
+  (`wasm_export_logs_masked`), appended by hex concat inside the same
+  version-fenced commit as the state blob (exactly-once by construction). A
+  GAME_START batch resets the column; a WAITING commit clears both the blob
+  and the log column (the `continue` reset must never leak the finished
+  session's state into the new lobby). game_logs rows are write-never
+  (legacy fallback read only). The end-of-game replay snapshot decodes the
+  column — the one place session logs become JS objects.
+- **Bot loop on the kernel**: every bot move applies via the same awire +
+  packed pipeline (`executeBotMovePacked`; the choose-move marshal-skip makes
+  the apply marshal free for kernel-brained bots), and `executeWithGameLock`
+  accepts the kernel products directly (`PackedOpProducts`) — commit takes
+  the blob + logwire hex, the broadcast takes the per-viewer buffers. No JS
+  AnimationEvents or appendLogs on the loop. Legacy
+  `processBotAction`/`executeBotMove` remain for offline harnesses/e2e.
+- **Meta state-ops**: `handleStart`'s all-ready deal ships kernel products
+  (`start_game_packed`) — the fattest broadcast goes kernel-native; add-bot's
+  auto-start stays on the JS path deliberately (its broadcast must carry the
+  roster extras, since the roster just changed). In-play `rearrange-hand` is
+  validated and applied in the kernel (`wasm_rearrange_hand` — the
+  permutation uniqueness check that prevents duplicate-card minting is C
+  now). Pure roster I/O (join/exit/add-bot/update-name/continue) stays TS —
+  it is membership plumbing, not game state.
+- **`get_my_games` = packed list**: per game, the caller's kernel-masked
+  view blob (+ roster JSON); lobbies/legacy rows ride as byte-wrapped
+  personalize_game JSON in the same binary envelope
+  (`encodeGamesList`/`decodePackedGamesList`).
+- Still JS: the `hand_rearranged` private ack message, and the replay
+  pipeline (already kernel-encoded at game end). guards.wasm now ships an
+  explicit export allow-list like the other modules (25KB → 20KB); its
+  `wasm_import_view` is exported and tested, though the client still
+  marshals gates from the view model in this pass.
 
 ## Closing the PostgREST side door
 

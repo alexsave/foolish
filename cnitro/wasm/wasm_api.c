@@ -356,6 +356,29 @@ int wasm_events_serialize(int viewer, int actor, int append_final_transition) {
                             actor, append_final_transition, g_io, IO_CAP);
 }
 
+// Reorder a seat's own hand to the given index order — the rearrange-hand
+// meta action, validated in the kernel. Indices are single bytes in input
+// buffer A. The permutation check is load-bearing (see actions/rearrange.ts
+// history): n must equal the hand count, every index in range, and each used
+// EXACTLY once — otherwise a hostile payload mints duplicate cards. Returns
+// 1 applied, 0 invalid (state untouched).
+int wasm_rearrange_hand(int seat, int n) {
+    if (seat < 0 || seat >= g_game.num_players) return 0;
+    Player *pl = &g_game.players[seat];
+    if (n != pl->hand_count || n < 0 || n > MAX_HAND_SIZE) return 0;
+    unsigned char seen[MAX_HAND_SIZE];
+    Card out[MAX_HAND_SIZE];
+    for (int i = 0; i < n; i++) seen[i] = 0;
+    for (int i = 0; i < n; i++) {
+        const unsigned char idx = g_in_raw_a[i];
+        if (idx >= (unsigned char)n || seen[idx]) return 0;
+        seen[idx] = 1;
+        out[i] = pl->hand[idx];
+    }
+    for (int i = 0; i < n; i++) pl->hand[i] = out[i];
+    return 1;
+}
+
 // ---------- queries ----------------------------------------------------------
 
 int wasm_game_done(void) { return game_done(&g_game); }

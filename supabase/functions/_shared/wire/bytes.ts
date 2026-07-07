@@ -32,12 +32,3 @@ export function bytesToBareHex(bytes: Uint8Array): string {
     return out;
 }
 
-// Little-endian u32 (the version field of the packed HTTP envelopes).
-export function putU32(out: number[], v: number): void {
-    out.push(v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >> 24) & 0xff);
-}
-
-export function readU32(buf: Uint8Array, off: number): number {
-    // >>> 0 keeps versions above 2^31 unsigned.
-    return (buf[off] | (buf[off + 1] << 8) | (buf[off + 2] << 16) | (buf[off + 3] << 24)) >>> 0;
-}

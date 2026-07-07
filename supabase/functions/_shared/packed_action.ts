@@ -7,8 +7,8 @@
 // synchronous kernel section (engine.ts runPackedAction). No TS Game object
 // exists on this path except the single cold materialization for the DB dual.
 import {
-    broadcastMessages, BroadcastMessage, commitGame, executeWithGameLock,
-    finalizeEndedGame, packedSequencePayload, supabaseClient,
+    broadcastPackedEventBuffers, commitGame, executeWithGameLock,
+    finalizeEndedGame, supabaseClient,
 } from './utils.ts';
 import { GAME_STATUS } from './types.ts';
 import { verify_player_in_game } from './common_utils.ts';
@@ -129,21 +129,7 @@ export async function executePackedAction(
         // commit, fire-and-forget — a plain `good` (zero events, not ended)
         // broadcasts nothing, exactly like the JSON path.
         if (run.nEvents > 0) {
-            const version = game.version ?? 0;
-            const messages: BroadcastMessage[] = [];
-            for (const s of humanSeats) {
-                messages.push({
-                    topic: `gu-${gameId}-${row.players[s].player_id}`,
-                    event: 'animation_events',
-                    payload: packedSequencePayload(run.events.get(s)!, version),
-                });
-            }
-            messages.push({
-                topic: `game-${gameId}`,
-                event: 'animation_events',
-                payload: packedSequencePayload(run.events.get(-1)!, version),
-            });
-            broadcastMessages(messages, reqId).catch(err =>
+            broadcastPackedEventBuffers(game, run.events, reqId).catch(err =>
                 console.error(`[${reqId}] Error broadcasting packed events:`, err));
         }
 
@@ -153,7 +139,11 @@ export async function executePackedAction(
 }
 
 // Pre-blob rows only: run the move through the legacy JSON pipeline (its
-// commit writes the blob, so this fires at most once per legacy game).
+// commit writes the blob, so this fires at most once per legacy game). The
+// binary response contract still holds: a handler rejection maps to a
+// REJECTED envelope (code 0 = unspecified — the legacy path throws message
+// strings, not codes) and the end-game race maps to MOOT, exactly like the
+// kernel path.
 async function legacyFallback(
     gameId: string, userId: string, wire: Uint8Array, reqId: string,
 ): Promise<PackedActionOutcome> {
@@ -164,14 +154,31 @@ async function legacyFallback(
     const { handlePass } = await import('./actions/pass.ts');
     const { handlePickup } = await import('./actions/pickup.ts');
     const { handleGood } = await import('./actions/good.ts');
+    let rejected = false;
     const result = await executeWithGameLock(gameId, async (game) => {
+        rejected = false; // reset per CAS attempt — the op re-runs on conflict
         verify_player_in_game(game, userId);
-        const events = dispatchLegacy(move, game, userId,
-            { handleAttack, handleCover, handlePass, handlePickup, handleGood });
-        return { game, events };
+        try {
+            const events = dispatchLegacy(move, game, userId,
+                { handleAttack, handleCover, handlePass, handlePickup, handleGood });
+            return { game, events };
+        } catch (e) {
+            // A validation rejection must not abort the lock as an HTTP
+            // error — surface it as the packed REJECTED status.
+            console.log(`[${reqId}][PACKED] legacy-path rejection:`, (e as Error).message);
+            rejected = true;
+            return { game, events: [] };
+        }
     }, reqId, true);
+    if (rejected) {
+        return {
+            status: ACTION_STATUS.REJECTED, rejectCode: 0,
+            version: result.game.version ?? 0, gameStatus: result.game.status,
+        };
+    }
+    const moot = result.game.status === GAME_STATUS.GAME_OVER && result.events.length === 0;
     return {
-        status: ACTION_STATUS.APPLIED, rejectCode: 0,
+        status: moot ? ACTION_STATUS.MOOT : ACTION_STATUS.APPLIED, rejectCode: 0,
         version: result.game.version ?? 0, gameStatus: result.game.status,
     };
 }

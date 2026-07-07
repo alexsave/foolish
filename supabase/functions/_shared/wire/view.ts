@@ -200,6 +200,10 @@ export function encodeGameResponse(
     version: number, seat: number, roster: PackedGameRoster, viewBlob: Uint8Array,
 ): Uint8Array {
     const rosterBytes = new TextEncoder().encode(JSON.stringify(roster));
+    // Both length fields are u16 — enforce, never wrap (a silent & 0xff
+    // truncation would desync the whole envelope). Real payloads are ~½KB.
+    if (rosterBytes.length > 0xffff) throw new Error(`view: roster JSON ${rosterBytes.length}B exceeds the u16 cap`);
+    if (viewBlob.length > 0xffff) throw new Error(`view: view blob ${viewBlob.length}B exceeds the u16 cap`);
     const out = new Uint8Array(3 + 4 + 2 + rosterBytes.length + 2 + viewBlob.length);
     let q = 0;
     out[q++] = GAME_RESP_FORMAT;
@@ -212,6 +216,64 @@ export function encodeGameResponse(
     out[q++] = viewBlob.length & 0xff; out[q++] = (viewBlob.length >> 8) & 0xff;
     out.set(viewBlob, q);
     return out;
+}
+
+// ---------------------------------------------------------------------------
+// get_my_games packed response: u8 fmt | u8 n_games | per game:
+//   u8 kind (1 = packed single-game envelope, 0 = personalize_game JSON for
+//   lobbies/legacy rows) | u32 LE byte length | the bytes.
+// ---------------------------------------------------------------------------
+
+export const GAMES_LIST_FORMAT = 1;
+
+export interface GamesListEntry { kind: 0 | 1; bytes: Uint8Array }
+
+export function encodeGamesList(entries: GamesListEntry[]): Uint8Array {
+    if (entries.length > 255) throw new Error(`view: ${entries.length} games exceeds the list cap`);
+    let total = 2;
+    for (const e of entries) total += 5 + e.bytes.length;
+    const out = new Uint8Array(total);
+    let q = 0;
+    out[q++] = GAMES_LIST_FORMAT;
+    out[q++] = entries.length;
+    for (const e of entries) {
+        out[q++] = e.kind;
+        out[q++] = e.bytes.length & 0xff;
+        out[q++] = (e.bytes.length >> 8) & 0xff;
+        out[q++] = (e.bytes.length >> 16) & 0xff;
+        out[q++] = (e.bytes.length >> 24) & 0xff;
+        out.set(e.bytes, q); q += e.bytes.length;
+    }
+    return out;
+}
+
+// Decode + materialize the dashboard list — packed entries through
+// decodePackedGame, JSON entries parsed directly. Unreadable entries are
+// skipped (matching the server's skip-on-load-failure behavior), an unknown
+// envelope returns null.
+export function decodePackedGamesList(
+    buf: Uint8Array, now?: () => number,
+): (PersonalGame | PublicGame)[] | null {
+    if (buf.length < 2 || buf[0] !== GAMES_LIST_FORMAT) return null;
+    const n = buf[1];
+    const games: (PersonalGame | PublicGame)[] = [];
+    let q = 2;
+    for (let i = 0; i < n; i++) {
+        if (q + 5 > buf.length) return null;
+        const kind = buf[q++];
+        const len = (buf[q] | (buf[q + 1] << 8) | (buf[q + 2] << 16) | (buf[q + 3] << 24)) >>> 0; q += 4;
+        if (q + len > buf.length) return null;
+        const bytes = buf.subarray(q, q + len); q += len;
+        try {
+            if (kind === 1) {
+                const decoded = decodePackedGame(bytes, now);
+                if (decoded) games.push(decoded.game);
+            } else {
+                games.push(JSON.parse(new TextDecoder().decode(bytes)));
+            }
+        } catch { /* skip unreadable entry */ }
+    }
+    return games;
 }
 
 // Decode + materialize in one step — the client's render-boundary JS

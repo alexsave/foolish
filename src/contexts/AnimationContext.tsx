@@ -733,10 +733,26 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         return { revertEvents, passIsInvalid };
     }
 
-    // Packed envelopes for games we haven't loaded yet: refetch once instead
-    // of dropping silently forever (the authoritative load supersedes the
-    // dropped sequence — its version is at least the broadcast's).
+    // Packed envelopes we can't decode (unknown game, corrupt bytes, roster
+    // desync): refetch the authoritative state once instead of dropping
+    // silently forever. The refetch re-checks the landed version against the
+    // broadcast's — a load that was already in flight when the broadcast
+    // committed can return an OLDER state (its read predates the commit), so
+    // one more load is chained in that case.
     const packedRefetchInFlight = useRef<Set<string>>(new Set());
+    const refetchForEnvelope = (gid: string | undefined, minVersion: number | undefined) => {
+        if (!gid || packedRefetchInFlight.current.has(gid)) return;
+        packedRefetchInFlight.current.add(gid);
+        serverActions.loadGame(gid)
+            .then(() => {
+                const landed = gamesRef.current[gid];
+                if (landed && minVersion !== undefined && (landed.version ?? 0) < minVersion) {
+                    return serverActions.loadGame(gid);
+                }
+            })
+            .catch(() => { /* resubscribe resync covers persistent failures */ })
+            .finally(() => packedRefetchInFlight.current.delete(gid));
+    };
 
     // Packed broadcast envelope {t:'as2', s, v, b, game_id, r?, m?} -> the
     // legacy sequence shape (docs/PACKED_WIRE_CUTOVER.md). This is the
@@ -767,14 +783,9 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 players: g.players.map(p => ({ player_id: p.player_id, name: p.name, is_ai: p.is_ai })),
             };
         } else {
-            // No way to name the seats: fetch the authoritative state once
-            // and drop this sequence — the load lands a version >= this one.
-            if (gid && !packedRefetchInFlight.current.has(gid)) {
-                packedRefetchInFlight.current.add(gid);
-                serverActions.loadGame(gid)
-                    .catch(() => { /* resubscribe resync covers persistent failures */ })
-                    .finally(() => packedRefetchInFlight.current.delete(gid));
-            }
+            // No way to name the seats: fetch the authoritative state and
+            // drop this sequence.
+            refetchForEnvelope(gid, typeof m.v === 'number' ? m.v : undefined);
             return null;
         }
         const ctx = {
@@ -786,9 +797,18 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             decoded = decodeEventWire(base64ToBytes(m.b), roster, ctx);
         } catch (e) {
             console.error('packed animation envelope decode failed:', e);
+            decoded = null;
+        }
+        // Undecodable bytes, or events naming seats beyond the roster we
+        // decoded with (the roster changed while this client was away —
+        // e.g. a bot was added and the game started): the local roster is
+        // stale. Refetch and drop; the load carries the fresh roster.
+        const seatOutOfRange = decoded?.events.some((ev: any) =>
+            ev.game_state && ev.game_state.players.length > roster.players.length);
+        if (!decoded || seatOutOfRange) {
+            refetchForEnvelope(gid, typeof m.v === 'number' ? m.v : undefined);
             return null;
         }
-        if (!decoded) return null;
         // Envelope-carried message strings are authoritative where present
         // (null = the event had no message).
         if (Array.isArray(m.m)) {

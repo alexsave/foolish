@@ -9,7 +9,7 @@ import { ANIMATION_TIME } from '../constants/constants';
 import { optimisticOverlay } from '../state/optimisticOverlay';
 import { cardKey, mergeHandOrder, reconcileHandMemory, displayedHand, mergeTableBattles, applyOverlayEntries } from '../state/clientReconcile';
 import { ACTION_STATUS, decodeActionResponse, encodeAction, encodeActionRequest } from '@shared/wire/awire.ts';
-import { decodePackedGame } from '@shared/wire/view.ts';
+import { decodePackedGame, decodePackedGamesList } from '@shared/wire/view.ts';
 import { rejectMessage } from '../wasm/rejectMessages';
 
 // Re-apply the local player's unconfirmed optimistic table cards onto an
@@ -923,20 +923,33 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 return;
             }
 
-            // The caller's games, already personalized by the server from each
-            // game's packed blob (get_my_games). player_hands is no longer read
-            // directly — it only serves as the server-side membership index now.
-            const { data, error } = await supabase.functions.invoke('get_my_games', { body: {} });
-            const payload: any = data;
+            // The caller's games as one packed binary list: each dealt game
+            // is the kernel-masked view blob (+ identity roster JSON), each
+            // lobby a byte-wrapped personalize_game JSON — materialized right
+            // here at the render boundary (docs/PACKED_WIRE_CUTOVER.md). A
+            // JSON response (legacy server) still parses through the old path.
+            const { data, error } = await supabase.functions.invoke('get_my_games', { body: { packed: true } });
 
-            if (error || !payload || payload.error) {
-                console.error('Error fetching user games:', error || payload?.error);
-                return;
+            let list: any[] = [];
+            if (!error && typeof Blob !== 'undefined' && data instanceof Blob) {
+                const decoded = decodePackedGamesList(new Uint8Array(await data.arrayBuffer()));
+                if (!decoded) {
+                    console.error('Error fetching user games: unreadable packed list');
+                    return;
+                }
+                list = decoded;
+            } else {
+                const payload: any = data;
+                if (error || !payload || payload.error) {
+                    console.error('Error fetching user games:', error || payload?.error);
+                    return;
+                }
+                list = payload.games ?? [];
             }
 
             const games: { [key: string]: PersonalGame } = {};
-            for (const fetched of (payload.games ?? [])) {
-                const game: PersonalGame = { ...fetched, self: fetched.self ?? null };
+            for (const fetched of list) {
+                const game: PersonalGame = { ...fetched, self: (fetched as any).self ?? null };
                 games[game.id] = game;
             }
 

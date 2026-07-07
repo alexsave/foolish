@@ -181,6 +181,65 @@ if (!process.env.VALIDATION_ONLY) {
         assert.equal((await pgPool.query('SELECT count(*) FROM player_hands WHERE game_id=$1 AND player_id=$2', [gameId, creator])).rows[0].count, '1', 'creator hand row created');
     });
 
+    // Regression: the full rematch cycle on a DEALT game (the seeded-continue
+    // test above never writes a blob, so it misses the stale-blob class of
+    // bug: `continue` used to leave the finished session's kernel blob in
+    // games.state — COALESCE never cleared it — and the blob-authoritative
+    // loaders then served the finished state to the new lobby: multi-human
+    // rematches could never start, post-continue join/exit bricked every
+    // load with a seat-count mismatch, and the old seats' hands leaked).
+    test('meta:continue — full rematch on a dealt game: blob cleared, lobby mutable, restart works', async () => {
+        const { legalMovesFor, applyPlayerMove } = await import('./dispatch.ts');
+        const gameId = `m${uuid().slice(0, 5)}`;
+        const h1 = uuid(), h2 = uuid(), h3 = uuid();
+        await seedGame(gameId, [
+            { id: h1, name: 'H1', is_ai: false, strategy_key: 'human' },
+            { id: h2, name: 'H2', is_ai: false, strategy_key: 'human' },
+        ]);
+        await runMeta(gameId, h1, { type: 'start', game_id: gameId });
+
+        // Play the dealt game to completion so the final commit writes a
+        // GAME_OVER blob — the exact state that used to go stale.
+        for (let steps = 0; steps < 600; steps++) {
+            const g = await loadCompleteGame(gameId);
+            if (g.status !== GAME_STATUS.PLAYING) break;
+            const moves = legalMovesFor(g);
+            if (moves.length === 0) break;
+            const pick = moves[Math.floor(Math.random() * moves.length)];
+            try {
+                await executeWithGameLock(gameId, async (gg) => ({ game: gg, events: applyPlayerMove(gg, pick) }), `rm${steps}`, true);
+            } catch { /* stale pick under the CAS — normal */ }
+        }
+        const finished = await pgPool.query('SELECT status, state FROM games WHERE id=$1', [gameId]);
+        assert.equal(finished.rows[0].status, 'game_over', 'game played to completion');
+        assert.ok(finished.rows[0].state, 'finished game carries a blob');
+
+        // Continue: the reset commit must CLEAR the blob (state = NULL on a
+        // WAITING transition), or everything below regresses.
+        await runMeta(gameId, h1, { type: 'continue', game_id: gameId });
+        const reset = await pgPool.query('SELECT status, state, logs_packed FROM games WHERE id=$1', [gameId]);
+        assert.equal(reset.rows[0].status, 'waiting', 'reset to lobby');
+        assert.equal(reset.rows[0].state, null, 'stale blob cleared on the WAITING transition');
+        const lobbyG = await loadCompleteGame(gameId);
+        assert.ok(lobbyG.players.every(p => p.hand.length === 0), 'no hands survive into the lobby');
+
+        // The post-continue lobby must be fully mutable: join + exit used to
+        // brick every subsequent load via the blob/roster seat mismatch.
+        await pgPool.query('INSERT INTO auth.users(id) VALUES($1) ON CONFLICT DO NOTHING', [h3]);
+        await runMeta(gameId, h3, { type: 'join', game_id: gameId });
+        await runMeta(gameId, h2, { type: 'exit', game_id: gameId });
+        const churned = await loadCompleteGame(gameId);
+        assert.equal(churned.players.length, 2, 'join + exit both applied');
+        assert.ok(churned.players.some(p => p.player_id === h3), 'joiner present');
+
+        // Everyone readies up: the rematch must actually deal.
+        await runMeta(gameId, h1, { type: 'start', game_id: gameId });
+        await runMeta(gameId, h3, { type: 'start', game_id: gameId });
+        const restarted = await loadCompleteGame(gameId);
+        assert.equal(restarted.status, GAME_STATUS.PLAYING, 'rematch dealt');
+        assert.ok((await checkCardConservation(gameId)).ok, 'cards conserved on the rematch deal');
+    });
+
     registerMetaValidation();
 
     after(async () => { await pgPool.end(); });

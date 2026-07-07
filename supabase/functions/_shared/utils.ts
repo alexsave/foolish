@@ -44,7 +44,23 @@ export const supabaseClient = createClient(
 // is held, so nothing can leak or freeze. On conflict we reload and redo.
 // (Name kept as executeWithGameLock so callers are unchanged; it no longer locks.)
 // ============================================================================
-export const executeWithGameLock = async (game_id: string, operation: (game: Game) => Promise<{ game: Game, events: AnimationEvent[], deleted?: boolean }>, reqId: string = 'unknown', mootIfGameOver: boolean = false): Promise<{ game: Game, events: AnimationEvent[], deleted?: boolean }> => {
+// Kernel-produced commit/broadcast products an operation can hand back
+// instead of JS events (the bot loop's packed path): the state blob and
+// logwire hex go straight into commit_game, the per-viewer event buffers
+// straight to the broadcast, and `ended` replaces check_win_sync (the
+// kernel's wasm_finalize_win already parked the seats and the event stream
+// already carries the final MAGIC_TRANSITION).
+export interface PackedOpProducts {
+    ended: boolean;
+    stateHex: string;
+    logsHex: string | null;
+    nEvents: number;
+    events: Map<number, Uint8Array>; // viewer seat (-1 spectator) -> evwire bytes
+}
+
+interface GameOpResult { game: Game; events: AnimationEvent[]; deleted?: boolean; packed?: PackedOpProducts }
+
+export const executeWithGameLock = async (game_id: string, operation: (game: Game) => Promise<GameOpResult>, reqId: string = 'unknown', mootIfGameOver: boolean = false): Promise<GameOpResult> => {
     const MAX_ATTEMPTS = 5;
 
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -75,11 +91,14 @@ export const executeWithGameLock = async (game_id: string, operation: (game: Gam
         }
 
         // Pure end-of-game detection: sets GAME_OVER + player statuses in memory,
-        // no DB writes — so the committed state below is already final.
-        const game_ended = check_win_sync(result.game);
+        // no DB writes — so the committed state below is already final. The
+        // packed path did the equivalent inside the kernel (wasm_finalize_win).
+        const packed = result.packed;
+        const game_ended = packed ? packed.ended : check_win_sync(result.game);
 
         // Atomic, version-gated commit of the whole game state.
-        const commit = await commitGame(result.game, expectedVersion);
+        const commit = await commitGame(result.game, expectedVersion,
+            packed?.stateHex ?? null, packed?.logsHex ?? null);
 
         if (commit.status === 'conflict') {
             // Another actor committed between our load and our commit, so the move
@@ -91,20 +110,26 @@ export const executeWithGameLock = async (game_id: string, operation: (game: Gam
         // End-of-game one-time side effects (ELO + replay snapshot + log wipe),
         // run exactly once — only the winning commit reaches here. This MUST run
         // before the broadcast: it pushes the MAGIC_TRANSITION event and the final
-        // state the broadcast carries. The ending move's own logs were committed
-        // atomically with the final state above, so finalizeEndedGame loads the
-        // COMPLETE session for the replay snapshot.
+        // state the broadcast carries (the packed event stream already ends with
+        // that transition — the kernel appended it). The ending move's own logs
+        // were committed atomically with the final state above, so
+        // finalizeEndedGame reads the COMPLETE session for the replay snapshot.
         if (game_ended) {
             await finalizeEndedGame(result.game);
-            result.events.push({ type: ANIMATION_EVENT_TYPE.MAGIC_TRANSITION, game_state: result.game });
+            if (!packed) {
+                result.events.push({ type: ANIMATION_EVENT_TYPE.MAGIC_TRANSITION, game_state: result.game });
+            }
         }
 
         // Broadcast AFTER the durable commit (fire-and-forget). The move's logs
-        // were part of the commit itself (commit_game p_logs) — there is no
-        // separate log write left on this path; the fence is the version.
-        if (result.events.length > 0) {
-            console.log(`[${reqId}][TXN] Broadcasting ${result.events.length} events after commit`);
-            broadcastAnimationEvents(result.game, result.events, reqId).catch(err =>
+        // were part of the commit itself — there is no separate log write left
+        // on this path; the fence is the version.
+        if (packed ? packed.nEvents > 0 : result.events.length > 0) {
+            console.log(`[${reqId}][TXN] Broadcasting ${packed ? packed.nEvents : result.events.length} events after commit`);
+            const broadcast = packed
+                ? broadcastPackedEventBuffers(result.game, packed.events, reqId)
+                : broadcastAnimationEvents(result.game, result.events, reqId);
+            broadcast.catch(err =>
                 console.error(`[${reqId}] Error broadcasting events:`, err));
         }
 
@@ -228,6 +253,35 @@ export const packedSequencePayload = (bytes: Uint8Array, version: number, extra?
     ...(extra?.r ? { r: extra.r } : {}),
     ...(extra?.m ? { m: extra.m } : {}),
 });
+
+// Broadcast kernel-serialized per-viewer event buffers (the packed action
+// path and the packed bot loop). No r/m envelope extras: a move can't change
+// the roster, and its messages rebuild from codes client-side.
+export const broadcastPackedEventBuffers = async (game: Game, buffers: Map<number, Uint8Array>, reqId: string = 'unknown'): Promise<void> => {
+    const version = game.version ?? 0;
+    const messages: BroadcastMessage[] = [];
+    for (let seat = 0; seat < game.players.length; seat++) {
+        const p = game.players[seat];
+        if (p.is_ai) continue;
+        const bytes = buffers.get(seat);
+        if (bytes) {
+            messages.push({
+                topic: `gu-${game.id}-${p.player_id}`,
+                event: 'animation_events',
+                payload: packedSequencePayload(bytes, version),
+            });
+        }
+    }
+    const spectator = buffers.get(-1);
+    if (spectator) {
+        messages.push({
+            topic: `game-${game.id}`,
+            event: 'animation_events',
+            payload: packedSequencePayload(spectator, version),
+        });
+    }
+    await broadcastMessages(messages, reqId);
+};
 
 export const broadcastAnimationEvents = async (game: Game, events: AnimationEvent[], reqId: string = 'unknown'): Promise<void> => {
     if (events.length === 0) {
@@ -511,7 +565,14 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
     // (WAITING) games have no blob and fall through to the JSONB assembly below
     // (which also covers any legacy row committed before this column existed).
     // Lazy import so lobby-only loads never pull the rules-wasm embed.
-    if (data.state) {
+    // The status guard is load-bearing: a WAITING game must NEVER load from a
+    // blob. `continue` resets a finished game to WAITING and commit_game now
+    // clears the blob on that transition, but rows damaged before that fix
+    // (or a column-only status change) may still carry the finished session's
+    // blob — trusting it desyncs the mutable lobby roster from the blob's
+    // seats (bricking loads on join/exit) and leaks the previous session's
+    // hands. Lobbies always assemble from the JSONB membership rows below.
+    if (data.state && data.status !== GAME_STATUS.WAITING) {
         const { deserializeGameState } = await import('./wasm/engine.ts');
         const { hexToBytes } = await import('./replay/codec.ts');
         const game = deserializeGameState(hexToBytes(data.state), {

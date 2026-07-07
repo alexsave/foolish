@@ -165,7 +165,8 @@ WASM_API_EXPORTS := \
   -Wl,--export=wasm_replay_error_detail \
   -Wl,--export=wasm_legal_moves -Wl,--export=wasm_export_moves \
   -Wl,--export=wasm_apply_action -Wl,--export=wasm_finalize_win \
-  -Wl,--export=wasm_view_serialize -Wl,--export=wasm_events_serialize
+  -Wl,--export=wasm_view_serialize -Wl,--export=wasm_events_serialize \
+  -Wl,--export=wasm_rearrange_hand
 
 # bots.wasm exports the rules API above PLUS the bot bridge (wasm_bots_api.c).
 WASM_BOTS_API_EXPORTS := \
@@ -216,13 +217,32 @@ WASM_GUARDS_FLAGS := --target=wasm32 -O3 -nostdlib -ffreestanding -mbulk-memory 
                      -isystem wasm/include -Isrc -D_Thread_local= \
                      -DMAX_LOG_PAIRS=64 -DMAX_BATTLES=64 -DMAX_LOGS=64 \
                      -Wall -Wextra -Wno-unused-parameter \
-                     -Wl,--no-entry -Wl,--export-all -Wl,-z,stack-size=131072 -Wl,--stack-first
+                     -Wl,--no-entry -Wl,--export-memory -Wl,-z,stack-size=131072 -Wl,--stack-first
+
+# Explicit export allow-list, same rationale as WASM_API_EXPORTS (this
+# replaced --export-all here too: it pinned every internal symbol as a GC
+# root and bloated the name section). A NEW wasm_* guards entry point must be
+# added here or the browser bridge won't see it (clientGuards.ts fails loudly).
+WASM_GUARDS_EXPORTS := \
+  -Wl,--export=wasm_io_ptr -Wl,--export=wasm_io_cap \
+  -Wl,--export=wasm_cards_a_ptr -Wl,--export=wasm_cards_b_ptr \
+  -Wl,--export=wasm_init -Wl,--export=wasm_set_seed -Wl,--export=wasm_reject_reason \
+  -Wl,--export=wasm_import_state -Wl,--export=wasm_export_state \
+  -Wl,--export=wasm_import_view -Wl,--export=wasm_export_logs \
+  -Wl,--export=wasm_snap_count -Wl,--export=wasm_snap_tag \
+  -Wl,--export=wasm_snap_aux -Wl,--export=wasm_export_snapshot \
+  -Wl,--export=wasm_validate_attack -Wl,--export=wasm_validate_cover \
+  -Wl,--export=wasm_validate_pass -Wl,--export=wasm_validate_pickup \
+  -Wl,--export=wasm_validate_good -Wl,--export=wasm_validate_action \
+  -Wl,--export=wasm_attack -Wl,--export=wasm_cover -Wl,--export=wasm_pass \
+  -Wl,--export=wasm_pickup -Wl,--export=wasm_good -Wl,--export=wasm_apply_action \
+  -Wl,--export=wasm_game_done -Wl,--export=wasm_next_player -Wl,--export=wasm_can_cover
 
 WASM_GUARDS_SRC := src/game.c src/view.c src/awire.c wasm/wasm_guards_api.c
 
 build/guards.wasm: $(WASM_GUARDS_SRC) $(wildcard src/*.h) $(wildcard wasm/*.h)
 	@mkdir -p build
-	$(WASM_CC) $(WASM_GUARDS_FLAGS) $(WASM_GUARDS_SRC) -o $@
+	$(WASM_CC) $(WASM_GUARDS_FLAGS) $(WASM_GUARDS_EXPORTS) $(WASM_GUARDS_SRC) -o $@
 
 wasm-guards: build/guards.wasm
 	node wasm/embed.mjs build/guards.wasm ../supabase/functions/_shared/wasm/guards_wasm.ts GUARDS_WASM_B64

@@ -6,13 +6,28 @@
 // only the packaging is consolidated. Each handler mutates params.game and returns
 // {game, events}; executeWithGameLock (via wrap400) does the commit.
 
-import { ExecutionParams, broadcastToGameUser } from './utils.ts';
+import { ExecutionParams, broadcastToGameUser, PackedOpProducts } from './utils.ts';
 import { ANIMATION_EVENT_TYPE, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY, SERVER_EVENT_TYPE, AnimationEvent, Game } from './types.ts';
 import { cloneGame, verify_player_in_game } from './common_utils.ts';
-import { start_game } from './game_lifecycle.ts';
+import { start_game, start_game_packed } from './game_lifecycle.ts';
 import { MAX_PLAYERS } from './constants.ts';
 import { handleRearrangeHand as applyRearrangeHand } from './actions/rearrange.ts';
+import { runPackedRearrange, PackedRunOk } from './wasm/engine.ts';
+import { bytesToHex } from './replay/codec.ts';
+import { bytesToBareHex } from './wire/bytes.ts';
+import { logsFromKernelExport } from './wire/logwire.ts';
 import { createClient } from 'jsr:@supabase/supabase-js';
+
+// Kernel run -> the commit/broadcast products executeWithGameLock consumes.
+const packedProducts = (run: PackedRunOk): PackedOpProducts => ({
+    ended: run.ended,
+    stateHex: bytesToHex(run.stateBlob),
+    logsHex: run.logsWire.length > 2
+        ? bytesToBareHex(logsFromKernelExport(run.logsWire, Date.now()))
+        : null,
+    nEvents: run.nEvents,
+    events: run.events,
+});
 
 const supabaseClient = createClient(
     Deno.env.get('SUPABASE_URL') || '',
@@ -25,7 +40,7 @@ const GPT_ALLOWED_USER_ID = '60a5c562-0922-40a6-b416-77e3285d87b2';
 // `deleted` marks that the handler removed the games row itself (last player
 // exiting); executeWithGameLock then skips the version-CAS commit, which would
 // otherwise miss the deleted row, read as a conflict, and 400 a clean teardown.
-type Result = { game: Game; events: AnimationEvent[]; deleted?: boolean };
+type Result = { game: Game; events: AnimationEvent[]; deleted?: boolean; packed?: PackedOpProducts };
 
 // ---- start / ready ---------------------------------------------------------
 function handleStart({ user, game }: ExecutionParams): Result {
@@ -43,7 +58,11 @@ function handleStart({ user, game }: ExecutionParams): Result {
 
     const allPlayersReady = game.players.every(p => p.status === PLAYER_STATUS.READY) && game.players.length >= 2;
     if (allPlayersReady) {
-        return { game, events: start_game(game) };
+        // Kernel-packed deal: every recipient already knows this roster (the
+        // join/add-bot broadcasts carried it), so the fattest broadcast in
+        // the game — per-viewer DEAL/FLIPPED streams — goes out as kernel
+        // bytes with no JS AnimationEvents in between.
+        return { game, events: [], packed: packedProducts(start_game_packed(game)) };
     }
 
     return { game, events: [{
@@ -169,12 +188,16 @@ export function handleContinue({ user, game }: ExecutionParams): Result {
         throw new Error(`Game ${game.id} is not over`);
     }
 
-    // Determine the winner (first player who got out) / fool (last one still
-    // holding cards) from the FINISHED-game statuses, BEFORE the reset below
-    // clobbers them — otherwise every player is already READY/IDLE and both
-    // lookups miss, leaving the announcement stuck on the generic reset text.
-    const winner = game.players.find(p => p.status === PLAYER_STATUS.OUT);
-    const fool = game.players.find(p => p.status === PLAYER_STATUS.IN);
+    // Determine the winner / fool BEFORE the reset below clobbers the
+    // finished-game fields. The winner is the FIRST player to shed their
+    // cards — elimination_order[0] — not the first OUT seat in table order
+    // (those differ in 3+ player games). The fool is whoever is still IN
+    // (kernel finalize parks seats, so fall back to "not in
+    // elimination_order" when statuses were already reset).
+    const winner = game.players.find(p => p.player_id === game.elimination_order[0])
+        ?? game.players.find(p => p.status === PLAYER_STATUS.OUT);
+    const fool = game.players.find(p => p.status === PLAYER_STATUS.IN)
+        ?? game.players.find(p => !game.elimination_order.includes(p.player_id));
     let message = `Game ${game.id} has been reset for another round`;
     if (winner) message = `Player ${winner.name} won! Game reset for another round`;
     else if (fool) message = `Player ${fool.name} was the fool! Game reset for another round`;
@@ -240,10 +263,35 @@ function handleJoin({ user, user_name, body, game }: ExecutionParams): Result {
 
 // ---- rearrange hand --------------------------------------------------------
 function handleRearrangeHand({ user, user_name, game, body }: ExecutionParams): Result {
-    // Reorder the caller's hand. applyRearrangeHand validates membership + that
-    // card_indices is a permutation (uniqueness prevents minting duplicate
-    // cards via repeated indices). Mutates game in place.
-    applyRearrangeHand(game, user.id, body.card_indices);
+    // Reorder the caller's hand. For a dealt game the permutation validation
+    // — the load-bearing uniqueness check that prevents minting duplicate
+    // cards via repeated indices — runs INSIDE the kernel
+    // (wasm_rearrange_hand), and the reordered durable blob comes straight
+    // back; only the payload shape is checked in TS. Lobby/legacy games keep
+    // the JS path (their commit writes the hand tables, not the blob).
+    let packed: PackedOpProducts | undefined;
+    if (game.status === GAME_STATUS.PLAYING) {
+        const indices = body.card_indices;
+        if (!Array.isArray(indices) ||
+            !indices.every((i: unknown) => Number.isInteger(i) && (i as number) >= 0 && (i as number) <= 0xff)) {
+            throw new Error('Invalid card indices');
+        }
+        const seat = game.players.findIndex(p => p.player_id === user.id);
+        if (seat < 0) throw new Error('You are not in this game');
+        const result = runPackedRearrange(game, seat, indices as number[]);
+        if (!result) throw new Error('Invalid card indices');
+        // Keep the in-memory game in step for the commit's public dual.
+        game.players[seat].hand = result.post.players[seat].hand;
+        packed = {
+            ended: false,
+            stateHex: bytesToHex(result.stateBlob),
+            logsHex: null,
+            nEvents: 0,
+            events: new Map(),
+        };
+    } else {
+        applyRearrangeHand(game, user.id, body.card_indices);
+    }
 
     // Targeted broadcast only to the caller (their hand order is private); the
     // committed game itself is broadcast by executeWithGameLock.
@@ -251,7 +299,7 @@ function handleRearrangeHand({ user, user_name, game, body }: ExecutionParams): 
         message: `${user_name} rearranged their hand`
     }, user.id);
 
-    return { game, events: [] };
+    return { game, events: [], packed };
 }
 
 // ---- rearrange players (lobby seating order) -------------------------------

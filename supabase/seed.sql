@@ -522,9 +522,16 @@ BEGIN
     flipped = g.flipped, players = g.players, status = g.status, power_suit = g.power_suit,
     first_attacker = g.first_attacker, defender = g.defender, table_battles = g.table_battles,
     elimination_order = g.elimination_order, good_timestamp = g.good_timestamp,
-    good_players = g.good_players, state = COALESCE(p_state, state),
+    good_players = g.good_players,
+    -- A WAITING commit is the `continue` reset (or a lobby op): the finished
+    -- session's volatile state must NOT survive into the new lobby. A stale
+    -- blob desyncs from the mutable lobby roster (seat-count mismatches brick
+    -- every subsequent load) and leaks the previous session's hands through
+    -- the blob-authoritative loaders. COALESCE alone never cleared it.
+    state = CASE WHEN g.status = 'waiting' THEN NULL ELSE COALESCE(p_state, state) END,
     logs_packed = CASE
       WHEN p_logs_reset THEN COALESCE(p_logs_packed, '')
+      WHEN g.status = 'waiting' THEN ''
       ELSE COALESCE(logs_packed, '') || COALESCE(p_logs_packed, '')
     END,
     updated_at = now(), version = version + 1

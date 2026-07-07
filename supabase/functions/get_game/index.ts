@@ -3,7 +3,7 @@ import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { getAuthenticatedUser } from "../_shared/auth.ts";
 import { loadCompleteGame, supabaseClient } from "../_shared/utils.ts";
 import { personalize_game } from "../_shared/common_utils.ts";
-import { encodeGameResponse, PackedGameRoster } from "../_shared/wire/view.ts";
+import { buildPackedGameBytes } from "../_shared/packed_game.ts";
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
 // Read-only personalized game fetch. Two shapes:
@@ -33,28 +33,18 @@ serve(async (req: Request): Promise<Response> => {
         if (body.packed) {
             const { data, error } = await supabaseClient
                 .from('games').select('*').eq('id', game_id).single();
-            if (!error && data && data.state) {
-                const seat = (data.players as { player_id: string }[])
-                    .findIndex(p => p.player_id === user.id);
-                const roster: PackedGameRoster = {
-                    id: data.id,
-                    name: data.name,
-                    status: data.status, // column-authoritative over the blob's copy
-                    players: (data.players as { player_id: string; name: string; is_ai: boolean }[])
-                        .map(p => ({ player_id: p.player_id, name: p.name, is_ai: p.is_ai })),
-                    good_players: data.good_players || [],
-                    good_timestamp: data.good_timestamp || null,
-                };
-                // Lazy import: only a dealt game pulls the rules-wasm embed.
-                const { serializeViewBlob } = await import('../_shared/wasm/engine.ts');
-                const { hexToBytes } = await import('../_shared/replay/codec.ts');
-                const viewBlob = serializeViewBlob(hexToBytes(data.state), seat);
-                const bytes = encodeGameResponse(data.version ?? 0, seat, roster, viewBlob);
-                return new Response(bytes as unknown as BodyInit, {
-                    headers: { ...corsHeaders, 'Content-Type': 'application/octet-stream' },
-                });
+            if (!error && data) {
+                // buildPackedGameBytes returns null for lobbies (a WAITING
+                // game never loads from a blob — a stale one would serve the
+                // finished session's state) and legacy blob-less rows; those
+                // fall through to the JSON path below.
+                const bytes = await buildPackedGameBytes(data, user.id);
+                if (bytes) {
+                    return new Response(bytes as unknown as BodyInit, {
+                        headers: { ...corsHeaders, 'Content-Type': 'application/octet-stream' },
+                    });
+                }
             }
-            // No blob yet (lobby / legacy row): fall through to JSON.
         }
 
         const game = await loadCompleteGame(game_id);
