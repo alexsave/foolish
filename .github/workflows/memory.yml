@@ -42,7 +42,13 @@ jobs:
           version: latest
 
       - name: Install the diagnostic function
-        run: cp -r e2e/edge_memtest supabase/functions/memtest
+        run: |
+          cp -r e2e/edge_memtest supabase/functions/memtest
+          # memtest runs the real bot stack, so `functions serve` must bundle
+          # bots.wasm.gz next to it. Injected HERE, not in committed
+          # config.toml: `functions deploy` would try to deploy a memtest
+          # function that has no dir at deploy time and fail the deploy.
+          printf '\n[functions.memtest]\nstatic_files = [ "./functions/_shared/wasm/bots.wasm.gz" ]\n' >> supabase/config.toml
 
       - name: Start local stack (db + edge runtime)
         # memtest is DB-free, but `supabase start` still applies migrations and
