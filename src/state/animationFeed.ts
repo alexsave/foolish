@@ -53,7 +53,31 @@ export interface AnimationSequenceMessage {
     version?: number;
 }
 
-type FeedListener = (message: AnimationSequenceMessage) => void;
+/**
+ * Packed broadcast envelope (docs/PACKED_WIRE_CUTOVER.md): the server now
+ * ships the whole personalized animation sequence as ONE kernel-format byte
+ * buffer, base64 inside the JSON payload the realtime API requires. The
+ * consumer (AnimationProvider) decodes it into the legacy sequence shape at
+ * the render boundary; replay/tutorial synthesis still publishes the legacy
+ * AnimationSequenceMessage directly.
+ */
+export interface PackedSequenceEnvelope {
+    t: 'as2';
+    /** sequence id (dedup key) */
+    s: string;
+    /** committed games.version (the monotonic reorder-drop token) */
+    v: number;
+    /** base64(evwire bytes) */
+    b: string;
+    /** Attached by the transport (RealtimeAnimationFeed): the game this
+     *  envelope belongs to — the packed payload itself carries no JS state,
+     *  so the consumer needs it to pick the decode roster. */
+    game_id?: string;
+}
+
+export type AnimationFeedMessage = AnimationSequenceMessage | PackedSequenceEnvelope;
+
+type FeedListener = (message: AnimationFeedMessage) => void;
 
 class AnimationFeedBus {
     private listeners = new Set<FeedListener>();
@@ -65,7 +89,7 @@ class AnimationFeedBus {
         };
     }
 
-    publish(message: AnimationSequenceMessage): void {
+    publish(message: AnimationFeedMessage): void {
         for (const listener of this.listeners) {
             try {
                 listener(message);

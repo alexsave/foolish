@@ -82,7 +82,11 @@ export const RealtimeAnimationFeed = () => {
 
                 gameUserChannel
                     .on('broadcast', { event: 'animation_events' }, (payload) => {
-                        animationFeed.publish(payload.payload);
+                        // Attach the game id this channel is subscribed for: the
+                        // packed envelope ({t:'as2', s, v, b}) carries no JS game
+                        // state, so the consumer needs it to pick the decode
+                        // roster. Harmless on any legacy-shaped payload.
+                        animationFeed.publish({ ...payload.payload, game_id: url_game_id });
                     })
                     .subscribe((status, err) => {
                         if (status === 'SUBSCRIBED') {

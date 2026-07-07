@@ -19,6 +19,7 @@
 import { Card, PersonalGame } from '@shared/types.ts';
 import { findUnambiguousCover } from './coverCombinations';
 import * as guards from '../wasm/clientGuards.ts';
+import { rejectMessage } from '../wasm/rejectMessages';
 
 // ---- rule gates (delegated to the kernel) ----------------------------------
 
@@ -60,6 +61,16 @@ export const validatePass = (game: PersonalGame, cards: Card[]): void => {
 
 export const validatePickup = (game: PersonalGame): void => {
     if (!guards.canPickup(game)) throw new Error('Cannot pickup');
+};
+
+// Wire-based validator (docs/PACKED_WIRE_CUTOVER.md): gate the EXACT awire
+// bytes that will be POSTed — the caller builds the buffer once
+// (@shared/wire/awire.ts encodeAction) and shares it between this validation
+// and the send. Throws the ENGINE_REJECT_* mirror message on an illegal or
+// malformed wire. The per-move validators below stay for other callers.
+export const validateActionWire = (game: PersonalGame, wire: Uint8Array): void => {
+    const code = guards.validateActionWire(game, wire);
+    if (code !== 0) throw new Error(rejectMessage(code));
 };
 
 export const validateCover = (game: PersonalGame, coverCards: Card[], attackCards: Card[]): void => {
