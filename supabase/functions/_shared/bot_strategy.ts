@@ -3,7 +3,6 @@ import { kernelLegalMoves } from './wasm/engine.ts';
 import { STRAT, wasmChooseMove, wasmChooseMoveDirect } from './wasm/bots.ts';
 import { BotStrategy, LegalMove } from './bot_interfaces.ts';
 import { GPTBotStrategy } from './strategies/gpt_strategy.ts';
-import { NitroStrategy } from './strategies/nitro_strategy.ts';
 
 // Re-export interfaces for backwards compatibility
 export type { BotStrategy, LegalMove };
@@ -14,11 +13,8 @@ export type { BotStrategy, LegalMove };
 // moves and choose, and maps the returned index onto the caller's list (the
 // orderings are identical: both come from the kernel's enumerator).
 //
-// The two remaining TS-brained strategies are deliberate exceptions:
+// The only remaining TS-brained strategies are deliberate exceptions:
 //   - gpt/console: I/O-bound adapters (LLM calls, stdin), not game logic.
-//   - nitro: the experimental transformer NN (nitro_nn.ts + JSON weights) —
-//     a research artifact that plateaued below cordite (see README); porting
-//     an NN runtime to freestanding C isn't worth it unless it ever wins.
 export class WasmBotStrategy implements BotStrategy {
     readonly name: string;
     private strat: number;
@@ -68,7 +64,6 @@ export const BOT_STRATEGIES: Map<string, BotStrategy> = new Map<string, BotStrat
     // logs: espresso's discard memory reads LOG_DISCARD; cordite/fulminate
     // build their belief from the full public log.
     ['espresso', new WasmBotStrategy('espresso', STRAT.espresso, { logs: true })],
-    ['nitro', new NitroStrategy()],
     // CD_RACE stops a deliberation early once the leading candidate is
     // statistically separated (validated strength-neutral at C=75: pc4x800
     // identical, pc2/pc6 within noise; landslide decisions finish in ~50

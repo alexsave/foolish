@@ -10,7 +10,7 @@ verbatim as:
   seeded games (random, espresso, handwritten, simple_heuristic, champion,
   ultimate_champion, hacker);
 - the engines for the offline research harnesses in `offlinefun/localtest/`
-  (arenas, nitro training, profiling), which predate the kernel bridge;
+  (arenas, profiling), which predate the kernel bridge;
 - `cordite_core_old.ts` / `cordite_old_strategy.ts`: the pre-v2.3 cordite,
   kept for head-to-head strength baselines.
 
@@ -20,5 +20,5 @@ parity contract is design-level (same belief, same budgets via `CD_BUDGET`,
 same seat-profiling math), not move-for-move.
 
 Do not edit these files — a drifted oracle makes the parity test meaningless.
-The still-live TS strategies (`gpt`, `nitro`, console) remain in
+The still-live TS strategies (`gpt`, console) remain in
 `supabase/functions/_shared/strategies/`.

@@ -134,7 +134,7 @@ function importLogs(ex: BotsExports, game: Game): void {
 
 // Seat strategy keys: espresso's opponent modeling branches on whether an
 // opponent is the 'random' bot, so each seat's key rides along as a STRAT_*
-// id (-1 for keys with no kernel id: human, gpt, console, nitro).
+// id (-1 for keys with no kernel id: human, gpt, console).
 function importStrategyKeys(ex: BotsExports, game: Game): void {
     const buf = __mem(ex);
     const q = ex.wasm_io_ptr();
