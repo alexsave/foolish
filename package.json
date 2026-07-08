@@ -21,7 +21,9 @@
     "coverage:check:server": "c8 report --temp-directory=.v8cov --reporter=text-summary --check-coverage --lines 80 --branches 78 --all --src=supabase/functions/_shared --include='supabase/functions/_shared/**/*.ts' --exclude='supabase/functions/_shared/strategies/**' --exclude='supabase/functions/_shared/durakai/**' --exclude='**/*_wasm.ts' --exclude='**/*.json'",
     "coverage:check:client": "c8 report --temp-directory=.v8cov --reporter=text-summary --check-coverage --lines 90 --branches 82 --all --include='src/utils/gameValidation.ts' --include='src/utils/coverCombinations.ts'",
     "coverage": "npm run coverage:e2e && npm run coverage:check",
-    "bot:game": "tsx offlinefun/localtest/bot_loop_core.ts"
+    "bot:game": "tsx offlinefun/localtest/bot_loop_core.ts",
+    "bench:bot-e2e": "TSX_TSCONFIG_PATH=e2e/tsconfig.json node --import tsx e2e/bench_bot_e2e.ts",
+    "metrics": "node scripts/collect_metrics.mjs"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
