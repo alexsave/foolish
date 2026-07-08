@@ -21,7 +21,7 @@ export const e2ePool = pool;
 // Primary-key columns per table, for upsert conflict targets when not specified.
 const PK: Record<string, string> = {
     games: 'id', game_decks: 'game_id', player_hands: 'game_id,player_id',
-    bot_hands: 'game_id,bot_id', bots: 'id', game_logs: 'id',
+    bot_hands: 'game_id,bot_id', bots: 'id',
     user_elo_ratings: 'user_id', game_snapshots: 'id',
 };
 

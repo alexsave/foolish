@@ -12,7 +12,6 @@ import type { User } from 'jsr:@supabase/supabase-js';
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { getAuthenticatedUser } from './auth.ts';
-import { cleanupOldGameLogs, wipeAllGameLogs, loadCurrentSessionLogs } from './log_utils.ts';
 import { encodeEventWire } from './wire/evwire.ts';
 import { bytesToBase64 } from './wire/bytes.ts';
 // NOTE: bot_actions (→ the entire bot-strategy stack: cordite's ~127KB Monte-Carlo
@@ -595,13 +594,15 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
         return game;
     }
 
-    // Logs are loaded LAZILY (not here). Game logic never reads historical logs —
-    // handlers only APPEND via addLog, and the per-move response/broadcast strip
-    // logs entirely (gameToPublicGame / personalize_game). The only consumer of the
-    // full session is the end-of-game replay snapshot, which loads it on demand
-    // (finalizeEndedGame → loadCurrentSessionLogs). So every move starts with an
-    // empty log buffer that collects just this move's new logs; we no longer pull
-    // and sort the entire (growing) log history on the hot path.
+    // game.logs is the per-move WRITE buffer only — handlers APPEND this move's
+    // records via addLog, and commitGame encodes+appends them to the packed
+    // session-log column (games.logs_packed). It starts EMPTY every load: we no
+    // longer pull the whole (growing) history on the hot path. The two consumers
+    // of the FULL session load it on demand from games.logs_packed instead: the
+    // belief bots (loadSessionLogs → game.belief_logs, in the bot loop) and the
+    // end-of-game replay snapshot (finalizeEndedGame). Historical note: this
+    // field used to be assumed unread by game logic, which silently starved the
+    // belief bots until belief_logs was added — see loadSessionLogs.
     const logs: GameLog[] = [];
 
     const game: Game = {
@@ -742,7 +743,6 @@ export const commitGame = async (
         p_deck: dealt ? null : game.deck,
         p_hands: dealt ? null : humanHands,
         p_bot_hands: dealt ? null : botHands,
-        p_logs: null, // game_logs rows retired — the packed column is the log store
         p_state,
         p_logs_packed,
         p_logs_reset,
@@ -813,9 +813,9 @@ const check_win_sync = (game: Game): boolean => {
 // before the kernel chooses. Source of truth is the packed session-log column
 // (games.logs_packed — masked draws, appended under the commit version fence, so
 // it already holds exactly the current session: a GAME_START reset replaces it).
-// Legacy in-flight games fall back to the game_logs rows. Returns [] on any
-// failure so the bot still plays (beliefless) instead of crashing the loop. The
-// decode mirrors finalizeEndedGame's; kept separate so neither silently drifts.
+// Returns [] on any failure so the bot still plays (beliefless) instead of
+// crashing the loop. The decode mirrors finalizeEndedGame's; kept separate so
+// neither silently drifts.
 export const loadSessionLogs = async (
     game_id: string, players: { player_id: string }[],
 ): Promise<GameLog[]> => {
@@ -825,18 +825,12 @@ export const loadSessionLogs = async (
         if (data?.logs_packed) {
             const { decodeLogs } = await import('./wire/logwire.ts');
             const { hexToBytes } = await import('./replay/codec.ts');
-            const logs = decodeLogs(hexToBytes(data.logs_packed), game_id, players);
-            if (logs.length > 0) return logs;
+            return decodeLogs(hexToBytes(data.logs_packed), game_id, players);
         }
     } catch (e) {
         console.error(`[BELIEF] packed session log read failed for ${game_id}:`, e);
     }
-    try {
-        return await loadCurrentSessionLogs(supabaseClient, game_id);
-    } catch (e) {
-        console.error(`[BELIEF] legacy session log read failed for ${game_id}:`, e);
-        return [];
-    }
+    return [];
 };
 
 // One-time end-of-game side effects (ELO + replay snapshot + log wipe). Run by
@@ -856,8 +850,7 @@ export const finalizeEndedGame = async (game: Game): Promise<void> => {
     // column (games.logs_packed — appended move-by-move under the commit
     // version fence, so it is complete the moment the winning commit lands)
     // is the source; decode is the ONE place session logs become JS objects.
-    // Legacy in-flight games (sessions started before the column existed)
-    // fall back to the game_logs rows, then to the in-memory final move.
+    // Falls back to the in-memory final move if the column is somehow empty.
     let sessionLogs: GameLog[] = [];
     try {
         const { data } = await supabaseClient
@@ -870,17 +863,12 @@ export const finalizeEndedGame = async (game: Game): Promise<void> => {
     } catch (e) {
         console.error(`[REPLAY] packed session log read failed for ${game.id}:`, e);
     }
-    if (sessionLogs.length === 0 || sessionLogs[0].log_type !== LOG_TYPE.GAME_START) {
-        const legacy = await loadCurrentSessionLogs(supabaseClient, game.id);
-        if (legacy.length > 0) sessionLogs = legacy;
-    }
     const replayLogs = sessionLogs.length > 0 ? sessionLogs : game.logs;
 
     // Compress the finished session into a replay snapshot (game_snapshots
     // row) and retire its logs. verifyRoundTrip both encodes and proves the
     // encoding decodes back to the exact action sequence — only on success do
-    // we touch the logs. Clearing game.logs afterwards stops saveCompleteGame
-    // from re-inserting the rows we just wiped.
+    // we retire the packed session log.
     try {
         // Lazy import: the replay codec is only needed here, at game end.
         const { verifyRoundTrip } = await import('./replay/encode.ts');
@@ -916,20 +904,16 @@ export const finalizeEndedGame = async (game: Game): Promise<void> => {
             });
         if (snapError) throw snapError;
 
-        await wipeAllGameLogs(supabaseClient, game.id);
-        // Retire the packed session log the same way (plain update — the
-        // session is over, and a `continue` reset replaces the column anyway).
+        // Retire the packed session log (plain update — the session is over, and
+        // a `continue` reset replaces the column anyway).
         const { error: retireError } = await supabaseClient
             .from('games').update({ logs_packed: '' }).eq('id', game.id);
         if (retireError) throw retireError;
         game.logs = [];
     } catch (error) {
-        // Never break game completion over the snapshot; keep the logs as the
-        // fallback record and fall back to the age-based cleanup.
+        // Never break game completion over the snapshot; keep the packed session
+        // log as the fallback record (it will be replaced on the next session).
         console.error(`[REPLAY] Snapshot failed for game ${game.id} — keeping logs:`, error);
-        cleanupOldGameLogs(supabaseClient, game.id).catch(err => {
-            console.error(`Error cleaning up old logs for game ${game.id}:`, err);
-        });
     }
 
     await eloPromise;

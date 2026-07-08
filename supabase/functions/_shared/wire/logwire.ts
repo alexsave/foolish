@@ -1,6 +1,7 @@
 // Session log wire ("logwire" v1) — the packed, append-only byte form of a
-// game session's log stream, stored as games.logs_packed (hex) instead of
-// JSONB rows in game_logs (docs/PACKED_WIRE_CUTOVER.md).
+// game session's log stream, stored as games.logs_packed (hex). The SOLE
+// session-log store: the old JSONB game_logs table was dropped in migration
+// 20260708120000 (docs/PACKED_WIRE_CUTOVER.md).
 //
 //   per record:
 //     u48 LE created_at (epoch ms — the replay extras need per-move timing)
