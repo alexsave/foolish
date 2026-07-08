@@ -130,6 +130,16 @@ void   game_set_seed(uint32_t s);
 double game_random(void);            // 0..1
 uint32_t game_random_u32(void);
 
+// Wide, reproducible, full-universe deal seed (see deal_rng.h). Supplying 32
+// bytes (two 128-bit lanes) switches the DEAL's random card picks from the
+// 32-bit LCG to an unbiased ChaCha stream — lifting reachable deals from 2^32
+// to the whole 52!/36! space and making the deal reproducible from the seed.
+// len must be >= 32; fewer bytes is ignored (wide mode stays off). Any later
+// game_set_seed() call turns wide mode back off, so the legacy 32-bit path and
+// its pinned test streams are byte-for-byte unchanged when no wide seed is set.
+void   game_set_deal_seed_bytes(const uint8_t *seed, int len);
+int    game_deal_seed_active(void);  // 1 if a wide deal seed is in effect
+
 // Save/restore the game LCG state. Lets a strategy run internal
 // simulations (which consume game_random via draws and rollout policies)
 // without perturbing the outer game's random stream, and gives all

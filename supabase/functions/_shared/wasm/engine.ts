@@ -40,6 +40,7 @@ interface EngineExports {
     memory: WebAssembly.Memory;
     wasm_init(): void;
     wasm_set_seed(s: number): void;
+    wasm_set_deal_seed_bytes(): void;
     wasm_reject_reason(): number;
     wasm_io_ptr(): number;
     wasm_io_cap(): number;
@@ -725,7 +726,7 @@ function exportPackedProducts(
 export function runPackedStart(game: Game, humanSeats: number[]): PackedRunOk {
     const ex = engine();
     marshalGame(ex, game);
-    ex.wasm_set_seed(seedSource ? (seedSource() >>> 0) : ((Math.random() * 0xffffffff) >>> 0));
+    injectDealSeed(ex);   // live: full-universe ChaCha deal; test: pinned LCG
     ex.wasm_start_game();
     return exportPackedProducts(ex, -1, -1, humanSeats);
 }
@@ -825,12 +826,36 @@ type KernelAction =
 let seedSource: (() => number) | null = null;
 export function __setKernelSeedSource(fn: (() => number) | null): void { seedSource = fn; }
 
+// The 32-byte (two-128-bit-lane) seed of the most recent LIVE deal, or null if
+// the last deal used the deterministic test path. Persist this to reproduce a
+// deal exactly (see cnitro/src/deal_rng.h). Overwritten on each live deal.
+let lastDealSeed: Uint8Array | null = null;
+export function getLastDealSeed(): Uint8Array | null { return lastDealSeed; }
+
+// Seed the DEAL. Under a test seedSource we keep the pinned 32-bit LCG (deals
+// stay byte-for-byte reproducible for the parity suite). Live, we draw 32
+// crypto bytes and hand them to the kernel's ChaCha deal — lifting reachable
+// deals from 2^32 to the whole 52!/36! space and making the deal reproducible
+// from the saved bytes. Call AFTER marshalGame (it consumes the io buffer via
+// wasm_import_state, so the front of the buffer is free to carry the seed).
+function injectDealSeed(ex: EngineExports): void {
+    if (seedSource) { ex.wasm_set_seed(seedSource() >>> 0); lastDealSeed = null; return; }
+    const seed = new Uint8Array(32);
+    crypto.getRandomValues(seed);
+    mem(ex).set(seed, ex.wasm_io_ptr());
+    ex.wasm_set_deal_seed_bytes();
+    lastDealSeed = seed;
+}
+
 function runKernel(game: Game, action: KernelAction): KernelRun {
     const ex = engine();
     marshalGame(ex, game);
     // Draws consume kernel randomness; reseed per call so play stays as
-    // unpredictable as the Math.random() the TS engine used.
-    ex.wasm_set_seed(seedSource ? (seedSource() >>> 0) : ((Math.random() * 0xffffffff) >>> 0));
+    // unpredictable as the Math.random() the TS engine used. The initial deal
+    // ('start') gets the wide, full-universe, reproducible seed instead; every
+    // mid-game move keeps the per-call 32-bit reseed (deal-only scope).
+    if (action.kind === 'start') injectDealSeed(ex);
+    else ex.wasm_set_seed(seedSource ? (seedSource() >>> 0) : ((Math.random() * 0xffffffff) >>> 0));
 
     let ok = 1;
     switch (action.kind) {

@@ -7,6 +7,7 @@
 //   4. Full random / handwritten games (2p and 3p) run to a single loser.
 
 #include "../src/game.h"
+#include "../src/deal_rng.h"
 #include "../src/legal.h"
 #include "../src/strategy.h"
 #include <stdio.h>
@@ -731,7 +732,128 @@ static void test_legal_lite_greedy_cover(void) {
     CHECK(n_pickup == 1, "legal-lite: pickup still offered");
 }
 
+// ---------------------------------------------------------------------------
+// Wide, reproducible, full-universe deal seed (deal_rng.h / game.c).
+// ---------------------------------------------------------------------------
+
+// Fixed-order serialization of a full deal, so two deals compare byte-for-byte.
+static int deal_fingerprint(const Game *g, unsigned char *out) {
+    int k = 0;
+    out[k++] = (unsigned char)g->power_suit;
+    out[k++] = (unsigned char)g->first_attacker;
+    out[k++] = (unsigned char)(g->has_flipped ? 1 : 0);
+    out[k++] = (unsigned char)(g->has_flipped ? (g->flipped.suit * 16 + g->flipped.value) : 0);
+    for (int p = 0; p < g->num_players; p++) {
+        out[k++] = (unsigned char)g->players[p].hand_count;
+        for (int i = 0; i < g->players[p].hand_count; i++)
+            out[k++] = (unsigned char)(g->players[p].hand[i].suit * 16 + g->players[p].hand[i].value);
+    }
+    out[k++] = (unsigned char)(g->deck_count & 0xff);
+    for (int i = 0; i < g->deck_count; i++)
+        out[k++] = (unsigned char)(g->deck[i].suit * 16 + g->deck[i].value);
+    return k;
+}
+
+// The ChaCha20 core matches RFC 8439 §2.4.2 bit-for-bit (also cross-checked
+// against Node's crypto). This anchors the deal stream to the standard.
+static void test_deal_rng_kat(void) {
+    uint32_t st[16] = {
+        0x61707865, 0x3320646e, 0x79622d32, 0x6b206574,
+        0x03020100, 0x07060504, 0x0b0a0908, 0x0f0e0d0c,
+        0x13121110, 0x17161514, 0x1b1a1918, 0x1f1e1d1c,
+        0x00000001, 0x09000000, 0x4a000000, 0x00000000,
+    };
+    uint32_t out[16];
+    deal_rng_block(st, out);
+    unsigned char got[64];
+    for (int i = 0; i < 16; i++)
+        for (int b = 0; b < 4; b++) got[i * 4 + b] = (unsigned char)((out[i] >> (8 * b)) & 0xff);
+    static const unsigned char exp[64] = {
+        0x10,0xf1,0xe7,0xe4, 0xd1,0x3b,0x59,0x15, 0x50,0x0f,0xdd,0x1f, 0xa3,0x20,0x71,0xc4,
+        0xc7,0xd1,0xf4,0xc7, 0x33,0xc0,0x68,0x03, 0x04,0x22,0xaa,0x9a, 0xc3,0xd4,0x6c,0x4e,
+        0xd2,0x82,0x64,0x46, 0x07,0x9f,0xaa,0x09, 0x14,0xc2,0xd7,0x05, 0xd9,0x8b,0x02,0xa2,
+        0xb5,0x12,0x9c,0xd1, 0xde,0x16,0x4e,0xb9, 0xcb,0xd0,0x83,0xe8, 0xa2,0x50,0x3c,0x4e,
+    };
+    CHECK(memcmp(got, exp, 64) == 0, "chacha20 RFC 8439 keystream KAT");
+}
+
+// Reproducibility (same seed -> same deal), avalanche (1-bit seed change ->
+// different deal), and that game_set_seed() reverts to the legacy LCG path.
+static void test_deal_wide_reproducible(void) {
+    unsigned char seedA[32], seedB[32];
+    for (int i = 0; i < 32; i++) { seedA[i] = (unsigned char)(i * 7 + 1); seedB[i] = seedA[i]; }
+    seedB[0] ^= 0x01;  // flip exactly one bit
+
+    unsigned char fpA1[512], fpA2[512], fpB[512];
+    Game g;
+
+    game_set_deal_seed_bytes(seedA, 32);
+    CHECK(game_deal_seed_active() == 1, "wide deal active after set_deal_seed_bytes");
+    make_2p_game(&g); start_game(&g);
+    int la1 = deal_fingerprint(&g, fpA1);
+
+    game_set_deal_seed_bytes(seedA, 32);
+    make_2p_game(&g); start_game(&g);
+    int la2 = deal_fingerprint(&g, fpA2);
+
+    game_set_deal_seed_bytes(seedB, 32);
+    make_2p_game(&g); start_game(&g);
+    int lb = deal_fingerprint(&g, fpB);
+
+    CHECK(la1 == la2 && memcmp(fpA1, fpA2, la1) == 0, "same seed -> identical deal (reproducible)");
+    CHECK(!(la1 == lb && memcmp(fpA1, fpB, la1) == 0), "1-bit seed change -> different deal (avalanche)");
+
+    game_set_seed(42);
+    CHECK(game_deal_seed_active() == 0, "game_set_seed reverts to legacy LCG deal");
+}
+
+// Every wide deal is a valid permutation: 36 distinct, conserved cards.
+static void test_deal_wide_permutation(void) {
+    unsigned char seed[32];
+    for (int i = 0; i < 32; i++) seed[i] = (unsigned char)(i * 31 + 5);
+    for (int t = 0; t < 64; t++) {
+        seed[0] = (unsigned char)t; seed[1] = (unsigned char)(t >> 8);
+        game_set_deal_seed_bytes(seed, 32);
+        Game g; make_2p_game(&g); start_game(&g);
+        int seen[64]; memset(seen, 0, sizeof(seen));
+        int total = 0, dup = 0;
+        for (int p = 0; p < g.num_players; p++)
+            for (int i = 0; i < g.players[p].hand_count; i++) {
+                int id = g.players[p].hand[i].suit * 16 + g.players[p].hand[i].value;
+                if (id < 0 || id >= 64 || seen[id]) dup = 1; else { seen[id] = 1; total++; }
+            }
+        for (int i = 0; i < g.deck_count; i++) {
+            int id = g.deck[i].suit * 16 + g.deck[i].value;
+            if (id < 0 || id >= 64 || seen[id]) dup = 1; else { seen[id] = 1; total++; }
+        }
+        if (g.has_flipped) {
+            int id = g.flipped.suit * 16 + g.flipped.value;
+            if (id < 0 || id >= 64 || seen[id]) dup = 1; else { seen[id] = 1; total++; }
+        }
+        CHECK(!dup && total == 36, "wide deal is a valid 36-card permutation");
+    }
+}
+
+// deal_rng_bounded is free of modulo bias: n=7 (not a power of two) stays
+// uniform where a naive `u32 % 7` would over-weight the low buckets.
+static void test_deal_rng_unbiased(void) {
+    unsigned char seed[32];
+    for (int i = 0; i < 32; i++) seed[i] = (unsigned char)(0xA5 ^ i);
+    DealRng r; deal_rng_seed(&r, seed);
+    const int N = 7, trials = 700000;
+    int counts[7] = {0};
+    for (int i = 0; i < trials; i++) counts[deal_rng_bounded(&r, (uint32_t)N)]++;
+    int expv = trials / N, lo = expv - expv / 20, hi = expv + expv / 20;  // ±5%
+    int ok = 1;
+    for (int b = 0; b < N; b++) if (counts[b] < lo || counts[b] > hi) ok = 0;
+    CHECK(ok, "deal_rng_bounded(7) is uniform (no modulo bias)");
+}
+
 int main(void) {
+    test_deal_rng_kat();
+    test_deal_wide_reproducible();
+    test_deal_wide_permutation();
+    test_deal_rng_unbiased();
     test_start_game();
     test_legal_first_attack();
     test_legal_first_attack_duplicate();
