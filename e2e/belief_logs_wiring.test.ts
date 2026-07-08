@@ -69,9 +69,14 @@ test('the server bot loop feeds octogen the whole session log (not an empty one)
     async (g: Game) => ({ game: g, events: start_game(g) as AnimationEvent[] }), 'start', false);
 
   // Spy at the exact seam: what does game.belief_log_bytes hold when the bot
-  // loop asks octogen to choose? Decode the packed bytes to a record count.
+  // loop asks octogen to choose? Decode the packed bytes to a record count, and
+  // capture the raw hex so we can prove the RESIDENT log (this is a bots-only
+  // game, so the loop carries + appends it across cycles instead of re-reading)
+  // never drifts from the DB.
   const { decodeLogs } = await import('../supabase/functions/_shared/wire/logwire.ts');
-  const seen: { beliefLen: number }[] = [];
+  // BARE hex (no \x) — matches how logs_packed is stored, so a prefix compare works.
+  const { bytesToBareHex } = await import('../supabase/functions/_shared/wire/bytes.ts');
+  const seen: { beliefLen: number; hex: string }[] = [];
   const orig = WasmBotStrategy.prototype.chooseMoveDirect;
   WasmBotStrategy.prototype.chooseMoveDirect = function (game: Game, botPlayerId: string) {
     // `this.logs` is true only for the belief bots (octogen here).
@@ -79,7 +84,7 @@ test('the server bot loop feeds octogen the whole session log (not an empty one)
       const bytes = game.belief_log_bytes;
       let cnt = -1;
       if (bytes) { try { cnt = decodeLogs(bytes, game.id, game.players).length; } catch { cnt = -1; } }
-      seen.push({ beliefLen: cnt });
+      seen.push({ beliefLen: cnt, hex: bytes ? bytesToBareHex(bytes).toLowerCase() : '' });
     }
     return orig.call(this, game, botPlayerId);
   };
@@ -108,4 +113,16 @@ test('the server bot loop feeds octogen the whole session log (not an empty one)
   assert.ok(sessionLen >= 4, `precondition: the drive should persist a real session (got ${sessionLen})`);
   assert.ok(maxBeliefLen >= 4,
     `octogen chose with a near-empty log (max=${maxBeliefLen}) while ${sessionLen} records were persisted — belief bot is running blind`);
+
+  // RESIDENT-LOG CORRECTNESS: the loop carried the log across cycles and appended
+  // each committed move's bytes instead of re-reading the DB. Every buffer it fed
+  // octogen must therefore be a byte-exact PREFIX of the final persisted
+  // logs_packed — if the append ever drifted from what commit_game wrote, the
+  // resident would diverge and this fails.
+  const finalHex = ((await pgPool.query('SELECT logs_packed FROM games WHERE id=$1', [gameId])).rows[0]?.logs_packed ?? '').toLowerCase();
+  for (const s of seen) {
+    if (!s.hex) continue;
+    assert.ok(finalHex.startsWith(s.hex),
+      `resident belief log drifted from logs_packed: a fed buffer (${s.hex.length / 2} B) is not a prefix of the final persisted log (${finalHex.length / 2} B)`);
+  }
 });
