@@ -165,6 +165,17 @@ export interface Game extends PublicGame {
     deck: Card[];
     players: PrivatePlayer[];
     logs: GameLog[]; // Pending logs to be saved with game state
+    // Read-only session history for the belief/memory bots (octogen, semtex,
+    // cordite, fulminate, espresso — WasmBotStrategy with logs:true). Distinct
+    // from `logs`, which is the WRITE buffer the commit path re-encodes: the
+    // hot-path loader (loadCompleteGame) deliberately leaves `logs` empty so a
+    // move only ever appends its OWN records, but the belief bots need the whole
+    // current session to deduce hidden cards. The bot loop fills this from the
+    // persisted (masked) games.logs_packed before the kernel chooses; the
+    // chooser reads it and it never rides along into a commit. Undefined
+    // everywhere else — offline/test harnesses accumulate into `logs` and the
+    // chooser falls back to that.
+    belief_logs?: GameLog[];
     // Optimistic-concurrency token. Loaded from games.version; the commit_game
     // RPC only writes when the stored version still equals what we loaded, then
     // bumps it. Undefined for in-memory games never loaded from the DB (tests,

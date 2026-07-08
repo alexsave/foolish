@@ -20,8 +20,10 @@ export class WasmBotStrategy implements BotStrategy {
     private strat: number;
     private env?: Record<string, string>;
     // Only the belief/memory bots read the session log; skipping the log
-    // marshal for the rest removes the hottest TS frame of a bot turn.
-    private logs: boolean;
+    // marshal for the rest removes the hottest TS frame of a bot turn. Public
+    // so the server bot loop knows whether to hydrate game.belief_logs before
+    // this strategy chooses (strategyUsesLogs).
+    readonly logs: boolean;
 
     constructor(name: string, strat: number, opts: { env?: Record<string, string>; logs?: boolean } = {}) {
         this.name = name;
@@ -110,6 +112,14 @@ export function getBotStrategy(strategyKey: string): BotStrategy {
         return BOT_STRATEGIES.get('random')!;
     }
     return strategy;
+}
+
+// Does this bot's strategy read the session log to build a belief over hidden
+// cards? The server bot loop uses this to hydrate game.belief_logs only when a
+// belief bot is about to act — the beliefless strategies keep the fast path.
+export function strategyUsesLogs(strategyKey: string): boolean {
+    const s = BOT_STRATEGIES.get(strategyKey);
+    return s instanceof WasmBotStrategy && s.logs;
 }
 
 // Calculate all legal moves for a bot given current game state.
