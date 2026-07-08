@@ -40,12 +40,17 @@ export async function getAuthenticatedUser(req: Request): Promise<User> {
     const token = authHeader.replace('Bearer ', '');
 
     // Fast path: local signature verification via JWKS (asymmetric keys).
+    const tAuth = performance.now();
     const claims = await verifyJwtLocal(token);
-    if (claims) return claimsToUser(claims);
+    if (claims) {
+        console.log(`[perf] auth local-verify ${(performance.now() - tAuth).toFixed(0)}ms`);
+        return claimsToUser(claims);
+    }
 
     // Authoritative fallback: server-side verification at GoTrue. Only reached
     // for legacy HS256 projects or a token we couldn't verify locally — so
     // supabase-js loads here, off the common cold path, not at module scope.
+    console.warn('[perf] auth local-verify MISS → supabase-js getUser fallback (slow)');
     try {
         const { createClient } = await import('jsr:@supabase/supabase-js');
         const client = createClient(
@@ -53,6 +58,7 @@ export async function getAuthenticatedUser(req: Request): Promise<User> {
             Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '',
         );
         const { data: { user }, error } = await client.auth.getUser(token);
+        console.log(`[perf] auth getUser fallback ${(performance.now() - tAuth).toFixed(0)}ms`);
         if (error) {
             console.error('Authentication error:', error.message);
             throw new Error(`Invalid token: ${error.message}`);
@@ -87,13 +93,18 @@ const VERIFY_PARAMS: Record<Alg, EcdsaParams | AlgorithmIdentifier> = {
     RS256: { name: 'RSASSA-PKCS1-v1_5' },
 };
 
-interface Jwk { kid?: string; alg?: string; [k: string]: unknown; }
+interface Jwk { kid?: string; kty?: string; [k: string]: unknown; }
 interface Jwks { keys: Jwk[]; }
 
-// Imported verify keys by kid, cached across invocations on a warm isolate. Each
-// entry remembers the alg it was imported for, so a token's header alg must
-// match the key's alg (a second bind against algorithm substitution).
-const keyCache = new Map<string, { key: CryptoKey; alg: Alg }>();
+// Raw JWKs by kid, and CryptoKeys imported under a specific alg, cached across
+// invocations on a warm isolate. We DON'T key off the JWK's own `alg` field:
+// per RFC 7517 it is OPTIONAL, and Supabase's JWKS omits it — so the algorithm
+// comes from the (already validated + pinned) token header, and the JWK is
+// imported under that alg. A wrong key type for that alg makes importKey throw,
+// which rejects the token, so this is also the algorithm-substitution bind
+// (an EC key can't satisfy an RS256 header, or vice versa).
+const jwkByKid = new Map<string, Jwk>();
+const importedByKidAlg = new Map<string, CryptoKey>(); // `${kid}:${alg}` → key
 let lastJwksFetch = 0;
 let injectedJwks: Jwks | null = null; // test hook (see __setJwksForTest); bypasses the network
 
@@ -112,44 +123,59 @@ async function fetchJwks(): Promise<Jwks | null> {
     const apikey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || Deno.env.get('SUPABASE_ANON_KEY') || '';
     try {
         const res = await fetch(`${url}/auth/v1/.well-known/jwks.json`, { headers: apikey ? { apikey } : {} });
-        if (!res.ok) return null;
+        if (!res.ok) {
+            console.warn(`[auth] JWKS fetch HTTP ${res.status}`);
+            return null;
+        }
         return await res.json() as Jwks;
-    } catch {
+    } catch (e) {
+        console.warn('[auth] JWKS fetch failed:', (e as Error).message);
         return null;
     }
 }
 
-async function importJwks(jwks: Jwks): Promise<void> {
+function cacheJwks(jwks: Jwks): void {
     for (const jwk of jwks.keys ?? []) {
-        const { kid, alg } = jwk;
-        if (typeof kid !== 'string' || !isAlg(alg)) continue; // ignore keys for algs we won't accept
-        try {
-            const key = await crypto.subtle.importKey('jwk', jwk as JsonWebKey, IMPORT_PARAMS[alg], false, ['verify']);
-            keyCache.set(kid, { key, alg });
-        } catch {
-            /* skip an unusable/malformed key rather than failing the whole set */
-        }
+        if (typeof jwk.kid === 'string') jwkByKid.set(jwk.kid, jwk);
     }
 }
 
-// Resolve (and cache) the verify key for a header `kid`. On a miss, refetch the
-// JWKS at most once per minute so a bogus/rotated kid can't force a JWKS fetch on
-// every request.
-async function keyForKid(kid: string): Promise<{ key: CryptoKey; alg: Alg } | null> {
-    const cached = keyCache.get(kid);
+// The raw JWK for a header `kid`. On a miss, refetch the JWKS at most once per
+// minute so a bogus/rotated kid can't force a JWKS fetch on every request.
+async function jwkForKid(kid: string): Promise<Jwk | null> {
+    const cached = jwkByKid.get(kid);
     if (cached) return cached;
 
     if (injectedJwks) {
-        await importJwks(injectedJwks);
-        return keyCache.get(kid) ?? null;
+        cacheJwks(injectedJwks);
+        return jwkByKid.get(kid) ?? null;
     }
 
     const now = Date.now();
-    if (keyCache.size > 0 && now - lastJwksFetch < 60_000) return null; // throttle refetch for unknown kids
+    if (jwkByKid.size > 0 && now - lastJwksFetch < 60_000) return null; // throttle refetch for unknown kids
     lastJwksFetch = now;
     const jwks = await fetchJwks();
-    if (jwks) await importJwks(jwks);
-    return keyCache.get(kid) ?? null;
+    if (jwks) cacheJwks(jwks);
+    return jwkByKid.get(kid) ?? null;
+}
+
+// Resolve (and cache) the verify key for a header `kid`, imported under `alg`
+// (from the token header). Returns null if the kid is unknown or the JWK can't
+// be imported under that alg (wrong key type → algorithm-substitution rejected).
+async function keyForKid(kid: string, alg: Alg): Promise<CryptoKey | null> {
+    const cacheKey = `${kid}:${alg}`;
+    const cached = importedByKidAlg.get(cacheKey);
+    if (cached) return cached;
+
+    const jwk = await jwkForKid(kid);
+    if (!jwk) return null;
+    try {
+        const key = await crypto.subtle.importKey('jwk', jwk as JsonWebKey, IMPORT_PARAMS[alg], false, ['verify']);
+        importedByKidAlg.set(cacheKey, key);
+        return key;
+    } catch {
+        return null; // JWK is not a valid key for this alg
+    }
 }
 
 export interface VerifiedClaims {
@@ -183,10 +209,8 @@ export async function verifyJwtLocal(token: string): Promise<VerifiedClaims | nu
     if (!isAlg(header.alg) || typeof header.kid !== 'string') return null;
     const alg = header.alg;
 
-    const found = await keyForKid(header.kid);
-    // The key must exist AND have been imported for the SAME alg the header
-    // claims — no using an EC key to satisfy an RS256 header, or vice versa.
-    if (!found || found.alg !== alg) return null;
+    const key = await keyForKid(header.kid, alg);
+    if (!key) return null;
 
     let sig: Uint8Array;
     try {
@@ -197,7 +221,7 @@ export async function verifyJwtLocal(token: string): Promise<VerifiedClaims | nu
     const data = new TextEncoder().encode(`${h}.${p}`);
     let ok = false;
     try {
-        ok = await crypto.subtle.verify(VERIFY_PARAMS[alg], found.key, sig, data);
+        ok = await crypto.subtle.verify(VERIFY_PARAMS[alg], key, sig, data);
     } catch {
         return null;
     }
@@ -223,7 +247,8 @@ export async function verifyJwtLocal(token: string): Promise<VerifiedClaims | nu
 // no Deno). Passing null restores the network path and clears cached keys.
 export function __setJwksForTest(jwks: Jwks | null): void {
     injectedJwks = jwks;
-    keyCache.clear();
+    jwkByKid.clear();
+    importedByKidAlg.clear();
     lastJwksFetch = 0;
 }
 

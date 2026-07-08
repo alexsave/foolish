@@ -42,8 +42,10 @@ serve(async (req: Request): Promise<Response> => {
     const cors = handleCors(req);
     if (cors) return cors;
 
+    const T0 = performance.now();
     try {
         const user = await getAuthenticatedUser(req);
+        const tAfterAuth = performance.now();
 
         // Membership + ordering only — no hand data is read from player_hands.
         // Dedup game_ids and order by the joined games.updated_at (ISO strings
@@ -64,12 +66,19 @@ serve(async (req: Request): Promise<Response> => {
 
         // One batched read of every game the caller belongs to (was an N+1
         // per-game .single() loop). Map by id so we can emit in updated_at order.
+        const tAfterMembership = performance.now();
         const byId = new Map<string, any>();
         if (gameIds.length > 0) {
             const inList = gameIds.map(encodeURIComponent).join(',');
             const rows = await restGet(`games?select=${GAME_COLS}&id=in.(${inList})`);
             for (const row of rows) byId.set(row.id, row);
         }
+        const tAfterBatch = performance.now();
+        console.log(
+            `[perf] get_my_games auth ${(tAfterAuth - T0).toFixed(0)}ms | ` +
+            `membership ${(tAfterMembership - tAfterAuth).toFixed(0)}ms | ` +
+            `batch(${gameIds.length}) ${(tAfterBatch - tAfterMembership).toFixed(0)}ms`,
+        );
 
         let body: any = {};
         try { body = await req.json(); } catch { /* empty body */ }
@@ -102,6 +111,10 @@ serve(async (req: Request): Promise<Response> => {
                     console.error(`[get_my_games] skipping ${id}:`, (e as Error).message);
                 }
             }
+            console.log(
+                `[perf] get_my_games build(${entries.length}) ${(performance.now() - tAfterBatch).toFixed(0)}ms | ` +
+                `total ${(performance.now() - T0).toFixed(0)}ms`,
+            );
             return new Response(encodeGamesList(entries) as unknown as BodyInit, {
                 headers: { ...corsHeaders, 'Content-Type': 'application/octet-stream' },
             });
