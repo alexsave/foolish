@@ -749,7 +749,11 @@ export const commitGame = async (
     let p_views: Array<{ player_id: string; view: string; status: string }> | null = null;
     try {
         const { buildPlayerViewRows } = await import('./player_views.ts');
-        p_views = await buildPlayerViewRows(game, p_state, expectedVersion + 1);
+        // Number(): the loaded version can arrive as a string (a BIGINT column),
+        // and `"1" + 1` is "11" — the envelope's version must be the same NUMBER
+        // commit_game will compute (expectedVersion + 1), or the client's
+        // reorder-drop token desyncs from the row's version column.
+        p_views = await buildPlayerViewRows(game, p_state, Number(expectedVersion) + 1);
     } catch (e) {
         console.error(`[COMMIT] player_views build failed for ${game.id} (cache left stale):`, e);
     }

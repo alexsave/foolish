@@ -4,14 +4,13 @@
 
 `player_views` stores each player's **already-masked** view of each game,
 written **only by the server** (inside the authoritative commit), read **only by
-that player** under RLS. It lets the client load its **dashboard list** as a
-plain indexed `SELECT` — no `get_my_games` edge round-trip — and receive **live
-push updates** over Realtime.
+that player** under RLS. Both the **dashboard list** and the **single-game
+screen** now load a player's own view as a plain indexed `SELECT` — no
+`get_my_games` / `get_game` edge round-trip on the hot read path. `get_game` /
+`get_my_games` remain as the authoritative fallback (spectators, a cold cache).
 
-This is the **dashboard-list prototype** from the design handoff (the de-risked
-first step): the write path is wired for *every* commit (so per-game live views
-are forward-compatible), but the client currently reads only the **list** from
-the cache. `get_game` / `get_my_games` stay as the authoritative fallback.
+The write path is wired into *every* commit, so the cache is always the live,
+authoritative masked view of every game a player is in.
 
 ## Why a cache at all
 
@@ -94,39 +93,67 @@ the client falls back to `get_my_games`).
   decodes each `view` with `decodePackedGame` — no edge function. On a cold /
   empty / unreadable cache it falls back to `get_my_games` (the authoritative
   rebuild path, also the backfill for games created before this feature).
-- **Live updates**: a user-scoped Realtime `postgres_changes` subscription
-  (`pv-<user_id>`) pushes every committed masked snapshot into `games`
-  (INSERT/UPDATE) and drops pruned games (DELETE). It is the list-level
-  counterpart of `RealtimeAnimationFeed`'s per-game stream — full snapshots
-  instead of event deltas. Best-effort: if it can't connect, the list still
-  refreshes on the next `getUserGames` / navigation.
+- **Single game** (`loadGameInternal` → `loadGameFromCache`): a player reads
+  their own row for that game (`player_views WHERE game_id = ?`, RLS-scoped to
+  the caller, unique by PK) and decodes it — no `get_game` round-trip. Falls
+  back to `get_game` for a **spectator** (no row) or a cache miss.
+- **Live updates**:
+  - The **on-screen game** stays driven by the existing broadcast websockets
+    (`RealtimeAnimationFeed`'s `gu-` animation stream) — that path is proven and
+    animates moves; `player_views` must not push snapshots into it or the view
+    would snap past the in-flight animation (the dashboard subscription
+    explicitly skips the routed game for this reason).
+  - The **rest of the dashboard** is kept live by a user-scoped Realtime
+    `postgres_changes` subscription (`pv-<user_id>`): committed snapshots merge
+    into `games` (INSERT/UPDATE), pruned games are dropped (DELETE). Best-effort
+    — if it can't connect, the list refreshes on the next `getUserGames` /
+    navigation. This is a convenience layer; the latency win is the direct read,
+    not the push. It could equally be served by the existing broadcast infra (a
+    per-user list channel) if `postgres_changes` isn't enabled on the project.
 
 ## Decisions on the handoff's open questions
 
 1. **Spectators** keep using `get_game` — the dashboard is "my games"
    (participant rows), which is exactly what `player_id = auth.uid()` expresses.
-2. **Write scope**: all participants on every commit (simplest and always
-   consistent). See *Known limitations* for the write-amplification tradeoff.
+2. **Write scope**: all human participants on every commit (simplest and always
+   consistent; bots write nothing). See *Write amplification & storage*.
 3. **`get_my_games` stays** as the cache-miss fallback / rebuild path.
 4. **Backfill**: the write path repopulates naturally — a game gets its rows on
    its next commit — and `get_my_games` covers anything not yet cached, so no
    one-off backfill job is required for the prototype.
 
-## Known limitations / follow-ups
+## Write amplification & storage
 
-- **Write amplification**: every commit writes one row per human participant,
-  including per-move commits (this is what makes per-game live views a cheap
-  next step, but it is more write volume than the list strictly needs). A future
-  optimization: skip viewers whose list-visible representation didn't change.
-- **Per-game live reads** (step 3 of the handoff): the cache is already written
-  for live games, so the game screen could read/subscribe to its own
-  `player_views` row directly. Not wired yet — the game screen still uses
-  `get_game` + the `gu-` animation stream.
+- **Write volume**: every commit writes one row per human participant. There is
+  no useful "skip viewers whose list-visible state didn't change" optimization —
+  the row *is* the whole masked view, so essentially any commit that's worth
+  broadcasting also changes what a participant sees (hand counts, whose turn,
+  the table, status). We just write it. The one free reduction already in place:
+  **bots get no row** (no client reads one), so an all-bot game writes nothing.
+- **Storage is bounded, not growing**: exactly one row per (game, live human
+  participant). Nothing stale is ever kept — `commit_game` **prunes** a row the
+  moment a player leaves, and the `ON DELETE CASCADE` FK drops all of a game's
+  rows when the game is deleted. So total rows ≈ Σ (humans currently in a game),
+  which is small and self-limiting.
+
+## Follow-ups
+
+- The per-game **read** path is now on `player_views`; the on-screen game's
+  **live** updates still (deliberately) ride the existing `gu-` animation
+  broadcast so moves animate. If we ever want the game screen to consume
+  `player_views` snapshots directly, it would need to reconcile with the
+  animation timeline first.
 
 ## Tests
 
 `e2e/player_views.test.ts` (real Postgres, real `commit_game` / `create_game`):
 a dealt commit writes one masked, **byte-identical-to-`get_game`**, decodable row
-per human (none for bots); `create_game` seeds the lobby row; exiting prunes the
-leaver's row; RLS lets a player read only their own rows and blocks client
-writes.
+per human (none for bots); a **move** refreshes each row (version bumped, still
+masked, still byte-identical to `get_game` on the new state); `create_game` seeds
+the lobby row; exiting prunes the leaver's row; RLS lets a player read only their
+own rows and blocks client writes.
+
+> The move test caught a real bug: the envelope's version token was built with
+> `expectedVersion + 1`, which is **string concatenation** (`"1" + 1 === "11"`)
+> when the loaded version arrives as a BIGINT string — desyncing the client's
+> reorder-drop token from the row's version column. Fixed with `Number(...)`.

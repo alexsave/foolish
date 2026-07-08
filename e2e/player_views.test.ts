@@ -15,8 +15,9 @@ import './harness.ts';
 import { test, before, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { applySchema, resetDb, seedGame, uuid, pgPool } from './harness.ts';
-import { executeWithGameLock, supabaseClient } from '../supabase/functions/_shared/utils.ts';
+import { executeWithGameLock, loadCompleteGame, supabaseClient } from '../supabase/functions/_shared/utils.ts';
 import { handleMetaAction } from '../supabase/functions/_shared/meta_actions.ts';
+import { legalMovesFor, applyPlayerMove } from './dispatch.ts';
 import { buildPlayerViewRows } from '../supabase/functions/_shared/player_views.ts';
 import { buildPackedGameBytes } from '../supabase/functions/_shared/packed_game.ts';
 import { decodePackedGame } from '../supabase/functions/_shared/wire/view.ts';
@@ -96,6 +97,44 @@ test('dealt commit writes one masked, decodable row per human (not bots)', async
     const opp = game.players.find(p => p.player_id !== pid && !p.is_ai)!;
     assert.ok(opp.hand_length > 0 && !(game as any).players.some((p: any) => p.hand),
       'opponents carry only a count, no cards');
+  }
+});
+
+test('a move refreshes each human\'s cached view (version bumped, still masked & decodable)', async () => {
+  const gameId = `m${uuid().slice(0, 5)}`;
+  const h1 = uuid(), h2 = uuid();
+  await seedGame(gameId, [
+    { id: h1, name: 'H1', is_ai: false, strategy_key: 'human' },
+    { id: h2, name: 'H2', is_ai: false, strategy_key: 'human' },
+  ]);
+  await executeWithGameLock(gameId, async (game) =>
+    handleMetaAction({ user: { id: h1 } as any, user_name: 'H1', body: { type: 'start', game_id: gameId }, game, reqId: 'r' }),
+    'r', false);
+  const before = await viewsFor(gameId);
+
+  // Apply one real legal move (the same enumeration + dispatch the bot loop
+  // uses) through executeWithGameLock → commitGame, the live move commit path.
+  await executeWithGameLock(gameId, async (game) => {
+    const pms = legalMovesFor(game);
+    const events = pms.length ? applyPlayerMove(game, pms[0]) : [];
+    return { game, events };
+  }, 'r', true);
+
+  const g = (await pgPool.query(`SELECT ${GAME_COLS} FROM games WHERE id=$1`, [gameId])).rows[0];
+  const after = await viewsFor(gameId);
+  assert.equal(after.size, 2, 'still one row per human after the move');
+
+  for (const pid of [h1, h2]) {
+    assert.ok(Number(after.get(pid)!.version) > Number(before.get(pid)!.version),
+      `version bumped for ${pid}`);
+    assert.equal(after.get(pid)!.version, String(g.version), 'and mirrors the new games.version');
+    // Still byte-identical to the get_game builder on the NEW state.
+    assert.equal(after.get(pid)!.view, bytesToBareHex((await buildPackedGameBytes(g, pid))!),
+      `refreshed cache == get_game view for ${pid}`);
+    const game = decodePackedGame(hexToBytes(after.get(pid)!.view))!.game as PersonalGame;
+    assert.equal(game.self.player_id, pid, 'self still the owner');
+    assert.ok(!game.players.some((p: any) => p.player_id !== pid && p.hand),
+      'opponents still carry no cards');
   }
 });
 
