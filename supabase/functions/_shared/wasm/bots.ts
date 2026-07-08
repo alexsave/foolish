@@ -62,6 +62,13 @@ export function __botsWasmMB(): number {
     return mem ? Math.round(mem.buffer.byteLength / 1048576) : -1;
 }
 
+// Raw linear-memory bytes (wasm grows in 64KB pages) — finer than the MB round
+// above for benchmarks that need to see small deltas.
+export function __botsWasmBytes(): number {
+    const mem = (exportsCache as unknown as { memory?: WebAssembly.Memory } | null)?.memory;
+    return mem ? mem.buffer.byteLength : -1;
+}
+
 // Eager adoption for bot-serving workers: a fresh worker's first kernel
 // touch is otherwise a rules-path helper (kernelLegalMoves), which decodes
 // and instantiates rules.wasm only for bots.wasm to adopt over it one call

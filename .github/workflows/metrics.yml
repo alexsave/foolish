@@ -1,0 +1,131 @@
+name: metrics
+
+# Surfaces the repo's health numbers ON THE PR, before vs after, instead of
+# leaving them buried in gate logs. The headline is thinking-bot end-to-end
+# latency (full move vs real Postgres — the number a human waits on and the 2s
+# CPU cap gates); size, engine speed, and wasm memory all feed into it.
+#
+# It runs scripts/collect_metrics.mjs on BOTH the PR head and its base (the new
+# measurement files are copied into the base checkout so only the SOURCE
+# differs), then posts/updates one sticky comment with the deltas. Informational
+# only — the pass/fail gates stay in coverage.yml / memory.yml / validate.yml.
+
+on:
+  pull_request:
+    branches: [main]
+
+# Least privilege: read the code, write the one sticky PR comment.
+permissions:
+  contents: read
+  pull-requests: write
+
+# A newer push supersedes an in-flight metrics run for the same PR.
+concurrency:
+  group: metrics-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  metrics:
+    runs-on: ubuntu-latest
+
+    # Same Postgres the e2e harness expects (e2e/adapters/supabase.ts).
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: stress
+          POSTGRES_PASSWORD: stress
+          POSTGRES_DB: foolish
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U stress -d foolish"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      E2E_PGHOST: 127.0.0.1
+      E2E_PGPORT: 5432
+      E2E_PGUSER: stress
+      E2E_PGPASSWORD: stress
+      E2E_PGDATABASE: foolish
+      # Keep CI bounded; the E2E bench doubles (base + head).
+      BENCH_BOTS: octogen,semtex,cordite,fulminate
+      BENCH_BOT_MOVES: '20'
+      BENCH_GAMES: '300'
+
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@v4
+        with:
+          path: pr
+
+      - name: Checkout base
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # Measure both sides with the SAME collector/bench (the base branch may
+      # predate them) — only the measured SOURCE differs.
+      - name: Sync measurement scripts into base
+        run: |
+          mkdir -p base/scripts
+          cp pr/scripts/collect_metrics.mjs base/scripts/collect_metrics.mjs
+          cp pr/scripts/render_metrics.cjs  base/scripts/render_metrics.cjs
+          cp pr/e2e/bench_bot_e2e.ts        base/e2e/bench_bot_e2e.ts
+
+      - name: Install deps (head)
+        working-directory: pr
+        run: npm install
+
+      - name: Install deps (base)
+        working-directory: base
+        run: npm install
+
+      - name: Collect base metrics
+        working-directory: base
+        run: node scripts/collect_metrics.mjs > "$GITHUB_WORKSPACE/base.json"
+
+      - name: Collect head metrics
+        working-directory: pr
+        run: node scripts/collect_metrics.mjs > "$GITHUB_WORKSPACE/head.json"
+
+      - name: Upsert metrics comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const { render, MARKER, extractSlot, spliceSlot } = require(`${process.env.GITHUB_WORKSPACE}/pr/scripts/render_metrics.cjs`);
+            const base = JSON.parse(fs.readFileSync(`${process.env.GITHUB_WORKSPACE}/base.json`, 'utf8'));
+            const head = JSON.parse(fs.readFileSync(`${process.env.GITHUB_WORKSPACE}/head.json`, 'utf8'));
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const { data: comments } = await github.rest.issues.listComments({ owner, repo, issue_number, per_page: 100 });
+            const existing = comments.find((c) => c.body && c.body.includes(MARKER));
+            let body = render(base, head);
+            if (existing) {
+              // The coverage job co-owns this comment (it fills the coverage slot
+              // ~minutes later). Preserve whatever it already wrote so a metrics
+              // re-render never wipes it.
+              const cov = extractSlot(existing.body || '');
+              if (cov) body = spliceSlot(body, cov);
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
+
+      - name: Job summary (also viewable on the check)
+        if: always()
+        run: |
+          {
+            echo "### Metrics collected"
+            echo '```json'
+            cat "$GITHUB_WORKSPACE/head.json" 2>/dev/null || echo "head metrics missing"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
