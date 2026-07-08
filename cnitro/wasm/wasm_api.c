@@ -166,39 +166,30 @@ int wasm_export_state(void) { return put_state(&g_game, g_io); }
 // strategy_key/is_ai) is stable across a game and lives in a separate roster
 // column, reattached TS-side — exactly the split parseState/stateToGame
 // already assume (KernelState + template).
-// v1: [version][put_state...]. v2 adds a deterministic_deck flag byte right
-// after the version, before the put_state payload (see the Game field). v2 is
-// back-compatible: a v1 blob still loads, with the flag defaulted false, so
-// games in flight across the deploy are never rejected.
+// Layout: [version][deterministic_deck flag][put_state...]. The flag byte
+// (added with the seed-dealt deck; see the Game field) is what bumped this from
+// the old v1 [version][put_state...]. There is no v1 read path — a data
+// migration rewrites every stored v1 blob to v2 (flag 0), so no v1 blob ever
+// reaches this kernel; anything that isn't v2 is treated as unreadable.
 #define STATE_FORMAT_VERSION 2
 
 // Serialize the working game into g_io as a versioned durable blob; returns
-// the byte length (>=1).
+// the byte length (>=2).
 int wasm_state_serialize(void) {
     g_io[0] = (unsigned char)STATE_FORMAT_VERSION;
     g_io[1] = (unsigned char)(g_game.deterministic_deck ? 1 : 0);
     return 2 + put_state(&g_game, g_io + 2);
 }
 
-// Load a versioned durable blob (already written into g_io) back into the
-// working game. Returns 1 on success, 0 if the leading version byte is one
-// this kernel does not understand (caller must treat as unreadable, never as
-// an empty game). Both the current format and the previous v1 are accepted.
+// Load a durable blob (already written into g_io) back into the working game.
+// Returns 1 on success, 0 if the leading version byte is one this kernel does
+// not understand (caller must treat as unreadable, never as an empty game).
 int wasm_state_deserialize(int len) {
-    if (len < 1) return 0;
-    unsigned char v = g_io[0];
-    if (v == 1) {
-        get_state(&g_game, g_io + 1);
-        g_game.deterministic_deck = false;   // pre-flag games drew at random
-        return 1;
-    }
-    if (v == STATE_FORMAT_VERSION) {
-        bool det = g_io[1] != 0;
-        get_state(&g_game, g_io + 2);
-        g_game.deterministic_deck = det;
-        return 1;
-    }
-    return 0;
+    if (len < 2) return 0;
+    if (g_io[0] != STATE_FORMAT_VERSION) return 0;
+    g_game.deterministic_deck = g_io[1] != 0;
+    get_state(&g_game, g_io + 2);
+    return 1;
 }
 
 // The version this kernel writes — lets the TS bridge assert the embed it

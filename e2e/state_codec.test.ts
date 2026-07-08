@@ -76,18 +76,18 @@ test('kernel state codec reports a stable format version', () => {
   assert.equal(stateFormatVersion(), 2);
 });
 
-test('v1 blobs (pre-deterministic-deck format) still deserialize', () => {
-  // A game in flight across the deploy has a v1 blob: [version=1][put_state...]
-  // with no flag byte. Rebuild that shape from a current v2 blob (drop the flag
-  // at [1], stamp version 1) and confirm it loads losslessly — the flag simply
-  // defaults false, so those games keep drawing exactly as before.
-  const g = mkGame(4, 'v1compat');
+test('v1 blobs are rejected — they must be migrated to v2, not tolerated', () => {
+  // The kernel reads only v2; the deploy-time migration
+  // 20260708130000_migrate_state_blobs_v2 rewrites every stored v1 blob. Prove
+  // the kernel does NOT silently accept a v1 blob (so a missed migration fails
+  // loud, not with a mis-parsed game). Rebuild the old v1 shape from a v2 blob:
+  // [version=1][put_state...], i.e. drop the flag byte and stamp version 1.
+  const g = mkGame(4, 'v1reject');
   start_game(g);
   const cur = serializeGameState(g);
   assert.equal(cur[0], 2, 'current writer emits v2');
   const v1 = Uint8Array.from([1, ...cur.slice(2)]);
-  const restored = deserializeGameState(v1, rosterOf(g)); // must not throw
-  assert.deepEqual(projection(restored), projection(g), 'v1 blob restores losslessly');
+  assert.throws(() => deserializeGameState(v1, rosterOf(g)), /Unreadable game state blob/);
 });
 
 test('every reachable game state round-trips losslessly through the packed blob', async () => {
