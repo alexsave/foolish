@@ -90,10 +90,16 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     const userIdRef = useRef(user_id);
     const activeGameIdRef = useRef<string | null>(null);
     const spectatorGamesRef = useRef(spectatorGames);
+    // The game currently on screen (the ROUTE param), i.e. the one whose live
+    // updates RealtimeAnimationFeed owns via the gu- animation stream. The
+    // dashboard player_views subscription must NOT push snapshots into this game
+    // or it would snap past the in-flight animation to the final state.
+    const urlGameIdRef = useRef<string | undefined>(url_game_id);
     useEffect(() => { gamesRef.current = games; }, [games]);
     useEffect(() => { userIdRef.current = user_id; }, [user_id]);
     useEffect(() => { activeGameIdRef.current = active_game_id; }, [active_game_id]);
     useEffect(() => { spectatorGamesRef.current = spectatorGames; }, [spectatorGames]);
+    useEffect(() => { urlGameIdRef.current = url_game_id; }, [url_game_id]);
 
     // Local hand order state - keyed by game_id
     // Thinking we just need one tbh
@@ -320,6 +326,11 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 const decoded = decodePackedGame(hexToBytes(row.view));
                 if (!decoded) return;
                 const g = decoded.game as PersonalGame;
+                // The on-screen game is animation-owned (RealtimeAnimationFeed):
+                // pushing its final snapshot here would jump past the in-flight
+                // animation. Let that pipeline apply the game being viewed; this
+                // subscription keeps every OTHER game in the dashboard live.
+                if (g.id === urlGameIdRef.current) return;
                 setGames(prev => ({ ...prev, [g.id]: mergeGameData(g.id, { ...g, self: (g as any).self ?? null }, prev) }));
             } catch { /* unreadable snapshot — ignore; the next fetch resyncs */ }
         };
@@ -525,39 +536,73 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
+    // Fast path for the game screen (docs/PLAYER_VIEWS.md): a PLAYER reads their
+    // own already-masked view straight from player_views — a plain indexed RLS
+    // SELECT, no get_game edge round-trip. RLS scopes it to the caller, and the
+    // (game_id, player_id) PK means at most one row. Returns null for a spectator
+    // (no row), a cache miss (game predating the cache), or any failure — the
+    // caller then falls back to get_game, which also masks spectator views.
+    const loadGameFromCache = async (gameId: string): Promise<PersonalGame | null> => {
+        try {
+            if (!userIdRef.current) return null;
+            const { data, error } = await supabase
+                .from('player_views')
+                .select('view')
+                .eq('game_id', gameId)
+                .maybeSingle();
+            if (error || !(data as any)?.view) return null;
+            const decoded = decodePackedGame(hexToBytes((data as any).view));
+            if (!decoded) return null;
+            const g = decoded.game as PersonalGame;
+            return { ...g, self: (g as any).self ?? null };
+        } catch {
+            return null;
+        }
+    };
+
     const loadGameInternal = async (gameId: string): Promise<{ game_id: string }> => {
         try {
-            // The volatile game state lives in the packed kernel blob. With
-            // packed:true a DEALT game comes back as binary (roster JSON +
-            // the caller's kernel-masked view blob) that materializes into a
-            // PersonalGame right here — the render boundary; a lobby / legacy
-            // row falls back to the old personalize_game JSON. functions-js
-            // hands octet-stream responses over as a Blob, JSON as a parsed
-            // object, so the response type is the format switch.
-            const { data, error } = await supabase.functions.invoke('get_game', {
-                body: { game_id: gameId, packed: true },
-            });
+            // Player fast path: the caller's own masked view from the
+            // player_views cache. Falls back to get_game for spectators / a cold
+            // cache (the authoritative rebuild path, which also masks spectators).
+            let game: PersonalGame | null = await loadGameFromCache(gameId);
 
-            let game: PersonalGame;
-            if (!error && typeof Blob !== 'undefined' && data instanceof Blob) {
-                const decoded = decodePackedGame(new Uint8Array(await data.arrayBuffer()));
-                if (!decoded) {
-                    throw new Error(`Game ${gameId}: unreadable packed game response`);
+            if (!game) {
+                // The volatile game state lives in the packed kernel blob. With
+                // packed:true a DEALT game comes back as binary (roster JSON +
+                // the caller's kernel-masked view blob) that materializes into a
+                // PersonalGame right here — the render boundary; a lobby / legacy
+                // row falls back to the old personalize_game JSON. functions-js
+                // hands octet-stream responses over as a Blob, JSON as a parsed
+                // object, so the response type is the format switch.
+                const { data, error } = await supabase.functions.invoke('get_game', {
+                    body: { game_id: gameId, packed: true },
+                });
+
+                if (!error && typeof Blob !== 'undefined' && data instanceof Blob) {
+                    const decoded = decodePackedGame(new Uint8Array(await data.arrayBuffer()));
+                    if (!decoded) {
+                        throw new Error(`Game ${gameId}: unreadable packed game response`);
+                    }
+                    // decodePackedGame stamps game.version from the envelope; a
+                    // spectator gets no `self` (null below), same as the JSON path.
+                    game = { ...(decoded.game as PersonalGame), self: (decoded.game as PersonalGame).self ?? null };
+                } else {
+                    // Legacy JSON: has `self` for a player, no `self` for a
+                    // spectator (self stays null). Typed loosely like the old
+                    // direct reads — PersonalGame.self is non-null in the type but
+                    // null at runtime for spectators.
+                    const fetched: any = data;
+                    if (error || !fetched || fetched.error) {
+                        throw new Error(fetched?.error || `Game ${gameId} not found`);
+                    }
+                    game = { ...fetched, self: fetched.self ?? null };
                 }
-                // decodePackedGame stamps game.version from the envelope; a
-                // spectator gets no `self` (null below), same as the JSON path.
-                game = { ...(decoded.game as PersonalGame), self: (decoded.game as PersonalGame).self ?? null };
-            } else {
-                // Legacy JSON: has `self` for a player, no `self` for a
-                // spectator (self stays null). Typed loosely like the old
-                // direct reads — PersonalGame.self is non-null in the type but
-                // null at runtime for spectators.
-                const fetched: any = data;
-                if (error || !fetched || fetched.error) {
-                    throw new Error(fetched?.error || `Game ${gameId} not found`);
-                }
-                game = { ...fetched, self: fetched.self ?? null };
             }
+
+            // Both the cache hit and each fetch branch above assign or throw, so
+            // this only narrows the type (game is non-null here).
+            if (!game) throw new Error(`Game ${gameId} not found`);
 
             if (game.self) {
                 // Re-apply the local player's unconfirmed optimistic cards onto
