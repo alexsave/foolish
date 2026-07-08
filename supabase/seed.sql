@@ -14,7 +14,6 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 DROP FUNCTION IF EXISTS update_updated_at_column() CASCADE;
 
 -- Drop tables in reverse dependency order (this will automatically drop all policies and triggers)
-DROP TABLE IF EXISTS game_logs CASCADE;
 DROP TABLE IF EXISTS chat_messages CASCADE;
 DROP TABLE IF EXISTS bot_hands CASCADE;
 DROP TABLE IF EXISTS player_hands CASCADE;
@@ -25,7 +24,6 @@ DROP TABLE IF EXISTS bots CASCADE;
 DROP TABLE IF EXISTS auto_discard_locks CASCADE;
 
 -- Drop custom types
-DROP TYPE IF EXISTS log_type CASCADE;
 DROP TYPE IF EXISTS game_status CASCADE;
 DROP TYPE IF EXISTS player_status CASCADE;
 
@@ -46,18 +44,9 @@ CREATE TYPE game_status AS ENUM (
   'game_over'
 );
 
-CREATE TYPE log_type AS ENUM (
-  'game_start',
-  'attack',
-  'cover',
-  'pass',
-  'pickup',
-  'good',
-  'discard',
-  'defender_change',
-  'player_out',
-  'draw'
-);
+-- (log_type enum retired with the game_logs table — the session log now lives
+-- in games.logs_packed as packed bytes, whose record types are the C kernel's
+-- LOG_* ids, not this SQL enum. See migration 20260708120000.)
 
 -- =============================================================================
 -- MAIN TABLES: Separated for security
@@ -80,7 +69,7 @@ CREATE TABLE games (
   good_timestamp BIGINT, -- Timestamp in milliseconds when all attacks were covered, null if not all covered
   good_players JSONB NOT NULL DEFAULT '[]'::jsonb, -- Array of player_ids who have pressed 'good'
   state TEXT, -- packed kernel state blob (hex): the volatile game state the server reconstructs from on load (wasm_state_serialize / engine.ts serializeGameState). Authoritative once a game is dealt; the hand/deck JSONB columns are a client-facing read-model dual-written alongside it. NULL for never-dealt (waiting) games.
-  logs_packed TEXT, -- packed session log stream (BARE hex, no \\x prefix — appended by plain concat): kernel log records + u48 timestamps, DRAW identities pre-masked. Replaces game_logs rows; see wire/logwire.ts and migration 20260707150000.
+  logs_packed TEXT, -- packed session log stream (BARE hex, no \\x prefix — appended by plain concat): kernel log records + u48 timestamps, DRAW identities pre-masked. The sole session-log store (the game_logs table was dropped in migration 20260708120000); see wire/logwire.ts and migration 20260707150000.
   version BIGINT NOT NULL DEFAULT 0, -- optimistic-concurrency token (see commit_game RPC); replaces game_locks
   bot_lease_token UUID,              -- bot-loop lease holder token (replaces bot_locks)
   bot_lease_until TIMESTAMPTZ,       -- bot-loop lease expiry; auto-expiring, no finally-release needed
@@ -163,28 +152,18 @@ CREATE TABLE bot_hands (
 -- (auto_discard_locks removed — it backed the 60s all-good auto-discard, which
 -- is disabled in actions/good.ts; see migration 20260702090000.)
 
--- Game logs table - Log all game actions for bot memory and game history
--- This allows bots to track which cards have been played and infer information about opponent hands
-CREATE TABLE game_logs (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  game_id TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
-  log_type log_type NOT NULL,
-  player_id TEXT, -- Player who performed the action (null for system events like discard/defender_change)
-  card_pairs JSONB NOT NULL DEFAULT '[]'::jsonb, -- Array of {primary: Card, target?: Card} - target only used for COVER
-  defender_index INTEGER, -- For defender_change events, the new defender index
-  created_at TIMESTAMP DEFAULT NOW(),
-  -- Insert-order tie-breaker: created_at only has ms precision and one move's
-  -- cascade logs share a millisecond, so the replay encoder orders the session
-  -- by (created_at, seq). See migration 20260701120000.
-  seq BIGSERIAL
-);
+-- (The game_logs table was dropped in migration 20260708120000. The session log
+-- is stored as packed bytes in games.logs_packed — bot belief imports and the
+-- replay snapshot both read it from there. Nothing writes per-record log rows
+-- anymore.)
 
 -- Game snapshots - one row per finished session: the complete game compressed
 -- by functions/_shared/replay/, stored as raw binary. `moves` is the rANS
 -- move integer (decodes to the full game); `extras` is the optional names +
 -- timing blob. The share code is derived: base32(moves) + '-' + base32(extras)
 -- — the moves-only code is just the first part. Replaces the session's
--- game_logs rows, which are wiped after the snapshot is verified and stored.
+-- packed session log (games.logs_packed), which is cleared after the snapshot
+-- is verified and stored.
 -- player_ids doubles as the read ACL and records seat order. game_id is
 -- SET NULL on delete so replays outlive lobby deletion.
 CREATE TABLE game_snapshots (
@@ -217,10 +196,6 @@ CREATE INDEX idx_bots_strategy_key ON bots(strategy_key);
 CREATE INDEX idx_bots_elo_rating ON bots(elo_rating);
 CREATE INDEX idx_bot_hands_game_id ON bot_hands(game_id);
 CREATE INDEX idx_bot_hands_bot_id ON bot_hands(bot_id);
-CREATE INDEX idx_game_logs_game_id ON game_logs(game_id);
-CREATE INDEX idx_game_logs_log_type ON game_logs(log_type);
-CREATE INDEX idx_game_logs_player_id ON game_logs(player_id);
-CREATE INDEX idx_game_logs_created_at ON game_logs(created_at);
 CREATE INDEX idx_game_snapshots_game_id ON game_snapshots(game_id);
 CREATE INDEX idx_game_snapshots_created_at ON game_snapshots(created_at);
 CREATE INDEX idx_game_snapshots_player_ids ON game_snapshots USING GIN (player_ids);
@@ -236,7 +211,6 @@ ALTER TABLE chat_messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_elo_ratings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bots ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bot_hands ENABLE ROW LEVEL SECURITY;
-ALTER TABLE game_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE game_snapshots ENABLE ROW LEVEL SECURITY;
 
 -- =============================================================================
@@ -337,13 +311,6 @@ CREATE POLICY "Only service role can delete bots" ON bots
 CREATE POLICY "Only service role can access bot hands" ON bot_hands
   FOR ALL USING ((select auth.role()) = 'service_role');
 
--- Game logs: ONLY service role can write, but can be read for analysis
--- Bots and advanced strategies can read these logs to make better decisions
-CREATE POLICY "Service role can insert logs" ON game_logs
-  FOR INSERT WITH CHECK ((select auth.role()) = 'service_role');
-
-CREATE POLICY "Service role can read logs" ON game_logs
-  FOR SELECT USING ((select auth.role()) = 'service_role');
 
 -- Game snapshots: written by edge functions at game end; readable by the
 -- players who were in that game (player_ids holds their auth uids in seat
@@ -502,7 +469,6 @@ CREATE OR REPLACE FUNCTION commit_game(
   p_deck             JSONB,
   p_hands            JSONB,
   p_bot_hands        JSONB,
-  p_logs             JSONB   DEFAULT NULL,  -- legacy skew window only; new code passes NULL
   p_state            TEXT    DEFAULT NULL,  -- packed kernel state blob (hex); NULL leaves the column unchanged (never-dealt games)
   p_logs_packed      TEXT    DEFAULT NULL,  -- this move's logwire records (bare hex), appended under the version fence
   p_logs_reset       BOOLEAN DEFAULT FALSE  -- session reset (GAME_START in the records): replace instead of append
@@ -565,22 +531,8 @@ BEGIN
       SET hand = EXCLUDED.hand, awaiting_attack = EXCLUDED.awaiting_attack, updated_at = now();
   END IF;
 
-  -- This move's logs, atomic with the state they describe (see migration
-  -- 20260702100000). Array order is preserved by jsonb_array_elements, so
-  -- game_logs.seq keeps the emit order the replay encoder depends on.
-  -- ON CONFLICT keeps the write idempotent for retried requests.
-  IF p_logs IS NOT NULL AND jsonb_array_length(p_logs) > 0 THEN
-    INSERT INTO game_logs (id, game_id, log_type, player_id, card_pairs, defender_index, created_at)
-    SELECT (l->>'id')::uuid,
-           p_game_id,
-           (l->>'log_type')::log_type,
-           l->>'player_id',
-           COALESCE(l->'card_pairs', '[]'::jsonb),
-           (l->>'defender_index')::int,
-           (l->>'created_at')::timestamp
-    FROM jsonb_array_elements(p_logs) AS l
-    ON CONFLICT (id) DO NOTHING;
-  END IF;
+  -- The session log is the packed logs_packed column (handled in the UPDATE
+  -- above); per-record game_logs rows were retired in migration 20260708120000.
 
   RETURN jsonb_build_object('status', 'ok', 'version', v_new_version);
 END;

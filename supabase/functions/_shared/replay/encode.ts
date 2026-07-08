@@ -3,8 +3,8 @@
  * =============================================================================
  * Turns a finished game's log stream into the replay integer. Runs in the
  * edge functions at game end (utils.ts finalizeEndedGame): the resulting
- * base64 string is appended to games.snapshots and the game's game_logs rows
- * are wiped — the snapshot replaces them.
+ * base64 string is stored in game_snapshots and the game's packed session log
+ * (games.logs_packed) is cleared — the snapshot replaces it.
  *
  * The rules projection runs in the C kernel (cnitro/src/replay.c); this file
  * keeps the log-stream plumbing that is genuinely TS-shaped: slicing the
