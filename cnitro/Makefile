@@ -142,7 +142,8 @@ WASM_FLAGS := --target=wasm32 $(WASM_OPT) -nostdlib -ffreestanding -mbulk-memory
               -DMAX_LEGAL_MOVES=4096 -DMAX_MOVE_CARDS=28 -DMAX_BATTLES=64 \
               -DWORLD_LOG_CAP=40 \
               -Wall -Wextra -Wno-unused-parameter \
-              -Wl,--no-entry -Wl,--export-memory -Wl,-z,stack-size=262144 -Wl,--stack-first
+              -Wl,--no-entry -Wl,--export-memory -Wl,-z,stack-size=262144 -Wl,--stack-first \
+              -Wl,--strip-all
 
 # Explicit export allow-list — only the memory (above) + wasm_* API the TS
 # bridge actually calls (engine.ts / bots.ts). This REPLACES -Wl,--export-all,
@@ -230,7 +231,8 @@ WASM_GUARDS_FLAGS := --target=wasm32 $(WASM_OPT) -nostdlib -ffreestanding -mbulk
                      -isystem wasm/include -Isrc -D_Thread_local= -DDEAL_RNG_DISABLED \
                      -DMAX_LOG_PAIRS=64 -DMAX_BATTLES=64 -DMAX_LOGS=64 \
                      -Wall -Wextra -Wno-unused-parameter \
-                     -Wl,--no-entry -Wl,--export-memory -Wl,-z,stack-size=131072 -Wl,--stack-first
+                     -Wl,--no-entry -Wl,--export-memory -Wl,-z,stack-size=131072 -Wl,--stack-first \
+                     -Wl,--strip-all
 
 # Explicit export allow-list, same rationale as WASM_API_EXPORTS (this
 # replaced --export-all here too: it pinned every internal symbol as a GC
@@ -289,11 +291,39 @@ WASM_BOT_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/view.c sr
                 src/handwritten_prod_strategy.c src/semtex_strategy.c \
                 src/octogen_strategy.c wasm/wasm_api.c wasm/wasm_bots_api.c
 
-WASM_BOT_FLAGS := $(WASM_FLAGS)
+# PER-FILE opt (a mix one clang invocation can't express): the profiled hot MC
+# core is built at -O3, everything else at -Oz. -O3 on those five files cuts the
+# heavy belief bots' (octogen/semtex) end-to-end p50 ~15% — the thinking-bot
+# latency that the 2s CPU cap actually gates — while keeping the rest of the
+# module -Oz. That's cold code the edge runtime's short-lived workers never tier
+# up past Liftoff, so -O3 there only bloats the module (and its cold-start
+# compile) for no speed. Measured: this MC-core mix MATCHES whole-module -O3 p50
+# at ~66KB gz vs ~73KB (and beats all-Oz's ~52KB by ~15% p50). The heavy
+# decisions self-tier-up mid-search, so the win holds cold as well as warm.
+# Split the shared flags into compile-only vs link-only so per-file opt applies.
+WASM_BOT_CFLAGS  := $(filter-out -Wl% $(WASM_OPT),$(WASM_FLAGS))
+WASM_BOT_LDFLAGS := $(filter -Wl%,$(WASM_FLAGS))
+WASM_BOT_O3_SRC  := src/cordite_sim.c src/cordite_strategy.c \
+                    src/octogen_strategy.c src/semtex_strategy.c src/fulminate_strategy.c
 
-build/bots.wasm: $(WASM_BOT_SRC) $(wildcard src/*.h) $(wildcard wasm/*.h)
+WASM_BOT_OBJ    := $(addprefix build/botobj/,$(notdir $(WASM_BOT_SRC:.c=.o)))
+WASM_BOT_O3_OBJ := $(addprefix build/botobj/,$(notdir $(WASM_BOT_O3_SRC:.c=.o)))
+
+# Default bot-object opt is -Oz; the MC-core objects override to -O3.
+build/botobj/%.o: WASM_BOT_FILE_OPT := -Oz
+$(WASM_BOT_O3_OBJ): WASM_BOT_FILE_OPT := -O3
+
+build/botobj/%.o: src/%.c $(wildcard src/*.h) $(wildcard wasm/*.h)
+	@mkdir -p build/botobj
+	$(WASM_CC) $(WASM_BOT_CFLAGS) $(WASM_BOT_FILE_OPT) -c $< -o $@
+build/botobj/%.o: wasm/%.c $(wildcard src/*.h) $(wildcard wasm/*.h)
+	@mkdir -p build/botobj
+	$(WASM_CC) $(WASM_BOT_CFLAGS) $(WASM_BOT_FILE_OPT) -c $< -o $@
+
+build/bots.wasm: $(WASM_BOT_OBJ)
 	@mkdir -p build
-	$(WASM_CC) $(WASM_BOT_FLAGS) $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) $(WASM_BOT_SRC) -o $@
+	$(WASM_CC) --target=wasm32 -nostdlib $(WASM_BOT_LDFLAGS) \
+	          $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) $(WASM_BOT_OBJ) -o $@
 
 # bots.wasm ships as a gzip STATIC ASSET (config.toml static_files + deploy
 # --use-api, no Docker) — a real 47KB binary, not a 155KB base64 .ts embed.
