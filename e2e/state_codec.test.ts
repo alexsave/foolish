@@ -70,7 +70,24 @@ const projection = (g: Game) => ({
 const hex = (b: Uint8Array) => Buffer.from(b).toString('hex');
 
 test('kernel state codec reports a stable format version', () => {
-  assert.equal(stateFormatVersion(), 1);
+  // v2 added the deterministic_deck flag byte after the version (seed-dealt
+  // games; see cnitro wasm_state_serialize). Deserialize still accepts v1, so
+  // blobs written before the bump keep loading.
+  assert.equal(stateFormatVersion(), 2);
+});
+
+test('v1 blobs (pre-deterministic-deck format) still deserialize', () => {
+  // A game in flight across the deploy has a v1 blob: [version=1][put_state...]
+  // with no flag byte. Rebuild that shape from a current v2 blob (drop the flag
+  // at [1], stamp version 1) and confirm it loads losslessly — the flag simply
+  // defaults false, so those games keep drawing exactly as before.
+  const g = mkGame(4, 'v1compat');
+  start_game(g);
+  const cur = serializeGameState(g);
+  assert.equal(cur[0], 2, 'current writer emits v2');
+  const v1 = Uint8Array.from([1, ...cur.slice(2)]);
+  const restored = deserializeGameState(v1, rosterOf(g)); // must not throw
+  assert.deepEqual(projection(restored), projection(g), 'v1 blob restores losslessly');
 });
 
 test('every reachable game state round-trips losslessly through the packed blob', async () => {
