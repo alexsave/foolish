@@ -158,7 +158,8 @@ WASM_API_EXPORTS := \
   -Wl,--export=wasm_game_ptr_internal -Wl,--export=wasm_moves_ptr_internal \
   -Wl,--export=wasm_cards_a_ptr -Wl,--export=wasm_cards_b_ptr \
   -Wl,--export=wasm_init -Wl,--export=wasm_set_seed \
-  -Wl,--export=wasm_set_deal_seed_bytes -Wl,--export=wasm_reject_reason \
+  -Wl,--export=wasm_set_deal_seed_bytes -Wl,--export=wasm_set_deterministic_deck \
+  -Wl,--export=wasm_reject_reason \
   -Wl,--export=wasm_import_state -Wl,--export=wasm_export_state \
   -Wl,--export=wasm_state_serialize -Wl,--export=wasm_state_deserialize \
   -Wl,--export=wasm_state_format_version \
@@ -227,7 +228,7 @@ wasm: build/rules.wasm
 # Smaller caps than the rules module: the client never imports a session log
 # (each marshal starts fresh) and one optimistic move emits <64 logs.
 WASM_GUARDS_FLAGS := --target=wasm32 $(WASM_OPT) -nostdlib -ffreestanding -mbulk-memory \
-                     -isystem wasm/include -Isrc -D_Thread_local= \
+                     -isystem wasm/include -Isrc -D_Thread_local= -DDEAL_RNG_DISABLED \
                      -DMAX_LOG_PAIRS=64 -DMAX_BATTLES=64 -DMAX_LOGS=64 \
                      -Wall -Wextra -Wno-unused-parameter \
                      -Wl,--no-entry -Wl,--export-memory -Wl,-z,stack-size=131072 -Wl,--stack-first
@@ -258,7 +259,12 @@ WASM_GUARDS_EXPORTS := \
   -Wl,--export=wasm_pickup \
   -Wl,--export=wasm_game_done -Wl,--export=wasm_next_player -Wl,--export=wasm_can_cover
 
-WASM_GUARDS_SRC := src/game.c src/deal_rng.c src/view.c src/awire.c wasm/wasm_guards_api.c
+# The client guards module never deals (its optimistic draws are placeholders
+# and it never learns the seed), so -DDEAL_RNG_DISABLED compiles out the ChaCha
+# deal RNG entirely and deal_rng.c is not linked — no crypto weight in the
+# browser bundle. draw_card falls back to the trivial LCG index for its
+# placeholder splices, exactly as before this feature.
+WASM_GUARDS_SRC := src/game.c src/view.c src/awire.c wasm/wasm_guards_api.c
 
 build/guards.wasm: $(WASM_GUARDS_SRC) $(wildcard src/*.h) $(wildcard wasm/*.h)
 	@mkdir -p build

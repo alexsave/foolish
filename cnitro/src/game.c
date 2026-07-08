@@ -8,10 +8,18 @@
 // `setRandomSeed(seed)`).
 
 #include "game.h"
-#include "deal_rng.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+
+// The wide, reproducible deal (ChaCha) lives ONLY in builds that actually deal:
+// the rules kernel (server deal + replay) and native tools/tests. The client
+// guards module never deals — its optimistic draws are placeholder cards and it
+// never learns the seed — so it is compiled with -DDEAL_RNG_DISABLED and never
+// links deal_rng. See the Makefile guards flags.
+#ifndef DEAL_RNG_DISABLED
+#include "deal_rng.h"
+#endif
 
 // ---------- RNG (two independent LCGs, same recurrence as TS) ----------
 //
@@ -25,21 +33,46 @@
 static _Thread_local uint32_t g_seed = 1237;
 static _Thread_local uint32_t g_rand_seed = 1;
 
-// Wide deal RNG (deal_rng.h). Off by default: the deal uses the 32-bit LCG
-// exactly as before unless game_set_deal_seed_bytes() turns it on, and any
-// game_set_seed() turns it back off. This keeps every pinned LCG stream (the
-// C test suite, the e2e seedSource hooks) byte-for-byte unchanged.
+// Deterministic-deck mode. When on, the deck is a full ChaCha shuffle from the
+// stored seed and every draw pops the top — so the whole game (deal AND every
+// mid-game refill) is a pure function of the seed, with the persisted deck
+// order carrying the determinism between kernel calls. Off by default: the deal
+// and draws use the 32-bit LCG exactly as before, so every pinned LCG stream
+// (the C suite, the e2e seedSource hooks, in-flight legacy games) is unchanged.
+// game_set_seed() always turns it off.
+static _Thread_local int g_deal_wide = 0;
+#ifndef DEAL_RNG_DISABLED
 static _Thread_local DealRng g_deal_rng;
-static _Thread_local int     g_deal_wide = 0;
 
-// Unbiased random index in [0, n) for the DEAL. Wide mode -> ChaCha (no modulo
-// bias, integer-only, reproducible); otherwise the legacy float-scaled LCG,
-// clamped exactly as the original draw/first-attacker code did.
+// Fisher-Yates over the whole deck, driven by the ChaCha stream. Called once at
+// the deal; afterwards draws just pop, so this is the only shuffle in a game.
+static void deal_shuffle(Game *g) {
+    for (int i = g->deck_count - 1; i > 0; i--) {
+        int j = (int)deal_rng_bounded(&g_deal_rng, (uint32_t)(i + 1));
+        Card t = g->deck[i]; g->deck[i] = g->deck[j]; g->deck[j] = t;
+    }
+}
+#endif
+
+// Random index in [0, n) for a DECK DRAW. Deterministic mode pops the top of the
+// pre-shuffled deck (0); legacy consumes one game_random() and clamps, byte-for-
+// byte as the original inline draw code did (including on a 1-card deck, so the
+// pinned LCG stream never desyncs).
+static int draw_index(int n) {
+    if (g_deal_wide) return 0;
+    int idx = (int)(game_random() * n);
+    if (idx < 0) idx = 0;
+    if (idx >= n) idx = n - 1;
+    return idx;
+}
+
+// Random index in [0, n) for the first-attacker fallback (pick among players
+// when nobody holds a trump). Deterministic mode draws it, unbiased, from the
+// same ChaCha stream (so it too is reproducible); legacy uses the LCG.
 static int deal_index(int n) {
+#ifndef DEAL_RNG_DISABLED
     if (g_deal_wide) return (n <= 1) ? 0 : (int)deal_rng_bounded(&g_deal_rng, (uint32_t)n);
-    // Legacy path: consume exactly one game_random() and clamp, byte-for-byte
-    // as the original inline draw/first-attacker code did — including on a
-    // 1-card deck, so the pinned LCG stream never desyncs.
+#endif
     int idx = (int)(game_random() * n);
     if (idx < 0) idx = 0;
     if (idx >= n) idx = n - 1;
@@ -67,12 +100,25 @@ void game_set_seed(uint32_t s) {
 #endif
 }
 
+#ifndef DEAL_RNG_DISABLED
 void game_set_deal_seed_bytes(const uint8_t *seed, int len) {
     if (!seed || len < 32) return;   // too little entropy: leave wide mode off
     deal_rng_seed(&g_deal_rng, seed);
-    g_deal_wide = 1;
+    g_deal_wide = 1;                 // start_game will shuffle; draws then pop
 #ifdef GRPO_RNG_DEBUG
     g_seed_set = 1;                  // a wide seed also satisfies the init guard
+#endif
+}
+#else
+void game_set_deal_seed_bytes(const uint8_t *seed, int len) { (void)seed; (void)len; }
+#endif
+
+// Turn on deterministic (pop-the-top) draws WITHOUT reseeding — for mid-game
+// kernel calls on a seed-dealt game, where the deck was already shuffled at the
+// deal and only its persisted order is needed. A no-op in the guards build.
+void game_set_deterministic_deck(void) {
+#ifndef DEAL_RNG_DISABLED
+    g_deal_wide = 1;
 #endif
 }
 
@@ -242,7 +288,7 @@ static bool draw_card(Game *g, Card *out) {
         g->has_flipped = false;
         return true;
     }
-    int idx = deal_index(g->deck_count);
+    int idx = draw_index(g->deck_count);
     *out = g->deck[idx];
     for (int i = idx + 1; i < g->deck_count; i++) g->deck[i - 1] = g->deck[i];
     g->deck_count--;
@@ -300,6 +346,12 @@ void start_game(Game *g) {
     }
 
     refill_deck(g);
+#ifndef DEAL_RNG_DISABLED
+    // Seed-dealt game: shuffle the whole deck once from the ChaCha stream, then
+    // every draw below (and every mid-game refill) pops the top — the full deal
+    // and game are reproducible from the seed.
+    if (g_deal_wide) deal_shuffle(g);
+#endif
     // TS emits its opening MAGIC_TRANSITION here: PLAYING status, full deck,
     // hands still empty from the lobby.
     SNAP(g, ENGINE_HOOK_START_MAGIC, -1);

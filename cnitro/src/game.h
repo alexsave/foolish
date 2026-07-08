@@ -138,7 +138,13 @@ uint32_t game_random_u32(void);
 // game_set_seed() call turns wide mode back off, so the legacy 32-bit path and
 // its pinned test streams are byte-for-byte unchanged when no wide seed is set.
 void   game_set_deal_seed_bytes(const uint8_t *seed, int len);
-int    game_deal_seed_active(void);  // 1 if a wide deal seed is in effect
+int    game_deal_seed_active(void);  // 1 if deterministic-deck mode is in effect
+
+// Turn on deterministic (pop-the-top) draws without reseeding. A seed-dealt
+// game shuffles its deck once at the deal; every later kernel call (mid-game
+// refills) just needs pop mode, since the persisted deck order carries the
+// determinism. game_set_seed() clears it. No-op where the deal RNG is disabled.
+void   game_set_deterministic_deck(void);
 
 // Save/restore the game LCG state. Lets a strategy run internal
 // simulations (which consume game_random via draws and rollout policies)

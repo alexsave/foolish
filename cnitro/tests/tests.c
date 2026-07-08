@@ -849,8 +849,78 @@ static void test_deal_rng_unbiased(void) {
     CHECK(ok, "deal_rng_bounded(7) is uniform (no modulo bias)");
 }
 
+// Play a full handwritten-vs-handwritten game whose DECK is seed-dealt
+// (shuffle once, then pop) and hash the whole trajectory. The LCG (game_random)
+// drives only the harness's player-ordering; every engine draw — the deal and
+// every mid-game refill — comes from the deterministic deck, so a fixed seed
+// must reproduce the entire game bit-for-bit.
+static unsigned run_repro_game(const unsigned char *seed) {
+    game_set_seed(99);                     // LCG: harness player-ordering only
+    random_strategy_set_seed(99);
+    game_set_deal_seed_bytes(seed, 32);    // deck: shuffle + pop (stays on all game)
+    Game g; make_2p_game(&g);
+    start_game(&g);
+    unsigned h = 2166136261u;
+#define HH(b) do { h ^= (unsigned char)(b); h *= 16777619u; } while (0)
+    int iters = 0;
+    while (game_done(&g) < 0 && iters < 2000) {
+        iters++;
+        int eligible[MAX_PLAYERS]; int n_elig = 0;
+        for (int i = 0; i < g.num_players; i++) if (should_bot_act(&g, i)) eligible[n_elig++] = i;
+        if (n_elig == 0) break;
+        for (int i = n_elig - 1; i > 0; i--) {
+            int j = (int)(game_random() * (i + 1));
+            if (j < 0) j = 0; if (j > i) j = i;
+            int tmp = eligible[i]; eligible[i] = eligible[j]; eligible[j] = tmp;
+        }
+        bool acted = false;
+        for (int k = 0; k < n_elig; k++) {
+            int idx = eligible[k];
+            LegalMoves moves;
+            calculate_legal_moves(&g, idx, &moves);
+            if (moves.n == 0) continue;
+            int chosen = handwritten_strategy_choose(&g, idx, &moves, NULL);
+            if (chosen < 0) continue;
+            const LegalMove *m = &moves.moves[chosen];
+            bool ok = false;
+            switch (m->type) {
+                case MOVE_ATTACK: ok = handle_attack(&g, idx, m->cards, m->n_cards); break;
+                case MOVE_COVER:  ok = handle_cover (&g, idx, m->cards, m->attack_cards, m->n_cards); break;
+                case MOVE_PASS:   ok = handle_pass  (&g, idx, m->cards, m->n_cards); break;
+                case MOVE_PICKUP: ok = handle_pickup(&g, idx); break;
+                case MOVE_GOOD:   ok = handle_good  (&g, idx); break;
+                default: break;
+            }
+            if (ok) { acted = true; break; }
+        }
+        if (!acted) break;
+        HH(g.deck_count); HH(g.discard_pile_length); HH(g.power_suit);
+        for (int p = 0; p < g.num_players; p++) {
+            HH(g.players[p].hand_count);
+            for (int i = 0; i < g.players[p].hand_count; i++) {
+                HH(g.players[p].hand[i].suit); HH(g.players[p].hand[i].value);
+            }
+        }
+    }
+    HH(game_done(&g));
+    return h;
+#undef HH
+}
+
+static void test_whole_game_reproducible(void) {
+    unsigned char s[32];
+    for (int i = 0; i < 32; i++) s[i] = (unsigned char)(i * 13 + 2);
+    unsigned a = run_repro_game(s);
+    unsigned b = run_repro_game(s);
+    CHECK(a == b, "whole game (deal + every refill) reproduces from the seed");
+    s[5] ^= 0xFF;
+    unsigned c = run_repro_game(s);
+    CHECK(a != c, "a different seed yields a different game trajectory");
+}
+
 int main(void) {
     test_deal_rng_kat();
+    test_whole_game_reproducible();
     test_deal_wide_reproducible();
     test_deal_wide_permutation();
     test_deal_rng_unbiased();
