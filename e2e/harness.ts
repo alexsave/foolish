@@ -32,7 +32,7 @@ export async function applySchema(): Promise<void> {
 }
 
 export async function resetDb(): Promise<void> {
-    await pool.query('TRUNCATE games, game_decks, player_hands, bot_hands, bots, game_snapshots, user_elo_ratings RESTART IDENTITY CASCADE');
+    await pool.query('TRUNCATE games, game_decks, player_hands, bot_hands, bots, game_snapshots, user_elo_ratings, player_views RESTART IDENTITY CASCADE');
     await pool.query('TRUNCATE auth.users CASCADE');
     resetBroadcastLog();
 }

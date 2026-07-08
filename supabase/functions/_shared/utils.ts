@@ -736,6 +736,24 @@ export const commitGame = async (
     // blob) still finds its rows. game_decks likewise: the deck lives in the
     // blob once dealt.
     const dealt = p_state !== null;
+
+    // player_views cache: the per-participant MASKED view rows, upserted INSIDE
+    // the same version-fenced commit_game transaction as games.state so the
+    // cache can never be torn from the authoritative state (docs/PLAYER_VIEWS.md).
+    // The committed version is expectedVersion+1 (commit_game bumps by one); on a
+    // conflict the RPC returns before touching player_views and the retry
+    // recomputes. Building the views must NEVER break a commit — on failure we
+    // pass null, which leaves player_views untouched (a stale row is safe: the
+    // client falls back to get_my_games). Masking stays in the C kernel for
+    // dealt games (serializeViewBlobs); see player_views.ts.
+    let p_views: Array<{ player_id: string; view: string; status: string }> | null = null;
+    try {
+        const { buildPlayerViewRows } = await import('./player_views.ts');
+        p_views = await buildPlayerViewRows(game, p_state, expectedVersion + 1);
+    } catch (e) {
+        console.error(`[COMMIT] player_views build failed for ${game.id} (cache left stale):`, e);
+    }
+
     const { data, error } = await supabaseClient.rpc('commit_game', {
         p_game_id: game.id,
         p_expected_version: expectedVersion,
@@ -746,6 +764,7 @@ export const commitGame = async (
         p_state,
         p_logs_packed,
         p_logs_reset,
+        p_views,
         // The deal stamps game.game_seed; every other commit leaves it undefined,
         // so NULL flows and commit_game's COALESCE keeps the stored seed. Never
         // routed through p_game (PublicGame) — that would expose it to clients.

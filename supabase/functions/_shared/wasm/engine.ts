@@ -797,6 +797,30 @@ export function serializeViewBlob(blob: Uint8Array, viewerSeat: number): Uint8Ar
     return mem(ex).slice(base, base + len);
 }
 
+// The per-VIEWER masked blobs for MANY seats from one durable state blob — the
+// player_views cache writer (one row per participant per commit). The masking
+// itself stays entirely in the C kernel (wasm_view_serialize / view.c
+// state_put); this only deserializes ONCE and reads the resident g_game out per
+// seat, so N views cost one deserialize + N put_state instead of N full
+// re-deserializes. wasm_view_serialize is read-only on g_game (it writes into
+// g_io, the game is untouched), so the loop is safe — same one-load-many-export
+// discipline as exportPackedProducts' event loop. Returns viewerSeat -> blob.
+export function serializeViewBlobs(blob: Uint8Array, viewerSeats: number[]): Map<number, Uint8Array> {
+    const ex = engine();
+    const base = ex.wasm_io_ptr();
+    mem(ex).set(blob, base);
+    if (!ex.wasm_state_deserialize(blob.length)) {
+        throw new Error(`Unreadable game state blob: format version ${blob[0]}, kernel reads ${ex.wasm_state_format_version()}`);
+    }
+    residentFor = null;
+    const out = new Map<number, Uint8Array>();
+    for (const seat of viewerSeats) {
+        const len = ex.wasm_view_serialize(seat);
+        out.set(seat, mem(ex).slice(base, base + len));
+    }
+    return out;
+}
+
 // ---------------------------------------------------------------------------
 // Action execution + event synthesis
 // ---------------------------------------------------------------------------
