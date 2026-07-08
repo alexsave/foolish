@@ -12,6 +12,16 @@ import { ACTION_STATUS, decodeActionResponse, encodeAction, encodeActionRequest 
 import { decodePackedGame, decodePackedGamesList } from '@shared/wire/view.ts';
 import { rejectMessage } from '../wasm/rejectMessages';
 
+// Decode the bare-hex (no \x prefix) `view` blob stored in player_views. Tiny
+// local helper so the dashboard read doesn't pull the replay codec into the
+// main bundle.
+const hexToBytes = (hex: string): Uint8Array => {
+    const h = hex.startsWith('\\x') ? hex.slice(2) : hex;
+    const out = new Uint8Array(h.length >> 1);
+    for (let i = 0; i < out.length; i++) out[i] = parseInt(h.slice(i * 2, i * 2 + 2), 16);
+    return out;
+};
+
 // Re-apply the local player's unconfirmed optimistic table cards onto an
 // authoritatively-loaded game (reconnect resync), so a just-played card doesn't
 // vanish then reappear. Thin wrapper over the shared, unit-tested applyOverlayEntries.
@@ -168,9 +178,11 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             // the next game subscribes, so the socket is never bounced during a fast switch.
             // ONLY this context's channels (chat:… and the spectator game-…): the
             // gu-… animation channel is owned and torn down by RealtimeAnimationFeed —
-            // removing it here raced its own cleanup/reconnect handling.
+            // removing it here raced its own cleanup/reconnect handling. The pv-…
+            // dashboard-cache channel is user-scoped (not game-scoped) and owned by
+            // its own effect below, so it must survive game navigation too.
             supabase.getChannels().forEach((channel) => {
-                if (channel.topic.includes('gu-')) return;
+                if (channel.topic.includes('gu-') || channel.topic.includes('pv-')) return;
                 supabase.removeChannel(channel);
             });
         };
@@ -287,6 +299,71 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
         return result;
     };
+
+    // Dashboard live updates (docs/PLAYER_VIEWS.md): subscribe to THIS user's own
+    // player_views rows (RLS-enforced) and push each committed masked snapshot
+    // straight into `games`. This is the list-level counterpart of
+    // RealtimeAnimationFeed's per-game animation stream — full snapshots instead
+    // of event deltas, with no bespoke server fan-out. User-scoped (keyed on
+    // user_id only), so it survives game navigation; the pv- channel is excluded
+    // from the per-navigation channel teardown above. Best-effort: if the
+    // subscription can't be established, the list still refreshes on the next
+    // getUserGames / navigation.
+    const playerViewsChannelRef = useRef<any>(null);
+    useEffect(() => {
+        if (!user_id) return;
+        let cancelled = false;
+
+        const applyRow = (row: any) => {
+            if (!row?.view) return;
+            try {
+                const decoded = decodePackedGame(hexToBytes(row.view));
+                if (!decoded) return;
+                const g = decoded.game as PersonalGame;
+                setGames(prev => ({ ...prev, [g.id]: mergeGameData(g.id, { ...g, self: (g as any).self ?? null }, prev) }));
+            } catch { /* unreadable snapshot — ignore; the next fetch resyncs */ }
+        };
+
+        const pgChanges = { schema: 'public', table: 'player_views', filter: `player_id=eq.${user_id}` } as const;
+
+        // setAuth() hands Realtime the caller's JWT so postgres_changes applies
+        // player_views' RLS per row. NOT a `private` broadcast channel: for
+        // postgres_changes the source table's RLS is the gate (the row filter
+        // below is enforced server-side), not a realtime.messages topic policy —
+        // marking it private would make the channel demand a 'pv-…' broadcast
+        // policy that doesn't exist and fail to subscribe.
+        supabase.realtime.setAuth().then(() => {
+            if (cancelled) return;
+            const channel = supabase.channel(`pv-${user_id}`);
+            playerViewsChannelRef.current = channel;
+            channel
+                .on('postgres_changes', { event: 'INSERT', ...pgChanges }, (p: any) => applyRow(p.new))
+                .on('postgres_changes', { event: 'UPDATE', ...pgChanges }, (p: any) => applyRow(p.new))
+                .on('postgres_changes', { event: 'DELETE', ...pgChanges }, (p: any) => {
+                    // The old row carries only the replica-identity (PK) columns —
+                    // game_id + player_id — which is all we need to drop it.
+                    const gid = p.old?.game_id;
+                    if (!gid) return;
+                    setGames(prev => {
+                        if (!(gid in prev)) return prev;
+                        const next = { ...prev };
+                        delete next[gid];
+                        return next;
+                    });
+                })
+                .subscribe();
+        }).catch(err => console.error('player_views subscription failed:', err));
+
+        return () => {
+            cancelled = true;
+            if (playerViewsChannelRef.current) {
+                const ch = playerViewsChannelRef.current;
+                playerViewsChannelRef.current = null;
+                supabase.removeChannel(ch).catch(() => { /* already closed */ });
+            }
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [user_id]);
 
     const handleChatMessage = (message: any) => {
         // Handle database changes for chat messages
@@ -916,13 +993,53 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     }, []);
 
     const getUserGamesInternal = async (): Promise<void> => {
-        // This needs to also throw in status at least
-        try {
-            const user_id = userIdRef.current;
-            if (!user_id) {
-                return;
-            }
+        const user_id = userIdRef.current;
+        if (!user_id) {
+            return;
+        }
 
+        // Fast path (docs/PLAYER_VIEWS.md): read the dashboard list STRAIGHT from
+        // the player_views cache — a plain indexed RLS SELECT, no edge function,
+        // no cold start, no per-viewer masking on read (the rows are already
+        // masked at write time). Each row's `view` is the caller's packed
+        // single-game envelope, materialized here by the same shared codec the
+        // edge path uses (decodePackedGame). Falls back to get_my_games when the
+        // cache is cold/unavailable (a first load, or games created before this
+        // feature) — that edge function stays the authoritative rebuild path.
+        try {
+            const { data: rows, error } = await supabase
+                .from('player_views')
+                .select('view, status, version')
+                .eq('player_id', user_id)
+                .order('updated_at', { ascending: false });
+            if (!error && Array.isArray(rows) && rows.length > 0) {
+                const games: { [key: string]: PersonalGame } = {};
+                for (const row of rows) {
+                    try {
+                        const decoded = decodePackedGame(hexToBytes((row as any).view));
+                        if (!decoded) continue;
+                        const g = decoded.game as PersonalGame;
+                        games[g.id] = { ...g, self: (g as any).self ?? null };
+                    } catch { /* skip an unreadable row, same as the list codec */ }
+                }
+                if (Object.keys(games).length > 0) {
+                    setGames(prev => ({ ...prev, ...games }));
+                    return;
+                }
+            }
+            // error / empty / all-unreadable → fall through to the edge rebuild
+        } catch (e) {
+            console.error('player_views direct read failed, falling back to get_my_games:', e);
+        }
+
+        return getUserGamesFromEdge(user_id);
+    };
+
+    // Authoritative rebuild path: the get_my_games edge function (per-viewer
+    // masked in the C kernel server-side). Used as the player_views cache-miss
+    // fallback and for any client that predates the cache.
+    const getUserGamesFromEdge = async (user_id: string): Promise<void> => {
+        try {
             // The caller's games as one packed binary list: each dealt game
             // is the kernel-masked view blob (+ identity roster JSON), each
             // lobby a byte-wrapped personalize_game JSON — materialized right

@@ -14,6 +14,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 DROP FUNCTION IF EXISTS update_updated_at_column() CASCADE;
 
 -- Drop tables in reverse dependency order (this will automatically drop all policies and triggers)
+DROP TABLE IF EXISTS player_views CASCADE;
 DROP TABLE IF EXISTS chat_messages CASCADE;
 DROP TABLE IF EXISTS bot_hands CASCADE;
 DROP TABLE IF EXISTS player_hands CASCADE;
@@ -176,6 +177,27 @@ CREATE TABLE game_snapshots (
   created_at TIMESTAMP DEFAULT NOW()
 );
 
+-- Player views - a server-written, client-read PERSONALIZED VIEW CACHE
+-- (docs/PLAYER_VIEWS.md). One row per (game, human participant): `view` is that
+-- player's ALREADY-MASKED packed single-game envelope (the same bytes the
+-- get_game / get_my_games edge functions emit, decodable by the shared
+-- decodePackedGame), so RLS `player_id = auth.uid()` is SUFFICIENT — the row is
+-- pre-masked, nothing to hide on read. This lets the client load its dashboard
+-- list as a plain indexed SELECT (no edge round-trip) and get live pushes over
+-- Realtime. Written ONLY by the service role, inside commit_game / create_game's
+-- version-fenced transaction, so the cache can never be torn from games.state.
+-- The `view` blob is safe to expose (masked for its owner); it must NEVER carry
+-- the raw games.state.
+CREATE TABLE player_views (
+  game_id    TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+  player_id  UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  view       TEXT NOT NULL,            -- MASKED packed view envelope (bare hex), decodable by decodePackedGame
+  version    BIGINT NOT NULL,          -- mirrors games.version (optimistic token); client drops stale/reordered
+  status     TEXT NOT NULL,            -- denormalized game_status for cheap list filtering/rendering
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (game_id, player_id)
+);
+
 -- =============================================================================
 -- INDEXES: Create indexes for better performance
 -- =============================================================================
@@ -200,6 +222,9 @@ CREATE INDEX idx_bot_hands_bot_id ON bot_hands(bot_id);
 CREATE INDEX idx_game_snapshots_game_id ON game_snapshots(game_id);
 CREATE INDEX idx_game_snapshots_created_at ON game_snapshots(created_at);
 CREATE INDEX idx_game_snapshots_player_ids ON game_snapshots USING GIN (player_ids);
+-- dashboard list read: the caller's rows, newest game first (see get_my_games /
+-- the client's direct player_views SELECT).
+CREATE INDEX idx_player_views_player ON player_views(player_id, updated_at DESC);
 
 -- =============================================================================
 -- ROW LEVEL SECURITY: Enable RLS on all tables
@@ -213,6 +238,7 @@ ALTER TABLE user_elo_ratings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bots ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bot_hands ENABLE ROW LEVEL SECURITY;
 ALTER TABLE game_snapshots ENABLE ROW LEVEL SECURITY;
+ALTER TABLE player_views ENABLE ROW LEVEL SECURITY;
 
 -- =============================================================================
 -- RLS POLICIES: Security-first approach
@@ -324,6 +350,29 @@ CREATE POLICY "Participants can read snapshots" ON game_snapshots
     (select auth.role()) = 'service_role'
     OR player_ids ? (select auth.uid())::text
   );
+
+-- Player views: read ONLY your own rows; the blob is already masked for its
+-- owner, so this simple, auditable policy is the whole personalization boundary
+-- (docs/PLAYER_VIEWS.md). NO client writes — there is deliberately no
+-- INSERT/UPDATE/DELETE policy, so authenticated can only SELECT; the service
+-- role (which bypasses RLS) is the sole writer, via commit_game / create_game.
+CREATE POLICY "Players can read their own views" ON player_views
+  FOR SELECT USING (player_id = (select auth.uid()));
+
+-- RLS gates ROWS; the table privilege must also be granted. SELECT only — no
+-- INSERT/UPDATE/DELETE grant to client roles.
+GRANT SELECT ON public.player_views TO authenticated;
+
+-- Realtime: publish player_views so the client can subscribe to its own rows
+-- (RLS-enforced) and receive live view pushes on every commit. Guarded: the
+-- supabase_realtime publication exists on the Supabase platform but not in the
+-- bare-Postgres e2e harness (e2e/schema.sql), where this is a harmless no-op.
+DO $$ BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE public.player_views;
+EXCEPTION
+  WHEN undefined_object THEN NULL; -- no such publication (e2e harness): skip
+  WHEN duplicate_object THEN NULL; -- already in the publication: idempotent
+END $$;
 
 -- =============================================================================
 -- FUNCTIONS: Helper functions and triggers
@@ -473,7 +522,8 @@ CREATE OR REPLACE FUNCTION commit_game(
   p_state            TEXT    DEFAULT NULL,  -- packed kernel state blob (hex); NULL leaves the column unchanged (never-dealt games)
   p_logs_packed      TEXT    DEFAULT NULL,  -- this move's logwire records (bare hex), appended under the version fence
   p_logs_reset       BOOLEAN DEFAULT FALSE, -- session reset (GAME_START in the records): replace instead of append
-  p_game_seed        TEXT    DEFAULT NULL   -- deal seed (hex); set once at the deal, NULL on every other commit leaves it unchanged
+  p_game_seed        TEXT    DEFAULT NULL,  -- deal seed (hex); set once at the deal, NULL on every other commit leaves it unchanged
+  p_views            JSONB   DEFAULT NULL   -- per-participant masked view cache rows [{player_id,view,status}]; NULL leaves player_views untouched
 ) RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -540,6 +590,28 @@ BEGIN
   -- The session log is the packed logs_packed column (handled in the UPDATE
   -- above); per-record game_logs rows were retired in migration 20260708120000.
 
+  -- player_views personalized-view cache (docs/PLAYER_VIEWS.md), written in THIS
+  -- version-fenced transaction so it can never be torn from games.state. p_views
+  -- is the CURRENT participants' masked rows; NULL means "leave the cache
+  -- untouched" (a view-build failure upstream — the game still commits). An
+  -- empty array means "no human participants" and correctly prunes every row.
+  IF p_views IS NOT NULL THEN
+    INSERT INTO player_views (game_id, player_id, view, version, status, updated_at)
+    SELECT p_game_id, (v->>'player_id')::uuid, v->>'view', v_new_version, v->>'status', now()
+    FROM jsonb_array_elements(p_views) AS v
+    ON CONFLICT (game_id, player_id) DO UPDATE
+      SET view = EXCLUDED.view, version = EXCLUDED.version,
+          status = EXCLUDED.status, updated_at = now();
+
+    -- Prune rows for players no longer in the game (exited / removed), so a
+    -- participant who left stops seeing the game in their dashboard list.
+    DELETE FROM player_views
+    WHERE game_id = p_game_id
+      AND player_id NOT IN (
+        SELECT (v->>'player_id')::uuid FROM jsonb_array_elements(p_views) AS v
+      );
+  END IF;
+
   RETURN jsonb_build_object('status', 'ok', 'version', v_new_version);
 END;
 $$;
@@ -550,7 +622,8 @@ CREATE OR REPLACE FUNCTION create_game(
   p_game_id   TEXT,
   p_name      TEXT,
   p_player_id UUID,
-  p_players   JSONB
+  p_players   JSONB,
+  p_views     JSONB DEFAULT NULL   -- creator's masked view cache row(s); version 0
 ) RETURNS VOID
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -565,6 +638,19 @@ BEGIN
 
   INSERT INTO player_hands (game_id, player_id, hand, awaiting_attack)
     VALUES (p_game_id, p_player_id, '[]'::jsonb, false);
+
+  -- Seed the player_views dashboard cache for the creator in the same
+  -- transaction, so the new lobby is immediately readable from the client's
+  -- direct player_views SELECT (docs/PLAYER_VIEWS.md). version 0 = the initial
+  -- games.version.
+  IF p_views IS NOT NULL THEN
+    INSERT INTO player_views (game_id, player_id, view, version, status, updated_at)
+    SELECT p_game_id, (v->>'player_id')::uuid, v->>'view', 0, v->>'status', now()
+    FROM jsonb_array_elements(p_views) AS v
+    ON CONFLICT (game_id, player_id) DO UPDATE
+      SET view = EXCLUDED.view, version = EXCLUDED.version,
+          status = EXCLUDED.status, updated_at = now();
+  END IF;
 END;
 $$;
 
