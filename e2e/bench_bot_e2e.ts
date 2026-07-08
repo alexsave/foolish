@@ -37,11 +37,11 @@ const mkLcgU32 = (seed: number) => { let s = (seed >>> 0) || 1; return () => { s
 const nowMs = () => Number(process.hrtime.bigint()) / 1e6;
 
 // Belief hydration is feature-detected so this bench measures the TRUE pipeline
-// on either side of the belief-log fix: on branches that carry loadSessionLogs
-// the belief bots see the session (the intended behavior); on older branches
-// they don't (and importLogs just sees an empty log). Same code path the server
-// bot loop runs. Resolved in main() (no top-level await under tsx's CJS output).
-let loadSessionLogs: ((id: string, players: { player_id: string }[]) => Promise<unknown[]>) | null = null;
+// on either side of the belief-log fix: branches that carry loadSessionLogBytes
+// feed the belief bots the packed session bytes (the intended behavior); older
+// branches don't (and importLogs just sees an empty log). Same code path the
+// server bot loop runs. Resolved in main() (no top-level await under tsx's CJS).
+let loadSessionLogBytes: ((id: string) => Promise<Uint8Array | null>) | null = null;
 
 async function benchStrategy(strategy: string): Promise<{ strategy: string; n: number; mean: number; p50: number; p90: number; max: number; beliefHydrated: boolean }> {
   await resetDb();
@@ -58,9 +58,10 @@ async function benchStrategy(strategy: string): Promise<{ strategy: string; n: n
     const t0 = nowMs();
     const { game } = await executeWithGameLock(gameId, async (g: Game) => {
       // executeWithGameLock already ran loadCompleteGame(g) — a real row read.
-      if (loadSessionLogs) {
-        (g as unknown as { belief_logs?: unknown[] }).belief_logs = await loadSessionLogs(gameId, g.players);
-        if (((g as unknown as { belief_logs?: unknown[] }).belief_logs?.length ?? 0) > 0) beliefHydrated = true;
+      if (loadSessionLogBytes) {
+        const b = await loadSessionLogBytes(gameId);
+        (g as unknown as { belief_log_bytes?: Uint8Array }).belief_log_bytes = b ?? undefined;
+        if ((b?.length ?? 0) > 0) beliefHydrated = true;
       }
       if (g.status !== GAME_STATUS.PLAYING) return { game: g, events: [] };
       for (let i = 0; i < g.players.length; i++) {
@@ -105,8 +106,8 @@ async function benchStrategy(strategy: string): Promise<{ strategy: string; n: n
 async function main() {
   try {
     const u = await import('../supabase/functions/_shared/utils.ts');
-    if (typeof (u as Record<string, unknown>).loadSessionLogs === 'function') {
-      loadSessionLogs = (u as Record<string, unknown>).loadSessionLogs as typeof loadSessionLogs;
+    if (typeof (u as Record<string, unknown>).loadSessionLogBytes === 'function') {
+      loadSessionLogBytes = (u as Record<string, unknown>).loadSessionLogBytes as typeof loadSessionLogBytes;
     }
   } catch { /* older tree without the helper */ }
 
@@ -130,7 +131,7 @@ async function main() {
 
   if (JSON_OUT) { say(JSON.stringify({ e2e: results, memory })); await pgPool.end(); return; }
   say(`thinking-bot E2E latency vs real Postgres (load → belief → kernel choose → apply → commit), ${MOVES} decisions/bot`);
-  say(`belief hydrated: ${results.some(r => r.beliefHydrated) ? 'yes' : 'no (blind — no loadSessionLogs on this tree)'}`);
+  say(`belief hydrated: ${results.some(r => r.beliefHydrated) ? 'yes' : 'no (blind — no loadSessionLogBytes on this tree)'}`);
   for (const r of results) {
     say(`  ${r.strategy.padEnd(10)} n=${String(r.n).padStart(3)}  mean ${r.mean.toFixed(1).padStart(6)}ms   p50 ${r.p50.toFixed(1).padStart(6)}ms   p90 ${r.p90.toFixed(1).padStart(6)}ms   max ${r.max.toFixed(0)}ms`);
   }
