@@ -746,6 +746,10 @@ export const commitGame = async (
         p_state,
         p_logs_packed,
         p_logs_reset,
+        // The deal stamps game.game_seed; every other commit leaves it undefined,
+        // so NULL flows and commit_game's COALESCE keeps the stored seed. Never
+        // routed through p_game (PublicGame) — that would expose it to clients.
+        p_game_seed: dealt ? (game.game_seed ?? null) : null,
     });
 
     if (error) {

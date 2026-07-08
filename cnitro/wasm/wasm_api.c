@@ -115,10 +115,6 @@ void wasm_set_seed(unsigned int s) { game_set_seed(s); }
 // per-move reseed the engine already does keeps mid-game behavior unchanged).
 void wasm_set_deal_seed_bytes(void) { game_set_deal_seed_bytes(g_io, 32); }
 
-// Mid-game kernel calls on a seed-dealt game: turn on pop-the-top draws without
-// a seed (the shuffled deck order, marshaled in with the game, is enough).
-void wasm_set_deterministic_deck(void) { game_set_deterministic_deck(); }
-
 int wasm_reject_reason(void) { return engine_last_reject; }
 
 // ---------- state (de)serialization ---------------------------------------
@@ -146,8 +142,11 @@ static void get_state(Game *g, const unsigned char *p) {
     state_get(g, p, 0);
 }
 
-// TS -> C: parse the IO buffer into the working game.
-void wasm_import_state(void) { get_state(&g_game, g_io); }
+// TS -> C: parse the IO buffer into the working game. The ephemeral IO format
+// carries no deterministic_deck flag (only the durable blob does), so reset it:
+// a fresh deal has start_game set it, and a legacy game draws at random. This
+// also stops a reused engine instance inheriting a prior game's flag.
+void wasm_import_state(void) { get_state(&g_game, g_io); g_game.deterministic_deck = false; }
 
 // C -> TS: serialize the working game into the IO buffer; returns length.
 int wasm_export_state(void) { return put_state(&g_game, g_io); }
@@ -167,24 +166,39 @@ int wasm_export_state(void) { return put_state(&g_game, g_io); }
 // strategy_key/is_ai) is stable across a game and lives in a separate roster
 // column, reattached TS-side — exactly the split parseState/stateToGame
 // already assume (KernelState + template).
-#define STATE_FORMAT_VERSION 1
+// v1: [version][put_state...]. v2 adds a deterministic_deck flag byte right
+// after the version, before the put_state payload (see the Game field). v2 is
+// back-compatible: a v1 blob still loads, with the flag defaulted false, so
+// games in flight across the deploy are never rejected.
+#define STATE_FORMAT_VERSION 2
 
 // Serialize the working game into g_io as a versioned durable blob; returns
 // the byte length (>=1).
 int wasm_state_serialize(void) {
     g_io[0] = (unsigned char)STATE_FORMAT_VERSION;
-    return 1 + put_state(&g_game, g_io + 1);
+    g_io[1] = (unsigned char)(g_game.deterministic_deck ? 1 : 0);
+    return 2 + put_state(&g_game, g_io + 2);
 }
 
 // Load a versioned durable blob (already written into g_io) back into the
 // working game. Returns 1 on success, 0 if the leading version byte is one
 // this kernel does not understand (caller must treat as unreadable, never as
-// an empty game).
+// an empty game). Both the current format and the previous v1 are accepted.
 int wasm_state_deserialize(int len) {
     if (len < 1) return 0;
-    if (g_io[0] != STATE_FORMAT_VERSION) return 0;
-    get_state(&g_game, g_io + 1);
-    return 1;
+    unsigned char v = g_io[0];
+    if (v == 1) {
+        get_state(&g_game, g_io + 1);
+        g_game.deterministic_deck = false;   // pre-flag games drew at random
+        return 1;
+    }
+    if (v == STATE_FORMAT_VERSION) {
+        bool det = g_io[1] != 0;
+        get_state(&g_game, g_io + 2);
+        g_game.deterministic_deck = det;
+        return 1;
+    }
+    return 0;
 }
 
 // The version this kernel writes — lets the TS bridge assert the embed it

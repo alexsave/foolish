@@ -158,8 +158,7 @@ WASM_API_EXPORTS := \
   -Wl,--export=wasm_game_ptr_internal -Wl,--export=wasm_moves_ptr_internal \
   -Wl,--export=wasm_cards_a_ptr -Wl,--export=wasm_cards_b_ptr \
   -Wl,--export=wasm_init -Wl,--export=wasm_set_seed \
-  -Wl,--export=wasm_set_deal_seed_bytes -Wl,--export=wasm_set_deterministic_deck \
-  -Wl,--export=wasm_reject_reason \
+  -Wl,--export=wasm_set_deal_seed_bytes -Wl,--export=wasm_reject_reason \
   -Wl,--export=wasm_import_state -Wl,--export=wasm_export_state \
   -Wl,--export=wasm_state_serialize -Wl,--export=wasm_state_deserialize \
   -Wl,--export=wasm_state_format_version \

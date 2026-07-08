@@ -69,6 +69,7 @@ CREATE TABLE games (
   good_timestamp BIGINT, -- Timestamp in milliseconds when all attacks were covered, null if not all covered
   good_players JSONB NOT NULL DEFAULT '[]'::jsonb, -- Array of player_ids who have pressed 'good'
   state TEXT, -- packed kernel state blob (hex): the volatile game state the server reconstructs from on load (wasm_state_serialize / engine.ts serializeGameState). Authoritative once a game is dealt; the hand/deck JSONB columns are a client-facing read-model dual-written alongside it. NULL for never-dealt (waiting) games.
+  game_seed TEXT, -- SENSITIVE (server-only, like `state`): 64 hex chars = the 32-byte deal seed the deck was ChaCha-shuffled from. Regenerates the deal for audit/replay. NEVER granted to anon/authenticated (omitted from the column GRANT below); NULL for legacy/never-dealt games.
   logs_packed TEXT, -- packed session log stream (BARE hex, no \\x prefix — appended by plain concat): kernel log records + u48 timestamps, DRAW identities pre-masked. The sole session-log store (the game_logs table was dropped in migration 20260708120000); see wire/logwire.ts and migration 20260707150000.
   version BIGINT NOT NULL DEFAULT 0, -- optimistic-concurrency token (see commit_game RPC); replaces game_locks
   bot_lease_token UUID,              -- bot-loop lease holder token (replaces bot_locks)
@@ -471,7 +472,8 @@ CREATE OR REPLACE FUNCTION commit_game(
   p_bot_hands        JSONB,
   p_state            TEXT    DEFAULT NULL,  -- packed kernel state blob (hex); NULL leaves the column unchanged (never-dealt games)
   p_logs_packed      TEXT    DEFAULT NULL,  -- this move's logwire records (bare hex), appended under the version fence
-  p_logs_reset       BOOLEAN DEFAULT FALSE  -- session reset (GAME_START in the records): replace instead of append
+  p_logs_reset       BOOLEAN DEFAULT FALSE, -- session reset (GAME_START in the records): replace instead of append
+  p_game_seed        TEXT    DEFAULT NULL   -- deal seed (hex); set once at the deal, NULL on every other commit leaves it unchanged
 ) RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -495,6 +497,10 @@ BEGIN
     -- every subsequent load) and leaks the previous session's hands through
     -- the blob-authoritative loaders. COALESCE alone never cleared it.
     state = CASE WHEN g.status = 'waiting' THEN NULL ELSE COALESCE(p_state, state) END,
+    -- Same discipline as `state`: a WAITING reset clears the finished session's
+    -- seed so the next deal writes a fresh one; every dealt commit sets it (deal)
+    -- or leaves it (COALESCE with NULL).
+    game_seed = CASE WHEN g.status = 'waiting' THEN NULL ELSE COALESCE(p_game_seed, game_seed) END,
     logs_packed = CASE
       WHEN p_logs_reset THEN COALESCE(p_logs_packed, '')
       WHEN g.status = 'waiting' THEN ''

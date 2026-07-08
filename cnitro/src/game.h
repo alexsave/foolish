@@ -93,6 +93,12 @@ typedef struct {
     int16_t deck_count;
     int16_t discard_pile_length;
     bool    has_flipped;
+    // Seed-dealt game: the deck was ChaCha-shuffled once at the deal and every
+    // draw pops the top, so the whole game is reproducible from the seed. Set at
+    // the deal, carried in the durable state blob (state format v2), and read by
+    // every mid-game refill. Legacy (LCG) games leave it false and draw at
+    // random exactly as before. Not part of the ephemeral IO marshal.
+    bool    deterministic_deck;
     Card    flipped;
     Card    deck[MAX_DECK];
     Battle  table_battles[MAX_BATTLES];
@@ -138,13 +144,12 @@ uint32_t game_random_u32(void);
 // game_set_seed() call turns wide mode back off, so the legacy 32-bit path and
 // its pinned test streams are byte-for-byte unchanged when no wide seed is set.
 void   game_set_deal_seed_bytes(const uint8_t *seed, int len);
-int    game_deal_seed_active(void);  // 1 if deterministic-deck mode is in effect
+int    game_deal_seed_active(void);  // 1 if a wide deal seed is in effect
 
-// Turn on deterministic (pop-the-top) draws without reseeding. A seed-dealt
-// game shuffles its deck once at the deal; every later kernel call (mid-game
-// refills) just needs pop mode, since the persisted deck order carries the
-// determinism. game_set_seed() clears it. No-op where the deal RNG is disabled.
-void   game_set_deterministic_deck(void);
+// A seed-dealt game records deterministic_deck=true in its state (see the Game
+// field). Mid-game kernel calls need no seed: deserializing the durable blob
+// restores that flag, and draws pop the pre-shuffled deck. game_set_seed()
+// clears the wide flag; the persisted per-game flag is untouched by it.
 
 // Save/restore the game LCG state. Lets a strategy run internal
 // simulations (which consume game_random via draws and rollout policies)

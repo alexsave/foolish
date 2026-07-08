@@ -6,7 +6,7 @@
 
 import { Game, GAME_STATUS, AnimationEvent } from './types.ts';
 import { MAX_PLAYERS } from './constants.ts';
-import { applyKernelStateToGame, kernelStartGame, PackedRunOk, runPackedStart } from './wasm/engine.ts';
+import { applyKernelStateToGame, getLastDealSeedHex, kernelStartGame, PackedRunOk, runPackedStart } from './wasm/engine.ts';
 
 // Starts the game with all the animations. The deal/flip/first-attacker
 // rules live in the C kernel (cnitro/src/game.c start_game): player-major
@@ -25,7 +25,9 @@ export const start_game = (game: Game): AnimationEvent[] => {
     if (game.players.length > MAX_PLAYERS) {
         throw new Error(`Cannot start a game with ${game.players.length} players (max ${MAX_PLAYERS})`);
     }
-    return kernelStartGame(game);
+    const events = kernelStartGame(game);
+    game.game_seed = getLastDealSeedHex();   // persist the deal seed (audit/replay)
+    return events;
 }
 
 // The packed twin (docs/PACKED_WIRE_CUTOVER.md): the deal already ran in the
@@ -43,5 +45,6 @@ export const start_game_packed = (game: Game): PackedRunOk => {
     const humanSeats = game.players.map((_, i) => i).filter(i => !game.players[i].is_ai);
     const run = runPackedStart(game, humanSeats);
     applyKernelStateToGame(game, run.post, null);
+    game.game_seed = getLastDealSeedHex();   // persist the deal seed (audit/replay)
     return run;
 }
