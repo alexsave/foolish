@@ -1,5 +1,5 @@
 import { PrivatePlayer, GAME_STATUS, PLAYER_STATUS, GAME_MOVE_TYPE } from './types.ts';
-import { executeWithGameLock, loadSessionLogs, PackedOpProducts } from './utils.ts';
+import { executeWithGameLock, loadSessionLogBytes, PackedOpProducts } from './utils.ts';
 import { calculateLegalMoves, strategyUsesLogs, LegalMove } from './bot_strategy.ts';
 import { createClient } from 'jsr:@supabase/supabase-js';
 import { processBotActionPacked, executeBotMovePacked, shouldBotActCore, PackedBotMove } from './pure_bot_actions.ts';
@@ -265,17 +265,19 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
 
                 // Belief bots (octogen/semtex/cordite/fulminate/espresso) deduce
                 // hidden cards from the whole current session, but the hot-path
-                // loader (loadCompleteGame) leaves game.logs empty. Hydrate a
-                // READ-ONLY belief view from the persisted, DRAW-masked session
-                // log — once per cycle, and only when a belief bot is actually
-                // eligible so the beliefless bots keep the fast path. It stays
-                // off game.logs on purpose: the commit path re-encodes game.logs,
-                // so putting the whole session there would re-append it every
-                // move. Without this the belief bots play blind (see the octogen
-                // regression from the loadCompleteGame log-load removal).
+                // loader (loadCompleteGame) leaves game.logs empty. Hand them the
+                // persisted, DRAW-masked session log as its RAW PACKED BYTES —
+                // once per cycle, only when a belief bot is actually eligible so
+                // the beliefless bots keep the fast path. The kernel importer
+                // splices these bytes in directly (no JS-object decode/marshal;
+                // see importLogsPacked). It stays off game.logs on purpose: the
+                // commit path re-encodes game.logs, so putting the whole session
+                // there would re-append it every move. Without this the belief
+                // bots play blind (the octogen regression from the
+                // loadCompleteGame log-load removal).
                 if (eligibleBots.some(b => strategyUsesLogs(b.bot.strategy_key))) {
-                    game.belief_logs = await loadSessionLogs(game_id, game.players);
-                    console.log(`[BELIEF] hydrated ${game.belief_logs.length} session-log records for belief bots`);
+                    game.belief_log_bytes = (await loadSessionLogBytes(game_id)) ?? undefined;
+                    console.log(`[BELIEF] hydrated ${game.belief_log_bytes?.length ?? 0} session-log bytes for belief bots`);
                 }
 
                 // Fisher-Yates shuffle. A comparator-based shuffle

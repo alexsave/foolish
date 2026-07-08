@@ -68,14 +68,18 @@ test('the server bot loop feeds octogen the whole session log (not an empty one)
   await executeWithGameLock(gameId,
     async (g: Game) => ({ game: g, events: start_game(g) as AnimationEvent[] }), 'start', false);
 
-  // Spy at the exact seam: what does game.belief_logs hold when the bot loop
-  // asks octogen to choose? Record (beliefLen, sessionLen-at-that-moment).
+  // Spy at the exact seam: what does game.belief_log_bytes hold when the bot
+  // loop asks octogen to choose? Decode the packed bytes to a record count.
+  const { decodeLogs } = await import('../supabase/functions/_shared/wire/logwire.ts');
   const seen: { beliefLen: number }[] = [];
   const orig = WasmBotStrategy.prototype.chooseMoveDirect;
   WasmBotStrategy.prototype.chooseMoveDirect = function (game: Game, botPlayerId: string) {
     // `this.logs` is true only for the belief bots (octogen here).
     if ((this as unknown as { logs: boolean }).logs) {
-      seen.push({ beliefLen: game.belief_logs?.length ?? -1 });
+      const bytes = game.belief_log_bytes;
+      let cnt = -1;
+      if (bytes) { try { cnt = decodeLogs(bytes, game.id, game.players).length; } catch { cnt = -1; } }
+      seen.push({ beliefLen: cnt });
     }
     return orig.call(this, game, botPlayerId);
   };
@@ -95,7 +99,7 @@ test('the server bot loop feeds octogen the whole session log (not an empty one)
   // octogen actually got to choose through the real loop.
   assert.ok(seen.length > 0, 'octogen never chose through the real bot loop');
   // Never chose with a broken/undefined belief field.
-  assert.ok(seen.every(s => s.beliefLen >= 0), 'belief_logs was undefined at a belief-bot choose — hydration wiring missing');
+  assert.ok(seen.every(s => s.beliefLen >= 0), 'belief_log_bytes was undefined at a belief-bot choose — hydration wiring missing');
   // THE REGRESSION GUARD: once the session has accumulated records, octogen must
   // see them. Pre-fix, maxBeliefLen was pinned at 0 no matter how long the game
   // ran. The game produces several log records per bout (attack/cover/draw/

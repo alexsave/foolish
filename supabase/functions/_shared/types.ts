@@ -176,6 +176,12 @@ export interface Game extends PublicGame {
     // everywhere else — offline/test harnesses accumulate into `logs` and the
     // chooser falls back to that.
     belief_logs?: GameLog[];
+    // The SAME belief history, but kept as its raw packed bytes (games.logs_packed,
+    // logwire format) so the kernel importer splices them in with zero JS-object
+    // marshaling — "logs as C buffers" end to end (see importLogsPacked). The
+    // server bot loop sets this (preferred over belief_logs); offline/test paths
+    // that only have JS objects leave it undefined and the chooser marshals those.
+    belief_log_bytes?: Uint8Array;
     // Optimistic-concurrency token. Loaded from games.version; the commit_game
     // RPC only writes when the stored version still equals what we loaded, then
     // bumps it. Undefined for in-memory games never loaded from the DB (tests,

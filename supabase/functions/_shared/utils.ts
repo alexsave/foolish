@@ -599,10 +599,10 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
     // session-log column (games.logs_packed). It starts EMPTY every load: we no
     // longer pull the whole (growing) history on the hot path. The two consumers
     // of the FULL session load it on demand from games.logs_packed instead: the
-    // belief bots (loadSessionLogs → game.belief_logs, in the bot loop) and the
-    // end-of-game replay snapshot (finalizeEndedGame). Historical note: this
-    // field used to be assumed unread by game logic, which silently starved the
-    // belief bots until belief_logs was added — see loadSessionLogs.
+    // belief bots (loadSessionLogBytes → game.belief_log_bytes, in the bot loop)
+    // and the end-of-game replay snapshot (finalizeEndedGame). Historical note:
+    // this field used to be assumed unread by game logic, which silently starved
+    // the belief bots until the belief-log path was added — see loadSessionLogBytes.
     const logs: GameLog[] = [];
 
     const game: Game = {
@@ -806,31 +806,28 @@ const check_win_sync = (game: Game): boolean => {
     return true;
 }
 
-// Load the CURRENT session's log stream for the belief/memory bots. The hot
-// path (loadCompleteGame) leaves game.logs empty so a move only appends its own
-// records; but octogen/semtex/cordite/fulminate/espresso deduce hidden cards
-// from the whole session, so the bot loop hydrates game.belief_logs from here
-// before the kernel chooses. Source of truth is the packed session-log column
-// (games.logs_packed — masked draws, appended under the commit version fence, so
-// it already holds exactly the current session: a GAME_START reset replaces it).
-// Returns [] on any failure so the bot still plays (beliefless) instead of
-// crashing the loop. The decode mirrors finalizeEndedGame's; kept separate so
-// neither silently drifts.
-export const loadSessionLogs = async (
-    game_id: string, players: { player_id: string }[],
-): Promise<GameLog[]> => {
+// Load the CURRENT session's log as its RAW PACKED BYTES for the belief/memory
+// bots. The hot path (loadCompleteGame) leaves game.logs empty so a move only
+// appends its own records; but octogen/semtex/cordite/fulminate/espresso deduce
+// hidden cards from the whole session, so the bot loop hands these bytes to the
+// kernel (game.belief_log_bytes → importLogsPacked) with no JS-object decode in
+// between — "logs as C buffers". Source of truth is the packed session-log
+// column (games.logs_packed — masked draws, logwire format, appended under the
+// commit version fence, so it already holds exactly the current session: a
+// GAME_START reset replaces it). Returns null on any failure so the bot still
+// plays (beliefless) instead of crashing the loop.
+export const loadSessionLogBytes = async (game_id: string): Promise<Uint8Array | null> => {
     try {
         const { data } = await supabaseClient
             .from('games').select('logs_packed').eq('id', game_id).single();
         if (data?.logs_packed) {
-            const { decodeLogs } = await import('./wire/logwire.ts');
             const { hexToBytes } = await import('./replay/codec.ts');
-            return decodeLogs(hexToBytes(data.logs_packed), game_id, players);
+            return hexToBytes(data.logs_packed);
         }
     } catch (e) {
         console.error(`[BELIEF] packed session log read failed for ${game_id}:`, e);
     }
-    return [];
+    return null;
 };
 
 // One-time end-of-game side effects (ELO + replay snapshot + log wipe). Run by

@@ -105,11 +105,44 @@ export function __setBotSeedSource(fn: (() => number) | null): void { seedSource
 const MAX_KERNEL_LOGS = 512;   // MAX_LOGS in cnitro/src/game.h
 const MAX_KERNEL_PAIRS = 64;   // MAX_LOG_PAIRS in the wasm build
 
+// C-buffer fast path: splice the session log's PACKED bytes (games.logs_packed,
+// logwire format — see wire/logwire.ts) straight into the kernel import buffer,
+// with NO JS GameLog[] in between. The two layouts differ only in that logwire
+// prepends a u48 timestamp per record and has no count header; the records
+// themselves (type, seat, defender, n_pairs, wire-card pairs) are byte-identical
+// to what wasm_import_logs wants — and the seat is already in the bytes, so the
+// old decode→player_id→re-marshal→seat round trip was pure waste. This is the
+// "keep logs as C buffers" path: DB bytes → kernel, one copy.
+function importLogsPacked(ex: BotsExports, bytes: Uint8Array): void {
+    const buf = __mem(ex);
+    const base = ex.wasm_io_ptr();
+    let w = base + 2;   // records go after the u16 count header
+    let p = 0, n = 0;   // read cursor into logwire bytes; records written
+    while (p + 10 <= bytes.length && n < MAX_KERNEL_LOGS) {
+        p += 6;                                  // skip the u48 timestamp
+        const type = bytes[p], seat = bytes[p + 1], def = bytes[p + 2];
+        const srcPairs = bytes[p + 3];
+        p += 4;
+        if (p + srcPairs * 2 > bytes.length) break;   // truncated tail — stop
+        const wPairs = srcPairs < MAX_KERNEL_PAIRS ? srcPairs : MAX_KERNEL_PAIRS;
+        buf[w++] = type; buf[w++] = seat; buf[w++] = def; buf[w++] = wPairs;
+        for (let j = 0; j < wPairs * 2; j++) buf[w++] = bytes[p + j];
+        p += srcPairs * 2;
+        n++;
+    }
+    buf[base] = n & 0xff;
+    buf[base + 1] = (n >> 8) & 0xff;
+    ex.wasm_import_logs();
+}
+
 function importLogs(ex: BotsExports, game: Game): void {
-    // Prefer the belief-log view (the full current session, loaded from
-    // games.logs_packed by the server bot loop) over the write buffer `logs`,
-    // which the hot-path loader keeps empty. Offline/test harnesses set no
-    // belief_logs and accumulate into `logs`, so the fallback covers them.
+    // Fast path: the server bot loop hands the belief bots the session log as
+    // its raw packed bytes (game.belief_log_bytes) — feed them to the kernel
+    // with zero JS-object marshaling. Offline/test harnesses have no bytes and
+    // accumulate JS logs in game.logs (or set game.belief_logs directly), so the
+    // object marshal below still covers them.
+    const packed = game.belief_log_bytes;
+    if (packed) { importLogsPacked(ex, packed); return; }
     const logs = game.belief_logs ?? game.logs ?? [];
     const buf = __mem(ex);
     let q = ex.wasm_io_ptr();
