@@ -43,13 +43,22 @@ function size() {
 }
 
 // ---- speed: engine throughput ----
+// Single-run throughput on a shared CI runner swings several % — so run it a few
+// times and report the MEDIAN plus the observed spread (lo/hi). The renderer
+// only paints a delta green/red when it clears that noise band.
+const median = (a) => { const s = [...a].sort((x, y) => x - y); const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
 function speed() {
   try {
-    const out = runNode(['e2e/bench_engine.ts'], { BENCH_GAMES: process.env.BENCH_GAMES || '300' });
-    const g = out.match(/games\/sec:\s*([\d.]+)/);
-    const a = out.match(/actions\/sec:\s*([\d.]+)/);
-    const l = out.match(/legal-evals\/sec:\s*([\d.]+)/);
-    return { gamesPerSec: g ? +g[1] : null, actionsPerSec: a ? +a[1] : null, legalEvalsPerSec: l ? +l[1] : null };
+    const reps = Number(process.env.SPEED_REPS || 5);
+    const g = [], a = [], l = [];
+    for (let i = 0; i < reps; i++) {
+      const out = runNode(['e2e/bench_engine.ts'], { BENCH_GAMES: process.env.BENCH_GAMES || '300' });
+      const gm = out.match(/games\/sec:\s*([\d.]+)/); if (gm) g.push(+gm[1]);
+      const am = out.match(/actions\/sec:\s*([\d.]+)/); if (am) a.push(+am[1]);
+      const lm = out.match(/legal-evals\/sec:\s*([\d.]+)/); if (lm) l.push(+lm[1]);
+    }
+    const stat = (arr) => arr.length ? { med: median(arr), lo: Math.min(...arr), hi: Math.max(...arr), n: arr.length } : null;
+    return { reps, gamesPerSec: stat(g), actionsPerSec: stat(a), legalEvalsPerSec: stat(l) };
   } catch (e) { return { error: String(e.message || e) }; }
 }
 

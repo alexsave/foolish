@@ -101,15 +101,20 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            const { render, MARKER } = require(`${process.env.GITHUB_WORKSPACE}/pr/scripts/render_metrics.cjs`);
+            const { render, MARKER, extractSlot, spliceSlot } = require(`${process.env.GITHUB_WORKSPACE}/pr/scripts/render_metrics.cjs`);
             const base = JSON.parse(fs.readFileSync(`${process.env.GITHUB_WORKSPACE}/base.json`, 'utf8'));
             const head = JSON.parse(fs.readFileSync(`${process.env.GITHUB_WORKSPACE}/head.json`, 'utf8'));
-            const body = render(base, head);
             const { owner, repo } = context.repo;
             const issue_number = context.payload.pull_request.number;
             const { data: comments } = await github.rest.issues.listComments({ owner, repo, issue_number, per_page: 100 });
             const existing = comments.find((c) => c.body && c.body.includes(MARKER));
+            let body = render(base, head);
             if (existing) {
+              // The coverage job co-owns this comment (it fills the coverage slot
+              // ~minutes later). Preserve whatever it already wrote so a metrics
+              // re-render never wipes it.
+              const cov = extractSlot(existing.body || '');
+              if (cov) body = spliceSlot(body, cov);
               await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
             } else {
               await github.rest.issues.createComment({ owner, repo, issue_number, body });

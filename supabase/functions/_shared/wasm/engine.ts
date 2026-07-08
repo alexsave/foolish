@@ -105,6 +105,13 @@ export function __kernelWasmMB(): number {
     return mem ? Math.round(mem.buffer.byteLength / 1048576) : -1;
 }
 
+// Raw linear-memory bytes (wasm grows in 64KB pages, so this is page-granular) —
+// finer than the MB round above for benchmarks that need to see small deltas.
+export function __kernelWasmBytes(): number {
+    const mem = exportsCache?.memory;
+    return mem ? mem.buffer.byteLength : -1;
+}
+
 // The embed is take-once (a second take throws — see cnitro/wasm/embed.mjs),
 // so the decoded bytes are held here from first take until an instantiation
 // SUCCEEDS: a failed attempt (or a sync call racing an in-flight async one)

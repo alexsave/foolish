@@ -14,6 +14,11 @@ name: coverage
 # Floors live in cnitro/Makefile (COV_LINE_MIN/COV_BRANCH_MIN) and package.json
 # (coverage:check:*). Raise them as coverage climbs; never lower to make a red
 # build pass.
+#
+# The measured percentages are also surfaced ON THE PR: the `comment` job below
+# fills the coverage slot of the metrics comment (see .github/workflows/metrics.yml)
+# so a reviewer sees the actual numbers, not just a green check. Extraction is
+# best-effort (never fails the build); the gate steps remain the source of truth.
 
 on:
   push:
@@ -24,6 +29,9 @@ on:
 jobs:
   c-engine:
     runs-on: ubuntu-latest
+    outputs:
+      line: ${{ steps.covc.outputs.line }}
+      branch: ${{ steps.covc.outputs.branch }}
     steps:
       - uses: actions/checkout@v4
 
@@ -34,8 +42,32 @@ jobs:
         working-directory: cnitro
         run: make coverage
 
+      # Re-run gcovr over the same covbuild data (already produced above) to pull
+      # the numbers as JSON. Best-effort: never fails the job.
+      - name: Extract C coverage numbers
+        id: covc
+        if: always()
+        working-directory: cnitro
+        run: |
+          gcovr --root . --filter 'src/game\.c' --filter 'src/legal\.c' --filter 'src/replay\.c' \
+            --json-summary -o cov-summary.json || true
+          node -e '
+            let l = "", b = "";
+            try {
+              const j = require("./cov-summary.json");
+              l = j.line_percent ?? (j.line_total ? 100 * j.line_covered / j.line_total : "");
+              b = j.branch_percent ?? (j.branch_total ? 100 * j.branch_covered / j.branch_total : "");
+            } catch (e) {}
+            require("fs").appendFileSync(process.env.GITHUB_OUTPUT, `line=${l}\nbranch=${b}\n`);
+          '
+
   server-client-ts:
     runs-on: ubuntu-latest
+    outputs:
+      server_line: ${{ steps.covts.outputs.server_line }}
+      server_branch: ${{ steps.covts.outputs.server_branch }}
+      client_line: ${{ steps.covts.outputs.client_line }}
+      client_branch: ${{ steps.covts.outputs.client_branch }}
 
     # The e2e suite runs the REAL server orchestration (executeWithGameLock, the
     # CAS commit_game / bot-lease plpgsql, the meta endpoint) against a real
@@ -83,3 +115,59 @@ jobs:
 
       - name: Server + client coverage gate
         run: npm run coverage:check
+
+      # Re-report the SAME .v8cov data as json-summary to pull the numbers.
+      # Best-effort: never fails the job (the gate above already decided pass/fail).
+      - name: Extract TS coverage numbers
+        id: covts
+        if: always()
+        run: |
+          npm run coverage:json:server || true
+          npm run coverage:json:client || true
+          node -e '
+            const rd = (p) => { try { return require(p).total; } catch (e) { return null; } };
+            const s = rd("./.covjson/server/coverage-summary.json");
+            const c = rd("./.covjson/client/coverage-summary.json");
+            const lines = [
+              ["server_line", s?.lines?.pct ?? ""],
+              ["server_branch", s?.branches?.pct ?? ""],
+              ["client_line", c?.lines?.pct ?? ""],
+              ["client_branch", c?.branches?.pct ?? ""],
+            ].map(([k, v]) => `${k}=${v}`).join("\n");
+            require("fs").appendFileSync(process.env.GITHUB_OUTPUT, lines + "\n");
+          '
+
+  # Fill the coverage slot of the metrics comment. Runs even if a gate failed
+  # (always()) so a red ❌ number still shows; PR-only (nothing to comment on a push).
+  comment:
+    needs: [c-engine, server-client-ts]
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const { renderCoverage, spliceSlot, MARKER } = require(`${process.env.GITHUB_WORKSPACE}/scripts/render_metrics.cjs`);
+            const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
+            const ce = { line: num(`${{ needs.c-engine.outputs.line }}`), branch: num(`${{ needs.c-engine.outputs.branch }}`) };
+            const sv = { line: num(`${{ needs.server-client-ts.outputs.server_line }}`), branch: num(`${{ needs.server-client-ts.outputs.server_branch }}`) };
+            const cl = { line: num(`${{ needs.server-client-ts.outputs.client_line }}`), branch: num(`${{ needs.server-client-ts.outputs.client_branch }}`) };
+            const covTable = renderCoverage({
+              cEngine: ce.line != null ? ce : null,
+              server: sv.line != null ? sv : null,
+              client: cl.line != null ? cl : null,
+              floors: { cEngineLine: 90, cEngineBranch: 74, serverLine: 80, serverBranch: 78, clientLine: 90, clientBranch: 82 },
+            });
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const { data: comments } = await github.rest.issues.listComments({ owner, repo, issue_number, per_page: 100 });
+            const existing = comments.find((c) => c.body && c.body.includes(MARKER));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body: spliceSlot(existing.body, covTable) });
+            } else {
+              core.info('metrics comment not present yet; coverage attaches on the next metrics run');
+            }

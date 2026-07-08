@@ -21,8 +21,8 @@ import { executeWithGameLock } from '../supabase/functions/_shared/utils.ts';
 import { start_game } from '../supabase/functions/_shared/game_lifecycle.ts';
 import { calculateLegalMoves } from '../supabase/functions/_shared/bot_strategy.ts';
 import { processBotActionPacked, shouldBotActCore } from '../supabase/functions/_shared/pure_bot_actions.ts';
-import { __setBotSeedSource, __botsWasmMB } from '../supabase/functions/_shared/wasm/bots.ts';
-import { __setKernelSeedSource, __kernelWasmMB } from '../supabase/functions/_shared/wasm/engine.ts';
+import { __setBotSeedSource, __botsWasmMB, __botsWasmBytes } from '../supabase/functions/_shared/wasm/bots.ts';
+import { __setKernelSeedSource, __kernelWasmMB, __kernelWasmBytes } from '../supabase/functions/_shared/wasm/engine.ts';
 import { bytesToHex } from '../supabase/functions/_shared/replay/codec.ts';
 import { bytesToBareHex } from '../supabase/functions/_shared/wire/bytes.ts';
 import { logsFromKernelExport } from '../supabase/functions/_shared/wire/logwire.ts';
@@ -122,7 +122,11 @@ async function main() {
   }
 
   // Peak wasm linear memory after the MC bots ran (the external-budget number).
-  const memory = { botsWasmMB: __botsWasmMB(), kernelWasmMB: __kernelWasmMB() };
+  // Raw bytes too (page-granular) so before/after can resolve small deltas.
+  const memory = {
+    botsWasmMB: __botsWasmMB(), kernelWasmMB: __kernelWasmMB(),
+    botsWasmBytes: __botsWasmBytes(), kernelWasmBytes: __kernelWasmBytes(),
+  };
 
   if (JSON_OUT) { say(JSON.stringify({ e2e: results, memory })); await pgPool.end(); return; }
   say(`thinking-bot E2E latency vs real Postgres (load → belief → kernel choose → apply → commit), ${MOVES} decisions/bot`);
