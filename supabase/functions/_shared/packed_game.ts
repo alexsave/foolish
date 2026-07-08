@@ -21,13 +21,16 @@ export interface GamesRowForView {
     good_timestamp: number | null;
 }
 
-// A WAITING lobby row carries the roster + board columns but no dealt state
-// (no blob). This reconstructs the minimal Game the personalizer needs directly
-// from those columns — hands are empty pre-deal, so it reads no player_hands and
-// pulls no supabase-js. The output is field-equivalent to loadCompleteGame's
-// non-blob (lobby) assembly, so personalize_game(lobbyGameFromRow(row)) matches
-// personalize_game(loadCompleteGame(id)) for a WAITING game (see packed_review_gaps).
-export interface LobbyGameRow extends GamesRowForView {
+// Reconstruct the minimal Game the personalizer needs directly from a games
+// row, for any game that CAN'T be served packed — a WAITING lobby (no deal yet)
+// or a finished/legacy game with no state blob. It reads only the row's roster +
+// board columns: no player_hands read, no loadCompleteGame, no supabase-js. Hands
+// are empty, which is exactly what loadCompleteGame's non-blob branch also
+// produces (post-cutover the JSONB hand tables aren't written during play), so
+// personalize_game(gameViewFromRow(row)) matches personalize_game(
+// loadCompleteGame(id)) for these games (see packed_review_gaps). This is what
+// keeps the list build loop O(1) per game instead of an N+1 of per-game loads.
+export interface RowGameView extends GamesRowForView {
     players: (GamesRowForView['players'][number] & { status?: string; hand_length?: number; strategy_key?: string })[];
     discard_pile_length?: number;
     flipped?: unknown;
@@ -38,13 +41,13 @@ export interface LobbyGameRow extends GamesRowForView {
     elimination_order?: string[];
 }
 
-export function lobbyGameFromRow(row: LobbyGameRow): Game {
+export function gameViewFromRow(row: RowGameView): Game {
     const players: PrivatePlayer[] = (row.players ?? []).map((p) => ({
         player_id: p.player_id,
         name: p.name,
         status: (p.status ?? 'ready') as PrivatePlayer['status'],
         is_ai: p.is_ai,
-        hand: [], // pre-deal: no cards
+        hand: [], // no blob → no hidden hands to show (empty, as loadCompleteGame also yields here)
         hand_length: p.hand_length ?? 0,
         awaiting_attack: false,
         strategy_key: p.strategy_key ?? 'human',

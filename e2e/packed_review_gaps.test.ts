@@ -25,7 +25,7 @@ import { personalize_game } from '../supabase/functions/_shared/common_utils.ts'
 import { start_game } from '../supabase/functions/_shared/game_lifecycle.ts';
 import { kernelLegalMoves, kernelShouldAct, serializeGameState, __setKernelSeedSource } from '../supabase/functions/_shared/wasm/engine.ts';
 import { encodeAction, decodeAction, encodeActionRequest, decodeActionRequest, encodeActionResponse, decodeActionResponse, ACTION_STATUS, AwireKindName } from '../supabase/functions/_shared/wire/awire.ts';
-import { buildPackedGameBytes, lobbyGameFromRow } from '../supabase/functions/_shared/packed_game.ts';
+import { buildPackedGameBytes, gameViewFromRow } from '../supabase/functions/_shared/packed_game.ts';
 import { decodePackedGame, encodeGamesList, decodePackedGamesList } from '../supabase/functions/_shared/wire/view.ts';
 import { bytesToHex } from '../supabase/functions/_shared/replay/codec.ts';
 import { validateActionWire, initClientGuards } from '../src/wasm/clientGuards.ts';
@@ -233,30 +233,49 @@ if (!process.env.VALIDATION_ONLY) {
     }
   });
 
-  // get_my_games rebuilds a WAITING lobby's view straight from the games row
-  // (no player_hands read, no supabase-js) via lobbyGameFromRow. Prove that
-  // reconstruction is equivalent to the loadCompleteGame path it replaces, so
-  // the packed list a client sees is byte-identical to before the cold-start
-  // rewrite.
-  test('lobbyGameFromRow(row) personalizes identically to loadCompleteGame for a WAITING game', async () => {
-    const gameId = `l${uuid().slice(0, 5)}`;
+  // get_my_games serves any game with no state blob (a WAITING lobby, or a
+  // finished/legacy game) straight from the games row via gameViewFromRow — never
+  // loadCompleteGame, which would re-import supabase-js and do a per-game DB read
+  // (the build-loop N+1 that cost ~150ms/game). Prove that reconstruction is
+  // equivalent to the loadCompleteGame path it replaces, for BOTH a lobby and a
+  // finished game, so the list a client sees is unchanged.
+  test('gameViewFromRow(row) personalizes identically to loadCompleteGame (waiting + finished, no blob)', async () => {
+    // The exact columns get_my_games selects.
+    const cols = 'id,name,status,version,state,players,good_players,good_timestamp,' +
+      'discard_pile_length,flipped,power_suit,first_attacker,defender,table_battles,elimination_order';
+
+    // (a) WAITING lobby.
+    const lobbyId = `l${uuid().slice(0, 5)}`;
     const h1 = uuid(), h2 = uuid();
-    await seedGame(gameId, [
+    await seedGame(lobbyId, [
       { id: h1, name: 'H1', is_ai: false, strategy_key: 'human' },
       { id: h2, name: 'B2', is_ai: true, strategy_key: STRATEGY_KEY.RANDOM },
     ]);
 
-    // The exact columns get_my_games selects for the batched read.
-    const cols = 'id,name,status,version,state,players,good_players,good_timestamp,' +
-      'discard_pile_length,flipped,power_suit,first_attacker,defender,table_battles,elimination_order';
-    const row = (await pgPool.query(`SELECT ${cols} FROM games WHERE id=$1`, [gameId])).rows[0];
-    assert.equal(row.status, GAME_STATUS.WAITING, 'seeded game is a lobby');
+    // (b) Finished game with NO blob (the slow legacy shape): mark it GAME_OVER
+    // with an elimination order and no state, exactly what falls through to the
+    // row-view path in production.
+    const overId = `o${uuid().slice(0, 5)}`;
+    await seedGame(overId, [
+      { id: h1, name: 'H1', is_ai: false, strategy_key: 'human' },
+      { id: h2, name: 'B2', is_ai: true, strategy_key: STRATEGY_KEY.RANDOM },
+    ]);
+    await pgPool.query(
+      `UPDATE games SET status='game_over', state=NULL, elimination_order=$2 WHERE id=$1`,
+      [overId, JSON.stringify([h1])],
+    );
 
-    const viaLoad = await loadCompleteGame(gameId);
-    for (const viewer of [h1, h2, 'spectator-not-in-game']) {
-      const fromRow = personalize_game(lobbyGameFromRow(row), viewer);
-      const fromLoad = personalize_game(viaLoad, viewer);
-      assert.deepEqual(fromRow, fromLoad, `personalized lobby view matches for viewer ${viewer}`);
+    for (const [gameId, wantStatus] of [[lobbyId, GAME_STATUS.WAITING], [overId, GAME_STATUS.GAME_OVER]] as const) {
+      const row = (await pgPool.query(`SELECT ${cols} FROM games WHERE id=$1`, [gameId])).rows[0];
+      assert.equal(row.status, wantStatus, `${gameId} has expected status`);
+      assert.equal(row.state, null, `${gameId} has no blob → row-view path`);
+
+      const viaLoad = await loadCompleteGame(gameId);
+      for (const viewer of [h1, h2, 'spectator-not-in-game']) {
+        const fromRow = personalize_game(gameViewFromRow(row), viewer);
+        const fromLoad = personalize_game(viaLoad, viewer);
+        assert.deepEqual(fromRow, fromLoad, `${gameId}: personalized view matches for viewer ${viewer}`);
+      }
     }
   });
 
