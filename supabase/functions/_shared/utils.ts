@@ -806,6 +806,39 @@ const check_win_sync = (game: Game): boolean => {
     return true;
 }
 
+// Load the CURRENT session's log stream for the belief/memory bots. The hot
+// path (loadCompleteGame) leaves game.logs empty so a move only appends its own
+// records; but octogen/semtex/cordite/fulminate/espresso deduce hidden cards
+// from the whole session, so the bot loop hydrates game.belief_logs from here
+// before the kernel chooses. Source of truth is the packed session-log column
+// (games.logs_packed — masked draws, appended under the commit version fence, so
+// it already holds exactly the current session: a GAME_START reset replaces it).
+// Legacy in-flight games fall back to the game_logs rows. Returns [] on any
+// failure so the bot still plays (beliefless) instead of crashing the loop. The
+// decode mirrors finalizeEndedGame's; kept separate so neither silently drifts.
+export const loadSessionLogs = async (
+    game_id: string, players: { player_id: string }[],
+): Promise<GameLog[]> => {
+    try {
+        const { data } = await supabaseClient
+            .from('games').select('logs_packed').eq('id', game_id).single();
+        if (data?.logs_packed) {
+            const { decodeLogs } = await import('./wire/logwire.ts');
+            const { hexToBytes } = await import('./replay/codec.ts');
+            const logs = decodeLogs(hexToBytes(data.logs_packed), game_id, players);
+            if (logs.length > 0) return logs;
+        }
+    } catch (e) {
+        console.error(`[BELIEF] packed session log read failed for ${game_id}:`, e);
+    }
+    try {
+        return await loadCurrentSessionLogs(supabaseClient, game_id);
+    } catch (e) {
+        console.error(`[BELIEF] legacy session log read failed for ${game_id}:`, e);
+        return [];
+    }
+};
+
 // One-time end-of-game side effects (ELO + replay snapshot + log wipe). Run by
 // executeWithGameLock AFTER the final GAME_OVER state is durably committed, so it
 // fires exactly once (only the winning CAS commit reaches it). This is the tail of

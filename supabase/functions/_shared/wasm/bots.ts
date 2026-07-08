@@ -106,7 +106,11 @@ const MAX_KERNEL_LOGS = 512;   // MAX_LOGS in cnitro/src/game.h
 const MAX_KERNEL_PAIRS = 64;   // MAX_LOG_PAIRS in the wasm build
 
 function importLogs(ex: BotsExports, game: Game): void {
-    const logs = game.logs ?? [];
+    // Prefer the belief-log view (the full current session, loaded from
+    // games.logs_packed by the server bot loop) over the write buffer `logs`,
+    // which the hot-path loader keeps empty. Offline/test harnesses set no
+    // belief_logs and accumulate into `logs`, so the fallback covers them.
+    const logs = game.belief_logs ?? game.logs ?? [];
     const buf = __mem(ex);
     let q = ex.wasm_io_ptr();
     const n = Math.min(logs.length, MAX_KERNEL_LOGS);
