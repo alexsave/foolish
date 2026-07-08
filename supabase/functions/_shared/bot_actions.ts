@@ -5,7 +5,7 @@ import { createClient } from 'jsr:@supabase/supabase-js';
 import { processBotActionPacked, executeBotMovePacked, shouldBotActCore, PackedBotMove } from './pure_bot_actions.ts';
 import { __botsWasmMB, __ensureBots } from './wasm/bots.ts';
 import { __kernelWasmMB } from './wasm/engine.ts';
-import { bytesToHex } from './replay/codec.ts';
+import { bytesToHex, hexToBytes } from './replay/codec.ts';
 import { bytesToBareHex } from './wire/bytes.ts';
 import { logsFromKernelExport } from './wire/logwire.ts';
 
@@ -134,7 +134,20 @@ type CpuAcct = { computeMs: number; decisions: number; maxMs: number };
 
 // New improved bot processing that fixes eligibility drift
 // Uses one-bot-per-iteration approach to prevent race conditions
-const processBotActions = async (game_id: string, cycle: number = 0, loopStartTime?: number, cpu: CpuAcct = { computeMs: 0, decisions: 0, maxMs: 0 }, leaseToken: string = ''): Promise<void> => {
+// concat two byte buffers (resident belief log + this move's appended records).
+const concatBytes = (a: Uint8Array, b: Uint8Array): Uint8Array => {
+    const out = new Uint8Array(a.length + b.length);
+    out.set(a, 0); out.set(b, a.length);
+    return out;
+};
+
+// `residentBelief`: the current session's packed log bytes carried across cycles
+// of ONE drive segment, so a belief bot's per-cycle DB read (loadSessionLogBytes)
+// happens once instead of every cycle. Only used for bots-only games — under the
+// bot lease there is no concurrent writer, so appending our own committed records
+// keeps it byte-identical to games.logs_packed. Human games can be written
+// concurrently, so they reload each cycle (null carried forward).
+const processBotActions = async (game_id: string, cycle: number = 0, loopStartTime?: number, cpu: CpuAcct = { computeMs: 0, decisions: 0, maxMs: 0 }, leaseToken: string = '', residentBelief: Uint8Array | null = null): Promise<void> => {
 
     if (loopStartTime === undefined) {
         loopStartTime = Date.now();
@@ -180,6 +193,10 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
     let packedEnded = false;
     let packedNEvents = 0;
     let packedEvents: Map<number, Uint8Array> | null = null;
+    // Belief-log bytes actually used this cycle + whether the game was bots-only
+    // (set inside the lock), so the recursion can carry a resident log forward.
+    let hydratedBelief: Uint8Array | undefined;
+    let botsOnlyCycle = false;
     // Pacing for THIS cycle, derived from THIS game's players. Must not be
     // module state: one warm isolate can drive several games (heartbeat SCAN),
     // and a bots-only game writing 300ms there leaked into a concurrent
@@ -276,8 +293,18 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
                 // bots play blind (the octogen regression from the
                 // loadCompleteGame log-load removal).
                 if (eligibleBots.some(b => strategyUsesLogs(b.bot.strategy_key))) {
-                    game.belief_log_bytes = (await loadSessionLogBytes(game_id)) ?? undefined;
-                    console.log(`[BELIEF] hydrated ${game.belief_log_bytes?.length ?? 0} session-log bytes for belief bots`);
+                    // Bots-only games have no concurrent writer under the lease, so
+                    // a resident log carried from the previous cycle is still exactly
+                    // logs_packed — reuse it and skip the DB read. Human games might
+                    // be written between cycles, so always reload fresh.
+                    botsOnlyCycle = humanPlayersStillIn === 0;
+                    if (residentBelief && botsOnlyCycle) {
+                        game.belief_log_bytes = residentBelief;
+                    } else {
+                        game.belief_log_bytes = (await loadSessionLogBytes(game_id)) ?? undefined;
+                    }
+                    hydratedBelief = game.belief_log_bytes;
+                    console.log(`[BELIEF] ${residentBelief && botsOnlyCycle ? 'resident' : 'loaded'} ${game.belief_log_bytes?.length ?? 0} session-log bytes for belief bots`);
                 }
 
                 // Fisher-Yates shuffle. A comparator-based shuffle
@@ -406,6 +433,16 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
     const totalCycleTime = Date.now() - cycleStartTime;
     console.log(`[TIMING] Total cycle ${cycle} time: ${totalCycleTime}ms`);
 
+    // Carry the session log forward for the next cycle WITHOUT another DB read:
+    // this cycle's belief bytes + the logwire records this move just committed
+    // (packedLogsHex is exactly what commit_game appended to logs_packed). Only
+    // for bots-only cycles, where no other actor could have written in between.
+    let nextResident: Uint8Array | null = null;
+    if (botsOnlyCycle && hydratedBelief) {
+        const moveBytes = packedLogsHex ? hexToBytes(packedLogsHex) : new Uint8Array(0);
+        nextResident = moveBytes.length ? concatBytes(hydratedBelief, moveBytes) : hydratedBelief;
+    }
+
     // Continue the loop if a bot was processed or auto-transition occurred
     if (botProcessed) {
         // Skip pacing when there are no humans watching AND this cycle produced no
@@ -421,7 +458,7 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
             console.log(`[CYCLE ${cycle}] Cycle took ${totalCycleTime}ms (>= ${cycleDelay}ms target), continuing immediately`);
         }
 
-        return await processBotActions(game_id, cycle + 1, loopStartTime, cpu, leaseToken);
+        return await processBotActions(game_id, cycle + 1, loopStartTime, cpu, leaseToken, nextResident);
     } else {
         // No bot could act — waiting on a human, or the game is over. Stop; the cron
         // heartbeat (or the next human move) re-drives if there's still bot work.
