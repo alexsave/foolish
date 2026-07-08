@@ -8,13 +8,15 @@
 -- column not explicitly listed there; game_seed is deliberately omitted, so no
 -- grant change is needed here. It reaches clients through none of the payload
 -- builders (personalize_game / gameToPublicGame / the packed view blob).
+--
+-- Ordering: this runs AFTER 20260708120000_drop_game_logs, which left commit_game
+-- at 9 args (no p_logs). Drop THAT 9-arg signature and recreate at 10 args with
+-- p_game_seed appended — dropping first so a 9-arg call can't find both via the
+-- DEFAULT and error as ambiguous.
 
 ALTER TABLE games ADD COLUMN IF NOT EXISTS game_seed TEXT;  -- 64 hex chars (two 128-bit lanes), or NULL for legacy/never-dealt
 
--- commit_game gains p_game_seed. Drop the old 10-arg signature first: a plain
--- CREATE OR REPLACE with an extra DEFAULT arg would leave the old overload in
--- place, and a 10-argument call would then match both and error as ambiguous.
-DROP FUNCTION IF EXISTS commit_game(TEXT, BIGINT, JSONB, JSONB, JSONB, JSONB, JSONB, TEXT, TEXT, BOOLEAN);
+DROP FUNCTION IF EXISTS commit_game(TEXT, BIGINT, JSONB, JSONB, JSONB, JSONB, TEXT, TEXT, BOOLEAN);
 
 CREATE OR REPLACE FUNCTION commit_game(
   p_game_id          TEXT,
@@ -23,7 +25,6 @@ CREATE OR REPLACE FUNCTION commit_game(
   p_deck             JSONB,
   p_hands            JSONB,
   p_bot_hands        JSONB,
-  p_logs             JSONB   DEFAULT NULL,  -- legacy skew window only; new code passes NULL
   p_state            TEXT    DEFAULT NULL,  -- packed kernel state blob (hex); NULL leaves the column unchanged (never-dealt games)
   p_logs_packed      TEXT    DEFAULT NULL,  -- this move's logwire records (bare hex), appended under the version fence
   p_logs_reset       BOOLEAN DEFAULT FALSE, -- session reset (GAME_START in the records): replace instead of append
@@ -46,9 +47,9 @@ BEGIN
     elimination_order = g.elimination_order, good_timestamp = g.good_timestamp,
     good_players = g.good_players,
     state = CASE WHEN g.status = 'waiting' THEN NULL ELSE COALESCE(p_state, state) END,
-    -- Same discipline as `state`: a WAITING reset (continue/lobby) clears the
-    -- finished session's seed so the next deal writes a fresh one; every dealt
-    -- commit either sets it (the deal) or leaves it (COALESCE with NULL).
+    -- Same discipline as `state`: a WAITING reset clears the finished session's
+    -- seed so the next deal writes a fresh one; every dealt commit sets it (deal)
+    -- or leaves it (COALESCE with NULL).
     game_seed = CASE WHEN g.status = 'waiting' THEN NULL ELSE COALESCE(p_game_seed, game_seed) END,
     logs_packed = CASE
       WHEN p_logs_reset THEN COALESCE(p_logs_packed, '')
@@ -84,19 +85,6 @@ BEGIN
     FROM jsonb_array_elements(p_bot_hands) AS b
     ON CONFLICT (game_id, bot_id) DO UPDATE
       SET hand = EXCLUDED.hand, awaiting_attack = EXCLUDED.awaiting_attack, updated_at = now();
-  END IF;
-
-  IF p_logs IS NOT NULL AND jsonb_array_length(p_logs) > 0 THEN
-    INSERT INTO game_logs (id, game_id, log_type, player_id, card_pairs, defender_index, created_at)
-    SELECT (l->>'id')::uuid,
-           p_game_id,
-           (l->>'log_type')::log_type,
-           l->>'player_id',
-           COALESCE(l->'card_pairs', '[]'::jsonb),
-           (l->>'defender_index')::int,
-           (l->>'created_at')::timestamp
-    FROM jsonb_array_elements(p_logs) AS l
-    ON CONFLICT (id) DO NOTHING;
   END IF;
 
   RETURN jsonb_build_object('status', 'ok', 'version', v_new_version);
