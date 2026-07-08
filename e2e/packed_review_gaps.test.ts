@@ -25,7 +25,7 @@ import { personalize_game } from '../supabase/functions/_shared/common_utils.ts'
 import { start_game } from '../supabase/functions/_shared/game_lifecycle.ts';
 import { kernelLegalMoves, kernelShouldAct, serializeGameState, __setKernelSeedSource } from '../supabase/functions/_shared/wasm/engine.ts';
 import { encodeAction, decodeAction, encodeActionRequest, decodeActionRequest, encodeActionResponse, decodeActionResponse, ACTION_STATUS, AwireKindName } from '../supabase/functions/_shared/wire/awire.ts';
-import { buildPackedGameBytes } from '../supabase/functions/_shared/packed_game.ts';
+import { buildPackedGameBytes, lobbyGameFromRow } from '../supabase/functions/_shared/packed_game.ts';
 import { decodePackedGame, encodeGamesList, decodePackedGamesList } from '../supabase/functions/_shared/wire/view.ts';
 import { bytesToHex } from '../supabase/functions/_shared/replay/codec.ts';
 import { validateActionWire, initClientGuards } from '../src/wasm/clientGuards.ts';
@@ -230,6 +230,33 @@ if (!process.env.VALIDATION_ONLY) {
       }
     } finally {
       c.release();
+    }
+  });
+
+  // get_my_games rebuilds a WAITING lobby's view straight from the games row
+  // (no player_hands read, no supabase-js) via lobbyGameFromRow. Prove that
+  // reconstruction is equivalent to the loadCompleteGame path it replaces, so
+  // the packed list a client sees is byte-identical to before the cold-start
+  // rewrite.
+  test('lobbyGameFromRow(row) personalizes identically to loadCompleteGame for a WAITING game', async () => {
+    const gameId = `l${uuid().slice(0, 5)}`;
+    const h1 = uuid(), h2 = uuid();
+    await seedGame(gameId, [
+      { id: h1, name: 'H1', is_ai: false, strategy_key: 'human' },
+      { id: h2, name: 'B2', is_ai: true, strategy_key: STRATEGY_KEY.RANDOM },
+    ]);
+
+    // The exact columns get_my_games selects for the batched read.
+    const cols = 'id,name,status,version,state,players,good_players,good_timestamp,' +
+      'discard_pile_length,flipped,power_suit,first_attacker,defender,table_battles,elimination_order';
+    const row = (await pgPool.query(`SELECT ${cols} FROM games WHERE id=$1`, [gameId])).rows[0];
+    assert.equal(row.status, GAME_STATUS.WAITING, 'seeded game is a lobby');
+
+    const viaLoad = await loadCompleteGame(gameId);
+    for (const viewer of [h1, h2, 'spectator-not-in-game']) {
+      const fromRow = personalize_game(lobbyGameFromRow(row), viewer);
+      const fromLoad = personalize_game(viaLoad, viewer);
+      assert.deepEqual(fromRow, fromLoad, `personalized lobby view matches for viewer ${viewer}`);
     }
   });
 
