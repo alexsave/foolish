@@ -23,7 +23,7 @@ ifeq ($(OMP),1)
 endif
 
 # The engine + all heuristic / Monte-Carlo bots. Linked into every binary.
-CORE_SRC := src/game.c src/legal.c src/replay.c src/view.c src/awire.c \
+CORE_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/view.c src/awire.c \
             src/evwire.c src/random_strategy.c src/espresso_strategy.c \
             src/handwritten_strategy.c src/robusta_strategy.c \
             src/firecracker_strategy.c src/gunpowder_strategy.c \
@@ -157,7 +157,8 @@ WASM_API_EXPORTS := \
   -Wl,--export=wasm_io_ptr -Wl,--export=wasm_io_cap \
   -Wl,--export=wasm_game_ptr_internal -Wl,--export=wasm_moves_ptr_internal \
   -Wl,--export=wasm_cards_a_ptr -Wl,--export=wasm_cards_b_ptr \
-  -Wl,--export=wasm_init -Wl,--export=wasm_set_seed -Wl,--export=wasm_reject_reason \
+  -Wl,--export=wasm_init -Wl,--export=wasm_set_seed \
+  -Wl,--export=wasm_set_deal_seed_bytes -Wl,--export=wasm_reject_reason \
   -Wl,--export=wasm_import_state -Wl,--export=wasm_export_state \
   -Wl,--export=wasm_state_serialize -Wl,--export=wasm_state_deserialize \
   -Wl,--export=wasm_state_format_version \
@@ -203,7 +204,7 @@ WASM_RULES_FLAGS := $(filter-out -DMAX_LEGAL_MOVES=4096,$(WASM_FLAGS)) \
 
 # Blanket header dependency, same rationale as the native objects: a header
 # edit must rebuild BOTH wasm modules or they ship divergent kernels.
-WASM_RULES_SRC := src/game.c src/legal.c src/replay.c src/view.c src/awire.c \
+WASM_RULES_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/view.c src/awire.c \
                   src/evwire.c wasm/wasm_api.c
 
 build/rules.wasm: $(WASM_RULES_SRC) $(wildcard src/*.h) $(wildcard wasm/*.h)
@@ -257,7 +258,7 @@ WASM_GUARDS_EXPORTS := \
   -Wl,--export=wasm_pickup \
   -Wl,--export=wasm_game_done -Wl,--export=wasm_next_player -Wl,--export=wasm_can_cover
 
-WASM_GUARDS_SRC := src/game.c src/view.c src/awire.c wasm/wasm_guards_api.c
+WASM_GUARDS_SRC := src/game.c src/deal_rng.c src/view.c src/awire.c wasm/wasm_guards_api.c
 
 build/guards.wasm: $(WASM_GUARDS_SRC) $(wildcard src/*.h) $(wildcard wasm/*.h)
 	@mkdir -p build
@@ -273,7 +274,7 @@ wasm-guards: build/guards.wasm
 # Note: the distilled strategy (research, strength-negative — see
 # CORDITE_RESEARCH.md) stays native-arena-only; it is deliberately NOT in the
 # production bot module.
-WASM_BOT_SRC := src/game.c src/legal.c src/replay.c src/view.c src/awire.c \
+WASM_BOT_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/view.c src/awire.c \
                 src/evwire.c src/random_strategy.c \
                 src/espresso_strategy.c src/handwritten_strategy.c \
                 src/cordite_strategy.c src/cordite_sim.c \

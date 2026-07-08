@@ -107,6 +107,14 @@ void wasm_init(void) {
 }
 
 void wasm_set_seed(unsigned int s) { game_set_seed(s); }
+
+// Wide, reproducible deal seed: the caller writes 32 bytes (two 128-bit lanes)
+// to the front of the io buffer, then calls this before wasm_start_game(). The
+// deal then reaches the whole 52!/36! space and replays exactly from the same
+// bytes. A following wasm_set_seed() reverts to the legacy 32-bit LCG (so the
+// per-move reseed the engine already does keeps mid-game behavior unchanged).
+void wasm_set_deal_seed_bytes(void) { game_set_deal_seed_bytes(g_io, 32); }
+
 int wasm_reject_reason(void) { return engine_last_reject; }
 
 // ---------- state (de)serialization ---------------------------------------

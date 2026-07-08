@@ -8,6 +8,7 @@
 // `setRandomSeed(seed)`).
 
 #include "game.h"
+#include "deal_rng.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -24,6 +25,27 @@
 static _Thread_local uint32_t g_seed = 1237;
 static _Thread_local uint32_t g_rand_seed = 1;
 
+// Wide deal RNG (deal_rng.h). Off by default: the deal uses the 32-bit LCG
+// exactly as before unless game_set_deal_seed_bytes() turns it on, and any
+// game_set_seed() turns it back off. This keeps every pinned LCG stream (the
+// C test suite, the e2e seedSource hooks) byte-for-byte unchanged.
+static _Thread_local DealRng g_deal_rng;
+static _Thread_local int     g_deal_wide = 0;
+
+// Unbiased random index in [0, n) for the DEAL. Wide mode -> ChaCha (no modulo
+// bias, integer-only, reproducible); otherwise the legacy float-scaled LCG,
+// clamped exactly as the original draw/first-attacker code did.
+static int deal_index(int n) {
+    if (g_deal_wide) return (n <= 1) ? 0 : (int)deal_rng_bounded(&g_deal_rng, (uint32_t)n);
+    // Legacy path: consume exactly one game_random() and clamp, byte-for-byte
+    // as the original inline draw/first-attacker code did — including on a
+    // 1-card deck, so the pinned LCG stream never desyncs.
+    int idx = (int)(game_random() * n);
+    if (idx < 0) idx = 0;
+    if (idx >= n) idx = n - 1;
+    return idx;
+}
+
 // Observation hook + rejection reason (see game.h). Both are no-cost when
 // unused: the hook is NULL by default and the reason is a plain store.
 void (*engine_snap_hook)(const Game *g, int tag, int aux) = 0;
@@ -39,10 +61,22 @@ static _Thread_local int g_rand_seed_set = 0;
 
 void game_set_seed(uint32_t s) {
     g_seed = s ? s : 1;
+    g_deal_wide = 0;   // revert the deal to the legacy 32-bit LCG path
 #ifdef GRPO_RNG_DEBUG
     g_seed_set = 1;
 #endif
 }
+
+void game_set_deal_seed_bytes(const uint8_t *seed, int len) {
+    if (!seed || len < 32) return;   // too little entropy: leave wide mode off
+    deal_rng_seed(&g_deal_rng, seed);
+    g_deal_wide = 1;
+#ifdef GRPO_RNG_DEBUG
+    g_seed_set = 1;                  // a wide seed also satisfies the init guard
+#endif
+}
+
+int game_deal_seed_active(void) { return g_deal_wide; }
 uint32_t game_random_u32(void) {
 #ifdef GRPO_RNG_DEBUG
     if (!g_seed_set) {
@@ -208,9 +242,7 @@ static bool draw_card(Game *g, Card *out) {
         g->has_flipped = false;
         return true;
     }
-    int idx = (int)(game_random() * g->deck_count);
-    if (idx < 0) idx = 0;
-    if (idx >= g->deck_count) idx = g->deck_count - 1;
+    int idx = deal_index(g->deck_count);
     *out = g->deck[idx];
     for (int i = idx + 1; i < g->deck_count; i++) g->deck[i - 1] = g->deck[i];
     g->deck_count--;
@@ -246,9 +278,7 @@ static int determine_lowest_power_index(Game *g) {
         }
     }
     if (lowest_p == -1) {
-        lowest_p = (int)(game_random() * g->num_players);
-        if (lowest_p < 0) lowest_p = 0;
-        if (lowest_p >= g->num_players) lowest_p = g->num_players - 1;
+        lowest_p = deal_index(g->num_players);
     }
     return lowest_p;
 }
