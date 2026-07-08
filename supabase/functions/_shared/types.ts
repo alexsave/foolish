@@ -163,6 +163,11 @@ export interface PersonalGame extends PublicGame {
 // Complete game with deck generated on-demand for game logic
 export interface Game extends PublicGame {
     deck: Card[];
+    // SERVER-ONLY, like `deck` and the state blob — never on PublicGame, never
+    // serialized to clients. The 32-byte deal seed (64 hex chars) the deck was
+    // ChaCha-shuffled from; set at the deal, persisted to games.game_seed for
+    // audit/replay. Undefined on games not dealt this request.
+    game_seed?: string | null;
     players: PrivatePlayer[];
     logs: GameLog[]; // Pending logs to be saved with game state
     // Read-only session history for the belief/memory bots (octogen, semtex,

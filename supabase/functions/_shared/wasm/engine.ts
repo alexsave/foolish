@@ -832,6 +832,16 @@ export function __setKernelSeedSource(fn: (() => number) | null): void { seedSou
 let lastDealSeed: Uint8Array | null = null;
 export function getLastDealSeed(): Uint8Array | null { return lastDealSeed; }
 
+// The most recent live deal's seed as 64 lowercase hex chars, or null if the
+// last deal used the deterministic test path. Persist this (games.game_seed) to
+// regenerate the deal for audit/replay.
+export function getLastDealSeedHex(): string | null {
+    if (!lastDealSeed) return null;
+    let s = '';
+    for (const b of lastDealSeed) s += b.toString(16).padStart(2, '0');
+    return s;
+}
+
 // Seed the DEAL. Under a test seedSource we keep the pinned 32-bit LCG (deals
 // stay byte-for-byte reproducible for the parity suite). Live, we draw 32
 // crypto bytes and hand them to the kernel's ChaCha deal — lifting reachable

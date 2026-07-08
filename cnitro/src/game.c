@@ -57,9 +57,12 @@ static void deal_shuffle(Game *g) {
 // Random index in [0, n) for a DECK DRAW. Deterministic mode pops the top of the
 // pre-shuffled deck (0); legacy consumes one game_random() and clamps, byte-for-
 // byte as the original inline draw code did (including on a 1-card deck, so the
-// pinned LCG stream never desyncs).
-static int draw_index(int n) {
-    if (g_deal_wide) return 0;
+// pinned LCG stream never desyncs). Deterministic mode is signalled two ways,
+// both meaning "the deck is pre-shuffled, pop it": g_deal_wide during the deal
+// itself, and the per-game deterministic_deck flag mid-game (restored from the
+// durable blob, since the thread-local does not survive between kernel calls).
+static int draw_index(const Game *g, int n) {
+    if (g_deal_wide || g->deterministic_deck) return 0;
     int idx = (int)(game_random() * n);
     if (idx < 0) idx = 0;
     if (idx >= n) idx = n - 1;
@@ -112,15 +115,6 @@ void game_set_deal_seed_bytes(const uint8_t *seed, int len) {
 #else
 void game_set_deal_seed_bytes(const uint8_t *seed, int len) { (void)seed; (void)len; }
 #endif
-
-// Turn on deterministic (pop-the-top) draws WITHOUT reseeding — for mid-game
-// kernel calls on a seed-dealt game, where the deck was already shuffled at the
-// deal and only its persisted order is needed. A no-op in the guards build.
-void game_set_deterministic_deck(void) {
-#ifndef DEAL_RNG_DISABLED
-    g_deal_wide = 1;
-#endif
-}
 
 int game_deal_seed_active(void) { return g_deal_wide; }
 uint32_t game_random_u32(void) {
@@ -288,7 +282,7 @@ static bool draw_card(Game *g, Card *out) {
         g->has_flipped = false;
         return true;
     }
-    int idx = draw_index(g->deck_count);
+    int idx = draw_index(g, g->deck_count);
     *out = g->deck[idx];
     for (int i = idx + 1; i < g->deck_count; i++) g->deck[i - 1] = g->deck[i];
     g->deck_count--;
@@ -346,6 +340,10 @@ void start_game(Game *g) {
     }
 
     refill_deck(g);
+    // Record how this game draws, so mid-game kernel calls (which restore this
+    // from the durable blob, not the thread-local) keep popping the pre-shuffled
+    // deck. Legacy deals leave it false and draw at random, exactly as before.
+    g->deterministic_deck = g_deal_wide ? true : false;
 #ifndef DEAL_RNG_DISABLED
     // Seed-dealt game: shuffle the whole deck once from the ChaCha stream, then
     // every draw below (and every mid-game refill) pops the top — the full deal
