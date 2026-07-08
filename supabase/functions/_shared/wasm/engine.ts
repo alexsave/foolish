@@ -125,12 +125,17 @@ function rulesWasmBytes(): Uint8Array {
 
 function engine(): EngineExports {
     if (exportsCache) return exportsCache;
+    // [perf] one-time per isolate: gunzip embed + compile + instantiate + init.
+    // Isolates recycle often on the edge, so this is paid on the first kernel
+    // call of most requests — worth knowing if it dominates request latency.
+    const t = performance.now();
     const module = new WebAssembly.Module(rulesWasmBytes() as BufferSource);
     const instance = new WebAssembly.Instance(module, {});
     const ex = instance.exports as unknown as EngineExports;
     ex.wasm_init();
     exportsCache = ex;
     pendingWasmBytes = null;
+    console.log(`[perf] rules.wasm instantiate ${(performance.now() - t).toFixed(0)}ms`);
     return ex;
 }
 

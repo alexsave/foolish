@@ -34,8 +34,12 @@ const GEN_PARAMS: Record<Alg, EcKeyGenParams | RsaHashedKeyGenParams> = {
 
 async function genKey(alg: Alg, kid: string) {
     const kp = await crypto.subtle.generateKey(GEN_PARAMS[alg], true, ['sign', 'verify']);
-    const jwk = await crypto.subtle.exportKey('jwk', kp.publicKey) as JsonWebKey & { kid?: string; alg?: string; use?: string };
-    jwk.kid = kid; jwk.alg = alg; jwk.use = 'sig';
+    const jwk = await crypto.subtle.exportKey('jwk', kp.publicKey) as JsonWebKey & { kid?: string; use?: string };
+    // Deliberately DO NOT set jwk.alg. `alg` is optional in a JWK (RFC 7517) and
+    // Supabase's JWKS omits it; the verifier must derive the algorithm from the
+    // token header, not the JWK. (An earlier version required jwk.alg and so
+    // rejected every Supabase token, silently falling back to the slow getUser.)
+    jwk.kid = kid; jwk.use = 'sig';
     return { kp, jwk };
 }
 
