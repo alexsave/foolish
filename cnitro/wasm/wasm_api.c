@@ -115,6 +115,10 @@ void wasm_set_seed(unsigned int s) { game_set_seed(s); }
 // per-move reseed the engine already does keeps mid-game behavior unchanged).
 void wasm_set_deal_seed_bytes(void) { game_set_deal_seed_bytes(g_io, 32); }
 
+// Mid-game kernel calls on a seed-dealt game: turn on pop-the-top draws without
+// a seed (the shuffled deck order, marshaled in with the game, is enough).
+void wasm_set_deterministic_deck(void) { game_set_deterministic_deck(); }
+
 int wasm_reject_reason(void) { return engine_last_reject; }
 
 // ---------- state (de)serialization ---------------------------------------
