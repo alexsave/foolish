@@ -12,7 +12,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { verifyJwtLocal, __setJwksForTest } from '../supabase/functions/_shared/auth.ts';
+import { verifyJwtLocal, __setJwksForTest, unverifiedSubFromToken } from '../supabase/functions/_shared/auth.ts';
 
 const enc = new TextEncoder();
 const b64url = (bytes: Uint8Array): string => {
@@ -112,4 +112,24 @@ test('verifyJwtLocal: ES256 & RS256 verify; tamper/expiry/wrong-signer/alg-confu
     } finally {
         __setJwksForTest(null);
     }
+});
+
+test('unverifiedSubFromToken decodes sub WITHOUT verifying (latency helper only)', () => {
+    const enc2 = new TextEncoder();
+    const b = (s: string) => b64url(enc2.encode(s));
+    const hdr = b(JSON.stringify({ alg: 'ES256', kid: 'k', typ: 'JWT' }));
+
+    // Well-formed token with a GARBAGE signature: sub is still returned. This is
+    // the whole point — the caller fires subject-scoped work in parallel and MUST
+    // still await verifyJwtLocal before returning anything. If this ever started
+    // "verifying", the parallel optimization would be pointless.
+    const tok = `${hdr}.${b(JSON.stringify({ sub: 'user-xyz' }))}.${b('not-a-real-signature')}`;
+    assert.equal(unverifiedSubFromToken(tok), 'user-xyz');
+
+    // No sub / malformed / wrong shape → null (caller then rejects).
+    assert.equal(unverifiedSubFromToken(`${hdr}.${b(JSON.stringify({ foo: 1 }))}.${b('x')}`), null, 'no sub → null');
+    assert.equal(unverifiedSubFromToken(`${hdr}.${b(JSON.stringify({ sub: '' }))}.${b('x')}`), null, 'empty sub → null');
+    assert.equal(unverifiedSubFromToken('a.b'), null, 'two-part → null');
+    assert.equal(unverifiedSubFromToken('not-a-jwt'), null, 'garbage → null');
+    assert.equal(unverifiedSubFromToken(''), null, 'empty → null');
 });

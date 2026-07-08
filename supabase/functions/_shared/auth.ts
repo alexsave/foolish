@@ -191,6 +191,23 @@ export interface VerifiedClaims {
     [claim: string]: unknown;
 }
 
+// Decode — WITHOUT verifying — the `sub` claim from a compact JWS. This exists
+// purely for latency: it lets a handler start subject-scoped work (e.g. a DB
+// read for the caller's own rows) in parallel with signature verification. It is
+// NOT authorization — the signature is unchecked, so a caller could claim any
+// sub. Every caller MUST await verifyJwtLocal / getAuthenticatedUser and refuse
+// to return anything if that fails. Never throws.
+export function unverifiedSubFromToken(token: string): string | null {
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    try {
+        const payload = JSON.parse(b64urlToString(parts[1])) as { sub?: unknown };
+        return typeof payload?.sub === 'string' && payload.sub ? payload.sub : null;
+    } catch {
+        return null;
+    }
+}
+
 // Verify a compact JWS locally and return its claims, or null if the token is
 // malformed, uses a disallowed algorithm, is signed by an unknown key, fails the
 // signature check, or is expired / not-yet-valid. Never throws.
