@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
-import { getAuthenticatedUser } from "../_shared/auth.ts";
+import { getAuthenticatedUser, unverifiedSubFromToken } from "../_shared/auth.ts";
 import { personalize_game } from "../_shared/common_utils.ts";
 import { encodeGamesList, GamesListEntry } from "../_shared/wire/view.ts";
 import { buildPackedGameBytes, gameViewFromRow } from "../_shared/packed_game.ts";
@@ -43,15 +43,29 @@ serve(async (req: Request): Promise<Response> => {
 
     const T0 = performance.now();
     try {
-        const user = await getAuthenticatedUser(req);
-        const tAfterAuth = performance.now();
+        // Verify the JWT signature and fetch the caller's games CONCURRENTLY.
+        // They're two independent network round-trips (JWKS verify + PostgREST)
+        // that only need the subject — which the token already carries — so
+        // running them in series (as before) doubled the latency floor. We fire
+        // the query on the CLAIMED (unverified) sub, but return NOTHING until the
+        // signature verifies: a forged token wastes one query, never leaks data.
+        const token = (req.headers.get('Authorization') || '').replace('Bearer ', '');
+        const claimedSub = unverifiedSubFromToken(token);
+        if (!claimedSub) throw new Error('Invalid token');
 
-        // One embedded read: the caller's membership rows, each carrying its full
-        // game. Dedup by id (one player_hands row per game) and order by
-        // games.updated_at (ISO strings sort lexicographically), newest first.
-        const rows = await restGet(
-            `player_hands?select=games(${GAME_COLS})&player_id=eq.${encodeURIComponent(user.id)}`,
-        );
+        const authP = getAuthenticatedUser(req);
+        const fetchP = restGet(`player_hands?select=games(${GAME_COLS})&player_id=eq.${encodeURIComponent(claimedSub)}`);
+        const [authR, fetchR] = await Promise.allSettled([authP, fetchP]);
+
+        if (authR.status === 'rejected') throw authR.reason; // auth failed → the fetched rows are discarded
+        const user = authR.value;
+        if (fetchR.status === 'rejected') throw fetchR.reason;
+        let rows = fetchR.value;
+        // Paranoia: the verified subject must match what we queried. For a valid
+        // token it always does (same bytes), but never serve another user's rows.
+        if (user.id !== claimedSub) {
+            rows = await restGet(`player_hands?select=games(${GAME_COLS})&player_id=eq.${encodeURIComponent(user.id)}`);
+        }
         const seen = new Set<string>();
         const games: any[] = [];
         for (const r of rows) {
@@ -92,8 +106,7 @@ serve(async (req: Request): Promise<Response> => {
             }
             const tEnd = performance.now();
             console.log(
-                `[perf] get_my_games auth ${(tAfterAuth - T0).toFixed(0)}ms | ` +
-                `fetch(${games.length}) ${(tAfterFetch - tAfterAuth).toFixed(0)}ms | ` +
+                `[perf] get_my_games auth+fetch(${games.length}) ${(tAfterFetch - T0).toFixed(0)}ms overlapped | ` +
                 `build ${(tEnd - tAfterFetch).toFixed(0)}ms [packed=${nPacked} row=${nRow}] | ` +
                 `total ${(tEnd - T0).toFixed(0)}ms`,
             );
