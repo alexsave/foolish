@@ -790,7 +790,15 @@ typedef struct {
 // keeps the value provably correct regardless of the window it was found
 // under). Cleared per top-level solve call.
 
+// Build parameter. 16 = 65,536 entries x 16 B = 1 MiB (the historical value).
+// The table is a memoization cache of EXACT endgame values, but the solver is
+// node-budget-limited (SimSolver.budget), so a smaller table can cause more
+// recomputation, exhaust the budget sooner, and change which move is chosen —
+// it is a bot-strength knob, validated by comparing cnitro_eval win-rate /
+// mean-finish / histogram across sizes (see docs/WASM_L1_BUDGET.md).
+#ifndef CD_TT_BITS
 #define CD_TT_BITS  16
+#endif
 #define CD_TT_SIZE  (1u << CD_TT_BITS)
 #define CD_TT_MASK  (CD_TT_SIZE - 1u)
 
