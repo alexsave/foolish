@@ -618,41 +618,75 @@ $$;
 
 -- create_game: the three create-game inserts (games → game_decks → player_hands)
 -- in one transaction / one round-trip. See migration 20260618120000.
+-- Callable DIRECTLY by the authenticated client (no create edge function). The
+-- security boundary is auth.uid(): for a client call we DERIVE the creator's
+-- identity from the verified JWT and IGNORE any client-supplied identity params,
+-- so a client can't create a game as someone else. The explicit-param path
+-- remains only for a service-role caller (no user JWT). EXECUTE is granted to
+-- authenticated + service_role (never anon) below.
 CREATE OR REPLACE FUNCTION create_game(
   p_game_id   TEXT,
-  p_name      TEXT,
-  p_player_id UUID,
-  p_players   JSONB,
-  p_views     JSONB DEFAULT NULL   -- creator's masked view cache row(s); version 0
+  p_name      TEXT  DEFAULT NULL,   -- ignored for an authenticated caller (derived from the JWT)
+  p_player_id UUID  DEFAULT NULL,   -- ignored for an authenticated caller (auth.uid())
+  p_players   JSONB DEFAULT NULL,   -- ignored for an authenticated caller (built server-side)
+  p_views     JSONB DEFAULT NULL    -- creator's masked view cache row(s); version 0
 ) RETURNS VOID
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
 AS $$
+DECLARE
+  v_uid      UUID := auth.uid();
+  v_player   UUID;
+  v_name     TEXT;
+  v_players  JSONB;
+  v_username TEXT;
 BEGIN
+  IF v_uid IS NOT NULL THEN
+    -- Authenticated client-direct call: identity comes ONLY from the verified
+    -- token (anti-spoof) — client p_player_id/p_name/p_players are ignored.
+    v_player   := v_uid;
+    v_username := current_setting('request.jwt.claims', true)::jsonb -> 'user_metadata' ->> 'username';
+    v_name     := coalesce(v_username, 'Player') || '''s Game';
+    v_players  := jsonb_build_array(jsonb_build_object(
+                    'player_id', v_uid, 'name', v_username, 'status', 'idle', 'is_ai', false));
+  ELSE
+    -- Service-role caller (no user JWT): trust the explicit params it computed
+    -- from a verified token. anon can't reach here (see the GRANT below).
+    v_player  := p_player_id;
+    v_name    := p_name;
+    v_players := p_players;
+  END IF;
+
   INSERT INTO games (id, name, players, status)
-    VALUES (p_game_id, p_name, p_players, 'waiting');
+    VALUES (p_game_id, v_name, v_players, 'waiting');
 
   INSERT INTO game_decks (game_id, deck)
     VALUES (p_game_id, '[]'::jsonb);
 
   INSERT INTO player_hands (game_id, player_id, hand, awaiting_attack)
-    VALUES (p_game_id, p_player_id, '[]'::jsonb, false);
+    VALUES (p_game_id, v_player, '[]'::jsonb, false);
 
   -- Seed the player_views dashboard cache for the creator in the same
   -- transaction, so the new lobby is immediately readable from the client's
   -- direct player_views SELECT (docs/PLAYER_VIEWS.md). version 0 = the initial
-  -- games.version.
+  -- games.version. Only the CALLER'S OWN row is honored — a create must not seed
+  -- a player_views row for another user (which they'd then see in their list).
   IF p_views IS NOT NULL THEN
     INSERT INTO player_views (game_id, player_id, view, version, status, updated_at)
-    SELECT p_game_id, (v->>'player_id')::uuid, v->>'view', 0, v->>'status', now()
+    SELECT p_game_id, v_player, v->>'view', 0, v->>'status', now()
     FROM jsonb_array_elements(p_views) AS v
+    WHERE (v->>'player_id')::uuid = v_player
     ON CONFLICT (game_id, player_id) DO UPDATE
       SET view = EXCLUDED.view, version = EXCLUDED.version,
           status = EXCLUDED.status, updated_at = now();
   END IF;
 END;
 $$;
+
+-- Lock down execution: authenticated (client-direct) + service_role only.
+REVOKE ALL ON FUNCTION create_game(TEXT, TEXT, UUID, JSONB, JSONB) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION create_game(TEXT, TEXT, UUID, JSONB, JSONB) TO authenticated, service_role;
 
 -- Bot-loop lease: atomic claim (NULL if another loop holds a live lease).
 CREATE OR REPLACE FUNCTION try_acquire_bot_lease(p_game_id TEXT, p_ttl_ms INT)

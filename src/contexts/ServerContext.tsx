@@ -1,10 +1,11 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { Card, PersonalGame, PublicGame, GAME_STATUS, PLAYER_STATUS, STRATEGY_KEY } from '@shared/types.ts';
+import { Card, Game, PersonalGame, PublicGame, GAME_STATUS, PLAYER_STATUS, STRATEGY_KEY } from '@shared/types.ts';
 import supabase from '../backend/Connector';
 import { useParams } from 'next/navigation';
 import { useAuth } from './AuthContext';
 import { MAX_PLAYERS } from '@shared/constants.ts';
-import { get_next_player_index, card_comp } from '@shared/common_utils.ts';
+import { get_next_player_index, card_comp, createId } from '@shared/common_utils.ts';
+import { buildPlayerViewRows } from '@shared/player_views.ts';
 import { ANIMATION_TIME } from '../constants/constants';
 import { optimisticOverlay } from '../state/optimisticOverlay';
 import { cardKey, mergeHandOrder, reconcileHandMemory, displayedHand, mergeTableBattles, applyOverlayEntries } from '../state/clientReconcile';
@@ -46,7 +47,7 @@ const ServerStateContext = createContext<ServerStateType | null>(null);
 // for now we'll just use a fake auth impl
 // this will be kinda similar to client.js
 export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
-    const { user_id } = useAuth();
+    const { user_id, username } = useAuth();
     const url_game_id = useParams<{ game_id: string }>().game_id?.toLowerCase();
     // keep a state of games
     // maybe ref idk
@@ -88,6 +89,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     // handler that fires later.
     const gamesRef = useRef(games);
     const userIdRef = useRef(user_id);
+    const usernameRef = useRef(username);
+    useEffect(() => { usernameRef.current = username; }, [username]);
     const activeGameIdRef = useRef<string | null>(null);
     const spectatorGamesRef = useRef(spectatorGames);
     // The game currently on screen (the ROUTE param), i.e. the one whose live
@@ -413,16 +416,56 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         }
     };
 
+    // Create a game with NO edge function: build the lobby locally, show it
+    // optimistically, and persist via the create_game RPC directly
+    // (client→PostgREST). The RPC derives the creator from auth.uid() and ignores
+    // client identity params, so there is nothing to verify server-side here and
+    // nothing to shape/return — the new lobby is fully known from local data
+    // (docs/PLAYER_VIEWS.md). This drops the edge boot + JWKS auth + cold-isolate
+    // PostgREST hop the `create` function used to pay.
     const createGame = useCallback((): Promise<{ game_id: string }> => {
-        return invokeGameFunctions('create', {}, {
-            onSuccess: (data) => {
-                setGameId(data.data.id);
-                setGames(prev => ({ ...prev, [data.data.id]: mergeGameData(data.data.id, data.data, prev) }));
-                // Subscribe to the new game's chat (the gu- animation channel is
-                // owned by RealtimeAnimationFeed)
-                subscribeToChatMessages(data.data.id).catch(console.error);
+        const uid = userIdRef.current;
+        if (!uid) return Promise.reject(new Error('Not authenticated'));
+        const name = usernameRef.current ?? 'Player';
+        const game_id = createId();
+        const game_name = `${name}'s Game`;
+
+        // The lobby Game the server would build — fed to the SAME masked-view
+        // builder commit_game/create_game use, so the row we seed and the game we
+        // render are byte-identical to a later player_views read.
+        const lobbyGame: Game = {
+            id: game_id, name: game_name, deck: [], deck_length: 0,
+            discard_pile_length: 0, flipped: null,
+            players: [{
+                player_id: uid, name, status: PLAYER_STATUS.IDLE, is_ai: false,
+                hand: [], hand_length: 0, awaiting_attack: false, strategy_key: STRATEGY_KEY.HUMAN,
+            }],
+            status: GAME_STATUS.WAITING, power_suit: 0, first_attacker: 0, defender: 0,
+            table_battles: [], elimination_order: [], good_timestamp: null, good_players: [], logs: [],
+        };
+
+        return (async (): Promise<{ game_id: string }> => {
+            const p_views = await buildPlayerViewRows(lobbyGame, null, 0);
+            const mine = p_views.find(r => r.player_id === uid);
+            // Decode the creator's own envelope to the canonical PersonalGame and
+            // show it immediately — no round-trip to render the new lobby.
+            const decoded = mine ? decodePackedGame(hexToBytes(mine.view)) : null;
+            if (decoded) {
+                const optimistic = { ...(decoded.game as PersonalGame), self: (decoded.game as PersonalGame).self ?? null };
+                setGameId(game_id);
+                setGames(prev => ({ ...prev, [game_id]: optimistic }));
+                subscribeToChatMessages(game_id).catch(console.error);
             }
-        });
+
+            // Persist directly — the RPC derives identity from auth.uid().
+            const { error } = await supabase.rpc('create_game', { p_game_id: game_id, p_views });
+            if (error) {
+                // Roll back the optimistic lobby on failure.
+                setGames(prev => { const next = { ...prev }; delete next[game_id]; return next; });
+                throw new Error(`Failed to create game: ${error.message}`);
+            }
+            return { game_id };
+        })();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 

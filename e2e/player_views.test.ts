@@ -223,6 +223,53 @@ test('create_game seeds the creator\'s decodable lobby row', async () => {
   assert.equal((decoded!.game as PersonalGame).self.player_id, h1);
 });
 
+test('create_game (client-direct): identity comes from auth.uid(), spoofed params ignored', async () => {
+  const gameId = `d${uuid().slice(0, 5)}`;
+  const me = uuid(), victim = uuid();
+  await pgPool.query('INSERT INTO auth.users(id) VALUES ($1), ($2)', [me, victim]);
+
+  // The caller (me) builds its own lobby view, as the client does.
+  const lobby: Game = {
+    id: gameId, name: 'ME\'s Game', deck: [], deck_length: 0, discard_pile_length: 0,
+    flipped: null, status: GAME_STATUS.WAITING, power_suit: 0, first_attacker: 0, defender: 0,
+    table_battles: [], elimination_order: [], good_timestamp: null, good_players: [], logs: [],
+    players: [{
+      player_id: me, name: 'ME', status: PLAYER_STATUS.IDLE, is_ai: false,
+      hand: [], hand_length: 0, awaiting_attack: false, strategy_key: STRATEGY_KEY.HUMAN,
+    }],
+  };
+  const p_views = await buildPlayerViewRows(lobby, null, 0);
+
+  // Call as authenticated `me` (JWT sub + username), but SPOOF every identity
+  // param to the victim. The RPC must ignore them and use auth.uid().
+  const c = await pgPool.connect();
+  try {
+    await c.query('BEGIN');
+    await c.query('SET LOCAL ROLE authenticated');
+    await c.query(`SELECT set_config('request.jwt.claims', $1, true)`,
+      [JSON.stringify({ sub: me, user_metadata: { username: 'ME' } })]);
+    await c.query('SELECT create_game($1, $2, $3, $4::jsonb, $5::jsonb)', [
+      gameId,
+      'HACKED', // p_name spoof
+      victim,   // p_player_id spoof
+      JSON.stringify([{ player_id: victim, name: 'VICTIM', status: 'idle', is_ai: false }]), // p_players spoof
+      JSON.stringify(p_views),
+    ]);
+    await c.query('COMMIT');
+  } catch (e) { await c.query('ROLLBACK'); throw e; } finally { c.release(); }
+
+  const g = (await pgPool.query('SELECT name, players FROM games WHERE id=$1', [gameId])).rows[0];
+  assert.equal(g.name, "ME's Game", 'name derived from the JWT username, not the spoofed p_name');
+  assert.equal(g.players.length, 1);
+  assert.equal(g.players[0].player_id, me, 'roster player is the caller, not the spoofed victim');
+
+  const ph = (await pgPool.query('SELECT player_id FROM player_hands WHERE game_id=$1', [gameId])).rows;
+  assert.deepEqual(ph.map((r: { player_id: string }) => r.player_id), [me], 'membership row is the caller only');
+
+  const pv = await viewsFor(gameId);
+  assert.ok(pv.has(me) && !pv.has(victim), 'player_views seeded for the caller only — the victim gets nothing');
+});
+
 test('exiting a game prunes the leaver\'s view row', async () => {
   const gameId = `x${uuid().slice(0, 5)}`;
   const h1 = uuid(), h2 = uuid();
