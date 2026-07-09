@@ -18,8 +18,8 @@ import { applySchema, resetDb, seedGame, uuid, pgPool } from './harness.ts';
 import { executeWithGameLock, loadCompleteGame, supabaseClient } from '../supabase/functions/_shared/utils.ts';
 import { handleMetaAction } from '../supabase/functions/_shared/meta_actions.ts';
 import { legalMovesFor, applyPlayerMove } from './dispatch.ts';
-import { buildPlayerViewRows } from '../supabase/functions/_shared/player_views.ts';
-import { buildPackedGameBytes } from '../supabase/functions/_shared/packed_game.ts';
+import { buildPlayerViewRows, buildPlayerViewUpserts } from '../supabase/functions/_shared/player_views.ts';
+import { buildPackedGameBytes, gameViewFromRow } from '../supabase/functions/_shared/packed_game.ts';
 import { decodePackedGame } from '../supabase/functions/_shared/wire/view.ts';
 import { bytesToBareHex } from '../supabase/functions/_shared/wire/bytes.ts';
 import { hexToBytes } from '../supabase/functions/_shared/replay/codec.ts';
@@ -135,6 +135,61 @@ test('a move refreshes each human\'s cached view (version bumped, still masked &
     assert.equal(game.self.player_id, pid, 'self still the owner');
     assert.ok(!game.players.some((p: any) => p.player_id !== pid && p.hand),
       'opponents still carry no cards');
+  }
+});
+
+test('backfill (buildPlayerViewUpserts) rebuilds ALL participants byte-identically, fill-if-absent never overwrites', async () => {
+  const gameId = `b${uuid().slice(0, 5)}`;
+  const h1 = uuid(), h2 = uuid(), b1 = uuid();
+  await seedGame(gameId, [
+    { id: h1, name: 'H1', is_ai: false, strategy_key: 'human' },
+    { id: h2, name: 'H2', is_ai: false, strategy_key: 'human' },
+    { id: b1, name: '%Bot', is_ai: true, strategy_key: STRATEGY_KEY.RANDOM },
+  ]);
+  await executeWithGameLock(gameId, async (game) =>
+    handleMetaAction({ user: { id: h1 } as any, user_name: 'H1', body: { type: 'start', game_id: gameId }, game, reqId: 'r' }),
+    'r', false);
+
+  // The exact games row get_my_games / get_game hand to gameViewFromRow.
+  const cols = 'id,name,status,version,state,players,good_players,good_timestamp,' +
+    'discard_pile_length,flipped,power_suit,first_attacker,defender,table_battles,elimination_order';
+  const row = (await pgPool.query(`SELECT ${cols} FROM games WHERE id=$1`, [gameId])).rows[0];
+  const committed = await viewsFor(gameId);
+
+  // One load builds a row for EVERY human (not just the invoker), none for bots.
+  const ups = await buildPlayerViewUpserts(gameViewFromRow(row), row.state ?? null, Number(row.version));
+  const byId = new Map(ups.map(u => [u.player_id, u]));
+  assert.deepEqual([...byId.keys()].sort(), [h1, h2].sort(), 'a row for each human, none for the bot');
+  for (const pid of [h1, h2]) {
+    assert.equal(byId.get(pid)!.view, committed.get(pid)!.view, `backfilled view == committed view (${pid})`);
+    assert.equal(String(byId.get(pid)!.version), committed.get(pid)!.version, 'same version');
+  }
+
+  // (a) Simulate a game predating the cache: drop ALL its rows, then restore via
+  // the fill-if-absent insert get_my_games / get_game do.
+  await pgPool.query('DELETE FROM player_views WHERE game_id=$1', [gameId]);
+  for (const u of ups) {
+    await pgPool.query(
+      `INSERT INTO player_views(game_id,player_id,view,version,status) VALUES($1,$2,$3,$4,$5)
+       ON CONFLICT (game_id,player_id) DO NOTHING`,
+      [u.game_id, u.player_id, u.view, u.version, u.status]);
+  }
+  const after = await viewsFor(gameId);
+  for (const pid of [h1, h2]) assert.equal(after.get(pid)!.view, committed.get(pid)!.view, `row restored (${pid})`);
+
+  // (b) Fill-if-absent must NOT overwrite an existing (newer) row: re-run with a
+  // STALE version (0); every row already exists at the committed version.
+  const stale = await buildPlayerViewUpserts(gameViewFromRow(row), row.state ?? null, 0);
+  for (const u of stale) {
+    await pgPool.query(
+      `INSERT INTO player_views(game_id,player_id,view,version,status) VALUES($1,$2,$3,$4,$5)
+       ON CONFLICT (game_id,player_id) DO NOTHING`,
+      [u.game_id, u.player_id, u.view, u.version, u.status]);
+  }
+  const afterStale = await viewsFor(gameId);
+  for (const pid of [h1, h2]) {
+    assert.equal(afterStale.get(pid)!.version, committed.get(pid)!.version, `version untouched by stale fill (${pid})`);
+    assert.equal(afterStale.get(pid)!.view, committed.get(pid)!.view, `view untouched by stale fill (${pid})`);
   }
 });
 

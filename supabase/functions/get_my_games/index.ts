@@ -4,6 +4,7 @@ import { getAuthenticatedUser, unverifiedSubFromToken } from "../_shared/auth.ts
 import { personalize_game } from "../_shared/common_utils.ts";
 import { encodeGamesList, GamesListEntry } from "../_shared/wire/view.ts";
 import { buildPackedGameBytes, gameViewFromRow } from "../_shared/packed_game.ts";
+import { buildPlayerViewUpserts } from "../_shared/player_views.ts";
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
 // Read-only list of the caller's games, personalized. player_hands is the
@@ -40,6 +41,49 @@ async function restGet(pathAndQuery: string): Promise<any[]> {
     const res = await fetch(`${REST}/${pathAndQuery}`, { headers: restHeaders });
     if (!res.ok) throw new Error(`PostgREST ${res.status}: ${await res.text()}`);
     return await res.json();
+}
+
+// Cache-warm / BACKFILL (docs/PLAYER_VIEWS.md): this function is the fallback
+// whenever a player's player_views cache has no row for a game — the case for
+// games that predate the cache. Populate those missing rows as we serve, so the
+// NEXT dashboard load is a plain player_views SELECT and this edge function
+// drops out of the read path. Reuses the SAME builder commit_game uses, so each
+// warmed row is byte-identical to a committed one.
+//
+// Writes rows for ALL human participants of each game, not just the invoker: one
+// player's dashboard load thus backfills the whole game for everyone, so the
+// cache converges across users in a single pass (a temporary backfill — removed
+// when get_my_games is deleted).
+//
+// Fill-if-absent (Prefer: resolution=ignore-duplicates): commit_game owns
+// UPDATES under the version fence; this read-path write is NOT fenced, so it may
+// only INSERT rows that don't exist yet — never overwrite one commit_game may
+// have written at a newer version. Fire-and-forget (waitUntil): it must not add
+// latency to the response it is trying to make obsolete.
+async function warmPlayerViews(games: any[]): Promise<void> {
+    const rows: Record<string, unknown>[] = [];
+    for (const row of games) {
+        try {
+            const ups = await buildPlayerViewUpserts(gameViewFromRow(row), row.state ?? null, Number(row.version ?? 0));
+            for (const up of ups) rows.push(up as unknown as Record<string, unknown>);
+        } catch (e) {
+            console.error(`[get_my_games] warm build failed for ${row?.id}:`, (e as Error).message);
+        }
+    }
+    if (rows.length === 0) return;
+    const res = await fetch(`${REST}/player_views`, {
+        method: 'POST',
+        headers: { ...restHeaders, 'Content-Type': 'application/json', Prefer: 'resolution=ignore-duplicates,return=minimal' },
+        body: JSON.stringify(rows),
+    });
+    if (!res.ok) console.error(`[get_my_games] warm write ${res.status}: ${await res.text()}`);
+    else await res.body?.cancel();
+}
+
+function scheduleWarm(games: any[]): void {
+    const p = warmPlayerViews(games).catch(e => console.error('[get_my_games] warm error:', e));
+    const er = (globalThis as any).EdgeRuntime;
+    if (er && typeof er.waitUntil === 'function') er.waitUntil(p);
 }
 
 // The caller's games, newest first, via PostgREST. (A direct Postgres connection
@@ -118,6 +162,10 @@ serve(async (req: Request): Promise<Response> => {
                 `build ${(tEnd - tAfterFetch).toFixed(0)}ms [packed=${nPacked} row=${nRow}] | ` +
                 `total ${(tEnd - T0).toFixed(0)}ms`,
             );
+            // Backfill player_views for ALL participants of these games (any
+            // missing row), so the next load reads the cache directly and skips
+            // this function.
+            scheduleWarm(games);
             return new Response(encodeGamesList(entries) as unknown as BodyInit, {
                 headers: { ...corsHeaders, 'Content-Type': 'application/octet-stream' },
             });

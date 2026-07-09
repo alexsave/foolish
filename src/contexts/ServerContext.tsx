@@ -1043,41 +1043,54 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             return;
         }
 
-        // Fast path (docs/PLAYER_VIEWS.md): read the dashboard list STRAIGHT from
-        // the player_views cache — a plain indexed RLS SELECT, no edge function,
-        // no cold start, no per-viewer masking on read (the rows are already
-        // masked at write time). Each row's `view` is the caller's packed
-        // single-game envelope, materialized here by the same shared codec the
-        // edge path uses (decodePackedGame). Falls back to get_my_games when the
-        // cache is cold/unavailable (a first load, or games created before this
-        // feature) — that edge function stays the authoritative rebuild path.
-        try {
-            const { data: rows, error } = await supabase
-                .from('player_views')
-                .select('view, status, version')
-                .eq('player_id', user_id)
-                .order('updated_at', { ascending: false });
-            if (!error && Array.isArray(rows) && rows.length > 0) {
-                const games: { [key: string]: PersonalGame } = {};
-                for (const row of rows) {
-                    try {
-                        const decoded = decodePackedGame(hexToBytes((row as any).view));
-                        if (!decoded) continue;
-                        const g = decoded.game as PersonalGame;
-                        games[g.id] = { ...g, self: (g as any).self ?? null };
-                    } catch { /* skip an unreadable row, same as the list codec */ }
+        // One-time cache warm per device (docs/PLAYER_VIEWS.md). player_views is
+        // written going forward (every commit/create), so games that PREDATE the
+        // cache have no row yet — a direct read would return a PARTIAL list and,
+        // because it's non-empty, never trigger the rebuild that would backfill
+        // the rest. So until get_my_games has run once on this device (it
+        // backfills ALL of the caller's rows as it serves — see warmPlayerViews),
+        // treat the edge function as authoritative. After that, read player_views
+        // directly and stop calling the edge function.
+        let warmed = false;
+        try { warmed = typeof localStorage !== 'undefined' && localStorage.getItem('pv_warmed') === '1'; } catch { /* no storage */ }
+
+        // Fast path: read the dashboard list STRAIGHT from the player_views cache
+        // — a plain indexed RLS SELECT, no edge function, no cold start, no
+        // per-viewer masking on read (the rows are already masked at write time).
+        // Each row's `view` is the caller's packed single-game envelope,
+        // materialized here by the same shared codec the edge path uses.
+        if (warmed) {
+            try {
+                const { data: rows, error } = await supabase
+                    .from('player_views')
+                    .select('view, status, version')
+                    .eq('player_id', user_id)
+                    .order('updated_at', { ascending: false });
+                if (!error && Array.isArray(rows) && rows.length > 0) {
+                    const games: { [key: string]: PersonalGame } = {};
+                    for (const row of rows) {
+                        try {
+                            const decoded = decodePackedGame(hexToBytes((row as any).view));
+                            if (!decoded) continue;
+                            const g = decoded.game as PersonalGame;
+                            games[g.id] = { ...g, self: (g as any).self ?? null };
+                        } catch { /* skip an unreadable row, same as the list codec */ }
+                    }
+                    if (Object.keys(games).length > 0) {
+                        setGames(prev => ({ ...prev, ...games }));
+                        return;
+                    }
                 }
-                if (Object.keys(games).length > 0) {
-                    setGames(prev => ({ ...prev, ...games }));
-                    return;
-                }
+                // error / empty / all-unreadable → fall through to the edge rebuild
+            } catch (e) {
+                console.error('player_views direct read failed, falling back to get_my_games:', e);
             }
-            // error / empty / all-unreadable → fall through to the edge rebuild
-        } catch (e) {
-            console.error('player_views direct read failed, falling back to get_my_games:', e);
         }
 
-        return getUserGamesFromEdge(user_id);
+        // Authoritative rebuild (also backfills the cache for next time). Mark the
+        // device warmed once it succeeds so future loads use the direct read.
+        await getUserGamesFromEdge(user_id);
+        try { if (typeof localStorage !== 'undefined') localStorage.setItem('pv_warmed', '1'); } catch { /* no storage */ }
     };
 
     // Authoritative rebuild path: the get_my_games edge function (per-viewer
