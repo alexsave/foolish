@@ -46,29 +46,49 @@ wrap400(async ({ user, user_name }: ExecutionParams) => {
         logs: []
     };
 
-    // Create the game in ONE round-trip: the create_game RPC does the three
-    // inserts (games → game_decks → player_hands) in a single transaction,
-    // replacing what used to be sequential PostgREST calls (part of #6's slow
-    // create). p_views seeds the creator's player_views cache row (version 0)
-    // in the SAME transaction, so the new lobby is readable from the dashboard's
-    // direct player_views SELECT immediately (docs/PLAYER_VIEWS.md). A lobby has
-    // no hidden state, so this masked view is built by the pure-TS mirror (no
-    // rules-wasm on the create cold path).
-    const p_views = await buildPlayerViewRows(dbGameData, null, 0);
-    const { error: createError } = await supabaseClient.rpc('create_game', {
-        p_game_id: game_id,
-        p_name: game_name,
-        p_player_id: user_id,
-        p_players: [{
-            player_id: user_id,
-            name: user_name,
-            status: PLAYER_STATUS.IDLE,
-            is_ai: false
-        }],
-        p_views,
-    });
-    if (createError) {
-        throw new Error(`Failed to create game: ${createError.message}`);
+    // Persist AFTER the response, in the background. `create` is the ONE handler
+    // whose response depends on NO database read — the new lobby is fully
+    // determined by the inputs above, so the client can be handed the finished
+    // game immediately while the DB write happens off the critical path. Every
+    // other action must first LOAD the game, so none of them can defer like this.
+    // EdgeRuntime.waitUntil keeps the isolate alive until the write settles
+    // (same mechanism as the post-response bot loop); this takes the create_game
+    // PostgREST round-trip (~594ms from a cold isolate) off what the user waits on.
+    //
+    // The create_game RPC does the three inserts (games → game_decks →
+    // player_hands) + the player_views seed in one transaction; p_views (built by
+    // the pure-TS lobby mirror, no rules-wasm) makes the new lobby readable from
+    // the dashboard's direct player_views SELECT. Retry a few times so a
+    // background failure (which the client can't see — it already got the game)
+    // doesn't silently drop the write; a unique-violation means an earlier
+    // attempt actually landed, so treat it as success.
+    const persist = (async () => {
+        const p_views = await buildPlayerViewRows(dbGameData, null, 0);
+        for (let attempt = 1; attempt <= 3; attempt++) {
+            const { error } = await supabaseClient.rpc('create_game', {
+                p_game_id: game_id,
+                p_name: game_name,
+                p_player_id: user_id,
+                p_players: [{
+                    player_id: user_id,
+                    name: user_name,
+                    status: PLAYER_STATUS.IDLE,
+                    is_ai: false
+                }],
+                p_views,
+            });
+            if (!error) return;
+            if ((error as { code?: string }).code === '23505') return; // already inserted by a prior attempt
+            console.error(`[create] background persist attempt ${attempt}/3 failed for ${game_id}: ${error.message}`);
+        }
+        console.error(`[create] background persist GAVE UP for ${game_id} — the client holds a game that isn't in the DB`);
+    })();
+
+    const er = (globalThis as { EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void } }).EdgeRuntime;
+    if (er && typeof er.waitUntil === 'function') {
+        er.waitUntil(persist); // survive the response; write in the background
+    } else {
+        await persist; // no EdgeRuntime (local/test): don't lose the write
     }
 
     // No broadcast on create: a just-created game has exactly one member (the
