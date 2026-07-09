@@ -11,6 +11,7 @@
 #include "cordite_sim.h"
 #include "game.h"
 #include "card.h"
+#include "wasm_overlay.h"
 #include <string.h>
 #include <stddef.h>   // offsetof (solver clones skip the dead deck[] tail)
 #include <stdint.h>
@@ -1261,6 +1262,24 @@ static void sim_apply_sol(SimState *s, int p, const SolMove *m) {
                                      // play — is identical to the struct solver
 #define CD_SIM_SOLVE_MAX_MOVES 160   // generation buffer (slack above the cap)
 
+// M7a (docs/BOTS_WASM_MEMORY_PLAN.md): hoist sim_solve_rec's per-frame fat
+// locals — the move buffer + child SimState — into depth-indexed _Thread_local
+// BSS so the 48-frame recursion stops carrying ~3.2 KiB/frame on the shadow
+// stack (that recursion is the stack high-water once the M2-stream heuristic
+// frames are gone). Indexing is safe: depth is bounded < CD_SIM_SOLVE_MAX_DEPTH
+// by the guard at the top of sim_solve_rec before either array is touched, and
+// the recursion never re-enters a fresh solve tree (only sim_apply_sol + itself),
+// so no two live frames alias a slot. 100 slots not 160: generation saturates at
+// the buffer and any node with > CD_SOLVE_MOVES_CAP (96) moves aborts identically
+// (100 > 96), so the resolved/aborted node SET — hence play — is unchanged.
+// _Thread_local keeps native OMP race-free (same pattern as solve_ws); wasm
+// strips it. 48×100×18 + 48×328 = 102,144 B BSS.
+#define CD_SIM_SOLVE_REC_SLOTS 100
+_Static_assert(CD_SIM_SOLVE_REC_SLOTS > CD_SOLVE_MOVES_CAP,
+               "recursion gen buffer needs slack above the movecap abort");
+static _Thread_local SolMove  sim_rec_moves[CD_SIM_SOLVE_MAX_DEPTH][CD_SIM_SOLVE_REC_SLOTS];
+static _Thread_local SimState sim_rec_child[CD_SIM_SOLVE_MAX_DEPTH];
+
 // Generate the full legal-move set for `actor`, mirroring
 // calculate_legal_moves' branch selection.
 static int sim_gen_moves(const SimState *s, int actor, SolMove *buf, int max_n) {
@@ -1467,8 +1486,8 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
                 _nid,(unsigned long long)key,actor,(actor==S->me));
 #endif
 
-    SolMove moves[CD_SIM_SOLVE_MAX_MOVES];
-    int nm = sim_gen_moves(s, actor, moves, CD_SIM_SOLVE_MAX_MOVES);
+    SolMove *moves = sim_rec_moves[depth];   // hoisted to depth-indexed BSS (M7a)
+    int nm = sim_gen_moves(s, actor, moves, CD_SIM_SOLVE_REC_SLOTS);
     if (nm == 0) TR_RET(0, "nomoves");
     // Mirror the struct solver's `mv->n > CD_SOLVE_MAX_MOVES` bail: abort on
     // nodes with more than the cap legal moves, so we resolve/abort the exact
@@ -1501,7 +1520,7 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
     int maximizing = (actor == S->me);
     int best = maximizing ? -2000 : 2000;
     int applied = 0;
-    SimState child;
+    SimState *child = &sim_rec_child[depth];   // hoisted to depth-indexed BSS (M7a)
 #ifdef CD_TT_TRACE
     long _saved_parent = cd_tr_parent;
     if (cd_tr_active) cd_tr_parent = _nid;
@@ -1513,13 +1532,13 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
         // Skipping the 64B tail shaves ~20% off this per-node clone — the single
         // hottest memmove in the semtex/octogen/cordite MC profile. deck_n (=0)
         // sits before deck[] and is still copied, so movegen sees a valid count.
-        memcpy(&child, s, offsetof(SimState, deck));
-        sim_apply_sol(&child, actor, &moves[i]);
+        memcpy(child, s, offsetof(SimState, deck));
+        sim_apply_sol(child, actor, &moves[i]);
         applied = 1;
 #ifdef CD_TT_TRACE
         if (cd_tr_active) cd_tr_move(cd_tr_edge, sizeof(cd_tr_edge), &moves[i]);
 #endif
-        int v = sim_solve_rec(S, &child, alpha, beta, depth + 1);
+        int v = sim_solve_rec(S, child, alpha, beta, depth + 1);
         if (S->aborted) {
 #ifdef CD_TT_TRACE
             cd_tr_parent = _saved_parent;
@@ -2214,6 +2233,17 @@ static _Thread_local union {
     SolveMoves mv[SOLVE_SCRATCH_DEPTH];
     LegalMoves rollout;
 } solve_ws;
+
+#ifdef CD_WASM_OVERLAY
+// M8 (docs/BOTS_WASM_MEMORY_PLAN.md, wasm_overlay.h): the replay-call scratch
+// (g_rec/g_bn/g_replay_io, 90.5 KiB) is aliased into this arena — the two
+// families are never live at once (choose vs replay are non-nesting exports).
+// wasm-only: solve_ws is _Thread_local, so &solve_ws is a compile-time-constant
+// address only because wasm strips _Thread_local; natively the alias would race.
+unsigned char *const cd_overlay = (unsigned char *)&solve_ws;
+_Static_assert(CD_OVL_END <= sizeof(solve_ws), "M8 replay overlay does not fit inside solve_ws");
+_Static_assert(CD_OVL_GIO_END <= sizeof(solve_ws), "M9 g_io overlay does not fit inside solve_ws");
+#endif
 
 // Solver root slot: prefix-sized like the child slots (roots never take
 // appends — only children are applied to), but with num_logs pinned at 0,

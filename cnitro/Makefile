@@ -144,13 +144,42 @@ WASM_OPT   ?= -Oz
 # the buffer only feeds the exported move MENU, where the legal.c cap guards
 # already stop combinatorial blowups safely at any value. 65536 cost 10.9MB
 # of the module's 12MB for zero correctness benefit.
+# M2 (docs/BOTS_WASM_MEMORY_PLAN.md) measured whether the bots build could drop
+# to 1024 like rules (−181 KiB g_moves + −3 KiB forced_loss_flags): NEGATIVE.
+# Instrumenting the enumerator (-DLEGAL_STATS, legal.c) over every shipped bot
+# family × player counts 2–8 (52-card deck at 6–8p, production-accurate) shows
+# the DEFENDER cover-combination menu saturates the buffer (>16,384) in ordinary
+# large-hand 8-player states — e.g. a 20–23 card hand over 4 uncovered battles
+# enumerates 5,616–16,384+ covers. That is real reachable bot play, not a
+# corrupt state; the plan's decision rule (max > 2,900 → keep 4096) fires, and
+# unlike rules.wasm (which serves the human UI, where a truncated cover menu is
+# a benign UX bound) truncating a BOT's cover set at 1024 drops legal options it
+# would autonomously pick from → a behavior change. 4096 stays; the rules/bots
+# cap asymmetry is deliberate. (bots already truncates the widest 8p states at
+# 4096; 1024 would only truncate MORE.)
 # WORLD_LOG_CAP=40: sampled-world/trial/difftest Game slots keep a 40-entry
 # discard-only log instead of the full 512 (see cordite_sim.h) — the research
 # full-log world modes stay native-only. 3 x 61KB per bots.wasm instance.
-# Stack 256KB: with every sizeof(Game)/sizeof(LegalMoves) local moved into
-# shared scratch, the deepest real path is the bitboard solver's 48-frame
-# recursion (~1.5KB/frame) — 256KB is ~3x that worst case. --stack-first
-# keeps any regression a loud trap, and CI's mem job runs unpinned games.
+# Stack: the bots build now ships 64 KiB (override in WASM_BOT_LDFLAGS below),
+# down from 256 KiB, once three changes together collapsed the shadow-stack
+# high-water (docs/BOTS_WASM_MEMORY_PLAN.md §6). A wasm stack canary
+# (e2e/stack_canary.mts — paint 0xA5, run the shipped-bot corpus through the
+# production bridge, scan) measured the pre-work worst case at 179 KiB, driven by
+# (1) sim_solve_rec's 48-frame recursion carrying ~3.2 KiB/frame of fat locals and
+# (2) the int[MAX_LEGAL_MOVES] index arrays in the heuristic choosers (handwritten
+# 112 KiB, and the struct-rollout espresso frame semtex/fulminate reach). The three
+# changes: M7a hoists the solver's move buffer + child SimState into depth-indexed
+# BSS (cordite_sim.c — scalar frames, recursion depth-capped at 48); M2-stream
+# rewrites handwritten's chooser as a single streaming pass (no index arrays); and
+# the ship-set trim drops semtex/fulminate (the bots that reached the struct-rollout
+# espresso frame). The shipped MC bots (octogen/cordite) use the bitboard rollout
+# exclusively, so with the solver hoisted the measured high-water is 13.2 KiB —
+# 64 KiB is 4.8x that (the recursion depth cap makes ~15 KiB a near-hard ceiling,
+# so this margin is conservative). --stack-first keeps any regression a loud trap,
+# and CI's mem job runs unpinned games. Net vs 256 KiB: −192 KiB stack at +102 KiB
+# BSS (M7a) = −90 KiB. Native builds keep their large stack (this override is
+# wasm-bots-only); the solver hoist is behavior-neutral (_Thread_local, native OMP
+# safe; SIG-identical) so native play is unchanged.
 # MAX_MOVE_CARDS=28: for ANY state reachable with <= 52 distinct cards no
 # legal move exceeds 26 cards — an attack/pass of k needs the defender to
 # hold >= k (2k <= 52), a cover of n needs n covers + n table attacks
@@ -176,14 +205,16 @@ WASM_OPT   ?= -Oz
 #   MAGIC + TRASH + defender-draw + <=num_players batch draws = num_players
 #   + 3 = 11 at 8 players (refill snaps PER-PLAYER, not per card; no OUT/
 #   DEFENDER_CHANGE snap in that path). The deal window is num_players + 3 =
-#   11 too. Measured worst 12 over 63K games. 24 is ~1.8x the analytic
-#   ceiling — snap-ring overflow silently DROPS animation frames (visual, not
-#   corruption), so this margin is deliberate. Cuts g_snaps 55.7KB->27.8KB.
+#   11 too. Measured worst 12 over 63K games. 16 is 1.33x the measured worst
+#   and 1.45x the analytic ceiling (11) — snap-ring overflow silently DROPS
+#   animation frames (visual, not corruption), so a modest margin is safe.
+#   Cuts g_snaps 55.7KB->27.8KB->18.6KB (M4, docs/BOTS_WASM_MEMORY_PLAN.md;
+#   was 24). Shared by bots + rules; guards keeps its own MAX_SNAPS=1.
 WASM_FLAGS := --target=wasm32 $(WASM_OPT) -nostdlib -ffreestanding -mbulk-memory \
               -isystem wasm/include -Isrc -D_Thread_local= -DMAX_LOG_PAIRS=64 \
               -DMAX_LEGAL_MOVES=4096 -DMAX_MOVE_CARDS=28 -DMAX_BATTLES=64 \
               -DWORLD_LOG_CAP=40 \
-              -DREPLAY_REC_CAP=4096 -DWASM_REPLAY_IO_CAP=32768 -DMAX_SNAPS=24 \
+              -DREPLAY_REC_CAP=4096 -DWASM_REPLAY_IO_CAP=32768 -DMAX_SNAPS=16 \
               -DCD_TT_BITS=12 -DCD_TT_2WAY -DCD_TT_PACK8 \
               -Wall -Wextra -Wno-unused-parameter \
               -Wl,--no-entry -Wl,--export-memory -Wl,-z,stack-size=262144 -Wl,--stack-first \
@@ -374,14 +405,20 @@ wasm-guards: build/guards.wasm
 # Note: the distilled strategy (research, strength-negative — see
 # CORDITE_RESEARCH.md) stays native-arena-only; it is deliberately NOT in the
 # production bot module.
+# Only the SHIPPED difficulty-ladder bots (Durak Bot Ordnance Chart) that are
+# already ported to wasm — random, simple_heuristic, handwritten_prod, cordite,
+# octogen — plus the two heuristics the shipped MC bots call as rollout policies:
+# espresso and handwritten (arena builds, cordite_strategy.c:591-594). Dropped
+# entirely (no ladder slot, no dep of a shipped bot): champion, ultimate_champion,
+# hacker, fulminate, semtex, espresso_prod — their code + static data leave the
+# module. (firecracker/blackpowder are ladder rungs not yet ported to wasm; add
+# their .c + robusta_strategy.c when they land.)
 WASM_BOT_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/view.c src/awire.c \
                 src/evwire.c src/random_strategy.c \
                 src/espresso_strategy.c src/handwritten_strategy.c \
                 src/cordite_strategy.c src/cordite_sim.c \
-                src/simple_heuristic_strategy.c src/champion_strategy.c \
-                src/ultimate_champion_strategy.c src/hacker_strategy.c \
-                src/fulminate_strategy.c src/espresso_prod_strategy.c \
-                src/handwritten_prod_strategy.c src/semtex_strategy.c \
+                src/simple_heuristic_strategy.c \
+                src/handwritten_prod_strategy.c \
                 src/octogen_strategy.c wasm/wasm_api.c wasm/wasm_bots_api.c
 
 # PER-FILE opt (a mix one clang invocation can't express): the profiled hot MC
@@ -394,10 +431,17 @@ WASM_BOT_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/view.c sr
 # at ~66KB gz vs ~73KB (and beats all-Oz's ~52KB by ~15% p50). The heavy
 # decisions self-tier-up mid-search, so the win holds cold as well as warm.
 # Split the shared flags into compile-only vs link-only so per-file opt applies.
-WASM_BOT_CFLAGS  := $(filter-out -Wl% $(WASM_OPT),$(WASM_FLAGS))
-WASM_BOT_LDFLAGS := $(filter -Wl%,$(WASM_FLAGS))
+# CD_WASM_OVERLAY (M8, docs/BOTS_WASM_MEMORY_PLAN.md) is added HERE, not in the
+# shared WASM_FLAGS: it aliases the replay scratch into cordite_sim.c's solve_ws,
+# which only the bots module links — rules.wasm has no solver, and native builds
+# run OMP games in parallel where the alias would race. bots-module compile only.
+WASM_BOT_CFLAGS  := $(filter-out -Wl% $(WASM_OPT),$(WASM_FLAGS)) -DCD_WASM_OVERLAY
+# bots-only 64 KiB shadow stack (measured high-water 13.2 KiB after M7a +
+# M2-stream + ship-trim, see the Stack comment above). Trailing -z stack-size
+# wins in wasm-ld, overriding the shared WASM_FLAGS' 256 KiB for bots only.
+WASM_BOT_LDFLAGS := $(filter -Wl%,$(WASM_FLAGS)) -Wl,-z,stack-size=65536
 WASM_BOT_O3_SRC  := src/cordite_sim.c src/cordite_strategy.c \
-                    src/octogen_strategy.c src/semtex_strategy.c src/fulminate_strategy.c
+                    src/octogen_strategy.c
 
 WASM_BOT_OBJ    := $(addprefix build/botobj/,$(notdir $(WASM_BOT_SRC:.c=.o)))
 WASM_BOT_O3_OBJ := $(addprefix build/botobj/,$(notdir $(WASM_BOT_O3_SRC:.c=.o)))

@@ -260,6 +260,42 @@ the shadow stack (256 KiB), `solve_ws` (272 KiB), and `g_moves` (232 KiB) now
 lead. The measured map and an executable candidate-by-candidate plan for the
 next shrink round live in `docs/BOTS_WASM_MEMORY_PLAN.md`.
 
+**Next-round results (Jul 2026, see `BOTS_WASM_MEMORY_PLAN.md` §6):**
+- **M8 shipped** — the replay-call scratch (`g_rec`/`g_bn`/`g_replay_io`, 90.5 KiB)
+  is aliased into `solve_ws` (never concurrent: choose vs replay are non-nesting
+  exports). bots.wasm initial linear memory **18 → 17 pages** (1,179,648 →
+  1,114,112 B). wasm-only; verified byte-exact via `replay_codec` + a new
+  encode↔choose interleave gate.
+- **M4 shipped** — `MAX_SNAPS` 24 → 16 (−9 KiB `g_snaps` in bots + rules); 1.33×
+  the measured worst, no page change.
+- **M2 (`MAX_LEGAL_MOVES`→1024): NEGATIVE** — the move menu saturates >16k in
+  ordinary large-hand 8-player defender states even under shipped bots, so
+  truncation would change play. The better lever is **streaming (visitor)
+  enumeration**: `handwritten_strategy_choose` streamed (behavior-neutral, ~11%
+  faster, −112 KiB frame).
+- **M1/M7 (shadow stack): SHIPPED 256 → 64 KiB (−2 pages).** Initially dead (the
+  measured worst-case high-water was 179 KiB, so 256 KiB was only ~1.4×), it was
+  unlocked once M2-stream removed handwritten's frame and the ship-trim dropped
+  semtex/fulminate (the struct-rollout users). With **M7a** (hoist `sim_solve_rec`
+  fat locals to BSS) the shipped bots' high-water is **13.2 KiB** — 64 KiB is
+  4.8×. Net −192 KiB stack + 102 KiB BSS = **−90 KiB**; bots.wasm 17 → 15 pages.
+- **M9 shipped** — `g_io` (72 KiB) overlaid into `solve_ws` too (third
+  non-concurrent tenant, disjoint from the replay region). bots.wasm 15 → 14
+  pages.
+- **M3 (`MAX_LOGS`→256): NEGATIVE** — the session log peaks at ~1,030 entries
+  (`l1_measure`, two seeds), far above the 180 threshold and above today's 512,
+  so cutting it changes the belief bots' long-game view.
+- **M5 (packed solver moves): NEGATIVE on ROI** — `solve_ws` is a union whose
+  `mv` arm (278 KiB) is dominant but whose `rollout` arm (237 KiB) is live, so
+  packing `mv` only reaches −41 KiB (no page) at hot-loop latency risk.
+- **M6 blocked (W1); M7b not recommended** (no stack pressure after M7a).
+- **Ship-set trim** — the wasm build now carries only the deployed ladder bots;
+  bots.wasm code **−29%** (178,743 → 127,389 B). Enabled the stack cut above.
+
+**Net this round: bots.wasm initial linear memory 18 → 14 pages
+(1,179,648 → 917,504 B), code −29%.** Full per-candidate ledger:
+`docs/BOTS_WASM_MEMORY_PLAN.md` §7.
+
 The remaining static core is the Monte-Carlo solver scratch (`solve_ws` 272 KiB,
 `solve_child_scratch` 55 KiB, the world/trial/diff slots) — a per-search working
 set inherently larger than L1, **designed** around bitboard `SimState`s that *are*
