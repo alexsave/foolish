@@ -25,11 +25,26 @@ amount of dead over-provisioning to reclaim.
 
 ## Result
 
-| module        | before        | after        | reduction |
-| ------------- | ------------- | ------------ | --------- |
-| `guards.wasm` | 4 pages · 256 KiB | **1 page · 64 KiB**  | 4× |
-| `rules.wasm`  | 53 pages · 3.31 MiB | **5 pages · 320 KiB** | 10.6× |
-| `bots.wasm`   | 64 pages · 4 MiB | **18 pages · 1.13 MiB** | 3.6× |
+Two numbers matter and they differ for one module. **Initial** is the memory
+the module declares at link time (`memory.buffer.byteLength` at instantiation).
+**Peak** is the high-water mark during real gameplay — and it's what the edge
+external-memory budget is charged for, and what the CI `metrics` job reports.
+For a module that never calls `memory.grow`, peak == initial.
+
+| module        | before (peak) | after (peak) | reduction | grows at runtime? |
+| ------------- | ------------- | ------------ | --------- | ----------------- |
+| `guards.wasm` | 256 KiB | **64 KiB · 1 page** | 4× | no — pinned, 0 `memory.grow` |
+| `rules.wasm`  | 3.31 MiB | **320 KiB · 5 pages** | 10.6× | no — all-static, 0 `memory.grow` |
+| `bots.wasm`   | 5.13 MiB | **2.25 MiB** | 2.28× (−56%) | **yes** — see below |
+
+`bots.wasm` is the one that grows. Its **initial** memory dropped 64 → 18 pages
+(4 MiB → 1.13 MiB) from the shared buffer caps, but on first play its Monte-Carlo
+endgame solver bump-allocates a 1 MiB transposition table (+2 slack pages), so
+it settles at **36 pages · 2.25 MiB** and stays flat there (verified by
+`test:mem`). 2.25 MiB is the honest footprint; the 1.13 MiB static floor is not
+the whole story. The CI `metrics` bot measures this peak, and its numbers
+reconcile exactly: base `64 + 18 = 82 pages = 5.13 MiB`, this branch
+`18 + 18 = 36 pages = 2.25 MiB`.
 
 `guards.wasm` is pinned to exactly one page at link time
 (`--initial-memory=65536 --max-memory=65536`): if any buffer ever grows past
@@ -115,13 +130,26 @@ were left untouched here.
 
 ## `bots.wasm` floor
 
-`bots.wasm` dropped 4 MiB → 1.13 MiB purely from the shared replay/snapshot caps
-(the bot module links `replay.c` and `wasm_api.c` too). Its irreducible core is
-the cordite Monte-Carlo solver scratch (`solve_ws` 272 KiB, `solve_child_scratch`
-55 KiB, the world/trial/diff slots) — a per-search working set that is
-inherently larger than L1 and is **designed** around bitboard `SimState`s that
-*are* L1-resident during the hot rollout loop. Shrinking it further means
-touching MC semantics, which this pass deliberately did not.
+`bots.wasm`'s **static** footprint dropped 4 MiB → 1.13 MiB purely from the
+shared replay/snapshot caps (the bot module links `replay.c` and `wasm_api.c`
+too). Its **peak** is 2.25 MiB, and the 1.12 MiB gap is two things, both
+irreducible without touching bot behavior:
+
+- **The 1 MiB transposition table** (`cordite_sim.c`, `CD_TT_BITS=16` →
+  65,536 × 16-byte entries), bump-allocated on the first solve. It is a
+  memoization cache of *exact* endgame values — but the solver is
+  **budget-limited** (`SimSolver.budget` / `aborted`), so a smaller table means
+  more recomputation, the budget exhausts sooner, and the bot can pick a
+  *different* (weaker) move under the same time cap. So table size is a
+  bot-strength knob, not free memory: shrinking it needs an Elo-arena
+  regression, which is out of scope for a memory pass.
+- **+2 slack pages** in the bump allocator (`wasm_bots_api.c`) — already minimal.
+
+The rest of the static core is the cordite Monte-Carlo solver scratch
+(`solve_ws` 272 KiB, `solve_child_scratch` 55 KiB, the world/trial/diff slots) —
+a per-search working set inherently larger than L1, **designed** around bitboard
+`SimState`s that *are* L1-resident during the hot rollout loop. Fitting bots in
+L1 is not a memory-layout problem; it's a different solver.
 
 ## Validation
 
