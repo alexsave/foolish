@@ -606,13 +606,26 @@ BEGIN
       SET hand = EXCLUDED.hand, awaiting_attack = EXCLUDED.awaiting_attack, updated_at = now();
   END IF;
 
-  IF p_bot_hands IS NOT NULL AND jsonb_array_length(p_bot_hands) > 0 THEN
-    INSERT INTO bot_hands (game_id, bot_id, hand, awaiting_attack)
-    SELECT p_game_id, (b->>'bot_id')::uuid, b->'hand',
-           COALESCE((b->>'awaiting_attack')::bool, false)
-    FROM jsonb_array_elements(p_bot_hands) AS b
-    ON CONFLICT (game_id, bot_id) DO UPDATE
-      SET hand = EXCLUDED.hand, awaiting_attack = EXCLUDED.awaiting_attack, updated_at = now();
+  IF p_bot_hands IS NOT NULL THEN
+    IF jsonb_array_length(p_bot_hands) > 0 THEN
+      INSERT INTO bot_hands (game_id, bot_id, hand, awaiting_attack)
+      SELECT p_game_id, (b->>'bot_id')::uuid, b->'hand',
+             COALESCE((b->>'awaiting_attack')::bool, false)
+      FROM jsonb_array_elements(p_bot_hands) AS b
+      ON CONFLICT (game_id, bot_id) DO UPDATE
+        SET hand = EXCLUDED.hand, awaiting_attack = EXCLUDED.awaiting_attack, updated_at = now();
+    END IF;
+
+    -- Prune bot_hands for bots no longer in the roster (a removed lobby bot), so
+    -- handleExit doesn't need a separate pre-commit DELETE round-trip. Mirrors the
+    -- player_views prune below. Guarded to lobby commits: a dealt commit passes
+    -- p_bot_hands = NULL (the blob is authoritative), so mid-game bot hands are
+    -- never touched. An empty array prunes every bot (the last one was removed).
+    DELETE FROM bot_hands
+    WHERE game_id = p_game_id
+      AND bot_id NOT IN (
+        SELECT (b->>'bot_id')::uuid FROM jsonb_array_elements(p_bot_hands) AS b
+      );
   END IF;
 
   -- The session log is the packed logs_packed column (handled in the UPDATE

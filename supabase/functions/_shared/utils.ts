@@ -332,6 +332,12 @@ export interface ExecutionParams {
     body: any;
     game: Game;
     reqId: string;
+    // add-bot only: the bots-roster read, kicked off by wrap400 BEFORE the game
+    // load so the two overlap instead of running as two serial cold-isolate
+    // round-trips. undefined for every other action (and for direct callers /
+    // tests, where handleAddBot falls back to fetching inline). Typed as a
+    // PromiseLike so the PostgREST builder (a thenable) assigns cleanly.
+    botsPrefetch?: PromiseLike<{ data: any[] | null; error: any }>;
 }
 
 // Fire-and-forget bot drive AFTER the HTTP response (see the CRITICAL note
@@ -401,6 +407,15 @@ export const wrap400 = (
             const game_id = (body as any).game_id;
             console.log(`[${reqId}][WRAP400] game_id: ${game_id || 'none'}`);
 
+            // add-bot needs the bots roster, which does NOT depend on the game.
+            // Kick that read off NOW so it runs concurrently with loadCompleteGame
+            // (inside executeWithGameLock) instead of as a second serial round-trip
+            // after it. Not awaited here — handleAddBot awaits it. No .catch(): a
+            // rejection surfaces when handleAddBot awaits, inside the try/catch.
+            const botsPrefetch = (body as any).type === 'add-bot'
+                ? supabaseClient.from('bots').select('*')
+                : undefined;
+
             let result: any;
             let events: AnimationEvent[] = [];
 
@@ -408,7 +423,7 @@ export const wrap400 = (
                 // Execute operation with database lock for this specific game
                 const lockStart = Date.now();
                 console.log(`[${reqId}][WRAP400] Starting executeWithGameLock for game ${game_id}`);
-                const { game, events: operationEvents } = await executeWithGameLock(game_id, (game) => execute({ user, user_name, body, game, reqId }), reqId, mootIfGameOver);
+                const { game, events: operationEvents } = await executeWithGameLock(game_id, (game) => execute({ user, user_name, body, game, reqId, botsPrefetch }), reqId, mootIfGameOver);
                 console.log(`[${reqId}][WRAP400] executeWithGameLock took ${Date.now() - lockStart}ms`);
                 result = game;
                 events = operationEvents;
