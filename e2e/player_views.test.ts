@@ -10,6 +10,13 @@
 //  2. create_game seeds the creator's lobby row (no blob → the TS-mirror mask).
 //  3. Exiting prunes the leaver's row (they stop seeing the game in their list).
 //  4. RLS: a player reads ONLY their own rows; no client can write.
+//
+// And the sibling spectator_views cache (the SHARED, fully-masked seat -1 view
+// that replaced get_game's spectate path):
+//  5. A dealt commit / create_game writes one fully-masked (no self, no hands)
+//     spectator row, decodable by the same client codec.
+//  6. RLS: ANY authenticated user may read it (it carries no hidden state); no
+//     client can write.
 
 import './harness.ts';
 import { test, before, beforeEach } from 'node:test';
@@ -18,7 +25,7 @@ import { applySchema, resetDb, seedGame, uuid, pgPool } from './harness.ts';
 import { executeWithGameLock, loadCompleteGame, supabaseClient } from '../supabase/functions/_shared/utils.ts';
 import { handleMetaAction } from '../supabase/functions/_shared/meta_actions.ts';
 import { legalMovesFor, applyPlayerMove } from './dispatch.ts';
-import { buildPlayerViewRows, buildPlayerViewUpserts } from '../supabase/functions/_shared/player_views.ts';
+import { buildPlayerViewRows, buildPlayerViewUpserts, buildSpectatorView } from '../supabase/functions/_shared/player_views.ts';
 import { buildPackedGameBytes, gameViewFromRow } from '../supabase/functions/_shared/packed_game.ts';
 import { decodePackedGame } from '../supabase/functions/_shared/wire/view.ts';
 import { bytesToBareHex } from '../supabase/functions/_shared/wire/bytes.ts';
@@ -42,6 +49,13 @@ async function viewsFor(gameId: string): Promise<Map<string, { view: string; ver
   return m;
 }
 
+async function spectatorFor(gameId: string): Promise<{ view: string; version: string; status: string } | null> {
+  const { rows } = await pgPool.query(
+    'SELECT view, version, status FROM spectator_views WHERE game_id=$1', [gameId]);
+  if (rows.length === 0) return null;
+  return { view: rows[0].view, version: String(rows[0].version), status: rows[0].status };
+}
+
 before(async () => {
   await applySchema();
   // Make the harness's stub auth.uid() honor a per-connection JWT claim, so the
@@ -50,6 +64,15 @@ before(async () => {
   await pgPool.query(`
     CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $$
       SELECT NULLIF(current_setting('request.jwt.claims', true)::jsonb->>'sub','')::uuid
+    $$;`);
+  // Likewise honor a per-connection role claim so the spectator_views policy
+  // (auth.role() = 'authenticated') is actually exercised. Falls back to the
+  // default stub value ('service_role') when no claim is set, so every other
+  // test that relies on the service-role bypass is unaffected. Faithful to
+  // Supabase's own auth.role().
+  await pgPool.query(`
+    CREATE OR REPLACE FUNCTION auth.role() RETURNS text LANGUAGE sql STABLE AS $$
+      SELECT COALESCE(NULLIF(current_setting('request.jwt.claims', true)::jsonb->>'role',''), 'service_role')
     $$;`);
 });
 beforeEach(async () => { await resetDb(); });
@@ -271,6 +294,102 @@ test('RLS: a player reads only their own rows, and clients cannot write', async 
     // A client write is denied (no INSERT grant / policy).
     await assert.rejects(
       c.query(`INSERT INTO player_views(game_id,player_id,view,version,status) VALUES($1,$2,'00',0,'playing')`, [gameId, h1]),
+      /permission denied/, 'authenticated cannot insert');
+    await c.query('ROLLBACK');
+  } finally {
+    c.release();
+  }
+});
+
+test('a dealt commit writes one fully-masked (no self) spectator row, byte-identical to the builder', async () => {
+  const gameId = `sp${uuid().slice(0, 4)}`;
+  const h1 = uuid(), h2 = uuid();
+  await seedGame(gameId, [
+    { id: h1, name: 'H1', is_ai: false, strategy_key: 'human' },
+    { id: h2, name: 'H2', is_ai: false, strategy_key: 'human' },
+  ]);
+  await executeWithGameLock(gameId, async (game) =>
+    handleMetaAction({ user: { id: h1 } as any, user_name: 'H1', body: { type: 'start', game_id: gameId }, game, reqId: 'r' }),
+    'r', false);
+
+  const g = (await pgPool.query(`SELECT ${GAME_COLS} FROM games WHERE id=$1`, [gameId])).rows[0];
+  const spec = await spectatorFor(gameId);
+  assert.ok(spec, 'a spectator row was written');
+  assert.equal(spec!.status, 'playing', 'status denormalized');
+  assert.equal(spec!.version, String(g.version), 'version mirrors games.version');
+
+  // Byte-identical to the shared builder's seat -1 envelope.
+  const expected = await buildSpectatorView(gameViewFromRow(g), g.state ?? null, Number(g.version));
+  assert.equal(spec!.view, expected, 'cached spectator view == buildSpectatorView output');
+
+  // Decodes via the shared client codec as a spectator (no self, every hand
+  // masked to a count only — the raw state never leaks to the public row).
+  const decoded = decodePackedGame(hexToBytes(spec!.view));
+  assert.ok(decoded, 'spectator row decodes');
+  const view = decoded!.game as any;
+  assert.equal(view.id, gameId);
+  assert.equal(view.status, GAME_STATUS.PLAYING);
+  assert.ok(!view.self, 'spectator has no self');
+  assert.ok(view.players.every((p: any) => !p.hand), 'no player exposes real cards');
+  assert.ok(view.players.some((p: any) => p.hand_length > 0), 'hands are present as counts');
+});
+
+test('create_game seeds a decodable, fully-masked spectator lobby row', async () => {
+  const gameId = `sc${uuid().slice(0, 4)}`;
+  const h1 = uuid();
+  await pgPool.query('INSERT INTO auth.users(id) VALUES($1)', [h1]);
+
+  const lobby: Game = {
+    id: gameId, name: 'H1\'s Game', deck: [], deck_length: 0, discard_pile_length: 0,
+    flipped: null, status: GAME_STATUS.WAITING, power_suit: 0, first_attacker: 0, defender: 0,
+    table_battles: [], elimination_order: [], good_timestamp: null, good_players: [], logs: [],
+    players: [{
+      player_id: h1, name: 'H1', status: PLAYER_STATUS.IDLE, is_ai: false,
+      hand: [], hand_length: 0, awaiting_attack: false, strategy_key: STRATEGY_KEY.HUMAN,
+    }],
+  };
+  const p_views = await buildPlayerViewRows(lobby, null, 0);
+  const p_spectator = await buildSpectatorView(lobby, null, 0);
+  const { error } = await supabaseClient.rpc('create_game', {
+    p_game_id: gameId, p_name: lobby.name, p_player_id: h1,
+    p_players: [{ player_id: h1, name: 'H1', status: PLAYER_STATUS.IDLE, is_ai: false }],
+    p_views, p_spectator,
+  });
+  assert.ok(!error, `create_game ok: ${error?.message}`);
+
+  const spec = await spectatorFor(gameId);
+  assert.ok(spec, 'spectator lobby row seeded');
+  assert.equal(spec!.status, 'waiting');
+  const decoded = decodePackedGame(hexToBytes(spec!.view));
+  assert.ok(decoded, 'lobby spectator row decodes');
+  assert.equal(decoded!.game.status, GAME_STATUS.WAITING);
+  assert.ok(!(decoded!.game as any).self, 'spectator lobby row has no self');
+});
+
+test('RLS: ANY authenticated user can read a spectator row, and clients cannot write', async () => {
+  const gameId = `sr${uuid().slice(0, 4)}`;
+  const h1 = uuid(), h2 = uuid(), outsider = uuid();
+  await seedGame(gameId, [
+    { id: h1, name: 'H1', is_ai: false, strategy_key: 'human' },
+    { id: h2, name: 'H2', is_ai: false, strategy_key: 'human' },
+  ]);
+  await executeWithGameLock(gameId, async (game) =>
+    handleMetaAction({ user: { id: h1 } as any, user_name: 'H1', body: { type: 'start', game_id: gameId }, game, reqId: 'r' }),
+    'r', false);
+
+  const c = await pgPool.connect();
+  try {
+    // As an OUTSIDER (not a participant): still sees the shared spectator row —
+    // that is the whole point (a non-participant spectating the game).
+    await c.query('BEGIN');
+    await c.query('SET LOCAL ROLE authenticated');
+    await c.query(`SELECT set_config('request.jwt.claims', json_build_object('sub', $1::text, 'role', 'authenticated')::text, true)`, [outsider]);
+    const seen = await c.query('SELECT game_id FROM spectator_views WHERE game_id=$1', [gameId]);
+    assert.equal(seen.rows.length, 1, 'a non-participant can read the spectator row');
+
+    // A client write is denied (no INSERT grant / policy).
+    await assert.rejects(
+      c.query(`INSERT INTO spectator_views(game_id,view,version,status) VALUES($1,'00',0,'playing')`, [`${gameId}x`]),
       /permission denied/, 'authenticated cannot insert');
     await c.query('ROLLBACK');
   } finally {

@@ -14,6 +14,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 DROP FUNCTION IF EXISTS update_updated_at_column() CASCADE;
 
 -- Drop tables in reverse dependency order (this will automatically drop all policies and triggers)
+DROP TABLE IF EXISTS spectator_views CASCADE;
 DROP TABLE IF EXISTS player_views CASCADE;
 DROP TABLE IF EXISTS chat_messages CASCADE;
 DROP TABLE IF EXISTS bot_hands CASCADE;
@@ -198,6 +199,23 @@ CREATE TABLE player_views (
   PRIMARY KEY (game_id, player_id)
 );
 
+-- Spectator views — the SHARED, fully-masked (seat -1) view of a game, readable
+-- by ANY authenticated user (docs/PLAYER_VIEWS.md). This replaces get_game's
+-- spectate path: a non-participant has no player_views row (that table is keyed
+-- by auth.uid()), so spectators read their initial snapshot here and get live
+-- updates over the RLS-guarded game-<id> broadcast. `view` is fully masked
+-- (every hand a card-back, deck order hidden), so exposing it to all
+-- authenticated users is safe — it must NEVER carry the raw games.state. One row
+-- per game, written by the service role in commit_game / create_game's version
+-- fence, alongside the per-player rows.
+CREATE TABLE spectator_views (
+  game_id    TEXT PRIMARY KEY REFERENCES games(id) ON DELETE CASCADE,
+  view       TEXT NOT NULL,            -- fully-masked packed spectator envelope (bare hex), decodable by decodePackedGame
+  version    BIGINT NOT NULL,          -- mirrors games.version
+  status     TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- =============================================================================
 -- INDEXES: Create indexes for better performance
 -- =============================================================================
@@ -239,6 +257,7 @@ ALTER TABLE bots ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bot_hands ENABLE ROW LEVEL SECURITY;
 ALTER TABLE game_snapshots ENABLE ROW LEVEL SECURITY;
 ALTER TABLE player_views ENABLE ROW LEVEL SECURITY;
+ALTER TABLE spectator_views ENABLE ROW LEVEL SECURITY;
 
 -- =============================================================================
 -- RLS POLICIES: Security-first approach
@@ -362,6 +381,14 @@ CREATE POLICY "Players can read their own views" ON player_views
 -- RLS gates ROWS; the table privilege must also be granted. SELECT only — no
 -- INSERT/UPDATE/DELETE grant to client roles.
 GRANT SELECT ON public.player_views TO authenticated;
+
+-- Spectator views: the row is FULLY masked (seat -1), so ANY authenticated user
+-- may read it — this is exactly the spectate case (a non-participant viewing a
+-- game). Mirrors the game-<id> broadcast policy (authenticated-only). No client
+-- writes (service role only).
+CREATE POLICY "Authenticated can read spectator views" ON spectator_views
+  FOR SELECT USING ((select auth.role()) = 'authenticated');
+GRANT SELECT ON public.spectator_views TO authenticated;
 
 -- Realtime: publish player_views so the client can subscribe to its own rows
 -- (RLS-enforced) and receive live view pushes on every commit. Guarded: the
@@ -523,7 +550,8 @@ CREATE OR REPLACE FUNCTION commit_game(
   p_logs_packed      TEXT    DEFAULT NULL,  -- this move's logwire records (bare hex), appended under the version fence
   p_logs_reset       BOOLEAN DEFAULT FALSE, -- session reset (GAME_START in the records): replace instead of append
   p_game_seed        TEXT    DEFAULT NULL,  -- deal seed (hex); set once at the deal, NULL on every other commit leaves it unchanged
-  p_views            JSONB   DEFAULT NULL   -- per-participant masked view cache rows [{player_id,view,status}]; NULL leaves player_views untouched
+  p_views            JSONB   DEFAULT NULL,  -- per-participant masked view cache rows [{player_id,view,status}]; NULL leaves player_views untouched
+  p_spectator        TEXT    DEFAULT NULL   -- fully-masked seat -1 spectator view (bare hex); NULL leaves spectator_views untouched
 ) RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -612,6 +640,15 @@ BEGIN
       );
   END IF;
 
+  -- The shared spectator view (seat -1), same version fence. One row per game.
+  IF p_spectator IS NOT NULL THEN
+    INSERT INTO spectator_views (game_id, view, version, status, updated_at)
+    VALUES (p_game_id, p_spectator, v_new_version, g.status, now())
+    ON CONFLICT (game_id) DO UPDATE
+      SET view = EXCLUDED.view, version = EXCLUDED.version,
+          status = EXCLUDED.status, updated_at = now();
+  END IF;
+
   RETURN jsonb_build_object('status', 'ok', 'version', v_new_version);
 END;
 $$;
@@ -623,7 +660,8 @@ CREATE OR REPLACE FUNCTION create_game(
   p_name      TEXT,
   p_player_id UUID,
   p_players   JSONB,
-  p_views     JSONB DEFAULT NULL   -- creator's masked view cache row(s); version 0
+  p_views     JSONB DEFAULT NULL,  -- creator's masked view cache row(s); version 0
+  p_spectator TEXT  DEFAULT NULL   -- fully-masked seat -1 spectator view (bare hex); version 0
 ) RETURNS VOID
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -648,6 +686,15 @@ BEGIN
     SELECT p_game_id, (v->>'player_id')::uuid, v->>'view', 0, v->>'status', now()
     FROM jsonb_array_elements(p_views) AS v
     ON CONFLICT (game_id, player_id) DO UPDATE
+      SET view = EXCLUDED.view, version = EXCLUDED.version,
+          status = EXCLUDED.status, updated_at = now();
+  END IF;
+
+  -- The shared spectator view (seat -1) for the new lobby.
+  IF p_spectator IS NOT NULL THEN
+    INSERT INTO spectator_views (game_id, view, version, status, updated_at)
+    VALUES (p_game_id, p_spectator, 0, 'waiting', now())
+    ON CONFLICT (game_id) DO UPDATE
       SET view = EXCLUDED.view, version = EXCLUDED.version,
           status = EXCLUDED.status, updated_at = now();
   END IF;
