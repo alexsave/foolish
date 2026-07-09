@@ -3,21 +3,20 @@
 // The `player_views` table stores each participant's ALREADY-MASKED packed view
 // of a game, written only by the server (inside commit_game's version fence),
 // read only by that player under RLS. It lets the client load its dashboard
-// list as a plain indexed SELECT — no get_my_games edge round-trip — and get
-// live pushes for free via Realtime.
+// list as a plain indexed SELECT — no edge round-trip — and get live pushes for
+// free via Realtime.
 //
 // This module turns a committed Game into the per-player rows commit_game
 // upserts. Each row's `view` is the SAME packed single-game envelope the
-// get_game / get_my_games edge functions emit (encodeGameResponse), so the
-// client decodes it with the existing, shared decodePackedGame — nothing new on
-// the read side.
+// get_game edge function emits (encodeGameResponse), so the client decodes it
+// with the existing, shared decodePackedGame — nothing new on the read side.
 //
 // Masking stays in the C kernel wherever there is hidden state: a DEALT game's
 // per-seat blob comes from wasm_view_serialize (engine.serializeViewBlobs, ONE
 // deserialize for all seats). A lobby (WAITING) game has no kernel blob and no
 // hidden information (empty hands, empty deck), so its view is written by the
 // pure-TS mirror of the same kernel format (writeMaskedState) — the identical
-// fallback get_my_games already uses for blob-less rows.
+// path get_game uses for blob-less rows.
 import { GAME_STATUS, Game } from './types.ts';
 import {
     VIEW_FORMAT_VERSION, encodeGameResponse, writeMaskedState, PackedGameRoster,
@@ -102,14 +101,14 @@ export async function buildPlayerViewRows(
 }
 
 // Full upsert rows (with game_id + version) for the CACHE-WARM / BACKFILL path:
-// the get_my_games / get_game rebuild functions call this to populate a game's
-// missing player_views rows from a games row they already read, so that games
-// predating the cache (or any cache miss) become direct SELECTs on the next load
-// instead of falling back to the edge function forever.
+// get_game calls this when it serves a game to populate its missing player_views
+// rows from the games row it already read, so that a game predating the cache
+// (or any cache miss) becomes a direct SELECT on the next open instead of hitting
+// the edge function again.
 //
-// Writes rows for ALL human participants, not just the invoker: whoever loads
-// first backfills the whole game for everyone, so the cache converges across
-// users in one pass (a temporary backfill measure — remove with get_my_games).
+// Writes rows for ALL human participants, not just the fetcher: whoever opens (or
+// spectates) a game first backfills the whole game for everyone, so the cache
+// converges across users in one pass.
 //
 // Each row is byte-identical to what commit_game wrote for that (game, player)
 // at this version — same builder (buildPlayerViewRows) — so the warm write is a

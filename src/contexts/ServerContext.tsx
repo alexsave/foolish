@@ -9,7 +9,7 @@ import { ANIMATION_TIME } from '../constants/constants';
 import { optimisticOverlay } from '../state/optimisticOverlay';
 import { cardKey, mergeHandOrder, reconcileHandMemory, displayedHand, mergeTableBattles, applyOverlayEntries } from '../state/clientReconcile';
 import { ACTION_STATUS, decodeActionResponse, encodeAction, encodeActionRequest } from '@shared/wire/awire.ts';
-import { decodePackedGame, decodePackedGamesList } from '@shared/wire/view.ts';
+import { decodePackedGame } from '@shared/wire/view.ts';
 import { rejectMessage } from '../wasm/rejectMessages';
 
 // Decode the bare-hex (no \x prefix) `view` blob stored in player_views. Tiny
@@ -1043,95 +1043,35 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             return;
         }
 
-        // One-time cache warm per device (docs/PLAYER_VIEWS.md). player_views is
-        // written going forward (every commit/create), so games that PREDATE the
-        // cache have no row yet — a direct read would return a PARTIAL list and,
-        // because it's non-empty, never trigger the rebuild that would backfill
-        // the rest. So until get_my_games has run once on this device (it
-        // backfills ALL of the caller's rows as it serves — see warmPlayerViews),
-        // treat the edge function as authoritative. After that, read player_views
-        // directly and stop calling the edge function.
-        let warmed = false;
-        try { warmed = typeof localStorage !== 'undefined' && localStorage.getItem('pv_warmed') === '1'; } catch { /* no storage */ }
-
-        // Fast path: read the dashboard list STRAIGHT from the player_views cache
-        // — a plain indexed RLS SELECT, no edge function, no cold start, no
-        // per-viewer masking on read (the rows are already masked at write time).
+        // The dashboard list is a plain indexed RLS SELECT straight from the
+        // player_views cache (docs/PLAYER_VIEWS.md) — no edge function, no cold
+        // start, no per-viewer masking on read (rows are masked at write time).
         // Each row's `view` is the caller's packed single-game envelope,
-        // materialized here by the same shared codec the edge path uses.
-        if (warmed) {
-            try {
-                const { data: rows, error } = await supabase
-                    .from('player_views')
-                    .select('view, status, version')
-                    .eq('player_id', user_id)
-                    .order('updated_at', { ascending: false });
-                if (!error && Array.isArray(rows) && rows.length > 0) {
-                    const games: { [key: string]: PersonalGame } = {};
-                    for (const row of rows) {
-                        try {
-                            const decoded = decodePackedGame(hexToBytes((row as any).view));
-                            if (!decoded) continue;
-                            const g = decoded.game as PersonalGame;
-                            games[g.id] = { ...g, self: (g as any).self ?? null };
-                        } catch { /* skip an unreadable row, same as the list codec */ }
-                    }
-                    if (Object.keys(games).length > 0) {
-                        setGames(prev => ({ ...prev, ...games }));
-                        return;
-                    }
-                }
-                // error / empty / all-unreadable → fall through to the edge rebuild
-            } catch (e) {
-                console.error('player_views direct read failed, falling back to get_my_games:', e);
-            }
-        }
-
-        // Authoritative rebuild (also backfills the cache for next time). Mark the
-        // device warmed once it succeeds so future loads use the direct read.
-        await getUserGamesFromEdge(user_id);
-        try { if (typeof localStorage !== 'undefined') localStorage.setItem('pv_warmed', '1'); } catch { /* no storage */ }
-    };
-
-    // Authoritative rebuild path: the get_my_games edge function (per-viewer
-    // masked in the C kernel server-side). Used as the player_views cache-miss
-    // fallback and for any client that predates the cache.
-    const getUserGamesFromEdge = async (user_id: string): Promise<void> => {
+        // materialized here by the shared decodePackedGame. player_views is kept
+        // complete by commit_game / create_game, so there is no fallback: an
+        // empty result simply means the user has no games.
         try {
-            // The caller's games as one packed binary list: each dealt game
-            // is the kernel-masked view blob (+ identity roster JSON), each
-            // lobby a byte-wrapped personalize_game JSON — materialized right
-            // here at the render boundary (docs/PACKED_WIRE_CUTOVER.md). A
-            // JSON response (legacy server) still parses through the old path.
-            const { data, error } = await supabase.functions.invoke('get_my_games', { body: { packed: true } });
-
-            let list: any[] = [];
-            if (!error && typeof Blob !== 'undefined' && data instanceof Blob) {
-                const decoded = decodePackedGamesList(new Uint8Array(await data.arrayBuffer()));
-                if (!decoded) {
-                    console.error('Error fetching user games: unreadable packed list');
-                    return;
-                }
-                list = decoded;
-            } else {
-                const payload: any = data;
-                if (error || !payload || payload.error) {
-                    console.error('Error fetching user games:', error || payload?.error);
-                    return;
-                }
-                list = payload.games ?? [];
+            const { data: rows, error } = await supabase
+                .from('player_views')
+                .select('view, status, version')
+                .eq('player_id', user_id)
+                .order('updated_at', { ascending: false });
+            if (error) {
+                console.error('Error fetching user games from player_views:', error);
+                return;
             }
-
             const games: { [key: string]: PersonalGame } = {};
-            for (const fetched of list) {
-                const game: PersonalGame = { ...fetched, self: (fetched as any).self ?? null };
-                games[game.id] = game;
+            for (const row of rows ?? []) {
+                try {
+                    const decoded = decodePackedGame(hexToBytes((row as any).view));
+                    if (!decoded) continue;
+                    const g = decoded.game as PersonalGame;
+                    games[g.id] = { ...g, self: (g as any).self ?? null };
+                } catch { /* skip an unreadable row */ }
             }
-
             setGames(prev => ({ ...prev, ...games }));
-
-        } catch (error) {
-            console.error('Error in getUserGames:', error);
+        } catch (e) {
+            console.error('Error in getUserGames:', e);
         }
     };
 
