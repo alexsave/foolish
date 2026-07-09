@@ -184,9 +184,21 @@ WASM_FLAGS := --target=wasm32 $(WASM_OPT) -nostdlib -ffreestanding -mbulk-memory
               -DMAX_LEGAL_MOVES=4096 -DMAX_MOVE_CARDS=28 -DMAX_BATTLES=64 \
               -DWORLD_LOG_CAP=40 \
               -DREPLAY_REC_CAP=4096 -DWASM_REPLAY_IO_CAP=32768 -DMAX_SNAPS=24 \
+              -DCD_TT_BITS=13 \
               -Wall -Wextra -Wno-unused-parameter \
               -Wl,--no-entry -Wl,--export-memory -Wl,-z,stack-size=262144 -Wl,--stack-first \
               -Wl,--strip-all
+# CD_TT_BITS=13: the cordite endgame solver's transposition table (bump-
+# allocated on first play) is the largest driver of bots.wasm's RUNTIME peak —
+# it grows, unlike the static caps above. 16 = 1 MiB; 13 = 256 KiB (8,192
+# entries). It's a memoization cache, but the solver is node-budget-limited, so
+# table size is a bot-STRENGTH knob, validated by the per-game move-divergence
+# study (tools/tt_divergence.sh, docs/WASM_L1_BUDGET.md): the binding bot is
+# octogen (persists the table per game), divergence cliff at TT7 (128 entries);
+# every shipped solver bot is bit-identical to a collision-free table at TT8+.
+# 13 sits 6 bits / 64x above that cliff (extrapolated P[game diverges] ~2.5e-5).
+# Drops bots.wasm runtime peak 36 -> 24 pages (2.25 -> 1.5 MiB). Only bots links
+# cordite_sim, so rules/guards ignore this flag.
 
 # Explicit export allow-list — only the memory (above) + wasm_* API the TS
 # bridge actually calls (engine.ts / bots.ts). This REPLACES -Wl,--export-all,
