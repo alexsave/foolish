@@ -8,7 +8,7 @@ import { get_next_player_index, card_comp } from '@shared/common_utils.ts';
 import { ANIMATION_TIME } from '../constants/constants';
 import { optimisticOverlay } from '../state/optimisticOverlay';
 import { animationFeed } from '../state/animationFeed';
-import { cardKey, mergeHandOrder, reconcileHandMemory, displayedHand, mergeTableBattles, applyOverlayEntries } from '../state/clientReconcile';
+import { cardKey, mergeHandOrder, reconcileHandMemory, displayedHand, mergeTableBattles, applyOverlayEntries, resetToLobby } from '../state/clientReconcile';
 import { ACTION_STATUS, decodeActionResponse, encodeAction, encodeActionRequest } from '@shared/wire/awire.ts';
 import { decodePackedGame } from '@shared/wire/view.ts';
 import { rejectMessage } from '../wasm/rejectMessages';
@@ -1098,6 +1098,29 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     };
 
     const continueGame = useCallback((gameId: string): Promise<{ game_id: string }> => {
+        // Optimistic transition: reset the finished game to its lobby state LOCALLY
+        // right now, so the win screen swaps to the lobby instantly instead of
+        // waiting out the meta round-trip (the WinScreen→Lobby swap is purely
+        // status-driven — WinScreen renders null once status !== GAME_OVER). The
+        // server `continue` runs in the background; its authoritative reset (the
+        // MAGIC_TRANSITION broadcast + response) reconciles with this — they're
+        // built the same way, so there's no visible snap. On failure we roll back
+        // to the finished game so the user can retry. Mirrors handleContinue's
+        // reset in _shared/meta_actions.ts.
+        const prev = gamesRef.current[gameId];
+        if (prev && prev.status === GAME_STATUS.GAME_OVER) {
+            const optimistic = resetToLobby(prev);
+            setGames(cur => ({ ...cur, [gameId]: optimistic }));
+
+            invokeGameFunctions('meta', { type: 'continue', game_id: gameId }).catch(err => {
+                console.error('continue failed — rolling back to the finished game:', err);
+                setGames(cur => (cur[gameId] === optimistic ? { ...cur, [gameId]: prev } : cur));
+            });
+            return Promise.resolve({ game_id: gameId });
+        }
+
+        // Not a finished game we hold locally: no optimistic state to build, just
+        // await the server (the authoritative update arrives via broadcast).
         return invokeGameFunctions('meta', { type: 'continue', game_id: gameId });
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);

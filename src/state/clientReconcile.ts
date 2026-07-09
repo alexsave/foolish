@@ -3,9 +3,41 @@
 // needed). The components import from here; the e2e suite imports from here. There
 // is no second copy.
 
-import { Card, PersonalGame, Battle } from '@shared/types.ts';
+import { Card, PersonalGame, Battle, GAME_STATUS, PLAYER_STATUS } from '@shared/types.ts';
 
 export const cardKey = (c: Card): string => `${c.suit}-${c.value}`;
+
+// The lobby a finished game resets to on "continue" / "proceed to lobby". This
+// is the CLIENT MIRROR of the server's handleContinue reset
+// (_shared/meta_actions.ts): status → waiting, each player IDLE (human) / READY
+// (bot) with an empty hand, and every volatile round field cleared. Used to
+// transition the win screen to the lobby OPTIMISTICALLY (before the meta
+// round-trip); the authoritative reset that follows must match this byte-for-byte
+// on the public fields or the user sees a snap. Kept here, pure and unit-tested,
+// so it can't silently drift from the server. Returns a NEW game (no mutation).
+export const resetToLobby = (game: PersonalGame): PersonalGame => {
+    const resetStatus = (is_ai: boolean) => is_ai ? PLAYER_STATUS.READY : PLAYER_STATUS.IDLE;
+    return {
+        ...game,
+        status: GAME_STATUS.WAITING,
+        players: game.players.map(p => ({ ...p, status: resetStatus(p.is_ai), hand_length: 0 })),
+        self: game.self
+            ? { ...game.self, status: resetStatus(game.self.is_ai), hand: [], hand_length: 0, awaiting_attack: false }
+            : game.self,
+        deck_length: 0,
+        discard_pile_length: 0,
+        flipped: null,
+        power_suit: 0,
+        first_attacker: 0,
+        defender: 0,
+        table_battles: [],
+        elimination_order: [],
+        good_timestamp: null,
+        good_players: [],
+        // Keep game.version: the authoritative reset broadcasts at a HIGHER
+        // version, so the animation feed's reorder gate still accepts it.
+    };
+};
 const cardComp = (a: Card, b: Card): boolean => a.suit === b.suit && a.value === b.value;
 
 // ---- Live broadcast ordering gate -----------------------------------------
