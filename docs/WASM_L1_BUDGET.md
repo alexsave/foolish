@@ -151,25 +151,34 @@ keys are ever probed again, so evicting them is harmless.
 
 **Measurement** (`tools/tt_divergence.sh`): for every shipped solver bot, play
 identical seeds under the exact production env (`CD_BUDGET=prod CD_RACE=1
-CD_RACE_C=75`) with a candidate table and with a collision-free `TT22`, and
-compare a per-game hash of the bot's move sequence (`GAME_SIG`, `main_eval.c`).
-The per-game divergence rate:
+CD_RACE_C=75`) with a candidate table and with a reference table, and compare a
+per-game hash of the bot's move sequence (`GAME_SIG`, `main_eval.c`).
 
-| bot | table persistence | divergence cliff | clean at |
-| --- | --- | --- | --- |
-| **octogen** | per **game** | **TT7** (128 entries) | **TT8+** |
-| semtex | per game | TT6 | TT7+ |
-| cordite / fulminate | per solve | TT6 | TT7+ |
+**There is no clean cliff-to-zero — there is a floor.** Measured against an
+effectively-infinite table (`TT22`), octogen diverges at a residual rate of
+~3–6 per 10,000 games *even at `TT16`–`TT19`* — i.e. today's 1 MiB production
+table already differs from an infinite one at that rate. This is octogen's
+**inherent** table-size sensitivity: it persists the table across a whole game,
+and rare huge-endgame games collide at any practical size. Below that floor a
+collision **knee** appears at ~`TT10`–`TT11`; from `TT11` up through `TT19` the
+rate is flat at the floor (measured, all player counts, tens of thousands of
+games). cordite/fulminate/semtex diverge one bit lower still (knee ~`TT9`) —
+octogen is the binding bot.
 
-**octogen is the binding constraint** — it persists the table across a whole
-game, so its window is larger and it diverges one bit sooner than the rest. Every
-shipped solver bot is **bit-identical to a collision-free table at `TT8` and
-above** (0 divergences in 2,400 games each). With `p(M) ≈ C/M`, `CD_TT_BITS=13`
-sits **6 bits / 64× above octogen's cliff** — extrapolated `p(a game diverges)
-≈ 2.5e-5`, i.e. ≥ 99.997 % of games play identically to an infinite table. That
-is the shipped value: table 1 MiB → 256 KiB, runtime peak 36 → 24 pages. It was
-also independently confirmed bit-identical in the full-histogram sweep and by
-`bot_parity` against the TS oracle.
+So the infinite table is the wrong yardstick; **`TT16` — what ships today — is
+the decision-relevant baseline.** Measured directly against `TT16`, octogen at
+`CD_TT_BITS=13` diverges in **0 of 1,720 games** (pc 2/4/7, `BASE=16`). TT13
+sits at octogen's inherent floor, 2–3 bits above the collision knee, and is
+statistically **indistinguishable from the production table** — the shrink does
+not change how any bot plays relative to today. That is the shipped value:
+table 1 MiB → 256 KiB, runtime peak 36 → 24 pages. Also confirmed by
+`bot_parity` against the TS oracle (7/7).
+
+(An earlier draft of this doc claimed `p ≈ 2.5e-5` from a `p(M) ≈ C/M`
+extrapolation off a noisy 1-in-600 anchor against the infinite-table baseline.
+The scaled runs showed that baseline overstates the cost — the real vs-infinite
+rate at TT13 is the ~1e-3 floor, and the vs-production rate is ~0. The
+extrapolation is dropped in favor of the direct `BASE=16` measurement.)
 
 The remaining static core is the Monte-Carlo solver scratch (`solve_ws` 272 KiB,
 `solve_child_scratch` 55 KiB, the world/trial/diff slots) — a per-search working
@@ -177,7 +186,9 @@ set inherently larger than L1, **designed** around bitboard `SimState`s that *ar
 L1-resident during the hot rollout loop. Fitting bots in L1 is not a memory-layout
 problem; it's a different solver.
 
-Reproduce: `cnitro/tools/tt_divergence.sh octogen handwritten 2,4,6,8 4000 99 12 11 10 9 8 7`.
+Reproduce the floor vs infinite: `cnitro/tools/tt_divergence.sh octogen handwritten 2,4,6,8 4000 99 16 13 11 9 7`.
+Reproduce vs production: `BASE=16 cnitro/tools/tt_divergence.sh octogen handwritten 4 800 99001 13` (expect 0).
+Tip: keep runs focused (one player count, few sizes) — octogen at pc2 is the slow one.
 
 ## Validation
 
@@ -194,9 +205,11 @@ No cap cut shipped without a passing suite behind it:
   `awire_codec`, `action_handlers`, `fuzz`, `concurrent_games`, `cover`,
   `client_move_gates` — all green.
 - **transposition table (`CD_TT_BITS=13`)** — `tools/tt_divergence.sh` across all
-  five shipped solver bots (0 divergences at TT8+; octogen the binding bot at
-  TT7); `bot_parity` (7/7) confirms the TT13 wasm still matches the TS oracle;
-  `test:mem` (4/4) confirms bounded, flat memory at the smaller table.
+  five shipped solver bots: TT13 vs today's production TT16 diverges in 0/1720
+  octogen games (the binding bot), i.e. indistinguishable from the shipped table;
+  the collision knee is ~TT10-11, well below 13. `bot_parity` (7/7) confirms the
+  TT13 wasm still matches the TS oracle; `test:mem` (4/4) confirms bounded, flat
+  memory at the smaller table.
 
 (The research-only `solver_difftest` mismatches, but it mismatches identically on
 clean `main` and touches neither replay nor the wasm buffers changed here. The
