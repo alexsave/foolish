@@ -33,7 +33,29 @@ int replay_last_error_detail(void) { return g_err_detail; }
 // divides by, small integers (M < 2^21), so two exact primitives suffice and
 // the coder stays bit-identical to the BigInt reference.
 
-#define BN_CAP 49152  // 192 KB: >= the worst integer REC_CAP choices can build
+// REC_CAP/BN_CAP are build parameters: the native tools keep the huge
+// defaults; the wasm builds set measured caps (see the Makefile). Each
+// recorded choice multiplies the integer by M < 2^21, so the integer needs
+// <= ceil(21/32 x REC_CAP) limbs — BN_CAP derives from REC_CAP unless
+// explicitly overridden.
+#ifndef REPLAY_REC_CAP
+#define REPLAY_REC_CAP 65536
+#endif
+#ifndef REPLAY_BN_CAP
+#define REPLAY_BN_CAP ((REPLAY_REC_CAP * 21 + 31) / 32)
+#endif
+#define BN_CAP REPLAY_BN_CAP
+
+// Measurement-only counters (-DREPLAY_STATS): peak recorded choices and peak
+// bignum limbs across every encode/decode since process start. Compiled out
+// (zero cost) everywhere the flag is absent, which is every production build.
+#ifdef REPLAY_STATS
+int replay_stat_max_rec = 0;
+int replay_stat_max_bn = 0;
+#define STAT_MAX(v, x) do { if ((x) > (v)) (v) = (x); } while (0)
+#else
+#define STAT_MAX(v, x) do { } while (0)
+#endif
 
 typedef struct { int n; uint32_t l[BN_CAP]; } Bn;
 static Bn g_bn;
@@ -54,6 +76,7 @@ static bool bn_mul_add(Bn *x, uint32_t m, uint32_t a) {
         x->l[x->n++] = (uint32_t)carry;
         carry >>= 32;
     }
+    STAT_MAX(replay_stat_max_bn, x->n);
     return true;
 }
 
@@ -106,7 +129,7 @@ static int bn_to_bytes_be(const Bn *x, unsigned char *out, int out_cap) {
 // codes zero bits on both sides.
 
 typedef struct { uint32_t cum, w, M; } RecChoice;
-#define REC_CAP 65536  // far above any real game; overflow is a clean error
+#define REC_CAP REPLAY_REC_CAP  // build parameter; overflow is a clean error
 static RecChoice g_rec[REC_CAP];
 
 typedef struct {
@@ -131,6 +154,7 @@ static int coder_code(Coder *c, const uint32_t *w, int len, int chosen) {
         g_rec[c->n_rec].w = w[chosen];
         g_rec[c->n_rec].M = M;
         c->n_rec++;
+        STAT_MAX(replay_stat_max_rec, c->n_rec);
         return chosen;
     }
     uint32_t r = bn_divmod(c->x, M);
@@ -156,6 +180,7 @@ static int coder_uniform(Coder *c, int n, int chosen) {
         g_rec[c->n_rec].w = 1;
         g_rec[c->n_rec].M = (uint32_t)n;
         c->n_rec++;
+        STAT_MAX(replay_stat_max_rec, c->n_rec);
         return chosen;
     }
     // all-ones pop: k = x % n, x /= n (the w=1 multiply is a no-op)
