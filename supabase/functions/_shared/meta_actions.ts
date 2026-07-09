@@ -73,7 +73,7 @@ function handleStart({ user, game }: ExecutionParams): Result {
 }
 
 // ---- add bot ---------------------------------------------------------------
-export async function handleAddBot({ body, game, user }: ExecutionParams): Promise<Result> {
+export async function handleAddBot({ body, game, user, botsPrefetch }: ExecutionParams): Promise<Result> {
     const { game_id, bot_id } = body;
 
     if (game.status !== GAME_STATUS.WAITING) {
@@ -87,7 +87,10 @@ export async function handleAddBot({ body, game, user }: ExecutionParams): Promi
         throw new Error(`Game is full (max ${MAX_PLAYERS} players)`);
     }
 
-    const { data: allBots, error } = await supabaseClient.from('bots').select('*');
+    // Prefer the roster read wrap400 kicked off in parallel with the game load
+    // (one fewer serial round-trip); fall back to an inline fetch for direct
+    // callers / tests that invoke this handler without the prefetch.
+    const { data: allBots, error } = await (botsPrefetch ?? supabaseClient.from('bots').select('*'));
     if (error || !allBots) {
         throw new Error(`Failed to fetch bots`);
     }
@@ -155,7 +158,9 @@ export async function handleExit({ user, body, game }: ExecutionParams): Promise
         }
         exitedPlayerName = botPlayer.name;
         game.players = game.players.filter(player => player.player_id !== bot_id);
-        await supabaseClient.from('bot_hands').delete().eq('game_id', game.id).eq('bot_id', bot_id);
+        // No explicit bot_hands DELETE here: the commit that follows is a lobby
+        // commit (status=waiting), and commit_game now prunes bot_hands not in the
+        // post-removal roster in the same transaction — one fewer round-trip.
     } else {
         if (player_id === undefined) player_id = user_id;
         verify_player_in_game(game, player_id);

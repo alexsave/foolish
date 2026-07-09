@@ -90,10 +90,14 @@ if (!process.env.VALIDATION_ONLY) {
         ]);
         await pgPool.query("UPDATE games SET status='waiting' WHERE id=$1", [gameId]);
 
+        // seedGame gave the bot a bot_hands row; removing it must clear that row.
+        // handleExit no longer DELETEs it directly — commit_game prunes bot_hands
+        // not in the post-removal roster — so this asserts that prune fires.
+        assert.equal((await pgPool.query('SELECT count(*) FROM bot_hands WHERE game_id=$1', [gameId])).rows[0].count, '1', 'bot hand present before removal');
         await runMeta(gameId, h1, { type: 'exit', game_id: gameId, bot_id: bot });
         let g = await loadCompleteGame(gameId);
         assert.equal(g.players.length, 1, 'bot removed');
-        assert.equal((await pgPool.query('SELECT count(*) FROM bot_hands WHERE game_id=$1', [gameId])).rows[0].count, '0', 'bot hand deleted');
+        assert.equal((await pgPool.query('SELECT count(*) FROM bot_hands WHERE game_id=$1', [gameId])).rows[0].count, '0', 'bot hand pruned by commit_game');
 
         // The last exit must RESOLVE, not just happen to delete the row: it used
         // to succeed and then 400 (the CAS commit missed the deleted row, read it

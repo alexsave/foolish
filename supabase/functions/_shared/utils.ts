@@ -332,6 +332,12 @@ export interface ExecutionParams {
     body: any;
     game: Game;
     reqId: string;
+    // add-bot only: the bots-roster read, kicked off by wrap400 BEFORE the game
+    // load so the two overlap instead of running as two serial cold-isolate
+    // round-trips. undefined for every other action (and for direct callers /
+    // tests, where handleAddBot falls back to fetching inline). Typed as a
+    // PromiseLike so the PostgREST builder (a thenable) assigns cleanly.
+    botsPrefetch?: PromiseLike<{ data: any[] | null; error: any }>;
 }
 
 // Fire-and-forget bot drive AFTER the HTTP response (see the CRITICAL note
@@ -401,6 +407,15 @@ export const wrap400 = (
             const game_id = (body as any).game_id;
             console.log(`[${reqId}][WRAP400] game_id: ${game_id || 'none'}`);
 
+            // add-bot needs the bots roster, which does NOT depend on the game.
+            // Kick that read off NOW so it runs concurrently with loadCompleteGame
+            // (inside executeWithGameLock) instead of as a second serial round-trip
+            // after it. Not awaited here — handleAddBot awaits it. No .catch(): a
+            // rejection surfaces when handleAddBot awaits, inside the try/catch.
+            const botsPrefetch = (body as any).type === 'add-bot'
+                ? supabaseClient.from('bots').select('*')
+                : undefined;
+
             let result: any;
             let events: AnimationEvent[] = [];
 
@@ -408,7 +423,7 @@ export const wrap400 = (
                 // Execute operation with database lock for this specific game
                 const lockStart = Date.now();
                 console.log(`[${reqId}][WRAP400] Starting executeWithGameLock for game ${game_id}`);
-                const { game, events: operationEvents } = await executeWithGameLock(game_id, (game) => execute({ user, user_name, body, game, reqId }), reqId, mootIfGameOver);
+                const { game, events: operationEvents } = await executeWithGameLock(game_id, (game) => execute({ user, user_name, body, game, reqId, botsPrefetch }), reqId, mootIfGameOver);
                 console.log(`[${reqId}][WRAP400] executeWithGameLock took ${Date.now() - lockStart}ms`);
                 result = game;
                 events = operationEvents;
@@ -516,15 +531,18 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
     }
 
     // Bot strategy keys come from the bots table (stable identity), NOT the
-    // hand tables — since commit_game stopped writing bot_hands during play, a
-    // dealt bot may have no bot_hands row, so the old join-based lookup would
-    // miss its strategy_key (and its hand). One small lookup, only when bots
-    // are present. The hands themselves are irrelevant on the blob path (the
-    // blob is authoritative); the JSONB values below only feed the legacy
-    // no-blob fallback, so they default to empty rather than throwing.
+    // hand tables — since commit_game stopped writing bot_hands DURING PLAY, a
+    // dealt bot may have no bot_hands row, so the join-based lookup would miss its
+    // strategy_key. But this only affects DEALT games: a lobby (WAITING) commit
+    // always writes p_bot_hands (see commitGame: `dealt ? null : botHands`), so a
+    // lobby bot always has a bot_hands row and the main JOIN's bots(strategy_key)
+    // already carries it. So skip this extra round-trip for lobbies — which is
+    // exactly the add/remove-bot hot path, where shaving a cold-isolate round-trip
+    // (~350-500ms) matters. Only DEALT loads (blob present, non-waiting) need it.
+    const dealtLoad = !!data.state && data.status !== GAME_STATUS.WAITING;
     const botIds: string[] = data.players.filter((p: any) => p.is_ai).map((p: any) => p.player_id);
     const stratByBot = new Map<string, string>();
-    if (botIds.length > 0) {
+    if (dealtLoad && botIds.length > 0) {
         const { data: botRows } = await supabaseClient.from('bots').select('id, strategy_key').in('id', botIds);
         for (const b of botRows ?? []) stratByBot.set(b.id, b.strategy_key);
     }
