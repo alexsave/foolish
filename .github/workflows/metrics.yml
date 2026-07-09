@@ -54,6 +54,10 @@ jobs:
       BENCH_BOTS: octogen,semtex,cordite,fulminate
       BENCH_BOT_MOVES: '20'
       BENCH_GAMES: '300'
+      # E2E latency is wall-clock on a shared runner: one run's p50 swings too
+      # much to trust. Repeat the bench and report the MEDIAN p50 per bot (like
+      # SPEED_REPS does for engine speed) to squeeze out run-to-run variance.
+      E2E_REPS: '5'
 
     steps:
       - name: Checkout PR head

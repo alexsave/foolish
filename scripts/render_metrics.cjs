@@ -64,16 +64,30 @@ const spdRow = (label, b, h) => {
   return `| ${label} | ${spd(b)} | ${spd(h)} | ${cell} |`;
 };
 
+// base/head latency cell: median p50, plus ±½ the per-rep spread when present.
+const lat = (r) => r?.p50 == null ? 'n/a' : `${ms(r.p50)}${r.p50hi != null && r.p50lo != null ? ` ±${((r.p50hi - r.p50lo) / 2).toFixed(1)}` : ''}`;
 function e2eRows(base, head) {
   const byStrat = (blob) => Object.fromEntries((Array.isArray(blob?.e2e) ? blob.e2e : []).map((r) => [r.strategy, r]));
   const b = byStrat(base), h = byStrat(head);
   const strats = [...new Set([...Object.keys(b), ...Object.keys(h)])];
   if (!strats.length) return '| _no data_ | | | |';
   return strats.map((s) => {
-    // p50 is the robust central latency (immune to the odd 600ms MC outlier).
-    const bp = b[s]?.p50, hp = h[s]?.p50;
-    const belief = h[s]?.beliefHydrated ? ' 🧠' : '';
-    return `| \`${s}\`${belief} | ${ms(bp)} | ${ms(hp)} | ${deltaCell(bp, hp, { fmt: (x) => `${x.toFixed(1)} ms`, band: 0.08 })} |`;
+    // p50 is the robust central latency (immune to the odd 600ms MC outlier);
+    // now the MEDIAN p50 across E2E_REPS runs, so run-to-run jitter is squeezed.
+    const br = b[s], hr = h[s];
+    const belief = hr?.beliefHydrated ? ' 🧠' : '';
+    let cell;
+    // When the two per-rep [lo,hi] p50 ranges OVERLAP the medians are
+    // indistinguishable noise — show neutral, never a green/red "win" (same
+    // rule the engine-speed rows use for their lo/hi bands).
+    if (br && hr && hr.p50lo != null && br.p50lo != null && hr.p50lo <= br.p50hi && br.p50lo <= hr.p50hi) {
+      const d = (hr.p50 ?? 0) - (br.p50 ?? 0);
+      const pct = br.p50 ? ` (${d > 0 ? '+' : ''}${(100 * d / br.p50).toFixed(1)}%)` : '';
+      cell = Math.abs(d) < 1e-9 ? '—' : `⚪ ${d > 0 ? '+' : ''}${d.toFixed(1)} ms${pct} ≈`;
+    } else {
+      cell = deltaCell(br?.p50, hr?.p50, { fmt: (x) => `${x.toFixed(1)} ms`, band: 0.08 });
+    }
+    return `| \`${s}\`${belief} | ${lat(br)} | ${lat(hr)} | ${cell} |`;
   }).join('\n');
 }
 
@@ -92,13 +106,14 @@ function render(base, head, coverageSlot = null) {
   const bMem = base?.memory || {}, hMem = head?.memory || {};
   const bSpd = base?.speed || {}, hSpd = head?.speed || {};
   const reps = hSpd.reps || bSpd.reps;
+  const e2eReps = (Array.isArray(head?.e2e) && head.e2e[0]?.reps) || (Array.isArray(base?.e2e) && base.e2e[0]?.reps);
   const cov = coverageSlot || COV_PLACEHOLDER;
 
   return `${MARKER}
 ## 📊 Metrics — before (base) vs after (this PR)
 
 ### ⏱️ Thinking-bot end-to-end latency (p50)
-_Full move vs real Postgres: load → belief → kernel choose → apply → commit. Lower is better; 🧠 = belief log hydrated._
+_Full move vs real Postgres: load → belief → kernel choose → apply → commit${e2eReps ? `; median p50 of ${e2eReps} runs, ±½ range` : ''}. Lower is better; 🧠 = belief log hydrated._
 
 | bot | base | this PR | Δ |
 |---|---|---|---|

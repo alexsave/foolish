@@ -62,17 +62,51 @@ function speed() {
   } catch (e) { return { error: String(e.message || e) }; }
 }
 
-// ---- e2e latency + wasm memory (one Postgres-backed run) ----
+// ---- e2e latency + wasm memory (Postgres-backed) ----
+// The headline latency is wall-clock on a shared CI runner, so a SINGLE run's
+// p50 swings run-to-run enough to drown small real deltas. Mirror speed(): run
+// the whole bench a few times and report the MEDIAN p50 per strategy, plus the
+// observed lo/hi spread so the renderer can treat overlapping ranges as noise.
+// Memory is page-granular and deterministic, so any rep's number will do.
 function e2eAndMemory() {
   try {
-    const out = runNode(['e2e/bench_bot_e2e.ts'], {
-      BENCH_JSON: '1',
-      BENCH_BOTS: process.env.BENCH_BOTS || 'octogen,semtex,cordite,fulminate',
-      BENCH_BOT_MOVES: process.env.BENCH_BOT_MOVES || '25',
-    });
-    // bench prints exactly one JSON line; take the last non-empty line.
-    const line = out.trim().split('\n').filter(Boolean).pop();
-    return JSON.parse(line);
+    const reps = Number(process.env.E2E_REPS || 3);
+    const perStrat = new Map(); // strategy -> accumulated per-rep stats
+    let memory = null;
+    for (let i = 0; i < reps; i++) {
+      const out = runNode(['e2e/bench_bot_e2e.ts'], {
+        BENCH_JSON: '1',
+        BENCH_BOTS: process.env.BENCH_BOTS || 'octogen,semtex,cordite,fulminate',
+        BENCH_BOT_MOVES: process.env.BENCH_BOT_MOVES || '25',
+      });
+      // bench prints exactly one JSON line; take the last non-empty line.
+      const line = out.trim().split('\n').filter(Boolean).pop();
+      const parsed = JSON.parse(line);
+      if (parsed.error) throw new Error(parsed.error);
+      if (parsed.memory) memory = parsed.memory;
+      for (const r of parsed.e2e || []) {
+        if (!perStrat.has(r.strategy)) {
+          perStrat.set(r.strategy, { strategy: r.strategy, p50: [], p90: [], mean: [], max: [], n: [], beliefHydrated: false });
+        }
+        const s = perStrat.get(r.strategy);
+        s.p50.push(r.p50); s.p90.push(r.p90); s.mean.push(r.mean); s.max.push(r.max); s.n.push(r.n);
+        s.beliefHydrated = s.beliefHydrated || r.beliefHydrated;
+      }
+    }
+    const e2e = [...perStrat.values()].map((s) => ({
+      strategy: s.strategy,
+      reps: s.p50.length,
+      n: Math.round(median(s.n)),
+      mean: median(s.mean),
+      p50: median(s.p50),
+      p90: median(s.p90),
+      max: s.max.length ? Math.max(...s.max) : 0,
+      // observed spread of the per-rep p50 → the noise band the renderer honors.
+      p50lo: s.p50.length ? Math.min(...s.p50) : null,
+      p50hi: s.p50.length ? Math.max(...s.p50) : null,
+      beliefHydrated: s.beliefHydrated,
+    }));
+    return { e2e, memory: memory ?? { error: 'no memory' } };
   } catch (e) { return { error: String(e.message || e) }; }
 }
 
