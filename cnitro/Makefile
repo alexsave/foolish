@@ -38,7 +38,11 @@ CORE_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/view.c src/aw
             src/torpex_value.c src/novichok_strategy.c
 CORE_OBJ := $(CORE_SRC:src/%.c=build/%.o)
 
-.PHONY: all clean tests
+.PHONY: all clean tests print-core
+# Emit the core engine+strategy source list (used by tools/tt_divergence.sh to
+# build cnitro_eval at arbitrary -DCD_TT_BITS without duplicating the list).
+print-core:
+	@echo $(CORE_SRC)
 all: build/cnitro_eval build/cnitro_elo build/cnitro_replay build/cnitro_showcase build/cnitro_tests build/cnitro_gen
 
 # Generic compile rule for sources under src/ (build/%.o: src/%.c).
