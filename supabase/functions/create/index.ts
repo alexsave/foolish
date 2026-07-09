@@ -46,15 +46,36 @@ wrap400(async ({ user, user_name }: ExecutionParams) => {
         logs: []
     };
 
-    // Create the game in ONE round-trip: the create_game RPC does the three
-    // inserts (games → game_decks → player_hands) in a single transaction,
-    // replacing what used to be sequential PostgREST calls (part of #6's slow
-    // create). p_views seeds the creator's player_views cache row (version 0)
-    // in the SAME transaction, so the new lobby is readable from the dashboard's
-    // direct player_views SELECT immediately (docs/PLAYER_VIEWS.md). A lobby has
-    // no hidden state, so this masked view is built by the pure-TS mirror (no
-    // rules-wasm on the create cold path).
+    // [perf] Split the single "Direct execute" timing into its two parts — the
+    // masked-view build (pure TS for a lobby) vs the create_game PostgREST
+    // round-trip — so the "create is slow" investigation can see which dominates.
+    const tViews = performance.now();
+    // p_views seeds the creator's player_views cache row (version 0) in the SAME
+    // transaction as the inserts, so the new lobby is readable from the
+    // dashboard's direct player_views SELECT immediately (docs/PLAYER_VIEWS.md).
+    // A lobby has no hidden state, so this masked view is built by the pure-TS
+    // mirror (no rules-wasm on the create cold path) — expected to be ~0ms.
     const p_views = await buildPlayerViewRows(dbGameData, null, 0);
+    console.log(`[perf][create] buildPlayerViewRows ${(performance.now() - tViews).toFixed(0)}ms`);
+
+    // [perf] Optional cold-connection probe. create_game is normally the FIRST
+    // edge→PostgREST call in the isolate (auth verifies the JWT LOCALLY — no DB
+    // touch), so it pays the full cold PostgREST connection/HTTP setup (~750ms
+    // cold per docs/PLAYER_VIEWS.md), NOT the four tiny inserts. Set
+    // CREATE_TIMING_PROBE=1 to fire a trivial round-trip first: it absorbs the
+    // cold setup, so the create_game timing below then reflects the query alone —
+    // isolating connection cost from query cost. Off by default (adds a hop).
+    if (Deno.env.get('CREATE_TIMING_PROBE')) {
+        const tProbe = performance.now();
+        await supabaseClient.from('games').select('id').limit(1);
+        console.log(`[perf][create] postgrest warmup probe ${(performance.now() - tProbe).toFixed(0)}ms`);
+    }
+
+    // Create the game in ONE round-trip: the create_game RPC does the three
+    // inserts (games → game_decks → player_hands) + the player_views seed in a
+    // single transaction, replacing what used to be sequential PostgREST calls
+    // (part of #6's slow create).
+    const tRpc = performance.now();
     const { error: createError } = await supabaseClient.rpc('create_game', {
         p_game_id: game_id,
         p_name: game_name,
@@ -67,6 +88,7 @@ wrap400(async ({ user, user_name }: ExecutionParams) => {
         }],
         p_views,
     });
+    console.log(`[perf][create] create_game rpc ${(performance.now() - tRpc).toFixed(0)}ms`);
     if (createError) {
         throw new Error(`Failed to create game: ${createError.message}`);
     }
