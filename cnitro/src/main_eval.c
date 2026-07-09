@@ -270,7 +270,16 @@ static int play_one_audit(uint32_t seed, int n_players, int protagonist, int opp
 
 // Play one game. Returns seat-0 finish position (1..N). Position N == durak.
 // -1 if the game aborted incomplete.
+// GAME_SIG=1: print a per-game FNV-1a hash of the PROTAGONIST's move sequence
+// (seat 0) plus its finish, to stdout — the exact "did this bot play
+// identically" signal for the TT divergence-rate measurement (see
+// docs/WASM_L1_BUDGET.md). Two builds that print the same SIG for a seed
+// played that game bit-identically.
+static int g_sig = -1;
 static int play_one(uint32_t seed, int n_players, int protagonist, int opp) {
+    if (g_sig < 0) { const char *e = getenv("GAME_SIG"); g_sig = (e && e[0] && e[0] != '0') ? 1 : 0; }
+    unsigned long long sig = 1469598103934665603ULL;
+    #define SIG_FOLD(x) do { sig ^= (unsigned long long)(unsigned)(x); sig *= 1099511628211ULL; } while (0)
     // Cold solver TT per game: semtex/octogen leaf solving persists the TT
     // across the worlds of a decision (sound: exact fingerprints), but
     // letting it persist ACROSS GAMES couples the two games of a --control
@@ -308,6 +317,10 @@ static int play_one(uint32_t seed, int n_players, int protagonist, int opp) {
             int idx = dispatch_choose(g.players[pi].strategy_key, &g, pi, &moves);
             if (idx < 0 || idx >= moves.n) continue;
             const LegalMove *m = &moves.moves[idx];
+            if (g_sig && pi == 0) {  // hash only the protagonist's chosen moves
+                SIG_FOLD(m->type); SIG_FOLD(m->n_cards);
+                for (int c = 0; c < m->n_cards; c++) { SIG_FOLD(m->cards[c].suit); SIG_FOLD(m->cards[c].value); }
+            }
             bool ok = false;
             switch (m->type) {
                 case MOVE_ATTACK: ok = handle_attack(&g, pi, m->cards, m->n_cards); break;
@@ -321,11 +334,12 @@ static int play_one(uint32_t seed, int n_players, int protagonist, int opp) {
         }
         if (!acted) break;
     }
-    if (game_done(&g) < 0) return -1;
-    for (int i = 0; i < g.num_eliminated; i++) {
-        if (g.elimination_order[i] == 0) return i + 1;
-    }
-    return g.num_players;   // seat 0 is the durak
+    int finish;
+    if (game_done(&g) < 0) finish = -1;
+    else { finish = g.num_players; for (int i = 0; i < g.num_eliminated; i++) if (g.elimination_order[i] == 0) { finish = i + 1; break; } }
+    if (g_sig) printf("SIG %u %llu fin=%d\n", seed, sig, finish);
+    return finish;
+    #undef SIG_FOLD
 }
 
 int main(int argc, char **argv) {
