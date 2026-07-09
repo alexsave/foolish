@@ -45,7 +45,7 @@ disassembler is self-contained (MVP + sign-extension + bulk-memory; the modules
 use no SIMD) and validated: every function decodes contiguously and terminates
 in `end`.
 
-## Regenerate
+## Regenerate (this repo)
 
 ```bash
 cnitro/tools/wasm_anatomy/generate.sh          # -> docs/wasm-anatomy.html
@@ -55,8 +55,37 @@ cnitro/tools/wasm_anatomy/generate.sh out.html # custom output path
 Requires `clang` (wasm32 target), `wasm-ld`, `llvm-nm`, and `node`. Run it after
 any change to the C sources or Makefile WASM flags to refresh the page.
 
-Files:
-- `generate.sh` — end-to-end pipeline (build → name build → symbol map → analyze → render)
-- `analyze.mjs` — WASM section parser + disassembler → per-module JSON
-- `build_html.mjs` — derives the memory map & source attribution, emits the HTML (with the CSS)
+## Any wasm (generic)
+
+The parser, disassembler and page are not cnitro-specific — point the generic
+driver at any `.wasm` file(s):
+
+```bash
+cnitro/tools/wasm_anatomy/wasm-anatomy.sh app.wasm            # -> wasm-anatomy.html
+cnitro/tools/wasm_anatomy/wasm-anatomy.sh a.wasm b.wasm \
+    -o out.html -t "My modules" -s "subtitle"
+```
+
+Requires only `node` — no build step, no toolchain. Each module is parsed and
+disassembled straight from its bytes; the page degrades gracefully by what the
+binary carries:
+
+| the wasm has…              | you get |
+| -------------------------- | ------- |
+| a `name` custom section    | real function names + grouping by name prefix |
+| no names (`--strip-all`)   | functions by index (`func[N]`), one bucket |
+| imports (fns / memory / …) | a full imports table; imported-memory limits drive the map |
+| exported const getters     | resolved to their value in the exports table |
+
+Source-file attribution and the labeled named-buffer memory map are the only
+cnitro-specific extras (they need the object symbol tables and the `wasm_*_ptr`
+getters); `generate.sh` supplies them, `wasm-anatomy.sh` omits them.
+
+## Files
+- `wasm-anatomy.sh` — generic driver for arbitrary wasm (config → analyze → render)
+- `generate.sh` — cnitro pipeline (build → name build → symbol map → config → analyze → render)
+- `analyze.mjs` — config-driven WASM section parser + disassembler → per-module JSON
+- `build_html.mjs` — derives the memory map & attribution, emits the HTML (with the CSS)
 - `app.js` — the browser app (all seven views)
+
+Both drivers build a small `config.json` (`{title, subtitle, symfile?, modules:[{key, human, blurb?, wasm, named?}]}`) and hand it to `analyze.mjs` + `build_html.mjs` — that config is the whole generalization seam.

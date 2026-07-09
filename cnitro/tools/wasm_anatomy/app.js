@@ -13,7 +13,6 @@
     engine: 'engine core', codec: 'codec (replay/awire)', bridge: 'wasm bridge',
     strategy: 'bot strategies', runtime: 'runtime / compiler', other: 'other',
   };
-  const SUBORDER = ['engine', 'codec', 'strategy', 'bridge', 'runtime', 'other'];
   const OPCLASSES = {
     control: 'control flow', call: 'calls', local: 'locals', global: 'globals',
     memory: 'load / store', const: 'constants', i32: 'i32 arithmetic', i64: 'i64 arithmetic',
@@ -30,7 +29,7 @@
     data: 'initialized static data', custom: 'name / metadata',
   };
 
-  let MODULES = [], mi = 0, view = 'overview';
+  let MODULES = [], META = { title: 'WASM Anatomy', subtitle: '' }, mi = 0, view = 'overview';
   const VIEWS = [
     ['overview', 'Overview'], ['size', 'Size layout'], ['memory', 'Memory layout'],
     ['assembly', 'Annotated assembly'], ['opcodes', 'Opcode census'],
@@ -48,7 +47,9 @@
       D.getElementById('app').innerHTML = '<div id="boot">This page needs a browser with DecompressionStream (any current Chrome/Safari/Firefox).</div>';
       return;
     }
-    MODULES = JSON.parse(text);
+    const data = JSON.parse(text);
+    MODULES = data.modules; META = { title: data.title || 'WASM Anatomy', subtitle: data.subtitle || '' };
+    D.title = META.title;
     // restore theme
     const t = localStorage.getItem('wasmviz-theme');
     if (t) D.documentElement.setAttribute('data-theme', t);
@@ -62,7 +63,7 @@
     app.innerHTML = '';
     const rail = el('div'); rail.id = 'rail';
     rail.appendChild(el('div', 'brand',
-      '<h1>WASM Anatomy</h1><div class="sub">foolish · cnitro rules kernel</div>'));
+      '<h1>' + esc(META.title) + '</h1>' + (META.subtitle ? '<div class="sub">' + esc(META.subtitle) + '</div>' : '')));
     const pick = el('div', 'modpick');
     MODULES.forEach((m, i) => {
       const b = el('button', 'modbtn' + (i === mi ? ' on' : ''));
@@ -94,7 +95,8 @@
       const nx = cur === 'dark' ? 'light' : (cur === 'light' ? 'dark' : (matchMedia('(prefers-color-scheme: dark)').matches ? 'light' : 'dark'));
       D.documentElement.setAttribute('data-theme', nx); localStorage.setItem('wasmviz-theme', nx);
     };
-    foot.appendChild(el('span', null, '<span style="font-family:ui-monospace,monospace;font-size:10.5px;color:var(--faint)">-Oz · --strip-all</span>'));
+    const footText = MODULES.some(x => x.attributed) ? '-Oz · --strip-all' : MODULES.length + (MODULES.length === 1 ? ' module' : ' modules');
+    foot.appendChild(el('span', null, '<span style="font-family:ui-monospace,monospace;font-size:10.5px;color:var(--faint)">' + footText + '</span>'));
     foot.appendChild(tg);
     rail.appendChild(foot);
     app.appendChild(rail);
@@ -108,8 +110,10 @@
     main.innerHTML = '';
     const head = el('div', 'vhead');
     const vlabel = VIEWS.find(v => v[0] === view)[1];
+    const note = m.attributed ? 'byte-identical to the shipped artifact · names from a name-preserving companion build'
+      : (m.named ? 'symbols recovered from the module’s own name section' : 'stripped module · functions shown by index');
     head.innerHTML = '<h2>' + vlabel + '</h2><span class="crumb">' + esc(m.human) + '</span>' +
-      '<span class="note">byte-identical to the shipped artifact · disassembled from a name-preserving companion build</span>';
+      '<span class="note">' + note + '</span>';
     main.appendChild(head);
     const wrap = el('div', 'wrap'); main.appendChild(wrap);
     ({ overview: vOverview, size: vSize, memory: vMemory, assembly: vAssembly, opcodes: vOpcodes, interface: vInterface, data: vData }[view])(m, wrap);
@@ -128,10 +132,10 @@
     if (desc) c.appendChild(el('p', 'desc', desc));
     return c;
   }
-  function legend(entries) { // [ [colorVar, label] ]
+  function legend(entries) { // [ [colorValue, label] ] — colorValue is any CSS color (hex or var(...))
     const l = el('div', 'legend');
     entries.forEach(([cv, lb]) => l.appendChild(el('span', 'lg',
-      '<span class="sw" style="background:var(' + cv + ')"></span><b>' + esc(lb) + '</b>')));
+      '<span class="sw" style="background:' + cv + '"></span><b>' + esc(lb) + '</b>')));
     return l;
   }
 
@@ -145,25 +149,32 @@
       ['exports', String(m.numExports), 'entry pts'],
       ['linear memory', (m.memTop / 1048576).toFixed(m.memTop < 1048576 ? 2 : 0) + ' MiB', m.memPages + ' pages'],
     ]));
-    const c = card('What this module is', null, esc(m.blurb));
-    const facts = el('div'); facts.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;margin-top:6px';
-    const F = [
-      ['Provenance', 'Compiled from the cnitro C sources with clang ' + '-Oz' + ', stripped. This page’s bytes were verified <b>identical</b> to the shipped ' + (m.key === 'bots' ? 'bots.wasm.gz' : m.key + '_wasm.ts') + '.'],
-      ['Optimization', 'Size-first (<code class="inl">-Oz</code>), <code class="inl">-mbulk-memory</code>, no LTO, no fast-math — IEEE-identical to the TS oracles. Imports: <b>' + (m.numImports || 'none') + '</b> (freestanding, no libc).'],
-      ['Shipping', m.key === 'bots' ? 'A gzip static asset (server-only; bots never run in the browser).' : 'Base64-embedded in a generated .ts, decoded at load — works unchanged in Deno edge, Node and browsers.'],
-    ];
-    F.forEach(([t, b]) => { const d = el('div', 'card'); d.style.margin = '0'; d.innerHTML = '<h3>' + t + '</h3><p class="desc" style="margin-bottom:0">' + b + '</p>'; facts.appendChild(d); });
-    c.appendChild(facts);
-    w.appendChild(c);
+    if (m.blurb) {
+      const c = card('What this module is', null, esc(m.blurb));
+      if (m.attributed) {
+        const facts = el('div'); facts.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;margin-top:6px';
+        const F = [
+          ['Provenance', 'Compiled from the cnitro C sources with clang <code class="inl">-Oz</code>, stripped. This page’s bytes were verified <b>identical</b> to the shipped ' + (m.key === 'bots' ? 'bots.wasm.gz' : m.key + '_wasm.ts') + '.'],
+          ['Optimization', 'Size-first (<code class="inl">-Oz</code>), <code class="inl">-mbulk-memory</code>, no LTO, no fast-math. Imports: <b>' + (m.numImports || 'none') + '</b> (freestanding, no libc).'],
+          ['Shipping', m.key === 'bots' ? 'A gzip static asset (server-only; bots never run in the browser).' : 'Base64-embedded in a generated .ts, decoded at load — works unchanged in Deno edge, Node and browsers.'],
+        ];
+        F.forEach(([t, b]) => { const d = el('div', 'card'); d.style.margin = '0'; d.innerHTML = '<h3>' + t + '</h3><p class="desc" style="margin-bottom:0">' + b + '</p>'; facts.appendChild(d); });
+        c.appendChild(facts);
+      }
+      w.appendChild(c);
+    }
 
-    // subsystem composition
-    const sc = card('Where the code weight lives', 'code bytes by subsystem', 'Every function body attributed to its source file, grouped into the four subsystems that make up the kernel.');
-    const total = Object.values(m.subTotals).reduce((a, b) => a + b, 0);
+    // code weight by group (subsystem when a source map exists, else name prefix)
+    const groups = m.groups;
+    const total = groups.reduce((a, g) => a + g.bytes, 0) || 1;
+    const glabel = m.attributed ? 'code bytes by subsystem' : (m.named ? 'code bytes by name prefix' : 'code bytes');
+    const gdesc = m.attributed ? 'Every function body attributed to its source file, grouped into subsystems.'
+      : (m.named ? 'Functions grouped by the leading token of their symbol name — a plain wasm carries no source map, so this is the best grouping available.'
+        : 'This module has no name section, so functions can’t be grouped or named — shown as one bucket.');
+    const sc = card('Where the code weight lives', glabel, gdesc);
     const bl = el('div', 'barlist');
-    SUBORDER.filter(s => m.subTotals[s]).sort((a, b) => m.subTotals[b] - m.subTotals[a]).forEach(s => {
-      bl.appendChild(bar('<span class="sw" style="background:var(--sub-' + s + ')"></span>' + SUBS[s],
-        pct(m.subTotals[s], total), 'var(--sub-' + s + ')', kib(m.subTotals[s])));
-    });
+    groups.slice(0, 24).forEach(g => bl.appendChild(bar('<span class="sw" style="background:' + g.color + '"></span>' + esc(g.label),
+      pct(g.bytes, total), g.color, kib(g.bytes))));
     sc.appendChild(bl);
     w.appendChild(sc);
   }
@@ -214,19 +225,20 @@
     t.appendChild(tb); tc.appendChild(el('div', null, '')); tc.lastChild.style.marginTop = '16px'; tc.lastChild.appendChild(t);
     w.appendChild(tc);
 
-    // code by source file
-    const fc = card('Code by source file', 'within the CODE section', 'Each function’s body size summed by the .c file it came from (symbol→file via the object symbol tables). Colored by subsystem.');
-    fc.appendChild(legend(SUBORDER.filter(s => m.subTotals[s]).map(s => ['--sub-' + s, SUBS[s]])));
-    const files = Object.entries(m.fileTotals).sort((a, b) => b[1] - a[1]);
-    const fsub = {}; m.funcs.forEach(f => { fsub[f.file] = f.sub; });
-    const bl = el('div', 'barlist');
-    files.forEach(([f, sz]) => {
-      const sub = fsub[f] || 'other';
-      bl.appendChild(bar('<span class="sw" style="background:var(--sub-' + sub + ')"></span>' + esc(f) + '.c',
-        pct(sz, m.codeSize), 'var(--sub-' + sub + ')', kib(sz)));
-    });
-    fc.appendChild(bl);
-    w.appendChild(fc);
+    // code by source file / name group
+    if (m.named) {
+      const fc = card(m.attributed ? 'Code by source file' : 'Code by name group', 'within the CODE section',
+        m.attributed ? 'Each function’s body size summed by the .c file it came from (symbol→file via the object symbol tables), colored by subsystem.'
+          : 'Each function’s body size summed by the leading token of its symbol name.');
+      fc.appendChild(legend(m.groups.map(g => [g.color, g.label])));
+      const bl = el('div', 'barlist');
+      m.fileList.forEach(f => {
+        bl.appendChild(bar('<span class="sw" style="background:' + f.color + '"></span>' + esc(f.file) + (m.attributed ? '.c' : ''),
+          pct(f.bytes, m.codeSize), f.color, kib(f.bytes)));
+      });
+      fc.appendChild(bl);
+      w.appendChild(fc);
+    }
 
     // top functions
     const topc = card('Largest functions', 'top 40 by body size', 'Click a bar to jump to its annotated disassembly.');
@@ -234,8 +246,8 @@
     const maxSz = top[0].size;
     const bl2 = el('div', 'barlist');
     top.forEach(f => {
-      const r = bar('<span class="sw" style="background:var(--sub-' + f.sub + ')"></span>' + esc(f.name),
-        pct(f.size, maxSz), 'var(--sub-' + f.sub + ')', commas(f.size) + ' B');
+      const r = bar('<span class="sw" style="background:' + f.color + '"></span>' + esc(f.name),
+        pct(f.size, maxSz), f.color, commas(f.size) + ' B');
       r.style.cursor = 'pointer';
       r.onclick = () => { view = 'assembly'; buildShell(); render(); setTimeout(() => openFn(f.index), 30); };
       bl2.appendChild(r);
@@ -255,7 +267,10 @@
       ['static footprint', (staticEnd / 1048576).toFixed(2) + ' MiB', 'to __heap_base'],
       ['growable', m.memGrowable ? 'yes' : 'no', 'max = ∞'],
     ]));
-    const c = card('Linear memory at module init', 'address 0 → top · scroll down', 'One flat <code class="inl">ArrayBuffer</code>. With <code class="inl">--stack-first</code> the C shadow stack sits at the very bottom and grows <b>down</b>; static data, then the big zero-init engine/bot buffers, then a 2 MiB replay scratch fill the rest. Region sizes are exact; the named buffers are anchored by their <code class="inl">wasm_*_ptr</code> getter constants.');
+    const hasStack = mm.regions.some(r => r.kind === 'stack' && (r.end - r.start) > 0);
+    const c = card('Linear memory at module init', 'address 0 → top · scroll down', m.attributed
+      ? 'One flat <code class="inl">ArrayBuffer</code>. With <code class="inl">--stack-first</code> the C shadow stack sits at the very bottom and grows <b>down</b>; static data, then the big zero-init engine/bot buffers, then a 2 MiB replay scratch fill the rest. Region sizes are exact; the named buffers are anchored by their <code class="inl">wasm_*_ptr</code> getter constants.'
+      : 'One flat <code class="inl">ArrayBuffer</code>' + (hasStack ? '. A mutable i32 global (the LLVM <code class="inl">__stack_pointer</code>) marks the shadow stack at the bottom, growing <b>down</b>; ' : ', with ') + 'the initialized data segments and the buffers above them make up the static footprint. Region sizes are exact.');
     const tools = el('div', 'memtools');
     const seg = el('div', 'seg');
     ['linear', 'log'].forEach(mode => {
@@ -267,7 +282,7 @@
     tools.appendChild(el('span', null, '<span style="font-size:11.5px;color:var(--faint)">' +
       (memMode === 'linear' ? 'heights are true byte proportions — the 2 MiB replay buffer really is that big' : 'heights ∝ log₂(size) so tiny regions stay readable') + '</span>'));
     c.appendChild(tools);
-    c.appendChild(legend(Object.keys(MEMKIND).map(k => ['--mem-' + k, MEMKIND[k]])));
+    c.appendChild(legend(Object.keys(MEMKIND).map(k => ['var(--mem-' + k + ')', MEMKIND[k]])));
 
     const map = el('div', 'memmap');
     const scale = mm.memTop / 2400;
@@ -299,9 +314,11 @@
     search.oninput = () => { asmFilter = search.value.toLowerCase(); renderFnList(m, listWrap); };
     tools.appendChild(search);
     const subsel = el('select', 'btn');
-    subsel.innerHTML = '<option value="all">all subsystems</option>' + SUBORDER.filter(s => m.funcs.some(f => f.sub === s)).map(s => '<option value="' + s + '">' + SUBS[s] + '</option>').join('');
+    const grpWord = m.attributed ? 'subsystems' : 'name groups';
+    subsel.innerHTML = '<option value="all">all ' + grpWord + '</option>' +
+      m.groups.map(g => '<option value="' + esc(g.key) + '">' + esc(g.label) + '</option>').join('');
     subsel.value = asmSub; subsel.onchange = () => { asmSub = subsel.value; renderFnList(m, listWrap); };
-    tools.appendChild(subsel);
+    if (m.groups.length > 1) tools.appendChild(subsel);
     const sortsel = el('select', 'btn');
     sortsel.innerHTML = '<option value="index">order: file/index</option><option value="size">order: size ↓</option><option value="name">order: name</option>';
     sortsel.value = asmSort; sortsel.onchange = () => { asmSort = sortsel.value; renderFnList(m, listWrap); };
@@ -319,7 +336,7 @@
   }
   function currentFns(m) {
     let fns = m.funcs.slice();
-    if (asmSub !== 'all') fns = fns.filter(f => f.sub === asmSub);
+    if (asmSub !== 'all') fns = fns.filter(f => f.grp === asmSub);
     if (asmFilter) fns = fns.filter(f => f.name.toLowerCase().includes(asmFilter) || f.file.includes(asmFilter));
     if (asmSort === 'size') fns.sort((a, b) => b.size - a.size);
     else if (asmSort === 'name') fns.sort((a, b) => a.name.localeCompare(b.name));
@@ -340,12 +357,15 @@
     return '(' + p + ')' + (r ? ' → ' + r : '');
   }
   function fnNode(f) {
+    const m = MODULES[mi];
     const d = el('details', 'fn'); d.dataset.idx = f.index;
     const s = el('summary');
     s.innerHTML =
       '<span class="idx">#' + f.index + '</span>' +
       '<span class="fname">' + esc(f.name) + ' <span class="fsig">' + esc(sigText(f)) + '</span></span>' +
-      '<span class="fsub s-' + f.sub + '" style="border-color:currentColor">' + esc(f.file) + '.c</span>' +
+      (m.attributed || f.file !== 'code'
+        ? '<span class="fsub" style="color:' + f.color + ';border-color:' + f.color + '">' + esc(f.file) + (m.attributed ? '.c' : '') + '</span>'
+        : '') +
       '<span class="fsz">' + commas(f.size) + ' B · ' + f.ins.length + ' ins</span>';
     d.appendChild(s);
     d.addEventListener('toggle', () => {
@@ -405,7 +425,7 @@
     const classTot = {};
     m.ops.forEach(o => classTot[o.k] = (classTot[o.k] || 0) + o.n);
     const cc = card('Instruction mix by class', 'share of all ' + commas(m.opTotal) + ' instructions', 'What the compiler actually emitted. Load/store and local access dominate — the fingerprint of struct-heavy engine code lowered at ' + '-Oz.');
-    cc.appendChild(legend(Object.keys(OPCLASSES).filter(k => classTot[k]).map(k => ['--op-' + k, OPCLASSES[k]])));
+    cc.appendChild(legend(Object.keys(OPCLASSES).filter(k => classTot[k]).map(k => ['var(--op-' + k + ')', OPCLASSES[k]])));
     const bl = el('div', 'barlist');
     Object.entries(classTot).sort((a, b) => b[1] - a[1]).forEach(([k, n]) => {
       bl.appendChild(bar('<span class="sw" style="background:var(--op-' + k + ')"></span>' + OPCLASSES[k],
@@ -437,20 +457,48 @@
       ['indirect table', m.table ? commas(m.table[0].min) + ' slots' : '—', ''],
     ]));
     const ic = card('Imports', 'the host surface', 'What the module needs from the host at instantiation.');
-    if (!m.imports.length) ic.appendChild(el('p', 'lead', 'None. The kernel is compiled <code class="inl">-nostdlib -ffreestanding</code> — it imports nothing, not even memory (it exports its own). Every dependency, down to <code class="inl">memcpy</code>/<code class="inl">memset</code>, is compiled in.'));
+    if (!m.imports.length) {
+      ic.appendChild(el('p', 'lead', m.attributed
+        ? 'None. The kernel is compiled <code class="inl">-nostdlib -ffreestanding</code> — it imports nothing, not even memory (it exports its own). Every dependency, down to <code class="inl">memcpy</code>/<code class="inl">memset</code>, is compiled in.'
+        : 'None — this module is fully self-contained and imports nothing from the host.'));
+    } else {
+      const it = el('table', 't');
+      it.innerHTML = '<thead><tr><th>module</th><th>name</th><th>kind</th><th>type</th></tr></thead>';
+      const itb = el('tbody');
+      m.imports.forEach(im => {
+        let ty = '';
+        if (im.kind === 'func') ty = 'type #' + im.typeIndex;
+        else if (im.kind === 'mem') ty = 'min ' + im.limits?.min + (im.limits?.max != null ? ' / max ' + im.limits.max : '') + ' pages';
+        else if (im.kind === 'global') ty = (im.mut ? 'mut ' : '') + im.valtype;
+        else if (im.kind === 'table') ty = im.et + ' × ' + im.limits?.min;
+        itb.appendChild(el('tr', null,
+          '<td class="m" style="color:var(--dim)">' + esc(im.module) + '</td>' +
+          '<td class="m" style="color:var(--accent)">' + esc(im.field) + '</td>' +
+          '<td><span class="tag" style="color:var(--sec-import)">' + esc(im.kind) + '</span></td>' +
+          '<td class="m" style="color:var(--dim)">' + esc(ty) + '</td>'));
+      });
+      it.appendChild(itb);
+      const isc = el('div'); isc.style.cssText = 'max-height:360px;overflow:auto;border:1px solid var(--line);border-radius:8px'; isc.appendChild(it);
+      ic.appendChild(isc);
+    }
     w.appendChild(ic);
 
-    const ptrGet = new Set(Object.keys(m.ptrConsts).filter(k => /_ptr(_internal)?$|_cap$|_io_ptr$/.test(k)));
-    const ec = card('Exports', m.numExports + ' entry points', 'The explicit allow-list the Makefile passes to <code class="inl">wasm-ld</code> — only the memory plus the <code class="inl">wasm_*</code> API the TS bridge calls. Pure address getters resolve to a fixed linear-memory constant.');
+    const byIdx = {}; m.funcs.forEach(f => byIdx[f.index] = f);
+    // a pure constant getter: body is just `<const>; end` with no side effects
+    const constGetter = f => f && f.ins.length === 2 && f.ins[1].t === 'end' && /\.const$/.test(f.ins[0].t) ? f.ins[0].a : null;
+    const ec = card('Exports', m.numExports + ' entry points', m.attributed
+      ? 'The explicit allow-list the Makefile passes to <code class="inl">wasm-ld</code> — only the memory plus the <code class="inl">wasm_*</code> API the TS bridge calls. Pure address getters resolve to a fixed linear-memory constant.'
+      : 'Everything this module exposes to the host. Zero-argument functions that just return a constant are resolved to that value.');
     const t = el('table', 't');
     t.innerHTML = '<thead><tr><th>export</th><th>kind</th><th class="n">index</th><th>resolves to</th></tr></thead>';
     const tb = el('tbody');
     m.exports.forEach(x => {
       let resolve = '';
       if (x.kind === 'mem') resolve = 'linear memory — ' + m.memPages + ' pages';
-      else if (ptrGet.has(x.name) && x.name in m.ptrConsts) {
-        const v = m.ptrConsts[x.name];
-        resolve = /_cap$/.test(x.name) ? commas(v) + ' bytes' : hx(v) + ' <span style="color:var(--faint)">(' + commas(v) + ')</span>';
+      else if (x.kind === 'global') { const g = m.globals[x.index - m.imports.filter(i => i.kind === 'global').length]; if (g && g.initConst != null) resolve = hx(g.initConst); }
+      else if (x.kind === 'func') {
+        const cv = constGetter(byIdx[x.index]);
+        if (cv != null) { const v = parseInt(cv, 10); resolve = /_cap$|_size$|_len$/.test(x.name) ? commas(v) + ' bytes' : hx(v) + ' <span style="color:var(--faint)">(' + commas(v) + ')</span>'; }
       }
       tb.appendChild(el('tr', null,
         '<td class="m" style="color:var(--accent)">' + esc(x.name) + '</td>' +

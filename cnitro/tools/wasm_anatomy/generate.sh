@@ -53,12 +53,30 @@ $WASM_CC --target=wasm32 -Oz -nostdlib -ffreestanding -mbulk-memory -isystem was
 llvm-nm --defined-only "$WORK/wasm_guards_api.o" 2>/dev/null | awk '$2 ~ /[TtWw]/ {print $3"\twasm_guards_api"}' >> "$WORK/symfile.tsv"
 sort -u "$WORK/symfile.tsv" -o "$WORK/symfile.tsv"
 
-echo "[4/5] parse + disassemble"
-node "$HERE/analyze.mjs" "$WORK" "$BUILD"
+echo "[4/5] write config + parse + disassemble"
+# The config is what makes analyze/build_html generic — cnitro just fills in the
+# rich fields (named companions, symfile, per-module blurbs).
+WORK="$WORK" BUILD="$BUILD" node - > "$WORK/config.json" <<'NODE'
+const W = process.env.WORK, B = process.env.BUILD;
+console.log(JSON.stringify({
+  title: 'WASM Anatomy · foolish / cnitro',
+  subtitle: 'foolish · cnitro rules kernel',
+  symfile: `${W}/symfile.tsv`,
+  modules: [
+    { key:'rules', human:'rules.wasm', wasm:`${B}/rules.wasm`, named:`${B}/named/rules.named.wasm`,
+      blurb:'The production rules kernel: engine + legal-move generator + replay codec, compiled freestanding. Shipped base64-embedded in rules_wasm.ts and imported by the Deno edge functions AND the browser (replay decode).' },
+    { key:'guards', human:'guards.wasm', wasm:`${B}/guards.wasm`, named:`${B}/named/guards.named.wasm`,
+      blurb:'The smallest kernel: game.c only — no move enumeration, no replay codec. Backs the browser UI move-gates (validate-only) and optimistic apply. One engine, not two.' },
+    { key:'bots', human:'bots.wasm', wasm:`${B}/bots.wasm`, named:`${B}/named/bots.named.wasm`,
+      blurb:'The rules kernel PLUS every algorithmic bot strategy and the choose-move bridge. A superset of rules.wasm, loaded only where bots run. Ships as a gzip static asset, not a base64 embed.' },
+  ],
+}));
+NODE
+node "$HERE/analyze.mjs" "$WORK" "$WORK/config.json"
 
 echo "[5/5] render HTML"
 cp "$HERE/app.js" "$WORK/app.js"
-WASM_BUILD_DIR="$BUILD" node "$HERE/build_html.mjs" "$WORK" "$OUT"
+node "$HERE/build_html.mjs" "$WORK" "$OUT" "$WORK/config.json"
 
 rm -rf "$WORK"
 echo "done -> $OUT"

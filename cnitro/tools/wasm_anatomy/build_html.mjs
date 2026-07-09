@@ -6,16 +6,29 @@ import zlib from 'node:zlib';
 
 const DIR = process.argv[2] || '.';
 const OUT = process.argv[3] || `${DIR}/wasm_anatomy.html`;
+// Config drives everything (module list, labels, optional enrichment). This is
+// what makes the tool generic: `analyze.mjs` + this script work on ANY wasm; the
+// cnitro-specific richness (source-file attribution, module blurbs) is just
+// extra fields in the config, absent for a plain wasm.
+//   CONFIG = { title, subtitle, symfile?, modules:[{key, human, blurb?, wasm}] }
+const CONFIG = JSON.parse(fs.readFileSync(process.argv[4] || `${DIR}/config.json`, 'utf8'));
 
-// ---- source attribution -----------------------------------------------------
-const sym2file = {};
-for (const line of fs.readFileSync(`${DIR}/symfile.tsv`, 'utf8').split('\n')) {
-  if (!line.trim()) continue;
-  const [sym, file] = line.split('\t');
-  // first writer wins, but prefer a non-bridge definition for shared inlines
-  if (!(sym in sym2file) || (sym2file[sym].startsWith('wasm_') && !file.startsWith('wasm_'))) sym2file[sym] = file;
+// Node-side copy of the categorical palette so attribution colors can be baked
+// into the payload (keeps the client CSS free of module-specific classes).
+const SUB_HEX = { engine:'#4fb3cf', codec:'#e07bb0', bridge:'#6f97f0', strategy:'#b58ae6', runtime:'#8b98ac', other:'#6b7686' };
+const SUB_LABEL = { engine:'engine core', codec:'codec (replay/awire)', bridge:'wasm bridge', strategy:'bot strategies', runtime:'runtime / compiler', other:'other' };
+const PALETTE = ['#4fb3cf','#e07bb0','#6f97f0','#b58ae6','#8fce7a','#e0b23b','#e08a5a','#6fd0b0','#d0d060','#d17a6a','#9aa7b8','#7fb069','#c98bdb','#5aa9e0','#d99a4e','#78c2a4'];
+
+// ---- source attribution (optional; only when the config points at a symfile) -
+let sym2file = null;
+if (CONFIG.symfile && fs.existsSync(CONFIG.symfile)) {
+  sym2file = {};
+  for (const line of fs.readFileSync(CONFIG.symfile, 'utf8').split('\n')) {
+    if (!line.trim()) continue;
+    const [sym, file] = line.split('\t');
+    if (!(sym in sym2file) || (sym2file[sym].startsWith('wasm_') && !file.startsWith('wasm_'))) sym2file[sym] = file;
+  }
 }
-// file -> subsystem
 const FILE_SUB = {
   game:'engine', legal:'engine', deal_rng:'engine', view:'engine', replay:'codec',
   awire:'codec', evwire:'codec',
@@ -24,12 +37,10 @@ const FILE_SUB = {
 const STRAT_FILES = ['random_strategy','espresso_strategy','espresso_prod_strategy','handwritten_strategy','handwritten_prod_strategy','simple_heuristic_strategy','champion_strategy','ultimate_champion_strategy','hacker_strategy','fulminate_strategy','cordite_strategy','cordite_sim','semtex_strategy','octogen_strategy'];
 for (const f of STRAT_FILES) FILE_SUB[f] = 'strategy';
 
-function attribute(name) {
-  // exported wasm_* thunks belong to the bridge
+function attributeSym(name) {
   let file = sym2file[name];
   if (!file && name.startsWith('wasm_')) file = 'wasm_api';
   if (!file) {
-    // compiler/runtime helpers
     if (/^__|memcpy|memset|memmove|memcmp/.test(name)) return { file: 'runtime', sub: 'runtime' };
     return { file: 'other', sub: 'runtime' };
   }
@@ -40,8 +51,12 @@ function attribute(name) {
 const PAGE = 65536;
 function u(n){ return n; }
 function buildMemMap(m) {
-  const stackSize = (m.globals.find(g=>g.index===0)?.initConst) ?? 0;
-  const memTop = (m.memory?.[0]?.min ?? 0) * PAGE;
+  // __stack_pointer is conventionally global 0 for LLVM output, but only when
+  // it is a mutable i32; on a wasm without it we simply have no stack region.
+  const sp = m.globals.find(g => g.mut && g.valtype === 'i32' && g.initConst != null);
+  const stackSize = (m.globals[0]?.index === 0 && m.globals[0]?.mut ? m.globals[0].initConst : sp?.initConst) ?? 0;
+  const memMin = m.memory?.[0]?.min ?? m.imports.find(i => i.kind === 'mem')?.limits?.min ?? 0;
+  const memTop = memMin * PAGE;
   const p = m.ptrConsts || {};
   const dataEnd = m.data.reduce((mx,d)=>Math.max(mx, d.memOffset + d.size), stackSize);
   // authoritative anchored buffers (pure getter exports only)
@@ -97,50 +112,71 @@ function opClass(mn){
 }
 
 // ---- assemble per-module view model ----------------------------------------
-function buildModule(key, human, blurb) {
-  const m = JSON.parse(fs.readFileSync(`${DIR}/${key}.json`, 'utf8'));
-  // attribute functions
-  const fileTotals = {}; const subTotals = {};
+function buildModule(spec) {
+  const m = JSON.parse(fs.readFileSync(`${DIR}/${spec.key}.json`, 'utf8'));
+  const attributed = !!sym2file;                                    // source-file map present
+  const named = m.funcs.some(f => !/^func\[\d+\]$/.test(f.name));   // wasm carries a name section
+
+  // Assign each function a group + a baked-in color. With a symfile we use the
+  // cnitro subsystem taxonomy; otherwise we group by the leading token of the
+  // (name-section) symbol, or fall back to a single "code" bucket for a wasm
+  // with no names at all.
+  const fileTotals = {}, grpTotals = {}, grpColor = {}, fileColor = {};
+  let nextColor = 0;
+  const colorForKey = k => (grpColor[k] || (grpColor[k] = PALETTE[nextColor++ % PALETTE.length]));
   for (const f of m.funcs) {
-    const { file, sub } = attribute(f.name);
-    f.file = file; f.sub = sub;
-    fileTotals[file] = (fileTotals[file]||0) + f.size;
-    subTotals[sub] = (subTotals[sub]||0) + f.size;
-    for (const ins of f.ins) ins.k = opClass(ins.t); // class tag for coloring
+    let file, grp, color;
+    if (attributed) {
+      const a = attributeSym(f.name); file = a.file; grp = a.sub; color = SUB_HEX[a.sub] || SUB_HEX.other; grpColor[grp] = color;
+    } else if (named) {
+      file = (f.name.split(/[_.<[(]/)[0] || 'anon'); grp = file; color = colorForKey(grp);
+    } else {
+      file = 'code'; grp = 'code'; color = colorForKey('code');
+    }
+    f.file = file; f.grp = grp; f.color = color;
+    fileTotals[file] = (fileTotals[file] || 0) + f.size;
+    grpTotals[grp] = (grpTotals[grp] || 0) + f.size;
+    fileColor[file] = color;
+    for (const ins of f.ins) ins.k = opClass(ins.t);
   }
-  const codeSize = m.sections.find(s=>s.name==='code')?.size || 0;
+  const groups = Object.entries(grpTotals).sort((a, b) => b[1] - a[1])
+    .map(([g, bytes]) => ({ key: g, label: attributed ? (SUB_LABEL[g] || g) : g, color: grpColor[g], bytes }));
+  const fileList = Object.entries(fileTotals).sort((a, b) => b[1] - a[1])
+    .map(([file, bytes]) => ({ file, bytes, color: fileColor[file], grp: (m.funcs.find(f => f.file === file) || {}).grp }));
+
+  const codeSize = m.sections.find(s => s.name === 'code')?.size || 0;
   const memmap = buildMemMap(m);
-  // opcode histogram sorted
-  const ops = Object.entries(m.opcodes).map(([t,n])=>({ t, n, k: opClass(t) })).sort((a,b)=>b.n-a.n);
-  const opTotal = ops.reduce((a,o)=>a+o.n,0);
-  // gz size (actual shipped compression)
-  const strippedPath = `${process.env.WASM_BUILD_DIR || '/home/user/foolish/cnitro/build'}/${key}.wasm`;
-  const raw = fs.readFileSync(strippedPath);
+  const ops = Object.entries(m.opcodes).map(([t, n]) => ({ t, n, k: opClass(t) })).sort((a, b) => b.n - a.n);
+  const opTotal = ops.reduce((a, o) => a + o.n, 0);
+  const raw = fs.readFileSync(spec.wasm);
   const gz = zlib.gzipSync(raw, { level: 9 }).length;
+  // memory limits may come from an imported memory, not the memory section
+  const impMem = m.imports.find(i => i.kind === 'mem');
+  const memDef = m.memory?.[0] || impMem?.limits || null;
   return {
-    key, human, blurb,
+    key: spec.key, human: spec.human || spec.key, blurb: spec.blurb || '',
+    attributed, named, attrLabel: attributed ? 'source file' : (named ? 'name prefix' : 'unnamed'),
     total: m.total, gz, codeSize,
     numFuncs: m.funcs.length, numImports: m.imports.length, numExports: m.exports.length,
-    memPages: m.memory?.[0]?.min ?? 0, memTop: memmap.memTop, memGrowable: (m.memory?.[0]?.max==null),
+    memPages: memmap.memTop / 65536, memTop: memmap.memTop, memGrowable: memDef ? (memDef.max == null) : true, memImported: !!impMem,
     sections: m.sections, funcs: m.funcs, ops, opTotal,
     imports: m.imports, exports: m.exports, globals: m.globals, table: m.table,
     data: m.data, ptrConsts: m.ptrConsts, customs: m.customs,
-    fileTotals, subTotals, memmap,
+    fileTotals, groups, fileList, memmap,
   };
 }
 
-const MODULES = [
-  buildModule('rules', 'rules.wasm', 'The production rules kernel: engine + legal-move generator + replay codec, compiled freestanding. Shipped base64-embedded in rules_wasm.ts and imported by the Deno edge functions AND the browser (replay decode).'),
-  buildModule('guards', 'guards.wasm', 'The smallest kernel: game.c only — no move enumeration, no replay codec. Backs the browser UI move-gates (validate-only) and optimistic apply. One engine, not two.'),
-  buildModule('bots', 'bots.wasm', 'The rules kernel PLUS every algorithmic bot strategy and the choose-move bridge. A superset of rules.wasm, loaded only where bots run. Ships as a gzip static asset, not a base64 embed.'),
-];
-
-const payload = zlib.gzipSync(Buffer.from(JSON.stringify(MODULES)), { level: 9 }).toString('base64');
-console.log('payload gz+b64:', (payload.length/1e6).toFixed(2), 'MB');
+const MODULES = CONFIG.modules.map(buildModule);
+const payloadObj = { title: CONFIG.title || 'WASM Anatomy', subtitle: CONFIG.subtitle || '', modules: MODULES };
+const payload = zlib.gzipSync(Buffer.from(JSON.stringify(payloadObj)), { level: 9 }).toString('base64');
+console.log('payload gz+b64:', (payload.length / 1e6).toFixed(2), 'MB');
 
 // ============================================================================
-function renderHTML(b64) {
-  return String.raw`<title>WASM Anatomy · foolish / cnitro</title>
+function renderHTML(b64, title) {
+  // NOTE: charset must be declared for the standalone file:// case — without it
+  // the browser falls back to latin-1 and mangles every → │ ⇄ × ∞ · ’ in the UI.
+  return String.raw`<meta charset="utf-8">
+<title>${title.replace(/[<&]/g, c => ({ '<': '&lt;', '&': '&amp;' }[c]))}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>${CSS}</style>
 <div id="app" aria-busy="true">
@@ -346,5 +382,5 @@ table.t td.m{font-family:ui-monospace,monospace;color:var(--text)}
 `;
 
 const JS = fs.readFileSync(`${DIR}/app.js`, 'utf8');
-fs.writeFileSync(OUT, renderHTML(payload));
+fs.writeFileSync(OUT, renderHTML(payload, payloadObj.title));
 console.log('wrote', OUT, (fs.statSync(OUT).size/1e6).toFixed(2), 'MB');

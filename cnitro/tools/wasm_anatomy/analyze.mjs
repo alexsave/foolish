@@ -30,7 +30,7 @@ function parse(buf){
     const endp=contentStart+size; const sr=new Reader(buf, contentStart);
     try{
       if(id===1){ const n=sr.vu(); for(let i=0;i<n;i++){ sr.u8(); const params=valtypeVec(sr); const results=valtypeVec(sr); out.types.push({params,results}); } }
-      else if(id===2){ const n=sr.vu(); for(let i=0;i<n;i++){ const mod=sr.name(),field=sr.name(),kind=sr.u8(); const imp={module:mod,field,kind:KIND_NAMES[kind]}; if(kind===0){ imp.typeIndex=sr.vu(); out.numImportedFuncs++; } else if(kind===1){ sr.u8(); readLimits(sr); } else if(kind===2){ readLimits(sr); } else if(kind===3){ imp.valtype=VALTYPE[sr.u8()]; imp.mut=sr.u8(); } out.imports.push(imp); } }
+      else if(id===2){ const n=sr.vu(); for(let i=0;i<n;i++){ const mod=sr.name(),field=sr.name(),kind=sr.u8(); const imp={module:mod,field,kind:KIND_NAMES[kind]}; if(kind===0){ imp.typeIndex=sr.vu(); out.numImportedFuncs++; } else if(kind===1){ imp.et=VALTYPE[sr.u8()]; imp.limits=readLimits(sr); } else if(kind===2){ imp.limits=readLimits(sr); } else if(kind===3){ imp.valtype=VALTYPE[sr.u8()]; imp.mut=sr.u8(); } out.imports.push(imp); } }
       else if(id===3){ const n=sr.vu(); for(let i=0;i<n;i++) out.functionTypeIdx.push(sr.vu()); }
       else if(id===4){ const n=sr.vu(); const tabs=[]; for(let i=0;i<n;i++){ const et=VALTYPE[sr.u8()]; tabs.push({et,...readLimits(sr)}); } out.table=tabs; }
       else if(id===5){ const n=sr.vu(); const mems=[]; for(let i=0;i<n;i++) mems.push(readLimits(sr)); out.memory=mems; }
@@ -136,8 +136,17 @@ function decodeFunc(buf, cf, ctx){
 }
 
 function analyze(key, strippedPath, namedPath){
-  const stripped=fs.readFileSync(strippedPath); const named=fs.readFileSync(namedPath);
-  const meta=parse(stripped); const metaNamed=parse(named); const idxName=parseNameSection(named, metaNamed);
+  const stripped=fs.readFileSync(strippedPath); const meta=parse(stripped);
+  // Names come from a name-preserving companion build if one is given (cnitro:
+  // the shipped binary is --strip-all but the companion's CODE section is
+  // byte-identical), otherwise from the wasm's OWN name section, otherwise
+  // functions stay func[N]. This is what lets the tool run on any wasm.
+  let idxName={};
+  if(namedPath && namedPath!==strippedPath && fs.existsSync(namedPath)){
+    const named=fs.readFileSync(namedPath); idxName=parseNameSection(named, parse(named));
+  } else {
+    idxName=parseNameSection(stripped, meta);
+  }
 
   // memory regions from pointer-export constants — resolved after we know exports+consts
   const ptrConsts={};
@@ -169,13 +178,23 @@ function analyze(key, strippedPath, namedPath){
 }
 
 // ---- run --------------------------------------------------------------------
-const B=process.argv[3]||'/home/user/foolish/cnitro/build';
-const modules=[
-  {key:'rules', stripped:`${B}/rules.wasm`,  named:`${B}/named/rules.named.wasm`},
-  {key:'guards',stripped:`${B}/guards.wasm`, named:`${B}/named/guards.named.wasm`},
-  {key:'bots',  stripped:`${B}/bots.wasm`,   named:`${B}/named/bots.named.wasm`},
-];
+// Config-driven: `node analyze.mjs <outdir> <config.json>`
+//   config.modules = [{ key, wasm, named? }]
+// (a bare `<outdir> <buildDir>` invocation still works for the cnitro layout.)
 const OUT=process.argv[2]||'.';
+let modules;
+const arg3=process.argv[3];
+if(arg3 && arg3.endsWith('.json') && fs.existsSync(arg3)){
+  const cfg=JSON.parse(fs.readFileSync(arg3,'utf8'));
+  modules=cfg.modules.map(m=>({key:m.key, stripped:m.wasm, named:m.named||m.wasm}));
+} else {
+  const B=arg3||'/home/user/foolish/cnitro/build';
+  modules=[
+    {key:'rules', stripped:`${B}/rules.wasm`,  named:`${B}/named/rules.named.wasm`},
+    {key:'guards',stripped:`${B}/guards.wasm`, named:`${B}/named/guards.named.wasm`},
+    {key:'bots',  stripped:`${B}/bots.wasm`,   named:`${B}/named/bots.named.wasm`},
+  ];
+}
 for(const m of modules){
   const res=analyze(m.key,m.stripped,m.named);
   const dataOut=res.meta.data.map(d=>({memOffset:d.memOffset,size:d.size,b64:d.allBytes.toString('base64')}));
