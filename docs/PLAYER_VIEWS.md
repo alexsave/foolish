@@ -91,12 +91,40 @@ the client falls back to `get_my_games`).
 - **Dashboard list**: `getUserGamesInternal` reads
   `player_views WHERE player_id = auth.uid() ORDER BY updated_at DESC` and
   decodes each `view` with `decodePackedGame` — no edge function. On a cold /
-  empty / unreadable cache it falls back to `get_my_games` (the authoritative
-  rebuild path, also the backfill for games created before this feature).
+  empty / unreadable cache it falls back to `get_my_games`.
+  - **One-time warm per device.** Because the cache is written going *forward*,
+    games that predate it have no row — and a direct read that returns a
+    *partial* list would (being non-empty) never trigger the rebuild that
+    backfills the rest. So until `get_my_games` has run once on this device (a
+    `localStorage` `pv_warmed` flag), the client treats the edge function as
+    authoritative — that call backfills **all** of the caller's rows (see below).
+    After that, the dashboard is a pure `player_views` SELECT and `get_my_games`
+    drops out of the read path (~once per device, then quiet).
 - **Single game** (`loadGameInternal` → `loadGameFromCache`): a player reads
   their own row for that game (`player_views WHERE game_id = ?`, RLS-scoped to
   the caller, unique by PK) and decodes it — no `get_game` round-trip. Falls
   back to `get_game` for a **spectator** (no row) or a cache miss.
+
+### Cache warm / backfill (the rebuild functions self-heal)
+
+`player_views` is written going forward, so games that existed before it shipped
+have no row. Rather than a separate one-off job, the two **read fallbacks
+backfill as they serve** — and they write rows for **all human participants** of
+each game (via `buildPlayerViewUpserts` → the SAME builder `commit_game` uses, so
+each row is byte-identical), not just the invoker. So one player's dashboard load
+(`get_my_games`) or any player's / spectator's game fetch (`get_game`) backfills
+the whole game for everyone, converging the cache across users in a single pass.
+
+Both write **fill-if-absent** (`Prefer: resolution=ignore-duplicates` /
+`ignoreDuplicates`) and **fire-and-forget** (`EdgeRuntime.waitUntil`, so no added
+response latency). Fill-if-absent is load-bearing: `commit_game` owns UPDATEs
+under the version fence, and a read-path write is *not* fenced — so it may only
+INSERT a row that doesn't exist, never overwrite a possibly-newer committed one.
+Net effect: the first post-deploy read of each game populates every
+participant's row, and every read after is direct.
+
+> This all-participants warm is a **temporary backfill measure** — it (and
+> `get_my_games` itself) comes out once the cache is fully populated.
 - **Live updates**:
   - The **on-screen game** stays driven by the existing broadcast websockets
     (`RealtimeAnimationFeed`'s `gu-` animation stream) — that path is proven and
@@ -118,9 +146,10 @@ the client falls back to `get_my_games`).
 2. **Write scope**: all human participants on every commit (simplest and always
    consistent; bots write nothing). See *Write amplification & storage*.
 3. **`get_my_games` stays** as the cache-miss fallback / rebuild path.
-4. **Backfill**: the write path repopulates naturally — a game gets its rows on
-   its next commit — and `get_my_games` covers anything not yet cached, so no
-   one-off backfill job is required for the prototype.
+4. **Backfill**: no one-off job. The read fallbacks (`get_my_games` / `get_game`)
+   **self-warm** the cache fill-if-absent as they serve (see *Cache warm /
+   backfill*), so games predating the cache populate on their first post-deploy
+   read and every read after is direct.
 
 ## Write amplification & storage
 

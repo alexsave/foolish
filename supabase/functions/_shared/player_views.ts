@@ -100,3 +100,34 @@ export async function buildPlayerViewRows(
     }
     return rows;
 }
+
+// Full upsert rows (with game_id + version) for the CACHE-WARM / BACKFILL path:
+// the get_my_games / get_game rebuild functions call this to populate a game's
+// missing player_views rows from a games row they already read, so that games
+// predating the cache (or any cache miss) become direct SELECTs on the next load
+// instead of falling back to the edge function forever.
+//
+// Writes rows for ALL human participants, not just the invoker: whoever loads
+// first backfills the whole game for everyone, so the cache converges across
+// users in one pass (a temporary backfill measure — remove with get_my_games).
+//
+// Each row is byte-identical to what commit_game wrote for that (game, player)
+// at this version — same builder (buildPlayerViewRows) — so the warm write is a
+// pure fill-in, never a different value. Writers MUST insert these fill-if-absent
+// (ON CONFLICT DO NOTHING): commit_game owns UPDATES under the version fence, and
+// a read-path write is NOT fenced, so it must never overwrite an existing
+// (possibly newer) row. Empty for an all-bot game (no human rows to warm).
+export interface PlayerViewUpsert {
+    game_id: string;
+    player_id: string;
+    view: string;
+    version: number;
+    status: string;
+}
+
+export async function buildPlayerViewUpserts(
+    game: Game, stateHex: string | null, version: number,
+): Promise<PlayerViewUpsert[]> {
+    const rows = await buildPlayerViewRows(game, stateHex, version);
+    return rows.map(r => ({ game_id: game.id, player_id: r.player_id, view: r.view, version, status: r.status }));
+}

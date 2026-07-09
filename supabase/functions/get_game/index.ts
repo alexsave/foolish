@@ -3,8 +3,31 @@ import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { getAuthenticatedUser } from "../_shared/auth.ts";
 import { loadCompleteGame, supabaseClient } from "../_shared/utils.ts";
 import { personalize_game } from "../_shared/common_utils.ts";
-import { buildPackedGameBytes } from "../_shared/packed_game.ts";
+import { buildPackedGameBytes, gameViewFromRow } from "../_shared/packed_game.ts";
+import { buildPlayerViewUpserts } from "../_shared/player_views.ts";
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+
+// Cache-warm / BACKFILL (docs/PLAYER_VIEWS.md): when a game predating the cache
+// is fetched, populate its player_views rows for ALL human participants (the
+// SAME builder commit_game uses → byte-identical), so the next open reads the
+// cache directly instead of hitting this function — and so one player's (or a
+// spectator's) fetch backfills the whole game for everyone. Fill-if-absent
+// (ignoreDuplicates): commit_game owns UPDATES under the version fence; this
+// read-path write is not fenced, so it may only INSERT a missing row, never
+// overwrite a newer one. Fire-and-forget so it never adds latency to the
+// response it makes obsolete. (Temporary backfill — removed with get_my_games.)
+function warmGameViews(data: any): void {
+    const p = (async () => {
+        const rows = await buildPlayerViewUpserts(gameViewFromRow(data), data.state ?? null, Number(data.version ?? 0));
+        if (rows.length === 0) return;
+        const { error } = await supabaseClient
+            .from('player_views')
+            .upsert(rows, { onConflict: 'game_id,player_id', ignoreDuplicates: true });
+        if (error) console.error('[get_game] warm write failed:', error);
+    })().catch((e: unknown) => console.error('[get_game] warm error:', e));
+    const er = (globalThis as any).EdgeRuntime;
+    if (er && typeof er.waitUntil === 'function') er.waitUntil(p);
+}
 
 // Read-only personalized game fetch. Two shapes:
 //
@@ -44,6 +67,8 @@ serve(async (req: Request): Promise<Response> => {
                 // fall through to the JSON path below.
                 const bytes = await buildPackedGameBytes(data, user.id);
                 if (bytes) {
+                    // Backfill rows for ALL participants of this (dealt) game.
+                    warmGameViews(data);
                     return new Response(bytes as unknown as BodyInit, {
                         headers: { ...corsHeaders, 'Content-Type': 'application/octet-stream' },
                     });
