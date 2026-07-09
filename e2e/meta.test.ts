@@ -11,8 +11,9 @@ import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { applySchema, resetDb, seedGame, uuid, pgPool } from './harness.ts';
 import { executeWithGameLock, loadCompleteGame } from '../supabase/functions/_shared/utils.ts';
-import { handleMetaAction } from '../supabase/functions/_shared/meta_actions.ts';
+import { handleMetaAction, handleContinue } from '../supabase/functions/_shared/meta_actions.ts';
 import { GAME_STATUS, PLAYER_STATUS } from '../supabase/functions/_shared/types.ts';
+import { resetToLobby } from '../src/state/clientReconcile.ts';
 import { checkCardConservation } from './dispatch.ts';
 
 const params = (game: any, userId: string, body: any) => ({ user: { id: userId } as any, user_name: 'U', body, game, reqId: 'r' });
@@ -101,6 +102,51 @@ if (!process.env.VALIDATION_ONLY) {
         const res = await runMeta(gameId, h1, { type: 'exit', game_id: gameId });
         assert.equal(res.deleted, true, 'exit of the last player reports the deletion');
         assert.equal((await pgPool.query('SELECT count(*) FROM games WHERE id=$1', [gameId])).rows[0].count, '0', 'empty game deleted');
+    });
+
+    // The client applies "proceed to lobby" OPTIMISTICALLY (resetToLobby) before
+    // the meta round-trip; the authoritative server reset (handleContinue) that
+    // follows must agree on the public fields, or the user sees a snap. Run BOTH
+    // on the same finished game and compare.
+    test('optimistic resetToLobby (client) matches handleContinue (server)', () => {
+        const players = [
+            { player_id: 'h1', name: 'H1', is_ai: false, status: PLAYER_STATUS.OUT, hand_length: 0 },
+            { player_id: 'b1', name: 'Botty', is_ai: true, status: PLAYER_STATUS.IN, hand_length: 4 },
+        ];
+        const finishedCommon = {
+            id: 'g1', name: 'G1', status: GAME_STATUS.GAME_OVER,
+            discard_pile_length: 7, flipped: { suit: 1, value: 9 },
+            power_suit: 2, first_attacker: 1, defender: 0,
+            table_battles: [{ attack: { suit: 0, value: 5 }, defense: null }],
+            elimination_order: ['h1'], good_timestamp: 123, good_players: ['h1'], version: 41,
+        };
+        const clientGame: any = {
+            ...structuredClone(finishedCommon), deck_length: 5,
+            players: structuredClone(players),
+            self: { player_id: 'h1', name: 'H1', is_ai: false, status: PLAYER_STATUS.OUT, hand: [{ suit: 0, value: 5 }], hand_length: 1, awaiting_attack: true, strategy_key: 'human' },
+        };
+        const serverGame: any = {
+            ...structuredClone(finishedCommon), deck: [],
+            players: players.map(p => ({ ...p, hand: [], awaiting_attack: false, strategy_key: p.is_ai ? 'random' : 'human' })),
+        };
+
+        const client = resetToLobby(clientGame);
+        const server = handleContinue({ user: { id: 'h1' }, game: serverGame } as any).game;
+
+        assert.equal(client.status, GAME_STATUS.WAITING);
+        assert.equal(server.status, client.status, 'status matches');
+        for (let i = 0; i < client.players.length; i++) {
+            assert.equal(client.players[i].status, server.players[i].status, `player ${i} status matches server`);
+            assert.equal(client.players[i].hand_length, 0, `player ${i} hand cleared`);
+        }
+        for (const f of ['discard_pile_length', 'power_suit', 'first_attacker', 'defender'] as const) {
+            assert.equal((client as any)[f], (server as any)[f], `${f} matches server`);
+        }
+        assert.equal(client.flipped, null);
+        assert.deepEqual(client.table_battles, []);
+        assert.deepEqual(client.elimination_order, []);
+        assert.equal(client.version, 41, 'version preserved for the reorder gate');
+        assert.equal(clientGame.status, GAME_STATUS.GAME_OVER, 'input not mutated (rollback needs it)');
     });
 
     test('meta:continue — resets a finished game back to the lobby', async () => {
