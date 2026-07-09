@@ -35,16 +35,17 @@ For a module that never calls `memory.grow`, peak == initial.
 | ------------- | ------------- | ------------ | --------- | ----------------- |
 | `guards.wasm` | 256 KiB | **64 KiB · 1 page** | 4× | no — pinned, 0 `memory.grow` |
 | `rules.wasm`  | 3.31 MiB | **320 KiB · 5 pages** | 10.6× | no — all-static, 0 `memory.grow` |
-| `bots.wasm`   | 5.13 MiB | **2.25 MiB** | 2.28× (−56%) | **yes** — see below |
+| `bots.wasm`   | 5.13 MiB | **~1.5 MiB** | ~3.4× (−71%) | **yes** — see below |
 
 `bots.wasm` is the one that grows. Its **initial** memory dropped 64 → 18 pages
-(4 MiB → 1.13 MiB) from the shared buffer caps, but on first play its Monte-Carlo
-endgame solver bump-allocates a 1 MiB transposition table (+2 slack pages), so
-it settles at **36 pages · 2.25 MiB** and stays flat there (verified by
-`test:mem`). 2.25 MiB is the honest footprint; the 1.13 MiB static floor is not
-the whole story. The CI `metrics` bot measures this peak, and its numbers
-reconcile exactly: base `64 + 18 = 82 pages = 5.13 MiB`, this branch
-`18 + 18 = 36 pages = 2.25 MiB`.
+(4 MiB → 1.13 MiB) from the shared buffer caps. On first play its Monte-Carlo
+endgame solver then bump-allocates a transposition table (+2 slack pages) and
+stays flat there. That table was 1 MiB (`CD_TT_BITS=16`); the divergence study
+below shrank it to 256 KiB (`CD_TT_BITS=13`), so the runtime peak went
+`18 + 18 = 36 pages` (2.25 MiB) → `18 + 6 = 24 pages` (~1.5 MiB). Measured
+end-to-end across all MC families (rules + bots summed): **2.56 MiB → 1.69 MiB**;
+the CI `metrics` job reports the canonical bots-only figure. 1.5 MiB is the
+honest footprint — the 1.13 MiB static floor is not the whole story.
 
 `guards.wasm` is pinned to exactly one page at link time
 (`--initial-memory=65536 --max-memory=65536`): if any buffer ever grows past
@@ -128,28 +129,55 @@ The remaining weight is real working set, not slack: `g_moves` (LegalMoves menu,
 are the next target if 4 pages is ever wanted, but they're wire-format-frozen and
 were left untouched here.
 
-## `bots.wasm` floor
+## `bots.wasm` floor and the transposition-table study
 
-`bots.wasm`'s **static** footprint dropped 4 MiB → 1.13 MiB purely from the
-shared replay/snapshot caps (the bot module links `replay.c` and `wasm_api.c`
-too). Its **peak** is 2.25 MiB, and the 1.12 MiB gap is two things, both
-irreducible without touching bot behavior:
+`bots.wasm`'s **static** footprint dropped 4 MiB → 1.13 MiB from the shared
+replay/snapshot caps. Its runtime peak is dominated by one bump allocation: the
+cordite endgame solver's **transposition table** (`cordite_sim.c`), 1 MiB at the
+historical `CD_TT_BITS=16` (65,536 × 16 B). This is the one buffer whose size is
+a **bot-strength knob**, not free memory: the table caches *exact* endgame
+values, but the solver is **node-budget-limited** (`SimSolver.budget`), so a
+smaller table → more recomputation → the budget exhausts sooner → the bot can
+pick a *different* move. So it can't just be shrunk; it has to be measured.
 
-- **The 1 MiB transposition table** (`cordite_sim.c`, `CD_TT_BITS=16` →
-  65,536 × 16-byte entries), bump-allocated on the first solve. It is a
-  memoization cache of *exact* endgame values — but the solver is
-  **budget-limited** (`SimSolver.budget` / `aborted`), so a smaller table means
-  more recomputation, the budget exhausts sooner, and the bot can pick a
-  *different* (weaker) move under the same time cap. So table size is a
-  bot-strength knob, not free memory: shrinking it needs an Elo-arena
-  regression, which is out of scope for a memory pass.
-- **+2 slack pages** in the bump allocator (`wasm_bots_api.c`) — already minimal.
+**Mechanism.** The table is **direct-mapped** (`tt[key & MASK]`), so divergence
+from a collision-free table happens when two *reused* keys hash to the same slot
+— a birthday collision on the reused subset, giving `p(divergence) ≈ C/M` (halves
+per bit of table size). Crucially it's the *reused* subset, not total occupancy:
+the working set reaches `I ≈ 1305` distinct keys per window (measured collision-
+free, `-DCD_TT_STATS`), yet a 512-slot table (`TT9`) holds it with thousands of
+collisions and still plays **bit-identically** — because almost none of those
+keys are ever probed again, so evicting them is harmless.
 
-The rest of the static core is the cordite Monte-Carlo solver scratch
-(`solve_ws` 272 KiB, `solve_child_scratch` 55 KiB, the world/trial/diff slots) —
-a per-search working set inherently larger than L1, **designed** around bitboard
-`SimState`s that *are* L1-resident during the hot rollout loop. Fitting bots in
-L1 is not a memory-layout problem; it's a different solver.
+**Measurement** (`tools/tt_divergence.sh`): for every shipped solver bot, play
+identical seeds under the exact production env (`CD_BUDGET=prod CD_RACE=1
+CD_RACE_C=75`) with a candidate table and with a collision-free `TT22`, and
+compare a per-game hash of the bot's move sequence (`GAME_SIG`, `main_eval.c`).
+The per-game divergence rate:
+
+| bot | table persistence | divergence cliff | clean at |
+| --- | --- | --- | --- |
+| **octogen** | per **game** | **TT7** (128 entries) | **TT8+** |
+| semtex | per game | TT6 | TT7+ |
+| cordite / fulminate | per solve | TT6 | TT7+ |
+
+**octogen is the binding constraint** — it persists the table across a whole
+game, so its window is larger and it diverges one bit sooner than the rest. Every
+shipped solver bot is **bit-identical to a collision-free table at `TT8` and
+above** (0 divergences in 2,400 games each). With `p(M) ≈ C/M`, `CD_TT_BITS=13`
+sits **6 bits / 64× above octogen's cliff** — extrapolated `p(a game diverges)
+≈ 2.5e-5`, i.e. ≥ 99.997 % of games play identically to an infinite table. That
+is the shipped value: table 1 MiB → 256 KiB, runtime peak 36 → 24 pages. It was
+also independently confirmed bit-identical in the full-histogram sweep and by
+`bot_parity` against the TS oracle.
+
+The remaining static core is the Monte-Carlo solver scratch (`solve_ws` 272 KiB,
+`solve_child_scratch` 55 KiB, the world/trial/diff slots) — a per-search working
+set inherently larger than L1, **designed** around bitboard `SimState`s that *are*
+L1-resident during the hot rollout loop. Fitting bots in L1 is not a memory-layout
+problem; it's a different solver.
+
+Reproduce: `cnitro/tools/tt_divergence.sh octogen handwritten 2,4,6,8 4000 99 12 11 10 9 8 7`.
 
 ## Validation
 
@@ -165,6 +193,11 @@ No cap cut shipped without a passing suite behind it:
   `replay_codec` (byte-exact vs the frozen TS oracle at the new caps),
   `awire_codec`, `action_handlers`, `fuzz`, `concurrent_games`, `cover`,
   `client_move_gates` — all green.
+- **transposition table (`CD_TT_BITS=13`)** — `tools/tt_divergence.sh` across all
+  five shipped solver bots (0 divergences at TT8+; octogen the binding bot at
+  TT7); `bot_parity` (7/7) confirms the TT13 wasm still matches the TS oracle;
+  `test:mem` (4/4) confirms bounded, flat memory at the smaller table.
 
 (The research-only `solver_difftest` mismatches, but it mismatches identically on
-clean `main` and touches neither replay nor the wasm buffers changed here.)
+clean `main` and touches neither replay nor the wasm buffers changed here. The
+native/arena builds keep `CD_TT_BITS=16` — the shrink is wasm-only.)
