@@ -15,6 +15,9 @@
 #include <stddef.h>   // offsetof (solver clones skip the dead deck[] tail)
 #include <stdint.h>
 #include <stdlib.h>   // calloc/free for the solver transposition table
+#ifdef CD_TT_STATS
+#include <stdio.h>    // measurement-only (native); wasm never sets CD_TT_STATS
+#endif
 
 // ---------- card-id helpers --------------------------------------------
 
@@ -818,8 +821,33 @@ typedef struct {
 
 static _Thread_local CdTTEntry *cd_tt = NULL;
 
+// -------- occupancy instrumentation (-DCD_TT_STATS; compiled out otherwise) --
+// Measures the distribution of I = distinct keys inserted per clear-window
+// (between cd_sim_solve_reset calls). At the default CD_TT_BITS=16 the table is
+// effectively collision-free, so occupancy == true distinct-key count. This
+// distribution drives the direct-mapped birthday-collision model that sizes a
+// smaller table with a stated confidence bound (docs/WASM_L1_BUDGET.md).
+#ifdef CD_TT_STATS
+#define CD_STAT_MAXB 65537
+long cd_stat_hist[CD_STAT_MAXB];   // hist[I] = #windows that inserted I distinct keys
+long cd_stat_windows = 0;          // total clear-windows seen
+long cd_stat_max_I = 0;            // largest I observed
+long cd_stat_collisions = 0;       // evictions at store (should be ~0 at TT16)
+static _Thread_local long cd_stat_occ = 0;
+void cd_tt_stats_dump(void) {
+    fprintf(stderr, "CD_TT_STATS windows=%ld max_I=%ld collisions=%ld\n",
+            cd_stat_windows, cd_stat_max_I, cd_stat_collisions);
+    for (long i = 0; i < CD_STAT_MAXB; i++)
+        if (cd_stat_hist[i]) fprintf(stderr, "CD_TT_HIST %ld %ld\n", i, cd_stat_hist[i]);
+}
+static _Thread_local int cd_stat_atexit = 0;
+#endif
+
 static CdTTEntry *cd_tt_get(void) {
     if (!cd_tt) cd_tt = (CdTTEntry *)calloc(CD_TT_SIZE, sizeof(CdTTEntry));
+#ifdef CD_TT_STATS
+    if (!cd_stat_atexit) { cd_stat_atexit = 1; atexit(cd_tt_stats_dump); }
+#endif
     return cd_tt;
 }
 
@@ -1118,6 +1146,10 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
     // either as exact would corrupt a later lookup under a wider window. So we
     // store solely the exact case; bound nodes are simply not memoized.
     if (e && key && best > alpha0 && best < beta0) {
+#ifdef CD_TT_STATS
+        if (!e->valid) { cd_stat_occ++; if (cd_stat_occ > cd_stat_max_I) cd_stat_max_I = cd_stat_occ; }
+        else if (e->key != key) cd_stat_collisions++;   // eviction — must stay ~0 at TT16
+#endif
         e->key = key;
         e->value = (int16_t)best;
         e->depth = (uint8_t)depth;
@@ -1155,6 +1187,16 @@ int cd_sim_solve_d(SimState *s, int me, int alpha, int beta, long *budget,
 }
 
 void cd_sim_solve_reset(void) {
+#ifdef CD_TT_STATS
+    // record the window that just closed (occ = distinct keys inserted since
+    // the previous reset), then start a fresh window.
+    if (cd_stat_occ > 0) {
+        long b = cd_stat_occ < CD_STAT_MAXB ? cd_stat_occ : CD_STAT_MAXB - 1;
+        cd_stat_hist[b]++;
+        cd_stat_windows++;
+    }
+    cd_stat_occ = 0;
+#endif
     if (cd_tt) memset(cd_tt, 0, CD_TT_SIZE * sizeof(CdTTEntry));
 }
 
