@@ -150,7 +150,7 @@ test('backfill (buildPlayerViewUpserts) rebuilds ALL participants byte-identical
     handleMetaAction({ user: { id: h1 } as any, user_name: 'H1', body: { type: 'start', game_id: gameId }, game, reqId: 'r' }),
     'r', false);
 
-  // The exact games row get_my_games / get_game hand to gameViewFromRow.
+  // The exact games row get_game hands to gameViewFromRow.
   const cols = 'id,name,status,version,state,players,good_players,good_timestamp,' +
     'discard_pile_length,flipped,power_suit,first_attacker,defender,table_battles,elimination_order';
   const row = (await pgPool.query(`SELECT ${cols} FROM games WHERE id=$1`, [gameId])).rows[0];
@@ -166,7 +166,7 @@ test('backfill (buildPlayerViewUpserts) rebuilds ALL participants byte-identical
   }
 
   // (a) Simulate a game predating the cache: drop ALL its rows, then restore via
-  // the fill-if-absent insert get_my_games / get_game do.
+  // the fill-if-absent insert get_game does.
   await pgPool.query('DELETE FROM player_views WHERE game_id=$1', [gameId]);
   for (const u of ups) {
     await pgPool.query(

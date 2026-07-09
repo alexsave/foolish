@@ -743,9 +743,10 @@ export const commitGame = async (
     // The committed version is expectedVersion+1 (commit_game bumps by one); on a
     // conflict the RPC returns before touching player_views and the retry
     // recomputes. Building the views must NEVER break a commit — on failure we
-    // pass null, which leaves player_views untouched (a stale row is safe: the
-    // client falls back to get_my_games). Masking stays in the C kernel for
-    // dealt games (serializeViewBlobs); see player_views.ts.
+    // pass null, which leaves player_views untouched (a stale row self-corrects:
+    // get_game re-warms it on the next open, and the client's version token drops
+    // it). Masking stays in the C kernel for dealt games (serializeViewBlobs);
+    // see player_views.ts.
     let p_views: Array<{ player_id: string; view: string; status: string }> | null = null;
     try {
         const { buildPlayerViewRows } = await import('./player_views.ts');

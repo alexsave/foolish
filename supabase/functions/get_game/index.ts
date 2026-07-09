@@ -7,15 +7,16 @@ import { buildPackedGameBytes, gameViewFromRow } from "../_shared/packed_game.ts
 import { buildPlayerViewUpserts } from "../_shared/player_views.ts";
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
-// Cache-warm / BACKFILL (docs/PLAYER_VIEWS.md): when a game predating the cache
-// is fetched, populate its player_views rows for ALL human participants (the
-// SAME builder commit_game uses → byte-identical), so the next open reads the
-// cache directly instead of hitting this function — and so one player's (or a
-// spectator's) fetch backfills the whole game for everyone. Fill-if-absent
-// (ignoreDuplicates): commit_game owns UPDATES under the version fence; this
-// read-path write is not fenced, so it may only INSERT a missing row, never
-// overwrite a newer one. Fire-and-forget so it never adds latency to the
-// response it makes obsolete. (Temporary backfill — removed with get_my_games.)
+// Cache-warm / BACKFILL (docs/PLAYER_VIEWS.md): get_game is the fallback for a
+// player whose player_views row is missing (a game predating the cache) and for
+// spectators. When it serves a dealt game, populate that game's player_views
+// rows for ALL human participants (the SAME builder commit_game uses →
+// byte-identical), so the next open reads the cache directly instead of hitting
+// this function again — one player's (or a spectator's) fetch backfills the whole
+// game for everyone. Fill-if-absent (ignoreDuplicates): commit_game owns UPDATES
+// under the version fence; this read-path write is not fenced, so it may only
+// INSERT a missing row, never overwrite a newer one. Fire-and-forget so it never
+// adds latency to the response it makes obsolete.
 function warmGameViews(data: any): void {
     const p = (async () => {
         const rows = await buildPlayerViewUpserts(gameViewFromRow(data), data.state ?? null, Number(data.version ?? 0));
