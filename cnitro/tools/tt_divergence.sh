@@ -21,14 +21,20 @@ cd "$(dirname "$0")/.."                       # -> cnitro
 BOT=${1:-cordite}; OPP=${2:-handwritten}; PCS=${3:-4,8}; GAMES=${4:-500}; SEED=${5:-222333}
 if [ "$#" -gt 5 ]; then shift 5; BITS=("$@"); else BITS=(13 12 11 10 9 8 7 6); fi
 CC=${CC:-cc}
+# BASE=<bits> overrides the reference build. Default 22 = effectively collision-
+# free (the "infinite table"). Set BASE=16 to compare against TODAY'S PRODUCTION
+# table instead — octogen has an irreducible TT-size sensitivity (rare huge-
+# endgame games collide even at TT16-19), so TT16 is the decision-relevant
+# baseline, not an infinite one.
+BASE=${BASE:-22}
 CORE=$(make -s print-core)
 WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
 J=${J:-$( (nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4) )}
 
-echo "compiler=$CC  jobs=$J  baseline=TT22 (collision-free)  candidates=${BITS[*]}"
+echo "compiler=$CC  jobs=$J  baseline=TT$BASE  candidates=${BITS[*]}"
 build() { $CC -O2 -ffast-math -Isrc -Wno-deprecated-declarations -DCD_TT_BITS="$1" $CORE src/main_eval.c -o "$WORK/eval_$1" -lm; }
 # parallel builds
-for b in 22 "${BITS[@]}"; do
+for b in "$BASE" "${BITS[@]}"; do
   ( build "$b" ) & while [ "$(jobs -rp | wc -l)" -ge "$J" ]; do wait -n; done
 done; wait
 
@@ -37,7 +43,7 @@ run() { GAME_SIG=1 CD_BUDGET=prod CD_RACE=1 CD_RACE_C=75 \
         --games="$GAMES" --seed-start="$SEED" 2>/dev/null | grep '^SIG'; }
 
 # parallel runs (each eval is single-threaded)
-run 22 > "$WORK/base.txt" &
+run "$BASE" > "$WORK/base.txt" &
 for b in "${BITS[@]}"; do
   ( run "$b" > "$WORK/m_$b.txt" ) & while [ "$(jobs -rp | wc -l)" -ge "$J" ]; do wait -n; done
 done; wait
