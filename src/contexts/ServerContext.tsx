@@ -413,16 +413,32 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         }
     };
 
-    const createGame = useCallback((): Promise<{ game_id: string }> => {
-        return invokeGameFunctions('create', {}, {
-            onSuccess: (data) => {
-                setGameId(data.data.id);
-                setGames(prev => ({ ...prev, [data.data.id]: mergeGameData(data.data.id, data.data, prev) }));
-                // Subscribe to the new game's chat (the gu- animation channel is
-                // owned by RealtimeAnimationFeed)
-                subscribeToChatMessages(data.data.id).catch(console.error);
-            }
-        });
+    const createGame = useCallback(async (): Promise<{ game_id: string }> => {
+        // create now returns the caller's PACKED view buffer (like get_game) —
+        // decode it with the shared codec, the same path loadGame uses. A JSON
+        // body is the legacy fallback. The server persists the game to the DB in
+        // the background AFTER responding, so this returns as soon as the lobby is
+        // built (no create_game round-trip on the critical path).
+        const { data, error } = await supabase.functions.invoke('create', { body: {} });
+        if (error) throw error;
+
+        let game: PersonalGame;
+        if (typeof Blob !== 'undefined' && data instanceof Blob) {
+            const decoded = decodePackedGame(new Uint8Array(await data.arrayBuffer()));
+            if (!decoded) throw new Error('create: unreadable packed response');
+            game = { ...(decoded.game as PersonalGame), self: (decoded.game as PersonalGame).self ?? null };
+        } else {
+            const fetched: any = data;
+            if (!fetched || fetched.error || !fetched.id) throw new Error(fetched?.error || 'create failed');
+            game = { ...fetched, self: fetched.self ?? null };
+        }
+
+        setGameId(game.id);
+        setGames(prev => ({ ...prev, [game.id]: mergeGameData(game.id, game, prev) }));
+        // Subscribe to the new game's chat (the gu- animation channel is owned by
+        // RealtimeAnimationFeed).
+        subscribeToChatMessages(game.id).catch(console.error);
+        return { game_id: game.id };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
