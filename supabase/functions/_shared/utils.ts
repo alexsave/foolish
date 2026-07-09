@@ -743,20 +743,24 @@ export const commitGame = async (
     // The committed version is expectedVersion+1 (commit_game bumps by one); on a
     // conflict the RPC returns before touching player_views and the retry
     // recomputes. Building the views must NEVER break a commit — on failure we
-    // pass null, which leaves player_views untouched (a stale row self-corrects:
-    // get_game re-warms it on the next open, and the client's version token drops
-    // it). Masking stays in the C kernel for dealt games (serializeViewBlobs);
-    // see player_views.ts.
+    // pass null, which leaves player_views untouched (a stale row self-corrects
+    // on the next commit, and the client's version token drops it). Masking stays
+    // in the C kernel for dealt games (serializeViewBlobs); see player_views.ts.
     let p_views: Array<{ player_id: string; view: string; status: string }> | null = null;
+    // The shared spectator (seat -1) view — one masked row for every viewer who
+    // isn't a participant (spectator_views); replaces get_game's spectate path.
+    let p_spectator: string | null = null;
     try {
-        const { buildPlayerViewRows } = await import('./player_views.ts');
+        const { buildPlayerViewRows, buildSpectatorView } = await import('./player_views.ts');
         // Number(): the loaded version can arrive as a string (a BIGINT column),
         // and `"1" + 1` is "11" — the envelope's version must be the same NUMBER
         // commit_game will compute (expectedVersion + 1), or the client's
         // reorder-drop token desyncs from the row's version column.
-        p_views = await buildPlayerViewRows(game, p_state, Number(expectedVersion) + 1);
+        const newVersion = Number(expectedVersion) + 1;
+        p_views = await buildPlayerViewRows(game, p_state, newVersion);
+        p_spectator = await buildSpectatorView(game, p_state, newVersion);
     } catch (e) {
-        console.error(`[COMMIT] player_views build failed for ${game.id} (cache left stale):`, e);
+        console.error(`[COMMIT] view build failed for ${game.id} (cache left stale):`, e);
     }
 
     const { data, error } = await supabaseClient.rpc('commit_game', {
@@ -770,6 +774,7 @@ export const commitGame = async (
         p_logs_packed,
         p_logs_reset,
         p_views,
+        p_spectator,
         // The deal stamps game.game_seed; every other commit leaves it undefined,
         // so NULL flows and commit_game's COALESCE keeps the stored seed. Never
         // routed through p_game (PublicGame) — that would expose it to clients.
