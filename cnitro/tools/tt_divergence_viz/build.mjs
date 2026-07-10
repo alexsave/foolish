@@ -16,8 +16,14 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..', '..', '..');
 const OUT = process.argv[2] || path.join(REPO, 'docs', 'tt-divergence.html');
 
-const ccdf = JSON.parse(fs.readFileSync(path.join(HERE, 'data', 'ccdf.json'), 'utf8'));
-const measured = JSON.parse(fs.readFileSync(path.join(HERE, 'data', 'measured.json'), 'utf8'));
+// Both are optional — a from-scratch checkout with no measurements still builds
+// a valid (empty) page; add data with generate.sh and rebuild.
+function readJSON(p, dflt) {
+  try { return JSON.parse(fs.readFileSync(p, 'utf8')); }
+  catch (e) { if (e.code === 'ENOENT') return dflt; throw e; }
+}
+const ccdf = readJSON(path.join(HERE, 'data', 'ccdf.json'), {});
+const measured = readJSON(path.join(HERE, 'data', 'measured.json'), { series: [] });
 
 const DATA = JSON.stringify({ ccdf, measured });
 
