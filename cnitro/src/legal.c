@@ -14,6 +14,29 @@ void legal_set_move_cap(int cap) {
     g_move_cap = (cap > 0 && cap <= MAX_LEGAL_MOVES) ? cap : MAX_LEGAL_MOVES;
 }
 
+// LEGAL_STATS (measurement-only, compiled out of every production build): record
+// the widest FULL-cap enumeration — i.e. the exported move MENU (the g_moves
+// buffer sized MAX_LEGAL_MOVES), NOT the solver's compact scratch, which lowers
+// g_move_cap. Sizes the M2 decision (docs/BOTS_WASM_MEMORY_PLAN.md). Prints each
+// new high-water to stderr so a sweep can `grep LEGALMAX | sort -n | tail -1`.
+#ifdef LEGAL_STATS
+#include <stdio.h>
+static int legal_stat_max_n = 0;
+static void legal_stat_note(const LegalMoves *out, const Game *g, int bot_idx) {
+    // Emit each new high-water with the state that drove it (player count,
+    // uncovered battles, actor hand size) so a sweep can identify WHICH states
+    // are wide: `... 2>&1 | grep LEGALMAX | sort -n | tail`. The wide ones are
+    // large-hand 8-player defenders — cover-combination blow-up (M2 finding).
+    if (g_move_cap >= MAX_LEGAL_MOVES && out->n > legal_stat_max_n) {
+        legal_stat_max_n = out->n;
+        fprintf(stderr, "LEGALMAX %d np=%d nb=%d hand=%d\n",
+                out->n, g->num_players, g->num_battles, g->players[bot_idx].hand_count);
+    }
+}
+#else
+#define legal_stat_note(out, g, bot_idx) ((void)0)
+#endif
+
 // Append a move; silently drops past the cap (MAX_LEGAL_MOVES by default).
 // The slot is NOT zeroed: every consumer reads cards[]/attack_cards[] bounded
 // by n_cards (set by the caller), and clearing the full struct was a
@@ -359,6 +382,7 @@ void calculate_legal_moves(const Game *g, int bot_idx, LegalMoves *out) {
             if (m) m->type = MOVE_GOOD;
         }
     }
+    legal_stat_note(out, g, bot_idx);
 }
 
 // Lite variant — identical to calculate_legal_moves except cover enumeration
@@ -393,4 +417,5 @@ void calculate_legal_moves_lite(const Game *g, int bot_idx, LegalMoves *out) {
             if (m) m->type = MOVE_GOOD;
         }
     }
+    legal_stat_note(out, g, bot_idx);
 }
