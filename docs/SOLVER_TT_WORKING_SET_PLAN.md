@@ -269,6 +269,14 @@ landing (1 wasm page, L1d-resident). See §5 for wiring.
 
 ### C5 — `CD_TT_BOUNDS`: store fail-soft bounds, exact-priority  *(outcome-safe; highest payoff; medium-high effort)*
 
+> **MEASURED (Jul 2026): the store is validated safe; the reuse below is a
+> characterized NEGATIVE** — ~30% outcome flips at TT22, root-caused to the
+> exact-in-window invariant (bound magnitudes absorbed into ancestor values
+> certified EXACT; the solver's ±1-wide probe windows amplify any distortion
+> into outcome flips). The "possibly SIG-safe" hope below is false. The full
+> post-mortem and the specified fix (C5-v2 taint propagation) live in
+> **`docs/C5_BOUNDS_HANDOFF.md`** — execute from there, not from this section.
+
 **Idea.** The census's headline waste: 200M+ completed refutations per few dozen
 games, none stored. Standard chess-engine TT flags fix this. Add a flag byte in the
 entry's 4 spare pad bytes: `{EXACT, LOWER, UPPER}`.
