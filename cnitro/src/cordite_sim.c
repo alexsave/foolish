@@ -1209,6 +1209,25 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
     // slack above the cap so a true count above it is still detected.
     if (nm > CD_SOLVE_MOVES_CAP) { S->aborted = 1; TR_RET(0, "movecap"); }
 
+#ifdef CD_TT_ORDER2
+    // Experimental move ordering: try the most-committing moves first (more cards
+    // played empties a hand / ends the round faster -> earlier alpha-beta cutoffs
+    // -> fewer distinct positions visited -> smaller working set). pickup/good
+    // (n==0) last. Insertion sort, nm is small. Does not change the value on a
+    // full search; only which nodes are visited (and, under budget, what resolves).
+    for (int i = 1; i < nm; i++) {
+        SolMove kv = moves[i];
+        int ki = (kv.n == 0) ? -1 : kv.n;
+        int j = i - 1;
+        while (j >= 0) {
+            int kj = (moves[j].n == 0) ? -1 : moves[j].n;
+            if (kj >= ki) break;              // descending by key
+            moves[j + 1] = moves[j]; j--;
+        }
+        moves[j + 1] = kv;
+    }
+#endif
+
     int alpha0 = alpha, beta0 = beta;   // original window for exactness test
     int maximizing = (actor == S->me);
     int best = maximizing ? -2000 : 2000;
