@@ -28,7 +28,17 @@ extern unsigned char *const cd_overlay;   // == (unsigned char *)&solve_ws
 #define CD_OVL_REC_OFF 0u        // g_rec:       REC_CAP * 12 B  == 49152
 #define CD_OVL_BN_OFF  49152u    // g_bn (Bn):   <= 11264 B slot (16-aligned)
 #define CD_OVL_IO_OFF  60416u    // g_replay_io: <= 32768 B slot
-#define CD_OVL_END     (CD_OVL_IO_OFF + 32768u)   // 93184
+#define CD_OVL_END     (CD_OVL_IO_OFF + 32768u)   // 93184 — end of replay scratch
+
+// M9 (M8-ext): g_io — the marshaling I/O buffer — is a THIRD non-concurrent
+// tenant of solve_ws, placed in a region DISJOINT from the replay scratch above.
+// g_io is consumed into g_game by wasm_import_* BEFORE a choose's solve and only
+// written (the chosen move / an export) AFTER it; the solver reads g_game/SimStates,
+// never g_io. So within a choose it is sequential with solve_ws.mv, and across
+// calls it never coincides with a replay call. Disjoint placement (after the replay
+// region) also makes it trivially safe vs replay even if a flow interleaved them.
+#define CD_OVL_GIO_OFF CD_OVL_END                  // 93184 — g_io starts after replay
+#define CD_OVL_GIO_END (CD_OVL_GIO_OFF + 73728u)   // 166912 (bots WASM_IO_CAP = 72 KiB)
 #endif
 
 #endif
