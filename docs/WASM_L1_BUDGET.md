@@ -237,6 +237,24 @@ Shipped value: runtime peak 22 → 21 pages (table 128 → 64 KiB, one wasm page
 L1d-resident), strength ≥ the TT13 table it replaces. Native builds keep the large
 direct-mapped table; the flag is wasm-only.
 
+### The 8-byte-entry follow-on (`CD_TT_PACK8`, candidate C6)
+
+The entry was 16 bytes (`{key:64, value:16, depth:8, valid:8}`) but only ~52 bits
+of it carry information. `CD_TT_PACK8` packs it to **8 bytes**: a 40-bit key TAG
+(the slot index supplies the low `CD_TT_BITS`, for a 40+bits effective key), a
+12-bit signed value (`|v| ≤ 1000`), a 6-bit depth (`≤ 48`), and valid + 2-bit bound
+flags. So the shipped `TT12 + 2WAY` table halves again, **64 KiB → 32 KiB**, at the
+same 4,096 slots — SIG-identical to the 16-byte table on the full tricky panel and
+at TT22. The one new cost is a tag alias: two positions sharing a slot *and* a
+40-bit tag return a silently-wrong value, at ~1e-5/game — an order of magnitude
+below octogen's ~4e-4 inherent table-size floor, so it is invisible against the
+noise the table already carries. A uniform `CD_TT_KEYTAG` macro (identity when the
+flag is off) keeps the full-key path byte-identical.
+
+Net solver-table trajectory: **1 MiB (TT16) → 128 KiB (TT13) → 64 KiB (TT12+2WAY) →
+32 KiB (TT12+2WAY+PACK8)** — a 32× shrink from the historical table, strength
+unchanged, now a quarter of a wasm page.
+
 The remaining static core is the Monte-Carlo solver scratch (`solve_ws` 272 KiB,
 `solve_child_scratch` 55 KiB, the world/trial/diff slots) — a per-search working
 set inherently larger than L1, **designed** around bitboard `SimState`s that *are*

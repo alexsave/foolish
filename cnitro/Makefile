@@ -184,7 +184,7 @@ WASM_FLAGS := --target=wasm32 $(WASM_OPT) -nostdlib -ffreestanding -mbulk-memory
               -DMAX_LEGAL_MOVES=4096 -DMAX_MOVE_CARDS=28 -DMAX_BATTLES=64 \
               -DWORLD_LOG_CAP=40 \
               -DREPLAY_REC_CAP=4096 -DWASM_REPLAY_IO_CAP=32768 -DMAX_SNAPS=24 \
-              -DCD_TT_BITS=12 -DCD_TT_2WAY \
+              -DCD_TT_BITS=12 -DCD_TT_2WAY -DCD_TT_PACK8 \
               -Wall -Wextra -Wno-unused-parameter \
               -Wl,--no-entry -Wl,--export-memory -Wl,-z,stack-size=262144 -Wl,--stack-first \
               -Wl,--strip-all
@@ -206,6 +206,12 @@ WASM_FLAGS := --target=wasm32 $(WASM_OPT) -nostdlib -ffreestanding -mbulk-memory
 # ladder. Drops the solver's runtime peak another 64 KiB (1 page) below TT13,
 # with strength >= the previously shipped table. Only bots links cordite_sim, so
 # rules/guards ignore it.
+# CD_TT_PACK8 (candidate C6): packs each entry from 16 to 8 bytes (40-bit key tag
+# + 12-bit value + 6-bit depth + flags), halving the table again to 32 KiB at the
+# same 4,096 slots. SIG-identical to the 16-byte TT12+2WAY table on the full tricky
+# panel and at TT22 (the 40-bit tag + 12-bit index = 52-bit effective key aliases
+# to a wrong value at only ~1e-5/game, an order of magnitude below octogen's ~4e-4
+# inherent floor). Net solver table: 128 KiB (TT13) -> 64 KiB (TT12+2WAY) -> 32 KiB.
 
 # Explicit export allow-list — only the memory (above) + wasm_* API the TS
 # bridge actually calls (engine.ts / bots.ts). This REPLACES -Wl,--export-all,
