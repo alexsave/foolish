@@ -65,7 +65,18 @@ void *memset(void *dst, int c, size_t n) {
 #endif
 #define MAX_IN_CARDS 128
 
+#ifdef CD_WASM_OVERLAY
+// M9 (docs/BOTS_WASM_MEMORY_PLAN.md): g_io aliases into solve_ws (see
+// wasm_overlay.h) — bots-only, saving 72 KiB. Never concurrent with the solver
+// (input is copied into g_game by wasm_import_* before a choose's solve; the
+// chosen move / exports are written after; the solver reads g_game/SimStates,
+// never g_io) nor with the replay scratch (disjoint region + separate top-level
+// calls). rules.wasm has no solve_ws, so it keeps the static buffer.
+_Static_assert(IO_CAP <= CD_OVL_GIO_END - CD_OVL_GIO_OFF, "g_io overflows its overlay slot");
+#define g_io ((unsigned char *)(cd_overlay + CD_OVL_GIO_OFF))
+#else
 static unsigned char g_io[IO_CAP];
+#endif
 static Game g_game;
 
 // Snapshots never carry logs (animation game_states are log-stripped
