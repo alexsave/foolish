@@ -51,13 +51,17 @@ jobs:
       E2E_PGPASSWORD: stress
       E2E_PGDATABASE: foolish
       # Keep CI bounded; the E2E bench doubles (base + head).
-      # Only bots actually dispatched in the wasm build (wasm_bots_api.c) —
-      # any other STRAT falls through to random_strategy_choose, so benching a
-      # non-shipped bot measures a trivial random move, not its search (that is
-      # why the ship-trim made semtex/fulminate report phantom -80%/-28% deltas).
-      # octogen + cordite are the shipped MC "thinking" bots; firecracker/
-      # blackpowder join here once they are ported into the wasm dispatch.
-      BENCH_BOTS: octogen,cordite
+      # Every bot here must be one the wasm build actually dispatches
+      # (wasm_bots_api.c) — any other STRAT falls through to
+      # random_strategy_choose, so benching a non-shipped bot measures a
+      # trivial random move, not its search (that is why the ship-trim made
+      # semtex/fulminate report phantom -80%/-28% deltas). octogen is the
+      # headline (the MC bot the 2s CPU cap gates); cordite is the other
+      # shipped MC "thinking" bot; handwritten (strategy_key -> id 16 =
+      # STRAT_HANDWRITTEN_PROD)/simple_heuristic/random are the shipped fast
+      # bots (sub-ms, they mostly measure the wasm + Postgres round-trip
+      # floor). firecracker/blackpowder join once ported to the wasm dispatch.
+      BENCH_BOTS: octogen,cordite,handwritten,simple_heuristic,random
       BENCH_BOT_MOVES: '20'
       BENCH_GAMES: '300'
       # E2E latency is wall-clock on a shared runner: one run's p50 swings too
