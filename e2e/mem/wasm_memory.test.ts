@@ -110,9 +110,10 @@ test('bots.wasm memory is bounded and flat across all MC bot families', async ()
     };
     type PrivateLike = { player_id: string };
 
-    // Game 1 warms the shared solver scratch; the MC families it exercises
-    // cover cordite-derived code paths (semtex, octogen).
-    await playGame('mem1', ['semtex', 'octogen']);
+    // Game 1 warms the shared solver scratch. Uses the shipped MC ladder bots
+    // (octogen, cordite) — semtex/fulminate were dropped from the wasm build, so
+    // they would fall back to random and not exercise the solver.
+    await playGame('mem1', ['octogen', 'cordite']);
     const afterFirst = wasmTotal();
     // 150MB external is the edge budget; rules+bots plus scratch must sit
     // far below it so JS buffers/fetch bodies have room.
@@ -120,8 +121,8 @@ test('bots.wasm memory is bounded and flat across all MC bot families', async ()
         `wasm memory after one game is ${(afterFirst / 1048576) | 0}MB; budget regression`);
 
     // Every further family and game must reuse the SAME scratch: exactly flat.
-    await playGame('mem2', ['cordite', 'semtex']);
-    await playGame('mem3', ['fulminate', 'octogen']);
+    await playGame('mem2', ['cordite', 'octogen']);
+    await playGame('mem3', ['octogen', 'cordite']);
     const afterAll = wasmTotal();
     assert.equal(afterAll, afterFirst,
         `wasm memory grew ${((afterAll - afterFirst) / 1048576) | 0}MB across families; per-family allocations are back`);

@@ -172,8 +172,12 @@ void wasm_clear_logs(void) { wasm_game_ptr_internal()->num_logs = 0; }
 
 // Game identity for per-game bot memory (espresso's discard memory was a
 // per-game-id map in TS). The bridge sends a hash of game.id per decision.
-void espresso_prod_set_game_key(uint32_t key);
-void wasm_set_game_key(unsigned int key) { espresso_prod_set_game_key(key); }
+// espresso_prod was the only consumer of a per-game key (for its discard
+// memory) and is no longer linked into the wasm build (dropped from the shipped
+// ladder). The remaining bots keep their per-game state keyed internally
+// (e.g. cordite's transposition table), so this bridge hook is now a no-op. The
+// TS side still calls it once per decision, so the export stays.
+void wasm_set_game_key(unsigned int key) { (void)key; }
 
 void wasm_import_strategy_keys(void) {
     Game *g = wasm_game_ptr_internal();
@@ -207,20 +211,20 @@ int wasm_choose_move(int strat, int bot_idx) {
     calculate_legal_moves(g, bot_idx, lm);
     if (lm->n == 0) return -1;
 
+    // Shipped ladder only (docs/BOTS_WASM_MEMORY_PLAN.md, "Durak Bot Ordnance
+    // Chart"): the wasm module dispatches ONLY the deployed difficulty rungs that
+    // are ported — random, simple_heuristic, handwritten_prod, cordite, octogen
+    // (firecracker/blackpowder join when ported). espresso_strategy_choose and
+    // handwritten_strategy_choose stay LINKED (cordite/octogen call them as
+    // rollout policies) but are no longer reachable as a top-level bot. champion,
+    // ultimate_champion, hacker, fulminate, espresso_prod and semtex left the
+    // build entirely. Any dropped/unported strat id falls back to random.
     StrategyFn fn = 0;
     switch (strat) {
         case STRAT_RANDOM:            fn = random_strategy_choose; break;
-        case STRAT_ESPRESSO:          fn = espresso_strategy_choose; break;
-        case STRAT_HANDWRITTEN:       fn = handwritten_strategy_choose; break;
-        case STRAT_CORDITE:           fn = cordite_strategy_choose; break;
         case STRAT_SIMPLE_HEURISTIC:  fn = simple_heuristic_strategy_choose; break;
-        case STRAT_CHAMPION:          fn = champion_strategy_choose; break;
-        case STRAT_ULTIMATE_CHAMPION: fn = ultimate_champion_strategy_choose; break;
-        case STRAT_HACKER:            fn = hacker_strategy_choose; break;
-        case STRAT_FULMINATE:         fn = fulminate_strategy_choose; break;
-        case STRAT_ESPRESSO_PROD:     fn = espresso_prod_strategy_choose; break;
         case STRAT_HANDWRITTEN_PROD:  fn = handwritten_prod_strategy_choose; break;
-        case STRAT_SEMTEX:            fn = semtex_strategy_choose; break;
+        case STRAT_CORDITE:           fn = cordite_strategy_choose; break;
         case STRAT_OCTOGEN:           fn = octogen_strategy_choose; break;
         default:                      fn = random_strategy_choose; break;
     }

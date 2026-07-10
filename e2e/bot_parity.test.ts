@@ -30,10 +30,6 @@ import {
 import { RandomBotStrategy, setRandomSeed } from '../offlinefun/localtest/frozen/random_strategy.ts';
 import { HandwrittenBotStrategy } from '../offlinefun/localtest/frozen/handwritten_strategy.ts';
 import { SimpleHeuristicStrategy } from '../offlinefun/localtest/frozen/simple_heuristic_strategy.ts';
-import { UltimateChampionStrategy } from '../offlinefun/localtest/frozen/ultimate_champion_strategy.ts';
-import { ChampionStrategy } from '../offlinefun/localtest/frozen/champion_strategy.ts';
-import { HackerStrategy } from '../offlinefun/localtest/frozen/hacker_strategy.ts';
-import { EspressoStrategy } from '../offlinefun/localtest/frozen/espresso_strategy.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 
@@ -59,7 +55,7 @@ const mkLcgU32 = (seed: number) => {
 const KEY_MIXES = [
   () => STRATEGY_KEY.RANDOM,
   () => STRATEGY_KEY.HANDWRITTEN,
-  (i: number) => (i % 2 ? STRATEGY_KEY.RANDOM : STRATEGY_KEY.CHAMPION),
+  (i: number) => (i % 2 ? STRATEGY_KEY.RANDOM : STRATEGY_KEY.SIMPLE_HEURISTIC),
 ];
 const mkPlayer = (i: number, mix: number): PrivatePlayer => ({
   player_id: `p${i}`, name: `P${i}`, status: PLAYER_STATUS.READY, is_ai: true,
@@ -83,14 +79,17 @@ interface ParityCase {
   pin?: (seed: number) => void;
 }
 
+// Only the wasm-dispatchable ladder bots remain parity-checkable. STRAT.handwritten
+// resolves to the shipped handwritten_prod kernel (bots.ts maps 'handwritten'->16),
+// whose frozen TS mirror is HandwrittenBotStrategy. espresso (-> espresso_prod),
+// champion, ultimate_champion and hacker were dropped from the wasm build
+// entirely, so there is no kernel to compare them against here; their frozen TS
+// mirrors + the native C suite still cover them. cordite/octogen are exercised
+// elsewhere (they are re-implementations, not line ports — see header).
 const CASES: ParityCase[] = [
   { name: 'random', ts: new RandomBotStrategy(), strat: STRAT.random, pin: setRandomSeed },
-  { name: 'espresso', ts: new EspressoStrategy(), strat: STRAT.espresso },
   { name: 'handwritten', ts: new HandwrittenBotStrategy(), strat: STRAT.handwritten },
   { name: 'simple_heuristic', ts: new SimpleHeuristicStrategy(), strat: STRAT.simple_heuristic },
-  { name: 'champion', ts: new ChampionStrategy(), strat: STRAT.champion },
-  { name: 'ultimate_champion', ts: new UltimateChampionStrategy(), strat: STRAT.ultimate_champion },
-  { name: 'hacker', ts: new HackerStrategy(), strat: STRAT.hacker },
 ];
 
 const PLAYER_COUNTS = [2, 3, 4, 6, 8];
