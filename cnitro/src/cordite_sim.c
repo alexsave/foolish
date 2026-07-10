@@ -1209,19 +1209,24 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
     // slack above the cap so a true count above it is still detected.
     if (nm > CD_SOLVE_MOVES_CAP) { S->aborted = 1; TR_RET(0, "movecap"); }
 
-#ifdef CD_TT_ORDER2
-    // Experimental move ordering: try the most-committing moves first (more cards
-    // played empties a hand / ends the round faster -> earlier alpha-beta cutoffs
-    // -> fewer distinct positions visited -> smaller working set). pickup/good
-    // (n==0) last. Insertion sort, nm is small. Does not change the value on a
-    // full search; only which nodes are visited (and, under budget, what resolves).
+#if defined(CD_TT_ORDER2) || defined(CD_TT_ORDER3)
+    // Experimental move ordering (insertion sort, nm small). Two directions:
+    //   ORDER2: most-committing first (big attacks) — cuts W hard but drives the
+    //           search into deep lines that trip the ply-48 abort -> regressions.
+    //   ORDER3: SHORT-LINE first — round-enders (GOOD/pickup, n==0) then fewest
+    //           cards, so short lines resolve before the search can go deep.
+    // key: ORDER2 sorts by n descending (n==0 -> -1, last); ORDER3 ascending.
     for (int i = 1; i < nm; i++) {
         SolMove kv = moves[i];
         int ki = (kv.n == 0) ? -1 : kv.n;
         int j = i - 1;
         while (j >= 0) {
             int kj = (moves[j].n == 0) ? -1 : moves[j].n;
-            if (kj >= ki) break;              // descending by key
+#ifdef CD_TT_ORDER3
+            if (kj <= ki) break;              // ascending: short lines first
+#else
+            if (kj >= ki) break;              // descending: big moves first
+#endif
             moves[j + 1] = moves[j]; j--;
         }
         moves[j + 1] = kv;
