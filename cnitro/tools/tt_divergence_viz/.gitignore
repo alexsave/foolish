@@ -1,5 +1,5 @@
-# build artifact from generate.sh --measure (rebuilt on demand)
-/eval_stats22
+# build artifacts from generate.sh measure (rebuilt on demand; REF_BITS varies the name)
+/eval_stats*
 # scratch working-set dir at the tool root; the committed accumulator is data/W/
 /W/
 *.err

@@ -30,15 +30,20 @@ J=${J:-$( (nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4) )}
 mkdir -p "$HERE/W" "$HERE/data/W"
 throttle() { while [ "$(jobs -rp | wc -l)" -ge "$J" ]; do wait "$(jobs -rp | head -1)"; done; }
 
-# Build the CD_TT_STATS evaluator once (TT22 = collision-free, so the histogram
-# is the true distinct-key working set, not a collided undercount).
+# Build the reference-table evaluator. REF_BITS (default 22, 64 MiB) sets the
+# reference table size: bigger = fewer birthday collisions, so the measured W is
+# closer to the true distinct-key count — but the table is memset to zero on
+# every solve reset, so cost scales with 2^REF_BITS (TT24 = 256 MiB, TT26 = 1 GiB
+# per clear). 22 is collision-free to <1% even for the deep tail; raise it only
+# if a 22-vs-higher spot check shows W drifting.
+REF_BITS=${REF_BITS:-22}
 ensure_bin() {
-  BIN="$HERE/eval_stats22"
+  BIN="$HERE/eval_stats${REF_BITS}"
   [ -x "$BIN" ] && [ "$BIN" -nt "$CNITRO/src/cordite_sim.c" ] && return
-  echo "[build] compiling CD_TT_STATS evaluator (TT22)..."
+  echo "[build] compiling CD_TT_STATS evaluator (TT${REF_BITS})..."
   local CORE; CORE=$(cd "$CNITRO" && make -s print-core)
   ( cd "$CNITRO" && $CC -O2 -ffast-math -Isrc -Wno-deprecated-declarations \
-      -DCD_TT_STATS -DCD_TT_BITS=22 $CORE src/main_eval.c -o "$BIN" -lm )
+      -DCD_TT_STATS -DCD_TT_BITS="$REF_BITS" $CORE src/main_eval.c -o "$BIN" -lm )
 }
 
 # distinct games already banked for a cell = distinct seeds in the .gw file
