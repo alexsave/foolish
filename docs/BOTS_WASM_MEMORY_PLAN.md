@@ -470,3 +470,246 @@ scratch lives INSIDE it rather than beside it) plus the rules-engine state
 the module must host because it IS the engine (W1). Getting below ~8 pages
 means either M6's architecture change or the "different solver" the L1
 budget doc already names as the real frontier.
+
+---
+
+## 6. Execution log & measured results (Jul 2026)
+
+Executed in the order M1-measure → M2 → M4 → M8. Each entry records the
+measured number (the deliverable), not the estimate.
+
+### M1 / M7 — shadow stack: NEGATIVE (no change; 256 KiB stays)
+
+The canary (`e2e/stack_canary.mts` — paint the shadow stack 0xA5, drive the
+heavy corpus through the production bot bridge, scan the high-water) settled
+the M1/M7a branch and then killed both arms:
+
+- **Base high-water = 179 KiB.** That makes today's 256 KiB stack only
+  **~1.43×** — the *same* margin rules.wasm ships, NOT the "~3×" the old
+  Makefile comment implied (it assumed ~1.5 KiB/frame; the real driver is
+  fatter and different). So M1-as-written (256→128 KiB) is dead on arrival:
+  128 KiB is *below* the measured worst case.
+- **The high-water is not solver-recursion-dominated.** Disassembling the
+  per-function wasm stack frames shows the tall frames are the heuristic
+  choosers' `int[MAX_LEGAL_MOVES]` index arrays:
+  `handwritten_strategy_choose` = 7×`int[4096]` = **112 KiB**,
+  `espresso_strategy_choose` = **64.5 KiB**, `champion` = 32 KiB — plus
+  `sim_solve_rec`'s 48-frame recursion (~3.2 KiB/frame fat locals).
+- **M7a was built and validated** (hoist `sim_solve_rec`'s move buffer +
+  child `SimState` into depth-indexed `_Thread_local` BSS; SIG-identical to
+  baseline over 720 games, 4 families × pc 2/3/4 × 60). It drops the solver
+  branch, but the new high-water is the untouched 112 KiB handwritten frame
+  (**measured 115 KiB**). So the stack can only reach ~192 KiB (−64 KiB) at a
+  cost of +102 KiB BSS — a **net loss**. Reverted.
+- The heuristic frames scale with `MAX_LEGAL_MOVES`, so the *only* lever that
+  shrinks them 4× is M2 — which is also negative (below). **M1 and M2 are
+  coupled**; neither ships. The Makefile stack comment is corrected to the
+  measured 179 KiB / 1.43× reality.
+
+### M2 — `MAX_LEGAL_MOVES` 4096→1024: NEGATIVE (4096 stays)
+
+Instrumented the enumerator (`-DLEGAL_STATS` in `legal.c`, records the widest
+FULL-cap menu — the `g_moves` buffer, excluding the solver's lowered-cap
+scratch) and swept every shipped bot family × player counts 2–8 (production
+deck: 36 cards at 2–5p, 52 at 6–8p), fast heuristics at 1,500 games/config and
+the MC families lighter. **The menu saturates the 16,384 buffer under every
+strategy, including the shipped MC bot octogen and the handwritten rollout
+policy.** The wide states are ordinary large-hand 8-player *defenders*: a
+20–23 card hand over 4 uncovered battles enumerates **5,616 → 16,384+** cover
+combinations (the documented cover-combination blow-up, `legal.h`). This is
+real reachable bot play, not a corrupt state. Per the plan's rule
+(max > 2,900 → keep 4096) and because truncating a **bot's** cover set at 1024
+drops legal options it would autonomously choose from (a behavior change —
+unlike rules.wasm at 1024, which only bounds the human UI's cover menu),
+**4096 stays.** The rules/bots cap asymmetry is deliberate. (bots already
+truncates the widest 8p states at 4096; 1024 would truncate more.)
+
+**Consequence for the ledger:** the plan's two largest projected wins
+(M1/M7 −90…−128 KiB and M2 −181 KiB) do not materialize *as written*. The
+realistic remaining static-cap budget is M8 (−90.5 KiB) + M4 (−9 KiB) +
+M3 (−66 KiB, gated). But the M1/M2 dead end pointed at a better lever:
+
+### M2-stream — streaming (visitor) enumeration instead of truncation
+
+The reason M2 (blunt cap → 1024) changes behavior is that it *drops legal
+moves*. But bot move-evaluation is a **reduction** — score every move, keep the
+best (heuristics) or the top-K (the MC bots' candidate stage, `og_pick_candidates`
+already keeps ≤27 via `og_ranked_insert`). A reduction never needs the whole list
+resident: enumerate → score → discard. So the honest fix is to make the
+enumerator **push each move to a visitor** instead of filling the shared 232 KiB
+`g_moves` buffer. That shrinks `g_moves` to a tiny top-K window **and** collapses
+the heuristic choosers' `int[MAX_LEGAL_MOVES]` frames — behavior-neutral (same
+moves, same order, same tie-breaks), unlike truncation. Evidence it's the right
+model: octogen-vs-octogen at 6 players enumerates **7,593** moves as the actor —
+already above today's 4096 — yet only ever searches its top ~27, so even 4096 is
+wasted materialization.
+
+**UPDATE — the stack cut landed (256 → 64 KiB, −2 pages).** M1/M7's "negative"
+above was only true *before its blockers cleared*. Once M2-stream removed
+handwritten's 112 KiB frame **and** the ship-set trim dropped semtex/fulminate
+(the only bots that reached the struct-rollout espresso frame), the shipped MC
+bots (octogen/cordite) use the bitboard rollout exclusively — so applying **M7a**
+(hoist `sim_solve_rec`'s fat locals to BSS) drops the canary high-water to
+**13.2 KiB** over the shipped-bot corpus. The recursion is depth-capped at 48, so
+~15 KiB is a near-hard ceiling; the bots stack now ships **64 KiB** (4.8×,
+wasm-only). Net −192 KiB stack at +102 KiB BSS = **−90 KiB**, bots.wasm
+**17 → 15 pages**. So the plan's M7a −90 KiB *did* materialize — it just needed
+M2-stream + the ship-trim first. Full step-1 detail:
+
+**Step 1: `handwritten_strategy_choose` streamed.** It bucketed move
+indices into five `int[MAX_LEGAL_MOVES]` arrays (+2 in the attack branch) = a
+**112 KiB** stack frame at MAX_LEGAL_MOVES=4096, purely to run per-category
+argmax/argmin. Those are now one streaming pass over the list with scalars
+(`hw_mcl`). SIG-identical over 2,760 games, bot_parity green, and **~11% faster**
+on handwritten self-play (0.373s → 0.331s / 4,000 games) — no array
+materialization. The 112 KiB frame is gone from the module's top frames; the
+shadow-stack high-water dropped 179 → **154 KiB** with this alone (still
+solver-recursion-bound). handwritten is the MC bots' rollout policy, so this is a
+hot-path latency win too. Remaining to reach an actual stack-size cut:
+stream espresso (its 66 KiB rollout frame) + apply M7a (solver-locals hoist),
+then the stack falls under a page boundary. The full `g_moves` win needs the
+visitor enumerator + all consumers converted — the biggest single BSS prize
+(−232 KiB) and the natural next step.
+
+### Ship-set trim — drop unshipped bots from the wasm build
+
+Orthogonal to the caps: the wasm module only needs the deployed ladder bots
+(Durak Bot Ordnance Chart). Dropped champion, ultimate_champion, hacker,
+fulminate, espresso_prod and semtex from `WASM_BOT_SRC` entirely (no ladder slot,
+no dependency of a shipped bot); espresso/handwritten (arena) stay linked as the
+MC bots' rollout policies. **bots.wasm 178,743 → 127,389 bytes (−29% code)**,
+gz ~60 → 49 KB. This is a module-size / cold-start win; the dropped weight is
+mostly code (outside linear memory), so the initial page count is unchanged. It
+also shrinks the consumer set the visitor-enumerator refactor must convert.
+
+### M9 — overlay g_io into solve_ws (SHIPPED, −1 page)
+
+The M8/M9 arena idea extended to `g_io` (the 72 KiB marshaling I/O buffer): a
+third non-concurrent tenant of `solve_ws`, in a region disjoint from the replay
+scratch. `g_io` is input (copied into `g_game` by `wasm_import_*` **before** a
+choose's solve) and output (the chosen move / an export written **after** it) —
+the solver reads `g_game`/SimStates, never `g_io` — so it is sequential with the
+solver within a choose and never coincides with a replay call. −72 KiB, bots.wasm
+**15 → 14 pages**. Gates: `test:mem` (the real marshal→choose→apply path carries
+state/logs in and the move out around the solve) + `bot_parity`'s direct-move
+decode (reads the move straight from `g_io` after the solve) + replay/fuzz.
+
+### M3 — `MAX_LOGS` 512→256: NEGATIVE (512 stays)
+
+Gating measurement (`build/l1_measure`, `mx_logs_game` over ~7,000 games/seed,
+two seeds): the **session log peaks at 1,028 / 1,036 entries** — far above the
+plan's 180 threshold, and above the *current* 512 (so long games already truncate
+what espresso/handwritten's belief imports). Cutting to 256 removes more of that
+history → a behavior change on long games. Keep 512. (Post-M9 its memory upside
+was also gone: the derived `WASM_IO_CAP` shrink is moot because `g_io` is now
+overlaid, and `g_game` — the only remaining beneficiary, ~34 KiB — can't be
+overlaid, it persists across the solve as the resident state, W1.)
+
+### M5 — packed solver move slots: NEGATIVE on ROI (not shipped)
+
+`solve_ws` is a `union { SolveMoves mv[48]; LegalMoves rollout; }`. Measured
+arms: `mv` = 278,592 B (dominant), `rollout` = 237,572 B, and the rollout arm is
+**live** for the shipped bots (`rollout_moves_scratch()` in og_/cd_simulate's
+struct rollout). So packing the `mv` LegalMove 58→~40 B shrinks `mv` to 192 KiB
+but the union only falls to the rollout arm's **237 KiB = −41 KiB (no page
+boundary crossed)**, while adding pack/unpack to the hottest struct-solver loop
+(the plan's own >2%-latency-revert tripwire). The full −86 KiB additionally needs
+the rollout arm shrunk (its own smaller cap) — a truncation risk on the struct
+rollout's lite move list. And the implementation is worse than "invasive":
+today the three solvers enumerate **zero-copy** by casting `SolveMoves*` to
+`LegalMoves*` and letting `calculate_legal_moves` write 58 B `LegalMove`s
+straight into the slot (`cordite_strategy.c:502`, "shares LegalMoves' leading
+layout"). Packing to 40 B breaks that cast — it forces enumeration into a temp
++ a pack step, and an **unpack of every move in the hottest solver read loop**
+(each node reads `mv[depth].moves[i]` and hands it to `cd_apply`), which is
+exactly the >2%-latency tripwire the plan set for M5. Capped below a page,
+latency-risky, and it dismantles a clean fast path: not worth destabilizing the
+shipped MC bots. Measured and hands-on-verified, not shipped.
+
+### M6 — split the replay codec out: BLOCKED (unchanged)
+
+W1 stands: bots.wasm adopts the engine slot and must serve the replay codec on
+the one instance. Unblocking is a TS routing change (keep a resident rules
+instance and route codec calls to it) — an architecture decision, out of scope.
+Not attempted. (M8/M9 reclaimed the replay+io scratch *bytes* via overlay
+instead, which is the achievable part of the same idea.)
+
+### M7b — full iterative solver rewrite: NOT RECOMMENDED (unchanged)
+
+After M7a the `sim_solve_rec` frames are ~scalars; a hand-managed iterative
+rewrite would save at most those few KiB in exchange for hand-rolling alpha-beta
+unwind + the TT store-on-return + abort propagation in the module's most
+heavily-validated function. The 64 KiB stack (13.2 KiB high-water) needs no more
+stack headroom, so there is no motivation. Not attempted.
+
+---
+
+## 7. Final ledger — every candidate
+
+Initial linear memory: **18 pages (1,179,648 B) → 14 pages (917,504 B)** this
+round (−4 pages), plus bots.wasm code **−29%** (178,743 → 127,389 B) and the
+runtime peak drops correspondingly (TT + heap unchanged).
+
+| candidate | outcome | Δ | notes |
+|---|---|---|---|
+| M1 / M7a — shadow stack 256→64 KiB | **SHIPPED** | −90 KiB (17→15 pg) | unlocked by M2-stream + ship-trim; solver-locals hoist, canary 13.2 KiB |
+| M2 — MAX_LEGAL_MOVES→1024 | **NEGATIVE** | 0 | menu saturates >16k under shipped bots; truncation = behavior change |
+| M2-stream (handwritten) | **SHIPPED** | frame −112 KiB, +11% speed | streaming reduction; enabled the stack cut |
+| M3 — MAX_LOGS→256 | **NEGATIVE** | 0 | session log peaks ~1,030 ≫ 180 |
+| M4 — MAX_SNAPS 24→16 | **SHIPPED** | −9 KiB ×2 | 1.33× measured worst |
+| M5 — packed solver moves | **NEGATIVE (ROI)** | (−41 KiB, no page) | union-capped by live rollout arm; latency risk |
+| M6 — split replay codec | **BLOCKED** | — | W1 (engine-slot adoption) |
+| M7b — iterative solver | **NOT REC.** | — | no stack pressure left after M7a |
+| M8 — overlay replay scratch | **SHIPPED** | −90.5 KiB (18→17 pg) | non-concurrent alias into solve_ws |
+| M9 — overlay g_io | **SHIPPED** | −72 KiB (15→14 pg) | third non-concurrent tenant of solve_ws |
+| Ship-set trim | **SHIPPED** | code −29% | drop 6 unshipped bots |
+
+All shipped changes are wasm-bots-only where noted; native builds keep every bot
+and every large cap. Gates held throughout: native 161/161, sim/apply/replay
+difftests 0 real, bot_parity, test:mem 4/4, replay_codec + interleave, fuzz.
+
+## 8. Latency & further-tenant investigation
+
+Follow-up questions: hottest memory, memory ordering, M5-with-latency, more
+overlay tenants. Measured with the `CD_LAT=1` CPU-time probe (`main_eval.c`) —
+octogen pc2 vs cordite is the latency-relevant matchup (octogen ≈ **41.5 ms/dec**,
+cordite ≈ 0.82 ms/dec at the native TT).
+
+- **The hot path is octogen's bitboard endgame solver** (`sim_solve_rec`): per
+  node it does one TT probe (random-indexed → the cache-miss hotspot), one
+  `sim_gen_moves`, and per child a ~264 B `SimState` clone (`memcpy` skipping the
+  dead deck tail) + `sim_apply_sol`. By *access count* the SimState clone
+  dominates (nodes × branching); by *cache misses* the TT does.
+- **The TT is already tuned for L1**: 32 KiB (`TT12+2WAY+PACK8`, a quarter wasm
+  page), `calloc`'d 16-B-aligned so every 16-B 2-way pair sits within one 64-B
+  cache line. No alignment/size win left.
+- **M7a was a latency *win*, not a cost.** Measured directly (same 2,092
+  decisions, same seeds): pre-M7a 45.4 ms/dec → M7a **41.5 ms/dec, −8.6%**. The
+  100-slot depth-indexed BSS buffers are a smaller per-level footprint than the
+  old 160-slot stack frame and drop the per-frame fat-local stack traffic. So the
+  memory win (−90 KiB stack) came with a latency win.
+- **Memory ordering: little to gain.** The bitboard solver's per-node BSS
+  (`sim_rec_moves`, `sim_rec_child`) is already adjacent (link order), and the TT
+  is a separate L1-sized `calloc`. Reordering the static block order would not
+  change the hot working set (TT + the depth-indexed slots + the live SimState).
+- **M5 with latency: not worth it, and it saves nothing charged.** Beyond the
+  latency risk (og_solve, a hot struct-solver path, would take a per-node
+  pack/unpack — §6), M5 is union-capped at −41 KiB which **does not cross a page**
+  (917,504 − 41 KiB = 876,484 = still 14 pages). The edge external-memory budget
+  is charged per page / buffer size, so a sub-page shrink of an overlaid arena
+  buys nothing at runtime while risking the 2 s-CPU-cap latency. Decisively not
+  worth implementing.
+- **More tenants for solve_ws: none left.** After M8 (replay) + M9 (g_io), the
+  remaining big blocks can't join: `g_moves` (232 KiB) is **concurrent with the
+  solver** — octogen's win-hunt reads `moves->moves[i]` across `moves->n`
+  throughout the search (`octogen_strategy.c:906`), so it can't be copied to a
+  small buffer and freed; `g_game`/`g_snaps` are the resident marshal state that
+  must persist across the solve (W1); the codec tables `g_comb`/`g_opts`/
+  `g_weights` are initialized once and read forever; and `solve_child_scratch` +
+  the world/trial/diff slots are themselves choose-scratch, live *during* the
+  solve. `g_io` was the last non-concurrent tenant.
+
+**Net:** the module is well-tuned; the round's remaining upside is not in caps or
+overlays but in the two large, higher-risk architectural moves already named —
+the visitor-enumerator `g_moves` rework (needs the TS list-path wire change) and
+M6's replay-routing split — neither of which is a quiet in-place change.
