@@ -834,11 +834,22 @@ long cd_stat_hist[CD_STAT_MAXB];   // hist[I] = #windows that inserted I distinc
 long cd_stat_windows = 0;          // total clear-windows seen
 long cd_stat_max_I = 0;            // largest I observed
 long cd_stat_collisions = 0;       // evictions at store (should be ~0 at TT16)
+// Store-census (for the working-set-reduction plan, docs/SOLVER_TT_WORKING_SET_PLAN.md):
+//   ins_cards[c] = distinct-key insertions at nodes with c cards across both hands
+//                  (run at TT22 so occupancy ~= distinct keys) — locates the W mass.
+//   failhi/faillo = node completions whose value fell OUTSIDE the node's window
+//                  (fail-soft bounds). Today these store NOTHING — each is thrown-
+//                  away work a bounds-storing TT (CD_TT_BOUNDS) could cache.
+long cd_stat_ins_cards[25];
+long cd_stat_failhi = 0, cd_stat_faillo = 0;
 static _Thread_local long cd_stat_occ = 0;
 static _Thread_local long cd_stat_game_max = 0;  // largest window this game
 void cd_tt_stats_dump(void) {
     fprintf(stderr, "CD_TT_STATS windows=%ld max_I=%ld collisions=%ld\n",
             cd_stat_windows, cd_stat_max_I, cd_stat_collisions);
+    fprintf(stderr, "CD_TT_STATS2 failhi=%ld faillo=%ld\n", cd_stat_failhi, cd_stat_faillo);
+    for (int i = 0; i < 25; i++)
+        if (cd_stat_ins_cards[i]) fprintf(stderr, "CD_TT_CARDS %d %ld\n", i, cd_stat_ins_cards[i]);
     for (long i = 0; i < CD_STAT_MAXB; i++)
         if (cd_stat_hist[i]) fprintf(stderr, "CD_TT_HIST %ld %ld\n", i, cd_stat_hist[i]);
 }
@@ -1335,6 +1346,12 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
     // upper bound; on a fail-high (best >= beta0) only a lower bound — storing
     // either as exact would corrupt a later lookup under a wider window. So we
     // store solely the exact case; bound nodes are simply not memoized.
+#ifdef CD_TT_STATS
+    if (e && key) {   // census: how much completed work falls outside the window
+        if (best >= beta0) cd_stat_failhi++;
+        else if (best <= alpha0) cd_stat_faillo++;
+    }
+#endif
     if (e && key && best > alpha0 && best < beta0) {
         int store = 1;
 #ifdef CD_TT_DEPTH_PREF
@@ -1347,7 +1364,12 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
 #endif
         if (store) {
 #ifdef CD_TT_STATS
-            if (!e->valid) { cd_stat_occ++; if (cd_stat_occ > cd_stat_max_I) cd_stat_max_I = cd_stat_occ; }
+            if (!e->valid) {
+                cd_stat_occ++; if (cd_stat_occ > cd_stat_max_I) cd_stat_max_I = cd_stat_occ;
+                int tc = __builtin_popcountll(s->hand[a]) + __builtin_popcountll(s->hand[b]);
+                if (tc > 24) tc = 24;
+                cd_stat_ins_cards[tc]++;   // census: which layer the distinct keys live in
+            }
             else if (e->key != key) cd_stat_collisions++;   // eviction — must stay ~0 at TT16
 #endif
 #ifdef CD_TT_TRACE
