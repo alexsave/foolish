@@ -41,11 +41,14 @@ For a module that never calls `memory.grow`, peak == initial.
 (4 MiB → 1.13 MiB) from the shared buffer caps. On first play its Monte-Carlo
 endgame solver then bump-allocates a transposition table (+2 slack pages) and
 stays flat there. That table was 1 MiB (`CD_TT_BITS=16`); the divergence study
-below shrank it to 128 KiB (`CD_TT_BITS=13`, 8,192 × 16 B), so the runtime
-peak went `18 + 18 = 36 pages` (2.25 MiB) → `18 + 4 = 22 pages` (~1.375 MiB). Measured
-end-to-end across all MC families (rules + bots summed): **2.56 MiB → 1.69 MiB**;
-the CI `metrics` job reports the canonical bots-only figure. 1.375 MiB is the
-honest footprint — the 1.13 MiB static floor is not the whole story.
+below shrank it to 128 KiB (`CD_TT_BITS=13`, 8,192 × 16 B), and a 2-way
+associativity change (`CD_TT_2WAY`, candidate C4 in
+`SOLVER_TT_WORKING_SET_PLAN.md`) then let it drop again to **64 KiB**
+(`CD_TT_BITS=12`, 4,096 × 16 B = exactly one wasm page, L1d-resident) at
+strength ≥ the TT13 table. The runtime peak went `18 + 18 = 36 pages`
+(2.25 MiB) → `18 + 4 = 22 pages` (~1.375 MiB) → `18 + 3 = 21 pages` (~1.31 MiB).
+The CI `metrics` job reports the canonical bots-only figure. That footprint —
+not the 1.13 MiB static floor — is the honest number.
 
 `guards.wasm` is pinned to exactly one page at link time
 (`--initial-memory=65536 --max-memory=65536`): if any buffer ever grows past
@@ -172,7 +175,9 @@ sits at octogen's inherent floor, 2–3 bits above the collision knee, and is
 statistically **indistinguishable from the production table** — the shrink does
 not change how any bot plays relative to today. That is the shipped value:
 table 1 MiB → 128 KiB, runtime peak 36 → 22 pages. Also confirmed by
-`bot_parity` against the TS oracle (7/7).
+`bot_parity` against the TS oracle (7/7). (A further 2-way associativity change,
+`CD_TT_2WAY`, then took the shipped table to **64 KiB** — `CD_TT_BITS=12`, one
+wasm page — at strength ≥ TT13; see "The 2-way follow-on" below.)
 
 (An earlier draft of this doc claimed `p ≈ 2.5e-5` from a `p(M) ≈ C/M`
 extrapolation off a noisy 1-in-600 anchor against the infinite-table baseline.
@@ -204,6 +209,57 @@ exhausted well before the table fills. And it is why *no* finite table is provab
 perfect — the octogen sweep's `0 / 35,000` at TT22 only bounds the true rate below
 `3/35,000 ≈ 8.6e-5` (rule of three), it does not prove zero.
 
+### The 2-way follow-on (`CD_TT_2WAY`, `CD_TT_BITS=12`)
+
+The birthday model above says the cost is *conflict* misses on the reused subset —
+two live keys colliding in a direct-mapped table. Set associativity attacks exactly
+that: make each aligned slot pair a 2-entry bucket (both entries share one 64-byte
+cache line), probe both halves, and on store keep the shallower-ply entry (larger
+subtree = costlier to recompute) while always storing the new one. This roughly
+halves conflict misses — worth ≈ **+1 effective bit** — so a 64 KiB `TT12` table
+behaves like the 128 KiB `TT13` above. Full design + safety analysis: candidate
+**C4** in `SOLVER_TT_WORKING_SET_PLAN.md`.
+
+It is **value-safe** (a hit returns exactly what a recompute would; behavior changes
+only through the halved collision channel), so it climbs the same measurement ladder:
+
+- `CD_TT_2WAY`@`TT22` is **SIG-identical** to std@`TT22` over 200 mixed seeds (100
+  handwritten + 100 espresso) — no value drift.
+- On the tricky panel it **fixes** the two known TT13 win→loss outcome flips — seeds
+  **720958** and **700910** now win at TT13/TT12/TT11 where the direct-mapped table
+  lost — and plays the infinite-table move on the perennial diverger 500459 at
+  TT12/TT13. Zero outcome regressions on the panel.
+- At scale, `TT12`+2WAY vs `TT22` over **3,000 espresso games**: **0 outcome flips**
+  (0.000%) and 0.10% move-divergence — both *below* direct-mapped TT13's 0.14% /
+  0.04% floor. Half the bytes, strictly better fidelity.
+
+Shipped value: runtime peak 22 → 21 pages (table 128 → 64 KiB, one wasm page,
+L1d-resident), strength ≥ the TT13 table it replaces. Native builds keep the large
+direct-mapped table; the flag is wasm-only.
+
+### The 8-byte-entry follow-on (`CD_TT_PACK8`, candidate C6)
+
+The entry was 16 bytes (`{key:64, value:16, depth:8, valid:8}`) but only ~52 bits
+of it carry information. `CD_TT_PACK8` packs it to **8 bytes**: a 40-bit key TAG
+(the slot index supplies the low `CD_TT_BITS`, for a 40+bits effective key), a
+12-bit signed value (`|v| ≤ 1000`), a 6-bit depth (`≤ 48`), and valid + 2-bit bound
+flags. So the shipped `TT12 + 2WAY` table halves again, **64 KiB → 32 KiB**, at the
+same 4,096 slots — SIG-identical to the 16-byte table on the full tricky panel and
+at TT22. The one new cost is a tag alias: two positions sharing a slot *and* a
+40-bit tag return a silently-wrong value, at ~1e-5/game — an order of magnitude
+below octogen's ~4e-4 inherent table-size floor, so it is invisible against the
+noise the table already carries. A uniform `CD_TT_KEYTAG` macro (identity when the
+flag is off) keeps the full-key path byte-identical.
+
+Net solver-table trajectory: **1 MiB (TT16) → 128 KiB (TT13) → 64 KiB (TT12+2WAY) →
+32 KiB (TT12+2WAY+PACK8)** — a 32× shrink from the historical table, strength
+unchanged, now a quarter of a wasm page.
+
+**Next round:** with the TT down to 32 KiB it is no longer a dominant block —
+the shadow stack (256 KiB), `solve_ws` (272 KiB), and `g_moves` (232 KiB) now
+lead. The measured map and an executable candidate-by-candidate plan for the
+next shrink round live in `docs/BOTS_WASM_MEMORY_PLAN.md`.
+
 The remaining static core is the Monte-Carlo solver scratch (`solve_ws` 272 KiB,
 `solve_child_scratch` 55 KiB, the world/trial/diff slots) — a per-search working
 set inherently larger than L1, **designed** around bitboard `SimState`s that *are*
@@ -234,6 +290,12 @@ No cap cut shipped without a passing suite behind it:
   the collision knee is ~TT10-11, well below 13. `bot_parity` (7/7) confirms the
   TT13 wasm still matches the TS oracle; `test:mem` (4/4) confirms bounded, flat
   memory at the smaller table.
+- **2-way table (`CD_TT_BITS=12 -DCD_TT_2WAY`)** — value-safe by construction and
+  measured so: SIG-identical to std at TT22 (200 seeds); on the tricky panel it
+  fixes the TT13 win→loss flips (720958, 700910) with no regressions; at scale,
+  TT12+2WAY vs TT22 over 3,000 espresso games gives 0 outcome flips and 0.10%
+  move-divergence, below TT13's floor. (`tools/tt_divergence_viz/outcome_pair.sh`
+  with `EXTRA=-DCD_TT_2WAY CAND=12`; full ladder in `SOLVER_TT_WORKING_SET_PLAN.md`.)
 
 (The research-only `solver_difftest` mismatches, but it mismatches identically on
 clean `main` and touches neither replay nor the wasm buffers changed here. The

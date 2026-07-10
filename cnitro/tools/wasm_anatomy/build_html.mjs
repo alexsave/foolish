@@ -62,11 +62,10 @@ function buildMemMap(m) {
   // authoritative anchored buffers (pure getter exports only)
   const anchors = [];
   const add = (start, size, label, detail, kind) => { if (start>0) anchors.push({ start, size, label, detail, kind }); };
-  const kib = n => n >= 1024 ? (n / 1024).toFixed(n % 1024 ? 1 : 0) + ' KiB' : n + ' B';
-  if (p.wasm_io_ptr) add(p.wasm_io_ptr, p.wasm_io_cap||0, 'g_io', `TS ⇄ kernel IO buffer · IO_CAP = ${kib(p.wasm_io_cap||0)}`, 'io');
+  if (p.wasm_io_ptr) add(p.wasm_io_ptr, p.wasm_io_cap||0, 'g_io', 'TS ⇄ kernel IO buffer · IO_CAP = 72 KiB', 'io');
   if (p.wasm_game_ptr_internal) {
     const gEnd = p.wasm_moves_ptr_internal || (p.wasm_game_ptr_internal);
-    add(p.wasm_game_ptr_internal, (gEnd>p.wasm_game_ptr_internal?gEnd:p.wasm_game_ptr_internal+0) - p.wasm_game_ptr_internal, 'g_game + g_snaps', 'live Game struct + animation snapshot ring (MAX_SNAPS, L1-budgeted)', 'game');
+    add(p.wasm_game_ptr_internal, (gEnd>p.wasm_game_ptr_internal?gEnd:p.wasm_game_ptr_internal+0) - p.wasm_game_ptr_internal, 'g_game + g_snaps[48]', 'live Game struct + snapshot ring (MAX_SNAPS = 48)', 'game');
   }
   if (p.wasm_moves_ptr_internal) {
     const mEnd = p.wasm_cards_a_ptr || p.wasm_moves_ptr_internal;
@@ -77,7 +76,7 @@ function buildMemMap(m) {
     const cEnd = p.wasm_replay_io_ptr && p.wasm_replay_io_ptr>cStart ? Math.min(p.wasm_cards_b_ptr+128+512, p.wasm_replay_io_ptr) : (p.wasm_cards_b_ptr? p.wasm_cards_b_ptr+128 : cStart+256);
     add(cStart, Math.max(256, (p.wasm_cards_b_ptr? p.wasm_cards_b_ptr+128:cStart+256)-cStart), 'g_in_raw_a/b · g_in_a/b', 'action-card decode buffers (MAX_IN_CARDS = 128)', 'cards');
   }
-  if (p.wasm_replay_io_ptr) add(p.wasm_replay_io_ptr, p.wasm_replay_io_cap||0, 'replay_io', `replay-codec scratch buffer (${kib(p.wasm_replay_io_cap||0)} cap)`, 'replay');
+  if (p.wasm_replay_io_ptr) add(p.wasm_replay_io_ptr, p.wasm_replay_io_cap||0, 'replay_io', 'replay-codec scratch buffer (2 MiB cap)', 'replay');
 
   anchors.sort((a,b)=>a.start-b.start);
   // assemble ordered regions with gap-fill

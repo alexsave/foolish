@@ -265,11 +265,11 @@
       ['linear memory', (mm.memTop / 1048576).toFixed(2) + ' MiB', m.memPages + ' pages'],
       ['stack', kib(mm.stackSize), '@ 0'],
       ['static footprint', (staticEnd / 1048576).toFixed(2) + ' MiB', 'to __heap_base'],
-      ['growable', m.memGrowable ? 'yes' : 'no', m.memGrowable ? 'max = ∞' : 'pinned to ' + m.memPages + (m.memPages === 1 ? ' page' : ' pages')],
+      ['growable', m.memGrowable ? 'yes' : 'no', 'max = ∞'],
     ]));
     const hasStack = mm.regions.some(r => r.kind === 'stack' && (r.end - r.start) > 0);
     const c = card('Linear memory at module init', 'address 0 → top · scroll down', m.attributed
-      ? 'One flat <code class="inl">ArrayBuffer</code>. With <code class="inl">--stack-first</code> the C shadow stack sits at the very bottom and grows <b>down</b>; then static data and the zero-init engine/bot buffers. Every region is sized from a measured max (docs/WASM_L1_BUDGET.md) and anchored by its <code class="inl">wasm_*_ptr</code> getter constant — the numbers below are exact.'
+      ? 'One flat <code class="inl">ArrayBuffer</code>. With <code class="inl">--stack-first</code> the C shadow stack sits at the very bottom and grows <b>down</b>; static data, then the big zero-init engine/bot buffers, then a 2 MiB replay scratch fill the rest. Region sizes are exact; the named buffers are anchored by their <code class="inl">wasm_*_ptr</code> getter constants.'
       : 'One flat <code class="inl">ArrayBuffer</code>' + (hasStack ? '. A mutable i32 global (the LLVM <code class="inl">__stack_pointer</code>) marks the shadow stack at the bottom, growing <b>down</b>; ' : ', with ') + 'the initialized data segments and the buffers above them make up the static footprint. Region sizes are exact.');
     const tools = el('div', 'memtools');
     const seg = el('div', 'seg');
@@ -280,7 +280,7 @@
     });
     tools.appendChild(seg);
     tools.appendChild(el('span', null, '<span style="font-size:11.5px;color:var(--faint)">' +
-      (memMode === 'linear' ? 'heights are true byte proportions — the largest region dominates the module' : 'heights ∝ log₂(size) so tiny regions stay readable') + '</span>'));
+      (memMode === 'linear' ? 'heights are true byte proportions — the 2 MiB replay buffer really is that big' : 'heights ∝ log₂(size) so tiny regions stay readable') + '</span>'));
     c.appendChild(tools);
     c.appendChild(legend(Object.keys(MEMKIND).map(k => ['var(--mem-' + k + ')', MEMKIND[k]])));
 

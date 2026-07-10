@@ -60,15 +60,15 @@ WORK="$WORK" BUILD="$BUILD" node - > "$WORK/config.json" <<'NODE'
 const W = process.env.WORK, B = process.env.BUILD;
 console.log(JSON.stringify({
   title: 'WASM Anatomy · foolish / cnitro',
-  subtitle: 'L1-budgeted build · guards = 1 page (64 KiB)',
+  subtitle: 'foolish · cnitro rules kernel',
   symfile: `${W}/symfile.tsv`,
   modules: [
     { key:'rules', human:'rules.wasm', wasm:`${B}/rules.wasm`, named:`${B}/named/rules.named.wasm`,
-      blurb:'The production rules kernel: engine + legal-move generator + replay codec, compiled freestanding. Shipped base64-embedded in rules_wasm.ts and imported by the Deno edge functions AND the browser (replay decode). Linear memory 5 pages (320 KiB), down from 53 after the L1 budget pass (docs/WASM_L1_BUDGET.md).' },
+      blurb:'The production rules kernel: engine + legal-move generator + replay codec, compiled freestanding. Shipped base64-embedded in rules_wasm.ts and imported by the Deno edge functions AND the browser (replay decode).' },
     { key:'guards', human:'guards.wasm', wasm:`${B}/guards.wasm`, named:`${B}/named/guards.named.wasm`,
-      blurb:'The smallest kernel: game.c only — no move enumeration, no replay codec. Backs the browser UI move-gates (validate-only) and optimistic apply. One engine, not two. PINNED to one 64 KiB wasm page (--initial-memory = --max-memory), L1-resident on Graviton/Neoverse; wasm-ld refuses to link if a buffer overruns the page.' },
+      blurb:'The smallest kernel: game.c only — no move enumeration, no replay codec. Backs the browser UI move-gates (validate-only) and optimistic apply. One engine, not two.' },
     { key:'bots', human:'bots.wasm', wasm:`${B}/bots.wasm`, named:`${B}/named/bots.named.wasm`,
-      blurb:'The rules kernel PLUS every algorithmic bot strategy and the choose-move bridge. A superset of rules.wasm, loaded only where bots run. Ships as a gzip static asset, not a base64 embed. Linear memory: 18 pages (1.13 MiB) initial, down from 64; it GROWS on first play to 22 pages (~1.375 MiB peak, what CI/edge charge) when the cordite solver bump-allocates its transposition table — shrunk 1 MiB -> 128 KiB (CD_TT_BITS 16->13). Sizing was validated by a per-game move-divergence study (docs/WASM_L1_BUDGET.md): against the table that ships today (TT16) the shrunk table plays octogen identically (0/1720 games); the divergence-vs-infinite curve is the survival function of octogen’s per-game solver working set. Down from a 5.13 MiB base peak (-73%). Fitting bots in L1 is a solver problem, not a layout one.' },
+      blurb:'The rules kernel PLUS every algorithmic bot strategy and the choose-move bridge. A superset of rules.wasm, loaded only where bots run. Ships as a gzip static asset, not a base64 embed.' },
   ],
 }));
 NODE
