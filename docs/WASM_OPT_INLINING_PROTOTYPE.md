@@ -64,31 +64,57 @@ where `wasm-ld` LTO was not. Bot parity holding ⇒ **zero strength change**
 (moves are byte-identical). (`e2e/pass_parity` needs a local Postgres and is
 unrelated — it fails the same way on the baseline assets in this sandbox.)
 
-## Runtime (warm)
+## Runtime — two regimes
+
+### (a) Warm micro-bench — kernel in isolation
 
 Deterministic micro-bench (`e2e/bench_wasm_inlining.ts`): drive full games
 with the heavy MC bot **octogen**, timing only `wasmChooseMove`. Both modules
 do byte-identical work (2,200 decisions); only codegen differs. 3 reps each,
-Node 22 / V8:
+Node 22 / V8 (fully tiered to TurboFan):
 
 | module | median `choose_ms` | ns / decision |
 | --- | --- | --- |
 | baseline (shipped) | ~24,120 | ~10.9M |
 | `-O2 --inlining-optimizing` | ~23,096 | ~10.5M |
 
-**~4% faster warm**, ~1 point above run-to-run variance. Caveat: this is V8
-fully tiered up to TurboFan (**warm**). Production edge workers are the
-short-lived **Liftoff** regime the Makefile's `-Oz` rationale targets; heavy
-bots "self-tier-up mid-search" within a 2 s decision, so *some* of this is
-reachable in prod, but confirming it needs the real `bench:bot-e2e` p50 harness
-under the edge runtime, not this warm Node number.
+~4% faster **on the isolated kernel**, ~1 point above variance.
+
+### (b) `bench:bot-e2e` p50 — the number a human waits on
+
+The real harness: full server pipeline against real Postgres
+(`loadCompleteGame` → belief hydrate → kernel choose → apply → CAS commit),
+driven by the four belief/MC bots. `BENCH_BOT_MOVES=40`, 3 reps, median p50 (ms):
+
+| bot | baseline p50 | `-O2 --inlining-optimizing` p50 | Δ |
+| --- | --- | --- | --- |
+| octogen  | 68.4 | 69.7 | ~0 (noise; ranges overlap) |
+| semtex   | 55.5 | 55.1 | ~0 (noise) |
+| **cordite**  | 14.8 | **13.4** | **−9% (consistent, non-overlapping)** |
+| fulminate| 12.5 | 12.2 | ~0 (noise) |
+
+**The warm ~4% does NOT translate to the bots that gate the 2 s cap.**
+octogen/semtex p50 is dominated by belief hydration + MC world allocation +
+the DB round-trip, not the inlinable kernel arithmetic — so the kernel
+micro-speedup washes out end-to-end. The only clear win is **cordite (−9%)**, a
+lighter MC bot whose per-decision cost is mostly kernel math — and at ~14 ms it
+is already far under any latency the user notices. The heavy thinkers that
+actually approach the cap are unmoved.
 
 ## Verdict
 
 Feasible and *safe* — it clears the correctness gate LTO failed — but the
-payoff is **marginal**: −1.9% gzip and ~4% warm latency, on `bots.wasm` only,
-and only with `-O2 --inlining-optimizing` (the intuitive `--inlining` / `-O3`
-choices regress size). It adds a Binaryen build dependency for that. Left
-**off by default**; the opt-in hook is in place so it can be A/B'd against the
-real edge p50 harness before any decision to ship. rules/guards should never
-enable it — they're already at the floor.
+payoff, measured on the metric that matters, is **not worth shipping now**:
+
+- **Size:** −1.9% gzip on `bots.wasm` only (rules/guards already at `-Oz`'s floor).
+- **End-to-end latency:** no improvement on the heavy belief bots that gate the
+  2 s cap; a real but immaterial −9% on cordite (already ~14 ms). The
+  attractive ~4% warm-kernel number is masked by belief + DB overhead in the
+  real pipeline.
+- **Cost:** a new Binaryen build dependency, and only `-O2 --inlining-optimizing`
+  helps at all — the intuitive `--inlining` / `-O3` choices *regress* size.
+
+Left **off by default**. The opt-in `WASM_POSTOPT` hook stays so this can be
+re-A/B'd cheaply if the pipeline changes (e.g. belief hydration moves off the
+hot path, or a bot appears whose p50 is kernel-bound). rules/guards should
+never enable it.
