@@ -100,15 +100,40 @@ export async function buildPlayerViewRows(
     return rows;
 }
 
-// Full upsert rows (with game_id + version) for the CACHE-WARM / BACKFILL path:
-// get_game calls this when it serves a game to populate its missing player_views
-// rows from the games row it already read, so that a game predating the cache
-// (or any cache miss) becomes a direct SELECT on the next open instead of hitting
-// the edge function again.
-//
-// Writes rows for ALL human participants, not just the fetcher: whoever opens (or
-// spectates) a game first backfills the whole game for everyone, so the cache
-// converges across users in one pass.
+// The SHARED spectator view (seat -1) for a game — the fully-masked view (every
+// hand a card-back, deck order hidden) that any authenticated user may read
+// (spectator_views table, looser RLS), replacing get_game's spectate path. Same
+// packed envelope decodePackedGame yields a PublicGame (no self) from. Masking
+// stays in the C kernel for a dealt game: wasm_view_serialize(-1) (VIEW_SPECTATOR)
+// via serializeViewBlobs([-1]); a lobby has no kernel state, so the pure-TS
+// view.c mirror writeMaskedState(game, -1) produces the identical bytes.
+export async function buildSpectatorView(
+    game: Game, stateHex: string | null, version: number,
+): Promise<string> {
+    const roster = rosterOf(game);
+    const dealt = stateHex !== null && game.status !== GAME_STATUS.WAITING;
+
+    let viewBlob: Uint8Array;
+    if (dealt) {
+        const { serializeViewBlobs } = await import('./wasm/engine.ts');
+        const { hexToBytes } = await import('./replay/codec.ts');
+        viewBlob = serializeViewBlobs(hexToBytes(stateHex!), [-1]).get(-1)!;
+    } else {
+        const body: number[] = [];
+        writeMaskedState(game, -1, body); // -1 => no seat visible (all card-backs)
+        viewBlob = Uint8Array.from([VIEW_FORMAT_VERSION, 0xff, ...body]);
+    }
+    return bytesToBareHex(encodeGameResponse(version, -1, roster, viewBlob));
+}
+
+// Full upsert rows (with game_id + version) for a CACHE-WARM / BACKFILL path:
+// the same per-participant rows commit_game writes, but shaped for a fill-if-
+// absent write from OUTSIDE a commit (whoever reads a game first can backfill the
+// whole game for everyone, so a game predating the cache becomes a direct SELECT
+// on the next open). No runtime caller today — get_game (its only user) was
+// removed once all live games had views — but the e2e suite exercises it to pin
+// the byte-identical-rebuild + fill-if-absent invariants a future backfill relies
+// on.
 //
 // Each row is byte-identical to what commit_game wrote for that (game, player)
 // at this version — same builder (buildPlayerViewRows) — so the warm write is a

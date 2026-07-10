@@ -7,6 +7,7 @@ import { MAX_PLAYERS } from '@shared/constants.ts';
 import { get_next_player_index, card_comp } from '@shared/common_utils.ts';
 import { ANIMATION_TIME } from '../constants/constants';
 import { optimisticOverlay } from '../state/optimisticOverlay';
+import { animationFeed } from '../state/animationFeed';
 import { cardKey, mergeHandOrder, reconcileHandMemory, displayedHand, mergeTableBattles, applyOverlayEntries } from '../state/clientReconcile';
 import { ACTION_STATUS, decodeActionResponse, encodeAction, encodeActionRequest } from '@shared/wire/awire.ts';
 import { decodePackedGame } from '@shared/wire/view.ts';
@@ -39,9 +40,9 @@ const ServerActionsContext = createContext<ServerActionsType | null>(null);
 const ServerStateContext = createContext<ServerStateType | null>(null);
 
 // (The old `handsQuery` PostgREST projection is gone: the client no longer
-// reads player_hands/games directly — game state is fetched, already
-// personalized from the packed kernel blob, via the get_game / get_my_games
-// edge functions. See docs/STATE_BLOB_CUTOVER.md.)
+// reads player_hands/games directly — it reads its own already-masked packed
+// view straight from the player_views / spectator_views caches (a plain indexed
+// RLS SELECT), with no edge round-trip. See docs/PLAYER_VIEWS.md.)
 
 // for now we'll just use a fake auth impl
 // this will be kinda similar to client.js
@@ -554,10 +555,10 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
     // Fast path for the game screen (docs/PLAYER_VIEWS.md): a PLAYER reads their
     // own already-masked view straight from player_views — a plain indexed RLS
-    // SELECT, no get_game edge round-trip. RLS scopes it to the caller, and the
+    // SELECT, no edge round-trip. RLS scopes it to the caller, and the
     // (game_id, player_id) PK means at most one row. Returns null for a spectator
     // (no row), a cache miss (game predating the cache), or any failure — the
-    // caller then falls back to get_game, which also masks spectator views.
+    // caller then falls back to spectator_views (the shared masked view).
     const loadGameFromCache = async (gameId: string): Promise<PersonalGame | null> => {
         try {
             if (!userIdRef.current) return null;
@@ -576,48 +577,43 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         }
     };
 
+    // Spectator fast path (docs/PLAYER_VIEWS.md): a NON-participant reads the
+    // shared, fully-masked (seat -1) view straight from spectator_views — a plain
+    // indexed RLS SELECT, no edge round-trip, replacing the get_game spectate
+    // path. Readable by any authenticated user (the row carries no hidden state),
+    // one row per game. Returns null on a miss/failure; `self` is always null
+    // (a spectator has no seat). Live updates arrive over the game-<id> broadcast.
+    const loadSpectatorFromCache = async (gameId: string): Promise<PersonalGame | null> => {
+        try {
+            const { data, error } = await supabase
+                .from('spectator_views')
+                .select('view')
+                .eq('game_id', gameId)
+                .maybeSingle();
+            if (error || !(data as any)?.view) return null;
+            const decoded = decodePackedGame(hexToBytes((data as any).view));
+            if (!decoded) return null;
+            const g = decoded.game as PersonalGame;
+            return { ...g, self: (g as any).self ?? null };
+        } catch {
+            return null;
+        }
+    };
+
     const loadGameInternal = async (gameId: string): Promise<{ game_id: string }> => {
         try {
             // Player fast path: the caller's own masked view from the
-            // player_views cache. Falls back to get_game for spectators / a cold
-            // cache (the authoritative rebuild path, which also masks spectators).
+            // player_views cache. Falls back to the shared spectator_views row
+            // (fully masked, no self) for a non-participant — both are plain
+            // indexed RLS SELECTs, no edge function.
             let game: PersonalGame | null = await loadGameFromCache(gameId);
 
             if (!game) {
-                // The volatile game state lives in the packed kernel blob. With
-                // packed:true a DEALT game comes back as binary (roster JSON +
-                // the caller's kernel-masked view blob) that materializes into a
-                // PersonalGame right here — the render boundary; a lobby / legacy
-                // row falls back to the old personalize_game JSON. functions-js
-                // hands octet-stream responses over as a Blob, JSON as a parsed
-                // object, so the response type is the format switch.
-                const { data, error } = await supabase.functions.invoke('get_game', {
-                    body: { game_id: gameId, packed: true },
-                });
-
-                if (!error && typeof Blob !== 'undefined' && data instanceof Blob) {
-                    const decoded = decodePackedGame(new Uint8Array(await data.arrayBuffer()));
-                    if (!decoded) {
-                        throw new Error(`Game ${gameId}: unreadable packed game response`);
-                    }
-                    // decodePackedGame stamps game.version from the envelope; a
-                    // spectator gets no `self` (null below), same as the JSON path.
-                    game = { ...(decoded.game as PersonalGame), self: (decoded.game as PersonalGame).self ?? null };
-                } else {
-                    // Legacy JSON: has `self` for a player, no `self` for a
-                    // spectator (self stays null). Typed loosely like the old
-                    // direct reads — PersonalGame.self is non-null in the type but
-                    // null at runtime for spectators.
-                    const fetched: any = data;
-                    if (error || !fetched || fetched.error) {
-                        throw new Error(fetched?.error || `Game ${gameId} not found`);
-                    }
-                    game = { ...fetched, self: fetched.self ?? null };
-                }
+                game = await loadSpectatorFromCache(gameId);
             }
 
-            // Both the cache hit and each fetch branch above assign or throw, so
-            // this only narrows the type (game is non-null here).
+            // Neither cache had a row (game predates the caches, or was pruned):
+            // there is no edge fallback anymore, so this is a genuine not-found.
             if (!game) throw new Error(`Game ${gameId} not found`);
 
             if (game.self) {
@@ -680,11 +676,21 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 const gameChannel = supabase.channel(`game-${gameId}`, {
                     config: { private: true }
                 });
-                // Spectators currently don't need to listen to any events
-                // All game state is included in animation events
-                gameChannel.subscribe((status, err) => status === 'SUBSCRIBED'
-                    ? console.log('Connected to game channel:', `game-${gameId}`)
-                    : console.error('Game channel error:', err));
+                // Spectators get LIVE game updates too: the server broadcasts the
+                // fully-masked (seat -1) animation stream to this game-<id> topic
+                // (broadcastPackedEventBuffers / broadcastAnimationEvents), built
+                // by the same WASM/event-wire encoder the players' gu-<id>-<user>
+                // streams use. Republish it into animationFeed exactly like
+                // RealtimeAnimationFeed does for players — the packed envelope
+                // ({t:'as2',s,v,b}) carries no JS state, so attach the game id so
+                // the consumer can pick the decode roster.
+                gameChannel
+                    .on('broadcast', { event: 'animation_events' }, (payload) => {
+                        animationFeed.publish({ ...payload.payload, game_id: gameId });
+                    })
+                    .subscribe((status, err) => status === 'SUBSCRIBED'
+                        ? console.log('Connected to game channel:', `game-${gameId}`)
+                        : console.error('Game channel error:', err));
 
                 // Subscribe to chat messages for spectators too
                 subscribeToChatMessages(gameId).catch(console.error);

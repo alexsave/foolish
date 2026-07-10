@@ -24,11 +24,20 @@ void *memcpy(void *dst, const void *src, size_t n) { __builtin_memcpy(dst, src, 
 void *memset(void *dst, int c, size_t n) { __builtin_memset(dst, c, n); return dst; }
 
 // ---------- shared buffers ----------------------------------------------
-// State export is <1KB; the widest export here is the per-action log stream
-// (2 + MAX_LOGS x (4 + MAX_LOG_PAIRS x 2)). At the guards build's 64/64 that
-// is ~8KB — 16KB clears it with room to spare.
-#define IO_CAP (16 * 1024)
+// State export is <1.1KB; the widest WRITE this bridge can make is the
+// per-action log stream (2 + MAX_LOGS x (4 + MAX_LOG_PAIRS x 2)) = 8,450B
+// at the guards build's 64/64 — 8.5KB clears it even though the log export
+// isn't currently in the linker's export list (it must stay cleared so
+// reviving that export can never overflow into g_game).
+#define IO_CAP 8704
+// The shipped guards module exports NO snapshot readers (see the Makefile's
+// WASM_GUARDS_EXPORTS trim), so the ring is write-only — the build passes
+// -DMAX_SNAPS=1 to shrink the dead slots from 48x1,160B to one. Reviving
+// snapshots = re-add the exports AND raise this back (16 covers the
+// measured worst of 11 fires per action; see tests/l1_measure.c).
+#ifndef MAX_SNAPS
 #define MAX_SNAPS 48
+#endif
 #define MAX_IN_CARDS 128
 
 static unsigned char g_io[IO_CAP];
@@ -133,19 +142,25 @@ int wasm_export_snapshot(int i) { return put_state((const Game *)(const void *)g
 // when the move is legal, else the ENGINE_REJECT_* code.
 
 static Card g_clone_hidden; // unused placeholder to keep the struct copy honest
+// The clone lives in BSS, not on the C stack: sizeof(Game) is ~9.6KB at the
+// guards caps, and keeping it off the stack is what lets this module link
+// with a 16KB shadow stack (the whole module then fits ONE wasm page — the
+// L1-cache budget, docs/WASM_L1_BUDGET.md). Single-threaded by design like
+// every other static here, and gates never nest.
+static Game g_validate_tmp;
 static int validate_run(int kind, int player_idx, int n) {
-    Game tmp;
-    game_clone(&tmp, &g_game);
+    Game *tmp_p = &g_validate_tmp;
+    game_clone(tmp_p, &g_game);
     void (*saved)(const Game *, int, int) = engine_snap_hook;
     engine_snap_hook = 0; // a gate must not perturb the snapshot buffer
     engine_last_reject = ENGINE_REJECT_NONE;
     int ok = 0;
     switch (kind) {
-        case 0: ok = handle_attack(&tmp, player_idx, g_in_a, n); break;
-        case 1: ok = handle_cover(&tmp, player_idx, g_in_a, g_in_b, n); break;
-        case 2: ok = handle_pass(&tmp, player_idx, g_in_a, n); break;
-        case 3: ok = handle_pickup(&tmp, player_idx); break;
-        case 4: ok = handle_good(&tmp, player_idx); break;
+        case 0: ok = handle_attack(tmp_p, player_idx, g_in_a, n); break;
+        case 1: ok = handle_cover(tmp_p, player_idx, g_in_a, g_in_b, n); break;
+        case 2: ok = handle_pass(tmp_p, player_idx, g_in_a, n); break;
+        case 3: ok = handle_pickup(tmp_p, player_idx); break;
+        case 4: ok = handle_good(tmp_p, player_idx); break;
         default: break;
     }
     engine_snap_hook = saved;

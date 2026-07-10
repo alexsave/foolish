@@ -15,6 +15,9 @@
 #include <stddef.h>   // offsetof (solver clones skip the dead deck[] tail)
 #include <stdint.h>
 #include <stdlib.h>   // calloc/free for the solver transposition table
+#ifdef CD_TT_STATS
+#include <stdio.h>    // measurement-only (native); wasm never sets CD_TT_STATS
+#endif
 
 // ---------- card-id helpers --------------------------------------------
 
@@ -790,7 +793,15 @@ typedef struct {
 // keeps the value provably correct regardless of the window it was found
 // under). Cleared per top-level solve call.
 
+// Build parameter. 16 = 65,536 entries x 16 B = 1 MiB (the historical value).
+// The table is a memoization cache of EXACT endgame values, but the solver is
+// node-budget-limited (SimSolver.budget), so a smaller table can cause more
+// recomputation, exhaust the budget sooner, and change which move is chosen —
+// it is a bot-strength knob, validated by comparing cnitro_eval win-rate /
+// mean-finish / histogram across sizes (see docs/WASM_L1_BUDGET.md).
+#ifndef CD_TT_BITS
 #define CD_TT_BITS  16
+#endif
 #define CD_TT_SIZE  (1u << CD_TT_BITS)
 #define CD_TT_MASK  (CD_TT_SIZE - 1u)
 
@@ -805,13 +816,74 @@ typedef struct {
     long budget;
     int  aborted;
     int  me;
+    int  order;   // move ordering: 0 gen-order, 2 big-first (desc), 3 short-first (asc)
     CdTTEntry *tt;
 } SimSolver;
 
 static _Thread_local CdTTEntry *cd_tt = NULL;
 
+// -------- occupancy instrumentation (-DCD_TT_STATS; compiled out otherwise) --
+// Measures the distribution of I = distinct keys inserted per clear-window
+// (between cd_sim_solve_reset calls). At the default CD_TT_BITS=16 the table is
+// effectively collision-free, so occupancy == true distinct-key count. This
+// distribution drives the direct-mapped birthday-collision model that sizes a
+// smaller table with a stated confidence bound (docs/WASM_L1_BUDGET.md).
+#ifdef CD_TT_STATS
+#define CD_STAT_MAXB 65537
+long cd_stat_hist[CD_STAT_MAXB];   // hist[I] = #windows that inserted I distinct keys
+long cd_stat_windows = 0;          // total clear-windows seen
+long cd_stat_max_I = 0;            // largest I observed
+long cd_stat_collisions = 0;       // evictions at store (should be ~0 at TT16)
+// Store-census (for the working-set-reduction plan, docs/SOLVER_TT_WORKING_SET_PLAN.md):
+//   ins_cards[c] = distinct-key insertions at nodes with c cards across both hands
+//                  (run at TT22 so occupancy ~= distinct keys) — locates the W mass.
+//   failhi/faillo = node completions whose value fell OUTSIDE the node's window
+//                  (fail-soft bounds). Today these store NOTHING — each is thrown-
+//                  away work a bounds-storing TT (CD_TT_BOUNDS) could cache.
+long cd_stat_ins_cards[25];
+long cd_stat_failhi = 0, cd_stat_faillo = 0;
+static _Thread_local long cd_stat_occ = 0;
+static _Thread_local long cd_stat_game_max = 0;  // largest window this game
+void cd_tt_stats_dump(void) {
+    fprintf(stderr, "CD_TT_STATS windows=%ld max_I=%ld collisions=%ld\n",
+            cd_stat_windows, cd_stat_max_I, cd_stat_collisions);
+    fprintf(stderr, "CD_TT_STATS2 failhi=%ld faillo=%ld\n", cd_stat_failhi, cd_stat_faillo);
+    for (int i = 0; i < 25; i++)
+        if (cd_stat_ins_cards[i]) fprintf(stderr, "CD_TT_CARDS %d %ld\n", i, cd_stat_ins_cards[i]);
+    for (long i = 0; i < CD_STAT_MAXB; i++)
+        if (cd_stat_hist[i]) fprintf(stderr, "CD_TT_HIST %ld %ld\n", i, cd_stat_hist[i]);
+}
+static _Thread_local int cd_stat_atexit = 0;
+#endif
+
+// Per-game working set, keyed by seed. W = the largest key-set that had to
+// coexist in the table during one game (one window for the persist bots, the
+// max single-solve window for the reset bots) — the quantity that must fit
+// under M for the game to play like an unbounded table. main_eval calls this at
+// each game's end and emits "GW <seed> <W>", so accumulation dedups on seed and
+// never double-counts a re-measured game. Returns -1 when built without stats.
+long cd_sim_stats_game_flush(void) {
+#ifdef CD_TT_STATS
+    if (cd_stat_occ > 0) {                 // flush the still-open final window
+        long b = cd_stat_occ < CD_STAT_MAXB ? cd_stat_occ : CD_STAT_MAXB - 1;
+        cd_stat_hist[b]++;
+        cd_stat_windows++;
+        if (cd_stat_occ > cd_stat_game_max) cd_stat_game_max = cd_stat_occ;
+    }
+    long w = cd_stat_game_max;
+    cd_stat_game_max = 0;
+    cd_stat_occ = 0;
+    return w;
+#else
+    return -1;
+#endif
+}
+
 static CdTTEntry *cd_tt_get(void) {
     if (!cd_tt) cd_tt = (CdTTEntry *)calloc(CD_TT_SIZE, sizeof(CdTTEntry));
+#ifdef CD_TT_STATS
+    if (!cd_stat_atexit) { cd_stat_atexit = 1; atexit(cd_tt_stats_dump); }
+#endif
     return cd_tt;
 }
 
@@ -834,6 +906,57 @@ static uint64_t sim_fingerprint(const SimState *s, int a, int b) {
     h ^= h >> 31;
     return h ? h : 1;
 }
+
+#ifdef CD_TT_SUITSYM
+// Suit-symmetry canonical fingerprint: the three NON-trump suits are
+// interchangeable (a card's suit only matters via trump + same-suit covering),
+// so a position and any permutation of its non-trump suits have the SAME game
+// value. We key the TT on the canonical orbit representative = the minimum
+// fingerprint over the 6 permutations of the non-trump suits. Every position in
+// an orbit yields the same set of 6 fingerprints, hence the same min -> the 6
+// equivalent positions collapse to ONE table entry. The stored value is
+// permutation-invariant, so reuse across the orbit is exact and the search
+// returns identical values (move-preserving). Cards are suit*13+rank; hands are
+// 52-bit masks with one 13-bit block per suit.
+static uint64_t sim_fingerprint_canon(const SimState *s, int a, int b) {
+    static const int P[6][3] = {{0,1,2},{0,2,1},{1,0,2},{1,2,0},{2,0,1},{2,1,0}};
+    int power = s->power_suit;
+    int nt[3], k = 0;
+    for (int su = 0; su < 4; su++) if (su != power) nt[k++] = su;
+    uint64_t best = ~0ull;
+    for (int p = 0; p < 6; p++) {
+        int map[4]; map[power] = power;
+        map[nt[0]] = nt[P[p][0]]; map[nt[1]] = nt[P[p][1]]; map[nt[2]] = nt[P[p][2]];
+        // remap a 52-bit hand: move each 13-bit suit block to map[suit]
+        uint64_t ha = 0, hb = 0;
+        for (int su = 0; su < 4; su++) {
+            ha |= ((s->hand[a] >> (su * 13)) & 0x1FFFull) << (map[su] * 13);
+            hb |= ((s->hand[b] >> (su * 13)) & 0x1FFFull) << (map[su] * 13);
+        }
+        uint64_t h = ha * 0x9E3779B97F4A7C15ull;
+        h ^= (hb + 0x7F4A7C15ull) * 0xC2B2AE3D27D4EB4Full;
+        uint64_t t = 0;
+        for (int i = 0; i < s->num_battles; i++) {
+            int ac = s->atk[i]; uint64_t cell = (uint64_t)(map[ac / 13] * 13 + ac % 13);
+            if (s->covered_mask & (1ull << i)) {
+                int dc = s->def[i];
+                cell |= ((uint64_t)(map[dc / 13] * 13 + dc % 13) << 8) | (1ull << 16);
+            }
+            t = t * 1099511628211ull + (cell + 1);
+        }
+        h ^= t * 0xFF51AFD7ED558CCDull;
+        h ^= (uint64_t)s->defender << 1;
+        h ^= (uint64_t)s->first_attacker << 9;
+        h ^= (uint64_t)(s->good_mask & 0xff) << 17;
+        h ^= (uint64_t)s->num_battles << 25;
+        h ^= 0x94D049BB133111EBull;
+        h ^= h >> 31;
+        h = h ? h : 1;
+        if (h < best) best = h;
+    }
+    return best;
+}
+#endif
 
 // The single attacker (the non-defender IN player) in a 2-player node.
 static inline int sim_other_in(const SimState *s, int p) {
@@ -1027,17 +1150,81 @@ static int sim_gen_moves(const SimState *s, int actor, SolMove *buf, int max_n) 
     return 0;
 }
 
+// ---- TT thrash trace (-DCD_TT_TRACE; compiled out otherwise) --------------
+// Emits a machine-readable exploration trace for ONE selected endgame-solve
+// group (CD_TRACE_GROUP=<n>, group counter bumped per cd_sim_solve_reset), and
+// optionally only the root moves whose applied table matches CD_TRACE_ROOT (a
+// substring; empty = all). Lines (stderr):
+//   SOLVE   g=<grp> call=<i> me=<me> d0=<d> a=<al> b=<be> budget=<b> root=<tbl>
+//   SOLRET  g=<grp> call=<i> v=<v> aborted=<a> nodes=<n> budgetleft=<b>
+//   ENTER   <nid> <pid> d=<depth> a=<alpha> b=<beta> edge=<move>
+//   KEY     <nid> key=<hex> actor=<a> max=<0|1> nm=<nmoves>
+//   RET     <nid> v=<value> why=<reason>
+//   HIT     <nid> key=<hex> depth=<d> stored_depth=<sd> value=<v>
+//   STORE   <nid> slot=<s> key=<hex> depth=<d>
+//   EVICT   <nid> slot=<s> oldkey=<hex> olddepth=<d> newkey=<hex> newdepth=<d>
+#ifdef CD_TT_TRACE
+#include <stdlib.h>
+#include <string.h>
+static _Thread_local long cd_tr_group  = -1;   // current group (bump on reset)
+static _Thread_local long cd_tr_target = -2;   // group to trace (-2 uninit)
+static _Thread_local const char *cd_tr_rootf = (const char*)-1; // CD_TRACE_ROOT
+static _Thread_local int  cd_tr_active = 0;     // this solve_d call is traced
+static _Thread_local long cd_tr_nid    = 0;     // node id counter (per group)
+static _Thread_local long cd_tr_parent = 0;     // current parent node id
+static _Thread_local long cd_tr_nodes  = 0;     // nodes expanded this solve_d
+static _Thread_local int  cd_tr_call   = 0;     // solve_d index within group
+static _Thread_local char cd_tr_edge[24] = "root"; // pending inbound-edge label
+static const char CD_TR_SUIT[4] = {'S','H','C','D'};
+static const char *CD_TR_VAL[14] = {"?","2","3","4","5","6","7","8","9","10","J","Q","K","A"};
+static void cd_tr_card(char *b, int id) {
+    int v = id % 13 + 1, s = id / 13;
+    snprintf(b, 8, "%s%c", (v>=1&&v<=13)?CD_TR_VAL[v]:"?", (s>=0&&s<4)?CD_TR_SUIT[s]:'?');
+}
+static void cd_tr_table(char *out, size_t n, const SimState *s) {
+    out[0]=0; char c[8];
+    for (int i=0;i<s->num_battles;i++){
+        cd_tr_card(c,s->atk[i]); strncat(out,c,n-strlen(out)-1);
+        if (s->covered_mask&(1ull<<i)){ strncat(out,"/",n-strlen(out)-1);
+            cd_tr_card(c,s->def[i]); strncat(out,c,n-strlen(out)-1);} }
+}
+static void cd_tr_move(char *out, size_t n, const SolMove *m) {
+    const char *t = m->type==MV_ATTACK?"A":m->type==MV_COVER?"C":
+                    m->type==MV_PASS?"P":m->type==MV_PICKUP?"PU":
+                    m->type==MV_GOOD?"G":"?";
+    out[0]=0; strncat(out,t,n-1);
+    for (int i=0;i<m->n;i++){ char c[8]; cd_tr_card(c,m->cards[i]);
+        size_t l=strlen(out); if(l+1<n){ out[l]=(i?',':':'); out[l+1]=0;
+            strncat(out,c,n-strlen(out)-1);} }
+}
+static int cd_tr_grp_match(void) {
+    if (cd_tr_target == -2) { const char *e=getenv("CD_TRACE_GROUP"); cd_tr_target=e?atol(e):-1; }
+    return cd_tr_target>=0 && cd_tr_group==cd_tr_target;
+}
+#define TR_RET(v, why) do { if (cd_tr_active) { fprintf(stderr,"RET %ld v=%d why=%s\n",_nid,(int)(v),why); cd_tr_parent=_pid; } return (v); } while (0)
+#else
+#define TR_RET(v, why) return (v)
+#endif
+
 // Move-ordering key: lower = tried first. For the maximizer we want quick
 // wins; for both sides emptying the hand / ending the round tends to resolve
 // fast. We sort attacks/covers by card count desc then score, pickup/good
 // last. Ordering does not affect the value (full search), only speed.
 static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int depth) {
+#ifdef CD_TT_TRACE
+    long _nid = 0, _pid = cd_tr_parent;
+    if (cd_tr_active) {
+        _nid = ++cd_tr_nid; cd_tr_nodes++;
+        fprintf(stderr,"ENTER %ld %ld d=%d a=%d b=%d edge=%s\n",
+                _nid,_pid,depth,alpha,beta,cd_tr_edge);
+    }
+#endif
     int loser = sim_done(s);
-    if (loser >= 0) return (loser == S->me) ? -(1000 - depth) : (1000 - depth);
+    if (loser >= 0) TR_RET((loser == S->me) ? -(1000 - depth) : (1000 - depth), "term");
     int incount = sim_in_count(s);
-    if (incount == 0) return 0;
-    if (depth >= CD_SIM_SOLVE_MAX_DEPTH) { S->aborted = 1; return 0; }
-    if (--S->budget <= 0) { S->aborted = 1; return 0; }
+    if (incount == 0) TR_RET(0, "draw");
+    if (depth >= CD_SIM_SOLVE_MAX_DEPTH) { S->aborted = 1; TR_RET(0, "maxdepth"); }
+    if (--S->budget <= 0) { S->aborted = 1; TR_RET(0, "budget"); }
 
     // actor: defender-priority, then first IN actor (mirrors cd_solve).
     int actor = -1;
@@ -1046,7 +1233,7 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
         for (int i = 0; i < s->num_players; i++)
             if (sim_should_act(s, i)) { actor = i; break; }
     }
-    if (actor < 0) return 0;
+    if (actor < 0) TR_RET(0, "noactor");
 
     // Two players for the fingerprint (the only IN pair in an endgame).
     int a = -1, b = -1;
@@ -1055,31 +1242,70 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
     uint64_t key = 0;
     CdTTEntry *e = NULL;
     if (b >= 0) {
+#ifdef CD_TT_SUITSYM
+        key = sim_fingerprint_canon(s, a, b);
+#else
         key = sim_fingerprint(s, a, b);
+#endif
         e = &S->tt[key & CD_TT_MASK];
         if (e->valid && e->key == key) {
             // stored value is depth-relative to e->depth; re-base to this depth.
             int v = e->value;
             if (v > 0) v = v - (1000 - e->depth) + (1000 - depth);
             else if (v < 0) v = v + (1000 - e->depth) - (1000 - depth);
-            return v;
+#ifdef CD_TT_TRACE
+            if (cd_tr_active)
+                fprintf(stderr,"HIT %ld key=%llx depth=%d stored_depth=%d value=%d\n",
+                        _nid,(unsigned long long)key,depth,(int)e->depth,v);
+#endif
+            TR_RET(v, "tthit");
         }
     }
+#ifdef CD_TT_TRACE
+    if (cd_tr_active)
+        fprintf(stderr,"KEY %ld key=%llx actor=%d max=%d\n",
+                _nid,(unsigned long long)key,actor,(actor==S->me));
+#endif
 
     SolMove moves[CD_SIM_SOLVE_MAX_MOVES];
     int nm = sim_gen_moves(s, actor, moves, CD_SIM_SOLVE_MAX_MOVES);
-    if (nm == 0) return 0;
+    if (nm == 0) TR_RET(0, "nomoves");
     // Mirror the struct solver's `mv->n > CD_SOLVE_MAX_MOVES` bail: abort on
     // nodes with more than the cap legal moves, so we resolve/abort the exact
     // same position set as the struct solver (identical play). The buffer has
     // slack above the cap so a true count above it is still detected.
-    if (nm > CD_SOLVE_MOVES_CAP) { S->aborted = 1; return 0; }
+    if (nm > CD_SOLVE_MOVES_CAP) { S->aborted = 1; TR_RET(0, "movecap"); }
+
+    // Move ordering (insertion sort, nm small), runtime-selected by S->order:
+    //   2 = big-first (descending by card count) — aggressive cutoffs, small W,
+    //       but dives into deep lines that can trip the ply-48 abort.
+    //   3 = short-line-first (ascending) — round-enders/fewest cards first, so
+    //       short lines resolve before the search goes deep (fuller, bigger W).
+    //   0 = generation order. CD_TT_ADAPT runs 2, and on abort re-solves with 3.
+    if (S->order) {
+        int desc = (S->order == 2);
+        for (int i = 1; i < nm; i++) {
+            SolMove kv = moves[i];
+            int ki = (kv.n == 0) ? -1 : kv.n;
+            int j = i - 1;
+            while (j >= 0) {
+                int kj = (moves[j].n == 0) ? -1 : moves[j].n;
+                if (desc ? (kj >= ki) : (kj <= ki)) break;
+                moves[j + 1] = moves[j]; j--;
+            }
+            moves[j + 1] = kv;
+        }
+    }
 
     int alpha0 = alpha, beta0 = beta;   // original window for exactness test
     int maximizing = (actor == S->me);
     int best = maximizing ? -2000 : 2000;
     int applied = 0;
     SimState child;
+#ifdef CD_TT_TRACE
+    long _saved_parent = cd_tr_parent;
+    if (cd_tr_active) cd_tr_parent = _nid;
+#endif
     for (int i = 0; i < nm; i++) {
         // Copy everything EXCEPT the deck[] tail: the solver only ever runs on
         // deck-empty endgames (entered at deck_n==0 && !has_flipped) and nothing
@@ -1090,8 +1316,16 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
         memcpy(&child, s, offsetof(SimState, deck));
         sim_apply_sol(&child, actor, &moves[i]);
         applied = 1;
+#ifdef CD_TT_TRACE
+        if (cd_tr_active) cd_tr_move(cd_tr_edge, sizeof(cd_tr_edge), &moves[i]);
+#endif
         int v = sim_solve_rec(S, &child, alpha, beta, depth + 1);
-        if (S->aborted) return 0;
+        if (S->aborted) {
+#ifdef CD_TT_TRACE
+            cd_tr_parent = _saved_parent;
+#endif
+            TR_RET(0, "abort");
+        }
         if (maximizing) {
             if (v > best) best = v;
             if (best > alpha) alpha = best;
@@ -1101,7 +1335,10 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
         }
         if (alpha >= beta) break;
     }
-    if (!applied || best == -2000 || best == 2000) return 0;
+#ifdef CD_TT_TRACE
+    if (cd_tr_active) cd_tr_parent = _saved_parent;
+#endif
+    if (!applied || best == -2000 || best == 2000) TR_RET(0, "unresolved");
 
     // Memoize EXACT values only. A fail-soft alpha-beta result `best` is the
     // true game value only when it lands strictly INSIDE the original window
@@ -1109,13 +1346,51 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
     // upper bound; on a fail-high (best >= beta0) only a lower bound — storing
     // either as exact would corrupt a later lookup under a wider window. So we
     // store solely the exact case; bound nodes are simply not memoized.
-    if (e && key && best > alpha0 && best < beta0) {
-        e->key = key;
-        e->value = (int16_t)best;
-        e->depth = (uint8_t)depth;
-        e->valid = 1;
+#ifdef CD_TT_STATS
+    if (e && key) {   // census: how much completed work falls outside the window
+        if (best >= beta0) cd_stat_failhi++;
+        else if (best <= alpha0) cd_stat_faillo++;
     }
-    return best;
+#endif
+    if (e && key && best > alpha0 && best < beta0) {
+        int store = 1;
+#ifdef CD_TT_DEPTH_PREF
+        // Depth-preferred replacement: on a collision with a DIFFERENT key, keep
+        // whichever entry is closer to the root (lower ply = larger subtree below
+        // it = costliest to recompute). Empty slots and same-key refreshes always
+        // store. Aims to cut the eviction thrashing that perturbs move choice at
+        // small table sizes, at zero extra memory (one comparison).
+        if (e->valid && e->key != key && (uint8_t)depth > e->depth) store = 0;
+#endif
+        if (store) {
+#ifdef CD_TT_STATS
+            if (!e->valid) {
+                cd_stat_occ++; if (cd_stat_occ > cd_stat_max_I) cd_stat_max_I = cd_stat_occ;
+                int tc = __builtin_popcountll(s->hand[a]) + __builtin_popcountll(s->hand[b]);
+                if (tc > 24) tc = 24;
+                cd_stat_ins_cards[tc]++;   // census: which layer the distinct keys live in
+            }
+            else if (e->key != key) cd_stat_collisions++;   // eviction — must stay ~0 at TT16
+#endif
+#ifdef CD_TT_TRACE
+            if (cd_tr_active) {
+                unsigned slot = (unsigned)(key & CD_TT_MASK);
+                if (e->valid && e->key != key)
+                    fprintf(stderr,"EVICT %ld slot=%u oldkey=%llx olddepth=%d newkey=%llx newdepth=%d\n",
+                            _nid,slot,(unsigned long long)e->key,(int)e->depth,
+                            (unsigned long long)key,depth);
+                else
+                    fprintf(stderr,"STORE %ld slot=%u key=%llx depth=%d\n",
+                            _nid,slot,(unsigned long long)key,depth);
+            }
+#endif
+            e->key = key;
+            e->value = (int16_t)best;
+            e->depth = (uint8_t)depth;
+            e->valid = 1;
+        }
+    }
+    TR_RET(best, "exact");
 }
 
 // Public entry: exact value of position `s` from `me`'s perspective, with the
@@ -1135,18 +1410,80 @@ int cd_sim_solve(SimState *s, int me, int alpha, int beta, long budget, int *abo
 int cd_sim_solve_d(SimState *s, int me, int alpha, int beta, long *budget,
                    int depth0, int *aborted) {
     SimSolver S;
+    long budget0 = *budget;
     S.budget = *budget;
     S.aborted = 0;
     S.me = me;
+    S.order = 0;
+#if defined(CD_TT_ADAPT) || defined(CD_TT_ORDER2)
+    S.order = 2;              // big-first by default
+#elif defined(CD_TT_ORDER3)
+    S.order = 3;
+#endif
     S.tt = cd_tt_get();
     if (!S.tt) { if (aborted) *aborted = 1; return 0; }
+#ifdef CD_TT_TRACE
+    int _call = cd_tr_call++;
+    long _nodes0 = cd_tr_nodes;
+    char _tbl[128]; cd_tr_table(_tbl, sizeof(_tbl), s);
+    if (cd_tr_grp_match()) {
+        if (cd_tr_rootf == (const char*)-1) cd_tr_rootf = getenv("CD_TRACE_ROOT");
+        cd_tr_active = (!cd_tr_rootf || !*cd_tr_rootf || strstr(_tbl, cd_tr_rootf) != NULL);
+        strcpy(cd_tr_edge, "root");
+        if (cd_tr_active) {
+            char _h0[80], _h1[80]; int _p1=-1;
+            for (int _i=0;_i<s->num_players;_i++) if (_i!=me && s->status_p[_i]==PLAYER_STATUS_IN){_p1=_i;break;}
+            _h0[0]=0; _h1[0]=0;
+            { char c[8]; for(uint64_t x=s->hand[me];x;x&=x-1){int id=__builtin_ctzll(x);cd_tr_card(c,id);size_t l=strlen(_h0);if(l){_h0[l]=',';_h0[l+1]=0;}strncat(_h0,c,sizeof(_h0)-strlen(_h0)-1);} }
+            if(_p1>=0){ char c[8]; for(uint64_t x=s->hand[_p1];x;x&=x-1){int id=__builtin_ctzll(x);cd_tr_card(c,id);size_t l=strlen(_h1);if(l){_h1[l]=',';_h1[l+1]=0;}strncat(_h1,c,sizeof(_h1)-strlen(_h1)-1);} }
+            fprintf(stderr,"SOLVE g=%ld call=%d me=%d opp=%d power=%d def=%d fa=%d d0=%d a=%d b=%d budget=%ld root=[%s] h%d=[%s] h%d=[%s]\n",
+                    cd_tr_group,_call,me,_p1,s->power_suit,s->defender,s->first_attacker,
+                    depth0,alpha,beta,*budget,_tbl,me,_h0,_p1,_h1);
+        }
+    } else cd_tr_active = 0;
+#endif
     int v = sim_solve_rec(&S, s, alpha, beta, depth0);
+#ifdef CD_TT_ADAPT
+    // big-first (order 2) bailed on a deep line -> re-solve this position with the
+    // fuller short-line-first order (3) and a fresh budget, so we resolve it
+    // instead of dropping to the Monte-Carlo fallback. Aborts are rare, so the
+    // common path stays cheap (small W) while the knife-edge games stay correct.
+    if (S.aborted && S.order == 2) {
+        S.budget = budget0; S.aborted = 0; S.order = 0;   // fall back to the reliable std order
+        v = sim_solve_rec(&S, s, alpha, beta, depth0);
+    }
+#endif
     *budget = S.budget;
     if (aborted) *aborted = S.aborted;
+#ifdef CD_TT_TRACE
+    if (cd_tr_active)
+        fprintf(stderr,"SOLRET g=%ld call=%d v=%d aborted=%d nodes=%ld budgetleft=%ld\n",
+                cd_tr_group,_call,v,S.aborted,cd_tr_nodes-_nodes0,*budget);
+    // Always-on lightweight per-move summary (group discovery, all groups).
+    fprintf(stderr,"SUM g=%ld call=%d me=%d a=%d b=%d v=%d aborted=%d budgetleft=%ld root=[%s]\n",
+            cd_tr_group,_call,me,alpha,beta,v,S.aborted,*budget,_tbl);
+    cd_tr_active = 0;
+#endif
     return v;
 }
 
 void cd_sim_solve_reset(void) {
+#ifdef CD_TT_STATS
+    // record the window that just closed (occ = distinct keys inserted since
+    // the previous reset), then start a fresh window.
+    if (cd_stat_occ > 0) {
+        long b = cd_stat_occ < CD_STAT_MAXB ? cd_stat_occ : CD_STAT_MAXB - 1;
+        cd_stat_hist[b]++;
+        cd_stat_windows++;
+        if (cd_stat_occ > cd_stat_game_max) cd_stat_game_max = cd_stat_occ;
+    }
+    cd_stat_occ = 0;
+#endif
+#ifdef CD_TT_TRACE
+    cd_tr_group++;
+    cd_tr_call = 0;
+    if (cd_tr_grp_match()) { cd_tr_nid = 0; cd_tr_parent = 0; }
+#endif
     if (cd_tt) memset(cd_tt, 0, CD_TT_SIZE * sizeof(CdTTEntry));
 }
 

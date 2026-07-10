@@ -270,7 +270,26 @@ static int play_one_audit(uint32_t seed, int n_players, int protagonist, int opp
 
 // Play one game. Returns seat-0 finish position (1..N). Position N == durak.
 // -1 if the game aborted incomplete.
+// GAME_SIG=1: print a per-game FNV-1a hash of the PROTAGONIST's move sequence
+// (seat 0) plus its finish, to stdout — the exact "did this bot play
+// identically" signal for the TT divergence-rate measurement (see
+// docs/WASM_L1_BUDGET.md). Two builds that print the same SIG for a seed
+// played that game bit-identically.
+static int g_sig = -1;
+static int g_gw = -1;   // CD_GW=1: emit per-game seed-keyed working set "GW <seed> <W>"
+static int g_lat = -1;  // CD_LAT=1: time the protagonist's decisions (dedicated latency pass)
+// Protagonist (seat 0) decision latency: CPU time is contention-robust. Dumped
+// once at exit as "LAT <total_ns> <decisions>" (stderr) when CD_LAT is on.
+static long long g_lat_ns = 0; static long g_lat_n = 0; static int g_lat_reg = 0;
+static void lat_dump(void){ if (g_lat_n) fprintf(stderr, "LAT %lld %ld\n", g_lat_ns, g_lat_n); }
+static long long now_cpu_ns(void){ struct timespec t;
+  clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &t); return (long long)t.tv_sec*1000000000LL + t.tv_nsec; }
 static int play_one(uint32_t seed, int n_players, int protagonist, int opp) {
+    if (g_sig < 0) { const char *e = getenv("GAME_SIG"); g_sig = (e && e[0] && e[0] != '0') ? 1 : 0; }
+    if (g_gw < 0)  { const char *e = getenv("CD_GW");    g_gw  = (e && e[0] && e[0] != '0') ? 1 : 0; }
+    if (g_lat < 0) { const char *e = getenv("CD_LAT");   g_lat = (e && e[0] && e[0] != '0') ? 1 : 0; }
+    unsigned long long sig = 1469598103934665603ULL;
+    #define SIG_FOLD(x) do { sig ^= (unsigned long long)(unsigned)(x); sig *= 1099511628211ULL; } while (0)
     // Cold solver TT per game: semtex/octogen leaf solving persists the TT
     // across the worlds of a decision (sound: exact fingerprints), but
     // letting it persist ACROSS GAMES couples the two games of a --control
@@ -305,9 +324,18 @@ static int play_one(uint32_t seed, int n_players, int protagonist, int opp) {
             LegalMoves moves;
             calculate_legal_moves(&g, pi, &moves);
             if (moves.n == 0) continue;
+            long long _lt0 = (g_lat && pi == 0) ? now_cpu_ns() : 0;
             int idx = dispatch_choose(g.players[pi].strategy_key, &g, pi, &moves);
+            if (g_lat && pi == 0) {
+                g_lat_ns += now_cpu_ns() - _lt0; g_lat_n++;
+                if (!g_lat_reg) { g_lat_reg = 1; atexit(lat_dump); }
+            }
             if (idx < 0 || idx >= moves.n) continue;
             const LegalMove *m = &moves.moves[idx];
+            if (g_sig && pi == 0) {  // hash only the protagonist's chosen moves
+                SIG_FOLD(m->type); SIG_FOLD(m->n_cards);
+                for (int c = 0; c < m->n_cards; c++) { SIG_FOLD(m->cards[c].suit); SIG_FOLD(m->cards[c].value); }
+            }
             bool ok = false;
             switch (m->type) {
                 case MOVE_ATTACK: ok = handle_attack(&g, pi, m->cards, m->n_cards); break;
@@ -321,11 +349,13 @@ static int play_one(uint32_t seed, int n_players, int protagonist, int opp) {
         }
         if (!acted) break;
     }
-    if (game_done(&g) < 0) return -1;
-    for (int i = 0; i < g.num_eliminated; i++) {
-        if (g.elimination_order[i] == 0) return i + 1;
-    }
-    return g.num_players;   // seat 0 is the durak
+    int finish;
+    if (game_done(&g) < 0) finish = -1;
+    else { finish = g.num_players; for (int i = 0; i < g.num_eliminated; i++) if (g.elimination_order[i] == 0) { finish = i + 1; break; } }
+    if (g_sig) printf("SIG %u %llu fin=%d\n", seed, sig, finish);
+    if (g_gw) { long w = cd_sim_stats_game_flush(); printf("GW %u %ld\n", seed, w); }
+    return finish;
+    #undef SIG_FOLD
 }
 
 int main(int argc, char **argv) {

@@ -3,7 +3,7 @@ import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { getAuthenticatedUser } from "../_shared/auth.ts";
 import { Game, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY } from "../_shared/types.ts";
 import { createId, personalize_game } from "../_shared/common_utils.ts";
-import { buildPlayerViewRows } from "../_shared/player_views.ts";
+import { buildPlayerViewRows, buildSpectatorView } from "../_shared/player_views.ts";
 import { createClient } from 'jsr:@supabase/supabase-js';
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
@@ -21,9 +21,10 @@ const hexToBytes = (hex: string): Uint8Array => {
     return out;
 };
 
-// Create a game. A standalone handler (not wrap400) because it returns the same
-// PACKED view buffer get_game returns — the client decodes it with the shared
-// decodePackedGame, so create is no longer a JSON special case.
+// Create a game. A standalone handler (not wrap400) because it returns a PACKED
+// view buffer (the same envelope the player_views cache stores) — the client
+// decodes it with the shared decodePackedGame, so create is no longer a JSON
+// special case.
 //
 // `create` is the ONE handler whose response depends on NO database read: the new
 // lobby is fully determined by the inputs, so we build the creator's masked view
@@ -60,8 +61,11 @@ serve(async (req: Request): Promise<Response> => {
         };
 
         // The creator's packed view envelope (built by the pure-TS lobby mirror —
-        // no rules-wasm): the response body AND the player_views cache seed.
+        // no rules-wasm): the response body AND the player_views cache seed. The
+        // spectator view (seat -1) seeds spectator_views so non-participants can
+        // view the new lobby without get_game.
         const p_views = await buildPlayerViewRows(dbGameData, null, 0);
+        const p_spectator = await buildSpectatorView(dbGameData, null, 0);
         const mine = p_views.find(r => r.player_id === user_id);
 
         // Persist AFTER the response (create_game does the 3 inserts + the
@@ -77,6 +81,7 @@ serve(async (req: Request): Promise<Response> => {
                     p_player_id: user_id,
                     p_players: [{ player_id: user_id, name: user_name, status: PLAYER_STATUS.IDLE, is_ai: false }],
                     p_views,
+                    p_spectator,
                 });
                 if (!error) return;
                 if ((error as { code?: string }).code === '23505') return; // already inserted by a prior attempt

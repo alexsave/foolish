@@ -1,0 +1,450 @@
+<meta charset="utf-8">
+<title>Seed 500459 - TT thrash flips octogen's move</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root{
+  --surface-0:#f4f4f2; --surface-1:#fcfcfb; --surface-2:#ececea; --border:#dad9d4;
+  --text-primary:#0b0b0b; --text-secondary:#52514e; --text-muted:#86857f;
+  --win:#0a7a35; --win-bg:#dcefe1; --loss:#d23b3a; --loss-bg:#f7dcdc;
+  --evict:#c74a1e; --evict-bg:#fbe2d6; --stored:#2a78d6; --stored-bg:#dce9fb;
+  --hit:#12805a; --hit-bg:#d6efe5; --abort:#d23b3a;
+  --accent:#4a3aa7; --card:#ffffff; --card-red:#c0392b; --card-trump:#8a6d00;
+  --shadow:0 1px 3px rgba(0,0,0,.08),0 1px 2px rgba(0,0,0,.04);
+}
+@media (prefers-color-scheme: dark){:root{
+  --surface-0:#131312; --surface-1:#1c1c1a; --surface-2:#252523; --border:#3a3a37;
+  --text-primary:#f4f4f2; --text-secondary:#c3c2b7; --text-muted:#8e8d84;
+  --win:#3fbf72; --win-bg:#123322; --loss:#e66767; --loss-bg:#3a1a1a;
+  --evict:#e77a4d; --evict-bg:#3a2113; --stored:#57a0ee; --stored-bg:#122238;
+  --hit:#3bbd8c; --hit-bg:#0f2c20; --abort:#e66767;
+  --accent:#9085e9; --card:#2b2b28; --card-red:#e77a6a; --card-trump:#e0b83a;
+  --shadow:0 1px 3px rgba(0,0,0,.4);
+}}
+:root[data-theme="dark"]{
+  --surface-0:#131312; --surface-1:#1c1c1a; --surface-2:#252523; --border:#3a3a37;
+  --text-primary:#f4f4f2; --text-secondary:#c3c2b7; --text-muted:#8e8d84;
+  --win:#3fbf72; --win-bg:#123322; --loss:#e66767; --loss-bg:#3a1a1a;
+  --evict:#e77a4d; --evict-bg:#3a2113; --stored:#57a0ee; --stored-bg:#122238;
+  --hit:#3bbd8c; --hit-bg:#0f2c20; --abort:#e66767;
+  --accent:#9085e9; --card:#2b2b28; --card-red:#e77a6a; --card-trump:#e0b83a;
+  --shadow:0 1px 3px rgba(0,0,0,.4);
+}
+:root[data-theme="light"]{
+  --surface-0:#f4f4f2; --surface-1:#fcfcfb; --surface-2:#ececea; --border:#dad9d4;
+  --text-primary:#0b0b0b; --text-secondary:#52514e; --text-muted:#86857f;
+  --win:#0a7a35; --win-bg:#dcefe1; --loss:#d23b3a; --loss-bg:#f7dcdc;
+  --evict:#c74a1e; --evict-bg:#fbe2d6; --stored:#2a78d6; --stored-bg:#dce9fb;
+  --hit:#12805a; --hit-bg:#d6efe5; --abort:#d23b3a;
+  --accent:#4a3aa7; --card:#ffffff; --card-red:#c0392b; --card-trump:#8a6d00;
+  --shadow:0 1px 3px rgba(0,0,0,.08),0 1px 2px rgba(0,0,0,.04);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--surface-0);color:var(--text-primary);
+  font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  -webkit-font-smoothing:antialiased;}
+.wrap{max-width:960px;margin:0 auto;padding:28px 20px 80px;}
+h1{font-size:26px;line-height:1.2;margin:0 0 6px;letter-spacing:-.02em}
+h2{font-size:20px;margin:44px 0 10px;letter-spacing:-.01em;padding-top:8px}
+h3{font-size:15px;margin:20px 0 8px;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.04em;font-weight:600}
+p{margin:10px 0;color:var(--text-secondary)}
+.lede{font-size:17px;color:var(--text-secondary);max-width:70ch}
+code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.92em}
+.card-panel{background:var(--surface-1);border:1px solid var(--border);border-radius:12px;padding:18px 20px;box-shadow:var(--shadow);margin:16px 0}
+.muted{color:var(--text-muted)}
+b,strong{color:var(--text-primary)}
+/* stat tiles */
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:18px 0}
+.tile{background:var(--surface-1);border:1px solid var(--border);border-radius:12px;padding:14px 16px;box-shadow:var(--shadow)}
+.tile .n{font-size:26px;font-weight:700;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.tile .l{font-size:12.5px;color:var(--text-muted);margin-top:2px}
+.tile.win .n{color:var(--win)} .tile.loss .n{color:var(--loss)} .tile.evict .n{color:var(--evict)}
+/* playing cards */
+.hand{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.pc{display:inline-flex;align-items:center;justify-content:center;min-width:34px;height:44px;padding:0 7px;
+  background:var(--card);border:1px solid var(--border);border-radius:7px;font-weight:700;font-size:15px;
+  box-shadow:var(--shadow);font-variant-numeric:tabular-nums;color:var(--text-primary)}
+.pc.red{color:var(--card-red)} .pc.trump{border-color:var(--card-trump);border-width:2px;color:var(--card-trump)}
+.pc.sm{height:34px;min-width:26px;font-size:13px;border-radius:6px}
+.pc .s{font-size:.86em;margin-left:1px}
+/* controls */
+.seg{display:inline-flex;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;padding:3px;gap:2px}
+.seg button{border:0;background:transparent;color:var(--text-secondary);font:inherit;font-weight:600;
+  padding:6px 13px;border-radius:6px;cursor:pointer;font-size:13.5px}
+.seg button.on{background:var(--card);color:var(--text-primary);box-shadow:var(--shadow)}
+.ctl-row{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;margin:8px 0 14px}
+.ctl-row .lab{font-size:12.5px;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+/* legend */
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;margin:10px 0;font-size:13px;color:var(--text-secondary)}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.sw{width:12px;height:12px;border-radius:3px;display:inline-block;flex:none}
+/* win-hunt bars */
+.bars{display:flex;flex-direction:column;gap:7px}
+.bar-row{display:grid;grid-template-columns:96px 1fr auto;gap:10px;align-items:center}
+.bar-move{font-family:ui-monospace,monospace;font-size:13px;text-align:right;color:var(--text-secondary);white-space:nowrap}
+.bar-track{background:var(--surface-2);border-radius:4px;height:22px;position:relative;overflow:hidden}
+.bar-fill{height:100%;border-radius:4px 0 0 4px;min-width:2px;transition:width .35s ease}
+.bar-fill.win{background:var(--win)} .bar-fill.abort{background:var(--loss)}
+.bar-tag{font-size:12px;font-variant-numeric:tabular-nums;color:var(--text-secondary);white-space:nowrap;min-width:104px}
+.bar-row.chosen .bar-move{color:var(--text-primary);font-weight:700}
+.bar-row.chosen .bar-track{outline:2px solid var(--win);outline-offset:1px}
+.verdict{margin-top:14px;padding:11px 14px;border-radius:9px;font-size:14px;border:1px solid}
+.verdict.win{background:var(--win-bg);border-color:var(--win)}
+.verdict.abort{background:var(--loss-bg);border-color:var(--loss)}
+/* ladder */
+.ladder{position:relative;margin:6px 0;border-left:2px dashed var(--border);padding-left:0}
+.rung{display:grid;grid-template-columns:44px 118px 1fr;gap:10px;align-items:center;padding:2px 0;position:relative}
+.rung .d{font-size:11px;color:var(--text-muted);text-align:right;font-variant-numeric:tabular-nums}
+.rung .mv{font-family:ui-monospace,monospace;font-size:12.5px;color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rung .an{font-size:12px}
+.rung.crit{background:var(--evict-bg);border-radius:7px;padding:5px 8px;margin:3px -8px}
+.rung.crit .mv{color:var(--text-primary);font-weight:700}
+.rung.abortrow{background:var(--loss-bg);border-radius:7px;padding:7px 8px;margin:4px -8px}
+.badge{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:600;padding:2px 8px;border-radius:20px;white-space:nowrap}
+.badge.evict{background:var(--evict);color:#fff} .badge.hit{background:var(--hit);color:#fff}
+.badge.stored{background:var(--stored);color:#fff} .badge.abort{background:var(--abort);color:#fff}
+.badge.dim{background:var(--surface-2);color:var(--text-muted)}
+.collapsed{color:var(--text-muted);font-size:12.5px;font-style:italic;padding:6px 0 6px 54px}
+/* slot ping-pong */
+.slotgrid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:8px}
+@media(max-width:620px){.slotgrid{grid-template-columns:1fr}}
+.slotbox{background:var(--surface-1);border:1px solid var(--border);border-radius:10px;padding:14px;box-shadow:var(--shadow)}
+.slotbox h4{margin:0 0 4px;font-size:14px}
+.tl{list-style:none;margin:10px 0 0;padding:0;position:relative}
+.tl li{position:relative;padding:5px 0 5px 20px;font-size:13px;color:var(--text-secondary)}
+.tl li::before{content:"";position:absolute;left:4px;top:11px;width:8px;height:8px;border-radius:50%;background:var(--text-muted)}
+.tl li.store::before{background:var(--stored)} .tl li.evict::before{background:var(--evict)}
+.tl li.hit::before{background:var(--hit)} .tl li.recompute::before{background:var(--loss)}
+.tl li b{color:var(--text-primary)}
+table.tbl{border-collapse:collapse;width:100%;font-size:13px;margin:8px 0}
+table.tbl th,table.tbl td{border:1px solid var(--border);padding:6px 9px;text-align:right;font-variant-numeric:tabular-nums}
+table.tbl th:first-child,table.tbl td:first-child{text-align:left}
+table.tbl thead th{background:var(--surface-2);font-weight:600}
+.scroll{overflow-x:auto}
+.pill{display:inline-block;padding:1px 8px;border-radius:20px;font-size:12px;font-weight:600}
+.pill.win{background:var(--win-bg);color:var(--win)} .pill.abort{background:var(--loss-bg);color:var(--loss)}
+details{margin:12px 0}summary{cursor:pointer;font-weight:600;color:var(--text-secondary)}
+.footnote{font-size:12.5px;color:var(--text-muted)}
+.themebtn{position:fixed;top:12px;right:12px;z-index:9;border:1px solid var(--border);background:var(--surface-1);
+  color:var(--text-secondary);border-radius:8px;padding:6px 10px;cursor:pointer;font:inherit;font-size:13px;box-shadow:var(--shadow)}
+.arrow{color:var(--text-muted)}
+</style>
+
+<button class="themebtn" id="themebtn" title="Toggle theme">theme</button>
+<div class="wrap">
+
+<h1>One position, two moves: how transposition-table size flips octogen's play</h1>
+<p class="lede">Game <b>seed&nbsp;500459</b>, octogen vs handwritten, 2 players. octogen's exact endgame
+solver picks <b>a different opening attack at move 35</b> depending only on how big its transposition
+table is. Every finite table from TT8 up to TT18 plays one move; only the near&nbsp;collision&#8209;free
+TT22 plays another. Both lines still win &mdash; but they reveal a real search pathology.</p>
+
+<div class="tiles" id="tiles"></div>
+
+<div class="card-panel">
+<p style="margin-top:0"><b>The one&#8209;line mechanism.</b> At move&nbsp;35 the solver runs a
+<i>win&#8209;hunt</i>: it exactly solves each candidate attack under a shared node budget and takes
+the fastest forced win. At small tables, hash collisions evict two heavily&#8209;reused endgame
+positions; re&#8209;searching them drives one line down to the hard <span class="mono">depth&nbsp;48</span>
+recursion cap, which <b>aborts</b> that candidate. At TT13/TT15 <b>every</b> candidate aborts, so the
+solver returns nothing and a Monte&#8209;Carlo fallback plays <span class="mono">10H,10D</span>. At TT22
+the evictions don't happen, <span class="mono">KD</span> resolves to a forced win, and the solver plays it.</p>
+</div>
+
+<h2>1 &nbsp;The position at move 35</h2>
+<p>Deck empty, two players left &mdash; a perfect&#8209;information endgame. Trump is
+<b id="trumpname"></b>. octogen (p0) is first attacker with 8 cards; handwritten (p1) has just 2,
+including the trump ace.</p>
+<div class="card-panel">
+  <h3 style="margin-top:0">octogen &mdash; p0 (to attack)</h3>
+  <div class="hand" id="p0hand"></div>
+  <h3>handwritten &mdash; p1 (defender)</h3>
+  <div class="hand" id="p1hand"></div>
+</div>
+
+<h3>The two candidate first attacks that get chosen</h3>
+<div class="slotgrid">
+  <div class="slotbox">
+    <h4><span class="pill abort">TT8&ndash;TT18 play</span></h4>
+    <div class="hand" style="margin:10px 0"><span class="pc red">10<span class="s">&hearts;</span></span><span class="pc red">10<span class="s">&diams;</span></span></div>
+    <p class="footnote" style="margin:4px 0 0">Lead the pair of tens. Chosen by the Monte&#8209;Carlo fallback
+    <i>after the exact solver gives up</i> (every candidate aborted). Still wins &rarr; finish position 1.</p>
+  </div>
+  <div class="slotbox">
+    <h4><span class="pill win">TT22 plays</span></h4>
+    <div class="hand" style="margin:10px 0"><span class="pc red">K<span class="s">&diams;</span></span></div>
+    <p class="footnote" style="margin:4px 0 0">Lead the lone King of Diamonds. Chosen by the exact solver
+    as a <b>forced win</b> (value&nbsp;984), the fastest of the winning leads. Wins &rarr; finish position 1.</p>
+  </div>
+</div>
+<p class="footnote">Both are legal, both win. The divergence is a tie&#8209;break between winning plans that
+only the collision&#8209;free table can actually see.</p>
+
+<details>
+<summary>Show the played line to move 35 (identical at every table size)</summary>
+<div class="scroll"><div id="seqbox" style="font-family:ui-monospace,monospace;font-size:12.5px;line-height:1.7;margin-top:10px"></div></div>
+</details>
+
+<h2>2 &nbsp;The win&#8209;hunt: why the move flips</h2>
+<p>The solver solves each candidate attack in order, draining a shared budget of 400,000 search nodes,
+and keeps the highest&#8209;value <i>resolved</i> win. A candidate that <b>aborts</b> (hits the depth cap or
+runs the budget out) is discarded. Pick a table size:</p>
+
+<div class="ctl-row">
+  <span class="lab">Table size</span>
+  <div class="seg" id="whseg">
+    <button data-s="13">TT13 <span class="muted">8K slots</span></button>
+    <button data-s="15" class="on">TT15 <span class="muted">32K slots</span></button>
+    <button data-s="22">TT22 <span class="muted">4.2M slots</span></button>
+  </div>
+</div>
+<div class="legend">
+  <span><span class="sw" style="background:var(--win)"></span>resolved &mdash; forced win (value)</span>
+  <span><span class="sw" style="background:var(--loss)"></span>aborted &mdash; unresolved, discarded</span>
+  <span class="muted">bar length = budget nodes spent on that candidate</span>
+</div>
+<div class="card-panel">
+  <div class="bars" id="whbars"></div>
+  <div class="verdict" id="whverdict"></div>
+</div>
+<p class="footnote">JH aborts at every size (its subtree is genuinely deep &mdash; structural, not a
+TT artifact). The story is the rest: at TT13/TT15 <b>all</b> candidates abort; at TT22, KD onward resolve.</p>
+
+<h2>3 &nbsp;What gets thrashed: the KD search, TT15 vs TT22</h2>
+<p>Zoom into the single candidate that decides everything &mdash; leading <span class="mono">KD</span>.
+Same position, same code, only the table size differs:</p>
+<div class="scroll">
+<table class="tbl" id="kdtable"><thead><tr>
+<th>KD search</th><th>TT13</th><th>TT15</th><th>TT22</th></tr></thead><tbody></tbody></table>
+</div>
+<p>At TT22 the search visits <b>more</b> nodes (166k) yet <i>resolves</i>, because it never wastes work:
+26 evictions, 0 depth&#8209;cap aborts. At TT15 the search visits fewer nodes but <b>bails early</b> &mdash;
+403 evictions force re&#8209;searches, and one of them trips the depth&#8209;48 cap. That single abort is fatal:
+it propagates up and kills the whole KD solve.</p>
+
+<h2>4 &nbsp;The thrash descent</h2>
+<p>Here is the exact line inside the KD search that reaches the depth&#8209;48 cap at TT15. Each rung is one
+ply (a move by p0 or p1). The line only descends this far because evicted transposition entries force the
+solver to <b>re&#8209;expand</b> positions it had already solved. Toggle to see what the same positions do at TT22.</p>
+<div class="ctl-row">
+  <span class="lab">Annotate for</span>
+  <div class="seg" id="ladseg">
+    <button data-m="15" class="on">TT15 &mdash; thrashed</button>
+    <button data-m="22">TT22 &mdash; clean cache</button>
+  </div>
+</div>
+<div class="legend">
+  <span><span class="sw" style="background:var(--evict)"></span>evicted &rarr; re&#8209;expanded (TT15)</span>
+  <span><span class="sw" style="background:var(--hit)"></span>cache hit &rarr; returns a win (TT22)</span>
+  <span><span class="sw" style="background:var(--abort)"></span>depth&#8209;48 cap &rarr; abort</span>
+</div>
+<div class="card-panel">
+  <div class="ladder" id="ladder"></div>
+</div>
+
+<h2>5 &nbsp;The decision&#8209;critical evictions</h2>
+<p>Two endgame positions do all the damage. In a direct&#8209;mapped table each key lands in exactly one slot
+(<span class="mono">key &amp; MASK</span>); a colliding key overwrites it. At TT15 these two positions collide
+with others and get evicted before they're reused. At TT22 they get their own slots and are reused many times.</p>
+<div class="slotgrid" id="critgrid"></div>
+<p class="footnote" style="margin-top:14px">K2 is the sharper case: at TT15 it and its collider
+<span class="mono">16eceb0c&hellip;</span> <b>ping&#8209;pong</b> on slot 17545 &mdash; each evicts the other &mdash; so
+neither's subtree ever stays cached. At TT22 the same position is stored once and <b>hit 23 times</b>.</p>
+
+<h2>6 &nbsp;Why depth&#8209;preferred replacement does <i>not</i> rescue this game</h2>
+<div class="card-panel">
+<p style="margin-top:0">A natural fix is <b>depth&#8209;preferred replacement</b>: on a collision, keep whichever
+entry sits closer to the root (bigger subtree, costlier to recompute). It fixes some knife&#8209;edge seeds
+&mdash; but <b>not 500459</b>. Two reasons the trace makes concrete:</p>
+<ul style="color:var(--text-secondary);margin:6px 0">
+<li>The critical positions K1/K2 are stored <b>deep</b> (plies 27&ndash;28), and their colliders arrive at
+<b>equal or shallower</b> ply (K1's evictor is also ply&nbsp;27; K2 ping&#8209;pongs with a ply&#8209;25/30 neighbour).
+A depth rule can't consistently protect a deep entry from an equally&#8209;deep or shallower rival.</li>
+<li>The thrash isn't one protectable near&#8209;root eviction &mdash; it's the <b>pervasive</b> loss of deep
+transpositions. Every table up to TT18 (256K slots) still aborts the win&#8209;hunt; only the essentially
+collision&#8209;free TT22 keeps <i>enough</i> of the ~2,800&#8209;position working set resident at once.</li>
+</ul>
+<p style="margin-bottom:0">So 500459's divergence is <b>fundamental</b>, not a hash&#8209;layout accident: seeing KD as a win
+<i>requires</i> a table big enough to hold the whole endgame's transposition set without eviction.</p>
+</div>
+
+<h2>Method &amp; what was pruned</h2>
+<p class="footnote">
+Traces were produced by instrumenting <span class="mono">sim_solve_rec</span> in
+<span class="mono">cnitro/src/cordite_sim.c</span> behind a compile&#8209;time <span class="mono">-DCD_TT_TRACE</span>
+flag (off in normal builds), dumping every node ENTER/KEY/RET plus every TT STORE, HIT and EVICT for the
+move&#8209;35 win&#8209;hunt only (group 4), at TT13/TT15/TT22. The KD search visits 55k&ndash;166k nodes; this page
+shows the <b>10&#8209;candidate win&#8209;hunt summary</b> (complete) and the <b>48&#8209;ply thrash descent</b> (the exact
+root&rarr;depth&#8209;48 path, complete) &mdash; the tens of thousands of sibling subtrees are summarised as counts,
+not drawn. Node counts in the bar chart are budget nodes spent; the KD table lists total search nodes visited
+(which additionally counts terminals and TT hits). Values are depth&#8209;relative: <span class="mono">v&asymp;984</span>
+means "a forced win in a few plies," sign = win/loss for octogen.</p>
+
+</div>
+
+<script id="data" type="application/json">{"setup":{"seed":500459,"trump":"C","trump_name":"Clubs","p0hand":["KD","AS","8H","10H","10D","JH","AH","9C"],"p1hand":["AC","8D"],"defender":"p1","first_attacker":"p0","p0hand_after_KD":["AS","8H","10H","JH","AH","9C","10D"]},"winhunt":{"13":[{"call":0,"move":"JH","v":0,"aborted":1,"budgetleft":354899,"nodes":45101},{"call":1,"move":"KD","v":0,"aborted":1,"budgetleft":310302,"nodes":44597},{"call":2,"move":"8H","v":0,"aborted":1,"budgetleft":308402,"nodes":1900},{"call":3,"move":"10H","v":0,"aborted":1,"budgetleft":307056,"nodes":1346},{"call":4,"move":"10D","v":0,"aborted":1,"budgetleft":297848,"nodes":9208},{"call":5,"move":"10H10D","v":0,"aborted":1,"budgetleft":297296,"nodes":552},{"call":6,"move":"AS","v":0,"aborted":1,"budgetleft":295086,"nodes":2210},{"call":7,"move":"AH","v":0,"aborted":1,"budgetleft":293994,"nodes":1092},{"call":8,"move":"ASAH","v":0,"aborted":1,"budgetleft":292902,"nodes":1092},{"call":9,"move":"9C","v":0,"aborted":1,"budgetleft":291890,"nodes":1012}],"15":[{"call":0,"move":"JH","v":0,"aborted":1,"budgetleft":355042,"nodes":44958},{"call":1,"move":"KD","v":0,"aborted":1,"budgetleft":310813,"nodes":44229},{"call":2,"move":"8H","v":0,"aborted":1,"budgetleft":308943,"nodes":1870},{"call":3,"move":"10H","v":0,"aborted":1,"budgetleft":307625,"nodes":1318},{"call":4,"move":"10D","v":0,"aborted":1,"budgetleft":298703,"nodes":8922},{"call":5,"move":"10H10D","v":0,"aborted":1,"budgetleft":298154,"nodes":549},{"call":6,"move":"AS","v":0,"aborted":1,"budgetleft":296065,"nodes":2089},{"call":7,"move":"AH","v":0,"aborted":1,"budgetleft":295049,"nodes":1016},{"call":8,"move":"ASAH","v":0,"aborted":1,"budgetleft":294033,"nodes":1016},{"call":9,"move":"9C","v":0,"aborted":1,"budgetleft":293056,"nodes":977}],"22":[{"call":0,"move":"JH","v":0,"aborted":1,"budgetleft":356092,"nodes":43908},{"call":1,"move":"KD","v":984,"aborted":0,"budgetleft":220901,"nodes":135191},{"call":2,"move":"8H","v":984,"aborted":0,"budgetleft":172384,"nodes":48517},{"call":3,"move":"10H","v":983,"aborted":0,"budgetleft":141529,"nodes":30855},{"call":4,"move":"10D","v":983,"aborted":0,"budgetleft":109571,"nodes":31958},{"call":5,"move":"10H10D","v":984,"aborted":0,"budgetleft":92633,"nodes":16938},{"call":6,"move":"AS","v":984,"aborted":0,"budgetleft":90797,"nodes":1836},{"call":7,"move":"AH","v":984,"aborted":0,"budgetleft":88961,"nodes":1836},{"call":8,"move":"ASAH","v":984,"aborted":0,"budgetleft":86345,"nodes":2616},{"call":9,"move":"9C","v":984,"aborted":0,"budgetleft":84851,"nodes":1494}]},"poison":[{"d":1,"edge":"root","key":"1f21d8b1c1776d26","why":"abort","tt22_stored":true,"tt22_hits":0,"tt22_store_depth":1,"tt15_evicted":false},{"d":2,"edge":"C:AC","key":"759afee1dbb45787","why":"abort","tt22_stored":true,"tt22_hits":0,"tt22_store_depth":2,"tt15_evicted":false},{"d":3,"edge":"A:AS","key":"6b03431179fae70f","why":"abort","tt22_stored":true,"tt22_hits":0,"tt22_store_depth":3,"tt15_evicted":false},{"d":4,"edge":"PU","key":"126b1e0b4f93ac84","why":"abort","tt22_stored":true,"tt22_hits":0,"tt22_store_depth":4,"tt15_evicted":false},{"d":5,"edge":"A:8H","key":"97dea8a0ef3fc1d5","why":"abort","tt22_stored":true,"tt22_hits":0,"tt22_store_depth":5,"tt15_evicted":false},{"d":6,"edge":"PU","key":"d7d653d64809373d","why":"abort","tt22_stored":false,"tt22_hits":0,"tt22_store_depth":null,"tt15_evicted":false},{"d":7,"edge":"A:10H","key":"6e035988c2593a1c","why":"abort","tt22_stored":true,"tt22_hits":1,"tt22_store_depth":7,"tt15_evicted":false},{"d":8,"edge":"PU","key":"54fd58633adf2055","why":"abort","tt22_stored":true,"tt22_hits":1,"tt22_store_depth":8,"tt15_evicted":false},{"d":9,"edge":"A:10D","key":"49a3201f8269b6dc","why":"abort","tt22_stored":true,"tt22_hits":0,"tt22_store_depth":9,"tt15_evicted":false},{"d":10,"edge":"PU","key":"185b5863a3932055","why":"abort","tt22_stored":false,"tt22_hits":0,"tt22_store_depth":null,"tt15_evicted":false},{"d":11,"edge":"A:9C","key":"ce2f3a9988275698","why":"abort","tt22_stored":false,"tt22_hits":0,"tt22_store_depth":null,"tt15_evicted":false},{"d":12,"edge":"PU","key":"d6ac0a9a3e7d85a5","why":"abort","tt22_stored":false,"tt22_hits":0,"tt22_store_depth":null,"tt15_evicted":false},{"d":13,"edge":"A:JH","key":"b55a3593ac7e5ddc","why":"abort","tt22_stored":false,"tt22_hits":0,"tt22_store_depth":null,"tt15_evicted":false},{"d":14,"edge":"C:9C","key":"928f1c0857d8bbeb","why":"abort","tt22_stored":false,"tt22_hits":0,"tt22_store_depth":null,"tt15_evicted":false},{"d":15,"edge":"G","key":"b556935bfcc8b425","why":"abort","tt22_stored":false,"tt22_hits":0,"tt22_store_depth":null,"tt15_evicted":false},{"d":16,"edge":"A:8D","key":"b08d2b975020896a","why":"abort","tt22_stored":false,"tt22_hits":0,"tt22_store_depth":null,"tt15_evicted":false},{"d":17,"edge":"PU","key":"e05f135b56dbb425","why":"abort","tt22_stored":false,"tt22_hits":0,"tt22_store_depth":null,"tt15_evicted":false},{"d":18,"edge":"A:8H","key":"e015eeee25694f4b","why":"abort","tt22_stored":false,"tt22_hits":0,"tt22_store_depth":null,"tt15_evicted":false},{"d":19,"edge":"C:AH","key":"31206a831f59ac4","why":"abort","tt22_stored":false,"tt22_hits":0,"tt22_store_depth":null,"tt15_evicted":false},{"d":20,"edge":"A:AS","key":"360362c25444eb21","why":"abort","tt22_stored":false,"tt22_hits":0,"tt22_store_depth":null,"tt15_evicted":false},{"d":21,"edge":"PU","key":"8a79d20fb38c768d","why":"abort","tt22_stored":false,"tt22_hits":0,"tt22_store_depth":null,"tt15_evicted":false},{"d":22,"edge":"A:10H","key":"33a1f0223d062b4a","why":"abort","tt22_stored":false,"tt22_hits":0,"tt22_store_depth":null,"tt15_evicted":false},{"d":23,"edge":"PU","key":"fa549b7d4ed6e469","why":"abort","tt22_stored":false,"tt22_hits":0,"tt22_store_depth":null,"tt15_evicted":false},{"d":24,"edge":"A:10D","key":"af6ce30166ac72e0","why":"abort","tt22_stored":false,"tt22_hits":0,"tt22_store_depth":null,"tt15_evicted":false},{"d":25,"edge":"P:10H","key":"3acda4b7bb82b213","why":"abort","tt22_stored":false,"tt22_hits":0,"tt22_store_depth":null,"tt15_evicted":false},{"d":26,"edge":"C:AC","key":"81e0b541dc9d7d4","why":"abort","tt22_stored":true,"tt22_hits":37,"tt22_store_depth":26,"tt15_evicted":false},{"d":27,"edge":"PU","key":"8a79d20fb38c748f","why":"abort","tt22_stored":true,"tt22_hits":0,"tt22_store_depth":27,"tt15_evicted":false},{"d":28,"edge":"A:8D","key":"d55aaac3aa95c9c0","why":"abort","tt22_stored":false,"tt22_hits":0,"tt22_store_depth":null,"tt15_evicted":false},{"d":29,"edge":"C:AC","key":"b82f749330338360","why":"abort","tt22_stored":true,"tt22_hits":0,"tt22_store_depth":29,"tt15_evicted":false},{"d":30,"edge":"A:AS","key":"d9146513e5bdeabd","why":"abort","tt22_stored":false,"tt22_hits":0,"tt22_store_depth":null,"tt15_evicted":false},{"d":31,"edge":"PU","key":"3595c985266e0398","why":"abort","tt22_stored":false,"tt22_hits":0,"tt22_store_depth":null,"tt15_evicted":false},{"d":32,"edge":"A:AH","key":"56df6774124b12a9","why":"abort","tt22_stored":false,"tt22_hits":0,"tt22_store_depth":null,"tt15_evicted":false},{"d":33,"edge":"C:AC","key":"b725e24e9c29609","why":"abort","tt22_stored":false,"tt22_hits":0,"tt22_store_depth":null,"tt15_evicted":false},{"d":34,"edge":"G","key":"b54f885bcdda8225","why":"abort","tt22_stored":false,"tt22_hits":0,"tt22_store_depth":null,"tt15_evicted":false},{"d":35,"edge":"A:10H","key":"8cb1ee73675c57ea","why":"abort","tt22_stored":true,"tt22_hits":2,"tt22_store_depth":27,"tt15_evicted":true},{"d":36,"edge":"PU","key":"b484eb0df38c4489","why":"abort","tt22_stored":true,"tt22_hits":23,"tt22_store_depth":28,"tt15_evicted":true},{"d":37,"edge":"A:10D","key":"e07c9371d876d200","why":"abort","tt22_stored":false,"tt22_hits":0,"tt22_store_depth":null,"tt15_evicted":false},{"d":38,"edge":"PU","key":"78d1eb0c6b264489","why":"abort","tt22_stored":false,"tt22_hits":0,"tt22_store_depth":null,"tt15_evicted":false},{"d":39,"edge":"A:KD","key":"b5be308c6395856","why":"abort","tt22_stored":false,"tt22_hits":0,"tt22_store_depth":null,"tt15_evicted":false},{"d":40,"edge":"PU","key":"a641eb0dd6064489","why":"abort","tt22_stored":false,"tt22_hits":0,"tt22_store_depth":null,"tt15_evicted":false},{"d":41,"edge":"A:8D","key":"234653c07b5679c6","why":"abort","tt22_stored":false,"tt22_hits":16,"tt22_store_depth":null,"tt15_evicted":true},{"d":42,"edge":"C:10D","key":"8a3061b96be0be36","why":"abort","tt22_stored":true,"tt22_hits":6,"tt22_store_depth":34,"tt15_evicted":true},{"d":43,"edge":"G","key":"5fe4b0c9179068b","why":"abort","tt22_stored":true,"tt22_hits":0,"tt22_store_depth":35,"tt15_evicted":true},{"d":44,"edge":"A:10H","key":"bfab4e73016915e8","why":"abort","tt22_stored":false,"tt22_hits":0,"tt22_store_depth":null,"tt15_evicted":false},{"d":45,"edge":"PU","key":"6c9685aaad74027","why":"abort","tt22_stored":false,"tt22_hits":0,"tt22_store_depth":null,"tt15_evicted":false},{"d":46,"edge":"A:8H","key":"bae32ed6ba84cd39","why":"abort","tt22_stored":false,"tt22_hits":0,"tt22_store_depth":null,"tt15_evicted":false},{"d":47,"edge":"C:10H","key":"5543c8034d42d191","why":"abort","tt22_stored":false,"tt22_hits":0,"tt22_store_depth":null,"tt15_evicted":false},{"d":48,"edge":"G","key":null,"why":"maxdepth","tt22_stored":false,"tt22_hits":0,"tt22_store_depth":null,"tt15_evicted":false}],"crit":{"K1":{"key":"8cb1ee73675c57ea","desc":"octogen (p0) to move","tt15":[{"t":"KEY","depth":null},{"t":"EVICT","role":"evictor","slot":22506,"oldkey":"acb9ee73274c","olddepth":24,"newkey":"8cb1ee73675c","newdepth":27},{"t":"EVICT","role":"evicted","slot":22506,"oldkey":"8cb1ee73675c","olddepth":27,"newkey":"2f11ae72201c","newdepth":27},{"t":"KEY","depth":null}],"tt22":[{"t":"KEY","depth":null},{"t":"STORE","nid":25311,"slot":1857514,"depth":27},{"t":"HIT","depth":35,"stored_depth":27,"value":952},{"t":"HIT","depth":31,"stored_depth":27,"value":956}]},"K2":{"key":"b484eb0df38c4489","desc":"handwritten (p1) to move (defender)","tt15":[{"t":"KEY","depth":null},{"t":"KEY","depth":null},{"t":"EVICT","role":"evictor","slot":17545,"oldkey":"16eceb0cb75c","olddepth":25,"newkey":"b484eb0df38c","newdepth":28},{"t":"EVICT","role":"evicted","slot":17545,"oldkey":"b484eb0df38c","olddepth":28,"newkey":"16eceb0cb75c","newdepth":30},{"t":"KEY","depth":null}],"tt22":[{"t":"KEY","depth":null},{"t":"KEY","depth":null},{"t":"STORE","nid":25312,"slot":803977,"depth":28},{"t":"HIT","depth":28,"stored_depth":28,"value":960},{"t":"HIT","depth":28,"stored_depth":28,"value":960},{"t":"HIT","depth":26,"stored_depth":28,"value":962},{"t":"HIT","depth":24,"stored_depth":28,"value":964},{"t":"HIT","depth":20,"stored_depth":28,"value":968},{"t":"HIT","depth":22,"stored_depth":28,"value":966},{"t":"HIT","depth":20,"stored_depth":28,"value":968},{"t":"HIT","depth":20,"stored_depth":28,"value":968},{"t":"HIT","depth":28,"stored_depth":28,"value":960},{"t":"HIT","depth":32,"stored_depth":28,"value":956},{"t":"HIT","depth":30,"stored_depth":28,"value":958},{"t":"HIT","depth":28,"stored_depth":28,"value":960},{"t":"HIT","depth":28,"stored_depth":28,"value":960},{"t":"HIT","depth":26,"stored_depth":28,"value":962},{"t":"HIT","depth":24,"stored_depth":28,"value":964},{"t":"HIT","depth":28,"stored_depth":28,"value":960},{"t":"HIT","depth":24,"stored_depth":28,"value":964},{"t":"HIT","depth":24,"stored_depth":28,"value":964},{"t":"HIT","depth":24,"stored_depth":28,"value":964},{"t":"HIT","depth":24,"stored_depth":28,"value":964},{"t":"HIT","depth":24,"stored_depth":28,"value":964},{"t":"HIT","depth":24,"stored_depth":28,"value":964},{"t":"HIT","depth":22,"stored_depth":28,"value":966}]}},"kdstats":{"13":{"nodes":55738,"evicts":602,"maxdepth":1,"hits":1263,"stores":577,"v":0,"aborted":1},"15":{"nodes":55089,"evicts":403,"maxdepth":1,"hits":1436,"stores":721,"v":0,"aborted":1},"22":{"nodes":166268,"evicts":26,"maxdepth":0,"hits":5590,"stores":1817,"v":984,"aborted":0}},"seq":[{"step":1,"p":"p1","type":"ATTACK","cards":"JS,JD","hand":6,"table":"(empty)"},{"step":2,"p":"p0","type":"COVER","cards":"QS","hand":6,"table":"JS/_ JD/_"},{"step":3,"p":"p1","type":"GOOD","cards":"","hand":4,"table":"JS/QS JD/_"},{"step":4,"p":"p0","type":"PICKUP","cards":"","hand":5,"table":"JS/QS JD/_"},{"step":5,"p":"p1","type":"ATTACK","cards":"8S","hand":6,"table":"(empty)"},{"step":6,"p":"p0","type":"COVER","cards":"QS","hand":8,"table":"8S/_"},{"step":7,"p":"p1","type":"GOOD","cards":"","hand":5,"table":"8S/QS"},{"step":8,"p":"p0","type":"ATTACK","cards":"JS,JD","hand":7,"table":"(empty)"},{"step":9,"p":"p1","type":"COVER","cards":"10C,8C","hand":6,"table":"JS/_ JD/_"},{"step":10,"p":"p0","type":"GOOD","cards":"","hand":5,"table":"JS/10C JD/8C"},{"step":11,"p":"p1","type":"ATTACK","cards":"6D","hand":6,"table":"(empty)"},{"step":12,"p":"p0","type":"PASS","cards":"6H","hand":6,"table":"6D/_"},{"step":13,"p":"p0","type":"GOOD","cards":"","hand":5,"table":"6D/_ 6H/_"},{"step":14,"p":"p1","type":"COVER","cards":"QD,7H","hand":5,"table":"6D/_ 6H/_"},{"step":15,"p":"p0","type":"ATTACK","cards":"7D,QH","hand":5,"table":"6D/QD 6H/7H"},{"step":16,"p":"p1","type":"COVER","cards":"KC,KH","hand":3,"table":"6D/QD 6H/7H 7D/_ QH/_"},{"step":17,"p":"p0","type":"GOOD","cards":"","hand":3,"table":"6D/QD 6H/7H 7D/KC QH/KH"},{"step":18,"p":"p1","type":"ATTACK","cards":"9S,9H","hand":6,"table":"(empty)"},{"step":19,"p":"p0","type":"PASS","cards":"9D","hand":6,"table":"9S/_ 9H/_"},{"step":20,"p":"p1","type":"COVER","cards":"QC,7C,AD","hand":4,"table":"9S/_ 9H/_ 9D/_"},{"step":21,"p":"p0","type":"GOOD","cards":"","hand":5,"table":"9S/QC 9H/7C 9D/AD"},{"step":22,"p":"p1","type":"ATTACK","cards":"6S","hand":6,"table":"(empty)"},{"step":23,"p":"p1","type":"GOOD","cards":"","hand":5,"table":"6S/_"},{"step":24,"p":"p0","type":"PASS","cards":"6C","hand":6,"table":"6S/_"},{"step":25,"p":"p1","type":"COVER","cards":"KS,JC","hand":5,"table":"6S/_ 6C/_"},{"step":26,"p":"p0","type":"GOOD","cards":"","hand":5,"table":"6S/KS 6C/JC"},{"step":27,"p":"p1","type":"ATTACK","cards":"10S,10D","hand":6,"table":"(empty)"},{"step":28,"p":"p0","type":"COVER","cards":"9C","hand":6,"table":"10S/_ 10D/_"},{"step":29,"p":"p0","type":"COVER","cards":"AS","hand":5,"table":"10S/_ 10D/9C"},{"step":30,"p":"p1","type":"ATTACK","cards":"AH","hand":4,"table":"10S/AS 10D/9C"},{"step":31,"p":"p0","type":"PICKUP","cards":"","hand":4,"table":"10S/AS 10D/9C AH/_"},{"step":32,"p":"p1","type":"ATTACK","cards":"7S","hand":3,"table":"(empty)"},{"step":33,"p":"p0","type":"COVER","cards":"10S","hand":9,"table":"7S/_"},{"step":34,"p":"p1","type":"GOOD","cards":"","hand":2,"table":"7S/10S"},{"step":35,"p":"p0","type":"ATTACK","cards":"10H,10D","hand":8,"table":"(empty)"},{"step":36,"p":"p1","type":"PICKUP","cards":"","hand":2,"table":"10H/_ 10D/_"},{"step":37,"p":"p0","type":"ATTACK","cards":"KD","hand":6,"table":"(empty)"}],"colls":{"13":2123,"15":1490,"22":58},"maxI":{"13":1495,"15":1763,"22":2823},"depthcap":48}</script>
+<script>
+const D = JSON.parse(document.getElementById('data').textContent);
+const SUIT={S:'♠',H:'♥',C:'♣',D:'♦'};
+const RED=new Set(['H','D']);
+function suitOf(c){return c.slice(-1);}
+function cardHTML(c,sm){const s=suitOf(c);const r=c.slice(0,-1);
+  let cls='pc'+(sm?' sm':'');
+  if(s==='C') cls+=' trump'; else if(RED.has(s)) cls+=' red';
+  return `<span class="${cls}">${r}<span class="s">${SUIT[s]}</span></span>`;}
+// theme toggle
+const tb=document.getElementById('themebtn');
+tb.onclick=()=>{const r=document.documentElement;
+  const cur=r.getAttribute('data-theme')|| (matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');
+  r.setAttribute('data-theme',cur==='dark'?'light':'dark');};
+
+// tiles
+const kd=D.kdstats;
+document.getElementById('tiles').innerHTML=[
+  {n:'2',l:'candidate moves chosen (10H,10D vs KD)'},
+  {n:'TT18',l:'largest table still playing 10H,10D',c:'loss'},
+  {n:'TT22',l:'smallest table playing KD',c:'win'},
+  {n:'1 &rarr; 0',l:'depth-48 aborts, TT15 &rarr; TT22 (KD)',c:'evict'},
+  {n:'403 &rarr; 26',l:'TT slot evictions, TT15 &rarr; TT22 (KD)',c:'evict'},
+].map(t=>`<div class="tile ${t.c||''}"><div class="n">${t.n}</div><div class="l">${t.l}</div></div>`).join('');
+
+// setup
+document.getElementById('trumpname').textContent=D.setup.trump_name+' (♣)';
+document.getElementById('p0hand').innerHTML=D.setup.p0hand.map(c=>cardHTML(c)).join('');
+document.getElementById('p1hand').innerHTML=D.setup.p1hand.map(c=>cardHTML(c)).join('');
+
+// sequence
+document.getElementById('seqbox').innerHTML=D.seq.map(m=>{
+  const hi=m.step===35;
+  const cards=m.cards?(' '+m.cards):'';
+  const style=hi?'background:var(--win-bg);font-weight:700;padding:1px 4px;border-radius:4px':'';
+  return `<div style="${style}">[${String(m.step).padStart(2)}] ${m.p} ${m.type.padEnd(7)}${cards}`
+    +`<span class="muted"> &nbsp; hand=${m.hand} table=[${m.table}]</span></div>`;
+}).join('');
+
+// win-hunt bars
+const CHOSEN={'13':null,'15':null,'22':'KD'};
+function renderWH(size){
+  const rows=D.winhunt[size];
+  const max=Math.max(...rows.map(r=>r.nodes));
+  document.getElementById('whbars').innerHTML=rows.map(r=>{
+    const w=Math.max(2,Math.round(100*r.nodes/max));
+    const win=r.aborted===0;
+    const chosen=(CHOSEN[size]===r.move);
+    const tag=win?`<span style="color:var(--win);font-weight:600">win &middot; v=${r.v}</span>`
+                 :`<span style="color:var(--loss)">aborted</span>`;
+    return `<div class="bar-row${chosen?' chosen':''}">
+      <div class="bar-move">${r.move}${chosen?' ★':''}</div>
+      <div class="bar-track"><div class="bar-fill ${win?'win':'abort'}" style="width:${w}%"></div></div>
+      <div class="bar-tag">${(r.nodes/1000).toFixed(1)}k nodes &nbsp; ${tag}</div></div>`;
+  }).join('');
+  const anyWin=rows.some(r=>r.aborted===0);
+  const v=document.getElementById('whverdict');
+  if(anyWin){
+    v.className='verdict win';
+    v.innerHTML=`<b>Solver resolves.</b> KD is the first candidate to resolve to a forced win (value&nbsp;984),
+      so octogen plays <b>KD &#9733;</b>. The later 984&#8209;value leads tie but lose the tie&#8209;break by move order.`;
+  }else{
+    v.className='verdict abort';
+    v.innerHTML=`<b>Every candidate aborts.</b> The win&#8209;hunt finds no resolved win, so
+      <span class="mono">og_try_endgame_solve</span> returns &minus;1. The move falls to the Monte&#8209;Carlo
+      fallback, which leads the pair <b>10H,10D</b>.`;
+  }
+}
+document.querySelectorAll('#whseg button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('#whseg button').forEach(x=>x.classList.remove('on'));
+  b.classList.add('on');renderWH(b.dataset.s);});
+renderWH('15');
+
+// KD table
+(function(){
+  const tb=document.querySelector('#kdtable tbody');
+  const row=(lab,f,fmt)=>`<tr><td>${lab}</td><td>${fmt(kd['13'])}</td><td>${fmt(kd['15'])}</td><td>${fmt(kd['22'])}</td></tr>`;
+  tb.innerHTML=[
+    row('outcome','',k=>k.aborted?'<span class="pill abort">abort</span>':'<span class="pill win">win v='+k.v+'</span>'),
+    row('search nodes visited','',k=>k.nodes.toLocaleString()),
+    row('TT stores','',k=>k.stores.toLocaleString()),
+    row('TT cache hits','',k=>k.hits.toLocaleString()),
+    row('TT evictions','',k=>k.evicts.toLocaleString()),
+    row('depth-48 aborts','',k=>k.maxdepth),
+  ].join('');
+})();
+
+// ladder
+function renderLadder(mode){
+  const P=D.poison;
+  let html='';
+  let lastShown=-1;
+  P.forEach((n,i)=>{
+    const isCrit = n.tt15_evicted && n.tt22_hits>0;
+    const isAbort = n.why==='maxdepth';
+    const critBand = n.d>=34;                   // show full detail from ply 34 down
+    const show = critBand || isCrit || i<6;      // top of tree + critical band
+    if(!show){ return; }
+    if(lastShown>=0 && i-lastShown>1){
+      html+=`<div class="collapsed">&#8942;&nbsp; plies ${P[lastShown].d+1}&ndash;${n.d-1} &mdash; ${n.d-1-P[lastShown].d} more re&#8209;expanded plies (transposition re&#8209;search)</div>`;
+    }
+    lastShown=i;
+    let an='';
+    if(isAbort){
+      html+=`<div class="rung abortrow"><div class="d">${n.d}</div>
+        <div class="mv">${mvLabel(n.edge)}</div>
+        <div class="an"><span class="badge abort">DEPTH ${D.depthcap} &mdash; ABORT</span>
+        <span class="muted"> whole KD solve fails</span></div></div>`;
+      return;
+    }
+    if(mode==='15'){
+      if(n.tt15_evicted) an=`<span class="badge evict">evicted &rarr; re&#8209;expanded</span>`;
+      else if(isCrit) an=`<span class="badge dim">re&#8209;computed</span>`;
+    }else{ // TT22
+      if(n.tt22_hits>0) an=`<span class="badge hit">cache hit &rarr; returns win</span> <span class="muted">reused ${n.tt22_hits}×</span>`;
+      else if(n.tt22_stored) an=`<span class="badge stored">stored</span>`;
+    }
+    const cls='rung'+(isCrit?' crit':'');
+    html+=`<div class="${cls}"><div class="d">${n.d}</div>
+      <div class="mv">${mvLabel(n.edge)}</div><div class="an">${an}</div></div>`;
+  });
+  if(mode==='22'){
+    html+=`<div class="collapsed" style="color:var(--hit)">&#10003;&nbsp; At TT22 the critical positions stay cached, so this descent
+      <b>never reaches the cap</b> &mdash; the deepest node explored is ply 47 and KD resolves to a win.</div>`;
+  }
+  document.getElementById('ladder').innerHTML=html;
+}
+function mvLabel(e){
+  if(e==='root') return 'KD (root attack)';
+  if(e==='PU') return 'p1 pickup';
+  if(e==='G') return 'good (round ends)';
+  const m=e.match(/^([ACP]):(.+)$/);
+  if(m){const t={A:'attack',C:'cover',P:'pass'}[m[1]];return t+' '+m[2];}
+  return e;
+}
+document.querySelectorAll('#ladseg button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('#ladseg button').forEach(x=>x.classList.remove('on'));
+  b.classList.add('on');renderLadder(b.dataset.m);});
+renderLadder('15');
+
+// critical keys
+function critBox(id,c){
+  const klabel=`<span class="mono">${c.key.slice(0,12)}…</span>`;
+  function tl(events,size){
+    return '<ul class="tl">'+events.map(e=>{
+      if(e.t==='STORE') return `<li class="store"><b>store</b> at ply ${e.depth}, slot ${e.slot}</li>`;
+      if(e.t==='HIT') return `<li class="hit"><b>cache hit</b> at ply ${e.depth} &rarr; returns win (v=${e.value})</li>`;
+      if(e.t==='EVICT'){
+        if(e.role==='evictor') return `<li class="store"><b>store</b> at ply ${e.newdepth}, slot ${e.slot} <span class="muted">(overwrites ${e.oldkey}… @ply ${e.olddepth})</span></li>`;
+        return `<li class="evict"><b>EVICTED</b> from slot ${e.slot} by ${e.newkey}… (ply ${e.newdepth})</li>`;
+      }
+      if(e.t==='KEY') return `<li class="recompute">re&#8209;expanded from scratch <span class="muted">(cache miss)</span></li>`;
+      return '';
+    }).join('')+'</ul>';
+  }
+  return `<div class="slotbox">
+    <h4>${id}: ${klabel}</h4>
+    <p class="footnote" style="margin:2px 0 6px">${c.desc}</p>
+    <div style="font-size:12px;font-weight:700;color:var(--loss);text-transform:uppercase;letter-spacing:.04em;margin-top:8px">TT15 &mdash; thrashed</div>
+    ${tl(c.tt15)}
+    <div style="font-size:12px;font-weight:700;color:var(--win);text-transform:uppercase;letter-spacing:.04em;margin-top:12px">TT22 &mdash; clean</div>
+    ${tl(c.tt22)}
+  </div>`;
+}
+document.getElementById('critgrid').innerHTML=critBox('K1',D.crit.K1)+critBox('K2',D.crit.K2);
+</script>

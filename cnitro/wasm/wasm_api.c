@@ -41,14 +41,27 @@ void *memset(void *dst, int c, size_t n) {
 // ---------- shared buffers ----------------------------------------------
 
 // Sized by the widest export, which is the LOG export worst case:
-// 2 + MAX_LOGS x (4 + MAX_LOG_PAIRS x 2) = 67,586B at the production
-// 512/64 — written unchecked by wasm_export_logs, so IO_CAP must clear it.
-// 72KB leaves ~6KB of headroom over that; everything else is far smaller
-// (state export <1KB, env strings, the chosen move). The legal-move export
-// is CHUNKED (wasm_export_moves) and clamps its chunk to the buffer, so it
-// no longer sizes IO_CAP — the TS side derives its chunk from wasm_io_cap.
-#define IO_CAP (72 * 1024)
+// 2 + MAX_LOGS x (4 + MAX_LOG_PAIRS x 2) — written unchecked by
+// wasm_export_logs, so IO_CAP must clear it at the build's MAX_LOGS:
+// 67,586B at bots' 512/64 (the 72KB default), 16,898B at rules' 128/64
+// (why the rules build overrides to 24KB — see the Makefile L1 notes).
+// Everything else is far smaller (state export <1.1KB, env strings, the
+// chosen move), and the legal-move export is CHUNKED (wasm_export_moves)
+// and clamps its chunk to the buffer, so it no longer sizes IO_CAP — the
+// TS side derives its chunk from wasm_io_cap.
+#ifndef WASM_IO_CAP
+#define WASM_IO_CAP (72 * 1024)
+#endif
+#define IO_CAP WASM_IO_CAP
+// Snapshot slots for ONE marshal window (the ring resets per marshal).
+// Analytic worst is num_players + 3 (deal, or a round transition: MAGIC +
+// TRASH + <=num_players+1 per-player refill draws) = 11 at 8 players;
+// measured worst 12 over 63K games (tests/l1_measure.c). The builds pass 24
+// (~1.8x); overflow silently drops animation frames, hence the margin. This
+// default keeps the historical native value.
+#ifndef MAX_SNAPS
 #define MAX_SNAPS 48
+#endif
 #define MAX_IN_CARDS 128
 
 static unsigned char g_io[IO_CAP];
@@ -413,12 +426,20 @@ int wasm_can_cover(int as, int av, int ds, int dv, int power_suit) {
 // a negative REPLAY_E* code; wasm_replay_error_detail carries the message
 // parameter (unsupported version, menu size).
 //
-// 2MB: decode's worst CONFORMING stream is far smaller (~50KB for a monster
-// game); the ceiling only matters for hostile integers, which fail with a
-// clean REPLAY_ECAP instead of unbounded growth (the TS reference grew an
-// unbounded array there).
+// Capacity is a build parameter (default keeps the historical 2MB). The
+// wasm builds pass 32KB: decode's worst CONFORMING stream is ~50KB only for
+// a hypothetical every-log-has-52-pairs monster; the measured worst over
+// 28K engine games (tests/l1_measure.c) is 3,117B in and a 200B blob out,
+// so 32KB is >10x the observed ceiling. Oversized inputs — hostile integers
+// or absurd streams — fail with a clean REPLAY_ECAP instead of unbounded
+// growth (the TS reference grew an unbounded array there), and encode/
+// decode stay self-consistent: any stream encode accepts fits decode's
+// output bound by construction (they share this buffer).
 
-#define REPLAY_IO_CAP (2 * 1024 * 1024)
+#ifndef WASM_REPLAY_IO_CAP
+#define WASM_REPLAY_IO_CAP (2 * 1024 * 1024)
+#endif
+#define REPLAY_IO_CAP WASM_REPLAY_IO_CAP
 static unsigned char g_replay_io[REPLAY_IO_CAP];
 
 unsigned char *wasm_replay_io_ptr(void) { return g_replay_io; }

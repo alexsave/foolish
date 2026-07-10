@@ -38,7 +38,11 @@ CORE_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/view.c src/aw
             src/torpex_value.c src/novichok_strategy.c
 CORE_OBJ := $(CORE_SRC:src/%.c=build/%.o)
 
-.PHONY: all clean tests
+.PHONY: all clean tests print-core
+# Emit the core engine+strategy source list (used by tools/tt_divergence.sh to
+# build cnitro_eval at arbitrary -DCD_TT_BITS without duplicating the list).
+print-core:
+	@echo $(CORE_SRC)
 all: build/cnitro_eval build/cnitro_elo build/cnitro_replay build/cnitro_showcase build/cnitro_tests build/cnitro_gen
 
 # Generic compile rule for sources under src/ (build/%.o: src/%.c).
@@ -92,6 +96,22 @@ difftests: build/sim_difftest build/apply_difftest build/solver_difftest build/r
 	./build/solver_difftest 4 40 "" 200000 && \
 	./build/replay_difftest 40
 
+# L1 memory budget measurement (docs/WASM_L1_BUDGET.md). Plays ~63K real games
+# and reports the observed maxima that size every wasm static buffer. Built at
+# the WASM cap set + headroom so the numbers are true maxima; -DREPLAY_STATS
+# turns on the (otherwise compiled-out) replay coder peak counters.
+# `make l1-measure GAMES=1500` runs the sweep across seeds.
+GAMES ?= 1500
+build/l1_measure: tests/l1_measure.c $(wildcard src/*.h) src/game.c src/deal_rng.c src/legal.c src/replay.c src/view.c src/random_strategy.c src/handwritten_strategy.c
+	@mkdir -p build
+	$(CC) -O2 -Isrc -DMAX_LOG_PAIRS=64 -DMAX_BATTLES=64 -DMAX_LOGS=2048 \
+	  -DMAX_LEGAL_MOVES=16384 -DMAX_MOVE_CARDS=52 -DREPLAY_STATS \
+	  src/game.c src/deal_rng.c src/legal.c src/replay.c src/view.c \
+	  src/random_strategy.c src/handwritten_strategy.c tests/l1_measure.c -o $@ -lm
+.PHONY: l1-measure
+l1-measure: build/l1_measure
+	./build/l1_measure $(GAMES) 1 && ./build/l1_measure $(GAMES) 99991
+
 # ---------------------------------------------------------------------------
 # WebAssembly rules kernel: game.c + legal.c + the wasm bridge, compiled
 # freestanding (no libc; wasm/include has the tiny shims, wasm_api.c provides
@@ -137,13 +157,49 @@ WASM_OPT   ?= -Oz
 # (2n <= 52) — so 28 emits the identical move set for every real game (the
 # production deck is 36). Only corrupt/hostile marshaled states (duplicate
 # cards) could enumerate wider moves, which the caps drop by design.
+#
+# --- L1 memory budget (docs/WASM_L1_BUDGET.md) --------------------------
+# Every static buffer below is sized from tests/l1_measure.c (28K engine
+# games, all player counts, random + handwritten strategies) with the
+# margins stated inline. Overflow of any of them is a CLEAN error (replay
+# REPLAY_ECAP, snap-ring drop, io bounds-checks), never corruption.
+# REPLAY_REC_CAP=4096: peak recorded coder choices observed 674 (6.1x
+#   margin); BN_CAP derives from it in replay.c (2,688 limbs) and stays
+#   above the 2,049-limb floor a max-size REPLAY_MAX_INT_BYTES decode
+#   integer needs. Cuts g_rec 768KB->48KB and g_bn 192KB->10.5KB in BOTH
+#   replay-linking modules.
+# WASM_REPLAY_IO_CAP=32768: observed worst encode input 3,117B / blob 200B
+#   (>10x margin); decode input is separately capped at 8KB by
+#   REPLAY_MAX_INT_BYTES. Cuts g_replay_io 2MB->32KB per module.
+# MAX_SNAPS=24: the ring holds ONE marshal window's animation snapshots
+#   (resets per marshal). Analytic worst is the round-transition window:
+#   MAGIC + TRASH + defender-draw + <=num_players batch draws = num_players
+#   + 3 = 11 at 8 players (refill snaps PER-PLAYER, not per card; no OUT/
+#   DEFENDER_CHANGE snap in that path). The deal window is num_players + 3 =
+#   11 too. Measured worst 12 over 63K games. 24 is ~1.8x the analytic
+#   ceiling — snap-ring overflow silently DROPS animation frames (visual, not
+#   corruption), so this margin is deliberate. Cuts g_snaps 55.7KB->27.8KB.
 WASM_FLAGS := --target=wasm32 $(WASM_OPT) -nostdlib -ffreestanding -mbulk-memory \
               -isystem wasm/include -Isrc -D_Thread_local= -DMAX_LOG_PAIRS=64 \
               -DMAX_LEGAL_MOVES=4096 -DMAX_MOVE_CARDS=28 -DMAX_BATTLES=64 \
               -DWORLD_LOG_CAP=40 \
+              -DREPLAY_REC_CAP=4096 -DWASM_REPLAY_IO_CAP=32768 -DMAX_SNAPS=24 \
+              -DCD_TT_BITS=13 \
               -Wall -Wextra -Wno-unused-parameter \
               -Wl,--no-entry -Wl,--export-memory -Wl,-z,stack-size=262144 -Wl,--stack-first \
               -Wl,--strip-all
+# CD_TT_BITS=13: the cordite endgame solver's transposition table (bump-
+# allocated on first play) is the largest driver of bots.wasm's RUNTIME peak —
+# it grows, unlike the static caps above. 16 = 1 MiB; 13 = 128 KiB (8,192
+# entries). It's a memoization cache, but the solver is node-budget-limited, so
+# table size is a bot-STRENGTH knob, sized by the per-game move-divergence study
+# (tools/tt_divergence.sh, docs/WASM_L1_BUDGET.md). There is no cliff-to-zero: the
+# binding bot octogen (persists the table per game) has an INHERENT ~4e-4 floor of
+# size-sensitivity that exists even at TT16-TT19; the collision knee is ~TT10-11.
+# So TT16 (production today) is the baseline, not an infinite table — and TT13 vs
+# TT16 diverges in 0/1720 games (octogen, pc 2/4/7). TT13 is indistinguishable
+# from the shipped table, 2-3 bits above the knee. Drops runtime peak 36 -> 22
+# pages (2.25 -> 1.375 MiB). Only bots links cordite_sim, so rules/guards ignore it.
 
 # Explicit export allow-list — only the memory (above) + wasm_* API the TS
 # bridge actually calls (engine.ts / bots.ts). This REPLACES -Wl,--export-all,
@@ -197,11 +253,20 @@ WASM_BOTS_API_EXPORTS := \
 # g_game only ever holds ONE action's logs — hard worst ~76 (a 64-cover
 # round's discard + draws + transitions). The bots module MUST keep 512:
 # its belief imports the whole session log (TS MAX_KERNEL_LOGS mirror).
-# Stack 128KB: no solver, no rollouts — the deepest rules path is the cover
-# enumeration (~45KB measured worst); 128KB is ~3x that. The trailing
-# -z stack-size overrides the shared flags' 256KB (last one wins in wasm-ld).
+# Stack 64KB: no solver, no rollouts — the deepest rules path is the cover
+# enumeration (~45KB measured worst); 64KB is 1.4x that, and --stack-first
+# turns any regression into a loud trap that the fuzz + cover e2e suites
+# exercise directly (they drive the enumeration harder than production
+# does). The trailing -z stack-size overrides the shared flags' 256KB (last
+# one wins in wasm-ld).
+# WASM_IO_CAP=24576: this build's widest unchunked io write is the log
+# export at MAX_LOGS=128 — 2 + 128 x (4 + 64x2) = 16,898B; 24KB is 1.45x
+# that (the 72KB default exists for bots' 512-log session export).
+# Together with the shared L1 caps above, rules.wasm linear memory drops
+# 53 pages (3.31MB) -> 5 pages (320KB).
 WASM_RULES_FLAGS := $(filter-out -DMAX_LEGAL_MOVES=4096,$(WASM_FLAGS)) \
-                    -DMAX_LEGAL_MOVES=1024 -DMAX_LOGS=128 -Wl,-z,stack-size=131072
+                    -DMAX_LEGAL_MOVES=1024 -DMAX_LOGS=128 -DWASM_IO_CAP=24576 \
+                    -Wl,-z,stack-size=65536
 
 # Blanket header dependency, same rationale as the native objects: a header
 # edit must rebuild BOTH wasm modules or they ship divergent kernels.
@@ -227,11 +292,27 @@ wasm: build/rules.wasm
 # not two). Same wire layout as rules.wasm; e2e asserts guards==rules parity.
 # Smaller caps than the rules module: the client never imports a session log
 # (each marshal starts fresh) and one optimistic move emits <64 logs.
+#
+# THE L1 MODULE: linear memory is PINNED to one 64KB wasm page — the whole
+# module state (stack, Game, clone scratch, io, card buffers) lives inside
+# a single page that fits an L1 data cache (Neoverse/Graviton L1d is
+# exactly 64KB; Apple M-series is 128KB). --initial-memory=--max-memory
+# makes it a hard link-time + run-time invariant: if a buffer grows past
+# the page, wasm-ld REFUSES TO LINK (no silent regression), and the module
+# can never memory.grow (it has no allocator — verified: no memory.grow
+# opcode in the binary). Budget & measurements: docs/WASM_L1_BUDGET.md.
+# Stack 16KB: the deepest guards path was validate_run's ~9.6KB Game clone,
+# which now lives in BSS (wasm_guards_api.c g_validate_tmp); what remains on
+# the stack is handle_* / state_get frames (<2KB observed) — 16KB is >5x
+# that, and --stack-first keeps any regression a loud trap.
+# MAX_SNAPS=1: the shipped guards module exports no snapshot readers (see
+# WASM_GUARDS_EXPORTS below), so the ring was 55.7KB of write-only memory.
 WASM_GUARDS_FLAGS := --target=wasm32 $(WASM_OPT) -nostdlib -ffreestanding -mbulk-memory \
                      -isystem wasm/include -Isrc -D_Thread_local= -DDEAL_RNG_DISABLED \
-                     -DMAX_LOG_PAIRS=64 -DMAX_BATTLES=64 -DMAX_LOGS=64 \
+                     -DMAX_LOG_PAIRS=64 -DMAX_BATTLES=64 -DMAX_LOGS=64 -DMAX_SNAPS=1 \
                      -Wall -Wextra -Wno-unused-parameter \
-                     -Wl,--no-entry -Wl,--export-memory -Wl,-z,stack-size=131072 -Wl,--stack-first \
+                     -Wl,--no-entry -Wl,--export-memory -Wl,-z,stack-size=16384 -Wl,--stack-first \
+                     -Wl,--initial-memory=65536 -Wl,--max-memory=65536 \
                      -Wl,--strip-all
 
 # Explicit export allow-list, same rationale as WASM_API_EXPORTS (this
