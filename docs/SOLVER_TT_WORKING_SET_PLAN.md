@@ -172,6 +172,17 @@ Measure directly: W(RANKSYM)/W(std) at TT22 over the §7 panel + 100-game batch.
 The existing 6-perm `CD_TT_SUITSYM` gave only ~1.05–1.1× — rank compaction is the
 part with real headroom; if measurement shows <1.3×, drop C2 and lean on C3/C5.
 
+**MEASURED (DONE — Jul 2026, `-DCD_TT_RANKSYM`).** Collapse W(std)/W(ranksym) =
+**1.17× overall** on the panel at TT22 (1.04–1.57×; best on low-card games) — beats
+SUITSYM's ~1.07× but below the 1.3× keep-bar. V1: **not** bit-identical (2/200 seeds
+change move hash, both `fin=1` → **0 outcome flips** over 200 games) — the orbit
+collapse gives extra hits, saves budget, and reshuffles knife-edge tie-breaks;
+consistent with budget-boundary, not a value bug. **Latency: ~2.2× slower per
+decision** (6-perm × rank-compaction fingerprint at every node). Verdict: **kept
+flag-gated, NOT shipped** — +0.2 effective bit doesn't justify ~2× hot-path cost.
+If ever wanted, apply the plan's optimizations first (direct suit-sort instead of
+6-perm min; canonicalize only at `cards ≤ 10`) to recover the latency.
+
 **Cost.** Fingerprint goes from ~20 ops to ~80–120 ops/node. Node cost is dominated
 by the child memcpy + movegen, but verify with V5; if hot, canonicalize only at
 `cards ≤ 10` (where the collapse lives) and tag plain/canon keys with a high bit so
