@@ -255,6 +255,11 @@ Net solver-table trajectory: **1 MiB (TT16) → 128 KiB (TT13) → 64 KiB (TT12+
 32 KiB (TT12+2WAY+PACK8)** — a 32× shrink from the historical table, strength
 unchanged, now a quarter of a wasm page.
 
+**Next round:** with the TT down to 32 KiB it is no longer a dominant block —
+the shadow stack (256 KiB), `solve_ws` (272 KiB), and `g_moves` (232 KiB) now
+lead. The measured map and an executable candidate-by-candidate plan for the
+next shrink round live in `docs/BOTS_WASM_MEMORY_PLAN.md`.
+
 The remaining static core is the Monte-Carlo solver scratch (`solve_ws` 272 KiB,
 `solve_child_scratch` 55 KiB, the world/trial/diff slots) — a per-search working
 set inherently larger than L1, **designed** around bitboard `SimState`s that *are*
