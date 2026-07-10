@@ -65,10 +65,17 @@ new Uint8Array(botsMem.buffer).fill(0xA5, 64, STACK_SIZE - 64);
 
 // Heavy corpus: deepest endgames are 2-player (longest solves), across every
 // MC family; plus wide 8-player states.  Multiple seeds via start_game's RNG.
+// IMPORTANT: every strategy wasm_choose_move dispatches is a potential
+// high-water frame, so the corpus must exercise the fat-framed HEURISTICS
+// (espresso/champion/handwritten/simple_heuristic) as the DECIDING bot too, not
+// just the MC families — their choose frames stack under their own callers.
 const families = ['octogen', 'semtex', 'cordite', 'fulminate'];
+const heuristics = ['espresso', 'champion', 'handwritten', 'simple_heuristic'];
 const matchups: string[][] = [];
 for (const f of families) { matchups.push([f, f]); matchups.push([f, 'octogen']); }
-matchups.push(['octogen', 'semtex', 'cordite', 'fulminate', 'octogen', 'semtex', 'cordite', 'fulminate']); // 8p
+for (const h of heuristics) { matchups.push([h, h]); matchups.push([h, 'octogen']); matchups.push([h, 'espresso']); }
+matchups.push(['octogen', 'semtex', 'cordite', 'fulminate', 'espresso', 'champion', 'handwritten', 'simple_heuristic']); // 8p mixed
+matchups.push(['espresso', 'espresso', 'espresso', 'espresso', 'espresso', 'espresso', 'espresso', 'espresso']); // 8p espresso
 matchups.push(['octogen', 'octogen', 'octogen', 'octogen', 'octogen', 'octogen', 'octogen', 'octogen']);
 
 const ROUNDS = 6;
