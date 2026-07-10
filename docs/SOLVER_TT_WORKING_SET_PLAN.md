@@ -223,6 +223,26 @@ for the expensive entry).
 **Expected.** Conflict misses ≈ halved ⟹ ≈ +1 effective bit: TT12-2way ≈ TT13
 behavior at 64 KiB. ~15 lines. Composes with everything.
 
+**MEASURED (DONE — Jul 2026, `-DCD_TT_2WAY`, prod env).** Landed and validated
+through the ladder. Result: **2WAY@TT12 (64 KiB) strictly beats std@TT13 (128 KiB)** —
+half the bytes, better fidelity.
+
+- **V0** default build (no flag): SIG-identical to pre-change (20 seeds). ✔
+- **V1** value safety: 2WAY@TT22 SIG-identical to std@TT22 over 200 mixed seeds
+  (100 handwritten @500000 + 100 espresso @700000). ✔
+- **V2** tricky panel (TT13/12/11): 2WAY **fixes** the std-TT13 0.04% outcome flip
+  **720958** (win at TT13/12/11, std loses), extends **700910**'s win down to TT11
+  (std loses at TT12/TT11), and converges **500459** to the TT22 move at TT12/TT13
+  (std diverges at every size). **Zero outcome regressions** across the panel; every
+  2WAY `fin=1`. (W census reads *higher* for 2WAY — associativity retains more
+  distinct keys, i.e. better slot utilization; it is not a cost.)
+- **V4** outcome flips at scale, 2WAY@TT12 vs TT22, 3000 espresso games:
+  **0 outcome flips (0.000%)**, move-divergence 0.100% — both below std-TT13's
+  0.14% / 0.04% reference. (V3 move-divergence is subsumed: same run.)
+
+Effective gain confirmed at ≥ +1 bit; TT12+2WAY is the recommended production
+landing (1 wasm page, L1d-resident). See §5 for wiring.
+
 ### C5 — `CD_TT_BOUNDS`: store fail-soft bounds, exact-priority  *(outcome-safe; highest payoff; medium-high effort)*
 
 **Idea.** The census's headline waste: 200M+ completed refutations per few dozen
