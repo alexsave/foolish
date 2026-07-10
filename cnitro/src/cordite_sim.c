@@ -895,6 +895,57 @@ static uint64_t sim_fingerprint(const SimState *s, int a, int b) {
     return h ? h : 1;
 }
 
+#ifdef CD_TT_SUITSYM
+// Suit-symmetry canonical fingerprint: the three NON-trump suits are
+// interchangeable (a card's suit only matters via trump + same-suit covering),
+// so a position and any permutation of its non-trump suits have the SAME game
+// value. We key the TT on the canonical orbit representative = the minimum
+// fingerprint over the 6 permutations of the non-trump suits. Every position in
+// an orbit yields the same set of 6 fingerprints, hence the same min -> the 6
+// equivalent positions collapse to ONE table entry. The stored value is
+// permutation-invariant, so reuse across the orbit is exact and the search
+// returns identical values (move-preserving). Cards are suit*13+rank; hands are
+// 52-bit masks with one 13-bit block per suit.
+static uint64_t sim_fingerprint_canon(const SimState *s, int a, int b) {
+    static const int P[6][3] = {{0,1,2},{0,2,1},{1,0,2},{1,2,0},{2,0,1},{2,1,0}};
+    int power = s->power_suit;
+    int nt[3], k = 0;
+    for (int su = 0; su < 4; su++) if (su != power) nt[k++] = su;
+    uint64_t best = ~0ull;
+    for (int p = 0; p < 6; p++) {
+        int map[4]; map[power] = power;
+        map[nt[0]] = nt[P[p][0]]; map[nt[1]] = nt[P[p][1]]; map[nt[2]] = nt[P[p][2]];
+        // remap a 52-bit hand: move each 13-bit suit block to map[suit]
+        uint64_t ha = 0, hb = 0;
+        for (int su = 0; su < 4; su++) {
+            ha |= ((s->hand[a] >> (su * 13)) & 0x1FFFull) << (map[su] * 13);
+            hb |= ((s->hand[b] >> (su * 13)) & 0x1FFFull) << (map[su] * 13);
+        }
+        uint64_t h = ha * 0x9E3779B97F4A7C15ull;
+        h ^= (hb + 0x7F4A7C15ull) * 0xC2B2AE3D27D4EB4Full;
+        uint64_t t = 0;
+        for (int i = 0; i < s->num_battles; i++) {
+            int ac = s->atk[i]; uint64_t cell = (uint64_t)(map[ac / 13] * 13 + ac % 13);
+            if (s->covered_mask & (1ull << i)) {
+                int dc = s->def[i];
+                cell |= ((uint64_t)(map[dc / 13] * 13 + dc % 13) << 8) | (1ull << 16);
+            }
+            t = t * 1099511628211ull + (cell + 1);
+        }
+        h ^= t * 0xFF51AFD7ED558CCDull;
+        h ^= (uint64_t)s->defender << 1;
+        h ^= (uint64_t)s->first_attacker << 9;
+        h ^= (uint64_t)(s->good_mask & 0xff) << 17;
+        h ^= (uint64_t)s->num_battles << 25;
+        h ^= 0x94D049BB133111EBull;
+        h ^= h >> 31;
+        h = h ? h : 1;
+        if (h < best) best = h;
+    }
+    return best;
+}
+#endif
+
 // The single attacker (the non-defender IN player) in a 2-player node.
 static inline int sim_other_in(const SimState *s, int p) {
     for (int i = 0; i < s->num_players; i++)
@@ -1179,7 +1230,11 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
     uint64_t key = 0;
     CdTTEntry *e = NULL;
     if (b >= 0) {
+#ifdef CD_TT_SUITSYM
+        key = sim_fingerprint_canon(s, a, b);
+#else
         key = sim_fingerprint(s, a, b);
+#endif
         e = &S->tt[key & CD_TT_MASK];
         if (e->valid && e->key == key) {
             // stored value is depth-relative to e->depth; re-base to this depth.
