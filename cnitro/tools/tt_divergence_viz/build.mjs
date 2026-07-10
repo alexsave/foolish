@@ -27,8 +27,10 @@ const measuredBase = readJSON(path.join(HERE, 'data', 'measured.json'), { series
 const divergence = readJSON(path.join(HERE, 'data', 'divergence.json'), { series: [] });
 // hand-entered points + accumulating seed-keyed divergence, drawn as one layer
 const measured = { series: [...(measuredBase.series || []), ...(divergence.series || [])] };
+// avg protagonist decision latency per (cell,bits), filled by the final CD_LAT pass
+const latency = readJSON(path.join(HERE, 'data', 'latency.json'), {});
 
-const DATA = JSON.stringify({ ccdf, measured });
+const DATA = JSON.stringify({ ccdf, measured, latency });
 
 const html = `<meta charset="utf-8">
 <title>Transposition-table divergence · foolish / cnitro</title>
@@ -204,6 +206,16 @@ perfect.</p>
   </div>
   <div class="legend" id="legend"></div>
 </figure>
+
+<h2>Octogen · pc 2 — divergence by table size <span class="small" id="divSub"></span></h2>
+<p>The decision table: for the binding configuration (octogen, 2 players), the directly-measured
+fraction of games that play a different move sequence than they would at the TT22 reference, with a
+95% Wilson interval, accumulating seed by seed. The <span style="color:var(--ship)">shipped TT13</span>
+row is highlighted. <span class="mono">rule-of-3</span> upper bounds apply where zero divergences have
+been seen so far. Latency is the average protagonist decision time (filled by a dedicated pass).</p>
+<div class="card" style="padding:6px 4px">
+  <div style="overflow-x:auto"><table class="tbl" id="divTable"></table></div>
+</div>
 
 <h2>Working-set density — how many bits each game needs</h2>
 <p>The curve above is the <em>tail</em>; this is the <em>density</em> it's the tail of. For every game,
@@ -574,7 +586,49 @@ function draw(){
   hit.addEventListener('mouseleave',()=>{tip.style.opacity=0;cross.style.opacity=0;});
 
   buildLegend(); buildTable(); buildFoot();
-  drawHist();
+  drawHist(); buildDivTable();
+}
+
+// ---- the decision table: octogen pc2 divergence by table size, with CI + latency
+function buildDivTable(){
+  const T=document.getElementById('divTable'); if(!T) return;
+  const s=(DATA.measured.series||[]).find(x=>x.bot==='octogen'&&x.pc===2&&x.measured);
+  const model=cells['octogen_pc2'];
+  const lat=(DATA.latency&&DATA.latency['octogen_pc2'])||{};
+  const sub=document.getElementById('divSub');
+  if(!s||!s.points||!s.points.length){
+    T.innerHTML='<tbody><tr><td style="color:var(--ink-3);padding:14px">no divergence data yet — run '
+      +'<code>tools/tt_divergence_viz/accrue_div.sh</code></td></tr></tbody>';
+    if(sub) sub.textContent=''; return;
+  }
+  const gmax=Math.max(...s.points.map(p=>p.games||0));
+  if(sub) sub.textContent='· up to '+gmax.toLocaleString()+' seeds/size · ref TT'+(s.ref_bits||22);
+  let h='<thead><tr>'
+    +'<th>table</th><th>entries</th><th>bytes</th><th>games</th><th>diverged</th>'
+    +'<th>divergence</th><th>95% interval</th><th>model P(W&gt;M)</th><th>avg decision</th>'
+    +'</tr></thead><tbody class="mono">';
+  s.points.slice().sort((a,b)=>a.bits-b.bits).forEach(p=>{
+    const bd=bounds(p.diverged,p.games);
+    const ship=p.bits===13;
+    const bytes=p.bits>=10?((2**p.bits*16)/1024/(p.bits>=20?1024:1)).toFixed(0)+(p.bits>=20?' MiB':' KiB'):(2**p.bits*16)+' B';
+    const mc=model?model.ccdf.find(d=>d.bits===p.bits):null;
+    const modelp=mc?(mc.p>0?pctP(mc.p):'0'):'—';
+    const rate = p.diverged>0? (p.diverged/p.games*100).toFixed( p.diverged/p.games<0.001?3:2 )+'%' : '0';
+    const ci = p.diverged>0
+       ? (bd.lo*100).toFixed(bd.lo<0.001?3:2)+'–'+(bd.hi*100).toFixed(bd.hi<0.01?3:2)+'%'
+       : '&lt; '+(bd.hi*100).toFixed(bd.hi<0.01?3:2)+'%';
+    const L=lat[String(p.bits)];
+    const latStr = L&&L.avg_ms!=null ? L.avg_ms.toFixed(L.avg_ms<10?2:1)+' ms' : '<span style="color:var(--ink-3)">—</span>';
+    h+='<tr'+(ship?' style="background:color-mix(in srgb, var(--ship) 12%, transparent)"':'')+'>'
+      +'<td style="text-align:left'+(ship?';font-weight:700;color:var(--ship)':'')+'">TT'+p.bits+(ship?' ◄ shipped':'')+'</td>'
+      +'<td>'+fmtEntries(2**p.bits)+'</td><td>'+bytes+'</td>'
+      +'<td>'+p.games.toLocaleString()+'</td><td>'+p.diverged.toLocaleString()+'</td>'
+      +'<td'+(p.diverged>0?'':' style="color:var(--ink-3)"')+'>'+rate+'</td>'
+      +'<td style="color:var(--ink-2)">'+ci+'</td>'
+      +'<td style="color:var(--ink-3)">'+modelp+'</td>'
+      +'<td>'+latStr+'</td></tr>';
+  });
+  T.innerHTML=h+'</tbody>';
 }
 
 // ---- working-set density: bits-needed histogram per selected cell ----
