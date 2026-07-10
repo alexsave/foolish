@@ -35,16 +35,16 @@ For a module that never calls `memory.grow`, peak == initial.
 | ------------- | ------------- | ------------ | --------- | ----------------- |
 | `guards.wasm` | 256 KiB | **64 KiB · 1 page** | 4× | no — pinned, 0 `memory.grow` |
 | `rules.wasm`  | 3.31 MiB | **320 KiB · 5 pages** | 10.6× | no — all-static, 0 `memory.grow` |
-| `bots.wasm`   | 5.13 MiB | **~1.5 MiB** | ~3.4× (−71%) | **yes** — see below |
+| `bots.wasm`   | 5.13 MiB | **~1.375 MiB** | ~3.7× (−73%) | **yes** — see below |
 
 `bots.wasm` is the one that grows. Its **initial** memory dropped 64 → 18 pages
 (4 MiB → 1.13 MiB) from the shared buffer caps. On first play its Monte-Carlo
 endgame solver then bump-allocates a transposition table (+2 slack pages) and
 stays flat there. That table was 1 MiB (`CD_TT_BITS=16`); the divergence study
-below shrank it to 256 KiB (`CD_TT_BITS=13`), so the runtime peak went
-`18 + 18 = 36 pages` (2.25 MiB) → `18 + 6 = 24 pages` (~1.5 MiB). Measured
+below shrank it to 128 KiB (`CD_TT_BITS=13`, 8,192 × 16 B), so the runtime
+peak went `18 + 18 = 36 pages` (2.25 MiB) → `18 + 4 = 22 pages` (~1.375 MiB). Measured
 end-to-end across all MC families (rules + bots summed): **2.56 MiB → 1.69 MiB**;
-the CI `metrics` job reports the canonical bots-only figure. 1.5 MiB is the
+the CI `metrics` job reports the canonical bots-only figure. 1.375 MiB is the
 honest footprint — the 1.13 MiB static floor is not the whole story.
 
 `guards.wasm` is pinned to exactly one page at link time
@@ -171,7 +171,7 @@ the decision-relevant baseline.** Measured directly against `TT16`, octogen at
 sits at octogen's inherent floor, 2–3 bits above the collision knee, and is
 statistically **indistinguishable from the production table** — the shrink does
 not change how any bot plays relative to today. That is the shipped value:
-table 1 MiB → 256 KiB, runtime peak 36 → 24 pages. Also confirmed by
+table 1 MiB → 128 KiB, runtime peak 36 → 22 pages. Also confirmed by
 `bot_parity` against the TS oracle (7/7).
 
 (An earlier draft of this doc claimed `p ≈ 2.5e-5` from a `p(M) ≈ C/M`

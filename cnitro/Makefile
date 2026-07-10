@@ -190,7 +190,7 @@ WASM_FLAGS := --target=wasm32 $(WASM_OPT) -nostdlib -ffreestanding -mbulk-memory
               -Wl,--strip-all
 # CD_TT_BITS=13: the cordite endgame solver's transposition table (bump-
 # allocated on first play) is the largest driver of bots.wasm's RUNTIME peak —
-# it grows, unlike the static caps above. 16 = 1 MiB; 13 = 256 KiB (8,192
+# it grows, unlike the static caps above. 16 = 1 MiB; 13 = 128 KiB (8,192
 # entries). It's a memoization cache, but the solver is node-budget-limited, so
 # table size is a bot-STRENGTH knob, sized by the per-game move-divergence study
 # (tools/tt_divergence.sh, docs/WASM_L1_BUDGET.md). There is no cliff-to-zero: the
@@ -198,8 +198,8 @@ WASM_FLAGS := --target=wasm32 $(WASM_OPT) -nostdlib -ffreestanding -mbulk-memory
 # size-sensitivity that exists even at TT16-TT19; the collision knee is ~TT10-11.
 # So TT16 (production today) is the baseline, not an infinite table — and TT13 vs
 # TT16 diverges in 0/1720 games (octogen, pc 2/4/7). TT13 is indistinguishable
-# from the shipped table, 2-3 bits above the knee. Drops runtime peak 36 -> 24
-# pages (2.25 -> 1.5 MiB). Only bots links cordite_sim, so rules/guards ignore it.
+# from the shipped table, 2-3 bits above the knee. Drops runtime peak 36 -> 22
+# pages (2.25 -> 1.375 MiB). Only bots links cordite_sim, so rules/guards ignore it.
 
 # Explicit export allow-list — only the memory (above) + wasm_* API the TS
 # bridge actually calls (engine.ts / bots.ts). This REPLACES -Wl,--export-all,
