@@ -172,6 +172,17 @@ Measure directly: W(RANKSYM)/W(std) at TT22 over the §7 panel + 100-game batch.
 The existing 6-perm `CD_TT_SUITSYM` gave only ~1.05–1.1× — rank compaction is the
 part with real headroom; if measurement shows <1.3×, drop C2 and lean on C3/C5.
 
+**MEASURED (DONE — Jul 2026, `-DCD_TT_RANKSYM`).** Collapse W(std)/W(ranksym) =
+**1.17× overall** on the panel at TT22 (1.04–1.57×; best on low-card games) — beats
+SUITSYM's ~1.07× but below the 1.3× keep-bar. V1: **not** bit-identical (2/200 seeds
+change move hash, both `fin=1` → **0 outcome flips** over 200 games) — the orbit
+collapse gives extra hits, saves budget, and reshuffles knife-edge tie-breaks;
+consistent with budget-boundary, not a value bug. **Latency: ~2.2× slower per
+decision** (6-perm × rank-compaction fingerprint at every node). Verdict: **kept
+flag-gated, NOT shipped** — +0.2 effective bit doesn't justify ~2× hot-path cost.
+If ever wanted, apply the plan's optimizations first (direct suit-sort instead of
+6-perm min; canonicalize only at `cards ≤ 10`) to recover the latency.
+
 **Cost.** Fingerprint goes from ~20 ops to ~80–120 ops/node. Node cost is dominated
 by the child memcpy + movegen, but verify with V5; if hot, canonicalize only at
 `cards ≤ 10` (where the collapse lives) and tag plain/canon keys with a high bit so
@@ -210,6 +221,19 @@ positive; V2/V3 decide. If aborts rise, raise `CD_TT_TAIL_N` before raising K.
 
 **Wasm note.** +8 KiB BSS against a 64→8 KiB main-table saving.
 
+**MEASURED (DONE — `-DCD_TT_TAILCACHE`, tail=512/K=6, composed with 2WAY).** Value-safe
+confirmed: with a lossless (1M-slot) tail at TT22, SIG-identical to std@TT22 over 200
+mixed seeds — the routing introduces no value drift; the small tail is a pure capacity
+trade. Panel: behavior is **flat from TT13-main down to TT9-main (8 KiB)** — every
+panel seed wins at every main size, including the flips 720958/700910; only 500459
+diverges in move (still a win). Pool split at TT12: **78% of insertions land in the
+8 KiB tail**; the main table sees only ~467 distinct keys/game. Scale gate
+(tail512 + main-**TT10**, 16 KiB total, vs pure std TT22, 3,000 espresso games):
+move-div 0.30%, **outcome-flips 1/3000 (0.033%, one win→loss)** — at std-TT13's floor
+in a **quarter** of TT13's bytes. **Tabled** (kept flag-gated, not shipped): the
+current ship (TT12+2WAY+PACK8 = 32 KiB, 0 flips) already beats TT13; C3 trades to
+16 KiB at the cost of that one flip, revisit if byte budget tightens further.
+
 ### C4 — `CD_TT_2WAY`: pairwise 2-way associativity  *(value-safe; trivial effort)*
 
 **Idea.** Direct-mapped tables lose ~half their capacity to conflict misses. Make
@@ -223,7 +247,35 @@ for the expensive entry).
 **Expected.** Conflict misses ≈ halved ⟹ ≈ +1 effective bit: TT12-2way ≈ TT13
 behavior at 64 KiB. ~15 lines. Composes with everything.
 
+**MEASURED (DONE — Jul 2026, `-DCD_TT_2WAY`, prod env).** Landed and validated
+through the ladder. Result: **2WAY@TT12 (64 KiB) strictly beats std@TT13 (128 KiB)** —
+half the bytes, better fidelity.
+
+- **V0** default build (no flag): SIG-identical to pre-change (20 seeds). ✔
+- **V1** value safety: 2WAY@TT22 SIG-identical to std@TT22 over 200 mixed seeds
+  (100 handwritten @500000 + 100 espresso @700000). ✔
+- **V2** tricky panel (TT13/12/11): 2WAY **fixes** the std-TT13 0.04% outcome flip
+  **720958** (win at TT13/12/11, std loses), extends **700910**'s win down to TT11
+  (std loses at TT12/TT11), and converges **500459** to the TT22 move at TT12/TT13
+  (std diverges at every size). **Zero outcome regressions** across the panel; every
+  2WAY `fin=1`. (W census reads *higher* for 2WAY — associativity retains more
+  distinct keys, i.e. better slot utilization; it is not a cost.)
+- **V4** outcome flips at scale, 2WAY@TT12 vs TT22, 3000 espresso games:
+  **0 outcome flips (0.000%)**, move-divergence 0.100% — both below std-TT13's
+  0.14% / 0.04% reference. (V3 move-divergence is subsumed: same run.)
+
+Effective gain confirmed at ≥ +1 bit; TT12+2WAY is the recommended production
+landing (1 wasm page, L1d-resident). See §5 for wiring.
+
 ### C5 — `CD_TT_BOUNDS`: store fail-soft bounds, exact-priority  *(outcome-safe; highest payoff; medium-high effort)*
+
+> **MEASURED (Jul 2026): the store is validated safe; the reuse below is a
+> characterized NEGATIVE** — ~30% outcome flips at TT22, root-caused to the
+> exact-in-window invariant (bound magnitudes absorbed into ancestor values
+> certified EXACT; the solver's ±1-wide probe windows amplify any distortion
+> into outcome flips). The "possibly SIG-safe" hope below is false. The
+> `CD_TT_BOUNDS` store machinery is committed off-by-default; the reuse path
+> (`CD_TT_BOUNDS_USE`) is kept only as a documented reference and does not ship.
 
 **Idea.** The census's headline waste: 200M+ completed refutations per few dozen
 games, none stored. Standard chess-engine TT flags fix this. Add a flag byte in the
@@ -267,6 +319,18 @@ Pack `{tag:40, value:12, depth:6, flags:2}` into 8 bytes → 2× slots per byte
 of *silently wrong values*. That is an undetectable-corruption channel in a system
 whose whole story is 10⁻⁴-level guarantees — only worth it if, after C2–C5, byte
 budget is still the binding constraint. Position honestly or skip.
+
+**MEASURED (DONE — SHIPPED, `-DCD_TT_PACK8`).** Implemented as `{key:40, value:12
+(signed), depth:6, valid:1, bound:2, pad:3}` = 8 bytes; a uniform `CD_TT_KEYTAG(k)`
+macro (identity when off, so V0 is byte-identical) applies at every key site, so it
+composes with 2WAY/TAILCACHE/BOUNDS. Result: **behavior-neutral 2× byte win.**
+- V0 default unchanged; PACK8+2WAY@TT22 SIG-identical to std@TT22.
+- **PACK8+2WAY@TT12 vs plain 2WAY@TT12** (same 4,096 slots, 32 KiB vs 64 KiB):
+  **0 move-diffs, 0 outcome-flips over 600 games** (300 hw + 300 espresso) plus the
+  full tricky panel — the tag alias (~1e-5/game) never fired, as expected.
+- **Shipped** in `WASM_FLAGS` (TT12 + 2WAY + PACK8): solver table **64 → 32 KiB**,
+  a quarter of a wasm page. Trajectory: 1 MiB → 128 KiB → 64 KiB → 32 KiB, strength
+  unchanged. The alias risk sits an order of magnitude below octogen's ~4e-4 floor.
 
 ---
 
