@@ -17,6 +17,7 @@
 #include "wire.h"
 #include "legal.h"
 #include "replay.h"
+#include "wasm_overlay.h"
 #include "view.h"
 #include "awire.h"
 #include "evwire.h"
@@ -440,7 +441,16 @@ int wasm_can_cover(int as, int av, int ds, int dv, int power_suit) {
 #define WASM_REPLAY_IO_CAP (2 * 1024 * 1024)
 #endif
 #define REPLAY_IO_CAP WASM_REPLAY_IO_CAP
+#ifdef CD_WASM_OVERLAY
+// M8: g_replay_io aliases into solve_ws (see wasm_overlay.h). The TS bridge
+// writes the input at this pointer, calls the codec, then reads the output —
+// all within one synchronous function, so no choose call interleaves. cd_overlay
+// is a fixed static address, so a cached wasm_replay_io_ptr() stays valid.
+_Static_assert(REPLAY_IO_CAP <= CD_OVL_END - CD_OVL_IO_OFF, "g_replay_io overflows its overlay slot");
+#define g_replay_io ((unsigned char *)(cd_overlay + CD_OVL_IO_OFF))
+#else
 static unsigned char g_replay_io[REPLAY_IO_CAP];
+#endif
 
 unsigned char *wasm_replay_io_ptr(void) { return g_replay_io; }
 int wasm_replay_io_cap(void) { return REPLAY_IO_CAP; }
