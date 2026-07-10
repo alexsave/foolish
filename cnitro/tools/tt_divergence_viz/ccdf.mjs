@@ -20,7 +20,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const dir = process.argv[2] || path.join(path.dirname(new URL(import.meta.url).pathname), 'data', 'W');
-const files = fs.readdirSync(dir).filter(f => f.endsWith('.gw'));
+let files = [];
+try { files = fs.readdirSync(dir).filter(f => f.endsWith('.gw')); }
+catch (e) { if (e.code !== 'ENOENT') throw e; }   // no data yet -> empty CCDF
 
 function parseGW(txt) {
   const bySeed = new Map();               // seed -> W (dedup: deterministic, so identical on repeat)
