@@ -810,7 +810,26 @@ typedef struct {
     int16_t  value;   // exact value at this node (me-perspective, abs depth-relative)
     uint8_t  depth;   // ply depth this value was computed at (value is depth-relative)
     uint8_t  valid;
-} CdTTEntry;
+#ifdef CD_TT_BOUNDS
+    uint8_t  bound;   // C5: 0=EXACT, 1=LOWER (value is a lower bound), 2=UPPER
+#endif
+} CdTTEntry;         // 16 bytes either way (bound lands in existing pad)
+
+#ifdef CD_TT_BOUNDS
+// C5 (docs/SOLVER_TT_WORKING_SET_PLAN.md): the census's headline waste is 200M+
+// completed refutations per few dozen games that the exact-only policy discards.
+// Cache them as fail-soft bounds (standard chess-engine flags) so the win-hunt
+// stops re-deriving refutations its predecessors already proved — the engine
+// behind the 500459-class abort. Replacement is EXACT-priority: a bound never
+// evicts or downgrades an EXACT entry, so today's exact retention is preserved
+// exactly and bounds are pure additive cache (more cutoffs, less budget burn).
+#define TT_EXACT 0
+#define TT_LOWER 1
+#define TT_UPPER 2
+#ifndef CD_TT_BOUND_MINCARDS
+#define CD_TT_BOUND_MINCARDS 5   // only cache bounds for the expensive deep layer
+#endif
+#endif
 
 typedef struct {
     long budget;
@@ -1380,7 +1399,47 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
                 fprintf(stderr,"HIT %ld key=%llx depth=%d stored_depth=%d value=%d\n",
                         _nid,(unsigned long long)key,depth,(int)e->depth,v);
 #endif
+#ifdef CD_TT_BOUNDS
+            // EXACT -> return; a proven bound either cuts off or narrows [alpha,beta]
+            // (the rebase is an additive shift, so the >=/<= direction survives it).
+            if (e->bound == TT_EXACT) TR_RET(v, "tthit");
+#ifdef CD_TT_BOUNDS_USE
+            // EXPERIMENTAL / KNOWN-BROKEN (kept for the record; NOT enabled by plain
+            // CD_TT_BOUNDS). Using fail-soft bounds for cutoffs/narrowing corrupts
+            // OUTCOMES here (~30% win<->loss flips at TT22, measured): this solver's
+            // callers read the returned value as a mate value (win/loss sign +
+            // fastest-win magnitude), not as an alpha-beta-internal bound, so a bound
+            // that propagates up and is absorbed as "exact" at an ancestor flips the
+            // root's win/loss call. Even sign-guarded, pure cutoffs still flip. A
+            // correct design must keep bound values from ever being read as exact
+            // mate values (e.g. bounds in a per-solve side table used only for
+            // intra-search pruning, never across the persistent multi-window TT).
+            // See docs/SOLVER_TT_WORKING_SET_PLAN.md C5. Plain CD_TT_BOUNDS below is
+            // STORE-ONLY and validated SIG-identical to std at TT22.
+            // Only SIGN-DETERMINING bounds are safe to act on. A LOWER bound proves
+            // true >= v; that pins the outcome to a WIN only when v > 0. A negative
+            // or zero lower bound leaves the sign open (true could still be a win),
+            // and returning such a v on a cutoff reports a loss/draw where the node
+            // is actually won — the mate-value sign flip V1 caught. Symmetric for an
+            // UPPER bound (safe only when v < 0, a proven loss). A proven win/loss is
+            // also exactly the refutation the win-hunt wants to reuse, so this keeps
+            // all the value while dropping the ambiguous-sign bounds (treated as a
+            // miss → normal search). Narrowing alpha up to a proven win / beta down
+            // to a proven loss can only exclude values the true result provably beats.
+            if (e->bound == TT_LOWER && v > 0) {          // proven WIN, true >= v > 0
+                if (v >= beta) TR_RET(v, "ttlo");
+                if (v > alpha) alpha = v;
+                if (alpha >= beta) TR_RET(v, "ttcut");
+            } else if (e->bound == TT_UPPER && v < 0) {   // proven LOSS, true <= v < 0
+                if (v <= alpha) TR_RET(v, "ttup");
+                if (v < beta) beta = v;
+                if (alpha >= beta) TR_RET(v, "ttcut");
+            }
+            // else: ambiguous-sign bound → fall through and search normally
+#endif
+#else
             TR_RET(v, "tthit");
+#endif
         }
     }
 #ifdef CD_TT_TRACE
@@ -1474,6 +1533,7 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
         else if (best <= alpha0) cd_stat_faillo++;
     }
 #endif
+#ifndef CD_TT_BOUNDS
     if (e && key && best > alpha0 && best < beta0) {
         int store = 1;
 #ifdef CD_TT_2WAY
@@ -1529,6 +1589,55 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
             e->valid = 1;
         }
     }
+#else   /* CD_TT_BOUNDS: store EXACT and, deep enough, fail-soft LOWER/UPPER bounds */
+    if (e && key) {
+        int bnd = (best > alpha0 && best < beta0) ? TT_EXACT
+                : (best >= beta0)                 ? TT_LOWER
+                :                                   TT_UPPER;   /* best <= alpha0 */
+        int tc = __builtin_popcountll(s->hand[a]) + __builtin_popcountll(s->hand[b]);
+        if (bnd == TT_EXACT || tc >= CD_TT_BOUND_MINCARDS) {
+            CdTTEntry *slot;
+#ifdef CD_TT_2WAY
+            // Victim among the pair; when evicting a different key, prefer to drop a
+            // bound over an EXACT, else the deeper-ply (cheaper-to-redo) entry.
+            CdTTEntry *bkt = &tbl[key & tmask & ~1ull];
+            if      (bkt[0].valid && bkt[0].key == key) slot = &bkt[0];
+            else if (bkt[1].valid && bkt[1].key == key) slot = &bkt[1];
+            else if (!bkt[0].valid)                     slot = &bkt[0];
+            else if (!bkt[1].valid)                     slot = &bkt[1];
+            else {
+                int ex0 = (bkt[0].bound == TT_EXACT), ex1 = (bkt[1].bound == TT_EXACT);
+                if (ex0 != ex1) slot = ex0 ? &bkt[1] : &bkt[0];
+                else slot = (bkt[0].depth >= bkt[1].depth) ? &bkt[0] : &bkt[1];
+            }
+#else
+            slot = &tbl[key & tmask];
+#endif
+            // EXACT-priority: a bound never displaces a valid EXACT entry (same key
+            // or not) — so today's exact retention is preserved and bounds are pure
+            // additive cache. EXACT overwrites anything (as the exact-only path did).
+            int proceed = !(bnd != TT_EXACT && slot->valid && slot->bound == TT_EXACT);
+            if (proceed) {
+#ifdef CD_TT_STATS
+                if (!slot->valid) {
+                    cd_stat_occ++; if (cd_stat_occ > cd_stat_max_I) cd_stat_max_I = cd_stat_occ;
+                    cd_stat_ins_cards[tc > 24 ? 24 : tc]++;
+#ifdef CD_TT_TAILCACHE
+                    if (tbl == cd_tt_tail) cd_stat_tail_ins++; else cd_stat_main_ins++;
+#endif
+                } else if (slot->key != key && slot->bound == TT_EXACT && bnd == TT_EXACT) {
+                    cd_stat_collisions++;   // count exact-evicts-exact only (metric stays meaningful)
+                }
+#endif
+                slot->key = key;
+                slot->value = (int16_t)best;
+                slot->depth = (uint8_t)depth;
+                slot->valid = 1;
+                slot->bound = (uint8_t)bnd;
+            }
+        }
+    }
+#endif
     TR_RET(best, "exact");
 }
 
