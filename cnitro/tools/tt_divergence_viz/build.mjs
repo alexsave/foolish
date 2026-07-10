@@ -23,7 +23,10 @@ function readJSON(p, dflt) {
   catch (e) { if (e.code === 'ENOENT') return dflt; throw e; }
 }
 const ccdf = readJSON(path.join(HERE, 'data', 'ccdf.json'), {});
-const measured = readJSON(path.join(HERE, 'data', 'measured.json'), { series: [] });
+const measuredBase = readJSON(path.join(HERE, 'data', 'measured.json'), { series: [] });
+const divergence = readJSON(path.join(HERE, 'data', 'divergence.json'), { series: [] });
+// hand-entered points + accumulating seed-keyed divergence, drawn as one layer
+const measured = { series: [...(measuredBase.series || []), ...(divergence.series || [])] };
 
 const DATA = JSON.stringify({ ccdf, measured });
 
@@ -530,9 +533,13 @@ function draw(){
   if(state.raw){
     DATA.measured.series.forEach(s=>{
       if(!state.bots.has(s.bot)) return;
+      // numeric-pc series (e.g. the accumulating octogen pc2 sweep) follow the
+      // player-count selector so they overlay their own model curve; string-pc
+      // series ("mixed", "4,8") are always shown.
+      if(typeof s.pc==='number' && state.pcs.size && !state.pcs.has(s.pc)) return;
       s.points.forEach(pt=>{
         if(pt.bits<B_MIN||pt.bits>B_MAX) return;
-        const bd=bounds(pt.diverged, s.games);
+        const bd=bounds(pt.diverged, pt.games||s.games);
         const x=xOf(pt.bits);
         const y = bd.p>0? yOf(bd.p) : (state.y==='log'? yOf(FLOOR_P*1.4) : yOf(0));
         // bounds whisker
@@ -707,12 +714,13 @@ function tipCurve(bot,pc,pt,cell){
    +'<div class="row"><span class="k">max W seen</span><span>'+cell.maxW.toLocaleString()+'</span></div>';
 }
 function tipRaw(s,pt,bd){
+  const g = pt.games||s.games;
   const pcl = s.pc==='mixed'?'mixed pc':'pc '+s.pc;
-  let b = bd.p>0 ? pctP(bd.p) : '0 of '+s.games.toLocaleString();
+  let b = bd.p>0 ? pctP(bd.p) : '0 of '+g.toLocaleString();
   let bound = 'p &lt; '+pctP(bd.hi)+' (95%)';
   return '<b style="color:'+color(s.bot)+'">'+PRETTY[s.bot]+' · '+pcl+'</b> — measured'
    +'<div class="row"><span class="k">table</span><span>TT'+pt.bits+'</span></div>'
-   +'<div class="row"><span class="k">diverged</span><span>'+pt.diverged+' / '+s.games.toLocaleString()+'</span></div>'
+   +'<div class="row"><span class="k">diverged</span><span>'+pt.diverged+' / '+g.toLocaleString()+'</span></div>'
    +'<div class="row"><span class="k">rate</span><span>'+b+'</span></div>'
    +'<div class="row"><span class="k">bound</span><span>'+bound+'</span></div>';
 }
