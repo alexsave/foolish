@@ -1170,14 +1170,25 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
     // either as exact would corrupt a later lookup under a wider window. So we
     // store solely the exact case; bound nodes are simply not memoized.
     if (e && key && best > alpha0 && best < beta0) {
-#ifdef CD_TT_STATS
-        if (!e->valid) { cd_stat_occ++; if (cd_stat_occ > cd_stat_max_I) cd_stat_max_I = cd_stat_occ; }
-        else if (e->key != key) cd_stat_collisions++;   // eviction — must stay ~0 at TT16
+        int store = 1;
+#ifdef CD_TT_DEPTH_PREF
+        // Depth-preferred replacement: on a collision with a DIFFERENT key, keep
+        // whichever entry is closer to the root (lower ply = larger subtree below
+        // it = costliest to recompute). Empty slots and same-key refreshes always
+        // store. Aims to cut the eviction thrashing that perturbs move choice at
+        // small table sizes, at zero extra memory (one comparison).
+        if (e->valid && e->key != key && (uint8_t)depth > e->depth) store = 0;
 #endif
-        e->key = key;
-        e->value = (int16_t)best;
-        e->depth = (uint8_t)depth;
-        e->valid = 1;
+        if (store) {
+#ifdef CD_TT_STATS
+            if (!e->valid) { cd_stat_occ++; if (cd_stat_occ > cd_stat_max_I) cd_stat_max_I = cd_stat_occ; }
+            else if (e->key != key) cd_stat_collisions++;   // eviction — must stay ~0 at TT16
+#endif
+            e->key = key;
+            e->value = (int16_t)best;
+            e->depth = (uint8_t)depth;
+            e->valid = 1;
+        }
     }
     return best;
 }
