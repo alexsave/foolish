@@ -816,6 +816,7 @@ typedef struct {
     long budget;
     int  aborted;
     int  me;
+    int  order;   // move ordering: 0 gen-order, 2 big-first (desc), 3 short-first (asc)
     CdTTEntry *tt;
 } SimSolver;
 
@@ -1264,29 +1265,26 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
     // slack above the cap so a true count above it is still detected.
     if (nm > CD_SOLVE_MOVES_CAP) { S->aborted = 1; TR_RET(0, "movecap"); }
 
-#if defined(CD_TT_ORDER2) || defined(CD_TT_ORDER3)
-    // Experimental move ordering (insertion sort, nm small). Two directions:
-    //   ORDER2: most-committing first (big attacks) — cuts W hard but drives the
-    //           search into deep lines that trip the ply-48 abort -> regressions.
-    //   ORDER3: SHORT-LINE first — round-enders (GOOD/pickup, n==0) then fewest
-    //           cards, so short lines resolve before the search can go deep.
-    // key: ORDER2 sorts by n descending (n==0 -> -1, last); ORDER3 ascending.
-    for (int i = 1; i < nm; i++) {
-        SolMove kv = moves[i];
-        int ki = (kv.n == 0) ? -1 : kv.n;
-        int j = i - 1;
-        while (j >= 0) {
-            int kj = (moves[j].n == 0) ? -1 : moves[j].n;
-#ifdef CD_TT_ORDER3
-            if (kj <= ki) break;              // ascending: short lines first
-#else
-            if (kj >= ki) break;              // descending: big moves first
-#endif
-            moves[j + 1] = moves[j]; j--;
+    // Move ordering (insertion sort, nm small), runtime-selected by S->order:
+    //   2 = big-first (descending by card count) — aggressive cutoffs, small W,
+    //       but dives into deep lines that can trip the ply-48 abort.
+    //   3 = short-line-first (ascending) — round-enders/fewest cards first, so
+    //       short lines resolve before the search goes deep (fuller, bigger W).
+    //   0 = generation order. CD_TT_ADAPT runs 2, and on abort re-solves with 3.
+    if (S->order) {
+        int desc = (S->order == 2);
+        for (int i = 1; i < nm; i++) {
+            SolMove kv = moves[i];
+            int ki = (kv.n == 0) ? -1 : kv.n;
+            int j = i - 1;
+            while (j >= 0) {
+                int kj = (moves[j].n == 0) ? -1 : moves[j].n;
+                if (desc ? (kj >= ki) : (kj <= ki)) break;
+                moves[j + 1] = moves[j]; j--;
+            }
+            moves[j + 1] = kv;
         }
-        moves[j + 1] = kv;
     }
-#endif
 
     int alpha0 = alpha, beta0 = beta;   // original window for exactness test
     int maximizing = (actor == S->me);
@@ -1390,9 +1388,16 @@ int cd_sim_solve(SimState *s, int me, int alpha, int beta, long budget, int *abo
 int cd_sim_solve_d(SimState *s, int me, int alpha, int beta, long *budget,
                    int depth0, int *aborted) {
     SimSolver S;
+    long budget0 = *budget;
     S.budget = *budget;
     S.aborted = 0;
     S.me = me;
+    S.order = 0;
+#if defined(CD_TT_ADAPT) || defined(CD_TT_ORDER2)
+    S.order = 2;              // big-first by default
+#elif defined(CD_TT_ORDER3)
+    S.order = 3;
+#endif
     S.tt = cd_tt_get();
     if (!S.tt) { if (aborted) *aborted = 1; return 0; }
 #ifdef CD_TT_TRACE
@@ -1416,6 +1421,16 @@ int cd_sim_solve_d(SimState *s, int me, int alpha, int beta, long *budget,
     } else cd_tr_active = 0;
 #endif
     int v = sim_solve_rec(&S, s, alpha, beta, depth0);
+#ifdef CD_TT_ADAPT
+    // big-first (order 2) bailed on a deep line -> re-solve this position with the
+    // fuller short-line-first order (3) and a fresh budget, so we resolve it
+    // instead of dropping to the Monte-Carlo fallback. Aborts are rare, so the
+    // common path stays cheap (small W) while the knife-edge games stay correct.
+    if (S.aborted && S.order == 2) {
+        S.budget = budget0; S.aborted = 0; S.order = 0;   // fall back to the reliable std order
+        v = sim_solve_rec(&S, s, alpha, beta, depth0);
+    }
+#endif
     *budget = S.budget;
     if (aborted) *aborted = S.aborted;
 #ifdef CD_TT_TRACE
