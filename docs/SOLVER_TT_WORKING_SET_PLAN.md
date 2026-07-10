@@ -221,6 +221,19 @@ positive; V2/V3 decide. If aborts rise, raise `CD_TT_TAIL_N` before raising K.
 
 **Wasm note.** +8 KiB BSS against a 64→8 KiB main-table saving.
 
+**MEASURED (DONE — `-DCD_TT_TAILCACHE`, tail=512/K=6, composed with 2WAY).** Value-safe
+confirmed: with a lossless (1M-slot) tail at TT22, SIG-identical to std@TT22 over 200
+mixed seeds — the routing introduces no value drift; the small tail is a pure capacity
+trade. Panel: behavior is **flat from TT13-main down to TT9-main (8 KiB)** — every
+panel seed wins at every main size, including the flips 720958/700910; only 500459
+diverges in move (still a win). Pool split at TT12: **78% of insertions land in the
+8 KiB tail**; the main table sees only ~467 distinct keys/game. Scale gate
+(tail512 + main-**TT10**, 16 KiB total, vs pure std TT22, 3,000 espresso games):
+move-div 0.30%, **outcome-flips 1/3000 (0.033%, one win→loss)** — at std-TT13's floor
+in a **quarter** of TT13's bytes. **Tabled** (kept flag-gated, not shipped): the
+current ship (TT12+2WAY+PACK8 = 32 KiB, 0 flips) already beats TT13; C3 trades to
+16 KiB at the cost of that one flip, revisit if byte budget tightens further.
+
 ### C4 — `CD_TT_2WAY`: pairwise 2-way associativity  *(value-safe; trivial effort)*
 
 **Idea.** Direct-mapped tables lose ~half their capacity to conflict misses. Make
@@ -298,6 +311,18 @@ Pack `{tag:40, value:12, depth:6, flags:2}` into 8 bytes → 2× slots per byte
 of *silently wrong values*. That is an undetectable-corruption channel in a system
 whose whole story is 10⁻⁴-level guarantees — only worth it if, after C2–C5, byte
 budget is still the binding constraint. Position honestly or skip.
+
+**MEASURED (DONE — SHIPPED, `-DCD_TT_PACK8`).** Implemented as `{key:40, value:12
+(signed), depth:6, valid:1, bound:2, pad:3}` = 8 bytes; a uniform `CD_TT_KEYTAG(k)`
+macro (identity when off, so V0 is byte-identical) applies at every key site, so it
+composes with 2WAY/TAILCACHE/BOUNDS. Result: **behavior-neutral 2× byte win.**
+- V0 default unchanged; PACK8+2WAY@TT22 SIG-identical to std@TT22.
+- **PACK8+2WAY@TT12 vs plain 2WAY@TT12** (same 4,096 slots, 32 KiB vs 64 KiB):
+  **0 move-diffs, 0 outcome-flips over 600 games** (300 hw + 300 espresso) plus the
+  full tricky panel — the tag alias (~1e-5/game) never fired, as expected.
+- **Shipped** in `WASM_FLAGS` (TT12 + 2WAY + PACK8): solver table **64 → 32 KiB**,
+  a quarter of a wasm page. Trajectory: 1 MiB → 128 KiB → 64 KiB → 32 KiB, strength
+  unchanged. The alias risk sits an order of magnitude below octogen's ~4e-4 floor.
 
 ---
 
