@@ -978,6 +978,83 @@ static uint64_t sim_fingerprint_canon(const SimState *s, int a, int b) {
 }
 #endif
 
+#ifdef CD_TT_RANKSYM
+// C2 (docs/SOLVER_TT_WORKING_SET_PLAN.md): rank+suit canonical fingerprint.
+// Beyond suit symmetry (C4/SUITSYM), the endgame value depends on rank only
+// through (a) trump membership, (b) the RELATIVE order of ranks in the covering
+// rules, and (c) cross-suit rank EQUALITY (attack/pass sets join on equal rank).
+// Absolute ranks are irrelevant once the missing cards are gone. So compact the
+// global rank axis to the ranks actually present — a single monotone bijection
+// nr[] applied to EVERY suit (global, so cross-suit equality is preserved) — and
+// then take the suit-permutation canonical min as before. Two positions that are
+// order-isomorphic after this collapse to ONE key; their game trees are
+// isomorphic and their depth-relative values identical, so the shared entry is
+// exact (value-safe). Subsumes CD_TT_SUITSYM.
+static uint64_t sim_fingerprint_ranksym(const SimState *s, int a, int b) {
+    static const int P[6][3] = {{0,1,2},{0,2,1},{1,0,2},{1,2,0},{2,0,1},{2,1,0}};
+    uint64_t HA = s->hand[a], HB = s->hand[b];
+    // ranks present across both hands + all battle cards (covered defenders too)
+    uint32_t R = 0;
+    for (int su = 0; su < 4; su++) {
+        R |= (uint32_t)((HA >> (su * 13)) & 0x1FFFu);
+        R |= (uint32_t)((HB >> (su * 13)) & 0x1FFFu);
+    }
+    for (int i = 0; i < s->num_battles; i++) {
+        R |= 1u << (s->atk[i] % 13);
+        if (s->covered_mask & (1ull << i)) R |= 1u << (s->def[i] % 13);
+    }
+    // nr[r] = #present ranks below r = the compacted position of rank r. Monotone
+    // in r (order preserved) and a bijection on present ranks (equality preserved).
+    uint8_t nr[13];
+    for (int r = 0; r < 13; r++) nr[r] = (uint8_t)__builtin_popcount(R & ((1u << r) - 1u));
+    // per-suit rank-compacted 13-bit blocks for each hand (done once, before perms)
+    uint32_t ca[4], cb[4];
+    for (int su = 0; su < 4; su++) {
+        uint32_t x = (uint32_t)((HA >> (su * 13)) & 0x1FFFu), c = 0;
+        while (x) { int r = __builtin_ctz(x); c |= 1u << nr[r]; x &= x - 1; }
+        ca[su] = c;
+        x = (uint32_t)((HB >> (su * 13)) & 0x1FFFu); c = 0;
+        while (x) { int r = __builtin_ctz(x); c |= 1u << nr[r]; x &= x - 1; }
+        cb[su] = c;
+    }
+    int power = s->power_suit;
+    int nt[3], k = 0;
+    for (int su = 0; su < 4; su++) if (su != power) nt[k++] = su;
+    uint64_t best = ~0ull;
+    for (int p = 0; p < 6; p++) {
+        int map[4]; map[power] = power;
+        map[nt[0]] = nt[P[p][0]]; map[nt[1]] = nt[P[p][1]]; map[nt[2]] = nt[P[p][2]];
+        uint64_t ha = 0, hb = 0;
+        for (int su = 0; su < 4; su++) {
+            ha |= (uint64_t)ca[su] << (map[su] * 13);
+            hb |= (uint64_t)cb[su] << (map[su] * 13);
+        }
+        uint64_t h = ha * 0x9E3779B97F4A7C15ull;
+        h ^= (hb + 0x7F4A7C15ull) * 0xC2B2AE3D27D4EB4Full;
+        uint64_t t = 0;
+        for (int i = 0; i < s->num_battles; i++) {
+            int ac = s->atk[i];
+            uint64_t cell = (uint64_t)(map[ac / 13] * 13 + nr[ac % 13]);
+            if (s->covered_mask & (1ull << i)) {
+                int dc = s->def[i];
+                cell |= ((uint64_t)(map[dc / 13] * 13 + nr[dc % 13]) << 8) | (1ull << 16);
+            }
+            t = t * 1099511628211ull + (cell + 1);
+        }
+        h ^= t * 0xFF51AFD7ED558CCDull;
+        h ^= (uint64_t)s->defender << 1;
+        h ^= (uint64_t)s->first_attacker << 9;
+        h ^= (uint64_t)(s->good_mask & 0xff) << 17;
+        h ^= (uint64_t)s->num_battles << 25;
+        h ^= 0x94D049BB133111EBull;
+        h ^= h >> 31;
+        h = h ? h : 1;
+        if (h < best) best = h;
+    }
+    return best;
+}
+#endif
+
 // The single attacker (the non-defender IN player) in a 2-player node.
 static inline int sim_other_in(const SimState *s, int p) {
     for (int i = 0; i < s->num_players; i++)
@@ -1263,7 +1340,9 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
     CdTTEntry *e = NULL;
     CdTTEntry *tbl = S->tt; uint64_t tmask = CD_TT_MASK;   // pool this node uses (main by default)
     if (b >= 0) {
-#ifdef CD_TT_SUITSYM
+#if defined(CD_TT_RANKSYM)
+        key = sim_fingerprint_ranksym(s, a, b);
+#elif defined(CD_TT_SUITSYM)
         key = sim_fingerprint_canon(s, a, b);
 #else
         key = sim_fingerprint(s, a, b);
