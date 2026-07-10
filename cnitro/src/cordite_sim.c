@@ -822,6 +822,23 @@ typedef struct {
 
 static _Thread_local CdTTEntry *cd_tt = NULL;
 
+#ifdef CD_TT_TAILCACHE
+// C3 (docs/SOLVER_TT_WORKING_SET_PLAN.md): the census shows ~91% of distinct keys
+// are near-leaf positions (<= 6 cards across both hands) whose subtrees are tiny
+// and cheap to recompute. Route those to a small, always-resident side cache so
+// the expensive MAIN table only has to hold the deep (>= K+1 card) working set —
+// ~100-600 distinct keys/game. Value-safe: same entry semantics, different slot
+// pool; hits are exact, misses recompute the identical value.
+#ifndef CD_TT_TAIL_N
+#define CD_TT_TAIL_N 512          // side-cache slots (MUST be a power of two)
+#endif
+#ifndef CD_TT_TAIL_K
+#define CD_TT_TAIL_K 6            // route positions with <= K cards (both hands) to the tail
+#endif
+#define CD_TT_TAIL_MASK ((uint64_t)(CD_TT_TAIL_N - 1))
+static _Thread_local CdTTEntry cd_tt_tail[CD_TT_TAIL_N];
+#endif
+
 // -------- occupancy instrumentation (-DCD_TT_STATS; compiled out otherwise) --
 // Measures the distribution of I = distinct keys inserted per clear-window
 // (between cd_sim_solve_reset calls). At the default CD_TT_BITS=16 the table is
@@ -842,12 +859,15 @@ long cd_stat_collisions = 0;       // evictions at store (should be ~0 at TT16)
 //                  away work a bounds-storing TT (CD_TT_BOUNDS) could cache.
 long cd_stat_ins_cards[25];
 long cd_stat_failhi = 0, cd_stat_faillo = 0;
+long cd_stat_tail_ins = 0, cd_stat_main_ins = 0;   // C3: distinct-key insertions by pool
 static _Thread_local long cd_stat_occ = 0;
 static _Thread_local long cd_stat_game_max = 0;  // largest window this game
 void cd_tt_stats_dump(void) {
     fprintf(stderr, "CD_TT_STATS windows=%ld max_I=%ld collisions=%ld\n",
             cd_stat_windows, cd_stat_max_I, cd_stat_collisions);
     fprintf(stderr, "CD_TT_STATS2 failhi=%ld faillo=%ld\n", cd_stat_failhi, cd_stat_faillo);
+    if (cd_stat_main_ins || cd_stat_tail_ins)
+        fprintf(stderr, "CD_TT_POOL main_ins=%ld tail_ins=%ld\n", cd_stat_main_ins, cd_stat_tail_ins);
     for (int i = 0; i < 25; i++)
         if (cd_stat_ins_cards[i]) fprintf(stderr, "CD_TT_CARDS %d %ld\n", i, cd_stat_ins_cards[i]);
     for (long i = 0; i < CD_STAT_MAXB; i++)
@@ -1241,11 +1261,20 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
         if (s->status_p[i] == PLAYER_STATUS_IN) { if (a < 0) a = i; else b = i; }
     uint64_t key = 0;
     CdTTEntry *e = NULL;
+    CdTTEntry *tbl = S->tt; uint64_t tmask = CD_TT_MASK;   // pool this node uses (main by default)
     if (b >= 0) {
 #ifdef CD_TT_SUITSYM
         key = sim_fingerprint_canon(s, a, b);
 #else
         key = sim_fingerprint(s, a, b);
+#endif
+#ifdef CD_TT_TAILCACHE
+        // Near-leaf positions go to the small always-resident side cache; deep
+        // positions to the expensive main table. Both hands' card count picks the
+        // pool identically at probe and store (this node's hands don't change).
+        if (__builtin_popcountll(s->hand[a]) + __builtin_popcountll(s->hand[b]) <= CD_TT_TAIL_K) {
+            tbl = cd_tt_tail; tmask = CD_TT_TAIL_MASK;
+        }
 #endif
 #ifdef CD_TT_2WAY
         // 2-way set associativity: each aligned slot pair is one bucket (both
@@ -1254,13 +1283,13 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
         // slot so the store path still fires — the real victim is re-chosen from
         // live bucket contents at the store site below.
         {
-            CdTTEntry *bkt = &S->tt[key & CD_TT_MASK & ~1ull];
+            CdTTEntry *bkt = &tbl[key & tmask & ~1ull];
             if (bkt[0].valid && bkt[0].key == key)      e = &bkt[0];
             else if (bkt[1].valid && bkt[1].key == key) e = &bkt[1];
             else                                        e = &bkt[0];
         }
 #else
-        e = &S->tt[key & CD_TT_MASK];
+        e = &tbl[key & tmask];
 #endif
         if (e->valid && e->key == key) {
             // stored value is depth-relative to e->depth; re-base to this depth.
@@ -1374,7 +1403,7 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
         // the deeper-ply entry (bigger depth = smaller subtree = cheaper to redo).
         // Always store — refusal is the pathology that made 1-way DEPTH_PREF regress.
         {
-            CdTTEntry *bkt = &S->tt[key & CD_TT_MASK & ~1ull];
+            CdTTEntry *bkt = &tbl[key & tmask & ~1ull];
             if (bkt[0].valid && bkt[0].key == key)      e = &bkt[0];
             else if (bkt[1].valid && bkt[1].key == key) e = &bkt[1];
             else if (!bkt[0].valid)                     e = &bkt[0];
@@ -1397,6 +1426,9 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
                 int tc = __builtin_popcountll(s->hand[a]) + __builtin_popcountll(s->hand[b]);
                 if (tc > 24) tc = 24;
                 cd_stat_ins_cards[tc]++;   // census: which layer the distinct keys live in
+#ifdef CD_TT_TAILCACHE
+                if (tbl == cd_tt_tail) cd_stat_tail_ins++; else cd_stat_main_ins++;
+#endif
             }
             else if (e->key != key) cd_stat_collisions++;   // eviction — must stay ~0 at TT16
 #endif
@@ -1513,6 +1545,9 @@ void cd_sim_solve_reset(void) {
     if (cd_tr_grp_match()) { cd_tr_nid = 0; cd_tr_parent = 0; }
 #endif
     if (cd_tt) memset(cd_tt, 0, CD_TT_SIZE * sizeof(CdTTEntry));
+#ifdef CD_TT_TAILCACHE
+    memset(cd_tt_tail, 0, sizeof(cd_tt_tail));
+#endif
 }
 
 // Single-step (test hook): advance one actor; returns the actor index or -1.
