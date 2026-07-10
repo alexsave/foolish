@@ -834,6 +834,7 @@ long cd_stat_windows = 0;          // total clear-windows seen
 long cd_stat_max_I = 0;            // largest I observed
 long cd_stat_collisions = 0;       // evictions at store (should be ~0 at TT16)
 static _Thread_local long cd_stat_occ = 0;
+static _Thread_local long cd_stat_game_max = 0;  // largest window this game
 void cd_tt_stats_dump(void) {
     fprintf(stderr, "CD_TT_STATS windows=%ld max_I=%ld collisions=%ld\n",
             cd_stat_windows, cd_stat_max_I, cd_stat_collisions);
@@ -842,6 +843,29 @@ void cd_tt_stats_dump(void) {
 }
 static _Thread_local int cd_stat_atexit = 0;
 #endif
+
+// Per-game working set, keyed by seed. W = the largest key-set that had to
+// coexist in the table during one game (one window for the persist bots, the
+// max single-solve window for the reset bots) — the quantity that must fit
+// under M for the game to play like an unbounded table. main_eval calls this at
+// each game's end and emits "GW <seed> <W>", so accumulation dedups on seed and
+// never double-counts a re-measured game. Returns -1 when built without stats.
+long cd_sim_stats_game_flush(void) {
+#ifdef CD_TT_STATS
+    if (cd_stat_occ > 0) {                 // flush the still-open final window
+        long b = cd_stat_occ < CD_STAT_MAXB ? cd_stat_occ : CD_STAT_MAXB - 1;
+        cd_stat_hist[b]++;
+        cd_stat_windows++;
+        if (cd_stat_occ > cd_stat_game_max) cd_stat_game_max = cd_stat_occ;
+    }
+    long w = cd_stat_game_max;
+    cd_stat_game_max = 0;
+    cd_stat_occ = 0;
+    return w;
+#else
+    return -1;
+#endif
+}
 
 static CdTTEntry *cd_tt_get(void) {
     if (!cd_tt) cd_tt = (CdTTEntry *)calloc(CD_TT_SIZE, sizeof(CdTTEntry));
@@ -1194,6 +1218,7 @@ void cd_sim_solve_reset(void) {
         long b = cd_stat_occ < CD_STAT_MAXB ? cd_stat_occ : CD_STAT_MAXB - 1;
         cd_stat_hist[b]++;
         cd_stat_windows++;
+        if (cd_stat_occ > cd_stat_game_max) cd_stat_game_max = cd_stat_occ;
     }
     cd_stat_occ = 0;
 #endif

@@ -276,8 +276,10 @@ static int play_one_audit(uint32_t seed, int n_players, int protagonist, int opp
 // docs/WASM_L1_BUDGET.md). Two builds that print the same SIG for a seed
 // played that game bit-identically.
 static int g_sig = -1;
+static int g_gw = -1;   // CD_GW=1: emit per-game seed-keyed working set "GW <seed> <W>"
 static int play_one(uint32_t seed, int n_players, int protagonist, int opp) {
     if (g_sig < 0) { const char *e = getenv("GAME_SIG"); g_sig = (e && e[0] && e[0] != '0') ? 1 : 0; }
+    if (g_gw < 0)  { const char *e = getenv("CD_GW");    g_gw  = (e && e[0] && e[0] != '0') ? 1 : 0; }
     unsigned long long sig = 1469598103934665603ULL;
     #define SIG_FOLD(x) do { sig ^= (unsigned long long)(unsigned)(x); sig *= 1099511628211ULL; } while (0)
     // Cold solver TT per game: semtex/octogen leaf solving persists the TT
@@ -338,6 +340,7 @@ static int play_one(uint32_t seed, int n_players, int protagonist, int opp) {
     if (game_done(&g) < 0) finish = -1;
     else { finish = g.num_players; for (int i = 0; i < g.num_eliminated; i++) if (g.elimination_order[i] == 0) { finish = i + 1; break; } }
     if (g_sig) printf("SIG %u %llu fin=%d\n", seed, sig, finish);
+    if (g_gw) { long w = cd_sim_stats_game_flush(); printf("GW %u %ld\n", seed, w); }
     return finish;
     #undef SIG_FOLD
 }
