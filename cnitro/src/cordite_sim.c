@@ -805,6 +805,23 @@ typedef struct {
 #define CD_TT_SIZE  (1u << CD_TT_BITS)
 #define CD_TT_MASK  (CD_TT_SIZE - 1u)
 
+#ifdef CD_TT_PACK8
+// C6 (docs/SOLVER_TT_WORKING_SET_PLAN.md): 8-byte entries — half the bytes, so the
+// same budget holds 2x the slots (+1 effective bit; TT13 bytes hold TT14 slots).
+// The full 64-bit key is replaced by a 40-bit TAG; the slot index (CD_TT_BITS bits)
+// supplies the rest, for a 40+CD_TT_BITS-bit effective key. Cost: two distinct
+// positions sharing a slot AND a 40-bit tag alias -> a silently-wrong value, at
+// ~probes * 2^-40 ~= 1e-5/game. Value fits signed-12 (|v|<=1000), depth<=48 in 6.
+typedef struct {
+    uint64_t key   : 40;   // 40-bit fingerprint tag (see CD_TT_KEYTAG)
+    int64_t  value : 12;   // exact value, depth-relative (signed, |v| <= 1000)
+    uint64_t depth : 6;    // ply depth (<= CD_SIM_SOLVE_MAX_DEPTH = 48)
+    uint64_t valid : 1;
+    uint64_t bound : 2;    // C5 flag when composed; else unused
+    uint64_t _pad  : 3;
+} CdTTEntry;               // 8 bytes
+#define CD_TT_KEYTAG(k) ((uint64_t)(((k) >> CD_TT_BITS) & 0xFFFFFFFFFFull))
+#else
 typedef struct {
     uint64_t key;     // full 64-bit fingerprint (0 => empty)
     int16_t  value;   // exact value at this node (me-perspective, abs depth-relative)
@@ -814,6 +831,8 @@ typedef struct {
     uint8_t  bound;   // C5: 0=EXACT, 1=LOWER (value is a lower bound), 2=UPPER
 #endif
 } CdTTEntry;         // 16 bytes either way (bound lands in existing pad)
+#define CD_TT_KEYTAG(k) (k)   // no-op: full-key path
+#endif
 
 #ifdef CD_TT_BOUNDS
 // C5 (docs/SOLVER_TT_WORKING_SET_PLAN.md): the census's headline waste is 200M+
@@ -1382,14 +1401,14 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
         // live bucket contents at the store site below.
         {
             CdTTEntry *bkt = &tbl[key & tmask & ~1ull];
-            if (bkt[0].valid && bkt[0].key == key)      e = &bkt[0];
-            else if (bkt[1].valid && bkt[1].key == key) e = &bkt[1];
+            if (bkt[0].valid && bkt[0].key == CD_TT_KEYTAG(key))      e = &bkt[0];
+            else if (bkt[1].valid && bkt[1].key == CD_TT_KEYTAG(key)) e = &bkt[1];
             else                                        e = &bkt[0];
         }
 #else
         e = &tbl[key & tmask];
 #endif
-        if (e->valid && e->key == key) {
+        if (e->valid && e->key == CD_TT_KEYTAG(key)) {
             // stored value is depth-relative to e->depth; re-base to this depth.
             int v = e->value;
             if (v > 0) v = v - (1000 - e->depth) + (1000 - depth);
@@ -1543,8 +1562,8 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
         // Always store — refusal is the pathology that made 1-way DEPTH_PREF regress.
         {
             CdTTEntry *bkt = &tbl[key & tmask & ~1ull];
-            if (bkt[0].valid && bkt[0].key == key)      e = &bkt[0];
-            else if (bkt[1].valid && bkt[1].key == key) e = &bkt[1];
+            if (bkt[0].valid && bkt[0].key == CD_TT_KEYTAG(key))      e = &bkt[0];
+            else if (bkt[1].valid && bkt[1].key == CD_TT_KEYTAG(key)) e = &bkt[1];
             else if (!bkt[0].valid)                     e = &bkt[0];
             else if (!bkt[1].valid)                     e = &bkt[1];
             else e = (bkt[0].depth >= bkt[1].depth) ? &bkt[0] : &bkt[1];
@@ -1556,7 +1575,7 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
         // it = costliest to recompute). Empty slots and same-key refreshes always
         // store. Aims to cut the eviction thrashing that perturbs move choice at
         // small table sizes, at zero extra memory (one comparison).
-        if (e->valid && e->key != key && (uint8_t)depth > e->depth) store = 0;
+        if (e->valid && e->key != CD_TT_KEYTAG(key) && (uint8_t)depth > e->depth) store = 0;
 #endif
         if (store) {
 #ifdef CD_TT_STATS
@@ -1569,12 +1588,12 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
                 if (tbl == cd_tt_tail) cd_stat_tail_ins++; else cd_stat_main_ins++;
 #endif
             }
-            else if (e->key != key) cd_stat_collisions++;   // eviction — must stay ~0 at TT16
+            else if (e->key != CD_TT_KEYTAG(key)) cd_stat_collisions++;   // eviction — must stay ~0 at TT16
 #endif
 #ifdef CD_TT_TRACE
             if (cd_tr_active) {
                 unsigned slot = (unsigned)(key & CD_TT_MASK);
-                if (e->valid && e->key != key)
+                if (e->valid && e->key != CD_TT_KEYTAG(key))
                     fprintf(stderr,"EVICT %ld slot=%u oldkey=%llx olddepth=%d newkey=%llx newdepth=%d\n",
                             _nid,slot,(unsigned long long)e->key,(int)e->depth,
                             (unsigned long long)key,depth);
@@ -1583,7 +1602,7 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
                             _nid,slot,(unsigned long long)key,depth);
             }
 #endif
-            e->key = key;
+            e->key = CD_TT_KEYTAG(key);
             e->value = (int16_t)best;
             e->depth = (uint8_t)depth;
             e->valid = 1;
@@ -1601,8 +1620,8 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
             // Victim among the pair; when evicting a different key, prefer to drop a
             // bound over an EXACT, else the deeper-ply (cheaper-to-redo) entry.
             CdTTEntry *bkt = &tbl[key & tmask & ~1ull];
-            if      (bkt[0].valid && bkt[0].key == key) slot = &bkt[0];
-            else if (bkt[1].valid && bkt[1].key == key) slot = &bkt[1];
+            if      (bkt[0].valid && bkt[0].key == CD_TT_KEYTAG(key)) slot = &bkt[0];
+            else if (bkt[1].valid && bkt[1].key == CD_TT_KEYTAG(key)) slot = &bkt[1];
             else if (!bkt[0].valid)                     slot = &bkt[0];
             else if (!bkt[1].valid)                     slot = &bkt[1];
             else {
@@ -1625,11 +1644,11 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
 #ifdef CD_TT_TAILCACHE
                     if (tbl == cd_tt_tail) cd_stat_tail_ins++; else cd_stat_main_ins++;
 #endif
-                } else if (slot->key != key && slot->bound == TT_EXACT && bnd == TT_EXACT) {
+                } else if (slot->key != CD_TT_KEYTAG(key) && slot->bound == TT_EXACT && bnd == TT_EXACT) {
                     cd_stat_collisions++;   // count exact-evicts-exact only (metric stays meaningful)
                 }
 #endif
-                slot->key = key;
+                slot->key = CD_TT_KEYTAG(key);
                 slot->value = (int16_t)best;
                 slot->depth = (uint8_t)depth;
                 slot->valid = 1;
