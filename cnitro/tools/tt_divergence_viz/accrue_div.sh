@@ -75,4 +75,5 @@ done
 
 node "$HERE/div.mjs" > "$HERE/data/divergence.json"
 node "$HERE/build.mjs" >/dev/null
-echo "[div] wrote data/divergence.json + rebuilt HTML — refresh the browser"
+node "$HERE/table.mjs" >/dev/null   # refresh docs/OCTOGEN_PC2_DIVERGENCE.md
+echo "[div] wrote data/divergence.json + rebuilt HTML + table — refresh the browser"
