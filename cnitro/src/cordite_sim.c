@@ -1247,7 +1247,21 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
 #else
         key = sim_fingerprint(s, a, b);
 #endif
+#ifdef CD_TT_2WAY
+        // 2-way set associativity: each aligned slot pair is one bucket (both
+        // entries share a 64-byte cache line at 16 B/entry). Probe both halves;
+        // hit on either key. On a miss `e` is left pointing at the bucket's low
+        // slot so the store path still fires — the real victim is re-chosen from
+        // live bucket contents at the store site below.
+        {
+            CdTTEntry *bkt = &S->tt[key & CD_TT_MASK & ~1ull];
+            if (bkt[0].valid && bkt[0].key == key)      e = &bkt[0];
+            else if (bkt[1].valid && bkt[1].key == key) e = &bkt[1];
+            else                                        e = &bkt[0];
+        }
+#else
         e = &S->tt[key & CD_TT_MASK];
+#endif
         if (e->valid && e->key == key) {
             // stored value is depth-relative to e->depth; re-base to this depth.
             int v = e->value;
@@ -1354,6 +1368,20 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
 #endif
     if (e && key && best > alpha0 && best < beta0) {
         int store = 1;
+#ifdef CD_TT_2WAY
+        // Re-choose the victim from the bucket's LIVE contents (children may have
+        // filled it since our probe): same-key slot, else an empty slot, else evict
+        // the deeper-ply entry (bigger depth = smaller subtree = cheaper to redo).
+        // Always store — refusal is the pathology that made 1-way DEPTH_PREF regress.
+        {
+            CdTTEntry *bkt = &S->tt[key & CD_TT_MASK & ~1ull];
+            if (bkt[0].valid && bkt[0].key == key)      e = &bkt[0];
+            else if (bkt[1].valid && bkt[1].key == key) e = &bkt[1];
+            else if (!bkt[0].valid)                     e = &bkt[0];
+            else if (!bkt[1].valid)                     e = &bkt[1];
+            else e = (bkt[0].depth >= bkt[1].depth) ? &bkt[0] : &bkt[1];
+        }
+#endif
 #ifdef CD_TT_DEPTH_PREF
         // Depth-preferred replacement: on a collision with a DIFFERENT key, keep
         // whichever entry is closer to the root (lower ply = larger subtree below
