@@ -805,12 +805,50 @@ typedef struct {
 #define CD_TT_SIZE  (1u << CD_TT_BITS)
 #define CD_TT_MASK  (CD_TT_SIZE - 1u)
 
+#ifdef CD_TT_PACK8
+// C6 (docs/SOLVER_TT_WORKING_SET_PLAN.md): 8-byte entries — half the bytes, so the
+// same budget holds 2x the slots (+1 effective bit; TT13 bytes hold TT14 slots).
+// The full 64-bit key is replaced by a 40-bit TAG; the slot index (CD_TT_BITS bits)
+// supplies the rest, for a 40+CD_TT_BITS-bit effective key. Cost: two distinct
+// positions sharing a slot AND a 40-bit tag alias -> a silently-wrong value, at
+// ~probes * 2^-40 ~= 1e-5/game. Value fits signed-12 (|v|<=1000), depth<=48 in 6.
+typedef struct {
+    uint64_t key   : 40;   // 40-bit fingerprint tag (see CD_TT_KEYTAG)
+    int64_t  value : 12;   // exact value, depth-relative (signed, |v| <= 1000)
+    uint64_t depth : 6;    // ply depth (<= CD_SIM_SOLVE_MAX_DEPTH = 48)
+    uint64_t valid : 1;
+    uint64_t bound : 2;    // C5 flag when composed; else unused
+    uint64_t _pad  : 3;
+} CdTTEntry;               // 8 bytes
+#define CD_TT_KEYTAG(k) ((uint64_t)(((k) >> CD_TT_BITS) & 0xFFFFFFFFFFull))
+#else
 typedef struct {
     uint64_t key;     // full 64-bit fingerprint (0 => empty)
     int16_t  value;   // exact value at this node (me-perspective, abs depth-relative)
     uint8_t  depth;   // ply depth this value was computed at (value is depth-relative)
     uint8_t  valid;
-} CdTTEntry;
+#ifdef CD_TT_BOUNDS
+    uint8_t  bound;   // C5: 0=EXACT, 1=LOWER (value is a lower bound), 2=UPPER
+#endif
+} CdTTEntry;         // 16 bytes either way (bound lands in existing pad)
+#define CD_TT_KEYTAG(k) (k)   // no-op: full-key path
+#endif
+
+#ifdef CD_TT_BOUNDS
+// C5 (docs/SOLVER_TT_WORKING_SET_PLAN.md): the census's headline waste is 200M+
+// completed refutations per few dozen games that the exact-only policy discards.
+// Cache them as fail-soft bounds (standard chess-engine flags) so the win-hunt
+// stops re-deriving refutations its predecessors already proved — the engine
+// behind the 500459-class abort. Replacement is EXACT-priority: a bound never
+// evicts or downgrades an EXACT entry, so today's exact retention is preserved
+// exactly and bounds are pure additive cache (more cutoffs, less budget burn).
+#define TT_EXACT 0
+#define TT_LOWER 1
+#define TT_UPPER 2
+#ifndef CD_TT_BOUND_MINCARDS
+#define CD_TT_BOUND_MINCARDS 5   // only cache bounds for the expensive deep layer
+#endif
+#endif
 
 typedef struct {
     long budget;
@@ -821,6 +859,23 @@ typedef struct {
 } SimSolver;
 
 static _Thread_local CdTTEntry *cd_tt = NULL;
+
+#ifdef CD_TT_TAILCACHE
+// C3 (docs/SOLVER_TT_WORKING_SET_PLAN.md): the census shows ~91% of distinct keys
+// are near-leaf positions (<= 6 cards across both hands) whose subtrees are tiny
+// and cheap to recompute. Route those to a small, always-resident side cache so
+// the expensive MAIN table only has to hold the deep (>= K+1 card) working set —
+// ~100-600 distinct keys/game. Value-safe: same entry semantics, different slot
+// pool; hits are exact, misses recompute the identical value.
+#ifndef CD_TT_TAIL_N
+#define CD_TT_TAIL_N 512          // side-cache slots (MUST be a power of two)
+#endif
+#ifndef CD_TT_TAIL_K
+#define CD_TT_TAIL_K 6            // route positions with <= K cards (both hands) to the tail
+#endif
+#define CD_TT_TAIL_MASK ((uint64_t)(CD_TT_TAIL_N - 1))
+static _Thread_local CdTTEntry cd_tt_tail[CD_TT_TAIL_N];
+#endif
 
 // -------- occupancy instrumentation (-DCD_TT_STATS; compiled out otherwise) --
 // Measures the distribution of I = distinct keys inserted per clear-window
@@ -842,12 +897,15 @@ long cd_stat_collisions = 0;       // evictions at store (should be ~0 at TT16)
 //                  away work a bounds-storing TT (CD_TT_BOUNDS) could cache.
 long cd_stat_ins_cards[25];
 long cd_stat_failhi = 0, cd_stat_faillo = 0;
+long cd_stat_tail_ins = 0, cd_stat_main_ins = 0;   // C3: distinct-key insertions by pool
 static _Thread_local long cd_stat_occ = 0;
 static _Thread_local long cd_stat_game_max = 0;  // largest window this game
 void cd_tt_stats_dump(void) {
     fprintf(stderr, "CD_TT_STATS windows=%ld max_I=%ld collisions=%ld\n",
             cd_stat_windows, cd_stat_max_I, cd_stat_collisions);
     fprintf(stderr, "CD_TT_STATS2 failhi=%ld faillo=%ld\n", cd_stat_failhi, cd_stat_faillo);
+    if (cd_stat_main_ins || cd_stat_tail_ins)
+        fprintf(stderr, "CD_TT_POOL main_ins=%ld tail_ins=%ld\n", cd_stat_main_ins, cd_stat_tail_ins);
     for (int i = 0; i < 25; i++)
         if (cd_stat_ins_cards[i]) fprintf(stderr, "CD_TT_CARDS %d %ld\n", i, cd_stat_ins_cards[i]);
     for (long i = 0; i < CD_STAT_MAXB; i++)
@@ -941,6 +999,83 @@ static uint64_t sim_fingerprint_canon(const SimState *s, int a, int b) {
             if (s->covered_mask & (1ull << i)) {
                 int dc = s->def[i];
                 cell |= ((uint64_t)(map[dc / 13] * 13 + dc % 13) << 8) | (1ull << 16);
+            }
+            t = t * 1099511628211ull + (cell + 1);
+        }
+        h ^= t * 0xFF51AFD7ED558CCDull;
+        h ^= (uint64_t)s->defender << 1;
+        h ^= (uint64_t)s->first_attacker << 9;
+        h ^= (uint64_t)(s->good_mask & 0xff) << 17;
+        h ^= (uint64_t)s->num_battles << 25;
+        h ^= 0x94D049BB133111EBull;
+        h ^= h >> 31;
+        h = h ? h : 1;
+        if (h < best) best = h;
+    }
+    return best;
+}
+#endif
+
+#ifdef CD_TT_RANKSYM
+// C2 (docs/SOLVER_TT_WORKING_SET_PLAN.md): rank+suit canonical fingerprint.
+// Beyond suit symmetry (C4/SUITSYM), the endgame value depends on rank only
+// through (a) trump membership, (b) the RELATIVE order of ranks in the covering
+// rules, and (c) cross-suit rank EQUALITY (attack/pass sets join on equal rank).
+// Absolute ranks are irrelevant once the missing cards are gone. So compact the
+// global rank axis to the ranks actually present — a single monotone bijection
+// nr[] applied to EVERY suit (global, so cross-suit equality is preserved) — and
+// then take the suit-permutation canonical min as before. Two positions that are
+// order-isomorphic after this collapse to ONE key; their game trees are
+// isomorphic and their depth-relative values identical, so the shared entry is
+// exact (value-safe). Subsumes CD_TT_SUITSYM.
+static uint64_t sim_fingerprint_ranksym(const SimState *s, int a, int b) {
+    static const int P[6][3] = {{0,1,2},{0,2,1},{1,0,2},{1,2,0},{2,0,1},{2,1,0}};
+    uint64_t HA = s->hand[a], HB = s->hand[b];
+    // ranks present across both hands + all battle cards (covered defenders too)
+    uint32_t R = 0;
+    for (int su = 0; su < 4; su++) {
+        R |= (uint32_t)((HA >> (su * 13)) & 0x1FFFu);
+        R |= (uint32_t)((HB >> (su * 13)) & 0x1FFFu);
+    }
+    for (int i = 0; i < s->num_battles; i++) {
+        R |= 1u << (s->atk[i] % 13);
+        if (s->covered_mask & (1ull << i)) R |= 1u << (s->def[i] % 13);
+    }
+    // nr[r] = #present ranks below r = the compacted position of rank r. Monotone
+    // in r (order preserved) and a bijection on present ranks (equality preserved).
+    uint8_t nr[13];
+    for (int r = 0; r < 13; r++) nr[r] = (uint8_t)__builtin_popcount(R & ((1u << r) - 1u));
+    // per-suit rank-compacted 13-bit blocks for each hand (done once, before perms)
+    uint32_t ca[4], cb[4];
+    for (int su = 0; su < 4; su++) {
+        uint32_t x = (uint32_t)((HA >> (su * 13)) & 0x1FFFu), c = 0;
+        while (x) { int r = __builtin_ctz(x); c |= 1u << nr[r]; x &= x - 1; }
+        ca[su] = c;
+        x = (uint32_t)((HB >> (su * 13)) & 0x1FFFu); c = 0;
+        while (x) { int r = __builtin_ctz(x); c |= 1u << nr[r]; x &= x - 1; }
+        cb[su] = c;
+    }
+    int power = s->power_suit;
+    int nt[3], k = 0;
+    for (int su = 0; su < 4; su++) if (su != power) nt[k++] = su;
+    uint64_t best = ~0ull;
+    for (int p = 0; p < 6; p++) {
+        int map[4]; map[power] = power;
+        map[nt[0]] = nt[P[p][0]]; map[nt[1]] = nt[P[p][1]]; map[nt[2]] = nt[P[p][2]];
+        uint64_t ha = 0, hb = 0;
+        for (int su = 0; su < 4; su++) {
+            ha |= (uint64_t)ca[su] << (map[su] * 13);
+            hb |= (uint64_t)cb[su] << (map[su] * 13);
+        }
+        uint64_t h = ha * 0x9E3779B97F4A7C15ull;
+        h ^= (hb + 0x7F4A7C15ull) * 0xC2B2AE3D27D4EB4Full;
+        uint64_t t = 0;
+        for (int i = 0; i < s->num_battles; i++) {
+            int ac = s->atk[i];
+            uint64_t cell = (uint64_t)(map[ac / 13] * 13 + nr[ac % 13]);
+            if (s->covered_mask & (1ull << i)) {
+                int dc = s->def[i];
+                cell |= ((uint64_t)(map[dc / 13] * 13 + nr[dc % 13]) << 8) | (1ull << 16);
             }
             t = t * 1099511628211ull + (cell + 1);
         }
@@ -1241,14 +1376,39 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
         if (s->status_p[i] == PLAYER_STATUS_IN) { if (a < 0) a = i; else b = i; }
     uint64_t key = 0;
     CdTTEntry *e = NULL;
+    CdTTEntry *tbl = S->tt; uint64_t tmask = CD_TT_MASK;   // pool this node uses (main by default)
     if (b >= 0) {
-#ifdef CD_TT_SUITSYM
+#if defined(CD_TT_RANKSYM)
+        key = sim_fingerprint_ranksym(s, a, b);
+#elif defined(CD_TT_SUITSYM)
         key = sim_fingerprint_canon(s, a, b);
 #else
         key = sim_fingerprint(s, a, b);
 #endif
-        e = &S->tt[key & CD_TT_MASK];
-        if (e->valid && e->key == key) {
+#ifdef CD_TT_TAILCACHE
+        // Near-leaf positions go to the small always-resident side cache; deep
+        // positions to the expensive main table. Both hands' card count picks the
+        // pool identically at probe and store (this node's hands don't change).
+        if (__builtin_popcountll(s->hand[a]) + __builtin_popcountll(s->hand[b]) <= CD_TT_TAIL_K) {
+            tbl = cd_tt_tail; tmask = CD_TT_TAIL_MASK;
+        }
+#endif
+#ifdef CD_TT_2WAY
+        // 2-way set associativity: each aligned slot pair is one bucket (both
+        // entries share a 64-byte cache line at 16 B/entry). Probe both halves;
+        // hit on either key. On a miss `e` is left pointing at the bucket's low
+        // slot so the store path still fires — the real victim is re-chosen from
+        // live bucket contents at the store site below.
+        {
+            CdTTEntry *bkt = &tbl[key & tmask & ~1ull];
+            if (bkt[0].valid && bkt[0].key == CD_TT_KEYTAG(key))      e = &bkt[0];
+            else if (bkt[1].valid && bkt[1].key == CD_TT_KEYTAG(key)) e = &bkt[1];
+            else                                        e = &bkt[0];
+        }
+#else
+        e = &tbl[key & tmask];
+#endif
+        if (e->valid && e->key == CD_TT_KEYTAG(key)) {
             // stored value is depth-relative to e->depth; re-base to this depth.
             int v = e->value;
             if (v > 0) v = v - (1000 - e->depth) + (1000 - depth);
@@ -1258,7 +1418,47 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
                 fprintf(stderr,"HIT %ld key=%llx depth=%d stored_depth=%d value=%d\n",
                         _nid,(unsigned long long)key,depth,(int)e->depth,v);
 #endif
+#ifdef CD_TT_BOUNDS
+            // EXACT -> return; a proven bound either cuts off or narrows [alpha,beta]
+            // (the rebase is an additive shift, so the >=/<= direction survives it).
+            if (e->bound == TT_EXACT) TR_RET(v, "tthit");
+#ifdef CD_TT_BOUNDS_USE
+            // EXPERIMENTAL / KNOWN-BROKEN (kept for the record; NOT enabled by plain
+            // CD_TT_BOUNDS). Using fail-soft bounds for cutoffs/narrowing corrupts
+            // OUTCOMES here (~30% win<->loss flips at TT22, measured): this solver's
+            // callers read the returned value as a mate value (win/loss sign +
+            // fastest-win magnitude), not as an alpha-beta-internal bound, so a bound
+            // that propagates up and is absorbed as "exact" at an ancestor flips the
+            // root's win/loss call. Even sign-guarded, pure cutoffs still flip. A
+            // correct design must keep bound values from ever being read as exact
+            // mate values (e.g. bounds in a per-solve side table used only for
+            // intra-search pruning, never across the persistent multi-window TT).
+            // See docs/SOLVER_TT_WORKING_SET_PLAN.md C5. Plain CD_TT_BOUNDS below is
+            // STORE-ONLY and validated SIG-identical to std at TT22.
+            // Only SIGN-DETERMINING bounds are safe to act on. A LOWER bound proves
+            // true >= v; that pins the outcome to a WIN only when v > 0. A negative
+            // or zero lower bound leaves the sign open (true could still be a win),
+            // and returning such a v on a cutoff reports a loss/draw where the node
+            // is actually won — the mate-value sign flip V1 caught. Symmetric for an
+            // UPPER bound (safe only when v < 0, a proven loss). A proven win/loss is
+            // also exactly the refutation the win-hunt wants to reuse, so this keeps
+            // all the value while dropping the ambiguous-sign bounds (treated as a
+            // miss → normal search). Narrowing alpha up to a proven win / beta down
+            // to a proven loss can only exclude values the true result provably beats.
+            if (e->bound == TT_LOWER && v > 0) {          // proven WIN, true >= v > 0
+                if (v >= beta) TR_RET(v, "ttlo");
+                if (v > alpha) alpha = v;
+                if (alpha >= beta) TR_RET(v, "ttcut");
+            } else if (e->bound == TT_UPPER && v < 0) {   // proven LOSS, true <= v < 0
+                if (v <= alpha) TR_RET(v, "ttup");
+                if (v < beta) beta = v;
+                if (alpha >= beta) TR_RET(v, "ttcut");
+            }
+            // else: ambiguous-sign bound → fall through and search normally
+#endif
+#else
             TR_RET(v, "tthit");
+#endif
         }
     }
 #ifdef CD_TT_TRACE
@@ -1352,15 +1552,30 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
         else if (best <= alpha0) cd_stat_faillo++;
     }
 #endif
+#ifndef CD_TT_BOUNDS
     if (e && key && best > alpha0 && best < beta0) {
         int store = 1;
+#ifdef CD_TT_2WAY
+        // Re-choose the victim from the bucket's LIVE contents (children may have
+        // filled it since our probe): same-key slot, else an empty slot, else evict
+        // the deeper-ply entry (bigger depth = smaller subtree = cheaper to redo).
+        // Always store — refusal is the pathology that made 1-way DEPTH_PREF regress.
+        {
+            CdTTEntry *bkt = &tbl[key & tmask & ~1ull];
+            if (bkt[0].valid && bkt[0].key == CD_TT_KEYTAG(key))      e = &bkt[0];
+            else if (bkt[1].valid && bkt[1].key == CD_TT_KEYTAG(key)) e = &bkt[1];
+            else if (!bkt[0].valid)                     e = &bkt[0];
+            else if (!bkt[1].valid)                     e = &bkt[1];
+            else e = (bkt[0].depth >= bkt[1].depth) ? &bkt[0] : &bkt[1];
+        }
+#endif
 #ifdef CD_TT_DEPTH_PREF
         // Depth-preferred replacement: on a collision with a DIFFERENT key, keep
         // whichever entry is closer to the root (lower ply = larger subtree below
         // it = costliest to recompute). Empty slots and same-key refreshes always
         // store. Aims to cut the eviction thrashing that perturbs move choice at
         // small table sizes, at zero extra memory (one comparison).
-        if (e->valid && e->key != key && (uint8_t)depth > e->depth) store = 0;
+        if (e->valid && e->key != CD_TT_KEYTAG(key) && (uint8_t)depth > e->depth) store = 0;
 #endif
         if (store) {
 #ifdef CD_TT_STATS
@@ -1369,13 +1584,16 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
                 int tc = __builtin_popcountll(s->hand[a]) + __builtin_popcountll(s->hand[b]);
                 if (tc > 24) tc = 24;
                 cd_stat_ins_cards[tc]++;   // census: which layer the distinct keys live in
+#ifdef CD_TT_TAILCACHE
+                if (tbl == cd_tt_tail) cd_stat_tail_ins++; else cd_stat_main_ins++;
+#endif
             }
-            else if (e->key != key) cd_stat_collisions++;   // eviction — must stay ~0 at TT16
+            else if (e->key != CD_TT_KEYTAG(key)) cd_stat_collisions++;   // eviction — must stay ~0 at TT16
 #endif
 #ifdef CD_TT_TRACE
             if (cd_tr_active) {
                 unsigned slot = (unsigned)(key & CD_TT_MASK);
-                if (e->valid && e->key != key)
+                if (e->valid && e->key != CD_TT_KEYTAG(key))
                     fprintf(stderr,"EVICT %ld slot=%u oldkey=%llx olddepth=%d newkey=%llx newdepth=%d\n",
                             _nid,slot,(unsigned long long)e->key,(int)e->depth,
                             (unsigned long long)key,depth);
@@ -1384,12 +1602,61 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
                             _nid,slot,(unsigned long long)key,depth);
             }
 #endif
-            e->key = key;
+            e->key = CD_TT_KEYTAG(key);
             e->value = (int16_t)best;
             e->depth = (uint8_t)depth;
             e->valid = 1;
         }
     }
+#else   /* CD_TT_BOUNDS: store EXACT and, deep enough, fail-soft LOWER/UPPER bounds */
+    if (e && key) {
+        int bnd = (best > alpha0 && best < beta0) ? TT_EXACT
+                : (best >= beta0)                 ? TT_LOWER
+                :                                   TT_UPPER;   /* best <= alpha0 */
+        int tc = __builtin_popcountll(s->hand[a]) + __builtin_popcountll(s->hand[b]);
+        if (bnd == TT_EXACT || tc >= CD_TT_BOUND_MINCARDS) {
+            CdTTEntry *slot;
+#ifdef CD_TT_2WAY
+            // Victim among the pair; when evicting a different key, prefer to drop a
+            // bound over an EXACT, else the deeper-ply (cheaper-to-redo) entry.
+            CdTTEntry *bkt = &tbl[key & tmask & ~1ull];
+            if      (bkt[0].valid && bkt[0].key == CD_TT_KEYTAG(key)) slot = &bkt[0];
+            else if (bkt[1].valid && bkt[1].key == CD_TT_KEYTAG(key)) slot = &bkt[1];
+            else if (!bkt[0].valid)                     slot = &bkt[0];
+            else if (!bkt[1].valid)                     slot = &bkt[1];
+            else {
+                int ex0 = (bkt[0].bound == TT_EXACT), ex1 = (bkt[1].bound == TT_EXACT);
+                if (ex0 != ex1) slot = ex0 ? &bkt[1] : &bkt[0];
+                else slot = (bkt[0].depth >= bkt[1].depth) ? &bkt[0] : &bkt[1];
+            }
+#else
+            slot = &tbl[key & tmask];
+#endif
+            // EXACT-priority: a bound never displaces a valid EXACT entry (same key
+            // or not) — so today's exact retention is preserved and bounds are pure
+            // additive cache. EXACT overwrites anything (as the exact-only path did).
+            int proceed = !(bnd != TT_EXACT && slot->valid && slot->bound == TT_EXACT);
+            if (proceed) {
+#ifdef CD_TT_STATS
+                if (!slot->valid) {
+                    cd_stat_occ++; if (cd_stat_occ > cd_stat_max_I) cd_stat_max_I = cd_stat_occ;
+                    cd_stat_ins_cards[tc > 24 ? 24 : tc]++;
+#ifdef CD_TT_TAILCACHE
+                    if (tbl == cd_tt_tail) cd_stat_tail_ins++; else cd_stat_main_ins++;
+#endif
+                } else if (slot->key != CD_TT_KEYTAG(key) && slot->bound == TT_EXACT && bnd == TT_EXACT) {
+                    cd_stat_collisions++;   // count exact-evicts-exact only (metric stays meaningful)
+                }
+#endif
+                slot->key = CD_TT_KEYTAG(key);
+                slot->value = (int16_t)best;
+                slot->depth = (uint8_t)depth;
+                slot->valid = 1;
+                slot->bound = (uint8_t)bnd;
+            }
+        }
+    }
+#endif
     TR_RET(best, "exact");
 }
 
@@ -1485,6 +1752,9 @@ void cd_sim_solve_reset(void) {
     if (cd_tr_grp_match()) { cd_tr_nid = 0; cd_tr_parent = 0; }
 #endif
     if (cd_tt) memset(cd_tt, 0, CD_TT_SIZE * sizeof(CdTTEntry));
+#ifdef CD_TT_TAILCACHE
+    memset(cd_tt_tail, 0, sizeof(cd_tt_tail));
+#endif
 }
 
 // Single-step (test hook): advance one actor; returns the actor index or -1.
