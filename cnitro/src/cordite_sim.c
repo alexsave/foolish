@@ -805,6 +805,16 @@ typedef struct {
 #define CD_TT_SIZE  (1u << CD_TT_BITS)
 #define CD_TT_MASK  (CD_TT_SIZE - 1u)
 
+// C5-v2 (docs/SOLVER_TT_WORKING_SET_PLAN.md §C5): taint-propagated bound REUSE.
+// It is built on top of the C5 store machinery (the bound field + fail-soft
+// LOWER/UPPER store path), so enabling v2 implies CD_TT_BOUNDS. Unlike the
+// known-broken CD_TT_BOUNDS_USE, v2 threads two "certified-exactness" bits
+// through the recursion so a magnitude-contaminated value is never stored as
+// EXACT and a boundary-risky root classification is re-solved bounds-free.
+#if defined(CD_TT_BOUNDS_V2) && !defined(CD_TT_BOUNDS)
+#define CD_TT_BOUNDS
+#endif
+
 #ifdef CD_TT_PACK8
 // C6 (docs/SOLVER_TT_WORKING_SET_PLAN.md): 8-byte entries — half the bytes, so the
 // same budget holds 2x the slots (+1 effective bit; TT13 bytes hold TT14 slots).
@@ -850,12 +860,52 @@ typedef struct {
 #endif
 #endif
 
+#ifdef CD_TT_BOUNDS_V2
+#include <stdio.h>    // instrumentation dump (§4.5); native measurement only
+// §4.5 counters: how often the root re-solves because its result sat within
+// taint-range of a window boundary. Expected rare (most solves resolve well
+// inside or well outside the window). A high rate means taint is firing on the
+// common path — investigate before trusting the strength numbers.
+long cd_v2_roots = 0;
+long cd_v2_resolves = 0;
+static int cd_v2_atexit_done = 0;
+static void cd_v2_dump(void) {
+    fprintf(stderr, "CD_TT_BOUNDS_V2 roots=%ld resolves=%ld (%.4f%%)\n",
+            cd_v2_roots, cd_v2_resolves,
+            cd_v2_roots ? 100.0 * (double)cd_v2_resolves / (double)cd_v2_roots : 0.0);
+}
+#endif
+
+#ifdef CD_SOLVE_ABORTSTAT
+#include <stdio.h>
+#include <stdlib.h>
+long cd_solve_calls = 0, cd_solve_aborts = 0;
+static int cd_solve_abortstat_done = 0;
+static void cd_solve_abortstat_dump(void) {
+    fprintf(stderr, "CD_SOLVE_ABORTSTAT calls=%ld aborts=%ld (%.4f%%)\n",
+            cd_solve_calls, cd_solve_aborts,
+            cd_solve_calls ? 100.0 * (double)cd_solve_aborts / (double)cd_solve_calls : 0.0);
+}
+void cd_solve_abortstat_register(void) {
+    if (!cd_solve_abortstat_done) { cd_solve_abortstat_done = 1; atexit(cd_solve_abortstat_dump); }
+}
+#endif
+
 typedef struct {
     long budget;
     int  aborted;
     int  me;
     int  order;   // move ordering: 0 gen-order, 2 big-first (desc), 3 short-first (asc)
     CdTTEntry *tt;
+#ifdef CD_TT_BOUNDS_V2
+    // §4.1 taint of the value JUST returned by sim_solve_rec (like `aborted`,
+    // the parent reads these immediately after each child call): t_lo=1 => the
+    // value may be BELOW the true value (understatement possible, i.e. a valid
+    // LOWER bound), t_hi=1 => may be ABOVE (overstatement, a valid UPPER bound),
+    // (0,0) => certified exact.
+    uint8_t t_lo, t_hi;
+    uint8_t use_bounds;   // 1: reuse bound entries for cutoff/narrow; 0: root re-solve
+#endif
 } SimSolver;
 
 static _Thread_local CdTTEntry *cd_tt = NULL;
@@ -1354,6 +1404,12 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
                 _nid,_pid,depth,alpha,beta,cd_tr_edge);
     }
 #endif
+#ifdef CD_TT_BOUNDS_V2
+    // Default this node's returned value to certified-exact; the probe (bound
+    // cutoffs) and the accumulation loop below override where warranted. Every
+    // early return (terminal/draw/abort/no-move) is a true value -> (0,0).
+    S->t_lo = 0; S->t_hi = 0;
+#endif
     int loser = sim_done(s);
     if (loser >= 0) TR_RET((loser == S->me) ? -(1000 - depth) : (1000 - depth), "term");
     int incount = sim_in_count(s);
@@ -1419,6 +1475,28 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
                         _nid,(unsigned long long)key,depth,(int)e->depth,v);
 #endif
 #ifdef CD_TT_BOUNDS
+#ifdef CD_TT_BOUNDS_V2
+            // C5-v2 taint-tracked reuse (§4.2). The rebase above is an additive
+            // shift, so the >=/<= direction survives it.
+            //   EXACT       -> return v, taint (0,0)
+            //   LOWER, v>=b -> return v, taint (1,0)   // true>=v>=beta: fail-high, may understate
+            //   UPPER, v<=a -> return v, taint (0,1)   // true<=v<=alpha: fail-low,  may overstate
+            //   LOWER, v>a  -> alpha=v                 // narrowing is sound; taints nothing
+            //   UPPER, v<b  -> beta =v
+            // use_bounds==0 (the §4.5 re-solve pass): bounds are a miss; only
+            // EXACT still hits (exact entries are never taint-contaminated).
+            if (e->bound == TT_EXACT) { S->t_lo = 0; S->t_hi = 0; TR_RET(v, "tthit"); }
+            if (S->use_bounds) {
+                if (e->bound == TT_LOWER) {          // proven true >= v
+                    if (v >= beta) { S->t_lo = 1; S->t_hi = 0; TR_RET(v, "ttlo"); }
+                    if (v > alpha) alpha = v;
+                } else {                             // TT_UPPER: proven true <= v
+                    if (v <= alpha) { S->t_lo = 0; S->t_hi = 1; TR_RET(v, "ttup"); }
+                    if (v < beta) beta = v;
+                }
+            }
+            // bound not usable as a return here -> fall through (treated as a miss)
+#else
             // EXACT -> return; a proven bound either cuts off or narrows [alpha,beta]
             // (the rebase is an additive shift, so the >=/<= direction survives it).
             if (e->bound == TT_EXACT) TR_RET(v, "tthit");
@@ -1456,6 +1534,7 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
             }
             // else: ambiguous-sign bound → fall through and search normally
 #endif
+#endif  /* CD_TT_BOUNDS_V2 */
 #else
             TR_RET(v, "tthit");
 #endif
@@ -1502,6 +1581,23 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
     int best = maximizing ? -2000 : 2000;
     int applied = 0;
     SimState child;
+#ifdef CD_TT_BOUNDS_V2
+    // §4.3 taint algebra (truth table). Each child returns (v, clo, chi):
+    //   clo=1  child value may understate its true value (a valid LOWER bound)
+    //   chi=1  child value may overstate  its true value (a valid UPPER bound)
+    // MAXIMIZING node, best = max(children):
+    //   t_lo (max may understate) = OR over ALL children of clo — ANY child whose
+    //         true value could exceed its report could exceed our max.
+    //   t_hi (max may overstate)  = chi of the FINAL best child only — a non-best
+    //         child's overstatement cannot lift the max; only the winner's can.
+    // MINIMIZING node, best = min(children): the mirror —
+    //   t_hi = OR over ALL children of chi;  t_lo = clo of the final best child.
+    // A cutoff (alpha>=beta break) keeps whatever taint `best` carries then; a
+    // fail-high is stored as LOWER (needs t_hi==0) and a fail-low as UPPER (needs
+    // t_lo==0), so the pruned tail never matters to the store decision.
+    uint8_t node_lo = 0, node_hi = 0;   // OR-accumulators over all children
+    uint8_t best_lo = 0, best_hi = 0;   // taint of the current best child
+#endif
 #ifdef CD_TT_TRACE
     long _saved_parent = cd_tr_parent;
     if (cd_tr_active) cd_tr_parent = _nid;
@@ -1526,19 +1622,48 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
 #endif
             TR_RET(0, "abort");
         }
+#ifdef CD_TT_BOUNDS_V2
+        uint8_t clo = S->t_lo, chi = S->t_hi;   // taint of the child just returned
+#endif
         if (maximizing) {
-            if (v > best) best = v;
+            if (v > best) {
+                best = v;
+#ifdef CD_TT_BOUNDS_V2
+                best_hi = chi;   // t_hi(max) tracks only the winning child
+#endif
+            }
             if (best > alpha) alpha = best;
         } else {
-            if (v < best) best = v;
+            if (v < best) {
+                best = v;
+#ifdef CD_TT_BOUNDS_V2
+                best_lo = clo;   // t_lo(min) tracks only the winning child
+#endif
+            }
             if (best < beta) beta = best;
         }
+#ifdef CD_TT_BOUNDS_V2
+        node_lo |= clo;   // t_lo(max) = OR of every child's lo
+        node_hi |= chi;   // t_hi(min) = OR of every child's hi
+#endif
         if (alpha >= beta) break;
     }
 #ifdef CD_TT_TRACE
     if (cd_tr_active) cd_tr_parent = _saved_parent;
 #endif
-    if (!applied || best == -2000 || best == 2000) TR_RET(0, "unresolved");
+#ifdef CD_TT_BOUNDS_V2
+    // §4.3: publish this node's taint. It gates the store below (a contaminated
+    // value must not be certified) and is read by the parent as this call's
+    // returned-value taint.
+    if (maximizing) { S->t_lo = node_lo; S->t_hi = best_hi; }
+    else            { S->t_lo = best_lo; S->t_hi = node_hi; }
+#endif
+    if (!applied || best == -2000 || best == 2000) {
+#ifdef CD_TT_BOUNDS_V2
+        S->t_lo = 0; S->t_hi = 0;   // returning 0 (no resolvable child): exact
+#endif
+        TR_RET(0, "unresolved");
+    }
 
     // Memoize EXACT values only. A fail-soft alpha-beta result `best` is the
     // true game value only when it lands strictly INSIDE the original window
@@ -1614,7 +1739,18 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
                 : (best >= beta0)                 ? TT_LOWER
                 :                                   TT_UPPER;   /* best <= alpha0 */
         int tc = __builtin_popcountll(s->hand[a]) + __builtin_popcountll(s->hand[b]);
-        if (bnd == TT_EXACT || tc >= CD_TT_BOUND_MINCARDS) {
+#ifdef CD_TT_BOUNDS_V2
+        // §4.4: never certify a taint-contaminated value. EXACT needs (0,0); a
+        // fail-high LOWER needs true>=best (t_hi==0); a fail-low UPPER needs
+        // true<=best (t_lo==0). Anything else stores nothing (the value on the
+        // table is left for a future exact resolution).
+        int taint_ok = (bnd == TT_EXACT) ? (S->t_lo == 0 && S->t_hi == 0)
+                     : (bnd == TT_LOWER) ? (S->t_hi == 0)
+                     :                     (S->t_lo == 0);
+#else
+        const int taint_ok = 1;
+#endif
+        if (taint_ok && (bnd == TT_EXACT || tc >= CD_TT_BOUND_MINCARDS)) {
             CdTTEntry *slot;
 #ifdef CD_TT_2WAY
             // Victim among the pair; when evicting a different key, prefer to drop a
@@ -1689,6 +1825,11 @@ int cd_sim_solve_d(SimState *s, int me, int alpha, int beta, long *budget,
 #endif
     S.tt = cd_tt_get();
     if (!S.tt) { if (aborted) *aborted = 1; return 0; }
+#ifdef CD_TT_BOUNDS_V2
+    S.t_lo = 0; S.t_hi = 0;
+    S.use_bounds = 1;            // reuse bound entries; the §4.5 re-solve flips this off
+    if (!cd_v2_atexit_done) { cd_v2_atexit_done = 1; atexit(cd_v2_dump); }
+#endif
 #ifdef CD_TT_TRACE
     int _call = cd_tr_call++;
     long _nodes0 = cd_tr_nodes;
@@ -1720,8 +1861,34 @@ int cd_sim_solve_d(SimState *s, int me, int alpha, int beta, long *budget,
         v = sim_solve_rec(&S, s, alpha, beta, depth0);
     }
 #endif
+#ifdef CD_TT_BOUNDS_V2
+    // §4.5: the root value must be classified identically to a bounds-free
+    // solver. If the returned value sits within taint-range of a window edge —
+    // t_lo could push a value at/below alpha up over it, or t_hi could push a
+    // value at/above beta down under it — the fail-high/fail-low/in-window
+    // classification is in doubt. Re-solve ONCE with bound reuse disabled
+    // (EXACT hits still serve — they are never contaminated), sharing the
+    // remaining budget. Untainted or boundary-safe results stand. Behavior can
+    // then differ from std only through the node-budget channel (fewer nodes
+    // burned), the same channel as any speedup.
+    cd_v2_roots++;
+    if (!S.aborted && ((S.t_lo && v <= alpha + 1) || (S.t_hi && v >= beta - 1))) {
+        cd_v2_resolves++;
+        S.use_bounds = 0;
+        v = sim_solve_rec(&S, s, alpha, beta, depth0);
+    }
+#endif
     *budget = S.budget;
     if (aborted) *aborted = S.aborted;
+#ifdef CD_SOLVE_ABORTSTAT
+    // Measurement hook (both std and v2 builds may define it): the C5 prize is
+    // abort reduction, so count solve_d calls and how many exhausted budget/depth.
+    extern long cd_solve_calls, cd_solve_aborts;
+    void cd_solve_abortstat_register(void);
+    cd_solve_abortstat_register();
+    cd_solve_calls++;
+    if (S.aborted) cd_solve_aborts++;
+#endif
 #ifdef CD_TT_TRACE
     if (cd_tr_active)
         fprintf(stderr,"SOLRET g=%ld call=%d v=%d aborted=%d nodes=%ld budgetleft=%ld\n",

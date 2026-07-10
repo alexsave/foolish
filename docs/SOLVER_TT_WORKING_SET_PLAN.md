@@ -269,13 +269,20 @@ landing (1 wasm page, L1d-resident). See §5 for wiring.
 
 ### C5 — `CD_TT_BOUNDS`: store fail-soft bounds, exact-priority  *(outcome-safe; highest payoff; medium-high effort)*
 
-> **MEASURED (Jul 2026): the store is validated safe; the reuse below is a
+> **MEASURED (Jul 2026): the store is validated safe; the naive reuse below is a
 > characterized NEGATIVE** — ~30% outcome flips at TT22, root-caused to the
 > exact-in-window invariant (bound magnitudes absorbed into ancestor values
 > certified EXACT; the solver's ±1-wide probe windows amplify any distortion
-> into outcome flips). The "possibly SIG-safe" hope below is false. The full
-> post-mortem and the specified fix (C5-v2 taint propagation) live in
-> **`docs/C5_BOUNDS_HANDOFF.md`** — execute from there, not from this section.
+> into outcome flips). The "possibly SIG-safe" hope below is false.
+>
+> **C5-v2 (taint propagation) IMPLEMENTED and MEASURED — also a documented
+> negative.** `CD_TT_BOUNDS_V2` fixes the value bug (sound: 1/200 flip at
+> plentiful budget vs the naive reuse's ~30%) and delivers the mechanistic prize
+> (abort rate 3.83% → 1.54%), but that does NOT convert to strength: prod-budget
+> win-rate is flat within noise while the node-budget-channel reshuffle produces
+> 27/200 espresso win→loss flips, failing V4/V-strength. Ships OFF. Full
+> post-mortem, root cause, the §4 fix, and the §7 numbers live in
+> **`docs/C5_BOUNDS_HANDOFF.md`** — read there before reopening C5.
 
 **Idea.** The census's headline waste: 200M+ completed refutations per few dozen
 games, none stored. Standard chess-engine TT flags fix this. Add a flag byte in the

@@ -1,18 +1,23 @@
 # C5 (`CD_TT_BOUNDS`) — what happened, why, and what to do with it
 
-**Status: store machinery landed and validated safe; bound *reuse* is a
-characterized negative with a precise root cause and a specified fix (C5-v2).**
-This doc is the execution handoff for that fix. Read §3 (root cause) until it
-clicks — every design decision in §4 follows from it, and the naive fixes all
-fail for the same reason the first attempt did.
+**Status: C5-v2 IMPLEMENTED and MEASURED — a documented negative. The taint fix
+is value-sound (no contamination) AND delivers its mechanistic prize (abort rate
+3.83% → 1.54%, −60%), but that does NOT convert to strength: prod-budget win-rate
+is flat within noise and the budget-channel reshuffle produces 27/200 win→loss
+flips, decisively failing V4/V-strength. The prize was overestimated. `CD_TT_BOUNDS_V2`
+ships OFF, alongside `CD_TT_BOUNDS_USE`; the store scaffolding stays. Full numbers
+in §7.** The original handoff (root cause §3, the specified fix §4) is preserved
+below unchanged — read §3 until it clicks, then §7 for what happened when it ran.
 
-Code state on branch (commit `09fa2ed`, file `cnitro/src/cordite_sim.c`):
+Code state on branch (`cnitro/src/cordite_sim.c`):
 
 | flag | state | meaning |
 |---|---|---|
 | `CD_TT_BOUNDS` | off by default, **safe** | entry gains a `bound` field {EXACT=0, LOWER=1, UPPER=2}; fail-high/fail-low results are *stored* as bounds (cards ≥ `CD_TT_BOUND_MINCARDS`=5) with EXACT-priority replacement. Probe treats bound entries as misses. Validated SIG-identical to std at TT22. |
 | `CD_TT_BOUNDS_USE` | off, **known-broken** | enables sign-guarded cutoff/narrowing reuse of bound entries. ~30% outcome flips at TT22. Kept as a documented reference; do not ship. |
+| `CD_TT_BOUNDS_V2` | off, **sound but no strength payoff** | taint-propagated bound reuse (§4). Value-sound at plentiful budget (1/200 flip, win-rate identical); cuts aborts 3.83%→1.54% at prod budget, but win-rate stays flat and 27/200 espresso win→loss flips fail V4. Implies `CD_TT_BOUNDS`. Kept flag-gated as the reference implementation of the §4 fix; do not ship. See §7. |
 | `CD_TT_BOUND_MINCARDS` | 5 | bounds only cached for the deep (expensive) layer |
+| `CD_SOLVE_ABORTSTAT` | off, measurement | counts `cd_sim_solve_d` calls + budget/depth aborts (both std and v2 builds), dumps at exit. Used for the §7 abort numbers. |
 
 The 8-byte packed entry (`CD_TT_PACK8`, shipped) already reserves 2 bound bits,
 so any v2 composes with the production 32 KiB table at zero extra bytes.
@@ -222,3 +227,121 @@ cheaper and independent; v2's payoff (abort reduction) compounds with theirs
 (fewer nodes per subtree). If v2 fails its gates twice, close C5 permanently
 with the numbers in this file's style — a documented negative is a valid
 deliverable.
+
+---
+
+## 7. C5-v2 — what happened when it ran (the measured negative)
+
+The §4 fix was implemented as specified (`CD_TT_BOUNDS_V2` in
+`cnitro/src/cordite_sim.c`): taint bits `t_lo/t_hi` on `SimSolver`, the §4.2
+probe rules, the §4.3 accumulation, the §4.4 taint-gated store, and the §4.5
+root re-solve. `CD_TT_BOUNDS_V2` implies `CD_TT_BOUNDS`. One deviation from the
+literal §4.3 text, made for soundness (see "taint algebra" below).
+
+**Build** (from `cnitro/`, `CORE=$(make -s print-core)`):
+
+```sh
+cc -O2 -ffast-math -Isrc -Wno-deprecated-declarations \
+   -DCD_TT_BOUNDS_V2 -DCD_TT_2WAY -DCD_TT_PACK8 -DCD_TT_BITS=22 \
+   $CORE src/main_eval.c -o eval_v2 -lm
+# std baseline = same line without -DCD_TT_BOUNDS_V2
+```
+
+### 7.1 The value fix works — no contamination (the §3 bug is dead)
+
+Re-run the ladder's soundness check with a plentiful budget so the node-budget
+channel is silenced and only *value* differences can move an outcome:
+
+`OG_BBLEAF_BUDGET=100000000 OG_LEAF_BUDGET=100000000`, octogen vs espresso,
+200 seeds from 700003, `CD_RACE=0`, both arms @TT22:
+
+| arm | wins/200 |
+|---|---|
+| std (bounds-free) | 164 |
+| v2 | 163 |
+
+**1 outcome flip in 200** (a residual magnitude/depth-cap artifact, not a sign
+error). This is the headline: the broken `CD_TT_BOUNDS_USE` flipped ~30% here;
+v2 is value-identical. The taint algebra prevents any magnitude-contaminated
+value from ever being certified EXACT, and the §4.5 root guard would catch a
+boundary-risky root — though in practice it never has to (see 7.3). **The §3
+"certify a contaminated ancestor as EXACT" corruption is eliminated.**
+
+### 7.2 The mechanistic prize is delivered — aborts drop 60%
+
+`-DCD_SOLVE_ABORTSTAT` (counts `cd_sim_solve_d` calls and budget/depth aborts),
+octogen vs espresso, 60 seeds, prod budget, single-thread:
+
+| arm | solve calls | aborts | abort rate |
+|---|---|---|---|
+| std | 2,825,991 | 108,221 | **3.83%** |
+| v2 | 2,953,456 | 45,521 | **1.54%** |
+
+Bound reuse cuts the abort rate by ~60% — exactly the lever §1 predicted. The
+refutation cache is real: the win-hunt stops re-deriving refutations its
+predecessors already proved, and far fewer solves exhaust the 3,000-node leaf
+budget.
+
+### 7.3 …but it does NOT convert to strength (the prize was overestimated)
+
+At the shipped **prod** budget, octogen @TT22, `CD_RACE=0`, v2 vs std, 200 seeds:
+
+| opponent (seed base) | flips | win→loss | loss→win | std wins | v2 wins |
+|---|---|---|---|---|---|
+| espresso (700003) | 48 | **27** | 21 | 161 | 155 |
+| handwritten (500000) | 16 | 8 | 8 | 184 | 184 |
+
+Win-rate is **flat within noise** (espresso 161→155 is ≈1σ on 200 games; hw
+184→184 exact), while the sound-but-pervasive **node-budget channel** reshuffles
+which positions resolve-vs-abort across a game, producing **27 espresso win→loss
+flips**. That decisively fails **V4** (`0 win→loss flips`) and **V-strength**
+(`win-rate ≥ shipped`). The `roots=2,953,456 resolves=0` counter confirms the
+§4.5 root re-solve essentially never fires, so **V-latency is free** (no extra
+solves) — the failure is not overhead, it is that fewer aborts simply do not buy
+better play here.
+
+**Why:** the abort baseline was already only 3.8%, and the aborted solves fell
+back to a Monte-Carlo playout that was *already good enough* on those positions —
+converting them to exact resolutions changes octogen's moves without changing who
+wins. This is the branch §6 named: "aborts drop but win-rate doesn't move → the
+prize was overestimated; document the numbers and stop; the store scaffolding
+stays for the side-table variant."
+
+### 7.4 Taint algebra: the one deviation from the literal §4.3
+
+§4.3 as written drops the taint of a *superseded* best child (when `v_i > best`
+at a max node it overwrites the primary taint and never folds the old best's
+`lo` into `acc_lo`). That is unsound in the corner where a superseded child
+carried a propagated `LOWER` taint whose value was below `beta` (possible when a
+min-ancestor had narrowed `beta` below the parent's): its true value could still
+exceed the final max, so the max may understate, yet the literal rule reports
+`(0,0)` → a wrongful EXACT store. The implementation therefore uses the strictly
+conservative rule, written as the truth-table comment above the loop:
+
+- **max** node: `t_lo = OR over ALL children of clo`; `t_hi = chi of the final best child`.
+- **min** node: `t_hi = OR over ALL children of chi`; `t_lo = clo of the final best child`.
+
+This can only *over*-taint (turn a would-be EXACT into a bound or a no-store, or
+a clean return into a re-solve trigger) — never certify a contaminated value. It
+is why 7.1 shows zero sign errors.
+
+### 7.5 Verdict and what to keep
+
+C5-v2 is a **characterized negative**: correct, sound, and it delivers the
+measured abort reduction, but the abort reduction is strength-neutral at
+octogen's prod budget. Per §6 this closes the *reuse-into-the-main-TT* line.
+
+Kept (all flag-gated OFF, default build byte-identical):
+
+- `CD_TT_BOUNDS` — store-only, validated safe; **stays** (it is the scaffolding
+  the side-table variant of §4.6 would reuse, and the census counters remain
+  useful).
+- `CD_TT_BOUNDS_V2` — the reference implementation of the §4 fix. Do not ship
+  enabled. If C5 is ever reopened, it should be as the **separate side table**
+  of §4.6 (bounds used only for intra-search pruning, never consumed as mate
+  values across the persistent multi-window TT) targeted at a regime where the
+  abort baseline is high enough for the reduction to matter — not octogen@prod.
+- `CD_SOLVE_ABORTSTAT` — the measurement hook that produced 7.2.
+
+Do NOT reduce `CD_TT_BOUND_MINCARDS`, add ordering levers, or re-enable
+`CD_TT_BOUNDS_USE` (§4.6 still applies).
