@@ -57,8 +57,18 @@ for (const f of files) {
     for (const w of Ws) if (w > thr) gt++;
     ccdf.push({ bits: b, entries: thr, p: gt / n, k: gt });
   }
+  // density: bits NEEDED per game = ceil(log2(W)), i.e. the smallest table that
+  // holds the game's whole working set. W=0 (no solve) is its own category.
+  const wbits = new Array(25).fill(0);   // index b = games needing exactly b bits
+  let zeroGames = 0;
+  for (const w of Ws) {
+    if (w <= 0) { zeroGames++; continue; }
+    let b = Math.ceil(Math.log2(w));
+    if (b < 0) b = 0; if (b > 24) b = 24;
+    wbits[b]++;
+  }
   out[`${bot}_pc${pc}`] = {
-    bot, pc, games: n, maxW,
+    bot, pc, games: n, maxW, zeroGames, wbits,
     median: pctile(sorted, 0.5),
     p90: pctile(sorted, 0.90),
     p99: pctile(sorted, 0.99),

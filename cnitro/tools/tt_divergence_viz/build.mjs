@@ -202,6 +202,25 @@ perfect.</p>
   <div class="legend" id="legend"></div>
 </figure>
 
+<h2>Working-set density — how many bits each game needs</h2>
+<p>The curve above is the <em>tail</em>; this is the <em>density</em> it's the tail of. For every game,
+<span class="mono">bits = &lceil;log<sub>2</sub> W&rceil;</span> — the smallest table that holds its whole
+working set. Read it directly as &ldquo;how big a table this game wants.&rdquo; The
+<span class="mono">no-solve</span> games (never reached the endgame solver, <span class="mono">W=0</span>)
+are called out separately; everything to the right of the <span style="color:var(--ship)">TT13</span>
+line is a game that would overflow the shipped table. Same bot / player-count selectors; the y-axis
+toggle applies here too (log is the honest default — the no-solve share dwarfs the rest on a linear
+scale).</p>
+
+<figure class="card" style="padding:14px 10px 8px">
+  <div class="chart-wrap" id="histWrap">
+    <svg id="histChart" viewBox="0 0 920 420" preserveAspectRatio="xMidYMid meet" role="img"
+         aria-label="Distribution of per-game working set, in bits needed"></svg>
+    <div class="tip" id="htip"></div>
+  </div>
+  <div class="legend" id="hlegend"></div>
+</figure>
+
 <div class="grid2">
   <div class="card">
     <h3 style="margin-top:2px">Working-set percentiles</h3>
@@ -426,6 +445,9 @@ function marker(cx,cy,shape,fill,r=4.5){
 const svg=document.getElementById('chart');
 const tip=document.getElementById('tip');
 const wrap=document.getElementById('chartWrap');
+const hsvg=document.getElementById('histChart');
+const htip=document.getElementById('htip');
+const hwrap=document.getElementById('histWrap');
 
 function draw(){
   while(svg.firstChild) svg.removeChild(svg.firstChild);
@@ -545,6 +567,123 @@ function draw(){
   hit.addEventListener('mouseleave',()=>{tip.style.opacity=0;cross.style.opacity=0;});
 
   buildLegend(); buildTable(); buildFoot();
+  drawHist();
+}
+
+// ---- working-set density: bits-needed histogram per selected cell ----
+function drawHist(){
+  while(hsvg.firstChild) hsvg.removeChild(hsvg.firstChild);
+  const HW=920, HH=420, HM={l:56,r:20,t:16,b:52};
+  const pW=HW-HM.l-HM.r, pH=HH-HM.t-HM.b;
+  // selected cells
+  const sel=[];
+  for(const bot of state.bots) for(const pc of state.pcs){ const c=cells[bot+'_pc'+pc]; if(c) sel.push(c); }
+  // x categories: "none" (W=0) then bits 1..maxBits
+  let maxBits=13;
+  sel.forEach(c=> c.wbits.forEach((n,b)=>{ if(n>0 && b>maxBits) maxBits=b; }));
+  maxBits=Math.min(maxBits+1, 24);
+  const cats=maxBits+1;                       // slot 0 = none, slots 1..maxBits = bits
+  const slotW=pW/cats;
+  const xSlot = i => HM.l + i*slotW + slotW/2; // center of slot i (0=none,1..=bits)
+  // y: fraction of games; scale to the max W>0 bucket (none is annotated, not scaled to)
+  let yMax=0;
+  sel.forEach(c=>{ for(let b=1;b<=maxBits;b++){ const f=c.wbits[b]/c.games; if(f>yMax)yMax=f; } });
+  if(yMax<=0) yMax=1;
+  const yLogFloor=1e-4;
+  function hY(f){
+    if(state.y==='lin') return HM.t + (1-f/yMax)*pH;
+    const lo=Math.log10(yLogFloor), hi=Math.log10(Math.max(yMax,1e-3));
+    const lf=Math.log10(Math.max(f,yLogFloor));
+    return HM.t + (hi-lf)/(hi-lo)*pH;
+  }
+  const hbase=HM.t+pH;
+  // grid + y labels
+  if(state.y==='lin'){
+    for(let i=0;i<=4;i++){ const f=yMax*i/4, y=HM.t+(1-i/4)*pH;
+      hsvg.appendChild(el('line',{x1:HM.l,y1:y,x2:HM.l+pW,y2:y,class:'gridline'}));
+      hsvg.appendChild(hylab(y,(f*100).toFixed(f<0.05?1:0)+'%')); }
+  } else {
+    [1,0.1,0.01,0.001,0.0001].forEach(f=>{ if(f>yMax*1.5)return; const y=hY(f);
+      hsvg.appendChild(el('line',{x1:HM.l,y1:y,x2:HM.l+pW,y2:y,class:'gridline'}));
+      hsvg.appendChild(hylab(y,(f*100)>=1?(f*100)+'%':(f*100).toFixed(f>=0.001?1:2)+'%')); });
+  }
+  hsvg.appendChild(el('line',{x1:HM.l,y1:hbase,x2:HM.l+pW,y2:hbase,class:'axisline'}));
+  // x labels
+  for(let i=0;i<=maxBits;i++){ const x=xSlot(i);
+    const lab = i===0 ? 'none' : String(i);
+    hsvg.appendChild(hxlab(x,hbase+16,lab));
+    if(i>0 && (i%2===0||i===maxBits)) hsvg.appendChild(hxlab(x,hbase+29, fmtEntries(2**i)));
+  }
+  hsvg.appendChild(el('text',{x:HM.l+pW/2,y:HH-6,'text-anchor':'middle',class:'axis-title'})).textContent
+    = 'bits needed  =  ceil(log2 W)   (table entries below)';
+  const yt=el('text',{x:15,y:HM.t+pH/2,'text-anchor':'middle',class:'axis-title',transform:'rotate(-90 15 '+(HM.t+pH/2)+')'});
+  yt.textContent='fraction of games'; hsvg.appendChild(yt);
+  // Table-of-T-bits fits a game iff bits-needed <= T, so its "fits | overflows"
+  // boundary sits at the RIGHT edge of slot T (between slot T and T+1).
+  const refB=(b,stroke,label,dy,anchor)=>{ if(b>maxBits)return; const x=HM.l+(b+1)*slotW;
+    hsvg.appendChild(el('line',{x1:x,y1:HM.t,x2:x,y2:hbase,class:'refline',stroke}));
+    const t=el('text',{x:x+(anchor==='end'?-3:3),y:HM.t+dy,class:'reflabel',fill:stroke,'text-anchor':anchor||'start'});
+    t.textContent=label; hsvg.appendChild(t); };
+  refB(12,'var(--accent)','64 KiB',24,'end'); refB(13,'var(--ship)','TT13 shipped',11,'end');
+  // per-cell stepped bars (grouped within each bit slot)
+  const hot=[];
+  const groupW=slotW*0.8, bw=sel.length? groupW/sel.length : groupW;
+  sel.forEach((c,si)=>{
+    const col=color(c.bot);
+    for(let b=1;b<=maxBits;b++){
+      const f=c.wbits[b]/c.games; if(f<=0) continue;
+      const x0=HM.l + b*slotW + slotW*0.1 + si*bw;
+      const y=hY(f);
+      hsvg.appendChild(el('rect',{x:x0.toFixed(1),y:y.toFixed(1),width:Math.max(1,bw-1).toFixed(1),
+        height:Math.max(0,hbase-y).toFixed(1),fill:col,opacity:.85,rx:1}));
+      hot.push({x:x0+bw/2,y,html:htipBar(c,b,f)});
+    }
+    // "none" marker for this cell at slot 0
+    const nf=c.zeroGames/c.games;
+    const nx=HM.l+slotW*0.1+si*bw, ny=hY(Math.min(nf,yMax));
+    hsvg.appendChild(el('rect',{x:nx.toFixed(1),y:ny.toFixed(1),width:Math.max(1,bw-1).toFixed(1),
+      height:Math.max(0,hbase-ny).toFixed(1),fill:col,opacity:.35,rx:1}));
+    hot.push({x:nx+bw/2,y:ny,html:htipNone(c,nf)});
+  });
+  // note when the no-solve bars are clipped (their true % is in the tooltip)
+  if(sel.some(c=> c.zeroGames/c.games > yMax)){
+    const t=el('text',{x:xSlot(0),y:HM.t-4,'text-anchor':'middle'});
+    t.setAttribute('fill','var(--ink-3)'); t.style.fontSize='9.5px';
+    t.textContent='no-solve ↑ clipped'; hsvg.appendChild(t); }
+  // hover
+  const hhit=el('rect',{x:HM.l,y:HM.t,width:pW,height:pH,fill:'transparent'}); hsvg.appendChild(hhit);
+  hhit.addEventListener('mousemove',ev=>{
+    const p=hsvg.createSVGPoint(); p.x=ev.clientX; p.y=ev.clientY;
+    const loc=p.matrixTransform(hsvg.getScreenCTM().inverse());
+    let best=null,bd=1e9; for(const h of hot){const dd=(h.x-loc.x)**2+(h.y-loc.y)**2; if(dd<bd){bd=dd;best=h;}}
+    if(best&&bd<2500){ const cr=hsvg.getBoundingClientRect(), sx=cr.width/HW, sy=cr.height/HH;
+      htip.innerHTML=best.html; htip.style.opacity=1; htip.style.left=(best.x*sx)+'px'; htip.style.top=(best.y*sy)+'px';
+    } else htip.style.opacity=0;
+  });
+  hhit.addEventListener('mouseleave',()=>htip.style.opacity=0);
+  buildHLegend(sel);
+}
+function hylab(y,t){const e=el('text',{x:52,y:y+3,'text-anchor':'end'});e.setAttribute('fill','var(--ink-3)');e.style.fontSize='11px';e.textContent=t;return e;}
+function hxlab(x,y,t){const e=el('text',{x,y,'text-anchor':'middle'});e.setAttribute('fill','var(--ink-3)');e.style.fontSize='10.5px';e.textContent=t;return e;}
+function htipBar(c,b,f){
+  return '<b style="color:'+color(c.bot)+'">'+PRETTY[c.bot]+' · pc'+c.pc+'</b>'
+   +'<div class="row"><span class="k">needs</span><span>'+b+' bits · '+fmtEntries(2**b)+'</span></div>'
+   +'<div class="row"><span class="k">games</span><span>'+Math.round(f*c.games)+' / '+c.games.toLocaleString()+'</span></div>'
+   +'<div class="row"><span class="k">fraction</span><span>'+(f*100<0.1?(f*100).toFixed(2):(f*100).toFixed(1))+'%</span></div>';
+}
+function htipNone(c,nf){
+  return '<b style="color:'+color(c.bot)+'">'+PRETTY[c.bot]+' · pc'+c.pc+'</b>'
+   +'<div class="row"><span class="k">no solve (W=0)</span><span>'+(nf*100).toFixed(1)+'%</span></div>'
+   +'<div class="row"><span class="k">games</span><span>'+c.zeroGames.toLocaleString()+' / '+c.games.toLocaleString()+'</span></div>'
+   +'<div class="small" style="margin-top:3px">never reached the solver → can’t diverge</div>';
+}
+function buildHLegend(sel){
+  const L=document.getElementById('hlegend'); L.innerHTML='';
+  sel.forEach(c=>{ const d=document.createElement('span'); d.className='li';
+    d.innerHTML='<span class="sw" style="background:'+color(c.bot)+'"></span>'+PRETTY[c.bot]+' · pc'+c.pc; L.appendChild(d); });
+  if(!sel.length){ L.innerHTML='<span class="li" style="color:var(--ink-3)">select a bot + player count</span>'; }
+  else { const n=document.createElement('span'); n.className='li'; n.style.color='var(--ink-3)';
+    n.innerHTML='faded bar at left = no-solve share (W=0)'; L.appendChild(n); }
 }
 
 function refline(bits,stroke,label,dy=11,anchor='start'){
