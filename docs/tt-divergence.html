@@ -263,6 +263,12 @@ the divergence bound below what we care about, at the smallest memory.&rdquo;</p
 (<span class="mono">0</span> if the game never reached the endgame solver). Games run under the production
 budget (<code>CD_BUDGET=prod CD_RACE=1 CD_RACE_C=75</code>). <code>ccdf.mjs</code> reads the records and
 computes <span class="mono">P(W &gt; 2<sup>bits</sup>)</span> over the <em>distinct games</em>.</p>
+<p class="small">The reference table (<code>REF_BITS</code>, default TT22) is <em>almost</em> collision-free,
+not perfectly — the same &ldquo;no perfect table&rdquo; caveat, now on the ruler itself. In deep
+two-player games a few keys still collide there, so TT22 undercounts <span class="mono">W</span> by a few
+percent mid-range and <span class="mono">&lt;0.1%</span> for the largest working sets (measured against
+TT26: 4,694 → 4,698). Immaterial for the TT13 decision — everything sits ~2&times; under the threshold —
+so TT22 is the fast default; raise <code>REF_BITS</code> only to sharpen the deep TT16 tail.</p>
 <p><b>Keyed on the seed, so accumulation is safe.</b> A game is a deterministic function of its
 <span class="mono">(bot, opponent, player-count, seed)</span>. Each curve fixes the first three, so
 records are keyed by <b>seed</b> and <b>deduped</b> — re-measuring a seed collapses to one record, and the
