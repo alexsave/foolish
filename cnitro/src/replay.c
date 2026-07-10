@@ -23,6 +23,7 @@
 // bignum scratch are plain statics. Do not call from OMP arena workers.
 
 #include "replay.h"
+#include "wasm_overlay.h"
 #include <string.h>
 
 static int g_err_detail = 0;
@@ -58,7 +59,14 @@ int replay_stat_max_bn = 0;
 #endif
 
 typedef struct { int n; uint32_t l[BN_CAP]; } Bn;
+#ifdef CD_WASM_OVERLAY
+// M8: g_bn aliases into solve_ws (see wasm_overlay.h). Written-before-read every
+// call (bn_zero / bn_from_bytes_be / coder_finish set .n before any read).
+_Static_assert(sizeof(Bn) <= CD_OVL_IO_OFF - CD_OVL_BN_OFF, "g_bn overflows its overlay slot");
+#define g_bn (*(Bn *)(cd_overlay + CD_OVL_BN_OFF))
+#else
 static Bn g_bn;
+#endif
 
 static void bn_zero(Bn *x) { x->n = 0; }
 static bool bn_is_zero(const Bn *x) { return x->n == 0; }
@@ -130,7 +138,15 @@ static int bn_to_bytes_be(const Bn *x, unsigned char *out, int out_cap) {
 
 typedef struct { uint32_t cum, w, M; } RecChoice;
 #define REC_CAP REPLAY_REC_CAP  // build parameter; overflow is a clean error
+#ifdef CD_WASM_OVERLAY
+// M8: g_rec aliases into solve_ws (see wasm_overlay.h). Written-before-read
+// every call — the Coder's n_rec index starts at 0, so entry [i] is stored
+// before it is ever read back in the finish/decode pass.
+_Static_assert((size_t)REC_CAP * sizeof(RecChoice) <= CD_OVL_BN_OFF, "g_rec overflows its overlay slot");
+#define g_rec ((RecChoice *)(cd_overlay + CD_OVL_REC_OFF))
+#else
 static RecChoice g_rec[REC_CAP];
+#endif
 
 typedef struct {
     bool encode;
