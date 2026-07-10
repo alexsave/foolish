@@ -184,22 +184,28 @@ WASM_FLAGS := --target=wasm32 $(WASM_OPT) -nostdlib -ffreestanding -mbulk-memory
               -DMAX_LEGAL_MOVES=4096 -DMAX_MOVE_CARDS=28 -DMAX_BATTLES=64 \
               -DWORLD_LOG_CAP=40 \
               -DREPLAY_REC_CAP=4096 -DWASM_REPLAY_IO_CAP=32768 -DMAX_SNAPS=24 \
-              -DCD_TT_BITS=13 \
+              -DCD_TT_BITS=12 -DCD_TT_2WAY \
               -Wall -Wextra -Wno-unused-parameter \
               -Wl,--no-entry -Wl,--export-memory -Wl,-z,stack-size=262144 -Wl,--stack-first \
               -Wl,--strip-all
-# CD_TT_BITS=13: the cordite endgame solver's transposition table (bump-
-# allocated on first play) is the largest driver of bots.wasm's RUNTIME peak —
-# it grows, unlike the static caps above. 16 = 1 MiB; 13 = 128 KiB (8,192
-# entries). It's a memoization cache, but the solver is node-budget-limited, so
-# table size is a bot-STRENGTH knob, sized by the per-game move-divergence study
+# CD_TT_BITS=12 + CD_TT_2WAY: the cordite endgame solver's transposition table
+# (bump-allocated on first play) is the largest driver of bots.wasm's RUNTIME
+# peak — it grows, unlike the static caps above. 16 = 1 MiB; 13 = 128 KiB; 12 =
+# 64 KiB (4,096 entries, exactly one wasm page → L1d-resident). It's a
+# memoization cache, but the solver is node-budget-limited, so table size is a
+# bot-STRENGTH knob, sized by the per-game move-divergence study
 # (tools/tt_divergence.sh, docs/WASM_L1_BUDGET.md). There is no cliff-to-zero: the
 # binding bot octogen (persists the table per game) has an INHERENT ~4e-4 floor of
 # size-sensitivity that exists even at TT16-TT19; the collision knee is ~TT10-11.
-# So TT16 (production today) is the baseline, not an infinite table — and TT13 vs
-# TT16 diverges in 0/1720 games (octogen, pc 2/4/7). TT13 is indistinguishable
-# from the shipped table, 2-3 bits above the knee. Drops runtime peak 36 -> 22
-# pages (2.25 -> 1.375 MiB). Only bots links cordite_sim, so rules/guards ignore it.
+# CD_TT_2WAY makes each aligned slot pair a 2-entry bucket (one cache line),
+# roughly halving conflict misses ⟹ ~+1 effective bit, so TT12+2WAY (64 KiB)
+# matches/beats direct-mapped TT13 (128 KiB): over 3,000 espresso games it gives
+# 0 outcome flips and 0.10% move-divergence vs TT22, both below TT13's 0.14%/0.04%
+# floor, and it FIXES TT13's known win->loss flips (seeds 720958, 700910). See
+# docs/SOLVER_TT_WORKING_SET_PLAN.md (candidate C4) for the full validation
+# ladder. Drops the solver's runtime peak another 64 KiB (1 page) below TT13,
+# with strength >= the previously shipped table. Only bots links cordite_sim, so
+# rules/guards ignore it.
 
 # Explicit export allow-list — only the memory (above) + wasm_* API the TS
 # bridge actually calls (engine.ts / bots.ts). This REPLACES -Wl,--export-all,
