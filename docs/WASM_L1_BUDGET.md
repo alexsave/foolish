@@ -180,6 +180,30 @@ The scaled runs showed that baseline overstates the cost — the real vs-infinit
 rate at TT13 is the ~1e-3 floor, and the vs-production rate is ~0. The
 extrapolation is dropped in favor of the direct `BASE=16` measurement.)
 
+**The working-set model — an interactive view.** `docs/tt-divergence.html`
+(regenerate with `tools/tt_divergence_viz/generate.sh`) plots all of this: a
+divergence-vs-table-size curve per bot and player count, with the raw measured
+points overlaid and a log-scale toggle. The birthday argument has a cleaner,
+baseline-free restatement there. Instrument the solver to count the distinct
+keys it inserts per game — its working set `W` (`-DCD_TT_STATS`). A direct-mapped
+table of `M = 2^bits` slots can only force an eviction cascade once `W > M`, so
+the per-game divergence rate is bounded by the survival function of the working
+set:
+
+    P(diverge | table = 2^bits)  ≤  P(W > 2^bits)
+
+This is an upper bound, not an identity — an overflow only flips a move if the
+evicted entry is reused before the node budget runs out — but it needs **no
+reference table**: `W` is a property of the game and the solver, measurable at
+every size. It also gives per-game certainty: any game whose whole `W` fits under
+`M` is bit-identical to an infinite table. Measured max `W` climbs as the endgame
+deepens (fewer players → longer solves), and only the deepest two-player games
+push past a few thousand keys — every shipped player count from 3 up stays under
+TT13's 8,192. That is why TT13 matches production: the working-set tail is
+exhausted well before the table fills. And it is why *no* finite table is provably
+perfect — the octogen sweep's `0 / 35,000` at TT22 only bounds the true rate below
+`3/35,000 ≈ 8.6e-5` (rule of three), it does not prove zero.
+
 The remaining static core is the Monte-Carlo solver scratch (`solve_ws` 272 KiB,
 `solve_child_scratch` 55 KiB, the world/trial/diff slots) — a per-search working
 set inherently larger than L1, **designed** around bitboard `SimState`s that *are*

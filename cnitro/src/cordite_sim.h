@@ -128,6 +128,10 @@ int  cd_sim_solve(SimState *s, int me, int alpha, int beta, long budget, int *ab
 int  cd_sim_solve_d(SimState *s, int me, int alpha, int beta, long *budget,
                     int depth0, int *aborted);
 void cd_sim_solve_reset(void);
+// Measurement hook (-DCD_TT_STATS): flush + return this game's peak working set
+// (distinct keys that had to coexist in the table), then reset for the next
+// game. Returns -1 when built without stats. See cordite_sim.c.
+long cd_sim_stats_game_flush(void);
 
 // Shared struct-solver scratch (child states + move lists, indexed by depth),
 // ONE copy for all MC families (cordite/semtex/octogen). Safe to share: one
