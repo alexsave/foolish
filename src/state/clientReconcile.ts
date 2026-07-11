@@ -73,6 +73,31 @@ export const mergeHandOrder = (oldHand: Card[], newHand: Card[]): Card[] => {
     return [...preserved, ...added];
 };
 
+// Bounds-safe drag-rearrange swap (DragContext). `toIndex` comes from a DOM
+// `data-card-index` read during a mousemove; if the hand shrinks between render
+// and that read (a card resolves / an opponent acts / a resync mid-drag), the
+// stale index can outrun `order`. The naive `next[toIndex] = ...` then produced
+// a SPARSE array with `undefined` holes, which crashed the hand render's
+// `cardKey`/`.map` on `card.suit` (prod: "undefined is not an object
+// (evaluating 'e.suit')"). Any out-of-range / degenerate move returns the input
+// array unchanged (referential identity signals "no-op" to the caller), so a
+// hole can never be created.
+export const reorderHand = (order: Card[], fromIndex: number, toIndex: number): Card[] => {
+    // Number.isInteger rejects NaN (parseInt on a missing/garbled data-card-index)
+    // and floats — NaN would slip past `< 0` / `>= length` (both false for NaN).
+    if (!order
+        || fromIndex === toIndex
+        || !Number.isInteger(fromIndex) || fromIndex < 0 || fromIndex >= order.length
+        || !Number.isInteger(toIndex) || toIndex < 0 || toIndex >= order.length) {
+        return order;
+    }
+    const next = [...order];
+    const moved = next[fromIndex];
+    next[fromIndex] = next[toIndex];
+    next[toIndex] = moved;
+    return next;
+};
+
 // Sticky arrangement memory: keeps every known card's slot and only grows with
 // genuinely-new cards, so a card removed optimistically and then rejected keeps
 // its slot instead of jumping to the end.

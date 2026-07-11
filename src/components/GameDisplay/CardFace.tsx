@@ -40,6 +40,16 @@ export const CardFace = ({ card, onClick, style = {}, playerId, isAnimationOverl
         };
     }, []); // Empty dependency array - ResizeObserver handles all size changes
 
+    // Defense in depth: never crash the whole Game Page on a missing card. A
+    // null/undefined slot should be impossible now that the hand reorder is
+    // bounds-safe (see reorderHand / DragContext), but if one ever reaches here
+    // — a sparse-array hole, a stale render — degrade to a face-down instead of
+    // dereferencing `card.suit` on undefined (prod: "undefined is not an object
+    // (evaluating 'e.suit')").
+    if (!card) {
+        return <CardBack deckSize={1} />;
+    }
+
     // Check if this is a sanitized card (used for other players' cards in animations)
     const isSanitizedCard = card.suit === -1 && card.value === -1;
 

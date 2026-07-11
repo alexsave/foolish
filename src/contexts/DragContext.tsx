@@ -5,6 +5,7 @@ import { useAnimation } from './AnimationContext';
 import { useAuth } from './AuthContext';
 import { useGame } from './GameContext';
 import { canCover } from '@shared/common_utils.ts';
+import { reorderHand } from '../state/clientReconcile';
 import { canAttack, canPass as canPassValidation } from '../utils/gameValidation';
 import { findUnambiguousCover } from '../utils/coverCombinations';
 
@@ -226,14 +227,15 @@ export const DragProvider = ({ children }: { children: React.ReactNode }) => {
                 if (targetIndex === draggedCardIndex) {
                     return;
                 }
-                // Do immediate swap in the array
-                const newOrder = [...localHandOrder];
-                const draggedCard = newOrder[draggedCardIndex];
-                const targetCard = newOrder[targetIndex];
-
-                // Swap the cards
-                newOrder[draggedCardIndex] = targetCard;
-                newOrder[targetIndex] = draggedCard;
+                // Bounds-safe swap. `targetIndex` comes from the hovered card's
+                // DOM attribute and can outrun localHandOrder if the hand shrank
+                // mid-drag; reorderHand returns the SAME array for any such
+                // out-of-range move, which we treat as a no-op (never corrupt
+                // the drag index or create a sparse array). See clientReconcile.
+                const newOrder = reorderHand(localHandOrder, draggedCardIndex, targetIndex);
+                if (newOrder === localHandOrder) {
+                    return;
+                }
 
                 setLocalHandOrder(newOrder);
                 setDraggedCardIndex(targetIndex); // Update dragged index to new position
