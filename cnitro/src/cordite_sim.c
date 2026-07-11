@@ -870,16 +870,13 @@ static _Thread_local long cd_leafbook_hit = 0;
 #ifdef CD_LEAFBOOK
 #include "leafbook.h"
 #include "leafbook_data.h"
-// Binary search the key-sorted generated book; -1 if absent.
-static long cd_leafbook_find(uint64_t key) {
-    long lo = 0, hi = LEAFBOOK_N - 1;
-    while (lo <= hi) {
-        long mid = (lo + hi) >> 1;
-        uint64_t k = leafbook_keys[mid];
-        if (k == key) return mid;
-        if (k < key) lo = mid + 1; else hi = mid - 1;
-    }
-    return -1;
+// CHD minimal-perfect-hash lookup: bucket -> displacement -> slot -> value.
+// Every probed <=K round-boundary form is present (V-book absent=0), so there
+// is no absent case to reject — the lookup always returns that key's value.
+static inline uint8_t cd_leafbook_value(uint64_t key) {
+    uint32_t b = lb_bucket(key, LEAFBOOK_M, LEAFBOOK_SEED);
+    uint32_t s = lb_slot(key, leafbook_disp[b], LEAFBOOK_R, LEAFBOOK_SEED);
+    return leafbook_vals[s];
 }
 #endif
 void cd_sim_set_leafbook(int on) { cd_leafbook_on = on ? 1 : 0; }
@@ -1431,16 +1428,13 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
         if (atk != def && (s->in_mask >> atk & 1u) && (s->in_mask >> def & 1u)) {
             int nc = __builtin_popcountll(s->hand[atk]) + __builtin_popcountll(s->hand[def]);
             if (nc >= 2 && nc <= LEAFBOOK_DATA_K) {
-                long bi = cd_leafbook_find(leafbook_key(s->hand[atk], s->hand[def], s->power_suit));
-                if (bi >= 0) {
-                    cd_leafbook_hit++;
-                    uint8_t vb = leafbook_vals[bi];
-                    int outc = vb >> 4, dist = vb & 15;
-                    int av = (outc == 2) ? (1000 - (depth + dist))
-                           : (outc == 0) ? -(1000 - (depth + dist)) : 0;
-                    int v = (S->me == atk) ? av : -av;   // book is attacker-perspective
-                    TR_RET(v, "leafbook");
-                }
+                cd_leafbook_hit++;
+                uint8_t vb = cd_leafbook_value(leafbook_key(s->hand[atk], s->hand[def], s->power_suit));
+                int outc = vb >> 4, dist = vb & 15;
+                int av = (outc == 2) ? (1000 - (depth + dist))
+                       : (outc == 0) ? -(1000 - (depth + dist)) : 0;
+                int v = (S->me == atk) ? av : -av;   // book is attacker-perspective
+                TR_RET(v, "leafbook");
             }
         }
     }

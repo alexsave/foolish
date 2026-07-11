@@ -6,7 +6,7 @@ the bitboard solver *before* the transposition table. A book hit terminates the
 whole subtree with a proven value — no search, no TT traffic, no budget.
 
 It is the first "spend the free L1" candidate to beat the control (R2): at pc2
-it makes hexogen **11% faster** (30.08 → 26.72 ms/dec) at neutral-to-slightly-
+it makes hexogen **14% faster** (30.18 → 26.00 ms/dec) at neutral-to-slightly-
 better strength, because it attacks a *different* axis than more search worlds
 (the saturated one — see the world-budget knee in the Ordnance Chart).
 
@@ -25,12 +25,29 @@ bit-identical by construction. The value byte is
 
 ## Reach K — the feasibility gate (`make leafbook-gate`)
 
-Distinct canonical forms grow ~10× per card: K=4 → 1,883 (1.8 KiB), K=5 →
-19,715 (19.3 KiB), K=6 → 205,853 (201 KiB, over budget). **Shipped K=4** as a
-key-sorted `(uint64 key, uint8 value)` array with binary search — exact, needs
-no perfect hash. K=5 fits L1 only via a 1-byte/entry index store
-(minimal-perfect-hash by enumeration rank); it is the natural next step and
-reaches bigger, budget-binding subtrees.
+Distinct canonical forms grow ~10× per card: K=4 → 1,883, K=5 → 19,715,
+K=6 → 205,853 (201 KiB, over budget — dropped). **Shipped K=5.**
+
+## Storage — a CHD minimal perfect hash (the "index store")
+
+K=5's 19,715 entries fit L1 only as a **1-byte-per-entry value array + a minimal
+perfect hash** (no keys stored) — a sorted `(key,value)` array would be ~118 KiB.
+CHD (compress-hash-displace, `src/leafbook.h`): a first-level hash buckets the
+keys; each bucket gets a displacement chosen so its keys land in distinct free
+slots of the minimal `R=N` value array. Probe = bucket → displacement → slot →
+value, **O(1)** — cheaper than the binary search a key array would need, which is
+where K=5's latency edge over a K=4 key-array comes from. Built size: **27.0 KiB**
+(7.9 KiB displacements + 19.7 KiB values), under the 32 KiB free budget. The
+builder self-checks the hash is a bijection; the offline V-book proves
+completeness (a missing form would return a colliding slot's value → a mismatch).
+
+**Reach note (measured):** at pc2 vs espresso, K=5 plays *move-identically* to
+K=4 — within a leaf solve the total card count changes by −2 per covered round
+and 0 on a pickup, so its parity is fixed and the reachable round boundaries land
+≤4 cards; nc=5 boundaries don't arise. So K=5's extra ~18k entries are latent
+here (future-proofing other configs), and the shipped win is the O(1) MPH probe.
+K=4 via the same MPH would be ~2.6 KiB for the identical measured play, if
+footprint ever matters more than reach.
 
 ## Correctness (`make leafbook-verify`) — must be 100%
 

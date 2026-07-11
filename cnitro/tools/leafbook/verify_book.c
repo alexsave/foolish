@@ -22,16 +22,14 @@
 static uint32_t rng = 0x1234567u;
 static inline uint32_t xr(void) { rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5; return rng; }
 
-// Binary search the key-sorted book; -1 if absent.
-static long book_find(uint64_t key) {
-    long lo = 0, hi = LEAFBOOK_N - 1;
-    while (lo <= hi) {
-        long mid = (lo + hi) >> 1;
-        uint64_t k = leafbook_keys[mid];
-        if (k == key) return mid;
-        if (k < key) lo = mid + 1; else hi = mid - 1;
-    }
-    return -1;
+// CHD minimal-perfect-hash lookup (same as the engine probe). An unenumerated
+// (absent) form would land on some other key's slot and return a value that
+// almost certainly disagrees with the direct solve — so incompleteness shows up
+// as a value mismatch, not a silent miss.
+static inline uint8_t book_value(uint64_t key) {
+    uint32_t b = lb_bucket(key, LEAFBOOK_M, LEAFBOOK_SEED);
+    uint32_t s = lb_slot(key, leafbook_disp[b], LEAFBOOK_R, LEAFBOOK_SEED);
+    return leafbook_vals[s];
 }
 
 static void mk(SimState *s, uint64_t HA, uint64_t HD, int power) {
@@ -107,17 +105,15 @@ int main(int argc, char **argv) {
 #endif
 
         uint64_t key = leafbook_key(HA, HD, power);
-        long idx = book_find(key);
-        checked++;
-        if (idx < 0) { miss_absent++; if (first_bad < 0) first_bad = t; continue; }
-        hits++;
-        if (leafbook_vals[idx] != direct) {
+        uint8_t bookv = book_value(key);
+        checked++; hits++;
+        if (bookv != direct) {
             mismatch++;
             if (first_bad < 0) first_bad = t;
             if (mismatch <= 5)
                 fprintf(stderr, "MISMATCH key=%llx book=0x%02x direct=0x%02x (o/d book=%d/%d direct=%d/%d)\n",
-                        (unsigned long long)key, leafbook_vals[idx], direct,
-                        leafbook_vals[idx] >> 4, leafbook_vals[idx] & 15, direct >> 4, direct & 15);
+                        (unsigned long long)key, bookv, direct,
+                        bookv >> 4, bookv & 15, direct >> 4, direct & 15);
         }
     }
     printf("V-book: K=%d  samples=%ld  checked=%ld  book_hits=%ld  absent=%ld  mismatch=%ld\n",

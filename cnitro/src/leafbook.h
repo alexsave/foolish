@@ -43,6 +43,28 @@ static inline uint32_t leafbook_pack24(uint64_t H) {
     return out;
 }
 
+// ---- CHD minimal-perfect-hash primitives (shared by builder + probe) ----
+// At K=5 the ~20k entries fit L1 only as a 1-byte-per-entry value array indexed
+// by a minimal perfect hash — no keys stored. CHD (compress-hash-displace): a
+// first-level hash buckets keys; each bucket gets a displacement chosen so its
+// keys land in distinct free slots of the minimal [0,R=N) value array. Probe:
+// bucket -> displacement -> slot -> value. Both hashes MUST be identical in the
+// builder (tools/leafbook/build_book.c) and the engine probe (cordite_sim.c),
+// which this shared header guarantees. Completeness (every probed <=K
+// round-boundary form is in the book) is proven by the V-book gate's absent=0,
+// so a stored key/tag for absent-rejection is unnecessary.
+static inline uint64_t lb_mix(uint64_t x) {
+    x ^= x >> 33; x *= 0xff51afd7ed558ccdULL;
+    x ^= x >> 33; x *= 0xc4ceb9fe1a85ec53ULL;
+    x ^= x >> 33; return x;
+}
+static inline uint32_t lb_bucket(uint64_t key, uint32_t M, uint64_t seed) {
+    return (uint32_t)(lb_mix(key ^ seed) % M);
+}
+static inline uint32_t lb_slot(uint64_t key, uint32_t disp, uint32_t R, uint64_t seed) {
+    return (uint32_t)(lb_mix(key ^ seed ^ (0x9E3779B97F4A7C15ull * ((uint64_t)disp + 1))) % R);
+}
+
 // Canonical 48-bit key for the round-boundary endgame (HA attacker, HD
 // defender, power the trump suit). Deterministic; equal iff same value-orbit.
 static inline uint64_t leafbook_key(uint64_t HA, uint64_t HD, int power) {

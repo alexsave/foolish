@@ -126,6 +126,22 @@ uint8_t leafbook_solve_byte(uint64_t HA, uint64_t HD, int power, int *ab) {
     return (uint8_t)((outcome << 4) | dist);
 }
 
+// ---- CHD minimal-perfect-hash construction ------------------------------
+// Place N keys into a minimal (R=N) value array: bucket by lb_bucket, then for
+// each bucket (largest first) find a displacement whose lb_slot maps all its
+// keys to distinct free slots. Retries with a fresh global seed on failure.
+#define LB_DISP_MAX 60000            // fits uint16; overflow => reseed
+
+static int cmp_bucket_size(const void *pa, const void *pb, void *ctx) {
+    const int *sz = (const int *)ctx;
+    return sz[*(const int *)pb] - sz[*(const int *)pa];   // descending
+}
+// portable desc sort of bucket ids by size (no qsort_r dependency)
+static int *g_bsz;
+static int cmp_bsz(const void *a, const void *b) {
+    return g_bsz[*(const int *)b] - g_bsz[*(const int *)a];
+}
+
 int main(void) {
     // Trigger cordite_sim's lazy VALUE/SUIT/HIGHER mask init (only fired inside
     // cd_sim_from_game) before we solve hand-built states directly.
@@ -134,40 +150,100 @@ int main(void) {
     hkey = calloc(HSIZE, sizeof(uint64_t));
     if (!hkey) { fprintf(stderr, "oom\n"); return 1; }
     dfs(0, 0, 0, 0);
-    qsort(keys, nkeys, sizeof(uint64_t), cmp_u64);
+    qsort(keys, nkeys, sizeof(uint64_t), cmp_u64);   // deterministic key order
 
-    uint8_t *vals = malloc(nkeys);
+    uint8_t *val_of = malloc(nkeys);
     long aborts = 0, wins = 0, losses = 0, draws = 0, maxdist = 0;
     for (long i = 0; i < nkeys; i++) {
         uint64_t HA, HD; decode_key(keys[i], &HA, &HD);
         int ab = 0;
-        vals[i] = leafbook_solve_byte(HA, HD, 3, &ab);
+        val_of[i] = leafbook_solve_byte(HA, HD, 3, &ab);
         if (ab) { aborts++; fprintf(stderr, "ABORT at key %llx\n", (unsigned long long)keys[i]); }
-        int o = vals[i] >> 4, d = vals[i] & 15;
+        int o = val_of[i] >> 4, d = val_of[i] & 15;
         if (o == 2) wins++; else if (o == 0) losses++; else draws++;
         if (d > maxdist) maxdist = d;
     }
     fprintf(stderr, "leafbook: K=%d  entries=%ld  wins=%ld losses=%ld draws=%ld  maxdist=%ld  aborts=%ld\n",
             KMAX, nkeys, wins, losses, draws, maxdist, aborts);
     if (aborts) { fprintf(stderr, "FATAL: solves aborted; book would be unsound\n"); return 2; }
+    (void)cmp_bucket_size;
 
-    // Emit the generated header.
+    uint32_t N = (uint32_t)nkeys, R = N;
+    uint32_t M = (N + 4) / 5;                 // ~5 keys/bucket (CHD sweet spot)
+    uint16_t *disp = malloc((size_t)M * sizeof(uint16_t));
+    uint8_t  *vals = malloc(R);
+    uint8_t  *occ  = malloc(R);
+    // bucket membership (CSR): head[M], nxt[N]
+    int *head = malloc((size_t)M * sizeof(int));
+    int *nxt  = malloc((size_t)N * sizeof(int));
+    int *bsz  = malloc((size_t)M * sizeof(int));
+    int *order = malloc((size_t)M * sizeof(int));
+    uint64_t seed = 0x1234567;
+    int ok = 0;
+    for (int attempt = 0; attempt < 200 && !ok; attempt++) {
+        if (attempt) seed = lb_mix(seed) | 1;   // advance only after a failed attempt
+        for (uint32_t b = 0; b < M; b++) { head[b] = -1; bsz[b] = 0; }
+        for (uint32_t i = 0; i < N; i++) {
+            uint32_t b = lb_bucket(keys[i], M, seed);
+            nxt[i] = head[b]; head[b] = (int)i; bsz[b]++;
+        }
+        for (uint32_t b = 0; b < M; b++) order[b] = (int)b;
+        g_bsz = bsz; qsort(order, M, sizeof(int), cmp_bsz);
+        memset(occ, 0, R);
+        ok = 1;
+        for (uint32_t oi = 0; oi < M && ok; oi++) {
+            int b = order[oi];
+            if (bsz[b] == 0) { disp[b] = 0; continue; }
+            int placed = 0;
+            for (uint32_t d = 0; d <= LB_DISP_MAX && !placed; d++) {
+                int good = 1;
+                // check all keys land distinct + free
+                uint32_t tmp[64]; int tn = 0;
+                for (int i = head[b]; i >= 0; i = nxt[i]) {
+                    uint32_t s = lb_slot(keys[i], d, R, seed);
+                    if (occ[s]) { good = 0; break; }
+                    int dup = 0; for (int t = 0; t < tn; t++) if (tmp[t] == s) { dup = 1; break; }
+                    if (dup) { good = 0; break; }
+                    if (tn < 64) tmp[tn++] = s;
+                }
+                if (good) {
+                    for (int i = head[b]; i >= 0; i = nxt[i]) {
+                        uint32_t s = lb_slot(keys[i], d, R, seed);
+                        occ[s] = 1; vals[s] = val_of[i];
+                    }
+                    disp[b] = (uint16_t)d; placed = 1;
+                }
+            }
+            if (!placed) ok = 0;
+        }
+        if (!ok) fprintf(stderr, "  CHD attempt %d failed; reseeding\n", attempt);
+    }
+    if (!ok) { fprintf(stderr, "FATAL: CHD construction failed\n"); return 3; }
+
+    // Build-time self-check: the MPH must be a bijection reproducing every value.
+    for (uint32_t i = 0; i < N; i++) {
+        uint32_t s = lb_slot(keys[i], disp[lb_bucket(keys[i], M, seed)], R, seed);
+        if (vals[s] != val_of[i]) { fprintf(stderr, "FATAL: MPH self-check failed at %u\n", i); return 4; }
+    }
+    long disp_bytes = (long)M * 2, val_bytes = R;
+    fprintf(stderr, "leafbook MPH: N=%u M=%u R=%u seed=0x%llx  size=%ld B (disp %ld + vals %ld) = %.1f KiB\n",
+            N, M, R, (unsigned long long)seed, disp_bytes + val_bytes, disp_bytes, val_bytes,
+            (disp_bytes + val_bytes) / 1024.0);
+
+    // Emit the generated header (value array + displacements; NO keys stored).
     printf("// GENERATED by tools/leafbook/build_book.c — do not edit.\n");
-    printf("// LEAFBOOK reach K=%d; docs/L1_SPEND_PLAN.md §4. Key-sorted for binary search.\n", KMAX);
+    printf("// LEAFBOOK reach K=%d; docs/L1_SPEND_PLAN.md §4. CHD minimal perfect hash.\n", KMAX);
     printf("#ifndef CNITRO_LEAFBOOK_DATA_H\n#define CNITRO_LEAFBOOK_DATA_H\n#include <stdint.h>\n\n");
     printf("#define LEAFBOOK_DATA_K %d\n", KMAX);
-    printf("#define LEAFBOOK_N %ldL\n\n", nkeys);
-    printf("static const uint64_t leafbook_keys[LEAFBOOK_N] = {\n");
-    for (long i = 0; i < nkeys; i++) {
-        printf("0x%llxull,", (unsigned long long)keys[i]);
-        if ((i & 7) == 7) printf("\n");
-    }
+    printf("#define LEAFBOOK_N %ldL\n", nkeys);
+    printf("#define LEAFBOOK_M %uu\n", M);
+    printf("#define LEAFBOOK_R %uu\n", R);
+    printf("#define LEAFBOOK_SEED 0x%llxull\n\n", (unsigned long long)seed);
+    printf("static const uint16_t leafbook_disp[LEAFBOOK_M] = {\n");
+    for (uint32_t i = 0; i < M; i++) { printf("%u,", disp[i]); if ((i & 15) == 15) printf("\n"); }
     printf("\n};\n\n");
-    printf("static const uint8_t leafbook_vals[LEAFBOOK_N] = {\n");
-    for (long i = 0; i < nkeys; i++) {
-        printf("%u,", vals[i]);
-        if ((i & 31) == 31) printf("\n");
-    }
+    printf("static const uint8_t leafbook_vals[LEAFBOOK_R] = {\n");
+    for (uint32_t i = 0; i < R; i++) { printf("%u,", vals[i]); if ((i & 31) == 31) printf("\n"); }
     printf("\n};\n\n#endif\n");
     return 0;
 }

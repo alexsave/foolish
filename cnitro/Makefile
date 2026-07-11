@@ -128,7 +128,7 @@ l1-measure: build/l1_measure
 # value-safety gate (offline canonicalization + in-engine probe, must be 100%).
 # The build_book pass compiles WITHOUT -DCD_LEAFBOOK (it builds the book by
 # direct solves); verify_book compiles WITH it to exercise the engine probe.
-LEAFBOOK_K ?= 4
+LEAFBOOK_K ?= 5
 LEAFBOOK_CFLAGS := -O2 -ffast-math -Isrc -Wno-deprecated-declarations -DCD_TT_BITS=12
 .PHONY: leafbook leafbook-gate leafbook-verify
 leafbook:

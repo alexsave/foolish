@@ -21,12 +21,15 @@ nodes before the TT. A book hit terminates the whole subtree with a PROVEN value
 in-engine probe 2×10⁶, 0 mismatches), so it changes play only by resolving lines
 the budget-limited search would have aborted.
 
-Measured (`L1_SPEND_PLAN.md` Appendix A):
-- pc2 latency: **26.72 ms/dec vs octogen's 30.08 — 11% faster.**
+Measured (`L1_SPEND_PLAN.md` Appendix A), K=5 book via a CHD minimal perfect
+hash (27 KiB, O(1) probe):
+- pc2 latency: **26.00 ms/dec vs octogen's 30.18 — 14% faster.**
 - pc2 strength (1000 paired vs espresso): diff **−0.010 ± 0.010**, win **81.0%
   vs 80.0%**, better/worse/eq **58/48/894** — neutral-to-slightly-better.
 - pc4: byte-identical to octogen (the book resolves the same values octogen
   already reached within budget there).
+- K=5 plays move-identically to K=4 at pc2 (card-parity keeps reachable round
+  boundaries ≤4 cards); the extra reach is latent, the win is the O(1) probe.
 
 This is the first L1 spend to clear R2 (a win over the control): faster, at ≥
 strength. It works because it is a *different* lever from more search worlds.

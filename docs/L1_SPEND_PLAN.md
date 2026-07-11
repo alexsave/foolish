@@ -296,7 +296,7 @@ into the default build (which is the pc2-tuned shipped config). A pc3+ sweep,
 where rollouts dominate, is the only place it could still pay — left as future
 work, not assumed.
 
-### S3 — LEAFBOOK: the star. SHIPPED at K=4, and the FIRST spend to beat control
+### S3 — LEAFBOOK: the star. SHIPPED at K=5, and the FIRST spend to beat control
 
 Built the full pipeline (`tools/leafbook/*`, `src/leafbook.h`, generated
 `src/leafbook_data.h`, the `-DCD_LEAFBOOK` probe in `cordite_sim.c`,
@@ -311,8 +311,12 @@ forms (both hands non-empty):
 | 5 | 19,715 | 19.3 KiB | fits L1 only via a 1 B/entry minimal-perfect-hash |
 | 6 | 205,853 | 201 KiB | **drop** — 6× over the 32 KiB budget |
 
-K=6 is out; K=5 needs an index store (follow-up). **Shipped K=4** as a sorted
-`(key,value)` array — exact, no perfect-hash risk.
+K=6 is out. **Shipped K=5** via a **CHD minimal perfect hash** (`src/leafbook.h`):
+a 1-byte-per-entry value array + per-bucket displacements, no keys stored —
+**27.0 KiB** (7.9 KiB disp + 19.7 KiB vals), under the 32 KiB budget. The probe
+is **O(1)** (bucket→displacement→slot), cheaper than the binary search a key
+array needs — which is the whole latency edge (see below). A key-sorted array
+would have been ~118 KiB and would not fit L1.
 
 **Value-safety gate (`make leafbook-verify`, non-negotiable §4 step 3):**
 - Offline V-book: **1,000,000** random concrete positions, book-through-
@@ -330,13 +334,20 @@ budget-limited search would abort):**
 
 | metric | octogen | hexogen (book, `HX_PCT=100`) |
 |---|---|---|
-| pc2 latency (40g) | 30.08 ms/dec | **26.72 (−11%)** |
+| pc2 latency (40g) | 30.18 ms/dec | **26.00 (−14%)** |
 | pc2 strength (1000 paired vs espresso) | — | diff **−0.010 ± 0.010**, win **81.0% vs 80.0%**, better/worse/eq **58/48/894** |
 | pc4 strength (800 paired) | — | **0/0/800 identical** (book resolves the same values octogen already reached at pc4) |
 | book hits | 0 (gate off) | ~51 M / 40 games |
 
+**Reach note:** K=5 plays *move-identically* to K=4 at pc2 (within a leaf solve
+the total card count changes by −2 per covered round, 0 on a pickup, so parity
+is fixed and reachable round boundaries land ≤4 cards; nc=5 never arises). So
+K=5's extra ~18k entries are latent here and the shipped win is the O(1) MPH
+probe (K=5 26.00 vs the K=4 binary-search 26.72). K=4 via the same MPH would be
+~2.6 KiB for identical measured play, if footprint outweighs future reach.
+
 **Verdict: the first spend to clear R2.** Where S0/S1/S4 were flat-or-slower,
-LEAFBOOK is **11% faster at pc2 with neutral-to-slightly-better strength** —
+LEAFBOOK is **14% faster at pc2 with neutral-to-slightly-better strength** —
 because it is a *different lever* (exact endgame resolution) than the saturated
 world-budget axis. The 1 win→loss seen in a 30-seed scan is the OCTOGEN.md
 adverse-selection effect (exact play forfeiting swindle equity vs an imperfect
@@ -355,10 +366,10 @@ keeps the oracle research-only) with exact, zero-search endgame values.
 
 ### What's left
 
-- **S3 → K=5**: 19,715 entries fit L1 only via a 1 B/entry minimal-perfect-hash
-  (index by enumeration rank). K=5 reaches bigger, budget-binding subtrees, so
-  its resolution gain (not just speed) should exceed K=4's. The pipeline +
-  gates are in place; only the index store is new work.
+- **S3 → K=6** is out (201 KiB). K=5 is the L1 ceiling for the book. Extending
+  the book's *reach* beyond speed would require the leaf solver to actually hit
+  ≥5-card round boundaries (it doesn't at pc2 — parity, above); a pc3+/other-bot
+  sweep is where the latent K=5 entries could start paying, left as future work.
 - **S2 bound side-table** (§3) — remains blocked on `C5_BOUNDS_HANDOFF.md` §4
   (C5-v2), which was characterized as a negative (slower, ~30% flips) and is not
   being pursued.
