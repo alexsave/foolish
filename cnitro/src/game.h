@@ -161,6 +161,7 @@ void     game_rng_set(uint32_t s);
 
 void     random_strategy_set_seed(uint32_t s);
 double   random_strategy_random(void);
+uint32_t random_strategy_rng_get(void);
 
 // ---------- Engine observation hooks ------------------------------------
 //

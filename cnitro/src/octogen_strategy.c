@@ -1476,10 +1476,19 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
     int W1, W2, W3;
     og_params(g->num_players, &W1, &W2, &W3);
 
-    uint32_t base = og_mix((uint32_t)g->num_logs * 2654435761u,
-                           ((uint32_t)g->deck_count << 8)
-                           ^ (uint32_t)g->discard_pile_length
-                           ^ ((uint32_t)bot_idx << 20));
+    // World-sampling seed. The public-state terms give distinct streams per
+    // decision; the strategy-LCG term folds in the SERVER-ONLY secret (live it is
+    // reseeded per decision from state_fnv(g_rng_base); see game.c /
+    // wasm_api.c). WITHOUT it, base is a pure function of the public board and a
+    // source holder could recompute octogen's exact world sample and predict its
+    // every move — the vulnerability wasm_set_rng_base was added to close. Stays
+    // reproducible to the server (same game_seed) and deterministic in native
+    // tests (strategy LCG seeded from the run seed).
+    uint32_t base = og_mix(og_mix((uint32_t)g->num_logs * 2654435761u,
+                                  ((uint32_t)g->deck_count << 8)
+                                  ^ (uint32_t)g->discard_pile_length
+                                  ^ ((uint32_t)bot_idx << 20)),
+                           random_strategy_rng_get());
 
     double score[OG_MAX_CANDS] = {0};
     int    nsim [OG_MAX_CANDS] = {0};
