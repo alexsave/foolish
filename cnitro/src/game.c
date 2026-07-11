@@ -211,6 +211,25 @@ int game_done(const Game *g) {
 
 // ---------- Logs -------------------------------------------------------
 
+#ifdef GUARDS_VALIDATE_ONLY
+// GUARDS_VALIDATE_ONLY: guards.wasm is a MOVE VALIDATOR. It dry-runs the real
+// handle_* on a throwaway clone and reads ONLY the reject code — the animation
+// logs those handlers emit (and the end-of-round stock refill, see
+// refill_player_hands below) are always discarded (guards exports no log/state
+// reader, and legality never reads g->logs / num_pairs; verified by the greps
+// behind e2e/client_guards + e2e/wasm_kernel_fuzz). Compile the whole log-append
+// path down to no-ops so the validator carries none of it. A single static sink
+// backs callers that write log fields directly (e.g. LOG_DEFENDER_CHANGE's
+// dc->defender_index); those writes are inert.
+static GameLog g_log_sink;
+static GameLog *log_alloc(Game *g, int log_type, int player_idx) {
+    (void)g; (void)log_type; (void)player_idx;
+    return &g_log_sink;
+}
+static void log_add_card(GameLog *l, Card c) { (void)l; (void)c; }
+static void log_add_pair(GameLog *l, Card primary, Card target) { (void)l; (void)primary; (void)target; }
+#else
+
 static GameLog *log_alloc(Game *g, int log_type, int player_idx) {
     bool drop;
     if (g->log_cap > 0) {
@@ -256,6 +275,7 @@ static void log_add_pair(GameLog *l, Card primary, Card target) {
     p->primary = primary;
     p->target = target;
 }
+#endif  // GUARDS_NO_LOG
 
 // ---------- Hand ops ---------------------------------------------------
 
@@ -400,6 +420,15 @@ static bool no_cards_left(const Game *g) {
     return g->deck_count == 0 && !g->has_flipped;
 }
 
+#ifdef GUARDS_VALIDATE_ONLY
+// Validate-only build: the stock refill runs only in a move's COMMIT phase,
+// AFTER every reject check has passed — no reject code depends on the cards it
+// draws, and guards discards the post-move state. No-op it so the whole draw
+// path (draw_card, refill_deck) dead-code-eliminates out of the validator.
+// (handle_* still runs full mutation, so cover's mid-apply re-check and pass's
+// post-mutation PASS_OVERFLOW reject stay byte-for-byte identical to the server.)
+static void refill_player_hands(Game *g) { (void)g; }
+#else
 static void refill_player_hands(Game *g) {
     if (no_cards_left(g)) {
         for (int i = 0; i < g->num_players; i++) {
@@ -459,6 +488,7 @@ static void refill_player_hands(Game *g) {
         p_idx = get_next_player_index(g, p_idx);
     } while (p_idx != g->first_attacker);
 }
+#endif  // GUARDS_VALIDATE_ONLY
 
 // ---------- Action: attack --------------------------------------------
 

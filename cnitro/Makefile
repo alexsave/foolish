@@ -412,10 +412,40 @@ WASM_RULES_FLAGS := $(filter-out -DMAX_LEGAL_MOVES=4096,$(WASM_FLAGS)) \
 WASM_RULES_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/view.c src/awire.c \
                   src/evwire.c wasm/wasm_api.c
 
-build/rules.wasm: $(WASM_RULES_SRC) $(wildcard src/*.h) $(wildcard wasm/*.h)
+# Built from per-file OBJECTS (not one single-step `clang *.c -o` invocation),
+# for the same reason bots is: single-step clang emits NO function-name section
+# — even unstripped — so the wasm-anatomy tool cannot recover names for it. A
+# separate-object link keeps the symbols, and the post-link wasm-opt recovers
+# the extra whole-program DCE single-step did for free (net +~60 B, behavior-
+# identical, gated by e2e/wasm_kernel_fuzz). Split the combined flag set into
+# compile-only (-c) and link-only (-Wl%). rules/guards are size-first (no MC hot
+# loop) ⇒ -Oz, unlike bots (-O2 --inlining-optimizing); a global WASM_POSTOPT
+# override still wins.
+WASM_RULES_CFLAGS  := $(filter-out -Wl%,$(WASM_RULES_FLAGS))
+WASM_RULES_LDFLAGS := --target=wasm32 -nostdlib $(filter -Wl%,$(WASM_RULES_FLAGS))
+WASM_RULES_POSTOPT ?= $(if $(strip $(WASM_POSTOPT)),$(WASM_POSTOPT),-Oz)
+WASM_RULES_OBJ := $(addprefix build/rulesobj/,$(notdir $(WASM_RULES_SRC:.c=.o)))
+
+build/rulesobj/%.o: src/%.c $(wildcard src/*.h) $(wildcard wasm/*.h)
+	@mkdir -p build/rulesobj
+	$(WASM_CC) $(WASM_RULES_CFLAGS) -c $< -o $@
+build/rulesobj/%.o: wasm/%.c $(wildcard src/*.h) $(wildcard wasm/*.h)
+	@mkdir -p build/rulesobj
+	$(WASM_CC) $(WASM_RULES_CFLAGS) -c $< -o $@
+
+build/rules.wasm: $(WASM_RULES_OBJ)
 	@mkdir -p build
-	$(WASM_CC) $(WASM_RULES_FLAGS) $(WASM_API_EXPORTS) $(WASM_RULES_SRC) -o $@
-	$(call wasm_postopt,$(WASM_POSTOPT),$@)
+	$(WASM_CC) $(WASM_RULES_LDFLAGS) $(WASM_API_EXPORTS) $(WASM_RULES_OBJ) -o $@
+	$(call wasm_postopt,$(WASM_RULES_POSTOPT),$@)
+
+# Name-preserving companion (wasm-anatomy): same objects/link/wasm-opt as the
+# shipped module, minus -Wl,--strip-all and with wasm-opt --debuginfo ⇒ its CODE
+# section is byte-identical to build/rules.wasm but names are kept. generate.sh
+# asserts that byte-identity.
+build/named/rules.named.wasm: $(WASM_RULES_OBJ)
+	@mkdir -p build/named
+	$(WASM_CC) $(filter-out -Wl$(comma)--strip-all,$(WASM_RULES_LDFLAGS)) $(WASM_API_EXPORTS) $(WASM_RULES_OBJ) -o $@
+	$(if $(strip $(WASM_RULES_POSTOPT)),$(WASM_OPT_BIN) $(WASM_OPT_FEATURES) $(WASM_RULES_POSTOPT) --debuginfo $@ -o $@,:)
 
 # Regenerates the base64 module the TS side imports (works unchanged in
 # Deno edge functions, Node and browsers — no asset pipeline needed).
@@ -431,7 +461,8 @@ wasm: build/rules.wasm
 # so the interactive client stops reimplementing the rules in TS (one engine,
 # not two). Same wire layout as rules.wasm; e2e asserts guards==rules parity.
 # Smaller caps than the rules module: the client never imports a session log
-# (each marshal starts fresh) and one optimistic move emits <64 logs.
+# (each marshal starts fresh), and as a validate-only build it emits no logs at
+# all (see -DGUARDS_VALIDATE_ONLY / MAX_LOGS=1 below).
 #
 # THE L1 MODULE: linear memory is PINNED to one 64KB wasm page — the whole
 # module state (stack, Game, clone scratch, io, card buffers) lives inside
@@ -441,15 +472,32 @@ wasm: build/rules.wasm
 # the page, wasm-ld REFUSES TO LINK (no silent regression), and the module
 # can never memory.grow (it has no allocator — verified: no memory.grow
 # opcode in the binary). Budget & measurements: docs/WASM_L1_BUDGET.md.
-# Stack 16KB: the deepest guards path was validate_run's ~9.6KB Game clone,
-# which now lives in BSS (wasm_guards_api.c g_validate_tmp); what remains on
-# the stack is handle_* / state_get frames (<2KB observed) — 16KB is >5x
-# that, and --stack-first keeps any regression a loud trap.
+# Stack 16KB: validate_run's Game clone lives in BSS (wasm_guards_api.c
+# g_validate_tmp), not on the stack — and at MAX_LOGS=1 it is now ~1.1KB, not the
+# old ~9.6KB. What remains on the stack is handle_* / state_get frames (<2KB
+# observed) — 16KB is >5x that, and --stack-first keeps any regression a loud trap.
 # MAX_SNAPS=1: the shipped guards module exports no snapshot readers (see
 # WASM_GUARDS_EXPORTS below), so the ring was 55.7KB of write-only memory.
+# -DGUARDS_VALIDATE_ONLY: guards validates by dry-running handle_* on a throwaway
+# clone and reading ONLY the reject code. Both the animation logs those handlers
+# emit AND the end-of-round stock refill happen in the COMMIT phase, after every
+# reject check — no reject depends on them and the post-move state is discarded.
+# So this compiles the log-append path (log_alloc/log_add_card/log_add_pair) and
+# refill_player_hands (→ draw_card, refill_deck) down to no-ops; handle_*'s full
+# mutation still runs, so every reject code stays byte-identical to the server.
+# Gated by e2e/client_guards (kernel-parity) + e2e/wasm_kernel_fuzz.
+# MAX_LOGS=1 / MAX_LOG_PAIRS=1: with GUARDS_VALIDATE_ONLY the logs are never
+# written (no-op path) and never marshaled (the wire carries no logs), so the
+# Game.logs[] buffer is DEAD. At 64/64 it was 8,448 B of the 9,608 B Game struct
+# (88%) — and validate_run's game_clone memcpy(sizeof(Game)) copied ALL of it on
+# EVERY gate. Shrinking to 1/1 drops sizeof(Game) to 1,168 B: the per-gate clone
+# copies ~8.4 KB less and g_game + g_validate_tmp reclaim ~16.9 KB of the 64 KB
+# page. Nothing in the guards-linked set (game.c/view.c/awire.c/wasm_guards_api.c)
+# uses these for a live buffer — the card inputs are g_in_a[MAX_IN_CARDS].
 WASM_GUARDS_FLAGS := --target=wasm32 $(WASM_OPT) -nostdlib -ffreestanding -mbulk-memory \
                      -isystem wasm/include -Isrc -D_Thread_local= -DDEAL_RNG_DISABLED \
-                     -DMAX_LOG_PAIRS=64 -DMAX_BATTLES=64 -DMAX_LOGS=64 -DMAX_SNAPS=1 \
+                     -DGUARDS_VALIDATE_ONLY \
+                     -DMAX_LOG_PAIRS=1 -DMAX_BATTLES=64 -DMAX_LOGS=1 -DMAX_SNAPS=1 \
                      -Wall -Wextra -Wno-unused-parameter \
                      -Wl,--no-entry -Wl,--export-memory -Wl,-z,stack-size=16384 -Wl,--stack-first \
                      -Wl,--initial-memory=65536 -Wl,--max-memory=65536 \
@@ -466,19 +514,22 @@ WASM_GUARDS_FLAGS := --target=wasm32 $(WASM_OPT) -nostdlib -ffreestanding -mbulk
 # wasm_validate_good, subsumed by wasm_validate_action which handles all five
 # kinds) — was reachable from NO caller in src/ or e2e/, so rooting it only
 # bloated the shipped module. Re-add an export line to revive a capability;
-# the C stays in game.c / wasm_guards_api.c. The kept wasm_attack..pickup +
-# wasm_export_state are dormant in prod (the TS overlay does optimistic play)
-# but guarded by the applyMove prediction test, so they stay.
+# the C stays in game.c / wasm_guards_api.c.
+# VALIDATION-ONLY: the kernel optimistic-apply entries (wasm_attack..pickup +
+# wasm_export_state) are dropped. Production optimistic play is the pure-TS
+# overlay (src/state/optimisticOverlay.ts + clientReconcile.ts), NOT this wasm
+# path — applyMove had NO src/ runtime caller, only an e2e test. Removing the
+# apply exports lets wasm-ld drop handle_*'s apply-only wrappers; validation
+# itself still dry-runs handle_* (validate_run), so rules parity is unchanged.
+# Revive the client-side kernel apply by re-adding these five + applyMove.
 WASM_GUARDS_EXPORTS := \
   -Wl,--export=wasm_io_ptr \
   -Wl,--export=wasm_cards_a_ptr -Wl,--export=wasm_cards_b_ptr \
   -Wl,--export=wasm_init \
-  -Wl,--export=wasm_import_state -Wl,--export=wasm_export_state \
+  -Wl,--export=wasm_import_state \
   -Wl,--export=wasm_validate_attack -Wl,--export=wasm_validate_cover \
   -Wl,--export=wasm_validate_pass -Wl,--export=wasm_validate_pickup \
   -Wl,--export=wasm_validate_action \
-  -Wl,--export=wasm_attack -Wl,--export=wasm_cover -Wl,--export=wasm_pass \
-  -Wl,--export=wasm_pickup \
   -Wl,--export=wasm_game_done -Wl,--export=wasm_next_player -Wl,--export=wasm_can_cover
 
 # The client guards module never deals (its optimistic draws are placeholders
@@ -488,10 +539,28 @@ WASM_GUARDS_EXPORTS := \
 # placeholder splices, exactly as before this feature.
 WASM_GUARDS_SRC := src/game.c src/view.c src/awire.c wasm/wasm_guards_api.c
 
-build/guards.wasm: $(WASM_GUARDS_SRC) $(wildcard src/*.h) $(wildcard wasm/*.h)
+# Object-based, same rationale as rules above (symbols for the anatomy tool).
+WASM_GUARDS_CFLAGS  := $(filter-out -Wl%,$(WASM_GUARDS_FLAGS))
+WASM_GUARDS_LDFLAGS := --target=wasm32 -nostdlib $(filter -Wl%,$(WASM_GUARDS_FLAGS))
+WASM_GUARDS_POSTOPT ?= $(if $(strip $(WASM_POSTOPT)),$(WASM_POSTOPT),-Oz)
+WASM_GUARDS_OBJ := $(addprefix build/guardsobj/,$(notdir $(WASM_GUARDS_SRC:.c=.o)))
+
+build/guardsobj/%.o: src/%.c $(wildcard src/*.h) $(wildcard wasm/*.h)
+	@mkdir -p build/guardsobj
+	$(WASM_CC) $(WASM_GUARDS_CFLAGS) -c $< -o $@
+build/guardsobj/%.o: wasm/%.c $(wildcard src/*.h) $(wildcard wasm/*.h)
+	@mkdir -p build/guardsobj
+	$(WASM_CC) $(WASM_GUARDS_CFLAGS) -c $< -o $@
+
+build/guards.wasm: $(WASM_GUARDS_OBJ)
 	@mkdir -p build
-	$(WASM_CC) $(WASM_GUARDS_FLAGS) $(WASM_GUARDS_EXPORTS) $(WASM_GUARDS_SRC) -o $@
-	$(call wasm_postopt,$(WASM_POSTOPT),$@)
+	$(WASM_CC) $(WASM_GUARDS_LDFLAGS) $(WASM_GUARDS_EXPORTS) $(WASM_GUARDS_OBJ) -o $@
+	$(call wasm_postopt,$(WASM_GUARDS_POSTOPT),$@)
+
+build/named/guards.named.wasm: $(WASM_GUARDS_OBJ)
+	@mkdir -p build/named
+	$(WASM_CC) $(filter-out -Wl$(comma)--strip-all,$(WASM_GUARDS_LDFLAGS)) $(WASM_GUARDS_EXPORTS) $(WASM_GUARDS_OBJ) -o $@
+	$(if $(strip $(WASM_GUARDS_POSTOPT)),$(WASM_OPT_BIN) $(WASM_OPT_FEATURES) $(WASM_GUARDS_POSTOPT) --debuginfo $@ -o $@,:)
 
 wasm-guards: build/guards.wasm
 	node wasm/embed.mjs build/guards.wasm ../supabase/functions/_shared/wasm/guards_wasm.ts GUARDS_WASM_B64 --gzip
@@ -503,17 +572,24 @@ wasm-guards: build/guards.wasm
 # Note: the distilled strategy (research, strength-negative — see
 # CORDITE_RESEARCH.md) stays native-arena-only; it is deliberately NOT in the
 # production bot module.
-# Only the SHIPPED difficulty-ladder bots (Durak Bot Ordnance Chart) that are
-# already ported to wasm — random, simple_heuristic, handwritten_prod, cordite,
-# octogen — plus the two heuristics the shipped MC bots call as rollout policies:
-# espresso and handwritten (arena builds, cordite_strategy.c:591-594). Dropped
+# The SHIPPED difficulty-ladder bots (Durak Bot Ordnance Chart), all now ported
+# to wasm — random, simple_heuristic, handwritten_prod, firecracker, blackpowder,
+# cordite, octogen (the full seven rungs) — plus the two heuristics the MC bots
+# call as rollout policies: espresso and handwritten (arena builds,
+# cordite_strategy.c:591-594; also firecracker/blackpowder's rollouts).
+# robusta_strategy.c rides along because firecracker IS robusta's MC with an
+# espresso rollout (firecracker_strategy.c calls robusta_mc_choose). Dropped
 # entirely (no ladder slot, no dep of a shipped bot): champion, ultimate_champion,
 # hacker, fulminate, semtex, espresso_prod — their code + static data leave the
-# module. (firecracker/blackpowder are ladder rungs not yet ported to wasm; add
-# their .c + robusta_strategy.c when they land.)
+# module. NOTE: robusta/blackpowder MC rolls a full Game + LegalMoves per sample;
+# those were stack locals (fine on native's 8 MB stack) and are hoisted to
+# lazily-malloc'd per-thread scratch so they fit the 22 KiB bots.wasm shadow
+# stack (see the stack-hoist notes in robusta_strategy.c / blackpowder_strategy.c).
 WASM_BOT_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/view.c src/awire.c \
                 src/evwire.c src/random_strategy.c \
                 src/espresso_strategy.c src/handwritten_strategy.c \
+                src/robusta_strategy.c src/firecracker_strategy.c \
+                src/blackpowder_strategy.c \
                 src/cordite_strategy.c src/cordite_sim.c \
                 src/simple_heuristic_strategy.c \
                 src/handwritten_prod_strategy.c \

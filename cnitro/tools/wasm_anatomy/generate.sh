@@ -32,44 +32,43 @@ echo "[1/5] building stripped production modules"
 # on disk). Removing the linked artifacts guarantees they reflect the DEFAULT
 # flags; the objects stay cached so this is cheap. The [2/5] guard would catch a
 # mismatch anyway, but this prevents the abort in the common stale-build case.
-rm -f build/rules.wasm build/guards.wasm build/bots.wasm build/named/bots.named.wasm
+rm -f build/rules.wasm build/guards.wasm build/bots.wasm \
+      build/named/rules.named.wasm build/named/guards.named.wasm build/named/bots.named.wasm
 make build/rules.wasm build/guards.wasm build/bots.wasm >/dev/null
 
 echo "[2/5] building name-preserving companions"
 mkdir -p "$NAMED"
-# strip --strip-all from each real link command, redirect output into named/
-for m in rules guards; do
-  make --always-make -n "build/$m.wasm" 2>/dev/null | grep -E "clang.* -o build/$m.wasm" \
-    | sed "s/-Wl,--strip-all //; s#-o build/$m.wasm#-o build/named/$m.named.wasm#" | bash
+# All three modules build from separate OBJECTS, so each companion is produced by
+# the Makefile from the IDENTICAL objects + link + wasm-opt as the shipped module
+# — the only difference is no -Wl,--strip-all and wasm-opt --debuginfo to keep the
+# function name section. (A hand-rolled relink would skip the wasm-opt pass and
+# its inlining/DCE would shift every name off the optimized bytes.)
+make build/named/rules.named.wasm build/named/guards.named.wasm build/named/bots.named.wasm >/dev/null
+# Guard: for EACH module, every function body must be byte-identical to the
+# shipped module's function at the same index — that per-function identity is what
+# lets the name section map 1:1 onto the shipped bytes. (wasm-opt --debuginfo
+# leaves harmless framing differences in the CODE section as a whole, so compare
+# bodies by index, not the raw section.) Fail loudly on any drift.
+for m in rules guards bots; do
+  node -e '
+    const fs=require("fs");
+    const bodies=p=>{const b=fs.readFileSync(p);let i=8;const out=[];while(i<b.length){const id=b[i++];let sh=0,ln=0,by;do{by=b[i++];ln|=(by&127)<<sh;sh+=7}while(by&128);if(id===10){let j=i;let s2=0,cnt=0,c;do{c=b[j++];cnt|=(c&127)<<s2;s2+=7}while(c&128);for(let f=0;f<cnt;f++){let sz=0,ss=0,cc;do{cc=b[j++];sz|=(cc&127)<<ss;ss+=7}while(cc&128);out.push(b.slice(j,j+sz));j+=sz;}}i+=ln;}return out;};
+    const c=bodies(process.argv[1]), s=bodies(process.argv[2]), m=process.argv[3];
+    if(c.length!==s.length){console.error("ERROR: "+m+".named companion has "+c.length+" funcs vs shipped "+s.length+" — names would mis-map. Aborting.");process.exit(1);}
+    for(let k=0;k<s.length;k++) if(Buffer.compare(c[k],s[k])!==0){console.error("ERROR: "+m+".named companion function #"+k+" differs from shipped build/"+m+".wasm — names would mis-map. Aborting.");process.exit(1);}
+  ' "$NAMED/$m.named.wasm" "build/$m.wasm" "$m" || exit 1
 done
-# bots: build the name-preserving companion via the Makefile so it uses the
-# IDENTICAL objects + link + wasm-opt pass as build/bots.wasm (only difference:
-# names kept). A hand-rolled relink here would skip the wasm-opt pass and its
-# inlining would drop functions, shifting every name off the optimized bytes.
-make build/named/bots.named.wasm >/dev/null
-# Guard: the companion's CODE section MUST be byte-identical to the shipped
-# module — that identity is exactly what makes the name indices map 1:1 onto the
-# optimized bytes. (The companion also carries a harmless target_features custom
-# section that --debuginfo preserves, so compare the CODE section specifically,
-# not the whole file.) Fail loudly on any drift.
-node -e '
-  const fs=require("fs");
-  const code=p=>{const b=fs.readFileSync(p);let i=8;while(i<b.length){const id=b[i++];let sh=0,ln=0,by;do{by=b[i++];ln|=(by&127)<<sh;sh+=7}while(by&128);if(id===10)return b.slice(i,i+ln);i+=ln;}return Buffer.alloc(0);};
-  const a=code(process.argv[1]), s=code(process.argv[2]);
-  if(Buffer.compare(a,s)!==0){ console.error("ERROR: bots.named companion CODE ("+a.length+"B) != shipped build/bots.wasm CODE ("+s.length+"B) — names would mis-map onto the optimized bytes. Aborting."); process.exit(1); }
-' "$NAMED/bots.named.wasm" build/bots.wasm || exit 1
 
 echo "[3/5] symbol -> source-file map"
+# All three modules now compile to per-file objects, so every symbol (incl.
+# wasm_guards_api) has a home object — no special-case compile needed. Same
+# symbol from rules/guards/bots objects maps to the same source file; sort -u
+# dedupes.
 : > "$WORK/symfile.tsv"
-for o in build/botobj/*.o; do
+for o in build/rulesobj/*.o build/guardsobj/*.o build/botobj/*.o; do
   base="$(basename "$o" .o)"
   llvm-nm --defined-only "$o" 2>/dev/null | awk -v f="$base" '$2 ~ /[TtWw]/ {print $3"\t"f}'
 done >> "$WORK/symfile.tsv"
-# guards api object is not in botobj — compile just for its symbol names
-$WASM_CC --target=wasm32 -Oz -nostdlib -ffreestanding -mbulk-memory -isystem wasm/include -Isrc \
-  -D_Thread_local= -DDEAL_RNG_DISABLED -DMAX_LOG_PAIRS=64 -DMAX_BATTLES=64 -DMAX_LOGS=64 \
-  -c wasm/wasm_guards_api.c -o "$WORK/wasm_guards_api.o" 2>/dev/null
-llvm-nm --defined-only "$WORK/wasm_guards_api.o" 2>/dev/null | awk '$2 ~ /[TtWw]/ {print $3"\twasm_guards_api"}' >> "$WORK/symfile.tsv"
 sort -u "$WORK/symfile.tsv" -o "$WORK/symfile.tsv"
 
 echo "[4/5] write config + parse + disassemble"

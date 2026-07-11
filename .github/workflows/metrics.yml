@@ -57,11 +57,13 @@ jobs:
       # trivial random move, not its search (that is why the ship-trim made
       # semtex/fulminate report phantom -80%/-28% deltas). octogen is the
       # headline (the MC bot the 2s CPU cap gates); cordite is the other
-      # shipped MC "thinking" bot; handwritten (strategy_key -> id 16 =
-      # STRAT_HANDWRITTEN_PROD)/simple_heuristic/random are the shipped fast
-      # bots (sub-ms, they mostly measure the wasm + Postgres round-trip
-      # floor). firecracker/blackpowder join once ported to the wasm dispatch.
-      BENCH_BOTS: octogen,cordite,handwritten,simple_heuristic,random
+      # shipped MC "thinking" bot; blackpowder and firecracker are the Hard/Medium
+      # ladder rungs (now ported to the wasm dispatch — both MC bots that run a
+      # rollout/solver, so they measure real search); handwritten (strategy_key ->
+      # id 16 = STRAT_HANDWRITTEN_PROD)/simple_heuristic/random are the shipped fast
+      # bots (sub-ms, they mostly measure the wasm + Postgres round-trip floor).
+      # Order = descending ladder strength.
+      BENCH_BOTS: octogen,cordite,blackpowder,firecracker,handwritten,simple_heuristic,random
       BENCH_BOT_MOVES: '20'
       BENCH_GAMES: '300'
       # E2E latency is wall-clock on a shared runner: one run's p50 swings too

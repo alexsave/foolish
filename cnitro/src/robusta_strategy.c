@@ -9,8 +9,18 @@
 #include "robusta_strategy.h"
 #include "card.h"
 #include "game.h"
+#include "cordite_sim.h"   // shared MC scratch (reused so wasm memory is unchanged)
 #include <string.h>
 #include <stdint.h>
+
+// The MC rollout puts a full Game (~67 KiB) and a LegalMoves (~232 KiB) in play
+// per sample. Natively that lives on an 8 MB stack, but bots.wasm ships a 22 KiB
+// shadow stack, so those buffers must not be stack locals (an on-stack LegalMoves
+// alone traps under --stack-first) — and malloc'ing them would grow the module
+// past octogen's footprint. Instead firecracker's rollout reuses the SHARED
+// scratch octogen already reserves: the sampled world goes in world_scratch_game()
+// (a short log-capped slot) and the rollout move list in rollout_moves_scratch().
+// Only one MC family runs per decision, so the slots are ours for the duration.
 
 // ---------- helpers ---------------------------------------------------
 
@@ -384,9 +394,27 @@ static void rollout_round(const Card *first_attack, int fa_n,
 // Sample a fictional consistent state into `g_out`. Pinned cards (from
 // pickup logs) go to their known holder; the unseen pool shuffles into the
 // remaining opp-hand slots + the deck.
+// Clone into a shared short world slot: the log-free prefix plus the LOG_DISCARD
+// tail (the only log type the espresso/handwritten rollout policies read),
+// capped at WORLD_LOG_CAP. Mirrors cordite's sampler so the shared world slot is
+// respected on the wasm short-log build; native (WORLD_LOG_CAP==0) keeps every
+// discard in a full-size slot. Same tradeoff cordite already makes.
+static void robusta_clone_world(Game *dst, const Game *src) {
+    memcpy(dst, src, offsetof(Game, logs));
+    int nl = 0;
+    for (int i = 0; i < src->num_logs; i++) {
+        if (src->logs[i].log_type != LOG_DISCARD) continue;
+        if (WORLD_LOG_CAP > 0 && nl >= WORLD_LOG_CAP) break;
+        dst->logs[nl++] = src->logs[i];
+    }
+    dst->num_logs = nl;
+    dst->log_cap  = WORLD_LOG_CAP;
+    dst->log_virt = (int16_t)nl;
+}
+
 static bool sample_consistent_state(Game *g_out, const Game *g_in, int my_idx,
                                      const UnseenPool *u, uint32_t seed) {
-    game_clone(g_out, g_in);
+    robusta_clone_world(g_out, g_in);
 
     // Step 1: place pinned cards in the right opp's hand at slot 0..pinned_n.
     for (int i = 0; i < g_in->num_players; i++) {
@@ -439,6 +467,7 @@ static bool apply_move(Game *g, int p_idx, const LegalMove *m) {
 //   - espresso_strategy_choose  for firecracker (cheats inside the
 //     fictional state — which is robusta's own MC sample, not real cards)
 static int simulate_to_end(Game *g, int my_idx, int max_turns, StrategyFn rollout_fn) {
+    LegalMoves *moves = rollout_moves_scratch();  // shared rollout buffer, no new memory
     int turns = 0;
     while (game_done(g) < 0 && turns++ < max_turns) {
         int elig[MAX_PLAYERS]; int n_e = 0;
@@ -447,12 +476,11 @@ static int simulate_to_end(Game *g, int my_idx, int max_turns, StrategyFn rollou
         bool acted = false;
         for (int k = 0; k < n_e; k++) {
             int pi = elig[k];
-            LegalMoves moves;
-            calculate_legal_moves_lite(g, pi, &moves);
-            if (moves.n == 0) continue;
-            int idx = rollout_fn(g, pi, &moves, NULL);
-            if (idx < 0 || idx >= moves.n) continue;
-            if (apply_move(g, pi, &moves.moves[idx])) { acted = true; break; }
+            calculate_legal_moves_lite(g, pi, moves);
+            if (moves->n == 0) continue;
+            int idx = rollout_fn(g, pi, moves, NULL);
+            if (idx < 0 || idx >= moves->n) continue;
+            if (apply_move(g, pi, &moves->moves[idx])) { acted = true; break; }
         }
         if (!acted) break;
     }
@@ -469,13 +497,13 @@ static double mc_eval_move(const Game *g_orig, int my_idx, const LegalMove *m,
                             StrategyFn rollout_fn) {
     double total = 0.0;
     int valid = 0;
+    Game *g = world_scratch_game();   // shared sampled-world slot, no new memory
     for (int s = 0; s < n_samples; s++) {
-        Game g;
         uint32_t seed = base_seed + (uint32_t)(s + 1) * 0x85EBCA77u;
-        if (!sample_consistent_state(&g, g_orig, my_idx, u, seed)) continue;
-        if (!apply_move(&g, my_idx, m)) continue;
-        int fp = simulate_to_end(&g, my_idx, 600, rollout_fn);
-        if (fp == 0) fp = g.num_players;  // count incomplete as durak (worst)
+        if (!sample_consistent_state(g, g_orig, my_idx, u, seed)) continue;
+        if (!apply_move(g, my_idx, m)) continue;
+        int fp = simulate_to_end(g, my_idx, 600, rollout_fn);
+        if (fp == 0) fp = g->num_players;  // count incomplete as durak (worst)
         total += (double)fp;
         valid++;
     }

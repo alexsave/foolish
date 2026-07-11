@@ -916,25 +916,29 @@ INSERT INTO bots (nickname, strategy_key) VALUES
 ('Simple Heuristic 2', 'simple_heuristic'),
 ('Simple Heuristic 3', 'simple_heuristic'),
 
--- Ultimate champion strategy bots (advanced AI)
-('Ultimate Champion 1', 'ultimate_champion'),
-('Ultimate Champion 2', 'ultimate_champion'),
-('Ultimate Champion 3', 'ultimate_champion'),
+-- NOTE: champion, ultimate_champion, hacker, espresso, semtex and semtex_max
+-- are intentionally NOT seeded. Those strategies are not compiled into / not
+-- dispatched by the production bots.wasm (see wasm_choose_move in
+-- cnitro/wasm/wasm_bots_api.c), so a bot carrying one of those keys silently
+-- falls back to `random` — a bot that plays nothing like its name and pollutes
+-- the Elo leaderboard. Only strategy keys the wasm actually dispatches are
+-- seeded: random, simple_heuristic, handwritten (→handwritten_prod),
+-- firecracker, blackpowder, cordite/cordite_max, octogen/octogen_max.
 
--- Champion strategy bots (tournament winners)
-('Champion 1', 'champion'),
-('Champion 2', 'champion'),
-('Champion 3', 'champion'),
-('Champion 4', 'champion'),
+-- Firecracker strategy bots — shipped ladder "Medium" rung (Durak Bot Ordnance
+-- Chart). Public-info Monte Carlo: robusta's sampled-world MC with espresso as
+-- the rollout policy. Honest (never reads real hidden hands).
+('Firecracker 1', 'firecracker'),
+('Firecracker 2', 'firecracker'),
+('Firecracker 3', 'firecracker'),
 
--- Hacker strategy bots (perfect information - UNFAIR ADVANTAGE)
-('Hacker 1', 'hacker'),
-('Hacker 2', 'hacker'),
-
--- Espresso strategy bots (perfect-info + lookahead, beats handwritten ~54%)
-('Espresso 1', 'espresso'),
-('Espresso 2', 'espresso'),
-('Espresso 3', 'espresso'),
+-- Blackpowder strategy bots — shipped ladder "Hard" rung. The first
+-- belief-constrained Monte Carlo (cordite's predecessor): card memory rebuilt
+-- from the public log, void-constraint belief mixture, and an exact endgame
+-- solver. Public info only.
+('Blackpowder 1', 'blackpowder'),
+('Blackpowder 2', 'blackpowder'),
+('Blackpowder 3', 'blackpowder'),
 
 -- Cordite strategy bots (belief-constrained Monte Carlo, no cheating —
 -- beats every other bot at every player count 2-8; see cnitro/CORDITE.md)
@@ -947,17 +951,8 @@ INSERT INTO bots (nickname, strategy_key) VALUES
 ('Cordite Max 2', 'cordite_max'),
 ('Cordite Max 3', 'cordite_max'),
 
--- Semtex (cordite's successor: exact leaf endgames in rollouts, extended
--- exact-solve window, per-seat MC-tells + opponent profiling — beats cordite
--- head-to-head and exploits weak opponents harder; see cnitro/SEMTEX.md)
-('Semtex 1', 'semtex'),
-('Semtex 2', 'semtex'),
-('Semtex 3', 'semtex'),
-
--- Semtex Max (same brain, cordite_max world budget)
-('Semtex Max 1', 'semtex_max'),
-('Semtex Max 2', 'semtex_max'),
-('Semtex Max 3', 'semtex_max'),
+-- (semtex / semtex_max are not seeded — not dispatched by bots.wasm; see the
+-- note above. Octogen is semtex's shipped successor and IS dispatched.)
 
 -- Octogen (semtex + extended exact-solve window; provably never worse than
 -- semtex, strictly better in deep heads-up endgames — see cnitro/OCTOGEN.md)

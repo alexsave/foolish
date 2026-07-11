@@ -107,15 +107,20 @@ test('guards.wasm linear memory is pinned flat at 1 page', () => {
     assert.equal(max, 1, `guards.wasm max memory is ${max} pages; expected a hard 1-page pin`);
 });
 
-test("bots.wasm declared INITIAL memory is 13 pages (stack shrink; it grows a TT on top)", () => {
+test("bots.wasm declared INITIAL memory is 14 pages (13 + LEAFBOOK read-only data)", () => {
     // bots.wasm can't be pinned — it bump-allocates a per-family transposition
     // table at runtime (see the flat-across-families test below). So we assert
-    // the INITIAL declared memory only: the 22 KiB shadow stack took it 14 -> 13
-    // pages. A regression back to 14 (a new static buffer, or the stack creeping
-    // back up) trips this. Read straight from the shipped gz artifact.
+    // the INITIAL declared memory only. Was 13 pages after the 22 KiB shadow-stack
+    // shrink; the octogen/cordite LEAFBOOK endgame oracle (cnitro/LEAFBOOK.md)
+    // adds ~2.6 KiB of static read-only book data, which crosses into a 14th page.
+    // That is the book's genuine footprint, deliberately accepted — the SOLVER's
+    // hot working set is what must stay in L1, and it does: the 32 KiB TT + 2.6 KiB
+    // book = 34.6 KiB, well under the 64 KiB L1 page (docs/L1_SPEND_PLAN.md §6). A
+    // regression back UP from 14 (a new static buffer, or the stack creeping up)
+    // trips this. Read straight from the shipped gz artifact.
     const wasm = new Uint8Array(gunzipSync(readFileSync(resolve('supabase/functions/_shared/wasm/bots.wasm.gz'))));
     const { min } = memLimits(wasm);
-    assert.equal(min, 13, `bots.wasm initial memory is ${min} pages (${min * PAGE}B); expected 13 — a static buffer grew or the shadow stack crept back up`);
+    assert.equal(min, 14, `bots.wasm initial memory is ${min} pages (${min * PAGE}B); expected 14 (13 + the LEAFBOOK's ~2.6 KiB static data)`);
 });
 
 test('loading the bot kernel (read + gunzip + instantiate) fits a 64MB-old-space node', () => {
@@ -192,8 +197,14 @@ test('bots.wasm memory is bounded and flat across all MC bot families', async ()
         `wasm memory after one game is ${(afterFirst / 1048576) | 0}MB; budget regression`);
 
     // Every further family and game must reuse the SAME scratch: exactly flat.
+    // firecracker (robusta MC + espresso rollout) and blackpowder (belief MC +
+    // exact endgame solver) are the other shipped MC ladder bots — they run on
+    // the SAME shared world/solver/rollout scratch, so exercising them here must
+    // not grow the module by a byte. This is the guard that would have caught the
+    // per-family malloc regression that first shipped them.
     await playGame('mem2', ['cordite', 'octogen']);
-    await playGame('mem3', ['octogen', 'cordite']);
+    await playGame('mem3', ['blackpowder', 'firecracker']);            // 2p: solver + handwritten rollout
+    await playGame('mem4', ['firecracker', 'blackpowder', 'firecracker']); // 3p: espresso rollout, no solver
     const afterAll = wasmTotal();
     assert.equal(afterAll, afterFirst,
         `wasm memory grew ${((afterAll - afterFirst) / 1048576) | 0}MB across families; per-family allocations are back`);
