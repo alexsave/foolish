@@ -227,3 +227,85 @@ appendix-style) and dropped. If everything fails, ship S0's TT13 — a free
 half-bit of collision margin — and close the file with the numbers. A
 documented negative is a valid deliverable; this session produced three
 (ORDER2/3, ADAPT, RANKSYM-as-keying) and each one narrowed the next search.
+
+---
+
+## Appendix A — measured results (implementation pass)
+
+Arbiter, exactly as §0: native `-O2 -ffast-math`, shipped flags
+`-DCD_TT_2WAY -DCD_TT_PACK8 -DCD_TT_BITS=12`, `CD_BUDGET=prod`. Latency is the
+`CD_LAT` CPU-time probe (`CD_RACE=1 CD_RACE_C=75`), 40 games/pc; strength is the
+paired `--control` A/B (same deal, hero vs control at seat 0, vs espresso), which
+cancels deal luck. Hardware differs from the doc's earlier runs, so read the
+numbers *relative to the control measured on the same box*, not against §5's
+33.81 ms/dec. **hexogen shipped this pass; the two cheap spends did not clear the
+R2 control bar.**
+
+### hexogen — born (STRAT_HEXOGEN 24, `src/hexogen_strategy.c`)
+
+The §7 checklist is done for the native engine: new id + name map
+(`"hexogen"`/`"hx"`), thin wrapper over octogen (`octogen_set_hexogen`), eval +
+elo dispatch, Makefile CORE. Iron rule R1 verified: octogen (and the other six
+shipped families) are **byte-identical** pre/post change — 40 seeds pc2 +
+25-seed hexogen@100 == octogen SIG check, `bot_parity` untouched. TS-map (step 4)
+is deferred until hexogen is prod-selected, exactly as the checklist says.
+
+### S0 — control (TT13, 64 KiB): flat, as predicted
+
+| build | ms/dec (pc2, 40g) |
+|---|---|
+| TT12+2WAY+PACK8 (shipped, 32 KiB) | **30.02** |
+| TT13+2WAY+PACK8 (S0, 64 KiB) | 30.05 |
+
+Latency indistinguishable; outcome-divergence not re-run (the flat TT11–TT19
+curve and TT12's 0/3,000 are already established in `WASM_L1_BUDGET.md`). S0 is
+the bar and the bar is ~0. ✔ recorded.
+
+### S4 — hexogen world-raise: FLAT vs control → does not clear R2
+
+`HX_PCT` = percent of octogen's per-decision worlds. Paired vs octogen, vs
+espresso (diff = hero − ctrl mean finish; **lower is better**, so a win is a
+*negative* diff):
+
+| config | pc | games | diff ± SE | win hero / ctrl | latency vs octogen |
+|---|---|---|---|---|---|
+| hexogen @125% | 2 | 1000 | **+0.010 ± 0.017** | 79.0% / 80.0% | 35.13 vs 30.02 (**+17%**) |
+| hexogen @110% | 2 | — | (latency only) | — | 33.94 (+13%) |
+| hexogen @125% | 4 | 800 | **+0.015 ± 0.025** | 41.8% / 41.4% | — |
+
+Both diffs are within ~0.6 SE of zero (slightly *worse*, not better), while the
+raise costs latency ∝ the multiplier. This is the same wall `og_params` already
+documents at pc2 ("the exact solver, not the rollout, dominates"; 2×/3× worlds
+"not reliably better") — the MC world budget is saturated, so a *modest* raise
+buys no strength, and the raise that *does* move strength (the 6× oracle) is
+nowhere near iso-latency. **Verdict: the standalone iso-latency world-raise is a
+documented negative.** hexogen therefore ships at `HX_PCT=100` (== octogen); the
+knob stays for research and for when a node-saving lever funds a real raise.
+
+### S1 — tail cache (grow to `CD_TT_TAIL_N=1024`): pc2 latency NEGATIVE → drop
+
+| octogen build | ms/dec (pc2, 40g) |
+|---|---|
+| shipped (no tail) | **30.02** |
+| + `CD_TT_TAILCACHE -DCD_TT_TAIL_N=1024` (40 KiB) | 32.57 (**+8.5% slower**) |
+
+Exactly the contingency §2 flagged: the tail *mechanism* works (the census's 78%
+insert-absorption stands), but ≤6-card leaf subtrees are so cheap to recompute
+that the probe/maintenance overhead exceeds the saving at pc2. **Not shipped**
+into the default build (which is the pc2-tuned shipped config). A pc3+ sweep,
+where rollouts dominate, is the only place it could still pay — left as future
+work, not assumed.
+
+### Net + what's next
+
+All three cheap spends (S0/S1/S4) fail R2 at the shipped pc2/pc4 configs — the
+"free 32 KiB → free strength" thesis does **not** hold via table-doubling, tail
+growth, or a modest world-raise. The strength levers that remain are the two the
+plan always flagged as the real work, and they land in the hexogen scaffold now
+in place:
+
+- **S3 LEAFBOOK** (§4) — the star. Saves whole ≤K-card subtrees, which is *real*
+  node savings that can fund an iso-latency raise (unlike S4's unfunded raise).
+  Do the cheap feasibility gate (enumerate + count the canonical space) first.
+- **S2 bound side-table** (§3) — blocked on `C5_BOUNDS_HANDOFF.md` §4 (C5-v2)
+  landing green; that fix is not yet implemented.
