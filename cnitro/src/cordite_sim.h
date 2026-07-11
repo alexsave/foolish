@@ -160,6 +160,11 @@ _Static_assert(SOLVE_SCRATCH_MOVES <= MAX_LEGAL_MOVES, "cap must fit the generat
 // drops every append into its static scratch — solver children never read
 // logs, and full-size Games were 7.7MB of scratch for write-only data.
 Game *solve_scratch_child(int depth);
+// Two int[MAX_LEGAL_MOVES] index-scratch slices for espresso's 1v1 body when it
+// is a rollout policy (firecracker/blackpowder) — carved from the (idle) solver
+// child arena so it costs no extra static memory, keeping bots.wasm's declared
+// initial memory at 13 pages. See cordite_sim.c. `which` in {0,1}.
+int *rollout_index_scratch(int which);
 // Shared struct-rollout move buffer (full LegalMoves: rollout policies pick
 // among the complete lite enumeration, so capping would change play). One
 // static for all families: rollouts never nest, and keeping it OFF the wasm
