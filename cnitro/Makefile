@@ -143,6 +143,18 @@ leafbook-verify:
 	./build/leafbook_verify 1000000
 
 # ---------------------------------------------------------------------------
+# og_explain: octogen deliberation-dump analysis tool (cnitro/tools/og_explain).
+# -DOG_EXPLAIN_BUILD is what compiles the OG_EXPLAIN machinery INTO octogen; it
+# is defined ONLY here, so every shipped native + wasm build carries none of it.
+# Build with the same CFLAGS as the eval harness so octogen's evaluation matches
+# production. `make og_explain` produces build/og_explain; the pipeline driver
+# (tools/og_explain/explain.py) invokes it.
+.PHONY: og_explain
+og_explain:
+	@mkdir -p build
+	$(CC) $(CFLAGS) -DOG_EXPLAIN_BUILD $(CORE_SRC) tests/og_explain.c -o build/og_explain $(LDFLAGS)
+
+# ---------------------------------------------------------------------------
 # WebAssembly rules kernel: game.c + legal.c + the wasm bridge, compiled
 # freestanding (no libc; wasm/include has the tiny shims, wasm_api.c provides
 # memcpy/memset). This is THE production rules engine: the TS server imports

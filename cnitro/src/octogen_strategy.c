@@ -837,6 +837,46 @@ void og_difftest_report(void) {
     }
 }
 
+// ---------- OG_EXPLAIN: deliberation dump (analysis build only) -------------
+//
+// COMPILED OUT of every normal build: the entire deliberation-dump machinery
+// (this block, the solver-verdict probe, og_ex_emit, and the emit hooks in
+// octogen_choose_impl) lives behind OG_EXPLAIN_BUILD, so the shipped native +
+// wasm bots carry ZERO of it — no code-size cost. It is enabled only by the
+// `make og_explain` analysis tool (cnitro/tools/og_explain), which defines
+// -DOG_EXPLAIN_BUILD.
+//
+// When built, set OG_EXPLAIN=1 (dump to stderr) or OG_EXPLAIN=/path/to/file to
+// emit one JSON-lines record per deciding-seat decision: the seat's hand, the
+// table, the candidate moves with their MC average-finish scores
+// (score[i]/nsim[i]) OR the exact endgame-solver verdict per move (win/loss/
+// draw/unknown), and the chosen move. Nothing runs when the var is unset.
+#ifdef OG_EXPLAIN_BUILD
+enum { OG_EX_NONE_V = 2000001, OG_EX_UNKNOWN_V = 2000002, OG_EX_ILLEGAL_V = 2000003 };
+static FILE *og_ex_out = NULL;
+static int   og_ex_on  = -1;            // -1 unloaded, 0 off, 1 on
+static int   og_ex_solve_applied = 0;   // did the endgame solver fire this decision
+static int   og_ex_verdict[600];        // exact per-root-move solver value / sentinel
+
+static int og_explain_on(void) {
+    if (og_ex_on < 0) {
+        const char *e = getenv("OG_EXPLAIN");
+        og_ex_on = (e && e[0] && strcmp(e, "0") != 0) ? 1 : 0;
+        if (og_ex_on) {
+            if (strcmp(e, "1") != 0) og_ex_out = fopen(e, "w");
+            if (!og_ex_out) og_ex_out = stderr;
+        }
+    }
+    return og_ex_on;
+}
+// og_ex_emit (the per-decision JSON dump) is defined after the Candidates
+// typedef, just above octogen_choose_impl.
+static void og_ex_emit(const Game *g, int bot_idx, const LegalMoves *moves,
+                       const void *C, const double *score, const int *nsim,
+                       const bool *alive, const bool *forced_loss,
+                       int chosen_idx, int solver_applied, int solver_win_idx);
+#endif  // OG_EXPLAIN_BUILD
+
 // ---------- root endgame solve (win take + loss avoid) ---------------------
 
 // Solve every root move with a full window when 2 players remain and the
@@ -884,6 +924,30 @@ static int og_try_endgame_solve(const Game *g, int bot_idx,
     SimState root_sim;
     if (bbsolve) cd_sim_from_game(&root_sim, root);
     cd_sim_solve_reset();
+
+    // OG_EXPLAIN: record an EXACT full-window verdict for every root move
+    // (win/loss/draw/unknown), for the deliberation dump. This is a pure probe
+    // — it runs its own budget, then resets the transposition table so the real
+    // pruned win-hunt below starts cold exactly as it would with the var unset.
+    // Nothing here executes when OG_EXPLAIN is not set.
+#ifdef OG_EXPLAIN_BUILD
+    if (og_explain_on() && bbsolve) {
+        og_ex_solve_applied = 1;
+        int cap = (int)(sizeof(og_ex_verdict) / sizeof(og_ex_verdict[0]));
+        for (int i = 0; i < moves->n && i < cap; i++) {
+            SimState child = root_sim;
+            if (!cd_sim_apply_root_move(&child, bot_idx, &moves->moves[i])) {
+                og_ex_verdict[i] = OG_EX_ILLEGAL_V; continue;
+            }
+            int ab = 0;
+            const char *ebs = getenv("OG_EXPLAIN_SOLVE_BUDGET");
+            long eb = ebs ? atol(ebs) : 4000000L;
+            int v = cd_sim_solve_d(&child, bot_idx, -2000, 2000, &eb, 1, &ab);
+            og_ex_verdict[i] = (ab || eb <= 0) ? OG_EX_UNKNOWN_V : v;
+        }
+        cd_sim_solve_reset();   // restore a cold TT for the real solve
+    }
+#endif  // OG_EXPLAIN_BUILD
 
     Solver S;
     S.budget  = OG_SOLVE_BUDGET;
@@ -1118,11 +1182,148 @@ static void og_verify_belief(const Game *g, int bot_idx, const Belief *B) {
     }
 }
 
+// ---------- OG_EXPLAIN emit (defined here: needs Candidates + MOVE_*) -------
+#ifdef OG_EXPLAIN_BUILD
+static const char *OG_EX_VAL[14] = {
+    "?","2","3","4","5","6","7","8","9","10","J","Q","K","A"
+};
+// Canonical durak rank convention (wire v13 = A), trump marked with '*'.
+static void og_ex_fmt_card(char *buf, size_t n, Card c, int trump) {
+    const char *v = (c.value >= 1 && c.value <= 13) ? OG_EX_VAL[c.value] : "?";
+    char s = (c.suit >= 0 && c.suit < 4) ? "SHCD"[(int)c.suit] : '?';
+    snprintf(buf, n, "%s%c%s", v, s, (c.suit == trump) ? "*" : "");
+}
+static int og_ex_cards_json(char *out, size_t cap, const Card *cards, int n, int trump) {
+    int w = 0;
+    w += snprintf(out + w, cap - w, "[");
+    for (int i = 0; i < n; i++) {
+        char cb[8]; og_ex_fmt_card(cb, sizeof cb, cards[i], trump);
+        w += snprintf(out + w, cap - w, "%s\"%s\"", i ? "," : "", cb);
+    }
+    w += snprintf(out + w, cap - w, "]");
+    return w;
+}
+static const char *OG_EX_MTYPE[6] = { "attack","cover","pass","pickup","good","wait" };
+static void og_ex_move_label(char *label, size_t cap, const LegalMove *m, int trump) {
+    const char *mt = (m->type >= 0 && m->type < 6) ? OG_EX_MTYPE[m->type] : "?";
+    if (m->type == MOVE_COVER && m->n_cards >= 1) {
+        int w = snprintf(label, cap, "cover");
+        for (int k = 0; k < m->n_cards; k++) {
+            char cc[8], tt[8];
+            og_ex_fmt_card(cc, sizeof cc, m->cards[k], trump);
+            og_ex_fmt_card(tt, sizeof tt, m->attack_cards[k], trump);
+            w += snprintf(label + w, cap - w, "%s%s->%s", k ? "," : " ", cc, tt);
+        }
+    } else if (m->type == MOVE_PICKUP) {
+        snprintf(label, cap, "pickup");
+    } else if (m->type == MOVE_GOOD) {
+        snprintf(label, cap, "good");
+    } else {
+        char cl[64]; cl[0] = 0; int cw = 0;
+        for (int c = 0; c < m->n_cards; c++) {
+            char cb[8]; og_ex_fmt_card(cb, sizeof cb, m->cards[c], trump);
+            cw += snprintf(cl + cw, sizeof(cl) - cw, "%s%s", c ? " " : "", cb);
+        }
+        snprintf(label, cap, "%s %s", mt, cl);
+    }
+}
+// Emit one decision record as a JSON line. score/nsim/alive/forced_loss/Cv may
+// be NULL (endgame-win and single-move paths). score[k]/nsim[k]/alive[k] index
+// by CANDIDATE position k (matching C->idx[k]); verdicts/forced_loss index by
+// the move index into moves->moves[].
+static void og_ex_emit(const Game *g, int bot_idx, const LegalMoves *moves,
+                       const void *Cv, const double *score, const int *nsim,
+                       const bool *alive, const bool *forced_loss,
+                       int chosen_idx, int solver_applied, int solver_win_idx) {
+    (void)solver_win_idx;
+    if (!og_ex_out) return;
+    const Candidates *C = (const Candidates *)Cv;
+    int trump = g->power_suit;
+    char buf[16384]; int w = 0;
+    #define OGA(...) do { w += snprintf(buf + w, sizeof(buf) - w, __VA_ARGS__); } while (0)
+
+    OGA("{\"ply\":%d,\"seat\":%d,\"deck\":%d,\"defender\":%d,\"trump\":%d,\"nlogs\":%d",
+        g->num_logs, bot_idx, g->deck_count, g->defender, trump, g->num_logs);
+
+    OGA(",\"hand\":");
+    { const Player *pl = &g->players[bot_idx];
+      w += og_ex_cards_json(buf + w, sizeof(buf) - w, pl->hand, pl->hand_count, trump); }
+    OGA(",\"hand_count\":%d", g->players[bot_idx].hand_count);
+    OGA(",\"opp_counts\":[");
+    for (int p = 0; p < g->num_players; p++) OGA("%s%d", p ? "," : "", g->players[p].hand_count);
+    OGA("]");
+
+    OGA(",\"table\":[");
+    for (int b = 0; b < g->num_battles; b++) {
+        char ab[8], db[8];
+        og_ex_fmt_card(ab, sizeof ab, g->table_battles[b].attack, trump);
+        bool cov = !card_is_none(g->table_battles[b].defense);
+        if (cov) { og_ex_fmt_card(db, sizeof db, g->table_battles[b].defense, trump);
+                   OGA("%s{\"attack\":\"%s\",\"defense\":\"%s\"}", b ? "," : "", ab, db); }
+        else       OGA("%s{\"attack\":\"%s\",\"defense\":null}", b ? "," : "", ab);
+    }
+    OGA("]");
+
+    const char *sres = !solver_applied ? "none" : (chosen_idx >= 0 && solver_win_idx >= 0 ? "win" : "eval");
+    OGA(",\"solver\":{\"applied\":%d,\"result\":\"%s\"}", solver_applied ? 1 : 0, sres);
+
+    int ncand = C ? C->n : moves->n;
+    OGA(",\"candidates\":[");
+    for (int k = 0; k < ncand; k++) {
+        int mi = C ? C->idx[k] : k;
+        const LegalMove *m = &moves->moves[mi];
+        const char *mt = (m->type >= 0 && m->type < 6) ? OG_EX_MTYPE[m->type] : "?";
+        char label[96]; og_ex_move_label(label, sizeof label, m, trump);
+        OGA("%s{\"type\":\"%s\",\"label\":\"%s\",\"cards\":", k ? "," : "", mt, label);
+        w += og_ex_cards_json(buf + w, sizeof(buf) - w, m->cards, m->n_cards, trump);
+        if (m->type == MOVE_COVER) {
+            OGA(",\"target\":");
+            w += og_ex_cards_json(buf + w, sizeof(buf) - w, m->attack_cards, m->n_cards, trump);
+        }
+        if (score && nsim && nsim[k] > 0)
+            OGA(",\"score\":%.4f,\"nsim\":%d", score[k] / (double)nsim[k], nsim[k]);
+        else
+            OGA(",\"score\":null,\"nsim\":%d", nsim ? nsim[k] : 0);
+        OGA(",\"alive\":%d", (alive ? (alive[k] ? 1 : 0) : 1));
+        OGA(",\"forced_loss\":%d", (forced_loss ? (forced_loss[mi] ? 1 : 0) : 0));
+        const char *vd = "none"; int vv = 0, has_vv = 0;
+        if (solver_applied && mi < (int)(sizeof(og_ex_verdict)/sizeof(int))) {
+            int val = og_ex_verdict[mi];
+            if (val == OG_EX_UNKNOWN_V) vd = "unknown";
+            else if (val == OG_EX_ILLEGAL_V) vd = "illegal";
+            else if (val == OG_EX_NONE_V) vd = "none";
+            else { has_vv = 1; vv = val; vd = (val > 0) ? "win" : (val < 0) ? "loss" : "draw"; }
+        }
+        OGA(",\"verdict\":\"%s\"", vd);
+        if (has_vv) OGA(",\"verdict_val\":%d", vv);
+        OGA(",\"chosen\":%d}", (mi == chosen_idx) ? 1 : 0);
+    }
+    OGA("]");
+
+    { char label[96] = "?";
+      if (chosen_idx >= 0 && chosen_idx < moves->n)
+          og_ex_move_label(label, sizeof label, &moves->moves[chosen_idx], trump);
+      OGA(",\"chosen\":\"%s\"}", label); }
+    #undef OGA
+    fputs(buf, og_ex_out);
+    fputc('\n', og_ex_out);
+    fflush(og_ex_out);
+}
+#endif  // OG_EXPLAIN_BUILD
+
 static int octogen_choose_impl(const Game *g, int bot_idx,
                             const LegalMoves *moves, void *ctx) {
     (void)ctx;
     if (moves->n == 0) return -1;
-    if (moves->n == 1) return 0;
+    if (moves->n == 1) {
+#ifdef OG_EXPLAIN_BUILD
+        if (og_explain_on()) {
+            og_ex_solve_applied = 0;
+            og_ex_emit(g, bot_idx, moves, NULL, NULL, NULL, NULL, NULL, 0, 0, -1);
+        }
+#endif
+        return 0;
+    }
 
     if (!og_flags_loaded) {
         og_no_solve  = og_flag("OG_NO_SOLVE");
@@ -1201,9 +1402,23 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
     bool *forced_loss = forced_loss_scratch();
     memset(forced_loss, 0, (size_t)moves->n * sizeof(bool));
     int n_safe = moves->n;
+#ifdef OG_EXPLAIN_BUILD
+    if (og_explain_on()) {
+        og_ex_solve_applied = 0;
+        for (int i = 0; i < (int)(sizeof(og_ex_verdict)/sizeof(og_ex_verdict[0])); i++)
+            og_ex_verdict[i] = OG_EX_NONE_V;
+    }
+#endif
     int solved = og_no_solve ? -1
                : og_try_endgame_solve(g, bot_idx, moves, &B, forced_loss, &n_safe);
     if (solved >= 0) {
+#ifdef OG_EXPLAIN_BUILD
+        if (og_explain_on()) {
+            Candidates EC; og_pick_candidates(g, moves, forced_loss, &EC);
+            og_ex_emit(g, bot_idx, moves, &EC, NULL, NULL, NULL, forced_loss,
+                       solved, og_ex_solve_applied, solved);
+        }
+#endif
         game_rng_set(saved_rng);
         return solved;
     }
@@ -1215,8 +1430,22 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
         memset(forced_loss, 0, (size_t)moves->n * sizeof(bool));
         og_pick_candidates(g, moves, forced_loss, &C);
     }
-    if (C.n == 0) { game_rng_set(saved_rng); return 0; }
-    if (C.n == 1) { game_rng_set(saved_rng); return C.idx[0]; }
+    if (C.n == 0) {
+#ifdef OG_EXPLAIN_BUILD
+        if (og_explain_on())
+            og_ex_emit(g, bot_idx, moves, &C, NULL, NULL, NULL, forced_loss,
+                       0, og_ex_solve_applied, -1);
+#endif
+        game_rng_set(saved_rng); return 0;
+    }
+    if (C.n == 1) {
+#ifdef OG_EXPLAIN_BUILD
+        if (og_explain_on())
+            og_ex_emit(g, bot_idx, moves, &C, NULL, NULL, NULL, forced_loss,
+                       C.idx[0], og_ex_solve_applied, -1);
+#endif
+        game_rng_set(saved_rng); return C.idx[0];
+    }
 
     int W1, W2, W3;
     og_params(g->num_players, &W1, &W2, &W3);
@@ -1342,8 +1571,14 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
         if (v < best_v) { best_v = v; best = i; }
     }
 
+    int chosen = best >= 0 ? C.idx[best] : 0;
+#ifdef OG_EXPLAIN_BUILD
+    if (og_explain_on())
+        og_ex_emit(g, bot_idx, moves, &C, score, nsim, alive, forced_loss,
+                   chosen, og_ex_solve_applied, -1);
+#endif
     game_rng_set(saved_rng);
-    return best >= 0 ? C.idx[best] : 0;
+    return chosen;
 }
 
 // Oracle semtex: the same brain with 6x the sampled-world budget and wider
