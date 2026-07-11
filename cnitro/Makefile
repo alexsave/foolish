@@ -447,8 +447,17 @@ wasm: build/rules.wasm
 # that, and --stack-first keeps any regression a loud trap.
 # MAX_SNAPS=1: the shipped guards module exports no snapshot readers (see
 # WASM_GUARDS_EXPORTS below), so the ring was 55.7KB of write-only memory.
+# -DGUARDS_VALIDATE_ONLY: guards validates by dry-running handle_* on a throwaway
+# clone and reading ONLY the reject code. Both the animation logs those handlers
+# emit AND the end-of-round stock refill happen in the COMMIT phase, after every
+# reject check — no reject depends on them and the post-move state is discarded.
+# So this compiles the log-append path (log_alloc/log_add_card/log_add_pair) and
+# refill_player_hands (→ draw_card, refill_deck) down to no-ops; handle_*'s full
+# mutation still runs, so every reject code stays byte-identical to the server.
+# Gated by e2e/client_guards (kernel-parity) + e2e/wasm_kernel_fuzz.
 WASM_GUARDS_FLAGS := --target=wasm32 $(WASM_OPT) -nostdlib -ffreestanding -mbulk-memory \
                      -isystem wasm/include -Isrc -D_Thread_local= -DDEAL_RNG_DISABLED \
+                     -DGUARDS_VALIDATE_ONLY \
                      -DMAX_LOG_PAIRS=64 -DMAX_BATTLES=64 -DMAX_LOGS=64 -DMAX_SNAPS=1 \
                      -Wall -Wextra -Wno-unused-parameter \
                      -Wl,--no-entry -Wl,--export-memory -Wl,-z,stack-size=16384 -Wl,--stack-first \
@@ -466,19 +475,22 @@ WASM_GUARDS_FLAGS := --target=wasm32 $(WASM_OPT) -nostdlib -ffreestanding -mbulk
 # wasm_validate_good, subsumed by wasm_validate_action which handles all five
 # kinds) — was reachable from NO caller in src/ or e2e/, so rooting it only
 # bloated the shipped module. Re-add an export line to revive a capability;
-# the C stays in game.c / wasm_guards_api.c. The kept wasm_attack..pickup +
-# wasm_export_state are dormant in prod (the TS overlay does optimistic play)
-# but guarded by the applyMove prediction test, so they stay.
+# the C stays in game.c / wasm_guards_api.c.
+# VALIDATION-ONLY: the kernel optimistic-apply entries (wasm_attack..pickup +
+# wasm_export_state) are dropped. Production optimistic play is the pure-TS
+# overlay (src/state/optimisticOverlay.ts + clientReconcile.ts), NOT this wasm
+# path — applyMove had NO src/ runtime caller, only an e2e test. Removing the
+# apply exports lets wasm-ld drop handle_*'s apply-only wrappers; validation
+# itself still dry-runs handle_* (validate_run), so rules parity is unchanged.
+# Revive the client-side kernel apply by re-adding these five + applyMove.
 WASM_GUARDS_EXPORTS := \
   -Wl,--export=wasm_io_ptr \
   -Wl,--export=wasm_cards_a_ptr -Wl,--export=wasm_cards_b_ptr \
   -Wl,--export=wasm_init \
-  -Wl,--export=wasm_import_state -Wl,--export=wasm_export_state \
+  -Wl,--export=wasm_import_state \
   -Wl,--export=wasm_validate_attack -Wl,--export=wasm_validate_cover \
   -Wl,--export=wasm_validate_pass -Wl,--export=wasm_validate_pickup \
   -Wl,--export=wasm_validate_action \
-  -Wl,--export=wasm_attack -Wl,--export=wasm_cover -Wl,--export=wasm_pass \
-  -Wl,--export=wasm_pickup \
   -Wl,--export=wasm_game_done -Wl,--export=wasm_next_player -Wl,--export=wasm_can_cover
 
 # The client guards module never deals (its optimistic draws are placeholders
