@@ -343,9 +343,19 @@ WASM_BOTS_API_EXPORTS := \
 # that (the 72KB default exists for bots' 512-log session export).
 # Together with the shared L1 caps above, rules.wasm linear memory drops
 # 53 pages (3.31MB) -> 5 pages (320KB).
+# PIN (R0, docs/RULES_GUARDS_WASM_MEMORY_PLAN.md): --initial-memory ==
+# --max-memory freezes rules.wasm linear memory exactly like the guards pin
+# (see WASM_GUARDS_FLAGS below). The module has no allocator and never calls
+# memory.grow (all state is the static caps above), so a fixed size is a hard
+# invariant: if any buffer grows past the pin, wasm-ld REFUSES TO LINK, and any
+# runtime memory.grow traps. This is what makes the tight R1 headroom a build
+# error instead of a production surprise. Re-pin LOWER after each landed
+# candidate. 262144 = 4 pages after the R1 arena overlay (below); 5 pages
+# (327680) was the pre-overlay floor.
 WASM_RULES_FLAGS := $(filter-out -DMAX_LEGAL_MOVES=4096,$(WASM_FLAGS)) \
                     -DMAX_LEGAL_MOVES=1024 -DMAX_LOGS=128 -DWASM_IO_CAP=24576 \
-                    -Wl,-z,stack-size=65536
+                    -Wl,-z,stack-size=65536 \
+                    -Wl,--initial-memory=327680 -Wl,--max-memory=327680
 
 # Blanket header dependency, same rationale as the native objects: a header
 # edit must rebuild BOTH wasm modules or they ship divergent kernels.
