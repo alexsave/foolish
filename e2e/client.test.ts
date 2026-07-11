@@ -10,6 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
     displayedHand, reconcileHandMemory, mergeTableBattles, shouldDropStaleSequence, applyOverlayEntries, cardKey,
+    reorderHand,
 } from '../src/state/clientReconcile';
 
 type C = { suit: number; value: number };
@@ -102,6 +103,40 @@ export function registerClientValidation(): void {
         const game2: any = { table_battles: [{ attack: atk, defense: null }] as B[], self: { hand: [cov] } };
         applyOverlayEntries(game2, [{ card: cov, target: atk }]);
         assert.equal(cardKey(game2.table_battles[0].defense), cardKey(cov), 'optimistic cover preserved');
+    });
+
+    // ---- drag-rearrange bounds safety (regression: prod "undefined is not an
+    // object (evaluating 'e.suit')") ------------------------------------------
+    // The DragContext swap read a hovered card's DOM `data-card-index` and did
+    // `next[toIndex] = dragged`. When the hand shrank mid-drag the stale index
+    // outran the array, creating a SPARSE hole that crashed the hand render's
+    // cardKey/.map. reorderHand is the deployed fix.
+    test('reorderHand: an out-of-bounds target is a no-op (never makes an undefined hole)', () => {
+        const hand = [c(0, 6), c(1, 7), c(2, 8), c(3, 9), c(0, 10), c(1, 11)]; // length 6
+
+        // Demonstrate the ORIGINAL bug shape: the naive swap makes a hole and the
+        // render map then throws exactly the production error.
+        const naive = [...hand];
+        const dragged = naive[2];
+        naive[2] = naive[8];   // undefined
+        naive[8] = dragged;    // extend past end -> holes at 6,7
+        assert.equal(naive.length, 9, 'naive swap corrupted the array length');
+        assert.throws(() => naive.map(cardKey), /suit/, 'naive swap crashes the render map (the prod bug)');
+
+        // The fix: a stale/out-of-range target index leaves the hand untouched,
+        // and returns the SAME reference so DragContext treats it as a no-op.
+        for (const bad of [6, 8, 99, -1, NaN]) {
+            const out = reorderHand(hand, 2, bad);
+            assert.equal(out, hand, `toIndex=${bad} must be a no-op (same reference)`);
+        }
+        assert.equal(reorderHand(hand, 9, 2), hand, 'out-of-range fromIndex is also a no-op');
+
+        // A valid in-range swap still works and never produces undefined.
+        const swapped = reorderHand(hand, 1, 4);
+        assert.equal(swapped.length, 6);
+        assert.deepEqual(keys(swapped), keys([c(0, 6), c(0, 10), c(2, 8), c(3, 9), c(1, 7), c(1, 11)]));
+        assert.ok(swapped.every((x) => x != null), 'no undefined slots');
+        assert.doesNotThrow(() => swapped.map(cardKey), 'render map never throws on a reordered hand');
     });
 }
 
