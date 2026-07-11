@@ -382,10 +382,40 @@ WASM_RULES_FLAGS := $(filter-out -DMAX_LEGAL_MOVES=4096,$(WASM_FLAGS)) \
 WASM_RULES_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/view.c src/awire.c \
                   src/evwire.c wasm/wasm_api.c
 
-build/rules.wasm: $(WASM_RULES_SRC) $(wildcard src/*.h) $(wildcard wasm/*.h)
+# Built from per-file OBJECTS (not one single-step `clang *.c -o` invocation),
+# for the same reason bots is: single-step clang emits NO function-name section
+# — even unstripped — so the wasm-anatomy tool cannot recover names for it. A
+# separate-object link keeps the symbols, and the post-link wasm-opt recovers
+# the extra whole-program DCE single-step did for free (net +~60 B, behavior-
+# identical, gated by e2e/wasm_kernel_fuzz). Split the combined flag set into
+# compile-only (-c) and link-only (-Wl%). rules/guards are size-first (no MC hot
+# loop) ⇒ -Oz, unlike bots (-O2 --inlining-optimizing); a global WASM_POSTOPT
+# override still wins.
+WASM_RULES_CFLAGS  := $(filter-out -Wl%,$(WASM_RULES_FLAGS))
+WASM_RULES_LDFLAGS := --target=wasm32 -nostdlib $(filter -Wl%,$(WASM_RULES_FLAGS))
+WASM_RULES_POSTOPT ?= $(if $(strip $(WASM_POSTOPT)),$(WASM_POSTOPT),-Oz)
+WASM_RULES_OBJ := $(addprefix build/rulesobj/,$(notdir $(WASM_RULES_SRC:.c=.o)))
+
+build/rulesobj/%.o: src/%.c $(wildcard src/*.h) $(wildcard wasm/*.h)
+	@mkdir -p build/rulesobj
+	$(WASM_CC) $(WASM_RULES_CFLAGS) -c $< -o $@
+build/rulesobj/%.o: wasm/%.c $(wildcard src/*.h) $(wildcard wasm/*.h)
+	@mkdir -p build/rulesobj
+	$(WASM_CC) $(WASM_RULES_CFLAGS) -c $< -o $@
+
+build/rules.wasm: $(WASM_RULES_OBJ)
 	@mkdir -p build
-	$(WASM_CC) $(WASM_RULES_FLAGS) $(WASM_API_EXPORTS) $(WASM_RULES_SRC) -o $@
-	$(call wasm_postopt,$(WASM_POSTOPT),$@)
+	$(WASM_CC) $(WASM_RULES_LDFLAGS) $(WASM_API_EXPORTS) $(WASM_RULES_OBJ) -o $@
+	$(call wasm_postopt,$(WASM_RULES_POSTOPT),$@)
+
+# Name-preserving companion (wasm-anatomy): same objects/link/wasm-opt as the
+# shipped module, minus -Wl,--strip-all and with wasm-opt --debuginfo ⇒ its CODE
+# section is byte-identical to build/rules.wasm but names are kept. generate.sh
+# asserts that byte-identity.
+build/named/rules.named.wasm: $(WASM_RULES_OBJ)
+	@mkdir -p build/named
+	$(WASM_CC) $(filter-out -Wl$(comma)--strip-all,$(WASM_RULES_LDFLAGS)) $(WASM_API_EXPORTS) $(WASM_RULES_OBJ) -o $@
+	$(if $(strip $(WASM_RULES_POSTOPT)),$(WASM_OPT_BIN) $(WASM_OPT_FEATURES) $(WASM_RULES_POSTOPT) --debuginfo $@ -o $@,:)
 
 # Regenerates the base64 module the TS side imports (works unchanged in
 # Deno edge functions, Node and browsers — no asset pipeline needed).
@@ -458,10 +488,28 @@ WASM_GUARDS_EXPORTS := \
 # placeholder splices, exactly as before this feature.
 WASM_GUARDS_SRC := src/game.c src/view.c src/awire.c wasm/wasm_guards_api.c
 
-build/guards.wasm: $(WASM_GUARDS_SRC) $(wildcard src/*.h) $(wildcard wasm/*.h)
+# Object-based, same rationale as rules above (symbols for the anatomy tool).
+WASM_GUARDS_CFLAGS  := $(filter-out -Wl%,$(WASM_GUARDS_FLAGS))
+WASM_GUARDS_LDFLAGS := --target=wasm32 -nostdlib $(filter -Wl%,$(WASM_GUARDS_FLAGS))
+WASM_GUARDS_POSTOPT ?= $(if $(strip $(WASM_POSTOPT)),$(WASM_POSTOPT),-Oz)
+WASM_GUARDS_OBJ := $(addprefix build/guardsobj/,$(notdir $(WASM_GUARDS_SRC:.c=.o)))
+
+build/guardsobj/%.o: src/%.c $(wildcard src/*.h) $(wildcard wasm/*.h)
+	@mkdir -p build/guardsobj
+	$(WASM_CC) $(WASM_GUARDS_CFLAGS) -c $< -o $@
+build/guardsobj/%.o: wasm/%.c $(wildcard src/*.h) $(wildcard wasm/*.h)
+	@mkdir -p build/guardsobj
+	$(WASM_CC) $(WASM_GUARDS_CFLAGS) -c $< -o $@
+
+build/guards.wasm: $(WASM_GUARDS_OBJ)
 	@mkdir -p build
-	$(WASM_CC) $(WASM_GUARDS_FLAGS) $(WASM_GUARDS_EXPORTS) $(WASM_GUARDS_SRC) -o $@
-	$(call wasm_postopt,$(WASM_POSTOPT),$@)
+	$(WASM_CC) $(WASM_GUARDS_LDFLAGS) $(WASM_GUARDS_EXPORTS) $(WASM_GUARDS_OBJ) -o $@
+	$(call wasm_postopt,$(WASM_GUARDS_POSTOPT),$@)
+
+build/named/guards.named.wasm: $(WASM_GUARDS_OBJ)
+	@mkdir -p build/named
+	$(WASM_CC) $(filter-out -Wl$(comma)--strip-all,$(WASM_GUARDS_LDFLAGS)) $(WASM_GUARDS_EXPORTS) $(WASM_GUARDS_OBJ) -o $@
+	$(if $(strip $(WASM_GUARDS_POSTOPT)),$(WASM_OPT_BIN) $(WASM_OPT_FEATURES) $(WASM_GUARDS_POSTOPT) --debuginfo $@ -o $@,:)
 
 wasm-guards: build/guards.wasm
 	node wasm/embed.mjs build/guards.wasm ../supabase/functions/_shared/wasm/guards_wasm.ts GUARDS_WASM_B64 --gzip
