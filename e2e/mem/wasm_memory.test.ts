@@ -192,8 +192,14 @@ test('bots.wasm memory is bounded and flat across all MC bot families', async ()
         `wasm memory after one game is ${(afterFirst / 1048576) | 0}MB; budget regression`);
 
     // Every further family and game must reuse the SAME scratch: exactly flat.
+    // firecracker (robusta MC + espresso rollout) and blackpowder (belief MC +
+    // exact endgame solver) are the other shipped MC ladder bots — they run on
+    // the SAME shared world/solver/rollout scratch, so exercising them here must
+    // not grow the module by a byte. This is the guard that would have caught the
+    // per-family malloc regression that first shipped them.
     await playGame('mem2', ['cordite', 'octogen']);
-    await playGame('mem3', ['octogen', 'cordite']);
+    await playGame('mem3', ['blackpowder', 'firecracker']);            // 2p: solver + handwritten rollout
+    await playGame('mem4', ['firecracker', 'blackpowder', 'firecracker']); // 3p: espresso rollout, no solver
     const afterAll = wasmTotal();
     assert.equal(afterAll, afterFirst,
         `wasm memory grew ${((afterAll - afterFirst) / 1048576) | 0}MB across families; per-family allocations are back`);

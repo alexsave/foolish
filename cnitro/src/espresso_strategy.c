@@ -12,6 +12,7 @@
 #include "strategy.h"
 #include "card.h"
 #include "game.h"
+#include "cordite_sim.h"   // rollout_index_scratch (shared, idle-solver-arena)
 #include <string.h>
 #include <stdint.h>
 // espresso's 1v1 body stashes candidate move indices in several
@@ -19,17 +20,17 @@
 // those sit on an 8 MB stack, but bots.wasm ships a 22 KiB shadow stack and
 // espresso is now reachable as a full-Game rollout policy (firecracker's every
 // rollout; blackpowder's multi-player endgames), so stacking them traps under
-// --stack-first. They move to static per-thread scratch — pure index scratch,
-// written-before-read, non-re-entrant within a decision, _Thread_local for
-// native OMP. Static BSS (paid once at instantiation), NOT malloc, so the module
-// never grows past octogen's footprint. Two buffers suffice: only cover_idx
-// (which 2) and full_idx (which 3) are live at the same time, so full_idx gets
-// its own buffer and the other four (attack/pass/cover/done, used in sequence)
-// share the first.
+// --stack-first. Instead of a dedicated static buffer (which would push
+// bots.wasm's declared initial memory into a 14th page — see
+// e2e/mem/wasm_memory), they borrow two slices of the shared, log-less solver
+// child arena via rollout_index_scratch. That arena is idle whenever a rollout
+// policy runs (an exact solve always returns before the move it feeds is played
+// out; firecracker has no solver), so lending it costs no extra memory. Two
+// slices suffice: only cover_idx (which 2) and full_idx (which 3) are live at
+// once, so full_idx takes slice 1 and the other four (attack/pass/cover/done,
+// used in sequence) share slice 0.
 static int *esp_idx_scratch(int which) {
-    static _Thread_local int buf_a[MAX_LEGAL_MOVES];
-    static _Thread_local int buf_b[MAX_LEGAL_MOVES];
-    return which == 3 ? buf_b : buf_a;
+    return rollout_index_scratch(which == 3 ? 1 : 0);
 }
 
 // ---------- helpers ---------------------------------------------------

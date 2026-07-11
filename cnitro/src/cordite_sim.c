@@ -2256,6 +2256,23 @@ Game *solve_scratch_child(int depth) {
     return (Game *)(solve_child_scratch + (size_t)depth * SOLVE_CHILD_STRIDE);
 }
 
+// Two int[MAX_LEGAL_MOVES] index-scratch slices for espresso's 1v1 body when it
+// runs as a rollout policy (firecracker's every rollout; blackpowder's
+// multi-player endgames). Carved from the solver child arena, which is IDLE
+// whenever a rollout policy runs: an exact solve always completes and RETURNS
+// before the move it feeds is played out (the same non-overlap the solve_ws
+// union relies on), and firecracker has no solver at all — so the child slots
+// are free. A dedicated 32 KiB static would instead push bots.wasm's declared
+// initial memory from 13 into a 14th page (asserted by e2e/mem/wasm_memory).
+// `which` in {0,1}; the two slices never alias (espresso holds at most
+// cover_idx + full_idx live at once).
+_Static_assert(2u * (size_t)MAX_LEGAL_MOVES * sizeof(int) <= sizeof(solve_child_scratch),
+               "espresso rollout index scratch does not fit the solver child arena");
+int *rollout_index_scratch(int which) {
+    return (int *)(solve_child_scratch
+                   + (size_t)(which & 1) * (size_t)MAX_LEGAL_MOVES * sizeof(int));
+}
+
 void solve_clone_prefix(Game *dst, const Game *src) {
     memcpy(dst, src, offsetof(Game, logs));
     // Sinkhole: log_alloc sees a full array and drops appends into its own
