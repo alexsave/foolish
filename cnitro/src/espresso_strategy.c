@@ -14,23 +14,22 @@
 #include "game.h"
 #include <string.h>
 #include <stdint.h>
-#include <stdlib.h>   // malloc — for the hoisted move-index scratch below
-
 // espresso's 1v1 body stashes candidate move indices in several
 // int[MAX_LEGAL_MOVES] arrays (16 KiB each at MAX_LEGAL_MOVES=4096). Natively
 // those sit on an 8 MB stack, but bots.wasm ships a 22 KiB shadow stack and
 // espresso is now reachable as a full-Game rollout policy (firecracker's every
 // rollout; blackpowder's multi-player endgames), so stacking them traps under
-// --stack-first. They move to lazily-malloc'd per-thread scratch — pure index
-// scratch, written-before-read, non-re-entrant within a decision, and
-// _Thread_local so native OMP eval keeps one buffer per thread. Behaviour is
-// unchanged (verified by e2e/bot_parity), so cordite's frozen rollout mirror is
-// unaffected. `which` in [0,5): one buffer per array so any two live at once
-// (cover_idx + full_idx) never alias.
+// --stack-first. They move to static per-thread scratch — pure index scratch,
+// written-before-read, non-re-entrant within a decision, _Thread_local for
+// native OMP. Static BSS (paid once at instantiation), NOT malloc, so the module
+// never grows past octogen's footprint. Two buffers suffice: only cover_idx
+// (which 2) and full_idx (which 3) are live at the same time, so full_idx gets
+// its own buffer and the other four (attack/pass/cover/done, used in sequence)
+// share the first.
 static int *esp_idx_scratch(int which) {
-    static _Thread_local int *bufs[5] = { 0 };
-    if (!bufs[which]) bufs[which] = malloc(sizeof(int) * MAX_LEGAL_MOVES);
-    return bufs[which];
+    static _Thread_local int buf_a[MAX_LEGAL_MOVES];
+    static _Thread_local int buf_b[MAX_LEGAL_MOVES];
+    return which == 3 ? buf_b : buf_a;
 }
 
 // ---------- helpers ---------------------------------------------------

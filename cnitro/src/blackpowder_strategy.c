@@ -33,6 +33,7 @@
 #include "strategy.h"
 #include "card.h"
 #include "game.h"
+#include "cordite_sim.h"   // shared MC/solver scratch (reused so wasm memory is unchanged)
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -274,9 +275,28 @@ static void bp_build_belief(const Game *g, int bot_idx, Belief *B) {
 // Sample one full consistent world: pinned cards go to their holders, the
 // rest of the unseen pool shuffles into the deck and the unknown hand slots,
 // then a repair pass swaps constraint-violating cards into the deck.
+// Clone into a shared short world slot: the log-free prefix plus the LOG_DISCARD
+// tail (the only log type a rollout policy — espresso's discard memory — reads
+// back), capped at WORLD_LOG_CAP. Mirrors cordite's sampler exactly, so the
+// shared world_scratch slots are respected on the wasm short-log build; on native
+// (WORLD_LOG_CAP==0) the slot is full-size and every discard is kept. Dropping
+// non-discard logs is the same tradeoff cordite already makes.
+static void bp_clone_world(Game *dst, const Game *src) {
+    memcpy(dst, src, offsetof(Game, logs));
+    int nl = 0;
+    for (int i = 0; i < src->num_logs; i++) {
+        if (src->logs[i].log_type != LOG_DISCARD) continue;
+        if (WORLD_LOG_CAP > 0 && nl >= WORLD_LOG_CAP) break;
+        dst->logs[nl++] = src->logs[i];
+    }
+    dst->num_logs = nl;
+    dst->log_cap  = WORLD_LOG_CAP;
+    dst->log_virt = (int16_t)nl;
+}
+
 static void bp_sample_world(Game *g_out, const Game *g_in, int my_idx,
                             const Belief *B, uint32_t seed, bool apply_voids) {
-    game_clone(g_out, g_in);
+    bp_clone_world(g_out, g_in);
 
     for (int i = 0; i < g_in->num_players; i++) {
         if (i == my_idx) continue;
@@ -353,12 +373,12 @@ static StrategyFn bp_rollout_for(const Game *g) {
 // Roll a sampled world to completion; returns my finish position (1..N),
 // or 0 if the simulation didn't terminate.
 static int bp_simulate(Game *g, int my_idx, int max_turns) {
-    // A LegalMoves is ~232 KiB — far past the bots.wasm 22 KiB shadow stack, so
-    // it lives in lazily-malloc'd per-thread scratch, not a stack local. Safe:
-    // bp_simulate is non-recursive and the rollout policies it calls are leaves
-    // that never re-enter it; the buffer is written-before-read each turn.
-    static _Thread_local LegalMoves *moves = NULL;
-    if (!moves) { moves = malloc(sizeof(LegalMoves)); if (!moves) return 0; }
+    // A LegalMoves is ~232 KiB — far past the bots.wasm 22 KiB shadow stack, and
+    // malloc'ing one would grow the module past octogen's footprint. Reuse the
+    // shared rollout move buffer octogen's rollouts already use (rollouts never
+    // nest, and the solver — the only other user of its union'd storage — has
+    // already returned by the time the MC stage runs).
+    LegalMoves *moves = rollout_moves_scratch();
     int turns = 0;
     while (game_done(g) < 0 && turns++ < max_turns) {
         bool acted = false;
@@ -391,21 +411,18 @@ typedef struct {
     long budget;
     bool aborted;
     int  me;
-    // Depth-indexed scratch (Game + LegalMoves per frame are far too big for
-    // the stack at depth 48). Lazily allocated, reused across calls.
-    Game       *child;   // [BP_SOLVE_MAX_DEPTH]
-    LegalMoves *mv;      // [BP_SOLVE_MAX_DEPTH]
 } Solver;
 
-static _Thread_local Game       *bp_solver_child = NULL;
-static _Thread_local LegalMoves *bp_solver_mv = NULL;
-
-// Copy only the live prefix of the Game (everything before the log tail).
-// The solver zeroes num_logs at the root, so log copying stays tiny.
-static void bp_lite_clone(Game *dst, const Game *src) {
-    size_t base = offsetof(Game, logs);
-    memcpy(dst, src, base + (size_t)src->num_logs * sizeof(GameLog));
-}
+// The endgame solver runs entirely on the SHARED cordite_sim solve scratch —
+// the same log-less child slots (solve_scratch_child), compact 100-move lists
+// (solve_scratch_mv, filled under legal_set_move_cap) and root slot that
+// octogen's solver already uses. That is what keeps this bot inside octogen's
+// memory envelope: the previous per-depth Game+LegalMoves malloc was ~14 MB at
+// the wasm MAX_LEGAL_MOVES=4096. The depth/move ceilings must fit the shared
+// slots (they do — 48 == SOLVE_SCRATCH_DEPTH, 96 < SOLVE_SCRATCH_MOVES=100, the
+// same tradeoff octogen accepts).
+_Static_assert(BP_SOLVE_MAX_DEPTH <= SOLVE_SCRATCH_DEPTH, "bp solver depth exceeds shared scratch");
+_Static_assert(BP_SOLVE_MAX_MOVES <= SOLVE_SCRATCH_MOVES, "bp solver move cap exceeds shared scratch");
 
 // Returns a value in [-1000, 1000] from `me`'s perspective: positive = me
 // escaping (win), negative = me as durak. Magnitude prefers faster wins and
@@ -429,16 +446,21 @@ static int bp_solve(Solver *S, const Game *g, int alpha, int beta, int depth) {
     }
     if (actor < 0) return 0;
 
-    LegalMoves *mv = &S->mv[depth];
-    calculate_legal_moves(g, actor, mv);
+    // Bounded generation into the compact shared slot (see SOLVE_SCRATCH_MOVES):
+    // the cast is safe because SolveMoves shares LegalMoves' leading {n, moves[]}
+    // layout and the cap keeps writes inside its 100-slot bound.
+    SolveMoves *mv = &solve_scratch_mv()[depth];
+    legal_set_move_cap(SOLVE_SCRATCH_MOVES);
+    calculate_legal_moves(g, actor, (LegalMoves *)mv);
+    legal_set_move_cap(0);
     if (mv->n == 0) return 0;
     if (mv->n > BP_SOLVE_MAX_MOVES) { S->aborted = true; return 0; }
 
     bool maximizing = (actor == S->me);
     int best = maximizing ? -2000 : 2000;
     for (int i = 0; i < mv->n; i++) {
-        Game *child = &S->child[depth];
-        bp_lite_clone(child, g);
+        Game *child = solve_scratch_child(depth);
+        solve_clone_prefix(child, g);
         if (!bp_apply(child, actor, &mv->moves[i])) continue;
         int v = bp_solve(S, child, alpha, beta, depth + 1);
         if (S->aborted) return 0;
@@ -477,23 +499,10 @@ static int bp_try_endgame_solve(const Game *g, int bot_idx,
     int total = g->players[bot_idx].hand_count + g->players[opp].hand_count;
     if (total > BP_SOLVE_MAX_CARDS) return -1;
 
-    if (!bp_solver_child) {
-        bp_solver_child = malloc(sizeof(Game) * BP_SOLVE_MAX_DEPTH);
-        bp_solver_mv    = malloc(sizeof(LegalMoves) * BP_SOLVE_MAX_DEPTH);
-        if (!bp_solver_child || !bp_solver_mv) return -1;
-    }
-
-    // root + the per-candidate child are full Games (~67 KiB each). Both are
-    // live at once (child is cloned from root), and both are far too big for the
-    // bots.wasm shadow stack, so they join the solver's malloc'd scratch as two
-    // dedicated per-thread buffers (distinct from bp_solver_child[], which
-    // bp_solve clones into per depth).
-    static _Thread_local Game *root = NULL, *child = NULL;
-    if (!root)  { root  = malloc(sizeof(Game)); if (!root)  return -1; }
-    if (!child) { child = malloc(sizeof(Game)); if (!child) return -1; }
-
-    game_clone(root, g);
-    root->num_logs = 0;  // solver never reads history; keeps clones tiny
+    // Root + per-candidate child live on the shared solver slots. bp_solve
+    // recurses from depth 1, so child(0) is free for the top candidate child.
+    Game *root = solve_scratch_root();
+    solve_clone_root(root, g);   // prefix copy, num_logs = 0 (solver reads no history)
     for (int k = 0; k < B->pinned_n[opp]; k++) {
         root->players[opp].hand[k] = B->pinned[opp][k];
     }
@@ -505,14 +514,13 @@ static int bp_try_endgame_solve(const Game *g, int bot_idx,
     S.budget  = BP_SOLVE_BUDGET;
     S.aborted = false;
     S.me      = bot_idx;
-    S.child   = bp_solver_child;
-    S.mv      = bp_solver_mv;
 
     int best_idx = -1;
     int best_v = 0;   // only accept strictly winning lines
     int alpha = -2000;
     for (int i = 0; i < moves->n; i++) {
-        bp_lite_clone(child, root);
+        Game *child = solve_scratch_child(0);
+        solve_clone_prefix(child, root);
         if (!bp_apply(child, bot_idx, &moves->moves[i])) continue;
         int v = bp_solve(&S, child, alpha, 2000, 1);
         if (S.aborted) return -1;
@@ -684,7 +692,10 @@ int blackpowder_strategy_choose(const Game *g, int bot_idx,
     bool   alive[BP_MAX_CANDS];
     for (int i = 0; i < C.n; i++) alive[i] = true;
 
-    static _Thread_local Game world, trial;
+    // Reuse octogen's shared sampled-world slots (short log-capped Games) rather
+    // than our own static pair — same memory, zero growth. Only one MC family
+    // runs per decision, so the slots are ours for the duration.
+    Game *world = world_scratch_game(), *trial = trial_scratch_game();
 
     // Stage 1: all candidates on W1 shared worlds.
     // Stage 2: survivors on W2 more shared worlds.
@@ -697,20 +708,20 @@ int blackpowder_strategy_choose(const Game *g, int bot_idx,
             // players (and the random bot) sometimes pick up while holding
             // covers, so 1 world in 4 ignores the voids — a belief mixture
             // that degrades gracefully when the assumption is wrong.
-            bp_sample_world(&world, g, bot_idx, &B, wseed, (w & 3) != 3);
+            bp_sample_world(world, g, bot_idx, &B, wseed, (w & 3) != 3);
             uint32_t sim_rng = bp_mix(wseed, 0x51AB1E5u);
             for (int ci = 0; ci < C.n; ci++) {
                 if (!alive[ci]) continue;
-                game_clone(&trial, &world);
+                bp_clone_world(trial, world);
                 game_rng_set(sim_rng);   // identical stream for every move
-                if (!bp_apply(&trial, bot_idx, &moves->moves[C.idx[ci]])) {
+                if (!bp_apply(trial, bot_idx, &moves->moves[C.idx[ci]])) {
                     // Move invalid in this world (can't happen for own-hand
                     // moves, but stay safe): count as worst.
                     score[ci] += (double)g->num_players;
                     nsim[ci]++;
                     continue;
                 }
-                int fp = bp_simulate(&trial, bot_idx, 600);
+                int fp = bp_simulate(trial, bot_idx, 600);
                 if (fp == 0) fp = g->num_players;
                 score[ci] += (double)fp;
                 nsim[ci]++;
