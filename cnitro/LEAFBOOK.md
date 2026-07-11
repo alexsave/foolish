@@ -5,10 +5,16 @@ every small round-boundary endgame into a read-only book, and probe it inside
 the bitboard solver *before* the transposition table. A book hit terminates the
 whole subtree with a proven value — no search, no TT traffic, no budget.
 
-It is the first "spend the free L1" candidate to beat the control (R2): at pc2
-it makes hexogen **14% faster** (30.18 → 26.00 ms/dec) at neutral-to-slightly-
-better strength, because it attacks a *different* axis than more search worlds
-(the saturated one — see the world-budget knee in the Ordnance Chart).
+It ships **inside octogen** (enabled per-decision via `cd_sim_set_leafbook`):
+the only "spend the free L1" candidate to beat the control (R2). It makes octogen
+**~15% faster e2e p50** (`bench:bot-e2e`, wasm, ~64 → ~56 ms) at neutral strength
+and unchanged runtime memory, because it attacks a *different* axis than more
+search worlds (the saturated one — see the world-budget knee in the Ordnance
+Chart). Strength-neutral at every player count; stack-safe (13.8 KiB high-water
+under the 22 KiB shadow stack). Because it changes octogen's play only via the
+shared node-budget channel (like a bigger TT), it is a genuine behavior change —
+but octogen is a C re-implementation, not a `bot_parity` line-port, so there is
+no frozen mirror to break.
 
 ## What it stores
 
@@ -26,28 +32,26 @@ bit-identical by construction. The value byte is
 ## Reach K — the feasibility gate (`make leafbook-gate`)
 
 Distinct canonical forms grow ~10× per card: K=4 → 1,883, K=5 → 19,715,
-K=6 → 205,853 (201 KiB, over budget — dropped). **Shipped K=5.**
+K=6 → 205,853 (201 KiB, over budget — dropped). **Shipped K=4.** K=5 plays
+*move-identically* to K=4 at pc2 — within a leaf solve the total card count
+changes by −2 per covered round and 0 on a pickup, so parity is fixed and the
+reachable round boundaries land ≤4 cards; nc=5 never arises. So K=4 gives the
+identical win at ~10× less footprint. `LEAFBOOK_K=5 make leafbook` regenerates
+the larger book for latent pc3+ reach.
 
 ## Storage — a CHD minimal perfect hash (the "index store")
 
-K=5's 19,715 entries fit L1 only as a **1-byte-per-entry value array + a minimal
-perfect hash** (no keys stored) — a sorted `(key,value)` array would be ~118 KiB.
-CHD (compress-hash-displace, `src/leafbook.h`): a first-level hash buckets the
-keys; each bucket gets a displacement chosen so its keys land in distinct free
-slots of the minimal `R=N` value array. Probe = bucket → displacement → slot →
-value, **O(1)** — cheaper than the binary search a key array would need, which is
-where K=5's latency edge over a K=4 key-array comes from. Built size: **27.0 KiB**
-(7.9 KiB displacements + 19.7 KiB values), under the 32 KiB free budget. The
-builder self-checks the hash is a bijection; the offline V-book proves
-completeness (a missing form would return a colliding slot's value → a mismatch).
-
-**Reach note (measured):** at pc2 vs espresso, K=5 plays *move-identically* to
-K=4 — within a leaf solve the total card count changes by −2 per covered round
-and 0 on a pickup, so its parity is fixed and the reachable round boundaries land
-≤4 cards; nc=5 boundaries don't arise. So K=5's extra ~18k entries are latent
-here (future-proofing other configs), and the shipped win is the O(1) MPH probe.
-K=4 via the same MPH would be ~2.6 KiB for the identical measured play, if
-footprint ever matters more than reach.
+The book is a **1-byte-per-entry value array + a minimal perfect hash** (no keys
+stored) — a sorted `(key,value)` array would need the 48-bit keys (K=5 would be
+~118 KiB). CHD (compress-hash-displace, `src/leafbook.h`): a first-level hash
+buckets the keys; each bucket gets a displacement chosen so its keys land in
+distinct free slots of the minimal `R=N` value array. Probe = bucket →
+displacement → slot → value, **O(1)** — cheaper than a binary search. K=4 built
+size: **2.6 KiB** (0.7 KiB displacements + 1.9 KiB values); K=5 is 27 KiB. Both
+are dwarfed by the ~1 MB runtime TT peak, so the wasm memory footprint is
+unchanged — only the module *size* grows (+2.4 KiB gz at K=4). The builder
+self-checks the hash is a bijection; the offline V-book proves completeness (a
+missing form would return a colliding slot's value → a mismatch).
 
 ## Correctness (`make leafbook-verify`) — must be 100%
 
@@ -60,20 +64,21 @@ Two independent gates, both required to pass exactly:
    attacker/defender identification, the attacker→me perspective flip, and the
    depth rebase. 0 mismatches.
 
-The book is proven-exact, so enabling it can only ever change play by resolving
-a line the budget-limited search would have *aborted* — never by returning a
-wrong value.
+The book is proven-exact, so enabling it changes play only by resolving lines the
+budget-limited search would otherwise burn nodes on (a bigger-TT-like effect via
+the shared node budget) — never by returning a wrong value.
 
 ## Wiring
 
-- `src/leafbook.h` — canonicalization (header-only; also linked by the tools).
+- `src/leafbook.h` — canonicalization + CHD hash (header-only; also linked by the tools).
 - `src/leafbook_data.h` — GENERATED by `make leafbook`; committed.
 - `cordite_sim.c` — the probe in `sim_solve_rec` behind `-DCD_LEAFBOOK`, before
   the TT probe; runtime-gated by `cd_sim_set_leafbook` (thread-local).
-- `hexogen_strategy.c` — turns the book on for the span of a hexogen decision.
-  octogen and every shipped family never set the gate → **byte-identical**
-  (R1, verified by V0 + bot_parity). Compiled into NATIVE builds only; the wasm
-  module (no hexogen) carries no book.
+- `octogen_strategy.c` — `octogen_strategy_choose` brackets its decision with
+  `cd_sim_set_leafbook(1/0)`, so octogen (and only octogen) uses the book. Other
+  solver callers that never enable the gate are byte-identical.
+- `-DCD_LEAFBOOK` is in both native `CFLAGS` and `WASM_BOT_CFLAGS`, so production
+  octogen (wasm) gets the speedup; the ~2.6 KiB book is memory-neutral.
 - `tools/leafbook/{enumerate,build_book,verify_book}.c` — the gate, builder, and
   value-safety verifier.
 

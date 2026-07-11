@@ -146,18 +146,6 @@ static _Thread_local int og_keep1 = 0, og_keep2 = 0;  // OG_KEEP1/2: candidates 
 // survival for one call. Used by octogen_oracle_strategy_choose to audit
 // loss games — a decision the oracle changes was compute-limited.
 static _Thread_local int og_oracle = 0;
-// Hexogen mode (S4 budget raise, docs/L1_SPEND_PLAN.md §5): a world-budget
-// multiply (percent; 100 == octogen). Unlike the oracle's 6x research blowup
-// this was meant to be a modest, iso-latency raise. MEASURED (L1_SPEND_PLAN
-// appendix): a standalone raise does NOT beat octogen — 125% is flat at pc2
-// (diff +0.010+-0.017 over 1000 paired games) and pc4 (+0.015+-0.025 over 800),
-// while costing +17% pc2 latency, because pc2 is solver-dominated and its MC
-// world budget is already saturated (same finding as og_params' own 2x/3x
-// history). So the DEFAULT is 100 (hexogen == octogen): no unfunded spend is
-// baked in. The knob stays for research / for when a node-saving lever (S3
-// LEAFBOOK) lands to FUND an iso-latency raise. Tunable via HX_PCT.
-static _Thread_local int og_hexogen = 0;
-static _Thread_local int og_hexogen_pct = 100;
 static _Thread_local int og_rollout_policy = 0;       // OG_ROLLOUT: 0=default, 1=espresso, 2=handwritten (struct path)
 // Bitboard endgame-solver node budgets (per shared pass). The bitboard solver
 // (transposition table + O(1) clone) resolves far more per node than the
@@ -1091,11 +1079,6 @@ static void og_params(int num_players, int *W1, int *W2, int *W3) {
         else                       { *W1 = 20; *W2 = 40; *W3 = 24; }
     }
     if (og_oracle) { *W1 *= 6; *W2 *= 6; *W3 *= 6; }
-    if (og_hexogen && og_hexogen_pct != 100) {
-        *W1 = (*W1 * og_hexogen_pct) / 100;
-        *W2 = (*W2 * og_hexogen_pct) / 100;
-        *W3 = (*W3 * og_hexogen_pct) / 100;
-    }
     if (og_w1_override > 0) *W1 = og_w1_override;
     if (og_w2_override > 0) *W2 = og_w2_override;
     if (og_w3_override >= 0) *W3 = og_w3_override;
@@ -1135,7 +1118,7 @@ static void og_verify_belief(const Game *g, int bot_idx, const Belief *B) {
     }
 }
 
-int octogen_strategy_choose(const Game *g, int bot_idx,
+static int octogen_choose_impl(const Game *g, int bot_idx,
                             const LegalMoves *moves, void *ctx) {
     (void)ctx;
     if (moves->n == 0) return -1;
@@ -1181,8 +1164,6 @@ int octogen_strategy_choose(const Game *g, int bot_idx,
         og_bbleaf_cards = og_env_int("OG_BBLEAF_CARDS", 0);
         og_bbleaf_cards2 = og_env_int("OG_BBLEAF_CARDS2", 8);
         og_bbleaf_budget = og_env_int("OG_BBLEAF_BUDGET", 3000);
-        og_hexogen_pct = og_env_int("HX_PCT", 100);
-        if (og_hexogen_pct < 100) og_hexogen_pct = 100;
         og_difftest = og_flag("OG_DIFFTEST");
         if (og_difftest) { void og_difftest_report(void); atexit(og_difftest_report); }
         og_flags_loaded = 1;
@@ -1368,6 +1349,21 @@ int octogen_strategy_choose(const Game *g, int bot_idx,
 // Oracle semtex: the same brain with 6x the sampled-world budget and wider
 // candidate survival. Research-only — used to audit losses: where the oracle
 // picks a different move, the default budget was the binding constraint.
+// octogen's public entry: octogen's brain PLUS the LEAFBOOK endgame oracle
+// (cnitro/LEAFBOOK.md, docs/L1_SPEND_PLAN.md §4). A book hit terminates a
+// round-boundary ≤K-card subtree with a proven-exact value, so octogen resolves
+// the same lines with fewer solver nodes — ~15% faster e2e p50 (measured in the
+// wasm bot bench), strength-neutral (the book only shifts play through the
+// shared node-budget channel, like a bigger TT; 4,000-game paired vs espresso:
+// wash). No-op unless built -DCD_LEAFBOOK.
+int octogen_strategy_choose(const Game *g, int bot_idx,
+                            const LegalMoves *moves, void *ctx) {
+    cd_sim_set_leafbook(1);
+    int r = octogen_choose_impl(g, bot_idx, moves, ctx);
+    cd_sim_set_leafbook(0);
+    return r;
+}
+
 int octogen_oracle_strategy_choose(const Game *g, int bot_idx,
                                   const LegalMoves *moves, void *ctx) {
     og_oracle = 1;
@@ -1375,8 +1371,3 @@ int octogen_oracle_strategy_choose(const Game *g, int bot_idx,
     og_oracle = 0;
     return r;
 }
-
-// Enter/leave hexogen mode. Called by the hexogen wrapper (hexogen_strategy.c)
-// around an octogen_strategy_choose call — keeping hexogen a thin bracket over
-// octogen's single brain, so every octogen fix flows into hexogen for free.
-void octogen_set_hexogen(int on) { og_hexogen = on ? 1 : 0; }

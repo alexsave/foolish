@@ -862,9 +862,9 @@ typedef struct {
 static _Thread_local CdTTEntry *cd_tt = NULL;
 
 // ---- LEAFBOOK (docs/L1_SPEND_PLAN.md §4) -------------------------------
-// Runtime gate: 0 = book off (octogen, all shipped bots — byte-identical);
-// hexogen sets it on for the span of its decision. Compiled out entirely
-// unless -DCD_LEAFBOOK, so non-hexogen native/wasm builds carry no book.
+// Runtime gate: 0 = book off; a bot sets it on for the span of its decision
+// (octogen does — see octogen_strategy.c). Compiled out entirely unless
+// -DCD_LEAFBOOK, so builds without the flag carry no book.
 static _Thread_local int  cd_leafbook_on = 0;
 static _Thread_local long cd_leafbook_hit = 0;
 #ifdef CD_LEAFBOOK
