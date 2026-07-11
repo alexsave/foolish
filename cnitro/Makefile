@@ -130,28 +130,36 @@ WASM_CC    ?= clang
 # only bloats Liftoff). Override for a warm-latency regime: `make WASM_OPT=-O3`.
 WASM_OPT   ?= -Oz
 
-# --- Prototype: optional post-link Binaryen (wasm-opt) pass ---------------
+# --- Post-link Binaryen (wasm-opt) size pass ------------------------------
 # clang/wasm-ld compile each object in ISOLATION here — LTO is banned (it
 # corrupts the indirect-function table, see WASM_FLAGS). wasm-opt runs on the
-# already-LINKED binary, so it is the only stage that can inline ACROSS the
-# object boundary (e.g. cordite_sim.c helpers into cordite_strategy.c callers).
-# Off by default (empty ⇒ the recipe step is a no-op `:`). Enable per build:
-#   make wasm-bots WASM_POSTOPT="-O2 --inlining-optimizing"
-# Correctness is gated by the SAME suites that caught the LTO table corruption:
-# the embedded module still feeds e2e/wasm_kernel_fuzz + e2e/bot_parity.
-# Measured (bots.wasm, the only module where it moves): -O2 --inlining-optimizing
-# is the sole variant that shrinks the SHIPPED gzip (60,440 -> 59,289 B, -1.9%);
-# plain --inlining and -O3 both grow it (inlining bloats). rules/guards are
-# already at clang -Oz's floor — wasm-opt is a no-op-to-worse there, so the
-# `wasm`/`wasm-guards` targets leave it off unless you opt in globally.
+# already-LINKED binary, so it is the only stage that can clean up / inline
+# ACROSS the object boundary. REQUIRES binaryen (`wasm-opt`) on PATH to build
+# bots.wasm; CI does not rebuild the wasm (it ships the committed .gz), so this
+# is a build-time dep only for whoever regenerates the asset. Correctness is
+# gated by the SAME suites that caught the LTO table corruption — the embedded
+# module still feeds e2e/wasm_kernel_fuzz + e2e/bot_parity (both green).
+#
+# Measured on the shipped bots.wasm (post strategy-cull, docs/
+# WASM_OPT_INLINING_PROTOTYPE.md): -O2 --inlining-optimizing shrinks the SHIPPED
+# gzip 49,446 -> 46,259 B (-6.4%) and is runtime-NEUTRAL on the bench:bot-e2e
+# p50 (octogen/semtex/cordite/fulminate all within noise). So the win is module
+# size / cold-start, not per-move speed. Plain -Oz is ~150 B smaller but is
+# size-over-speed and unverified for warm latency, so it is NOT the default.
+# rules/guards are already at clang -Oz's floor — wasm-opt is a no-op-to-worse
+# there — so only bots enables it; WASM_POSTOPT stays empty for the others.
 WASM_OPT_BIN  ?= wasm-opt
+# General manual override for any module, e.g. `make wasm WASM_POSTOPT=-Oz`.
 WASM_POSTOPT  ?=
+# bots ships with the pass ON by default; a global WASM_POSTOPT override wins.
+WASM_BOTS_POSTOPT ?= $(if $(strip $(WASM_POSTOPT)),$(WASM_POSTOPT),-O2 --inlining-optimizing)
 # bulk-memory is on in every module (-mbulk-memory); the rest are stock LLVM
 # output features wasm-opt must be told to accept before it will touch the binary.
 WASM_OPT_FEATURES ?= --enable-bulk-memory --enable-mutable-globals --enable-sign-ext
-# $(call wasm_postopt,<file>) — rewrites <file> in place, or a no-op when unset.
+# $(call wasm_postopt,<flags>,<file>) — rewrites <file> in place, or a no-op
+# when <flags> is empty.
 define wasm_postopt
-$(if $(strip $(WASM_POSTOPT)),$(WASM_OPT_BIN) $(WASM_OPT_FEATURES) $(WASM_POSTOPT) $(1) -o $(1),:)
+$(if $(strip $(1)),$(WASM_OPT_BIN) $(WASM_OPT_FEATURES) $(1) $(2) -o $(2),:)
 endef
 # -mbulk-memory: memcpy/memset (incl. clang-lowered struct copies) become the
 # wasm memory.copy/memory.fill instructions, which every 2020+ runtime (V8,
@@ -347,7 +355,7 @@ WASM_RULES_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/view.c 
 build/rules.wasm: $(WASM_RULES_SRC) $(wildcard src/*.h) $(wildcard wasm/*.h)
 	@mkdir -p build
 	$(WASM_CC) $(WASM_RULES_FLAGS) $(WASM_API_EXPORTS) $(WASM_RULES_SRC) -o $@
-	$(call wasm_postopt,$@)
+	$(call wasm_postopt,$(WASM_POSTOPT),$@)
 
 # Regenerates the base64 module the TS side imports (works unchanged in
 # Deno edge functions, Node and browsers — no asset pipeline needed).
@@ -423,7 +431,7 @@ WASM_GUARDS_SRC := src/game.c src/view.c src/awire.c wasm/wasm_guards_api.c
 build/guards.wasm: $(WASM_GUARDS_SRC) $(wildcard src/*.h) $(wildcard wasm/*.h)
 	@mkdir -p build
 	$(WASM_CC) $(WASM_GUARDS_FLAGS) $(WASM_GUARDS_EXPORTS) $(WASM_GUARDS_SRC) -o $@
-	$(call wasm_postopt,$@)
+	$(call wasm_postopt,$(WASM_POSTOPT),$@)
 
 wasm-guards: build/guards.wasm
 	node wasm/embed.mjs build/guards.wasm ../supabase/functions/_shared/wasm/guards_wasm.ts GUARDS_WASM_B64 --gzip
@@ -491,7 +499,7 @@ build/bots.wasm: $(WASM_BOT_OBJ)
 	@mkdir -p build
 	$(WASM_CC) --target=wasm32 -nostdlib $(WASM_BOT_LDFLAGS) \
 	          $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) $(WASM_BOT_OBJ) -o $@
-	$(call wasm_postopt,$@)
+	$(call wasm_postopt,$(WASM_BOTS_POSTOPT),$@)
 
 # bots.wasm ships as a gzip STATIC ASSET (config.toml static_files + deploy
 # --use-api, no Docker) — a real 47KB binary, not a 155KB base64 .ts embed.
