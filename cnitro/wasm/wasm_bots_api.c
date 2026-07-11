@@ -212,18 +212,21 @@ int wasm_choose_move(int strat, int bot_idx) {
     if (lm->n == 0) return -1;
 
     // Shipped ladder only (docs/BOTS_WASM_MEMORY_PLAN.md, "Durak Bot Ordnance
-    // Chart"): the wasm module dispatches ONLY the deployed difficulty rungs that
-    // are ported — random, simple_heuristic, handwritten_prod, cordite, octogen
-    // (firecracker/blackpowder join when ported). espresso_strategy_choose and
-    // handwritten_strategy_choose stay LINKED (cordite/octogen call them as
-    // rollout policies) but are no longer reachable as a top-level bot. champion,
-    // ultimate_champion, hacker, fulminate, espresso_prod and semtex left the
-    // build entirely. Any dropped/unported strat id falls back to random.
+    // Chart"): the wasm module dispatches the deployed difficulty rungs that are
+    // ported — random, simple_heuristic, handwritten_prod, firecracker,
+    // blackpowder, cordite, octogen (the full seven-rung ladder).
+    // espresso_strategy_choose and handwritten_strategy_choose stay LINKED
+    // (cordite/octogen/firecracker/blackpowder call them as rollout policies) but
+    // are no longer reachable as a top-level bot. champion, ultimate_champion,
+    // hacker, fulminate, espresso_prod and semtex left the build entirely. Any
+    // dropped/unported strat id falls back to random.
     StrategyFn fn = 0;
     switch (strat) {
         case STRAT_RANDOM:            fn = random_strategy_choose; break;
         case STRAT_SIMPLE_HEURISTIC:  fn = simple_heuristic_strategy_choose; break;
         case STRAT_HANDWRITTEN_PROD:  fn = handwritten_prod_strategy_choose; break;
+        case STRAT_FIRECRACKER:       fn = firecracker_strategy_choose; break;
+        case STRAT_BLACKPOWDER:       fn = blackpowder_strategy_choose; break;
         case STRAT_CORDITE:           fn = cordite_strategy_choose; break;
         case STRAT_OCTOGEN:           fn = octogen_strategy_choose; break;
         default:                      fn = random_strategy_choose; break;

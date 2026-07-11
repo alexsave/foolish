@@ -936,6 +936,21 @@ INSERT INTO bots (nickname, strategy_key) VALUES
 ('Espresso 2', 'espresso'),
 ('Espresso 3', 'espresso'),
 
+-- Firecracker strategy bots — shipped ladder "Medium" rung (Durak Bot Ordnance
+-- Chart). Public-info Monte Carlo: robusta's sampled-world MC with espresso as
+-- the rollout policy. Honest (never reads real hidden hands).
+('Firecracker 1', 'firecracker'),
+('Firecracker 2', 'firecracker'),
+('Firecracker 3', 'firecracker'),
+
+-- Blackpowder strategy bots — shipped ladder "Hard" rung. The first
+-- belief-constrained Monte Carlo (cordite's predecessor): card memory rebuilt
+-- from the public log, void-constraint belief mixture, and an exact endgame
+-- solver. Public info only.
+('Blackpowder 1', 'blackpowder'),
+('Blackpowder 2', 'blackpowder'),
+('Blackpowder 3', 'blackpowder'),
+
 -- Cordite strategy bots (belief-constrained Monte Carlo, no cheating —
 -- beats every other bot at every player count 2-8; see cnitro/CORDITE.md)
 ('Cordite 1', 'cordite'),

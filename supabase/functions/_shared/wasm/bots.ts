@@ -43,6 +43,8 @@ export const STRAT = {
     random: 0,
     espresso: 15,
     handwritten: 16,
+    firecracker: 4,
+    blackpowder: 6,
     cordite: 7,
     simple_heuristic: 10,
     champion: 11,

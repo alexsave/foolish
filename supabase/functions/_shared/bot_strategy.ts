@@ -66,6 +66,13 @@ export const BOT_STRATEGIES: Map<string, BotStrategy> = new Map<string, BotStrat
     // logs: espresso's discard memory reads LOG_DISCARD; cordite/fulminate
     // build their belief from the full public log.
     ['espresso', new WasmBotStrategy('espresso', STRAT.espresso, { logs: true })],
+    // Ladder rungs Medium/Hard (Durak Bot Ordnance Chart). firecracker is
+    // robusta's public-info MC with an espresso rollout; blackpowder is the
+    // belief-constrained MC with an exact endgame solver. Both rebuild card
+    // memory from the public session log, so logs: true hydrates game.belief_logs
+    // before they choose (strategyUsesLogs).
+    ['firecracker', new WasmBotStrategy('firecracker', STRAT.firecracker, { logs: true })],
+    ['blackpowder', new WasmBotStrategy('blackpowder', STRAT.blackpowder, { logs: true })],
     // CD_RACE stops a deliberation early once the leading candidate is
     // statistically separated (validated strength-neutral at C=75: pc4x800
     // identical, pc2/pc6 within noise; landslide decisions finish in ~50
