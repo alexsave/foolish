@@ -48,13 +48,15 @@ test('rules embed is a single-line literal (no parse-time concat garbage)', () =
     assert.ok(src.trimEnd().split('\n').length <= 12, `${rel} is not a single-line embed`);
 });
 
-// R0 pin + R1 arena overlay (docs/RULES_GUARDS_WASM_MEMORY_PLAN.md): rules.wasm
-// linear memory is now a hard-pinned 4 pages (was 5 pre-overlay). The pin
-// (--initial-memory == --max-memory) means the module can never memory.grow, so
-// the instance's memory is EXACTLY 4 pages and stays flat for the process's
-// life. Read the committed embed straight off disk (base64 -> gunzip) so this
-// runs in CI without a build, and without disturbing the take-once accessor the
-// engine uses. guards.wasm's 1-page pin is asserted alongside for good measure.
+// R0 pin + R1 arena overlay + R4 stack shrink
+// (docs/RULES_GUARDS_WASM_MEMORY_PLAN.md): rules.wasm linear memory is now a
+// hard-pinned 3 pages (was 5 pre-round: overlay -1 page, stack 64->32 KiB -1
+// page). The pin (--initial-memory == --max-memory) means the module can never
+// memory.grow, so the instance's memory is EXACTLY 3 pages and stays flat for
+// the process's life. Read the committed embed straight off disk (base64 ->
+// gunzip) so this runs in CI without a build, and without disturbing the
+// take-once accessor the engine uses. guards.wasm's 1-page pin is asserted
+// alongside for good measure.
 const PAGE = 65536;
 function embedWasmBytes(relTs: string): Uint8Array {
     const src = readFileSync(resolve(relTs), 'utf8');
@@ -79,20 +81,20 @@ function memLimits(wasm: Uint8Array): { min: number; max: number | null } {
     throw new Error('no memory section');
 }
 
-test('rules.wasm linear memory is pinned flat at 4 pages (R0 pin + R1 overlay)', () => {
+test('rules.wasm linear memory is pinned flat at 3 pages (R0 pin + R1 overlay + R4 stack)', () => {
     const wasm = embedWasmBytes('supabase/functions/_shared/wasm/rules_wasm.ts');
     const { min, max } = memLimits(wasm);
-    assert.equal(min, 4, `rules.wasm initial memory is ${min} pages (${min * PAGE}B); expected 4 — a static buffer grew, or the overlay regressed`);
-    assert.equal(max, 4, `rules.wasm max memory is ${max} pages; expected a hard 4-page pin (--initial-memory == --max-memory)`);
+    assert.equal(min, 3, `rules.wasm initial memory is ${min} pages (${min * PAGE}B); expected 3 — a static buffer grew, or the overlay/stack regressed`);
+    assert.equal(max, 3, `rules.wasm max memory is ${max} pages; expected a hard 3-page pin (--initial-memory == --max-memory)`);
 
-    // Belt-and-braces: the module actually instantiates at exactly 4 pages and
+    // Belt-and-braces: the module actually instantiates at exactly 3 pages and
     // cannot grow past the pin (a memory.grow would trap — but the linker also
     // strips any grow path, since rules.wasm has no allocator).
     const inst = new WebAssembly.Instance(new WebAssembly.Module(wasm), {});
     const mem = (inst.exports as { memory: WebAssembly.Memory }).memory;
-    assert.equal(mem.buffer.byteLength, 4 * PAGE, 'rules.wasm did not instantiate at 4 pages');
+    assert.equal(mem.buffer.byteLength, 3 * PAGE, 'rules.wasm did not instantiate at 3 pages');
     assert.throws(() => mem.grow(1), 'rules.wasm memory grew past its pin — the pin is not enforced');
-    assert.equal(mem.buffer.byteLength, 4 * PAGE, 'rules.wasm memory changed after a rejected grow');
+    assert.equal(mem.buffer.byteLength, 3 * PAGE, 'rules.wasm memory changed after a rejected grow');
 });
 
 test('guards.wasm linear memory is pinned flat at 1 page', () => {

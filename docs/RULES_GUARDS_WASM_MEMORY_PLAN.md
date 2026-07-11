@@ -9,13 +9,16 @@ round. Everything you need is either in this file, in the two companion docs
 #61) to the OTHER two shipped modules. bots.wasm is **done for now**
 (18 → 14 pages, code −29%; do not touch it). The remaining candidates:
 
-> **Status (this round): R0 + R1 landed.** rules.wasm is now a hard-pinned
-> **4 pages** (262,144 B) after the arena overlay. The table below is the
-> pre-round starting state; see §7 for the ledger.
+> **Status (this round): R0 + R1 + R4 landed — reached the 3-page stretch
+> target.** rules.wasm is now a hard-pinned **3 pages** (196,608 B): the arena
+> overlay (R1) reclaimed 1 page and the measured stack shrink 64→32 KiB (R4)
+> reclaimed another. R3 was measured and declined (can't cross a page alone
+> after R1). The table below is the pre-round starting state; see §7 for the
+> ledger.
 
 | module | today (measured 2026-07-11) | realistic target | verdict |
 |---|---|---|---|
-| `rules.wasm` | **5 pages** (327,680 B), 35,489 B code, unpinned → **now 4 pages, pinned** | **4 pages** solid ✅, **3 pages** stretch | ~90 KiB of dead aliasable scratch — the main prize (reclaimed by R1) |
+| `rules.wasm` | **5 pages** (327,680 B), 35,489 B code, unpinned → **now 3 pages, pinned** | **4 pages** solid ✅, **3 pages** stretch ✅ | ~90 KiB of dead aliasable scratch (R1) + a 32 KiB over-provisioned stack (R4) — both reclaimed |
 | `guards.wasm` | **1 page**, pinned (`max=1`), 10,717 B code | — | **DONE. Do not touch.** 1 page is the hard floor (wasm page granularity); the linker pin makes any regression a build failure |
 | `bots.wasm` | 14 pages + runtime TT | — | done this round; leave alone |
 
@@ -390,7 +393,8 @@ on octogen's solve path. If you go, prefer R4; use R3 only with the pin.
 |---|---|---|
 | R0 pin @5 pages | ✅ landed | rules.wasm pinned `--initial-memory == --max-memory == 327680` (5 pages). Module instantiates + passes every non-DB e2e gate; guards.wasm + native `cnitro_tests` byte-identical. |
 | R1 arena overlay → 4 pages + re-pin | ✅ landed | `CD_RULES_OVERLAY` aliases {g_rec,g_bn,g_replay_io} over {g_moves,g_snaps,g_io} in `g_rules_arena` (RULES_ARENA_SIZE=102544). rules.wasm **5 → 4 pages** (327680 → **262144**, re-pinned). Native `cnitro_tests` byte-identical (flag absent ⇒ plain statics); guards.wasm byte-identical; 161/161 native, sim/apply/replay difftests 0 real divergences; new interleave gate (`e2e/rules_overlay.test.ts`) + mem page assertion green. |
-| R2/R3/R4 → 3 pages | see §5 note | evaluated below |
+| **R3** MAX_LEGAL_MOVES 1024→512 | ❌ declined (measured insufficient) | After R1 the arena is action-bound (102,544 > replay 92,688), so shrinking g_moves by 29,696 only drops the arena to the replay floor 92,688 (−9,856) → total 213,557 B = **still 4 pages**. R3 can't cross a page boundary alone (the plan's §5 arithmetic pre-dated the g_moves overlay) and adds a menu-truncation audit burden — not worth it. R4 supersedes it. |
+| **R4** stack 64→32 KiB → 3 pages + re-pin | ✅ landed | Measured the cover-enum stack high-water with a rules canary (`e2e/rules_stack_canary.mts`): **14.3 KiB** worst (calc_cover_moves' `CoverOption opts[64]` ≈9 KiB + ~576 B/level). 32 KiB is **2.23×** — above the 1.4× bar. The old 64 KiB targeted the analytic MAX_BATTLES=64 worst (~45 KiB), but that state is unreachable: `choose_attack_subset` enumerates 2^n_uncovered subsets and hangs by ~n_uncovered 28-30, well before the ~40-battle depth that overflows a 32 KiB stack — so no state that completes at 64 KiB traps at 32 KiB. rules.wasm **4 → 3 pages** (262144 → **196608**, re-pinned; 5,963 B headroom). Native byte-identical; guards byte-identical; 161/161 + difftests clean; fuzz + cover + cover_combinations + interleave + mem(3-page) gates green (no `--stack-first` trap). |
 
 ---
 
