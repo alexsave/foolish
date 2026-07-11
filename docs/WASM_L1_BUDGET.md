@@ -38,7 +38,14 @@ For a module that never calls `memory.grow`, peak == initial.
 | `bots.wasm`   | 5.13 MiB | **~1.375 MiB** | ~3.7× (−73%) | **yes** — see below |
 
 `bots.wasm` is the one that grows. Its **initial** memory dropped 64 → 18 pages
-(4 MiB → 1.13 MiB) from the shared buffer caps. On first play its Monte-Carlo
+(4 MiB → 1.13 MiB) from the shared buffer caps, then 18 → 14 (ship-trim + solver
+hoist), and now **14 → 13** by shrinking its shadow stack 64 → 22 KiB: the
+production stack worst is the cover enumeration at 14.3 KiB (measured; real games
+cap the defender at ≤6 uncovered battles), so 22 KiB is 1.54×. Unlike rules,
+bots can't be *pinned* (it grows a TT), so this is a soft initial-page win — a
+corrupt >~22-battle state would trap cleanly under `--stack-first` rather than
+complete, which bots (server-side, engine-produced states only) never sees. On
+first play its Monte-Carlo
 endgame solver then bump-allocates a transposition table (+2 slack pages) and
 stays flat there. That table was 1 MiB (`CD_TT_BITS=16`); the divergence study
 below shrank it to 128 KiB (`CD_TT_BITS=13`, 8,192 × 16 B), and a 2-way

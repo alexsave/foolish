@@ -107,6 +107,17 @@ test('guards.wasm linear memory is pinned flat at 1 page', () => {
     assert.equal(max, 1, `guards.wasm max memory is ${max} pages; expected a hard 1-page pin`);
 });
 
+test("bots.wasm declared INITIAL memory is 13 pages (stack shrink; it grows a TT on top)", () => {
+    // bots.wasm can't be pinned — it bump-allocates a per-family transposition
+    // table at runtime (see the flat-across-families test below). So we assert
+    // the INITIAL declared memory only: the 22 KiB shadow stack took it 14 -> 13
+    // pages. A regression back to 14 (a new static buffer, or the stack creeping
+    // back up) trips this. Read straight from the shipped gz artifact.
+    const wasm = new Uint8Array(gunzipSync(readFileSync(resolve('supabase/functions/_shared/wasm/bots.wasm.gz'))));
+    const { min } = memLimits(wasm);
+    assert.equal(min, 13, `bots.wasm initial memory is ${min} pages (${min * PAGE}B); expected 13 — a static buffer grew or the shadow stack crept back up`);
+});
+
 test('loading the bot kernel (read + gunzip + instantiate) fits a 64MB-old-space node', () => {
     // The old base64 embed needed ~300MB transient just to PARSE; the gz static
     // asset is read, inflated and instantiated at runtime. Do exactly that (the

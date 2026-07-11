@@ -504,10 +504,20 @@ WASM_BOT_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/view.c sr
 # which only the bots module links — rules.wasm has no solver, and native builds
 # run OMP games in parallel where the alias would race. bots-module compile only.
 WASM_BOT_CFLAGS  := $(filter-out -Wl% $(WASM_OPT),$(WASM_FLAGS)) -DCD_WASM_OVERLAY
-# bots-only 64 KiB shadow stack (measured high-water 13.2 KiB after M7a +
-# M2-stream + ship-trim, see the Stack comment above). Trailing -z stack-size
-# wins in wasm-ld, overriding the shared WASM_FLAGS' 256 KiB for bots only.
-WASM_BOT_LDFLAGS := $(filter -Wl%,$(WASM_FLAGS)) -Wl,-z,stack-size=65536
+# bots-only 22 KiB shadow stack. Adversarial canary (e2e/rules_stack_canary.mts
+# for the cover path + e2e/stack_canary.mts for the solver path) measures the
+# PRODUCTION worst at 14.3 KiB — the cover enumeration (calc_cover_moves'
+# CoverOption opts[64] ~9.5 KiB + ~576 B per uncovered battle), which dominates
+# the solver's ~12 KiB. Real games cap the defender at <=6 uncovered battles, so
+# 22 KiB is 1.54x the production worst. Only a CORRUPT/hostile marshaled state
+# with >~22 uncovered battles could exceed it (the cover frame is linear in
+# battle count) — and that traps cleanly under --stack-first, never corrupts,
+# exactly as the rules 32 KiB choice accepts. bots is server-side and only ever
+# marshals engine-produced states (<=6 battles), so this path is unreachable in
+# production. Net: -42 KiB stack takes bots' INITIAL linear memory 14 -> 13 pages
+# (893,664 -> 850,656 B; the module still grows a TT on top at runtime — see the
+# peak table in docs/WASM_L1_BUDGET.md). Trailing -z stack-size wins in wasm-ld.
+WASM_BOT_LDFLAGS := $(filter -Wl%,$(WASM_FLAGS)) -Wl,-z,stack-size=22528
 WASM_BOT_O3_SRC  := src/cordite_sim.c src/cordite_strategy.c \
                     src/octogen_strategy.c
 
