@@ -227,3 +227,156 @@ appendix-style) and dropped. If everything fails, ship S0's TT13 — a free
 half-bit of collision margin — and close the file with the numbers. A
 documented negative is a valid deliverable; this session produced three
 (ORDER2/3, ADAPT, RANKSYM-as-keying) and each one narrowed the next search.
+
+---
+
+## Appendix A — measured results (implementation pass)
+
+Arbiter, exactly as §0: native `-O2 -ffast-math`, shipped flags
+`-DCD_TT_2WAY -DCD_TT_PACK8 -DCD_TT_BITS=12`, `CD_BUDGET=prod`. Latency is the
+`CD_LAT` CPU-time probe (`CD_RACE=1 CD_RACE_C=75`), 40 games/pc; strength is the
+paired `--control` A/B (same deal, hero vs control at seat 0, vs espresso), which
+cancels deal luck. Hardware differs from the doc's earlier runs, so read the
+numbers *relative to the control measured on the same box*, not against §5's
+33.81 ms/dec. **Outcome: the LEAFBOOK (S3) shipped — folded into octogen for a
+~15% e2e p50 win — and is the only spend to clear R2. S0/S1/S4 are documented
+negatives.**
+
+### The story of the "new bot"
+
+This pass first birthed **hexogen** (a new id wrapping octogen) as the vehicle
+for behavior-changing spends, then measured them. The world-raise (S4) was flat;
+the LEAFBOOK (S3) was the win. A 4,000-game paired test showed the book is
+strength-**neutral** vs octogen (not stronger), so per the "if wash, it's just
+octogen" call it was **folded directly into octogen** and hexogen was retired —
+octogen now enables the book per-decision (`cd_sim_set_leafbook`). octogen isn't
+in `bot_parity` (it's a C re-implementation, not a TS line-port), so there is no
+frozen mirror to break; the change is validated by the value-safety gates + the
+multi-pc strength/stack checks below.
+
+### S0 — control (TT13, 64 KiB): flat, as predicted
+
+| build | ms/dec (pc2, 40g) |
+|---|---|
+| TT12+2WAY+PACK8 (shipped, 32 KiB) | **30.02** |
+| TT13+2WAY+PACK8 (S0, 64 KiB) | 30.05 |
+
+Latency indistinguishable; outcome-divergence not re-run (the flat TT11–TT19
+curve and TT12's 0/3,000 are already established in `WASM_L1_BUDGET.md`). S0 is
+the bar and the bar is ~0. ✔ recorded.
+
+### S4 — hexogen world-raise: FLAT vs control → does not clear R2
+
+`HX_PCT` = percent of octogen's per-decision worlds. Paired vs octogen, vs
+espresso (diff = hero − ctrl mean finish; **lower is better**, so a win is a
+*negative* diff):
+
+| config | pc | games | diff ± SE | win hero / ctrl | latency vs octogen |
+|---|---|---|---|---|---|
+| hexogen @125% | 2 | 1000 | **+0.010 ± 0.017** | 79.0% / 80.0% | 35.13 vs 30.02 (**+17%**) |
+| hexogen @110% | 2 | — | (latency only) | — | 33.94 (+13%) |
+| hexogen @125% | 4 | 800 | **+0.015 ± 0.025** | 41.8% / 41.4% | — |
+
+Both diffs are within ~0.6 SE of zero (slightly *worse*, not better), while the
+raise costs latency ∝ the multiplier. This is the same wall `og_params` already
+documents at pc2 ("the exact solver, not the rollout, dominates"; 2×/3× worlds
+"not reliably better") — the MC world budget is saturated, so a *modest* raise
+buys no strength, and the raise that *does* move strength (the 6× oracle) is
+nowhere near iso-latency. **Verdict: the standalone iso-latency world-raise is a
+documented negative.** hexogen therefore ships at `HX_PCT=100` (== octogen); the
+knob stays for research and for when a node-saving lever funds a real raise.
+
+### S1 — tail cache (grow to `CD_TT_TAIL_N=1024`): pc2 latency NEGATIVE → drop
+
+| octogen build | ms/dec (pc2, 40g) |
+|---|---|
+| shipped (no tail) | **30.02** |
+| + `CD_TT_TAILCACHE -DCD_TT_TAIL_N=1024` (40 KiB) | 32.57 (**+8.5% slower**) |
+
+Exactly the contingency §2 flagged: the tail *mechanism* works (the census's 78%
+insert-absorption stands), but ≤6-card leaf subtrees are so cheap to recompute
+that the probe/maintenance overhead exceeds the saving at pc2. **Not shipped**
+into the default build (which is the pc2-tuned shipped config). A pc3+ sweep,
+where rollouts dominate, is the only place it could still pay — left as future
+work, not assumed.
+
+### S3 — LEAFBOOK: the star. SHIPPED in octogen, the ONLY spend to beat control
+
+Built the full pipeline (`tools/leafbook/*`, `src/leafbook.h`, generated
+`src/leafbook_data.h`, the `-DCD_LEAFBOOK` probe in `cordite_sim.c` enabled by
+octogen via `cd_sim_set_leafbook`). See `cnitro/LEAFBOOK.md`.
+
+**Feasibility gate (`make leafbook-gate`)** — distinct canonical round-boundary
+forms (both hands non-empty): K=4 → 1,883, K=5 → 19,715, K=6 → 205,853 (201 KiB,
+over budget → dropped).
+
+**Shipped K=4** via a **CHD minimal perfect hash** (`src/leafbook.h`): a
+1-byte-per-entry value array + per-bucket displacements, no keys stored —
+**2.6 KiB**, O(1) probe (bucket→displacement→slot). K=5 (27 KiB) plays
+*move-identically* to K=4 at pc2 — within a leaf solve the total card count
+changes by −2 per covered round and 0 on a pickup, so parity is fixed and the
+reachable round boundaries land ≤4 cards; nc=5 never arises. So K=4 gives the
+identical win at ~10× less footprint; K=5 is available for latent pc3+ reach.
+
+**Value-safety gate (`make leafbook-verify`, K=4, non-negotiable §4 step 3):**
+- Offline V-book: **1,000,000** random concrete positions, book-through-
+  canonicalization vs direct solve → **0 mismatches**.
+- In-engine probe: **2,000,000** engine solves (both roles), book-ON vs full
+  search → **0 mismatches** (validates attacker/defender id, the attacker→me
+  perspective flip, the depth rebase). The book is proven-exact, so enabling it
+  changes play only via the shared node-budget channel, like a bigger TT — never
+  a wrong value. (Gotcha fixed: offline solvers must `cd_sim_solve_reset()` per
+  solve, or the persistent TT saturates and pollutes values.)
+
+**Payoff — the real metric is e2e p50 (`npm run bench:bot-e2e`, wasm, real PG):**
+
+| metric | octogen (no book) | octogen + K=4 book |
+|---|---|---|
+| **e2e p50 (pc2, wasm)** | ~64 ms | **~56 ms (−12–15%)** |
+| wasm runtime memory | bots=1 MB | **bots=1 MB (unchanged)** — 2.6 KiB book is noise vs the ~1 MB TT peak |
+| module size | 114 KB / 46.5 KB gz | 119 KB / 48.9 KB gz (+4.8 KB / +2.4 KB) |
+| native ms/dec (pc2, CD_LAT) | 30.1 | 26.0 (−14%) |
+
+**Multi-player-count strength (600 games/pc vs espresso, book vs no-book):**
+
+| pc | win% no-book → book | |
+|---|---|---|
+| 2 | 78.3% → 81.0% | neutral-to-better (this sample) |
+| 3 | 64.0% → 64.0% | ±1 seed |
+| 4 / 6 / 8 | identical → identical | **byte-identical histograms** |
+
+A 4,000-game pc2 paired test (the authoritative strength read) is a wash: diff
++0.009 ± 0.006, win 78.7% vs 79.6%, 231 better / 267 worse — statistically not
+different (the OCTOGEN.md adverse-selection effect, exact play vs imperfect
+espresso). **So: strength-neutral at every player count, a real ~15% e2e win.**
+
+**Stack safety** (`e2e/stack_canary.mts`, the heaviest corpus — 8-player game +
+deep endgame solves, production 22 KiB shadow stack): high-water **13.8 KiB**
+(≤ the 14.3 KiB no-book baseline — a book hit *returns* instead of recursing
+deeper, so it never deepens the stack). No overflow at any player count.
+
+**Verdict: the only spend to clear R2.** Where S0/S1/S4 were flat-or-slower,
+LEAFBOOK is a real ~15% e2e p50 win at neutral strength and unchanged runtime
+memory — because it is a *different lever* (exact endgame resolution) than the
+saturated world-budget axis. Folded into **octogen** (hexogen retired).
+
+### The world-budget axis is saturated — octogen_oracle confirms it
+
+The world-raise (S4) and the 6× `octogen_oracle` are the SAME lever. The Durak
+Bot Ordnance Chart's own budget sweep (0.25×→12× worlds) puts the knee at the
+BASE budget: octogen_oracle tops the table at 77.3% — only **+1.6 pp over
+octogen** at 6× compute, "research-only." That is exactly why S4 measured flat
+here: more worlds buy nothing once past the knee. LEAFBOOK wins precisely
+because it leaves that axis and attacks the *latency* wall (the compute bar that
+keeps the oracle research-only) with exact, zero-search endgame values.
+
+### What's left
+
+- **Broaden the book to cordite** — the other shipped MC bot uses the same
+  bitboard solver, so `cd_sim_set_leafbook` in cordite would give it the same
+  latency win. Not done here (scoped to octogen, the binding thinking-bot).
+- **Book reach beyond K=4** — K=5/K=6 add nothing at pc2 (parity keeps reachable
+  round boundaries ≤4 cards). A pc3+/other-opponent sweep is the only place the
+  larger books could start paying; `LEAFBOOK_K=5 make leafbook` regenerates it.
+- **S2 bound side-table** (§3) — blocked on `C5_BOUNDS_HANDOFF.md` §4 (C5-v2),
+  characterized as a negative (slower, ~30% flips) and not being pursued.

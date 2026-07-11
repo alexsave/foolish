@@ -282,6 +282,8 @@ static int g_lat = -1;  // CD_LAT=1: time the protagonist's decisions (dedicated
 // once at exit as "LAT <total_ns> <decisions>" (stderr) when CD_LAT is on.
 static long long g_lat_ns = 0; static long g_lat_n = 0; static int g_lat_reg = 0;
 static void lat_dump(void){ if (g_lat_n) fprintf(stderr, "LAT %lld %ld\n", g_lat_ns, g_lat_n); }
+// CD_LEAFBOOK_STATS=1: dump the cumulative round-boundary book-hit count at exit.
+static void leafbook_dump(void){ fprintf(stderr, "LEAFBOOK hits=%ld\n", cd_sim_leafbook_hits()); }
 static long long now_cpu_ns(void){ struct timespec t;
   clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &t); return (long long)t.tv_sec*1000000000LL + t.tv_nsec; }
 static int play_one(uint32_t seed, int n_players, int protagonist, int opp) {
@@ -359,6 +361,7 @@ static int play_one(uint32_t seed, int n_players, int protagonist, int opp) {
 }
 
 int main(int argc, char **argv) {
+    { const char *e = getenv("CD_LEAFBOOK_STATS"); if (e && e[0] && e[0] != '0') atexit(leafbook_dump); }
     const char *strat_str = get_arg(argc, argv, "strategy", "cordite");
     int protagonist = parse_strategy(strat_str);
     if (protagonist < 0) { fprintf(stderr, "unknown strategy '%s'\n", strat_str); return 2; }

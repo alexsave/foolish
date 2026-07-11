@@ -22,6 +22,14 @@ ifeq ($(OMP),1)
   LDFLAGS += -fopenmp
 endif
 
+# LEAFBOOK (cnitro/LEAFBOOK.md, docs/L1_SPEND_PLAN.md §4): compile octogen's
+# precomputed endgame oracle into every native binary. octogen enables it
+# per-decision (cd_sim_set_leafbook); other solver callers that never enable it
+# are byte-identical. Also added to WASM_BOT_CFLAGS so production octogen gets
+# the ~15% e2e p50 speedup. The generated book (src/leafbook_data.h) is
+# committed; regenerate it with `make leafbook` after an endgame-solver change.
+CFLAGS += -DCD_LEAFBOOK
+
 # The engine + all heuristic / Monte-Carlo bots. Linked into every binary.
 CORE_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/view.c src/awire.c \
             src/evwire.c src/random_strategy.c src/espresso_strategy.c \
@@ -111,6 +119,28 @@ build/l1_measure: tests/l1_measure.c $(wildcard src/*.h) src/game.c src/deal_rng
 .PHONY: l1-measure
 l1-measure: build/l1_measure
 	./build/l1_measure $(GAMES) 1 && ./build/l1_measure $(GAMES) 99991
+
+# LEAFBOOK (docs/L1_SPEND_PLAN.md §4, S3). `make leafbook` regenerates the
+# committed src/leafbook_data.h: enumerate every canonical <=K-card round-boundary
+# endgame, solve each exactly, emit a key-sorted book. `make leafbook-gate` runs
+# the enumeration feasibility census; `make leafbook-verify` runs the V-book
+# value-safety gate (offline canonicalization + in-engine probe, must be 100%).
+# The build_book pass compiles WITHOUT -DCD_LEAFBOOK (it builds the book by
+# direct solves); verify_book compiles WITH it to exercise the engine probe.
+LEAFBOOK_K ?= 4
+LEAFBOOK_CFLAGS := -O2 -ffast-math -Isrc -Wno-deprecated-declarations -DCD_TT_BITS=12
+.PHONY: leafbook leafbook-gate leafbook-verify
+leafbook:
+	@mkdir -p build
+	$(CC) $(LEAFBOOK_CFLAGS) -DLEAFBOOK_BUILD_K=$(LEAFBOOK_K) $(CORE_SRC) tools/leafbook/build_book.c -o build/leafbook_build -lm
+	./build/leafbook_build > src/leafbook_data.h
+leafbook-gate:
+	@mkdir -p build
+	$(CC) -O2 -Isrc tools/leafbook/enumerate.c -o build/leafbook_enum && ./build/leafbook_enum
+leafbook-verify:
+	@mkdir -p build
+	$(CC) $(LEAFBOOK_CFLAGS) -DCD_LEAFBOOK $(CORE_SRC) tools/leafbook/verify_book.c -o build/leafbook_verify -lm
+	./build/leafbook_verify 1000000
 
 # ---------------------------------------------------------------------------
 # WebAssembly rules kernel: game.c + legal.c + the wasm bridge, compiled
@@ -579,7 +609,12 @@ WASM_BOT_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/view.c sr
 # shared WASM_FLAGS: it aliases the replay scratch into cordite_sim.c's solve_ws,
 # which only the bots module links — rules.wasm has no solver, and native builds
 # run OMP games in parallel where the alias would race. bots-module compile only.
-WASM_BOT_CFLAGS  := $(filter-out -Wl% $(WASM_OPT),$(WASM_FLAGS)) -DCD_WASM_OVERLAY
+# -DCD_LEAFBOOK: octogen's shipped endgame oracle (cnitro/LEAFBOOK.md). octogen
+# enables it per-decision (cd_sim_set_leafbook); it terminates round-boundary
+# ≤K-card subtrees with a proven-exact value for ~15% faster e2e p50. The book
+# data (~27 KiB read-only) is dwarfed by the runtime TT peak, so the wasm memory
+# footprint is unchanged; only the module SIZE grows by the book bytes.
+WASM_BOT_CFLAGS  := $(filter-out -Wl% $(WASM_OPT),$(WASM_FLAGS)) -DCD_WASM_OVERLAY -DCD_LEAFBOOK
 # bots-only 22 KiB shadow stack. Adversarial canary (e2e/rules_stack_canary.mts
 # for the cover path + e2e/stack_canary.mts for the solver path) measures the
 # PRODUCTION worst at 14.3 KiB — the cover enumeration (calc_cover_moves'

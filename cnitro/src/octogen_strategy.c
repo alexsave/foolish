@@ -1118,7 +1118,7 @@ static void og_verify_belief(const Game *g, int bot_idx, const Belief *B) {
     }
 }
 
-int octogen_strategy_choose(const Game *g, int bot_idx,
+static int octogen_choose_impl(const Game *g, int bot_idx,
                             const LegalMoves *moves, void *ctx) {
     (void)ctx;
     if (moves->n == 0) return -1;
@@ -1349,6 +1349,21 @@ int octogen_strategy_choose(const Game *g, int bot_idx,
 // Oracle semtex: the same brain with 6x the sampled-world budget and wider
 // candidate survival. Research-only — used to audit losses: where the oracle
 // picks a different move, the default budget was the binding constraint.
+// octogen's public entry: octogen's brain PLUS the LEAFBOOK endgame oracle
+// (cnitro/LEAFBOOK.md, docs/L1_SPEND_PLAN.md §4). A book hit terminates a
+// round-boundary ≤K-card subtree with a proven-exact value, so octogen resolves
+// the same lines with fewer solver nodes — ~15% faster e2e p50 (measured in the
+// wasm bot bench), strength-neutral (the book only shifts play through the
+// shared node-budget channel, like a bigger TT; 4,000-game paired vs espresso:
+// wash). No-op unless built -DCD_LEAFBOOK.
+int octogen_strategy_choose(const Game *g, int bot_idx,
+                            const LegalMoves *moves, void *ctx) {
+    cd_sim_set_leafbook(1);
+    int r = octogen_choose_impl(g, bot_idx, moves, ctx);
+    cd_sim_set_leafbook(0);
+    return r;
+}
+
 int octogen_oracle_strategy_choose(const Game *g, int bot_idx,
                                   const LegalMoves *moves, void *ctx) {
     og_oracle = 1;

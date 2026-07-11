@@ -1363,7 +1363,7 @@ static void cd_verify_belief(const Game *g, int bot_idx, const Belief *B) {
     }
 }
 
-int cordite_strategy_choose(const Game *g, int bot_idx,
+static int cordite_choose_impl(const Game *g, int bot_idx,
                             const LegalMoves *moves, void *ctx) {
     (void)ctx;
     if (moves->n == 0) return -1;
@@ -1581,6 +1581,17 @@ race_done:;
 
     game_rng_set(saved_rng);
     return best >= 0 ? C.idx[best] : 0;
+}
+
+// cordite's public entry: the same brain PLUS the LEAFBOOK endgame oracle
+// (cnitro/LEAFBOOK.md) — a proven-exact, strength-neutral speedup shared with
+// octogen. No-op unless built -DCD_LEAFBOOK.
+int cordite_strategy_choose(const Game *g, int bot_idx,
+                            const LegalMoves *moves, void *ctx) {
+    cd_sim_set_leafbook(1);
+    int r = cordite_choose_impl(g, bot_idx, moves, ctx);
+    cd_sim_set_leafbook(0);
+    return r;
 }
 
 // "cordite before the changes": same engine (fast + exact) but the pre-2x world

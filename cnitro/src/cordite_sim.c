@@ -861,6 +861,27 @@ typedef struct {
 
 static _Thread_local CdTTEntry *cd_tt = NULL;
 
+// ---- LEAFBOOK (docs/L1_SPEND_PLAN.md §4) -------------------------------
+// Runtime gate: 0 = book off; a bot sets it on for the span of its decision
+// (octogen does — see octogen_strategy.c). Compiled out entirely unless
+// -DCD_LEAFBOOK, so builds without the flag carry no book.
+static _Thread_local int  cd_leafbook_on = 0;
+static _Thread_local long cd_leafbook_hit = 0;
+#ifdef CD_LEAFBOOK
+#include "leafbook.h"
+#include "leafbook_data.h"
+// CHD minimal-perfect-hash lookup: bucket -> displacement -> slot -> value.
+// Every probed <=K round-boundary form is present (V-book absent=0), so there
+// is no absent case to reject — the lookup always returns that key's value.
+static inline uint8_t cd_leafbook_value(uint64_t key) {
+    uint32_t b = lb_bucket(key, LEAFBOOK_M, LEAFBOOK_SEED);
+    uint32_t s = lb_slot(key, leafbook_disp[b], LEAFBOOK_R, LEAFBOOK_SEED);
+    return leafbook_vals[s];
+}
+#endif
+void cd_sim_set_leafbook(int on) { cd_leafbook_on = on ? 1 : 0; }
+long cd_sim_leafbook_hits(void) { return cd_leafbook_hit; }
+
 #ifdef CD_TT_TAILCACHE
 // C3 (docs/SOLVER_TT_WORKING_SET_PLAN.md): the census shows ~91% of distinct keys
 // are near-leaf positions (<= 6 cards across both hands) whose subtrees are tiny
@@ -1393,6 +1414,32 @@ static int sim_solve_rec(SimSolver *S, SimState *s, int alpha, int beta, int dep
     int a = -1, b = -1;
     for (int i = 0; i < s->num_players; i++)
         if (s->status_p[i] == PLAYER_STATUS_IN) { if (a < 0) a = i; else b = i; }
+
+#ifdef CD_LEAFBOOK
+    // LEAFBOOK probe (before the TT): at a round boundary (empty table, nobody
+    // said good) with a deck-empty 2-player <=K-card position, a book hit
+    // terminates the whole subtree with a proven value — no search, no TT
+    // traffic, no budget. The book value is the attacker-to-move's result; flip
+    // to S->me's perspective. Value-safe by the offline V-book gate (100.000%
+    // over 1e6 samples). Round-boundary => actor == first_attacker (attacker).
+    if (cd_leafbook_on && b >= 0 && s->num_battles == 0 && s->good_mask == 0
+        && sim_no_cards_left(s)) {
+        int atk = s->first_attacker, def = s->defender;
+        if (atk != def && (s->in_mask >> atk & 1u) && (s->in_mask >> def & 1u)) {
+            int nc = __builtin_popcountll(s->hand[atk]) + __builtin_popcountll(s->hand[def]);
+            if (nc >= 2 && nc <= LEAFBOOK_DATA_K) {
+                cd_leafbook_hit++;
+                uint8_t vb = cd_leafbook_value(leafbook_key(s->hand[atk], s->hand[def], s->power_suit));
+                int outc = vb >> 4, dist = vb & 15;
+                int av = (outc == 2) ? (1000 - (depth + dist))
+                       : (outc == 0) ? -(1000 - (depth + dist)) : 0;
+                int v = (S->me == atk) ? av : -av;   // book is attacker-perspective
+                TR_RET(v, "leafbook");
+            }
+        }
+    }
+#endif
+
     uint64_t key = 0;
     CdTTEntry *e = NULL;
     CdTTEntry *tbl = S->tt; uint64_t tmask = CD_TT_MASK;   // pool this node uses (main by default)
