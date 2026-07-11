@@ -49,8 +49,13 @@ cnitro/*.trace/
 # local dev overrides (shadows next.config.mjs if tracked!)
 next.config.js
 
-# Local Claude Code agent worktrees
-.claude/
+# Local Claude Code agent worktrees / local state — ignored, EXCEPT the shared
+# project hook below (installs binaryen so `make wasm-bots` can run wasm-opt).
+.claude/*
+!.claude/settings.json
+!.claude/hooks/
+.claude/hooks/*
+!.claude/hooks/session-start.sh
 isolate-*.log
 
 # Coverage artifacts
