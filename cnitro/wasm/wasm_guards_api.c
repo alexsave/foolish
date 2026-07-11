@@ -24,11 +24,14 @@ void *memcpy(void *dst, const void *src, size_t n) { __builtin_memcpy(dst, src, 
 void *memset(void *dst, int c, size_t n) { __builtin_memset(dst, c, n); return dst; }
 
 // ---------- shared buffers ----------------------------------------------
-// State export is <1.1KB; the widest WRITE this bridge can make is the
-// per-action log stream (2 + MAX_LOGS x (4 + MAX_LOG_PAIRS x 2)) = 8,450B
-// at the guards build's 64/64 — 8.5KB clears it even though the log export
-// isn't currently in the linker's export list (it must stay cleared so
-// reviving that export can never overflow into g_game).
+// g_io holds the game state the TS bridge marshals in (get_state reads it,
+// clamping every count to Game capacity). This is a VALIDATE-ONLY build: no
+// state/log/snapshot export is in the linker export list, and at MAX_LOGS=1 even
+// a revived log export is a few bytes — so the widest live write is the state
+// import, <1.1KB. IO_CAP stays at a conservative 8.5KB (it's a fixed static
+// buffer with no per-gate cost, unlike the Game clone); it could safely shrink
+// to ~2KB now that the old 8,450B log-stream rationale (MAX_LOGS x MAX_LOG_PAIRS
+// at 64/64) no longer applies.
 #define IO_CAP 8704
 // The shipped guards module exports NO snapshot readers (see the Makefile's
 // WASM_GUARDS_EXPORTS trim), so the ring is write-only — the build passes
