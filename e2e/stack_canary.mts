@@ -11,7 +11,7 @@ import { start_game } from '../supabase/functions/_shared/game_lifecycle.ts';
 import { processBotAction } from '../supabase/functions/_shared/pure_bot_actions.ts';
 import { Game, PrivatePlayer, PLAYER_STATUS, GAME_STATUS } from '../supabase/functions/_shared/types.ts';
 
-const STACK_SIZE = Number(process.env.STACK_SIZE ?? 262144);  // current bots -z stack-size
+const STACK_SIZE = Number(process.env.STACK_SIZE ?? 22528);  // current bots -z stack-size (Makefile WASM_BOT_LDFLAGS)
 
 // Capture every wasm memory + its initial size; the bots module is the one with
 // the largest initial linear memory (rules=5 pages, guards=1 page, bots>=17).
@@ -70,10 +70,12 @@ new Uint8Array(botsMem.buffer).fill(0xA5, 64, STACK_SIZE - 64);
 // (espresso/champion/handwritten/simple_heuristic) as the DECIDING bot too, not
 // just the MC families — their choose frames stack under their own callers.
 // Only the SHIPPED wasm bots (Durak Bot Ordnance Chart drop): the MC families
-// octogen/cordite plus the dispatchable heuristics handwritten_prod and
-// simple_heuristic. The MC bots internally exercise their espresso/handwritten
-// (arena) rollout policies, which carry the fattest remaining frames.
-const families = ['octogen', 'cordite'];
+// octogen/cordite/firecracker/blackpowder plus the dispatchable heuristics
+// handwritten_prod and simple_heuristic. The MC bots internally exercise their
+// espresso/handwritten (arena) rollout policies, which carry the fattest
+// remaining frames — firecracker rolls out with espresso on EVERY sample and
+// blackpowder in its multi-player endgames, so both drive espresso's 1v1 body.
+const families = ['octogen', 'cordite', 'firecracker', 'blackpowder'];
 const heuristics = ['handwritten_prod', 'simple_heuristic'];
 const matchups: string[][] = [];
 for (const f of families) { matchups.push([f, f]); matchups.push([f, 'cordite']); }

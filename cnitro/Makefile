@@ -473,17 +473,24 @@ wasm-guards: build/guards.wasm
 # Note: the distilled strategy (research, strength-negative — see
 # CORDITE_RESEARCH.md) stays native-arena-only; it is deliberately NOT in the
 # production bot module.
-# Only the SHIPPED difficulty-ladder bots (Durak Bot Ordnance Chart) that are
-# already ported to wasm — random, simple_heuristic, handwritten_prod, cordite,
-# octogen — plus the two heuristics the shipped MC bots call as rollout policies:
-# espresso and handwritten (arena builds, cordite_strategy.c:591-594). Dropped
+# The SHIPPED difficulty-ladder bots (Durak Bot Ordnance Chart), all now ported
+# to wasm — random, simple_heuristic, handwritten_prod, firecracker, blackpowder,
+# cordite, octogen (the full seven rungs) — plus the two heuristics the MC bots
+# call as rollout policies: espresso and handwritten (arena builds,
+# cordite_strategy.c:591-594; also firecracker/blackpowder's rollouts).
+# robusta_strategy.c rides along because firecracker IS robusta's MC with an
+# espresso rollout (firecracker_strategy.c calls robusta_mc_choose). Dropped
 # entirely (no ladder slot, no dep of a shipped bot): champion, ultimate_champion,
 # hacker, fulminate, semtex, espresso_prod — their code + static data leave the
-# module. (firecracker/blackpowder are ladder rungs not yet ported to wasm; add
-# their .c + robusta_strategy.c when they land.)
+# module. NOTE: robusta/blackpowder MC rolls a full Game + LegalMoves per sample;
+# those were stack locals (fine on native's 8 MB stack) and are hoisted to
+# lazily-malloc'd per-thread scratch so they fit the 22 KiB bots.wasm shadow
+# stack (see the stack-hoist notes in robusta_strategy.c / blackpowder_strategy.c).
 WASM_BOT_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/view.c src/awire.c \
                 src/evwire.c src/random_strategy.c \
                 src/espresso_strategy.c src/handwritten_strategy.c \
+                src/robusta_strategy.c src/firecracker_strategy.c \
+                src/blackpowder_strategy.c \
                 src/cordite_strategy.c src/cordite_sim.c \
                 src/simple_heuristic_strategy.c \
                 src/handwritten_prod_strategy.c \

@@ -353,18 +353,23 @@ static StrategyFn bp_rollout_for(const Game *g) {
 // Roll a sampled world to completion; returns my finish position (1..N),
 // or 0 if the simulation didn't terminate.
 static int bp_simulate(Game *g, int my_idx, int max_turns) {
+    // A LegalMoves is ~232 KiB — far past the bots.wasm 22 KiB shadow stack, so
+    // it lives in lazily-malloc'd per-thread scratch, not a stack local. Safe:
+    // bp_simulate is non-recursive and the rollout policies it calls are leaves
+    // that never re-enter it; the buffer is written-before-read each turn.
+    static _Thread_local LegalMoves *moves = NULL;
+    if (!moves) { moves = malloc(sizeof(LegalMoves)); if (!moves) return 0; }
     int turns = 0;
     while (game_done(g) < 0 && turns++ < max_turns) {
         bool acted = false;
         for (int pi = 0; pi < g->num_players; pi++) {
             if (!should_bot_act(g, pi)) continue;
-            LegalMoves moves;
-            calculate_legal_moves_lite(g, pi, &moves);
-            if (moves.n == 0) continue;
+            calculate_legal_moves_lite(g, pi, moves);
+            if (moves->n == 0) continue;
             StrategyFn fn = bp_rollout_for(g);
-            int idx = fn(g, pi, &moves, NULL);
-            if (idx < 0 || idx >= moves.n) continue;
-            if (bp_apply(g, pi, &moves.moves[idx])) { acted = true; break; }
+            int idx = fn(g, pi, moves, NULL);
+            if (idx < 0 || idx >= moves->n) continue;
+            if (bp_apply(g, pi, &moves->moves[idx])) { acted = true; break; }
         }
         if (!acted) break;
     }
@@ -478,14 +483,22 @@ static int bp_try_endgame_solve(const Game *g, int bot_idx,
         if (!bp_solver_child || !bp_solver_mv) return -1;
     }
 
-    Game root;
-    game_clone(&root, g);
-    root.num_logs = 0;  // solver never reads history; keeps clones tiny
+    // root + the per-candidate child are full Games (~67 KiB each). Both are
+    // live at once (child is cloned from root), and both are far too big for the
+    // bots.wasm shadow stack, so they join the solver's malloc'd scratch as two
+    // dedicated per-thread buffers (distinct from bp_solver_child[], which
+    // bp_solve clones into per depth).
+    static _Thread_local Game *root = NULL, *child = NULL;
+    if (!root)  { root  = malloc(sizeof(Game)); if (!root)  return -1; }
+    if (!child) { child = malloc(sizeof(Game)); if (!child) return -1; }
+
+    game_clone(root, g);
+    root->num_logs = 0;  // solver never reads history; keeps clones tiny
     for (int k = 0; k < B->pinned_n[opp]; k++) {
-        root.players[opp].hand[k] = B->pinned[opp][k];
+        root->players[opp].hand[k] = B->pinned[opp][k];
     }
     for (int k = 0; k < B->n; k++) {
-        root.players[opp].hand[B->pinned_n[opp] + k] = B->pool[k];
+        root->players[opp].hand[B->pinned_n[opp] + k] = B->pool[k];
     }
 
     Solver S;
@@ -499,10 +512,9 @@ static int bp_try_endgame_solve(const Game *g, int bot_idx,
     int best_v = 0;   // only accept strictly winning lines
     int alpha = -2000;
     for (int i = 0; i < moves->n; i++) {
-        Game child;
-        bp_lite_clone(&child, &root);
-        if (!bp_apply(&child, bot_idx, &moves->moves[i])) continue;
-        int v = bp_solve(&S, &child, alpha, 2000, 1);
+        bp_lite_clone(child, root);
+        if (!bp_apply(child, bot_idx, &moves->moves[i])) continue;
+        int v = bp_solve(&S, child, alpha, 2000, 1);
         if (S.aborted) return -1;
         if (v > best_v) { best_v = v; best_idx = i; }
         if (v > alpha) alpha = v;

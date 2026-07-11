@@ -254,6 +254,8 @@ export const STRATEGY_KEY = {
     CONSOLE: 'console',
     GPT: 'gpt',
     ESPRESSO: 'espresso',
+    FIRECRACKER: 'firecracker',
+    BLACKPOWDER: 'blackpowder',
     CORDITE: 'cordite',
     CORDITE_MAX: 'cordite_max'
 } as const;

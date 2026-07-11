@@ -14,6 +14,24 @@
 #include "game.h"
 #include <string.h>
 #include <stdint.h>
+#include <stdlib.h>   // malloc — for the hoisted move-index scratch below
+
+// espresso's 1v1 body stashes candidate move indices in several
+// int[MAX_LEGAL_MOVES] arrays (16 KiB each at MAX_LEGAL_MOVES=4096). Natively
+// those sit on an 8 MB stack, but bots.wasm ships a 22 KiB shadow stack and
+// espresso is now reachable as a full-Game rollout policy (firecracker's every
+// rollout; blackpowder's multi-player endgames), so stacking them traps under
+// --stack-first. They move to lazily-malloc'd per-thread scratch — pure index
+// scratch, written-before-read, non-re-entrant within a decision, and
+// _Thread_local so native OMP eval keeps one buffer per thread. Behaviour is
+// unchanged (verified by e2e/bot_parity), so cordite's frozen rollout mirror is
+// unaffected. `which` in [0,5): one buffer per array so any two live at once
+// (cover_idx + full_idx) never alias.
+static int *esp_idx_scratch(int which) {
+    static _Thread_local int *bufs[5] = { 0 };
+    if (!bufs[which]) bufs[which] = malloc(sizeof(int) * MAX_LEGAL_MOVES);
+    return bufs[which];
+}
 
 // ---------- helpers ---------------------------------------------------
 
@@ -246,7 +264,8 @@ int espresso_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves
 
     // We pick "candidateMoves" — either non-trump (if any) or all-trump under
     // a probability gate. Stash indices into moves->moves[].
-    int candidate_idx[MAX_LEGAL_MOVES];
+    int *candidate_idx = esp_idx_scratch(0);
+    if (!candidate_idx) return handwritten_strategy_choose(g, bot_idx, moves, ctx);
     int cn = 0;
     bool fall_through_to_other = false;
 
@@ -374,7 +393,9 @@ int espresso_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves
     (void)fall_through_to_other;
 
     // ---- pass moves ---------------------------------------------------
-    int pass_idx[MAX_LEGAL_MOVES]; int pn = 0;
+    int *pass_idx = esp_idx_scratch(1);
+    if (!pass_idx) return handwritten_strategy_choose(g, bot_idx, moves, ctx);
+    int pn = 0;
     for (int i = 0; i < moves->n; i++) if (moves->moves[i].type == MOVE_PASS) pass_idx[pn++] = i;
     if (pn > 0 && opp) {
         int best = pass_idx[0];
@@ -415,14 +436,18 @@ int espresso_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves
     if (pn > 0) return pass_idx[0];
 
     // ---- cover moves --------------------------------------------------
-    int cover_idx[MAX_LEGAL_MOVES]; int cnv = 0;
+    int *cover_idx = esp_idx_scratch(2);
+    if (!cover_idx) return handwritten_strategy_choose(g, bot_idx, moves, ctx);
+    int cnv = 0;
     for (int i = 0; i < moves->n; i++) if (moves->moves[i].type == MOVE_COVER) cover_idx[cnv++] = i;
     if (cnv > 0) {
         int uncovered = 0;
         for (int i = 0; i < g->num_battles; i++) if (!!card_is_none(g->table_battles[i].defense)) uncovered++;
 
         // Full-cover moves only.
-        int full_idx[MAX_LEGAL_MOVES]; int fn = 0;
+        int *full_idx = esp_idx_scratch(3);
+        if (!full_idx) return handwritten_strategy_choose(g, bot_idx, moves, ctx);
+        int fn = 0;
         for (int i = 0; i < cnv; i++) {
             // attack_cards length stored as n_cards (TS uses cards.length === uncovered).
             if (moves->moves[cover_idx[i]].n_cards == uncovered) full_idx[fn++] = cover_idx[i];
@@ -541,7 +566,9 @@ int espresso_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves
     for (int i = 0; i < moves->n; i++) if (moves->moves[i].type == MOVE_GOOD) return i;
 
     // ---- done attacks (sort by count desc, score asc) -----------------
-    int done_idx[MAX_LEGAL_MOVES]; int dnv = 0;
+    int *done_idx = esp_idx_scratch(4);
+    if (!done_idx) return handwritten_strategy_choose(g, bot_idx, moves, ctx);
+    int dnv = 0;
     for (int i = 0; i < moves->n; i++) if (moves->moves[i].type == MOVE_ATTACK) done_idx[dnv++] = i;
     if (dnv > 0) {
         int best = done_idx[0];

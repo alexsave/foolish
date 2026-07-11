@@ -11,6 +11,17 @@
 #include "game.h"
 #include <string.h>
 #include <stdint.h>
+#include <stdlib.h>   // malloc — wasm-shim/native both; see stack-hoist note below
+
+// The MC rollout puts a full Game (~67 KiB) and a LegalMoves (~232 KiB) in
+// play per sample. Natively that lives on an 8 MB stack, but the bots.wasm
+// module ships a 22 KiB shadow stack, so those buffers MUST NOT be stack
+// locals there (an on-stack LegalMoves alone traps under --stack-first). They
+// are lazily malloc'd into per-thread scratch instead — the exact pattern the
+// blackpowder solver already uses (bp_solver_child), and behaviour-neutral:
+// each buffer is written-before-read within a single call, the rollout policy
+// is a leaf that never re-enters these functions, and the pointers are
+// _Thread_local so native OMP parallel eval keeps one buffer per thread.
 
 // ---------- helpers ---------------------------------------------------
 
@@ -439,6 +450,8 @@ static bool apply_move(Game *g, int p_idx, const LegalMove *m) {
 //   - espresso_strategy_choose  for firecracker (cheats inside the
 //     fictional state — which is robusta's own MC sample, not real cards)
 static int simulate_to_end(Game *g, int my_idx, int max_turns, StrategyFn rollout_fn) {
+    static _Thread_local LegalMoves *moves = NULL;  // hoisted off the stack
+    if (!moves) { moves = malloc(sizeof(LegalMoves)); if (!moves) return 0; }
     int turns = 0;
     while (game_done(g) < 0 && turns++ < max_turns) {
         int elig[MAX_PLAYERS]; int n_e = 0;
@@ -447,12 +460,11 @@ static int simulate_to_end(Game *g, int my_idx, int max_turns, StrategyFn rollou
         bool acted = false;
         for (int k = 0; k < n_e; k++) {
             int pi = elig[k];
-            LegalMoves moves;
-            calculate_legal_moves_lite(g, pi, &moves);
-            if (moves.n == 0) continue;
-            int idx = rollout_fn(g, pi, &moves, NULL);
-            if (idx < 0 || idx >= moves.n) continue;
-            if (apply_move(g, pi, &moves.moves[idx])) { acted = true; break; }
+            calculate_legal_moves_lite(g, pi, moves);
+            if (moves->n == 0) continue;
+            int idx = rollout_fn(g, pi, moves, NULL);
+            if (idx < 0 || idx >= moves->n) continue;
+            if (apply_move(g, pi, &moves->moves[idx])) { acted = true; break; }
         }
         if (!acted) break;
     }
@@ -469,13 +481,14 @@ static double mc_eval_move(const Game *g_orig, int my_idx, const LegalMove *m,
                             StrategyFn rollout_fn) {
     double total = 0.0;
     int valid = 0;
+    static _Thread_local Game *g = NULL;   // hoisted off the stack (see note atop file)
+    if (!g) { g = malloc(sizeof(Game)); if (!g) return (double)g_orig->num_players; }
     for (int s = 0; s < n_samples; s++) {
-        Game g;
         uint32_t seed = base_seed + (uint32_t)(s + 1) * 0x85EBCA77u;
-        if (!sample_consistent_state(&g, g_orig, my_idx, u, seed)) continue;
-        if (!apply_move(&g, my_idx, m)) continue;
-        int fp = simulate_to_end(&g, my_idx, 600, rollout_fn);
-        if (fp == 0) fp = g.num_players;  // count incomplete as durak (worst)
+        if (!sample_consistent_state(g, g_orig, my_idx, u, seed)) continue;
+        if (!apply_move(g, my_idx, m)) continue;
+        int fp = simulate_to_end(g, my_idx, 600, rollout_fn);
+        if (fp == 0) fp = g->num_players;  // count incomplete as durak (worst)
         total += (double)fp;
         valid++;
     }
