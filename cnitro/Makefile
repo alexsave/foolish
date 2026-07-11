@@ -501,6 +501,22 @@ build/bots.wasm: $(WASM_BOT_OBJ)
 	          $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) $(WASM_BOT_OBJ) -o $@
 	$(call wasm_postopt,$(WASM_BOTS_POSTOPT),$@)
 
+# Name-preserving companion for the wasm-anatomy tool (tools/wasm_anatomy). It
+# must have a CODE section BYTE-IDENTICAL to build/bots.wasm but keep the
+# function name section, so the disassembler maps names 1:1 onto the shipped
+# (stripped) bytes. Same objects + same link + same wasm-opt pass as
+# build/bots.wasm, differing ONLY by: no -Wl,--strip-all, and wasm-opt keeps
+# names via --debuginfo. Because the wasm-opt pass now reshapes the module
+# (inlining removes functions), a companion WITHOUT the pass would have
+# different function indices and mis-map every name — hence this target runs the
+# identical pass. generate.sh re-strips this and asserts it equals build/bots.wasm.
+comma := ,
+build/named/bots.named.wasm: $(WASM_BOT_OBJ)
+	@mkdir -p build/named
+	$(WASM_CC) --target=wasm32 -nostdlib $(filter-out -Wl$(comma)--strip-all,$(WASM_BOT_LDFLAGS)) \
+	          $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) $(WASM_BOT_OBJ) -o $@
+	$(if $(strip $(WASM_BOTS_POSTOPT)),$(WASM_OPT_BIN) $(WASM_OPT_FEATURES) $(WASM_BOTS_POSTOPT) --debuginfo $@ -o $@,:)
+
 # bots.wasm ships as a gzip STATIC ASSET (config.toml static_files + deploy
 # --use-api, no Docker) — a real 47KB binary, not a 155KB base64 .ts embed.
 # Loaded by _shared/wasm/wasm_asset.ts (server-only; bots never run in browser).

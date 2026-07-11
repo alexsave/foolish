@@ -26,6 +26,13 @@ echo "cnitro=$CNITRO  out=$OUT"
 cd "$CNITRO"
 
 echo "[1/5] building stripped production modules"
+# Force-relink the wasm outputs from the (cached) objects: make is timestamp-
+# based and won't rebuild them when only a recipe VARIABLE changed (e.g. a prior
+# `make wasm-bots WASM_BOTS_POSTOPT=…` left a differently-optimized build/bots.wasm
+# on disk). Removing the linked artifacts guarantees they reflect the DEFAULT
+# flags; the objects stay cached so this is cheap. The [2/5] guard would catch a
+# mismatch anyway, but this prevents the abort in the common stale-build case.
+rm -f build/rules.wasm build/guards.wasm build/bots.wasm build/named/bots.named.wasm
 make build/rules.wasm build/guards.wasm build/bots.wasm >/dev/null
 
 echo "[2/5] building name-preserving companions"
@@ -35,10 +42,22 @@ for m in rules guards; do
   make --always-make -n "build/$m.wasm" 2>/dev/null | grep -E "clang.* -o build/$m.wasm" \
     | sed "s/-Wl,--strip-all //; s#-o build/$m.wasm#-o build/named/$m.named.wasm#" | bash
 done
-# bots: relink the existing objects (same exports) without --strip-all
-EXPORTS=$(make --always-make -n build/bots.wasm 2>/dev/null | tr ' ' '\n' | grep '^-Wl,--export=' | sort -u | tr '\n' ' ')
-$WASM_CC --target=wasm32 -nostdlib -Wl,--no-entry -Wl,--export-memory \
-  -Wl,-z,stack-size=262144 -Wl,--stack-first $EXPORTS build/botobj/*.o -o "$NAMED/bots.named.wasm"
+# bots: build the name-preserving companion via the Makefile so it uses the
+# IDENTICAL objects + link + wasm-opt pass as build/bots.wasm (only difference:
+# names kept). A hand-rolled relink here would skip the wasm-opt pass and its
+# inlining would drop functions, shifting every name off the optimized bytes.
+make build/named/bots.named.wasm >/dev/null
+# Guard: the companion's CODE section MUST be byte-identical to the shipped
+# module — that identity is exactly what makes the name indices map 1:1 onto the
+# optimized bytes. (The companion also carries a harmless target_features custom
+# section that --debuginfo preserves, so compare the CODE section specifically,
+# not the whole file.) Fail loudly on any drift.
+node -e '
+  const fs=require("fs");
+  const code=p=>{const b=fs.readFileSync(p);let i=8;while(i<b.length){const id=b[i++];let sh=0,ln=0,by;do{by=b[i++];ln|=(by&127)<<sh;sh+=7}while(by&128);if(id===10)return b.slice(i,i+ln);i+=ln;}return Buffer.alloc(0);};
+  const a=code(process.argv[1]), s=code(process.argv[2]);
+  if(Buffer.compare(a,s)!==0){ console.error("ERROR: bots.named companion CODE ("+a.length+"B) != shipped build/bots.wasm CODE ("+s.length+"B) — names would mis-map onto the optimized bytes. Aborting."); process.exit(1); }
+' "$NAMED/bots.named.wasm" build/bots.wasm || exit 1
 
 echo "[3/5] symbol -> source-file map"
 : > "$WORK/symfile.tsv"
