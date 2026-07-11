@@ -9,9 +9,13 @@ round. Everything you need is either in this file, in the two companion docs
 #61) to the OTHER two shipped modules. bots.wasm is **done for now**
 (18 → 14 pages, code −29%; do not touch it). The remaining candidates:
 
+> **Status (this round): R0 + R1 landed.** rules.wasm is now a hard-pinned
+> **4 pages** (262,144 B) after the arena overlay. The table below is the
+> pre-round starting state; see §7 for the ledger.
+
 | module | today (measured 2026-07-11) | realistic target | verdict |
 |---|---|---|---|
-| `rules.wasm` | **5 pages** (327,680 B), 35,489 B code, unpinned | **4 pages** solid, **3 pages** stretch | ~90 KiB of dead aliasable scratch — the main prize |
+| `rules.wasm` | **5 pages** (327,680 B), 35,489 B code, unpinned → **now 4 pages, pinned** | **4 pages** solid ✅, **3 pages** stretch | ~90 KiB of dead aliasable scratch — the main prize (reclaimed by R1) |
 | `guards.wasm` | **1 page**, pinned (`max=1`), 10,717 B code | — | **DONE. Do not touch.** 1 page is the hard floor (wasm page granularity); the linker pin makes any regression a build failure |
 | `bots.wasm` | 14 pages + runtime TT | — | done this round; leave alone |
 
@@ -384,9 +388,9 @@ on octogen's solve path. If you go, prefer R4; use R3 only with the pin.
 
 | candidate | status | measured result |
 |---|---|---|
-| R0 pin @5 pages | — | |
-| R1 arena overlay → 4 pages + re-pin | — | |
-| R2/R3/R4 → 3 pages | — | |
+| R0 pin @5 pages | ✅ landed | rules.wasm pinned `--initial-memory == --max-memory == 327680` (5 pages). Module instantiates + passes every non-DB e2e gate; guards.wasm + native `cnitro_tests` byte-identical. |
+| R1 arena overlay → 4 pages + re-pin | ✅ landed | `CD_RULES_OVERLAY` aliases {g_rec,g_bn,g_replay_io} over {g_moves,g_snaps,g_io} in `g_rules_arena` (RULES_ARENA_SIZE=102544). rules.wasm **5 → 4 pages** (327680 → **262144**, re-pinned). Native `cnitro_tests` byte-identical (flag absent ⇒ plain statics); guards.wasm byte-identical; 161/161 native, sim/apply/replay difftests 0 real divergences; new interleave gate (`e2e/rules_overlay.test.ts`) + mem page assertion green. |
+| R2/R3/R4 → 3 pages | see §5 note | evaluated below |
 
 ---
 

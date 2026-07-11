@@ -24,6 +24,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import { gunzipSync } from 'node:zlib';
 import { resolve } from 'node:path';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
@@ -45,6 +46,63 @@ test('rules embed is a single-line literal (no parse-time concat garbage)', () =
     const src = readFileSync(resolve(rel), 'utf8');
     assert.ok(!/'\s*\+/.test(src), `${rel} is chunk-concatenated; regenerate with cnitro/wasm/embed.mjs`);
     assert.ok(src.trimEnd().split('\n').length <= 12, `${rel} is not a single-line embed`);
+});
+
+// R0 pin + R1 arena overlay (docs/RULES_GUARDS_WASM_MEMORY_PLAN.md): rules.wasm
+// linear memory is now a hard-pinned 4 pages (was 5 pre-overlay). The pin
+// (--initial-memory == --max-memory) means the module can never memory.grow, so
+// the instance's memory is EXACTLY 4 pages and stays flat for the process's
+// life. Read the committed embed straight off disk (base64 -> gunzip) so this
+// runs in CI without a build, and without disturbing the take-once accessor the
+// engine uses. guards.wasm's 1-page pin is asserted alongside for good measure.
+const PAGE = 65536;
+function embedWasmBytes(relTs: string): Uint8Array {
+    const src = readFileSync(resolve(relTs), 'utf8');
+    const m = src.match(/'([A-Za-z0-9+/=]+)'/);
+    assert.ok(m, `${relTs}: no base64 literal found`);
+    return new Uint8Array(gunzipSync(Buffer.from(m![1], 'base64')));
+}
+// Parse the memory section's (min, max) page limits straight from the binary —
+// the pin is a link-time fact, so assert on the module, not a live instance.
+function memLimits(wasm: Uint8Array): { min: number; max: number | null } {
+    let p = 8; // skip the 8-byte module header
+    const leb = () => { let r = 0, s = 0, b: number; do { b = wasm[p++]; r |= (b & 0x7f) << s; s += 7; } while (b & 0x80); return r >>> 0; };
+    while (p < wasm.length) {
+        const id = wasm[p++], len = leb(), end = p + len;
+        if (id === 5) { // memory section
+            leb(); // count (1)
+            const flags = leb(), min = leb();
+            return { min, max: (flags & 1) ? leb() : null };
+        }
+        p = end;
+    }
+    throw new Error('no memory section');
+}
+
+test('rules.wasm linear memory is pinned flat at 4 pages (R0 pin + R1 overlay)', () => {
+    const wasm = embedWasmBytes('supabase/functions/_shared/wasm/rules_wasm.ts');
+    const { min, max } = memLimits(wasm);
+    assert.equal(min, 4, `rules.wasm initial memory is ${min} pages (${min * PAGE}B); expected 4 — a static buffer grew, or the overlay regressed`);
+    assert.equal(max, 4, `rules.wasm max memory is ${max} pages; expected a hard 4-page pin (--initial-memory == --max-memory)`);
+
+    // Belt-and-braces: the module actually instantiates at exactly 4 pages and
+    // cannot grow past the pin (a memory.grow would trap — but the linker also
+    // strips any grow path, since rules.wasm has no allocator).
+    const inst = new WebAssembly.Instance(new WebAssembly.Module(wasm), {});
+    const mem = (inst.exports as { memory: WebAssembly.Memory }).memory;
+    assert.equal(mem.buffer.byteLength, 4 * PAGE, 'rules.wasm did not instantiate at 4 pages');
+    assert.throws(() => mem.grow(1), 'rules.wasm memory grew past its pin — the pin is not enforced');
+    assert.equal(mem.buffer.byteLength, 4 * PAGE, 'rules.wasm memory changed after a rejected grow');
+});
+
+test('guards.wasm linear memory is pinned flat at 1 page', () => {
+    // guards.wasm ships as a gzip embed like rules; assert its 1-page L1 pin is
+    // intact (it shares game.c/view.c/awire.c with rules, so a shared-flag leak
+    // that regrew it would show here).
+    const wasm = embedWasmBytes('supabase/functions/_shared/wasm/guards_wasm.ts');
+    const { min, max } = memLimits(wasm);
+    assert.equal(min, 1, `guards.wasm initial memory is ${min} pages; expected the 1-page L1 pin`);
+    assert.equal(max, 1, `guards.wasm max memory is ${max} pages; expected a hard 1-page pin`);
 });
 
 test('loading the bot kernel (read + gunzip + instantiate) fits a 64MB-old-space node', () => {

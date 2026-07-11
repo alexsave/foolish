@@ -352,10 +352,20 @@ WASM_BOTS_API_EXPORTS := \
 # error instead of a production surprise. Re-pin LOWER after each landed
 # candidate. 262144 = 4 pages after the R1 arena overlay (below); 5 pages
 # (327680) was the pre-overlay floor.
+# CD_RULES_OVERLAY (R1, docs/RULES_GUARDS_WASM_MEMORY_PLAN.md): alias the
+# replay-call scratch family (g_rec + g_bn + g_replay_io, ~90 KiB) over the
+# action family (g_moves + g_snaps + g_io) in one arena (src/rules_overlay.h,
+# g_rules_arena in wasm_api.c). The two families are provably never live at the
+# same time (single-threaded module; replay encode/decode vs action/menu are
+# top-level exports that never nest, and each buffer is written-before-read
+# within its call). Saves ~93 KiB → 5 pages -> 4 pages. rules.wasm ONLY: the
+# bots build aliases into solve_ws instead (CD_WASM_OVERLAY), native uses plain
+# statics; the two flavors are mutually exclusive (#error in rules_overlay.h).
 WASM_RULES_FLAGS := $(filter-out -DMAX_LEGAL_MOVES=4096,$(WASM_FLAGS)) \
                     -DMAX_LEGAL_MOVES=1024 -DMAX_LOGS=128 -DWASM_IO_CAP=24576 \
+                    -DCD_RULES_OVERLAY \
                     -Wl,-z,stack-size=65536 \
-                    -Wl,--initial-memory=327680 -Wl,--max-memory=327680
+                    -Wl,--initial-memory=262144 -Wl,--max-memory=262144
 
 # Blanket header dependency, same rationale as the native objects: a header
 # edit must rebuild BOTH wasm modules or they ship divergent kernels.
