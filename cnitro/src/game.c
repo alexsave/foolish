@@ -46,6 +46,23 @@ static _Thread_local DealRng g_deal_rng;
 
 // Fisher-Yates over the whole deck, driven by the ChaCha stream. Called once at
 // the deal; afterwards draws just pop, so this is the only shuffle in a game.
+//
+// NOTE for future optimizers: yes, we materialize the full shuffle up front and
+// persist the deck in the state blob, rather than storing just the seed + a draw
+// index and re-deriving cards on demand. That is deliberate and measured — do
+// not "optimize" it away:
+//   - Space: the deck is smaller than the seed. A 2p deck is 36 cards → ~23
+//     bytes after the deal, shrinking to 0; the seed+index alt is a flat 34 B.
+//     Measured over a full game the deck averaged 9.5 B and never exceeded the
+//     alt's 34 B (docs/GAME_DETERMINISM_FIX.md).
+//   - Latency: draws become an O(1) pop. Seed-on-demand would re-run this
+//     shuffle (~522 ns) on every drawing move — 20-40× per game — for that
+//     negative space "saving".
+//   - Size: ChaCha (deal_rng, ~1.4 KB) is in the binary either way; the alt
+//     only ADDS code (seed-in-blob + re-derive on load).
+//   - Security: the deck in the blob is masked per-viewer (WIRE_CARD_HIDDEN);
+//     the seed stays in a server-only column. Putting the seed in the blob would
+//     drag the crown-jewel seed toward the client boundary.
 static void deal_shuffle(Game *g) {
     for (int i = g->deck_count - 1; i > 0; i--) {
         int j = (int)deal_rng_bounded(&g_deal_rng, (uint32_t)(i + 1));

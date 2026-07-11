@@ -47,6 +47,10 @@ interface EngineExports {
     wasm_cards_a_ptr(): number;
     wasm_cards_b_ptr(): number;
     wasm_import_state(): void;
+    wasm_set_deterministic_deck(on: number): void;
+    wasm_seed_rng_deterministic(): void;
+    wasm_set_strategy_seed_deterministic(): void;
+    wasm_set_rng_base(base: number): void;
     wasm_export_state(): number;
     wasm_state_serialize(): number;
     wasm_state_deserialize(len: number): number;
@@ -369,6 +373,15 @@ function marshalGame(ex: EngineExports, game: Game): void {
         buf[q++] = s & 0xff;
     }
     ex.wasm_import_state();
+    // wasm_import_state drops the deterministic-deck flag (the transient IO
+    // format doesn't carry it). Re-assert it for seed-dealt games so the bot
+    // path — which marshals a JS Game rather than loading the durable blob —
+    // pops the pre-shuffled deck on every mid-game refill instead of drawing a
+    // RANDOM card. Without this the game stops being reproducible from its deal
+    // seed after the opening (the deck was shuffled deterministically, but the
+    // draws scrambled it). game.deterministic_deck is set from the blob on load
+    // (deserializeGameState) and at the deal (game_lifecycle).
+    if (game.deterministic_deck) ex.wasm_set_deterministic_deck(1);
 }
 
 export interface KernelState {
@@ -546,6 +559,11 @@ export function deserializeGameState(bytes: Uint8Array, roster: RosterTemplate):
     residentFor = null;
     ex.wasm_export_state();
     const ks = parseState(mem(ex), base);
+    // Carry the durable blob's deterministic-deck flag (byte 1, after the
+    // version) onto the JS Game so a later marshalGame can re-assert it — the
+    // transient import path would otherwise drop it and randomize mid-game
+    // draws on the bot loop. See marshalGame / wasm_set_deterministic_deck.
+    const deterministicDeck = bytes.length > 1 && bytes[1] !== 0;
     const template = {
         id: roster.id,
         name: roster.name,
@@ -559,6 +577,7 @@ export function deserializeGameState(bytes: Uint8Array, roster: RosterTemplate):
     // deck lives in the blob, so deck_length is authoritative from it (the
     // roster's is only a placeholder for stateToGame's template slot).
     game.deck_length = game.deck.length;
+    game.deterministic_deck = deterministicDeck;
     return game;
 }
 
@@ -679,8 +698,13 @@ function packedActionCore(
 ): PackedRunOk | PackedRunReject {
     const buf = mem(ex);
 
-    // Same per-call reseed as runKernel — draws must stay unpredictable.
-    ex.wasm_set_seed(seedSource ? (seedSource() >>> 0) : ((Math.random() * 0xffffffff) >>> 0));
+    // Mid-game LCG seed. Tests pin it via seedSource so the parity suite stays
+    // byte-for-byte. Live, seed it DETERMINISTICALLY from the current game state
+    // (itself a pure function of the deal seed) instead of Math.random — so the
+    // whole game replays from its deal seed. Crypto is drawn exactly once, at
+    // the deal (injectDealSeed); no per-move randomness after that.
+    if (seedSource) ex.wasm_set_seed(seedSource() >>> 0);
+    else ex.wasm_seed_rng_deterministic();
 
     if (wire.length > 128) throw new Error('malformed action wire');
     buf.set(wire, ex.wasm_cards_a_ptr());
@@ -855,6 +879,26 @@ type KernelAction =
 let seedSource: (() => number) | null = null;
 export function __setKernelSeedSource(fn: (() => number) | null): void { seedSource = fn; }
 
+// Test hook: pin the 32-byte deal seed so a deal reproduces a KNOWN game (used
+// by the determinism suite to replay one deal across processes). Null clears it
+// back to the live crypto deal. Ignored under seedSource (that path stays LCG).
+let dealSeedOverride: Uint8Array | null = null;
+export function __setDealSeedOverride(seed: Uint8Array | null): void { dealSeedOverride = seed; }
+
+// 32-bit base for the mid-game bot RNG, derived from the SERVER-ONLY deal seed
+// (game.game_seed, never sent to a client). Seeding the bots from this instead
+// of the public board is a security boundary: a player — even one with the
+// source — can't recompute the seed without game_seed, so they can't predict
+// octogen's world sampling. FNV-1a of the 64-hex-char seed; 0 when there is no
+// deal seed (tests use seedSource to pin the stream, legacy games have none).
+// One-way, so the base leaking (it never does) still wouldn't reveal game_seed.
+export function rngBaseFromSeed(hex?: string | null): number {
+    if (!hex) return 0;
+    let h = 2166136261;
+    for (let i = 0; i < hex.length; i++) h = Math.imul(h ^ hex.charCodeAt(i), 16777619);
+    return h >>> 0;
+}
+
 // The 32-byte (two-128-bit-lane) seed of the most recent LIVE deal, or null if
 // the last deal used the deterministic test path. Persist this to reproduce a
 // deal exactly (see cnitro/src/deal_rng.h). Overwritten on each live deal.
@@ -879,8 +923,8 @@ export function getLastDealSeedHex(): string | null {
 // wasm_import_state, so the front of the buffer is free to carry the seed).
 function injectDealSeed(ex: EngineExports): void {
     if (seedSource) { ex.wasm_set_seed(seedSource() >>> 0); lastDealSeed = null; return; }
-    const seed = new Uint8Array(32);
-    crypto.getRandomValues(seed);
+    const seed = dealSeedOverride ? dealSeedOverride.slice() : new Uint8Array(32);
+    if (!dealSeedOverride) crypto.getRandomValues(seed);
     mem(ex).set(seed, ex.wasm_io_ptr());
     ex.wasm_set_deal_seed_bytes();
     lastDealSeed = seed;
@@ -889,12 +933,14 @@ function injectDealSeed(ex: EngineExports): void {
 function runKernel(game: Game, action: KernelAction): KernelRun {
     const ex = engine();
     marshalGame(ex, game);
-    // Draws consume kernel randomness; reseed per call so play stays as
-    // unpredictable as the Math.random() the TS engine used. The initial deal
-    // ('start') gets the wide, full-universe, reproducible seed instead; every
-    // mid-game move keeps the per-call 32-bit reseed (deal-only scope).
+    // Seed kernel randomness. The initial deal ('start') gets the wide,
+    // full-universe crypto seed (injectDealSeed) — the ONLY crypto draw in a
+    // game. Every mid-game move seeds the LCG DETERMINISTICALLY from the current
+    // state (tests still pin it via seedSource), so the game replays exactly
+    // from its deal seed instead of the old per-move Math.random reseed.
     if (action.kind === 'start') injectDealSeed(ex);
-    else ex.wasm_set_seed(seedSource ? (seedSource() >>> 0) : ((Math.random() * 0xffffffff) >>> 0));
+    else if (seedSource) ex.wasm_set_seed(seedSource() >>> 0);
+    else { ex.wasm_set_rng_base(rngBaseFromSeed(game.game_seed)); ex.wasm_seed_rng_deterministic(); }
 
     let ok = 1;
     switch (action.kind) {

@@ -276,7 +276,11 @@ WASM_API_EXPORTS := \
   -Wl,--export=wasm_legal_moves -Wl,--export=wasm_export_moves \
   -Wl,--export=wasm_apply_action -Wl,--export=wasm_finalize_win \
   -Wl,--export=wasm_view_serialize -Wl,--export=wasm_events_serialize \
-  -Wl,--export=wasm_rearrange_hand
+  -Wl,--export=wasm_rearrange_hand \
+  -Wl,--export=wasm_set_deterministic_deck \
+  -Wl,--export=wasm_seed_rng_deterministic \
+  -Wl,--export=wasm_set_strategy_seed_deterministic \
+  -Wl,--export=wasm_set_rng_base
 
 # bots.wasm exports the rules API above PLUS the bot bridge (wasm_bots_api.c).
 WASM_BOTS_API_EXPORTS := \

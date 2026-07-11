@@ -609,6 +609,12 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
         // admin/teardown UPDATE). The blob's copy is redundant — trust the
         // column so a column-only status change is never masked by a stale blob.
         game.status = data.status;
+        // SERVER-ONLY: carry the deal seed onto the working Game so the bot loop
+        // can seed its Monte-Carlo RNG from it (see wasm/bots.ts / wasm_set_rng_base)
+        // — the bots must NOT be seeded from the public board or their play becomes
+        // predictable. game_seed never reaches a client (not on PublicGame; the
+        // gameToPublicGame / personalize_game projections drop it).
+        game.game_seed = data.game_seed ?? null;
         return game;
     }
 

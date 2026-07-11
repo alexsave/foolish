@@ -27,6 +27,9 @@ export const start_game = (game: Game): AnimationEvent[] => {
     }
     const events = kernelStartGame(game);
     game.game_seed = getLastDealSeedHex();   // persist the deal seed (audit/replay)
+    // A live seed-dealt game pops the pre-shuffled deck (reproducible from the
+    // seed); the test/legacy path (null seed) keeps legacy random draws.
+    game.deterministic_deck = game.game_seed !== null;
     return events;
 }
 
@@ -46,5 +49,7 @@ export const start_game_packed = (game: Game): PackedRunOk => {
     const run = runPackedStart(game, humanSeats);
     applyKernelStateToGame(game, run.post, null);
     game.game_seed = getLastDealSeedHex();   // persist the deal seed (audit/replay)
+    // See start_game: seed-dealt games pop the pre-shuffled deck deterministically.
+    game.deterministic_deck = game.game_seed !== null;
     return run;
 }
