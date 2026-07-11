@@ -296,16 +296,69 @@ into the default build (which is the pc2-tuned shipped config). A pc3+ sweep,
 where rollouts dominate, is the only place it could still pay — left as future
 work, not assumed.
 
-### Net + what's next
+### S3 — LEAFBOOK: the star. SHIPPED at K=4, and the FIRST spend to beat control
 
-All three cheap spends (S0/S1/S4) fail R2 at the shipped pc2/pc4 configs — the
-"free 32 KiB → free strength" thesis does **not** hold via table-doubling, tail
-growth, or a modest world-raise. The strength levers that remain are the two the
-plan always flagged as the real work, and they land in the hexogen scaffold now
-in place:
+Built the full pipeline (`tools/leafbook/*`, `src/leafbook.h`, generated
+`src/leafbook_data.h`, the `-DCD_LEAFBOOK` probe in `cordite_sim.c`,
+hexogen-gated via `cd_sim_set_leafbook`). See `cnitro/LEAFBOOK.md`.
 
-- **S3 LEAFBOOK** (§4) — the star. Saves whole ≤K-card subtrees, which is *real*
-  node savings that can fund an iso-latency raise (unlike S4's unfunded raise).
-  Do the cheap feasibility gate (enumerate + count the canonical space) first.
-- **S2 bound side-table** (§3) — blocked on `C5_BOUNDS_HANDOFF.md` §4 (C5-v2)
-  landing green; that fix is not yet implemented.
+**Feasibility gate (`make leafbook-gate`)** — distinct canonical round-boundary
+forms (both hands non-empty):
+
+| K | book entries | @1 B/entry | verdict |
+|---|---|---|---|
+| 4 | 1,883 | 1.8 KiB | ship (sorted array + binary search) |
+| 5 | 19,715 | 19.3 KiB | fits L1 only via a 1 B/entry minimal-perfect-hash |
+| 6 | 205,853 | 201 KiB | **drop** — 6× over the 32 KiB budget |
+
+K=6 is out; K=5 needs an index store (follow-up). **Shipped K=4** as a sorted
+`(key,value)` array — exact, no perfect-hash risk.
+
+**Value-safety gate (`make leafbook-verify`, non-negotiable §4 step 3):**
+- Offline V-book: **1,000,000** random concrete positions, book-through-
+  canonicalization vs direct solve → **100.000% agreement, 0 mismatches**.
+- In-engine probe: **2,000,000** engine solves (both roles), book-ON (probe
+  fires) vs book-OFF (full search) → **0 mismatches**. Validates the
+  attacker/defender id, the attacker→me perspective flip, and the depth rebase.
+
+  (One gotcha surfaced and fixed: the offline solvers must `cd_sim_solve_reset()`
+  per solve — the persistent TT is only collision-safe kept small, and hammering
+  it with 10⁵ un-reset solves saturates and pollutes values.)
+
+**Payoff (shipped config, book proven-exact so it only ever resolves lines the
+budget-limited search would abort):**
+
+| metric | octogen | hexogen (book, `HX_PCT=100`) |
+|---|---|---|
+| pc2 latency (40g) | 30.08 ms/dec | **26.72 (−11%)** |
+| pc2 strength (1000 paired vs espresso) | — | diff **−0.010 ± 0.010**, win **81.0% vs 80.0%**, better/worse/eq **58/48/894** |
+| pc4 strength (800 paired) | — | **0/0/800 identical** (book resolves the same values octogen already reached at pc4) |
+| book hits | 0 (gate off) | ~51 M / 40 games |
+
+**Verdict: the first spend to clear R2.** Where S0/S1/S4 were flat-or-slower,
+LEAFBOOK is **11% faster at pc2 with neutral-to-slightly-better strength** —
+because it is a *different lever* (exact endgame resolution) than the saturated
+world-budget axis. The 1 win→loss seen in a 30-seed scan is the OCTOGEN.md
+adverse-selection effect (exact play forfeiting swindle equity vs an imperfect
+espresso), not a value error — it is outweighed (58 better / 48 worse over 1000).
+hexogen ships as **octogen + LEAFBOOK**.
+
+### The world-budget axis is saturated — octogen_oracle confirms it
+
+The world-raise (S4) and the 6× `octogen_oracle` are the SAME lever. The Durak
+Bot Ordnance Chart's own budget sweep (0.25×→12× worlds) puts the knee at the
+BASE budget: octogen_oracle tops the table at 77.3% — only **+1.6 pp over
+octogen** at 6× compute, "research-only." That is exactly why S4 measured flat
+here: more worlds buy nothing once past the knee. LEAFBOOK wins precisely
+because it leaves that axis and attacks the *latency* wall (the compute bar that
+keeps the oracle research-only) with exact, zero-search endgame values.
+
+### What's left
+
+- **S3 → K=5**: 19,715 entries fit L1 only via a 1 B/entry minimal-perfect-hash
+  (index by enumeration rank). K=5 reaches bigger, budget-binding subtrees, so
+  its resolution gain (not just speed) should exceed K=4's. The pipeline +
+  gates are in place; only the index store is new work.
+- **S2 bound side-table** (§3) — remains blocked on `C5_BOUNDS_HANDOFF.md` §4
+  (C5-v2), which was characterized as a negative (slower, ~30% flips) and is not
+  being pursued.

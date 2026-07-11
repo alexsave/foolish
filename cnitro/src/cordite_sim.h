@@ -128,6 +128,13 @@ int  cd_sim_solve(SimState *s, int me, int alpha, int beta, long budget, int *ab
 int  cd_sim_solve_d(SimState *s, int me, int alpha, int beta, long *budget,
                     int depth0, int *aborted);
 void cd_sim_solve_reset(void);
+
+// LEAFBOOK (docs/L1_SPEND_PLAN.md §4, S3): a precomputed canonical endgame
+// oracle probed at round-boundary <=K-card nodes BEFORE the TT. It changes
+// which lines resolve within budget, so it is RUNTIME-gated to hexogen only
+// (iron rule R1: octogen stays byte-identical). No-op unless built -DCD_LEAFBOOK.
+void cd_sim_set_leafbook(int on);
+long cd_sim_leafbook_hits(void);   // probes that hit the book since last reset
 // Measurement hook (-DCD_TT_STATS): flush + return this game's peak working set
 // (distinct keys that had to coexist in the table), then reset for the next
 // game. Returns -1 when built without stats. See cordite_sim.c.

@@ -22,6 +22,15 @@ ifeq ($(OMP),1)
   LDFLAGS += -fopenmp
 endif
 
+# LEAFBOOK (docs/L1_SPEND_PLAN.md §4, S3): compile the precomputed canonical
+# endgame oracle into the NATIVE binaries so hexogen (a native research bot) can
+# use it. Runtime-gated to hexogen only (cd_sim_set_leafbook), so octogen and
+# every shipped family stay byte-identical — verified by bot_parity + V0. NOT in
+# WASM_FLAGS: hexogen has no wasm build and the book would only bloat the shipped
+# module. The generated book (src/leafbook_data.h) is committed; regenerate it
+# with `make leafbook` after any change to the endgame solver.
+CFLAGS += -DCD_LEAFBOOK
+
 # The engine + all heuristic / Monte-Carlo bots. Linked into every binary.
 CORE_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/view.c src/awire.c \
             src/evwire.c src/random_strategy.c src/espresso_strategy.c \
@@ -111,6 +120,28 @@ build/l1_measure: tests/l1_measure.c $(wildcard src/*.h) src/game.c src/deal_rng
 .PHONY: l1-measure
 l1-measure: build/l1_measure
 	./build/l1_measure $(GAMES) 1 && ./build/l1_measure $(GAMES) 99991
+
+# LEAFBOOK (docs/L1_SPEND_PLAN.md §4, S3). `make leafbook` regenerates the
+# committed src/leafbook_data.h: enumerate every canonical <=K-card round-boundary
+# endgame, solve each exactly, emit a key-sorted book. `make leafbook-gate` runs
+# the enumeration feasibility census; `make leafbook-verify` runs the V-book
+# value-safety gate (offline canonicalization + in-engine probe, must be 100%).
+# The build_book pass compiles WITHOUT -DCD_LEAFBOOK (it builds the book by
+# direct solves); verify_book compiles WITH it to exercise the engine probe.
+LEAFBOOK_K ?= 4
+LEAFBOOK_CFLAGS := -O2 -ffast-math -Isrc -Wno-deprecated-declarations -DCD_TT_BITS=12
+.PHONY: leafbook leafbook-gate leafbook-verify
+leafbook:
+	@mkdir -p build
+	$(CC) $(LEAFBOOK_CFLAGS) -DLEAFBOOK_BUILD_K=$(LEAFBOOK_K) $(CORE_SRC) tools/leafbook/build_book.c -o build/leafbook_build -lm
+	./build/leafbook_build > src/leafbook_data.h
+leafbook-gate:
+	@mkdir -p build
+	$(CC) -O2 -Isrc tools/leafbook/enumerate.c -o build/leafbook_enum && ./build/leafbook_enum
+leafbook-verify:
+	@mkdir -p build
+	$(CC) $(LEAFBOOK_CFLAGS) -DCD_LEAFBOOK $(CORE_SRC) tools/leafbook/verify_book.c -o build/leafbook_verify -lm
+	./build/leafbook_verify 1000000
 
 # ---------------------------------------------------------------------------
 # WebAssembly rules kernel: game.c + legal.c + the wasm bridge, compiled

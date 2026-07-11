@@ -28,12 +28,15 @@
 
 #include "hexogen_strategy.h"
 #include "octogen_strategy.h"
+#include "cordite_sim.h"
 #include "strategy.h"
 
 int hexogen_strategy_choose(const Game *g, int bot_idx,
                             const LegalMoves *moves, void *ctx) {
     octogen_set_hexogen(1);
+    cd_sim_set_leafbook(1);   // S3 endgame oracle (no-op unless built -DCD_LEAFBOOK)
     int r = octogen_strategy_choose(g, bot_idx, moves, ctx);
+    cd_sim_set_leafbook(0);
     octogen_set_hexogen(0);
     return r;
 }
