@@ -180,7 +180,7 @@ function renderHTML(b64, title) {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>${CSS}</style>
 <div id="app" aria-busy="true">
-  <div id="boot">decompressing module data…</div>
+  <div id="boot">loading… (if this message never changes, the viewer is blocking inline scripts — open this file in a browser tab)</div>
 </div>
 <script id="payload" type="application/octet-stream">${b64}</script>
 <script>${JS}</script>`;

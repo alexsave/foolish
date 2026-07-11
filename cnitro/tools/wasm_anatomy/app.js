@@ -36,25 +36,64 @@
     ['interface', 'Imports · exports'], ['data', 'Data segments'],
   ];
 
+  // Every failure below reports to the boot panel instead of leaving the page
+  // frozen on "decompressing…". Each stage narrates itself, so a hang is
+  // visible as the stage it stuck on, and a thrown/rejected error is shown with
+  // its message + a pointer to open the file in a real browser tab.
+  function bootMsg(t) { const b = D.getElementById('boot'); if (b) b.textContent = t; }
+  function bootFail(t) {
+    const a = D.getElementById('app');
+    if (a) a.innerHTML = '<div id="boot" style="white-space:pre-wrap;max-width:60ch">' + t + '</div>';
+  }
   async function boot() {
-    const b64 = D.getElementById('payload').textContent.trim();
-    const bin = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-    let text;
     try {
-      const ds = new DecompressionStream('gzip');
-      text = await new Response(new Blob([bin]).stream().pipeThrough(ds)).text();
+      const raw = D.getElementById('payload');
+      // Strip ALL whitespace: a viewer that reflows the long base64 line (or the
+      // page getting truncated) would otherwise make atob throw silently.
+      const b64 = (raw ? raw.textContent : '').replace(/\s+/g, '');
+      if (!b64) return bootFail('No embedded module data found — the payload is empty (the page may have been truncated by the viewer). Open docs/wasm-anatomy.html in a browser tab.');
+
+      bootMsg('decoding ' + Math.round(b64.length / 1024) + ' KB…');
+      let bin;
+      try {
+        bin = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+      } catch (e) {
+        return bootFail('Could not decode the embedded data (base64: ' + e.message + ').\nThe page was likely truncated by the viewer — open docs/wasm-anatomy.html in a browser tab.');
+      }
+
+      if (typeof DecompressionStream === 'undefined')
+        return bootFail('This viewer has no DecompressionStream API. Open docs/wasm-anatomy.html in a current Chrome/Safari/Firefox tab.');
+
+      bootMsg('decompressing ' + Math.round(bin.length / 1024) + ' KB…');
+      let text;
+      try {
+        const ds = new DecompressionStream('gzip');
+        const stream = new Response(new Blob([bin]).stream().pipeThrough(ds)).text();
+        // Watchdog: a stalled stream in a locked-down sandbox never rejects, so
+        // race it against a timer — otherwise the page hangs here forever.
+        const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('decompression timed out after 30s (the viewer may be blocking the Streams API)')), 30000));
+        text = await Promise.race([stream, timeout]);
+      } catch (e) {
+        return bootFail('Decompression failed: ' + e.message + '.\nOpen docs/wasm-anatomy.html in a browser tab.');
+      }
+
+      bootMsg('parsing ' + Math.round(text.length / 1024) + ' KB…');
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (e) {
+        return bootFail('Module data parse error: ' + e.message + '.');
+      }
+
+      MODULES = data.modules; META = { title: data.title || 'WASM Anatomy', subtitle: data.subtitle || '' };
+      D.title = META.title;
+      // restore theme
+      try { const t = localStorage.getItem('wasmviz-theme'); if (t) D.documentElement.setAttribute('data-theme', t); } catch (e) { /* storage may be blocked in a sandbox */ }
+      buildShell();
+      render();
     } catch (e) {
-      D.getElementById('app').innerHTML = '<div id="boot">This page needs a browser with DecompressionStream (any current Chrome/Safari/Firefox).</div>';
-      return;
+      bootFail('Failed to load the visualizer: ' + (e && e.message ? e.message : e) + '.');
     }
-    const data = JSON.parse(text);
-    MODULES = data.modules; META = { title: data.title || 'WASM Anatomy', subtitle: data.subtitle || '' };
-    D.title = META.title;
-    // restore theme
-    const t = localStorage.getItem('wasmviz-theme');
-    if (t) D.documentElement.setAttribute('data-theme', t);
-    buildShell();
-    render();
   }
 
   function buildShell() {
