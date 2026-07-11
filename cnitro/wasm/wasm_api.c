@@ -18,6 +18,7 @@
 #include "legal.h"
 #include "replay.h"
 #include "wasm_overlay.h"
+#include "rules_overlay.h"
 #include "view.h"
 #include "awire.h"
 #include "evwire.h"
@@ -65,6 +66,17 @@ void *memset(void *dst, int c, size_t n) {
 #endif
 #define MAX_IN_CARDS 128
 
+#ifdef CD_RULES_OVERLAY
+// R1 (docs/RULES_GUARDS_WASM_MEMORY_PLAN.md): the rules.wasm arena that hosts
+// BOTH buffer families (see rules_overlay.h). Sized by the larger (action)
+// family; the replay family aliases it from offset 0. rules.wasm-only — the
+// bots build uses solve_ws (CD_WASM_OVERLAY) and native uses plain statics.
+_Alignas(16) static unsigned char g_rules_arena[RULES_ARENA_SIZE];
+unsigned char *const rules_overlay = g_rules_arena;
+_Static_assert(RULES_OVL_ACTION_END <= RULES_ARENA_SIZE, "action family overflows rules arena");
+_Static_assert(RULES_OVL_REPLAY_END <= RULES_ARENA_SIZE, "replay family overflows rules arena");
+#endif
+
 #ifdef CD_WASM_OVERLAY
 // M9 (docs/BOTS_WASM_MEMORY_PLAN.md): g_io aliases into solve_ws (see
 // wasm_overlay.h) — bots-only, saving 72 KiB. Never concurrent with the solver
@@ -74,6 +86,13 @@ void *memset(void *dst, int c, size_t n) {
 // calls). rules.wasm has no solve_ws, so it keeps the static buffer.
 _Static_assert(IO_CAP <= CD_OVL_GIO_END - CD_OVL_GIO_OFF, "g_io overflows its overlay slot");
 #define g_io ((unsigned char *)(cd_overlay + CD_OVL_GIO_OFF))
+#elif defined(CD_RULES_OVERLAY)
+// R1: g_io is the ACTION family's I/O slot. Disjoint from g_moves/g_snaps
+// (the action call reads a move / writes an export into g_io while g_moves and
+// g_snaps hold the menu / snapshots — all three live at once, at distinct
+// offsets), and aliased over the replay family (dead during any replay call).
+_Static_assert(IO_CAP <= RULES_OVL_ACTION_END - RULES_OVL_IO_OFF, "g_io overflows its overlay slot");
+#define g_io ((unsigned char *)(rules_overlay + RULES_OVL_IO_OFF))
 #else
 static unsigned char g_io[IO_CAP];
 #endif
@@ -84,11 +103,27 @@ static Game g_game;
 // ~2.5 KB instead of the full log-laden struct.
 #define GAME_PREFIX_SIZE (__builtin_offsetof(Game, num_logs))
 typedef struct { _Alignas(8) unsigned char bytes[GAME_PREFIX_SIZE]; } SnapSlot;
+#ifdef CD_RULES_OVERLAY
+// R1: g_snaps is the ACTION family's snapshot slot. 16-aligned arena +
+// 8-aligned offset satisfies SnapSlot's _Alignas(8).
+_Static_assert(_Alignof(SnapSlot) <= 16, "SnapSlot alignment exceeds the arena's 16");
+_Static_assert(RULES_OVL_SNAPS_OFF % _Alignof(SnapSlot) == 0, "g_snaps offset misaligned");
+_Static_assert(sizeof(SnapSlot) * MAX_SNAPS <= RULES_OVL_IO_OFF - RULES_OVL_SNAPS_OFF, "g_snaps overflows its overlay slot");
+#define g_snaps ((SnapSlot *)(rules_overlay + RULES_OVL_SNAPS_OFF))
+#else
 static SnapSlot g_snaps[MAX_SNAPS];
+#endif
 static int g_snap_tags[MAX_SNAPS];
 static int g_snap_aux[MAX_SNAPS];
 static int g_n_snaps;
+#ifdef CD_RULES_OVERLAY
+// R1: g_moves is the ACTION family's menu slot (offset 0).
+_Static_assert(_Alignof(LegalMoves) <= 16, "LegalMoves alignment exceeds the arena's 16");
+_Static_assert(sizeof(LegalMoves) <= RULES_OVL_SNAPS_OFF - RULES_OVL_MOVES_OFF, "g_moves overflows its overlay slot");
+#define g_moves (*(LegalMoves *)(rules_overlay + RULES_OVL_MOVES_OFF))
+#else
 static LegalMoves g_moves;
+#endif
 // TS writes 1-byte wire cards into the raw buffers; decode_in_cards
 // converts (and clamps) them to the in-memory Card.
 static unsigned char g_in_raw_a[MAX_IN_CARDS];
@@ -521,6 +556,12 @@ int wasm_can_cover(int as, int av, int ds, int dv, int power_suit) {
 // is a fixed static address, so a cached wasm_replay_io_ptr() stays valid.
 _Static_assert(REPLAY_IO_CAP <= CD_OVL_END - CD_OVL_IO_OFF, "g_replay_io overflows its overlay slot");
 #define g_replay_io ((unsigned char *)(cd_overlay + CD_OVL_IO_OFF))
+#elif defined(CD_RULES_OVERLAY)
+// R1: g_replay_io is the REPLAY family's blob slot, aliased over the action
+// family. rules_overlay is a fixed static address, so a cached
+// wasm_replay_io_ptr() stays valid across calls.
+_Static_assert(REPLAY_IO_CAP <= RULES_OVL_REPLAY_END - RULES_OVL_REPLAY_IO_OFF, "g_replay_io overflows its overlay slot");
+#define g_replay_io ((unsigned char *)(rules_overlay + RULES_OVL_REPLAY_IO_OFF))
 #else
 static unsigned char g_replay_io[REPLAY_IO_CAP];
 #endif

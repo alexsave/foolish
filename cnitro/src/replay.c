@@ -24,6 +24,7 @@
 
 #include "replay.h"
 #include "wasm_overlay.h"
+#include "rules_overlay.h"
 #include <string.h>
 
 static int g_err_detail = 0;
@@ -64,6 +65,15 @@ typedef struct { int n; uint32_t l[BN_CAP]; } Bn;
 // call (bn_zero / bn_from_bytes_be / coder_finish set .n before any read).
 _Static_assert(sizeof(Bn) <= CD_OVL_IO_OFF - CD_OVL_BN_OFF, "g_bn overflows its overlay slot");
 #define g_bn (*(Bn *)(cd_overlay + CD_OVL_BN_OFF))
+#elif defined(CD_RULES_OVERLAY)
+// R1 (docs/RULES_GUARDS_WASM_MEMORY_PLAN.md): g_bn is the REPLAY family's
+// bignum slot in the rules arena (see rules_overlay.h). Written-before-read
+// every call, exactly as the M8 bots overlay above. 16-aligned arena satisfies
+// Bn's 4-byte alignment at the 4-aligned RULES_OVL_BN_OFF.
+_Static_assert(_Alignof(Bn) <= 16, "Bn alignment exceeds the arena's 16");
+_Static_assert(RULES_OVL_BN_OFF % _Alignof(Bn) == 0, "g_bn offset misaligned");
+_Static_assert(sizeof(Bn) <= RULES_OVL_REPLAY_IO_OFF - RULES_OVL_BN_OFF, "g_bn overflows its overlay slot");
+#define g_bn (*(Bn *)(rules_overlay + RULES_OVL_BN_OFF))
 #else
 static Bn g_bn;
 #endif
@@ -144,6 +154,12 @@ typedef struct { uint32_t cum, w, M; } RecChoice;
 // before it is ever read back in the finish/decode pass.
 _Static_assert((size_t)REC_CAP * sizeof(RecChoice) <= CD_OVL_BN_OFF, "g_rec overflows its overlay slot");
 #define g_rec ((RecChoice *)(cd_overlay + CD_OVL_REC_OFF))
+#elif defined(CD_RULES_OVERLAY)
+// R1: g_rec is the REPLAY family's choice-log slot in the rules arena (offset
+// 0). Written-before-read every call, exactly as the M8 bots overlay above.
+_Static_assert(_Alignof(RecChoice) <= 16, "RecChoice alignment exceeds the arena's 16");
+_Static_assert((size_t)REC_CAP * sizeof(RecChoice) <= RULES_OVL_BN_OFF - RULES_OVL_REC_OFF, "g_rec overflows its overlay slot");
+#define g_rec ((RecChoice *)(rules_overlay + RULES_OVL_REC_OFF))
 #else
 static RecChoice g_rec[REC_CAP];
 #endif

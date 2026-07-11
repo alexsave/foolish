@@ -6,6 +6,7 @@
 //
 // Metrics:
 //   size   — the three wasm modules (rules/guards embedded b64, bots.wasm.gz), raw + gzip bytes
+//   linearMemory — each module's DECLARED linear memory (initial pages/bytes + pinned flag)
 //   speed  — engine throughput (games/sec, actions/sec) from e2e/bench_engine.ts
 //   memory — peak bots/kernel wasm linear memory (MB) after the MC bots ran
 //   e2e    — THE headline: full thinking-bot move latency vs real Postgres
@@ -21,6 +22,13 @@ const runNode = (args, extraEnv = {}) =>
     { encoding: 'utf8', env: { ...tsxEnv, ...extraEnv }, maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] });
 
 // ---- size: committed wasm artifacts (no toolchain needed) ----
+// Return the decompressed wasm bytes for a base64 embed (rules/guards) …
+function embeddedBytes(tsFile) {
+  const src = readFileSync(`${WASM}/${tsFile}`, 'utf8');
+  const m = src.match(/b64[^']*'([A-Za-z0-9+/=]+)'/);
+  if (!m) return null;
+  return gunzipSync(Buffer.from(m[1], 'base64'));
+}
 function embeddedSize(tsFile) {
   const src = readFileSync(`${WASM}/${tsFile}`, 'utf8');
   const m = src.match(/b64[^']*'([A-Za-z0-9+/=]+)'/);
@@ -32,6 +40,38 @@ function gzFileSize(path) {
   const gz = readFileSync(path);
   return { raw: gunzipSync(gz).length, gz: gz.length };
 }
+
+// DECLARED linear memory: the (min,max) page limits in a module's memory
+// section — the size the module reserves at instantiation, independent of any
+// runtime bench. This is what the R0/R1/R4 rules shrink and the guards pin move.
+// Deterministic + toolchain-free, so it runs on both base and head everywhere.
+const PAGE = 65536;
+function linearMemOf(bytes) {
+  if (!bytes) return null;
+  let p = 8; // skip the 8-byte module header
+  const leb = () => { let r = 0, s = 0, b; do { b = bytes[p++]; r |= (b & 0x7f) << s; s += 7; } while (b & 0x80); return r >>> 0; };
+  while (p < bytes.length) {
+    const id = bytes[p++], len = leb(), end = p + len;
+    if (id === 5) { // memory section
+      leb(); // count (always 1 here)
+      const flags = leb(), min = leb();
+      const max = (flags & 1) ? leb() : null;
+      return { pages: min, bytes: min * PAGE, maxPages: max, pinned: max === min };
+    }
+    p = end;
+  }
+  return null;
+}
+function linearMemory() {
+  try {
+    return {
+      rules: linearMemOf(embeddedBytes('rules_wasm.ts')),
+      guards: linearMemOf(embeddedBytes('guards_wasm.ts')),
+      bots: linearMemOf(gunzipSync(readFileSync(`${WASM}/bots.wasm.gz`))),
+    };
+  } catch (e) { return { error: String(e.message || e) }; }
+}
+
 function size() {
   try {
     return {
@@ -113,6 +153,7 @@ function e2eAndMemory() {
 const em = e2eAndMemory();
 const metrics = {
   size: size(),
+  linearMemory: linearMemory(),
   speed: speed(),
   memory: em.memory ?? { error: em.error ?? 'no memory' },
   e2e: em.e2e ?? { error: em.error ?? 'no e2e' },

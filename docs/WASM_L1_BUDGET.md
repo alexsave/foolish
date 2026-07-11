@@ -34,11 +34,18 @@ For a module that never calls `memory.grow`, peak == initial.
 | module        | before (peak) | after (peak) | reduction | grows at runtime? |
 | ------------- | ------------- | ------------ | --------- | ----------------- |
 | `guards.wasm` | 256 KiB | **64 KiB · 1 page** | 4× | no — pinned, 0 `memory.grow` |
-| `rules.wasm`  | 3.31 MiB | **320 KiB · 5 pages** | 10.6× | no — all-static, 0 `memory.grow` |
+| `rules.wasm`  | 3.31 MiB | **192 KiB · 3 pages** | 17.6× | no — all-static, pinned, 0 `memory.grow` |
 | `bots.wasm`   | 5.13 MiB | **~1.375 MiB** | ~3.7× (−73%) | **yes** — see below |
 
 `bots.wasm` is the one that grows. Its **initial** memory dropped 64 → 18 pages
-(4 MiB → 1.13 MiB) from the shared buffer caps. On first play its Monte-Carlo
+(4 MiB → 1.13 MiB) from the shared buffer caps, then 18 → 14 (ship-trim + solver
+hoist), and now **14 → 13** by shrinking its shadow stack 64 → 22 KiB: the
+production stack worst is the cover enumeration at 14.3 KiB (measured; real games
+cap the defender at ≤6 uncovered battles), so 22 KiB is 1.54×. Unlike rules,
+bots can't be *pinned* (it grows a TT), so this is a soft initial-page win — a
+corrupt >~22-battle state would trap cleanly under `--stack-first` rather than
+complete, which bots (server-side, engine-produced states only) never sees. On
+first play its Monte-Carlo
 endgame solver then bump-allocates a transposition table (+2 slack pages) and
 stays flat there. That table was 1 MiB (`CD_TT_BITS=16`); the divergence study
 below shrank it to 128 KiB (`CD_TT_BITS=13`, 8,192 × 16 B), and a 2-way
@@ -91,7 +98,7 @@ frame.
 | animation snapshots (`MAX_SNAPS`)   | 12           | 24          | 1.8× *(analytic)* | ring drops extra frames (visual only) |
 | io buffer, rules (`WASM_IO_CAP`)    | 16,898 (log export) | 24,576 | 1.45× | log export is the widest unchunked write; bounds-checked |
 | io buffer, guards (`IO_CAP`)        | 8,450 (log export) | 8,704 | 1.03× | export not in the linker allow-list; kept clear defensively |
-| shadow stack, rules                 | ~45 KiB (cover enum) | 64 KiB | 1.4× | `--stack-first` → loud trap, not corruption |
+| shadow stack, rules                 | 14.3 KiB (cover enum, canary) | 32 KiB | 2.23× | `--stack-first` → loud trap, not corruption (R4) |
 | shadow stack, guards                | <2 KiB (Game clone in BSS) | 16 KiB | >5× | `--stack-first` → loud trap |
 
 ### `REPLAY_BN_CAP` is derived, not measured
@@ -123,14 +130,24 @@ Shipping 24 is ~1.8× the ceiling at zero page cost.
   48-slot ring was 55.7 KiB of write-only memory. Reviving snapshots means
   re-adding the exports *and* raising the cap back.
 
-## Where `rules.wasm`'s 5 pages go (≈260 KiB static)
+## Where `rules.wasm`'s pages go (now 3 pages after the overlay + stack round)
 
-The remaining weight is real working set, not slack: `g_moves` (LegalMoves menu,
-59 KiB at `MAX_LEGAL_MOVES=1024`), `g_rec` (48 KiB), `g_replay_io` (32 KiB),
-`g_snaps` (28 KiB), `g_io` (24 KiB), `g_comb` (the 52×52 binomial table, 21 KiB),
-`g_game` (18 KiB). The replay codec's tables (`g_comb`, `g_opts`, `g_weights`)
-are the next target if 4 pages is ever wanted, but they're wire-format-frozen and
-were left untouched here.
+The buffers are real working set: `g_moves` (LegalMoves menu, 59 KiB at
+`MAX_LEGAL_MOVES=1024`), `g_rec` (48 KiB), `g_replay_io` (32 KiB), `g_snaps`
+(18 KiB), `g_io` (24 KiB), `g_comb` (the 52×52 binomial table, 21 KiB), `g_game`
+(18 KiB). The replay codec's tables (`g_comb`, `g_opts`, `g_weights`) are
+wire-format-frozen and were left untouched.
+
+**Round result (docs/RULES_GUARDS_WASM_MEMORY_PLAN.md): 5 → 3 pages.** R1 aliases
+the replay-call scratch family {`g_rec`,`g_bn`,`g_replay_io`} (~90 KiB) *over*
+the action family {`g_moves`,`g_snaps`,`g_io`} in one `g_rules_arena` — the two
+are never live at once (single-threaded; replay encode/decode vs action/menu are
+non-nesting exports), reclaiming a page. R4 then shrinks the shadow stack
+64 → 32 KiB (the cover-enum canary measures a 14.3 KiB worst; 2.23× margin),
+reclaiming another. Linear memory is now hard-pinned at **196,608 B (3 pages)**,
+so any future static growth fails the link. R3 (`MAX_LEGAL_MOVES` 512) was
+declined — after the overlay the arena is action-bound, so it can't cross a page
+alone.
 
 ## `bots.wasm` floor and the transposition-table study
 

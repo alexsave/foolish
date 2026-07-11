@@ -332,20 +332,50 @@ WASM_BOTS_API_EXPORTS := \
 # g_game only ever holds ONE action's logs — hard worst ~76 (a 64-cover
 # round's discard + draws + transitions). The bots module MUST keep 512:
 # its belief imports the whole session log (TS MAX_KERNEL_LOGS mirror).
-# Stack 64KB: no solver, no rollouts — the deepest rules path is the cover
-# enumeration (~45KB measured worst); 64KB is 1.4x that, and --stack-first
-# turns any regression into a loud trap that the fuzz + cover e2e suites
-# exercise directly (they drive the enumeration harder than production
-# does). The trailing -z stack-size overrides the shared flags' 256KB (last
-# one wins in wasm-ld).
+# Stack 32KB (R4, docs/RULES_GUARDS_WASM_MEMORY_PLAN.md): no solver, no
+# rollouts — the deepest rules path is the cover enumeration. A wasm stack
+# canary (paint 0xA5, drive the cover + attack-combination corpus through the
+# production kernelLegalMoves marshal, scan) measures the realistic worst at
+# 14.3 KiB (calc_cover_moves' CoverOption opts[64] ~= 9 KiB single frame, plus
+# ~576 B/level over n_uncovered levels of choose_attack_subset). 32 KiB is
+# 2.23x that. The old 64 KiB was sized for the analytic MAX_BATTLES=64 worst
+# (~45 KiB), but that state is unreachable: choose_attack_subset enumerates
+# 2^n_uncovered subsets, so it HANGS by ~n_uncovered 28-30 — long before the
+# ~40-battle depth that would overflow even the 32 KiB stack. So no state that
+# completes at 64 KiB traps at 32 KiB; --stack-first keeps any surprise a loud
+# trap that the fuzz + cover e2e suites (which drive enumeration harder than
+# production) exercise directly. The trailing -z stack-size overrides the
+# shared flags' 256KB (last one wins in wasm-ld). Net: -32 KiB stack, and with
+# the R1 arena at 102,544 B the module drops 4 -> 3 pages.
 # WASM_IO_CAP=24576: this build's widest unchunked io write is the log
 # export at MAX_LOGS=128 — 2 + 128 x (4 + 64x2) = 16,898B; 24KB is 1.45x
 # that (the 72KB default exists for bots' 512-log session export).
 # Together with the shared L1 caps above, rules.wasm linear memory drops
 # 53 pages (3.31MB) -> 5 pages (320KB).
+# PIN (R0, docs/RULES_GUARDS_WASM_MEMORY_PLAN.md): --initial-memory ==
+# --max-memory freezes rules.wasm linear memory exactly like the guards pin
+# (see WASM_GUARDS_FLAGS below). The module has no allocator and never calls
+# memory.grow (all state is the static caps above), so a fixed size is a hard
+# invariant: if any buffer grows past the pin, wasm-ld REFUSES TO LINK, and any
+# runtime memory.grow traps. This is what makes the tight R1 headroom a build
+# error instead of a production surprise. Re-pin LOWER after each landed
+# candidate. 196608 = 3 pages after the R1 arena overlay + R4 stack shrink
+# (below); 4 pages (262144) was the post-overlay floor and 5 pages (327680)
+# the pre-overlay floor.
+# CD_RULES_OVERLAY (R1, docs/RULES_GUARDS_WASM_MEMORY_PLAN.md): alias the
+# replay-call scratch family (g_rec + g_bn + g_replay_io, ~90 KiB) over the
+# action family (g_moves + g_snaps + g_io) in one arena (src/rules_overlay.h,
+# g_rules_arena in wasm_api.c). The two families are provably never live at the
+# same time (single-threaded module; replay encode/decode vs action/menu are
+# top-level exports that never nest, and each buffer is written-before-read
+# within its call). Saves ~93 KiB → 5 pages -> 4 pages. rules.wasm ONLY: the
+# bots build aliases into solve_ws instead (CD_WASM_OVERLAY), native uses plain
+# statics; the two flavors are mutually exclusive (#error in rules_overlay.h).
 WASM_RULES_FLAGS := $(filter-out -DMAX_LEGAL_MOVES=4096,$(WASM_FLAGS)) \
                     -DMAX_LEGAL_MOVES=1024 -DMAX_LOGS=128 -DWASM_IO_CAP=24576 \
-                    -Wl,-z,stack-size=65536
+                    -DCD_RULES_OVERLAY \
+                    -Wl,-z,stack-size=32768 \
+                    -Wl,--initial-memory=196608 -Wl,--max-memory=196608
 
 # Blanket header dependency, same rationale as the native objects: a header
 # edit must rebuild BOTH wasm modules or they ship divergent kernels.
@@ -474,10 +504,20 @@ WASM_BOT_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/view.c sr
 # which only the bots module links — rules.wasm has no solver, and native builds
 # run OMP games in parallel where the alias would race. bots-module compile only.
 WASM_BOT_CFLAGS  := $(filter-out -Wl% $(WASM_OPT),$(WASM_FLAGS)) -DCD_WASM_OVERLAY
-# bots-only 64 KiB shadow stack (measured high-water 13.2 KiB after M7a +
-# M2-stream + ship-trim, see the Stack comment above). Trailing -z stack-size
-# wins in wasm-ld, overriding the shared WASM_FLAGS' 256 KiB for bots only.
-WASM_BOT_LDFLAGS := $(filter -Wl%,$(WASM_FLAGS)) -Wl,-z,stack-size=65536
+# bots-only 22 KiB shadow stack. Adversarial canary (e2e/rules_stack_canary.mts
+# for the cover path + e2e/stack_canary.mts for the solver path) measures the
+# PRODUCTION worst at 14.3 KiB — the cover enumeration (calc_cover_moves'
+# CoverOption opts[64] ~9.5 KiB + ~576 B per uncovered battle), which dominates
+# the solver's ~12 KiB. Real games cap the defender at <=6 uncovered battles, so
+# 22 KiB is 1.54x the production worst. Only a CORRUPT/hostile marshaled state
+# with >~22 uncovered battles could exceed it (the cover frame is linear in
+# battle count) — and that traps cleanly under --stack-first, never corrupts,
+# exactly as the rules 32 KiB choice accepts. bots is server-side and only ever
+# marshals engine-produced states (<=6 battles), so this path is unreachable in
+# production. Net: -42 KiB stack takes bots' INITIAL linear memory 14 -> 13 pages
+# (893,664 -> 850,656 B; the module still grows a TT on top at runtime — see the
+# peak table in docs/WASM_L1_BUDGET.md). Trailing -z stack-size wins in wasm-ld.
+WASM_BOT_LDFLAGS := $(filter -Wl%,$(WASM_FLAGS)) -Wl,-z,stack-size=22528
 WASM_BOT_O3_SRC  := src/cordite_sim.c src/cordite_strategy.c \
                     src/octogen_strategy.c
 

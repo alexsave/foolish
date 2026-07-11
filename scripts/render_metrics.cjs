@@ -102,6 +102,17 @@ function memRow(label, bBytes, hBytes) {
   return `| ${label} | ${mb(bBytes)} | ${mb(hBytes)} | ${deltaCell(bBytes, hBytes, { fmt: (x) => mb(Math.abs(x)).replace(' MB', '') + ' MB' })} |`;
 }
 
+// DECLARED linear memory per module (pages · KB), from the committed artifacts.
+// bots.wasm is initial-only (it grows a TT at runtime — see the peak table); a
+// pinned module (--initial-memory == --max-memory) is flagged 📌.
+function declaredMemRows(base, head) {
+  const pageStr = (lm) => lm == null ? 'n/a' : `${lm.pages} pg · ${kb(lm.bytes)}${lm.pinned ? ' 📌' : ''}`;
+  return ['rules', 'guards', 'bots'].map((m) => {
+    const b = base?.linearMemory?.[m], h = head?.linearMemory?.[m];
+    return `| \`${m}.wasm\` | ${pageStr(b)} | ${pageStr(h)} | ${deltaCell(b?.bytes, h?.bytes, { fmt: kb })} |`;
+  }).join('\n');
+}
+
 function render(base, head, coverageSlot = null) {
   const bMem = base?.memory || {}, hMem = head?.memory || {};
   const bSpd = base?.speed || {}, hSpd = head?.speed || {};
@@ -128,7 +139,14 @@ ${spdRow('games/sec', bSpd.gamesPerSec, hSpd.gamesPerSec)}
 ${spdRow('actions/sec', bSpd.actionsPerSec, hSpd.actionsPerSec)}
 ${spdRow('legal-evals/sec', bSpd.legalEvalsPerSec, hSpd.legalEvalsPerSec)}
 
-### 💾 wasm linear memory (peak)
+### 💾 wasm linear memory — declared (initial)
+_Lower is better; page-granular (64 KB). 📌 = pinned (\`--initial-memory == --max-memory\`); \`bots.wasm\` grows a TT at runtime — see peak below._
+
+| module | base | this PR | Δ |
+|---|---|---|---|
+${declaredMemRows(base, head)}
+
+### 💾 wasm linear memory (runtime peak)
 _Lower is better; page-granular (64 KB)._
 
 | module | base | this PR | Δ |
