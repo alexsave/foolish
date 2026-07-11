@@ -872,7 +872,7 @@ static int og_explain_on(void) {
 // og_ex_emit (the per-decision JSON dump) is defined after the Candidates
 // typedef, just above octogen_choose_impl.
 static void og_ex_emit(const Game *g, int bot_idx, const LegalMoves *moves,
-                       const void *C, const double *score, const int *nsim,
+                       const Belief *B, const void *C, const double *score, const int *nsim,
                        const bool *alive, const bool *forced_loss,
                        int chosen_idx, int solver_applied, int solver_win_idx);
 #endif  // OG_EXPLAIN_BUILD
@@ -1232,7 +1232,7 @@ static void og_ex_move_label(char *label, size_t cap, const LegalMove *m, int tr
 // by CANDIDATE position k (matching C->idx[k]); verdicts/forced_loss index by
 // the move index into moves->moves[].
 static void og_ex_emit(const Game *g, int bot_idx, const LegalMoves *moves,
-                       const void *Cv, const double *score, const int *nsim,
+                       const Belief *B, const void *Cv, const double *score, const int *nsim,
                        const bool *alive, const bool *forced_loss,
                        int chosen_idx, int solver_applied, int solver_win_idx) {
     (void)solver_win_idx;
@@ -1244,6 +1244,31 @@ static void og_ex_emit(const Game *g, int bot_idx, const LegalMoves *moves,
 
     OGA("{\"ply\":%d,\"seat\":%d,\"deck\":%d,\"defender\":%d,\"trump\":%d,\"nlogs\":%d",
         g->num_logs, bot_idx, g->deck_count, g->defender, trump, g->num_logs);
+
+    // octogen's actual belief about the hidden cards (public deduction): the
+    // cards it has PINNED to each opponent's hand (watched them pick up, not yet
+    // replayed) vs the genuinely-unknown pool (deck + un-pinned opponent cards),
+    // plus demonstrated suit voids and rank floors. This is what octogen knows,
+    // straight from og_build_belief — not reconstructed downstream.
+    if (B) {
+        OGA(",\"belief\":{\"pinned\":[");
+        for (int p = 0; p < g->num_players; p++) {
+            OGA("%s", p ? "," : "");
+            w += og_ex_cards_json(buf + w, sizeof(buf) - w, B->pinned[p], B->pinned_n[p], trump);
+        }
+        OGA("],\"pool\":");
+        w += og_ex_cards_json(buf + w, sizeof(buf) - w, B->pool, B->n, trump);
+        // voids[p] = attack cards p demonstrably could NOT cover at a pickup, so
+        // p holds nothing that beats them (a deduced constraint, not a card).
+        OGA(",\"voids\":[");
+        for (int p = 0; p < g->num_players; p++) {
+            OGA("%s", p ? "," : "");
+            w += og_ex_cards_json(buf + w, sizeof(buf) - w, B->voids[p], B->void_n[p], trump);
+        }
+        OGA("],\"floor\":[");
+        for (int p = 0; p < g->num_players; p++) OGA("%s%d", p ? "," : "", B->floor_v[p]);
+        OGA("]}");
+    }
 
     OGA(",\"hand\":");
     { const Player *pl = &g->players[bot_idx];
@@ -1319,7 +1344,8 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
 #ifdef OG_EXPLAIN_BUILD
         if (og_explain_on()) {
             og_ex_solve_applied = 0;
-            og_ex_emit(g, bot_idx, moves, NULL, NULL, NULL, NULL, NULL, 0, 0, -1);
+            Belief lb; og_build_belief(g, bot_idx, &lb);   // for the known-state dump only
+            og_ex_emit(g, bot_idx, moves, &lb, NULL, NULL, NULL, NULL, NULL, 0, 0, -1);
         }
 #endif
         return 0;
@@ -1415,7 +1441,7 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
 #ifdef OG_EXPLAIN_BUILD
         if (og_explain_on()) {
             Candidates EC; og_pick_candidates(g, moves, forced_loss, &EC);
-            og_ex_emit(g, bot_idx, moves, &EC, NULL, NULL, NULL, forced_loss,
+            og_ex_emit(g, bot_idx, moves, &B, &EC, NULL, NULL, NULL, forced_loss,
                        solved, og_ex_solve_applied, solved);
         }
 #endif
@@ -1433,7 +1459,7 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
     if (C.n == 0) {
 #ifdef OG_EXPLAIN_BUILD
         if (og_explain_on())
-            og_ex_emit(g, bot_idx, moves, &C, NULL, NULL, NULL, forced_loss,
+            og_ex_emit(g, bot_idx, moves, &B, &C, NULL, NULL, NULL, forced_loss,
                        0, og_ex_solve_applied, -1);
 #endif
         game_rng_set(saved_rng); return 0;
@@ -1441,7 +1467,7 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
     if (C.n == 1) {
 #ifdef OG_EXPLAIN_BUILD
         if (og_explain_on())
-            og_ex_emit(g, bot_idx, moves, &C, NULL, NULL, NULL, forced_loss,
+            og_ex_emit(g, bot_idx, moves, &B, &C, NULL, NULL, NULL, forced_loss,
                        C.idx[0], og_ex_solve_applied, -1);
 #endif
         game_rng_set(saved_rng); return C.idx[0];
@@ -1574,7 +1600,7 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
     int chosen = best >= 0 ? C.idx[best] : 0;
 #ifdef OG_EXPLAIN_BUILD
     if (og_explain_on())
-        og_ex_emit(g, bot_idx, moves, &C, score, nsim, alive, forced_loss,
+        og_ex_emit(g, bot_idx, moves, &B, &C, score, nsim, alive, forced_loss,
                    chosen, og_ex_solve_applied, -1);
 #endif
     game_rng_set(saved_rng);

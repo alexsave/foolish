@@ -178,8 +178,49 @@ static void inject_deal(Game *g, const char *dealfile) {
             n0, n1, nd, flip[0].suit, flip[0].value, g->power_suit);
 }
 
+// ---- wasm-faithful per-decision reseed (fidelity / security probe) --------
+// Replicate the LIVE wasm bot seeding (wasm_api.c state_fnv + engine.ts
+// rngBaseFromSeed) so we can test whether the server-only deal seed actually
+// reaches octogen's decision. rngBaseFromSeed = FNV-1a over the 64-hex-char
+// seed STRING; state_fnv folds that base + the volatile public state.
+static uint32_t g_ogx_rng_base = 0u;
+static uint32_t ogx_rng_base_from_hex(const char *hex) {
+    uint32_t h = 2166136261u;
+    for (const char *p = hex; *p; p++) h = (h ^ (uint32_t)(unsigned char)*p) * 16777619u;
+    return h;
+}
+static uint32_t ogx_state_fnv(const Game *g, uint32_t salt) {
+    uint32_t h = 2166136261u ^ salt ^ g_ogx_rng_base;
+#define OGXMIX(b) do { h = (h ^ (uint32_t)(unsigned char)(b)) * 16777619u; } while (0)
+    OGXMIX(g->num_logs); OGXMIX((unsigned)g->num_logs >> 8);
+    OGXMIX(g->defender); OGXMIX(g->first_attacker); OGXMIX(g->power_suit);
+    OGXMIX(g->deck_count); OGXMIX((unsigned)g->deck_count >> 8);
+    for (int i = 0; i < g->deck_count; i++) { OGXMIX(g->deck[i].suit); OGXMIX(g->deck[i].value); }
+    for (int p = 0; p < g->num_players; p++) {
+        OGXMIX(g->players[p].hand_count);
+        for (int j = 0; j < g->players[p].hand_count; j++) {
+            OGXMIX(g->players[p].hand[j].suit); OGXMIX(g->players[p].hand[j].value);
+        }
+    }
+#undef OGXMIX
+    return h;
+}
+// Mirror the live path (engine.ts runKernel + bots.ts): per move-application seed
+// game_random from state_fnv(0); per bot decision seed random_strategy from
+// state_fnv(0x9E3779B9). Both fold in the SERVER-ONLY base.
+static void ogx_wasm_reseed(const Game *g) {
+    game_rng_set(ogx_state_fnv(g, 0u));
+    random_strategy_set_seed(ogx_state_fnv(g, 0x9E3779B9u));
+}
+
 static int driven_replay(uint8_t *seed, const char *movesfile, const char *dealfile) {
     cd_sim_solve_reset();
+    // Optional: OGX_WASM_SEED=<64-hex deal seed> makes the driver seed octogen's
+    // RNGs exactly like the live wasm server (folding in the secret base), to
+    // test whether that changes octogen's picks vs the public-state-only default.
+    const char *wasm_hex = getenv("OGX_WASM_SEED");
+    if (wasm_hex && strlen(wasm_hex) >= 1) g_ogx_rng_base = ogx_rng_base_from_hex(wasm_hex);
+    int wasm_seed_mode = (wasm_hex != NULL);
     game_set_seed(1);
     game_set_deal_seed_bytes(seed, 32);
     Game g; memset(&g, 0, sizeof g);
@@ -223,6 +264,7 @@ static int driven_replay(uint8_t *seed, const char *movesfile, const char *dealf
             LegalMoves moves;
             calculate_legal_moves(&g, 1, &moves);
             int rec_idx = match_legal(&moves, &m);
+            if (wasm_seed_mode) ogx_wasm_reseed(&g);   // live-faithful RNG seeding
             int og_idx = octogen_strategy_choose(&g, 1, &moves, NULL);
             p1_dec++;
             if (moves.n <= 1) p1_forced++;

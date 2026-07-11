@@ -76,28 +76,15 @@ def norm(s):
     return p[0] + ' ' + ' '.join(sorted(p[1:]))
 
 
-# The full 36-card durak deck: 9 ranks (values 5..13 = 6..A) x 4 suits.
-FULL_DECK = {(s, v) for s in range(4) for v in range(5, 14)}
-
-# ---- walk the logs: reconstruct table + hand counts + the discard pile ------
-# "Visible to octogen" at any instant = its own hand + the flip + the discard
-# pile + whatever is on the table right now. Everything else (the face-down
-# deck + the opponent's hand) is hidden. A card the opponent PICKS UP leaves the
-# table and becomes hidden again — so we track the growing discard set and the
-# CURRENT table, never a cumulative "ever seen" set (which would wrongly keep
-# picked-up cards visible).
+# ---- walk the logs: reconstruct the table + per-seat hand counts ------------
+# (octogen's belief about hidden cards is dumped by the engine per decision; we
+# only reconstruct the public board here for the step-through.)
 hc = [6] * NPLAYERS
 table = []            # [{attack, defense|None}]
-discard = set()       # (suit,value) of every card sent to the discard pile
-FLIP_SV = (FLIP['suit'], FLIP['value'])
 out = []
 for i, l in enumerate(logs):
     t, seat = l['t'], l['seat']
     cards = [(x['p']['suit'], x['p']['value'], x['tg']) for x in l['cards']]
-    if t == 'discard':
-        for x in l['cards']:
-            if x['p']['value'] != -1:
-                discard.add((x['p']['suit'], x['p']['value']))
     action = None
     if t == 'attack':
         for s, v, tg in cards:
@@ -150,27 +137,49 @@ for i, l in enumerate(logs):
     rec = None
     if i in by_ply:
         d = by_ply[i]
-        # "octogen known state": the cards HIDDEN from octogen right now = the
-        # whole deck minus what it holds, the flip, the discard pile, and the
-        # cards on the table. That hidden pool is split between the face-down
-        # deck and the opponent's hand: |pool| == deck + opponent_cards exactly.
-        # When the deck empties, the pool collapses onto the opponent's hand —
-        # public deduction — which is what lets the endgame solver PROVE the line.
-        og_hand = {tok_to_sv(tn) for tn in d['hand']}
-        tbl = set()
-        for b in d['table']:
-            tbl.add(tok_to_sv(b['attack']))
-            if b.get('defense'):
-                tbl.add(tok_to_sv(b['defense']))
-        visible = og_hand | discard | {FLIP_SV} | tbl
-        pool = sorted(FULL_DECK - visible)
+        # "octogen known state" — octogen's ACTUAL belief, dumped from the engine
+        # (og_build_belief), not reconstructed here. For each opponent it PINS the
+        # cards it watched them take (still in hand); the rest of their hand plus
+        # the face-down deck form the unknown pool it samples over. Pinned +
+        # pool == deck + opponent, always; once the deck empties the pool is just
+        # the opponent's un-pinned cards, so octogen knows the whole hand — the
+        # public deduction the exact endgame solver runs on.
+        bel = d.get('belief', {})
+        og_seat = d['seat']
+        pinned_all = bel.get('pinned', [[]] * NPLAYERS)
+        voids_all = bel.get('voids', [[]] * NPLAYERS)
+        floors = bel.get('floor', [0] * NPLAYERS)
+        pool_toks = bel.get('pool', [])
         oppc = opp_count(d, rd)
-        assert len(pool) == d['deck'] + oppc, \
-            f"ply {i}: pool {len(pool)} != deck {d['deck']} + opp {oppc}"
+
+        def tcard(tn):
+            s, v = tok_to_sv(tn)
+            return card(s, v)
+
+        # Per-opponent belief so 3+ player games render each seat octogen has
+        # partial knowledge of. (The driver is 2-player today, but the page is
+        # not — it loops over however many opponents appear.)
+        opps = []
+        total_pinned = 0
+        for p in range(NPLAYERS):
+            if p == og_seat:
+                continue
+            pinned_p = pinned_all[p]
+            total_pinned += len(pinned_p)
+            opps.append({'seat': p,
+                         'count': d['opp_counts'][p],
+                         'pinned': [tcard(t) for t in pinned_p],
+                         'voids': [tcard(t) for t in voids_all[p]],
+                         'floor': floors[p]})
+        # pinned across all opponents + the shared unknown pool == deck + all opps
+        assert total_pinned + len(pool_toks) == d['deck'] + oppc, \
+            f"ply {i}: pinned {total_pinned} + pool {len(pool_toks)} != deck {d['deck']} + opp {oppc}"
         rec = {'ply': i, 'hand': d['hand'], 'table': d['table'], 'opp_counts': d['opp_counts'],
                'deck': d['deck'], 'solver': d['solver'], 'candidates': d['candidates'],
                'chosen': d['chosen'],
-               'known': {'pool': [card(s, v) for (s, v) in pool],
+               'known': {'opps': opps,
+                         'pinned_total': total_pinned,
+                         'pool': [tcard(t) for t in pool_toks],
                          'deck': d['deck'], 'opp_count': oppc}}
     out.append({'i': i, 't': t, 'seat': seat, 'def': l.get('def'), 'action': action,
                 'table': [{'a': b['attack'], 'd': b['defense']} for b in table],
