@@ -168,6 +168,13 @@ export interface Game extends PublicGame {
     // ChaCha-shuffled from; set at the deal, persisted to games.game_seed for
     // audit/replay. Undefined on games not dealt this request.
     game_seed?: string | null;
+    // SERVER-ONLY. True when the deck was shuffled once from the deal seed and
+    // mid-game refills must POP the pre-shuffled top (so the whole game is a
+    // pure function of the deal seed). Mirrors the kernel's deterministic_deck
+    // flag carried in the durable blob: set at the deal and restored on load
+    // (deserializeGameState), then re-asserted through marshalGame so the bot
+    // path doesn't randomize draws. Undefined/false = legacy random-draw deal.
+    deterministic_deck?: boolean;
     players: PrivatePlayer[];
     logs: GameLog[]; // Pending logs to be saved with game state
     // Read-only session history for the belief/memory bots (octogen, semtex,

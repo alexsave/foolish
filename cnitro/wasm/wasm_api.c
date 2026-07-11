@@ -170,8 +170,70 @@ static void get_state(Game *g, const unsigned char *p) {
 // TS -> C: parse the IO buffer into the working game. The ephemeral IO format
 // carries no deterministic_deck flag (only the durable blob does), so reset it:
 // a fresh deal has start_game set it, and a legacy game draws at random. This
-// also stops a reused engine instance inheriting a prior game's flag.
+// also stops a reused engine instance inheriting a prior game's flag. The
+// caller re-asserts the flag right after (wasm_set_deterministic_deck) for a
+// seed-dealt game — otherwise the bot path (which imports rather than
+// deserializes) would draw at random mid-game and diverge from the deal seed.
 void wasm_import_state(void) { get_state(&g_game, g_io); g_game.deterministic_deck = false; }
+
+// Re-assert the deterministic-deck flag after wasm_import_state. Seed-dealt
+// games carry it in the durable blob (wasm_state_deserialize restores it), but
+// the transient import path drops it — so the bot loop, which marshals a JS
+// Game instead of loading the blob, must set it back or every mid-game refill
+// pops a RANDOM card and the game stops being reproducible from its deal seed.
+void wasm_set_deterministic_deck(int on) { g_game.deterministic_deck = on != 0; }
+
+// SECRET base folded into every mid-game RNG seed below. Set from the 32-byte
+// deal seed (games.game_seed) — which is SERVER-ONLY: it never appears on
+// PublicGame, in the state blob, or in any per-viewer view, so a player can't
+// see or reconstruct it. This is the whole point of the field: the mid-game bot
+// RNG must NOT be derivable from anything on the public board, or a source-code
+// holder could recompute octogen's world-sampling seed and predict its every
+// move. The visible-state bytes below add decorrelation only; the base is what
+// makes the seed unpredictable. 0 only under the test seed-source or a game with
+// no deal seed (legacy) — live games always set it (see wasm_set_rng_base).
+static uint32_t g_rng_base = 0u;
+void wasm_set_rng_base(uint32_t base) { g_rng_base = base; }
+
+// FNV-1a hash of the SECRET base + the VOLATILE game state (+ a salt so distinct
+// RNG streams get distinct seeds from the same state). State is a pure function
+// of the deal seed, so any RNG seeded from it stays reproducible across replays;
+// the base makes it reproducible ONLY to the server that holds game_seed.
+static uint32_t state_fnv(uint32_t salt) {
+    uint32_t h = 2166136261u ^ salt ^ g_rng_base;
+#define MIX(b) do { h = (h ^ (uint32_t)(unsigned char)(b)) * 16777619u; } while (0)
+    MIX(g_game.num_logs); MIX((unsigned)g_game.num_logs >> 8);
+    MIX(g_game.defender); MIX(g_game.first_attacker); MIX(g_game.power_suit);
+    MIX(g_game.deck_count); MIX((unsigned)g_game.deck_count >> 8);
+    for (int i = 0; i < g_game.deck_count; i++) { MIX(g_game.deck[i].suit); MIX(g_game.deck[i].value); }
+    for (int p = 0; p < g_game.num_players; p++) {
+        MIX(g_game.players[p].hand_count);
+        for (int j = 0; j < g_game.players[p].hand_count; j++) {
+            MIX(g_game.players[p].hand[j].suit); MIX(g_game.players[p].hand[j].value);
+        }
+    }
+#undef MIX
+    return h;
+}
+
+// Seed the mid-game LCG (game_random) deterministically from the CURRENT game
+// state instead of Math.random. Called once per move-application in place of
+// the old per-move crypto/Math.random reseed: the state is itself a pure
+// function of the deal seed, so mixing it here keeps every game_random draw
+// (legacy random deals, bot tie-breaks) reproducible — the whole game replays
+// from the deal seed alone. Seed-dealt games pop the pre-shuffled deck and
+// never consume this, but it costs nothing and covers the legacy path too.
+void wasm_seed_rng_deterministic(void) { game_rng_set(state_fnv(0u)); }
+
+// Seed the STRATEGY LCG (random_strategy_random, consumed by the Monte-Carlo
+// bots' rollout opponent models) deterministically from state, replacing the
+// per-decision Math.random the bot bridge used to draw. This is what made even
+// octogen non-reproducible: its rollouts sample opponent replies off this
+// stream, so a fresh Math.random each decision meant a different choice from
+// identical state. A distinct salt keeps it decorrelated from the draw stream.
+void wasm_set_strategy_seed_deterministic(void) {
+    random_strategy_set_seed(state_fnv(0x9E3779B9u));
+}
 
 // C -> TS: serialize the working game into the IO buffer; returns length.
 int wasm_export_state(void) { return put_state(&g_game, g_io); }

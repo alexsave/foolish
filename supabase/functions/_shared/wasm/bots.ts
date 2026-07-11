@@ -20,7 +20,7 @@ import { loadWasmGz } from './wasm_asset.ts';
 import {
     EngineExports, __LOG_TYPE_TO_INT, __MOVE_TYPE, __adoptEngine,
     __marshalGame, __mem, __pooledCard, __setResident,
-    __wireLogCard, __cardFromWire,
+    __wireLogCard, __cardFromWire, rngBaseFromSeed,
 } from './engine.ts';
 
 interface BotsExports extends EngineExports {
@@ -244,8 +244,15 @@ export function wasmChooseMove(
     importStrategyKeys(ex, game);
     if (opts.logs !== false) importLogs(ex, game);
     if (opts.env) setEnv(ex, opts.env);
-    const seed = seedSource ? seedSource() : Math.floor(Math.random() * 4294967296);
-    ex.wasm_set_strategy_seed(seed >>> 0);
+    // Tests pin the strategy stream via seedSource. Live, seed it
+    // DETERMINISTICALLY — but from the SERVER-ONLY deal seed (game.game_seed),
+    // not the public board. The Monte-Carlo bots' rollout opponent models draw
+    // from this stream; if the seed were a hash of visible state, a source-code
+    // holder could recompute it and predict octogen's every move. wasm_set_rng_base
+    // folds the (never-client-visible) deal seed in, so the seed is reproducible
+    // ONLY to the server that holds it. Replaces the old per-decision Math.random.
+    if (seedSource) ex.wasm_set_strategy_seed(seedSource() >>> 0);
+    else { ex.wasm_set_rng_base(rngBaseFromSeed(game.game_seed)); ex.wasm_set_strategy_seed_deterministic(); }
     const idx = ex.wasm_choose_move(strat, seat);
     // The choose only READ the marshaled state; clearing the imported logs
     // makes the resident kernel state byte-equivalent to a fresh marshal, so
