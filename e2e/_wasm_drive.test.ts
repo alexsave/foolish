@@ -22,10 +22,11 @@ test('wasm octogen deliberation drive', { skip: !process.env.OGX_WASM_DELIB }, (
     const HEX = process.env.RECON_SEED!;
     const rd = JSON.parse(readFileSync(process.env.RECON_RD!, 'utf8'));
     const OUT = process.env.OGX_WASM_DELIB!;
+    const NP = Number(rd.playerCount || 2);
     const OGSEAT = Number(process.env.OGX_SEAT || '1');
     __setDealSeedOverride(Uint8Array.from(HEX.match(/../g)!.map((b) => parseInt(b, 16))));
     const g: any = {
-        players: [0, 1].map((i) => ({ player_id: `p${i}`, name: `P${i}`, status: PLAYER_STATUS.READY, is_ai: true, hand: [], awaiting_attack: false, hand_length: 0, strategy_key: (STRATEGY_KEY as any).OCTOGEN })),
+        players: Array.from({ length: NP }, (_, i) => ({ player_id: `p${i}`, name: `P${i}`, status: PLAYER_STATUS.READY, is_ai: true, hand: [], awaiting_attack: false, hand_length: 0, strategy_key: (STRATEGY_KEY as any).OCTOGEN })),
         deck: [], logs: [], belief_logs: [], game_seed: HEX, id: 'g', name: 'g', status: GAME_STATUS.WAITING, deck_length: 0, discard_pile_length: 0, flipped: null, power_suit: 0, first_attacker: 0, defender: 0, table_battles: [], elimination_order: [], good_timestamp: null, good_players: [],
     };
     const startRun: any = start_game_packed(g);
