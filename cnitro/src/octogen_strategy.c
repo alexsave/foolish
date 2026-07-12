@@ -397,7 +397,21 @@ static void og_build_belief(const Game *g, int bot_idx, Belief *B) {
                 if (p >= 0 && p != bot_idx) {
                     B->void_n[p] = 0;    // new unknown cards: constraints expire
                     B->floor_v[p] = 0;
-                    if (i == flip_log_idx) og_pinned_add(B, p, g->flipped);
+                    if (i == flip_log_idx) {
+                        // Deck just ran dry: this seat picked up the face-up
+                        // trump, watched all game, so pin it. Its identity is the
+                        // LAST card of this record (drawn once the deck emptied)
+                        // and is the one REVEALED draw in the masked belief stream
+                        // (other draws arrive {-1,-1}). Read it from the LOG, not
+                        // g->flipped: the wire serializer zeroes g->flipped to
+                        // {0,0} once has_flipped goes false (view.c), so the
+                        // resident kernel state no longer carries the real card —
+                        // pinning g->flipped there phantom-pins {0,0}.
+                        if (L->num_pairs > 0) {
+                            Card fc = L->pairs[L->num_pairs - 1].primary;
+                            if (fc.value >= 0 && fc.suit >= 0) og_pinned_add(B, p, fc);
+                        }
+                    }
                 }
                 break;
             case LOG_PLAYER_OUT:
