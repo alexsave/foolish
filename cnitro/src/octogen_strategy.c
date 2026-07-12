@@ -852,12 +852,77 @@ void og_difftest_report(void) {
 // (score[i]/nsim[i]) OR the exact endgame-solver verdict per move (win/loss/
 // draw/unknown), and the chosen move. Nothing runs when the var is unset.
 #ifdef OG_EXPLAIN_BUILD
+#ifdef CD_WASM_OVERLAY
+// Freestanding snprintf/atol for the analysis-only wasm build (-nostdlib has no
+// libc). Supports exactly what og_ex_emit uses: %d, %ld, %s, %c, %.Nf, %%.
+// Returns bytes actually written (clamped), which keeps the `w += snprintf(...)`
+// accumulators inside the 16 KiB record buffer.
+#include <stdarg.h>
+static long atol(const char *s) {
+    long v = 0; int neg = 0;
+    if (*s == '-') { neg = 1; s++; } else if (*s == '+') s++;
+    while (*s >= '0' && *s <= '9') v = v * 10 + (*s++ - '0');
+    return neg ? -v : v;
+}
+static int og_ex_putl(char *b, int cap, long v) {
+    char t[24]; int n = 0, w = 0; unsigned long u;
+    if (v < 0) { if (w < cap) b[w] = '-'; w++; u = (unsigned long)(-(v + 1)) + 1; }
+    else u = (unsigned long)v;
+    do { t[n++] = (char)('0' + u % 10); u /= 10; } while (u);
+    while (n) { if (w < cap) b[w] = t[--n]; w++; }
+    return w;
+}
+static int wasm_vsnprintf(char *buf, unsigned long n, const char *fmt, va_list ap) {
+    int w = 0; int cap = (int)n - 1; if (cap < 0) cap = 0;
+    for (; *fmt; fmt++) {
+        if (*fmt != '%') { if (w < cap) buf[w] = *fmt; w++; continue; }
+        fmt++;
+        int prec = -1, islong = 0;
+        if (*fmt == '.') { fmt++; prec = 0; while (*fmt >= '0' && *fmt <= '9') prec = prec * 10 + (*fmt++ - '0'); }
+        if (*fmt == 'l') { islong = 1; fmt++; }
+        if (*fmt == 'd') { long v = islong ? va_arg(ap, long) : va_arg(ap, int); w += og_ex_putl(buf + (w < cap ? w : cap), (w < cap ? cap - w : 0), v); }
+        else if (*fmt == 's') { const char *s = va_arg(ap, const char *); for (; *s; s++) { if (w < cap) buf[w] = *s; w++; } }
+        else if (*fmt == 'c') { char c = (char)va_arg(ap, int); if (w < cap) buf[w] = c; w++; }
+        else if (*fmt == 'f') {
+            double d = va_arg(ap, double); if (prec < 0) prec = 6;
+            if (d < 0) { if (w < cap) buf[w] = '-'; w++; d = -d; }
+            double scale = 1; for (int i = 0; i < prec; i++) scale *= 10;
+            double rounded = d * scale + 0.5;
+            long long whole = (long long)(rounded / scale);
+            long long frac = (long long)rounded - whole * (long long)scale;
+            w += og_ex_putl(buf + (w < cap ? w : cap), (w < cap ? cap - w : 0), (long)whole);
+            if (prec > 0) {
+                if (w < cap) buf[w] = '.'; w++;
+                for (int i = prec - 1, ff = (int)frac; i >= 0; i--) {
+                    int dv = 1; for (int j = 0; j < i; j++) dv *= 10;
+                    if (w < cap) buf[w] = (char)('0' + (ff / dv) % 10); w++;
+                }
+            }
+        } else if (*fmt == '%') { if (w < cap) buf[w] = '%'; w++; }
+    }
+    if ((int)n > 0) buf[w < cap ? w : cap] = 0;
+    return w < cap ? w : cap;
+}
+static int snprintf(char *buf, unsigned long n, const char *fmt, ...) {
+    va_list ap; va_start(ap, fmt); int r = wasm_vsnprintf(buf, n, fmt, ap); va_end(ap); return r;
+}
+#endif
 enum { OG_EX_NONE_V = 2000001, OG_EX_UNKNOWN_V = 2000002, OG_EX_ILLEGAL_V = 2000003 };
-static FILE *og_ex_out = NULL;
-static int   og_ex_on  = -1;            // -1 unloaded, 0 off, 1 on
 static int   og_ex_solve_applied = 0;   // did the endgame solver fire this decision
 static int   og_ex_verdict[600];        // exact per-root-move solver value / sentinel
 
+#ifdef CD_WASM_OVERLAY
+// wasm has no getenv/FILE*: the dump goes to a static buffer the JS harness reads
+// via the exported accessors below. Always on in this (analysis-only) build.
+static char og_ex_wbuf[1 << 20];
+static int  og_ex_wlen = 0;
+const char *wasm_og_explain_ptr(void)   { return og_ex_wbuf; }
+int         wasm_og_explain_len(void)   { return og_ex_wlen; }
+void        wasm_og_explain_reset(void) { og_ex_wlen = 0; }
+static int og_explain_on(void) { return 1; }
+#else
+static FILE *og_ex_out = NULL;
+static int   og_ex_on  = -1;            // -1 unloaded, 0 off, 1 on
 static int og_explain_on(void) {
     if (og_ex_on < 0) {
         const char *e = getenv("OG_EXPLAIN");
@@ -869,6 +934,7 @@ static int og_explain_on(void) {
     }
     return og_ex_on;
 }
+#endif
 // og_ex_emit (the per-decision JSON dump) is defined after the Candidates
 // typedef, just above octogen_choose_impl.
 static void og_ex_emit(const Game *g, int bot_idx, const LegalMoves *moves,
@@ -1236,7 +1302,9 @@ static void og_ex_emit(const Game *g, int bot_idx, const LegalMoves *moves,
                        const bool *alive, const bool *forced_loss,
                        int chosen_idx, int solver_applied, int solver_win_idx) {
     (void)solver_win_idx;
+#ifndef CD_WASM_OVERLAY
     if (!og_ex_out) return;
+#endif
     const Candidates *C = (const Candidates *)Cv;
     int trump = g->power_suit;
     char buf[16384]; int w = 0;
@@ -1330,9 +1398,17 @@ static void og_ex_emit(const Game *g, int bot_idx, const LegalMoves *moves,
           og_ex_move_label(label, sizeof label, &moves->moves[chosen_idx], trump);
       OGA(",\"chosen\":\"%s\"}", label); }
     #undef OGA
+#ifdef CD_WASM_OVERLAY
+    // append "buf\n" to the JS-readable buffer (drop the record if it won't fit)
+    if (og_ex_wlen + w + 1 < (int)sizeof(og_ex_wbuf)) {
+        for (int i = 0; i < w; i++) og_ex_wbuf[og_ex_wlen++] = buf[i];
+        og_ex_wbuf[og_ex_wlen++] = '\n';
+    }
+#else
     fputs(buf, og_ex_out);
     fputc('\n', og_ex_out);
     fflush(og_ex_out);
+#endif
 }
 #endif  // OG_EXPLAIN_BUILD
 

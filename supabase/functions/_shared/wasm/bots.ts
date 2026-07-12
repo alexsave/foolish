@@ -78,6 +78,22 @@ export function __botsWasmBytes(): number {
 // the top of the bot loop makes bots.wasm the FIRST and only instance.
 export function __ensureBots(): void { bots(); }
 
+// Analysis only: read the per-decision deliberation dump from a bots.wasm built
+// with -DOG_EXPLAIN_BUILD (make bots-wasm-explain). Returns '' for the shipped
+// build (no such export). Reset clears the static buffer for the next decision.
+export function __ogExplainDump(reset = true): string {
+    const ex = bots() as unknown as {
+        wasm_og_explain_ptr?: () => number; wasm_og_explain_len?: () => number;
+        wasm_og_explain_reset?: () => void; memory: WebAssembly.Memory;
+    };
+    if (!ex.wasm_og_explain_len || !ex.wasm_og_explain_ptr) return '';
+    const len = ex.wasm_og_explain_len();
+    const ptr = ex.wasm_og_explain_ptr();
+    const s = new TextDecoder().decode(new Uint8Array(ex.memory.buffer, ptr, len));
+    if (reset && ex.wasm_og_explain_reset) ex.wasm_og_explain_reset();
+    return s;
+}
+
 function bots(): BotsExports {
     if (exportsCache) return exportsCache;
     const module = new WebAssembly.Module(loadWasmGz('bots') as BufferSource);
