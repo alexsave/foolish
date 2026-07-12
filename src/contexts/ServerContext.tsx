@@ -8,7 +8,7 @@ import { get_next_player_index, card_comp } from '@shared/common_utils.ts';
 import { ANIMATION_TIME } from '../constants/constants';
 import { optimisticOverlay } from '../state/optimisticOverlay';
 import { animationFeed } from '../state/animationFeed';
-import { cardKey, mergeHandOrder, reconcileHandMemory, displayedHand, mergeTableBattles, applyOverlayEntries, resetToLobby } from '../state/clientReconcile';
+import { cardKey, mergeHandOrder, reconcileHandMemory, displayedHand, mergeTableBattles, applyOverlayEntries, resetToLobby, isHandPermutation } from '../state/clientReconcile';
 import { ACTION_STATUS, decodeActionResponse, encodeAction, encodeActionRequest } from '@shared/wire/awire.ts';
 import { decodePackedGame } from '@shared/wire/view.ts';
 import { rejectMessage } from '../wasm/rejectMessages';
@@ -1010,6 +1010,19 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         if (previousHand.length === 0) {
             return Promise.reject(new Error(`Cannot rearrange hand`));
         }
+
+        // The reorder is debounced (DragContext.scheduleCardRearrangeUpdate), so by
+        // the time it flushes the hand may have changed (a card played, drawn, or
+        // picked up). Indices computed against the OLD hand can now be out-of-range
+        // or non-bijective; applying them optimistically would mint an `undefined`
+        // slot (previousHand[outOfRange]) into self.hand, and the next render crashes
+        // reading `card.suit`. Only apply a clean permutation (the same contract the
+        // server's handleRearrangeHand enforces); otherwise abandon the stale reorder
+        // rather than materialize a holed hand.
+        if (!isHandPermutation(cardIndices, previousHand.length)) {
+            return Promise.resolve({ game_id: gameId });
+        }
+
         const rearrangedHand = cardIndices.map(index => previousHand[index]);
         setGames(prev => ({
             ...prev, [gameId]: {

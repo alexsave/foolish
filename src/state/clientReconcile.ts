@@ -98,6 +98,22 @@ export const reorderHand = (order: Card[], fromIndex: number, toIndex: number): 
     return next;
 };
 
+// The debounced hand-rearrange flush (DragContext.scheduleCardRearrangeUpdate ->
+// ServerContext.rearrangeHand) applies `cardIndices` to the CURRENT hand as
+// `indices.map(i => hand[i])`. Those indices were computed against an EARLIER
+// hand snapshot, so by flush time the hand may have shrunk (a card played,
+// drawn, or picked up) — a now-out-of-range index yields `hand[i] === undefined`,
+// minting a hole that crashes the render on `card.suit` (the same "e.suit" prod
+// crash reorderHand guards on the swap side). Only apply when the indices are a
+// true permutation of the current hand — same contract the server's
+// handleRearrangeHand enforces (in range, unique, full-length); otherwise the
+// caller abandons the stale reorder and keeps the authoritative order.
+export const isHandPermutation = (cardIndices: number[], handLength: number): boolean =>
+    Array.isArray(cardIndices)
+    && cardIndices.length === handLength
+    && new Set(cardIndices).size === handLength
+    && cardIndices.every((i) => Number.isInteger(i) && i >= 0 && i < handLength);
+
 // Sticky arrangement memory: keeps every known card's slot and only grows with
 // genuinely-new cards, so a card removed optimistically and then rejected keeps
 // its slot instead of jumping to the end.
