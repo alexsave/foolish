@@ -230,27 +230,38 @@ void wasm_set_deterministic_deck(int on) { g_game.deterministic_deck = on != 0; 
 static uint32_t g_rng_base = 0u;
 void wasm_set_rng_base(uint32_t base) { g_rng_base = base; }
 
-// FNV-1a hash of the SECRET base + PUBLIC, replay-reconstructible scalars (+ a
-// salt so distinct RNG streams get distinct seeds). The unpredictability rests
-// ENTIRELY on g_rng_base = rngBaseFromSeed(game_seed) — the server-only deal
-// seed — so a source-code holder still can't predict octogen's stream, while
-// every term here is public and recoverable from the move log alone.
+// Per-decision RNG seed for the Monte-Carlo bots' world sampling (salt
+// 0x9E3779B9) and the mid-game deal RNG (salt 0). It folds the SECRET
+// g_rng_base = rngBaseFromSeed(game_seed) together with the salt and the PUBLIC
+// board state, then avalanches.
 //
-// It deliberately does NOT hash the ordered hands or the face-down deck. Those
-// are HIDDEN-from-bots state, and worse, a player can permute their own hand
-// (wasm_rearrange_hand — a cosmetic drag) which the replay codec does not store,
-// so folding hand order in (a) let an opponent perturb octogen's RNG with a
-// card their bot can't even see, and (b) made recorded games non-reproducible on
-// a near-tie tie-break. num_logs alone is strictly monotonic, so each decision
-// still gets a distinct seed; defender/deck_count add public decorrelation.
+// Two properties have to hold at once:
+//   * Reproducible — every hashed term must be recoverable from a shared replay,
+//     so a recorded game replays bit-exactly. That rules OUT num_logs (records
+//     the codec may drop) and the ORDERED hands / face-down deck (hidden from
+//     the bot, and a player can even permute their own hand via rearrange).
+//   * Varying per decision — g_rng_base alone is constant for the whole game, so
+//     seeding from it only would hand every decision the same RNG. So we mix in
+//     the PUBLIC, replay-recoverable state that moves every turn: the cards on
+//     the table, each seat's hand COUNT (not its cards), deck/discard sizes and
+//     the defender. All face-up, all a pure function of the move log.
+// Unpredictability still rests entirely on the secret seed — the public terms
+// are known to everyone, but without g_rng_base they can't yield the stream.
 static uint32_t state_fnv(uint32_t salt) {
-    uint32_t h = 2166136261u ^ salt ^ g_rng_base;
+    uint32_t h = 2166136261u ^ (salt * 2654435761u) ^ g_rng_base;
 #define MIX(b) do { h = (h ^ (uint32_t)(unsigned char)(b)) * 16777619u; } while (0)
-    MIX(g_game.num_logs); MIX((unsigned)g_game.num_logs >> 8);
     MIX(g_game.defender); MIX(g_game.first_attacker); MIX(g_game.power_suit);
     MIX(g_game.deck_count); MIX((unsigned)g_game.deck_count >> 8);
+    MIX(g_game.discard_pile_length); MIX((unsigned)g_game.discard_pile_length >> 8);
+    for (int p = 0; p < g_game.num_players; p++) MIX(g_game.players[p].hand_count);
+    MIX(g_game.num_battles);
+    for (int i = 0; i < g_game.num_battles; i++) {
+        MIX(g_game.table_battles[i].attack.suit);  MIX(g_game.table_battles[i].attack.value);
+        MIX(g_game.table_battles[i].defense.suit); MIX(g_game.table_battles[i].defense.value);
+    }
 #undef MIX
-    return h;
+    h ^= h >> 16; h *= 0x85EBCA6Bu; h ^= h >> 13; h *= 0xC2B2AE35u; h ^= h >> 16;
+    return h ? h : 1;
 }
 
 // Seed the mid-game LCG (game_random) deterministically from the CURRENT game
@@ -271,6 +282,11 @@ void wasm_seed_rng_deterministic(void) { game_rng_set(state_fnv(0u)); }
 void wasm_set_strategy_seed_deterministic(void) {
     random_strategy_set_seed(state_fnv(0x9E3779B9u));
 }
+
+// Debug/analysis hook: the strategy seed that would be chosen for the CURRENT
+// marshaled state. Lets a harness confirm the seed varies per decision (public
+// board changes) yet reproduces across a replay. Behavior-neutral.
+uint32_t wasm_strategy_seed_probe(void) { return state_fnv(0x9E3779B9u); }
 
 // C -> TS: serialize the working game into the IO buffer; returns length.
 int wasm_export_state(void) { return put_state(&g_game, g_io); }

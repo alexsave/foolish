@@ -1442,15 +1442,14 @@ static int cordite_choose_impl(const Game *g, int bot_idx,
     int W1, W2, W3;
     cd_params(g->num_players, &W1, &W2, &W3);
 
-    // World-sampling seed: public-state terms for per-decision decorrelation +
-    // the strategy-LCG term, which live folds in the SERVER-ONLY secret so the
-    // sample (and thus the move) can't be recomputed from the public board.
-    // Same rationale as octogen (see octogen_strategy.c / wasm_api.c).
-    uint32_t base = cd_mix(cd_mix((uint32_t)g->num_logs * 2654435761u,
-                                  ((uint32_t)g->deck_count << 8)
-                                  ^ (uint32_t)g->discard_pile_length
-                                  ^ ((uint32_t)bot_idx << 20)),
-                           random_strategy_rng_get());
+    // World-sampling seed: the SERVER-ONLY secret (strategy LCG, reseeded per
+    // decision from state_fnv(g_rng_base)) + the deciding seat, and nothing else.
+    // Folding in game state that a shared replay can't reproduce (num_logs) or
+    // that's hidden/player-reorderable (hands, deck) would make recorded games
+    // non-replayable without buying any real unpredictability — that rests on the
+    // secret deal seed. Same rationale as octogen (see octogen_strategy.c /
+    // wasm_api.c); (w+1) below supplies the diverse per-world seeds.
+    uint32_t base = cd_mix((uint32_t)bot_idx * 2654435761u, random_strategy_rng_get());
 
     double score[CD_MAX_CANDS] = {0};
     int    nsim [CD_MAX_CANDS] = {0};

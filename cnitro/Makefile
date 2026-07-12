@@ -354,6 +354,7 @@ WASM_API_EXPORTS := \
   -Wl,--export=wasm_set_deterministic_deck \
   -Wl,--export=wasm_seed_rng_deterministic \
   -Wl,--export=wasm_set_strategy_seed_deterministic \
+  -Wl,--export=wasm_strategy_seed_probe \
   -Wl,--export=wasm_set_rng_base
 
 # bots.wasm exports the rules API above PLUS the bot bridge (wasm_bots_api.c).

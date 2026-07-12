@@ -94,6 +94,14 @@ export function __ogExplainDump(reset = true): string {
     return s;
 }
 
+// Analysis only: the strategy RNG seed (state_fnv) for the CURRENTLY marshaled
+// state. Call right after a choose to read the seed that decision used — lets a
+// harness confirm the seed varies per decision yet reproduces across a replay.
+export function __strategySeedProbe(): number {
+    const ex = bots() as unknown as { wasm_strategy_seed_probe?: () => number };
+    return ex.wasm_strategy_seed_probe ? (ex.wasm_strategy_seed_probe() >>> 0) : -1;
+}
+
 function bots(): BotsExports {
     if (exportsCache) return exportsCache;
     const module = new WebAssembly.Module(loadWasmGz('bots') as BufferSource);
