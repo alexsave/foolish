@@ -28,8 +28,9 @@ test('trump-lead frequency across world seeds', { skip: !process.env.RECON_SEED 
     const deckLen = () => (g.deck && g.deck.length) || g.deck_length || 0;
     say(`deal trump=${g.power_suit} deck_length=${g.deck_length} deck_count=${g.deck_count} deck.len=${g.deck?.length}`);
     const TRUMP = g.power_suit;
-    const env = { CD_BUDGET: process.env.RECON_BUDGET || 'prod', CD_RACE: '1', CD_RACE_C: process.env.RECON_RACE_C || '75' };
-    say(`env CD_BUDGET=${env.CD_BUDGET} CD_RACE_C=${env.CD_RACE_C}`);
+    const env: Record<string, string> = { CD_BUDGET: process.env.RECON_BUDGET || 'prod', CD_RACE: '1', CD_RACE_C: process.env.RECON_RACE_C || '75' };
+    for (const k of Object.keys(process.env)) if (k.startsWith('OG_')) env[k] = process.env[k]!;
+    say(`env ${JSON.stringify(env)}`);
     const C = (s: number, v: number) => ({ suit: s, value: v });
     const cvt = (l: any) => ({ log_type: l.t, player_id: l.seat != null ? `p${l.seat}` : null, defender_index: l.def ?? -1, card_pairs: (l.cards || []).map((c: any) => ({ primary: c.p, target: c.tg })) });
     // engine small-deck values: 5..13 == 6,7,8,9,10,J,Q,K,A
