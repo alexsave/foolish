@@ -128,6 +128,7 @@ input[type=range]{flex:1;min-width:180px;accent-color:var(--accent)}
 .chip.unknown{background:var(--surface-2);color:var(--text-muted)} .chip.match{background:var(--win-bg);color:var(--win)}
 .chip.mismatch{background:var(--warn-bg);color:var(--warn)} .chip.forced{background:var(--info-bg);color:var(--info)}
 .chip.trumpkeep{background:var(--card-trump);color:#fff;opacity:.92}
+.chip.raced{background:var(--surface-2);color:var(--text-muted);font-weight:600}
 .btag .raw{color:var(--text-muted);text-decoration:line-through;text-decoration-thickness:1px}
 .btag .dim{color:var(--text-muted)}
 .keepnote{border-left:3px solid var(--card-trump);padding-left:9px}
@@ -400,21 +401,32 @@ function renderDecision(){
   if(isSolverVerdict){ const ord={win:0,draw:1,unknown:2,none:3,loss:4,illegal:5}; cs.sort((a,b)=>(ord[a.verdict]-ord[b.verdict])); }
   else cs.sort((a,b)=>((a.score==null)-(b.score==null))||(eff(a)-eff(b)));
   const scored=cs.filter(c=>c.score!=null);
-  const best=scored.length?Math.min.apply(null,scored.map(eff)):null;
+  // "best" (green) = best move octogen actually FINALISED (alive). Moves raced
+  // out early carry a noisy few-sim average and must not win the highlight.
+  const aliveEff=scored.filter(c=>c.alive).map(eff);
+  const best=aliveEff.length?Math.min.apply(null,aliveEff):(scored.length?Math.min.apply(null,scored.map(eff)):null);
+  const worst=scored.length?Math.max.apply(null,scored.map(eff)):null;
+  // Bar length relative to the candidates shown (best fills the track, worst is
+  // short), with a floored span. An absolute (2-score) mapping clamps to empty
+  // for anything but a 2-player endgame; this keeps ordering legible at any table
+  // size while keeping genuine near-ties visually tight.
+  const span=scored.length?Math.max(worst-best,0.4):1;
+  const barW=(c)=>Math.max(12,Math.min(100,96-((eff(c)-best)/span)*84));
   const anyTax=scored.some(c=>c.trumpTax>0);
   const recN=normLabel(recMove);
   cs.forEach(c=>{
     const row=document.createElement('div'); row.className='brow';
-    if(c.score!=null && eff(c)===best) row.classList.add('best');
+    if(c.score!=null && c.alive && eff(c)===best) row.classList.add('best');
     if(c.chosen) row.classList.add('chosen');
-    if(!c.alive) row.classList.add('pruned');
+    if(!c.alive && c.score!=null) row.classList.add('pruned');
     const mv=document.createElement('div'); mv.className='bmove'; mv.appendChild(moveChips(c));
     if(normLabel(c.label)===recN){ const rt=document.createElement('span'); rt.className='chip forced'; rt.style.marginLeft='4px'; rt.textContent='recorded'; mv.appendChild(rt); }
+    if(!c.alive && c.score!=null){ const rc=document.createElement('span'); rc.className='chip raced'; rc.style.marginLeft='4px'; rc.textContent='raced out'; mv.appendChild(rc); }
     if(c.trumpTax>0){ const kt=document.createElement('span'); kt.className='chip trumpkeep'; kt.style.marginLeft='4px'; kt.textContent='trump‑keep +'+c.trumpTax.toFixed(3); mv.appendChild(kt); }
     row.appendChild(mv);
     const tr=document.createElement('div'); tr.className='btrack';
     const fill=document.createElement('div'); fill.className='bfill';
-    if(c.score!=null){ const w=Math.max(2,Math.min(100,(2-eff(c))/1*100)); fill.style.width=w+'%'; }
+    if(c.score!=null){ fill.style.width=barW(c)+'%'; }
     else fill.style.width='0%';
     tr.appendChild(fill); row.appendChild(tr);
     const tg=document.createElement('div'); tg.className='btag';
@@ -476,6 +488,7 @@ function flaggedCallout(d,recMove,isSolverVerdict){
 
 function knownPanel(d){
   const k=d.known, empty=(k.deck===0);
+  const proven=d.solver && d.solver.applied && d.candidates.some(c=>c.verdict==='win'||c.verdict==='loss');
   const wrap=document.createElement('div'); wrap.className='known'+(empty?' empty':'');
   let head='<h3 style="margin-top:0">octogen known state</h3>';
   head+='<div class="kmeta"><span>deck (face&#8209;down): <b>'+k.deck+'</b></span>'+
@@ -515,9 +528,12 @@ function knownPanel(d){
   const poolWrap=document.createElement('div'); poolWrap.className='kgroup';
   const note=document.createElement('div'); note.className='klabel';
   const unpinned=k.opp_count-k.pinned_total;
-  if(empty){
+  if(empty && proven){
     note.innerHTML='<b>Deck empty</b> &mdash; so these <b>'+k.pool.length+'</b> are the opponents&rsquo; remaining cards. '+
       'With the '+k.pinned_total+' pinned above, octogen now knows the <b>entire</b> unseen layout &mdash; the endgame solver proves the line:';
+  }else if(empty){
+    note.innerHTML='<b>Deck empty</b> &mdash; so these <b>'+k.pool.length+'</b> are the opponents&rsquo; remaining cards. octogen knows '+
+      'the <b>entire</b> unseen layout, but this endgame is too large for the exact solver to resolve within budget, so it sampled:';
   }else{
     note.innerHTML='Unknown to octogen &mdash; these <b>'+k.pool.length+'</b> are split between the face&#8209;down deck ('+k.deck+') and '+
       'opponents&rsquo; un&#8209;pinned cards ('+unpinned+'). It samples their placement across worlds:';

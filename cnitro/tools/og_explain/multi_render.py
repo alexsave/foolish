@@ -129,6 +129,7 @@ input[type=range]{flex:1;min-width:180px;accent-color:var(--accent)}
 .chip.unknown{background:var(--surface-2);color:var(--text-muted)} .chip.match{background:var(--win-bg);color:var(--win)}
 .chip.mismatch{background:var(--warn-bg);color:var(--warn)} .chip.forced{background:var(--info-bg);color:var(--info)}
 .chip.trumpkeep{background:var(--card-trump);color:#fff;opacity:.92} .chip.rnd{background:var(--rand-bg);color:var(--rand)}
+.chip.raced{background:var(--surface-2);color:var(--text-muted);font-weight:600}
 .btag .raw{color:var(--text-muted);text-decoration:line-through;text-decoration-thickness:1px}
 .btag .dim{color:var(--text-muted)}
 .keepnote{border-left:3px solid var(--card-trump);padding-left:9px}
@@ -214,7 +215,9 @@ Away from the endgame octogen samples many worlds (deals of the hidden cards) an
 end; the bar is its <b>average finish</b> (1 = out first = win, higher = worse, lower is better). Once the deck is
 empty it solves the position <b>exactly</b> (proven <span class="chip win">win</span>/<span class="chip loss">loss</span>).
 It also shows what octogen actually <b>knows</b> about the hidden cards: the cards it has <b>pinned</b> to a seat
-(watched them pick up) vs the unknown pool it samples over.</li>
+(watched them pick up) vs the unknown pool it samples over. Moves tagged <span class="chip raced">raced out</span> were
+dropped early by octogen&rsquo;s progressive widening &mdash; it stopped sampling them, so their few&#8209;sim average is
+noise and isn&rsquo;t what it chose from (the green bar is the best <i>fully&#8209;simulated</i> move).</li>
 <li id="howrandom"><b style="color:var(--rand)">random turns.</b> Random has no belief and no rollout &mdash; it just
 picks one of its legal moves <b>uniformly at random</b>. So its &ldquo;reasoning&rdquo; is the full menu of legal moves
 at that position, each with probability <b>1/N</b>; the one it actually played is highlighted. That&rsquo;s the whole
@@ -436,7 +439,7 @@ function randomPanel(d){
   const co=document.createElement('div'); co.className='callout rnd';
   co.innerHTML='<b>Contrast with octogen.</b> Where an octogen seat would sample thousands of worlds and (in the endgame) '+
     'prove a win or loss, random treats all '+n+' of these as equally good. That&rsquo;s exactly why octogen beats it &mdash; '+
-    'step to an octogen (p0&ndash;p3) turn to see the difference.';
+    'step to an octogen turn ('+seatSpan(OCTOLIST.slice(0,4))+(OCTOLIST.length>4?'&hellip;':'')+') to see the difference.';
   panel.appendChild(co);
   return panel;
 }
@@ -468,21 +471,37 @@ function octogenPanel(d){
   if(isSolverVerdict){ const ord={win:0,draw:1,unknown:2,none:3,loss:4,illegal:5}; cs.sort((a,b)=>(ord[a.verdict]-ord[b.verdict])); }
   else cs.sort((a,b)=>((a.score==null)-(b.score==null))||(eff(a)-eff(b)));
   const scored=cs.filter(c=>c.score!=null);
-  const best=scored.length?Math.min.apply(null,scored.map(eff)):null;
+  // "best" (the green bar) is the best move octogen actually FINALISED — the
+  // lowest avg finish among the moves it kept fully simulating (alive). Moves it
+  // raced out early (alive=0) carry a noisy few-sim average that can look better
+  // by chance; highlighting one of those as "best" would wrongly make octogen's
+  // pick look like a mistake. Fall back to all scored moves if none are alive.
+  const aliveEff=scored.filter(c=>c.alive).map(eff);
+  const best=aliveEff.length?Math.min.apply(null,aliveEff):(scored.length?Math.min.apply(null,scored.map(eff)):null);
+  const worst=scored.length?Math.max.apply(null,scored.map(eff)):null;
+  // Bar length is RELATIVE to the candidates shown: the best (lowest avg finish)
+  // fills the track, the worst is short. The absolute finish scale differs wildly
+  // by player count (1-2 heads-up, 1-8 at a full table), so an absolute mapping
+  // makes every 8-player bar clamp to empty — this keeps the ordering legible at
+  // any table size. The span is floored so a cluster of genuine near-ties still
+  // reads as a tight group rather than getting stretched across the whole track.
+  const span=scored.length?Math.max(worst-best,0.4):1;
+  const barW=(c)=>Math.max(12,Math.min(100,96-((eff(c)-best)/span)*84));
   const anyTax=scored.some(c=>c.trumpTax>0);
   const recN=normLabel(recMove);
   cs.forEach(c=>{
     const row=document.createElement('div'); row.className='brow';
-    if(c.score!=null && eff(c)===best) row.classList.add('best');
+    if(c.score!=null && c.alive && eff(c)===best) row.classList.add('best');
     if(c.chosen) row.classList.add('chosen');
-    if(!c.alive) row.classList.add('pruned');
+    if(!c.alive && c.score!=null) row.classList.add('pruned');
     const mv=document.createElement('div'); mv.className='bmove'; mv.appendChild(moveChips(c));
     if(normLabel(c.label)===recN){ const rt=document.createElement('span'); rt.className='chip forced'; rt.style.marginLeft='4px'; rt.textContent='recorded'; mv.appendChild(rt); }
+    if(!c.alive && c.score!=null){ const rc=document.createElement('span'); rc.className='chip raced'; rc.style.marginLeft='4px'; rc.textContent='raced out'; mv.appendChild(rc); }
     if(c.trumpTax>0){ const kt=document.createElement('span'); kt.className='chip trumpkeep'; kt.style.marginLeft='4px'; kt.textContent='trump‑keep +'+c.trumpTax.toFixed(3); mv.appendChild(kt); }
     row.appendChild(mv);
     const tr=document.createElement('div'); tr.className='btrack';
     const fill=document.createElement('div'); fill.className='bfill';
-    if(c.score!=null){ const w=Math.max(2,Math.min(100,(2-eff(c))/1*100)); fill.style.width=w+'%'; }
+    if(c.score!=null){ fill.style.width=barW(c)+'%'; }
     else fill.style.width='0%';
     tr.appendChild(fill); row.appendChild(tr);
     const tg=document.createElement('div'); tg.className='btag';
@@ -563,7 +582,11 @@ function knownPanel(d){
   if(empty && proven){
     note.innerHTML='<b>Deck empty</b> &mdash; these <b>'+k.pool.length+'</b> are the opponents&rsquo; remaining cards. With the '+k.pinned_total+' pinned above, octogen knows the <b>entire</b> unseen layout &mdash; the exact endgame solver proves the line:';
   }else if(empty){
-    note.innerHTML='<b>Deck empty</b> &mdash; these <b>'+k.pool.length+'</b> are the opponents&rsquo; remaining cards. octogen knows the whole unseen layout, but with several seats still in this is past the exact solver&rsquo;s 2&#8209;player reach, so it still samples their placement across worlds:';
+    const inPlayers=(d.opp_counts||[]).filter(c=>c>0).length;
+    const why = inPlayers>2
+      ? ('with <b>'+inPlayers+'</b> players still in, this is past the exact solver&rsquo;s 2&#8209;player reach')
+      : ('this endgame is too large for the exact 2&#8209;player solver to resolve within budget');
+    note.innerHTML='<b>Deck empty</b> &mdash; these <b>'+k.pool.length+'</b> are the opponents&rsquo; remaining cards. octogen knows the whole unseen layout, but '+why+', so it sampled their placement across worlds:';
   }else{
     note.innerHTML='Unknown pool &mdash; these <b>'+k.pool.length+'</b> are split across the face&#8209;down deck ('+k.deck+') and opponents&rsquo; un&#8209;pinned cards. octogen samples their placement across worlds:';
   }
