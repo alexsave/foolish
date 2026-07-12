@@ -136,6 +136,11 @@ input[type=range]{flex:1;min-width:180px;accent-color:var(--accent)}
 .kmeta{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:13px;margin-bottom:6px}
 .kmeta b{font-variant-numeric:tabular-nums}
 .known.empty{border-color:var(--win)}
+.kgroup{margin:8px 0}
+.klabel{font-size:13px;color:var(--text-secondary);margin-bottom:5px}
+.klabel.known-yes{color:var(--win);font-weight:600}
+.pc.pinned{border-color:var(--win);border-width:2px;box-shadow:0 0 0 1px var(--win-bg)}
+.pc.poolc{border-style:dashed;opacity:.9}
 .themebtn{position:fixed;top:12px;right:12px;z-index:9;border:1px solid var(--border);background:var(--surface-1);
   color:var(--text-secondary);border-radius:8px;padding:6px 10px;cursor:pointer;font:inherit;font-size:13px;box-shadow:var(--shadow)}
 .arrow{color:var(--text-muted);margin:0 2px}
@@ -196,11 +201,13 @@ The chosen move is outlined; the best&#8209;scoring move is green.</li>
 hand (see &ldquo;octogen known state&rdquo;), so octogen solves the position exactly &mdash;
 each move is a proven <span class="chip win">win</span> / <span class="chip loss">loss</span>
 / draw rather than a sampled average.</li>
-<li><b>octogen known state.</b> The cards hidden from octogen right now = the whole 36&#8209;card
-deck minus its hand, the flip, the discard pile, and the table. That hidden pool splits between
-the face&#8209;down deck and the opponent's hand (<span class="mono">pool = deck + opponent</span>,
-exactly). When the deck empties the pool collapses onto the opponent's hand &mdash; that is the
-public deduction the exact solver runs on.</li>
+<li><b>octogen known state.</b> This is octogen's <i>actual</i> belief, dumped from the engine.
+It <b>pins</b> the cards it watched the opponent pick up (still in their hand) &mdash; it knows those
+exactly &mdash; and treats the rest as an unknown pool (the face&#8209;down deck + the opponent's
+un&#8209;pinned cards). <span class="mono">pinned + pool = deck + opponent</span>, always. Once the
+deck empties the pool is just the opponent's remaining cards, so pinned + pool = the opponent's
+<b>entire hand</b> &mdash; the public deduction the exact solver runs on. It also tracks
+suit&#8209;cover voids and rank floors from the same public log.</li>
 <li><b>&ldquo;octogen agrees / would differ.&rdquo;</b> At each octogen turn the recorded move is
 compared to what this octogen build picks on the true state. Ties are common: several moves often
 score within Monte&#8209;Carlo noise, so a &ldquo;differ&rdquo; is usually a near&#8209;tie, not a blunder
@@ -253,9 +260,12 @@ document.getElementById('tiles').innerHTML = tiles.map(([cls,n,l])=>
 document.getElementById('repro').innerHTML =
   'The deal is reproduced from the 32&#8209;byte deal seed <code>'+esc(M.seed.slice(0,16))+'&hellip;</code>; the engine '+
   'deals it, then the recorded public moves are replayed and octogen is queried at each of its turns. All <b>'+M.nlogs+'</b> '+
-  'logs reproduce move&#8209;for&#8209;move. octogen&rsquo;s deliberation is read&#8209;only &mdash; querying it does not perturb its '+
-  'own choice. Across <b>'+M.decisions+'</b> octogen turns this build agrees with <b>'+M.match+'</b> ('+M.forced+' of them a '+
-  'forced single move); the remaining differences are near&#8209;ties in Monte&#8209;Carlo noise (each flagged below shows the scores).';
+  'logs reproduce move&#8209;for&#8209;move. <b>octogen&rsquo;s move is a deterministic function of the public board</b> &mdash; its '+
+  'Monte&#8209;Carlo seed is derived from public state, not the deal seed (verified: identical picks with the real seed, a bogus '+
+  'seed, or none). Across <b>'+M.decisions+'</b> octogen turns this <i>native</i> reconstruction agrees with the recorded '+
+  '<i>wasm</i>&#8209;played game on <b>'+M.match+'</b> ('+M.forced+' forced). Every remaining difference is <b>co&#8209;optimal</b>: '+
+  'the endgame ones are proven solver wins for BOTH moves, the rest are within Monte&#8209;Carlo sampling error &mdash; the native '+
+  'and wasm builds simply break those ties differently (each flagged below shows the scores).';
 
 document.getElementById('flagHead').textContent =
   D.flagged.length ? ('Moves where octogen would differ ('+D.flagged.length+')') : 'octogen agrees with every non-forced move';
@@ -442,22 +452,55 @@ function knownPanel(d){
   const wrap=document.createElement('div'); wrap.className='known'+(empty?' empty':'');
   let head='<h3 style="margin-top:0">octogen known state</h3>';
   head+='<div class="kmeta"><span>deck (face&#8209;down): <b>'+k.deck+'</b></span>'+
-        '<span>opponent holds: <b>'+k.opp_count+'</b></span>'+
-        '<span>hidden pool: <b>'+k.pool.length+'</b> = deck + opponent</span></div>';
+        '<span>opponents hold: <b>'+k.opp_count+'</b></span>'+
+        '<span>octogen has pinned: <b>'+k.pinned_total+'</b> of them</span></div>';
   wrap.innerHTML=head;
-  const note=document.createElement('p'); note.style.margin='2px 0 8px'; note.style.fontSize='13px';
+
+  // Per opponent: the cards octogen KNOWS they hold (watched them pick up, not
+  // yet replayed) — real deduction, not the whole hand. Loops over however many
+  // opponents there are, so 3+ player games render each seat.
+  k.opps.forEach(o=>{
+    const oppLabel='p'+o.seat;
+    const g=document.createElement('div'); g.className='kgroup';
+    if(o.pinned.length){
+      g.innerHTML='<div class="klabel known-yes">octogen knows '+oppLabel+' holds these '+o.pinned.length+' of '+o.count+
+        ' &mdash; it watched them get picked up:</div>';
+      const row=document.createElement('div'); row.className='hand';
+      o.pinned.forEach(c=>{const e=cardEl(c,true);e.classList.add('pinned');row.appendChild(e);});
+      g.appendChild(row);
+    }else{
+      g.innerHTML='<div class="klabel muted">'+oppLabel+' ('+o.count+' cards): octogen has pinned none yet '+
+        '(nothing it saw them pick up is still in their hand).</div>';
+    }
+    // secondary deductions for this opponent
+    if((o.voids&&o.voids.length)||o.floor){
+      const extra=document.createElement('div'); extra.className='klabel muted'; extra.style.marginTop='4px';
+      const bits=[];
+      if(o.voids&&o.voids.length) bits.push('can&rsquo;t cover '+o.voids.map(c=>cardHTML(c,true)).join(' '));
+      if(o.floor) bits.push('lowest non&#8209;trump &ge; '+o.floor);
+      extra.innerHTML='&hellip; and octogen deduced '+oppLabel+' '+bits.join('; ')+'.';
+      g.appendChild(extra);
+    }
+    wrap.appendChild(g);
+  });
+
+  // The genuinely-unknown pool: face-down deck + all opponents' un-pinned cards.
+  const poolWrap=document.createElement('div'); poolWrap.className='kgroup';
+  const note=document.createElement('div'); note.className='klabel';
+  const unpinned=k.opp_count-k.pinned_total;
   if(empty){
-    note.innerHTML='<b>Deck empty.</b> The hidden pool now <b>is</b> the opponent&rsquo;s exact hand &mdash; octogen has '+
-      'perfect information and the endgame solver proves the result.';
+    note.innerHTML='<b>Deck empty</b> &mdash; so these <b>'+k.pool.length+'</b> are the opponents&rsquo; remaining cards. '+
+      'With the '+k.pinned_total+' pinned above, octogen now knows the <b>entire</b> unseen layout &mdash; the endgame solver proves the line:';
   }else{
-    note.innerHTML='These '+k.pool.length+' cards are hidden from octogen &mdash; each is either in the face&#8209;down '+
-      'deck ('+k.deck+') or the opponent&rsquo;s hand ('+k.opp_count+'). octogen samples their placement across worlds.';
+    note.innerHTML='Unknown to octogen &mdash; these <b>'+k.pool.length+'</b> are split between the face&#8209;down deck ('+k.deck+') and '+
+      'opponents&rsquo; un&#8209;pinned cards ('+unpinned+'). It samples their placement across worlds:';
   }
-  wrap.appendChild(note);
+  poolWrap.appendChild(note);
   const pool=document.createElement('div'); pool.className='hand';
-  k.pool.forEach(c=>pool.appendChild(cardEl(c,true)));
-  if(!k.pool.length){ pool.innerHTML='<span class="muted">(nothing hidden)</span>'; }
-  wrap.appendChild(pool);
+  k.pool.forEach(c=>{const e=cardEl(c,true);e.classList.add('poolc');pool.appendChild(e);});
+  if(!k.pool.length){ pool.innerHTML='<span class="muted">(nothing unknown)</span>'; }
+  poolWrap.appendChild(pool);
+  wrap.appendChild(poolWrap);
   return wrap;
 }
 

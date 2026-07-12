@@ -163,6 +163,12 @@ void random_strategy_set_seed(uint32_t s) {
     g_rand_seed_set = 1;
 #endif
 }
+// Current strategy-LCG state, WITHOUT advancing it. Live (wasm) this is reseeded
+// per bot decision from state_fnv (which folds in the SERVER-ONLY g_rng_base),
+// so it carries the secret; the Monte-Carlo bots mix it into their world seed so
+// their move can't be recomputed from the public board. Reproducible to the
+// server (same game_seed -> same value), deterministic in native tests.
+uint32_t random_strategy_rng_get(void) { return g_rand_seed; }
 double random_strategy_random(void) {
 #ifdef GRPO_RNG_DEBUG
     if (!g_rand_seed_set) {
