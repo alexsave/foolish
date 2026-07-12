@@ -230,23 +230,25 @@ void wasm_set_deterministic_deck(int on) { g_game.deterministic_deck = on != 0; 
 static uint32_t g_rng_base = 0u;
 void wasm_set_rng_base(uint32_t base) { g_rng_base = base; }
 
-// FNV-1a hash of the SECRET base + the VOLATILE game state (+ a salt so distinct
-// RNG streams get distinct seeds from the same state). State is a pure function
-// of the deal seed, so any RNG seeded from it stays reproducible across replays;
-// the base makes it reproducible ONLY to the server that holds game_seed.
+// FNV-1a hash of the SECRET base + PUBLIC, replay-reconstructible scalars (+ a
+// salt so distinct RNG streams get distinct seeds). The unpredictability rests
+// ENTIRELY on g_rng_base = rngBaseFromSeed(game_seed) — the server-only deal
+// seed — so a source-code holder still can't predict octogen's stream, while
+// every term here is public and recoverable from the move log alone.
+//
+// It deliberately does NOT hash the ordered hands or the face-down deck. Those
+// are HIDDEN-from-bots state, and worse, a player can permute their own hand
+// (wasm_rearrange_hand — a cosmetic drag) which the replay codec does not store,
+// so folding hand order in (a) let an opponent perturb octogen's RNG with a
+// card their bot can't even see, and (b) made recorded games non-reproducible on
+// a near-tie tie-break. num_logs alone is strictly monotonic, so each decision
+// still gets a distinct seed; defender/deck_count add public decorrelation.
 static uint32_t state_fnv(uint32_t salt) {
     uint32_t h = 2166136261u ^ salt ^ g_rng_base;
 #define MIX(b) do { h = (h ^ (uint32_t)(unsigned char)(b)) * 16777619u; } while (0)
     MIX(g_game.num_logs); MIX((unsigned)g_game.num_logs >> 8);
     MIX(g_game.defender); MIX(g_game.first_attacker); MIX(g_game.power_suit);
     MIX(g_game.deck_count); MIX((unsigned)g_game.deck_count >> 8);
-    for (int i = 0; i < g_game.deck_count; i++) { MIX(g_game.deck[i].suit); MIX(g_game.deck[i].value); }
-    for (int p = 0; p < g_game.num_players; p++) {
-        MIX(g_game.players[p].hand_count);
-        for (int j = 0; j < g_game.players[p].hand_count; j++) {
-            MIX(g_game.players[p].hand[j].suit); MIX(g_game.players[p].hand[j].value);
-        }
-    }
 #undef MIX
     return h;
 }
