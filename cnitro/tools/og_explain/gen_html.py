@@ -127,6 +127,10 @@ input[type=range]{flex:1;min-width:180px;accent-color:var(--accent)}
 .chip.win{background:var(--win-bg);color:var(--win)} .chip.loss{background:var(--loss-bg);color:var(--loss)}
 .chip.unknown{background:var(--surface-2);color:var(--text-muted)} .chip.match{background:var(--win-bg);color:var(--win)}
 .chip.mismatch{background:var(--warn-bg);color:var(--warn)} .chip.forced{background:var(--info-bg);color:var(--info)}
+.chip.trumpkeep{background:var(--card-trump);color:#fff;opacity:.92}
+.btag .raw{color:var(--text-muted);text-decoration:line-through;text-decoration-thickness:1px}
+.btag .dim{color:var(--text-muted)}
+.keepnote{border-left:3px solid var(--card-trump);padding-left:9px}
 .callout{margin-top:12px;padding:12px 14px;border-radius:9px;border:1px solid;font-size:14px}
 .callout.warn{background:var(--warn-bg);border-color:var(--warn)}
 .callout.win{background:var(--win-bg);border-color:var(--win)}
@@ -197,6 +201,12 @@ as <b>A&spades;</b> is <code>{suit:0,value:13}</code>; the trump suit is boxed a
 worlds (deals of the hidden cards) and rolls each candidate move out to the end; the bar is
 its <b>average finish position</b> (1 = eliminated first = win, higher = worse). Lower is better.
 The chosen move is outlined; the best&#8209;scoring move is green.</li>
+<li><b>Trump&#8209;keep tax.</b> The weak rollout policy undervalues holding trumps while the deck is
+alive, so a low&#8209;trump lead scores within noise of a junk lead and the raw Monte&#8209;Carlo
+argmin would pick it ~half the time. octogen adds a small tax (<span class="chip trumpkeep">trump&#8209;keep</span>)
+to the score of any move that <i>leads</i> a trump while the deck is alive, tipping those near&#8209;ties
+toward keeping the trump. Taxed rows show <span class="raw">raw</span>&nbsp;+&nbsp;tax&nbsp;=&nbsp;<b>adjusted</b>;
+the ranking and the green &ldquo;best&rdquo; use the adjusted score.</li>
 <li><b>Exact endgame solver.</b> Once the deck is empty the hidden pool <i>is</i> the opponent's
 hand (see &ldquo;octogen known state&rdquo;), so octogen solves the position exactly &mdash;
 each move is a proven <span class="chip win">win</span> / <span class="chip loss">loss</span>
@@ -378,31 +388,43 @@ function renderDecision(){
   panel.appendChild(h3);
   const bars=document.createElement('div'); bars.className='bars';
   const cs=d.candidates.slice();
+  // Rank by the tax-ADJUSTED score octogen actually used (raw MC score + the
+  // trump-conservation tax), so the visual order and the green "best" match what
+  // it played. eff() falls back to the raw score when there is no tax.
+  const eff=(c)=>(c.adjScore!=null?c.adjScore:c.score);
   if(isSolverVerdict){ const ord={win:0,draw:1,unknown:2,none:3,loss:4,illegal:5}; cs.sort((a,b)=>(ord[a.verdict]-ord[b.verdict])); }
-  else cs.sort((a,b)=>((a.score==null)-(b.score==null))||(a.score-b.score));
+  else cs.sort((a,b)=>((a.score==null)-(b.score==null))||(eff(a)-eff(b)));
   const scored=cs.filter(c=>c.score!=null);
-  const best=scored.length?Math.min.apply(null,scored.map(c=>c.score)):null;
+  const best=scored.length?Math.min.apply(null,scored.map(eff)):null;
+  const anyTax=scored.some(c=>c.trumpTax>0);
   const recN=normLabel(recMove);
   cs.forEach(c=>{
     const row=document.createElement('div'); row.className='brow';
-    if(c.score!=null && c.score===best) row.classList.add('best');
+    if(c.score!=null && eff(c)===best) row.classList.add('best');
     if(c.chosen) row.classList.add('chosen');
     if(!c.alive) row.classList.add('pruned');
     const mv=document.createElement('div'); mv.className='bmove'; mv.appendChild(moveChips(c));
     if(normLabel(c.label)===recN){ const rt=document.createElement('span'); rt.className='chip forced'; rt.style.marginLeft='4px'; rt.textContent='recorded'; mv.appendChild(rt); }
+    if(c.trumpTax>0){ const kt=document.createElement('span'); kt.className='chip trumpkeep'; kt.style.marginLeft='4px'; kt.textContent='trump‑keep +'+c.trumpTax.toFixed(3); mv.appendChild(kt); }
     row.appendChild(mv);
     const tr=document.createElement('div'); tr.className='btrack';
     const fill=document.createElement('div'); fill.className='bfill';
-    if(c.score!=null){ const w=Math.max(2,Math.min(100,(2-c.score)/1*100)); fill.style.width=w+'%'; }
+    if(c.score!=null){ const w=Math.max(2,Math.min(100,(2-eff(c))/1*100)); fill.style.width=w+'%'; }
     else fill.style.width='0%';
     tr.appendChild(fill); row.appendChild(tr);
     const tg=document.createElement('div'); tg.className='btag';
     if(isSolverVerdict){ tg.innerHTML='<span class="chip '+c.verdict+'">'+c.verdict+'</span>'; }
-    else if(c.score!=null){ tg.textContent=c.score.toFixed(4)+'  ('+c.nsim+' sims)'; }
+    else if(c.score!=null){
+      if(c.trumpTax>0){ tg.innerHTML='<span class="raw">'+c.score.toFixed(4)+'</span> +'+c.trumpTax.toFixed(3)+' = <b>'+eff(c).toFixed(4)+'</b> <span class="dim">('+c.nsim+' sims)</span>'; }
+      else{ tg.textContent=eff(c).toFixed(4)+'  ('+c.nsim+' sims)'; }
+    }
     else { tg.innerHTML='<span class="chip unknown">'+(c.verdict||'n/a')+'</span>'; }
     row.appendChild(tg);
     bars.appendChild(row);
   });
+  if(anyTax){ const kn=document.createElement('div'); kn.className='solvernote keepnote';
+    kn.innerHTML='<b>Trump‑keep tax active.</b> While the deck is alive octogen adds <b>+'+(M.trumpKeep||0.04).toFixed(3)+'</b> to the average‑finish score of any move that <i>leads a trump</i> (per trump, attacks only). It only changes the pick when the raw Monte‑Carlo scores are within noise — tipping a near‑tie toward keeping the trump. Raw score → adjusted shown above.';
+    panel.appendChild(kn); }
   panel.appendChild(bars);
   if(solver && !isSolverVerdict){
     const sn=document.createElement('div'); sn.className='solvernote';

@@ -22,6 +22,11 @@ FIRST = rd['firstAttacker']
 FOOL = rd['fool']
 ELIM = rd['eliminationOrder']
 NPLAYERS = rd.get('playerCount', 2)
+# Trump-conservation tie-break (octogen_strategy.c OG_TRUMP_KEEP, wired at
+# bot_strategy.ts OCTOGEN_TRUMP_KEEP=40). The dump carries RAW Monte-Carlo
+# scores; octogen ranks by score + this tax per trump LED on an attack while the
+# deck is alive. Keep in sync with the deployed value.
+TRUMP_KEEP = 0.040
 
 VAL = {5: '6', 6: '7', 7: '8', 8: '9', 9: '10', 10: 'J', 11: 'Q', 12: 'K', 13: 'A'}
 SUITSYM = {0: '♠', 1: '♥', 2: '♣', 3: '♦'}   # S H C D
@@ -174,6 +179,15 @@ for i, l in enumerate(logs):
         # pinned across all opponents + the shared unknown pool == deck + all opps
         assert total_pinned + len(pool_toks) == d['deck'] + oppc, \
             f"ply {i}: pinned {total_pinned} + pool {len(pool_toks)} != deck {d['deck']} + opp {oppc}"
+        # Annotate each candidate with the trump-conservation tax and the
+        # tax-adjusted score octogen actually ranked by, so the page can show a
+        # trump lead getting demoted below the junk-card lead it (correctly) played.
+        deck_alive = d['deck'] > 0
+        for c in d['candidates']:
+            n_trump = sum(1 for cd in c.get('cards', []) if str(cd).endswith('*'))
+            tax = TRUMP_KEEP * n_trump if (deck_alive and c.get('type') == 'attack') else 0.0
+            c['trumpTax'] = round(tax, 4)
+            c['adjScore'] = round(c['score'] + tax, 4) if c.get('score') is not None else None
         rec = {'ply': i, 'hand': d['hand'], 'table': d['table'], 'opp_counts': d['opp_counts'],
                'deck': d['deck'], 'solver': d['solver'], 'candidates': d['candidates'],
                'chosen': d['chosen'],
@@ -211,6 +225,7 @@ data = {
         'flip': card(FLIP['suit'], FLIP['value']),
         'nlogs': len(logs),
         'decisions': total, 'match': match, 'forced': forced,
+        'trumpKeep': TRUMP_KEEP,
     },
     'flagged': flagged,
     'logs': out,
