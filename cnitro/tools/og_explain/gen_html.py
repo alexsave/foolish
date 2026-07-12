@@ -119,6 +119,8 @@ input[type=range]{flex:1;min-width:180px;accent-color:var(--accent)}
 .btrack{background:var(--surface-2);border-radius:4px;height:22px;position:relative;overflow:hidden}
 .bfill{height:100%;border-radius:4px 0 0 4px;min-width:2px;background:var(--accent);opacity:.55}
 .brow.best .bfill{background:var(--win);opacity:.9}
+.bfill.v-win{background:var(--win);opacity:.85} .bfill.v-loss{background:var(--loss);opacity:.8}
+.bfill.v-draw{background:var(--info);opacity:.7} .bfill.v-unk{background:var(--text-muted);opacity:.5}
 .brow.chosen .btrack{outline:2px solid var(--accent);outline-offset:1px}
 .brow.best.chosen .btrack{outline-color:var(--win)}
 .brow.pruned{opacity:.5}
@@ -414,19 +416,22 @@ function renderDecision(){
   const barW=(c)=>Math.max(12,Math.min(100,96-((eff(c)-best)/span)*84));
   const anyTax=scored.some(c=>c.trumpTax>0);
   const recN=normLabel(recMove);
+  // Solver-verdict panel: bar reflects the exact verdict, not the MC score.
+  const VBAR={win:[100,'v-win'],draw:[55,'v-draw'],unknown:[45,'v-unk'],loss:[16,'v-loss']};
   cs.forEach(c=>{
     const row=document.createElement('div'); row.className='brow';
-    if(c.score!=null && c.alive && eff(c)===best) row.classList.add('best');
+    if(!isSolverVerdict && c.score!=null && c.alive && eff(c)===best) row.classList.add('best');
     if(c.chosen) row.classList.add('chosen');
-    if(!c.alive && c.score!=null) row.classList.add('pruned');
+    if(!isSolverVerdict && !c.alive && c.score!=null) row.classList.add('pruned');
     const mv=document.createElement('div'); mv.className='bmove'; mv.appendChild(moveChips(c));
     if(normLabel(c.label)===recN){ const rt=document.createElement('span'); rt.className='chip forced'; rt.style.marginLeft='4px'; rt.textContent='recorded'; mv.appendChild(rt); }
-    if(!c.alive && c.score!=null){ const rc=document.createElement('span'); rc.className='chip raced'; rc.style.marginLeft='4px'; rc.textContent='raced out'; mv.appendChild(rc); }
+    if(!isSolverVerdict && !c.alive && c.score!=null){ const rc=document.createElement('span'); rc.className='chip raced'; rc.style.marginLeft='4px'; rc.textContent='raced out'; mv.appendChild(rc); }
     if(c.trumpTax>0){ const kt=document.createElement('span'); kt.className='chip trumpkeep'; kt.style.marginLeft='4px'; kt.textContent='trump‑keep +'+c.trumpTax.toFixed(3); mv.appendChild(kt); }
     row.appendChild(mv);
     const tr=document.createElement('div'); tr.className='btrack';
     const fill=document.createElement('div'); fill.className='bfill';
-    if(c.score!=null){ fill.style.width=barW(c)+'%'; }
+    if(isSolverVerdict){ const vb=VBAR[c.verdict]||[0,'']; fill.style.width=vb[0]+'%'; if(vb[1]) fill.classList.add(vb[1]); }
+    else if(c.score!=null){ fill.style.width=barW(c)+'%'; }
     else fill.style.width='0%';
     tr.appendChild(fill); row.appendChild(tr);
     const tg=document.createElement('div'); tg.className='btag';
