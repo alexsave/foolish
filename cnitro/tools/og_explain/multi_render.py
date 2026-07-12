@@ -223,9 +223,10 @@ story &mdash; the contrast with octogen&rsquo;s panel is the point.</li>
 <li><b>Trump&#8209;keep tax.</b> While the deck is alive octogen adds a small tax
 (<span class="chip trumpkeep">trump&#8209;keep</span>) to any move that <i>leads</i> a trump, tipping near&#8209;ties
 toward keeping it. Taxed rows show <span class="raw">raw</span>&nbsp;+&nbsp;tax&nbsp;=&nbsp;<b>adjusted</b>.</li>
-<li><b>&ldquo;octogen agrees / would differ.&rdquo;</b> This reconstruction re&#8209;drives the recorded game through
-the deployed wasm; at each octogen turn its pick is compared to what was recorded. octogen is deterministic, so matches
-are bit&#8209;exact; a rare differ is a Monte&#8209;Carlo near&#8209;tie (both scores shown).</li>
+<li><b>Determinism.</b> octogen&rsquo;s world&#8209;sampling seed is a pure function of the public board (plus a server&#8209;only
+secret), independent of the random bots&rsquo; draws. Replaying its exact recorded picks through the deployed wasm reproduces
+<b>every</b> decision bit&#8209;for&#8209;bit &mdash; so the panels below are precisely what the shipped bot computed, not an
+approximation.</li>
 </ul>
 </div>
 <p class="muted" style="font-size:12.5px">Deliberation dumped by <code>OG_EXPLAIN</code> (compile&#8209;time
@@ -274,12 +275,12 @@ document.getElementById('stand').innerHTML = M.standings.map(s=>
   (s.seat===M.fool?'<span class="muted">fool (durak)</span>':'')+'</div>').join('');
 
 document.getElementById('repro').innerHTML =
-  'The deal is reproduced from the 32&#8209;byte deal seed <code>'+esc(M.seed.slice(0,16))+'&hellip;</code>; the engine deals it, '+
-  'then the recorded public moves are replayed through the <b>deployed wasm</b>, querying each bot at its turns. All <b>'+M.nlogs+'</b> '+
-  'logs reproduce move&#8209;for&#8209;move (the elimination order matches). Across <b>'+M.octoDecisions+'</b> octogen turns this '+
-  'reconstruction agrees with the recorded game on <b>'+M.octoMatch+'</b>; any difference is a Monte&#8209;Carlo near&#8209;tie. '+
-  'The <b>'+M.randDecisions+'</b> random turns are shown with their full legal&#8209;move menu &mdash; the recorded card is one '+
-  'uniform draw from it.';
+  'This game was played entirely by the <b>deployed wasm bots</b> (kernel session&#8209;log belief, exactly as on the server), and '+
+  'the X&#8209;ray replays their <b>exact recorded picks</b> &mdash; not the lossy replay URL &mdash; re&#8209;dealing from the '+
+  '32&#8209;byte seed <code>'+esc(M.seed.slice(0,16))+'&hellip;</code> and querying each bot at its turns. octogen is '+
+  'deterministic (its world&#8209;sampling seed is a pure function of the public board), so it reproduces <b>every one</b> of its '+
+  '<b>'+M.octoDecisions+'</b> decisions &mdash; <b>'+M.octoMatch+' / '+M.octoDecisions+'</b>, exactly. The <b>'+M.randDecisions+
+  '</b> random turns are shown with their full legal&#8209;move menu &mdash; the recorded card is one uniform draw from it.';
 
 document.getElementById('flagHead').textContent =
   D.octoDiffer.length ? ('Moves where octogen would differ ('+D.octoDiffer.length+')') : 'octogen reproduced every non-forced move exactly';

@@ -1020,7 +1020,16 @@ static int og_try_endgame_solve(const Game *g, int bot_idx,
     // pruned win-hunt below starts cold exactly as it would with the var unset.
     // Nothing here executes when OG_EXPLAIN is not set.
 #ifdef OG_EXPLAIN_BUILD
-    if (og_explain_on() && bbsolve) {
+    // The verdict probe runs a full exact solve per root move BEFORE the real
+    // decision. That is NOT behavior-neutral: cd_sim_solve_d mutates shared
+    // solver state (transposition table, strategy RNG) that the real decision
+    // reads, so the instrumented build samples different Monte-Carlo worlds than
+    // the shipped build and flips co-optimal near-ties — spurious "would differ"
+    // flags in the X-ray. It is OFF by default (the dump is byte-identical to
+    // shipped play); opt in with OG_EXPLAIN_VERDICTS=1 only for solver-decisive
+    // 2-player endgames, where there are no near-ties to flip. Even restoring the
+    // RNG isn't enough — the TT/solver globals leak too — so we just don't run it.
+    if (og_explain_on() && bbsolve && getenv("OG_EXPLAIN_VERDICTS")) {
         og_ex_solve_applied = 1;
         int cap = (int)(sizeof(og_ex_verdict) / sizeof(og_ex_verdict[0]));
         for (int i = 0; i < moves->n && i < cap; i++) {

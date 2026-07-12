@@ -20,7 +20,10 @@ const SU = ['S', 'H', 'C', 'D'];
 
 test('shipped-wasm octogen reproduction', { skip: !process.env.SC_RUN }, () => {
     const HEX = process.env.RECON_SEED!;
-    const rd = JSON.parse(readFileSync(process.env.RECON_RD!, 'utf8'));
+    // Two modes: OGX_GEN_JSON drives the EXACT recorded picks (kernel-path
+    // record); otherwise RECON_RD drives the decoded replay logs.
+    const gen = process.env.OGX_GEN_JSON ? JSON.parse(readFileSync(process.env.OGX_GEN_JSON, 'utf8')) : null;
+    const rd = gen ? gen.rd : JSON.parse(readFileSync(process.env.RECON_RD!, 'utf8'));
     const NP = Number(rd.playerCount || 2);
     const TRUMP = (rd.trumpCard || {}).suit ?? 0;
     const OCTO = new Set((process.env.OGX_OCTO_SEATS || '').split(',').filter((s) => s !== '').map(Number));
@@ -46,28 +49,31 @@ test('shipped-wasm octogen reproduction', { skip: !process.env.SC_RUN }, () => {
     delete g.belief_logs;
     if (startRun && startRun.logsWire && startRun.logsWire.length > 2) appendBelief(logsFromKernelExport(startRun.logsWire, 1));
 
-    const diffs: any[] = []; let octo = 0;
-    for (let i = 0; i < rd.logs.length; i++) {
-        const l = rd.logs[i];
-        if (!['attack', 'cover', 'pass', 'pickup', 'good'].includes(l.t)) continue;
-        if (OCTO.has(l.seat)) {
+    // Unified step list: exact picks (gen) or replay-log actions (rd).
+    const steps = gen
+        ? gen.moves.map((m: any) => ({ seat: m.seat, type: m.type, cards: m.cards || [], atk: m.attack_cards }))
+        : rd.logs.filter((l: any) => ['attack', 'cover', 'pass', 'pickup', 'good'].includes(l.t))
+            .map((l: any) => ({ seat: l.seat, type: l.t, cards: l.cards.map((c: any) => c.p), atk: l.t === 'cover' ? l.cards.map((c: any) => c.tg) : undefined }));
+
+    const diffs: any[] = []; let octo = 0, k = 0;
+    for (const s of steps) {
+        if (OCTO.has(s.seat)) {
             g.belief_log_bytes = belief;
-            const q: any = wasmChooseMoveDirect(g, `p${l.seat}`, STRAT.octogen, { env });
+            const q: any = wasmChooseMoveDirect(g, `p${s.seat}`, STRAT.octogen, { env });
             octo++;
             const picked = q ? lab(q.type, q.cards || [], q.attack_cards) : '(null)';
-            const recorded = lab(l.t, l.cards.map((c: any) => c.p), l.t === 'cover' ? l.cards.map((c: any) => c.tg) : undefined);
-            if (norm(picked) !== norm(recorded)) diffs.push({ ply: i, seat: l.seat, picked, recorded });
+            const recorded = lab(s.type, s.cards, s.atk);
+            if (norm(picked) !== norm(recorded)) diffs.push({ step: k, seat: s.seat, picked, recorded });
         }
-        const cards = l.cards.map((c: any) => C(c.p.suit, c.p.value));
-        const atk = l.t === 'cover' ? l.cards.map((c: any) => C(c.tg.suit, c.tg.value)) : undefined;
-        let aiMask = 0; g.players.forEach((p: any, k: number) => { if (p.is_ai) aiMask |= 1 << k; });
-        const move: any = { kind: l.t };
-        if (l.t !== 'pickup' && l.t !== 'good') move.cards = cards;
-        if (atk) move.attack_cards = atk;
-        const run: any = runPackedGameAction(g, l.seat, encodeAction(move), aiMask, []);
-        if (!run || !run.ok) { process.stderr.write(`stopped at ${i}\n`); break; }
+        let aiMask = 0; g.players.forEach((p: any, kk: number) => { if (p.is_ai) aiMask |= 1 << kk; });
+        const move: any = { kind: s.type };
+        if (s.type !== 'pickup' && s.type !== 'good') move.cards = s.cards.map((c: any) => C(c.suit, c.value));
+        if (s.atk) move.attack_cards = s.atk.map((c: any) => C(c.suit, c.value));
+        const run: any = runPackedGameAction(g, s.seat, encodeAction(move), aiMask, []);
+        if (!run || !run.ok) { process.stderr.write(`stopped at step ${k}\n`); break; }
         appendBelief(logsFromKernelExport(run.logsWire, 1));
-        applyKernelStateToGame(g, run.post, `p${l.seat}`);
+        applyKernelStateToGame(g, run.post, `p${s.seat}`);
+        k++;
     }
-    process.stderr.write(`SHIPPED-wasm octogen: ${octo} turns, ${diffs.length} differ: ${JSON.stringify(diffs)}\n`);
+    process.stderr.write(`SHIPPED-wasm octogen (${gen ? 'exact picks' : 'replay logs'}): ${octo} turns, ${diffs.length} differ: ${JSON.stringify(diffs)}\n`);
 });

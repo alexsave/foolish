@@ -76,6 +76,26 @@ def norm(s):
     return p[0] + ' ' + ' '.join(sorted(p[1:]))
 
 
+def merged_cover_label(idx):
+    """A multi-card cover is ONE bot decision but the kernel logs it as one
+    LOG_COVER record per card. octogen's dump carries the whole move, so to
+    compare we rebuild the full recorded move by merging the consecutive
+    same-seat cover logs starting at idx (otherwise a 2-card cover looks like a
+    'differ' against just its first split log)."""
+    seat0 = logs[idx]['seat']
+
+    def tk(c):
+        return c['r'] + SU[c['suit']] + ('*' if c['trump'] else '')
+    parts, j = [], idx
+    while j < len(logs) and logs[j]['t'] == 'cover' and logs[j]['seat'] == seat0:
+        for x in logs[j]['cards']:
+            c = card(x['p']['suit'], x['p']['value'])
+            t = card(x['tg']['suit'], x['tg']['value']) if x['tg'] else None
+            parts.append(tk(c) + '->' + (tk(t) if t else '?'))
+        j += 1
+    return 'cover ' + ' '.join(parts)
+
+
 # ---- walk the logs: reconstruct the public board + per-seat hand counts -------
 hc = [6] * NP
 table = []
@@ -129,7 +149,8 @@ for i, l in enumerate(logs):
     rec = None
     if i in by_ply:
         d = by_ply[i]
-        recmove = recorded_label(action) if action else '?'
+        recmove = merged_cover_label(i) if (action and action['kind'] == 'cover') \
+            else (recorded_label(action) if action else '?')
         if d.get('kind') == 'random':
             legal = d['legal']
             chosen = d['chosen']
