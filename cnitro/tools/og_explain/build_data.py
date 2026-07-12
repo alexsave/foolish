@@ -28,16 +28,25 @@ NPLAYERS = rd.get('playerCount', 2)
 # deck is alive. Keep in sync with the deployed value.
 TRUMP_KEEP = 0.040
 
-VAL = {5: '6', 6: '7', 7: '8', 8: '9', 9: '10', 10: 'J', 11: 'Q', 12: 'K', 13: 'A'}
+# Covers BOTH deck sizes: the 36-card small deck (2 players) uses values 5-13
+# (6..A); the 52-card large deck (5+ players) also uses 1-4 (2..5). ACE is 13 in
+# both, so the value->rank map is fixed.
+VAL = {1: '2', 2: '3', 3: '4', 4: '5', 5: '6', 6: '7', 7: '8', 8: '9', 9: '10',
+       10: 'J', 11: 'Q', 12: 'K', 13: 'A'}
 SUITSYM = {0: '♠', 1: '♥', 2: '♣', 3: '♦'}   # S H C D
 SU = {0: 'S', 1: 'H', 2: 'C', 3: 'D'}
 
 
 def card(s, v):
-    if v == -1:
-        return {'r': '?', 'suit': s, 'trump': False, 'red': False, 'hidden': True, 'str': '??'}
-    return {'r': VAL.get(v, '?'), 'suit': s, 'sym': SUITSYM[s], 'trump': (s == TRUMP),
-            'red': (s in (1, 3)), 'hidden': False, 'str': VAL.get(v, '?') + SUITSYM[s]}
+    # Robust to partial / unknown cards: octogen's multi-player belief can pin a
+    # card whose suit it knows but not its rank (og_explain emits '?S'), and a
+    # masked draw has neither. Render whatever is known; never crash.
+    known_s = isinstance(s, int) and 0 <= s <= 3
+    r = VAL.get(v, '?')
+    sym = SUITSYM[s] if known_s else '?'
+    return {'r': r, 'suit': s if known_s else -1, 'sym': sym,
+            'trump': (known_s and s == TRUMP), 'red': (known_s and s in (1, 3)),
+            'hidden': (r == '?'), 'str': (r + sym) if (r != '?' or known_s) else '??'}
 
 
 VALREV = {v: k for k, v in VAL.items()}
@@ -45,10 +54,11 @@ SUREV = {'S': 0, 'H': 1, 'C': 2, 'D': 3}
 
 
 def tok_to_sv(t):
-    """Parse an og_explain token ('9C*','10H','AS') into (suit, value)."""
+    """Parse an og_explain token ('9C*','10H','AS','?S') into (suit, value);
+    unknown rank/suit -> -1 (partial pin or masked card)."""
     t = t.rstrip('*')
-    suit = SUREV[t[-1]]
-    return (suit, VALREV[t[:-1]])
+    suit = SUREV.get(t[-1:], -1)
+    return (suit, VALREV.get(t[:-1], -1))
 
 
 def opp_count(d, rd):
@@ -176,9 +186,16 @@ for i, l in enumerate(logs):
                          'pinned': [tcard(t) for t in pinned_p],
                          'voids': [tcard(t) for t in voids_all[p]],
                          'floor': floors[p]})
-        # pinned across all opponents + the shared unknown pool == deck + all opps
-        assert total_pinned + len(pool_toks) == d['deck'] + oppc, \
-            f"ply {i}: pinned {total_pinned} + pool {len(pool_toks)} != deck {d['deck']} + opp {oppc}"
+        # pinned across all opponents + the shared unknown pool == deck + all opps.
+        # Exact only when every pin is a FULLY-known card (removed from the pool).
+        # In multi-player games octogen can hold a PARTIAL pin (suit known, rank
+        # unknown, '?S') which stays in the unknown pool, so the identity is off by
+        # the number of partial pins. Note it and render anyway rather than crash.
+        partial = sum(1 for p in range(NPLAYERS) if p != og_seat
+                      for t in pinned_all[p] if VALREV.get(t.rstrip('*')[:-1], -1) == -1)
+        if total_pinned + len(pool_toks) != d['deck'] + oppc + partial:
+            sys.stderr.write(f"note: ply {i}: pinned {total_pinned} + pool {len(pool_toks)} "
+                             f"!= deck {d['deck']} + opp {oppc} (+{partial} partial)\n")
         # Annotate each candidate with the trump-conservation tax and the
         # tax-adjusted score octogen actually ranked by, so the page can show a
         # trump lead getting demoted below the junk-card lead it (correctly) played.

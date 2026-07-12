@@ -37,7 +37,7 @@ def drive_native(seed, rd, moves, delib):
         env=env, stdout=subprocess.DEVNULL)
 
 
-def drive_wasm(seed, rd, delib):
+def drive_wasm(seed, rd, delib, ogseat):
     """The DEPLOYED bots.wasm (bots-wasm-explain = shipped wasm + behavior-neutral
     OG_EXPLAIN sink), so the deliberation is the exact binary that played the
     game — no native-vs-wasm divergence. Swaps the instrumented wasm in for the
@@ -53,6 +53,7 @@ def drive_wasm(seed, rd, delib):
         shutil.copyfile(explain_gz, shipped)
         print('[3/5] drive octogen through the deployed wasm (OG_EXPLAIN)', file=sys.stderr)
         env = dict(os.environ, RECON_SEED=seed, RECON_RD=rd, OGX_WASM_DELIB=delib,
+                   OGX_SEAT=str(ogseat),
                    TSX_TSCONFIG_PATH=os.path.join(ROOT, 'e2e', 'tsconfig.json'))
         # Driver lives in e2e/ so the deal-seed override resolves to one engine.ts
         # module instance (from other dirs it duplicates and the deal goes random).
@@ -64,10 +65,15 @@ def drive_wasm(seed, rd, delib):
 
 
 def main():
-    argv = [a for a in sys.argv[1:] if a != '--wasm']
-    use_wasm = '--wasm' in sys.argv
+    flags = [a for a in sys.argv[1:] if a.startswith('--')]
+    argv = [a for a in sys.argv[1:] if not a.startswith('--')]
+    use_wasm = '--wasm' in flags
+    ogseat = 1  # default: 2-player replays seat octogen at p1
+    for f in flags:
+        if f.startswith('--seat='):
+            ogseat = int(f.split('=', 1)[1])
     if len(argv) < 2:
-        print('usage: explain.py [--wasm] <replay-url> <deal-seed> [out.html]', file=sys.stderr)
+        print('usage: explain.py [--wasm] [--seat=N] <replay-url> <deal-seed> [out.html]', file=sys.stderr)
         return 2
     url, seed = argv[0], argv[1]
     out_html = argv[2] if len(argv) > 2 else os.path.join(ROOT, 'docs', 'octogen-replay-explain.html')
@@ -82,7 +88,7 @@ def main():
     run(['node', '--import', 'tsx', os.path.join(HERE, 'decode_to_json.mjs'), url, rd])
 
     if use_wasm:
-        drive_wasm(seed, rd, delib)
+        drive_wasm(seed, rd, delib, ogseat)
     else:
         drive_native(seed, rd, moves, delib)
 
