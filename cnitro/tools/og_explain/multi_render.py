@@ -1,18 +1,9 @@
 #!/usr/bin/env python3
-# Render page_data.json into the self-contained interactive page
-# docs/octogen-replay-explain.html. NOTHING about the specific game is hardcoded
-# here: every fact (players, trump, who won, the fool, the agree/differ tally,
-# which moves are flagged, the flagged-move commentary, the "octogen known
-# state" pool) is read from page_data.json / derived in the browser from the
-# engine's own deliberation dump.
-#
-#   gen_html.py page_data.json out.html
+# render(data) -> a self-contained interactive multi-bot replay X-ray page.
+# Consumed by multi_page.py. Octogen seats get the full deliberation panel
+# (Monte-Carlo / endgame solver / belief); random seats get their legal-move
+# menu with the recorded pick highlighted. Nothing game-specific is hardcoded.
 import json
-import sys
-
-data = json.load(open(sys.argv[1]))
-OUT = sys.argv[2] if len(sys.argv) > 2 else 'docs/octogen-replay-explain.html'
-DATA_JSON = json.dumps(data, separators=(',', ':'))
 
 CSS = r"""
 :root{
@@ -20,7 +11,8 @@ CSS = r"""
   --text-primary:#0b0b0b; --text-secondary:#52514e; --text-muted:#86857f;
   --win:#0a7a35; --win-bg:#dcefe1; --loss:#d23b3a; --loss-bg:#f7dcdc;
   --warn:#c74a1e; --warn-bg:#fbe2d6; --info:#2a78d6; --info-bg:#dce9fb;
-  --accent:#4a3aa7; --card:#ffffff; --card-red:#c0392b; --card-trump:#8a6d00;
+  --rand:#7a5a12; --rand-bg:#f3ead6; --accent:#4a3aa7; --card:#ffffff;
+  --card-red:#c0392b; --card-trump:#8a6d00;
   --shadow:0 1px 3px rgba(0,0,0,.08),0 1px 2px rgba(0,0,0,.04);
 }
 @media (prefers-color-scheme: dark){:root{
@@ -28,44 +20,53 @@ CSS = r"""
   --text-primary:#f4f4f2; --text-secondary:#c3c2b7; --text-muted:#8e8d84;
   --win:#3fbf72; --win-bg:#123322; --loss:#e66767; --loss-bg:#3a1a1a;
   --warn:#e77a4d; --warn-bg:#3a2113; --info:#57a0ee; --info-bg:#122238;
-  --accent:#9085e9; --card:#2b2b28; --card-red:#e77a6a; --card-trump:#e0b83a;
-  --shadow:0 1px 3px rgba(0,0,0,.4);
+  --rand:#d6b45c; --rand-bg:#332a15; --accent:#9085e9; --card:#2b2b28;
+  --card-red:#e77a6a; --card-trump:#e0b83a; --shadow:0 1px 3px rgba(0,0,0,.4);
 }}
 :root[data-theme="dark"]{
   --surface-0:#131312; --surface-1:#1c1c1a; --surface-2:#252523; --border:#3a3a37;
   --text-primary:#f4f4f2; --text-secondary:#c3c2b7; --text-muted:#8e8d84;
   --win:#3fbf72; --win-bg:#123322; --loss:#e66767; --loss-bg:#3a1a1a;
   --warn:#e77a4d; --warn-bg:#3a2113; --info:#57a0ee; --info-bg:#122238;
-  --accent:#9085e9; --card:#2b2b28; --card-red:#e77a6a; --card-trump:#e0b83a;
-  --shadow:0 1px 3px rgba(0,0,0,.4);
+  --rand:#d6b45c; --rand-bg:#332a15; --accent:#9085e9; --card:#2b2b28;
+  --card-red:#e77a6a; --card-trump:#e0b83a; --shadow:0 1px 3px rgba(0,0,0,.4);
 }
 :root[data-theme="light"]{
   --surface-0:#f4f4f2; --surface-1:#fcfcfb; --surface-2:#ececea; --border:#dad9d4;
   --text-primary:#0b0b0b; --text-secondary:#52514e; --text-muted:#86857f;
   --win:#0a7a35; --win-bg:#dcefe1; --loss:#d23b3a; --loss-bg:#f7dcdc;
   --warn:#c74a1e; --warn-bg:#fbe2d6; --info:#2a78d6; --info-bg:#dce9fb;
-  --accent:#4a3aa7; --card:#ffffff; --card-red:#c0392b; --card-trump:#8a6d00;
+  --rand:#7a5a12; --rand-bg:#f3ead6; --accent:#4a3aa7; --card:#ffffff;
+  --card-red:#c0392b; --card-trump:#8a6d00;
   --shadow:0 1px 3px rgba(0,0,0,.08),0 1px 2px rgba(0,0,0,.04);
 }
 *{box-sizing:border-box}
 body{margin:0;background:var(--surface-0);color:var(--text-primary);
   font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
   -webkit-font-smoothing:antialiased;}
-.wrap{max-width:1000px;margin:0 auto;padding:28px 20px 90px;}
+.wrap{max-width:1040px;margin:0 auto;padding:28px 20px 90px;}
 h1{font-size:26px;line-height:1.2;margin:0 0 6px;letter-spacing:-.02em}
 h2{font-size:20px;margin:40px 0 10px;letter-spacing:-.01em;padding-top:8px}
 h3{font-size:14px;margin:18px 0 8px;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.04em;font-weight:600}
 p{margin:10px 0;color:var(--text-secondary)}
-.lede{font-size:17px;color:var(--text-secondary);max-width:74ch}
+.lede{font-size:17px;color:var(--text-secondary);max-width:76ch}
 code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.9em}
 .panel{background:var(--surface-1);border:1px solid var(--border);border-radius:12px;padding:18px 20px;box-shadow:var(--shadow);margin:16px 0}
 .muted{color:var(--text-muted)}
 b,strong{color:var(--text-primary)}
-.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin:18px 0}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:18px 0}
 .tile{background:var(--surface-1);border:1px solid var(--border);border-radius:12px;padding:14px 16px;box-shadow:var(--shadow)}
-.tile .n{font-size:23px;font-weight:700;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.tile .n{font-size:22px;font-weight:700;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
 .tile .l{font-size:12.5px;color:var(--text-muted);margin-top:2px}
-.tile.win .n{color:var(--win)} .tile.loss .n{color:var(--loss)}
+.tile.win .n{color:var(--win)}
+/* standings */
+.stand{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}
+.srow{display:flex;align-items:center;gap:9px;background:var(--surface-1);border:1px solid var(--border);
+  border-radius:10px;padding:7px 12px;box-shadow:var(--shadow);font-size:13.5px}
+.srow .pl{font-weight:800;font-variant-numeric:tabular-nums;min-width:20px;color:var(--text-muted)}
+.srow.p1 .pl{color:var(--win)} .srow.fool{border-color:var(--loss)}
+.badge{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;padding:2px 7px;border-radius:5px}
+.badge.octogen{background:var(--win-bg);color:var(--win)} .badge.random{background:var(--rand-bg);color:var(--rand)}
 /* playing cards */
 .pc{display:inline-flex;align-items:center;justify-content:center;min-width:30px;height:40px;padding:0 6px;
   background:var(--card);border:1px solid var(--border);border-radius:7px;font-weight:700;font-size:15px;
@@ -76,30 +77,30 @@ b,strong{color:var(--text-primary)}
 .pc .s{font-size:.82em}
 .hand{display:flex;flex-wrap:wrap;gap:5px;align-items:center}
 /* controls */
-.seg{display:inline-flex;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;padding:3px;gap:2px}
-.seg button{border:0;background:transparent;color:var(--text-secondary);font:inherit;font-weight:600;
-  padding:6px 12px;border-radius:6px;cursor:pointer;font-size:13.5px}
-.seg button.on{background:var(--card);color:var(--text-primary);box-shadow:var(--shadow)}
-.ctl{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:center;margin:10px 0 6px}
+.ctl{display:flex;flex-wrap:wrap;gap:10px 10px;align-items:center;margin:10px 0 6px}
 .ctl button.nav{border:1px solid var(--border);background:var(--surface-1);color:var(--text-primary);
   border-radius:8px;padding:7px 13px;cursor:pointer;font:inherit;font-weight:600;font-size:14px;box-shadow:var(--shadow)}
 .ctl button.nav:disabled{opacity:.4;cursor:default}
+.ctl button.nav.og{border-color:var(--win);color:var(--win)}
+.ctl button.nav.rnd{border-color:var(--rand);color:var(--rand)}
 input[type=range]{flex:1;min-width:180px;accent-color:var(--accent)}
 .jump{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
 .jump button{border:1px solid var(--warn);background:var(--warn-bg);color:var(--warn);border-radius:8px;
   padding:6px 11px;cursor:pointer;font:inherit;font-weight:600;font-size:13px}
 /* board */
 .board{display:grid;grid-template-columns:1fr;gap:14px;margin:14px 0}
-.seatrow{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
-.seatchip{display:inline-flex;align-items:center;gap:7px;background:var(--surface-2);border:1px solid var(--border);
-  border-radius:20px;padding:4px 12px;font-size:13px;font-weight:600}
+.seatrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.seatchip{display:inline-flex;align-items:center;gap:6px;background:var(--surface-2);border:1px solid var(--border);
+  border-radius:20px;padding:4px 11px;font-size:13px;font-weight:600}
 .seatchip.def{background:var(--info-bg);border-color:var(--info);color:var(--info)}
 .seatchip.og{background:var(--win-bg);border-color:var(--win);color:var(--win)}
-.seatchip .cnt{font-variant-numeric:tabular-nums}
+.seatchip.rnd{background:var(--rand-bg);border-color:var(--rand);color:var(--rand)}
+.seatchip.acting{outline:2px solid var(--accent);outline-offset:1px}
+.seatchip.out{opacity:.4;text-decoration:line-through}
+.seatchip .cnt{font-variant-numeric:tabular-nums;font-weight:500}
 .tablearea{min-height:56px;background:var(--surface-2);border:1px dashed var(--border);border-radius:10px;padding:12px;
   display:flex;flex-wrap:wrap;gap:14px;align-items:center}
 .battle{display:flex;flex-direction:column;align-items:center;gap:3px}
-.battle .df{opacity:.95}
 .battle .un{color:var(--text-muted);font-size:11px}
 .actline{font-size:14.5px;margin:4px 0 0}
 .actline .who{font-weight:700}
@@ -110,11 +111,11 @@ input[type=range]{flex:1;min-width:180px;accent-color:var(--accent)}
 .tag.pass{background:var(--surface-2);color:var(--text-secondary)} .tag.draw,.tag.defender_change,.tag.player_out,.tag.game_start{background:var(--surface-2);color:var(--text-muted)}
 /* decision panel */
 .dpanel{border:2px solid var(--accent);border-radius:12px;padding:16px 18px;margin:16px 0;background:var(--surface-1);box-shadow:var(--shadow)}
-.dpanel.solver{border-color:var(--win)}
+.dpanel.solver{border-color:var(--win)} .dpanel.og{border-color:var(--win)} .dpanel.rnd{border-color:var(--rand)}
 .dhead{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;margin-bottom:8px}
 .dhead .t{font-weight:700;font-size:15px}
 .bars{display:flex;flex-direction:column;gap:6px;margin-top:6px}
-.brow{display:grid;grid-template-columns:170px 1fr auto;gap:10px;align-items:center}
+.brow{display:grid;grid-template-columns:180px 1fr auto;gap:10px;align-items:center}
 .bmove{display:flex;gap:3px;align-items:center;justify-content:flex-end;flex-wrap:wrap}
 .btrack{background:var(--surface-2);border-radius:4px;height:22px;position:relative;overflow:hidden}
 .bfill{height:100%;border-radius:4px 0 0 4px;min-width:2px;background:var(--accent);opacity:.55}
@@ -129,15 +130,21 @@ input[type=range]{flex:1;min-width:180px;accent-color:var(--accent)}
 .chip.win{background:var(--win-bg);color:var(--win)} .chip.loss{background:var(--loss-bg);color:var(--loss)}
 .chip.unknown{background:var(--surface-2);color:var(--text-muted)} .chip.match{background:var(--win-bg);color:var(--win)}
 .chip.mismatch{background:var(--warn-bg);color:var(--warn)} .chip.forced{background:var(--info-bg);color:var(--info)}
-.chip.trumpkeep{background:var(--card-trump);color:#fff;opacity:.92}
+.chip.trumpkeep{background:var(--card-trump);color:#fff;opacity:.92} .chip.rnd{background:var(--rand-bg);color:var(--rand)}
 .chip.raced{background:var(--surface-2);color:var(--text-muted);font-weight:600}
 .btag .raw{color:var(--text-muted);text-decoration:line-through;text-decoration-thickness:1px}
 .btag .dim{color:var(--text-muted)}
 .keepnote{border-left:3px solid var(--card-trump);padding-left:9px}
 .callout{margin-top:12px;padding:12px 14px;border-radius:9px;border:1px solid;font-size:14px}
 .callout.warn{background:var(--warn-bg);border-color:var(--warn)}
-.callout.win{background:var(--win-bg);border-color:var(--win)}
-.callout.info{background:var(--info-bg);border-color:var(--info)}
+.callout.rnd{background:var(--rand-bg);border-color:var(--rand)}
+/* random menu */
+.rmenu{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+.ropt{display:flex;align-items:center;gap:8px;border:1px solid var(--border);border-radius:9px;padding:7px 11px;background:var(--surface-2)}
+.ropt.picked{border-color:var(--rand);background:var(--rand-bg);box-shadow:0 0 0 1px var(--rand)}
+.ropt .pm{display:flex;gap:3px;align-items:center;flex-wrap:wrap}
+.ropt .pick{margin-left:auto;font-size:11.5px;font-weight:700;color:var(--rand)}
+.ropt .verb{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;color:var(--text-muted);min-width:52px}
 /* known state */
 .known{margin-top:14px;border-top:1px dashed var(--border);padding-top:12px}
 .kmeta{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:13px;margin-bottom:6px}
@@ -152,25 +159,28 @@ input[type=range]{flex:1;min-width:180px;accent-color:var(--accent)}
   color:var(--text-secondary);border-radius:8px;padding:6px 10px;cursor:pointer;font:inherit;font-size:13px;box-shadow:var(--shadow)}
 .arrow{color:var(--text-muted);margin:0 2px}
 .solvernote{font-size:12.5px;color:var(--text-muted);margin-top:6px}
-@media(max-width:620px){.brow{grid-template-columns:120px 1fr}.btag{grid-column:2;min-width:0;text-align:right}}
+@media(max-width:640px){.brow{grid-template-columns:130px 1fr}.btag{grid-column:2;min-width:0;text-align:right}}
 """
 
 HTML = r"""<meta charset="utf-8">
-<title>Why octogen played that: a replay X-ray</title>
+<title>Eight bots, eight minds — a wasm-bot replay X-ray</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>__CSS__</style>
 <button class="themebtn" id="themebtn" title="Toggle theme">theme</button>
 <div class="wrap">
-<h1>Why octogen played that &mdash; a replay X&#8209;ray</h1>
+<h1 id="pagetitle">Eight bots, eight minds &mdash; a replay X&#8209;ray</h1>
 <p class="lede" id="lede"></p>
 
 <div class="tiles" id="tiles"></div>
 
+<h3 style="margin-top:22px">Final standings</h3>
+<div class="stand" id="stand"></div>
+
 <div class="panel">
 <h3>How this was reproduced</h3>
 <p id="repro"></p>
-<p class="muted">Rank convention is the correct Durak one (wire value&nbsp;13 = A). A card shown
-as <b>A&spades;</b> is <code>{suit:0,value:13}</code>; the trump suit is boxed and gold.</p>
+<p class="muted">Rank convention is the correct Durak one (wire value&nbsp;13 = A). The trump suit is boxed and gold.
+<span id="seatlegend"></span></p>
 </div>
 
 <h2 id="flagHead">Moves where octogen would differ</h2>
@@ -181,9 +191,11 @@ as <b>A&spades;</b> is <code>{suit:0,value:13}</code>; the trump suit is boxed a
   <button class="nav" id="first">&laquo; start</button>
   <button class="nav" id="prev">&lsaquo; prev</button>
   <button class="nav" id="next">next &rsaquo;</button>
-  <button class="nav" id="nextd">next octogen decision &raquo;</button>
-  <span class="mono muted" id="counter"></span>
+  <button class="nav" id="nextd">next decision &raquo;</button>
+  <button class="nav og" id="nextog">next octogen &raquo;</button>
+  <button class="nav rnd" id="nextrnd">next random &raquo;</button>
 </div>
+<div class="ctl"><span class="mono muted" id="counter"></span></div>
 <div class="ctl"><input type="range" id="slider" min="0" max="0" value="0"></div>
 
 <div class="board panel">
@@ -200,42 +212,31 @@ as <b>A&spades;</b> is <code>{suit:0,value:13}</code>; the trump suit is boxed a
 <h2 style="margin-top:44px">How to read the panels</h2>
 <div class="panel">
 <ul style="color:var(--text-secondary);margin:6px 0;padding-left:20px;line-height:1.7">
-<li><b>Monte&#8209;Carlo candidates.</b> Away from the endgame octogen samples many possible
-worlds (deals of the hidden cards) and rolls each candidate move out to the end; the bar is
-its <b>average finish position</b> (1 = eliminated first = win, higher = worse). Lower is better.
-The chosen move is outlined; the best&#8209;scoring move is green.</li>
-<li><b>Trump&#8209;keep tax.</b> The weak rollout policy undervalues holding trumps while the deck is
-alive, so a low&#8209;trump lead scores within noise of a junk lead and the raw Monte&#8209;Carlo
-argmin would pick it ~half the time. octogen adds a small tax (<span class="chip trumpkeep">trump&#8209;keep</span>)
-to the score of any move that <i>leads</i> a trump while the deck is alive, tipping those near&#8209;ties
-toward keeping the trump. Taxed rows show <span class="raw">raw</span>&nbsp;+&nbsp;tax&nbsp;=&nbsp;<b>adjusted</b>;
-the ranking and the green &ldquo;best&rdquo; use the adjusted score.</li>
-<li><b>Exact endgame solver.</b> Once the deck is empty the hidden pool <i>is</i> the opponent's
-hand (see &ldquo;octogen known state&rdquo;), so octogen solves the position exactly &mdash;
-each move is a proven <span class="chip win">win</span> / <span class="chip loss">loss</span>
-/ draw rather than a sampled average.</li>
-<li><b>octogen known state.</b> This is octogen's <i>actual</i> belief, dumped from the engine.
-It <b>pins</b> the cards it watched the opponent pick up (still in their hand) &mdash; it knows those
-exactly &mdash; and treats the rest as an unknown pool (the face&#8209;down deck + the opponent's
-un&#8209;pinned cards). <span class="mono">pinned + pool = deck + opponent</span>, always. Once the
-deck empties the pool is just the opponent's remaining cards, so pinned + pool = the opponent's
-<b>entire hand</b> &mdash; the public deduction the exact solver runs on. It also tracks
-suit&#8209;cover voids and rank floors from the same public log.</li>
-<li><b>&ldquo;octogen agrees / would differ.&rdquo;</b> At each octogen turn the recorded move is
-compared to what this octogen build picks on the true state. Ties are common: several moves often
-score within Monte&#8209;Carlo noise, so a &ldquo;differ&rdquo; is usually a near&#8209;tie, not a blunder
-(each flagged panel shows both scores). octogen is <i>deterministic</i> &mdash; its world&#8209;sampling
-seed is <code>state_fnv</code> over the ordered hands + deck &mdash; so a matched move is bit&#8209;exact.
-A near&#8209;tie can still &ldquo;differ&rdquo; because that seed also hashes the <b>opponent&rsquo;s hand
-order</b>, and a human can <b>rearrange their hand</b> (a drag&#8209;to&#8209;reorder meta&#8209;action that
-is <i>not stored in the replay</i>). When that happens the exact tie&#8209;break can&rsquo;t be recovered
-from the public replay &mdash; the move sets still match, only the noise&#8209;level ordering differs.</li>
+<li><b style="color:var(--win)">octogen turns.</b> The full deliberation, dumped from the C engine.
+Away from the endgame octogen samples many worlds (deals of the hidden cards) and rolls each candidate move to the
+end; the bar is its <b>average finish</b> (1 = out first = win, higher = worse, lower is better). Once the deck is
+empty it solves the position <b>exactly</b> (proven <span class="chip win">win</span>/<span class="chip loss">loss</span>).
+It also shows what octogen actually <b>knows</b> about the hidden cards: the cards it has <b>pinned</b> to a seat
+(watched them pick up) vs the unknown pool it samples over. Moves tagged <span class="chip raced">raced out</span> were
+dropped early by octogen&rsquo;s progressive widening &mdash; it stopped sampling them, so their few&#8209;sim average is
+noise and isn&rsquo;t what it chose from (the green bar is the best <i>fully&#8209;simulated</i> move).</li>
+<li id="howrandom"><b style="color:var(--rand)">random turns.</b> Random has no belief and no rollout &mdash; it just
+picks one of its legal moves <b>uniformly at random</b>. So its &ldquo;reasoning&rdquo; is the full menu of legal moves
+at that position, each with probability <b>1/N</b>; the one it actually played is highlighted. That&rsquo;s the whole
+story &mdash; the contrast with octogen&rsquo;s panel is the point.</li>
+<li><b>Trump&#8209;keep tax.</b> While the deck is alive octogen adds a small tax
+(<span class="chip trumpkeep">trump&#8209;keep</span>) to any move that <i>leads</i> a trump, tipping near&#8209;ties
+toward keeping it. Taxed rows show <span class="raw">raw</span>&nbsp;+&nbsp;tax&nbsp;=&nbsp;<b>adjusted</b>.</li>
+<li><b>Determinism.</b> octogen&rsquo;s world&#8209;sampling seed is a pure function of the public board (plus a server&#8209;only
+secret), independent of the random bots&rsquo; draws. Replaying its exact recorded picks through the deployed wasm reproduces
+<b>every</b> decision bit&#8209;for&#8209;bit &mdash; so the panels below are precisely what the shipped bot computed, not an
+approximation.</li>
 </ul>
 </div>
 <p class="muted" style="font-size:12.5px">Deliberation dumped by <code>OG_EXPLAIN</code> (compile&#8209;time
-<code>-DOG_EXPLAIN_BUILD</code>, absent from shipped bots) in <code>cnitro/src/octogen_strategy.c</code>;
-game reproduced and driven by <code>cnitro/tests/og_explain.c</code>; page assembled by
-<code>cnitro/tools/og_explain/</code>.</p>
+<code>-DOG_EXPLAIN_BUILD</code>, absent from shipped bots) in <code>cnitro/src/octogen_strategy.c</code>; game driven
+through the deployed wasm by <code>e2e/_wasm_multi_drive.test.ts</code>; page assembled by
+<code>cnitro/tools/og_explain/multi_page.py</code>.</p>
 </div>
 <script>
 const DATA=__DATA__;
@@ -246,50 +247,69 @@ const DATA=__DATA__;
 JS = r"""
 (function(){
 const D=DATA, L=D.logs, N=L.length, M=D.meta;
-const NP=M.players, TRUMP=M.trump, OG=M.ogSeat;
+const NP=M.players, TRUMP=M.trump;
+const OCTO=new Set(M.octoSeats);
 const SYMS=['♠','♥','♣','♦'];
 let cur=0;
 
-function seatRole(p){
-  const r=[];
-  if(p===OG) r.push('octogen');
-  if(p===M.winner) r.push('winner'); else if(p===M.fool) r.push('fool');
-  return r.join(' · ');
-}
+function isOcto(p){return OCTO.has(p);}
+function seatKind(p){return isOcto(p)?'octogen':'random';}
+const OCTOLIST=[]; const RANDLIST=[];
+for(let p=0;p<NP;p++){ (isOcto(p)?OCTOLIST:RANDLIST).push(p); }
+const nOcto=OCTOLIST.length, nRand=RANDLIST.length;
+const seatSpan=(arr)=>arr.map(p=>'<b class="mono">p'+p+'</b>').join(', ');
+const matchup = nRand ? (nOcto+'&times;octogen vs '+nRand+'&times;random') : (nOcto+'&times;octogen');
+const matchupShort = nRand ? (nOcto+' vs '+nRand) : (nOcto+' bots');
+document.getElementById('pagetitle').innerHTML =
+  (nRand? 'Eight bots, eight minds' : nOcto+' octogens, one table') + ' &mdash; a wasm&#8209;bot replay X&#8209;ray';
 
-// ---- intro / tiles / repro (all derived from meta) ----
+// ---- intro / tiles / standings ----
+const octoIntro = nRand
+  ? 'seats '+seatSpan(OCTOLIST)+' are <b style="color:var(--win)">octogen</b> (Monte&#8209;Carlo world&#8209;sampling + '+
+    'exact endgame solver); seats '+seatSpan(RANDLIST)+' are <b style="color:var(--rand)">random</b> (uniform legal move)'
+  : 'all <b>'+nOcto+'</b> seats are <b style="color:var(--win)">octogen</b> (Monte&#8209;Carlo world&#8209;sampling + exact '+
+    'endgame solver) &mdash; the same bot playing itself, each modelling the other seven';
 document.getElementById('lede').innerHTML =
-  'One recorded <b>'+NP+'&#8209;player</b> Durak game (trump <b>'+M.trumpSym+'</b>, flip '+cardHTML(M.flip,true)+'). '+
-  'Seat <b>p'+M.winner+'</b> ('+(M.winner===OG?'octogen':'seat '+M.winner)+') wins; <b>p'+M.fool+'</b> is the fool (durak). '+
-  'This page steps through every public move and, at each of <b>octogen&rsquo;s</b> (p'+OG+') turns, opens up its actual '+
-  'deliberation: the Monte&#8209;Carlo average&#8209;finish score of each candidate move, or the exact endgame&#8209;solver '+
-  'verdict when the deck is empty &mdash; plus what octogen actually knows about the hidden cards. Numbers are dumped '+
-  'straight from the C engine, not reconstructed by hand.';
+  'One recorded <b>'+NP+'&#8209;player</b> Durak game: '+octoIntro+'. Trump is <b>'+M.trumpSym+'</b>, flip '+cardHTML(M.flip,true)+'. '+
+  'Step through every public move; at <b>each bot&rsquo;s own turn</b> the panel opens up what it was thinking &mdash; the full '+
+  'octogen X&#8209;ray'+(nRand?' for the octogen seats, and the legal&#8209;move menu (with the pick highlighted) for the random seats':'')+'.';
 
+const winKind=seatKind(M.winner);
 const tiles=[
-  ['n', NP, 'players'],
+  ['n', matchupShort, nRand? 'octogen vs random' : 'octogen self&#8209;play (mirror)'],
   ['n', M.trumpSym+' '+suitName(TRUMP), 'trump · flip '+M.flip.str],
-  [M.winner===OG?'win':'', 'p'+M.winner+' wins', 'p'+M.fool+' = fool (durak)'],
-  ['n', M.match+' / '+M.decisions, 'octogen turns it agrees with'+(M.forced?' ('+M.forced+' forced)':'')],
+  [winKind==='octogen'?'win':'', 'p'+M.winner+' wins', 'winner is '+winKind],
+  ['n', M.octoMatch+' / '+M.octoDecisions, 'octogen turns reproduced exactly'],
 ];
 document.getElementById('tiles').innerHTML = tiles.map(([cls,n,l])=>
   '<div class="tile'+(cls==='win'?' win':'')+'"><div class="n">'+n+'</div><div class="l">'+l+'</div></div>').join('');
 
+document.getElementById('stand').innerHTML = M.standings.map(s=>
+  '<div class="srow p'+s.place+(s.seat===M.fool?' fool':'')+'"><span class="pl">'+ordinal(s.place)+'</span>'+
+  '<b class="mono">p'+s.seat+'</b><span class="badge '+s.kind+'">'+s.kind+'</span>'+
+  (s.seat===M.fool?'<span class="muted">fool (durak)</span>':'')+'</div>').join('');
+
 document.getElementById('repro').innerHTML =
-  'The deal is reproduced from the 32&#8209;byte deal seed <code>'+esc(M.seed.slice(0,16))+'&hellip;</code>; the engine '+
-  'deals it, then the recorded public moves are replayed and octogen is queried at each of its turns. All <b>'+M.nlogs+'</b> '+
-  'logs reproduce move&#8209;for&#8209;move. <b>octogen&rsquo;s move is a deterministic function of the public board</b> &mdash; its '+
-  'Monte&#8209;Carlo seed is derived from public state, not the deal seed (verified: identical picks with the real seed, a bogus '+
-  'seed, or none). Across <b>'+M.decisions+'</b> octogen turns this <i>native</i> reconstruction agrees with the recorded '+
-  '<i>wasm</i>&#8209;played game on <b>'+M.match+'</b> ('+M.forced+' forced). Every remaining difference is <b>co&#8209;optimal</b>: '+
-  'the endgame ones are proven solver wins for BOTH moves, the rest are within Monte&#8209;Carlo sampling error &mdash; the native '+
-  'and wasm builds simply break those ties differently (each flagged below shows the scores).';
+  'This game was played entirely by the <b>deployed wasm bots</b> (kernel session&#8209;log belief, exactly as on the server), and '+
+  'the X&#8209;ray replays their <b>exact recorded picks</b> &mdash; not the lossy replay URL &mdash; re&#8209;dealing from the '+
+  '32&#8209;byte seed <code>'+esc(M.seed.slice(0,16))+'&hellip;</code> and querying each bot at its turns. octogen is '+
+  'deterministic (its world&#8209;sampling seed is a pure function of the public board), so it reproduces <b>every one</b> of its '+
+  '<b>'+M.octoDecisions+'</b> decisions &mdash; <b>'+M.octoMatch+' / '+M.octoDecisions+'</b>, exactly.'+
+  (M.randDecisions ? ' The <b>'+M.randDecisions+'</b> random turns are shown with their full legal&#8209;move menu &mdash; '+
+   'the recorded card is one uniform draw from it.' : '');
+
+document.getElementById('seatlegend').innerHTML = nRand
+  ? 'Seats '+seatSpan(OCTOLIST)+' are <b style="color:var(--win)">octogen</b>; '+seatSpan(RANDLIST)+' are <b style="color:var(--rand)">random</b>.'
+  : 'All '+nOcto+' seats are <b style="color:var(--win)">octogen</b> &mdash; the same bot playing itself.';
+if(!nRand){ const hr=document.getElementById('howrandom'); if(hr) hr.style.display='none';
+  const nb=document.getElementById('nextrnd'); if(nb) nb.style.display='none'; }
 
 document.getElementById('flagHead').textContent =
-  D.flagged.length ? ('Moves where octogen would differ ('+D.flagged.length+')') : 'octogen agrees with every non-forced move';
+  D.octoDiffer.length ? ('Moves where octogen would differ ('+D.octoDiffer.length+')') : 'octogen reproduced every non-forced move exactly';
 
 function suitName(s){return ['spades','hearts','clubs','diamonds'][s];}
 function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+function ordinal(n){return n+({1:'st',2:'nd',3:'rd'}[n%10>3||[11,12,13].includes(n%100)?0:n%10]||'th');}
 
 // ---- card rendering ----
 function cardEl(c,sm){
@@ -300,10 +320,9 @@ function cardEl(c,sm){
   return d;
 }
 function cardHTML(c,sm){return cardEl(c,sm).outerHTML;}
-// parse an OG token like "AS*","10H","6S*" into a card obj (trump from meta)
 const VS={S:0,H:1,C:2,D:3};
 function tok(t){
-  const m=t.match(/^(10|[2-9]|[JQKA])([SHCD])(\*?)$/);
+  const m=String(t).match(/^(10|[2-9]|[JQKA])([SHCD])(\*?)$/);
   if(!m) return {hidden:true};
   const s=VS[m[2]];
   return {r:m[1],suit:s,sym:SYMS[s],trump:s===TRUMP,red:(s===1||s===3),hidden:false};
@@ -313,16 +332,33 @@ function tokRow(tokens,sm){
   tokens.forEach(t=>f.appendChild(cardEl(tok(t),sm)));
   return f;
 }
+// render a move-label string ("attack KC", "cover 9C->10H", "pickup") into chips
+function labelChips(label){
+  const f=document.createElement('span'); f.className='pm';
+  const parts=String(label).split(/\s+/); const verb=parts[0]; const rest=parts.slice(1);
+  const vb=document.createElement('span'); vb.className='verb'; vb.textContent=verb; f.appendChild(vb);
+  if(verb==='pickup'||verb==='good'||rest.length===0){ return f; }
+  rest.forEach(t=>{
+    if(t.includes('->')){
+      const [c,tg]=t.split('->');
+      f.appendChild(cardEl(tok(c),true));
+      const ar=document.createElement('span');ar.className='arrow';ar.innerHTML='&rarr;';f.appendChild(ar);
+      f.appendChild(cardEl(tok(tg),true));
+    }else{ f.appendChild(cardEl(tok(t),true)); }
+  });
+  return f;
+}
 
 function renderBoard(){
   const o=L[cur];
   const sr=document.getElementById('seatrow'); sr.innerHTML='';
   const dfn=currentDefender();
+  const actingSeat=o.decision?o.decision.seat:(o.action&&o.action.seat!=null?o.action.seat:-1);
   for(let p=0;p<NP;p++){
     const el=document.createElement('span');
-    const role=seatRole(p);
-    el.className='seatchip'+(dfn===p?' def':'')+(p===OG?' og':'');
-    el.innerHTML='<b>p'+p+'</b>'+(role?' ('+role+')':'')+' <span class="cnt">&middot; '+o.hc[p]+' cards</span>'+(dfn===p?' &middot; defending':'');
+    el.className='seatchip'+(dfn===p?' def':'')+(isOcto(p)?' og':' rnd')+(actingSeat===p?' acting':'')+(o.hc[p]<=0&&isEliminated(p)?' out':'');
+    el.innerHTML='<b>p'+p+'</b> <span class="badge '+seatKind(p)+'">'+(isOcto(p)?'OG':'RND')+'</span>'+
+      '<span class="cnt">'+o.hc[p]+'</span>'+(dfn===p?' <span class="muted">def</span>':'');
     sr.appendChild(el);
   }
   const ta=document.getElementById('tablearea'); ta.innerHTML='';
@@ -330,7 +366,7 @@ function renderBoard(){
   o.table.forEach(b=>{
     const bt=document.createElement('div'); bt.className='battle';
     bt.appendChild(cardEl(b.a,false));
-    if(b.d){const dd=cardEl(b.d,false);dd.classList.add('df');bt.appendChild(dd);}
+    if(b.d){const dd=cardEl(b.d,false);bt.appendChild(dd);}
     else{const u=document.createElement('div');u.className='un';u.textContent='uncovered';bt.appendChild(u);}
     ta.appendChild(bt);
   });
@@ -342,8 +378,12 @@ function renderBoard(){
   document.getElementById('next').disabled=cur===N-1;
   renderDecision();
 }
+function isEliminated(p){
+  for(let i=0;i<=cur;i++){ if(L[i].t==='player_out'&&L[i].seat===p) return true; }
+  return false;
+}
 function currentDefender(){
-  let d=M.fool;
+  let d=-1;
   for(let i=cur;i>=0;i--){ if(L[i].t==='defender_change'){d=L[i].def;break;} }
   return d;
 }
@@ -371,23 +411,56 @@ function actionText(o){
 function renderDecision(){
   const host=document.getElementById('decision'); host.innerHTML='';
   const o=L[cur];
-  if(!o.decision){ host.innerHTML='<p class="muted" style="margin-left:2px">No octogen decision at this log &mdash; step to an octogen (p'+OG+') turn to see the deliberation.</p>'; return; }
-  const d=o.decision;
+  if(!o.decision){ host.innerHTML='<p class="muted" style="margin-left:2px">No bot decision at this log &mdash; step to a bot&rsquo;s turn (attack / cover / pass / pickup / good) to see its reasoning.</p>'; return; }
+  if(o.decision.kind==='random') host.appendChild(randomPanel(o.decision));
+  else host.appendChild(octogenPanel(o.decision));
+}
+
+// ---- RANDOM panel ----
+function randomPanel(d){
+  const panel=document.createElement('div'); panel.className='dpanel rnd';
+  const n=d.choiceCount;
+  let hh='<div class="dhead"><span class="t">random (p'+d.seat+') decision @ log '+d.ply+'</span>';
+  hh+='<span class="chip rnd">uniform 1 / '+n+'</span>';
+  hh+='<span class="muted mono">deck='+d.deck+'</span></div>';
+  panel.innerHTML=hh;
+  const intro=document.createElement('p'); intro.style.margin='2px 0 4px';
+  intro.innerHTML='random has <b>no belief and no search</b>. It enumerated its <b>'+n+'</b> legal move'+(n>1?'s':'')+
+    ' and picked one <b>uniformly at random</b> (each with probability '+ (n>1?('<b>'+(1/n).toFixed(3)+'</b>'):'<b>1.000</b>')+
+    '). The recorded pick is highlighted.';
+  panel.appendChild(intro);
+  const menu=document.createElement('div'); menu.className='rmenu';
+  const chosenN=normLabel(d.chosen);
+  d.legal.forEach(lab=>{
+    const row=document.createElement('div'); row.className='ropt'+(normLabel(lab)===chosenN?' picked':'');
+    row.appendChild(labelChips(lab));
+    if(normLabel(lab)===chosenN){ const p=document.createElement('span'); p.className='pick'; p.textContent='◀ played'; row.appendChild(p); }
+    menu.appendChild(row);
+  });
+  panel.appendChild(menu);
+  const co=document.createElement('div'); co.className='callout rnd';
+  co.innerHTML='<b>Contrast with octogen.</b> Where an octogen seat would sample thousands of worlds and (in the endgame) '+
+    'prove a win or loss, random treats all '+n+' of these as equally good. That&rsquo;s exactly why octogen beats it &mdash; '+
+    'step to an octogen turn ('+seatSpan(OCTOLIST.slice(0,4))+(OCTOLIST.length>4?'&hellip;':'')+') to see the difference.';
+  panel.appendChild(co);
+  return panel;
+}
+
+// ---- OCTOGEN panel (full X-ray) ----
+function octogenPanel(d){
   const solver=d.solver && d.solver.applied;
-  const panel=document.createElement('div'); panel.className='dpanel'+(solver?' solver':'');
-  const recMove=recordedMoveLabel(o);
-  const match=(normLabel(d.chosen)===normLabel(recMove));
-  const forced=(d.candidates.length<=1);
-  let hh='<div class="dhead"><span class="t">octogen deliberation @ log '+cur+'</span>';
-  hh+='<span class="chip '+(forced?'forced':(match?'match':'mismatch'))+'">'+(forced?'forced (only move)':(match?'octogen agrees':'octogen would differ'))+'</span>';
+  const panel=document.createElement('div'); panel.className='dpanel og'+(solver?' solver':'');
+  const recMove=d.recorded, match=d.match, forced=d.forced;
+  let hh='<div class="dhead"><span class="t">octogen (p'+d.seat+') deliberation @ log '+d.ply+'</span>';
+  hh+='<span class="chip '+(forced?'forced':(match?'match':'mismatch'))+'">'+(forced?'forced (only move)':(match?'reproduced exactly':'would differ'))+'</span>';
   hh+='<span class="muted mono">deck='+d.deck+' &middot; opp holds '+d.known.opp_count+'</span></div>';
   panel.innerHTML=hh;
 
-  const hl=document.createElement('div'); hl.innerHTML='<h3>octogen (p'+OG+') hand</h3>';
+  const hl=document.createElement('div'); hl.innerHTML='<h3>octogen (p'+d.seat+') hand</h3>';
   const hr=document.createElement('div'); hr.className='hand'; hr.appendChild(tokRow(d.hand,false)); hl.appendChild(hr); panel.appendChild(hl);
 
   const pk=document.createElement('p'); pk.style.margin='10px 0 2px';
-  pk.innerHTML='<b>Recorded octogen played:</b> <span class="mono">'+esc(recMove)+'</span> &nbsp; &middot; &nbsp; <b>this build picks:</b> <span class="mono">'+esc(d.chosen)+'</span>';
+  pk.innerHTML='<b>Recorded:</b> <span class="mono">'+esc(recMove)+'</span> &nbsp;&middot;&nbsp; <b>this build picks:</b> <span class="mono">'+esc(d.chosen)+'</span>';
   panel.appendChild(pk);
 
   const isSolverVerdict=solver && d.candidates.some(c=>c.verdict==='win'||c.verdict==='loss');
@@ -396,30 +469,36 @@ function renderDecision(){
   panel.appendChild(h3);
   const bars=document.createElement('div'); bars.className='bars';
   const cs=d.candidates.slice();
-  // Rank by the tax-ADJUSTED score octogen actually used (raw MC score + the
-  // trump-conservation tax), so the visual order and the green "best" match what
-  // it played. eff() falls back to the raw score when there is no tax.
   const eff=(c)=>(c.adjScore!=null?c.adjScore:c.score);
   if(isSolverVerdict){ const ord={win:0,draw:1,unknown:2,none:3,loss:4,illegal:5}; cs.sort((a,b)=>(ord[a.verdict]-ord[b.verdict])); }
   else cs.sort((a,b)=>((a.score==null)-(b.score==null))||(eff(a)-eff(b)));
   const scored=cs.filter(c=>c.score!=null);
-  // "best" (green) = best move octogen actually FINALISED (alive). Moves raced
-  // out early carry a noisy few-sim average and must not win the highlight.
+  // "best" (the green bar) is the best move octogen actually FINALISED — the
+  // lowest avg finish among the moves it kept fully simulating (alive). Moves it
+  // raced out early (alive=0) carry a noisy few-sim average that can look better
+  // by chance; highlighting one of those as "best" would wrongly make octogen's
+  // pick look like a mistake. Fall back to all scored moves if none are alive.
   const aliveEff=scored.filter(c=>c.alive).map(eff);
   const best=aliveEff.length?Math.min.apply(null,aliveEff):(scored.length?Math.min.apply(null,scored.map(eff)):null);
   const worst=scored.length?Math.max.apply(null,scored.map(eff)):null;
-  // Bar length relative to the candidates shown (best fills the track, worst is
-  // short), with a floored span. An absolute (2-score) mapping clamps to empty
-  // for anything but a 2-player endgame; this keeps ordering legible at any table
-  // size while keeping genuine near-ties visually tight.
+  // Bar length is RELATIVE to the candidates shown: the best (lowest avg finish)
+  // fills the track, the worst is short. The absolute finish scale differs wildly
+  // by player count (1-2 heads-up, 1-8 at a full table), so an absolute mapping
+  // makes every 8-player bar clamp to empty — this keeps the ordering legible at
+  // any table size. The span is floored so a cluster of genuine near-ties still
+  // reads as a tight group rather than getting stretched across the whole track.
   const span=scored.length?Math.max(worst-best,0.4):1;
   const barW=(c)=>Math.max(12,Math.min(100,96-((eff(c)-best)/span)*84));
   const anyTax=scored.some(c=>c.trumpTax>0);
   const recN=normLabel(recMove);
-  // Solver-verdict panel: bar reflects the exact verdict, not the MC score.
+  // In a solver-verdict panel the bar reflects the exact VERDICT, not the
+  // (irrelevant) Monte-Carlo score — otherwise a proven loss octogen was forced
+  // into can draw a full green "best" bar, contradicting its own loss chip.
   const VBAR={win:[100,'v-win'],draw:[55,'v-draw'],unknown:[45,'v-unk'],loss:[16,'v-loss']};
   cs.forEach(c=>{
     const row=document.createElement('div'); row.className='brow';
+    // MC-only decorations (best/raced-out) are meaningless once the solver has
+    // an exact verdict, so suppress them in a verdict panel.
     if(!isSolverVerdict && c.score!=null && c.alive && eff(c)===best) row.classList.add('best');
     if(c.chosen) row.classList.add('chosen');
     if(!isSolverVerdict && !c.alive && c.score!=null) row.classList.add('pruned');
@@ -445,49 +524,34 @@ function renderDecision(){
     bars.appendChild(row);
   });
   if(anyTax){ const kn=document.createElement('div'); kn.className='solvernote keepnote';
-    kn.innerHTML='<b>Trump‑keep tax active.</b> While the deck is alive octogen adds <b>+'+(M.trumpKeep||0.04).toFixed(3)+'</b> to the average‑finish score of any move that <i>leads a trump</i> (per trump, attacks only). It only changes the pick when the raw Monte‑Carlo scores are within noise — tipping a near‑tie toward keeping the trump. Raw score → adjusted shown above.';
+    kn.innerHTML='<b>Trump‑keep tax active.</b> While the deck is alive octogen adds <b>+'+(M.trumpKeep||0.04).toFixed(3)+'</b> to the average‑finish score of any move that <i>leads a trump</i> (per trump, attacks only), tipping near‑ties toward keeping the trump.';
     panel.appendChild(kn); }
   panel.appendChild(bars);
   if(solver && !isSolverVerdict){
     const sn=document.createElement('div'); sn.className='solvernote';
-    sn.innerHTML='Endgame solver fired but could not prove a result within budget for these moves &mdash; the decision fell through to Monte&#8209;Carlo (scores above).';
+    sn.innerHTML='Endgame solver fired but could not prove a result within budget &mdash; the decision fell through to Monte&#8209;Carlo (scores above).';
     panel.appendChild(sn);
   }
-
-  // auto-generated flagged callout (only when octogen would genuinely differ)
   if(!match && !forced){
     const co=document.createElement('div'); co.className='callout warn';
     co.innerHTML=flaggedCallout(d,recMove,isSolverVerdict);
     panel.appendChild(co);
   }
-
-  // octogen known state
   panel.appendChild(knownPanel(d));
-  host.appendChild(panel);
+  return panel;
 }
 
-// Build honest flagged commentary straight from the candidate numbers.
 function flaggedCallout(d,recMove,isSolverVerdict){
   const recN=normLabel(recMove);
   const rec=d.candidates.find(c=>normLabel(c.label)===recN);
   const chosen=d.candidates.find(c=>c.chosen) || d.candidates.find(c=>normLabel(c.label)===normLabel(d.chosen));
-  let s='<b>octogen would differ.</b> The recorded move was <span class="mono">'+esc(recMove)+'</span>; '+
-        'this build prefers <span class="mono">'+esc(d.chosen)+'</span>. ';
+  let s='<b>octogen would differ.</b> Recorded was <span class="mono">'+esc(recMove)+'</span>; this build prefers <span class="mono">'+esc(d.chosen)+'</span>. ';
   if(isSolverVerdict && rec && chosen){
-    s+='By the exact solver the recorded move is <span class="chip '+(rec.verdict||'unknown')+'">'+(rec.verdict||'n/a')+
-       '</span> and octogen&rsquo;s pick is <span class="chip '+(chosen.verdict||'unknown')+'">'+(chosen.verdict||'n/a')+'</span>.';
+    s+='By the exact solver the recorded move is <span class="chip '+(rec.verdict||'unknown')+'">'+(rec.verdict||'n/a')+'</span> and octogen&rsquo;s pick is <span class="chip '+(chosen.verdict||'unknown')+'">'+(chosen.verdict||'n/a')+'</span>.';
   } else if(rec && chosen && rec.score!=null && chosen.score!=null){
-    const gap=Math.abs(rec.score-chosen.score);
-    const tie=gap<0.02;
-    s+='In Monte&#8209;Carlo the recorded move scores <b>'+rec.score.toFixed(4)+'</b> ('+rec.nsim+' sims) vs octogen&rsquo;s '+
-       '<b>'+chosen.score.toFixed(4)+'</b> ('+chosen.nsim+' sims) &mdash; a gap of '+gap.toFixed(4)+', '+
-       (tie?'i.e. a <b>near&#8209;tie</b> inside sampling noise.':'a modest edge to octogen&rsquo;s pick.');
-    if(rec.alive===0) s+=' The recorded move was pruned before the final sampling stage, so its score rests on fewer sims.';
-  } else if(rec && rec.score==null){
-    s+='The recorded move was pruned early (no full Monte&#8209;Carlo score), so the two are not directly comparable &mdash; both are plausible.';
-  } else {
-    s+='The two are close in octogen&rsquo;s evaluation.';
-  }
+    const gap=Math.abs(rec.score-chosen.score); const tie=gap<0.02;
+    s+='In Monte&#8209;Carlo the recorded move scores <b>'+rec.score.toFixed(4)+'</b> vs octogen&rsquo;s <b>'+chosen.score.toFixed(4)+'</b> &mdash; a gap of '+gap.toFixed(4)+', '+(tie?'a <b>near&#8209;tie</b> inside sampling noise.':'a modest edge.');
+  } else { s+='The two are close in octogen&rsquo;s evaluation.'; }
   return s;
 }
 
@@ -498,50 +562,42 @@ function knownPanel(d){
   let head='<h3 style="margin-top:0">octogen known state</h3>';
   head+='<div class="kmeta"><span>deck (face&#8209;down): <b>'+k.deck+'</b></span>'+
         '<span>opponents hold: <b>'+k.opp_count+'</b></span>'+
-        '<span>octogen has pinned: <b>'+k.pinned_total+'</b> of them</span></div>';
+        '<span>pinned: <b>'+k.pinned_total+'</b></span></div>';
   wrap.innerHTML=head;
-
-  // Per opponent: the cards octogen KNOWS they hold (watched them pick up, not
-  // yet replayed) — real deduction, not the whole hand. Loops over however many
-  // opponents there are, so 3+ player games render each seat.
   k.opps.forEach(o=>{
+    if(o.count<=0 && !o.pinned.length) return;
     const oppLabel='p'+o.seat;
     const g=document.createElement('div'); g.className='kgroup';
     if(o.pinned.length){
-      g.innerHTML='<div class="klabel known-yes">octogen knows '+oppLabel+' holds these '+o.pinned.length+' of '+o.count+
-        ' &mdash; it watched them get picked up:</div>';
+      g.innerHTML='<div class="klabel known-yes">knows '+oppLabel+' holds these '+o.pinned.length+' of '+o.count+' &mdash; watched them pick up:</div>';
       const row=document.createElement('div'); row.className='hand';
       o.pinned.forEach(c=>{const e=cardEl(c,true);e.classList.add('pinned');row.appendChild(e);});
       g.appendChild(row);
     }else{
-      g.innerHTML='<div class="klabel muted">'+oppLabel+' ('+o.count+' cards): octogen has pinned none yet '+
-        '(nothing it saw them pick up is still in their hand).</div>';
+      g.innerHTML='<div class="klabel muted">'+oppLabel+' ('+o.count+' cards): nothing pinned yet.</div>';
     }
-    // secondary deductions for this opponent
     if((o.voids&&o.voids.length)||o.floor){
       const extra=document.createElement('div'); extra.className='klabel muted'; extra.style.marginTop='4px';
       const bits=[];
       if(o.voids&&o.voids.length) bits.push('can&rsquo;t cover '+o.voids.map(c=>cardHTML(c,true)).join(' '));
       if(o.floor) bits.push('lowest non&#8209;trump &ge; '+o.floor);
-      extra.innerHTML='&hellip; and octogen deduced '+oppLabel+' '+bits.join('; ')+'.';
+      extra.innerHTML='&hellip; deduced '+oppLabel+' '+bits.join('; ')+'.';
       g.appendChild(extra);
     }
     wrap.appendChild(g);
   });
-
-  // The genuinely-unknown pool: face-down deck + all opponents' un-pinned cards.
   const poolWrap=document.createElement('div'); poolWrap.className='kgroup';
   const note=document.createElement('div'); note.className='klabel';
-  const unpinned=k.opp_count-k.pinned_total;
   if(empty && proven){
-    note.innerHTML='<b>Deck empty</b> &mdash; so these <b>'+k.pool.length+'</b> are the opponents&rsquo; remaining cards. '+
-      'With the '+k.pinned_total+' pinned above, octogen now knows the <b>entire</b> unseen layout &mdash; the endgame solver proves the line:';
+    note.innerHTML='<b>Deck empty</b> &mdash; these <b>'+k.pool.length+'</b> are the opponents&rsquo; remaining cards. With the '+k.pinned_total+' pinned above, octogen knows the <b>entire</b> unseen layout &mdash; the exact endgame solver proves the line:';
   }else if(empty){
-    note.innerHTML='<b>Deck empty</b> &mdash; so these <b>'+k.pool.length+'</b> are the opponents&rsquo; remaining cards. octogen knows '+
-      'the <b>entire</b> unseen layout, but this endgame is too large for the exact solver to resolve within budget, so it sampled:';
+    const inPlayers=(d.opp_counts||[]).filter(c=>c>0).length;
+    const why = inPlayers>2
+      ? ('with <b>'+inPlayers+'</b> players still in, this is past the exact solver&rsquo;s 2&#8209;player reach')
+      : ('this endgame is too large for the exact 2&#8209;player solver to resolve within budget');
+    note.innerHTML='<b>Deck empty</b> &mdash; these <b>'+k.pool.length+'</b> are the opponents&rsquo; remaining cards. octogen knows the whole unseen layout, but '+why+', so it sampled their placement across worlds:';
   }else{
-    note.innerHTML='Unknown to octogen &mdash; these <b>'+k.pool.length+'</b> are split between the face&#8209;down deck ('+k.deck+') and '+
-      'opponents&rsquo; un&#8209;pinned cards ('+unpinned+'). It samples their placement across worlds:';
+    note.innerHTML='Unknown pool &mdash; these <b>'+k.pool.length+'</b> are split across the face&#8209;down deck ('+k.deck+') and opponents&rsquo; un&#8209;pinned cards. octogen samples their placement across worlds:';
   }
   poolWrap.appendChild(note);
   const pool=document.createElement('div'); pool.className='hand';
@@ -566,36 +622,29 @@ function moveChips(c){
   else { const lab=document.createElement('span');lab.className='mono muted';lab.style.marginRight='4px';lab.textContent=c.type;f.appendChild(lab); c.cards.forEach(t=>f.appendChild(cardEl(tok(t),true))); }
   return f;
 }
-function recordedMoveLabel(o){
-  const a=o.action;
-  function t(c){return c.r+ ({0:'S',1:'H',2:'C',3:'D'}[c.suit]) + (c.trump?'*':'');}
-  if(a.kind==='attack') return 'attack '+a.cards.map(t).join(' ');
-  if(a.kind==='pass') return 'pass '+a.cards.map(t).join(' ');
-  if(a.kind==='cover') return 'cover '+a.cards.map((c,i)=>t(c)+'->'+t(a.targets[i])).join(' ');
-  if(a.kind==='pickup') return 'pickup';
-  if(a.kind==='good') return 'good';
-  return a.kind;
-}
 function normLabel(s){
   const parts=String(s).replace(/,/g,' ').trim().split(/\s+/);
   return parts[0]+' '+parts.slice(1).sort().join(' ');
 }
 
-// jump buttons — one per flagged (octogen-would-differ) decision
+// jump buttons — one per octogen-would-differ decision
 const jb=document.getElementById('jump');
-if(!D.flagged.length){ jb.innerHTML='<span class="muted">(none &mdash; every non-forced octogen move matches this build)</span>'; }
-D.flagged.forEach(i=>{
-  const o=L[i]; const rec=recordedMoveLabel(o);
-  const b=document.createElement('button'); b.innerHTML='log '+i+' &middot; '+esc(rec);
+if(!D.octoDiffer.length){ jb.innerHTML='<span class="muted">(none &mdash; every non-forced octogen move reproduced exactly)</span>'; }
+D.octoDiffer.forEach(i=>{
+  const o=L[i]; const rec=o.decision?o.decision.recorded:'';
+  const b=document.createElement('button'); b.innerHTML='log '+i+' &middot; p'+o.decision.seat+' &middot; '+esc(rec);
   b.onclick=()=>{cur=i;renderBoard();document.getElementById('decision').scrollIntoView({behavior:'smooth',block:'center'});};
   jb.appendChild(b);
 });
 
+function jumpNext(pred){ for(let i=cur+1;i<N;i++){ if(pred(L[i])){cur=i;break;} } renderBoard(); document.getElementById('decision').scrollIntoView({behavior:'smooth',block:'nearest'}); }
 document.getElementById('slider').max=N-1;
 document.getElementById('first').onclick=()=>{cur=0;renderBoard();};
 document.getElementById('prev').onclick=()=>{if(cur>0)cur--;renderBoard();};
 document.getElementById('next').onclick=()=>{if(cur<N-1)cur++;renderBoard();};
-document.getElementById('nextd').onclick=()=>{for(let i=cur+1;i<N;i++){if(L[i].decision){cur=i;break;}}renderBoard();};
+document.getElementById('nextd').onclick=()=>jumpNext(o=>o.decision);
+document.getElementById('nextog').onclick=()=>jumpNext(o=>o.decision&&o.decision.kind==='octogen');
+document.getElementById('nextrnd').onclick=()=>jumpNext(o=>o.decision&&o.decision.kind==='random');
 document.getElementById('slider').oninput=(e)=>{cur=+e.target.value;renderBoard();};
 document.addEventListener('keydown',e=>{if(e.key==='ArrowLeft'){if(cur>0)cur--;renderBoard();}else if(e.key==='ArrowRight'){if(cur<N-1)cur++;renderBoard();}});
 
@@ -606,6 +655,7 @@ renderBoard();
 })();
 """
 
-out = HTML.replace('__CSS__', CSS).replace('__DATA__', DATA_JSON).replace('__JS__', JS)
-open(OUT, 'w').write(out)
-print(f'wrote {OUT} ({len(out)} bytes)', file=sys.stderr)
+
+def render(data):
+    data_json = json.dumps(data, separators=(',', ':'))
+    return HTML.replace('__CSS__', CSS).replace('__DATA__', data_json).replace('__JS__', JS)

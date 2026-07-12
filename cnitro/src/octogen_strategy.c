@@ -1020,8 +1020,17 @@ static int og_try_endgame_solve(const Game *g, int bot_idx,
     // pruned win-hunt below starts cold exactly as it would with the var unset.
     // Nothing here executes when OG_EXPLAIN is not set.
 #ifdef OG_EXPLAIN_BUILD
+    // The verdict probe runs a full exact solve per root move BEFORE the real
+    // decision, to record win/loss/draw per move for the dump. It must be
+    // behavior-neutral: the real decision reads the strategy RNG
+    // (random_strategy_rng_get) to seed its Monte-Carlo world sampling, and
+    // cd_sim_solve_d advances that RNG — so save it and restore it after, and
+    // reset the transposition table, leaving the real solve/sampling exactly as
+    // the shipped build would run it (verified: exact-pick reconstruction stays
+    // 0-differ with this on).
     if (og_explain_on() && bbsolve) {
         og_ex_solve_applied = 1;
+        uint32_t og_ex_rng_save = random_strategy_rng_get();
         int cap = (int)(sizeof(og_ex_verdict) / sizeof(og_ex_verdict[0]));
         for (int i = 0; i < moves->n && i < cap; i++) {
             SimState child = root_sim;
@@ -1034,7 +1043,8 @@ static int og_try_endgame_solve(const Game *g, int bot_idx,
             int v = cd_sim_solve_d(&child, bot_idx, -2000, 2000, &eb, 1, &ab);
             og_ex_verdict[i] = (ab || eb <= 0) ? OG_EX_UNKNOWN_V : v;
         }
-        cd_sim_solve_reset();   // restore a cold TT for the real solve
+        cd_sim_solve_reset();                       // cold TT for the real solve
+        random_strategy_set_seed(og_ex_rng_save);   // unperturbed strategy RNG
     }
 #endif  // OG_EXPLAIN_BUILD
 
