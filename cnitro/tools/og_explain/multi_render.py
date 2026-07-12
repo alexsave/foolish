@@ -160,12 +160,12 @@ input[type=range]{flex:1;min-width:180px;accent-color:var(--accent)}
 """
 
 HTML = r"""<meta charset="utf-8">
-<title>Eight bots, eight minds — a 4-octogen vs 4-random replay X-ray</title>
+<title>Eight bots, eight minds — a wasm-bot replay X-ray</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>__CSS__</style>
 <button class="themebtn" id="themebtn" title="Toggle theme">theme</button>
 <div class="wrap">
-<h1>Eight bots, eight minds &mdash; a 4&times;octogen vs 4&times;random X&#8209;ray</h1>
+<h1 id="pagetitle">Eight bots, eight minds &mdash; a replay X&#8209;ray</h1>
 <p class="lede" id="lede"></p>
 
 <div class="tiles" id="tiles"></div>
@@ -177,8 +177,7 @@ HTML = r"""<meta charset="utf-8">
 <h3>How this was reproduced</h3>
 <p id="repro"></p>
 <p class="muted">Rank convention is the correct Durak one (wire value&nbsp;13 = A). The trump suit is boxed and gold.
-Seats <b class="mono">p0&ndash;p3</b> are <b style="color:var(--win)">octogen</b>; <b class="mono">p4&ndash;p7</b> are
-<b style="color:var(--rand)">random</b>.</p>
+<span id="seatlegend"></span></p>
 </div>
 
 <h2 id="flagHead">Moves where octogen would differ</h2>
@@ -210,13 +209,13 @@ Seats <b class="mono">p0&ndash;p3</b> are <b style="color:var(--win)">octogen</b
 <h2 style="margin-top:44px">How to read the panels</h2>
 <div class="panel">
 <ul style="color:var(--text-secondary);margin:6px 0;padding-left:20px;line-height:1.7">
-<li><b style="color:var(--win)">octogen turns (p0&ndash;p3).</b> The full deliberation, dumped from the C engine.
+<li><b style="color:var(--win)">octogen turns.</b> The full deliberation, dumped from the C engine.
 Away from the endgame octogen samples many worlds (deals of the hidden cards) and rolls each candidate move to the
 end; the bar is its <b>average finish</b> (1 = out first = win, higher = worse, lower is better). Once the deck is
 empty it solves the position <b>exactly</b> (proven <span class="chip win">win</span>/<span class="chip loss">loss</span>).
 It also shows what octogen actually <b>knows</b> about the hidden cards: the cards it has <b>pinned</b> to a seat
 (watched them pick up) vs the unknown pool it samples over.</li>
-<li><b style="color:var(--rand)">random turns (p4&ndash;p7).</b> Random has no belief and no rollout &mdash; it just
+<li id="howrandom"><b style="color:var(--rand)">random turns.</b> Random has no belief and no rollout &mdash; it just
 picks one of its legal moves <b>uniformly at random</b>. So its &ldquo;reasoning&rdquo; is the full menu of legal moves
 at that position, each with probability <b>1/N</b>; the one it actually played is highlighted. That&rsquo;s the whole
 story &mdash; the contrast with octogen&rsquo;s panel is the point.</li>
@@ -250,18 +249,29 @@ let cur=0;
 
 function isOcto(p){return OCTO.has(p);}
 function seatKind(p){return isOcto(p)?'octogen':'random';}
+const OCTOLIST=[]; const RANDLIST=[];
+for(let p=0;p<NP;p++){ (isOcto(p)?OCTOLIST:RANDLIST).push(p); }
+const nOcto=OCTOLIST.length, nRand=RANDLIST.length;
+const seatSpan=(arr)=>arr.map(p=>'<b class="mono">p'+p+'</b>').join(', ');
+const matchup = nRand ? (nOcto+'&times;octogen vs '+nRand+'&times;random') : (nOcto+'&times;octogen');
+const matchupShort = nRand ? (nOcto+' vs '+nRand) : (nOcto+' bots');
+document.getElementById('pagetitle').innerHTML =
+  (nRand? 'Eight bots, eight minds' : nOcto+' octogens, one table') + ' &mdash; a wasm&#8209;bot replay X&#8209;ray';
 
 // ---- intro / tiles / standings ----
+const octoIntro = nRand
+  ? 'seats '+seatSpan(OCTOLIST)+' are <b style="color:var(--win)">octogen</b> (Monte&#8209;Carlo world&#8209;sampling + '+
+    'exact endgame solver); seats '+seatSpan(RANDLIST)+' are <b style="color:var(--rand)">random</b> (uniform legal move)'
+  : 'all <b>'+nOcto+'</b> seats are <b style="color:var(--win)">octogen</b> (Monte&#8209;Carlo world&#8209;sampling + exact '+
+    'endgame solver) &mdash; the same bot playing itself, each modelling the other seven';
 document.getElementById('lede').innerHTML =
-  'One recorded <b>8&#8209;player</b> Durak game: seats <b class="mono">p0&ndash;p3</b> are <b style="color:var(--win)">octogen</b> '+
-  '(Monte&#8209;Carlo world&#8209;sampling + exact endgame solver), seats <b class="mono">p4&ndash;p7</b> are '+
-  '<b style="color:var(--rand)">random</b> (uniform legal move). Trump is <b>'+M.trumpSym+'</b>, flip '+cardHTML(M.flip,true)+'. '+
+  'One recorded <b>'+NP+'&#8209;player</b> Durak game: '+octoIntro+'. Trump is <b>'+M.trumpSym+'</b>, flip '+cardHTML(M.flip,true)+'. '+
   'Step through every public move; at <b>each bot&rsquo;s own turn</b> the panel opens up what it was thinking &mdash; the full '+
-  'octogen X&#8209;ray for the octogen seats, and the legal&#8209;move menu (with the pick highlighted) for the random seats.';
+  'octogen X&#8209;ray'+(nRand?' for the octogen seats, and the legal&#8209;move menu (with the pick highlighted) for the random seats':'')+'.';
 
 const winKind=seatKind(M.winner);
 const tiles=[
-  ['n','4 vs 4','octogen (p0&ndash;3) vs random (p4&ndash;7)'],
+  ['n', matchupShort, nRand? 'octogen vs random' : 'octogen self&#8209;play (mirror)'],
   ['n', M.trumpSym+' '+suitName(TRUMP), 'trump · flip '+M.flip.str],
   [winKind==='octogen'?'win':'', 'p'+M.winner+' wins', 'winner is '+winKind],
   ['n', M.octoMatch+' / '+M.octoDecisions, 'octogen turns reproduced exactly'],
@@ -279,8 +289,15 @@ document.getElementById('repro').innerHTML =
   'the X&#8209;ray replays their <b>exact recorded picks</b> &mdash; not the lossy replay URL &mdash; re&#8209;dealing from the '+
   '32&#8209;byte seed <code>'+esc(M.seed.slice(0,16))+'&hellip;</code> and querying each bot at its turns. octogen is '+
   'deterministic (its world&#8209;sampling seed is a pure function of the public board), so it reproduces <b>every one</b> of its '+
-  '<b>'+M.octoDecisions+'</b> decisions &mdash; <b>'+M.octoMatch+' / '+M.octoDecisions+'</b>, exactly. The <b>'+M.randDecisions+
-  '</b> random turns are shown with their full legal&#8209;move menu &mdash; the recorded card is one uniform draw from it.';
+  '<b>'+M.octoDecisions+'</b> decisions &mdash; <b>'+M.octoMatch+' / '+M.octoDecisions+'</b>, exactly.'+
+  (M.randDecisions ? ' The <b>'+M.randDecisions+'</b> random turns are shown with their full legal&#8209;move menu &mdash; '+
+   'the recorded card is one uniform draw from it.' : '');
+
+document.getElementById('seatlegend').innerHTML = nRand
+  ? 'Seats '+seatSpan(OCTOLIST)+' are <b style="color:var(--win)">octogen</b>; '+seatSpan(RANDLIST)+' are <b style="color:var(--rand)">random</b>.'
+  : 'All '+nOcto+' seats are <b style="color:var(--win)">octogen</b> &mdash; the same bot playing itself.';
+if(!nRand){ const hr=document.getElementById('howrandom'); if(hr) hr.style.display='none';
+  const nb=document.getElementById('nextrnd'); if(nb) nb.style.display='none'; }
 
 document.getElementById('flagHead').textContent =
   D.octoDiffer.length ? ('Moves where octogen would differ ('+D.octoDiffer.length+')') : 'octogen reproduced every non-forced move exactly';

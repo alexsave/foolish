@@ -22,11 +22,14 @@ import { PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY } from '../supabase/functions/
 
 __ensureBots();
 const NP = 8;
-const OCTO = new Set([0, 1, 2, 3]);
+// Which seats are octogen (default 0-3 = 4v4); OGX_OCTO_SEATS=0,1,2,3,4,5,6,7 for
+// an all-octogen table. The rest are random.
+const OCTO = new Set((process.env.OGX_OCTO_SEATS || '0,1,2,3').split(',').filter((s) => s !== '').map(Number));
 const env = { CD_BUDGET: 'prod', CD_RACE: '1', CD_RACE_C: '75' };
 const cat = (a: Uint8Array, b: Uint8Array) => { const m = new Uint8Array(a.length + b.length); m.set(a); m.set(b, a.length); return m; };
 const stratOf = (s: number) => OCTO.has(s) ? STRAT.octogen : STRAT.random;
-const names = Array.from({ length: NP }, (_, i) => OCTO.has(i) ? `%OCTOGEN ${i + 1}` : `%RANDOM ${i - 3}`);
+let ogN = 0, rnN = 0;
+const names = Array.from({ length: NP }, (_, i) => OCTO.has(i) ? `%OCTOGEN ${++ogN}` : `%RANDOM ${++rnN}`);
 const mkGame = () => ({
     players: Array.from({ length: NP }, (_, i) => ({ player_id: `p${i}`, name: names[i], status: PLAYER_STATUS.READY, is_ai: true, hand: [], awaiting_attack: false, hand_length: 0, strategy_key: OCTO.has(i) ? (STRATEGY_KEY as any).OCTOGEN : (STRATEGY_KEY as any).RANDOM })),
     deck: [], logs: [], id: 'g', name: 'g', status: GAME_STATUS.WAITING, deck_length: 0, discard_pile_length: 0, flipped: null, power_suit: 0, first_attacker: 0, defender: 0, table_battles: [], elimination_order: [], good_timestamp: null, good_players: [], game_seed: null,

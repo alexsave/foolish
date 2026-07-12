@@ -77,17 +77,21 @@ def norm(s):
 
 
 def merged_cover_label(idx):
-    """A multi-card cover is ONE bot decision but the kernel logs it as one
-    LOG_COVER record per card. octogen's dump carries the whole move, so to
-    compare we rebuild the full recorded move by merging the consecutive
-    same-seat cover logs starting at idx (otherwise a 2-card cover looks like a
-    'differ' against just its first split log)."""
+    """A cover that plays several cards in ONE decision is logged as one
+    LOG_COVER record per card, and octogen's dump carries the whole move — so we
+    rebuild the recorded move by merging the consecutive same-seat cover logs
+    starting at idx (otherwise a 2-card cover looks like a 'differ' against just
+    its first split log). BUT octogen usually covers one card per decision: those
+    are SEPARATE decisions that each land in by_ply, and must NOT be merged. So
+    stop at the first later log that has its own decision record."""
     seat0 = logs[idx]['seat']
 
     def tk(c):
         return c['r'] + SU[c['suit']] + ('*' if c['trump'] else '')
     parts, j = [], idx
     while j < len(logs) and logs[j]['t'] == 'cover' and logs[j]['seat'] == seat0:
+        if j > idx and j in by_ply:   # a separate cover decision starts here
+            break
         for x in logs[j]['cards']:
             c = card(x['p']['suit'], x['p']['value'])
             t = card(x['tg']['suit'], x['tg']['value']) if x['tg'] else None
