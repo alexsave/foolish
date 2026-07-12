@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
     displayedHand, reconcileHandMemory, mergeTableBattles, shouldDropStaleSequence, applyOverlayEntries, cardKey,
-    reorderHand,
+    reorderHand, isHandPermutation,
 } from '../src/state/clientReconcile';
 
 type C = { suit: number; value: number };
@@ -137,6 +137,38 @@ export function registerClientValidation(): void {
         assert.deepEqual(keys(swapped), keys([c(0, 6), c(0, 10), c(2, 8), c(3, 9), c(1, 7), c(1, 11)]));
         assert.ok(swapped.every((x) => x != null), 'no undefined slots');
         assert.doesNotThrow(() => swapped.map(cardKey), 'render map never throws on a reordered hand');
+    });
+
+    // ---- debounced rearrange-flush safety (same 'e.suit' crash, other path) ---
+    // ServerContext.rearrangeHand applies `cardIndices.map(i => hand[i])`
+    // optimistically. The indices are computed at drag-end but the flush is
+    // debounced ~5s; if the hand shrinks first (a card played/drawn/picked up)
+    // an index outruns the now-shorter hand, `hand[i]` is undefined, and the
+    // hand render's cardKey/.map crashes on `card.suit`. isHandPermutation is
+    // the gate that abandons a stale reorder instead of applying it.
+    test('isHandPermutation: stale/out-of-range indices are rejected (no undefined hole)', () => {
+        const hand = [c(0, 6), c(1, 7), c(2, 8), c(3, 9), c(0, 10)]; // length 5
+
+        // The prod crash shape: indices captured against a length-6 hand, applied
+        // after it shrank to 5 -> index 5 is out of range -> undefined slot.
+        const stale = [0, 1, 2, 3, 5];
+        const naive = stale.map((i) => hand[i]);
+        assert.ok(naive.includes(undefined), 'stale index minted an undefined slot');
+        assert.throws(() => naive.map(cardKey), /suit/, 'the holed hand crashes the render map (the prod bug)');
+        assert.equal(isHandPermutation(stale, hand.length), false, 'out-of-range index rejected');
+
+        // Other degenerate shapes the gate must reject.
+        assert.equal(isHandPermutation([0, 0, 1, 2, 3], hand.length), false, 'duplicate indices rejected');
+        assert.equal(isHandPermutation([0, 1, 2, 3], hand.length), false, 'wrong length rejected');
+        assert.equal(isHandPermutation([0, 1, 2, 3, NaN], hand.length), false, 'NaN rejected');
+        assert.equal(isHandPermutation([-1, 1, 2, 3, 4], hand.length), false, 'negative index rejected');
+
+        // A genuine permutation still passes and maps cleanly (never undefined).
+        const good = [4, 3, 2, 1, 0];
+        assert.equal(isHandPermutation(good, hand.length), true, 'a real permutation is accepted');
+        const applied = good.map((i) => hand[i]);
+        assert.ok(applied.every((x) => x != null), 'no undefined slots');
+        assert.doesNotThrow(() => applied.map(cardKey), 'render map never throws on a valid rearrange');
     });
 }
 
