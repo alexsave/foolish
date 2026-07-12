@@ -619,7 +619,7 @@ function applyStateToGame(game: Game, ks: KernelState, actorId: string | null): 
 
 // DRAW logs hide card identities ({suit:-1,value:-1}) except the flipped
 // trump card, whose draw is public — exactly the TS refill convention.
-function appendLogs(game: Game, kernelLogs: KernelLog[], preFlipped: Card | null, postFlipped: Card | null): void {
+export function appendLogs(game: Game, kernelLogs: KernelLog[], preFlipped: Card | null, postFlipped: Card | null): void {
     const flippedWasDrawn = preFlipped !== null && postFlipped === null;
     for (const kl of kernelLogs) {
         let pairs = kl.pairs.map(p => ({ primary: p.primary, target: p.target }));

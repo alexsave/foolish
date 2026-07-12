@@ -664,6 +664,28 @@ build/bots.wasm: $(WASM_BOT_OBJ)
 	          $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) $(WASM_BOT_OBJ) -o $@
 	$(call wasm_postopt,$(WASM_BOTS_POSTOPT),$@)
 
+# bots-explain.wasm: byte-for-byte the SAME octogen as bots.wasm (same sources,
+# same per-file opt, same flags, same wasm-opt pass) PLUS -DOG_EXPLAIN_BUILD,
+# which is behavior-neutral (the deliberation dump is #ifdef'd + gated and resets
+# the TT). Extra exports let the JS harness read the per-decision dump from a
+# static buffer (wasm has no file I/O). ANALYSIS ONLY — never shipped.
+.PHONY: bots-wasm-explain
+bots-wasm-explain:
+	@mkdir -p build/botexplain
+	@for src in $(WASM_BOT_SRC); do \
+	  base=$$(basename $$src .c); opt=-Oz; \
+	  case " $(WASM_BOT_O3_SRC) " in *" $$src "*) opt=-O3;; esac; \
+	  echo "  CC(explain) $$src [$$opt]"; \
+	  $(WASM_CC) $(WASM_BOT_CFLAGS) -DOG_EXPLAIN_BUILD $$opt -c $$src -o build/botexplain/$$base.o || exit 1; \
+	done
+	$(WASM_CC) --target=wasm32 -nostdlib $(WASM_BOT_LDFLAGS) \
+	          $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) \
+	          -Wl,--export=wasm_og_explain_ptr -Wl,--export=wasm_og_explain_len -Wl,--export=wasm_og_explain_reset \
+	          build/botexplain/*.o -o build/bots-explain.wasm
+	$(call wasm_postopt,$(WASM_BOTS_POSTOPT),build/bots-explain.wasm)
+	gzip -9 -c build/bots-explain.wasm > build/bots-explain.wasm.gz
+	@echo "built build/bots-explain.wasm(.gz) — load via the harness"
+
 # Name-preserving companion for the wasm-anatomy tool (tools/wasm_anatomy). It
 # must have a CODE section BYTE-IDENTICAL to build/bots.wasm but keep the
 # function name section, so the disassembler maps names 1:1 onto the shipped
