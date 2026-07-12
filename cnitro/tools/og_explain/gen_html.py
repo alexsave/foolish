@@ -221,7 +221,12 @@ suit&#8209;cover voids and rank floors from the same public log.</li>
 <li><b>&ldquo;octogen agrees / would differ.&rdquo;</b> At each octogen turn the recorded move is
 compared to what this octogen build picks on the true state. Ties are common: several moves often
 score within Monte&#8209;Carlo noise, so a &ldquo;differ&rdquo; is usually a near&#8209;tie, not a blunder
-(each flagged panel shows both scores).</li>
+(each flagged panel shows both scores). octogen is <i>deterministic</i> &mdash; its world&#8209;sampling
+seed is <code>state_fnv</code> over the ordered hands + deck &mdash; so a matched move is bit&#8209;exact.
+A near&#8209;tie can still &ldquo;differ&rdquo; because that seed also hashes the <b>opponent&rsquo;s hand
+order</b>, and a human can <b>rearrange their hand</b> (a drag&#8209;to&#8209;reorder meta&#8209;action that
+is <i>not stored in the replay</i>). When that happens the exact tie&#8209;break can&rsquo;t be recovered
+from the public replay &mdash; the move sets still match, only the noise&#8209;level ordering differs.</li>
 </ul>
 </div>
 <p class="muted" style="font-size:12.5px">Deliberation dumped by <code>OG_EXPLAIN</code> (compile&#8209;time

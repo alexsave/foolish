@@ -12,6 +12,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { start_game_packed } from '../supabase/functions/_shared/game_lifecycle.ts';
 import { runPackedGameAction, applyKernelStateToGame, __setDealSeedOverride } from '../supabase/functions/_shared/wasm/engine.ts';
 import { encodeAction } from '../supabase/functions/_shared/wire/awire.ts';
+import { logsFromKernelExport } from '../supabase/functions/_shared/wire/logwire.ts';
 import { wasmChooseMoveDirect, __ensureBots, __ogExplainDump, STRAT } from '../supabase/functions/_shared/wasm/bots.ts';
 import { PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY } from '../supabase/functions/_shared/types.ts';
 
@@ -27,21 +28,38 @@ test('wasm octogen deliberation drive', { skip: !process.env.OGX_WASM_DELIB }, (
         players: [0, 1].map((i) => ({ player_id: `p${i}`, name: `P${i}`, status: PLAYER_STATUS.READY, is_ai: true, hand: [], awaiting_attack: false, hand_length: 0, strategy_key: (STRATEGY_KEY as any).OCTOGEN })),
         deck: [], logs: [], belief_logs: [], game_seed: HEX, id: 'g', name: 'g', status: GAME_STATUS.WAITING, deck_length: 0, discard_pile_length: 0, flipped: null, power_suit: 0, first_attacker: 0, defender: 0, table_battles: [], elimination_order: [], good_timestamp: null, good_players: [],
     };
-    start_game_packed(g);
+    const startRun: any = start_game_packed(g);
     const tc = rd.trumpCard || {};
     if (g.power_suit !== tc.suit) {
         throw new Error(`deal mismatch: wasm trump=${g.power_suit} but replay trump=${tc.suit} — seed does not reproduce this game`);
     }
     const env = { CD_BUDGET: 'prod', CD_RACE: '1', CD_RACE_C: '75' };
     const C = (s: number, v: number) => ({ suit: s, value: v });
-    const cvt = (l: any) => ({ log_type: l.t, player_id: l.seat != null ? `p${l.seat}` : null, defender_index: l.def ?? -1, card_pairs: (l.cards || []).map((c: any) => ({ primary: c.p, target: c.tg })) });
+
+    // octogen is DETERMINISTIC given (state, game_seed, belief): its per-decision
+    // world-sampling seed is state_fnv(g_rng_base) over the ORDERED hands+deck and
+    // num_logs (wasm_api.c). To break ties the same way the server did, we must
+    // feed the SAME belief it saw — the kernel's OWN masked session-log stream,
+    // accumulated from each action's logsWire (exactly what the server stores in
+    // belief_log_bytes), NOT the decoded-replay slice (which counts game_start /
+    // masks differently and shifts num_logs). Timestamps aren't hashed, so any
+    // value works.
+    let belief = new Uint8Array(0);
+    const appendBelief = (chunk: Uint8Array) => {
+        const merged = new Uint8Array(belief.length + chunk.length);
+        merged.set(belief); merged.set(chunk, belief.length); belief = merged;
+    };
+    delete g.belief_logs;
+    // Seed with the game-start record the engine emitted (deal/flip) — the
+    // server's session log begins with it, so octogen's num_logs starts at 1.
+    if (startRun && startRun.logsWire && startRun.logsWire.length > 2) appendBelief(logsFromKernelExport(startRun.logsWire, 1));
 
     const records: string[] = [];
     for (let i = 0; i < rd.logs.length; i++) {
         const l = rd.logs[i];
         if (!['attack', 'cover', 'pass', 'pickup', 'good'].includes(l.t)) continue;
         if (l.seat === OGSEAT) {
-            g.belief_logs = rd.logs.slice(0, i).map(cvt);   // public log stream octogen deduces from
+            g.belief_log_bytes = belief;                     // EXACT server belief (kernel stream)
             __ogExplainDump(true);                           // clear sink
             wasmChooseMoveDirect(g, `p${OGSEAT}`, STRAT.octogen, { env });
             const dump = __ogExplainDump(true).trim();       // one og_ex_emit record
@@ -56,6 +74,7 @@ test('wasm octogen deliberation drive', { skip: !process.env.OGX_WASM_DELIB }, (
         if (atk) move.attack_cards = atk;
         const run: any = runPackedGameAction(g, l.seat, encodeAction(move), aiMask, humanSeats);
         if (!run || !run.ok) { process.stderr.write(`drive stopped at log ${i} (${l.t} p${l.seat}) reason=${run?.reason}\n`); break; }
+        appendBelief(logsFromKernelExport(run.logsWire, 1));  // grow the belief exactly as the server does
         applyKernelStateToGame(g, run.post, `p${l.seat}`);
     }
     if (!records.length) throw new Error('no OG_EXPLAIN records — is the OG_EXPLAIN wasm swapped in? (make bots-wasm-explain)');
