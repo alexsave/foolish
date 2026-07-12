@@ -56,6 +56,10 @@ export class WasmBotStrategy implements BotStrategy {
 // Strategy registry. CD_BUDGET selects the kernel cordite's world/pruning
 // budget: 'prod' mirrors the deployed v2.4 player-count-aware budget,
 // 'max' the larger cordite_max tier (see cnitro/src/cordite_strategy.c).
+// Single revert knob for the octogen trump-conservation tie-break. '40' = on
+// (default); '0' = pre-fix behavior. See the octogen registration below.
+const OCTOGEN_TRUMP_KEEP = '40';
+
 export const BOT_STRATEGIES: Map<string, BotStrategy> = new Map<string, BotStrategy>([
     ['random', new WasmBotStrategy('random', STRAT.random)],
     ['handwritten', new WasmBotStrategy('handwritten', STRAT.handwritten)],
@@ -83,9 +87,15 @@ export const BOT_STRATEGIES: Map<string, BotStrategy> = new Map<string, BotStrat
     // Self-budgeted C brains — no env knobs. The _max keys alias the base
     // strategy until a kernel-side max-budget knob exists (TODO).
     ['semtex', new WasmBotStrategy('semtex', STRAT.semtex, { logs: true })],
-    ['octogen', new WasmBotStrategy('octogen', STRAT.octogen, { logs: true })],
+    // OCTOGEN_TRUMP_KEEP (see octogen_strategy.c OG_TRUMP_KEEP): milli-units of
+    // mean-finish taxed per trump LED while the deck is alive, tipping
+    // noise-level ties toward keeping trumps instead of dumping a low trump the
+    // weak rollout policy undervalues. Measured +2.7pp win vs espresso, flat vs
+    // handwritten; ~0 latency/memory cost. <<< SET TO '0' TO REVERT to the
+    // pre-fix behavior — takes effect on edge redeploy, no wasm rebuild. >>>
+    ['octogen', new WasmBotStrategy('octogen', STRAT.octogen, { env: { OG_TRUMP_KEEP: OCTOGEN_TRUMP_KEEP }, logs: true })],
     ['semtex_max', new WasmBotStrategy('semtex_max', STRAT.semtex, { logs: true })],
-    ['octogen_max', new WasmBotStrategy('octogen_max', STRAT.octogen, { logs: true })],
+    ['octogen_max', new WasmBotStrategy('octogen_max', STRAT.octogen, { env: { OG_TRUMP_KEEP: OCTOGEN_TRUMP_KEEP }, logs: true })],
 ]);
 
 // Lazy-load GPT strategy to avoid requiring API key at module load time
