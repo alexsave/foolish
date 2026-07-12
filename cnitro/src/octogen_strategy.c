@@ -147,6 +147,15 @@ static _Thread_local int og_keep1 = 0, og_keep2 = 0;  // OG_KEEP1/2: candidates 
 // loss games — a decision the oracle changes was compute-limited.
 static _Thread_local int og_oracle = 0;
 static _Thread_local int og_rollout_policy = 0;       // OG_ROLLOUT: 0=default, 1=espresso, 2=handwritten (struct path)
+// Trump-conservation tie-break: the weak handwritten rollout policy undervalues
+// keeping trumps while the deck is alive, so leading a low trump scores ~equal
+// to a junk card and MC noise picks it ~half the time (measured: 52.5% -> 36.7%
+// under a stronger rollout). A small tax per trump LED (attack only; covers are
+// forced defense) added to the mean-finish score at selection tips near-ties
+// toward the cheap non-trump WITHOUT overriding a genuine gap. In milli-units of
+// mean-finish-position via OG_TRUMP_KEEP (default 40 = 0.040; MC noise between
+// near-tied candidates ~0.05). 0 disables. Endgame (deck dead) is never taxed.
+static _Thread_local double og_trump_keep = 0.040;
 // Bitboard endgame-solver node budgets (per shared pass). The bitboard solver
 // (transposition table + O(1) clone) resolves far more per node than the
 // struct solver, so it needs a much smaller node budget to do equivalent work
@@ -1444,6 +1453,7 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
         og_keep1 = og_env_int("OG_KEEP1", 0);
         og_keep2 = og_env_int("OG_KEEP2", 0);
         og_rollout_policy = og_env_int("OG_ROLLOUT", 0);
+        og_trump_keep = og_env_int("OG_TRUMP_KEEP", 40) / 1000.0;
         og_bb_win_budget = og_env_int("OG_BB_WIN", 400000);
         og_solve_cards = og_env_int("OG_SOLVE_CARDS", 28);
         og_avoid_cards = og_env_int("OG_AVOID_CARDS", 24);
@@ -1571,6 +1581,26 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
     bool   alive[OG_MAX_CANDS];
     for (int i = 0; i < C.n; i++) alive[i] = true;
 
+    // Trump-conservation tie-break tax (added to a candidate's mean-finish score
+    // ONLY at selection; the raw MC scores in score[]/nsim[] are left untouched so
+    // the OG_EXPLAIN dump still shows true rollout values). Attacks only, deck
+    // alive only — leading/throwing a trump is discretionary spend; covering with
+    // one is forced defense and endgame trumps must be used.
+    double keep_pen[OG_MAX_CANDS];
+    {
+        bool deck_alive = (g->deck_count > 0 || g->has_flipped);
+        for (int i = 0; i < C.n; i++) {
+            keep_pen[i] = 0.0;
+            if (og_trump_keep > 0.0 && deck_alive) {
+                const LegalMove *m = &moves->moves[C.idx[i]];
+                if (m->type == MOVE_ATTACK)
+                    for (int k = 0; k < m->n_cards; k++)
+                        if (m->cards[k].suit == g->power_suit)
+                            keep_pen[i] += og_trump_keep;
+            }
+        }
+    }
+
     Game *world = world_scratch_game(), *trial = trial_scratch_game();
     SimState *world_sim = world_scratch_sim(), *trial_sim = trial_scratch_sim();
 
@@ -1660,7 +1690,7 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
                 double worst_v = -1e30;
                 for (int i = 0; i < C.n; i++) {
                     if (!alive[i]) continue;
-                    double v = score[i] / (double)(nsim[i] ? nsim[i] : 1);
+                    double v = score[i] / (double)(nsim[i] ? nsim[i] : 1) + keep_pen[i];
                     // >= : among tied scores drop the LAST candidate. The
                     // candidate list is ranked cheapest-first, so this keeps
                     // the cheap move on ties; dropping the first-tied instead
@@ -1678,7 +1708,7 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
     double best_v = 1e30;
     for (int i = 0; i < C.n; i++) {
         if (!alive[i] || nsim[i] == 0) continue;
-        double v = score[i] / (double)nsim[i];
+        double v = score[i] / (double)nsim[i] + keep_pen[i];
         if (v < best_v) { best_v = v; best = i; }
     }
 
