@@ -11,7 +11,7 @@ import React, { useMemo } from 'react';
 import { Card } from '@shared/types.ts';
 import { useLocalization } from '../contexts/LocalizationContext';
 import {
-    OracleSnapshot, OracleCandidate, oracleClassify, OracleClass, ORACLE_SE0,
+    OracleSnapshot, OracleCandidate, oracleClassify, OracleClass,
 } from '../oracle/types';
 
 // Inverse of oracleCardToken (types.ts): recover the decoded Card so the real
@@ -85,9 +85,6 @@ function McRow({ c, best, worst, bestAdj, renderCard, t }: {
     // Bar width replicates the X-ray formula (gen_html.py / multi_render.py).
     const span = Math.max(worst - best, 0.4);
     const barW = scored ? Math.max(12, Math.min(100, 96 - ((eff! - best) / span) * 84)) : 0;
-    // Focus factor: rows materialise out of fog and lock crisp as SE -> 0.
-    const f = c.se === Infinity ? 0 : Math.max(0, Math.min(1, 1 - c.se / ORACLE_SE0));
-    const blur = scored ? (1 - f) * 2.5 : 0;
     const decimals = c.se < 0.15 ? 2 : 0;
     const isBest = scored && bestAdj != null && Math.abs(eff! - bestAdj) < 1e-9;
     const delta = scored && bestAdj != null ? eff! - bestAdj : 0;
@@ -104,8 +101,7 @@ function McRow({ c, best, worst, bestAdj, renderCard, t }: {
                 padding: '5px 7px', borderRadius: 7,
                 border: c.played ? '1px solid #E79743' : '1px solid transparent',
                 background: c.played ? 'rgba(231,151,67,0.08)' : 'transparent',
-                opacity: scored ? 0.45 + 0.55 * f : 0.7,
-                transition: 'opacity 200ms ease, filter 200ms ease',
+                opacity: scored ? 1 : 0.7,
             }}
         >
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -125,7 +121,6 @@ function McRow({ c, best, worst, bestAdj, renderCard, t }: {
                 <div style={{
                     flex: '1 1 auto', height: 7, borderRadius: 4,
                     background: 'rgba(255,255,255,0.08)', overflow: 'hidden',
-                    filter: blur ? `blur(${blur.toFixed(2)}px)` : undefined,
                 }}>
                     {scored && (
                         <div style={{
@@ -140,7 +135,6 @@ function McRow({ c, best, worst, bestAdj, renderCard, t }: {
                     style={{
                         fontVariantNumeric: 'tabular-nums', fontSize: '0.68rem',
                         color: 'var(--color-text-muted)', minWidth: 66, textAlign: 'right',
-                        filter: blur ? `blur(${blur.toFixed(2)}px)` : undefined,
                     }}
                 >
                     {scored
