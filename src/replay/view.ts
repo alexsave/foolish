@@ -135,10 +135,20 @@ export function buildReplaySteps(d: DecodedReplay): ReplayStep[] {
         const i = known[s].findIndex((k) => sameCard(k, c));
         if (i >= 0) {
             known[s].splice(i, 1);
+            return;
+        }
+        hidden[s]--;
+        if (hidden[s] < 0) throw new Error('replay view desync: hand underflow');
+        if (isV6) {
+            // v6 slots already carry their true identities (set at draw time), so
+            // remove the slot that ACTUALLY holds this card — never FIFO-bind, which
+            // would overwrite the correct identity with the play order (the exact
+            // retrodiction error v6 exists to avoid).
+            const si = slots[s].findIndex((slot) => slot.identity && sameCard(slot.identity, c));
+            if (si < 0) throw new Error('replay view desync: v6 slot not found');
+            slots[s].splice(si, 1);
         } else {
-            hidden[s]--;
-            if (hidden[s] < 0) throw new Error('replay view desync: hand underflow');
-            // a fresh reveal: bind the identity to the oldest hidden card
+            // v5: a fresh reveal — bind the identity to the oldest hidden card.
             const slot = slots[s].shift();
             if (!slot) throw new Error('replay view desync: slot underflow');
             slot.identity = c;
@@ -228,18 +238,21 @@ export function buildReplaySteps(d: DecodedReplay): ReplayStep[] {
 
             case LOG_TYPE.DRAW:
                 for (const c of primaries) {
-                    if (c.suit >= 0) {
-                        // v5: the flipped trump is the only identified draw.
-                        // v6: every draw (deal + stock + flip) is identified —
-                        // the flip alone doesn't come off the counted stock.
+                    if (c.suit >= 0 && isV6 && !sameCard(c, d.trumpCard)) {
+                        // v6 deal/stock draw: FACE-DOWN to spectators even though
+                        // the codec stores its identity. Record it as a hidden slot
+                        // CARRYING that identity (surfaced only by the eye toggle and
+                        // the Oracle), NOT a public 'known' card — otherwise the deal
+                        // renders face-up, which is what a live deal never shows.
+                        hidden[l.seat!]++;
+                        slots[l.seat!].push({ identity: { ...c } });
+                        deckCount--;
+                        if (deckCount < 0)
+                            throw new Error('replay view desync: deck underflow');
+                    } else if (c.suit >= 0) {
+                        // the flipped trump is genuinely public (v5 and v6) -> known.
                         known[l.seat!].push(c);
-                        if (isV6 && !sameCard(c, d.trumpCard)) {
-                            deckCount--;
-                            if (deckCount < 0)
-                                throw new Error('replay view desync: deck underflow');
-                        } else {
-                            flipped = null;
-                        }
+                        flipped = null;
                     } else {
                         hidden[l.seat!]++;
                         slots[l.seat!].push({ identity: null });
@@ -268,16 +281,20 @@ export function buildReplaySteps(d: DecodedReplay): ReplayStep[] {
 
         recordOuts();
 
-        const realDraws = primaries.filter((c) => c.suit >= 0);
+        // A DRAW step SHOWS only the public flip; deal/stock draws stay a
+        // face-down count (their exact identities live in slots for the reveal
+        // toggle). On v5 the only identified draw already IS the flip, so this is
+        // unchanged there; on v6 it stops the deal rendering face-up.
+        const flipDraws = primaries.filter((c) => c.suit >= 0 && sameCard(c, d.trumpCard));
         slotRefs.push(slots.map((q) => [...q]));
         steps.push(
             snapshot(
                 l.log_type,
                 l.seat,
-                l.log_type === LOG_TYPE.DRAW ? realDraws : primaries,
+                l.log_type === LOG_TYPE.DRAW ? flipDraws : primaries,
                 l.card_pairs[0]?.target ?? null,
                 l.log_type === LOG_TYPE.DRAW
-                    ? primaries.length - realDraws.length
+                    ? primaries.length - flipDraws.length
                     : primaries.length,
             ),
         );
