@@ -80,7 +80,10 @@ function McRow({ c, best, worst, bestAdj, renderCard, t }: {
     c: OracleCandidate; best: number; worst: number; bestAdj: number | null;
     renderCard: Props['renderCard']; t: (id: any, p?: any) => string;
 }) {
-    const eff = c.adjusted;
+    // Bar, sort, classification and the displayed number ALL key off the true
+    // expected finish (mean) — the 0.04/trump tie-break tax never distorts what
+    // the user sees, so the bars always agree with the EF numbers.
+    const eff = c.mean;
     const scored = eff != null;
     // Bar width replicates the X-ray formula (gen_html.py / multi_render.py).
     const span = Math.max(worst - best, 0.4);
@@ -183,7 +186,7 @@ export const OracleOverlay = ({ snapshot, onClose, onToggleMemory, onRetry, rend
     const { t } = useLocalization();
 
     const scored = useMemo(
-        () => (snapshot?.candidates ?? []).filter((c) => c.adjusted != null).map((c) => c.adjusted!),
+        () => (snapshot?.candidates ?? []).filter((c) => c.mean != null).map((c) => c.mean!),
         [snapshot],
     );
     const best = scored.length ? Math.min(...scored) : 0;
