@@ -145,11 +145,14 @@ export class OracleAccumulator {
                 (VERDICT_RANK[x.verdict] ?? 9) - (VERDICT_RANK[y.verdict] ?? 9)
                 || depthOf(y) - depthOf(x));
         } else {
+            // Sort by the true expected finish (mean) so the order matches the
+            // displayed numbers + bars; the trump tax is only an invisible
+            // tie-break for exactly-equal means (octogen's trump-conservation).
             list.sort((x, y) => {
-                if (x.adjusted == null && y.adjusted == null) return 0;
-                if (x.adjusted == null) return 1;      // scoreless rows last
-                if (y.adjusted == null) return -1;
-                return x.adjusted - y.adjusted;
+                if (x.mean == null && y.mean == null) return 0;
+                if (x.mean == null) return 1;          // scoreless rows last
+                if (y.mean == null) return -1;
+                return (x.mean - y.mean) || ((x.adjusted ?? x.mean) - (y.adjusted ?? y.mean));
             });
         }
         return list;
