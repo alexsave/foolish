@@ -1,10 +1,15 @@
 # The Infinite Oracle — replay move-strength analysis, designed
 
-**Status: DESIGN — not yet implemented.** This document is a complete build
-spec for a less-context-loaded agent. Read it start to finish before writing
-any code. Every factual claim about existing code carries a `file:line`
-anchor, verified against commit `cbb896d` (branch tip `1b27238`). If a line
-number has drifted, the surrounding identifiers are stable — search for them.
+**Status: IMPLEMENTED (Mode A).** Mode A shipped on branch
+`claude/replay-ui-new-feature-tektn9`: the C hooks (`-DFOOLISH_ORACLE_BUILD`),
+the `wasm-oracle` Makefile target + committed `public/oracle.wasm.gz`, the
+`src/oracle/` worker fleet + controller, the `OracleOverlay` UI, en/ru/ko
+strings, the `e2e/oracle_replay.test.ts` headless suite, and the acceptance
+screenshots in `docs/screenshots/oracle-*.png`. Mode B (§8b) remains optional
+and unbuilt. This document is the original build spec; every factual claim
+about existing code carries a `file:line` anchor, verified against commit
+`cbb896d` (branch tip `1b27238`). If a line number has drifted, the
+surrounding identifiers are stable — search for them.
 
 ---
 
