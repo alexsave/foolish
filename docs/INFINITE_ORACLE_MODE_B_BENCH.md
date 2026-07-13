@@ -61,10 +61,34 @@ Caveats, stated openly:
   10%. Conversely, this Mode-A path memcpys pre-captured marshal bytes instead of
   running the JS `__marshalGame` arithmetic, which slightly *understates* Mode A's
   cost. The two effects roughly cancel; ~10–16% is a fair estimate.
-- This minimal Mode B measures choose-throughput; it does **not** yet emit the
-  per-candidate scores (the MT4/MT5 accumulator). Making it a drop-in Mode A
-  replacement needs that plus the browser COOP/COEP change (§8b.2) and the loader
-  mode-selection (§8b.8). The choose compute measured here is representative.
+
+## Status — Mode B is now a complete drop-in (branch `claude/oracle-mode-b`)
+
+The measurement build has since been finished into a real, functional oracle,
+kept on its own branch (unmerged):
+
+- **Per-candidate scores (MT4/MT5).** `oracle-mt` now folds each batch's rollout
+  `score[]`/`nsim[]` into the shared `OgMtControl` accumulator at the octogen
+  emit point; the control instance reads back per-candidate mean-finish, `nsim`,
+  and `forced_loss`. `scripts/oracle_mt_verify.mjs` drives the SAME decision
+  through Mode A and Mode B and asserts the means agree — **worst |Δ| = 0.014**.
+- **Browser integration.** COOP/COEP headers (`next.config.mjs`) make the page
+  cross-origin isolated; `oracleControllerFactory` picks Mode B when
+  `crossOriginIsolated` and Mode A otherwise. `OracleModeBController` runs the
+  control instance on the main thread (marshal once, spawn trampolines, poll the
+  C accumulator on rAF); `oracleMtWorker` is the ~15-line thread trampoline.
+  **Verified in headless Chromium** (`docs/screenshots/oracle-modeb.png`):
+  `crossOriginIsolated === true`, `window.__oracleMode === 'B'`, the overlay
+  streams the same per-candidate EFs as Mode A.
+- **Coarser verdicts.** Endgame win/draw/loss verdicts in Mode B currently come
+  only from `forced_loss` (proven losses), not the full explain-probe table —
+  §8b.5 MT6's acknowledged simplification. Mode A remains the richer exact-regime
+  path. Shipped `bots/rules/guards.wasm` and Mode A `oracle.wasm` stay
+  byte-identical throughout.
+
+The recommendation below is unchanged: the ~10% latency win still doesn't
+justify the COOP/COEP blast radius + concurrency C for latency alone, but the
+drop-in is now built and proven, ready to switch on if that calculus changes.
 
 **Recommendation:** given Mode A already converges in well under a second on this
 hardware, a ~10% throughput win does not justify Mode B's cost (250–350 lines of
