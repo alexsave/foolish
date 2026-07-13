@@ -795,9 +795,10 @@ export const commitGame = async (
     // logs; a GAME_START reset carries no pickup/discard, so it is never a close.
     let closedRound = false;
     if (p_logs_packed && !p_logs_reset) {
-        const { logwireClosesRound } = await import('./wire/logwire.ts');
-        const { hexToBytes } = await import('./replay/codec.ts');
-        closedRound = logwireClosesRound(hexToBytes(p_logs_packed));
+        // Scan the bare-hex log string in place — no Uint8Array allocation and
+        // no codec import on this per-commit path (see logwireHexClosesRound).
+        const { logwireHexClosesRound } = await import('./wire/logwire.ts');
+        closedRound = logwireHexClosesRound(p_logs_packed);
     }
 
     const { data, error } = await supabaseClient.rpc('commit_game', {
