@@ -112,6 +112,57 @@ sources inline. Supersedes the Phase-1 monetization mix in `docs/MONETIZATION_RO
 
 ---
 
+## 2b. What could this actually make? (revenue projection)
+
+One formula drives everything; argue with the inputs, not the arithmetic:
+
+```
+annual run-rate ≈ MAU × paid-conversion × net-$/payer/yr  +  one-offs
+```
+
+Inputs, sourced from §2/§11/§12: paid conversion of actives **0.8–1.5%**
+(chess.com converts ~1% of *registered* against a free rival; RevenueCat
+freemium median ~2.2% of downloads — we use MAU, the stricter base); blended
+**net ~$25/payer/yr** (mix of $33-net web annuals, ~$4.2-net store months with
+churn, ~$23-net Stars months at the 65% haircut); one-offs (day passes, single
+reviews, gifts) historically add **20–35%** on top of subscription revenue in
+comparable freemium games.
+
+| Scenario (run-rate at month 12–18) | MAU | Conv. | Payers | Subs/yr | One-offs/yr | **Total/yr** |
+| --- | --- | --- | --- | --- | --- | --- |
+| **Bear** — distribution stalls, current organic only | 5k | 0.8% | ~40 | ~$1k | ~$0.5k | **~$1.5–2k** |
+| **Base** — TMA + replay sharing work modestly | 50k | 1.2% | ~600 | ~$15k | ~$5k | **~$20–25k** |
+| **Strong** — a real hit in one channel (TMA virality or App Store featuring) | 250k | 1.5% | ~3,750 | ~$94k | ~$25k | **~$110–130k** |
+| **Breakout** — *the* Durak app, chess.com-shaped | 2M | 1.5% | ~30k | ~$750k | ~$150k | **~$0.9–1.1M** |
+
+Plus launch-only cash, not run-rate: the 500-cap **$79 Founder lifetime** is up
+to **~$40k one-time** if it sells out (don't plan on it; it's a bonus and a
+demand signal).
+
+How to read this honestly:
+
+- **Costs barely matter.** Fixed burn is ~$500–1k/yr (§14) and marginal COGS is
+  ~zero, so ~everything above is gross profit before income tax (§13). The
+  project's downside is time, not money.
+- **Bear→Base is a product problem** (does the paywall convert at 1%+? is the
+  free 1/day cap generating upgrade pressure?) — measurable within ~60 days of
+  the web launch with even a few thousand actives. If conversion lands under
+  ~0.5% at Base-level traffic, the price ladder or the free cap is wrong; fix
+  that before chasing MAU.
+- **Base→Strong→Breakout is purely the distribution problem** from
+  `MONETIZATION_ROADMAP.md` §2 — the Oracle doesn't create the audience, it
+  converts it at ~$0.25–0.40 per active per year (MAU × conv × net$). Every
+  10k MAU ≈ **$3–5k/yr** of run-rate at base assumptions; that's the exchange
+  rate to judge any distribution effort against.
+- **Millionaire money from the Oracle alone = Breakout tier** (~2M MAU). The
+  realistic 18-month corridor for this plan executed well but without a viral
+  break is **$20k–130k/yr** — meaningful solo-dev income, proof for investors
+  or acquirers, and the machinery that makes any future audience instantly
+  monetizable. Reaching seven figures still routes through the roadmap's
+  distribution phases (and its blend of tournament/event revenue at scale).
+
+---
+
 ## 3. The guarding model (client vs server, per platform)
 
 One principle: **we are metering a service, not hiding bits.** The engine already
@@ -428,8 +479,15 @@ exactly who texts on iMessage.
   the iMessage game and the web game are one artifact.
 - Async "correspondence Durak" (play a turn when you like) is a *new mode*, not
   a port: the rules engine is authoritative on both ends (guards.wasm / native
-  C), so each turn is validated locally, no server in the loop for 1v1 casual
-  play — which also means it works with **zero infra cost**.
+  C), so each turn is validated locally and **no server of ours is in the loop**
+  for casual 1v1 — Apple's iMessage infrastructure is the transport. Zero infra
+  cost, with two honest caveats: (a) the payload carries the *full* game state,
+  so hidden information (opponent's hand, deck order) is merely encoded, not
+  secret — a determined user could decode the URL and peek. Acceptable for
+  casual games between friends (GamePigeon's Sea Battle has the same property);
+  never acceptable for rated play. (b) Therefore **ranked/ELO games always go
+  through the normal server flow** (the bubble just deep-links into a real
+  server-backed game); serverless mode is casual-only and clearly labeled.
 
 **Constraints to respect (they shape the design, not kill it):**
 
