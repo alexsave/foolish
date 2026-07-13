@@ -741,6 +741,45 @@ wasm-oracle:
 	@echo "built ../public/oracle.wasm.gz ($$(wc -c < ../public/oracle.wasm.gz) B gz, $$(wc -c < build/oracle.wasm) B raw)"
 
 # ---------------------------------------------------------------------------
+# oracle-mt.wasm — Mode B (docs/INFINITE_ORACLE_DESIGN.md §8b): the same octogen
+# brain rebuilt for SHARED-MEMORY THREADS. Real TLS restored (no -D_Thread_local=)
+# so every RNG and all cordite scratch is genuinely per-thread — the proven
+# native OMP model. Coordination (job control, seeding, accumulation) lives in C
+# atomics (wasm/wasm_oracle_mt.c); the TS/worker side becomes a thin trampoline.
+# No OG_EXPLAIN, no CD_WASM_OVERLAY (its fixed-address aliasing is only legal
+# when TLS is stripped). A SECOND committed artifact (public/oracle-mt.wasm.gz);
+# the browser loader picks it only when crossOriginIsolated. NEVER touches the
+# shipped modules.
+WASM_ORACLE_MT_SRC := $(WASM_BOT_SRC) wasm/wasm_oracle_mt.c
+WASM_ORACLE_MT_CFLAGS := $(filter-out -Wl% $(WASM_OPT) -D_Thread_local= -DCD_TT_BITS=12,$(WASM_FLAGS)) \
+                         -DCD_TT_BITS=20 -DCD_LEAFBOOK -matomics \
+                         -DFOOLISH_ORACLE_BUILD -DFOOLISH_ORACLE_MT
+WASM_ORACLE_MT_LDFLAGS := $(filter-out -Wl$(comma)--export-memory,$(filter -Wl%,$(WASM_FLAGS))) \
+                          -Wl,--shared-memory -Wl,--import-memory -Wl,--max-memory=134217728 \
+                          -Wl,--export=__stack_pointer -Wl,--export=__wasm_init_tls \
+                          -Wl,--export=__tls_size -Wl,--export=__tls_align
+WASM_ORACLE_MT_EXPORTS := $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) \
+  -Wl,--export=wasm_og_reload_flags \
+  -Wl,--export=wasm_mt_reserve \
+  -Wl,--export=wasm_mt_warmup -Wl,--export=wasm_mt_setup -Wl,--export=wasm_mt_stop \
+  -Wl,--export=wasm_mt_total -Wl,--export=wasm_mt_checksum -Wl,--export=wasm_mt_active \
+  -Wl,--export=wasm_mt_thread_main
+.PHONY: wasm-oracle-mt
+wasm-oracle-mt:
+	@mkdir -p build/botoraclemt
+	@for src in $(WASM_ORACLE_MT_SRC); do \
+	  base=$$(basename $$src .c); opt=-Oz; \
+	  case " $(WASM_BOT_O3_SRC) " in *" $$src "*) opt=-O3;; esac; \
+	  echo "  CC(oracle-mt) $$src [$$opt]"; \
+	  $(WASM_CC) $(WASM_ORACLE_MT_CFLAGS) $$opt -c $$src -o build/botoraclemt/$$base.o || exit 1; \
+	done
+	$(WASM_CC) --target=wasm32 -nostdlib $(WASM_ORACLE_MT_LDFLAGS) \
+	          $(WASM_ORACLE_MT_EXPORTS) build/botoraclemt/*.o -o build/oracle-mt.wasm
+	$(WASM_OPT_BIN) $(WASM_OPT_FEATURES) --enable-threads $(WASM_BOTS_POSTOPT) build/oracle-mt.wasm -o build/oracle-mt.wasm
+	gzip -9 -n -c build/oracle-mt.wasm > ../public/oracle-mt.wasm.gz
+	@echo "built ../public/oracle-mt.wasm.gz ($$(wc -c < ../public/oracle-mt.wasm.gz) B gz, $$(wc -c < build/oracle-mt.wasm) B raw)"
+
+# ---------------------------------------------------------------------------
 # Coverage gate (CI: ../.github/workflows/coverage.yml). Instruments the engine
 # with gcc --coverage, runs the committed unit suite + the difftests, and fails
 # if core-engine (game/legal/replay) LINE or BRANCH coverage regresses below the
