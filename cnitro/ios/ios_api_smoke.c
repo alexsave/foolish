@@ -79,6 +79,22 @@ int main(void) {
 
     fio_state_json(0, buf, sizeof(buf));
     printf("final state head=%.160s\n", buf);
+
+    // Replay round-trip (§16.C): encode the finished game to a base32 code,
+    // decode it back, and check the decoded fool matches the game's fool.
+    static char code[8192];
+    int clen = fio_replay_encode_b32(code, sizeof(code));
+    if (clen < 0) { printf("FAIL replay encode err=%d detail=%d\n", clen, fio_last_replay_error()); return 1; }
+    printf("replay code (%d chars): %.60s%s\n", clen, code, clen > 60 ? "..." : "");
+    int dlen = fio_replay_decode_json(code, buf, sizeof(buf));
+    if (dlen < 0) { printf("FAIL replay decode err=%d detail=%d\n", dlen, fio_last_replay_error()); return 1; }
+    printf("decoded head=%.140s\n", buf);
+    // find "fool": in the decoded JSON and compare to the game's fool.
+    const char *fp = strstr(buf, "\"fool\":");
+    int decoded_fool = fp ? atoi(fp + 7) : -999;
+    if (decoded_fool != fool) { printf("FAIL replay fool mismatch: decoded=%d game=%d\n", decoded_fool, fool); return 1; }
+    printf("replay round-trip OK (fool=%d)\n", decoded_fool);
+
     printf("SMOKE OK\n");
     return 0;
 }

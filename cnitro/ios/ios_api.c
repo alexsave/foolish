@@ -463,23 +463,183 @@ int fio_bot_choose_json(int strategy_id, int seat, char *out, int cap) {
     return j_finish(&j);
 }
 
-// ---------- replays --------------------------------------------------------
+// ---------- replays (§16.C) ------------------------------------------------
 //
-// M-C (§16.C) work. Decode is a thin wrapper over replay_decode; the b32 <->
-// integer alphabet and the encode-time log->action synthesis (encode.ts's
-// GOOD+DISCARD -> round_end folding) are ported in Milestone C. Until then these
-// return FIO_EREPLAY so no caller silently ships a wrong-alphabet code.
+// DECODE is implemented: base32 (RFC 4648 uppercase, no padding — the web's
+// codec.ts alphabet) → the replay integer bytes → replay_decode() → JSON. This
+// is byte-parity with the server by construction (shared replay.c), so a
+// web-generated code plays natively. ENCODE (share-your-game) still needs the
+// encode.ts log→action synthesis and lands later this milestone.
+
+// RFC 4648 base32 decode, MSB-first bit packing (mirrors codec.ts base32Decode).
+// Ignores any char outside A-Z/2-7 (so a `-extras` suffix or stray chars are
+// skipped). Returns bytes written, or -1 on overflow.
+static int b32_decode(const char *s, unsigned char *out, int cap) {
+    int bits = 0, value = 0, n = 0;
+    for (; *s; s++) {
+        char c = *s;
+        if (c == '-') break;                 // extras suffix begins here
+        int idx = -1;
+        if (c >= 'A' && c <= 'Z') idx = c - 'A';
+        else if (c >= 'a' && c <= 'z') idx = c - 'a';   // accept lowercase
+        else if (c >= '2' && c <= '7') idx = c - '2' + 26;
+        else continue;                       // ignore stray chars ('.', '/', ...)
+        value = (value << 5) | idx;
+        bits += 5;
+        if (bits >= 8) {
+            if (n >= cap) return -1;
+            out[n++] = (unsigned char)((value >> (bits - 8)) & 0xFF);
+            bits -= 8;
+        }
+    }
+    return n;
+}
+
+// Decode one wire card byte into JSON: null / hidden {-1,-1} / real {s,v}.
+static void j_wire_card(J *j, unsigned char b) {
+    if (b == REPLAY_CARD_NONE) { j_puts(j, "null"); return; }
+    if (b == REPLAY_CARD_HIDDEN) { j_puts(j, "{\"s\":-1,\"v\":-1}"); return; }
+    int v = b > 51 ? 51 : b;
+    Card c; c.suit = (int8_t)(v / 13); c.value = (int8_t)((v % 13) + 1);
+    j_card(j, c);
+}
+
+// card → wire byte (suit*13 + value-1).
+static unsigned char wire_of(Card c) {
+    if (card_is_none(c)) return REPLAY_CARD_NONE;
+    if (c.suit < 0 || c.value < 0) return REPLAY_CARD_HIDDEN;
+    return (unsigned char)(c.suit * 13 + (c.value - 1));
+}
+
+// RFC 4648 base32 encode, MSB-first, no padding (mirrors codec.ts base32Encode).
+static const char B32_ALPHA[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+static int b32_encode(const unsigned char *in, int n, char *out, int cap) {
+    int bits = 0, value = 0, w = 0;
+    for (int i = 0; i < n; i++) {
+        value = (value << 8) | in[i];
+        bits += 8;
+        while (bits >= 5) {
+            if (w >= cap - 1) return -1;
+            out[w++] = B32_ALPHA[(value >> (bits - 5)) & 31];
+            bits -= 5;
+        }
+    }
+    if (bits > 0) { if (w >= cap - 1) return -1; out[w++] = B32_ALPHA[(value << (5 - bits)) & 31]; }
+    out[w] = 0;
+    return w;
+}
+
+// makeSource (encode.ts / replay_difftest.c build_encode_input): the info logs
+// (attack/cover/pass/pickup) plus a round_end marker for every DISCARD directly
+// preceded by a GOOD. Header = [n][trump_id][first_attacker][u16 n_actions].
+static int build_encode_input(const Game *g, unsigned char *out, int cap) {
+    if (g->num_logs >= MAX_LOGS) return -1;   // log buffer overflowed → untrusted
+    int trump_id = g->flipped.suit * 13 + (g->flipped.value - 1);
+    int q = 5, n_actions = 0;
+    for (int i = 0; i < g->num_logs; i++) {
+        const GameLog *l = &g->logs[i];
+        int info = l->log_type == LOG_ATTACK || l->log_type == LOG_COVER
+                || l->log_type == LOG_PASS || l->log_type == LOG_PICKUP;
+        if (info) {
+            if (q + 3 + l->num_pairs * 2 > cap) return -1;
+            out[q++] = (unsigned char)l->log_type;
+            out[q++] = (unsigned char)l->player_idx;
+            out[q++] = (unsigned char)l->num_pairs;
+            for (int jx = 0; jx < l->num_pairs; jx++) {
+                out[q++] = wire_of(l->pairs[jx].primary);
+                out[q++] = wire_of(l->pairs[jx].target);
+            }
+            n_actions++;
+        } else if (l->log_type == LOG_DISCARD && i > 0 && g->logs[i - 1].log_type == LOG_GOOD) {
+            if (q + 3 > cap) return -1;
+            out[q++] = (unsigned char)REPLAY_ROUND_END;
+            out[q++] = 0xFF;
+            out[q++] = 0;
+            n_actions++;
+        }
+    }
+    out[0] = (unsigned char)g->num_players;
+    out[1] = (unsigned char)trump_id;
+    out[2] = (unsigned char)g->first_attacker;
+    out[3] = (unsigned char)(n_actions & 0xff);
+    out[4] = (unsigned char)((n_actions >> 8) & 0xff);
+    return q;
+}
 
 int fio_replay_encode_b32(char *out, int cap) {
-    (void)out; (void)cap;
+    if (!g_has_game) return FIO_ENOGAME;
     g_last_replay_error = 0;
-    return FIO_EREPLAY; // TODO(M-C): synthesize the action stream from g_game.logs, then replay_encode + b32.
+    static unsigned char encin[65536];
+    static unsigned char encout[16384];
+    int inlen = build_encode_input(&g_game, encin, sizeof(encin));
+    if (inlen < 0) { g_last_replay_error = REPLAY_EINPUT; return FIO_EREPLAY; }
+    int enclen = replay_encode(encin, inlen, encout, sizeof(encout));
+    if (enclen < 0) { g_last_replay_error = -enclen; return FIO_EREPLAY; }
+    int w = b32_encode(encout, enclen, out, cap);
+    if (w < 0) return FIO_ECAP;
+    return w;
 }
 
 int fio_replay_decode_json(const char *code, char *out, int cap) {
-    (void)code; (void)out; (void)cap;
+    if (!code) return FIO_EBADARG;
     g_last_replay_error = 0;
-    return FIO_EREPLAY; // TODO(M-C): b32-decode `code` to the replay integer, replay_decode, emit steps as JSON.
+
+    static unsigned char intbuf[16384];   // the replay integer bytes
+    static unsigned char dec[262144];      // replay_decode output (header + logs)
+
+    int ilen = b32_decode(code, intbuf, sizeof(intbuf));
+    if (ilen < 0) return FIO_ECAP;
+
+    int dlen = replay_decode(intbuf, ilen, dec, sizeof(dec));
+    if (dlen < 0) { g_last_replay_error = -dlen; return FIO_EREPLAY; }
+    if (dlen < REPLAY_DEC_HDR) { g_last_replay_error = REPLAY_EINPUT; return FIO_EREPLAY; }
+
+    // Parse the decoded binary (layout: replay.h DECODE output) into JSON.
+    const unsigned char *p = dec;
+    int version = p[0], n = p[1], trump = p[2], firstAtt = p[3], fool = p[4];
+    int discard = p[5] | (p[6] << 8);
+    int n_elim = p[7];
+    const unsigned char *elim = &p[8];
+    uint32_t n_logs = (uint32_t)p[16] | ((uint32_t)p[17] << 8)
+                    | ((uint32_t)p[18] << 16) | ((uint32_t)p[19] << 24);
+
+    J j; j_init(&j, out, cap);
+    j_puts(&j, "{\"version\":");       j_puti(&j, version);
+    j_puts(&j, ",\"nPlayers\":");      j_puti(&j, n);
+    j_puts(&j, ",\"trump\":");         j_wire_card(&j, (unsigned char)trump);
+    j_puts(&j, ",\"firstAttacker\":"); j_puti(&j, firstAtt);
+    j_puts(&j, ",\"fool\":");          j_puti(&j, fool == 0xFF ? -1 : fool);
+    j_puts(&j, ",\"discardCount\":");  j_puti(&j, discard);
+    j_puts(&j, ",\"eliminationOrder\":[");
+    for (int i = 0, first = 1; i < n_elim && i < 8; i++) {
+        if (elim[i] == 0xFF) continue;
+        if (!first) j_putc(&j, ','); first = 0;
+        j_puti(&j, elim[i]);
+    }
+    j_putc(&j, ']');
+
+    j_puts(&j, ",\"logs\":[");
+    const unsigned char *q = &dec[REPLAY_DEC_HDR];
+    const unsigned char *end = &dec[dlen];
+    for (uint32_t li = 0; li < n_logs && q + 4 <= end; li++) {
+        if (li) j_putc(&j, ',');
+        int log_type = q[0], seat = q[1], defIdx = q[2], n_pairs = q[3];
+        q += 4;
+        j_puts(&j, "{\"type\":");         j_puti(&j, log_type);
+        j_puts(&j, ",\"seat\":");         j_puti(&j, seat == 0xFF ? -1 : seat);
+        j_puts(&j, ",\"defenderIndex\":");j_puti(&j, defIdx == 0xFF ? -1 : defIdx);
+        j_puts(&j, ",\"pairs\":[");
+        for (int pr = 0; pr < n_pairs && q + 2 <= end; pr++) {
+            if (pr) j_putc(&j, ',');
+            j_puts(&j, "{\"primary\":"); j_wire_card(&j, q[0]);
+            j_puts(&j, ",\"target\":");  j_wire_card(&j, q[1]);
+            j_putc(&j, '}');
+            q += 2;
+        }
+        j_puts(&j, "]}");
+    }
+    j_puts(&j, "]}");
+    return j_finish(&j);
 }
 
 int fio_last_replay_error(void) { return g_last_replay_error; }
