@@ -787,6 +787,19 @@ export const commitGame = async (
         console.error(`[COMMIT] view build failed for ${game.id} (cache left stale):`, e);
     }
 
+    // Did THIS move close a round (a pickup or a discard)? The round-boundary
+    // guard (docs/WEB_RACE_BUG_HANDOFF.md) stamps games.round_epoch with the new
+    // version when it did, so a move composed against the prior round is
+    // rejected. Detected here — the one place every commit path (packed + JS/bot)
+    // funnels its logwire records through — by a byte scan of this move's packed
+    // logs; a GAME_START reset carries no pickup/discard, so it is never a close.
+    let closedRound = false;
+    if (p_logs_packed && !p_logs_reset) {
+        const { logwireClosesRound } = await import('./wire/logwire.ts');
+        const { hexToBytes } = await import('./replay/codec.ts');
+        closedRound = logwireClosesRound(hexToBytes(p_logs_packed));
+    }
+
     const { data, error } = await supabaseClient.rpc('commit_game', {
         p_game_id: game.id,
         p_expected_version: expectedVersion,
@@ -803,6 +816,7 @@ export const commitGame = async (
         // so NULL flows and commit_game's COALESCE keeps the stored seed. Never
         // routed through p_game (PublicGame) — that would expose it to clients.
         p_game_seed: dealt ? (game.game_seed ?? null) : null,
+        p_closed_round: closedRound,
     });
 
     if (error) {
@@ -810,13 +824,15 @@ export const commitGame = async (
         throw error;
     }
 
-    const res = data as { status: 'ok' | 'conflict'; version?: number };
+    const res = data as { status: 'ok' | 'conflict'; version?: number; round_epoch?: number };
     if (res.status === 'ok' && typeof res.version === 'number') {
         game.version = res.version; // keep the in-memory game's token current
         // Keep the isolate's packed-state cache current (CAS-fenced — a stale
-        // entry can only cost a conflict+reload, never a wrong write).
+        // entry can only cost a conflict+reload, never a wrong write). The
+        // round_epoch rides along so the round-boundary guard can read it from
+        // the cache without a DB round-trip.
         const { noteCommittedGame } = await import('./game_cache.ts');
-        noteCommittedGame(game, res.version, p_state);
+        noteCommittedGame(game, res.version, p_state, res.round_epoch ?? 0);
     }
     return res;
 };

@@ -74,6 +74,7 @@ CREATE TABLE games (
   game_seed TEXT, -- SENSITIVE (server-only, like `state`): 64 hex chars = the 32-byte deal seed the deck was ChaCha-shuffled from. Regenerates the deal for audit/replay. NEVER granted to anon/authenticated (omitted from the column GRANT below); NULL for legacy/never-dealt games.
   logs_packed TEXT, -- packed session log stream (BARE hex, no \\x prefix — appended by plain concat): kernel log records + u48 timestamps, DRAW identities pre-masked. The sole session-log store (the game_logs table was dropped in migration 20260708120000); see wire/logwire.ts and migration 20260707150000.
   version BIGINT NOT NULL DEFAULT 0, -- optimistic-concurrency token (see commit_game RPC); replaces game_locks
+  round_epoch BIGINT NOT NULL DEFAULT 0, -- the `version` at which the CURRENT round began — bumped to the new version on every commit whose move closed a round (pickup/discard). The server's round-boundary guard rejects a move whose client-intent version predates this (REJECT_STALE_ROUND); see docs/WEB_RACE_BUG_HANDOFF.md and commit_game's p_closed_round. 0 = round 1 / never-closed (the guard is a no-op).
   bot_lease_token UUID,              -- bot-loop lease holder token (replaces bot_locks)
   bot_lease_until TIMESTAMPTZ,       -- bot-loop lease expiry; auto-expiring, no finally-release needed
   created_at TIMESTAMP DEFAULT NOW(),
@@ -551,7 +552,8 @@ CREATE OR REPLACE FUNCTION commit_game(
   p_logs_reset       BOOLEAN DEFAULT FALSE, -- session reset (GAME_START in the records): replace instead of append
   p_game_seed        TEXT    DEFAULT NULL,  -- deal seed (hex); set once at the deal, NULL on every other commit leaves it unchanged
   p_views            JSONB   DEFAULT NULL,  -- per-participant masked view cache rows [{player_id,view,status}]; NULL leaves player_views untouched
-  p_spectator        TEXT    DEFAULT NULL   -- fully-masked seat -1 spectator view (bare hex); NULL leaves spectator_views untouched
+  p_spectator        TEXT    DEFAULT NULL,  -- fully-masked seat -1 spectator view (bare hex); NULL leaves spectator_views untouched
+  p_closed_round     BOOLEAN DEFAULT FALSE  -- TRUE when THIS move closed a round (pickup/discard): stamp round_epoch with the new version so the round-boundary guard rejects moves composed against the prior round (REJECT_STALE_ROUND, docs/WEB_RACE_BUG_HANDOFF.md)
 ) RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -559,6 +561,7 @@ SET search_path = public
 AS $$
 DECLARE
   v_new_version BIGINT;
+  v_round_epoch BIGINT;
   g games%ROWTYPE;
 BEGIN
   g := jsonb_populate_record(NULL::games, p_game);
@@ -584,9 +587,20 @@ BEGIN
       WHEN g.status = 'waiting' THEN ''
       ELSE COALESCE(logs_packed, '') || COALESCE(p_logs_packed, '')
     END,
+    -- round_epoch = the version at which the CURRENT round began. A new session
+    -- (WAITING reset, or a GAME_START in the appended records) restarts it at 0;
+    -- a round-closing move (p_closed_round) stamps it with the version this very
+    -- commit produces (version + 1, since `version` here is the OLD value);
+    -- every other move leaves it untouched. Same version fence as the state
+    -- blob, so a client's intent version can be compared to it without a torn read.
+    round_epoch = CASE
+      WHEN p_logs_reset OR g.status = 'waiting' THEN 0
+      WHEN p_closed_round THEN version + 1
+      ELSE round_epoch
+    END,
     updated_at = now(), version = version + 1
   WHERE id = p_game_id AND version = p_expected_version
-  RETURNING version INTO v_new_version;
+  RETURNING version, round_epoch INTO v_new_version, v_round_epoch;
 
   IF NOT FOUND THEN
     RETURN jsonb_build_object('status', 'conflict');
@@ -662,7 +676,7 @@ BEGIN
           status = EXCLUDED.status, updated_at = now();
   END IF;
 
-  RETURN jsonb_build_object('status', 'ok', 'version', v_new_version);
+  RETURN jsonb_build_object('status', 'ok', 'version', v_new_version, 'round_epoch', v_round_epoch);
 END;
 $$;
 

@@ -10,8 +10,10 @@ import assert from 'node:assert/strict';
 import { Card } from '../supabase/functions/_shared/types.ts';
 import {
     AWIRE_KIND, AWIRE_MAX_CARDS, AwireKindName, AwireMove,
-    decodeAction, encodeAction,
+    ACTION_REQ_FORMAT, ACTION_REQ_FORMAT_V1,
+    decodeAction, encodeAction, encodeActionRequest, decodeActionRequest,
 } from '../supabase/functions/_shared/wire/awire.ts';
+import { logwireClosesRound, logsFromKernelExport } from '../supabase/functions/_shared/wire/logwire.ts';
 
 // Deterministic RNG so a failure reproduces from the printed seed.
 let seed = Number(process.env.FUZZ_SEED || 0xa11ce) >>> 0;
@@ -131,4 +133,79 @@ test('awire: decodeAction never throws on random byte strings, and any accept is
     }
     // The near-valid quarter guarantees the accept path actually ran.
     assert.ok(accepted > 100, `enough random buffers decoded to exercise the accept path (${accepted})`);
+});
+
+// ---------------------------------------------------------------------------
+// Request envelope (the `action` edge function's binary body). v1 =
+// [fmt|gid_len|gid|wire]; v2 adds the client-intent round guard's u32
+// intent_version. An old client sends v1 (unguarded); a new client sends v2.
+// ---------------------------------------------------------------------------
+test('awire request envelope: v1 (no intent) and v2 (intent version) round-trip; decoder reads both', () => {
+    for (let i = 0; i < 500; i++) {
+        const gid = `g${ri(1e9).toString(36)}`;
+        const wire = encodeAction(randValidMove());
+
+        // v1 — no intent version.
+        const v1 = encodeActionRequest(gid, wire);
+        assert.equal(v1[0], ACTION_REQ_FORMAT_V1, 'v1 format byte');
+        const d1 = decodeActionRequest(v1);
+        assert.ok(d1, 'v1 decodes');
+        assert.equal(d1!.gameId, gid, 'v1 game id');
+        assert.deepEqual([...d1!.wire], [...wire], 'v1 wire preserved');
+        assert.equal(d1!.intentVersion, undefined, 'v1 carries no intent version (unguarded)');
+
+        // v2 — with a u32 intent version (exercise the full u32 range incl. > 2^31).
+        const iv = (ri(0xffff) * 0x10001) >>> 0; // spread across all 4 bytes
+        const v2 = encodeActionRequest(gid, wire, iv);
+        assert.equal(v2[0], ACTION_REQ_FORMAT, 'v2 format byte');
+        const d2 = decodeActionRequest(v2);
+        assert.ok(d2, 'v2 decodes');
+        assert.equal(d2!.gameId, gid, 'v2 game id');
+        assert.deepEqual([...d2!.wire], [...wire], 'v2 wire preserved after the intent field');
+        assert.equal(d2!.intentVersion, iv, 'v2 intent version round-trips exactly (u32)');
+    }
+    // intent_version 0 is a real value, not "absent" — the u32 must still ride.
+    const z = decodeActionRequest(encodeActionRequest('gg', encodeAction({ kind: 'good' }), 0));
+    assert.equal(z!.intentVersion, 0, 'intent version 0 is preserved as 0, not dropped');
+});
+
+test('awire request envelope: malformed/truncated buffers decode to null (never throw, never partial)', () => {
+    assert.equal(decodeActionRequest(new Uint8Array([])), null, 'empty');
+    assert.equal(decodeActionRequest(new Uint8Array([9, 0])), null, 'unknown format byte');
+    // v2 header claiming a gid + intent but truncated before the 2-byte wire.
+    assert.equal(decodeActionRequest(new Uint8Array([ACTION_REQ_FORMAT, 2, 65, 66, 0, 0, 0, 0])), null, 'v2 missing wire');
+    // v1 with a gid but no wire.
+    assert.equal(decodeActionRequest(new Uint8Array([ACTION_REQ_FORMAT_V1, 2, 65, 66])), null, 'v1 missing wire');
+});
+
+// ---------------------------------------------------------------------------
+// Round-close detector (drives the round_epoch guard, docs/WEB_RACE_BUG_HANDOFF.md):
+// a move closes a round exactly when its logs carry a PICKUP or a DISCARD.
+// ---------------------------------------------------------------------------
+const PICKUP_INT = 4, DISCARD_INT = 6, ATTACK_INT = 1, COVER_INT = 2, DEFENDER_CHANGE_INT = 7;
+// Build the kernel's raw log export (u16 count + timestamp-less records) that
+// logsFromKernelExport consumes — the exact bytes the packed path produces.
+function kernelExport(recs: { type: number; seat: number; def: number; pairs: number[][] }[]): Uint8Array {
+    const out: number[] = [recs.length & 0xff, (recs.length >> 8) & 0xff];
+    for (const r of recs) {
+        out.push(r.type, r.seat, r.def, r.pairs.length);
+        for (const p of r.pairs) out.push(p[0], p[1]);
+    }
+    return new Uint8Array(out);
+}
+const logwireOf = (recs: Parameters<typeof kernelExport>[0]) => logsFromKernelExport(kernelExport(recs), 1_700_000_000_000);
+
+test('logwireClosesRound: true iff the move logged a pickup or a discard', () => {
+    assert.equal(logwireClosesRound(new Uint8Array([])), false, 'empty log — no close');
+    assert.equal(logwireClosesRound(logwireOf([{ type: ATTACK_INT, seat: 0, def: 0xff, pairs: [[5, 0xff]] }])), false, 'a plain attack does not close a round');
+    assert.equal(logwireClosesRound(logwireOf([{ type: COVER_INT, seat: 1, def: 1, pairs: [[5, 10]] }])), false, 'a cover does not close a round');
+    assert.equal(logwireClosesRound(logwireOf([{ type: PICKUP_INT, seat: 1, def: 1, pairs: [[5, 0xff], [10, 0xff]] }])), true, 'a pickup closes the round');
+    assert.equal(logwireClosesRound(logwireOf([{ type: DISCARD_INT, seat: 0xff, def: 0xff, pairs: [[5, 0xff]] }])), true, 'a discard closes the round');
+    // A realistic covered-then-discarded round + its defender-change trailer.
+    assert.equal(logwireClosesRound(logwireOf([
+        { type: ATTACK_INT, seat: 0, def: 0xff, pairs: [[5, 0xff]] },
+        { type: COVER_INT, seat: 1, def: 1, pairs: [[5, 18]] },
+        { type: DISCARD_INT, seat: 0xff, def: 0xff, pairs: [[5, 18]] },
+        { type: DEFENDER_CHANGE_INT, seat: 0xff, def: 0, pairs: [] },
+    ])), true, 'a full covered round that trashes closes the round');
 });

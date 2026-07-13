@@ -27,9 +27,15 @@ export const REJECT_MESSAGES: Record<number, string> = {
     21: 'PASS_OVERFLOW: too many cards to pass',
 };
 
+// Server-edge reject codes live above the kernel's ENGINE_REJECT_* range (see
+// wire/awire.ts REJECT_STALE_ROUND): the move was kernel-legal but refused by
+// an edge policy — here, a round closed before it landed.
+const REJECT_STALE_ROUND = 100;
+
 // -1 is the guards/rules kernels' "malformed wire" verdict (not an
 // ENGINE_REJECT_* code); anything else unknown falls through generically.
 export function rejectMessage(code: number): string {
     if (code === -1) return 'MALFORMED: unreadable action wire';
+    if (code === REJECT_STALE_ROUND) return 'STALE_ROUND: a round closed before this move landed';
     return REJECT_MESSAGES[code] ?? `move rejected (code ${code})`;
 }

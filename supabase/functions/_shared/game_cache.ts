@@ -13,6 +13,11 @@ import { GAME_STATUS, Game } from './types.ts';
 
 export interface CachedGame {
     version: number;
+    // The version at which the current round began (games.round_epoch). Read by
+    // the packed path's round-boundary guard; a stale value can only cost a
+    // reject-recheck reload or a CAS conflict, never a wrong write (see
+    // executePackedAction).
+    roundEpoch: number;
     stateHex: string; // \x-prefixed, exactly as commit_game stores it
     name: string;
     status: string;
@@ -33,7 +38,7 @@ export function invalidateCachedGame(gameId: string): void {
 }
 
 // Called by commitGame after a successful version-gated write.
-export function noteCommittedGame(game: Game, version: number, stateHex: string | null): void {
+export function noteCommittedGame(game: Game, version: number, stateHex: string | null, roundEpoch: number = 0): void {
     if (!stateHex || game.status !== GAME_STATUS.PLAYING) {
         // Game over / lobby reset: the next read must see the columns
         // (finalize, moot checks, lobby assembly) — never a cached blob.
@@ -48,6 +53,7 @@ export function noteCommittedGame(game: Game, version: number, stateHex: string 
     cache.delete(game.id); // reinsert to refresh recency
     cache.set(game.id, {
         version,
+        roundEpoch,
         stateHex,
         name: game.name,
         status: game.status,

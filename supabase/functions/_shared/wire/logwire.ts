@@ -97,6 +97,28 @@ export function logsFromKernelExport(kernelBytes: Uint8Array, nowMs: number): Ui
     return new Uint8Array(out);
 }
 
+// A round closes exactly when the defender takes the table (PICKUP) or the
+// covered table is trashed (DISCARD) — the two log records that rotate
+// first_attacker/defender and refill hands. The server's round-boundary guard
+// (docs/WEB_RACE_BUG_HANDOFF.md) stamps games.round_epoch with the new version
+// on any commit whose move produced one of these, so it scans this move's
+// packed records for them. Byte scan only — no JS log objects, no wasm; safe
+// on the DRAW-masked stored stream. Same record layout as decodeLogs.
+const LOG_PICKUP_INT = LOG_TYPE_TO_INT.get(LOG_TYPE.PICKUP)!;
+const LOG_DISCARD_INT = LOG_TYPE_TO_INT.get(LOG_TYPE.DISCARD)!;
+
+export function logwireClosesRound(buf: Uint8Array): boolean {
+    let q = 0;
+    while (q < buf.length) {
+        if (q + 10 > buf.length) return false; // truncated tail — nothing more to read
+        const type = buf[q + 6];
+        if (type === LOG_PICKUP_INT || type === LOG_DISCARD_INT) return true;
+        const nPairs = buf[q + 9];
+        q += 10 + nPairs * 2;
+    }
+    return false;
+}
+
 // logwire bytes -> GameLog[] for the cold-path consumers that still want JS
 // objects (the end-of-game replay encode). Ids are synthesized (the old ones
 // only served insert idempotence); order is byte order (a total order — the

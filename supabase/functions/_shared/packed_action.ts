@@ -12,7 +12,7 @@ import {
 } from './utils.ts';
 import { GAME_STATUS } from './types.ts';
 import { verify_player_in_game } from './common_utils.ts';
-import { ACTION_STATUS, AwireMove, decodeAction } from './wire/awire.ts';
+import { ACTION_STATUS, AwireMove, decodeAction, REJECT_STALE_ROUND } from './wire/awire.ts';
 import { getCachedGame, invalidateCachedGame } from './game_cache.ts';
 
 export interface PackedActionOutcome {
@@ -27,6 +27,7 @@ interface GamesRow {
     name: string;
     status: string;
     version: number | null;
+    round_epoch: number | null;
     state: string | null;
     players: { player_id: string; name: string; is_ai: boolean; status: string }[];
     good_players: string[] | null;
@@ -37,6 +38,7 @@ const MAX_ATTEMPTS = 5;
 
 export async function executePackedAction(
     gameId: string, userId: string, wire: Uint8Array, reqId: string = 'packed',
+    intentVersion?: number,
 ): Promise<PackedActionOutcome> {
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
         // The load: this isolate usually committed this game's previous state
@@ -50,14 +52,14 @@ export async function executePackedAction(
         if (cached) {
             row = {
                 id: gameId, name: cached.name, status: cached.status,
-                version: cached.version, state: cached.stateHex,
+                version: cached.version, round_epoch: cached.roundEpoch, state: cached.stateHex,
                 players: cached.players, good_players: cached.good_players,
                 good_timestamp: cached.good_timestamp,
             };
         } else {
             const { data, error } = await supabaseClient
                 .from('games')
-                .select('id, name, status, version, state, players, good_players, good_timestamp')
+                .select('id, name, status, version, round_epoch, state, players, good_players, good_timestamp')
                 .eq('id', gameId).single();
             if (error || !data) throw new Error(`Game ${gameId} not found`);
             row = data as GamesRow;
@@ -66,9 +68,36 @@ export async function executePackedAction(
 
         // End-game race: same moot rule as executeWithGameLock — a move that
         // lost the race to a game-ending commit is a no-op, not an error.
+        // Checked BEFORE the round guard: a move against a finished game is a
+        // clean MOOT (the client resolves it as a no-op success), not a
+        // stale-round reject that would pop a toast at the win screen.
         if (row.status === GAME_STATUS.GAME_OVER) {
             console.log(`[${reqId}][PACKED] game ${gameId} already over — move is a no-op`);
             return { status: ACTION_STATUS.MOOT, rejectCode: 0, version: expectedVersion, gameStatus: row.status };
+        }
+
+        // Round-boundary guard (docs/WEB_RACE_BUG_HANDOFF.md). The client stamps
+        // its move with intentVersion — the games.version it composed the move
+        // against. round_epoch is the version the CURRENT round began at, bumped
+        // whenever a pickup/discard closes a round. intentVersion < round_epoch
+        // means a round closed AFTER the client composed this move: the move was
+        // aimed at a battle that no longer exists, and letting the kernel
+        // re-validate it against the fresh round is exactly the "revert, then it
+        // plays anyway" ghost. Reject it as stale intent instead. This is
+        // round-scoped, not version-scoped: same-round throw-ins (cross-version
+        // but same round_epoch) still validate purely by kernel legality.
+        //   - Old clients (v1 envelope) send no intentVersion => not guarded.
+        //   - A reject is only authoritative against FRESH state: a stale cache
+        //     entry always pairs a version with ITS epoch (both written by one
+        //     commit), so it can lag but never mislead — if it trips here on the
+        //     cached hot path, drop it and re-check against the DB before
+        //     rejecting. The inverse (cache too old to trip) is caught by the CAS
+        //     version fence on commit, which reloads fresh and re-runs this.
+        const roundEpoch = row.round_epoch ?? 0;
+        if (intentVersion !== undefined && intentVersion < roundEpoch) {
+            if (cached) { invalidateCachedGame(gameId); continue; }
+            console.log(`[${reqId}][PACKED] stale-round reject: intent v${intentVersion} < round_epoch v${roundEpoch} (game ${gameId})`);
+            return { status: ACTION_STATUS.REJECTED, rejectCode: REJECT_STALE_ROUND, version: expectedVersion, gameStatus: row.status };
         }
 
         // Legacy row without a blob (committed before games.state existed):

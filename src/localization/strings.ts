@@ -114,7 +114,8 @@ export type StringId =
   | 'oracle_class_good'
   | 'oracle_class_inaccuracy'
   | 'oracle_class_mistake'
-  | 'oracle_class_blunder';
+  | 'oracle_class_blunder'
+  | 'staleRoundReject';
 
 // English strings
 const strings_en: Record<StringId, string> = {
@@ -233,6 +234,7 @@ const strings_en: Record<StringId, string> = {
   oracle_class_inaccuracy: 'inaccuracy',
   oracle_class_mistake: 'mistake',
   oracle_class_blunder: 'blunder',
+  staleRoundReject: 'The round ended before your move landed — your card came back.',
 };
 
 // Russian strings
@@ -352,6 +354,7 @@ const strings_ru: Record<StringId, string> = {
   oracle_class_inaccuracy: 'неточность',
   oracle_class_mistake: 'ошибка',
   oracle_class_blunder: 'грубая ошибка',
+  staleRoundReject: 'Раунд закончился раньше, чем прошёл ваш ход — карта вернулась.',
 };
 
 // Korean strings
@@ -471,6 +474,7 @@ const strings_ko: Record<StringId, string> = {
   oracle_class_inaccuracy: '부정확',
   oracle_class_mistake: '실수',
   oracle_class_blunder: '대실수',
+  staleRoundReject: '수가 도착하기 전에 라운드가 끝나 카드가 되돌아왔습니다.',
 };
 
 // Combined strings object for easy access
