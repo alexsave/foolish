@@ -242,10 +242,12 @@ test('v6 finalize path: seed + masked logs -> exact hands', async () => {
       assert.equal(dec.formatVersion, 6, 'v6');
       assert.equal(dec.fool, foolSeat, 'fool');
       for (const step of steps)
-        for (const p of step.players) assert.equal(p.hidden, 0, 'zero hidden');
+        for (const p of step.players)
+          assert.ok(p.slots.every((s) => s !== null), 'every hidden slot resolved (no retrodiction)');
       const last = steps[steps.length - 1];
       for (let s = 0; s < np; s++) {
-        const got = new Set(last.players[s].known.map(cardKey));
+        const full = [...last.players[s].known, ...last.players[s].slots.filter(Boolean) as Card[]];
+        const got = new Set(full.map(cardKey));
         const want = new Set(game.players[s].hand.map(cardKey));
         assert.equal(got.size, want.size, `seat ${s} final hand size`);
         for (const k of want) assert.ok(got.has(k), `seat ${s} final card ${k}`);
@@ -285,7 +287,7 @@ test('v6 belief wire DRAW-masks — no drawn-card identity leaks to the Oracle',
   assert.equal(leaked, 0, `${leaked} drawn-card identities leaked into the belief wire`);
 });
 
-test('v6 view.ts builds EXACT hands (zero hidden — the Oracle fix)', async () => {
+test('v6 view.ts builds fully-resolved hands (no retrodiction — the Oracle fix)', async () => {
   let checked = 0;
   for (let np = 2; np <= 4; np++) {
     for (let gi = 0; gi < GAMES_PER_PC; gi++) {
@@ -298,19 +300,20 @@ test('v6 view.ts builds EXACT hands (zero hidden — the Oracle fix)', async () 
       const dec = await decodeReplay(enc.x);
       const steps = buildReplaySteps(dec); // must not throw (conservation holds)
 
-      // The whole point: a v6 replay is fully identity-resolved, so the reveal-
-      // hands view NEVER carries a hidden card and NEVER retrodicts a slot. The
-      // Oracle marshals these steps, so it now sees the true hand at every step.
+      // The whole point: a v6 replay is fully identity-resolved. Hidden cards are
+      // face-DOWN slots (so the deal doesn't render face-up — the UI fix), but
+      // EVERY slot carries its true identity — the view/Oracle never retrodict.
       for (const step of steps)
-        for (const p of step.players) {
-          assert.equal(p.hidden, 0, 'no hidden cards in a v6 step');
-          assert.ok(p.slots.every((s) => s === null), 'no retrodicted slots in v6');
-        }
+        for (const p of step.players)
+          assert.ok(p.slots.every((s) => s !== null),
+            'every v6 hidden slot has a resolved identity (no retrodicted guess)');
 
-      // Exactness: at the final step, each seat's known hand equals its true hand.
+      // Exactness: at the final step, each seat's FULL hand (public known +
+      // face-down-but-resolved slots) equals its true hand.
       const last = steps[steps.length - 1];
       for (let s = 0; s < np; s++) {
-        const got = new Set(last.players[s].known.map(cardKey));
+        const full = [...last.players[s].known, ...last.players[s].slots.filter(Boolean) as Card[]];
+        const got = new Set(full.map(cardKey));
         const want = new Set(game.players[s].hand.map(cardKey));
         assert.equal(got.size, want.size, `seat ${s} final hand size`);
         for (const k of want) assert.ok(got.has(k), `seat ${s} final hand card ${k}`);
