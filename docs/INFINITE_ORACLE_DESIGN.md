@@ -900,14 +900,41 @@ one new file `cnitro/wasm/wasm_oracle_mt.c` plus small `#ifdef` seams:
   `_Thread_local LegalMoves` (237 KB/thread in TLS) and calls
   `calculate_legal_moves` + `octogen_strategy_choose` directly.
 - **MT3 — restore-TLS audit.** With `-D_Thread_local=` gone, everything the
-  native OMP build already keeps per-thread (solve_ws, cd_tt pointer, both
-  LCGs, world/trial/diff slots, `og_flags_loaded`, solver scratch) is
-  per-thread again by construction. The audit task: grep the oracle-linked
-  sources for `static` NOT `_Thread_local` and classify each as (a) shared
-  read-only after setup (g_game, env table, masks — fine), (b) MT-managed
-  (JobControl, accumulator), or (c) must not be touched by threads (g_io,
-  g_moves, snapshots — enforced by MT2/the no-`wasm_*`-calls rule). Write
-  the classification into the PR description.
+  native OMP build already keeps per-thread (solve_ws, cd_tt pointer +
+  tail cache, both LCGs, world/trial/diff slots, `og_flags_loaded`,
+  `og_polmap`/`og_bbleaf_on`, `forced_loss_flags`, solver scratch) is
+  per-thread again by construction — an adversarial audit confirmed every
+  mutable static on the choose path is `_Thread_local` in the native
+  sources, **except the four below**, which are the audit's starting list:
+  1. **Bitboard mask tables** (`SUIT_MASK`/`VALUE_MASK`/`HIGHER_MASK`,
+     guard `g_masks_ready`, `cordite_sim.c:31-53`) are **lazily first-touch
+     initialized** from `cd_sim_from_game`, not setup-time. Plain-int guard,
+     no acquire/release: a thread could observe the guard before the mask
+     words and score worlds on zero masks. Fix (required): `wasm_mt_setup`
+     forces the init on the control instance before the first generation
+     (call `ensure_masks` via a tiny export, or run one dummy
+     `cd_sim_from_game`), so threads only ever read them.
+  2. **The snapshot ring**: `wasm_init()` installs `snap_cb` into the
+     shared `engine_snap_hook` (`wasm_api.c:165-167`), and SNAP() fires
+     inside `handle_*` (`game.c:107,347-826`) — reachable from threads via
+     `og_apply` on the STRUCT solver/rollout paths (`octogen_strategy.c:
+     173-182,1080,1110,802,1689`) with **no `wasm_*` call involved**, so
+     the "threads don't call exports" rule does NOT cover it. Fix
+     (required): the MT build must not have the hook installed while
+     threads run — `wasm_mt_setup` sets `engine_snap_hook = NULL` (the
+     oracle never reads snapshots).
+  3. **`engine_last_reject`** (`game.c:105`), rewritten at the top of every
+     `handle_*` — benign diagnostic race (only read by
+     `wasm_reject_reason`); classify and leave.
+  4. **`log_alloc`'s static drop-sink scratch** (`game.c:256`), which
+     `solve_clone_prefix` routes solver-child log appends into
+     (`cordite_sim.c:2323-2328`) — contents never read, so benign, but a
+     formal data race; classify and leave (or make it TLS for tidiness).
+  Additionally: the struct-path env knobs (`OG_NO_BBSOLVE`,
+  `OG_NO_FASTROLL`, `OG_LEAF`, `OG_DIFFTEST`, `OG_NO_WORLDSIM`) are
+  **forbidden in Mode B env sets** — they route threads into `handle_*`
+  where items 2–4 live. The default fast bitboard path never enters them.
+  Write the full classification into the PR description.
 - **MT4 — the shared accumulator.** A static `JobControl`:
 
   ```c
@@ -931,11 +958,17 @@ one new file `cnitro/wasm/wasm_oracle_mt.c` plus small `#ifdef` seams:
   finish positions (ints 1..N) into `double score[26]`
   (`octogen_strategy.c:1602-1697`), so `(uint64_t)llround()` of a batch's
   sum is exact.
-- **MT5 — the accumulation hook.** In `octogen_choose_impl`, at the same
-  points the explain build calls `og_ex_emit` (`:1454,1552,1570,1578,
-  1740`), call `og_mt_accumulate(&C, score, nsim, forced_loss, verdicts…)`
-  instead (the raw arrays are in scope there — that is exactly what
-  `og_ex_emit` reads). Candidate order is deterministic for a fixed
+- **MT5 — the accumulation hook.** In `octogen_choose_impl`, call
+  `og_mt_accumulate(&C, score, nsim, forced_loss, verdicts…)` at the
+  full-MC emit point (`:1739-1743` — the ONLY site where `C`, `score[]`,
+  `nsim[]`, `alive[]`, `forced_loss[]` are all in scope; verified). The
+  four degenerate emit sites (single legal move `:1453-1459`, solver-win
+  `:1551-1557`, no-candidates `:1570-1574`, single-candidate
+  `:1578-1582`) have no score arrays — there is nothing to accumulate;
+  they get a small `og_mt_publish_trivial(...)` that fills the candidate
+  descriptor table + solver verdict/`chosen` info only (mirroring the
+  NULL-argument `og_ex_emit` forms the explain build uses there).
+  Candidate order is deterministic for a fixed
   (state, belief, env) — same insertion-ranked enumeration every thread,
   every batch (`og_pick_candidates`, `:1151-1196`, no RNG) — so index `i`
   is a stable key; the first accumulate CAS-publishes the descriptor table,
@@ -973,8 +1006,10 @@ one new file `cnitro/wasm/wasm_oracle_mt.c` plus small `#ifdef` seams:
   re-latches after `og_reload_flags()` — C1 is reused as plain C (its
   export wrapper is Mode A plumbing).
 - **MT8 — control exports** (control instance only):
-  `wasm_mt_reserve(n)`, `wasm_mt_setup(seat, w1, seed_base)` (resets table,
-  publishes job, bumps generation, `memory.atomic.notify`),
+  `wasm_mt_reserve(n)`, `wasm_mt_setup(seat, w1, seed_base)` (forces the
+  bitboard-mask init and clears `engine_snap_hook` — MT3 items 1–2 — then
+  resets the table, publishes the job, bumps generation,
+  `memory.atomic.notify`),
   `wasm_mt_stop()`, `wasm_mt_snapshot()` (relaxed-load copy of JobControl
   into `g_io`; approximate-while-running is fine for UI),
   `wasm_mt_candidates()` (descriptor table into `g_io` — TS renders labels
