@@ -9,6 +9,7 @@
  * ========================================================================== */
 
 import { SeatLog } from '@shared/replay/core.ts';
+import { LOG_TYPE } from '@shared/types.ts';
 import { __LOG_TYPE_TO_INT, __wireLogCard } from '@shared/wasm/engine.ts';
 
 const MAX_KERNEL_LOGS = 512;   // MAX_LOGS (game.h)
@@ -20,6 +21,15 @@ export function encodeLogsWire(logs: SeatLog[]): Uint8Array {
     out.push(n & 0xff, (n >> 8) & 0xff);
     for (let i = 0; i < n; i++) {
         const l = logs[i];
+        // DRAW-mask (logwire.ts:17-21): the live bot's belief feed NEVER reveals
+        // a drawn card's identity — only that a card moved deck->hand. A Decoded
+        // replay's DRAW logs carry the identity when it's known, which is ALWAYS
+        // for a Format-6 replay (the codec stores real deal/draws). Passing those
+        // through would hand octogen every opponent's hidden cards — perfect-
+        // memory becomes clairvoyance. So force every DRAW card to hidden here,
+        // exactly as the server's belief feed does. (On a v5 replay draws are
+        // already masked, so this is a no-op; on v6 it is load-bearing.)
+        const isDraw = l.log_type === LOG_TYPE.DRAW;
         out.push((__LOG_TYPE_TO_INT.get(l.log_type) ?? 0) & 0xff);
         out.push((l.seat ?? -1) & 0xff);
         out.push((l.defender_index ?? -1) & 0xff);
@@ -29,8 +39,9 @@ export function encodeLogsWire(logs: SeatLog[]): Uint8Array {
         for (let j = 0; j < np; j++) {
             const p = pairs[j];
             // missing primary -> hidden card (0xFE), matching importLogs; missing
-            // target -> the in-band "no card" (0xFF, via __wireLogCard).
-            out.push((p.primary ? __wireLogCard(p.primary) : 0xfe) & 0xff);
+            // target -> the in-band "no card" (0xFF, via __wireLogCard). DRAW
+            // primaries are forced hidden regardless of what the replay stored.
+            out.push((isDraw || !p.primary) ? 0xfe : (__wireLogCard(p.primary) & 0xff));
             out.push(__wireLogCard(p.target) & 0xff);
         }
     }

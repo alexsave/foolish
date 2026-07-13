@@ -30,6 +30,8 @@ import { decodeReplay } from '../supabase/functions/_shared/replay/decode.ts';
 import { reconstructSeededDeal } from '../supabase/functions/_shared/game_lifecycle.ts';
 import { __setDealSeedOverride } from '../supabase/functions/_shared/wasm/engine.ts';
 import { buildReplaySteps } from '../src/replay/view.ts';
+import { encodeLogsWire } from '../src/oracle/logsWire.ts';
+import { __LOG_TYPE_TO_INT } from '../supabase/functions/_shared/wasm/engine.ts';
 
 if (!process.env.E2E_VERBOSE) {
   console.log = () => {}; console.warn = () => {}; console.error = () => {}; console.info = () => {};
@@ -252,6 +254,35 @@ test('v6 finalize path: seed + masked logs -> exact hands', async () => {
     }
   }
   assert.ok(checked > 0, 'exercised at least one seeded finalize');
+});
+
+// The Oracle's memory-on belief must NOT leak v6's real draws: encodeLogsWire
+// has to DRAW-mask, matching the live bot's belief feed. Without it, feeding a
+// v6 replay's history would hand octogen every hidden card.
+test('v6 belief wire DRAW-masks — no drawn-card identity leaks to the Oracle', async () => {
+  const drawInt = __LOG_TYPE_TO_INT.get(LOG_TYPE.DRAW)!;
+  let realDraws = 0, leaked = 0, checked = 0;
+  for (let np = 2; np <= 4; np++) {
+    for (let gi = 0; gi < GAMES_PER_PC; gi++) {
+      const r = await playGame(np);
+      if (!r || r.game.logs.length === 0) continue;
+      const enc = await encodeReplayV6(inputOf(r.game, r.initialHands, r.flipped, r.stock));
+      const dec = await decodeReplay(enc.x);
+      for (const l of dec.logs)                        // sanity: v6 draws ARE real
+        if (l.log_type === LOG_TYPE.DRAW) for (const p of l.card_pairs) if (p.primary.suit >= 0) realDraws++;
+
+      const wire = encodeLogsWire(dec.logs);           // the memory-on belief feed
+      let pos = 0; const rd = () => wire[pos++];
+      const n = rd() | (rd() << 8);
+      for (let i = 0; i < n; i++) {
+        const type = rd(); rd(); rd(); const npair = rd();
+        for (let j = 0; j < npair; j++) { const prim = rd(); rd(); if (type === drawInt && prim !== 0xFE) leaked++; }
+      }
+      checked++;
+    }
+  }
+  assert.ok(checked > 0 && realDraws > 0, 'exercised v6 replays with real draws');
+  assert.equal(leaked, 0, `${leaked} drawn-card identities leaked into the belief wire`);
 });
 
 test('v6 view.ts builds EXACT hands (zero hidden — the Oracle fix)', async () => {
