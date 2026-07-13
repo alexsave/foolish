@@ -17,7 +17,7 @@ import {
     PLAYER_STATUS,
 } from '@shared/types.ts';
 import { CARDS_PER_PLAYER, deckSizeFor, minValueFor } from '@shared/constants.ts';
-import { DecodedReplay } from '@shared/replay/core.ts';
+import { DecodedReplay, FORMAT_VERSION_V6 } from '@shared/replay/core.ts';
 
 interface ReplaySeatView {
     /** face-down cards (identity unknown to spectators) */
@@ -72,20 +72,31 @@ export function buildReplaySteps(d: DecodedReplay): ReplayStep[] {
     const n = d.playerCount;
     const deckSize = deckSizeFor(n);
 
-    const hidden: number[] = new Array(n).fill(CARDS_PER_PLAYER);
+    // Format 6 is hidden-state-lossless: the initial deal and every draw arrive
+    // as LOG_DRAW records with REAL card identities (cnitro/src/replay.c
+    // run_replay_v6), so there is NOTHING to retrodict — hands are exact at
+    // every step, which is what lets the Oracle stop guessing (see
+    // docs/REPLAY_FORMAT6_HIDDEN_STATE.md). v5 keeps the FIFO-slot retrodiction.
+    const isV6 = d.formatVersion === FORMAT_VERSION_V6;
+
+    // v6 deals via explicit DRAW logs, so seats start with EMPTY hands and no
+    // hidden slots; v5 pre-seeds the hidden initial deal.
+    const hidden: number[] = new Array(n).fill(isV6 ? 0 : CARDS_PER_PLAYER);
     // shared-reference slots: snapshots keep references to these objects, so
     // an identity assigned when the card is finally played becomes visible in
     // every EARLIER snapshot that held the slot (see materialization below)
     type Slot = { identity: Card | null };
     const slots: Slot[][] = Array.from({ length: n }, () =>
-        Array.from({ length: CARDS_PER_PLAYER }, () => ({ identity: null })),
+        isV6 ? [] : Array.from({ length: CARDS_PER_PLAYER }, () => ({ identity: null })),
     );
     const slotRefs: Slot[][][] = []; // per step, per seat
     const known: Card[][] = Array.from({ length: n }, () => []);
     const out: boolean[] = new Array(n).fill(false);
     const goods = new Set<number>();
     let battles: { attack: Card; defense: Card | null }[] = [];
-    let deckCount = deckSize - CARDS_PER_PLAYER * n - 1;
+    // v6 replays the deal as draws, so the stock starts as the whole deck minus
+    // the flip and every real draw (deal + stock) counts down from there.
+    let deckCount = isV6 ? deckSize - 1 : deckSize - CARDS_PER_PLAYER * n - 1;
     let flipped: Card | null = d.trumpCard;
     let discard = 0;
     let defender = (d.firstAttacker + 1) % n;
@@ -218,9 +229,17 @@ export function buildReplaySteps(d: DecodedReplay): ReplayStep[] {
             case LOG_TYPE.DRAW:
                 for (const c of primaries) {
                     if (c.suit >= 0) {
-                        // the flipped trump is the only identified draw
+                        // v5: the flipped trump is the only identified draw.
+                        // v6: every draw (deal + stock + flip) is identified —
+                        // the flip alone doesn't come off the counted stock.
                         known[l.seat!].push(c);
-                        flipped = null;
+                        if (isV6 && !sameCard(c, d.trumpCard)) {
+                            deckCount--;
+                            if (deckCount < 0)
+                                throw new Error('replay view desync: deck underflow');
+                        } else {
+                            flipped = null;
+                        }
                     } else {
                         hidden[l.seat!]++;
                         slots[l.seat!].push({ identity: null });

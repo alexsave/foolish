@@ -173,6 +173,177 @@ export async function encodeReplay(input: ReplayInput): Promise<EncodedReplay> {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Format 6 (hidden-state-lossless, partial-game). Unlike v5, the encoder must
+// be fed the REAL hidden cards (the caller/server holds the true deck): the
+// initial deal (seat-major) and the real drawn cards. The result carries every
+// hidden identity, so a decoder never retrodicts — and, with `maxActions`, the
+// stream can stop MID-GAME. See cnitro/src/replay.h and
+// docs/REPLAY_FORMAT6_HIDDEN_STATE.md.
+export interface ReplayInputV6 extends ReplayInput {
+  /** each seat's true starting hand, seat-major (playerIds order) */
+  initialHands: Card[][];
+  /**
+   * the face-down stock in DRAW order (real cards, the flip excluded). For a
+   * seeded game this is exactly `game.deck` captured right after the deal (the
+   * kernel pops the top: `draw_index`); a non-seeded producer supplies the true
+   * drawn cards in draw order. Extra entries beyond what the game actually drew
+   * are ignored, so passing the whole stock is always safe (incl. mid-game).
+   */
+  stock: Card[];
+}
+
+// Collect the atom stream (capped at maxActions) and the reveal stream the
+// decoder's cascade consumes in lockstep: the initial deal (seat-major) then
+// the stock in draw order. Because reveals no longer come from the masked
+// DRAW logs, the log stream is only read for the ACTIONS.
+function collectV6(
+  input: ReplayInputV6,
+  maxActions: number,
+): { actions: Action[]; reveals: number[]; firstAttacker: number } {
+  let logs = input.logs;
+  for (let i = logs.length - 1; i >= 0; i--) {
+    if (logs[i].log_type === LOG_TYPE.GAME_START) { logs = logs.slice(i); break; }
+  }
+  const seatOf = (pid: string | null): number => {
+    const s = input.playerIds.indexOf(pid ?? "");
+    if (s < 0) throw new Error(`unknown player_id in logs: ${pid}`);
+    return s;
+  };
+
+  const reveals: number[] = [];
+  for (const hand of input.initialHands) for (const c of hand) reveals.push(wireOf(c));
+  for (const c of input.stock) reveals.push(wireOf(c));
+  if (reveals.some((w) => w === CARD_HIDDEN))
+    throw new Error("v6 encode needs real cards (got a hidden card in the deal/stock)");
+
+  const actions: Action[] = [];
+  for (let i = 0; i < logs.length; i++) {
+    const l = logs[i];
+    const info = INFO_TYPES.includes(l.log_type);
+    // a good-transition DISCARD closes a round; a clean-sweep cover's DISCARD is
+    // derived by the decoder, so only the former is an atom.
+    const roundEnd = l.log_type === LOG_TYPE.DISCARD && i > 0 &&
+      logs[i - 1].log_type === LOG_TYPE.GOOD;
+    if ((info || roundEnd) && actions.length >= maxActions) break;
+    if (info) actions.push({ kind: "log", log: l, seat: seatOf(l.player_id) });
+    else if (roundEnd) actions.push({ kind: "round_end" });
+  }
+  if (actions.length === 0) throw new Error("no game actions to encode");
+  const firstAtk = actions.find(
+    (a) => a.kind === "log" && a.log.log_type === LOG_TYPE.ATTACK,
+  );
+  if (!firstAtk || firstAtk.kind !== "log") throw new Error("no attack in logs");
+  return { actions, reveals, firstAttacker: firstAtk.seat };
+}
+
+function marshalInputV6(
+  n: number,
+  trumpId: number,
+  firstAttacker: number,
+  actions: Action[],
+  reveals: number[],
+  logInt: Map<string, number>,
+): Uint8Array {
+  if (actions.length > 0xffff)
+    throw new Error(`replay: too many actions to encode (${actions.length})`);
+  if (reveals.length > 0xffff)
+    throw new Error(`replay: too many reveals to encode (${reveals.length})`);
+  let size = 7 + reveals.length;
+  for (const a of actions)
+    size += 3 + (a.kind === "log" ? 2 * a.log.card_pairs.length : 0);
+  const buf = new Uint8Array(size);
+  buf[0] = n;
+  buf[1] = trumpId;
+  buf[2] = firstAttacker;
+  buf[3] = actions.length & 0xff;
+  buf[4] = (actions.length >> 8) & 0xff;
+  buf[5] = reveals.length & 0xff;
+  buf[6] = (reveals.length >> 8) & 0xff;
+  let q = 7;
+  for (const r of reveals) buf[q++] = r;
+  for (const a of actions) {
+    if (a.kind === "round_end") { buf[q++] = ROUND_END; buf[q++] = 0xff; buf[q++] = 0; continue; }
+    buf[q++] = logInt.get(a.log.log_type)!;
+    buf[q++] = a.seat;
+    buf[q++] = a.log.card_pairs.length;
+    for (const p of a.log.card_pairs) {
+      buf[q++] = wireOf(p.primary);
+      buf[q++] = p.target ? wireOf(p.target) : CARD_NONE;
+    }
+  }
+  return buf;
+}
+
+/** Encode a full or partial (mid-game) game as a Format-6 replay integer.
+ *  `maxActions` caps the atom count (default: the whole game). */
+export async function encodeReplayV6(
+  input: ReplayInputV6,
+  maxActions = 0xffff,
+): Promise<EncodedReplay> {
+  const n = input.playerIds.length;
+  if (n < 2 || n > 8) throw new Error(`unsupported player count ${n}`);
+  if (input.initialHands.length !== n)
+    throw new Error(`v6: need ${n} initial hands, got ${input.initialHands.length}`);
+  const trump = deriveTrump(input);
+  if (trump.value === ACE_VALUE) throw new Error("trump card cannot be an ace");
+  const { actions, reveals, firstAttacker } = collectV6(input, maxActions);
+
+  const eng = await import("../wasm/engine.ts");
+  await eng.ensureEngineAsync();
+  const bytes = eng.kernelReplayEncodeV6(
+    marshalInputV6(n, cardId(trump), firstAttacker, actions, reveals, eng.__LOG_TYPE_TO_INT),
+  );
+  const x = bytesToBigint(bytes);
+  return {
+    x, bytes, byteLength: bytes.length,
+    base32: base32Encode(bytes),
+    base64: base64Encode(bytes),
+    url: gameToUrl(x),
+  };
+}
+
+// Shared info-action comparison for both verify paths.
+function checkInfoActionsMatch(input: ReplayInput, decoded: DecodedReplay): void {
+  let logs = input.logs;
+  for (let i = logs.length - 1; i >= 0; i--) {
+    if (logs[i].log_type === LOG_TYPE.GAME_START) { logs = logs.slice(i); break; }
+  }
+  const origInfo = logs.filter((l) => INFO_TYPES.includes(l.log_type));
+  const decInfo = decoded.logs.filter((l) => INFO_TYPES.includes(l.log_type));
+  if (origInfo.length !== decInfo.length)
+    throw new Error(`verify failed: ${origInfo.length} actions in, ${decInfo.length} out`);
+  for (let i = 0; i < origInfo.length; i++) {
+    const a = origInfo[i];
+    const b = decInfo[i];
+    const seat = input.playerIds.indexOf(a.player_id ?? "");
+    if (
+      a.log_type !== b.log_type || seat !== b.seat ||
+      a.card_pairs.length !== b.card_pairs.length ||
+      !a.card_pairs.every((p, j) =>
+        p.primary.suit === b.card_pairs[j].primary.suit &&
+        p.primary.value === b.card_pairs[j].primary.value &&
+        (p.target?.suit ?? null) === (b.card_pairs[j].target?.suit ?? null) &&
+        (p.target?.value ?? null) === (b.card_pairs[j].target?.value ?? null))
+    ) {
+      throw new Error(`verify failed at action ${i} (${a.log_type})`);
+    }
+  }
+}
+
+/** v6 counterpart of verifyRoundTrip: encode a full game losslessly, decode it,
+ *  and confirm every info action round-trips. The decoded stream additionally
+ *  carries the true hidden state (checked by e2e/replay_v6.test.ts). */
+export async function verifyRoundTripV6(input: ReplayInputV6): Promise<{
+  encoded: EncodedReplay;
+  decoded: DecodedReplay;
+}> {
+  const encoded = await encodeReplayV6(input);
+  const decoded = await decodeReplay(encoded.x);
+  checkInfoActionsMatch(input, decoded);
+  return { encoded, decoded };
+}
+
 /** Encode, decode, and check the decoded stream reproduces every
  *  information-bearing log. Persist only what this returns — it catches any
  *  engine/model drift on the actual game at hand before data is destroyed. */

@@ -303,10 +303,11 @@ export function registerReplayValidation(): void {
   });
 
   test('kernel decode rejects garbage and future versions cleanly', async () => {
-    // version 6 header: the smallest integer whose version field is not 5
+    // version 7 header: the smallest integer whose version field is neither the
+    // frozen v5 nor the additive v6 (both are now supported); 7 stays unknown.
     await assert.rejects(
-      () => decodeReplay(6n),
-      /unsupported replay format version 6/,
+      () => decodeReplay(7n),
+      /unsupported replay format version 7/,
     );
     // random bytes: must terminate — either a clean throw or (by chance) a
     // well-formed decode, never a hang or a malformed structure

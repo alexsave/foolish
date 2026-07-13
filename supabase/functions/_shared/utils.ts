@@ -14,6 +14,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { getAuthenticatedUser } from './auth.ts';
 import { encodeEventWire } from './wire/evwire.ts';
 import { bytesToBase64 } from './wire/bytes.ts';
+import type { EncodedReplay } from './replay/core.ts';
 // NOTE: bot_actions (→ the entire bot-strategy stack: cordite's ~127KB Monte-Carlo
 // engine, etc.) and the replay codec are imported LAZILY at their use sites
 // below, NOT statically. wrap400 is imported by every edge function, so a static
@@ -923,9 +924,11 @@ export const finalizeEndedGame = async (game: Game): Promise<void> => {
     // is the source; decode is the ONE place session logs become JS objects.
     // Falls back to the in-memory final move if the column is somehow empty.
     let sessionLogs: GameLog[] = [];
+    let dealSeed: string | null = game.game_seed ?? null;
     try {
         const { data } = await supabaseClient
-            .from('games').select('logs_packed').eq('id', game.id).single();
+            .from('games').select('logs_packed, game_seed').eq('id', game.id).single();
+        if (data?.game_seed) dealSeed = data.game_seed;
         if (data?.logs_packed) {
             const { decodeLogs } = await import('./wire/logwire.ts');
             const { hexToBytes } = await import('./replay/codec.ts');
@@ -942,15 +945,37 @@ export const finalizeEndedGame = async (game: Game): Promise<void> => {
     // we retire the packed session log.
     try {
         // Lazy import: the replay codec is only needed here, at game end.
-        const { verifyRoundTrip } = await import('./replay/encode.ts');
+        const { verifyRoundTrip, verifyRoundTripV6 } = await import('./replay/encode.ts');
         const { encodeExtras, moveTimesFromLogs } = await import('./replay/extras.ts');
         const { base32Decode, bytesToHex } = await import('./replay/codec.ts');
 
-        const { encoded } = await verifyRoundTrip({
-            playerIds: game.players.map(player => player.player_id),
-            logs: replayLogs,
-            flipped: game.flipped,
-        });
+        const playerIds = game.players.map(player => player.player_id);
+
+        // Prefer Format 6 (hidden-state-lossless): the masked session log can't
+        // supply the hidden cards, but a seeded game's deal is reproducible — so
+        // re-deal from the stored seed to recover the true initial hands + stock,
+        // and encode a replay that carries every hidden identity. This is what
+        // lets the Oracle read exact hands at every step instead of retrodicting
+        // (docs/REPLAY_FORMAT6_HIDDEN_STATE.md). Any failure (no seed, deal drift)
+        // falls back to the frozen v5 codec so game-end never breaks.
+        let encoded: EncodedReplay | undefined;
+        if (dealSeed) {
+            try {
+                const { reconstructSeededDeal } = await import('./game_lifecycle.ts');
+                const { initialHands, stock, flip } = reconstructSeededDeal(dealSeed, game.players);
+                ({ encoded } = await verifyRoundTripV6({
+                    playerIds, logs: replayLogs, flipped: flip, initialHands, stock,
+                }));
+            } catch (e) {
+                console.error(`[REPLAY] v6 encode failed for ${game.id}, falling back to v5:`, e);
+            }
+        }
+        const usedV6 = encoded !== undefined;
+        if (!encoded) {
+            encoded = (await verifyRoundTrip({
+                playerIds, logs: replayLogs, flipped: game.flipped,
+            })).encoded;
+        }
 
         // Stored binary: `moves` is the rANS integer (the whole game),
         // `extras` the names + timing blob (_shared/replay/extras.ts). The
@@ -961,7 +986,7 @@ export const finalizeEndedGame = async (game: Game): Promise<void> => {
             game.players.map(player => player.name),
             moveTimesFromLogs(replayLogs),
         ));
-        console.log(`[REPLAY] Game ${game.id} encoded to ${encoded.byteLength}+${extrasBytes.length} bytes`);
+        console.log(`[REPLAY] Game ${game.id} encoded (v${usedV6 ? 6 : 5}) to ${encoded.byteLength}+${extrasBytes.length} bytes`);
 
         // Persist the snapshot BEFORE destroying the logs, so a failure
         // between the two never loses both.

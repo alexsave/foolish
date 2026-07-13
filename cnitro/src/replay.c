@@ -301,6 +301,11 @@ typedef struct {
     int out_pos, out_cap;
     uint32_t out_logs;
     int err;
+    // ---- Format 6 only (0 / NULL for v5) ----
+    int format;                // 5 (default) or 6
+    Coder *rev_coder;          // coder reached from draw_for to code reveals
+    const unsigned char *rev;  // encode: real hidden card ids (deal + draws)
+    int rev_n, rev_pos;        // reveal stream length / cursor
 } RModel;
 
 static RModel g_model;
@@ -460,6 +465,8 @@ static int table_pairs(const RModel *m, unsigned char (*pairs)[2]) {
 
 /* --------------------------- derived cascades --------------------------- */
 
+static int code_reveal(RModel *m, Coder *c, int seat);  // format 6, defined below
+
 // Port of refillPlayerHandsWithEvents semantics (kernel refill_player_hands
 // projected onto public state). Emits DRAW logs; players who end the refill
 // with no cards while the stock is dry go OUT silently.
@@ -469,8 +476,15 @@ static void draw_for(RModel *m, int seat) {
     while (hand_len(m, seat) < CARDS_PER_PLAYER) {
         if (m->deck_count > 0) {
             m->deck_count--;
-            m->unknown[seat]++;
-            pairs[nd][0] = REPLAY_CARD_HIDDEN;
+            if (m->format == 6) {
+                // v6: reveal the real drawn card inline (unseen now == stock).
+                int id = code_reveal(m, m->rev_coder, seat);
+                if (m->err) return;
+                pairs[nd][0] = (unsigned char)id;
+            } else {
+                m->unknown[seat]++;
+                pairs[nd][0] = REPLAY_CARD_HIDDEN;
+            }
             pairs[nd][1] = REPLAY_CARD_NONE;
             nd++;
         } else if (m->flipped_held) {
@@ -805,6 +819,59 @@ static int code_fresh(RModel *m, Coder *c, int seat, Pred pred, int actual_id) {
     return feas[k];
 }
 
+/* --------------------------- format 6 helpers --------------------------- */
+// Reveal ONE hidden card to `seat`, coded uniform over the unseen pool (a
+// uniformly shuffled deck makes the next dealt/drawn card uniform over what is
+// still unseen). The pool is enumerated in ascending id — a canonical order
+// both directions reproduce. Encode pulls the real id from m->rev; decode reads
+// it out of the integer. The card moves unseen -> known[seat]; unknown[] is
+// never touched, so in v6 every hand is fully known and the v5 reveal /
+// hypergeometric / complement machinery is simply never reached.
+static int code_reveal(RModel *m, Coder *c, int seat) {
+    int8_t pool[52];
+    int U = 0;
+    for (int id = 0; id < 52; id++)
+        if ((m->unseen >> id) & 1ull) pool[U++] = (int8_t)id;  // ascending id
+    if (U == 0) { m->err = REPLAY_ENOFRESH; return -1; }
+    int chosen = -1;
+    if (c->encode) {
+        if (m->rev_pos >= m->rev_n) { m->err = REPLAY_EINPUT; return -1; }
+        int real = m->rev[m->rev_pos++];
+        for (int j = 0; j < U; j++) if (pool[j] == real) { chosen = j; break; }
+        if (chosen < 0) { m->err = REPLAY_ENOTFEAS; return -1; }
+    }
+    int k = coder_uniform(c, U, chosen);
+    if (c->err) { m->err = c->err; return -1; }
+    int id = pool[k];
+    m->unseen &= ~(1ull << id);
+    m->known[seat] |= 1ull << id;
+    return id;
+}
+
+// LEB128-style varint over the coder (8 bits/byte via coder_uniform(256)); used
+// for the v6 atom count. Encode reads *val; decode builds it.
+static void code_varint(Coder *c, uint32_t *val) {
+    if (c->encode) {
+        uint32_t v = *val;
+        do {
+            int byte = (int)(v & 0x7Fu);
+            v >>= 7;
+            if (v) byte |= 0x80;
+            coder_uniform(c, 256, byte);
+        } while (v && !c->err);
+    } else {
+        uint32_t v = 0;
+        int shift = 0, byte;
+        do {
+            byte = coder_uniform(c, 256, -1);
+            if (c->err) break;
+            v |= (uint32_t)(byte & 0x7F) << shift;
+            shift += 7;
+        } while ((byte & 0x80) && shift < 35);
+        *val = v;
+    }
+}
+
 /* ------------------------------ info source ------------------------------ */
 // Encode-side reader over the marshaled action bytes (replay.h format). The
 // player_id -> seat mapping and the round_end synthesis stay TS-side.
@@ -1081,16 +1148,19 @@ static void atom_pass(RModel *m, Coder *c, const Src *s, Opt opt) {
 // the integer. This symmetry is the round-trip guarantee.
 
 static void model_init(RModel *m, int n, int trump_id, int first_attacker,
-                       unsigned char *out, int out_pos, int out_cap) {
+                       unsigned char *out, int out_pos, int out_cap, int format) {
     memset(m, 0, sizeof *m);
     m->n = n;
     m->trump_id = trump_id;
     m->power_suit = trump_id / 13;
+    m->format = format;
     int min_v = min_value_for(n);  // THE deck rule — card.h, shared with game.c
     int deck_size = 4 * (ACE_VALUE - min_v + 1);
     for (int s = 0; s < n; s++) {
         m->status[s] = true;
-        m->unknown[s] = CARDS_PER_PLAYER;
+        // v6 deals the initial hands explicitly (code_reveal), so they start
+        // empty and are filled before the first atom; v5 leaves them hidden.
+        m->unknown[s] = (format == 6) ? 0 : CARDS_PER_PLAYER;
     }
     m->deck_count = deck_size - n * CARDS_PER_PLAYER - 1;
     m->flipped_held = true;
@@ -1115,6 +1185,99 @@ static void run_replay(RModel *m, Coder *c, Src *s) {
     int atoms = 0;
     while (in_count(m) > 1) {
         if (++atoms > REPLAY_MAX_ATOMS) { m->err = REPLAY_EATOMS; return; }
+        check_conservation(m);
+        if (m->err) return;
+
+        int n_opts = build_top_menu(m, g_opts, g_weights);
+        if (m->err) return;
+        if (n_opts == 0) { m->err = REPLAY_ENOMOVES; return; }
+
+        int chosen = -1;
+        if (s) {
+            if (src_exhausted(s)) { m->err = REPLAY_EINCOMPLETE; return; }
+            int perr = src_load(s, m->n);
+            if (perr) { m->err = perr; return; }
+            chosen = find_top_index(m, g_opts, n_opts, s);
+            if (m->err) return;
+        }
+        int k = coder_code(c, g_weights, n_opts, chosen);
+        if (c->err) { m->err = c->err; return; }
+        Opt opt = g_opts[k];
+
+        switch (opt.kind) {
+            case OPT_ATTACK:    atom_attack(m, c, s, opt); break;
+            case OPT_COVER:     atom_cover(m, c, s, opt); break;
+            case OPT_PASS:      atom_pass(m, c, s, opt); break;
+            case OPT_PICKUP:    apply_pickup(m); break;
+            case OPT_ROUND_END: apply_round_end(m); break;
+        }
+        if (m->err) return;
+        if (c->err) { m->err = c->err; return; }
+
+        if (s) src_advance(s);
+    }
+    if (s && !src_exhausted(s)) m->err = REPLAY_ELOGSAFTER;
+}
+
+// Format 6 driver. Deals every seat's real initial hand (coded reveals, emitted
+// as one LOG_DRAW per seat), then runs exactly `n_atoms` top-level decisions —
+// so the stream may stop MID-GAME. Hidden cards are coded as they are dealt or
+// drawn (draw_for reaches the coder via m->rev_coder), so no reveal is ever
+// deferred and the decoded stream is fully identity-resolved. Shares every menu,
+// weight, atom and cascade with v5 — only card *revelation* moves earlier.
+// Deal one seat's CARDS_PER_PLAYER-card initial hand. A hand is a SET, so we
+// code it as an ASCENDING combination — each card uniform over the unseen cards
+// with a strictly larger id than the last — which spends no bits on within-hand
+// order (v5's ~log2(6!) per hand of slack). Draws stay single-card ordered
+// reveals (a draw is genuinely time-ordered). Emitted as one LOG_DRAW per seat.
+static void deal_hand_v6(RModel *m, Coder *c, int seat) {
+    int real[CARDS_PER_PLAYER];
+    if (c->encode) {
+        for (int k = 0; k < CARDS_PER_PLAYER; k++) {
+            if (m->rev_pos >= m->rev_n) { m->err = REPLAY_EINPUT; return; }
+            real[k] = m->rev[m->rev_pos++];
+        }
+        for (int i = 1; i < CARDS_PER_PLAYER; i++) {  // insertion sort ascending
+            int v = real[i], j = i - 1;
+            while (j >= 0 && real[j] > v) { real[j + 1] = real[j]; j--; }
+            real[j + 1] = v;
+        }
+    }
+    unsigned char pairs[CARDS_PER_PLAYER][2];
+    int lo = -1;
+    for (int k = 0; k < CARDS_PER_PLAYER; k++) {
+        int8_t pool[52];
+        int U = 0;
+        for (int id = lo + 1; id < 52; id++)
+            if ((m->unseen >> id) & 1ull) pool[U++] = (int8_t)id;  // ascending, > lo
+        if (U == 0) { m->err = REPLAY_ENOFRESH; return; }
+        int chosen = -1;
+        if (c->encode) {
+            for (int j = 0; j < U; j++) if (pool[j] == real[k]) { chosen = j; break; }
+            if (chosen < 0) { m->err = REPLAY_ENOTFEAS; return; }
+        }
+        int kk = coder_uniform(c, U, chosen);
+        if (c->err) { m->err = c->err; return; }
+        int id = pool[kk];
+        m->unseen &= ~(1ull << id);
+        m->known[seat] |= 1ull << id;
+        lo = id;
+        pairs[k][0] = (unsigned char)id;
+        pairs[k][1] = REPLAY_CARD_NONE;
+    }
+    emit(m, LOG_DRAW, seat, -1, pairs, CARDS_PER_PLAYER);
+}
+
+static void run_replay_v6(RModel *m, Coder *c, Src *s, uint32_t n_atoms) {
+    m->rev_coder = c;
+    // Initial deal: seat-major, CARDS_PER_PLAYER real cards each.
+    for (int seat = 0; seat < m->n; seat++) {
+        deal_hand_v6(m, c, seat);
+        if (m->err) return;
+    }
+
+    for (uint32_t a = 0; a < n_atoms; a++) {
+        if (in_count(m) <= 1) { m->err = REPLAY_ELOGSAFTER; return; }
         check_conservation(m);
         if (m->err) return;
 
@@ -1196,8 +1359,64 @@ int replay_encode(const unsigned char *in, int in_len,
     if (c.err) return -c.err;
 
     RModel *m = &g_model;
-    model_init(m, n, trump_id, fa, 0, 0, 0);
+    model_init(m, n, trump_id, fa, 0, 0, 0, REPLAY_FORMAT_VERSION);
     run_replay(m, &c, &s);
+    if (m->err) return -m->err;
+    if (c.err) return -c.err;
+
+    if (!coder_finish(&c, &g_bn)) return -REPLAY_ECAP;
+    int len = bn_to_bytes_be(&g_bn, out, out_cap);
+    if (len < 0) return -REPLAY_ECAP;
+    return len;
+}
+
+int replay_encode_v6(const unsigned char *in, int in_len,
+                     unsigned char *out, int out_cap) {
+    g_err_detail = 0;
+    comb_init();
+    if (in_len < 7) return -REPLAY_EINPUT;
+    int n = in[0], trump_id = in[1], fa = in[2];
+    if (n < 2 || n > MAX_PLAYERS) return -REPLAY_EINPUT;
+    if (trump_id > 51) return -REPLAY_EINPUT;
+    if (fa >= n) return -REPLAY_EINPUT;
+    int n_actions = in[3] | (in[4] << 8);
+    int n_reveals = in[5] | (in[6] << 8);
+    int rev_off = 7;
+    if (rev_off + n_reveals > in_len) return -REPLAY_EINPUT;
+    for (int i = 0; i < n_reveals; i++)
+        if (in[rev_off + i] > 51) return -REPLAY_EINPUT;
+
+    Src s;
+    memset(&s, 0, sizeof s);
+    s.buf = in;
+    s.len = in_len;
+    s.pos = rev_off + n_reveals;
+    s.count = n_actions;
+
+    Coder c;
+    memset(&c, 0, sizeof c);
+    c.encode = true;
+
+    coder_uniform(&c, REPLAY_VERSION_ALPHABET, REPLAY_FORMAT_VERSION_V6);
+    coder_uniform(&c, 7, n - 2);
+    int8_t alpha[48];
+    int alen = trump_alphabet(n, alpha);
+    int t = -1;
+    for (int i = 0; i < alen; i++)
+        if (alpha[i] == trump_id) { t = i; break; }
+    if (t < 0) return -REPLAY_EHEADER;
+    coder_uniform(&c, alen, t);
+    coder_uniform(&c, n, fa);
+    uint32_t atoms = (uint32_t)n_actions;
+    code_varint(&c, &atoms);
+    if (c.err) return -c.err;
+
+    RModel *m = &g_model;
+    model_init(m, n, trump_id, fa, 0, 0, 0, REPLAY_FORMAT_VERSION_V6);
+    m->rev = in + rev_off;
+    m->rev_n = n_reveals;
+    m->rev_pos = 0;
+    run_replay_v6(m, &c, &s, atoms);
     if (m->err) return -m->err;
     if (c.err) return -c.err;
 
@@ -1221,7 +1440,7 @@ int replay_decode(const unsigned char *in, int in_len,
     c.x = &g_bn;
 
     int version = coder_uniform(&c, REPLAY_VERSION_ALPHABET, -1);
-    if (version != REPLAY_FORMAT_VERSION) {
+    if (version != REPLAY_FORMAT_VERSION && version != REPLAY_FORMAT_VERSION_V6) {
         g_err_detail = version;
         return -REPLAY_EVERSION;
     }
@@ -1233,16 +1452,29 @@ int replay_decode(const unsigned char *in, int in_len,
     if (c.err) return -c.err;
 
     RModel *m = &g_model;
-    model_init(m, n, trump_id, first_attacker, out, REPLAY_DEC_HDR, out_cap);
-    run_replay(m, &c, 0);
+    model_init(m, n, trump_id, first_attacker, out, REPLAY_DEC_HDR, out_cap,
+               version);
+    if (version == REPLAY_FORMAT_VERSION_V6) {
+        uint32_t atoms = 0;
+        code_varint(&c, &atoms);
+        if (c.err) return -c.err;
+        run_replay_v6(m, &c, 0, atoms);
+    } else {
+        run_replay(m, &c, 0);
+    }
     if (m->err) return -m->err;
     if (!bn_is_zero(&g_bn)) return -REPLAY_ELEFTOVER;
-    if (in_count(m) != 1) return -REPLAY_ENOFOOL;
+    // v5 requires a single fool; v6 may legitimately be a mid-game cut where
+    // >1 players are still IN — then there is no fool yet (out[4] = 0xFF).
     int fool = -1;
-    for (int seat = 0; seat < n; seat++)
-        if (m->status[seat]) fool = seat;
+    if (in_count(m) == 1) {
+        for (int seat = 0; seat < n; seat++)
+            if (m->status[seat]) fool = seat;
+    } else if (version == REPLAY_FORMAT_VERSION) {
+        return -REPLAY_ENOFOOL;
+    }
 
-    out[0] = REPLAY_FORMAT_VERSION;
+    out[0] = (unsigned char)version;
     out[1] = (unsigned char)n;
     out[2] = (unsigned char)trump_id;
     out[3] = (unsigned char)first_attacker;
