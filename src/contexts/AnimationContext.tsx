@@ -16,6 +16,7 @@ import { staleOptimisticKeysOnTable } from '../state/optimisticAnimation';
 import { resolveUnconfirmedAttackCovers } from '../state/optimisticConflicts';
 import { optimisticOverlay } from '../state/optimisticOverlay';
 import { shouldDropStaleSequence } from '../state/clientReconcile';
+import { noteAuthoritativeVersion } from '../state/authoritativeVersion';
 
 // Animation timing constant
 export { ANIMATION_TIME } from '../constants/constants';
@@ -223,6 +224,9 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         if (typeof v === 'number') {
             lastAppliedVersionRef.current = lastAppliedVersionRef.current === null
                 ? v : Math.max(lastAppliedVersionRef.current, v);
+            // Share it with ServerContext so an outgoing move can be stamped with
+            // the version the client composed it against (the round guard).
+            noteAuthoritativeVersion(url_game_id, lastAppliedVersionRef.current);
         }
     }, [url_game_id, games]);
 
@@ -849,6 +853,9 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 return;
             }
             lastAppliedVersionRef.current = incomingVersion;
+            // A live broadcast is the freshest authoritative version — feed the
+            // move-stamping store so the next tap carries the current round.
+            noteAuthoritativeVersion(gateGameRef.current, incomingVersion);
 
             // Release any of my optimistic cards that this AUTHORITATIVE state
             // confirms are on the table BUT whose confirming broadcast was

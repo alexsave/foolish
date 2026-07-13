@@ -24,7 +24,7 @@ const packedAction = async (req: Request, user: { id: string }, reqId: string): 
         });
     }
     const { executePackedAction } = await import('../_shared/packed_action.ts');
-    const out = await executePackedAction(parsed.gameId, user.id, parsed.wire, reqId);
+    const out = await executePackedAction(parsed.gameId, user.id, parsed.wire, reqId, parsed.intentVersion);
     // Same bot nudge as the JSON path: an APPLIED human move wakes the bots.
     // (A rejection never did on the legacy path — it threw before run_bots.)
     if (out.status === ACTION_STATUS.APPLIED && out.gameStatus === GAME_STATUS.PLAYING) {

@@ -9,9 +9,11 @@ import { ANIMATION_TIME } from '../constants/constants';
 import { optimisticOverlay } from '../state/optimisticOverlay';
 import { animationFeed } from '../state/animationFeed';
 import { cardKey, mergeHandOrder, reconcileHandMemory, displayedHand, mergeTableBattles, applyOverlayEntries, resetToLobby, isHandPermutation } from '../state/clientReconcile';
-import { ACTION_STATUS, decodeActionResponse, encodeAction, encodeActionRequest } from '@shared/wire/awire.ts';
+import { ACTION_STATUS, REJECT_STALE_ROUND, decodeActionResponse, encodeAction, encodeActionRequest } from '@shared/wire/awire.ts';
 import { decodePackedGame } from '@shared/wire/view.ts';
 import { rejectMessage } from '../wasm/rejectMessages';
+import { authoritativeVersion } from '../state/authoritativeVersion';
+import { strings } from '../localization/strings';
 
 // Decode the bare-hex (no \x prefix) `view` blob stored in player_views. Tiny
 // local helper so the dashboard read doesn't pull the replay codec into the
@@ -71,6 +73,20 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     const [spectatorGames, setSpectatorGames] = useState<Set<string>>(new Set());
 
     const [gameLoadError, setGameLoadError] = useState<string | null>(null);
+
+    // A transient, localized notice shown when the server rejects a move because
+    // a round closed before it landed (REJECT_STALE_ROUND, the stale-intent race
+    // in docs/WEB_RACE_BUG_HANDOFF.md). The optimistic revert already happened
+    // off the pickup broadcast; this just tells the user WHY their card came back.
+    const [staleRoundNotice, setStaleRoundNotice] = useState<string | null>(null);
+    const staleNoticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const showStaleRoundNotice = useCallback(() => {
+        const lang = (typeof localStorage !== 'undefined' && localStorage.getItem('foolish_language')) || 'en';
+        const table = strings[lang] ?? strings.en;
+        setStaleRoundNotice(table.staleRoundReject ?? strings.en.staleRoundReject);
+        if (staleNoticeTimer.current) clearTimeout(staleNoticeTimer.current);
+        staleNoticeTimer.current = setTimeout(() => setStaleRoundNotice(null), 4000);
+    }, []);
 
     const [game_id, setGameId] = useState<string | null>(null);
 
@@ -1174,7 +1190,11 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     // a Blob; octet-stream responses come back as a Blob too.
     // 'bump' and all meta ops stay JSON via invokeGameFunctions.
     const invokePackedAction = async (gameId: string, wire: Uint8Array): Promise<{ game_id: string }> => {
-        const req = encodeActionRequest(gameId, wire);
+        // Stamp the move with the version the client composed it against, so the
+        // server's round-boundary guard can reject it if a round closed in the
+        // meantime (docs/WEB_RACE_BUG_HANDOFF.md). undefined => the legacy v1
+        // envelope, unguarded (we've not yet seen an authoritative version).
+        const req = encodeActionRequest(gameId, wire, authoritativeVersion(gameId));
         // Cast: encodeActionRequest builds a fresh, non-shared buffer; TS just
         // types Uint8Array over ArrayBufferLike, which BlobPart rejects.
         const { data, error } = await supabase.functions.invoke('action', { body: new Blob([req as Uint8Array<ArrayBuffer>]) });
@@ -1192,7 +1212,12 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             throw new Error('Invalid response from action: unreadable packed response');
         }
         if (resp.status === ACTION_STATUS.REJECTED) {
-            // Console-only diagnostics: callers revert the optimistic state.
+            // A stale-round reject is the one rejection the user should SEE: the
+            // move was kernel-legal, just aimed at a round that closed first, so
+            // surface the localized notice (the revert already fired off the
+            // pickup broadcast). Every other reject stays console-only diagnostics
+            // — callers revert the optimistic state either way.
+            if (resp.rejectCode === REJECT_STALE_ROUND) showStaleRoundNotice();
             throw new Error(rejectMessage(resp.rejectCode));
         }
         // APPLIED — or MOOT (the move lost the end-game race, a no-op): both
@@ -1234,12 +1259,13 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         game: games[active_game_id!],
         games,
         gameLoadError,
+        staleRoundNotice,
         chatMessages: chatMessages[active_game_id!] || [],
         // The rendered hand: authoritative self.hand, deduped and ordered by the
         // sticky arrangement memory. Guarantees no duplicates and no on-table
         // cards in the hand, and keeps a rejected card in its original slot.
         localHandOrder: displayedHand(localHandOrders[active_game_id!] || [], games[active_game_id!]?.self?.hand || []),
-    }), [games, active_game_id, gameLoadError, chatMessages, localHandOrders]);
+    }), [games, active_game_id, gameLoadError, staleRoundNotice, chatMessages, localHandOrders]);
 
     return (
         <ServerActionsContext.Provider value={actions}>
@@ -1285,6 +1311,9 @@ interface ServerStateType {
     game: PersonalGame | null;
     games: { [key: string]: PersonalGame };
     gameLoadError: string | null;
+    /** A localized notice when the server rejected a move as stale-round (a round
+     *  closed before it landed); null when there is nothing to show. Auto-clears. */
+    staleRoundNotice: string | null;
     chatMessages: any[];
     localHandOrder: Card[];
 }
@@ -1364,6 +1393,7 @@ export const ReplayServerProvider = ({ gameId, initialGame, children }: {
         game: games[gameId] ?? initialGame,
         games,
         gameLoadError: null,
+        staleRoundNotice: null,
         chatMessages: [],
         localHandOrder,
         // eslint-disable-next-line react-hooks/exhaustive-deps
