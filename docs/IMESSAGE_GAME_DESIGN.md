@@ -515,12 +515,13 @@ iMessage game funnels into, **choose the bundled form now**:
 > **Decision: create ONE iOS app record ("Foolish — Durak") containing (a) a
 > deliberately small but genuine host app and (b) the Messages extension.**
 
-The v1 host app is NOT a stub (stubs risk Guideline 4.2): it reuses the same
-SwiftUI board + `libfoolish.a` to offer **offline pass-and-play and vs-nothing
-practice** (deal a seeded game, both seats on one screen) plus a "paste a
-foolish.cards link" replay viewer opening the web replay. That's 2–4 days of
-extra work, gives reviewers something real, and is the seed the §7 full app
-(and Oracle) grows into without a new app identity.
+The v1 host app is NOT a stub (stubs risk Guideline 4.2). **Superseded note
+(2026-07-13):** the host is now the full native iOS app specified in
+`docs/IOS_APP_DESIGN.md` — build that first; this extension ships as a target
+inside its app record (`IOS_APP_DESIGN.md` §2 goal 6, §4). The extension's own
+targets, protocol, and milestones in this document are unchanged; wherever
+this doc says "host app", read "the IOS_APP_DESIGN.md app", and the shared
+SwiftUI board/engine bridge comes from its `FoolishKit`.
 
 ### 9.2 Targets
 
