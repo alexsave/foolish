@@ -451,3 +451,443 @@ already-polished shell; E–F are short tails.
 5. **Scope temptation:** the procedural-materials port beyond the card back
    (wool, wood), the Soviet ru theme, iPad, Game Center — all named here so
    they can be explicitly deferred, not rediscovered.
+
+---
+
+## 16. Milestone implementation guide (for an implementer with no iOS background)
+
+This section turns §14's table into executable instructions. It assumes the
+implementer can run shell commands on a Mac with Xcode 16+ installed, and has
+never used Swift. Read §3–§13 first; this section references them constantly.
+
+### 16.0 Conventions & ground rules (read once, apply always)
+
+- **Toolchain:** everything about the Xcode project lives in text. Install
+  [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`)
+  and define the project in `ios/project.yml`; `xcodegen generate` produces
+  `Foolish.xcodeproj`. Never hand-edit the `.xcodeproj` — it is a build
+  artifact (add it to `.gitignore`). This keeps every project change
+  reviewable and LLM-editable.
+- **Build & test from the shell**, not the IDE:
+  ```bash
+  cd ios && xcodegen generate
+  xcodebuild -project Foolish.xcodeproj -scheme Foolish \
+    -destination 'platform=iOS Simulator,name=iPhone 16' build
+  xcodebuild ... test        # runs XCTest bundles
+  xcrun simctl boot "iPhone 16" && open -a Simulator   # to look at it
+  ```
+- **The JSON bridge rule.** Swift never parses the kernel's packed binary
+  formats. For every piece of state Swift needs, add a C function to
+  `cnitro/ios/ios_api.c` that emits **JSON into a caller-provided buffer**,
+  and decode it in Swift with `Codable`. (Precedent: the kernel already emits
+  JSON for the oracle explain dump — `OG_EXPLAIN` in the wasm oracle build.)
+  Binary crosses the language boundary in exactly two places: golden-vector
+  fixtures (compared as opaque bytes) and the packed action encoder (§16.D3,
+  where byte-exactness against the TS implementation is the whole point).
+- **No rules in Swift** (§3). If you are writing an `if` about Durak rules in
+  Swift, stop and add a C accessor instead.
+- **Commit cadence:** one commit per numbered task below, message prefixed
+  `ios(<milestone>):`. Run the relevant tests before each commit.
+- **Don't touch:** existing `cnitro/src/*.c` game logic, `supabase/`,
+  `src/` web client — except the explicitly listed additive files
+  (`cnitro/ios/*`, `cnitro/Makefile` new targets, `scripts/gen_ios_goldens.mjs`,
+  `public/.well-known/` in §16.C5).
+- **When stuck on an Apple-ism** (signing, entitlements, provisioning): the
+  fix is almost always in `ios/project.yml` settings or the Developer portal
+  (developer.apple.com → Certificates, Identifiers & Profiles). Simulator
+  builds need NO signing; only device/TestFlight work does. Do all
+  development against the simulator until §16.F.
+
+---
+
+### 16.A Milestone A — foundation
+
+**A1. `make ios-lib` (the C engine as an xcframework).**
+Add to `cnitro/Makefile` (pattern-match the existing native targets for the
+source list — do NOT hardcode a list in this doc's spirit; the authoritative
+inventory is the Makefile's own native OBJECTS):
+
+```make
+IOS_SRC = src/game.c src/legal.c src/view.c src/replay.c src/deal_rng.c \
+          $(STRATEGY_SRC)            # reuse the same var the native build uses
+IOS_API = ios/ios_api.c
+IOS_MIN = -miphoneos-version-min=15.0
+
+ios-lib:
+	mkdir -p build/ios/device build/ios/sim
+	xcrun -sdk iphoneos clang -target arm64-apple-ios15.0 $(IOS_MIN) -O2 -c \
+	    $(IOS_SRC) $(IOS_API) && libtool -static -o build/ios/device/libfoolish.a *.o
+	xcrun -sdk iphonesimulator clang -target arm64-apple-ios15.0-simulator -O2 -c \
+	    $(IOS_SRC) $(IOS_API) && libtool -static -o build/ios/sim/libfoolish.a *.o
+	xcodebuild -create-xcframework \
+	    -library build/ios/device/libfoolish.a -headers ios/include \
+	    -library build/ios/sim/libfoolish.a    -headers ios/include \
+	    -output ../ios/vendor/Foolish.xcframework
+```
+
+(Adapt: object files per-directory, add x86_64 sim slice via a `lipo` merge
+if CI Macs are Intel; the flags are plain — the wasm build's freestanding
+constraints do NOT apply natively.)
+
+**A2. `cnitro/ios/ios_api.{h,c}` — the `fio_*` shim.** One static `Game`, no
+threads inside (the Swift wrapper serializes). Implement, in this order:
+
+```c
+// ios/include/ios_api.h  (this header IS the Swift-visible API)
+int  fio_new_game(const uint8_t *seed, int seed_len, int n_players); // deal_rng path, game.h:139-151
+int  fio_legal_moves_json(int seat, char *out, int cap);   // [{type,cards:[{s,v}]},...]
+int  fio_apply_json(const char *move_json);                // one move, validated
+int  fio_state_json(int viewer_seat, char *out, int cap);  // per-viewer masked view (view.c)
+int  fio_public_state_json(char *out, int cap);            // spectator view
+int  fio_actor_mask(void);                                 // bitmask of seats with legal moves
+int  fio_game_over(void);                                  // fool seat, or -1
+int  fio_bot_choose_json(int strategy_id, int seat, char *out, int cap); // M-B2
+int  fio_replay_encode_b32(char *out, int cap);            // M-C
+int  fio_replay_decode_b32(const char *code, char *out, int cap); // M-C, steps as JSON
+```
+
+The JSON shapes mirror the shared TS types (`@shared/types.ts` `Card`,
+`PersonalGame`) — copy field names from there so Swift models and web models
+read the same. Write a tiny C unit test (`cnitro/tests/`) exercising
+new→legal→apply→state round-trips before any Swift exists.
+
+**A3. Golden vectors.** Add `scripts/gen_ios_goldens.mjs` (Node, runs the
+kernel wasm via the e2e bridge): emits `ios/Fixtures/goldens.json` —
+`{seed, n_players, deal_fingerprint, legal_moves_at_step[], state_json_at_step[]}`
+for ~20 seeded games. The Swift test in A6 replays the same seeds through
+`libfoolish.a` and asserts equality. **This one test is the keystone of the
+whole port** — it proves the native build is the same engine.
+
+**A4. `ios/project.yml`** (XcodeGen). Starter:
+
+```yaml
+name: Foolish
+options: { bundleIdPrefix: cards.foolish, deploymentTarget: { iOS: "15.0" } }
+packages:
+  SnapshotTesting: { url: https://github.com/pointfreeco/swift-snapshot-testing, from: 1.17.0 }
+targets:
+  Foolish:
+    type: application
+    platform: iOS
+    sources: [FoolishApp]
+    dependencies: [{ target: FoolishKit }]
+    settings: { PRODUCT_BUNDLE_IDENTIFIER: cards.foolish.app }
+  FoolishKit:
+    type: framework
+    platform: iOS
+    sources: [FoolishKit, Entitlements]
+    dependencies: [{ framework: vendor/Foolish.xcframework, embed: false }]
+  FoolishTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [FoolishTests, Fixtures]
+    dependencies: [{ target: Foolish }, { package: SnapshotTesting }]
+```
+
+App Group + Associated Domains are added in §16.C5/§16.F (they require the
+Developer portal; not needed for simulator work).
+
+**A5. Engine bridge (`FoolishKit/Engine/`).** Three files:
+
+```swift
+// EngineC.swift — the ONLY file that touches the C API
+final class EngineC {
+  private let q = DispatchQueue(label: "engine")   // serializes the static Game
+  func newGame(seed: Data, players: Int) throws { ... fio_new_game ... }
+  func stateJSON(viewer: Int) throws -> Data { /* 64KB buffer, fio_state_json */ }
+  // every fio_* gets one throwing Swift method; negative return -> EngineError(code)
+}
+// Models.swift — Codable structs matching the JSON (Card{s,v}, GameView, Move)
+// LocalGame.swift — ObservableObject: published GameView, funcs play(Move),
+//   botTurnLoopIfNeeded(); all mutations via EngineC on q, published on main.
+```
+
+**A6. Tests + DesignSystem.** `EngineGoldenTests.swift` (A3 fixtures);
+`Tokens.swift` + `FCard` + `FHandFan` per §5.2/§5.4; snapshot tests for both
+components in light/dark; a `#if DEBUG` `GalleryView` screen listing every
+DesignSystem component (this is the reviewer-of-record for §5 — keep it
+current forever).
+
+**Definition of done (A):** `make ios-lib` green from clean checkout;
+`xcodebuild test` green including golden + snapshot suites; GalleryView
+renders in simulator; no signing configured anywhere.
+
+---
+
+### 16.B Milestone B — offline vertical slice
+
+**B1. Bot strategies in the lib.** Extend `IOS_SRC` with the strategy sources
+(same roster as `supabase/seed.sql` personalities; the C files follow
+`*_strategy.c` naming — take the exact set from the Makefile's bots build).
+`fio_bot_choose_json(strategy_id, seat, ...)` calls the same `choose_move`
+entry the server bridge uses (`_shared/bot_strategy.ts:37` shows the call
+shape). Map `strategy_id` ↔ roster names in one C table; expose
+`fio_strategy_count/name`.
+
+**B2. Bot pacing & thermal guard.** In `LocalGame`: after a human move, while
+`fio_actor_mask()` includes a bot seat — pick its move on a background queue,
+then apply after a UX delay (600–1200ms randomized; the server does the same
+deliberately — `e2e/bench_bot_e2e.ts:12` "deliberate inter-bot UX pacing").
+Cordite-class strategies: show the thinking indicator immediately; skip
+deliberation entirely when `ProcessInfo.processInfo.thermalState >= .serious`
+(fall back to `espresso` for that move — never freeze the game).
+
+**B3. Table screen composition.** One `TableView` driven by a `GameView`
+value + an `AnimationPlan` (see B4). Zones as §5.4 components; layout in a
+`GeometryReader` with fixed proportions: opponents strip 22% height, battles
+40%, deck well trailing, hand fan 26%, action bar between. Interaction flow
+(the ONLY pattern in the app):
+
+```
+tap card → EngineC.legalMoves → is this card in a legal move?
+  no  → .rigid haptic, 80ms shake, done
+  yes → LocalGame.play(move) → new GameView → diff → AnimationPlan → render
+```
+
+**B4. Animation = state diff.** Write `BoardDiff.swift`: given (old GameView,
+new GameView) produce moves: `cardMoved(card, from: .hand(seat), to:
+.battle(i, .attack))`, `handCountChanged`, `deckCountChanged`, `roundSwept`.
+Render with `matchedGeometryEffect` ids = card identity (`"\(s)-\(v)"`, back
+cards use synthetic slot ids), animated with the single §5.2 spring; deal
+choreography staggers cards 40ms apart. This diff engine is reused verbatim
+by replays (C) and online (D) — invest here.
+
+**B5. Home (offline path) + Win screen + bot picker** per §6 specs. Bot
+picker cycles the roster with left/right arrows (web precedent: commit
+`7f22749`).
+
+**B6. Tutorial.** Port the script from the web tutorial route
+(`src/app/tutorial/`) into a `TutorialScript.json` (steps: forced hands via a
+fixed seed chosen to reproduce the web tutorial's deal, highlight target,
+copy key). Runs as a `LocalGame` with input restricted to the scripted move.
+(If the web tutorial's exact deal can't be reproduced by seed, pick a new
+seed and adjust copy — the lesson content is what's being ported, not bytes.)
+
+**DoD (B):** complete bot game start→finish→rematch with radio off; 60fps
+during deal on an iPhone 12 (Instruments or on-device FPS overlay); tutorial
+completes; UITest drives one full offline game by accessibility ids.
+
+---
+
+### 16.C Milestone C — replays
+
+**C1. Decode.** `fio_replay_decode_b32(code, out)` → JSON array of steps
+mirroring the TS `DecodedReplay` (`@shared/replay/core.ts`) — reuse
+`replay_decode` (`cnitro/src/replay.h:100`) + a JSON emitter. Swift:
+`ReplayPlayer: ObservableObject` — an index into steps + the B4 diff engine
+for rendering; transport = play/pause/step/scrub (VHS feel per web
+`ReplayScreen.tsx`).
+
+**C2. Encode/share.** On Win screen and finished offline games:
+`fio_replay_encode_b32` → `https://foolish.cards/<code>`; share sheet
+(`ShareLink`) + QR (CoreImage `CIQRCodeGenerator`, quiet zone 4 modules,
+render at 512px). Assert in tests: encode→decode round-trip equals final
+state; and one **cross-platform fixture** — a committed web-generated code
+decodes natively to the fixture's expected JSON (generated by
+`scripts/gen_ios_goldens.mjs` via the wasm codec).
+
+**C3. Storage.** `ReplayStore`: one JSON file in Application Support
+(`[{code, date, fool, players, myResult}]`), newest-first list on the
+Replays screen. No database framework — do not add SwiftData/CoreData.
+
+**C4. Scan/paste.** Paste field validating via decode; camera scan with
+`AVCaptureMetadataOutput` (QR) behind a camera-permission string
+(`NSCameraUsageDescription` — write it now, review requires it).
+
+**C5. Universal links.** Two-sided task: (web) serve
+`public/.well-known/apple-app-site-association` (JSON, `applinks` for
+`/<code>` and `/m/*` paths — mind that `/<code>` collides with live-game
+URLs; include both, the app routes by decode success: replay code → replay
+viewer, else game id → §16.D join/spectate, else open Safari). (app)
+`com.apple.developer.associated-domains: applinks:foolish.cards` in
+project.yml entitlements + URL routing in `FoolishApp`. Device-only feature —
+simulator testing via `xcrun simctl openurl booted <url>`.
+
+**DoD (C):** web code plays natively; native code plays on web (manual);
+round-trip + cross-platform tests green; list/save/scan all work.
+
+---
+
+### 16.D Milestone D — online play (Stage C1: server-confirmed)
+
+**D0. FIRST TASK: write `docs/PROTOCOL.md`** by reading, in order:
+`src/contexts/ServerContext.tsx` (invokes at `:423,633,1150,1180`; channels
+at `:212,349,519,676`), `src/state/RealtimeAnimationFeed.tsx:76`,
+`src/state/clientReconcile.ts` (version gate `:44-52`; sequences carry full
+resulting state `:47-49`), `supabase/functions/_shared/packed_action.ts`,
+`player_views.ts`, `action/index.ts:17`. The doc must contain: every edge
+function's request/response shape, every channel name + event payload shape,
+the version gate rule, and the auth flow. Get it reviewed (PR) before writing
+`Net/` — it is the contract, and any surprise found later goes into it first.
+
+**D1. Dependencies & config.** Add `supabase-swift` to project.yml packages.
+Config via `ios/Config/{Debug,Release}.xcconfig`: `SUPABASE_URL`,
+`SUPABASE_KEY` (the same two the web client uses, README "Quick start" — the
+anon key is public by design; still keep it in xcconfig, not source).
+
+**D2. Auth port.** Mirror `AuthContext` exactly (`src/contexts/AuthContext.tsx`):
+`nameToEmail` = SHA-256 of uppercased username → first 16 hex chars →
+`<hex>@foolish.cards` (`:12-33`, `WEBSITE_DOMAIN` from
+`src/constants/constants.ts`); signUp carries
+`user_metadata.username` (uppercased) and must locally enforce the
+bot-reserved-prefix rejection (`usernameUsesReservedPrefix`,
+`src/common/botName.ts` — port the check). supabase-swift persists the
+session in Keychain by default. When the real-email auth rebuild lands
+(`ORACLE_MONETIZATION_ENGINEERING.md` §4), this module gains
+verify/reset flows — leave TODO seams, ship without them if the site has.
+
+**D3. Packed action encoder.** Port `_shared/packed_action.ts` to
+`Net/PackedAction.swift` **byte-for-byte**, validated by golden vectors:
+extend `scripts/gen_ios_goldens.mjs` to emit `action_goldens.json`
+(move JSON → expected bytes hex, ~50 cases covering every action type,
+multi-card moves, and — once the web race fix lands — the `intent_round`
+field per `WEB_RACE_BUG_HANDOFF.md` §5). POST via
+`supabase.functions.invoke("action", body: bytes)`; decode the
+`[fmt|status|reject_code|u32 version]` response (`action/index.ts:17`) into a
+Swift enum incl. `.staleRound` when the server ships it.
+
+**D4. Realtime feed.** `Net/GameFeed.swift`: subscribe `pv-<user_id>`,
+`gu-<gameId>-<user_id>`, `game-<gameId>` (spectate) — payload shapes from
+PROTOCOL.md. Apply the version gate (port `shouldDropStaleSequence` — 5
+lines). **Stage C1 rendering rule:** take each sequence's full resulting
+`PersonalGame`, map to `GameView`, feed the B4 diff engine. Use the
+sequence's event list only for ordering/timing hints, not as a second source
+of truth. In-flight UX: on POST, mark the played cards `.inFlight` (dimmed,
+locked, unmoved); confirm/animate on the broadcast; on reject unlock +
+`.rigid` + toast (reject-code strings localized, incl. stale-round copy from
+the handoff doc).
+
+**D5. Screens.** Home(online): quick-match = `create` then route by returned
+game id; join-by-code = the same game-URL parser as C5. Lobby per §6 (add-bot
+via the server flow, ready states over the feed). Table: identical `TableView`
+— `LocalGame` and `OnlineGame` both expose the same `GameSession` protocol
+(`view`, `play(move)`, `actorMask`); build that protocol NOW, in this
+milestone, by refactoring `LocalGame` to it. Win screen: Rematch = the
+`meta`/continue flow, optimistically resetting to lobby EXACTLY per
+`resetToLobby` (`clientReconcile.ts:10-40` — port its field list; the comment
+warns the server reset must match byte-for-byte or the UI snaps).
+
+**D6. Lifecycle & resync.** On foreground/reconnect: refetch authoritative
+state (the web pulls via `meta`/game fetch — PROTOCOL.md will pin the exact
+call), resubscribe channels, drop stale sequences via the gate, rebuild view.
+On websocket drop mid-game: passive banner ("reconnecting…"), never block
+input on the banner (the POST path is independent of the feed). Also send the
+web's bot-bump nudge where the web does (`ServerContext.tsx:633`).
+
+**D7. Spectate.** `game-<gameId>` public channel + public view JSON — same
+TableView, no fan, no action bar.
+
+**DoD (D):** two physical devices (or device+web) complete a prod game;
+mid-game force-kill + relaunch recovers to the live table; every reject code
+has a user-visible, localized surface; airplane-mode toggling mid-game
+recovers; UITest covers quick-match vs bot on a staging project (a dedicated
+Supabase project for CI — do NOT point tests at prod).
+
+---
+
+### 16.E Milestone E — entitlement seams, settings, localization, a11y
+
+**E1. Entitlements module** exactly per §10 (protocol, `FreeEntitlements`,
+`EntitlementSet`), injected via SwiftUI `Environment`. Unit test: with the
+free stub, `oraclePremium == false` and — the real assertion — **no view in
+the app reads StoreKit** (grep-based CI lint: `import StoreKit` is forbidden
+outside `Entitlements/` and fails the build if found; the v1 `Entitlements/`
+itself must not import it either).
+
+**E2. Flags.** `Flags.swift` (`oracleUI=false, paywallUI=false,
+webUpsellLink=false`) + a DEBUG-only settings row listing flag states.
+Reserved slots: Replay screen right-bar Oracle button position; Settings
+"Foolish Premium" row — both `if Flags.oracleUI` (i.e., compiled, invisible).
+
+**E3. Settings & account.** Language override (system/en/ru/ko), haptics
+toggle, account block (username, sign-out, DELETE ACCOUNT → the deletion
+edge function; if it doesn't exist yet this milestone BLOCKS §16.F — escalate,
+don't fake it with a mailto), licenses (single static screen), links
+(privacy policy + terms URLs on foolish.cards — coordinate with web).
+
+**E4. Localization.** Write `scripts/gen_ios_strings.mjs`: parse
+`src/localization/strings.ts` → merge into `ios/FoolishKit/Localizable.xcstrings`
+(String Catalog JSON; en/ru/ko values per key; keys keep the web's names,
+new iOS-only keys get an `ios.` prefix and MUST be added in all three
+languages in the same commit — CI check: the three language columns have
+identical key sets).
+
+**E5. Accessibility pass.** Checklist to execute, not aspiration: VoiceOver
+labels on every interactive element (card labels per §5.4 wording); Dynamic
+Type xxxLarge on all non-board screens without truncation (snapshot tests at
+that size); Reduce Motion honored (diff engine cross-fades instead of moving);
+minimum 44pt hit targets (the fan uses expanded hit slop); color-only
+information nowhere (trump marked by badge shape + color).
+
+**DoD (E):** flags off → zero billing surface (verified by UITest walking all
+screens); strings CI green; a11y checklist committed with each item checked.
+
+---
+
+### 16.F Milestone F — hardening & App Store submission
+
+**F1. Apple accounts & identifiers** (one-time, human-in-the-loop —
+the implementer prepares everything and the owner clicks): Apple Developer
+Program enrollment ($99/yr); in the Developer portal create bundle id
+`cards.foolish.app` (+ `.MessagesExtension` for later), App Group
+`group.cards.foolish`, Associated Domains capability; in App Store Connect
+create the app record — **decision locked in `IMESSAGE_GAME_DESIGN.md` §9.1:
+one record, this app** — name "Foolish — Durak" (check availability;
+fallbacks listed in review notes), primary language en, category Games/Card.
+Enable automatic signing in project.yml
+(`DEVELOPMENT_TEAM: <teamid>`, `CODE_SIGN_STYLE: Automatic`).
+
+**F2. App icon + launch.** Procedural-fern icon: render the §5.3 card-back
+fern (one blessed seed — commit it as `ICON_SEED`) at 1024px on
+`Color.table`, via a small `swift run` tool committed under `ios/Tools/`;
+Xcode 16 single-size icon slot. Launch screen: plain `Color.table` with
+centered wordmark — nothing dynamic (launch screens are static by platform
+rule).
+
+**F3. Privacy & compliance metadata** (all in App Store Connect + committed
+mirror in `ios/Compliance.md`): privacy labels — Data Used to Track You:
+none; Data Linked to You: identifiers (user id), user content (game history);
+Data Not Linked: none beyond diagnostics-off. `ITSAppUsesNonExemptEncryption
+= NO` in Info.plist. Age rating questionnaire: no gambling, no user-generated
+content beyond fixed-emoji chat (check what chat ships; if free-text chat is
+in scope, moderation answers change — prefer shipping emoji-only chat in v1
+to keep the questionnaire clean). Account deletion URL + in-app path.
+
+**F4. Screenshots & store page.** `xcrun simctl` scripted captures on
+iPhone 16 Pro Max + iPhone SE sizes: (1) table mid-battle, (2) offline bot
+roster, (3) replay with QR, (4) win screen, ru variants for the ru locale
+page. Keywords: durak, дурак, card game, подкидной — the store page is the
+"durak" search play (`MONETIZATION_ROADMAP.md` phase 1).
+
+**F5. TestFlight → review.** Internal TestFlight build → the owner + ru
+cohort for ≥1 week; fix crashes (Xcode Organizer). Submission review notes:
+60-second reviewer script ("Play → Offline → beat Espresso; Replays → paste
+code `<committed demo code>`; Settings → delete account works"), demo
+account credentials, note that the app is fully usable without an account.
+First submission WILL likely bounce once — respond within 24h, fix, resubmit;
+budget for two cycles in the §14 estimate.
+
+**DoD (F):** approved and live. Post-launch: tag the release, archive dSYMs,
+turn on App Store Connect crash reports review as a weekly habit.
+
+---
+
+### 16.G Milestone G+ — pointers only (each is its own work order)
+
+- **iMessage extension:** execute `IMESSAGE_GAME_DESIGN.md` §19 M1–M5 inside
+  this project (`FoolishMessages` target in project.yml; FoolishKit already
+  provides Boards/Engine/DesignSystem — its M2 is mostly done by this app).
+- **Stage C2 optimistic play:** export the web's optimistic unit fixtures
+  (`src/state/optimistic*.ts` tests) as JSON; port the pure functions to
+  `Net/Optimistic/`; run both implementations against the same vectors in
+  both CIs; only then wire into `OnlineGame`.
+- **Oracle + billing:** implement `StoreKitEntitlements` in `Entitlements/`
+  (StoreKit 2 `Transaction.currentEntitlements` + server mirror per
+  `ORACLE_MONETIZATION_ENGINEERING.md` §5/§7); flip `oracleUI`; native oracle
+  = new `wasm-oracle`-equivalent native target (the C already exists —
+  `docs/INFINITE_ORACLE_DESIGN.md`; threading per Oracle doc §7.1).
+  Blocked on: auth rebuild + entitlements backend.
+- **iPad:** revisit `TableView` proportions + pointer hover; no new logic.
+- **Push notifications:** requires APNs certs + server-side send on
+  turn events — design doc first (server work; coordinate with the
+  Supabase/edge-function owners).
