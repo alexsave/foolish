@@ -109,6 +109,64 @@ difftests: build/sim_difftest build/apply_difftest build/solver_difftest build/r
 	./build/replay_difftest 40 && \
 	./build/replay_v6_test 40
 
+# ---------- iOS static library / xcframework (docs/IOS_APP_DESIGN.md §16.A1) --
+#
+# Builds ../ios/vendor/Foolish.xcframework from the SAME CORE_SRC every native
+# binary uses, plus ios/ios_api.c (the Swift-visible bridge, ios/include/
+# ios_api.h). This is macOS + Xcode ONLY (needs xcrun/libtool/xcodebuild and
+# the iOS SDKs). On Linux/CI, `make ios-smoke` exercises the identical bridge
+# natively (clang) — it is the portable proof that new->legal->apply->state and
+# a full game run through the Swift entry points.
+#
+# Caps: the wide human-game caps the production wasm rules module uses
+# (MAX_BATTLES=64 etc.), because human games reach states the compact arena
+# never does (huge post-pickup hands). CD_LEAFBOOK is required by octogen
+# (src/leafbook_data.h is committed). NO -flto here — the xcframework is linked
+# by Xcode, and per-TU objects keep the archive portable across Xcode versions.
+IOS_MIN_VERSION := 15.0
+IOS_CAPS   := -DMAX_LOG_PAIRS=64 -DMAX_BATTLES=64 -DMAX_MOVE_CARDS=28 \
+              -DMAX_LEGAL_MOVES=4096 -DCD_LEAFBOOK
+IOS_SRC    := $(CORE_SRC) ios/ios_api.c
+IOS_CFLAGS := -O2 -Isrc -Iios/include $(IOS_CAPS)
+
+# $(1)=target-triple  $(2)=sdk name  $(3)=output dir
+define IOS_BUILD_SLICE
+	@mkdir -p $(3)/obj
+	@for s in $(IOS_SRC); do \
+	  o=$(3)/obj/$$(basename $$s .c).o; \
+	  echo "  CC[$(2)] $$s"; \
+	  xcrun -sdk $(2) clang -target $(1) $(IOS_CFLAGS) -c $$s -o $$o || exit 1; \
+	done
+	libtool -static -o $(3)/libfoolish.a $(3)/obj/*.o
+endef
+
+.PHONY: ios-lib ios-smoke
+ios-lib:
+	@echo "== device slice (arm64) =="
+	$(call IOS_BUILD_SLICE,arm64-apple-ios$(IOS_MIN_VERSION),iphoneos,build/ios/device)
+	@echo "== simulator slices (arm64 + x86_64) =="
+	$(call IOS_BUILD_SLICE,arm64-apple-ios$(IOS_MIN_VERSION)-simulator,iphonesimulator,build/ios/sim-arm64)
+	$(call IOS_BUILD_SLICE,x86_64-apple-ios$(IOS_MIN_VERSION)-simulator,iphonesimulator,build/ios/sim-x86_64)
+	@mkdir -p build/ios/sim
+	lipo -create build/ios/sim-arm64/libfoolish.a build/ios/sim-x86_64/libfoolish.a \
+	     -output build/ios/sim/libfoolish.a
+	@rm -rf ../ios/vendor/Foolish.xcframework
+	@mkdir -p ../ios/vendor
+	xcodebuild -create-xcframework \
+	  -library build/ios/device/libfoolish.a -headers ios/include \
+	  -library build/ios/sim/libfoolish.a    -headers ios/include \
+	  -output ../ios/vendor/Foolish.xcframework
+	@echo "wrote ../ios/vendor/Foolish.xcframework"
+
+# Portable bridge smoke test (Linux/CI-friendly). Compiles the bridge + core
+# fresh at the iOS caps (self-consistent struct layout — never mix cap sets)
+# and drives a full 4-player game to a fool through the Swift-facing entry
+# points. Fast (< 1s). This is the M-A keystone check runnable without a Mac.
+ios-smoke:
+	@mkdir -p build
+	$(CC) $(IOS_CFLAGS) ios/ios_api_smoke.c ios/ios_api.c $(CORE_SRC) -lm -o build/ios_smoke
+	./build/ios_smoke
+
 # L1 memory budget measurement (docs/WASM_L1_BUDGET.md). Plays ~63K real games
 # and reports the observed maxima that size every wasm static buffer. Built at
 # the WASM cap set + headroom so the numbers are true maxima; -DREPLAY_STATS
