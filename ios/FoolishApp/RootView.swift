@@ -25,6 +25,11 @@ struct RootView: View {
             }
         }
         .background(FColor.table.ignoresSafeArea())
+        .onOpenURL { coordinator.handle(url: $0) }
+        .sheet(item: $coordinator.pendingReplay) { pending in
+            NavigationStack { ReplayPlayerView(replay: pending.replay) }
+                .preferredColorScheme(.dark)
+        }
     }
 
     @ViewBuilder

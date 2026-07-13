@@ -23,6 +23,11 @@ final class AppCoordinator: ObservableObject {
 
     @Published var screen: Screen = .home
     @Published private(set) var offlineGame: LocalGame?
+    /// A replay opened from a universal link (foolish.cards/<code>), presented
+    /// over whatever is on screen (§16.C5).
+    @Published var pendingReplay: PendingReplay?
+
+    private let linkEngine = EngineC()
 
     /// Deterministic-but-varied seed. Uses a monotonic counter + wall clock so
     /// each new offline game deals differently; the seed is 32 bytes so the deal
@@ -45,6 +50,28 @@ final class AppCoordinator: ObservableObject {
         offlineGame = nil
         screen = .home
     }
+
+    /// Route a universal link. `foolish.cards/<code>` collides with live-game
+    /// URLs, so we route by DECODE SUCCESS (§16.C5): a valid replay code opens
+    /// the replay viewer; `/m/*` (iMessage viewer) and bare game ids for
+    /// spectating are handled once those milestones land (else the link falls
+    /// back to opening in Safari, which the OS does when we don't consume it).
+    func handle(url: URL) {
+        let path = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard !path.isEmpty, !path.hasPrefix("m/") else { return }
+        Task {
+            if let decoded = try? await linkEngine.replayDecode(code: path) {
+                pendingReplay = PendingReplay(replay: decoded)
+            }
+        }
+    }
+}
+
+/// Identifiable wrapper so a decoded replay can drive a `.sheet(item:)`.
+struct PendingReplay: Identifiable {
+    let id = UUID()
+    let replay: DecodedReplay
+}
 
     private func makeSeed() -> Data {
         var bytes = [UInt8](repeating: 0, count: 32)

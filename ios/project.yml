@@ -44,6 +44,12 @@ packages:
   SnapshotTesting:
     url: https://github.com/pointfreeco/swift-snapshot-testing
     from: 1.17.0
+  # Declared for Milestone D (online play, §16.D1). Add `{ package: Supabase }`
+  # to FoolishKit's dependencies when Net/ starts calling the edge functions /
+  # realtime; it is only resolved, not linked, until then.
+  Supabase:
+    url: https://github.com/supabase/supabase-swift
+    from: 2.0.0
 
 targets:
   # ---- The app -----------------------------------------------------------
@@ -53,6 +59,8 @@ targets:
     configFiles:
       Debug: Config/Debug.xcconfig
       Release: Config/Release.xcconfig
+    entitlements:
+      path: FoolishApp/Foolish.entitlements
     sources:
       - path: FoolishApp
     dependencies:
