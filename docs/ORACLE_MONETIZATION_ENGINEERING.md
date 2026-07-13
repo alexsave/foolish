@@ -24,7 +24,9 @@ sources inline. Supersedes the Phase-1 monetization mix in `docs/MONETIZATION_RO
   work, keeps ~90–95% of every dollar, and validates willingness-to-pay before any
   store bureaucracy. Telegram is the *only* payment rail that reaches Russia (Apple
   halted all RU payments Apr 1, 2026; Google Play billing died there Dec 2024). iOS
-  is the highest-ARPU storefront and the place where the native-C Oracle shines.
+  is the highest-ARPU storefront and the place where the native-C Oracle shines —
+  and it can carry a bundled **iMessage extension** (§7.5), a GamePigeon-style
+  turn-based Durak in chat threads that our replay codec is unusually suited to.
   Play last (smallest marginal audience, now fee-equal to Apple).
 - **Guarding:** on iOS, the paywall can genuinely live in the client (StoreKit 2
   entitlement + natively compiled engine inside a signed binary). On web/TMA the
@@ -396,6 +398,62 @@ and battery/thermal throttling are the real work — cap at
 `activeProcessorCount - 2` threads and pause batches when
 `thermalState >= .serious`).
 
+### 7.5 iMessage extension — the bundled distribution channel
+
+An iMessage app is an **extension target inside the main iOS app** (a
+`MSMessagesAppViewController` in the same App Store submission — no separate
+listing fees or review track), surfaced in the Messages app drawer. The
+channel is alive but niche: the Messages framework is still maintained
+([docs updated Jan 2026](https://developer.apple.com/documentation/Messages)),
+while the iMessage App Store itself has near-zero browse discoverability —
+distribution is **person-to-person**: a recipient without the app taps the
+game bubble and gets an install prompt. That mechanic built **GamePigeon**: a
+solo developer's 20+ minigame pack, #1 Top Free in the iMessage store within
+six months of launch, monetized on IAP cosmetics/ad-removal, culturally sticky
+with US teens for a decade ([Wikipedia](https://en.wikipedia.org/wiki/GamePigeon)).
+Notably, GamePigeon's catalog is checkers/8-ball/sea-battle-tier — there is
+**no serious card game with a real engine in the channel**, and the
+Russian-diaspora demographic (US/DE/IL iPhone teens and their parents) is
+exactly who texts on iMessage.
+
+**Why our stack is unusually suited to it — the codec is the killer fit:**
+
+- Turn-based iMessage games work via `MSSession`: each turn sends an
+  `MSMessage` whose **URL payload carries the game state**, and Messages
+  replaces the previous bubble in the same session. Most games have to invent
+  a compact state encoding for this; **we already ship one** — the rANS packed
+  state/replay codec was built to fit a whole game in a QR-alphanumeric URL.
+  A Durak turn bubble is literally `WWW.FOOLISH.CARDS/<code>` plus a rendered
+  snapshot of the table. The same URL opens on web for green-bubble friends —
+  the iMessage game and the web game are one artifact.
+- Async "correspondence Durak" (play a turn when you like) is a *new mode*, not
+  a port: the rules engine is authoritative on both ends (guards.wasm / native
+  C), so each turn is validated locally, no server in the loop for 1v1 casual
+  play — which also means it works with **zero infra cost**.
+
+**Constraints to respect (they shape the design, not kill it):**
+
+- Extensions run under a **strict, undocumented memory ceiling** (tens of MB;
+  jetsam kills over-budget extensions —
+  [Apple forums](https://developer.apple.com/forums/thread/60706)). The Oracle
+  worker fleet does NOT run in-extension. Pattern: play turns in the bubble;
+  the "Analyze with the Oracle" button deep-links into the **main app** (full
+  native oracle, full paywall) — the extension becomes an Oracle *funnel*, not
+  an Oracle host. Keep the extension UI native-lightweight (the procedural
+  renderer's 2D-canvas fallback, or plain UIKit cards), not the full Next.js
+  client in a WKWebView.
+- IAP works from extensions (GamePigeon sells inside Messages), but keep the
+  paywall in the main app — one purchase surface, fewer review variables. The
+  extension and app share the entitlement via an App Group + the same account.
+- Expectations: this is a **distribution experiment, not a revenue pillar** —
+  the iMessage store's discoverability is search-only and the channel is
+  US/diaspora-shaped. Success metric is installs-per-shared-game and the
+  extension→main-app→Oracle funnel, measured before investing past v1.
+
+Effort: **2–3 weeks** on top of the finished iOS app (extension target, MSSession
+turn plumbing over the existing codec, bubble snapshot rendering, deep links).
+Do not build it before the main app exists — it can't ship alone.
+
 ---
 
 ## 8. Platform: Google Play
@@ -522,6 +580,7 @@ semantics without a browser.
 | Android System WebView (Capacitor) | ✅ | ❌ SAB unsupported in WebView ([caniwebview](https://caniwebview.com/features/mdn-javascript-builtin-sharedarraybuffer/)) | — | Reason to prefer TWA on Android |
 | iOS WKWebView (Capacitor shell) | ✅ | ⚠️ unreliable/undocumented — do not plan on it | ✅ via native plugin | Native plugin replaces both modes (§7.1) |
 | Telegram webviews (iOS/Android/Desktop) | ✅ | ❌ assume absent | — | Cap workers at 4 on low-end Androids; honor `deviceMemory` |
+| iMessage extension | ❌ don't try | ❌ | ❌ | Tens-of-MB jetsam ceiling (§7.5); "Analyze" deep-links to the main app's native oracle |
 | Server (Deno edge) | single instance, 2s CPU | ❌ | — | Tokens & spot verdicts only |
 
 **Mode B rollout plan (separate branch, exactly as §8b prescribes):**
@@ -660,7 +719,8 @@ first ~10 subscribers cover it.
 | 4 | Telegram Mini App + Stars (§9) | 2–4 wk | RU/CIS revenue, viral channel |
 | 5 | iOS: Capacitor shell + native oracle plugin + StoreKit 2 (§7) | 4–8 wk | Highest-ARPU store |
 | 6 | Play: TWA + Digital Goods API + RTDN (§8; start the 12-tester clock at step 4) | 1–2 wk | Android store |
-| 7 | Mode B `wasm-oracle-mt` on `oracle-mode-b` branch (§10) | 1–2 wk | Desktop "Turbo" polish — optional, last |
+| 7 | iMessage extension: MSSession turns over the replay codec + deep-link Oracle funnel (§7.5) | 2–3 wk | Person-to-person iOS distribution — optional, requires step 5 |
+| 8 | Mode B `wasm-oracle-mt` on `oracle-mode-b` branch (§10) | 1–2 wk | Desktop "Turbo" polish — optional, last |
 
 Cross-cutting rules: every webhook idempotent; nightly entitlement
 reconciliation job; remote flags on all store-steering links; price experiments
