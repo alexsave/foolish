@@ -25,8 +25,10 @@ import {
 import { shouldBotActCore, processBotAction } from '../supabase/functions/_shared/pure_bot_actions.ts';
 import { calculateLegalMoves } from '../supabase/functions/_shared/bot_strategy.ts';
 import { INFO_TYPES } from '../supabase/functions/_shared/replay/core.ts';
-import { encodeReplayV6, ReplayInputV6 } from '../supabase/functions/_shared/replay/encode.ts';
+import { encodeReplayV6, verifyRoundTripV6, ReplayInputV6 } from '../supabase/functions/_shared/replay/encode.ts';
 import { decodeReplay } from '../supabase/functions/_shared/replay/decode.ts';
+import { reconstructSeededDeal } from '../supabase/functions/_shared/game_lifecycle.ts';
+import { __setDealSeedOverride } from '../supabase/functions/_shared/wasm/engine.ts';
 import { buildReplaySteps } from '../src/replay/view.ts';
 
 if (!process.env.E2E_VERBOSE) {
@@ -57,13 +59,15 @@ const tableCards = (g: Game): Card[] => g.table_battles.flatMap((b) =>
 // order), but the kernel exposes REAL hands every step — so we recover each
 // draw's true cards exactly from the seat's hand delta and patch them into the
 // DRAW logs, yielding the unmasked stream a v6 producer must feed the encoder.
-async function playGame(np: number): Promise<{ game: Game; initialHands: Card[][]; flipped: Card } | null> {
+async function playGame(np: number): Promise<{ game: Game; initialHands: Card[][]; flipped: Card; stock: Card[] } | null> {
   const game = mkGame(np);
   start_game(game);
   // The flip (and power_suit) are cleared once the trump is drawn late-game, so
   // snapshot the trump card now.
   const flipped: Card = { suit: game.flipped!.suit, value: game.flipped!.value };
+  const flipKey = cardKey(flipped);
   const initialHands = game.players.map((p) => p.hand.map((c) => ({ suit: c.suit, value: c.value })));
+  const stock: Card[] = []; // real drawn cards, in draw order (flip excluded)
   let actions = 0;
   while (game_done(game) === null) {
     if (++actions > MAX_ACTIONS) return null;
@@ -83,8 +87,8 @@ async function playGame(np: number): Promise<{ game: Game; initialHands: Card[][
     let acted = false;
     for (const p of elig) if (await processBotAction(game, p)) { acted = true; break; }
     if (!acted) return null;
-    // Un-mask each DRAW log this action produced: the seat's deck-sourced
-    // additions are its real hand minus (what it already held + any pickup).
+    // Recover each DRAW's real cards (the seat's deck-sourced additions) in log
+    // order = draw order, and accumulate the stock the v6 encoder consumes.
     for (let k = logsBefore; k < game.logs.length; k++) {
       const l = game.logs[k];
       if (l.log_type !== LOG_TYPE.DRAW) continue;
@@ -92,18 +96,19 @@ async function playGame(np: number): Promise<{ game: Game; initialHands: Card[][
       const drawn = game.players[seat].hand.filter(
         (c) => !before[seat].has(cardKey(c)) && !tableBefore.has(cardKey(c)));
       if (drawn.length !== l.card_pairs.length) return null; // unexpected; skip game
-      l.card_pairs = drawn.map((c) => ({ primary: { suit: c.suit, value: c.value }, target: null }));
+      for (const c of drawn) if (cardKey(c) !== flipKey) stock.push({ suit: c.suit, value: c.value });
     }
   }
-  return { game, initialHands, flipped };
+  return { game, initialHands, flipped, stock };
 }
 
-function inputOf(game: Game, initialHands: Card[][], flipped: Card): ReplayInputV6 {
+function inputOf(game: Game, initialHands: Card[][], flipped: Card, stock: Card[]): ReplayInputV6 {
   return {
     playerIds: game.players.map((p) => p.player_id),
     logs: game.logs,
     flipped,
     initialHands,
+    stock,
   };
 }
 
@@ -113,10 +118,10 @@ test('v6 wasm round-trips full games with real hidden state (2..4 players)', asy
     for (let gi = 0; gi < GAMES_PER_PC; gi++) {
       const r = await playGame(np);
       if (!r) continue;
-      const { game, initialHands, flipped } = r;
+      const { game, initialHands, flipped, stock } = r;
       if (game.logs.length === 0) continue;
 
-      const enc = await encodeReplayV6(inputOf(game, initialHands, flipped));
+      const enc = await encodeReplayV6(inputOf(game, initialHands, flipped, stock));
       const dec = await decodeReplay(enc.x);
 
       const foolSeat = game.players.findIndex((p) => p.player_id === game_done(game));
@@ -162,7 +167,7 @@ test('v6 wasm encodes a MID-GAME cut that decodes with no fool', async () => {
     for (let gi = 0; gi < GAMES_PER_PC && checked < 6; gi++) {
       const r = await playGame(np);
       if (!r) continue;
-      const { game, initialHands, flipped } = r;
+      const { game, initialHands, flipped, stock } = r;
       const full = game.logs.filter(
         (l, k) => INFO_TYPES.includes(l.log_type) ||
           (l.log_type === LOG_TYPE.DISCARD && k > 0 && game.logs[k - 1].log_type === LOG_TYPE.GOOD),
@@ -170,7 +175,7 @@ test('v6 wasm encodes a MID-GAME cut that decodes with no fool', async () => {
       if (full < 6) continue;
 
       const half = Math.floor(full / 2);
-      const enc = await encodeReplayV6(inputOf(game, initialHands, flipped), half);
+      const enc = await encodeReplayV6(inputOf(game, initialHands, flipped, stock), half);
       const dec = await decodeReplay(enc.x);
       const foolSeat = game.players.findIndex((p) => p.player_id === game_done(game));
       assert.equal(dec.formatVersion, 6, 'mid version');
@@ -185,16 +190,80 @@ test('v6 wasm encodes a MID-GAME cut that decodes with no fool', async () => {
   assert.ok(checked > 0, 'exercised at least one mid-game cut');
 });
 
+// The PRODUCTION finalize path: a seeded game keeps only its masked session log
+// + the deal seed. Re-deal from the seed (reconstructSeededDeal), encode v6, and
+// the decoded replay must carry exact hands — proving finalizeEndedGame works.
+test('v6 finalize path: seed + masked logs -> exact hands', async () => {
+  let checked = 0;
+  for (let np = 2; np <= 4; np++) {
+    for (let gi = 0; gi < GAMES_PER_PC; gi++) {
+      const seedHex = Array.from({ length: 32 },
+        (_, i) => ((i * 37 + gi * 101 + np * 7 + 3) & 0xff).toString(16).padStart(2, '0')).join('');
+      const game = mkGame(np);
+      __setDealSeedOverride(Uint8Array.from(seedHex.match(/../g)!.map((b) => parseInt(b, 16))));
+      let ok = true;
+      try {
+        start_game(game); // seeded: deterministic deck, reproducible from game.game_seed
+        let actions = 0;
+        while (game_done(game) === null) {
+          if (++actions > MAX_ACTIONS) { ok = false; break; }
+          const elig: PrivatePlayer[] = [];
+          for (let i = 0; i < game.players.length; i++) {
+            const p = game.players[i];
+            if (shouldBotActCore(game, p, i) && calculateLegalMoves(game, p.player_id).length > 0) elig.push(p);
+          }
+          if (elig.length === 0) { ok = false; break; }
+          for (let i = elig.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [elig[i], elig[j]] = [elig[j], elig[i]];
+          }
+          let acted = false;
+          for (const p of elig) if (await processBotAction(game, p)) { acted = true; break; }
+          if (!acted) { ok = false; break; }
+        }
+      } finally {
+        __setDealSeedOverride(null);
+      }
+      if (!ok || !game.game_seed || game.logs.length === 0) continue;
+
+      // Exactly what finalizeEndedGame does: re-deal from the stored seed, then
+      // encode v6 from the MASKED session log (game.logs — draws are hidden).
+      const { initialHands, stock, flip } = reconstructSeededDeal(game.game_seed, game.players);
+      const { encoded } = await verifyRoundTripV6({
+        playerIds: game.players.map((p) => p.player_id),
+        logs: game.logs, flipped: flip, initialHands, stock,
+      });
+
+      const dec = await decodeReplay(encoded.x);
+      const steps = buildReplaySteps(dec);
+      const foolSeat = game.players.findIndex((p) => p.player_id === game_done(game));
+      assert.equal(dec.formatVersion, 6, 'v6');
+      assert.equal(dec.fool, foolSeat, 'fool');
+      for (const step of steps)
+        for (const p of step.players) assert.equal(p.hidden, 0, 'zero hidden');
+      const last = steps[steps.length - 1];
+      for (let s = 0; s < np; s++) {
+        const got = new Set(last.players[s].known.map(cardKey));
+        const want = new Set(game.players[s].hand.map(cardKey));
+        assert.equal(got.size, want.size, `seat ${s} final hand size`);
+        for (const k of want) assert.ok(got.has(k), `seat ${s} final card ${k}`);
+      }
+      checked++;
+    }
+  }
+  assert.ok(checked > 0, 'exercised at least one seeded finalize');
+});
+
 test('v6 view.ts builds EXACT hands (zero hidden — the Oracle fix)', async () => {
   let checked = 0;
   for (let np = 2; np <= 4; np++) {
     for (let gi = 0; gi < GAMES_PER_PC; gi++) {
       const r = await playGame(np);
       if (!r) continue;
-      const { game, initialHands, flipped } = r;
+      const { game, initialHands, flipped, stock } = r;
       if (game.logs.length === 0) continue;
 
-      const enc = await encodeReplayV6(inputOf(game, initialHands, flipped));
+      const enc = await encodeReplayV6(inputOf(game, initialHands, flipped, stock));
       const dec = await decodeReplay(enc.x);
       const steps = buildReplaySteps(dec); // must not throw (conservation holds)
 

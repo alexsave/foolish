@@ -1,9 +1,30 @@
 # Replay Format 6 — hidden-state-lossless, partial-game codec
 
-**Status: shipped end to end.** C codec + native test, wasm exports (rules.wasm
-+ bots.wasm), TS encode/decode bridge, and view.ts consumption are all landed
-and tested. The Oracle now marshals exact hands from a v6 replay (no
-retrodiction). Remaining nice-to-haves in § Follow-up.
+**Status: shipped end to end, including the producer.** C codec + native test,
+wasm exports (rules.wasm + bots.wasm), TS encode/decode bridge, view.ts
+consumption, AND `finalizeEndedGame` now emit v6 for every seeded game. The
+Oracle marshals exact hands from a v6 replay (no retrodiction). Remaining
+nice-to-haves in § Follow-up.
+
+## The producer: `finalizeEndedGame` (utils.ts)
+
+At game end the server holds only the **masked** session log (`logs_packed`,
+draws hidden) + the **deal seed** (`games.game_seed`). The masked log can't
+supply hidden cards, but a seeded deal is reproducible, so finalize:
+
+1. re-runs just the deal from the stored seed — `reconstructSeededDeal`
+   (game_lifecycle.ts) → true initial hands + the face-down **stock in draw
+   order** (the kernel pops the top) + the trump;
+2. `verifyRoundTripV6({ playerIds, logs, flipped, initialHands, stock })` —
+   encodes v6 and re-decodes to prove every info action round-trips;
+3. stores that as the `game_snapshots.moves` blob.
+
+Any failure (no seed / deal drift / verify mismatch) logs and **falls back to
+the frozen v5 encode**, so game-end never breaks. This blocks game end by
+design — the end-game screen should always have a replay code. Cost is
+negligible: the re-deal is one `start_game` (~µs) and v6 encode ≈ v5 encode.
+`e2e/replay_v6.test.ts` exercises this exact path (seed + masked logs → exact
+decoded hands).
 
 ## Why this exists
 
@@ -122,7 +143,10 @@ at deal time.
 
 - A TS/e2e **oracle mirror** for v6 (like `e2e/replay_ts_oracle.ts` polices v5)
   if v6 ever needs cross-impl byte policing.
-- Wire `encodeReplayV6` into a real producer (server `finalizeEndedGame` for a
-  lossless finished-game code, and/or the iMessage FMSG mid-game path).
+- **Live / mid-game** producer: the seed + action log are already stored
+  incrementally, so a running v6 (or seed+actions) blob would let the Oracle
+  analyse an in-progress game. This is the iMessage FMSG path — future scope.
 - v6 **mid-game** `buildReplaySteps` sets the closing step's fool to `0xFF`
   (255); the replay screen's end-of-game UI should treat 255 as "no fool yet".
+- Old v5 snapshots stay v5 (the codec decodes both); only games finished after
+  this change are v6. A backfill re-encode from `game_seed` could upgrade them.
