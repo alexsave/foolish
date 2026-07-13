@@ -4,6 +4,7 @@
 // (native codec, §16.C2): a ShareLink to foolish.cards/<code> plus a QR.
 
 import SwiftUI
+import UIKit
 import FoolishKit
 
 struct WinView: View {

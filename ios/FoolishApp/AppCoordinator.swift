@@ -66,13 +66,6 @@ final class AppCoordinator: ObservableObject {
             }
         }
     }
-}
-
-/// Identifiable wrapper so a decoded replay can drive a `.sheet(item:)`.
-struct PendingReplay: Identifiable {
-    let id = UUID()
-    let replay: DecodedReplay
-}
 
     private func makeSeed() -> Data {
         var bytes = [UInt8](repeating: 0, count: 32)
@@ -81,4 +74,10 @@ struct PendingReplay: Identifiable {
         for i in 8..<32 { bytes[i] = UInt8((t &* UInt64(i + 1)) & 0xFF) }
         return Data(bytes)
     }
+}
+
+/// Identifiable wrapper so a decoded replay can drive a `.sheet(item:)`.
+struct PendingReplay: Identifiable {
+    let id = UUID()
+    let replay: DecodedReplay
 }

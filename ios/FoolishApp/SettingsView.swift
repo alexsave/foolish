@@ -28,7 +28,7 @@ struct SettingsView: View {
             .background(FColor.table.ignoresSafeArea())
             .navigationTitle(FStrings.t("settings"))
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .navigationBarTrailing) {
                     Button(FStrings.t("home")) { dismiss() }.tint(FColor.accent)
                 }
             }

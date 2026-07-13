@@ -9,7 +9,9 @@ import Foundation
 public struct DecodedReplay: Codable, Equatable, Sendable {
     public let version: Int
     public let nPlayers: Int
-    public let trump: Card
+    /// Optional: a malformed/edge code can carry a null trump byte; valid
+    /// replays always have a real trump.
+    public let trump: Card?
     public let firstAttacker: Int
     /// Fool (loser) seat, or -1 for a stream that ends mid-game (v6).
     public let fool: Int
@@ -18,7 +20,7 @@ public struct DecodedReplay: Codable, Equatable, Sendable {
     public let logs: [ReplayLog]
 
     public var isComplete: Bool { fool >= 0 }
-    public var trumpSuit: Suit? { Suit(rawValue: trump.s) }
+    public var trumpSuit: Suit? { trump.flatMap { Suit(rawValue: $0.s) } }
 }
 
 public struct ReplayLog: Codable, Equatable, Sendable {

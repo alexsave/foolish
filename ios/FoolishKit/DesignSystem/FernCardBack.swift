@@ -9,6 +9,7 @@
 // Determinism here is per-seed reproducibility (a xorshift keyed by the seed),
 // NOT byte-parity with the web's Math.random() stream — the back is cosmetic.
 
+import SwiftUI
 import CoreGraphics
 import UIKit
 
@@ -48,7 +49,9 @@ public enum FernCardBack {
         let renderer = UIGraphicsImageRenderer(size: size, format: format)
         return renderer.image { ctx in
             let cg = ctx.cgContext
-            cg.setFillColor(FColor.ink.cgColor)
+            // Color.cgColor is optional and Color has no withAlphaComponent —
+            // bridge through UIColor for the CGColor values CoreGraphics needs.
+            cg.setFillColor(UIColor(FColor.ink).cgColor)
             cg.fill(CGRect(origin: .zero, size: size))
 
             var rng = XorShift(seed: seed == 0 ? 0x9E3779B97F4A7C15 : seed)
@@ -61,7 +64,7 @@ public enum FernCardBack {
             let originX = size.width / 2
             let originY = size.height - inset
 
-            let bone = FColor.card.withAlphaComponent(0.72).cgColor
+            let bone = UIColor(FColor.card).withAlphaComponent(0.72).cgColor
             cg.setFillColor(bone)
 
             var x = 0.0, y = 0.0

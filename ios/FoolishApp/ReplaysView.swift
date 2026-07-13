@@ -56,7 +56,7 @@ struct ReplaysView: View {
             .background(FColor.table.ignoresSafeArea())
             .navigationTitle(FStrings.t("replays"))
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .navigationBarTrailing) {
                     Button(FStrings.t("home")) { dismiss() }.tint(FColor.accent)
                 }
             }
