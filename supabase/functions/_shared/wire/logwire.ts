@@ -119,6 +119,27 @@ export function logwireClosesRound(buf: Uint8Array): boolean {
     return false;
 }
 
+// Same scan, straight on the BARE-hex string commit_game stores — no
+// Uint8Array allocation and no codec import on the per-commit hot path (the
+// only caller, commitGame, holds the logs as hex already). Each byte is two
+// hex chars, so the byte offsets above double: type at chars [12,14), nPairs at
+// [18,20), record stride 10+2·nPairs bytes = 20+4·nPairs chars. Two hex nibbles
+// parse without allocating via charCode math (no slice/substr per record).
+const hx = (c: number): number => (c <= 57 ? c - 48 : (c <= 70 ? c - 55 : c - 87)); // '0'-'9' | 'A'-'F' | 'a'-'f'
+const byteAt = (h: string, charIdx: number): number => (hx(h.charCodeAt(charIdx)) << 4) | hx(h.charCodeAt(charIdx + 1));
+
+export function logwireHexClosesRound(hex: string): boolean {
+    const start = hex.startsWith('\\x') ? 2 : 0; // hexToBytes tolerated both; match it
+    let q = start;
+    while (q + 20 <= hex.length) { // a full 10-byte record header = 20 hex chars
+        const type = byteAt(hex, q + 12);
+        if (type === LOG_PICKUP_INT || type === LOG_DISCARD_INT) return true;
+        const nPairs = byteAt(hex, q + 18);
+        q += 20 + nPairs * 4;
+    }
+    return false;
+}
+
 // logwire bytes -> GameLog[] for the cold-path consumers that still want JS
 // objects (the end-of-game replay encode). Ids are synthesized (the old ones
 // only served insert idempotence); order is byte order (a total order — the

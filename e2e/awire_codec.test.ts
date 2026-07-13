@@ -13,7 +13,8 @@ import {
     ACTION_REQ_FORMAT, ACTION_REQ_FORMAT_V1,
     decodeAction, encodeAction, encodeActionRequest, decodeActionRequest,
 } from '../supabase/functions/_shared/wire/awire.ts';
-import { logwireClosesRound, logsFromKernelExport } from '../supabase/functions/_shared/wire/logwire.ts';
+import { logwireClosesRound, logwireHexClosesRound, logsFromKernelExport } from '../supabase/functions/_shared/wire/logwire.ts';
+import { bytesToBareHex } from '../supabase/functions/_shared/wire/bytes.ts';
 
 // Deterministic RNG so a failure reproduces from the printed seed.
 let seed = Number(process.env.FUZZ_SEED || 0xa11ce) >>> 0;
@@ -208,4 +209,41 @@ test('logwireClosesRound: true iff the move logged a pickup or a discard', () =>
         { type: DISCARD_INT, seat: 0xff, def: 0xff, pairs: [[5, 18]] },
         { type: DEFENDER_CHANGE_INT, seat: 0xff, def: 0, pairs: [] },
     ])), true, 'a full covered round that trashes closes the round');
+});
+
+test('logwireHexClosesRound: the zero-alloc hex scan agrees with the byte scan on every shape', () => {
+    // The hot-path detector reads the bare-hex string commit_game stores; it
+    // must be byte-for-byte identical to the Uint8Array scan (which the tests
+    // above pin) — including the empty log, the \\x-prefixed form, and records
+    // with pairs (whose stride the scan must skip correctly).
+    const shapes: Parameters<typeof kernelExport>[0][] = [
+        [],
+        [{ type: ATTACK_INT, seat: 0, def: 0xff, pairs: [[5, 0xff]] }],
+        [{ type: COVER_INT, seat: 1, def: 1, pairs: [[5, 10], [7, 12]] }],
+        [{ type: PICKUP_INT, seat: 1, def: 1, pairs: [[5, 0xff], [10, 0xff], [3, 0xff]] }],
+        [{ type: DISCARD_INT, seat: 0xff, def: 0xff, pairs: [[5, 0xff]] }],
+        [
+            { type: ATTACK_INT, seat: 0, def: 0xff, pairs: [[5, 0xff]] },
+            { type: COVER_INT, seat: 1, def: 1, pairs: [[5, 18]] },
+            { type: DISCARD_INT, seat: 0xff, def: 0xff, pairs: [[5, 18]] },
+            { type: DEFENDER_CHANGE_INT, seat: 0xff, def: 0, pairs: [] },
+        ],
+        // A pickup hiding AFTER a big multi-pair attack — the stride skip must
+        // land on the right type byte, not a card byte that happens to be 4/6.
+        [
+            { type: ATTACK_INT, seat: 0, def: 0xff, pairs: [[4, 0xff], [6, 0xff], [4, 0xff]] },
+            { type: PICKUP_INT, seat: 1, def: 1, pairs: [[4, 0xff]] },
+        ],
+    ];
+    for (const recs of shapes) {
+        const bytes = recs.length ? logwireOf(recs) : new Uint8Array([]);
+        const bare = bytesToBareHex(bytes);
+        const expected = logwireClosesRound(bytes);
+        assert.equal(logwireHexClosesRound(bare), expected, `hex scan matches byte scan (${JSON.stringify(recs.map(r => r.type))})`);
+        // Tolerates the pg \\x prefix exactly as hexToBytes did.
+        assert.equal(logwireHexClosesRound('\\x' + bare), expected, 'hex scan tolerates the \\x prefix');
+        // Upper-case hex nibbles parse identically (charCode math covers A-F).
+        assert.equal(logwireHexClosesRound(bare.toUpperCase()), expected, 'hex scan is case-insensitive');
+    }
+    assert.equal(logwireHexClosesRound(''), false, 'empty hex — no close');
 });
