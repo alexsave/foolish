@@ -1,0 +1,164 @@
+// LocalGame.swift — the offline game session. Owns one EngineC (kernel
+// instance), publishes the human seat's masked GameView, forwards the human's
+// moves, and drives the bot roster between human turns with UX pacing and a
+// thermal/battery guard (§7.2, §16.B2).
+//
+// This is the offline half of what becomes the `GameSession` protocol in
+// Milestone D (§16.D5) — LocalGame and OnlineGame will both vend `view`,
+// `play(_:)`, `legalMoves(for:)`, `actorMask`. Kept concrete here so SwiftUI's
+// ObservableObject wiring stays simple until that refactor.
+
+import Foundation
+import SwiftUI
+
+@MainActor
+public final class LocalGame: ObservableObject {
+
+    /// The human seat's masked view of the table. nil until the first refresh.
+    @Published public private(set) var view: GameView?
+    /// True while a bot is deliberating (drives the "thinking" indicator).
+    @Published public private(set) var thinking: Bool = false
+    /// The last move a bot made — the animation layer diffs against it (B4).
+    @Published public private(set) var lastBotMove: Move?
+    /// A transient reject surfaced to the UI (rigid haptic + toast, §8.2 C1).
+    @Published public private(set) var lastReject: EngineError?
+    /// Fool seat once the game ends, else nil.
+    @Published public private(set) var foolSeat: Int?
+    /// The human seat's current legal-move menu (kernel-computed). The board
+    /// derives every enable-state from this — never a hand-rolled rule (§3).
+    @Published public private(set) var humanLegal: [Move] = []
+    /// Seats with a pending action right now (bitmask) — drives per-seat
+    /// "thinking" marks. Kernel-computed (fio_actor_mask).
+    @Published public private(set) var actorMask: Int = 0
+
+    public let humanSeat: Int
+    public let players: Int
+
+    private let engine = EngineC()
+    /// Seat → roster strategy id, as requested by the caller. The thermal guard
+    /// may temporarily run a heavier seat as `espresso`; this is the seat's
+    /// "true" assignment to restore once the device cools (§7.2).
+    private let requestedStrategies: [Int: Int]
+    private var driveTask: Task<Void, Never>?
+
+    /// - Parameters:
+    ///   - seed: 32+ bytes ⇒ reproducible wide deal.
+    ///   - players: 2...8.
+    ///   - humanSeat: which seat the local player controls.
+    ///   - strategies: seat → roster strategy id for every OTHER seat.
+    public init(seed: Data, players: Int, humanSeat: Int = 0, strategies: [Int: Int]) {
+        self.players = players
+        self.humanSeat = humanSeat
+        self.requestedStrategies = strategies
+        Task { await self.boot(seed: seed) }
+    }
+
+    private func boot(seed: Data) async {
+        do {
+            try await engine.newGame(seed: seed, players: players)
+            for (seat, sid) in requestedStrategies where seat != humanSeat {
+                try? await engine.setSeatStrategy(seat: seat, strategyId: sid)
+            }
+            await refresh()
+            drive()
+        } catch {
+            lastReject = error as? EngineError ?? .unknown(-999)
+        }
+    }
+
+    // MARK: - Human intents
+
+    /// Legal moves for the human seat (kernel-computed; never hand-rolled).
+    public func legalMoves() async -> [Move] {
+        (try? await engine.legalMoves(seat: humanSeat)) ?? []
+    }
+
+    /// Apply a human move, then let the bots respond. Reject → published so the
+    /// UI can fire the rigid haptic + toast and unlock the touched cards (C1).
+    public func play(_ move: Move) {
+        Task {
+            do {
+                try await engine.apply(seat: humanSeat, move: move)
+                lastReject = nil
+                await refresh()
+                drive()
+            } catch {
+                lastReject = error as? EngineError ?? .unknown(-999)
+            }
+        }
+    }
+
+    // MARK: - Bot drive loop
+
+    private func drive() {
+        driveTask?.cancel()
+        driveTask = Task { await self.runBots() }
+    }
+
+    private func runBots() async {
+        while !Task.isCancelled {
+            guard let over = try? await engine.gameOver() else { break }
+            if over >= 0 { foolSeat = over; break }
+
+            guard let mask = try? await engine.actorMask() else { break }
+            // Human's turn (they're eligible): stop and wait for input.
+            if (mask & (1 << humanSeat)) != 0 { break }
+            if mask == 0 { break }
+
+            await applyThermalPolicy()
+
+            thinking = true
+            try? await Task.sleep(nanoseconds: botDelayNanos())
+            if Task.isCancelled { thinking = false; break }
+
+            let move = try? await engine.botStep(humanSeat: humanSeat)
+            thinking = false
+            guard let move, !Task.isCancelled else { break }
+            lastBotMove = move
+            await refresh()
+        }
+        await refresh()
+        if let over = try? await engine.gameOver(), over >= 0 { foolSeat = over }
+    }
+
+    private func refresh() async {
+        if let v = try? await engine.state(viewer: humanSeat) { view = v }
+        // Publish the human's legal menu too, so the board's enable-states are
+        // always kernel-driven and synchronous to read in view bodies.
+        humanLegal = (try? await engine.legalMoves(seat: humanSeat)) ?? []
+        actorMask = (try? await engine.actorMask()) ?? 0
+    }
+
+    // MARK: - Pacing & thermal guard (§7.2, §16.B2)
+
+    /// Deliberate inter-bot UX pacing, 600–1200ms (mirrors the server's
+    /// e2e/bench_bot_e2e.ts "deliberate inter-bot UX pacing"). Deterministic
+    /// jitter from the current battle count so replays feel identical.
+    private func botDelayNanos() -> UInt64 {
+        let jitter = UInt64(abs((view?.battles.count ?? 0) * 137) % 600)
+        return (600 + jitter) * 1_000_000
+    }
+
+    /// When the device is hot, temporarily run heavy solvers as espresso so the
+    /// game never freezes and the phone never cooks (§7.2, §15 risk 2). When it
+    /// cools, restore each seat's requested strategy.
+    private var espressoId: Int? // resolved lazily from the roster
+    private var downgraded = false
+
+    private func applyThermalPolicy() async {
+        let hot = ProcessInfo.processInfo.thermalState.rawValue >= ProcessInfo.ThermalState.serious.rawValue
+        if hot == downgraded { return }
+
+        if espressoId == nil {
+            let count = await engine.strategyCount()
+            for i in 0..<count where (try? await engine.strategyName(i)) == "espresso" { espressoId = i }
+        }
+        for (seat, sid) in requestedStrategies where seat != humanSeat {
+            let target = hot ? (espressoId ?? sid) : sid
+            try? await engine.setSeatStrategy(seat: seat, strategyId: target)
+        }
+        downgraded = hot
+    }
+
+    deinit { driveTask?.cancel() }
+}

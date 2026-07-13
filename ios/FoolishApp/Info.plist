@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>Foolish</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<!-- Localizations shipped from day one (§5.5): en / ru / ko. -->
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>en</string>
+		<string>ru</string>
+		<string>ko</string>
+	</array>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<!-- Standard HTTPS only; no non-exempt encryption (§11). -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<!-- Dark-first identity (§5.1): the app forces its own dark palette. -->
+	<key>UIUserInterfaceStyle</key>
+	<string>Dark</string>
+	<key>UILaunchScreen</key>
+	<dict>
+		<key>UIColorName</key>
+		<string>LaunchBackground</string>
+	</dict>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+	</array>
+	<!-- QR replay scanning (§16.C4). String required before review even though
+	     the camera is only used on the Replays screen. -->
+	<key>NSCameraUsageDescription</key>
+	<string>Scan a replay QR code to watch a shared game.</string>
+</dict>
+</plist>

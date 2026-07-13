@@ -35,7 +35,12 @@ yarn-error.log*
 .env.build
 .vercel
 
-*.sw*
+# Vim swap files. NOTE: must not be `*.sw*` — that also swallows *.swift
+# (the entire iOS app). Match only the real swap extensions.
+*.swp
+*.swo
+*.swn
+.*.sw?
 .vscode
 .cursor
 

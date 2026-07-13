@@ -167,6 +167,18 @@ ios-smoke:
 	$(CC) $(IOS_CFLAGS) ios/ios_api_smoke.c ios/ios_api.c $(CORE_SRC) -lm -o build/ios_smoke
 	./build/ios_smoke
 
+# Golden fixtures for the Swift EngineGoldenTests (§16.A3). Emits
+# ../ios/Fixtures/goldens.json from the SAME bridge the app links. Regenerate
+# after any engine/bridge change and commit the result; the Swift test then
+# proves the native build reproduces it byte-for-byte.
+.PHONY: ios-goldens
+ios-goldens:
+	@mkdir -p build
+	$(CC) $(IOS_CFLAGS) ios/ios_goldens.c ios/ios_api.c $(CORE_SRC) -lm -o build/ios_goldens
+	@mkdir -p ../ios/Fixtures
+	./build/ios_goldens > ../ios/Fixtures/goldens.json
+	@echo "wrote ../ios/Fixtures/goldens.json"
+
 # L1 memory budget measurement (docs/WASM_L1_BUDGET.md). Plays ~63K real games
 # and reports the observed maxima that size every wasm static buffer. Built at
 # the WASM cap set + headroom so the numbers are true maxima; -DREPLAY_STATS

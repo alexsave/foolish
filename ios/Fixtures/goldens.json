@@ -1,0 +1,166 @@
+{
+  "generator": "cnitro/ios/ios_goldens.c",
+  "nPlayers": 4,
+  "games": [
+    {
+      "seedByte0": 131,
+      "dealHash": "8b1614eb7d954992",
+      "seat0LegalHash": "9b8a3e00c63ea86f",
+      "steps": 106,
+      "fool": -1,
+      "playHash": "11b167aa5adb6561"
+    },
+    {
+      "seedByte0": 6,
+      "dealHash": "b12823fb733aabc6",
+      "seat0LegalHash": "9b8a3e00c63ea86f",
+      "steps": 163,
+      "fool": 1,
+      "playHash": "7e15eefc8df92ad8"
+    },
+    {
+      "seedByte0": 137,
+      "dealHash": "1f9eaa4a4f72543f",
+      "seat0LegalHash": "9b8a3e00c63ea86f",
+      "steps": 92,
+      "fool": -1,
+      "playHash": "41735e353b7a3ff1"
+    },
+    {
+      "seedByte0": 12,
+      "dealHash": "4c904b44577c10b9",
+      "seat0LegalHash": "938cf375c81b5e08",
+      "steps": 74,
+      "fool": -1,
+      "playHash": "c35f7f23370ab2fc"
+    },
+    {
+      "seedByte0": 143,
+      "dealHash": "514c83aaa4dc4e6f",
+      "seat0LegalHash": "c2f6dbaae53cbff8",
+      "steps": 121,
+      "fool": -1,
+      "playHash": "931768baa98f7cc1"
+    },
+    {
+      "seedByte0": 18,
+      "dealHash": "be60c68c400de0a7",
+      "seat0LegalHash": "7fba6ea3e5726072",
+      "steps": 117,
+      "fool": 3,
+      "playHash": "d9d970e7a1db239b"
+    },
+    {
+      "seedByte0": 149,
+      "dealHash": "7ffda5260b22707f",
+      "seat0LegalHash": "9b8a3e00c63ea86f",
+      "steps": 101,
+      "fool": -1,
+      "playHash": "038ecf5328135a21"
+    },
+    {
+      "seedByte0": 24,
+      "dealHash": "017e56217539dc8e",
+      "seat0LegalHash": "9b8a3e00c63ea86f",
+      "steps": 146,
+      "fool": 3,
+      "playHash": "ed2cd74e54eeb24a"
+    },
+    {
+      "seedByte0": 155,
+      "dealHash": "8387f47c1c5e9918",
+      "seat0LegalHash": "9b8a3e00c63ea86f",
+      "steps": 146,
+      "fool": 1,
+      "playHash": "58d740acd40ad646"
+    },
+    {
+      "seedByte0": 30,
+      "dealHash": "815386dfec7faeff",
+      "seat0LegalHash": "9b8a3e00c63ea86f",
+      "steps": 38,
+      "fool": -1,
+      "playHash": "b3e1b329f36a7f81"
+    },
+    {
+      "seedByte0": 161,
+      "dealHash": "03dff2ca324adbc1",
+      "seat0LegalHash": "9b8a3e00c63ea86f",
+      "steps": 203,
+      "fool": 0,
+      "playHash": "dfc38ba2e2db13a4"
+    },
+    {
+      "seedByte0": 36,
+      "dealHash": "02dab3ba54d4e4b5",
+      "seat0LegalHash": "9b8a3e00c63ea86f",
+      "steps": 211,
+      "fool": 3,
+      "playHash": "1c6081348ac988de"
+    },
+    {
+      "seedByte0": 167,
+      "dealHash": "0f976f18b42ed565",
+      "seat0LegalHash": "9b8a3e00c63ea86f",
+      "steps": 123,
+      "fool": 1,
+      "playHash": "1ec3d3600b189a7b"
+    },
+    {
+      "seedByte0": 42,
+      "dealHash": "2724ec5a2199915d",
+      "seat0LegalHash": "9b8a3e00c63ea86f",
+      "steps": 168,
+      "fool": 1,
+      "playHash": "d805fd573d3122f4"
+    },
+    {
+      "seedByte0": 173,
+      "dealHash": "5a22b902cbf830bc",
+      "seat0LegalHash": "9b8a3e00c63ea86f",
+      "steps": 103,
+      "fool": -1,
+      "playHash": "2b614441dca42569"
+    },
+    {
+      "seedByte0": 48,
+      "dealHash": "f2ca3314f3757d29",
+      "seat0LegalHash": "9b8a3e00c63ea86f",
+      "steps": 168,
+      "fool": 2,
+      "playHash": "be2bcf90eb4622e0"
+    },
+    {
+      "seedByte0": 179,
+      "dealHash": "1217e0019d408648",
+      "seat0LegalHash": "9b8a3e00c63ea86f",
+      "steps": 219,
+      "fool": 3,
+      "playHash": "ab8141a870ff3a88"
+    },
+    {
+      "seedByte0": 54,
+      "dealHash": "23e871d34b023738",
+      "seat0LegalHash": "9b8a3e00c63ea86f",
+      "steps": 170,
+      "fool": 3,
+      "playHash": "947124c6181c4a68"
+    },
+    {
+      "seedByte0": 185,
+      "dealHash": "0383436333a19ea5",
+      "seat0LegalHash": "9b8a3e00c63ea86f",
+      "steps": 175,
+      "fool": 3,
+      "playHash": "08d5107f38b0ef6a"
+    },
+    {
+      "seedByte0": 60,
+      "dealHash": "ee7ef09a2440d335",
+      "seat0LegalHash": "f7e62b355b529bda",
+      "steps": 183,
+      "fool": 1,
+      "playHash": "ee725d1767700672"
+    }
+  ]
+}
