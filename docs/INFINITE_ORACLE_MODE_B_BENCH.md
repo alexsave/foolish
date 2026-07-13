@@ -80,11 +80,17 @@ kept on its own branch (unmerged):
   **Verified in headless Chromium** (`docs/screenshots/oracle-modeb.png`):
   `crossOriginIsolated === true`, `window.__oracleMode === 'B'`, the overlay
   streams the same per-candidate EFs as Mode A.
-- **Coarser verdicts.** Endgame win/draw/loss verdicts in Mode B currently come
-  only from `forced_loss` (proven losses), not the full explain-probe table —
-  §8b.5 MT6's acknowledged simplification. Mode A remains the richer exact-regime
-  path. Shipped `bots/rules/guards.wasm` and Mode A `oracle.wasm` stay
-  byte-identical throughout.
+- **Full exact endgame verdicts (MT6, done).** The per-move win/draw/loss
+  verdict probe — with depth ("WIN in 3") — is now hoisted out of
+  `OG_EXPLAIN_BUILD` behind `FOOLISH_ORACLE_MT`, so Mode B shows the identical
+  exact-regime panel as Mode A (verified in-browser,
+  `docs/screenshots/oracle-modeb-exact.png`: `A♥ → WIN in 3`, played `K♠`
+  unknown). The probe is per-thread (thread-local verdict state, no races) and
+  runs only when the endgame gate passes; the controller stops on a proven
+  win/loss and defuses the probe if the position proves nothing at budget.
+  Shipped `bots/rules/guards.wasm` and Mode A `oracle.wasm` stay byte-identical
+  throughout (the OG_EXPLAIN paths are kept textually unchanged; MT variants sit
+  alongside under `#elif defined(FOOLISH_ORACLE_MT)`).
 
 The recommendation below is unchanged: the ~10% latency win still doesn't
 justify the COOP/COEP blast radius + concurrency C for latency alone, but the

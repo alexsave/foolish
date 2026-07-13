@@ -75,10 +75,13 @@ void wasm_mt_setup(int seat, uint32_t seed_base, uint32_t nthreads) {
     g_ogmt.n_candidates = 0;
     g_ogmt.chosen = -1;
     __atomic_store_n(&g_ogmt.batches, 0u, __ATOMIC_RELAXED);
+    __atomic_store_n(&g_ogmt.solver_applied, 0u, __ATOMIC_RELAXED);
+    __atomic_store_n(&g_ogmt.defuse_probe, 0u, __ATOMIC_RELAXED);
     for (int i = 0; i < OG_MT_MAX_CANDS; i++) {
         __atomic_store_n(&g_ogmt.sum_fp[i], 0ull, __ATOMIC_RELAXED);
         __atomic_store_n(&g_ogmt.nsim[i], 0u, __ATOMIC_RELAXED);
         __atomic_store_n(&g_ogmt.forced_loss[i], 0u, __ATOMIC_RELAXED);
+        g_ogmt.verdict[i] = 0;
     }
     /* publish, then release-bump the generation and wake parked threads */
     __atomic_add_fetch(&g_ogmt.generation, 1u, __ATOMIC_RELEASE);
@@ -119,6 +122,18 @@ int wasm_mt_forced(int i) {
     if (i < 0 || i >= OG_MT_MAX_CANDS) return 0;
     return (int)__atomic_load_n(&g_ogmt.forced_loss[i], __ATOMIC_RELAXED);
 }
+__attribute__((export_name("wasm_mt_solver")))
+int wasm_mt_solver(void) { return (int)__atomic_load_n(&g_ogmt.solver_applied, __ATOMIC_RELAXED); }
+__attribute__((export_name("wasm_mt_verdict")))
+int wasm_mt_verdict(int i) {
+    if (i < 0 || i >= OG_MT_MAX_CANDS) return 2000001;   // OG_EX_NONE_V
+    return g_ogmt.verdict[i];
+}
+/* Give up the (expensive) endgame verdict probe: the controller calls this once
+ * it sees the solver fired but proved nothing at budget, so later batches are
+ * pure-MC-priced (§8b.5 / §5.4). */
+__attribute__((export_name("wasm_mt_defuse")))
+void wasm_mt_defuse(void) { __atomic_store_n(&g_ogmt.defuse_probe, 1u, __ATOMIC_RELAXED); }
 
 /* Dump the candidate descriptor table into the io buffer for the TS overlay.
  * Per candidate: type, n_cards, n_cards x cardByte, n_targets, n_targets x

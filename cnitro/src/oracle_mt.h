@@ -46,6 +46,12 @@ typedef struct {
     uint32_t forced_loss[OG_MT_MAX_CANDS];
     uint32_t batches;               // # accumulated batches across all threads
     uint32_t desc_mismatch;         // candidate-set disagreement counter
+
+    // exact endgame verdicts (MT6): the full per-candidate win/draw/loss table
+    // from the same verdict probe Mode A runs, hoisted behind FOOLISH_ORACLE_MT.
+    uint32_t solver_applied;        // 1 = the endgame solver fired this decision
+    uint32_t defuse_probe;          // 1 = skip the (expensive) probe — unproven, gave up
+    int32_t  verdict[OG_MT_MAX_CANDS];  // og_ex_verdict value / sentinel, per candidate
 } OgMtControl;
 
 extern OgMtControl g_ogmt;

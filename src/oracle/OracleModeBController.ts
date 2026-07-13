@@ -50,6 +50,19 @@ interface MtExports {
     wasm_mt_nsim(i: number): number;
     wasm_mt_forced(i: number): number;
     wasm_mt_candidates(): number;
+    wasm_mt_solver(): number;
+    wasm_mt_verdict(i: number): number;
+    wasm_mt_defuse(): void;
+}
+
+const OG_EX_NONE_V = 2000001, OG_EX_UNKNOWN_V = 2000002, OG_EX_ILLEGAL_V = 2000003;
+function decodeVerdict(val: number): { verdict: OracleVerdict; verdictVal?: number } {
+    if (val === OG_EX_NONE_V) return { verdict: 'none' };
+    if (val === OG_EX_UNKNOWN_V) return { verdict: 'unknown' };
+    if (val === OG_EX_ILLEGAL_V) return { verdict: 'illegal' };
+    if (val > 0) return { verdict: 'win', verdictVal: val };
+    if (val < 0) return { verdict: 'loss', verdictVal: val };
+    return { verdict: 'draw' };
 }
 
 const raf: (cb: () => void) => number =
@@ -73,6 +86,7 @@ export class OracleModeBController {
     private error?: string;
     private startMs = 0;
     private rafId: number | null = null;
+    private defused = false;
 
     private subs = new Set<Subscriber>();
 
@@ -117,6 +131,7 @@ export class OracleModeBController {
         this.job = job;
         this.error = undefined;
         this.startMs = Date.now();
+        this.defused = false;
         this.status = 'loading';
         this.publish();
 
@@ -181,11 +196,33 @@ export class OracleModeBController {
 
     private poll(gen: number): void {
         if (gen !== this.gen || !this.ex) return;
+        const ex = this.ex;
         const elapsed = Date.now() - this.startMs;
+
+        // exact endgame: if the solver proved a win/loss, stop immediately (§8b.5).
+        const solver = ex.wasm_mt_solver() !== 0;
+        let hasWinLoss = false;
+        if (solver) {
+            const n = ex.wasm_mt_ncand();
+            for (let i = 0; i < n; i++) {
+                const v = decodeVerdict(ex.wasm_mt_verdict(i)).verdict;
+                if (v === 'win' || v === 'loss') { hasWinLoss = true; break; }
+            }
+        }
+        if (solver && hasWinLoss) {
+            this.status = 'exact';
+            ex.wasm_mt_stop();
+            this.publish();
+            return;
+        }
+        // endgame gate passed but nothing proven at budget: defuse the expensive
+        // per-choose probe so later batches are pure-MC-priced (§5.4).
+        if (solver && !hasWinLoss && !this.defused) { this.defused = true; ex.wasm_mt_defuse(); }
+
         const minN = this.minNsim();
         if ((minN >= ORACLE_CONVERGE_MIN_N && elapsed >= ORACLE_MIN_FOCUS_MS) || elapsed >= ORACLE_HARD_CAP_MS) {
             this.status = 'converged';
-            this.ex.wasm_mt_stop();
+            ex.wasm_mt_stop();
             this.publish();
             return;
         }
@@ -223,7 +260,7 @@ export class OracleModeBController {
         // keep the compiled module + shared memory for a possible re-open
     }
 
-    private readCandidates(): OracleCandidate[] {
+    private readCandidates(exact: boolean): OracleCandidate[] {
         const ex = this.ex!;
         const job = this.job!;
         const trump = job.gameBlob.power_suit;
@@ -249,34 +286,56 @@ export class OracleModeBController {
             const se = nsim > 0 ? 1.2 / Math.sqrt(nsim) : Infinity;
             const tax = mean != null && type === 'attack' && job.deckAlive
                 ? ORACLE_TRUMP_KEEP * cards.filter((tk) => tk.endsWith('*')).length : 0;
-            const verdict: OracleVerdict = forced ? 'loss' : 'none';
+            // exact endgame verdict from the probe; fall back to octogen's own
+            // forced_loss flag when the probe left it 'none'.
+            const dv = decodeVerdict(ex.wasm_mt_verdict(i));
+            const verdict: OracleVerdict = dv.verdict !== 'none' ? dv.verdict : (forced ? 'loss' : 'none');
             out.push({
                 key, type, label: `${type} ${cards.join(',')}`, cards, target: target.length ? target : undefined,
                 n: nsim, mean, se, adjusted: mean == null ? null : mean + tax,
-                verdict, forcedLoss: forced, pruned: false, chosen: i === chosen,
+                verdict, verdictVal: dv.verdictVal, forcedLoss: forced, pruned: false, chosen: i === chosen,
                 played: key === job.recordedKey,
             });
         }
-        out.sort((a, b) => {
-            if (a.adjusted == null && b.adjusted == null) return 0;
-            if (a.adjusted == null) return 1;
-            if (b.adjusted == null) return -1;
-            return a.adjusted - b.adjusted;
-        });
+        if (exact) {
+            const RANK: Record<string, number> = { win: 0, draw: 1, unknown: 2, none: 3, loss: 4, illegal: 5 };
+            const depth = (c: OracleCandidate) => (c.verdictVal != null ? 1000 - Math.abs(c.verdictVal) : 1000);
+            out.sort((a, b) => (RANK[a.verdict] ?? 9) - (RANK[b.verdict] ?? 9) || depth(b) - depth(a));
+        } else {
+            out.sort((a, b) => {
+                if (a.adjusted == null && b.adjusted == null) return 0;
+                if (a.adjusted == null) return 1;
+                if (b.adjusted == null) return -1;
+                return a.adjusted - b.adjusted;
+            });
+        }
         return out;
+    }
+
+    private isExact(): boolean {
+        const ex = this.ex;
+        if (!ex || ex.wasm_mt_solver() === 0) return false;
+        const n = ex.wasm_mt_ncand();
+        for (let i = 0; i < n; i++) {
+            const v = decodeVerdict(ex.wasm_mt_verdict(i)).verdict;
+            if (v === 'win' || v === 'loss') return true;
+        }
+        return false;
     }
 
     private snapshot(): OracleSnapshot {
         const job = this.job!;
         const ex = this.ex;
-        const candidates = ex && this.status !== 'loading' && this.status !== 'error' ? this.readCandidates() : [];
+        const active = !!ex && this.status !== 'loading' && this.status !== 'error';
+        const exact = active && (this.status === 'exact' || this.isExact());
+        const candidates = active ? this.readCandidates(exact) : [];
         const totalWorlds = candidates.reduce((m, c) => Math.max(m, c.n), 0);
         const elapsedMs = this.startMs ? Date.now() - this.startMs : 0;
         const recordedPresent = candidates.some((c) => c.played);
         return {
             decisionId: job.decisionId,
             status: this.status,
-            regime: 'mc',
+            regime: exact ? 'exact' : 'mc',
             candidates,
             totalWorlds,
             worldsPerSec: elapsedMs > 0 ? Math.round((totalWorlds / elapsedMs) * 1000) : 0,

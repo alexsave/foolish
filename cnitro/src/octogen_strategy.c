@@ -978,6 +978,16 @@ static void og_ex_emit(const Game *g, int bot_idx, const LegalMoves *moves,
                        int chosen_idx, int solver_applied, int solver_win_idx);
 #endif  // OG_EXPLAIN_BUILD
 
+#if defined(FOOLISH_ORACLE_MT) && !defined(OG_EXPLAIN_BUILD)
+// Mode B (docs/INFINITE_ORACLE_DESIGN.md §8b.5 MT6) reuses the exact-verdict
+// probe below but not the JSON dump, so declare just the verdict state the probe
+// fills. Thread-local: every thread runs its own probe over the same position
+// (identical results), so no cross-thread races on these.
+enum { OG_EX_NONE_V = 2000001, OG_EX_UNKNOWN_V = 2000002, OG_EX_ILLEGAL_V = 2000003 };
+static _Thread_local int og_ex_solve_applied = 0;
+static _Thread_local int og_ex_verdict[600];
+#endif
+
 // ---------- root endgame solve (win take + loss avoid) ---------------------
 
 // Solve every root move with a full window when 2 players remain and the
@@ -1058,7 +1068,31 @@ static int og_try_endgame_solve(const Game *g, int bot_idx,
         cd_sim_solve_reset();                       // cold TT for the real solve
         random_strategy_set_seed(og_ex_rng_save);   // unperturbed strategy RNG
     }
-#endif  // OG_EXPLAIN_BUILD
+#elif defined(FOOLISH_ORACLE_MT)
+    // Mode B: the SAME verdict probe (MT6), gated on the shared defuse flag
+    // instead of og_explain_on(). Runs per-thread over the shared position;
+    // og_ex_verdict/solve_applied are thread-local. Once the controller decides
+    // the position is unprovable at budget it sets defuse_probe, and this
+    // expensive per-choose solve is skipped (records unknown MC-priced batches).
+    if (bbsolve && !__atomic_load_n(&g_ogmt.defuse_probe, __ATOMIC_RELAXED)) {
+        og_ex_solve_applied = 1;
+        uint32_t og_ex_rng_save = random_strategy_rng_get();
+        int cap = (int)(sizeof(og_ex_verdict) / sizeof(og_ex_verdict[0]));
+        for (int i = 0; i < moves->n && i < cap; i++) {
+            SimState child = root_sim;
+            if (!cd_sim_apply_root_move(&child, bot_idx, &moves->moves[i])) {
+                og_ex_verdict[i] = OG_EX_ILLEGAL_V; continue;
+            }
+            int ab = 0;
+            const char *ebs = getenv("OG_EXPLAIN_SOLVE_BUDGET");
+            long eb = ebs ? (long)atoi(ebs) : 4000000L;
+            int v = cd_sim_solve_d(&child, bot_idx, -2000, 2000, &eb, 1, &ab);
+            og_ex_verdict[i] = (ab || eb <= 0) ? OG_EX_UNKNOWN_V : v;
+        }
+        cd_sim_solve_reset();
+        random_strategy_set_seed(og_ex_rng_save);
+    }
+#endif  // OG_EXPLAIN_BUILD / FOOLISH_ORACLE_MT
 
     Solver S;
     S.budget  = OG_SOLVE_BUDGET;
@@ -1148,6 +1182,44 @@ typedef struct {
     int idx[OG_MAX_CANDS];
     int n;
 } Candidates;
+
+#ifdef FOOLISH_ORACLE_MT
+// Mode B helpers (docs/INFINITE_ORACLE_DESIGN.md §8b.5). Publish the candidate
+// descriptor table once per generation (CAS), and copy the thread's exact
+// verdicts into the shared accumulator. Candidate order is deterministic
+// (og_pick_candidates, no RNG), so index i is a stable cross-thread key.
+static void og_mt_publish_desc(const LegalMoves *moves, const Candidates *C) {
+    uint32_t st = 0;
+    if (__atomic_load_n(&g_ogmt.cand_state, __ATOMIC_ACQUIRE) != 0) return;
+    if (!__atomic_compare_exchange_n(&g_ogmt.cand_state, &st, 1u, 0,
+                                     __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) return;
+    int n = C->n;
+    g_ogmt.n_candidates = n;
+    for (int i = 0; i < n && i < OG_MT_MAX_CANDS; i++) {
+        const LegalMove *m = &moves->moves[C->idx[i]];
+        OgMtCand *d = &g_ogmt.cand[i];
+        d->type = (uint8_t)m->type;
+        int nc = m->n_cards; if (nc > OG_MT_MAX_CARDS) nc = OG_MT_MAX_CARDS;
+        d->n_cards = (uint8_t)nc;
+        for (int k = 0; k < nc; k++)
+            d->cards[k] = (uint8_t)(((m->cards[k].suit & 0xf) << 4) | (m->cards[k].value & 0xf));
+        if (m->type == MOVE_COVER) {
+            d->n_targets = (uint8_t)nc;
+            for (int k = 0; k < nc; k++)
+                d->targets[k] = (uint8_t)(((m->attack_cards[k].suit & 0xf) << 4) | (m->attack_cards[k].value & 0xf));
+        } else {
+            d->n_targets = 0;
+        }
+    }
+    __atomic_store_n(&g_ogmt.cand_state, 2u, __ATOMIC_RELEASE);
+}
+static void og_mt_capture_verdicts(const Candidates *C) {
+    if (!og_ex_solve_applied) return;
+    __atomic_store_n(&g_ogmt.solver_applied, 1u, __ATOMIC_RELAXED);
+    for (int i = 0; i < C->n && i < OG_MT_MAX_CANDS; i++)
+        g_ogmt.verdict[i] = og_ex_verdict[C->idx[i]];
+}
+#endif
 
 static void og_ranked_insert(int *idxs, double *keys, int *n, int cap,
                              int idx, double key) {
@@ -1614,6 +1686,10 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
         for (int i = 0; i < (int)(sizeof(og_ex_verdict)/sizeof(og_ex_verdict[0])); i++)
             og_ex_verdict[i] = OG_EX_NONE_V;
     }
+#elif defined(FOOLISH_ORACLE_MT)
+    og_ex_solve_applied = 0;
+    for (int i = 0; i < (int)(sizeof(og_ex_verdict)/sizeof(og_ex_verdict[0])); i++)
+        og_ex_verdict[i] = OG_EX_NONE_V;
 #endif
     int solved = og_no_solve ? -1
                : og_try_endgame_solve(g, bot_idx, moves, &B, forced_loss, &n_safe);
@@ -1623,6 +1699,18 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
             Candidates EC; og_pick_candidates(g, moves, forced_loss, &EC);
             og_ex_emit(g, bot_idx, moves, &B, &EC, NULL, NULL, NULL, forced_loss,
                        solved, og_ex_solve_applied, solved);
+        }
+#endif
+#ifdef FOOLISH_ORACLE_MT
+        // Proven win: octogen returns the winning move directly (no MC). Publish
+        // the candidate table + verdicts so the controller shows the exact panel.
+        {
+            Candidates EC; og_pick_candidates(g, moves, forced_loss, &EC);
+            og_mt_publish_desc(moves, &EC);
+            og_mt_capture_verdicts(&EC);
+            for (int i = 0; i < EC.n; i++)
+                if (EC.idx[i] == solved) { __atomic_store_n(&g_ogmt.chosen, i, __ATOMIC_RELAXED); break; }
+            __atomic_fetch_add(&g_ogmt.batches, 1u, __ATOMIC_RELAXED);
         }
 #endif
         game_rng_set(saved_rng);
@@ -1820,29 +1908,8 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
     // of ints 1..N, so llround is exact).
     {
         int n = C.n;
-        uint32_t st = 0;
-        if (__atomic_load_n(&g_ogmt.cand_state, __ATOMIC_ACQUIRE) == 0 &&
-            __atomic_compare_exchange_n(&g_ogmt.cand_state, &st, 1u, 0,
-                                        __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
-            g_ogmt.n_candidates = n;
-            for (int i = 0; i < n && i < OG_MT_MAX_CANDS; i++) {
-                const LegalMove *m = &moves->moves[C.idx[i]];
-                OgMtCand *d = &g_ogmt.cand[i];
-                d->type = (uint8_t)m->type;
-                int nc = m->n_cards; if (nc > OG_MT_MAX_CARDS) nc = OG_MT_MAX_CARDS;
-                d->n_cards = (uint8_t)nc;
-                for (int k = 0; k < nc; k++)
-                    d->cards[k] = (uint8_t)(((m->cards[k].suit & 0xf) << 4) | (m->cards[k].value & 0xf));
-                if (m->type == MOVE_COVER) {
-                    d->n_targets = (uint8_t)nc;
-                    for (int k = 0; k < nc; k++)
-                        d->targets[k] = (uint8_t)(((m->attack_cards[k].suit & 0xf) << 4) | (m->attack_cards[k].value & 0xf));
-                } else {
-                    d->n_targets = 0;
-                }
-            }
-            __atomic_store_n(&g_ogmt.cand_state, 2u, __ATOMIC_RELEASE);
-        }
+        og_mt_publish_desc(moves, &C);
+        og_mt_capture_verdicts(&C);           // NONE unless the endgame probe fired
         for (int i = 0; i < n && i < OG_MT_MAX_CANDS; i++) {
             if (nsim[i] > 0) {
                 __atomic_fetch_add(&g_ogmt.sum_fp[i], (uint64_t)(score[i] + 0.5), __ATOMIC_RELAXED);
