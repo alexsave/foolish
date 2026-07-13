@@ -116,6 +116,23 @@ public actor EngineC {
         return String(decoding: d, as: UTF8.self)
     }
 
+    // MARK: replays (§7.3)
+
+    /// Encode the CURRENT game's history to a shareable base32 code.
+    public func replayEncodeCode() throws -> String {
+        let d = try json { fio_replay_encode_b32($0, $1) }
+        return String(decoding: d, as: UTF8.self)
+    }
+
+    /// Decode a shareable code to the decoded step list (does not touch the
+    /// current game). Byte-parity with the server (shared replay.c).
+    public func replayDecode(code: String) throws -> DecodedReplay {
+        let data = try code.withCString { cstr -> Data in
+            try json { fio_replay_decode_json(cstr, $0, $1) }
+        }
+        return try JSONDecoder().decode(DecodedReplay.self, from: data)
+    }
+
     // MARK: typed decoders (convenience)
 
     public func state(viewer: Int) throws -> GameView {

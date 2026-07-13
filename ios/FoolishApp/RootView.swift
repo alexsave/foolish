@@ -46,7 +46,7 @@ struct RootView: View {
             // Win screen over the settled board (§6 screen 4).
             if let fool = game.foolSeat {
                 WinView(
-                    view: game.view,
+                    game: game,
                     foolSeat: fool,
                     humanSeat: game.humanSeat,
                     onRematch: { if let c = lastConfig { coordinator.rematch(c) } },

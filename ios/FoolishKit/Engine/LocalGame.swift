@@ -88,6 +88,20 @@ public final class LocalGame: ObservableObject {
         }
     }
 
+    // MARK: - Replay sharing (§7.3, §16.C2)
+
+    /// Encode the finished (or in-progress) game to a shareable code, save it to
+    /// the local replay list, and return the foolish.cards URL. nil if encoding
+    /// fails (e.g. the log buffer overflowed — very long games).
+    public func makeShareURL() async -> URL? {
+        guard let code = try? await engine.replayEncodeCode(), !code.isEmpty else { return nil }
+        let fool = foolSeat ?? -1
+        let myResult = fool < 0 ? nil : (fool == humanSeat ? "lose" : "win")
+        ReplayStore.shared.save(ReplayRecord(code: code, savedAt: Date(),
+                                             players: players, fool: fool, myResult: myResult))
+        return URL(string: "https://foolish.cards/\(code)")
+    }
+
     // MARK: - Bot drive loop
 
     private func drive() {
