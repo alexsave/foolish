@@ -3,6 +3,7 @@
 // (M-D) will add its session here alongside `offlineGame`.
 
 import SwiftUI
+import Foundation
 import FoolishKit
 
 /// A chosen offline setup: which bot fills the opponent seats, and how many.

@@ -77,9 +77,40 @@ ios/
 
 ## Milestone status
 
-- **A — foundation:** ✅ engine bridge + `make ios-lib`/`ios-smoke`/`ios-goldens`,
-  DesignSystem tokens + components, golden + codec tests, DEBUG component gallery.
-- **B — offline slice:** ✅ Home (bot picker), Table, Win, LocalGame bot loop with
-  pacing + thermal guard, trilingual strings. (Tutorial, snapshot references, and
-  cross-zone card-flight animation are the remaining B polish.)
-- **C–F:** scaffolded (Net/replay/entitlements seams present) — see the design doc.
+Everything below the C engine has been developed against the design doc without a
+Mac in the loop, so the Swift compiles-in-principle but has **not been run through
+`xcodebuild` yet** — the first Mac session should `make ios-lib && xcodegen
+generate && xcodebuild ... build test` and fix any surfaced nits. The C bridge,
+by contrast, is proven on Linux (`make ios-smoke`, green).
+
+- **A — foundation:** ✅ engine bridge (`ios_api`), `make ios-lib`/`ios-smoke`/
+  `ios-goldens`, `project.yml`, Engine (EngineC actor, Models, LocalGame),
+  DesignSystem tokens + components, fern card back, golden + codec + Net tests,
+  DEBUG component gallery.
+- **B — offline slice:** ✅ Home (bot picker, left/right cycle), Table
+  (kernel-driven interaction), Win (rematch/share/home), LocalGame bot loop with
+  600–1200ms pacing + thermal downgrade guard, trilingual FStrings.
+  **Remaining:** the scripted Tutorial (§16.B6); cross-zone card-flight animation
+  (shared-namespace BoardDiff — today the board springs on state change).
+- **C — replays:** ✅ native encode+decode (base32 + shared `replay.c`, round-trip
+  proven), ReplayStore, Replays screen (paste/decode + transport), QR share,
+  universal-link routing + AASA. **Remaining:** render playback on the full board
+  (project decoded logs through the diff engine); camera QR scan (§16.C4).
+- **D — online:** `docs/PROTOCOL.md` (D0 skeleton), `Net/PackedAction` (awire wire,
+  tested), `Net/Auth` (nameToEmail + reserved prefix), `Net/VersionGate`, xcconfig
+  + supabase-swift declared. **Remaining:** the realtime feed, auth calls, lobby,
+  online Table/spectate, resync — the long pole (§16.D).
+- **E — seams/settings/l10n/a11y:** ✅ Entitlements (FreeEntitlements), Flags,
+  Settings (language/haptics/account seams/flags), `Localizable.xcstrings` +
+  generator, architecture lint, per-component a11y labels. **Remaining:** the full
+  a11y checklist pass + snapshot reference images (Mac).
+- **F — hardening/submission:** `Compliance.md` mirror. **Remaining (needs Apple
+  Developer account + Mac):** signing, app icon render, screenshots, TestFlight,
+  submission — all human-in-the-loop (§16.F).
+
+### External dependencies (other work-streams, not this repo's iOS code)
+- Stale-round server guard (`WEB_RACE_BUG_HANDOFF.md` §5) — must land before D.
+  The app already sends `intent_version` (PackedAction) so it won't reintroduce
+  the bug.
+- Account-deletion edge function (Oracle doc §4) — must exist before F submission
+  (Guideline 5.1.1(v)); the Settings Delete-Account seam calls it.

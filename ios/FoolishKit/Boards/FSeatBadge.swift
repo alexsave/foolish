@@ -3,6 +3,7 @@
 // (attacker/defender/"good"). No photos, no color-only state.
 
 import SwiftUI
+import Foundation   // sin(_:) for the thinking-dots pulse
 
 public struct FSeatBadge: View {
     public let name: String

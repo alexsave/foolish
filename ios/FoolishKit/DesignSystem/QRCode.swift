@@ -5,6 +5,7 @@
 // native equivalent.
 
 import SwiftUI
+import UIKit
 import CoreImage.CIFilterBuiltins
 
 public enum QRCode {
