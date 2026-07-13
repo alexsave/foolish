@@ -97,12 +97,17 @@ build/solver_difftest: tests/solver_difftest.c $(CORE_OBJ)
 # e2e/replay_codec.test.ts; also part of `make difftests`).
 build/replay_difftest: tests/replay_difftest.c $(CORE_OBJ)
 	$(CC) $(CFLAGS) tests/replay_difftest.c $(CORE_OBJ) -o $@ $(LDFLAGS)
-difftests: build/sim_difftest build/apply_difftest build/solver_difftest build/replay_difftest
+# Format-6 (partial-game, hidden-state-lossless) round trip + losslessness +
+# mid-game + size (docs/IMESSAGE_GAME_DESIGN.md §16 option 3).
+build/replay_v6_test: tests/replay_v6_test.c $(CORE_OBJ)
+	$(CC) $(CFLAGS) tests/replay_v6_test.c $(CORE_OBJ) -o $@ $(LDFLAGS)
+difftests: build/sim_difftest build/apply_difftest build/solver_difftest build/replay_difftest build/replay_v6_test
 	./build/sim_difftest 4 1000 && ./build/apply_difftest 4 200 && \
 	./build/solver_difftest 2 40 "" 200000 && \
 	./build/solver_difftest 3 40 "" 200000 && \
 	./build/solver_difftest 4 40 "" 200000 && \
-	./build/replay_difftest 40
+	./build/replay_difftest 40 && \
+	./build/replay_v6_test 40
 
 # L1 memory budget measurement (docs/WASM_L1_BUDGET.md). Plays ~63K real games
 # and reports the observed maxima that size every wasm static buffer. Built at

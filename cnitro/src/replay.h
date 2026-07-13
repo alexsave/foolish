@@ -17,6 +17,17 @@
 #include "game.h"
 
 #define REPLAY_FORMAT_VERSION  5
+// Format 6 (docs/IMESSAGE_GAME_DESIGN.md §16, option 3): the partial-game,
+// hidden-state-lossless variant. Unlike v5 — which derives DRAW logs publicly
+// (identity-hidden) and recovers the losers' cards by complement once the fool
+// is known — v6 entropy-codes every hidden card's identity INLINE at the moment
+// it is dealt or drawn (uniform over the unseen pool). Consequences: the decoded
+// stream carries REAL draw/deal identities (no retrodiction guess is ever
+// needed), an explicit atom count replaces "decode until fool known" so a stream
+// may terminate MID-GAME (no REPLAY_EINCOMPLETE), and the deal seed is NOT
+// carried (that is §16's alternative; the seed lives only in the FMSG envelope).
+// v5 stays byte-frozen; v6 is purely additive with its own version byte.
+#define REPLAY_FORMAT_VERSION_V6 6
 #define REPLAY_VERSION_ALPHABET 16
 // Hard guard: a malformed integer must never hang (mirrors core.ts MAX_ATOMS).
 #define REPLAY_MAX_ATOMS 20000
@@ -99,6 +110,31 @@ int replay_encode(const unsigned char *in, int in_len,
                   unsigned char *out, int out_cap);
 int replay_decode(const unsigned char *in, int in_len,
                   unsigned char *out, int out_cap);
+
+// ---------- Format 6 (partial-game, hidden-state-lossless) ------------------
+//
+// ENCODE input (v6 — v5's action stream plus the real hidden cards, since the
+// caller/server holds the true deck):
+//   u8 n (2..8), u8 trump_id (0..51), u8 first_attacker (< n)
+//   u16 LE n_actions       — number of top-level atoms to code (may be < the
+//                            full game: this is the mid-game cut point)
+//   u16 LE n_reveals       — number of real hidden cards supplied, in reveal
+//                            order: first n*CARDS_PER_PLAYER = the initial deal
+//                            (seat-major: seat 0's cards, then seat 1's, ...),
+//                            then one card per stock draw in the exact order the
+//                            refill cascade pops them. The flip is never listed
+//                            (it is the header trump and is drawn face-up last).
+//   n_reveals x u8         — wire card ids (0..51)
+//   per action (identical to v5): u8 kind, u8 seat, u8 n_pairs, pairs...
+//
+// ENCODE output / DECODE input: the replay integer, big-endian (as v5).
+//
+// DECODE output: the same header+log layout as v5, EXCEPT out[0] = 6, the log
+// stream is prefixed by one LOG_DRAW per seat carrying that seat's real initial
+// hand, every subsequent LOG_DRAW carries REAL card ids (never REPLAY_CARD_
+// HIDDEN), and out[4] (fool) is 0xFF when the stream ends mid-game.
+int replay_encode_v6(const unsigned char *in, int in_len,
+                     unsigned char *out, int out_cap);
 
 // Parameter of the last error (version for EVERSION, log_type<<16|menu size
 // for ENOTINMENU, 0 otherwise).
