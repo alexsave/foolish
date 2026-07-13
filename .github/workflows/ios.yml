@@ -1,0 +1,52 @@
+name: ios
+
+# iOS checks. The portable half runs on Linux (no Xcode needed): the C engine
+# bridge smoke test, goldens freshness, and the architecture lint. The Xcode
+# build+test half needs a macOS runner and is templated below — enable it once
+# an Apple Developer account / macOS minutes are available (Milestone F).
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ---- Portable: proves the bridge and fixtures on any clang box ------------
+  bridge-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bridge smoke test (drives a full game through fio_*)
+        run: cd cnitro && make ios-smoke
+
+      - name: Goldens are up to date
+        run: |
+          cd cnitro && make ios-goldens
+          if ! git diff --quiet -- ../ios/Fixtures/goldens.json; then
+            echo "::error::ios/Fixtures/goldens.json is stale — run 'make ios-goldens' and commit."
+            git --no-pager diff -- ../ios/Fixtures/goldens.json
+            exit 1
+          fi
+
+      - name: Architecture lint (§4, §16.E1)
+        run: bash ios/scripts/lint_architecture.sh
+
+  # ---- Xcode build + test (macOS) — enable in Milestone F -------------------
+  # xcode:
+  #   runs-on: macos-15
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - name: Install XcodeGen
+  #       run: brew install xcodegen
+  #     - name: Build the C engine xcframework
+  #       run: cd cnitro && make ios-lib
+  #     - name: Generate the project
+  #       run: cd ios && xcodegen generate
+  #     - name: Build & test
+  #       run: |
+  #         cd ios
+  #         xcodebuild -project Foolish.xcodeproj -scheme Foolish \
+  #           -destination 'platform=iOS Simulator,name=iPhone 16' \
+  #           build test | xcpretty

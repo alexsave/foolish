@@ -1,0 +1,6 @@
+#include "Base.xcconfig"
+
+// Debug-only overrides. Point at a staging Supabase project for CI/dev so tests
+// never touch prod (§16.D DoD: "do NOT point tests at prod").
+// SUPABASE_URL = https://<staging-ref>.supabase.co
+// SUPABASE_KEY = <staging-anon-key>

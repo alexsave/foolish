@@ -1,0 +1,11 @@
+// Base.xcconfig — settings shared by Debug and Release. Milestone D wiring
+// (§16.D1). The two Supabase values are the SAME public pair the web client uses
+// (README "Quick start"); the anon key is public by design, but it lives here
+// (not in source) so it is swapped per environment without a code change.
+//
+// FILL THESE IN before Milestone D online play (leave blank for v1 offline —
+// Net/ is not wired yet). Do NOT commit real values on a fork; use CI secrets
+// or a local untracked Config/Local.xcconfig that #includes this.
+
+SUPABASE_URL =
+SUPABASE_KEY =
