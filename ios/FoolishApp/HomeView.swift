@@ -17,6 +17,7 @@ struct HomeView: View {
     @State private var showGallery = false
     @State private var showReplays = false
     @State private var showSettings = false
+    @State private var showTutorial = false
 
     private var currentBot: (id: Int, name: String) {
         roster.isEmpty ? (0, "cordite") : roster[opponentIndex % roster.count]
@@ -127,17 +128,17 @@ struct HomeView: View {
     private var footer: some View {
         HStack(spacing: FSpace.xl) {
             footerLink("replays", "rectangle.stack") { showReplays = true }
-            footerLink("tutorial", "graduationcap") { toast = FStrings.t("ios.online_soon") }
+            footerLink("tutorial", "graduationcap") { showTutorial = true }
             footerLink("settings", "gearshape") { showSettings = true }
         }
         .padding(.bottom, FSpace.m)
         .sheet(isPresented: $showReplays) { ReplaysView() }
         .sheet(isPresented: $showSettings) { SettingsView() }
+        .fullScreenCover(isPresented: $showTutorial) { TutorialView() }
     }
 
     private func footerLink(_ key: String, _ system: String, _ action: @escaping () -> Void) -> some View {
-        // Tutorial (§16.B6) is still a placeholder; Replays (§16.C) and Settings
-        // (§16.E3) open their screens.
+        // Replays (§16.C), Tutorial (§16.B6) and Settings (§16.E3) open their screens.
         Button(action: action) {
             VStack(spacing: FSpace.xs) {
                 Image(systemName: system).font(.system(size: 18))
