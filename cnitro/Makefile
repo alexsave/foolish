@@ -763,7 +763,10 @@ WASM_ORACLE_MT_EXPORTS := $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) \
   -Wl,--export=wasm_mt_reserve \
   -Wl,--export=wasm_mt_warmup -Wl,--export=wasm_mt_setup -Wl,--export=wasm_mt_stop \
   -Wl,--export=wasm_mt_total -Wl,--export=wasm_mt_checksum -Wl,--export=wasm_mt_active \
-  -Wl,--export=wasm_mt_thread_main
+  -Wl,--export=wasm_mt_thread_main \
+  -Wl,--export=wasm_mt_ncand -Wl,--export=wasm_mt_ready -Wl,--export=wasm_mt_batches \
+  -Wl,--export=wasm_mt_chosen -Wl,--export=wasm_mt_sumfp -Wl,--export=wasm_mt_nsim \
+  -Wl,--export=wasm_mt_forced -Wl,--export=wasm_mt_candidates
 .PHONY: wasm-oracle-mt
 wasm-oracle-mt:
 	@mkdir -p build/botoraclemt

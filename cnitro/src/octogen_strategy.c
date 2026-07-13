@@ -40,6 +40,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stddef.h>
+#ifdef FOOLISH_ORACLE_MT
+#include "legal.h"
+#include "oracle_mt.h"     // Mode B: the shared accumulator this file feeds (MT5)
+#endif
 
 // ---------- small utils ------------------------------------------------
 
@@ -1806,6 +1810,50 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
     if (og_explain_on())
         og_ex_emit(g, bot_idx, moves, &B, &C, score, nsim, alive, forced_loss,
                    chosen, og_ex_solve_applied, -1);
+#endif
+#ifdef FOOLISH_ORACLE_MT
+    // MT5 (docs/INFINITE_ORACLE_DESIGN.md §8b): fold this batch's per-candidate
+    // rollout scores into the shared accumulator. Candidate enumeration is
+    // deterministic (og_pick_candidates, no RNG), so index i is a stable key
+    // across threads/batches — the first batch CAS-publishes the descriptor
+    // table, later ones only add integral finish-position sums (score[] is a sum
+    // of ints 1..N, so llround is exact).
+    {
+        int n = C.n;
+        uint32_t st = 0;
+        if (__atomic_load_n(&g_ogmt.cand_state, __ATOMIC_ACQUIRE) == 0 &&
+            __atomic_compare_exchange_n(&g_ogmt.cand_state, &st, 1u, 0,
+                                        __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
+            g_ogmt.n_candidates = n;
+            for (int i = 0; i < n && i < OG_MT_MAX_CANDS; i++) {
+                const LegalMove *m = &moves->moves[C.idx[i]];
+                OgMtCand *d = &g_ogmt.cand[i];
+                d->type = (uint8_t)m->type;
+                int nc = m->n_cards; if (nc > OG_MT_MAX_CARDS) nc = OG_MT_MAX_CARDS;
+                d->n_cards = (uint8_t)nc;
+                for (int k = 0; k < nc; k++)
+                    d->cards[k] = (uint8_t)(((m->cards[k].suit & 0xf) << 4) | (m->cards[k].value & 0xf));
+                if (m->type == MOVE_COVER) {
+                    d->n_targets = (uint8_t)nc;
+                    for (int k = 0; k < nc; k++)
+                        d->targets[k] = (uint8_t)(((m->attack_cards[k].suit & 0xf) << 4) | (m->attack_cards[k].value & 0xf));
+                } else {
+                    d->n_targets = 0;
+                }
+            }
+            __atomic_store_n(&g_ogmt.cand_state, 2u, __ATOMIC_RELEASE);
+        }
+        for (int i = 0; i < n && i < OG_MT_MAX_CANDS; i++) {
+            if (nsim[i] > 0) {
+                __atomic_fetch_add(&g_ogmt.sum_fp[i], (uint64_t)(score[i] + 0.5), __ATOMIC_RELAXED);
+                __atomic_fetch_add(&g_ogmt.nsim[i], (uint32_t)nsim[i], __ATOMIC_RELAXED);
+            }
+            if (forced_loss[C.idx[i]])
+                __atomic_store_n(&g_ogmt.forced_loss[i], 1u, __ATOMIC_RELAXED);
+        }
+        if (best >= 0) __atomic_store_n(&g_ogmt.chosen, best, __ATOMIC_RELAXED);
+        __atomic_fetch_add(&g_ogmt.batches, 1u, __ATOMIC_RELAXED);
+    }
 #endif
     game_rng_set(saved_rng);
     return chosen;
