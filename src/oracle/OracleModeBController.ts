@@ -302,11 +302,12 @@ export class OracleModeBController {
             const depth = (c: OracleCandidate) => (c.verdictVal != null ? 1000 - Math.abs(c.verdictVal) : 1000);
             out.sort((a, b) => (RANK[a.verdict] ?? 9) - (RANK[b.verdict] ?? 9) || depth(b) - depth(a));
         } else {
+            // by true expected finish (mean); trump tax is only a tie-break.
             out.sort((a, b) => {
-                if (a.adjusted == null && b.adjusted == null) return 0;
-                if (a.adjusted == null) return 1;
-                if (b.adjusted == null) return -1;
-                return a.adjusted - b.adjusted;
+                if (a.mean == null && b.mean == null) return 0;
+                if (a.mean == null) return 1;
+                if (b.mean == null) return -1;
+                return (a.mean - b.mean) || ((a.adjusted ?? a.mean) - (b.adjusted ?? b.mean));
             });
         }
         return out;
