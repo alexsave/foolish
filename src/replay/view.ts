@@ -56,6 +56,14 @@ export interface ReplayStep {
     discard: number;
     /** seat leading the current bout (drives the sword marker) */
     firstAttacker: number;
+    /**
+     * Seats in the order they went OUT as of this step (the fool is never in
+     * it). Folded from both PLAYER_OUT logs and the silent empty-stock refill
+     * outs, in kernel seat order — the ordered list the sim needs to map a
+     * rollout finish to a place (docs/INFINITE_ORACLE_DESIGN.md §8.4). Display
+     * never needed it; the oracle marshal does.
+     */
+    eliminationOrder: number[];
 }
 
 const sameCard = (a: Card, b: Card) => a.suit === b.suit && a.value === b.value;
@@ -88,6 +96,20 @@ export function buildReplaySteps(d: DecodedReplay): ReplayStep[] {
     let lastInfoWasPass = false;
 
     const handCount = (s: number) => hidden[s] + known[s].length;
+
+    // Ordered elimination list, folded from out-flag TRANSITIONS (PLAYER_OUT
+    // logs AND the silent empty-stock refill outs) in kernel seat order — see
+    // ReplayStep.eliminationOrder. Append-only; monotonic with `out[]`.
+    const prevOut = new Array(n).fill(false);
+    const eliminationOrder: number[] = [];
+    const recordOuts = () => {
+        for (let s = 0; s < n; s++) {
+            if (out[s] && !prevOut[s]) {
+                eliminationOrder.push(s);
+                prevOut[s] = true;
+            }
+        }
+    };
 
     // the IN seat from which get_next_player_index reaches `target`
     const previousIn = (target: number): number => {
@@ -140,6 +162,7 @@ export function buildReplaySteps(d: DecodedReplay): ReplayStep[] {
         flipped: flipped ? { ...flipped } : null,
         discard,
         firstAttacker,
+        eliminationOrder: [...eliminationOrder],
     });
 
     const steps: ReplayStep[] = [];
@@ -224,6 +247,8 @@ export function buildReplaySteps(d: DecodedReplay): ReplayStep[] {
             for (let s = 0; s < n; s++) if (handCount(s) === 0) out[s] = true;
         }
 
+        recordOuts();
+
         const realDraws = primaries.filter((c) => c.suit >= 0);
         slotRefs.push(slots.map((q) => [...q]));
         steps.push(
@@ -240,6 +265,7 @@ export function buildReplaySteps(d: DecodedReplay): ReplayStep[] {
     }
 
     // closing step: the fool is whoever is left holding cards
+    recordOuts();
     slotRefs.push(slots.map((q) => [...q]));
     steps.push(snapshot('end', d.fool, [], null, 0));
 

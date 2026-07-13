@@ -75,6 +75,14 @@ static int og_env_int(const char *name, int def) {
     return (v && v[0]) ? atoi(v) : def;
 }
 static _Thread_local int og_flags_loaded = 0;
+#ifdef FOOLISH_ORACLE_BUILD
+// Infinite-oracle hook (client replay analysis, docs/INFINITE_ORACLE_DESIGN.md
+// §6.2): let the browser bridge re-read the OG_* env between deliberation
+// batches, so the per-batch world budget can adapt to the measured device
+// speed. Mirrors cordite_reload_flags (cordite_strategy.c). Compiled ONLY into
+// oracle.wasm; shipped builds carry no trace of it.
+void og_reload_flags(void) { og_flags_loaded = 0; }
+#endif
 static _Thread_local int og_no_solve = 0, og_no_voids = 0, og_no_flip = 0;
 static _Thread_local int og_no_floors = 0, og_no_leaf = 0, og_no_avoid = 0;
 static _Thread_local int og_no_earlyexit = 0;
@@ -1340,7 +1348,16 @@ static void og_ex_emit(const Game *g, int bot_idx, const LegalMoves *moves,
 #endif
     const Candidates *C = (const Candidates *)Cv;
     int trump = g->power_suit;
+#ifdef FOOLISH_ORACLE_BUILD
+    // §6.3: the oracle appends verdict entries for pruned moves; heads-up
+    // ≤28-card positions can enumerate ~75-97 root moves, pushing a record past
+    // the 16 KiB staging cap where the freestanding snprintf TRUNCATES (not
+    // drops) into malformed JSON. Give the oracle build a big file-scope buffer
+    // (og_ex_emit is non-recursive, single-threaded in Mode A).
+    static char buf[65536]; int w = 0;
+#else
     char buf[16384]; int w = 0;
+#endif
     #define OGA(...) do { w += snprintf(buf + w, sizeof(buf) - w, __VA_ARGS__); } while (0)
 
     OGA("{\"ply\":%d,\"seat\":%d,\"deck\":%d,\"defender\":%d,\"trump\":%d,\"nlogs\":%d",
@@ -1424,6 +1441,41 @@ static void og_ex_emit(const Game *g, int bot_idx, const LegalMoves *moves,
         if (has_vv) OGA(",\"verdict_val\":%d", vv);
         OGA(",\"chosen\":%d}", (mi == chosen_idx) ? 1 : 0);
     }
+#ifdef FOOLISH_ORACLE_BUILD
+    // §6.3: in the exact regime, the move the player actually made may be
+    // excluded from candidacy as a proven loss — the very move a reviewer most
+    // wants judged. The probe already filled og_ex_verdict[mi] by MOVE index;
+    // emit a scoreless, pruned entry for every legal move with a PROVEN verdict
+    // (win/loss/draw) that is not already a candidate. C==NULL means the
+    // candidate set IS every move, so nothing is pruned; the MC regime
+    // (!solver_applied) emits none — mid-game menus can be thousands of moves.
+    if (solver_applied && C) {
+        int k2 = ncand;
+        for (int mi = 0; mi < moves->n; mi++) {
+            int is_cand = 0;
+            for (int k = 0; k < C->n; k++) if (C->idx[k] == mi) { is_cand = 1; break; }
+            if (is_cand) continue;
+            if (mi >= (int)(sizeof(og_ex_verdict)/sizeof(int))) continue;
+            int val = og_ex_verdict[mi];
+            if (val == OG_EX_NONE_V || val == OG_EX_UNKNOWN_V || val == OG_EX_ILLEGAL_V) continue;
+            const LegalMove *m = &moves->moves[mi];
+            const char *mt = (m->type >= 0 && m->type < 6) ? OG_EX_MTYPE[m->type] : "?";
+            char label[96]; og_ex_move_label(label, sizeof label, m, trump);
+            OGA("%s{\"type\":\"%s\",\"label\":\"%s\",\"cards\":", k2 ? "," : "", mt, label);
+            w += og_ex_cards_json(buf + w, sizeof(buf) - w, m->cards, m->n_cards, trump);
+            if (m->type == MOVE_COVER) {
+                OGA(",\"target\":");
+                w += og_ex_cards_json(buf + w, sizeof(buf) - w, m->attack_cards, m->n_cards, trump);
+            }
+            const char *vd = (val > 0) ? "win" : (val < 0) ? "loss" : "draw";
+            OGA(",\"score\":null,\"nsim\":0,\"alive\":0,\"pruned\":1,\"forced_loss\":%d",
+                (forced_loss ? (forced_loss[mi] ? 1 : 0) : 0));
+            OGA(",\"verdict\":\"%s\",\"verdict_val\":%d,\"chosen\":%d}",
+                vd, val, (mi == chosen_idx) ? 1 : 0);
+            k2++;
+        }
+    }
+#endif
     OGA("]");
 
     { char label[96] = "?";
@@ -1432,6 +1484,20 @@ static void og_ex_emit(const Game *g, int bot_idx, const LegalMoves *moves,
       OGA(",\"chosen\":\"%s\"}", label); }
     #undef OGA
 #ifdef CD_WASM_OVERLAY
+#ifdef FOOLISH_ORACLE_BUILD
+    // §6.3: the freestanding snprintf clamps (saturating w at sizeof(buf)-1)
+    // rather than failing, so a record that hit the staging cap is truncated
+    // malformed JSON. Detect the saturation and append an explicit overflow
+    // marker the worker recognizes (§8.5 step 9) instead of a broken line.
+    if (w >= (int)sizeof(buf) - 1) {
+        static const char ov[] = "{\"overflow\":1}";
+        int ol = (int)sizeof(ov) - 1;
+        if (og_ex_wlen + ol + 1 < (int)sizeof(og_ex_wbuf)) {
+            for (int i = 0; i < ol; i++) og_ex_wbuf[og_ex_wlen++] = ov[i];
+            og_ex_wbuf[og_ex_wlen++] = '\n';
+        }
+    } else
+#endif
     // append "buf\n" to the JS-readable buffer (drop the record if it won't fit)
     if (og_ex_wlen + w + 1 < (int)sizeof(og_ex_wbuf)) {
         for (int i = 0; i < w; i++) og_ex_wbuf[og_ex_wlen++] = buf[i];

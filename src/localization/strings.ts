@@ -87,7 +87,34 @@ export type StringId =
   | 'your_stats'
   | 'survival_rate'
   | 'times_fool'
-  | 'load_failed';
+  | 'load_failed'
+  | 'oracle_panel_title'
+  | 'oracle_button_title'
+  | 'oracle_no_decision'
+  | 'oracle_analyzing'
+  | 'oracle_converged'
+  | 'oracle_exact'
+  | 'oracle_memory'
+  | 'oracle_memory_on'
+  | 'oracle_memory_off'
+  | 'oracle_played'
+  | 'oracle_best'
+  | 'oracle_pruned'
+  | 'oracle_pruned_tip'
+  | 'oracle_approx'
+  | 'oracle_basis'
+  | 'oracle_memory_off_endgame'
+  | 'oracle_forced_loss'
+  | 'oracle_forced_move'
+  | 'oracle_ef_tip'
+  | 'oracle_unavailable'
+  | 'oracle_retry'
+  | 'oracle_class_best'
+  | 'oracle_class_excellent'
+  | 'oracle_class_good'
+  | 'oracle_class_inaccuracy'
+  | 'oracle_class_mistake'
+  | 'oracle_class_blunder';
 
 // English strings
 const strings_en: Record<StringId, string> = {
@@ -179,6 +206,33 @@ const strings_en: Record<StringId, string> = {
   survival_rate: 'Survival rate',
   times_fool: 'Times the fool',
   load_failed: 'Could not load — try again later',
+  oracle_panel_title: 'Move Oracle',
+  oracle_button_title: 'Oracle: move strength',
+  oracle_no_decision: 'No move to analyze yet',
+  oracle_analyzing: 'Analyzing… {n} worlds · {rate}/s',
+  oracle_converged: 'Converged',
+  oracle_exact: 'Exact (solved)',
+  oracle_memory: 'Memory',
+  oracle_memory_on: 'On — octogen remembers the whole game',
+  oracle_memory_off: 'Off — octogen forgets the history (human-like)',
+  oracle_played: 'played',
+  oracle_best: 'best',
+  oracle_pruned: 'not considered',
+  oracle_pruned_tip: 'Octogen never sampled this move — it ranked below its consideration set.',
+  oracle_approx: 'Approximate position (some hidden cards inferred).',
+  oracle_basis: 'Based on the publicly visible record.',
+  oracle_memory_off_endgame: 'Exact endgame proofs need Memory on.',
+  oracle_forced_loss: 'proven loss',
+  oracle_forced_move: 'Forced — no alternatives to compare',
+  oracle_ef_tip: 'Expected finishing place over the sampled worlds (lower is better).',
+  oracle_unavailable: 'Oracle failed to load',
+  oracle_retry: 'Retry',
+  oracle_class_best: 'best',
+  oracle_class_excellent: 'excellent',
+  oracle_class_good: 'good',
+  oracle_class_inaccuracy: 'inaccuracy',
+  oracle_class_mistake: 'mistake',
+  oracle_class_blunder: 'blunder',
 };
 
 // Russian strings
@@ -271,6 +325,33 @@ const strings_ru: Record<StringId, string> = {
   survival_rate: 'Процент выживания',
   times_fool: 'Раз дураком',
   load_failed: 'Не удалось загрузить — попробуйте позже',
+  oracle_panel_title: 'Оракул хода',
+  oracle_button_title: 'Оракул: сила хода',
+  oracle_no_decision: 'Пока нечего анализировать',
+  oracle_analyzing: 'Анализ… {n} миров · {rate}/с',
+  oracle_converged: 'Сошлось',
+  oracle_exact: 'Точно (решено)',
+  oracle_memory: 'Память',
+  oracle_memory_on: 'Вкл — октоген помнит всю партию',
+  oracle_memory_off: 'Выкл — октоген забыл историю (как человек)',
+  oracle_played: 'сыграно',
+  oracle_best: 'лучший',
+  oracle_pruned: 'не рассмотрен',
+  oracle_pruned_tip: 'Октоген не пробовал этот ход — он не вошёл в число рассматриваемых.',
+  oracle_approx: 'Приблизительная позиция (часть скрытых карт выведена).',
+  oracle_basis: 'На основе публично видимой записи.',
+  oracle_memory_off_endgame: 'Точные эндшпильные доказательства требуют включённой памяти.',
+  oracle_forced_loss: 'доказанный проигрыш',
+  oracle_forced_move: 'Вынужденно — не с чем сравнивать',
+  oracle_ef_tip: 'Ожидаемое место в сыгранных мирах (меньше — лучше).',
+  oracle_unavailable: 'Не удалось загрузить оракула',
+  oracle_retry: 'Повторить',
+  oracle_class_best: 'лучший',
+  oracle_class_excellent: 'отличный',
+  oracle_class_good: 'хороший',
+  oracle_class_inaccuracy: 'неточность',
+  oracle_class_mistake: 'ошибка',
+  oracle_class_blunder: 'грубая ошибка',
 };
 
 // Korean strings
@@ -363,6 +444,33 @@ const strings_ko: Record<StringId, string> = {
   survival_rate: '생존율',
   times_fool: '바보가 된 횟수',
   load_failed: '불러오지 못했습니다. 나중에 다시 시도하세요',
+  oracle_panel_title: '수 오라클',
+  oracle_button_title: '오라클: 수의 강도',
+  oracle_no_decision: '아직 분석할 수가 없습니다',
+  oracle_analyzing: '분석 중… {n}개 월드 · 초당 {rate}',
+  oracle_converged: '수렴됨',
+  oracle_exact: '정확 (풀이됨)',
+  oracle_memory: '기억',
+  oracle_memory_on: '켬 — 옥토겐이 전체 게임을 기억',
+  oracle_memory_off: '끔 — 옥토겐이 기록을 잊음 (사람처럼)',
+  oracle_played: '실제 수',
+  oracle_best: '최선',
+  oracle_pruned: '고려 안 됨',
+  oracle_pruned_tip: '옥토겐이 이 수를 표본으로 삼지 않았습니다 — 고려 대상에 들지 못했습니다.',
+  oracle_approx: '근사 포지션 (일부 숨겨진 카드는 추론됨).',
+  oracle_basis: '공개된 기록을 기반으로 함.',
+  oracle_memory_off_endgame: '정확한 엔드게임 증명에는 기억이 켜져 있어야 합니다.',
+  oracle_forced_loss: '증명된 패배',
+  oracle_forced_move: '강제 — 비교할 대안 없음',
+  oracle_ef_tip: '표본 월드에서의 예상 순위 (낮을수록 좋음).',
+  oracle_unavailable: '오라클을 불러오지 못했습니다',
+  oracle_retry: '다시 시도',
+  oracle_class_best: '최선',
+  oracle_class_excellent: '훌륭함',
+  oracle_class_good: '좋음',
+  oracle_class_inaccuracy: '부정확',
+  oracle_class_mistake: '실수',
+  oracle_class_blunder: '대실수',
 };
 
 // Combined strings object for easy access

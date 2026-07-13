@@ -198,6 +198,14 @@ void wasm_set_strategy_seed(unsigned int s) { random_strategy_set_seed(s); }
 void cordite_reload_flags(void);
 void wasm_reload_bot_flags(void) { cordite_reload_flags(); }
 
+#ifdef FOOLISH_ORACLE_BUILD
+// Infinite-oracle only (docs/INFINITE_ORACLE_DESIGN.md §6.2): the replay
+// analyzer rewrites OG_* env between deliberation batches (adaptive world
+// budget) and forces octogen to re-read it. Compiled ONLY into oracle.wasm.
+void og_reload_flags(void);
+void wasm_og_reload_flags(void) { og_reload_flags(); }
+#endif
+
 extern LegalMoves *wasm_moves_ptr_internal(void);
 
 // Runs the full bot turn in-kernel: enumerate legal moves for `bot_idx`,

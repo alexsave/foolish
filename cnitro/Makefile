@@ -710,6 +710,37 @@ wasm-bots: build/bots.wasm
 	gzip -9 -c build/bots.wasm > ../supabase/functions/_shared/wasm/bots.wasm.gz
 
 # ---------------------------------------------------------------------------
+# oracle.wasm — the client-side "infinite oracle" replay analyzer
+# (docs/INFINITE_ORACLE_DESIGN.md). bots.wasm's brain + the OG_EXPLAIN
+# per-candidate dump + oracle-only hooks (-DFOOLISH_ORACLE_BUILD), rebuilt for
+# the browser's unconstrained-memory regime: TT20 (+2WAY+PACK8 = 8 MiB runtime
+# table — a strength knob, Makefile:296-304) and the default 256 KiB stack (no
+# 22528 override). CD_WASM_OVERLAY stays: the explain sink requires it
+# (octogen_strategy.c) and repeated complete calls respect the tenancy. NEVER
+# replaces the shipped modules; ships as a committed public/oracle.wasm.gz the
+# replay page fetches lazily on the first Oracle button press.
+WASM_ORACLE_CFLAGS := $(filter-out -DCD_TT_BITS=12,$(WASM_BOT_CFLAGS)) \
+                      -DCD_TT_BITS=20 -DOG_EXPLAIN_BUILD -DFOOLISH_ORACLE_BUILD
+WASM_ORACLE_LDFLAGS := $(filter -Wl%,$(WASM_FLAGS))
+WASM_ORACLE_EXPORTS := $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) \
+  -Wl,--export=wasm_og_explain_ptr -Wl,--export=wasm_og_explain_len \
+  -Wl,--export=wasm_og_explain_reset -Wl,--export=wasm_og_reload_flags
+.PHONY: wasm-oracle
+wasm-oracle:
+	@mkdir -p build/botoracle
+	@for src in $(WASM_BOT_SRC); do \
+	  base=$$(basename $$src .c); opt=-Oz; \
+	  case " $(WASM_BOT_O3_SRC) " in *" $$src "*) opt=-O3;; esac; \
+	  echo "  CC(oracle) $$src [$$opt]"; \
+	  $(WASM_CC) $(WASM_ORACLE_CFLAGS) $$opt -c $$src -o build/botoracle/$$base.o || exit 1; \
+	done
+	$(WASM_CC) --target=wasm32 -nostdlib $(WASM_ORACLE_LDFLAGS) \
+	          $(WASM_ORACLE_EXPORTS) build/botoracle/*.o -o build/oracle.wasm
+	$(call wasm_postopt,$(WASM_BOTS_POSTOPT),build/oracle.wasm)
+	gzip -9 -n -c build/oracle.wasm > ../public/oracle.wasm.gz
+	@echo "built ../public/oracle.wasm.gz ($$(wc -c < ../public/oracle.wasm.gz) B gz, $$(wc -c < build/oracle.wasm) B raw)"
+
+# ---------------------------------------------------------------------------
 # Coverage gate (CI: ../.github/workflows/coverage.yml). Instruments the engine
 # with gcc --coverage, runs the committed unit suite + the difftests, and fails
 # if core-engine (game/legal/replay) LINE or BRANCH coverage regresses below the
