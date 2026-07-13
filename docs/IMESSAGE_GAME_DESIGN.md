@@ -16,14 +16,14 @@ anchor verified against the repo on 2026-07-13. Business context lives in
 4. [Payload format `FMSG` v1 (byte-level spec)](#4-payload-format)
 5. [The message protocol (state machine)](#5-message-protocol)
 6. [Identity & seats without a server](#6-identity--seats)
-7. [Forks, staleness, and double-send (consistency model)](#7-consistency)
+7. [The concurrency model: concurrent moves, forks, and rebase](#7-consistency)
 8. [The native engine library (C → iOS)](#8-native-engine)
 9. [Xcode project structure & the host-app decision](#9-xcode--host-app)
 10. [The extension UI (SwiftUI spec)](#10-ui-spec)
 11. [Messages framework wiring (exact APIs)](#11-messages-wiring)
 12. [Game end: bridging back into the ecosystem](#12-game-end)
 13. [Web fallback route `/m/`](#13-web-fallback)
-14. [Multiplayer beyond 1v1 (v2 design sketch)](#14-multiplayer)
+14. [Concurrency worked examples (incl. pickup ∥ attack)](#14-multiplayer)
 15. [Fair-deal protocol (optional, spec'd now, build later)](#15-fair-deal)
 16. [Format 6: the true partial-game rANS codec (optional optimization)](#16-format-6)
 17. [Gotchas catalog (read before writing any code)](#17-gotchas)
@@ -64,13 +64,21 @@ notification system. The extension only runs while the user is looking at it.
 
 ## 2. Product spec
 
-- **v1 is strictly 1v1** ("heads-up") Durak between two people in an iMessage
-  conversation. Group-chat multiplayer is §14, later.
+- **v1 supports 2–4 players from day one** (the engine allows 2–8,
+  `cnitro/src/game.h:12`; the payload format allows 8; **4 is a v1 UI cap**,
+  not a format cap). 1v1 in a DM and 3–4 players in a group thread are the
+  same protocol — 2p is just the N=2 special case. This is deliberate: Durak
+  is a **multi-actor game** (several players can legally act at the same
+  moment — see §7), so the concurrency machinery must exist even for 1v1, and
+  retrofitting N-player onto a turn-alternation protocol later would mean
+  redesigning the payload, the identity rules, and the consistency model. We
+  build it once, now.
 - Flow: player A opens the Foolish iMessage app in a conversation → taps
-  **New game** → a game bubble appears in the thread ("♠️ Alex started Durak —
-  your move"). B taps the bubble → the extension opens showing the table from
-  B's perspective → B plays their move(s) → a new bubble replaces the old one
-  (same `MSSession`) → alternating until someone is the fool.
+  **New game (2/3/4 players)** → a game bubble appears in the thread. In a DM
+  the game starts immediately; in a group, joiners tap the bubble and claim
+  seats (§6) until full, then play begins. Tapping the bubble opens the table
+  from your seat's perspective; play your move(s); a new bubble replaces the
+  old one (same `MSSession`) — until someone is the fool.
 - The bubble always shows: a rendered snapshot of the public table, whose turn
   it is, and turn number. `summaryText` (the fallback/notification line) says
   what happened: "Alex attacked with 7♠".
@@ -149,25 +157,33 @@ offset  size  field            notes
 0       1     magic      0xF7
 1       1     format     1
 2       1     flags      bit0 fair_deal (§15)  bit1 gzip-body  bits2-7 reserved=0
-3       1     phase      0=INVITE  1=ACCEPT  2=LIVE  3=FINISHED
-4       8     game_id    random u64, generated at INVITE, constant for the game
-12      2     turn       u16, count of actions applied (0 = fresh deal)
+3       1     phase      0=WAITING (seats unclaimed)  1=ACCEPT (fair-deal only, §15)
+                         2=LIVE  3=FINISHED
+4       8     game_id    random u64, generated at creation, constant for the game
+12      2     turn       u16, count of kernel actions applied (0 = fresh deal)
 14      1     last_actor_seat  seat (0-based) of the player who SENT this message
-15      1     n_players  =2 in v1 (engine supports 2..8, game.h:12)
+15      1     n_players  2..8 on the wire (creator fixes it at creation; UI caps 4 in v1)
 16      1     variant    reserved rules-variant byte, =0 (36-card podkidnoy defaults)
-17      1     reserved   =0
+17      1     round      u8, count of completed rounds in the chain (== number of
+                         discard/pickup round-closures; used by the rebase guard, §7.4)
 18      8     parent8    first 8 bytes of SHA-256 of the previous envelope's
-                         bytes (all zeros for INVITE). Fork/staleness detect (§7)
+                         bytes (all zeros for the creation message). §7
 26      16    seed       deal seed → game_set_deal_seed_bytes(seed,16).
-                         All zeros only in fair-deal INVITE/ACCEPT (§15)
-42      2     n_actions  u16
-44      3×n   actions    packed actions, 3 bytes each (§4.2)
-44+3n   var   [fair-deal extras, only when flags.bit0 — §15]
+                         All zeros only in fair-deal WAITING/ACCEPT (§15)
+42      1     n_joins    seats claimed so far (creator counts: >=1)
+43      var   joins      n_joins × { u8 seat, u8 name_len (<=12), name utf8 }
+                         ordered by claim time; creator is always seat 0 (§6)
+var     2     n_actions  u16
+var     3×n   actions    packed kernel actions, 3 bytes each (§4.2)
+var     var   [fair-deal extras, only when flags.bit0 — §15]
 ```
 
 Everything a device needs is here; there is deliberately **no state snapshot**
-in the payload (state is derived), no player names (Messages shows names), and
-no participant identifiers (they don't transfer across devices — §6).
+in the payload (state is derived) and no participant identifiers (they don't
+transfer across devices — §6). Nicknames are the only self-reported identity:
+typed once at create/join, max 12 UTF-8 bytes, shown as seat labels ("waiting
+for Sveta") and used for seat recovery (§6.3). The `joins` list is
+protocol-layer data, not kernel actions — the kernel replay never sees it.
 
 ### 4.2 Action encoding (3 bytes/action)
 
@@ -211,48 +227,70 @@ format bump.
 
 ## 5. Message protocol
 
-### 5.1 State machine (simple mode — fair_deal off, the v1 default)
+### 5.1 A truth to internalize first: Durak has no single "next actor"
+
+This engine is faithful to podkidnoy: while the defender is deciding, any
+eligible attacker may throw in more cards; several non-defenders may hold
+"awaiting" status at once (`awaiting_attack` flags, `cnitro/src/game.c:591,707`);
+the defender may cover or pick up at any point. **Multiple seats can have
+non-empty legal-move sets simultaneously — including in 2-player games** (the
+attacker can legally add a card at the same moment the defender can legally
+pick up). So the protocol below is NOT turn alternation. The rule is:
+
+> **Staging rule:** whenever the kernel gives *your* seat a non-empty legal-move
+> set, you may play. Apply your chosen action(s) locally, then stage ONE message
+> carrying the full updated chain. Concurrent messages from other players are
+> resolved by §7 — never by assuming you were the only one moving.
+
+`turn` counts kernel actions, not messages; one message may carry several
+actions by its sender (attack two cards, then "done").
+
+### 5.2 State machine (simple mode — fair_deal off, the v1 default)
 
 ```
-A taps "New game"
-  A's device: game_id=rand64, seed=rand128, deal via kernel, start_game
-              (kernel decides first attacker: lowest trump — engine handles it).
-              If A is the first actor, A may immediately play; either way A
-              STAGES the INVITE/LIVE bubble:
-                phase=LIVE, turn=n_actions_applied, last_actor_seat=A's seat
-  A hits Messages' send button (extensions cannot auto-send — §17.1)
+Creation (player A taps "New game", picks n_players and a nickname):
+  A's device: game_id=rand64, seed=rand128, joins=[{seat 0, "Alex"}]
+    n_players == 2 (DM): deal + start_game now → phase=LIVE; A may also
+                         immediately play own first actions before staging
+    n_players >= 3:      phase=WAITING (deal computed lazily — the seed is
+                         fixed, so dealing early or late is equivalent)
+  A stages the bubble, A taps Messages' send (extensions can't auto-send, §17.1)
 
-B taps the bubble
-  B's device: decode envelope → fresh kernel game → set seed → deal →
-              replay all actions (validate each) → render B's view.
-              B plays until the kernel says B is no longer the actor
-              (`wasm_should_act`-equivalent native call), stage new bubble
-              with turn+=k, parent8=digest(prev), last_actor_seat=B's seat.
-  B sends. Repeat, alternating, until the kernel reports game over.
+Joining (phase=WAITING, group thread):
+  each joiner taps the bubble → types a nickname → device appends
+  {next_free_seat, name} to joins, stages the updated WAITING bubble → sends.
+  The joiner whose claim FILLS the last seat also deals (seed is already in
+  the envelope), applies nothing, and stages phase=LIVE: "Game on — Sveta
+  attacks first" (kernel picks first attacker: lowest trump).
 
-Whoever applies the terminal action stages the FINISHED bubble (§12).
+Playing (phase=LIVE):
+  any player, on opening the current bubble:
+    decode → fresh kernel game → set seed → deal → replay all actions
+    (validating each) → render own seat's view
+    if my seat has legal moves → I may act (§5.1 staging rule)
+    if not → spectator view: "waiting for Sveta / Boris"
+  staged message: turn+=k, round updated, parent8=digest(prev), last_actor_seat=me
+
+Finish: whoever applies the terminal action stages the FINISHED bubble (§12).
+Laggards who open stale bubbles afterwards get §7's staleness handling.
 ```
 
-Notes:
 - **One bubble per game** via `MSSession` — Messages collapses older messages
   in the same session to their `summaryText` and keeps the latest interactive
   (§11.3). The thread never fills with 60 bubbles.
-- **A "turn" may be several kernel actions** (attack two cards, opponent covers
-  both…). The staging rule is: keep applying the local player's choices until
-  the kernel's next-actor is the opponent (or the game ends), then stage ONE
-  message carrying all of them. This is why `turn` counts *actions*, not
-  messages.
-- In heads-up Durak the kernel's next-actor is always unique, so alternation is
-  well-defined. (This uniqueness breaks at 3+ players — the core reason v1 is
-  1v1; §14.)
+- Seat-claim messages (WAITING) intentionally contain zero kernel actions, so
+  join races are trivially mergeable: two simultaneous claims of seat 2 fork
+  the joins list only; §7's preference rule picks one, and the loser's device
+  re-claims the next free seat automatically on next open.
 
-### 5.2 What each phase means
+### 5.3 What each phase means
 
 | phase | contents | staged by | UI on open |
 | --- | --- | --- | --- |
-| LIVE (2) | seed + actions | either player | table from viewer's seat; input enabled iff kernel says viewer is actor |
-| FINISHED (3) | seed + full actions | player who applied terminal action | result card + replay link (§12) |
-| INVITE (0) / ACCEPT (1) | only used by fair-deal mode | see §15 | — |
+| WAITING (0) | seed + joins (no actions) | creator, then each joiner | lobby: claimed seats by nickname, "join" button |
+| ACCEPT (1) | fair-deal handshake only | see §15 | — |
+| LIVE (2) | seed + joins + actions | any player with legal moves | table from viewer's seat; inputs enabled iff kernel grants viewer legal moves |
+| FINISHED (3) | seed + joins + full actions | player who applied terminal action | result card + replay link (§12) |
 
 ---
 
@@ -262,72 +300,153 @@ There are no accounts. Apple gives the extension **opaque participant UUIDs**
 (`conversation.localParticipantIdentifier`, `MSMessage.senderParticipantIdentifier`)
 with a brutal caveat: **they are scoped per-device-per-conversation** — the
 same human has *different* UUIDs on their own iPhone vs iPad, and on their
-opponent's device. Therefore participant UUIDs never go in the payload; each
-device figures out "which seat am I?" statelessly:
+opponent's device. Therefore participant UUIDs never go in the payload. Seat
+identity uses three layers, in order:
+
+### 6.1 Primary: the App Group cache
+
+At create/join time the device knows its seat with certainty (it just claimed
+it). Store `{game_id → mySeat}` in App Group storage (§9.3). This answers the
+question for the life of the install.
+
+### 6.2 Secondary: sender inference (exact, but only for the last actor)
 
 ```
-Rule S1 (stateless seat inference, works even after reinstall):
-  on opening a bubble:
-    amISender = (selectedMessage.senderParticipantIdentifier
-                 == conversation.localParticipantIdentifier)
-    mySeat = amISender ? envelope.last_actor_seat
-                       : 1 - envelope.last_actor_seat        // 2p only
+Rule S1: on opening a bubble,
+  if selectedMessage.senderParticipantIdentifier
+     == conversation.localParticipantIdentifier
+  then mySeat = envelope.last_actor_seat        // exact, any N
+  else if n_players == 2
+  then mySeat = 1 - envelope.last_actor_seat    // exact for 2p
+  else fall through to 6.3                      // N>=3, cache lost, not last actor
 ```
 
-- Seat 0 is defined as the game creator; `last_actor_seat` in the INVITE/first
-  LIVE bubble is 0 by construction.
-- Cache `{game_id → mySeat}` in App Group storage (§9.3) as an optimization
-  and for the game list, but Rule S1 must always be able to rebuild it — the
-  payload + message metadata are the only durable truth.
-- **Same-user-multiple-devices:** if Alex opens the game on iPad, Rule S1 still
-  works (Messages syncs the thread; sender identity resolves per device). The
-  App Group cache is per-device and simply rebuilds.
-- **Spoofing** (opponent editing a payload to move for you) is detectable only
-  as "actions by seat X arrived in a message whose sender wasn't X" — and the
-  extension can't verify historical senders, only the tapped message. Accepted
-  for casual play; noted in §17.9.
+### 6.3 Tertiary: nickname recovery (N≥3 after reinstall)
+
+The joins list carries every seat's nickname (§4.1). If the cache is gone and
+S1 can't decide, show a one-tap picker: "Which player are you? — Alex / Sveta /
+Boris". Wrong self-identification lets a user look at another seat's hand in a
+casual game among friends; acceptable, same trust level as passing the phone.
+(A cheat-resistant version is the per-seat secret commitment sketched in §15's
+appendix — server-free, but adds UX weight; not v1.)
+
+- Seat 0 is always the game creator; joiners take the lowest free seat at the
+  time their claim lands in the canonical chain (§5.2, §7).
+- **Same-user-multiple-devices:** iPad has no cache; S1 or the picker recovers
+  the seat, then that device caches it too.
+- **Spoofing** (editing a payload to move for another seat) is detectable only
+  as "actions by seat X in a message sent by not-X" for the tapped message.
+  Accepted for casual play; noted in §17.9.
 
 ---
 
-## 7. Consistency
+## 7. The concurrency model
 
-### 7.1 The canonical state is "the newest message in the session"
+This is the heart of the design. Read §5.1 first: multiple players can legally
+act at the same moment, in every game size. Two players WILL compose messages
+against the same parent state — the canonical example being **the defender
+sends "pick up" at the same instant an attacker sends a throw-in attack**. The
+model below makes every such race deterministic, convergent, and rules-faithful,
+with no coordinator. Mental model: **git**. Each bubble is a self-contained
+branch tip (seed + full action chain); Messages is an unreliable branch pointer;
+devices converge by a deterministic chain-preference rule and rebase their own
+unmerged moves.
 
-Messages' session replacement means the thread naturally shows one current
-bubble. The extension cannot enumerate the thread; it only sees the message the
-user tapped. So consistency is enforced with payload metadata:
+### 7.1 Chains, not diffs
 
-- `turn` — monotonically increasing action count.
-- `parent8` — digest chain: each envelope commits to its predecessor.
+Every envelope carries the FULL action chain from the deal (§4). Consequence:
+any single bubble is sufficient to adopt the game — devices never need to have
+seen prior messages, and a "lost" concurrent message loses only its *delta*,
+which its own author can rebase (§7.4). This property is what makes serverless
+concurrency tractable; do not ever optimize the payload into deltas.
 
-### 7.2 Staleness & forks
+### 7.2 The chain-preference rule (deterministic convergence)
 
-App Group cache stores per `game_id`: `{max_turn_seen, digest_of_latest}`.
-On open:
+Two chains for the same `game_id` are compared as follows — every device
+computes the same winner regardless of message delivery order:
 
-| Condition | Meaning | UI |
-| --- | --- | --- |
-| `env.turn > cached.max_turn` and `env.parent8` chain consistent | normal progress | play |
-| `env.turn < cached.max_turn` | user tapped an old (collapsed) bubble | banner "This game has moved on — open the newest message", read-only |
-| `env.turn == cached.max_turn` but digest differs | **fork** (e.g., both sides composed against the same parent; possible only via double-send or manual URL tampering) | Rule F1: the message *received most recently by this device* wins; render banner "Game took a different path — continuing from this bubble", overwrite cache |
-| `didStartSending` fires for our staged message | our move is committed | update cache to our new envelope |
-| `didCancelSending` fires | user deleted the staged bubble | roll cache back to pre-stage snapshot (§17.2) |
+```
+Rule P (total preference order):
+  1. higher round wins                (a closed round is settled history)
+  2. else higher turn wins            (more accepted actions)
+  3. else lexicographically smaller SHA-256(envelope bytes) wins  (arbitrary but universal)
+```
 
-In strict 1v1 alternation a fork requires the same player sending twice from
-one parent (Messages allows staging only one message at a time per extension
-session, so this is rare) — F1 keeps both devices converging on *some* line,
-which is all casual play needs.
+The device's cache stores the preferred chain seen so far. On every open
+(`selectedMessage`) or live receive (`didReceive`), compare the incoming chain
+to the cached one under Rule P; adopt the winner. Note Apple's session
+replacement usually makes the thread's visible bubble the newest delivered —
+but Rule P deliberately does NOT trust delivery order, because two devices can
+transiently disagree about "newest". Rule P needs no clocks and no ordering
+guarantees from the transport.
 
 ### 7.3 Validation = replay
 
-Because decode replays every action through the kernel's legality machinery, a
-corrupted or hand-edited payload fails loudly (an action not in the legal-move
-set simply won't apply). Error UI: "This game link is damaged." Never attempt
-partial recovery. The kernel is already hardened against hostile bytes — see
-`docs/SECURITY_WASM_BOUNDARY.md` (counts clamped, cards sanitized, enumeration
-bounded); `msg_wire.c` must go through the same `get_state`-style clamps by
-constructing games only via the public kernel calls, never by memcpy into
-`Game`.
+Adopting a chain always means replaying every action through the kernel's
+legality machinery — a corrupted or hand-edited payload fails loudly (an
+illegal action simply won't apply). Error UI: "This game link is damaged."
+Never attempt partial recovery. The kernel is already hardened against hostile
+bytes (`docs/SECURITY_WASM_BOUNDARY.md`); `msg_wire.c` constructs games only
+via public kernel calls, never memcpy into `Game`.
+
+### 7.4 Rebase: no legal move is silently lost
+
+Per `game_id`, the device keeps a small **pending ledger**: the actions *this
+seat* has staged/sent, each tagged with the `(round, turn, parent8)` it was
+composed against. When the device adopts a preferred chain that does NOT
+contain those actions (they lost a race):
+
+```
+Rule R (rebase):
+  for each pending action, in order:
+    if action.round < adopted_chain.round:      DISCARD  (round-boundary guard)
+    else if kernel says action is legal now:    RE-APPLY on top of adopted chain
+    else:                                       DISCARD
+  if anything re-applied → auto-stage the merged envelope,
+     UI: "Your move was re-applied on the new state — send to confirm"
+  if anything discarded → toast: "Your <move> was superseded (the round ended
+     / Sveta picked up first)" — and the hand re-renders from adopted state
+```
+
+**The round-boundary guard is essential.** Without it, a rebased action can be
+*legal but semantically different*: e.g. the attacker's throw-in composed
+against round 5's table would, after the defender's pickup closed round 5
+(pickup closes the round immediately and rotates roles —
+`cnitro/src/game.c:776-808`), re-validate as an *opening attack of round 6* —
+legal per the kernel, but not what the player chose to do. An action never
+survives rebase across a round boundary; within the same round, kernel
+legality is the arbiter. This rule is small, explainable to users, and
+rules-faithful.
+
+### 7.5 The race, resolved end-to-end (defender's pickup ∥ attacker's throw-in)
+
+Both compose against parent P (round 5, turn 20):
+
+- Defender's chain D: P + pickup → round 6, turn 21.
+- Attacker's chain A: P + attack(9♣) → round 5, turn 21.
+- Rule P: **D wins everywhere** (higher round beats equal turn). This is also
+  the right *game* outcome: picking up is the defender's prerogative at any
+  moment; the throw-in "didn't make it in time".
+- Attacker's device adopts D, rebases attack(9♣): `action.round (5) <
+  adopted.round (6)` → **discarded** with "Sveta picked up before your 9♣
+  landed." The attacker still holds the 9♣ — nothing is lost but tempo.
+- Had the *attack* landed first thread-wise, nothing changes: Rule P is
+  delivery-order-independent. Note the symmetric case — attack A adopted by
+  the defender's device *before* they send pickup — needs no machinery at all:
+  the defender simply picks up one more card (`handle_pickup` takes the whole
+  table, including the throw-in).
+
+More worked examples, including 3–4 player races, in §14.
+
+### 7.6 Staleness & lifecycle events
+
+| Condition | Meaning | UI |
+| --- | --- | --- |
+| incoming chain loses Rule P to cache | user tapped an old (collapsed) bubble | banner "This game has moved on — open the newest message", read-only, offer "show that state anyway" |
+| incoming chain wins Rule P | progress (or a fork we adopt) | §7.4 rebase, then play |
+| `didStartSending` fires for our staged message | our chain is committed to the thread | cache := our envelope; pending ledger := its unacked tail |
+| `didCancelSending` fires | user deleted the staged bubble | roll cache/ledger back to pre-stage snapshot (§17.2) |
+| FINISHED chain adopted while we had pending moves | game over won the race | all pending discarded; show result card |
 
 ---
 
@@ -444,10 +563,12 @@ Two presentation styles (§11.2):
 - **Interaction model (keep v1 dumb and reliable):** tap a hand card → if it's
   a legal attack/cover per `fio_legal_moves`, apply optimistically and re-render;
   action bar shows the kernel-driven set of non-card moves: **Pass / Pick up /
-  Done (good)** — enabled strictly from the legal-move list. A **Send move**
-  button appears once the local player is no longer the actor; it stages the
-  message (§11.4). Undo (before staging) = rebuild from envelope + replay minus
-  local moves — trivial since state is derived.
+  Done (good)** — enabled strictly from the legal-move list. **Send move**
+  enables as soon as ≥1 local action is applied (there is no "your turn is
+  over" in a multi-actor game — §5.1; a subtle "others may be playing too"
+  hint sits next to it, §14). Staging follows §11.4; incoming chains while
+  composing are handled by §7.4 rebase. Undo (before staging) = rebuild from
+  envelope + replay minus local moves — trivial since state is derived.
 - Rendering: pure SwiftUI shapes + SF Symbols (`suit.spade.fill` etc.), white
   rounded-rect cards, red/black glyphs; the procedural fractal aesthetic is a
   later port, NOT v1. Dark mode via system colors. Localize all strings from
@@ -545,28 +666,51 @@ New Next.js route `src/app/m/[payload]/page.tsx`:
 
 ---
 
-## 14. Multiplayer
+## 14. Concurrency worked examples
 
-Why v1 is 1v1: with 3+ players the kernel's "who may act" is **not unique** —
-in podkidnoy multiple attackers may throw in simultaneously, so asynchronous
-message ordering creates real races (two players legally act on the same
-parent state → guaranteed forks that F1 resolves arbitrarily and unfairly).
+§7 defines the machinery; this section walks the cases an implementer (and a
+tester) must reason through. Notation: `P` = shared parent state.
 
-v2 sketch (build only after v1 proves the loop):
+1. **Pickup ∥ throw-in (any N, incl. 2p):** worked end-to-end in §7.5. Winner:
+   pickup (round closure outranks). Loser's throw-in discarded by the
+   round-boundary guard with a human-readable toast.
+2. **Two attackers throw in simultaneously (N≥3):** chains A₁ = P+attack(9♣),
+   A₂ = P+attack(9♥). Same round, same turn count → Rule P tiebreak by digest.
+   Loser's device rebases: same round, and the kernel re-validates capacity
+   (defender's hand size / attack limit, enforced in `legal.c`). If capacity
+   remains → re-applied and auto-staged ("your 9♥ was re-applied — send").
+   If the winner's card consumed the last slot → discarded ("table is full").
+   Exactly the semantics of a physical table: fastest hand lands first.
+3. **Cover ∥ throw-in:** defender covers battle 1 while attacker adds a new
+   attack. Different battles — the rebase re-applies cleanly in either order.
+   No user-visible conflict at all; this is the common, boring race.
+4. **Good ∥ good (N≥3):** multiple attackers declare "done". Re-applied in
+   sequence; the kernel's `good_players_mask` (`game.c`) makes repeats
+   idempotent-by-legality; the final good triggers the round transition in
+   whichever chain lands last. Converges without special-casing.
+5. **Seat-claim ∥ seat-claim (WAITING):** both claim seat 2. Rule P digest
+   tiebreak picks one; loser's device auto-claims seat 3 on next open (no
+   kernel actions exist yet, so this can never conflict with play).
+6. **Move ∥ game-over:** a straggler's action races the terminal action.
+   FINISHED chain has the higher turn (or round) → wins; straggler's pending
+   is discarded by the FINISHED row of §7.6.
+7. **Same player, two devices (iPhone staged, iPad plays):** the pending
+   ledger is per-device; the iPhone's unsent staged move rebases against the
+   iPad's sent chain like any other race. No special handling.
 
-- Group iMessage threads support MSSession fine; payload already carries
-  `n_players` and 0-based seats; `game_id` keys seat claims.
-- **Seat claiming:** INVITE lists open seats; each joiner's ACCEPT-like turn
-  claims the lowest free seat (their device records it; Rule S1 generalizes:
-  the payload records `seat_claim_order` so any device can recompute claims
-  from the action list itself).
-- **Race taming:** restrict the async variant's rules — single-attacker strict
-  rotation (no mid-round throw-ins by third parties) so the actor is always
-  unique. This is a *rules variant* (the `variant` byte in the envelope) —
-  wire it through the kernel's config rather than pretending races don't
-  exist. Full podkidnoy chaos stays a realtime-server feature.
-- Out-of-turn players tapping the bubble get spectator view + "waiting for
-  Sveta".
+Design consequences worth stating explicitly:
+
+- **No rules variant is needed to tame races.** Earlier drafts considered a
+  strict-rotation variant; the rebase model makes full podkidnoy semantics
+  work asynchronously, and the physical-table analogy ("fastest hand wins,
+  pickup ends the argument") is the correct arbiter. The `variant` byte stays
+  reserved for actual rules options (deck size, transfer/perevodnoy), not for
+  concurrency workarounds.
+- **UI must expose contention gently:** while any other seat *could* act, show
+  a subtle "others may be playing too" hint next to Send, and always treat an
+  adopted foreign chain as normal progress, not an error.
+- v1 UI caps games at 4 players purely for layout; the protocol and tests run
+  at 8 (`MAX_PLAYERS`, `game.h:12`).
 
 ---
 
@@ -578,13 +722,18 @@ the envelope never needs a format bump:
 
 ```
 flags.bit0 = 1
-INVITE  (phase 0): seed field = zeros; append commit32 = SHA-256(s1)   [A picks s1]
-ACCEPT  (phase 1): seed field = zeros; append s2 (16 bytes)            [B picks s2]
-first LIVE turn:   seed = first 16 bytes of SHA-256(s1 ‖ s2); append s1
-                   [B's device verifies SHA-256(s1) == commit32 and recomputes seed]
+WAITING (phase 0): seed field = zeros; append commit32 = SHA-256(s1)   [creator picks s1]
+ACCEPT  (phase 1): seed field = zeros; each joiner appends their s_i (16 bytes)
+                   alongside their seat claim
+first LIVE turn:   seed = first 16 bytes of SHA-256(s1 ‖ s2 ‖ … ‖ sN);
+                   creator appends s1; every device verifies SHA-256(s1) ==
+                   commit32 and recomputes the seed
 ```
 
-Cost: one extra message round before play. UI copy: "🎲 Fair deal verified."
+Cost: one extra message round before play (in a 2p DM). UI copy: "🎲 Fair deal
+verified." Appendix idea (not v1): each joiner could also commit
+H(seat_secret) here, making §6.3's seat recovery cheat-resistant — a device
+proves a seat by presenting the preimage.
 
 ---
 
@@ -654,6 +803,16 @@ guardrail trips or QR-able mid-game states become a product need:
     so use the conversation-neutral phrasing from the shared strings file.
 14. **URL escaping:** base32 alphabet is URL-safe by construction (that's why
     we reuse the codec's); never URL-encode twice; assert round-trip in tests.
+15. **The pending ledger must be durable and small.** Store it in the App Group
+    alongside the cache (§9.3) so a killed extension or a cancel-after-stage
+    can't strand a move, and cap it at the current round's actions — the
+    round-boundary guard (§7.4) makes anything older unreplayable by
+    definition, so garbage-collect on every round closure.
+16. **Never special-case "whose turn it is" in UI logic.** Every piece of turn
+    logic must query the kernel's legal-move set for the local seat (§5.1).
+    Any hand-rolled "it's my turn" boolean will be wrong in multi-actor
+    states — this is the exact class of bug the repo previously eliminated on
+    the web client (see `git log 750d0b4`, "no hand-rolled rotation").
 
 ---
 
@@ -663,11 +822,21 @@ guardrail trips or QR-able mid-game states become a product need:
 kernel wasm against Node):**
 
 - `e2e/msg_wire.test.ts`: envelope round-trip (encode→decode→re-encode
-  byte-identical); golden hex vectors for INVITE/LIVE/FINISHED; tamper matrix
-  (flip every byte class → decode must fail cleanly, never crash — reuse the
-  hostile-bytes idioms from `e2e/client_guards.test.ts`); size guardrail (P95
-  simulated full game < 1,000 chars); fork/staleness rule table (§7.2) as pure
-  functions.
+  byte-identical); golden hex vectors for WAITING/LIVE/FINISHED at 2, 3, and 4
+  players; tamper matrix (flip every byte class → decode must fail cleanly,
+  never crash — reuse the hostile-bytes idioms from `e2e/client_guards.test.ts`);
+  size guardrail (P95 simulated full game < 1,000 chars **at 4 players**, the
+  worst case).
+- `e2e/msg_concurrency.test.ts` — the §7 model as pure functions over the C
+  exports: (a) Rule P is a total order (antisymmetric, transitive — property
+  test over random chain pairs); (b) delivery-order independence: for random
+  concurrent sends, all interleavings of adoption converge every simulated
+  device to the same chain; (c) rebase determinism incl. the round-boundary
+  guard — encode §14's seven worked examples as named regression cases, with
+  the pickup ∥ throw-in race asserted in both delivery orders; (d) N-player
+  fuzz: 3–8 simulated players acting concurrently at random through full
+  games — every game converges, every discarded action maps to a §7.4 reason,
+  and no chain ever contains a kernel-illegal action.
 - Cross-engine determinism: same seed → identical deal + identical legal-move
   menus in (a) kernel wasm and (b) `libfoolish.a` — golden vectors bridge the
   two (§8.2). Any divergence is a release blocker (both devices must replay
@@ -691,14 +860,17 @@ works; message queues); Mac recipient sees working `/m/` URL.
 
 | M | Deliverable | Effort | Acceptance criteria |
 | --- | --- | --- | --- |
-| **M0** | `msg_wire.c` + wasm exports + TS bridge + `e2e/msg_wire.test.ts` + `/m/` view-only route | 3–5 d | CI green incl. tamper + size guardrail; `/m/` renders a live-game URL read-only in prod |
+| **M0** | `msg_wire.c` + wasm exports + TS bridge + `e2e/msg_wire.test.ts` + **`e2e/msg_concurrency.test.ts` (Rule P / rebase / N-player fuzz)** + `/m/` view-only route | 5–8 d | CI green incl. tamper, size guardrail, convergence properties; `/m/` renders a live-game URL read-only in prod |
 | **M1** | `ios-lib` Makefile target (xcframework) + Xcode project skeleton (§9.2 targets, App Group) + Swift bridge + XCTest parity vs golden vectors | 2–4 d | XCTests green on CI-mac or locally; simulator app launches |
-| **M2** | SwiftUI board + interaction model (§10) driven end-to-end by `libfoolish.a`; host app pass-and-play mode | 4–7 d | A full local hotseat game is playable; snapshot renderer produces bubble images |
-| **M3** | Messages wiring (§11): stage/send/receive/replace, lifecycle cache, staleness/fork banners | 5–8 d | Two simulators complete a full game via bubbles; reinstall recovery works |
+| **M2** | SwiftUI board (2–4 seats) + interaction model (§10) driven end-to-end by `libfoolish.a`; host app pass-and-play mode | 5–8 d | A full local hotseat game (2p and 4p) is playable; snapshot renderer produces bubble images |
+| **M3** | Messages wiring (§11): stage/send/receive/replace, lifecycle cache + pending ledger, Rule P adoption, §7.4 rebase UX, lobby/seat-claim flow | 7–10 d | Two simulators complete 2p and 3p games via bubbles; §14 cases 1–2 reproduced manually with correct toasts; reinstall recovery works |
 | **M4** | Game end → v5 replay bubble (§12); localization; polish | 2–3 d | Finished game's bubble opens the real replay page; Oracle reachable from it |
 | **M5** | App Review prep: host-app polish, icons, privacy labels, age rating, TestFlight, submit | 3–5 d | Approved on the App Store |
-| **M6+** | Fair-deal (§15), group multiplayer (§14), web-side play (§13), format 6 (§16), main-app absorption per `ORACLE_MONETIZATION_ENGINEERING.md` §7 | — | — |
+| **M6+** | Fair-deal (§15), 5–8 player UI, web-side play (§13), format 6 (§16), main-app absorption per `ORACLE_MONETIZATION_ENGINEERING.md` §7 | — | — |
 
-Total to App Store: **~4–6 weeks solo.** The dependency spine is M0 → M1 → M2
-→ M3; M4/M5 are short tails. M0 is pure repo work with the existing toolchain
-— start there today.
+Total to App Store: **~5–7 weeks solo** (the N-player-from-day-one decision
+buys ~1 week of extra work in M0/M2/M3 and removes an entire future rewrite).
+The dependency spine is M0 → M1 → M2 → M3; M4/M5 are short tails. M0 is pure
+repo work with the existing toolchain — start there today, and note that the
+concurrency suite in M0 de-risks the entire design before a single line of
+Swift exists.
