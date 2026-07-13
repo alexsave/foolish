@@ -165,7 +165,10 @@ trust-but-spot-check the anchors.
 - **Determinism of a call**: octogen derives all world seeds from the
   strategy LCG *without advancing it* (`:1600`; `game.c:171`) and
   saves/restores the game LCG (`:1509,1744`). Two identical calls with the
-  same strategy seed are bit-identical. **The oracle must set a fresh random
+  same strategy seed are bit-identical *given identical TT state* (on a
+  warm instance the persistent leaf-solve TT can shift budget-limited
+  resolutions — relevant only to heads-up positions where the leaf gate
+  engages, `:1519-1520`). **The oracle must set a fresh random
   seed per batch** via `wasm_set_strategy_seed(u32)`
   (`wasm_bots_api.c:191-193`) — the latency bench already batches this way
   (`e2e/_wasm_latency.test.ts:52-62`). No other RNG needs seeding.
@@ -203,9 +206,14 @@ targets `og_explain` and `bots-wasm-explain`, `cnitro/Makefile:146-155,
   written by `og_ex_emit` (`:1333-1445`) into a **1 MiB static buffer**
   `og_ex_wbuf` (`:940-944`) — a plain static *outside* the CD_WASM_OVERLAY
   aliasing families (`wasm_overlay.h:26-42`), so it is never clobbered by
-  the solver. Per-record staging cap 16 KiB (`:1343`); a record that doesn't
-  fit is **silently dropped** (`:1434-1439`) → **reset the buffer every
-  batch**.
+  the solver. Per-record staging cap 16 KiB (`:1343`). **Careful**: on the
+  wasm sink an over-cap record is **truncated and still appended** — the
+  freestanding snprintf returns the *clamped* count (`:898-931`), so the
+  append guard at `:1434-1439` passes and a malformed JSON line lands in
+  the buffer (only 1 MiB-buffer exhaustion drops whole records). The worker
+  must treat a JSON.parse failure as a real signal (§8.5 step 9), and the
+  oracle build enlarges the staging buffer (§6.3). **Reset the buffer every
+  batch** regardless.
 - **Exports**: `wasm_og_explain_ptr()` / `wasm_og_explain_len()` /
   `wasm_og_explain_reset()` (`:940-944`; `Makefile:684`). TS reader
   precedent: `__ogExplainDump(reset)` (`bots.ts:84-95`).
@@ -346,8 +354,12 @@ are derived events). Define:
 ORACLE_DECISION_TYPES = { ATTACK, COVER, PASS, PICKUP, GOOD }   // seat != null
 ```
 
-Walk back from `i` to the nearest `j ≤ i` with `d.logs[j].log_type ∈
-ORACLE_DECISION_TYPES && d.logs[j].seat != null`. The analysis job is then:
+Walk back from `min(i, d.logs.length - 1)` — the clamp matters: the step
+list ends with a synthetic `'end'` entry at index `logs.length`
+(`view.ts:242-244`), where `d.logs[i]` is undefined; that final step is also
+where most end-of-game review happens — to the nearest `j` with
+`d.logs[j].log_type ∈ ORACLE_DECISION_TYPES && d.logs[j].seat != null`. The
+analysis job is then:
 
 - **pre-move state** = `steps[j-1]` (or the pre-deal state if `j === 0` —
   which cannot happen, since log 0 is GAME_START; if no such `j` exists the
@@ -376,11 +388,13 @@ Consequences:
 - Mid-game, the acting seat's *unplayed* cards may differ from historical
   truth (draw-order ambiguity). The analysis is then of "a position
   consistent with everything publicly visible in this replay" — which is
-  also exactly the information a human reviewer has. If any acting-hand slot
-  is still `null` after retrodiction+complement (rare; guard at
-  `view.ts:270-273`), fill it deterministically from the unseen-card
-  complement at that step and set `approx: true` on the job; the overlay
-  shows a small "approximate position" footnote (i18n `oracle_approx`).
+  also exactly the information a human reviewer has. Note: for any replay
+  that survives `buildReplaySteps`' conservation check (`view.ts:288-303`),
+  the complement fill (`view.ts:254-274`) binds *every* slot — a `null`
+  acting-hand slot should be unreachable. Keep a belt-and-suspenders
+  fallback anyway (fill deterministically from the unseen complement, set
+  `approx: true`, show the `oracle_approx` footnote) since the marshal must
+  never emit an invalid card.
 - This is a *feature-level* honesty requirement: the overlay subtitle for
   mid-game analyses reads "based on the publicly visible record" (i18n
   `oracle_basis`).
@@ -413,7 +427,15 @@ Consequences:
   UI switches to verdict bars with an "exact" badge (§9.5). If the solver
   fired but proved nothing within budget (`solver.applied && no win/loss
   verdicts`), stay in the MC regime and keep batching (the X-ray renders the
-  same distinction, `gen_html.py:393-455`).
+  same distinction, `gen_html.py:393-455`) — **but first defuse the probe**:
+  in this regime EVERY subsequent choose re-runs the full per-root-move
+  verdict probe (up to moves × 2M nodes) plus two full-TT memsets (8 MiB
+  each at TT20; `:1015,1046`; `cordite_sim.c:1820`), costs the §8.6 tuner
+  cannot touch (they are independent of `OG_W1`). Since the verdicts were
+  already proven unknowable at full budget, the worker rewrites the env pair
+  `OG_EXPLAIN_SOLVE_BUDGET=0` after that first batch — the knob is getenv'd
+  fresh per decision (`:1041-1044`), so no reload call is needed, and a ≤0
+  budget records `unknown` instantly. Later batches are then pure-MC-priced.
 
 ---
 
@@ -488,11 +510,20 @@ present in the candidate set but with a computed verdict, append an entry:
  "chosen":0}
 ```
 
-Bounded: the exact regime is heads-up ≤ 28 cards, so legal-move counts are
-dozens, far under the 16 KiB record cap. Do **not** emit pruned entries in
-the MC regime (mid-game menus can be thousands of moves and would blow the
-record cap; §9.4 handles the mid-game pruned-move UX bridge-side). Reuse the
-existing label/cards formatting helpers (`og_ex_move_label`, `:1306-1328`).
+Do **not** emit pruned entries in the MC regime (mid-game menus can be
+thousands of moves; §9.4 handles the mid-game pruned-move UX bridge-side).
+
+**Record-size requirement (verified, load-bearing):** heads-up ≤28-card
+positions can still enumerate ~75-97 root moves (equal-rank subset attacks),
+and the base record (belief + big hand + 26 candidates) is already 4-6 KiB —
+pruned verdict entries can push a record past the 16 KiB staging cap, where
+the wasm snprintf **truncates instead of dropping** (§4.2), producing
+malformed JSON. Under `FOOLISH_ORACLE_BUILD`: (a) enlarge the staging buffer
+to a file-scope `static char buf[65536]` (it currently lives in a
+non-recursive frame at `:1343`); (b) if the formatted length still hits the
+cap, drop the record and append a tiny `{"overflow":1}` line instead so the
+worker sees an explicit signal rather than a parse crash. Reuse the existing
+label/cards formatting helpers (`og_ex_move_label`, `:1306-1328`).
 
 ### 6.4 Explicitly rejected C changes (do not do these)
 
@@ -546,8 +577,14 @@ wasm-oracle:
 	$(WASM_CC) --target=wasm32 -nostdlib $(WASM_ORACLE_LDFLAGS) \
 	          $(WASM_ORACLE_EXPORTS) build/botoracle/*.o -o build/oracle.wasm
 	$(call wasm_postopt,$(WASM_BOTS_POSTOPT),build/oracle.wasm)
-	gzip -9 -c build/oracle.wasm > ../public/oracle.wasm.gz
+	gzip -9 -n -c build/oracle.wasm > ../public/oracle.wasm.gz
 ```
+
+(`-n` matters: without it gzip embeds the input mtime, so the committed gz
+churns on every rebuild of identical bytes — and note the shipped
+`wasm-bots` recipe lacks `-n` (`Makefile:710`), so §12.1's "shipped
+artifacts untouched" check must compare *inflated* bytes for
+`bots.wasm.gz`, not the gz files.)
 
 Notes for the builder:
 
@@ -620,16 +657,24 @@ interface OracleJob {
   logsWire: Uint8Array;        // pre-encoded kernel log wire (empty if memory off)
   recordedKey: string;         // canonical key of the recorded move (§9.4)
   numPlayers: number;
-  deckAlive: boolean;          // deck>0, for the display-side trump tax
-  approx: boolean;             // §5.2 null-slot fill happened
+  deckAlive: boolean;          // step.deckCount > 0 || step.flipped !== null —
+                               // octogen's actual tax gate (octogen_strategy.c:1614)
+                               // includes the deck-empty-but-flip-outstanding
+                               // window; this improves on the X-ray's deck>0
+                               // (build_data.py:203), which can't see has_flipped
+  approx: boolean;             // §5.2 null-slot fill happened (should be unreachable)
 }
+// gameBlob.good_players / .elimination_order are player_id STRING arrays
+// ('seat-N') — see §8.4; numeric seats fail silently in __marshalGame.
 ```
 
 ### 8.3 `logsWire.ts` — SeatLog[] → import wire
 
 Mirror `importLogs` (`bots.ts:164-203`) but from the decoded `SeatLog[]`
 (seat already numeric — simpler): `u16 LE count`, per record `i8 type`
-(via `__LOG_TYPE_TO_INT`, `engine.ts:276-280`), `i8 seat (0xFF if null)`,
+(`SeatLog.log_type` is a runtime STRING of the LogType union; map it via
+the exported `__LOG_TYPE_TO_INT` Map, `engine.ts:1502-1504`, with `?? 0`
+fallback per `bots.ts:185`), `i8 seat (0xFF if null)`,
 `i8 defender_index (0xFF if null)`, `u8 n_pairs (≤64)`, pairs via
 `__wireLogCard` (hidden `{-1,-1}` → `0xFE`, absent target → `0xFF`).
 Truncate at 512 records keep-first (mirrors the live cap). Encode ONCE on
@@ -651,24 +696,41 @@ table_battles, elimination_order. Build it from `steps[j-1]` + `d`:
 - acting seat's `hand`: the step's `known` + retrodicted `slots` for that
   seat (`ReplaySeatView`, `view.ts:22-40`), null-slot fill per §5.2.
 - every other seat: `hand_length` placeholders.
-- **`defender`, `goodSeats`, `outSeats` per step**: `ReplayStep` does not
-  currently carry these. Extend `buildReplaySteps` (`view.ts:63-306`) to
-  record them per step during its existing fold — it already processes
-  DEFENDER_CHANGE, GOOD, PLAYER_OUT and round transitions; capture
-  `defender` (current defender seat), `goodSeats: number[]` (seats that
-  said good this round; cleared on round transition), and the eliminated
-  list. This is an additive change to the step objects; rendering code is
-  untouched. (Builder: verify against `stepToGame`, `view.ts:332-368`,
-  which may already compute some of these — reuse, don't duplicate.)
-- `awaiting_attack`: set `true` for the defender iff any battle is
-  uncovered, `false` otherwise. **Verify in the headless test** (§12.2) that
-  this reproduces legality — the invariant to assert is: *the recorded move
-  is in the kernel's legal-move set at every decision step of the three
-  sample replays*. If that assert fails on GOOD/PASS edge cases, derive
-  `awaiting_attack` from the log stream instead (the fold sees ATTACKs).
-- `good_players` / `elimination_order`: from the new per-step fields; the
-  marshal writes them as a seat bitmask / seat list
-  (`engine.ts:346-354,369-374`).
+- **`defender`, goods, outs — already on the step (verified)**:
+  `ReplaySeatView` carries `out` / `isDefender` / `good` per seat
+  (`view.ts:37-39`, populated at `:127-134`), and `stepToGame` already
+  derives the marshal-ready values: `defender =
+  players.findIndex(p => p.isDefender)` (`:355`), `good_players =` the
+  `'seat-N'` id list (`:359-361`), statuses IN/OUT (`:348`). **Reuse those —
+  do not re-fold.**
+- **The ONE genuinely missing field: the ORDERED elimination list.**
+  `stepToGame` hardcodes `elimination_order: []` (`view.ts:357`) — display
+  code never needed it, but for the oracle it is **load-bearing for every
+  score**: `cd_sim_from_game` copies the marshaled elimination order into
+  the sim (`cordite_sim.c:90,101`) and every rollout finish position is
+  `elim_order index + 1` (`:1968-1970,2017-2019`). Marshaling `[]` after
+  the first elimination silently skews every EF. Capture the ordered list
+  in the `buildReplaySteps` fold — from PLAYER_OUT logs **plus the silent
+  no-log outs**: the kernel's empty-stock refill marks players out with no
+  log record (`game.c:440-447`, mirrored client-side at `view.ts:221-225`),
+  so fold the `out`-flag *transitions* in kernel seat order, not PLAYER_OUT
+  events alone. Add the §12.2 assertion: at any decision after k
+  eliminations, every candidate mean must be ≥ k+1.
+- **`good_players` / `elimination_order` are arrays of player_id STRINGS.**
+  `__marshalGame` converts them to the seat bitmask / seat list via
+  `findIndex(p => p.player_id === pid)` (`engine.ts:347-350,371-374`) —
+  numeric seats would silently produce an empty good mask and `0xFF`
+  elimination entries, and the §12.2-1 legality test would NOT catch it (a
+  recorded stream never replays an already-good press). Use the
+  `'seat-N'` convention `stepToGame` already uses (`view.ts:347`), and add
+  a §12.2 assertion that the good mask is non-empty at a step with goods
+  pending.
+- `awaiting_attack`: **inert — marshal `false` for every seat.** In the
+  kernel it is an attacker-side flag that is write-only for our purposes:
+  set/cleared in `game.c` (`:591,707,850`) but read nowhere in `legal.c`,
+  `should_bot_act`, or the sim — its only read is view serialization
+  (`view.c:47,112`). No derivation is needed and no test can (or needs to)
+  validate it.
 
 ### 8.5 `oracleWorker.ts` — the batch loop
 
@@ -683,8 +745,12 @@ Per batch (order per §4.3 — it is load-bearing):
      wasm_og_reload_flags()
 2. __marshalGame(ex, job.gameBlob)          // fresh marshal every batch
 3. importStrategyKeys: one i8 -1 per seat -> wasm_import_strategy_keys()
-   // -1 everywhere: strategy keys only feed struct-path opponent models,
-   // inert on octogen's default fast path (octogen_strategy.c:1518-1535)
+   // -1 everywhere: the only strategy that reads strategy_key is
+   // espresso_prod (espresso_prod_strategy.c:978), which is NOT linked into
+   // the bots/oracle wasm (Makefile:601-609) — keys are inert for the whole
+   // module. The call itself is still required only because
+   // wasm_import_strategy_keys reads num_players bytes unconditionally
+   // (wasm_bots_api.c:182-187).
 4. if job.memoryOn && job.logsWire.length: write logsWire -> wasm_import_logs()
 5. wasm_set_strategy_seed(nextSeed())       // crypto-seeded xorshift, never 0
 6. wasm_og_explain_reset()
@@ -693,9 +759,23 @@ Per batch (order per §4.3 — it is load-bearing):
    text = decode(memory at wasm_og_explain_ptr(), len)   // refresh the
    Uint8Array view EVERY read — memory.grow invalidates buffers (§4.3)
 9. record = JSON.parse(first line)
+   // a parse failure or an {"overflow":1} line (§6.3) is a real signal:
+   // post {t:'error'} and stop — do not retry-loop a malformed dump
 10. postMessage({t:'batch', decisionId, record, batchMs})
-11. if record.solver?.applied and any candidate verdict in {win,loss}:
-      post {t:'exact'} and stop looping     // proven values; no more sampling
+11. STOP RULES (all verified against real emit paths):
+    a. EXACT: record.solver?.applied and any candidate verdict in {win,loss}
+       -> post {t:'exact'}, stop.            // proven; no more sampling
+    b. FORCED/SOLVED: every candidate has nsim==0 (and no win/loss verdict)
+       -> post {t:'forced'}, stop after this first batch. This covers three
+       real paths that would otherwise spin to the hard cap: single legal
+       move (:1452-1461, emits C=NULL, no solver flag), solver-win with all
+       probe verdicts 'unknown' (:1550-1559 — the narrow-window win-hunt can
+       prove a win the full-window probe timed out on), and single surviving
+       candidate (:1577-1584). The UI renders the record as-is with the
+       oracle_forced_move note.
+    c. UNPROVEN-SOLVER DEFUSE: record.solver?.applied but no win/loss
+       verdicts -> rewrite env OG_EXPLAIN_SOLVE_BUDGET=0 (per-call getenv,
+       no reload needed) and keep batching in MC mode (§5.4).
 12. yield (setTimeout 0) and continue unless stopped
 ```
 
@@ -744,8 +824,12 @@ Convergence checkpoint ("keep running until a pretty big checkpoint"):
 
 ```
 CONVERGED when  minCandidate(n) >= 65_536  OR  maxCandidate(se) <= 0.005
+                (both computed over candidates with n > 0 ONLY — pruned and
+                 scoreless rows are excluded or forced steps never converge)
 HARD CAP        wall clock 180 s (belt and suspenders)
 EXACT           solver verdicts arrived -> stop immediately, badge "exact"
+FORCED          first batch reports all-nsim==0 with no verdicts -> stop,
+                badge oracle_forced_move (§8.5 step 11b)
 ```
 
 All four numbers are named constants in `types.ts`; tune after measuring.
@@ -1019,8 +1103,9 @@ one new file `cnitro/wasm/wasm_oracle_mt.c` plus small `#ifdef` seams:
 
 Mode A inherits `--stack-first` (overflow = loud trap). Mode B's threads
 run on heap-region stacks where overflow would silently smash adjacent
-memory. Mitigations, all required: 512 KiB per thread (≈ 23× the measured
-14.3 KiB worst case, `cnitro/Makefile:631-644`); a canary word at each
+memory. Mitigations, all required: 512 KiB per thread (≈ 36× the measured
+14.3 KiB worst case, ≈ 23× the shipped 22 KiB stack,
+`cnitro/Makefile:631-644`); a canary word at each
 stack's low end checked after every batch (`stack_canary_trips` in the
 snapshot; UI kills the run if it ever ticks); thread stacks placed at the
 LOW end of the reserved region so thread k's overflow walks into thread
@@ -1167,9 +1252,17 @@ oracle_approx         "Approximate position (some hidden cards inferred)."
 oracle_basis          "Based on the publicly visible record."
 oracle_memory_off_endgame "Exact endgame proofs need Memory on."
 oracle_forced_loss    "proven loss"
+oracle_forced_move    "Forced — no alternatives to compare"
 oracle_class_best/excellent/good/inaccuracy/mistake/blunder
 oracle_unavailable    "Oracle failed to load"
 ```
+
+**Failure path** (gives `oracle_unavailable` a behavior): on any
+fetch/gunzip/instantiate/Worker-construction failure, the panel renders
+`oracle_unavailable` with a retry affordance (re-running the §7.2 loader
+from scratch), the button stays enabled, the error is `console.error`'d,
+and no half-initialized fleet survives (dispose whatever partially
+started — StrictMode-safe).
 
 Theming: use `var(--color-text-primary)` / `--color-text-muted`, the
 `text-shadow` class, and `useStyles()` for the Soviet branch — copy the
@@ -1215,8 +1308,8 @@ through CSS vars so both themes read.
 | Batch wall time | target 40 ms | `OG_W1` adaptive (§8.6) |
 | Worlds/sec (fleet) | measure; naive estimate O(10³-10⁴)/s mid-game | — |
 | Checkpoint | 65,536 worlds/candidate or SE ≤ 0.005 or 180 s | constants |
-| Endgame first batch | + probe cost: ≤ moves × 2M nodes | `OG_EXPLAIN_SOLVE_BUDGET` |
-| TT reset memset | 8 MiB per root-solve engage — once, since exact stops batching | — |
+| Endgame probe | ≤ moves × 2M nodes, **per batch while the solver gate passes** — proven → exact stop after batch 1; unproven → defused to budget 0 after batch 1 (§5.4, §8.5-11c) | `OG_EXPLAIN_SOLVE_BUDGET` |
+| TT reset memset | 8 MiB per root-solve engage (2× with the probe) — bounded by the same batch-1 stop/defuse rules | — |
 
 ---
 
@@ -1227,10 +1320,12 @@ through CSS vars so both themes read.
 - `make wasm-oracle` succeeds; `git status` shows ONLY
   `public/oracle.wasm.gz` new — the three shipped artifacts and their
   embeds are untouched.
-- Sanity: `make wasm && make wasm-bots && make wasm-guards` then
-  `git diff --stat` shows no changes to
-  `supabase/functions/_shared/wasm/*` (proves `FOOLISH_ORACLE_BUILD`
-  guards leak nothing into shipped builds).
+- Sanity: `make wasm && make wasm-bots && make wasm-guards`, then verify the
+  shipped modules are byte-identical — for `bots.wasm.gz` compare the
+  **inflated** bytes (its recipe embeds an mtime in the gz header,
+  `Makefile:710`), for the embeds a plain `git diff` suffices. This proves
+  the `FOOLISH_ORACLE_BUILD` guards leak nothing into shipped builds. Then
+  `git checkout` any mtime-only gz churn rather than committing it.
 - Existing suites stay green: `npm run test:e2e` (at minimum the
   no-Postgres suites: `replay_codec`, `wasm_engine`, `bot_parity`).
 
@@ -1244,14 +1339,26 @@ second copies. Fixtures: the tutorial 3p code + the two 8p sample codes
 
 1. **Legality invariant** (the load-bearing one): for EVERY decision step of
    all three replays, marshal the constructed pre-move state and assert the
-   recorded move appears in `kernelLegalMoves` — this validates
-   defender/goods/awaiting_attack derivation (§8.4). Report the count.
+   recorded move appears in the legal-move set — this validates
+   defender/goods derivation (§8.4; `awaiting_attack` is inert and cannot be
+   validated this way). Enumerate via the **oracle instance's own**
+   `wasm_legal_moves` (4096 cap), NOT `kernelLegalMoves` on the engine slot
+   (rules.wasm caps at 1024, `Makefile:417-418`); for 8-player COVER steps
+   whose menus can saturate even 4096 (`Makefile:222-233`), fall back to
+   direct validation of the single recorded move (apply it via the kernel
+   and assert no reject) instead of menu membership. Report the count.
+   Additional assertions from §8.4: the good mask is non-empty at a step
+   with goods pending, and at any decision after k eliminations every
+   candidate mean is ≥ k+1 (catches a silently-empty `elimination_order`).
 2. **Batching**: at three mid-game decisions, run 5 batches with distinct
    seeds; assert candidate keys are stable across batches, `nsim` uniform
    per batch, cumulative `n` strictly increasing, and at least two batch
    means differ (fresh seeds actually vary worlds).
-3. **Determinism per seed**: same seed twice → identical dump text (guards
-   against accidental RNG leaks).
+3. **Determinism per seed**: same seed twice → identical dump text. Valid
+   only while TT state is identical (§4.1): run it on a fresh instance or
+   before any heads-up leaf-solving decision — the 3p/8p fixtures dodge the
+   pc2 leaf gate (`:1519-1520`), which checks total seats; note why in the
+   test.
 4. **Memory toggle**: at a decision after the first discard, ON vs OFF
    dumps differ in `belief.pool` size (discards resurrect), and at a
    deck-empty heads-up decision ON yields verdicts while OFF does not.
@@ -1266,9 +1373,12 @@ second copies. Fixtures: the tutorial 3p code + the two 8p sample codes
 
 ### 12.3 Browser acceptance (the user-requested proof)
 
-No committed browser harness exists; do this ad-hoc with Playwright (in the
-dev container Chromium is pre-installed at `/opt/pw-browsers`; do not run
-`playwright install`):
+No committed browser harness exists; do this ad-hoc with Playwright.
+(Environment note, not a repo fact: if the dev container pre-provisions
+browsers — check `echo $PLAYWRIGHT_BROWSERS_PATH` / `ls /opt/pw-browsers` —
+install a playwright version whose bundled Chromium revision matches the
+provisioned directory and skip `playwright install`; otherwise
+`npx playwright install chromium`.)
 
 ```bash
 npm run dev &                       # port 3000; replay needs no Supabase
@@ -1355,8 +1465,9 @@ as-is.
 | R1 | OG_* env latch: knobs frozen after first choose | C1/C2 reload hook; env installed before first choose regardless (§8.5 step 1 runs first) |
 | R2 | Identical batches if seeding is forgotten (strategy LCG is read, not advanced) | §8.5 step 5 is mandatory; test §12.2-2/3 catches it |
 | R3 | Dump buffer overflow silently drops records | `wasm_og_explain_reset()` every batch (§8.5 step 6) |
-| R4 | Endgame probe cost per batch (≤ moves × budget nodes) | exact regime stops batching after first batch; budget knob is per-call (`OG_EXPLAIN_SOLVE_BUDGET`) |
+| R4 | Endgame probe cost per batch (≤ moves × budget nodes, re-paid every batch while the gate passes) | proven → stop after batch 1; unproven → worker rewrites `OG_EXPLAIN_SOLVE_BUDGET=0` after batch 1 (per-call getenv; §8.5-11c) |
 | R5 | Played move pruned from candidates (caps 12/10/3) | §9.4 scoreless `pruned` row; C3 covers the endgame case with real verdicts |
+| R5b | Forced/solved decisions (1 legal move, 1 surviving candidate, solver-win with unknowable probe) never accumulate nsim → naive loop spins to the hard cap | FORCED stop rule §8.5-11b + `oracle_forced_move`; convergence computed over n>0 candidates only (§8.7) |
 | R6 | TT warmth makes batches non-i.i.d. | harmless to a converging mean; SE from batch means absorbs it; documented, no reset export |
 | R7 | Retrodicted mid-game hands ≠ historical truth | §5.2 honesty footnotes (`oracle_basis`, `oracle_approx`); exact at game end |
 | R8 | 512-log truncation in ultra-long games | matches the LIVE bot's own cap (parity); raising MAX_LOGS cascades into IO_CAP/overlay sizing — future work, do not do casually |
@@ -1367,7 +1478,7 @@ as-is.
 | R13 | `memory.grow` invalidates cached views | refresh `Uint8Array` on every read (§8.5 step 8) |
 | R14 | Client-only oracle is unmeterable vs the monetization plan | stated divergence (§1, §14); acceptable for this phase |
 | R15 | 16-slot / 32-byte env table | oracle uses 6 short pairs; adding knobs must respect the caps (`wasm_bots_api.c:83-88`) |
-| R16 | `awaiting_attack`/defender/goods reconstruction wrong | legality invariant test §12.2-1 gates the whole feature; derivation fallbacks in §8.4 |
+| R16 | defender/goods/elimination reconstruction wrong (esp. the silently-empty `elimination_order` skewing every score, and player_id-string vs numeric-seat mismatches failing silently) | §8.4 reuses the step's existing per-seat flags; §12.2-1 legality + good-mask + post-elimination-EF assertions gate it; `awaiting_attack` is inert (marshal false) |
 | R17 | (Mode B) COOP/COEP headers hit the shared `/[game_id]` route — auth popups / cross-origin subresources | credentialless COEP; audit per §8b.2; own commit + rollback note; runtime fallback to Mode A is automatic |
 | R18 | (Mode B) freestanding-threads toolchain unknowns (TLS init, passive-segment init, stack-pointer export) | mandatory hello-threads spike before MT1 (§13 step 8); two-artifact strategy isolates it from Mode A |
 | R19 | (Mode B) heap-region thread stacks lose `--stack-first` trap-on-overflow | 512 KiB stacks + per-batch canary check + layout ordering (§8b.6) |
