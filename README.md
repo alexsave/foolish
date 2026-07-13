@@ -62,6 +62,9 @@ src/                      Next.js web client (App Router)
   contexts/               game state, auth, realtime, drag, animation, theme, i18n
   state/                  realtime animation feed + client reconciliation
   replay/                 client-side replay decode + playback  ← project 2
+  oracle/                 the Infinite Oracle — in-browser octogen move-strength
+                          analysis over a paused replay decision
+                          (docs/INFINITE_ORACLE_DESIGN.md)
   backend/                Supabase client singleton
   localization/           en / ru / ko strings
   utils/                  procedural rendering helpers (fractal, textures)  ← project 3

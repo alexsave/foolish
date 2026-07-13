@@ -148,6 +148,11 @@ Chess.com's most important lesson: **free play, paid understanding.**
    spades — here's why"). The C engine already evaluates positions at scale;
    this is an API + UI project, not research. One free review/day, unlimited
    with **Foolish Premium (~$4–6/mo or $30–40/yr)**.
+   *(The client-side seed of this shipped first: the Infinite Oracle
+   (`docs/INFINITE_ORACLE_DESIGN.md`) runs octogen's judgment of every move in
+   the browser on the replay screen. It is a growth/wow feature — being
+   client-side, any paywall on it is UI-enforced only; a server-metered tier is
+   the billable path this section describes.)*
 2. **Premium bundle:** unlimited review, exclusive seed-drop cosmetics,
    tournament entries, ad-free, extended stats (win rate by trump suit,
    pickup-rate deltas — you have full replay history in a few bytes per game).

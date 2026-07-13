@@ -31,6 +31,10 @@ import { buildReplaySequences, buildReverseSequences, preDealGame } from '../rep
 import { splitReplayCode, decodeExtras, ReplayExtras } from '@shared/replay/extras.ts';
 import { INFO_TYPES } from '@shared/replay/core.ts';
 import { stepTimes } from '../replay/view';
+import { OracleOverlay } from './OracleOverlay';
+import { OracleController } from '../oracle/OracleController';
+import { buildOracleJob, findDecisionIndex } from '../oracle/replayOracleInput';
+import { OracleSnapshot } from '../oracle/types';
 
 /**
  * Self-contained replay viewer: WWW.FOOLISH.CARDS/<base32> — the path segment
@@ -505,6 +509,14 @@ const IconPen = () => (
         <path d="M16.5 3.5a2 2 0 0 1 2.8 2.8L8.7 16.9 4 18.5l1.6-4.7L16.5 3.5Z" />
     </Glyph>
 );
+/* Oracle — a crystal ball on its stand; active state tints the knob amber. */
+const IconOracle = () => (
+    <Glyph>
+        <circle cx={12} cy={10} r={6} />
+        <path d="M6.5 17.5h11L19 21H5l1.5-3.5Z" />
+        <circle cx={9.7} cy={8} r={1.6} fill="#161618" />
+    </Glyph>
+);
 
 interface StageProps {
     decoded: DecodedReplay;
@@ -540,6 +552,37 @@ const ReplayStage = ({ decoded, steps, sequences, reverses, gameId, names, times
     const stepRef = useRef(stepIdx);
     stepRef.current = stepIdx;
     const lastIdx = steps.length - 1;
+
+    // ---- Infinite Oracle (docs/INFINITE_ORACLE_DESIGN.md) ------------------
+    // A client-side octogen deliberation over the paused decision: strengths
+    // stream in and sharpen. Analysis only arms once animation settles on a
+    // decision step; the fleet stays warm across steps and is torn down on
+    // unmount. StrictMode-safe (start/stop bump a run generation).
+    const oracleRef = useRef<OracleController | null>(null);
+    const [oracleOpen, setOracleOpen] = useState(false);
+    const [oracleMemory, setOracleMemory] = useState(true);
+    const [oracleSnap, setOracleSnap] = useState<OracleSnapshot | null>(null);
+    const oracleDecision = useMemo(() => findDecisionIndex(decoded, stepIdx), [decoded, stepIdx]);
+    const getOracle = useCallback(() => {
+        if (!oracleRef.current) oracleRef.current = new OracleController();
+        return oracleRef.current;
+    }, []);
+    useEffect(() => {
+        if (!oracleOpen) return;
+        return getOracle().subscribe(setOracleSnap);
+    }, [oracleOpen, getOracle]);
+    useEffect(() => {
+        if (!oracleOpen) return;
+        const ctrl = getOracle();
+        if (playing || isAnimating) { ctrl.stopCurrent(); return; }
+        const job = buildOracleJob(decoded, steps, stepIdx, oracleMemory, gameId);
+        if (!job) { setOracleSnap(null); return; }
+        void ctrl.start(job);
+        return () => ctrl.stopCurrent();
+    }, [oracleOpen, stepIdx, isAnimating, playing, oracleMemory, decoded, steps, gameId, getOracle]);
+    useEffect(() => () => { oracleRef.current?.dispose(); oracleRef.current = null; }, []);
+    const renderOracleCard = useCallback(
+        (card: Card, w = 18) => <InlineCard card={card} w={w} />, []);
 
     // publish one step's sequence into the feed; a fresh sequence_id (and a
     // deep copy) lets the same step replay after scrubbing back. Plain
@@ -861,6 +904,14 @@ const ReplayStage = ({ decoded, steps, sequences, reverses, gameId, names, times
                     {btn(<IconBoutNext />, nextBout, t('replay_bout_next'))}
                     {btn(<IconEye />, () => setReveal((r) => !r), t(reveal ? 'hide_cards' : 'reveal_cards'), reveal)}
                     {btn(<IconPen />, toggleDrawing, t(drawing ? 'replay_draw_clear' : 'replay_draw'), drawing)}
+                    <span data-testid="oracle-btn-wrap" style={{ opacity: oracleDecision != null ? 1 : 0.4 }}>
+                        {btn(
+                            <IconOracle />,
+                            () => { if (oracleDecision != null) setOracleOpen((o) => !o); },
+                            oracleDecision != null ? t('oracle_button_title') : t('oracle_no_decision'),
+                            oracleOpen,
+                        )}
+                    </span>
                     {speeds.length > 1 &&
                         btn(
                             speeds[speedIdx % speeds.length].label,
@@ -873,6 +924,18 @@ const ReplayStage = ({ decoded, steps, sequences, reverses, gameId, names, times
                         )}
                 </div>
             </div>
+
+            {/* Infinite Oracle panel — right-anchored, mounted in the board
+                chrome so its mini-cards render inside the replay provider tree */}
+            {oracleOpen && (
+                <OracleOverlay
+                    snapshot={oracleSnap}
+                    onClose={() => setOracleOpen(false)}
+                    onToggleMemory={() => setOracleMemory((m) => !m)}
+                    onRetry={() => { const j = buildOracleJob(decoded, steps, stepIdx, oracleMemory, gameId); if (j) void getOracle().start(j); }}
+                    renderCard={renderOracleCard}
+                />
+            )}
 
             {/* home button — the same little wood square as the in-game back
                 button (btn-icon), positioned top-left by its own CSS */}
