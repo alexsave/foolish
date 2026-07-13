@@ -19,6 +19,9 @@ import { Card, LOG_TYPE, LogType, LogCardPair } from "../types.ts";
 // Wire-format constants. The kernel (cnitro/src/replay.h REPLAY_FORMAT_*)
 // is authoritative; these mirrors exist for TS-side pre-checks and tests.
 export const FORMAT_VERSION = 5;
+// Format 6: hidden-state-lossless, partial-game (cnitro/src/replay.h
+// REPLAY_FORMAT_VERSION_V6, docs/REPLAY_FORMAT6_HIDDEN_STATE.md).
+export const FORMAT_VERSION_V6 = 6;
 export const VERSION_ALPHABET = 16; // room for 15 future versions before a re-think
 
 /* ------------------------------- card ids -------------------------------- */

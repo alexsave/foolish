@@ -1,7 +1,9 @@
 # Replay Format 6 — hidden-state-lossless, partial-game codec
 
-**Status: C codec landed + native-tested. Wasm/TS/view.ts wiring is follow-up
-work (§ Integration).**
+**Status: shipped end to end.** C codec + native test, wasm exports (rules.wasm
++ bots.wasm), TS encode/decode bridge, and view.ts consumption are all landed
+and tested. The Oracle now marshals exact hands from a v6 replay (no
+retrodiction). Remaining nice-to-haves in § Follow-up.
 
 ## Why this exists
 
@@ -77,29 +79,50 @@ decode carries the true initial hands + every real draw (losslessness), encode
 determinism, decode→re-encode fixed point, and a mid-game prefix decodes cleanly
 with no fool.
 
-**Size: v6 ≈ +11.5% over v5** (e.g. 57.4 B vs 51.5 B avg). For comparison,
-storing the 32-byte seed would be ~+60% on a ~50 B payload. The overhead is the
-draw-order residual + the atom-count varint + a small initial-deal
-set-ordering slack (see below).
+**Size: v6 ≈ +6.4% over v5** (54.8 B vs 51.5 B avg over 900 games). For
+comparison, storing the 32-byte seed would be ~+60% on a ~50 B payload. The
+overhead is the draw-order residual + the atom-count varint. The initial deal is
+coded as an ascending *combination* per hand (see `deal_hand_v6`), so it spends
+no bits on within-hand order — that optimization alone cut v6 from +11.5% to
++6.4% (kept because it strictly shrinks the average).
 
-## Follow-up work (not yet done)
+## What's wired (all tested)
 
-1. **Optimize the initial deal.** The deal is coded as 6 *ordered* uniform picks
-   per seat; a hand is a set, so this wastes ~log₂(6!) ≈ 9.5 bits/hand. Coding
-   each hand as an ascending *combination* recovers it (~1 B/hand, more at high
-   pc). Draws don't have this slack (a draw is genuinely ordered).
-2. **Wasm + TS bridge.** Add `wasm_replay_encode_v6` to the rules export list
-   (`cnitro/Makefile`) and bridge it in `supabase/functions/_shared/replay/`.
-   **Before shipping in wasm, re-measure `REPLAY_STATS` peaks** — v6 codes more
-   choices per game (every reveal), so `g_rec`/`g_bn` overlay budgets
-   (`REPLAY_REC_CAP`, the `_Static_assert`s in `replay.c`) must be re-checked
-   against the tightened wasm caps. Native has huge caps, so this test is green
-   regardless.
-3. **view.ts consumption.** When a replay decodes as v6, use the real per-seat
-   initial-deal draws + real draw identities to seed hands directly instead of
-   `slots` retrodiction — that is what actually fixes the Oracle.
-4. **A TS/e2e oracle mirror** for v6 (like `e2e/replay_ts_oracle.ts` polices v5)
-   if v6 ever becomes a shipped wire format that needs cross-impl policing.
-5. **Producer note.** Whatever emits v6 must supply reveals in exact
-   refill-pop order (the native test extracts them from the kernel's real
-   `LOG_DRAW` stream — the server can do the same).
+- **Codec** — `cnitro/src/replay.{c,h}`: `code_reveal`, `deal_hand_v6`,
+  `code_varint`, `run_replay_v6`, `replay_encode_v6`, v6 branch in
+  `replay_decode`. v5 byte-frozen.
+- **Native test** — `cnitro/tests/replay_v6_test.c` (in `make difftests`):
+  ~787k assertions, pc 2–8. `REPLAY_STATS` peak = **465 recorded choices**
+  (wasm cap `REPLAY_REC_CAP` = 4096) and 34 bignum limbs (cap 2688) — v6 fits
+  the tight wasm rules overlay with large margin, so no memory-budget change
+  was needed.
+- **Wasm** — `wasm_replay_encode_v6` exported from **rules.wasm** and
+  **bots.wasm** (the latter because `bots.ts` adopts the engine slot when bots
+  run). Decode is version-dispatched, so `wasm_replay_decode` handles v6.
+  Both committed modules rebuilt.
+- **TS bridge** — `engine.ts` `kernelReplayEncodeV6`; `encode.ts`
+  `encodeReplayV6(input, maxActions?)` (builds the reveal stream, supports a
+  mid-game cut); `decode.ts` unchanged (generic). e2e: `e2e/replay_v6.test.ts`.
+- **view.ts** — a v6 replay carries real deal/draw identities, so
+  `buildReplaySteps` seats start empty and fill from the DRAW logs; hands are
+  exact at every step with **zero hidden cards and zero retrodicted slots**.
+  That is the Oracle fix: it marshals these steps.
+
+## Producer note (important)
+
+Whatever emits v6 must feed `encodeReplayV6` the **real** hidden cards: each
+seat's true initial hand plus real DRAW cards in refill-pop order. The server
+holds the true deck, so it can. For **seeded** games the draw order is even
+simpler — `game.deck` captured at deal time *is* the draw order (the kernel pops
+the top: `draw_index`), so no per-draw reconstruction is needed. `game.flipped`
+/ `power_suit` are cleared once the trump is drawn late-game — snapshot the trump
+at deal time.
+
+## Follow-up (nice-to-have, not blocking)
+
+- A TS/e2e **oracle mirror** for v6 (like `e2e/replay_ts_oracle.ts` polices v5)
+  if v6 ever needs cross-impl byte policing.
+- Wire `encodeReplayV6` into a real producer (server `finalizeEndedGame` for a
+  lossless finished-game code, and/or the iMessage FMSG mid-game path).
+- v6 **mid-game** `buildReplaySteps` sets the closing step's fool to `0xFF`
+  (255); the replay screen's end-of-game UI should treat 255 as "no fool yet".

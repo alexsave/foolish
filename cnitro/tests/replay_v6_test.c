@@ -390,6 +390,12 @@ int main(int argc, char **argv) {
 
     printf("replay v6 test: %d checks passed, %d failed, %d skipped\n",
            n_pass, n_fail, n_skip);
+#ifdef REPLAY_STATS
+    extern int replay_stat_max_rec, replay_stat_max_bn;
+    printf("REPLAY_STATS peaks: max_rec=%d max_bn=%d limbs "
+           "(wasm caps REPLAY_REC_CAP=4096, BN_CAP=%d)\n",
+           replay_stat_max_rec, replay_stat_max_bn, (4096 * 21 + 31) / 32);
+#endif
     if (n_sized)
         printf("size: v6 avg %.1f B vs v5 avg %.1f B over %d games (v6 = +%.1f%% for full "
                "hidden-state + mid-game capability)\n",

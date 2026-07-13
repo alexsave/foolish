@@ -77,6 +77,7 @@ interface EngineExports {
     wasm_replay_io_ptr(): number;
     wasm_replay_io_cap(): number;
     wasm_replay_encode(len: number): number;
+    wasm_replay_encode_v6(len: number): number;
     wasm_replay_decode(len: number): number;
     wasm_replay_error_detail(): number;
     // Packed wire pipeline (docs/PACKED_WIRE_CUTOVER.md)
@@ -1418,22 +1419,33 @@ function replayError(negCode: number, detail: number): Error {
     }
 }
 
-function kernelReplayRun(input: Uint8Array, encode: boolean): Uint8Array {
+type ReplayOp = 'encode' | 'encode_v6' | 'decode';
+
+function kernelReplayRun(input: Uint8Array, op: ReplayOp): Uint8Array {
     const ex = engine();
     if (input.length > ex.wasm_replay_io_cap()) throw new Error('replay: capacity exceeded');
     const base = ex.wasm_replay_io_ptr();
     mem(ex).set(input, base);
-    const r = encode ? ex.wasm_replay_encode(input.length) : ex.wasm_replay_decode(input.length);
+    const r = op === 'decode' ? ex.wasm_replay_decode(input.length)
+        : op === 'encode_v6' ? ex.wasm_replay_encode_v6(input.length)
+        : ex.wasm_replay_encode(input.length);
     if (r < 0) throw replayError(r, ex.wasm_replay_error_detail());
     return mem(ex).slice(base, base + r);
 }
 
 export function kernelReplayEncode(input: Uint8Array): Uint8Array {
-    return kernelReplayRun(input, true);
+    return kernelReplayRun(input, 'encode');
+}
+
+// Format 6 (hidden-state-lossless, partial-game — cnitro/src/replay.h). Input
+// carries the real hidden cards; decode is version-dispatched (kernelReplayDecode
+// handles v6 transparently).
+export function kernelReplayEncodeV6(input: Uint8Array): Uint8Array {
+    return kernelReplayRun(input, 'encode_v6');
 }
 
 export function kernelReplayDecode(integerBytes: Uint8Array): Uint8Array {
-    return kernelReplayRun(integerBytes, false);
+    return kernelReplayRun(integerBytes, 'decode');
 }
 
 // Worst-case wire bytes for one exported move: type + n + 2 x MAX_MOVE_CARDS

@@ -599,6 +599,12 @@ int wasm_replay_decode(int in_len) {
     if (in_len < 0 || in_len > REPLAY_IO_CAP) return -REPLAY_ECAP;
     return replay_decode(g_replay_io, in_len, g_replay_io, REPLAY_IO_CAP);
 }
+// Format 6 (hidden-state-lossless, partial-game — replay.h). Same in-place
+// contract; decode is version-dispatched so wasm_replay_decode handles v6 too.
+int wasm_replay_encode_v6(int in_len) {
+    if (in_len < 0 || in_len > REPLAY_IO_CAP) return -REPLAY_ECAP;
+    return replay_encode_v6(g_replay_io, in_len, g_replay_io, REPLAY_IO_CAP);
+}
 int wasm_replay_error_detail(void) { return replay_last_error_detail(); }
 
 // ---------- legal moves --------------------------------------------------------

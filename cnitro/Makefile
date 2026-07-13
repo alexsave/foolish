@@ -351,6 +351,7 @@ WASM_API_EXPORTS := \
   -Wl,--export=wasm_next_player -Wl,--export=wasm_can_cover \
   -Wl,--export=wasm_replay_io_ptr -Wl,--export=wasm_replay_io_cap \
   -Wl,--export=wasm_replay_encode -Wl,--export=wasm_replay_decode \
+  -Wl,--export=wasm_replay_encode_v6 \
   -Wl,--export=wasm_replay_error_detail \
   -Wl,--export=wasm_legal_moves -Wl,--export=wasm_export_moves \
   -Wl,--export=wasm_apply_action -Wl,--export=wasm_finalize_win \

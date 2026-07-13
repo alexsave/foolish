@@ -1225,18 +1225,54 @@ static void run_replay(RModel *m, Coder *c, Src *s) {
 // drawn (draw_for reaches the coder via m->rev_coder), so no reveal is ever
 // deferred and the decoded stream is fully identity-resolved. Shares every menu,
 // weight, atom and cascade with v5 — only card *revelation* moves earlier.
+// Deal one seat's CARDS_PER_PLAYER-card initial hand. A hand is a SET, so we
+// code it as an ASCENDING combination — each card uniform over the unseen cards
+// with a strictly larger id than the last — which spends no bits on within-hand
+// order (v5's ~log2(6!) per hand of slack). Draws stay single-card ordered
+// reveals (a draw is genuinely time-ordered). Emitted as one LOG_DRAW per seat.
+static void deal_hand_v6(RModel *m, Coder *c, int seat) {
+    int real[CARDS_PER_PLAYER];
+    if (c->encode) {
+        for (int k = 0; k < CARDS_PER_PLAYER; k++) {
+            if (m->rev_pos >= m->rev_n) { m->err = REPLAY_EINPUT; return; }
+            real[k] = m->rev[m->rev_pos++];
+        }
+        for (int i = 1; i < CARDS_PER_PLAYER; i++) {  // insertion sort ascending
+            int v = real[i], j = i - 1;
+            while (j >= 0 && real[j] > v) { real[j + 1] = real[j]; j--; }
+            real[j + 1] = v;
+        }
+    }
+    unsigned char pairs[CARDS_PER_PLAYER][2];
+    int lo = -1;
+    for (int k = 0; k < CARDS_PER_PLAYER; k++) {
+        int8_t pool[52];
+        int U = 0;
+        for (int id = lo + 1; id < 52; id++)
+            if ((m->unseen >> id) & 1ull) pool[U++] = (int8_t)id;  // ascending, > lo
+        if (U == 0) { m->err = REPLAY_ENOFRESH; return; }
+        int chosen = -1;
+        if (c->encode) {
+            for (int j = 0; j < U; j++) if (pool[j] == real[k]) { chosen = j; break; }
+            if (chosen < 0) { m->err = REPLAY_ENOTFEAS; return; }
+        }
+        int kk = coder_uniform(c, U, chosen);
+        if (c->err) { m->err = c->err; return; }
+        int id = pool[kk];
+        m->unseen &= ~(1ull << id);
+        m->known[seat] |= 1ull << id;
+        lo = id;
+        pairs[k][0] = (unsigned char)id;
+        pairs[k][1] = REPLAY_CARD_NONE;
+    }
+    emit(m, LOG_DRAW, seat, -1, pairs, CARDS_PER_PLAYER);
+}
+
 static void run_replay_v6(RModel *m, Coder *c, Src *s, uint32_t n_atoms) {
     m->rev_coder = c;
     // Initial deal: seat-major, CARDS_PER_PLAYER real cards each.
     for (int seat = 0; seat < m->n; seat++) {
-        unsigned char pairs[CARDS_PER_PLAYER][2];
-        for (int k = 0; k < CARDS_PER_PLAYER; k++) {
-            int id = code_reveal(m, c, seat);
-            if (m->err) return;
-            pairs[k][0] = (unsigned char)id;
-            pairs[k][1] = REPLAY_CARD_NONE;
-        }
-        emit(m, LOG_DRAW, seat, -1, pairs, CARDS_PER_PLAYER);
+        deal_hand_v6(m, c, seat);
         if (m->err) return;
     }
 
