@@ -891,3 +891,95 @@ turn on App Store Connect crash reports review as a weekly habit.
 - **Push notifications:** requires APNs certs + server-side send on
   turn events — design doc first (server work; coordinate with the
   Supabase/edge-function owners).
+
+---
+
+## 17. Implementation status & handoff (2026-07-14)
+
+*What has actually been built vs. what remains, so a fresh implementer (with a
+Mac + Apple account) can finish. Written after a from-scratch build pass that had
+no Mac/Xcode and no live backend — so the C engine is proven on Linux, and the
+Swift is written-to-compile but has NOT yet been through `xcodebuild`.*
+
+### 17.1 Branches
+
+- **`claude/account-deletion`** (off `main`): the account-deletion prerequisite —
+  migration `20260714120000_account_deletion.sql`, `supabase/functions/
+  delete-account`, and `src/app/delete-account` web page. Mergeable to `main`
+  independently; deploys the endpoint the app's submission needs (§9, §11).
+- **`claude/ios-app-design-98t5ap`**: the app, **rebased onto
+  `claude/account-deletion`** so it includes the endpoint. All iOS work is here.
+
+### 17.2 Prerequisites (both handled)
+
+1. **Stale-round guard** (`WEB_RACE_BUG_HANDOFF.md`) — **already landed** before
+   this work (migration `20260713120000_round_epoch_stale_guard.sql`,
+   `e2e/race_conditions.test.ts`, `intent_version` in the wire, `REJECT_STALE_
+   ROUND`, localized strings). The iOS `PackedAction` already sends
+   `intent_version` and decodes stale-round, so the app never reintroduces the
+   bug. Nothing to do.
+2. **Account deletion** (`ORACLE_MONETIZATION_ENGINEERING.md` §4) — **built** on
+   `claude/account-deletion` (see 17.1). Not yet deployed (deploys on merge to
+   `main`). Not yet run against a live DB — review the migration + function
+   before merging.
+
+### 17.3 What is DONE and verified (Linux, no Mac)
+
+- **C engine bridge** (`cnitro/ios/`, `make ios-lib`/`ios-smoke`/`ios-goldens`/
+  `ios-view-test`): all green. `ios-smoke` drives a full game + replay round-trip
+  through the `fio_*` API; `ios-view-test` proves the server packed masked-view
+  decodes through the SAME kernel as offline (view + legal moves match). The
+  bridge is the same `game.c`/`legal.c`/`view.c`/`replay.c` as the wasm build.
+- **Native replay codec** (encode+decode, base32 + shared `replay.c`) —
+  round-trip proven; byte-parity with the server by construction.
+- **Verified wire primitives** (unit-tested in isolation): `PackedAction` (awire,
+  matches `awire.h`), `Auth.nameToEmail` (golden vectors), `VersionGate`.
+
+### 17.4 What is BUILT but needs the first `xcodebuild` (Mac)
+
+All Swift under `ios/`. Two independent compile-review passes were run and their
+findings fixed, but Swift was never compiled. First Mac session:
+`cd cnitro && make ios-lib && cd ../ios && xcodegen generate && xcodebuild ...
+build test`, then fix any surfaced nits (most likely: supabase-swift 2.x exact
+API shapes — see 17.6). Offline play, replays, tutorial, settings, entitlements,
+localization, and the DEBUG gallery are all implemented.
+
+### 17.5 What is a TODO(D0) seam (needs the web wire / a live backend)
+
+The online realtime layer is assembled from the verified primitives, but three
+wire details could not be pinned without the web client / a running backend.
+They are marked `TODO(D0)` in-code and in `docs/PROTOCOL.md`:
+
+1. **`create` → game id** (`Net/OnlineService.swift` `gameId(fromCreateResponse:)`):
+   `create` returns the packed view; how the client learns the server-generated
+   game id must come from `src/contexts/ServerContext.tsx:423`.
+2. **`meta` join → local seat** (`Net/OnlineService.swift` `joinSeat`): the local
+   player's seat index from the join response roster.
+3. **Broadcast event names + payload keys** (`Net/GameFeed.swift` `bind`): the
+   exact realtime event name and the payload fields carrying `version` and the
+   packed `view` (`src/state/RealtimeAnimationFeed.tsx`).
+
+Fill these three and online play should function — the packed-action POST, the
+version gate, the kernel decode, and the in-flight affordance around them are
+final. `docs/PROTOCOL.md` is the D0 contract to complete first.
+
+### 17.6 First-Mac-session checklist
+
+1. `cd cnitro && make ios-lib` (needs Xcode CLT), then `make ios-smoke`,
+   `make ios-view-test`, `make ios-goldens` — confirm all green.
+2. `brew install xcodegen`; `cd ios && xcodegen generate`.
+3. `xcodebuild -scheme Foolish -destination 'platform=iOS Simulator,name=iPhone 16' build test` — fix compile nits (Engine/DesignSystem/Boards first, then Net/ supabase-swift shapes).
+4. Record snapshot references (`ComponentSnapshotTests`, set `record=true` once, commit `__Snapshots__`, set back).
+5. Fill the three `TODO(D0)` seams against the web client; smoke-test online vs a staging Supabase project (never prod, §16.D DoD).
+6. Merge `claude/account-deletion` to `main` (review the migration first) so the deletion endpoint deploys; set `SUPABASE_URL`/`KEY` in `ios/Config/*.xcconfig`.
+7. Milestone F (needs Apple account): signing (`DEVELOPMENT_TEAM` in project.yml), render the app icon (`swift run --package-path ios/Tools/IconGen icongen …`), screenshots, privacy labels (`ios/Compliance.md`), TestFlight, submit.
+
+### 17.7 Known gaps / deferred (not blockers)
+
+- Replay **board playback** renders the decoded event stream under a transport;
+  projecting each step onto the full board via the diff engine is a follow-up.
+- Cross-zone card-flight animation (shared-namespace BoardDiff) — today the board
+  springs on state change.
+- Camera QR **scan** (paste works); full a11y checklist pass; snapshot references.
+- `game_snapshots.extras` replay-name blob is not anonymized on deletion
+  (documented in the migration) — needs replay re-encoding.
