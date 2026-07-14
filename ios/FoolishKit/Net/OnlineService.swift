@@ -1,15 +1,11 @@
-// OnlineService.swift — quick-match / join-by-code entry points (§6, §16.D5).
-// Creates or joins a game via the edge functions and returns an OnlineGame bound
-// to the resulting game id + local seat.
+// OnlineService.swift — quick-match / join-by-code / spectate (§6, §16.D5).
 //
-// PROTOCOL SEAM — TODO(D0): `create` returns the creator's packed masked view
-// (create/index.ts), and the game id is generated server-side. How the client
-// learns the game id from that response (a header? a field decoded from the
-// view? a follow-up meta read?) must be pinned from the web client
-// (src/contexts/ServerContext.tsx:423). `gameId(fromCreateResponse:)` is that one
-// seam; everything else — auth gating, the OnlineGame wiring, the packed-action
-// POST, the realtime decode — is complete. Until the seam is filled, quickMatch
-// throws a clear, non-silent error.
+// The wire is now fully resolved from the web client (docs/PROTOCOL.md):
+// - `create` returns the creator's enveloped packed game (octet-stream). We
+//   decode it (PackedGame) to learn the game id + our seat + the initial view —
+//   the same thing decodePackedGame does on the web (ServerContext.tsx:433).
+// - `join`/`spectate` only need the game id up front; the seat and state arrive
+//   on the `player_views` / `spectator_views` feed (OnlineGame learns them).
 
 import Foundation
 import Supabase
@@ -19,35 +15,38 @@ public final class OnlineService {
     public static let shared = OnlineService()
     private init() {}
 
+    private let engine = EngineC()
     private var client: SupabaseClient? { Backend.shared.client }
 
-    /// Quick-match: create a game and return a session on it. The creator is
-    /// always seat 0.
+    /// Quick-match: create a game and return a session seeded from the response.
     public func quickMatch(userId: UUID) async throws -> OnlineGame {
         guard let client else { throw OnlineError.notConfigured }
-        let data: Data = try await client.functions.invoke("create", options: FunctionInvokeOptions(method: .post))
-        let gameId = try Self.gameId(fromCreateResponse: data)
-        return OnlineGame(gameId: gameId, userId: userId, humanSeat: 0)
+        // Raw-bytes overload: `create` returns the packed envelope, not JSON.
+        let data: Data = try await client.functions.invoke(
+            "create", options: FunctionInvokeOptions(method: .post, body: EmptyBody())
+        ) { data, _ in data }
+        guard let decoded = await PackedGame.decode(data, engine: engine) else {
+            throw OnlineError.badResponse
+        }
+        return OnlineGame(userId: userId, gameId: decoded.gameId, initial: decoded)
     }
 
-    /// Join a game by its id/code (the same parser as the universal-link route).
-    /// The local seat comes from the join response's player roster.
+    /// Join a game by id/code (the same parser as the universal-link route). The
+    /// seat + state arrive on the feed; we only need the id to subscribe.
     public func join(gameId rawId: String, userId: UUID) async throws -> OnlineGame {
-        guard client != nil else { throw OnlineError.notConfigured }
+        guard let client else { throw OnlineError.notConfigured }
         let gameId = Self.normalizeGameId(rawId)
-        // TODO(D0): call `meta` { type: 'join', game_id } and read the local
-        // player's seat from the response roster. Defaulting to a spectator seat
-        // until pinned keeps the flow honest.
-        let seat = try await joinSeat(gameId: gameId, userId: userId)
-        return OnlineGame(gameId: gameId, userId: userId, humanSeat: seat)
+        struct JoinBody: Encodable { let type = "join"; let game_id: String }
+        try await client.functions.invoke(
+            "meta", options: FunctionInvokeOptions(method: .post, body: JoinBody(game_id: gameId))
+        )
+        return OnlineGame(userId: userId, gameId: gameId)
     }
 
-    /// Spectate a game by id.
+    /// Spectate a game by id (public feed; no fan, no actions).
     public func spectate(gameId rawId: String, userId: UUID) -> OnlineGame {
-        OnlineGame(gameId: Self.normalizeGameId(rawId), userId: userId, humanSeat: -1, spectator: true)
+        OnlineGame(userId: userId, gameId: Self.normalizeGameId(rawId), spectator: true)
     }
-
-    // MARK: - seams (TODO(D0))
 
     static func normalizeGameId(_ raw: String) -> String {
         raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -55,23 +54,14 @@ public final class OnlineService {
             .replacingOccurrences(of: "http://foolish.cards/", with: "")
     }
 
-    static func gameId(fromCreateResponse data: Data) throws -> String {
-        // TODO(D0): decode the game id from the create response per the web wire.
-        throw OnlineError.protocolSeam("create → game id extraction (docs/PROTOCOL.md §2.1)")
-    }
-
-    private func joinSeat(gameId: String, userId: UUID) async throws -> Int {
-        // TODO(D0): meta 'join' → the local player's seat index.
-        throw OnlineError.protocolSeam("meta join → local seat (docs/PROTOCOL.md §7)")
-    }
+    private struct EmptyBody: Encodable {}
 
     public enum OnlineError: Error, LocalizedError {
-        case notConfigured
-        case protocolSeam(String)
+        case notConfigured, badResponse
         public var errorDescription: String? {
             switch self {
             case .notConfigured: return "Online play isn’t configured in this build."
-            case .protocolSeam(let what): return "Online play needs the backend wire finalized: \(what)."
+            case .badResponse: return "The server sent an unreadable response."
             }
         }
     }

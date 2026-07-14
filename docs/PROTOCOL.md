@@ -1,134 +1,139 @@
 # Foolish backend protocol (client contract)
 
-*The wire contract between a Foolish client and the Supabase backend. Milestone
-D's first task (`IOS_APP_DESIGN.md` §15.1, §16.D0): the web client is the
-protocol's only spec, so this doc extracts it from the verified anchors before
-any Swift `Net/` code is written. **Status: draft skeleton** — the invoke/channel
-shapes below are pinned from the §8.1 anchors; items marked `TODO(D0)` must be
-confirmed by reading the named web files during Milestone D and reviewed (PR)
-before `Net/` lands. Any surprise found later goes here first.*
+*The wire contract between a Foolish client and the Supabase backend, extracted
+from the web client (the protocol's only spec) for the native iOS port
+(`IOS_APP_DESIGN.md` §8, §16.D). Verified anchors 2026-07-14. This is now a
+resolved contract, not a skeleton — the native `Net/` layer implements it. What
+remains is END-TO-END testing against a live/staging backend (no wire unknowns).*
 
-Anchors (study before editing): `src/contexts/ServerContext.tsx`
-(invokes `:423,633,1150,1180`; channels `:212,349,519,676`),
-`src/state/RealtimeAnimationFeed.tsx:76`, `src/state/clientReconcile.ts`
-(version gate `:44-52`), `supabase/functions/_shared/packed_action.ts` +
-`wire/awire.ts`, `supabase/functions/_shared/player_views.ts`,
+Anchors: `src/contexts/ServerContext.tsx` (create `:433`; channels `:228,355,
+692`; meta `:462,1129`; action `:1192`; bump `:649`), `src/state/
+RealtimeAnimationFeed.tsx:76`, `src/state/clientReconcile.ts:43-52`,
+`supabase/functions/_shared/wire/view.ts` (`decodePackedGame:281`,
+`encodeGameResponse:199`, `writeMaskedState`), `supabase/functions/_shared/
+meta_actions.ts`, `supabase/functions/_shared/packed_action.ts`,
 `supabase/functions/action/index.ts:17`.
 
 ---
 
 ## 1. Transport
 
-All server calls are Supabase **Edge Functions** invoked via the Functions
-client (`supabase.functions.invoke(name, { body })`). Realtime updates arrive
-over Supabase **Realtime broadcast** channels. Auth is Supabase Auth (see §5).
-
-Base config (client-supplied, both public by design — README "Quick start"):
-`SUPABASE_URL`, `SUPABASE_KEY` (anon key). iOS keeps them in
-`ios/Config/{Debug,Release}.xcconfig`, never in source (§16.D1).
+Edge functions via `supabase.functions.invoke(name, { body })`; realtime via
+Supabase Realtime (both Postgres-change notifications AND broadcast — see §3).
+Auth is Supabase Auth (§6). Config: `SUPABASE_URL` / `SUPABASE_KEY` (anon,
+public), in `ios/Config/*.xcconfig`.
 
 ## 2. Edge functions
 
-| Function | Purpose | Body | Anchor |
+| Function | Purpose | Body | Response |
 | --- | --- | --- | --- |
-| `create` | New game | JSON (game options) | `ServerContext.tsx:423` |
-| `action` | ALL moves | **binary** packed action (§3) | `ServerContext.tsx:1180` |
-| `meta`   | lobby / continue / fetch | JSON (generic) | `ServerContext.tsx:1150` |
-| `add-bot`| add a bot seat | JSON | `supabase/functions/` listing |
+| `create` | new game | `{}` (JSON) | **binary** enveloped packed game (octet-stream, §5) |
+| `action` | ALL moves | **binary** packed action (§4) OR JSON `{game_id,type:'bump'}` | binary 7-byte response (§4) |
+| `meta` | lobby ops | JSON `{type, game_id, …}` (§7) | JSON `{ data: { id, … } }` |
 
-`bump` nudge: the web fires an `action` of type `bump` at
-`ServerContext.tsx:633` to prod bot turns. `TODO(D0)`: confirm whether `bump`
-is a JSON `meta`/`action` call or a distinct packed kind (the awire wire has NO
-bump kind — five kinds only: attack/cover/pass/pickup/good), i.e. bump is an
-out-of-band nudge, not a packed move.
+### 2.1 create → game id + seat (RESOLVED)
 
-### 2.1 `action` request/response
+`create` returns the creator's **enveloped packed game** as an octet-stream
+(`create/index.ts` builds it via `buildPlayerViewRows`). The client decodes it
+with `decodePackedGame` → `{ game, version, seat }`; **`game.id` is the game id
+and `seat` is the creator's seat** (always 0 for create). No separate id/seat
+call. iOS: `PackedGame.decode` (native mirror) → `DecodedGame{gameId, seat,
+version, view}`.
 
-**Request body** (packed, `wire/awire.ts` + envelope, ported in
-`FoolishKit/Net/PackedAction.swift`):
+## 3. Realtime channels (RESOLVED — note the transport per channel)
+
+| Channel | Transport | Carries |
+| --- | --- | --- |
+| `pv-<user_id>` | **Postgres changes** on `player_views` (filter `player_id=eq.<uid>`) | the user's authoritative masked view — `row.view` is bare-hex of the §5 envelope; `row.version` is the committed version |
+| `game-<gameId>` | Postgres changes on `spectator_views` (spectator) / broadcast `animation_events` | the public masked view / animation events |
+| `gu-<gameId>-<user_id>` | **broadcast**, event `animation_events` | packed event envelope `{t:'as2', s, v, b}` — `b` is base64 masked EVENT bytes (animation polish, NOT a full view) |
+| `chat:<gameId>` | broadcast, event `INSERT` | chat rows |
+
+**Stage C1 (what the app renders from):** the `player_views` row — the FULL
+resulting masked view, decoded per row (`applyRow` on the web). The
+`animation_events` broadcast is animation-only and is deferred to Stage C2.
+iOS `GameFeed` subscribes the `player_views` (or `spectator_views`) Postgres
+changes and hands each `row.view` to `PackedGame`.
+
+## 4. `action` (packed move) — RESOLVED, byte-verified
+
+Request (`encodeActionRequest`, ported byte-for-byte in `Net/PackedAction.swift`
+and verified against `awire.h`):
 
 ```
 [fmt=2][gid_len:u8][gid bytes][intent_version:u32 LE][ wire ]
-  wire = [kind:u8][n:u8][card:u8 × n]   (+ [attackCard:u8 × n] for cover)
-  kind: attack=0 cover=1 pass=2 pickup=3 good=4
-  card byte = suit*13 + (value-1), 0..51 ; 0xFE hidden ; 0xFF none
+  wire = [kind:u8][n:u8][card:u8 × n]  (+ [attackCard:u8 × n] for cover)
+  kind: attack=0 cover=1 pass=2 pickup=3 good=4 ; card = suit*13+(value-1)
 ```
 
-`intent_version` is the client's intended `games.version` — the stale-round
-guard (`WEB_RACE_BUG_HANDOFF.md` §5) compares it server-side. The iOS app sends
-it from day one; it must not ship the old bug.
-
-**Response** (7 bytes, `action/index.ts:17`):
+`intent_version` = the client's current `games.version` (from the last decoded
+envelope) — the stale-round guard (already live, `round_epoch_stale_guard.sql`)
+rejects cross-round moves. Response (7 bytes, `action/index.ts:17`):
 
 ```
 [fmt=1][status:u8][reject_code:u8][version:u32 LE]
-  status: applied=0 rejected=1 moot=2
-  reject_code: kernel ENGINE_REJECT_* (0..21) ; edge REJECT_STALE_ROUND=100
+  status: applied=0 rejected=1 moot=2 ; reject_code: ENGINE_REJECT_* (0..21), REJECT_STALE_ROUND=100
 ```
 
-## 3. Realtime channels
+**Client must request the RAW body** (not JSON-decoded) for this binary response.
 
-| Channel | Content | Anchor |
-| --- | --- | --- |
-| `pv-<user_id>` | personal view feed (your masked `PersonalGame`) | `ServerContext.tsx:349` |
-| `game-<gameId>` | public / spectator view | `ServerContext.tsx:519,676` |
-| `gu-<gameId>-<user_id>` | per-player animation event feed | `RealtimeAnimationFeed.tsx:76` |
-| `chat:<gameId>` | chat | `ServerContext.tsx:212` |
+The `bump` nudge (`ServerContext.tsx:649`) is a JSON `action` body
+`{ game_id, type: 'bump' }`, fired when the game has AI players.
 
-`TODO(D0)`: pin the exact broadcast **event names** and payload JSON shapes for
-each channel (the animation event list, the sequence wrapper).
+## 5. The enveloped packed game (RESOLVED byte layout)
 
-## 4. Ordering & the version gate
-
-Broadcasts arrive **unordered**. Every sequence carries the committed
-`games.version`; drop stale sequences with the version gate
-(`shouldDropStaleSequence`, `clientReconcile.ts:44-52`) — port it verbatim
-(≈5 lines) to `Net/`. Each sequence carries the **full resulting** masked state
-(`:47-49`), so Stage C1 rendering takes that state and feeds the board diff
-(no optimistic mutation, §8.2).
-
-## 5. Views (masking)
-
-Clients receive per-viewer masked state (`player_views.ts`): the `PersonalGame`
-JSON — your hand is real cards, other seats are counts, the deck is hidden. Wire
-field names (web, `@shared/types.ts`):
+`decodePackedGame` (`wire/view.ts:281`) / iOS `PackedGame`:
 
 ```
-PersonalGame = PublicGame + { self: PrivatePlayer }
-PublicGame:  id, name, deck_length, discard_pile_length, flipped (Card|null),
-             players: PublicPlayer[], status, power_suit, first_attacker,
-             defender, table_battles: {attack, defense|null}[],
-             elimination_order: string[], good_timestamp, good_players: string[],
-             version?
-PublicPlayer:  player_id, status ('idle'|'ready'|'in'|'out'), name, hand_length, is_ai
-PrivatePlayer: PublicPlayer + { hand: Card[], awaiting_attack, strategy_key }
-Card:          { suit: 0..3, value: 1..13 }   (hidden = {suit:-1, value:-1})
+[0]      magic = GAME_RESP_FORMAT (1)
+[1]      flags: bit0 = isPlayer
+[2]      seat (when isPlayer) else -1
+[3..6]   u32 LE version
+[7..8]   u16 LE roster JSON length
+[9..]    roster JSON = PackedGameRoster { id, name, players:[{player_id,name,is_ai}], status, good_players, good_timestamp }
+[q]      u16 LE view length          (q = 9 + rosterLen)
+[q+2]    VIEW_FORMAT_VERSION (1)
+[q+3]    viewer seat
+[q+4..]  masked state — view.c state_put layout (writeMaskedState is its TS mirror)
 ```
 
-Note the web wire uses `suit`/`value` and **string** statuses; the offline
-engine bridge (`cnitro/ios/ios_api.c`) uses the compact `{s,v}` + integer
-statuses. `Net/` maps `PersonalGame` → the app's `GameView` at the boundary
-(§16.D4), so the two representations meet in exactly one adapter.
+iOS parses the header in Swift and hands the **inner masked state** (`[q+4..]`)
+to the kernel (`fio_view_from_packed_json` → `view.c state_get`, proven by
+`make ios-view-test`), then merges the roster's real names in. `player_views.
+view` (hex) and the `create` response body are this same envelope.
 
-## 6. Auth
+## 6. Auth (RESOLVED)
 
-Username+password over supabase-swift (session persisted in Keychain), mirroring
-`AuthContext.tsx`:
+`nameToEmail(name)` = SHA-256(uppercased UTF-8) → first 16 hex → `<hex>@foolish.
+cards` (`Net/Auth.swift`, golden-tested). signUp carries `user_metadata.username`
+(uppercased) and must locally reject the `%` prefix. supabase-swift persists the
+session in the Keychain. Guest-first: no wall before play.
 
-- `nameToEmail(name)` = SHA-256(uppercased UTF-8 name) → first 16 hex chars →
-  `<hex>@foolish.cards` (`AuthContext.tsx:12-33`; domain
-  `WEBSITE_DOMAIN='foolish.cards'`).
-- signUp carries `user_metadata.username` (uppercased) and must locally reject
-  the bot-reserved prefix `%` anywhere in the name
-  (`usernameUsesReservedPrefix`, `src/common/botName.ts`).
-- Guest-first: online quick-match may prompt for a username only; no wall before
-  play. Real-email verify/reset arrive with the web's auth rebuild (Oracle §4) —
-  leave TODO seams.
+## 7. `meta` actions (RESOLVED)
 
-## 7. Lifecycle & resync (§16.D6)
+`{type, game_id, …}` → `{ data: { id, … } }`. The seat is NOT returned explicitly
+— the client reads it from the masked view (§5). Types (`meta_actions.ts`):
 
-On foreground/reconnect: refetch authoritative state (`TODO(D0)`: the exact
-`meta`/game-fetch call the web uses), resubscribe all channels, drop stale
-sequences via the gate, rebuild the view. On websocket drop mid-game: a passive
-"reconnecting…" banner; never block input on it (the POST path is independent of
-the feed).
+- `join {game_id}` — appends the caller to `game.players` (seat = new array
+  index); the `player_views` feed then delivers their masked view.
+- `continue {game_id}` — rematch; resets a GAME_OVER game to WAITING (mirror
+  `resetToLobby`, `clientReconcile.ts:10-40`).
+- `start {game_id}` · `add-bot {game_id, bot_id?}` · `exit {game_id, bot_id?,
+  player_id?}` · `update-name {game_id, new_name}` · `rearrange-hand
+  {game_id, card_indices}` · `rearrange-players {game_id, new_order}`.
+
+## 8. Ordering & resync
+
+Version gate (`shouldDropStaleSequence`, ported in `Net/VersionGate.swift`): drop
+any row/sequence whose `version` ≤ the newest applied. On foreground/reconnect:
+reset the gate, re-`select` the `player_views` row (`OnlineGame.resync`), re-apply.
+
+## 9. What remains (testing, not wire)
+
+- End-to-end against a **staging** Supabase project (never prod): quick-match vs
+  a bot, a 2-device human game, spectate, reject surfacing, resync.
+- Confirm supabase-swift 2.x exact API shapes at compile time (see the
+  `NOTE (Mac compile pass)` markers in `Net/`).
+- Stage C2 (optional): decode the `animation_events` broadcast for smoother
+  animation; the app is correct on `player_views` rows alone.
+- Online replay code surfacing (minted server-side at game end).

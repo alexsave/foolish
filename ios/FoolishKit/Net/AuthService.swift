@@ -9,6 +9,7 @@
 // 2.x; confirm the exact member names against the resolved version.
 
 import Foundation
+import Combine   // ObservableObject / @Published
 import Supabase
 
 @MainActor

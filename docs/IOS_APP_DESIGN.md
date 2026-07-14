@@ -944,24 +944,31 @@ build test`, then fix any surfaced nits (most likely: supabase-swift 2.x exact
 API shapes — see 17.6). Offline play, replays, tutorial, settings, entitlements,
 localization, and the DEBUG gallery are all implemented.
 
-### 17.5 What is a TODO(D0) seam (needs the web wire / a live backend)
+### 17.5 Online layer — wire RESOLVED (implemented from the web source)
 
-The online realtime layer is assembled from the verified primitives, but three
-wire details could not be pinned without the web client / a running backend.
-They are marked `TODO(D0)` in-code and in `docs/PROTOCOL.md`:
+The three items previously flagged as `TODO(D0)` were extracted from the web
+client and implemented — `docs/PROTOCOL.md` is now the resolved contract, not a
+skeleton:
 
-1. **`create` → game id** (`Net/OnlineService.swift` `gameId(fromCreateResponse:)`):
-   `create` returns the packed view; how the client learns the server-generated
-   game id must come from `src/contexts/ServerContext.tsx:423`.
-2. **`meta` join → local seat** (`Net/OnlineService.swift` `joinSeat`): the local
-   player's seat index from the join response roster.
-3. **Broadcast event names + payload keys** (`Net/GameFeed.swift` `bind`): the
-   exact realtime event name and the payload fields carrying `version` and the
-   packed `view` (`src/state/RealtimeAnimationFeed.tsx`).
+1. **`create` → game id + seat**: the response is the enveloped packed game;
+   `Net/PackedGame.decode` yields `{gameId, seat, version, view}` (native mirror
+   of `decodePackedGame`). No seam.
+2. **Local seat**: read from the packed envelope (byte `[2]`) — `OnlineGame`
+   learns it from the feed. No seam.
+3. **Realtime transport**: the authoritative masked view arrives as
+   **`player_views` Postgres-change rows** (not a broadcast); `GameFeed`
+   subscribes those and decodes `row.view` via `PackedGame`. The
+   `animation_events` broadcast is Stage-C2 animation polish, deferred.
 
-Fill these three and online play should function — the packed-action POST, the
-version gate, the kernel decode, and the in-flight affordance around them are
-final. `docs/PROTOCOL.md` is the D0 contract to complete first.
+New verified C: `fio_view_from_packed_json` + `fio_legal_from_packed_json` decode
+the server's masked-view wire through the SAME kernel as offline
+(`make ios-view-test`, green). So online renders and computes legal moves with
+zero rules in Swift.
+
+**What actually remains for online is testing, not wire** (§17.6 step 5): a
+compile pass to confirm supabase-swift 2.x API shapes (marked
+`NOTE (Mac compile pass)` in `Net/`), then end-to-end against a staging Supabase
+project. `docs/PROTOCOL.md` §9 lists it.
 
 ### 17.6 First-Mac-session checklist
 

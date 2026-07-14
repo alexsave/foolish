@@ -1,18 +1,16 @@
 // OnlineGame.swift — the online game session (§8, §16.D5). Conforms to the same
 // GameSession the board renders against, so ONE TableView drives online and
-// offline. State comes from the server's masked-view feed (decoded through the
-// kernel, never a Swift wire), and moves POST the packed action (PackedAction,
-// byte-verified). Stage C1: no optimistic mutation — the played cards go
-// in-flight (dim + lock, no movement) and animate from the authoritative
-// broadcast; a reject clears them with a rigid haptic + toast (§8.2).
+// offline. Authoritative masked state arrives as `player_views` rows (GameFeed),
+// decoded through PackedGame (envelope → kernel). Moves POST the packed action
+// (PackedAction, byte-verified). Stage C1: no optimistic mutation — the played
+// cards go in-flight (dim + lock) and the authoritative row that follows
+// supersedes them; a reject clears them with a rigid haptic + toast (§8.2).
 //
-// PROTOCOL SEAMS — TODO(D0): the `create`/`meta` response shapes (how the game id
-// and the local seat come back) and the broadcast payload keys are the parts
-// that need the live wire / web client to finalize (docs/PROTOCOL.md). The
-// verified primitives — packed-action encode, packed-view decode, the version
-// gate, the auth email — are wired in and correct.
+// The local seat and game id are read from the decoded envelope (the web does
+// the same via decodePackedGame) — no seat/id is threaded through the UI.
 
 import Foundation
+import Combine   // ObservableObject / @Published
 import Supabase
 
 @MainActor
@@ -25,69 +23,65 @@ public final class OnlineGame: ObservableObject, GameSession {
     @Published public private(set) var foolSeat: Int?
     @Published public private(set) var inFlight: Set<String> = []
 
-    public let humanSeat: Int
     public let gameId: String
     private let userId: UUID
     private let spectator: Bool
+    /// Learned from the decoded envelope; -1 until the first row arrives.
+    @Published private var seat: Int
+    public var humanSeat: Int { seat }
 
     private let engine = EngineC()
     private var feed: GameFeed?
-    /// The client's current authoritative version — sent as `intent_version` so
-    /// the server's stale-round guard can reject cross-round moves (§8.1).
     private var intentVersion: UInt32 = 0
 
-    /// - Parameters:
-    ///   - gameId: the game to join / spectate.
-    ///   - userId: the local user (their seat is `humanSeat`).
-    ///   - humanSeat: the local player's seat (from the create/join response).
-    ///   - spectator: true to watch the public feed (no fan, no actions).
-    public init(gameId: String, userId: UUID, humanSeat: Int, spectator: Bool = false) {
-        self.gameId = gameId
+    /// Quick-match seeds `initial` from the `create` response; join/spectate pass
+    /// nil and learn everything from the first `player_views` row.
+    public init(userId: UUID, gameId: String, spectator: Bool = false, initial: DecodedGame? = nil) {
         self.userId = userId
-        self.humanSeat = humanSeat
+        self.gameId = gameId
         self.spectator = spectator
+        self.seat = initial?.seat ?? -1
+        if let initial { apply(initial) }
         start()
     }
 
     private func start() {
-        let feed = GameFeed(onPacked: { [weak self] bytes, viewer, version in
-            self?.ingest(bytes: bytes, viewer: viewer, version: version)
-        })
+        let feed = GameFeed(onRow: { [weak self] hex, _ in self?.ingest(hex: hex) })
         self.feed = feed
         Task {
             if spectator { await feed.subscribePublic(gameId: gameId) }
-            else { await feed.subscribe(gameId: gameId, userId: userId, mySeat: humanSeat) }
+            else { await feed.subscribe(userId: userId) }
         }
     }
 
     // MARK: - incoming state
 
-    /// Decode a gated packed view through the kernel, publish view + legal moves,
-    /// clear any in-flight cards the broadcast now confirms.
-    private func ingest(bytes: Data, viewer: Int, version: Int?) {
+    private func ingest(hex: String) {
         Task {
-            guard let v = try? await engine.viewFromPacked(bytes, viewer: viewer) else { return }
-            self.view = v
-            if let version { self.intentVersion = UInt32(max(0, version)) }
-            self.foolSeat = v.isOver ? v.gameOver : nil
-            // Kernel-computed legal moves from the masked view (own hand is real).
+            guard let decoded = await PackedGame.decodeHex(hex, engine: engine) else { return }
+            // The user's feed carries every game they're in — apply only ours.
+            guard decoded.gameId == gameId else { return }
+            apply(decoded)
             if !spectator {
-                self.humanLegal = (try? await engine.legalFromPacked(bytes, seat: humanSeat)) ?? []
+                humanLegal = (try? await engine.legalFromPacked(decoded.stateBytes, seat: decoded.seat)) ?? []
             }
-            self.actorMask = Self.actorMask(from: v)
-            self.inFlight.removeAll()      // authoritative state supersedes in-flight
-            self.thinking = !spectator && !v.isOver && (self.actorMask & (1 << humanSeat)) == 0
         }
     }
 
-    /// Derive the actor mask from a view: the defender when battles are
-    /// uncovered, else the attackers. The kernel owns the real rule offline; for
-    /// the online masked view this is a display hint only (enable-states come
-    /// from `humanLegal`), so a coarse derivation is acceptable.
+    private func apply(_ decoded: DecodedGame) {
+        view = decoded.view
+        seat = decoded.seat
+        intentVersion = UInt32(max(0, decoded.version))
+        foolSeat = decoded.view.isOver ? decoded.view.gameOver : nil
+        actorMask = Self.actorMask(from: decoded.view)
+        inFlight.removeAll()   // authoritative state supersedes any in-flight
+        thinking = !spectator && !decoded.view.isOver && (actorMask & (1 << max(seat, 0))) == 0
+    }
+
+    /// Display hint only — enable-states come from `humanLegal` (kernel-computed).
     private static func actorMask(from v: GameView) -> Int {
         var mask = 0
-        let hasUncovered = v.battles.contains { $0.defense == nil }
-        if hasUncovered { mask |= (1 << v.defender) }
+        if v.battles.contains(where: { $0.defense == nil }) { mask |= (1 << v.defender) }
         else { mask |= (1 << v.firstAttacker) }
         return mask
     }
@@ -95,28 +89,25 @@ public final class OnlineGame: ObservableObject, GameSession {
     // MARK: - outgoing moves (Stage C1)
 
     public func play(_ move: Move) {
-        guard let client = Backend.shared.client else { return }
-        // In-flight affordance: dim + lock the touched cards; do NOT move them.
+        guard let client = Backend.shared.client, !spectator else { return }
         for c in move.cards { inFlight.insert(c.identity) }
-
         Task {
             do {
                 let body = try PackedAction.requestBody(gameId: gameId, intentVersion: intentVersion, move: move)
+                // Raw-bytes overload — the action response is a BINARY envelope,
+                // not JSON, so we must NOT let invoke run a JSONDecoder over it.
                 let data: Data = try await client.functions.invoke(
-                    "action",
-                    options: FunctionInvokeOptions(method: .post, body: body)
-                )
+                    "action", options: FunctionInvokeOptions(method: .post, body: body)
+                ) { data, _ in data }
                 let resp = try PackedAction.decodeResponse(data)
                 switch resp.status {
                 case .applied:
-                    intentVersion = resp.version
-                    // The authoritative broadcast will animate + clear in-flight.
+                    intentVersion = resp.version   // the pv- row will animate + clear in-flight
                 case .rejected:
                     clearInFlight(move)
-                    lastReject = resp.isStaleRound ? .reject(code: Int(PackedAction.rejectStaleRound))
-                                                   : .reject(code: Int(resp.rejectCode))
+                    lastReject = .reject(code: Int(resp.rejectCode))
                 case .moot:
-                    clearInFlight(move)   // already applied by another path
+                    clearInFlight(move)
                 }
             } catch {
                 clearInFlight(move)
@@ -125,24 +116,36 @@ public final class OnlineGame: ObservableObject, GameSession {
         }
     }
 
-    private func clearInFlight(_ move: Move) {
-        for c in move.cards { inFlight.remove(c.identity) }
-    }
+    private func clearInFlight(_ move: Move) { for c in move.cards { inFlight.remove(c.identity) } }
 
     // MARK: - lifecycle
 
-    /// Refetch authoritative state on foreground/reconnect (§16.D6). The exact
-    /// `meta`/fetch call is a TODO(D0) seam; the resync flow (reset gate →
-    /// refetch → resubscribe) is here.
+    /// Nudge the bot loop where the web does (ServerContext.tsx:633) — a JSON
+    /// `action` body, not a packed move.
+    public func bumpBots() {
+        guard let client = Backend.shared.client else { return }
+        struct Bump: Encodable { let game_id: String; let type = "bump" }
+        Task { _ = try? await client.functions.invoke("action",
+            options: FunctionInvokeOptions(method: .post, body: Bump(game_id: gameId))) }
+    }
+
+    /// Refetch authoritative state on foreground/reconnect (§16.D6): reset the
+    /// gate and re-read the player_views row.
     public func resync() async {
         feed?.resetVersionGate()
-        // TODO(D0): call `meta` to refetch the current masked view, then feed it
-        // through `feed?.feed(version:packedViewHex:viewer:)`.
+        guard let client = Backend.shared.client, !spectator else { return }
+        struct Row: Decodable { let view: String }
+        let rows: [Row] = (try? await client.from("player_views")
+            .select("view")
+            .eq("game_id", value: gameId)
+            .eq("player_id", value: userId.uuidString.lowercased())
+            .execute().value) ?? []
+        if let hex = rows.first?.view { ingest(hex: hex) }
     }
 
     public func makeShareURL() async -> URL? {
-        // Online replay codes are minted server-side at game end (finalizeEndedGame);
-        // the share flow surfaces that code. TODO(D0): read it from the meta feed.
+        // Online replay codes are minted server-side at game end (finalizeEndedGame,
+        // stored in game_snapshots). Surfacing that code is a follow-up (§17.7).
         nil
     }
 

@@ -5,6 +5,7 @@
 // comes from (a local kernel instance vs the server's masked-view feed).
 
 import Foundation
+import Combine   // ObservableObject
 
 @MainActor
 public protocol GameSession: ObservableObject {

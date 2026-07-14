@@ -100,13 +100,13 @@ public actor EngineC {
     /// with no game state, so this is safe to read synchronously off the actor —
     /// the Home/bot-picker needs it before any game exists (§6, §7.2).
     public nonisolated static func roster() -> [(id: Int, name: String)] {
-        var out: [(Int, String)] = []
+        var out: [(id: Int, name: String)] = []
         let n = Int(fio_strategy_count())
         var buf = [CChar](repeating: 0, count: 64)
         for i in 0..<n {
             let w = fio_strategy_name(Int32(i), &buf, 64)
             let name = w > 0 ? String(decoding: buf.prefix(Int(w)).map { UInt8(bitPattern: $0) }, as: UTF8.self) : "bot \(i)"
-            out.append((i, name))
+            out.append((id: i, name: name))
         }
         return out
     }
