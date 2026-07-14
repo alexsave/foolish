@@ -8,6 +8,24 @@ import SwiftUI
 /// Drill-down routes. The only navigation is this hierarchy + system Back.
 enum Route: Hashable { case table(String), action }
 
+extension View {
+    /// Replace watchOS 10's big circular back button with a small chevron chip
+    /// (like the classic ‹ back), freeing the top-left corner for game data.
+    func smallBack(_ pop: @escaping () -> Void) -> some View {
+        navigationBarBackButtonHidden(true)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button(action: pop) {
+                        Image(systemName: "chevron.backward")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(WColor.brass)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+    }
+}
+
 @main
 struct WatchFoolishApp: App {
     @StateObject private var game = MockGame()
@@ -23,9 +41,11 @@ struct WatchFoolishApp: App {
                         case .table(let id):
                             TableScreen(game: game, gameId: id, onPlay: { path.append(.action) })
                                 .navigationTitle("")
+                                .smallBack { if !path.isEmpty { path.removeLast() } }
                         case .action:
                             ActionScreen(game: game)
                                 .navigationTitle("")
+                                .smallBack { if !path.isEmpty { path.removeLast() } }
                         }
                     }
             }

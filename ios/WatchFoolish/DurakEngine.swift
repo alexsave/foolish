@@ -86,7 +86,8 @@ struct DurakEngine {
             return []
         } else {                        // you defend
             guard let i = uncoveredIndex else { return [.pickup] }
-            if let c = selected, beats(c, table[i].attack) { return [.cover(table[i].id), .pickup] }
+            // A card that can cover ⇒ just Cover (no Pickup); (Pass isn't modelled here).
+            if let c = selected, beats(c, table[i].attack) { return [.cover(table[i].id)] }
             return [.pickup]
         }
     }

@@ -30,10 +30,8 @@ struct TableScreen: View {
     var body: some View {
         GeometryReader { geo in
             let w = geo.size.width, h = geo.size.height
-            let center = CGPoint(x: w / 2, y: h * 0.41)
+            let center = CGPoint(x: w / 2, y: h * 0.42)
             let r = 0.33 * min(w, h)
-            // shared corner coordinates
-            let xL: CGFloat = 18, xR = w - 18, yTop: CGFloat = 14, yBot = h - 16
             ZStack {
                 ForEach(Array(seats.enumerated()), id: \.element.id) { i, s in
                     seat(s).position(pos(i, n: seats.count, center: center, r: r))
@@ -48,19 +46,19 @@ struct TableScreen: View {
                     battle(at: focus)
                     if game.battles.count > 1 { pageDots }
                 }
-                .position(x: w / 2, y: h * 0.41)
-
-                // four corners
-                countLabel(game.deckCount, "deck").position(x: xL, y: yTop)          // TL
-                countLabel(game.discardCount, "disc").position(x: xR, y: yTop)        // TR
-                TokenCard(card: game.trump, size: 18).position(x: xL, y: yBot)        // BL
-                swordButton.position(x: xR, y: yBot)                                  // BR
-                handPeek.position(x: w / 2, y: yBot)                                  // center bottom
+                .position(x: w / 2, y: h * 0.42)
             }
             .frame(width: w, height: h)
+            // Four corners pinned to the safe-area corners (the OS-standard inset
+            // that follows the rounded display + top band), so deck/trump share a
+            // left edge, discard/sword a right edge, and the top/bottom pairs a row.
+            .overlay(alignment: .topLeading)     { countLabel(game.deckCount, "deck").padding(2) }
+            .overlay(alignment: .topTrailing)    { countLabel(game.discardCount, "disc").padding(2) }
+            .overlay(alignment: .bottomLeading)  { TokenCard(card: game.trump, size: 18).padding(.leading, 2) }
+            .overlay(alignment: .bottomTrailing) { swordButton.padding(.trailing, 2) }
+            .overlay(alignment: .bottom)         { handPeek }
         }
-        .background(WColor.bg)
-        .ignoresSafeArea(edges: .bottom)
+        .background(WColor.bg.ignoresSafeArea())
         .focusable(game.battles.count > 1)
         // Only page battles with the Crown when there's more than one — a
         // `from: 0, through: 0` range is degenerate and can crash the rotation.
@@ -79,8 +77,8 @@ struct TableScreen: View {
     private func seat(_ s: SeatVM) -> some View {
         ZStack {
             if s.isDefender {
-                ShieldShape().stroke(WColor.brass, lineWidth: 1.6)
-                    .frame(width: 19, height: 23).offset(y: -1)
+                ShieldShape().stroke(WColor.brass, lineWidth: 1.5)
+                    .frame(width: 16, height: 19).offset(y: 1)   // tight around the count, clear of the name
             }
             Text("\(s.count)")
                 .font(WFont.token(14))

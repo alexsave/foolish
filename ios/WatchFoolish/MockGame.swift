@@ -39,7 +39,7 @@ enum WMove: Equatable {
         case .cover: return "Cover"
         case .pass:  return "Pass"
         case .pickup: return "Pickup"
-        case .done:  return "Done"
+        case .done:  return "Good"
         }
     }
 }
