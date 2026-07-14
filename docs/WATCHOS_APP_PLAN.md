@@ -174,6 +174,13 @@ line 11: ~11 text rows of vertical budget.
   are implicit at 6 o'clock and not drawn — the bottom strip is "you"),
   center battle strip with `attack > cover` tokens, bottom strip
   (trump · hand peek · `Pl`).
+- **Top-center back affordance** (the one addition to the sketch): a faint
+  `‹` glyph, or the current opponent's short name, in the **empty gap between
+  the deck (top-left) and discard (top-right) counts** — the sketch's
+  `│#D           #Di│` row is wide open in the middle. Tapping it returns to
+  the Games list; it also signposts the swipe-right gesture (§5.3). It lands
+  in confirmed-empty space, so it costs **no corner** — which is the point,
+  since all four corners are spoken for.
 - Names: **dropped from v1** (the study's arced-name idea is lovely and does
   not fit the real-size budget; the ring is anonymous counts. Names live in
   the game list, §5.3). Revisit on 49mm only.
@@ -205,19 +212,45 @@ line 11: ~11 text rows of vertical budget.
 - Edge: hand > ~24 cards (post-pickup monsters) — grid just scrolls; no
   special case.
 
-### 5.3 App structure around the two screens
+### 5.3 App structure & navigation — "back to Games" without a corner
+
+The problem: the Table screen's four corners are all taken (deck count,
+discard count, trump, `Pl`), so there is no corner to hang a "back to the games
+list" control on. The answer is to make the return path a **gesture, not a
+button** — it costs zero corner real estate.
+
+**Structure: one horizontal three-page pager** (SwiftUI `TabView`,
+`.tabViewStyle(.page)`) — no `NavigationStack`, because a nav bar would eat the
+vertical budget the §4 sketches are calibrated to; no tab bar; no menus:
 
 ```
-WatchFoolish (watchOS target)
-  GameListView   — active games (online, from the phone's account) +
-                   "Quick game vs bot" (offline); each row: opponent set,
-                   turn state ("your move" in brass), tap → Table
-  TableView      — §5.1        ⟵ vertical page-swipe or toolbar ⟶  ActionView — §5.2
-  Settings       — haptics toggle, sign-out; nothing else
+   ┌─────────┐      ┌─────────┐      ┌─────────┐
+   │  Games  │  ‹───│  Table  │───›  │ Action  │
+   └─────────┘ swipe└─────────┘ swipe└─────────┘
+     (root)      right  §5.1    left    §5.2
 ```
 
-Navigation: game list is root; Table↔Action are a two-page horizontal
-pagination (swipe or the `Pl`/back affordances). No tab bar, no menus.
+- **Games (left page):** active games (online, from the phone's account) +
+  "Quick game vs bot" (offline); each row: opponent set, turn state ("your
+  move" in brass), hand count. Tapping a game points Table/Action at that game
+  and swipes to Table.
+- **Back to Games from Table = swipe right** — the same left/right swipe you
+  already use for Table↔Action, extended one page left. This is the whole fix:
+  a directional gesture needs no corner. Swiping right from **Action** goes to
+  Table, then Games (two swipes), or jump straight back after a move via the
+  §5.1 top-center chip.
+- **Discoverability (edge-swipes don't advertise themselves on watchOS):** the
+  Table screen shows a faint **top-center "‹" / opponent-name chip** in the
+  confirmed-empty gap between the two count corners (§5.1) that also returns to
+  Games. The gesture is the mechanism; the chip is the sign that it exists.
+- **Settings** is reached from the Games page (a footer row), not the pager —
+  it's rare and doesn't deserve a page or a corner.
+
+Gesture budget (important): **horizontal swipe is reserved globally for the
+pager**, so no screen may use a horizontal swipe for in-content actions. This
+is already true — Table's battle-strip overflow pans by **Crown** (§5.1, not
+swipe), Action's grid scrolls by **Crown** and selects by **tap** (§5.2). One
+axis for navigation, the Crown for within-page — they never collide.
 
 ---
 
@@ -386,6 +419,13 @@ wants anyway.
    the both-devices-offline-a-month case; the §8.2 re-auth path is the net.
 9. **Do not port the phone's Boards/** — the design languages must not blend
    (§3); duplication of ~4 small views is cheaper than a themable board.
+10. **The pager must not wrap and must open on the right page** (§5.3): Games
+    is a hard left end, Action a hard right end — no carousel wrap (swiping
+    right off Games or left off Action goes nowhere, not around). Opening a
+    game from the list lands on **Table**, not Games; a "your move" push opens
+    directly on **Action**. Horizontal swipe is reserved for the pager
+    globally — no in-content horizontal swipes (§5.3 gesture budget); combine
+    with gotcha #6 (Crown = within-page) for the full input map.
 
 ## 13. Open questions (owner input wanted, none blocking W0–W1)
 
