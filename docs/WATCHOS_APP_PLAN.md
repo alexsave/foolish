@@ -88,6 +88,46 @@ textures and rectangular cards entirely.** The watch design is:
   (324×394 px; ~162×197 pt) and scales up to 45/49mm by spacing, never by
   adding elements.
 
+### 3.1 Cues taken from Apple's Weather app (the reference)
+
+Apple Weather for watchOS is the owner-designated quality bar. Five of its
+moves transfer directly; each is now a rule:
+
+1. **One hero element per screen.** Weather's city screen is an enormous
+   `85°` with everything else tiny around it — hierarchy, not density, is what
+   makes a watch screen readable. Our mapping: on **Table**, the center battle
+   strip is the hero (largest tokens on screen; ring counts and corners stay
+   small); on **Games**, the brass "your move" state; on the **fool screen**,
+   the `Д`. If two elements compete for hero on any screen, the design is
+   wrong.
+2. **Corner data as micro-gauges, not bare text.** Weather's bottom corners
+   are tiny circular dials (wind compass, 37% ring). Ours: the **deck count
+   renders inside a depleting ring** (full at 24/36 cards, empties as the
+   stock drains — the ring shape *is* the "how long is this game" signal at a
+   glance), and the **discard count inside a filling ring**. Same numerals as
+   the sketch, one ring stroke around each; no extra space cost.
+3. **Floating circular toolbar chips are the top-bar idiom.** Weather's
+   translucent round `≡` (its list) and condition buttons flank the clock —
+   that's the watchOS-10 toolbar (`topBarLeading`/`topBarTrailing`), layered
+   above content. This *is* our §5.3 answer drawn by Apple themselves: the
+   leading slot is the system Back (to Games, like Weather's back-to-cities),
+   and if we ever need one contextual control it's a single trailing circular
+   chip — never an in-content corner.
+4. **Background tint carries state.** Weather's sky-gradient background tells
+   you the conditions before you read anything. Restrained version for us on
+   true black: a faint bottom-up vignette — **brass when it's your move**,
+   neutral otherwise, red only on the you-picked-up beat. Never behind the
+   Action grid (contrast is king there), and it must survive always-on
+   dimming as "off," not as a wrong color.
+5. **List rows = name left, glyph + data right-aligned.** Weather's forecast
+   rows (`Tue ☀️ 62° 87°`) are the grammar for the **Games list**: opponent
+   left, then right-aligned state glyph + hand count (`Sveta ● HOD! 3`).
+   Numerals in the same rounded face throughout — Weather's giant rounded
+   numerals confirm the §3 SF Rounded call.
+
+(Weather's tiny precipitation bar chart has no v1 mapping — a per-game
+hand-size sparkline is a stats-screen idea for later, noted and parked.)
+
 ---
 
 ## 4. The owner's real-size sketches (normative)
@@ -303,6 +343,12 @@ the one move safe to commit straight from a notification (no selection needed);
   are implicit at 6 o'clock and not drawn — the bottom strip is "you"),
   center battle strip with `attack > cover` tokens, bottom strip
   (trump · hand peek · `Pl`).
+- **Hierarchy (the §3.1 hero rule):** the center battle strip is the hero —
+  its tokens are the largest elements on screen, sized like Weather's `85°`
+  relative to its gauges; ring counts, corners, and the bottom strip stay
+  deliberately small. The deck and discard corner counts render as **§3.1
+  micro-gauges** (deck = depleting ring, discard = filling ring) — same
+  numerals as the sketch, one ring stroke each, zero extra footprint.
 - **Back to Games is the system control, not a content element:** the nav
   bar's Back chevron + left-edge swipe (§5.3) sit in the system band *above*
   the content, so the sketch's four corners — and its empty top-center gap —
@@ -363,16 +409,20 @@ corner's job.
 ```
 
 - **Games (root):** a `List` in a `NavigationStack` — active games (online,
-  from the phone's account) + "Quick game vs bot" (offline); rows show opponent
-  set, turn state ("your move" in brass), hand count. Tapping a game **pushes**
-  Table.
+  from the phone's account) + "Quick game vs bot" (offline); rows follow the
+  §3.1 Weather-forecast grammar: opponent name left, right-aligned state
+  glyph + hand count (`Sveta   ● HOD! 3`), "your move" in brass. Tapping a
+  game **pushes** Table.
 - **Table → Action:** the sketch's `Pl` button **pushes** Action. The sketch
   already draws a drill-down *button*, not a page edge — that is itself the
   tell that this flow is hierarchical, not paged.
 - **Back — to Games from Table, and to Table from Action:** the **left-edge
   swipe** and the **Back chevron** the system draws at the top-left of the nav
   bar. Zero corner cost, zero custom code, and it is the exact gesture every
-  Apple Watch owner already knows.
+  Apple Watch owner already knows. Apple's own Weather app is the proof of
+  this exact shape (§3.1 cue 3): its floating top-left control returns to the
+  cities list while the content below keeps every pixel — same anatomy as
+  Games ◂ Table.
 - **Depth** is Games ▸ Table ▸ Action = **3 levels**, the HIG's stated maximum
   ("two to three"). Acceptable; do not add a fourth.
 - **Settings** hangs off the Games screen (a footer row), not the game flow.
@@ -582,3 +632,12 @@ wants anyway.
    two actions cleanly.
 4. Offline bot on watch: `espresso` fixed, or expose the picker? (Plan:
    fixed; the picker is phone surface.)
+5. **Deck ring as the screen bezel?** Weather's analog dial wraps data around
+   the circular geometry (§3.1). Bolder variant of cue 2: the Table's outer
+   edge itself is the depleting deck ring, and the seats sit *on* it —
+   unifying the seat circle and the deck gauge into one shape. Beautiful if
+   it works, noisy if it doesn't; prototype on-wrist in W2 against the plain
+   corner micro-gauge before committing.
+6. Fool screen hero (§3.1 cue 1): the `Д` glyph, or a Weather-style giant
+   numeral (games won count / new streak)? Decide when the win/loss beat is
+   built in W2.
