@@ -99,6 +99,27 @@ targets:
         # subset (Engine/DesignSystem/Boards, no app-only APIs) is split out.
         # Enabling it now would forbid app-only APIs the app legitimately uses.
 
+  # ---- watchOS app (docs/WATCHOS_APP_PLAN.md) ----------------------------
+  # Standalone design-warm-up shell: its own reduced design language (§3), no
+  # FoolishKit dependency yet — the engine/Net wire in at W1/W2. Watch-only /
+  # independent-capable (WKWatchOnly), so the sim runs it without a companion.
+  WatchFoolish:
+    type: application
+    platform: watchOS
+    deploymentTarget: "10.0"
+    sources:
+      - path: WatchFoolish
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: cards.foolish.watch
+        GENERATE_INFOPLIST_FILE: "YES"
+        INFOPLIST_KEY_WKApplication: "YES"
+        INFOPLIST_KEY_WKWatchOnly: "YES"
+        INFOPLIST_KEY_CFBundleDisplayName: Foolish
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
+        TARGETED_DEVICE_FAMILY: "4"      # watchOS
+        ENABLE_PREVIEWS: "YES"
+
   # ---- Unit + snapshot + golden tests ------------------------------------
   FoolishTests:
     type: bundle.unit-test
@@ -144,3 +165,9 @@ schemes:
       targets:
         - FoolishTests
         - FoolishUITests
+  WatchFoolish:
+    build:
+      targets:
+        WatchFoolish: all
+    run:
+      config: Debug
