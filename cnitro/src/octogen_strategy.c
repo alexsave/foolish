@@ -87,6 +87,16 @@ static _Thread_local int og_no_solve = 0, og_no_voids = 0, og_no_flip = 0;
 static _Thread_local int og_no_floors = 0, og_no_leaf = 0, og_no_avoid = 0;
 static _Thread_local int og_no_earlyexit = 0;
 static _Thread_local int og_verify = 0;
+#ifdef OG_HIDE_UNCOVERABLE
+// Experiment — "information-hiding tax" (docs/OCTOGEN_HIDE_UNCOVERABLE.md).
+// Seats whose bit is set in OG_HIDE_MASK pick up IMMEDIATELY instead of playing
+// a partial cover they cannot complete: a doomed defense that covers only some
+// table cards reveals those cover cards to the (MC) opponents before the
+// inevitable pickup. Compiled ONLY under -DOG_HIDE_UNCOVERABLE; the shipped
+// bots/rules/guards wasm carry no trace of it.
+static _Thread_local int og_hide_mask = 0;
+long og_hide_fire_count = 0;   // # of partial-cover->pickup overrides (analysis)
+#endif
 static _Thread_local int og_no_fastroll = 0;   // OG_NO_FASTROLL=1: struct rollout
 // Bitboard exact-leaf endgames inside rollouts (semtex's own lever): resolve
 // small 2-player deck-empty rollout endgames with the fast bitboard solver
@@ -1527,6 +1537,9 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
     }
 
     if (!og_flags_loaded) {
+#ifdef OG_HIDE_UNCOVERABLE
+        og_hide_mask = og_env_int("OG_HIDE_MASK", 0);
+#endif
         og_no_solve  = og_flag("OG_NO_SOLVE");
         og_no_voids  = og_flag("OG_NO_VOIDS");
         og_no_flip   = og_flag("OG_NO_FLIP");
@@ -1802,6 +1815,26 @@ static int octogen_choose_impl(const Game *g, int bot_idx,
     }
 
     int chosen = best >= 0 ? C.idx[best] : 0;
+#ifdef OG_HIDE_UNCOVERABLE
+    // Info-hiding tax: if this seat hides and octogen is about to play a COVER
+    // while it cannot cover EVERY uncovered card on the table (no full cover
+    // exists in the legal set), pick up immediately instead. A partial cover
+    // only leaks its cover cards before the pickup that is coming anyway.
+    if (((og_hide_mask >> bot_idx) & 1) && chosen >= 0 && chosen < moves->n
+        && moves->moves[chosen].type == MOVE_COVER) {
+        int n_uncov = 0;
+        for (int i = 0; i < g->num_battles; i++)
+            if (card_is_none(g->table_battles[i].defense)) n_uncov++;
+        int full_cover = 0, pickup_idx = -1;
+        for (int i = 0; i < moves->n; i++) {
+            if (moves->moves[i].type == MOVE_COVER && moves->moves[i].n_cards == n_uncov)
+                full_cover = 1;
+            else if (moves->moves[i].type == MOVE_PICKUP)
+                pickup_idx = i;
+        }
+        if (!full_cover && pickup_idx >= 0) { chosen = pickup_idx; og_hide_fire_count++; }
+    }
+#endif
 #ifdef OG_EXPLAIN_BUILD
     if (og_explain_on())
         og_ex_emit(g, bot_idx, moves, &B, &C, score, nsim, alive, forced_loss,
