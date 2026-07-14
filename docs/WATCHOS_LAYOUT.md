@@ -5,20 +5,23 @@ Deliverables:
 - **`docs/watchos-layout.html`** — the canonical mockups: every screen state as
   HTML/CSS/JS at native watch pixels, viewable at true physical size (with a
   monitor-calibration control), a 10 mm-finger overlay, a 2×3 tap-zone
-  overlay, and three live crown/tap demos. Six design options (A–F) with
-  per-element rationale; **Option F is the recommendation**.
+  overlay, and four live crown/tap demos. Seven design options (A–G) with
+  per-element rationale; **Option G is the build spec**.
 - **This doc** — the verified rules (with citations), the Apple HIG
   constraints (with quotes), the two design reviews and their engine verdicts,
   and ASCII reference frames.
 
-How this converged, in three rounds:
+How this converged, in four rounds:
 
 1. **Option B** ("Focus flow") — first 40 mm attempt; killed by the HIG type
    audit (half its text below Apple's 12 pt floor).
 2. **Option D** ("One thing at a time") — HIG-purist: full-bleed crown pages,
    one tap zone, everything ≥ 24 px. Correct but board-blind.
 3. **Foolish40 prototype + second design review → Option F** ("First person")
-   — the synthesis, and the recommendation.
+   — the synthesis chassis.
+4. **Owner review of F → Option G** ("First person, refined") — **the build
+   spec.** A/B/C were confirmed illegible at real size; D's full-screen card
+   and notifications survive inside G.
 
 ---
 
@@ -78,7 +81,7 @@ no confirmation dialogs. Its four factual assumptions, checked:
 | "Foolish is a double 36-deck, right? 42+8+14=64" | **No — single 52** (`card.h:15-29`); duplicates impossible (`game.c:305-316`). The deduction was sound; the premise was my earlier mockups' invented counts, which violated 52-card conservation. Fixed: every mock now sums to 52. No ×2 chips, no twin auto-focus; nitro's bitmask belief tracker stays. |
 | Fixed six-slot grid | **No slot cap** (`game.c:557-559`) — the 2×3 grid gets a "+N more" overflow cell for post-pickup defenders. |
 
-## 4 · Option F — "First person" (recommended)
+## 4 · Option F — "First person" (the chassis, superseded by G)
 
 Two screens total. **Table** (the only screen needed in play): status line
 (trump + deck), opponents' counts across the top (gold shield = defender,
@@ -147,26 +150,63 @@ Zones top-to-bottom: status (24 px) · opponent counts (25 px, shield boxed) ·
 pair grid (2×3, look-zone) · focus card + label column (the touch zone) ·
 chip strip + ✓ (look-zone + terminal detent) · page dots.
 
+## 4.5 · Option G — "First person, refined" (ships)
+
+F after the owner review, plus D's notifications. The deltas:
+
+- **Pairs read cover-first** — the covering card sits left, a small arrow
+  points at the card it covered (`K♠ ▸ Q♠`); an open attack is a dashed slot
+  (`▢ ▸ K♣`). One reading direction everywhere.
+- **The grid breathes** — 1–2 pairs render large, 3–6 compact, 7+ pages the
+  table with a **horizontal swipe** + dots (the one gesture the crown can't
+  take, since the crown owns the hand). Covers the no-slot-cap rule
+  (`game.c:557`) without shrinking below legibility.
+- **Trump is always on screen** — the status line carries the actual flipped
+  card as a mini glyph (`6♠ ▤8 · cap 2`), decaying to a bare suit icon once
+  it's drawn. Legal: the flip is public wire state (`view.c:19-26`) and is
+  always the final draw (`game.c:321-333`). The roster shows the long form
+  ("flip: 6♠ under deck").
+- **You are in the strip** — eighth seat, gold, in rotation order; when you
+  defend, the shield sits on your gold count. No separate "You" rendering.
+- **Words became pills** — the label column is gone; one terse D-style pill
+  (ATTACK · COVER K♣ · TAKE 5 · PASS ▸ LEV · GOOD), color = verb, no icon
+  glyphs. Snipes flash **✗ SNIPED** in the pill; the board explains the rest.
+- **One card per action** — no count sheets, no multi-select. Multi-card
+  *lead* is reachable sequentially (value goes live after the first card);
+  multi-card **pass is not** (`game.c:759`) and stays web-only — the one
+  documented capability cost.
+- **Goods** — shown only as green counts in the table strip; dropped from the
+  roster as noise. (They are public wire state either way: `view.c:27-31`,
+  `player_views.ts:46`, `clientGuards.ts:153-158` — not hidden state.)
+- **Notification, trimmed** — title only ("Kat passed to you") + Open Hand /
+  Take 2 / Dismiss. Layer 0 otherwise unchanged from D (widget, complication,
+  haptic vocabulary, wrist-down pre-focus).
+- **Big hands** — past ~7 options the chip strip becomes a crown-scrolled
+  viewport with edge fades; legal-first ordering keeps ✓ near.
+
 ## 5 · The other options (all kept in the HTML)
 
+- **F · First person** — G's chassis; superseded by G's refinements.
 - **D · One thing at a time** — full-bleed crown pages, one tap zone,
-  strictly ≥ 12 pt everywhere. The purist fallback if F's look-zone
-  exceptions offend. Its layer 0 (notification with inline Take, Smart Stack
-  widget, complication) carries into F unchanged.
+  strictly ≥ 12 pt everywhere. The purist fallback. Its layer 0 carries into
+  G unchanged (with the trimmed notification).
 - **E · Foolish40 × D** — the first merge (ring + glyphs + pill); superseded
-  by F, which deleted self-rendering, pagination, and curved names.
+  by F/G, which deleted self-rendering, pagination, and curved names.
 - **B · Focus flow** — killed by the type audit (documented in HTML §3).
 - **A · Dense board** — 44/46 mm only. **C · Action list** — the VoiceOver
   projection of F's detent list.
 
-## 6 · Cut list
+## 6 · Cut list (cumulative)
 
 - Curved ring names (→ roster page rows), "waiting on X" indicators (no turn
   order exists, fact #4), any round countdown (no timer, fact #5), popup
   sheets (→ adjacent crown detents/pages), ×2 duplicate chips (single deck,
   fact #2), avatar ring, discard-pile card list (count only; exact list is
   Oracle-tier), animations/evwire playback (snapshot trailers suffice),
-  chat/emotes/replay, hand rearrange (legal-first auto-order wins).
+  chat/emotes/replay, hand rearrange (legal-first auto-order wins),
+  multi-select / count sheets (G: one card per action; double-pass web-only),
+  goods on the roster page (green strip counts only), icon glyphs in pills
+  (⚔ rendered as ✕ in mono fonts — words won).
 
 ## 7 · Client stack notes
 
