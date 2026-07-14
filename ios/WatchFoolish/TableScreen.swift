@@ -61,9 +61,10 @@ struct TableScreen: View {
         }
         .background(WColor.bg)
         .ignoresSafeArea(edges: .bottom)
-        .focusable()
-        .digitalCrownRotation($crown, from: 0, through: Double(max(game.battles.count - 1, 0)),
-                              by: 1, sensitivity: .low, isContinuous: false, isHapticFeedbackEnabled: true)
+        .focusable(game.battles.count > 1)
+        // Only page battles with the Crown when there's more than one — a
+        // `from: 0, through: 0` range is degenerate and can crash the rotation.
+        .modifier(BattlePager(crown: $crown, count: game.battles.count))
         .onAppear { game.load(gameId); crown = 0 }
     }
 
@@ -136,5 +137,20 @@ struct TableScreen: View {
             .frame(width: 28, height: 28)
             .background(Circle().fill(game.yourTurn ? WColor.brass : WColor.ink))
             .onTapGesture(perform: onPlay)
+    }
+}
+
+/// Crown-paging over battles, applied only when there's more than one — avoids a
+/// degenerate `from: 0, through: 0` rotation range.
+private struct BattlePager: ViewModifier {
+    @Binding var crown: Double
+    let count: Int
+    func body(content: Content) -> some View {
+        if count > 1 {
+            content.digitalCrownRotation($crown, from: 0, through: Double(count - 1),
+                                         by: 1, sensitivity: .low, isContinuous: false, isHapticFeedbackEnabled: true)
+        } else {
+            content
+        }
     }
 }
