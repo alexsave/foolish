@@ -965,10 +965,17 @@ the server's masked-view wire through the SAME kernel as offline
 (`make ios-view-test`, green). So online renders and computes legal moves with
 zero rules in Swift.
 
-**What actually remains for online is testing, not wire** (§17.6 step 5): a
-compile pass to confirm supabase-swift 2.x API shapes (marked
-`NOTE (Mac compile pass)` in `Net/`), then end-to-end against a staging Supabase
-project. `docs/PROTOCOL.md` §9 lists it.
+The supabase-swift 2.x API shapes used in `Net/` were **verified against the SDK
+source** (Functions invoke overloads + `FunctionInvokeOptions(body: some
+Encodable)` raw-Data special-case; realtime `postgresChange(_:schema:table:
+filter: RealtimePostgresFilter)` + `await channel.subscribe()` + `decodeRecord`;
+auth `session`/`signIn`/`signUp`/`signOut`; `AnyJSON.stringValue`). One real bug
+was found and fixed there (the Postgres-change `filter:` is a
+`RealtimePostgresFilter`, not a `String`).
+
+**What actually remains for online is runtime testing, not wire or API** (§17.6
+step 5): the first `xcodebuild` (surface any residual nits), then end-to-end
+against a staging Supabase project. `docs/PROTOCOL.md` §9 lists it.
 
 ### 17.6 First-Mac-session checklist
 
