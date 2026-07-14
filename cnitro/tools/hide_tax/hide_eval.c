@@ -15,6 +15,21 @@
 
 extern long og_hide_fire_count;   // OG_HIDE_UNCOVERABLE analysis counter
 
+static int g_opp_key = STRAT_OCTOGEN;   // seats 1+; seat 0 is always octogen(hide)
+
+static int dispatch(int key, const Game *g, int pi, const LegalMoves *m) {
+    switch (key) {
+        case STRAT_OCTOGEN:          return octogen_strategy_choose(g, pi, m, NULL);
+        case STRAT_HANDWRITTEN:      return handwritten_strategy_choose(g, pi, m, NULL);
+        case STRAT_HANDWRITTEN_PROD: return handwritten_prod_strategy_choose(g, pi, m, NULL);
+        case STRAT_CORDITE:          return cordite_strategy_choose(g, pi, m, NULL);
+        case STRAT_SEMTEX:           return semtex_strategy_choose(g, pi, m, NULL);
+        case STRAT_ESPRESSO:         return espresso_strategy_choose(g, pi, m, NULL);
+        case STRAT_RANDOM:           return random_strategy_choose(g, pi, m, NULL);
+        default:                     return octogen_strategy_choose(g, pi, m, NULL);
+    }
+}
+
 // seat-0 finish position (1=winner ... n=durak/fool), or -1 if game didn't end.
 static int play_one(const uint8_t seed[32], int n) {
     cd_sim_solve_reset();
@@ -24,7 +39,7 @@ static int play_one(const uint8_t seed[32], int n) {
     g.num_players = (int8_t)n;
     for (int i = 0; i < n; i++) {
         g.players[i].status = PLAYER_STATUS_READY;
-        g.players[i].strategy_key = (int8_t)STRAT_OCTOGEN;
+        g.players[i].strategy_key = (int8_t)(i == 0 ? STRAT_OCTOGEN : g_opp_key);
         snprintf(g.players[i].player_id, sizeof g.players[i].player_id, "p%d", i);
     }
     start_game(&g);
@@ -41,7 +56,7 @@ static int play_one(const uint8_t seed[32], int n) {
         for (int k = 0; k < n_e; k++) {
             int pi = elig[k]; LegalMoves moves; calculate_legal_moves(&g, pi, &moves);
             if (moves.n == 0) continue;
-            int idx = octogen_strategy_choose(&g, pi, &moves, NULL);
+            int idx = dispatch(g.players[pi].strategy_key, &g, pi, &moves);
             if (idx < 0 || idx >= moves.n) continue;
             const LegalMove *m = &moves.moves[idx]; bool ok = false;
             switch (m->type) {
@@ -68,6 +83,7 @@ int main(int argc, char **argv) {
     long count = argc > 2 ? atol(argv[2]) : 20000;
     int  n     = argc > 3 ? atoi(argv[3]) : 2;
     int verbose = argc > 4 ? atoi(argv[4]) : 1;   // 1 = print per-seed lines
+    if (argc > 5) { int k = parse_strategy(argv[5]); if (k >= 0) g_opp_key = k; }
     long wins = 0, valid = 0, sumfp = 0;
     og_hide_fire_count = 0;
     for (long s = seed0; s < seed0 + count; s++) {
@@ -79,8 +95,9 @@ int main(int argc, char **argv) {
         if (verbose) printf("S %ld %d\n", s, fp);
     }
     const char *mask = getenv("OG_HIDE_MASK"); if (!mask) mask = "0";
-    fprintf(stderr, "MASK=%s n=%d games=%ld win0=%.3f%% mean_fp=%.4f fires=%ld\n",
-            mask, n, valid, 100.0 * wins / (valid ? valid : 1),
+    const char *oppn = argc > 5 ? argv[5] : "octogen";
+    fprintf(stderr, "MASK=%s opp=%s n=%d games=%ld win0=%.3f%% mean_fp=%.4f fires=%ld\n",
+            mask, oppn, n, valid, 100.0 * wins / (valid ? valid : 1),
             (double)sumfp / (valid ? valid : 1), og_hide_fire_count);
     return 0;
 }
