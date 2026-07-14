@@ -245,7 +245,15 @@ enabled = false
 enabled = true
 # Configure one of the supported request policies: `oneshot`, `per_worker`.
 # Use `oneshot` for hot reload, or `per_worker` for load testing.
-policy = "oneshot"
+#
+# MUST be `per_worker` for this app: the bot driver runs in the background via
+# `EdgeRuntime.waitUntil` (scheduleBotLoop / bot-heartbeat). Under `oneshot` the
+# worker is terminated the moment the HTTP response is sent, so the bot loop is
+# reaped before it can make a move — online games deadlock on the first bot turn.
+# `per_worker` keeps the worker alive until waitUntil settles (as hosted does).
+# Trade-off: no function hot-reload — re-run `supabase start`/restart edge to pick
+# up function edits.
+policy = "per_worker"
 # Port to attach the Chrome inspector for debugging edge functions.
 inspector_port = 8083
 

@@ -16,6 +16,7 @@ DROP FUNCTION IF EXISTS update_updated_at_column() CASCADE;
 -- Drop tables in reverse dependency order (this will automatically drop all policies and triggers)
 DROP TABLE IF EXISTS spectator_views CASCADE;
 DROP TABLE IF EXISTS player_views CASCADE;
+DROP TABLE IF EXISTS game_snapshots CASCADE;  -- created below (L173); was missing here, so a `db reset` that ran migrations first (which also create it) collided on re-create
 DROP TABLE IF EXISTS chat_messages CASCADE;
 DROP TABLE IF EXISTS bot_hands CASCADE;
 DROP TABLE IF EXISTS player_hands CASCADE;
@@ -985,6 +986,22 @@ INSERT INTO bots (nickname, strategy_key) VALUES
 -- DB gets this same rename via migrations/20260615120000_reserve_bot_username_prefix.sql.
 UPDATE bots SET nickname = '%' || nickname WHERE left(nickname, 1) <> '%';
 
+
+-- =============================================================================
+-- service_role table privileges.
+--
+-- The RLS policies above assume the trusted server role (`service_role`, used by
+-- every edge function) can do DML on these tables — but RLS policies do NOT grant
+-- table privileges. On the hosted project Supabase's platform default-privileges
+-- (ALTER DEFAULT PRIVILEGES … GRANT ALL … TO service_role) cover new tables
+-- automatically; a from-scratch local `db reset` recreates the tables via the
+-- DROP+CREATE above and those defaults don't apply, leaving service_role with no
+-- DML → the edge functions' direct reads/writes hit `permission denied for table
+-- games` (42501). RPCs still work because they're SECURITY DEFINER. Granting
+-- explicitly here fixes local and is a redundant no-op on hosted.
+GRANT ALL ON ALL TABLES    IN SCHEMA public TO service_role;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO service_role;
+GRANT ALL ON ALL ROUTINES  IN SCHEMA public TO service_role;
 
 -- =============================================================================
 -- SETUP COMPLETE!

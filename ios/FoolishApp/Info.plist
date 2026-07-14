@@ -30,6 +30,14 @@
 	<!-- Standard HTTPS only; no non-exempt encryption (§11). -->
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<!-- Allow cleartext ONLY to loopback / .local so a Debug build can talk to a
+	     local `supabase start` stack (http://127.0.0.1:54321). NSAllowsLocalNetworking
+	     is ignored for public hosts, so prod HTTPS stays fully ATS-enforced (§11). -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 	<!-- Backend config, substituted from Config/*.xcconfig at build (§16.D1).
 	     Blank in v1 offline builds; set for online play. -->
 	<key>SupabaseURL</key>

@@ -4,3 +4,7 @@
 // never touch prod (§16.D DoD: "do NOT point tests at prod").
 // SUPABASE_URL = https://<staging-ref>.supabase.co
 // SUPABASE_KEY = <staging-anon-key>
+
+// Optional, untracked per-machine override — typically a local `supabase start`
+// stack (see Config/Local.xcconfig.example). Absent on CI → silently skipped.
+#include? "Local.xcconfig"

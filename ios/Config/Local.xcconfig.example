@@ -1,0 +1,13 @@
+// Local.xcconfig.example — copy to `Local.xcconfig` (untracked) to point the
+// Debug build at a backend without editing tracked files. Debug.xcconfig pulls
+// it in via `#include? "Local.xcconfig"`, so it's optional.
+//
+// Typical use: a local `supabase start` stack. Get the values from
+// `supabase status` (API_URL + ANON_KEY). The anon key is public by design.
+//
+// xcconfig treats `//` as a comment even inside values, so the URL scheme is
+// assembled via a slash variable — keep this trick when editing.
+
+SUPA_SLASH = /
+SUPABASE_URL = http:$(SUPA_SLASH)$(SUPA_SLASH)127.0.0.1:54321
+SUPABASE_KEY = <paste ANON_KEY from `supabase status`>
