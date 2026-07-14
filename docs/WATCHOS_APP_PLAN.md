@@ -161,6 +161,135 @@ line 11: ~11 text rows of vertical budget.
 
 ---
 
+## 4b. More real-size frames (same style)
+
+Same frame as §4 — 16 columns wide, bottom border on line 11, calibrated to
+41mm in a default vim font. Tokens show **values only** (suit is color, which
+ASCII can't show — same as your two sketches). These render the screens/states
+the specs describe so the whole app is visible at once.
+
+**Games — the root list** (tap a row to drill into its Table; `HOD!` = your
+move, in brass):
+
+```
+┌────────────────┐
+│ GAMES          │
+│                │
+│ Sveta    HOD!  │
+│   hand 3       │
+│ Boris    wait  │
+│   hand 6       │
+│                │
+│ + Bot game     │
+│                │
+└────────────────┘
+```
+
+**Table — heads-up (2 players)**, shown with the system band above it. That
+band (clock + Back `‹`) is where "back to Games" lives — above the content, so
+none of the four content corners is spent on it:
+
+```
+    9:41   ‹          <- system band (OS-drawn): clock + Back. Not our content.
+┌────────────────┐
+│#D           #Di│    corners: deck (TL) · discard (TR)
+│      _         │
+│     |6|        │    lone opponent, defending (the _ ^ box = defender ring)
+│      ^         │
+│                │
+│    A > 10      │    the one battle: ace covered by a 10
+│                │
+│                │
+│Tr K 8 A 9 5  Pl│    bottom strip: trump · your hand peek · Pl -> Action
+└────────────────┘
+```
+
+**Action — defending, nothing selected** → the kernel offers only `Pickup`:
+
+```
+┌────────────────┐
+│                │
+│ 6   7   9   K  │
+│                │
+│ 8   J   A   3  │
+│                │
+│                │
+│   /--------\   │
+│   | Pickup |   │
+│   \--------/   │
+└────────────────┘
+```
+
+**Action — one card selected that can either beat or forward the attack** →
+the real Durak `Cover`/`Pass` fork, two half-width pills (`[9]` = selected,
+lifted + ringed):
+
+```
+┌────────────────┐
+│                │
+│ 6   7  [9]  K  │
+│                │
+│ 8   J   A   3  │
+│                │
+│ /-----\/-----\ │
+│ |Cover||Pass | │
+│ \-----/\-----/ │
+│                │
+└────────────────┘
+```
+
+**Action — attacker, table fully covered** → the round-closing `Done` (бито):
+
+```
+┌────────────────┐
+│                │
+│ 6   7   9   K  │
+│                │
+│ 8   J   A   3  │
+│                │
+│                │
+│   /--------\   │
+│   |  Done  |   │
+│   \--------/   │
+└────────────────┘
+```
+
+**Game over — the fool reveal** (Rematch re-deals via the `continue` flow):
+
+```
+┌────────────────┐
+│                │
+│   BORIS is     │
+│   the FOOL     │
+│                │
+│    ( Д )       │
+│                │
+│  /---------\   │
+│  | Rematch |   │
+│  \---------/   │
+└────────────────┘
+```
+
+**Notification — the "your move" push** (the killer feature, §9). `Pick up` is
+the one move safe to commit straight from a notification (no selection needed);
+`Play` opens the Action screen:
+
+```
+┌────────────────┐
+│ FOOLISH        │
+│                │
+│ Your move —    │
+│ Boris covered  │
+│ your 9         │
+│                │
+│  [   Play    ] │
+│  [  Pick up  ] │
+│                │
+└────────────────┘
+```
+
+---
+
 ## 5. Screen specs
 
 ### 5.1 Table screen (glance, read-mostly)
