@@ -9,9 +9,10 @@
 // row on its committed `version`, and hands the bare-hex `view` to the caller,
 // which decodes it through PackedGame (envelope → kernel).
 //
-// NOTE (Mac compile pass): supabase-swift's realtimeV2 Postgres-change API
-// (channel.postgresChange(_:schema:table:filter:), AnyAction/.record) is stable
-// in 2.x; confirm the exact spelling against the resolved version.
+// The supabase-swift API used here was verified against the SDK source
+// (2026-07): channel.postgresChange(InsertAction.self, schema:table:
+// filter: RealtimePostgresFilter) -> AsyncStream, `await channel.subscribe()`
+// (non-throwing), and action.decodeRecord(as:decoder:).
 
 import Foundation
 import Supabase
@@ -28,37 +29,45 @@ public final class GameFeed {
         self.onRow = onRow
     }
 
+    /// A `player_views` / `spectator_views` row — only the fields we need.
+    private struct ViewRow: Decodable { let view: String; let version: Int? }
+
     /// Player feed: `player_views` rows for this user (channel `pv-<user_id>`).
     public func subscribe(userId: UUID) async {
-        guard let client = Backend.shared.client else { return }
         let uid = userId.uuidString.lowercased()
-        await subscribeTable("pv-\(uid)", table: "player_views", filter: "player_id=eq.\(uid)")
+        await subscribeTable("pv-\(uid)", table: "player_views", filter: .eq("player_id", value: uid))
     }
 
     /// Spectator feed: `spectator_views` rows for this game (channel `game-<id>`).
     public func subscribePublic(gameId: String) async {
-        await subscribeTable("game-\(gameId)", table: "spectator_views", filter: "game_id=eq.\(gameId)")
+        await subscribeTable("game-\(gameId)", table: "spectator_views", filter: .eq("game_id", value: gameId))
     }
 
-    private func subscribeTable(_ channelName: String, table: String, filter: String) async {
+    private func subscribeTable(_ channelName: String, table: String, filter: RealtimePostgresFilter) async {
         guard let client = Backend.shared.client else { return }
         let ch = client.realtimeV2.channel(channelName)
-        // Insert + update both carry the fresh row in `.record`.
         let inserts = ch.postgresChange(InsertAction.self, schema: "public", table: table, filter: filter)
         let updates = ch.postgresChange(UpdateAction.self, schema: "public", table: table, filter: filter)
         await ch.subscribe()
         channel = ch
-        Task { [weak self] in for await a in inserts { self?.handle(a.record) } }
-        Task { [weak self] in for await a in updates { self?.handle(a.record) } }
+        // Both InsertAction and UpdateAction expose decodeRecord(as:decoder:).
+        Task { [weak self] in
+            for await a in inserts {
+                if let row = try? a.decodeRecord(as: ViewRow.self, decoder: JSONDecoder()) { self?.apply(row) }
+            }
+        }
+        Task { [weak self] in
+            for await a in updates {
+                if let row = try? a.decodeRecord(as: ViewRow.self, decoder: JSONDecoder()) { self?.apply(row) }
+            }
+        }
     }
 
-    private func handle(_ record: [String: AnyJSON]) {
-        let version = record["version"]?.intValue
-        let hex = record["view"]?.stringValue ?? ""
-        guard !hex.isEmpty else { return }
-        if VersionGate.shouldDrop(lastApplied: lastAppliedVersion, incoming: version) { return }
-        if let version { lastAppliedVersion = version }
-        onRow(hex, version)
+    private func apply(_ row: ViewRow) {
+        guard !row.view.isEmpty else { return }
+        if VersionGate.shouldDrop(lastApplied: lastAppliedVersion, incoming: row.version) { return }
+        if let v = row.version { lastAppliedVersion = v }
+        onRow(row.view, row.version)
     }
 
     public func unsubscribe() async {
