@@ -67,17 +67,25 @@ final class MockGame: ObservableObject {
     @Published var foolName: String?
     @Published private(set) var isEndgame = false
 
+    /// The "Bot game" is a REAL heads-up Durak (DurakEngine); the online rows are
+    /// static design scenarios. Non-nil only for the bot game.
+    private var engine: DurakEngine?
+
     private var loadedId: String?
     let deckMax = 36
     var trumpSuit: Suit { trump.suit }
 
-    /// You attack (vs defend) — used only for the legal-menu branch.
+    /// You attack (vs defend) — used only for the faked legal-menu branch.
     var youAttack: Bool { attackerSeat == -1 }
-    /// It's your move (drives the brass state); every scenario here is your turn.
-    var yourTurn: Bool { foolName == nil }
+    /// It's your move (drives the brass state).
+    var yourTurn: Bool {
+        if let e = engine { return e.fool == nil && e.toAct == .you }
+        return foolName == nil
+    }
 
-    /// The contextual pill menu for the current selection + role (faked §5.2).
+    /// The contextual pill menu for the current selection + role.
     var legalMoves: [WMove] {
+        if let e = engine { return e.youLegal(selected: selected) }
         let allCovered = !battles.isEmpty && battles.allSatisfy { $0.cover != nil }
         if youAttack {
             if selected != nil { return [.attack] }
@@ -94,7 +102,7 @@ final class MockGame: ObservableObject {
     func load(_ gameId: String) {
         guard gameId != loadedId else { return }
         loadedId = gameId
-        selected = nil; foolName = nil
+        selected = nil; foolName = nil; engine = nil
         switch gameId {
         case "g2":   // Boris — you DEFEND an uncovered attack (Pickup / Cover·Pass)
             opponentName = "Boris"
@@ -124,15 +132,11 @@ final class MockGame: ObservableObject {
                     Card(suit: .diamonds, value: 11), Card(suit: .hearts, value: 13), Card(suit: .spades, value: 8),
                     Card(suit: .clubs, value: 9)]
             deckCount = 8; discardCount = 14; isEndgame = false
-        case "bot":  // fresh offline game — you ATTACK an empty table
-            opponentName = "Espresso"
-            opponents = [Opponent(id: 0, name: "Espresso", handCount: 6)]
-            attackerSeat = -1; defenderSeat = 0
-            trump = Card(suit: .diamonds, value: 8)
-            battles = []
-            hand = [Card(suit: .clubs, value: 6), Card(suit: .diamonds, value: 9), Card(suit: .spades, value: 11),
-                    Card(suit: .hearts, value: 7), Card(suit: .diamonds, value: 14), Card(suit: .clubs, value: 13)]
-            deckCount = 30; discardCount = 0; isEndgame = false
+        case "bot":  // a REAL heads-up game vs the bot
+            opponentName = "Bot"
+            engine = DurakEngine.newGame()
+            mirror()
+            return
         default:     // g1 Sveta — you ATTACK, table fully covered (Done); endgame
             opponentName = "Sveta"
             opponents = [Opponent(id: 0, name: "Sveta", handCount: 3)]
@@ -150,9 +154,30 @@ final class MockGame: ObservableObject {
         WKInterfaceDevice.current().play(.click)
     }
 
-    /// Apply a mock move (mutates just enough to feel alive; the endgame scenario
-    /// resolves to the fool reveal so that screen is reachable in-flow).
+    /// Mirror the real engine's state into the published fields (bot game).
+    private func mirror() {
+        guard let e = engine else { return }
+        battles = e.table
+        hand = e.you
+        opponents = [Opponent(id: 0, name: "Bot", handCount: e.bot.count)]
+        deckCount = e.deck.count
+        discardCount = e.discardCount
+        trump = e.trumpCard
+        if e.attacker == .you { attackerSeat = -1; defenderSeat = 0 }
+        else { attackerSeat = 0; defenderSeat = -1 }
+        foolName = e.fool
+        selected = nil
+    }
+
+    /// Apply a move. The bot game runs the real engine (and the bot's reply);
+    /// the static online scenarios mutate just enough to feel alive.
     func play(_ move: WMove) {
+        if engine != nil {
+            engine!.youPlay(move, selected: selected)
+            mirror()
+            WKInterfaceDevice.current().play(.click)
+            return
+        }
         switch move {
         case .attack:
             if let s = selected { battles.append(Battle(id: battles.count, attack: s)); hand.removeAll { $0 == s } }
@@ -172,8 +197,9 @@ final class MockGame: ObservableObject {
         WKInterfaceDevice.current().play(.click)
     }
 
-    /// Re-deal (Rematch) — drop back to a fresh copy of the last scenario.
+    /// Re-deal (Rematch). The bot game deals a fresh engine; scenarios reload.
     func rematch() {
+        if engine != nil { engine = DurakEngine.newGame(); mirror(); return }
         let id = loadedId ?? "g1"; loadedId = nil; load(id)
     }
 }

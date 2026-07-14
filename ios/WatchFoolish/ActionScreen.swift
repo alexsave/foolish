@@ -41,7 +41,7 @@ struct ActionScreen: View {
         game.selected = selIndex >= 0 ? game.hand[selIndex] : nil
     }
 
-    // MARK: the kernel pill bar
+    // MARK: the kernel action bar — long pills
 
     private var pillBar: some View {
         HStack(spacing: 6) {
@@ -53,13 +53,14 @@ struct ActionScreen: View {
                 } label: {
                     Text(move.label)
                         .font(WFont.label(15))
-                        .frame(maxWidth: .infinity, minHeight: 32)
+                        .lineLimit(1).minimumScaleFactor(0.7)
+                        .frame(maxWidth: .infinity, minHeight: 34)
                 }
-                .buttonStyle(PillStyle(primary: isPrimary(move)))
+                .buttonStyle(LongPillStyle(primary: isPrimary(move)))
             }
         }
-        .padding(.horizontal, 6)
-        .padding(.bottom, 2)
+        .padding(.horizontal, 8)
+        .padding(.bottom, 3)
     }
 
     private func isPrimary(_ move: WMove) -> Bool {
@@ -67,8 +68,8 @@ struct ActionScreen: View {
     }
 }
 
-/// Brass for the primary action, dark outline for secondary.
-struct PillStyle: ButtonStyle {
+/// A long pill action button — brass for the primary, dark outline for secondary.
+struct LongPillStyle: ButtonStyle {
     let primary: Bool
     func makeBody(configuration: Configuration) -> some View {
         configuration.label

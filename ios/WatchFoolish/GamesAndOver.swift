@@ -65,9 +65,12 @@ struct GameOverScreen: View {
                 .foregroundStyle(WColor.brass)
             Spacer()
             Button(action: onRematch) {
-                Text("Rematch").font(WFont.label(15)).frame(maxWidth: .infinity, minHeight: 34)
+                Text("Rematch")
+                    .font(WFont.label(15)).foregroundStyle(WColor.bg)
+                    .frame(maxWidth: .infinity, minHeight: 34)
+                    .background(Capsule().fill(WColor.brass))
             }
-            .buttonStyle(PillStyle(primary: true))
+            .buttonStyle(.plain)
         }
         .padding(.horizontal, 10)
         .padding(.bottom, 4)

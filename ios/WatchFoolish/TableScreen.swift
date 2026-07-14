@@ -1,8 +1,8 @@
 // TableScreen.swift — the glance screen (docs/WATCHOS_APP_PLAN.md §5.1). One
-// screen, read-mostly: deck/discard corner micro-gauges, an opponent ring with
-// the defender highlighted, and the hero battle — ONE attack/cover pair at a
-// time, the Crown pages through them. Bottom strip: flipped trump · hand peek ·
-// the sword (→ Action). Back-to-Games is the system nav bar (§5.3).
+// screen: deck/discard counts (top corners), the FULL seat ring incl. you at
+// 6 o'clock (names arced along the ring), the hero battle (ONE attack/cover pair,
+// the Crown pages through them), and the bottom strip (flipped trump · hand peek
+// · a round sword → Action). Black canvas.
 
 import SwiftUI
 
@@ -12,34 +12,50 @@ struct TableScreen: View {
     let onPlay: () -> Void
 
     @State private var crown: Double = 0
-
     private var focus: Int { min(max(Int(crown.rounded()), 0), max(game.battles.count - 1, 0)) }
+
+    private struct SeatVM: Identifiable {
+        let id: Int; let name: String; let count: Int
+        let isSelf: Bool; let isDefender: Bool; let isAttacker: Bool; let isOut: Bool
+    }
+    private var seats: [SeatVM] {
+        var out = [SeatVM(id: -1, name: "You", count: game.hand.count, isSelf: true,
+                          isDefender: game.defenderSeat == -1, isAttacker: game.attackerSeat == -1, isOut: false)]
+        for o in game.opponents {
+            out.append(SeatVM(id: o.id, name: o.name, count: o.handCount, isSelf: false,
+                              isDefender: game.defenderSeat == o.id, isAttacker: game.attackerSeat == o.id, isOut: o.isOut))
+        }
+        return out
+    }
 
     var body: some View {
         GeometryReader { geo in
             let w = geo.size.width, h = geo.size.height
+            let center = CGPoint(x: w / 2, y: h * 0.45)
+            let r = 0.34 * min(w, h)
             ZStack {
-                if game.yourTurn { turnVignette }                    // §3.1 cue 4: brass on your move
-
-                RingGauge(count: game.deckCount, fraction: CGFloat(game.deckCount) / CGFloat(game.deckMax),
-                          fill: false, tint: WColor.dim)
-                    .position(x: 17, y: 12)
-                RingGauge(count: game.discardCount, fraction: CGFloat(game.discardCount) / CGFloat(game.deckMax),
-                          fill: true, tint: WColor.dim)
-                    .position(x: w - 17, y: 12)
-
-                ForEach(game.opponents) { opp in
-                    seat(opp).position(ringPosition(opp.id, count: game.opponents.count, in: geo.size))
+                // seats
+                ForEach(Array(seats.enumerated()), id: \.element.id) { i, s in
+                    seat(s).position(pos(i, n: seats.count, center: center, r: r))
                 }
+                // names arced along the whole ring, just outside the seats
+                RingNames(items: seats.enumerated().map { i, s in
+                    RingNames.Item(id: s.id, angle: angle(i, n: seats.count), name: s.name,
+                                   color: s.isSelf ? WColor.brass.opacity(0.9) : WColor.dim)
+                }, radius: r + 13, fontSize: 8.5)
+                .position(center)
 
-                // Hero: the focused battle only, largest tokens on screen.
                 VStack(spacing: 5) {
                     battle(at: focus)
                     if game.battles.count > 1 { pageDots }
                 }
-                .position(x: w / 2, y: h * 0.46)
+                .position(x: w / 2, y: h * 0.44)
 
-                bottomStrip.frame(width: w - 4).position(x: w / 2, y: h - 13)
+                // deck / discard — top corners, drawn on top of the ring
+                countLabel(game.deckCount, "deck").position(x: 22, y: 24)
+                countLabel(game.discardCount, "disc").position(x: w - 24, y: 24)
+
+                bottomStrip.frame(width: w - 4).position(x: w / 2, y: h - 12)
             }
             .frame(width: w, height: h)
         }
@@ -51,28 +67,36 @@ struct TableScreen: View {
         .onAppear { game.load(gameId); crown = 0 }
     }
 
-    // MARK: opponent ring
+    // MARK: ring geometry
 
-    /// θᵢ = −90° + i·360°/n, R ≈ 0.42·min(w,h); you are implicit at 6 o'clock.
-    private func ringPosition(_ i: Int, count: Int, in size: CGSize) -> CGPoint {
-        let cx = size.width / 2, cy = size.height * 0.40
-        let r = 0.42 * min(size.width, size.height)
-        let theta = -Double.pi / 2 + Double(i) * 2 * .pi / Double(max(count, 1))
-        return CGPoint(x: cx + r * CGFloat(cos(theta)), y: cy + r * CGFloat(sin(theta)))
+    private func angle(_ i: Int, n: Int) -> Double { .pi / 2 + Double(i) * 2 * .pi / Double(n) }
+    private func pos(_ i: Int, n: Int, center: CGPoint, r: CGFloat) -> CGPoint {
+        let a = angle(i, n: n)
+        return CGPoint(x: center.x + r * CGFloat(cos(a)), y: center.y + r * CGFloat(sin(a)))
     }
 
-    private func seat(_ opp: Opponent) -> some View {
-        let isDefender = opp.id == game.defenderSeat
-        let isAttacker = opp.id == game.attackerSeat
-        return VStack(spacing: 1) {
-            Text("\(opp.handCount)")
-                .font(WFont.token(18))
-                .foregroundStyle(opp.isOut ? WColor.faint : WColor.ink)
-                .frame(width: 28, height: 28)
-                .overlay(Circle().strokeBorder(isDefender ? WColor.brass : .clear, lineWidth: 2))
-            if isAttacker {
-                Circle().fill(WColor.ink).frame(width: 4, height: 4)
+    // MARK: seat (small circle, tight shield for the defender)
+
+    private func seat(_ s: SeatVM) -> some View {
+        ZStack {
+            Circle().fill(Color(white: 0.14)).frame(width: 24, height: 24)
+            if s.isDefender {
+                ShieldShape().stroke(WColor.brass, lineWidth: 1.8)
+                    .frame(width: 22, height: 27).offset(y: -1)      // tight around the count
             }
+            Text("\(s.count)")
+                .font(WFont.token(14))
+                .foregroundStyle(s.isOut ? WColor.faint : (s.isSelf ? WColor.brass : WColor.ink))
+            if s.isAttacker {
+                Circle().fill(WColor.ink).frame(width: 4, height: 4).offset(y: 16)
+            }
+        }
+    }
+
+    private func countLabel(_ n: Int, _ label: String) -> some View {
+        VStack(spacing: -1) {
+            Text("\(n)").font(WFont.token(15)).foregroundStyle(WColor.ink)
+            Text(label).font(WFont.label(7.5)).foregroundStyle(WColor.dim)
         }
     }
 
@@ -83,14 +107,14 @@ struct TableScreen: View {
             if game.battles.indices.contains(i) {
                 let b = game.battles[i]
                 HStack(spacing: 4) {
-                    TokenCard(card: b.attack, size: 40)
+                    TokenCard(card: b.attack, size: 38)
                     if let cov = b.cover {
-                        Text("›").font(WFont.token(26)).foregroundStyle(WColor.dim)
-                        TokenCard(card: cov, size: 40)
+                        Text("›").font(WFont.token(24)).foregroundStyle(WColor.dim)
+                        TokenCard(card: cov, size: 38)
                     }
                 }
             } else {
-                Text("—").font(WFont.token(22)).foregroundStyle(WColor.faint)
+                Text("—").font(WFont.token(20)).foregroundStyle(WColor.faint)
             }
         }
     }
@@ -103,52 +127,22 @@ struct TableScreen: View {
         }
     }
 
-    // MARK: bottom strip — flipped trump · hand peek · sword
+    // MARK: bottom strip — flipped trump · hand peek · round sword
 
     private var bottomStrip: some View {
         HStack(spacing: 4) {
-            TokenCard(card: game.trump, size: 15)          // the flipped trump (no "Tr" label)
+            TokenCard(card: game.trump, size: 14)
             Spacer(minLength: 2)
-            HStack(spacing: 3) {
-                ForEach(Array(game.hand.prefix(5))) { c in
-                    TokenCard(card: c, size: 13)
-                }
+            HStack(spacing: 2) {
+                ForEach(Array(game.hand.prefix(5))) { c in TokenCard(card: c, size: 12) }
             }
             Spacer(minLength: 2)
-            SwordIcon(size: 15, color: WColor.bg)          // Pl → the sword (→ Action)
-                .padding(.horizontal, 9).padding(.vertical, 5)
-                .background(Capsule().fill(game.yourTurn ? WColor.brass : WColor.ink))
+            SwordIcon(size: 16, color: WColor.bg)
+                .frame(width: 32, height: 32)
+                .background(Circle().fill(game.yourTurn ? WColor.brass : WColor.ink))
         }
         .padding(.horizontal, 3)
         .contentShape(Rectangle())
         .onTapGesture(perform: onPlay)
-    }
-
-    private var turnVignette: some View {
-        LinearGradient(colors: [.clear, WColor.brass.opacity(0.16)], startPoint: .top, endPoint: .bottom)
-            .ignoresSafeArea()
-    }
-}
-
-/// A corner micro-gauge (§3.1 cue 2): a numeral inside a ring that depletes
-/// (deck) or fills (discard).
-struct RingGauge: View {
-    let count: Int
-    let fraction: CGFloat
-    let fill: Bool
-    let tint: Color
-
-    var body: some View {
-        let f = max(0, min(1, fraction))
-        ZStack {
-            Circle().stroke(WColor.faint, lineWidth: 2)
-            Circle()
-                .trim(from: 0, to: fill ? f : 1)
-                .stroke(tint, style: StrokeStyle(lineWidth: 2, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-                .opacity(fill ? 1 : f)
-            Text("\(count)").font(WFont.token(13)).foregroundStyle(WColor.ink)
-        }
-        .frame(width: 28, height: 28)
     }
 }

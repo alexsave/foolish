@@ -46,27 +46,115 @@ struct TokenCard: View {
     var selected: Bool = false
 
     private var valueColor: Color { card.suit.isRed ? WColor.ink : WColor.bg }
+    /// Suit glyphs sit high in their line box; nudge the value onto each suit's
+    /// visual center (spade/club have a stem below, so they need more lift).
+    private var nudge: CGFloat {
+        switch card.suit {
+        case .spades:   return -size * 0.11
+        case .clubs:    return -size * 0.09
+        case .hearts:   return -size * 0.06
+        case .diamonds: return -size * 0.05
+        }
+    }
 
     var body: some View {
         ZStack {
             Text(card.suit.glyph)
-                .font(WFont.token(size * 1.5))
+                .font(WFont.token(size * 1.4))
                 .foregroundStyle(card.suit.color)
             Text(card.label)
-                .font(.system(size: size * (card.value == 10 ? 0.5 : 0.62), weight: .heavy, design: .rounded))
+                .font(.system(size: size * (card.value == 10 ? 0.5 : 0.58), weight: .heavy, design: .rounded))
                 .foregroundStyle(valueColor)
                 .monospacedDigit()
-                .offset(y: size * 0.06)          // nudge into the suit's solid body
+                .offset(y: nudge)
         }
-        .frame(width: size * 1.2, height: size * 1.4)
+        .frame(width: size * 1.55, height: size * 1.5)   // generous — the wide ♥/♣ must not clip
         .background(
             RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(selected ? Color(white: 0.16) : .clear)
+                .fill(selected ? Color(white: 0.18) : .clear)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .strokeBorder(selected ? WColor.ink : .clear, lineWidth: 1.5)
         )
+    }
+}
+
+/// A shield outline for the defender seat (§ owner request — a shield, not a
+/// circle): rounded top, straight shoulders, curving to a point at the bottom.
+struct ShieldShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        let r = rect.width * 0.22
+        p.move(to: CGPoint(x: rect.minX, y: rect.minY + r))
+        p.addQuadCurve(to: CGPoint(x: rect.minX + r, y: rect.minY), control: CGPoint(x: rect.minX, y: rect.minY))
+        p.addLine(to: CGPoint(x: rect.maxX - r, y: rect.minY))
+        p.addQuadCurve(to: CGPoint(x: rect.maxX, y: rect.minY + r), control: CGPoint(x: rect.maxX, y: rect.minY))
+        p.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + rect.height * 0.42))
+        p.addQuadCurve(to: CGPoint(x: rect.midX, y: rect.maxY),
+                       control: CGPoint(x: rect.maxX, y: rect.maxY - rect.height * 0.12))
+        p.addQuadCurve(to: CGPoint(x: rect.minX, y: rect.minY + rect.height * 0.42),
+                       control: CGPoint(x: rect.minX, y: rect.maxY - rect.height * 0.12))
+        p.closeSubpath()
+        return p
+    }
+}
+
+/// Text arced over the top of a circle (§ owner request — usernames curve around
+/// the seat). Each character is placed on the arc of `radius` and rotated tangent,
+/// spread symmetrically about 12 o'clock.
+struct ArcText: View {
+    let text: String
+    var radius: CGFloat = 18
+    var color: Color = WColor.dim
+    var fontSize: CGFloat = 9
+    var step: Double = 20        // degrees between characters
+
+    var body: some View {
+        let chars = Array(text.prefix(9))
+        let n = chars.count
+        return ZStack {
+            ForEach(0..<n, id: \.self) { i in
+                let deg = (Double(i) - Double(n - 1) / 2) * step
+                let rad = deg * .pi / 180
+                Text(String(chars[i]))
+                    .font(.system(size: fontSize, weight: .semibold, design: .rounded))
+                    .foregroundStyle(color)
+                    .rotationEffect(.degrees(deg))
+                    .offset(x: radius * CGFloat(sin(rad)), y: -radius * CGFloat(cos(rad)))
+            }
+        }
+        .frame(width: radius * 2 + fontSize * 2, height: radius * 2 + fontSize * 2)
+    }
+}
+
+/// Player names arced along the big seat ring (§ owner request): each name spans
+/// a small arc centered on its seat's angle, just outside the seat circle. Names
+/// on the bottom half flip so they stay upright. Placed once at the ring center.
+struct RingNames: View {
+    struct Item: Identifiable { let id: Int; let angle: Double; let name: String; let color: Color }
+    let items: [Item]
+    let radius: CGFloat
+    var fontSize: CGFloat = 9
+    var step: Double = 0.17        // radians between characters
+
+    var body: some View {
+        ZStack {
+            ForEach(items) { item in
+                let chars = Array(item.name.prefix(9))
+                let n = chars.count
+                let flipped = sin(item.angle) > 0.05        // lower half → read upright
+                ForEach(0..<n, id: \.self) { i in
+                    let delta = (Double(i) - Double(n - 1) / 2) * step
+                    let a = flipped ? item.angle - delta : item.angle + delta
+                    Text(String(chars[i]))
+                        .font(.system(size: fontSize, weight: .semibold, design: .rounded))
+                        .foregroundStyle(item.color)
+                        .rotationEffect(.radians(flipped ? a - .pi / 2 : a + .pi / 2))
+                        .offset(x: radius * CGFloat(cos(a)), y: radius * CGFloat(sin(a)))
+                }
+            }
+        }
     }
 }
 
