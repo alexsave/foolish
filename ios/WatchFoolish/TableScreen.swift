@@ -33,7 +33,7 @@ struct TableScreen: View {
             let center = CGPoint(x: w / 2, y: h * 0.41)
             let r = 0.33 * min(w, h)
             // shared corner coordinates
-            let xL: CGFloat = 20, xR = w - 20, yTop: CGFloat = 24, yBot = h - 16
+            let xL: CGFloat = 18, xR = w - 18, yTop: CGFloat = 14, yBot = h - 16
             ZStack {
                 ForEach(Array(seats.enumerated()), id: \.element.id) { i, s in
                     seat(s).position(pos(i, n: seats.count, center: center, r: r))
@@ -41,7 +41,7 @@ struct TableScreen: View {
                 RingNames(items: seats.enumerated().map { i, s in
                     RingNames.Item(id: s.id, angle: angle(i, n: seats.count), name: s.name,
                                    color: s.isSelf ? WColor.brass.opacity(0.9) : WColor.dim)
-                }, radius: r + 11, fontSize: 8.5)
+                }, radius: r + 9, fontSize: 8.5, step: 0.13)
                 .position(center)
 
                 VStack(spacing: 4) {
@@ -77,16 +77,16 @@ struct TableScreen: View {
 
     private func seat(_ s: SeatVM) -> some View {
         ZStack {
-            Circle().fill(Color(white: 0.14)).frame(width: 20, height: 20)
             if s.isDefender {
                 ShieldShape().stroke(WColor.brass, lineWidth: 1.6)
                     .frame(width: 19, height: 23).offset(y: -1)
             }
             Text("\(s.count)")
-                .font(WFont.token(13))
+                .font(WFont.token(14))
                 .foregroundStyle(s.isOut ? WColor.faint : (s.isSelf ? WColor.brass : WColor.ink))
             if s.isAttacker { Circle().fill(WColor.ink).frame(width: 3.5, height: 3.5).offset(y: 14) }
         }
+        .frame(width: 22, height: 22)
     }
 
     private func countLabel(_ n: Int, _ label: String) -> some View {
@@ -102,10 +102,10 @@ struct TableScreen: View {
         Group {
             if game.battles.indices.contains(i) {
                 let b = game.battles[i]
-                HStack(spacing: 1) {
+                HStack(spacing: -3) {
                     TokenCard(card: b.attack, size: 28)
                     if let cov = b.cover {
-                        Text("›").font(WFont.token(16)).foregroundStyle(WColor.dim)
+                        Text("›").font(WFont.token(14)).foregroundStyle(WColor.dim)
                         TokenCard(card: cov, size: 28)
                     }
                 }
