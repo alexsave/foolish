@@ -301,6 +301,106 @@ footer{margin-top:70px;border-top:2px solid var(--line);padding-top:14px;
 body.showf .fingero{display:block}
 body.showz .zoneso{display:block}
 
+/* =====================================================================
+   OPTION D — full-bleed crown pages. Every string >= 24px (12pt @2x);
+   default voice 26-32px (13-16pt). One tap zone: the whole screen.
+   ===================================================================== */
+.dtop{position:absolute;top:0;left:0;right:0;height:44px;display:flex;
+  justify-content:space-between;align-items:center;padding:8px 24px 0 26px;
+  z-index:5;font-size:24px;font-weight:700;color:#fff;white-space:nowrap;gap:8px}
+.dtop span:first-child{overflow:hidden;text-overflow:ellipsis}
+.dtop .dclock{color:#e9e2cf;font-variant-numeric:tabular-nums;font-weight:600}
+.dcard{position:absolute;inset:0;background:#f4f1e8;color:#16181c}
+.dcard::before{content:'';position:absolute;top:0;left:0;right:0;height:64px;
+  background:linear-gradient(rgba(0,0,0,.62),rgba(0,0,0,0));z-index:2}
+.dcard.red{color:#c9252d}
+.dcard .drank{position:absolute;top:52px;left:24px;font-size:58px;
+  font-weight:800;letter-spacing:-2px;line-height:1;z-index:1}
+.dcard .dpip{position:absolute;inset:20px 0 40px;display:flex;align-items:center;
+  justify-content:center;font-size:170px}
+.dcard.dim{filter:grayscale(.75) brightness(.5)}
+.dcard.atkcard{box-shadow:inset 0 0 0 5px #ff453a}
+.dact{position:absolute;left:0;right:0;bottom:0;height:56px;display:flex;
+  align-items:center;justify-content:center;gap:8px;font-size:27px;font-weight:800;
+  letter-spacing:.3px;z-index:5;white-space:nowrap;padding:0 34px 6px}
+.dact.ok{background:#30d158;color:#03210e}
+.dact.no{background:rgba(28,28,30,.94);color:#98989e;font-size:24px;font-weight:700}
+.dact.take{background:#ff453a;color:#2b0300}
+.vdots{position:absolute;right:8px;top:50%;transform:translateY(-50%);
+  display:flex;flex-direction:column;gap:8px;z-index:6}
+.vdots i{width:7px;height:7px;border-radius:50%;background:#48484a;display:block}
+.vdots i.on{background:#fff}
+.dstate{position:absolute;inset:0;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:12px;text-align:center;
+  padding:34px 22px 40px}
+.dstate .t1{font-size:54px;font-weight:850;line-height:1.02;letter-spacing:-1px}
+.dstate .t2{font-size:27px;font-weight:700;line-height:1.3}
+.dstate .t3{font-size:24px;font-weight:600;opacity:.72;line-height:1.3}
+.dstate.goodP{background:#30d158;color:#03210e}
+.dstate.takeP{background:#2b0503;color:#ff8177}
+.dstate.takeP .t1{color:#ff453a}
+.dstate.passP{background:#04203d;color:#9ecbff}
+.dstate.passP .t1{color:#409cff}
+.dstate.plain{color:#fff}
+.dstate .drow{display:flex;flex-wrap:wrap;gap:6px;justify-content:center}
+.dstate .dchip{font-size:24px;font-weight:700;background:#1c1c1e;color:#98989e;
+  border-radius:14px;padding:4px 14px}
+.dstate .dchip.ok{color:#30d158}
+.dstate .dchip.def{color:#ff8b84}
+.dtable{position:absolute;inset:0;padding:52px 20px 16px;display:flex;
+  flex-direction:column;gap:8px}
+.dtable .dpair{flex:none;height:64px;border-radius:18px;background:#1c1c1e;
+  display:flex;align-items:center;justify-content:center;gap:10px;
+  font-size:33px;font-weight:800}
+.dtable .dpair .sep{color:#48484a;font-size:26px}
+.dtable .dpair .openx{color:#8e8e93;font-size:26px;font-weight:700}
+.dtable .dpair .redt{color:#ff6961}
+.dbanner{position:absolute;top:46px;left:14px;right:14px;background:#2c2c2e;
+  border-radius:20px;padding:14px 18px;z-index:8;box-shadow:0 10px 30px rgba(0,0,0,.7)}
+.dbanner .t{color:#ff453a;font-weight:800;font-size:26px}
+.dbanner .b{color:#d5d5d9;font-size:24px;font-weight:600;margin-top:3px;line-height:1.25}
+/* notification + widget mocks */
+.dnotif{position:absolute;inset:0;display:flex;flex-direction:column;
+  padding:40px 14px 14px;gap:8px}
+.dnotif .nh{display:flex;align-items:center;gap:8px;font-size:24px;font-weight:700;
+  color:#98989e;padding-left:6px}
+.dnotif .nh i{width:26px;height:26px;border-radius:8px;background:#B32929;
+  display:inline-flex;align-items:center;justify-content:center;font-style:normal;
+  color:#F5E6C8;font-size:17px}
+.dnotif .nt{font-size:32px;font-weight:800;color:#fff;padding-left:6px}
+.dnotif .nb{font-size:25px;font-weight:600;color:#d5d5d9;padding-left:6px;line-height:1.3}
+.dnotif .nbtn{margin-top:auto;flex:none;height:56px;border-radius:18px;
+  background:#2c2c2e;display:flex;align-items:center;justify-content:center;
+  font-size:26px;font-weight:750}
+.dnotif .nbtn.g{color:#30d158}.dnotif .nbtn.r{color:#ff453a}.dnotif .nbtn.gr{color:#98989e}
+.dwidget{position:absolute;inset:0;display:flex;flex-direction:column;
+  align-items:center;justify-content:flex-end;padding:0 12px 18px;
+  background:radial-gradient(140px 140px at 50% 26%, #223 0%, #000 70%)}
+.dwidget .wclock{position:absolute;top:34px;left:0;right:0;text-align:center;
+  font-size:64px;font-weight:300;color:#e9e2cf;letter-spacing:2px}
+.dwidget .wcardw{width:100%;height:132px;border-radius:24px;background:#15151a;
+  border:1px solid #2c2c2e;padding:14px 18px;display:flex;flex-direction:column;
+  justify-content:center;gap:2px}
+.dwidget .wt{display:flex;align-items:center;gap:8px;font-size:22px;font-weight:700;
+  color:#98989e}
+.dwidget .wt i{width:22px;height:22px;border-radius:7px;background:#B32929;
+  display:inline-flex;align-items:center;justify-content:center;font-style:normal;
+  color:#F5E6C8;font-size:14px}
+.dwidget .wb{font-size:31px;font-weight:800;color:#fff}
+.dwidget .ws{font-size:24px;font-weight:600;color:#30d158}
+/* HIG receipts */
+.quotewall{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));
+  gap:12px;margin:16px 0}
+.q{border:2px solid var(--ink);background:var(--paper2);padding:12px 16px;
+  font-size:14.5px;line-height:1.5}
+.q em{display:block;font-style:italic}
+.q .src{display:block;margin-top:8px;font-family:var(--mono);font-size:11px;
+  color:var(--mut)}
+table.audit{border-collapse:collapse;width:100%;font-size:13.5px;margin-top:8px}
+table.audit th,table.audit td{border:1px solid var(--line);padding:7px 10px;text-align:left}
+table.audit th{font-family:var(--disp);text-transform:uppercase;font-size:12px;
+  letter-spacing:1px;background:var(--paper2)}
+
 /* demo */
 .demoWrap{display:flex;gap:26px;flex-wrap:wrap;align-items:flex-start;
   border:3px solid var(--green);background:var(--paper2);
@@ -324,10 +424,11 @@ body.showz .zoneso{display:block}
   <div class="kicker">Foolish · design study · branch claude/watchos-durak-layout-1toekd</div>
   <h1>Durak on a 40&nbsp;mm wrist</h1>
   <p class="sub">Layout options for a watchOS client of the Foolish engine — 8 players,
-  free-for-all throw-ins, transfer rules, no round timer. Every rule claim below was read
-  out of the engine (<code>cnitro/src/game.c</code>, <code>legal.c</code>, the wasm bridges),
-  not assumed from generic Durak. Mockups are HTML at native watch pixels; use the controls
-  to view them at true physical size.</p>
+  free-for-all throw-ins, transfer rules, no round timer. Every rule claim was read out of the
+  engine (<code>cnitro/src/game.c</code>, <code>legal.c</code>, the wasm bridges), and every
+  sizing claim is held to Apple's Human Interface Guidelines (quoted in §3 — 12&nbsp;pt text
+  floor, crown-first navigation, single-screen interactions). Mockups are HTML at native watch
+  pixels; use the controls to view them at true physical size.</p>
 </header>
 
 <div class="controls" id="controls">
@@ -478,12 +579,97 @@ body.showz .zoneso{display:block}
   </div>
 </section>
 
+<!-- ============================================================ HIG -->
+<section id="hig">
+  <h2>3 · What Apple actually says</h2>
+  <p class="lede">Quoted from the Human Interface Guidelines (fetched, not remembered). These four
+  ideas invalidate parts of every board-shaped design below — and they produce Option D.</p>
+  <div class="quotewall">
+    <div class="q"><em>“People glance at the Always On display many times throughout the day,
+      performing concise app interactions that can last for <b>less than a minute</b> each.
+      People frequently use a watchOS app's related experiences — like complications,
+      notifications, and Siri interactions — <b>more than they use the app itself</b>.”</em>
+      <span class="src">HIG · Designing for watchOS · “App interactions”</span></div>
+    <div class="q"><em>“Support quick, glanceable, <b>single-screen interactions</b> that deliver
+      critical information succinctly and help people perform targeted actions with a
+      <b>simple gesture or two</b>. Minimize the depth of hierarchy … use the Digital Crown to
+      provide vertical navigation for scrolling or <b>switching between screens</b>.”</em>
+      <span class="src">HIG · Designing for watchOS · “Best practices”</span></div>
+    <div class="q"><em>“Starting with watchOS 10, the Digital Crown takes on an elevated role as
+      <b>the primary input for navigation</b> … within apps, people turn the Digital Crown to
+      switch between <b>vertically paginated tabs</b>.” “Anchor your app's navigation to the
+      Digital Crown … back them up with corresponding touch screen interactions.”</em>
+      <span class="src">HIG · Digital Crown</span></div>
+    <div class="q"><em>Text sizes — watchOS default <b>16&nbsp;pt</b>, minimum <b>12&nbsp;pt</b>
+      (= 32 / 24 px on this 2× panel; SF&nbsp;Compact). “The Apple Watch bezel provides a
+      <b>natural visual padding</b> around your content” — design full-bleed, not framed.</em>
+      <span class="src">HIG · Typography (“Specifications”) · Layout</span></div>
+  </div>
+
+  <p><b>The audit that killed Option B as the recommendation.</b> Held to the 12 pt floor, the
+  “Focus flow” layout below is illegally small almost everywhere — it is a phone information
+  hierarchy miniaturized, which is exactly what the HIG warns against:</p>
+  <div class="tablewrap">
+  <table class="audit">
+    <tr><th>Element (Option B)</th><th>Size</th><th>vs 12 pt floor (24 px)</th>
+        <th>Option D replacement</th></tr>
+    <tr><td>Context band (defender · open · cap)</td><td>13.5 px ≈ 7 pt</td>
+        <td class="bad">−46 %</td><td>Top overlay line, 25 px, over full-bleed content</td></tr>
+    <tr><td>Hint line (“Legal — J is on the table”)</td><td>13 px ≈ 6.5 pt</td>
+        <td class="bad">−46 %</td><td>Bottom action strip, 27 px — the hint <i>is</i> the button</td></tr>
+    <tr><td>Card corner ranks</td><td>19–20 px ≈ 10 pt</td>
+        <td class="bad">−17 %</td><td>58 px rank + 170 px pip — the card is the screen</td></tr>
+    <tr><td>Button subtext, badges, dots caption</td><td>9.5–10.5 px ≈ 5 pt</td>
+        <td class="bad">−58 %</td><td>Deleted, or promoted to 24 px page text</td></tr>
+    <tr><td>Tap zones per screen</td><td>3–4</td><td class="meh">within 2×3 budget</td>
+        <td class="good">1 — the whole screen commits the visible page</td></tr>
+  </table>
+  </div>
+</section>
+
+<!-- ============================================================ OPTION D -->
+<section id="optd">
+  <h2>4 · Option D — “One thing at a time” <span class="tag">recommended</span></h2>
+  <p class="lede">The watch is not a board renderer; it is a decision surface. Every choice is a
+  full-bleed, crown-paginated screen: turn the crown through [TABLE] → [your cards, best first] →
+  [GOOD], tap <b>anywhere</b> to commit the visible page. The app opens directly on your best
+  legal card, so the common race play is <b>zero detents + one tap</b>. Layer 0 — notification,
+  Smart Stack widget, complication — covers the 90 % of an 8-player game when it isn't your
+  moment, exactly as the HIG prescribes.</p>
+
+  <div class="demoWrap">
+    <div class="stagebox" id="m-demo2" style="padding:0"></div>
+    <div class="side">
+      <h4>Live demo — crown pages, tap anywhere</h4>
+      <p>Hover the watch and <b>scroll</b> (or <kbd>↑</kbd><kbd>↓</kbd> after clicking it) to
+      page vertically: table → cards (legal first) → GOOD. The strip does not wrap — pages have
+      ends, like a watchOS 10 TabView, with edge dots as the pagination indicator.</p>
+      <p><b>Tap anywhere</b> on a legal card page to throw it (~1 in 3 loses the race and shows
+      the <code>DEFENDER_CAPACITY</code> banner). Illegal pages state their reason in the bottom
+      strip and ignore taps. The GOOD page commits the round-close vote and locks.</p>
+      <p>Legality still comes per card from guards.wasm gates
+      (<code>canAttack([card])</code>, <code>clientGuards.ts:219</code>) — this option changes
+      presentation, not the rules plumbing.</p>
+    </div>
+  </div>
+
+  <div class="gallery" id="gal-d"></div>
+
+  <div class="verdict rec"><b>Verdict:</b> the only design that satisfies the HIG numbers —
+  every string ≥ 24 px (12 pt), body voice 25–33 px, one tap zone per screen — while getting
+  <i>faster</i> for the race (opens on your best card; whole-screen commit can't be fumbled).
+  Costs: the table is a page rather than a pane (mitigated: capacity and live values ride the
+  top overlay on every card), and long post-pickup hands mean more detents (mitigated:
+  legal-first ordering keeps playable cards at the front).</div>
+</section>
+
 <!-- ============================================================ OPTION B -->
 <section id="optb">
-  <h2>3 · Option B — “Focus flow” <span class="tag">recommended</span></h2>
-  <p class="lede">One decision on screen at a time. The crown always drives exactly one selector;
-  taps only ever hit three fat zones: top band (table peek), center card (commit), bottom buttons
-  (GOOD / TAKE / PASS). The table lives one tap away as a crown-scrolled overlay.</p>
+  <h2>5 · Option B — “Focus flow” <span class="tag">the dense compromise</span></h2>
+  <p class="lede">The first 40&nbsp;mm attempt: one decision per screen, crown-driven carousel,
+  three fat tap zones. Kept because its interaction grammar (crown = aim, tap = commit) survives
+  into Option D — but its information density does not: see the type audit above. At true scale,
+  half its text sits below Apple's 12&nbsp;pt floor.</p>
 
   <div class="demoWrap">
     <div class="stagebox" id="m-demo" style="padding:0"></div>
@@ -496,22 +682,22 @@ body.showz .zoneso{display:block}
       <p><b>Tap the focused card</b> to throw it in — the demo plays the optimistic-send flow,
       including losing the race (~1 in 3 sends hits <code>DEFENDER_CAPACITY</code> so you can
       see the snipe toast). Tap <b>GOOD</b> to feel the lock-until-table-changes rule.</p>
-      <p>Mis-tap safety: tapping a <i>peeking neighbor</i> only focuses it — the single
-      destructive target is the center card, which is exactly one finger wide.</p>
+      <p>Compare it with the Option D demo above: same rules, same crown grammar — but count
+      what you can actually read at “Real size”.</p>
     </div>
   </div>
 
   <div class="gallery" id="gal-b"></div>
 
-  <div class="verdict rec"><b>Verdict:</b> the only option whose every tap target survives the
-  128&nbsp;px finger, and the only one that scales unchanged from 2 table pairs to 20 (the crown
-  doesn't care). Costs one tap of table visibility for attackers — mitigated by the always-on
-  ticker (live values · open count · capacity) in the context band.</div>
+  <div class="verdict"><b>Verdict:</b> every tap target survives the 128&nbsp;px finger and it
+  scales to any table size — but it fails the typography floor on five elements, which is
+  disqualifying at 40&nbsp;mm. Its screen-state inventory (the 13 states below) carries over to
+  Option D one-for-one.</div>
 </section>
 
 <!-- ============================================================ OPTION A -->
 <section id="opta">
-  <h2>4 · Option A — “Dense board”</h2>
+  <h2>6 · Option A — “Dense board”</h2>
   <p class="lede">The web layout miniaturized: persistent table strip + hand carousel + actions,
   all on one screen. Included because it's everyone's first instinct — and to show where it
   breaks at 40&nbsp;mm.</p>
@@ -524,7 +710,7 @@ body.showz .zoneso{display:block}
 
 <!-- ============================================================ OPTION C -->
 <section id="optc">
-  <h2>5 · Option C — “Action list”</h2>
+  <h2>7 · Option C — “Action list”</h2>
   <p class="lede">Pure watchOS: every legal move is a full-width row in a crown-scrolled list.
   The move space is small enough per moment (throwable cards + GOOD; or covers-for-current-target
   + TAKE + PASS) that rows stay countable.</p>
@@ -537,30 +723,43 @@ body.showz .zoneso{display:block}
 
 <!-- ============================================================ COMPARE -->
 <section id="compare">
-  <h2>6 · Side by side</h2>
+  <h2>8 · Side by side</h2>
   <div class="tablewrap">
   <table class="cmp">
-    <tr><th></th><th>A · Dense board</th><th>B · Focus flow</th><th>C · Action list</th></tr>
-    <tr><td>Survives 128 px finger</td><td class="bad">No (66 px chips)</td>
-        <td class="good">Yes (3 zones)</td><td class="good">Yes (58 px rows, full width)</td></tr>
-    <tr><td>Taps to throw in (race speed)</td><td class="good">crown + 1 tap</td>
-        <td class="good">crown + 1 tap</td><td class="meh">crown + 1 tap, list reorders mid-aim</td></tr>
-    <tr><td>Table visibility</td><td class="good">always on</td>
-        <td class="meh">ticker + 1-tap peek</td><td class="bad">text summary only</td></tr>
-    <tr><td>Defender flow</td><td class="meh">tap chip (too small) + tap card</td>
-        <td class="good">crown target → crown cover → tap</td><td class="meh">pair×cover rows explode</td></tr>
-    <tr><td>Post-pickup scale (10–20 pairs)</td><td class="bad">strip overflows</td>
-        <td class="good">unchanged</td><td class="bad">row count explodes</td></tr>
-    <tr><td>Feels like cards</td><td class="good">yes</td><td class="good">yes</td><td class="bad">no</td></tr>
+    <tr><th></th><th>D · One thing at a time</th><th>B · Focus flow</th>
+        <th>A · Dense board</th><th>C · Action list</th></tr>
+    <tr><td>Meets the 12 pt type floor</td><td class="good">Yes — smallest string 24 px</td>
+        <td class="bad">No — 5 elements at 5–10 pt</td><td class="bad">No — worse than B</td>
+        <td class="meh">Rows yes, summary bar no</td></tr>
+    <tr><td>Tap zones per screen</td><td class="good">1 (whole screen)</td>
+        <td class="good">3–4, all ≥ finger</td><td class="bad">chips at half-finger</td>
+        <td class="good">full-width rows</td></tr>
+    <tr><td>Race speed (throw-in)</td><td class="good">opens on best card: 0 detents + 1 tap</td>
+        <td class="good">crown + 1 tap</td><td class="good">crown + 1 tap</td>
+        <td class="meh">crown + 1 tap, list reorders mid-aim</td></tr>
+    <tr><td>Table visibility</td><td class="meh">cap/values overlay + table page (1 detent)</td>
+        <td class="meh">ticker + 1-tap peek</td><td class="good">always on</td>
+        <td class="bad">text summary only</td></tr>
+    <tr><td>Defender flow</td><td class="good">pages all the way down (attacks → covers)</td>
+        <td class="good">two-step wizard</td><td class="meh">tap chip + tap card</td>
+        <td class="meh">pair×cover rows explode</td></tr>
+    <tr><td>Post-pickup scale (10–20 pairs)</td><td class="good">unchanged (longer strip)</td>
+        <td class="good">unchanged</td><td class="bad">strip overflows</td>
+        <td class="bad">row count explodes</td></tr>
+    <tr><td>HIG conformance (crown-first, single-screen, layer 0)</td>
+        <td class="good">native</td><td class="meh">partial</td><td class="bad">phone-shaped</td>
+        <td class="good">native but joyless</td></tr>
   </table>
   </div>
-  <p><b>Recommendation:</b> ship <b>B</b>; keep C's row anatomy as the accessibility mode;
-  revisit A only as a 44/46&nbsp;mm enhancement.</p>
+  <p><b>Recommendation:</b> ship <b>D</b>, with layer 0 (notification + Smart Stack + complication)
+  treated as half the product. Keep C's row anatomy as the VoiceOver projection of D's pages.
+  B's grammar lives on inside D; A only makes sense at 44/46&nbsp;mm — and even there, D reads
+  better at arm's length.</p>
 </section>
 
 <!-- ============================================================ CUTS -->
 <section id="cuts">
-  <h2>7 · Cut list</h2>
+  <h2>9 · Cut list</h2>
   <p class="lede">If an element can't justify itself, it's gone. What didn't earn pixels:</p>
   <ul class="cuts">
     <li><b>8-player avatar ring</b> — seat identity only matters twice (who defends, who receives a
@@ -583,7 +782,7 @@ body.showz .zoneso{display:block}
 
 <!-- ============================================================ PROTOCOL -->
 <section id="proto">
-  <h2>8 · What the watch client actually consumes</h2>
+  <h2>10 · What the watch client actually consumes</h2>
   <ul class="cuts">
     <li><b>State in:</b> subscribe the player's <code>player_views</code> row — already
       per-seat masked server-side, decoded by the shared packed-game codec
@@ -957,6 +1156,238 @@ fig(galC,'C2 · Defender as a list','combinatorial smell',screenC({
 '<b>Reads like a spreadsheet</b> — legal, joyless; the card game disappears.',
 '<b>Keep the anatomy</b> — this exact row structure is the right VoiceOver/assistive projection of Option B.',
 ]);
+
+/* ============================================================ Option D */
+function dTop(ctx,clock){
+  return `<div class="dtop"><span>${ctx||''}</span><span class="dclock">${clock||'12:41'}</span></div>`;
+}
+function dDots(n,on){
+  let h='<div class="vdots">';
+  for(let i=0;i<n;i++)h+=`<i${i===on?' class="on"':''}></i>`;
+  return h+'</div>';
+}
+function dCardPage(o){
+  const red=RED.has(o.s)?' red':'';
+  let h=`<div class="dcard${red}${o.dim?' dim':''}${o.atk?' atkcard':''}">`+
+    `<div class="drank">${o.r}${o.s}</div><div class="dpip">${o.s}</div></div>`;
+  h+=dTop(o.ctx,o.clock);
+  if(o.act)h+=`<div class="dact ${o.act[0]}">${o.act[1]}</div>`;
+  if(o.dots)h+=dDots(o.dots[0],o.dots[1]);
+  return h+(o.extra||'');
+}
+function dStatePage(o){
+  let h=`<div class="dstate ${o.cls||'plain'}">`;
+  if(o.pre)h+=`<div class="t3">${o.pre}</div>`;
+  h+=`<div class="t1"${o.t1c?` style="color:${o.t1c}"`:''}>${o.t1}</div>`;
+  if(o.t2)h+=`<div class="t2">${o.t2}</div>`;
+  if(o.chips)h+=`<div class="drow">${o.chips}</div>`;
+  if(o.t3)h+=`<div class="t3">${o.t3}</div>`;
+  h+='</div>'+dTop(o.ctx,o.clock);
+  if(o.act)h+=`<div class="dact ${o.act[0]}">${o.act[1]}</div>`;
+  if(o.dots)h+=dDots(o.dots[0],o.dots[1]);
+  return h+(o.extra||'');
+}
+function dTablePage(pairs,ctx,clock,dots,actTxt){
+  let rows=pairs.map(p=>{
+    const a=`<span class="${RED.has(p[0].slice(-1))?'redt':''}">${p[0]}</span>`;
+    const d=p[1]?`<span class="${RED.has(p[1].slice(-1))?'redt':''}">${p[1]}</span>`
+             :'<span class="openx">open</span>';
+    return `<div class="dpair">${a}<span class="sep">▸</span>${d}</div>`;
+  }).join('');
+  return `<div class="dtable">${rows}</div>`+dTop(ctx,clock)+
+    `<div class="dact no">${actTxt||'CROWN ▾ YOUR CARDS'}</div>`+
+    (dots?dDots(dots[0],dots[1]):'');
+}
+const galD=document.getElementById('gal-d');
+
+fig(galD,'D0 · Notification','layer 0 — most of the game',
+  `<div class="dnotif"><div class="nh"><i>♠</i> FOOLISH</div>
+   <div class="nt">Your defense</div>
+   <div class="nb">KAT passed the table to you.<br>2 attacks · you hold 5</div>
+   <div class="nbtn g">Open hand</div><div class="nbtn r">Take 2</div>
+   <div class="nbtn gr">Dismiss</div></div>`,[
+'<b>HIG, verbatim</b> — “people frequently use notifications … more than the app itself”; in an 8-player game 90 % of wall-clock is not your moment, so the notification IS the primary UI.',
+'<b>Safe actions inline</b> — Take is offerable without opening (it\'s always legal for the defender, game.c:776-780); throwing/covering needs card choice, so “Open hand” deep-links into a D page.',
+'<b>Fires on decision moments only</b> — you\'re defender / you can throw in / all-covered-say-GOOD; anything else stays silent.',
+]);
+
+fig(galD,'D0b · Smart Stack + complication','glance layer',
+  `<div class="dwidget"><div class="wclock">12:41</div>
+   <div class="wcardw"><div class="wt"><i>♠</i> FOOLISH · vs KAT</div>
+   <div class="wb">Your move</div><div class="ws">J♦ 7♠ playable · cap 2</div></div></div>`,[
+'<b>Wrist-raise = game state</b> — the widget answers “do I need to act?” without opening anything (“actionable content that\'s relevant in the moment” — HIG).',
+'<b>One line of truth</b> — playable cards + capacity; tap dives straight to the best-card page.',
+'<b>Corner complication</b> — a ♠ glyph with a badge when a decision is pending; the watch face is the home screen of this app.',
+]);
+
+fig(galD,'D1 · Table page','crown stop №1',
+  dTablePage([['7♣','J♣'],['7♥',null],['J♠',null]],
+    'TABLE · cap 2','12:41',[8,0]),[
+'<b>The board is a page, not a pane</b> — full-width 33 px rows instead of 15 px chips; covered vs open readable at arm\'s length.',
+'<b>First crown stop</b> — one detent up from your cards; the strip has ends, not wraparound (watchOS TabView convention).',
+'<b>Scales by growing, not shrinking</b> — 10 post-pickup pairs = a scrolling list (game.c:557 allows dozens); row height never changes.',
+]);
+
+fig(galD,'D2 · Your best card','app opens here',
+  dCardPage({r:'J',s:'♦',ctx:'KAT · cap 2',act:['ok','TAP TO PLAY J♦'],dots:[8,1]}),[
+'<b>The card is the screen</b> — 58 px rank, 170 px pip: readable from a dropped wrist; “the bezel provides natural visual padding” (HIG Layout).',
+'<b>Whole screen commits</b> — one tap zone; the race play is 0 detents + 1 tap because the app opens on the best legal card (“proactively anticipating people\'s needs” — HIG).',
+'<b>Top overlay = the two live numbers</b> — defender and capacity (25 px), under the system clock\'s scrim.',
+'<b>Bottom strip is button and hint at once</b> — 27 px; green only when guards.wasm says legal.',
+]);
+
+fig(galD,'D3 · Illegal card','requested “nothing legal” state',
+  dCardPage({r:'9',s:'♥',dim:1,ctx:'KAT · cap 2',act:['no','9 NOT ON THE TABLE'],dots:[8,4]}),[
+'<b>Still a page</b> — dim, with the rule as the strip text; taps are ignored (haptic tick only). You keep planning with it in view.',
+'<b>Legal-first ordering</b> — dead cards sink to the strip\'s end, so “nothing legal” is discovered by the strip being gray from page one.',
+'<b>When the whole hand is dead</b> — every card page is gray and the GOOD page (D6) is one detent away; no separate empty-state screen needed.',
+]);
+
+fig(galD,'D4 · Table capped','requested state',
+  dCardPage({r:'J',s:'♦',dim:1,ctx:'KAT · cap 0',act:['no','TABLE CAPPED'],dots:[8,1]}),[
+'<b>Same anatomy, one number changed</b> — cap 0 in the overlay dims even matching ranks (game.c:557-559); the strip blames capacity, not your card.',
+'<b>No dead end</b> — GOOD page stays reachable; the state resolves only through KAT (cover / take / pass).',
+]);
+
+fig(galD,'D5 · Sniped','requested state',
+  dCardPage({r:'J',s:'♦',dim:1,ctx:'KAT · cap 0',act:['no','TABLE CAPPED'],dots:[8,1],
+    extra:`<div class="dbanner"><div class="t">✕ Too late</div>
+    <div class="b">BOR filled KAT's last slot.<br>J♦ is back in your hand.</div></div>`}),[
+'<b>Banner, not modal</b> — the race loss (serialized server-side, utils.ts:63) announces itself at notification scale (26 px) with a failure haptic, then dissolves.',
+'<b>The page already reconciled</b> — behind the banner the same card sits re-dimmed under cap 0: optimistic send reverted, world updated.',
+]);
+
+fig(galD,'D6 · GOOD page','end of the strip',
+  dStatePage({cls:'goodP',t1:'GOOD',t2:'2 of 6 have said it',
+    t3:'tap anywhere · resets if the table changes',ctx:'KAT · open 2',dots:[8,7]}),[
+'<b>The round-closer is a destination</b> — the last crown stop, full green, unmissable and unfumbleable: the mechanism of progress (game.c:852-868) gets a whole screen.',
+'<b>Vote count at 27 px</b> — you see exactly what your tap finishes.',
+'<b>After tapping</b> — the page becomes the lock state (legal.c:377-384): “GOOD ✓ — locked until the table changes”, and unlocks itself on the next pushed snapshot.',
+]);
+
+fig(galD,'D7 · Lead both','atomic multi-card as a page',
+  dStatePage({cls:'plain',pre:'YOU LEAD · you hold two 9s',t1:'9♣ + 9♥',t1c:'#fff',
+    t2:'lead both nines together',ctx:'',act:['ok','TAP TO LEAD BOTH'],dots:[9,2]}),[
+'<b>Sheets become pages</b> — cleverer than a popup: “9♣ alone” and “9♣ + 9♥” are adjacent crown stops, each full-screen, each one tap (multi-lead must be atomic, game.c:549).',
+'<b>Same trick for multi-pass</b> — “PASS 7♠” and “PASS 7♠ + 7♥” as adjacent pages (after one pass you\'re no longer defender, game.c:759 — sequential is impossible).',
+]);
+
+fig(galD,'D8 · Defending — an open attack','requested “3 open pairs”, page 2 of 3',
+  dCardPage({r:'J',s:'♥',atk:1,ctx:'DEFEND 2/3',clock:'12:44',
+    act:['ok','TAP — 3 COVERS FIT'],dots:[6,1]}),[
+'<b>Each open attack is a page</b> — red-ringed so table cards never read as yours; crown cycles the 3 open pairs, then TAKE and PASS pages (game.c:776, :716).',
+'<b>The badge became the button</b> — “3 covers fit” (canCoverPair sweep, clientGuards.ts:251) is now 27 px strip text, not a 9 px pill.',
+'<b>No timer pressure</b> — nothing counts down (good.ts:7-8); page count grows with throw-ins, live.',
+]);
+
+fig(galD,'D9 · Picking the cover','sub-strip: legal covers only',
+  dCardPage({r:'Q',s:'♥',ctx:'COVER J♥ 1/3',clock:'12:44',
+    act:['ok','TAP TO COVER J♥'],dots:[4,0]}),[
+'<b>The sub-strip holds only legal covers</b> — Q♥, A♥, 4♠ (trump), plus a back stop; illegal cards never enter this ring.',
+'<b>Trump is priced on its page</b> — 4♠\'s strip reads “TAP — SPENDS A TRUMP”; strategy surfaces as copy, not iconography.',
+'<b>Partial covers are free</b> — the engine takes pairs one at a time (game.c:638-655); after each commit the strip re-derives.',
+]);
+
+fig(galD,'D10 · TAKE page','surrender with its price',
+  dStatePage({cls:'takeP',t1:'TAKE 5',t2:'end the round — you absorb the table',
+    t3:'tap anywhere · next round skips you',ctx:'DEFEND 2/3',clock:'12:44',dots:[6,4]}),[
+'<b>Full-screen red = deliberate</b> — a whole-page destination can\'t be fat-fingered while aiming at a cover; crown distance is the confirmation.',
+'<b>Price and consequence at 27 px</b> — card count (game.c:787-795) and the skip rule (game.c:799-802) — the two facts that decide surrender.',
+]);
+
+fig(galD,'D11 · PASS page','transfer window',
+  dStatePage({cls:'passP',t1:'PASS → LEV',t2:'7♠ slides the table to LEV (holds 5)',
+    t3:'tap anywhere · LEV can pass it on',ctx:'DEFEND 2/2',clock:'12:47',dots:[5,3]}),[
+'<b>Appears only when true</b> — page exists iff canPass (game.c:716-772): pre-cover, matching card, receiver capacity; it vanishes the moment a cover lands.',
+'<b>Receiver named with hand count</b> — you\'re aiming the table at a person; that\'s the gamble, at headline size.',
+'<b>Snipeable, honestly</b> — a rival throw-in can kill this page mid-aim (game.c:734-735); it dissolves with the same banner pattern as D5.',
+]);
+
+fig(galD,'D12 · Locked — you said GOOD','requested “out of round”',
+  dStatePage({cls:'plain',t1:'ALL COVERED',t1c:'#30d158',
+    chips:'<span class="dchip ok">YOU ✓</span><span class="dchip ok">ANN ✓</span><span class="dchip ok">LEV ✓</span><span class="dchip ok">PET ✓</span><span class="dchip">BOR</span><span class="dchip">MIA</span><span class="dchip">SAM</span>',
+    t3:'4 of 7 · a throw-in reopens the table',ctx:'GOOD ✓ SAID',clock:'12:46',dots:[2,1]}),[
+'<b>Hand pages are gone</b> — GOOD locks you out until the table changes (legal.c:377-384); the strip shrinks to [TABLE] and this vote board.',
+'<b>Chips at 24 px</b> — exactly the 12 pt floor; seven names is the densest thing in Option D, and it\'s still legal.',
+'<b>Self-unlocking</b> — the next pushed snapshot (player_views row) regrows the card pages; zero user action.',
+]);
+
+fig(galD,'D13 · Round closes','interstitial · auto 2 s',
+  dStatePage({cls:'plain',t1:'KAT TAKES 5',t1c:'#ff453a',
+    t2:'LEV defends · BOR leads',t3:'you drew 2 → hand of 6 · tap to skip',
+    ctx:'',clock:'12:49'}),[
+'<b>One breath between rounds</b> — consequences (skip rule game.c:799-802, refill game.c:438-497) land while the table is empty anyway.',
+'<b>Names the next defender</b> — the only orientation that matters for the next ten seconds.',
+]);
+
+fig(galD,'D14 · Game over','the fool',
+  dStatePage({cls:'plain',pre:'ДУРАК',t1:'KAT',t1c:'#ff453a',
+    t3:'out: ANN · YOU · LEV · MIA · BOR · SAM · PET',ctx:'',clock:'12:58',
+    act:['no','TAP TO CLOSE']}),[
+'<b>Loser announced, not scores</b> — game_done returns one thing: the fool (game.c:208-216).',
+'<b>Escape order as one 24 px line</b> — the bragging-rights ledger at exactly the floor.',
+]);
+
+/* ---- Option D live demo ---- */
+(function(){
+  const host=document.getElementById('m-demo2');
+  const live=['7','J'];
+  let cap=2,open=2,said=false,banner=null,idx=1;
+  let pages=[{k:'table'},
+    {k:'card',r:'J',s:'♦'},{k:'card',r:'7',s:'♠'},
+    {k:'card',r:'8',s:'♦'},{k:'card',r:'9',s:'♥'},{k:'card',r:'Q',s:'♠'},{k:'card',r:'A',s:'♣'},
+    {k:'good'}];
+  const legal=c=>!said&&cap>0&&live.includes(c.r);
+  function render(){
+    const p=pages[idx];
+    let inner='';
+    const dots=[pages.length,idx];
+    if(p.k==='table'){
+      const prs=[['7♣','J♣'],['7♥',null],['J♠',null]];
+      while(prs.length<open+1)prs.push(['J♦',null]);
+      inner=dTablePage(prs.slice(0,4),`TABLE · cap ${cap}`,'12:41',dots);
+    }else if(p.k==='card'){
+      const ok=legal(p);
+      inner=dCardPage({r:p.r,s:p.s,dim:!ok,ctx:`KAT · cap ${cap}`,
+        act:ok?['ok',`TAP TO PLAY ${p.r}${p.s}`]
+          :['no',said?'GOOD SAID — LOCKED':cap<=0?'TABLE CAPPED':`${p.r} NOT ON THE TABLE`],
+        dots});
+    }else{
+      inner=dStatePage(said?{cls:'goodP',t1:'GOOD ✓',t2:'locked until the table changes',
+          t3:'a throw-in resets every vote',ctx:'WAITING',dots}
+        :{cls:'goodP',t1:'GOOD',t2:'2 of 6 have said it',
+          t3:'tap anywhere to commit',ctx:`KAT · open ${open}`,dots});
+    }
+    if(banner)inner+=`<div class="dbanner flash"><div class="t">${banner.t}</div><div class="b">${banner.b}</div></div>`;
+    mount(host,inner);
+    const scr=host.querySelector('.screen');
+    scr.setAttribute('tabindex','0');scr.style.cursor='pointer';
+    scr.addEventListener('wheel',e=>{e.preventDefault();spin(e.deltaY>0?1:-1);},{passive:false});
+    scr.addEventListener('keydown',e=>{
+      if(e.key==='ArrowDown'){spin(1);e.preventDefault()}
+      if(e.key==='ArrowUp'){spin(-1);e.preventDefault()}});
+    scr.addEventListener('click',commit);
+  }
+  let last=0;
+  function spin(d){const now=Date.now();if(now-last<130)return;last=now;
+    const n=Math.max(0,Math.min(pages.length-1,idx+d));
+    if(n!==idx){idx=n;banner=null;render();}}
+  function commit(){
+    const p=pages[idx];
+    if(p.k==='good'&&!said){said=true;render();return;}
+    if(p.k!=='card'||!legal(p))return;
+    if(Math.random()<0.33){
+      cap=0;open+=1;
+      banner={t:'✕ Too late',b:`BOR filled KAT's last slot.<br>${p.r}${p.s} is back in your hand.`};
+      render();setTimeout(()=>{banner=null;render();},2200);return;
+    }
+    banner={t:'✓ Thrown',b:`${p.r}${p.s} is on the table — cap ${cap-1} left.`};
+    cap-=1;open+=1;pages.splice(idx,1);
+    if(idx>=pages.length)idx=pages.length-1;
+    render();setTimeout(()=>{banner=null;render();},1500);
+  }
+  render();
+})();
 
 /* ============================================================ budget frame */
 mount(document.getElementById('m-budget'),screenHTML({
