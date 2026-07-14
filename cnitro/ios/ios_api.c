@@ -121,9 +121,7 @@ static int j_finish(J *j) {
 // other hand collapses to a count; the deck and flip-under-deck stay hidden.
 // viewer == VIEW_SPECTATOR masks every hand. This is the "you only see your own
 // hand" rule (view.h) rendered as JSON rather than the packed blob.
-static int emit_state(int viewer, char *out, int cap) {
-    if (!g_has_game) return FIO_ENOGAME;
-    const Game *g = &g_game;
+static int emit_state_of(const Game *g, int viewer, char *out, int cap) {
     J j; j_init(&j, out, cap);
 
     j_puts(&j, "{\"status\":");        j_puti(&j, g->status);
@@ -369,10 +367,30 @@ int fio_set_seat_strategy(int seat, int strategy_id) {
 int fio_has_game(void) { return g_has_game; }
 
 int fio_state_json(int viewer_seat, char *out, int cap) {
+    if (!g_has_game) return FIO_ENOGAME;
     if (viewer_seat < 0 || viewer_seat >= g_game.num_players) return FIO_EBADARG;
-    return emit_state(viewer_seat, out, cap);
+    return emit_state_of(&g_game, viewer_seat, out, cap);
 }
-int fio_public_state_json(char *out, int cap) { return emit_state(VIEW_SPECTATOR, out, cap); }
+int fio_public_state_json(char *out, int cap) {
+    if (!g_has_game) return FIO_ENOGAME;
+    return emit_state_of(&g_game, VIEW_SPECTATOR, out, cap);
+}
+
+// Decode a SERVER packed-view blob (the player_views / spectator_views wire, the
+// same state_put/state_get layout view.h single-sources) into the app's GameView
+// JSON — so online play renders through the SAME kernel decode as offline, never
+// a reimplemented wire in Swift (§8, §16.D4). `viewer` is the seat whose hand is
+// real in this blob (the local player's seat), or VIEW_SPECTATOR for the public
+// feed. Does not touch the current game.
+int fio_view_from_packed_json(const uint8_t *buf, int len, int viewer, char *out, int cap) {
+    if (!buf || len <= 0) return FIO_EBADARG;
+    static Game tmp;
+    memset(&tmp, 0, sizeof(tmp));
+    state_get(&tmp, buf, /*masked=*/1);
+    if (tmp.num_players < 2 || tmp.num_players > MAX_PLAYERS) return FIO_EPARSE;
+    if (viewer != VIEW_SPECTATOR && (viewer < 0 || viewer >= tmp.num_players)) return FIO_EBADARG;
+    return emit_state_of(&tmp, viewer, out, cap);
+}
 
 int fio_actor_mask(void) {
     if (!g_has_game) return FIO_ENOGAME;
