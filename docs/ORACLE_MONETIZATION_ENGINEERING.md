@@ -20,19 +20,24 @@ sources inline. Supersedes the Phase-1 monetization mix in `docs/MONETIZATION_RO
   actives — the Oracle monetizes an audience, it does not create one. Ship it lean
   (§15: ~3 weeks to first revenue), and keep spending the rest of the effort on
   distribution.
-- **Recommended order: Web+Stripe → Telegram → iOS → Play.** Web is 1–3 weeks of
-  work, keeps ~90–95% of every dollar, and validates willingness-to-pay before any
-  store bureaucracy. Telegram is the *only* payment rail that reaches Russia (Apple
-  halted all RU payments Apr 1, 2026; Google Play billing died there Dec 2024). iOS
-  is the highest-ARPU storefront and the place where the native-C Oracle shines —
-  and it can carry a bundled **iMessage extension** (§7.5), a GamePigeon-style
-  turn-based Durak in chat threads that our replay codec is unusually suited to.
-  Play last (smallest marginal audience, now fee-equal to Apple).
-- **Guarding:** on iOS, the paywall can genuinely live in the client (StoreKit 2
-  entitlement + natively compiled engine inside a signed binary). On web/TMA the
-  wasm is a public static asset (`public/oracle.wasm.gz`), so the paywall must be
-  **server-issued analysis tokens** — meter the *service*, accept that the *bits*
-  are free, exactly like chess.com charging for review on top of free Stockfish.
+- **Recommended order: Web+Stripe → Telegram → Steam → iOS → Play.** Web is 1–3
+  weeks of work, keeps ~90–95% of every dollar, and validates willingness-to-pay
+  before any store bureaucracy. Telegram is the *only mobile* payment rail that
+  reaches Russia (Apple halted all RU payments Apr 1, 2026; Google Play billing
+  died there Dec 2024). **Steam slots in third** (§8b): it's ~1 week of Electron
+  wrapping over the finished web client, it's a *second* rail into Russia (Steam
+  Wallet still works there), and its Chromium runtime makes it the best desktop
+  Oracle platform (Mode B threads, client-side guarding). iOS is the highest-ARPU
+  storefront and the place where the native-C Oracle shines — and it can carry a
+  bundled **iMessage extension** (§7.5), a GamePigeon-style turn-based Durak in
+  chat threads that our replay codec is unusually suited to. Play last (smallest
+  marginal audience, now fee-equal to Apple).
+- **Guarding:** on iOS **and Steam** the paywall can genuinely live in the client
+  (StoreKit 2 / `steamworks.js` entitlement check + a compiled engine inside a
+  shipped binary). On web/TMA the wasm is a public static asset
+  (`public/oracle.wasm.gz`), so the paywall must be **server-issued analysis
+  tokens** — meter the *service*, accept that the *bits* are free, exactly like
+  chess.com charging for review on top of free Stockfish.
 - **Auth must be rebuilt first.** Today: username → SHA-256 → fake
   `<hash>@foolish.cards` email + password (`src/contexts/AuthContext.tsx`),
   `enable_confirmations = false`, no reset flow, and Supabase's built-in mailer
@@ -177,6 +182,7 @@ and history*, not secret math.
 | Web / Stripe | **Server** (mandatory) | Real metering, soft secrecy | Server-issued **analysis tokens** (below). Optionally move `oracle.wasm.gz` behind an authenticated, short-lived signed URL to raise the casual bar — but never rely on that. |
 | Telegram Mini App | **Server** (same as web) | Same | Same token flow; auth comes from validated `initData` (§9). |
 | Play / TWA | **Server** (it's the web app) | Same | Same tokens; Play Billing feeds the same entitlement table. |
+| Steam (Electron) | **Client** (allowed) | Strong | `steamworks.js` verifies the subscription in the Electron main process before the fleet starts; shipped binary, not a public asset. Mirrored server-side (§5, §8b). |
 
 **The analysis-token flow** (the one new server surface, ~an edge function + two
 tables):
@@ -556,6 +562,70 @@ Goods API + RTDN webhook), plus the 14-day testing clock.
 
 ---
 
+## 8b. Platform: Steam
+
+Steam is the sleeper channel for this specific product, for three reasons that
+don't apply to the mobile stores: **(1)** Durak's PC audience is real and
+CIS-heavy — multiple Durak titles already ship on Steam ("Durak!" app 704480,
+"Modern Durak", "Durak With Friends" —
+[store.steampowered.com/app/704480](https://store.steampowered.com/app/704480/));
+**(2)** Steam is one of the **few Western storefronts still operational for
+Russian users** after Apple (Apr 2026) and Google (Dec 2024) cut RU payments —
+Steam Wallet codes remain a working RU on-ramp, so Steam partially substitutes
+for the role Telegram Stars plays elsewhere; **(3)** the Electron/Chromium
+runtime makes it the **best desktop Oracle platform** — real cores, full
+SharedArrayBuffer, so Mode B threads run (§10), and like iOS it can guard the
+paywall **client-side** inside a shipped binary. And once again: **no Durak on
+Steam offers analysis/coaching** — the same whitespace as everywhere else.
+
+- **Wrapper tech:** package the existing web client with **Electron** +
+  `steamworks.js` (the maintained open-source Steamworks binding for
+  Node/Electron — [github.com/ceifa/steamworks.js](https://github.com/ceifa/steamworks.js/);
+  [Phaser's web-game-on-Steam guide](https://phaser.io/news/2025/03/publishing-web-games-on-steam-with-electron)).
+  Our tiny, image-free bundle wraps cleanly; the same `oracle.wasm` fleet and
+  the whole game run unchanged in Chromium. This is the *lowest-effort native
+  build we have* — days, not weeks, because there is almost nothing to port.
+- **Costs & fees:** **$100 Steam Direct fee per app**, recoupable after $1,000
+  of revenue ([Steamworks docs](https://partner.steamgames.com/doc/gettingstarted));
+  revenue share **30%** (dropping to 25% over $10M lifetime, 20% over $50M —
+  irrelevant at our scale, so treat as flat 30%
+  ([revenue tiers, Dec 2025](https://steamcommunity.com/groups/steamworks/announcements/detail/1697191267930157838))).
+  Steam is **merchant of record** — it collects and remits sales tax/VAT
+  globally; we receive net proceeds ([Steamworks tax FAQ](https://partner.steamgames.com/doc/finance/taxfaq)).
+- **Monetization = Steam Wallet, natively.** In-app purchases must use the
+  microtransaction API (`ISteamMicroTxn`) — Steam customers pay from their
+  Steam Wallet, no external checkout allowed inside the app
+  ([microtransactions docs](https://partner.steamgames.com/doc/features/microtransactions)).
+  Steam **supports recurring subscriptions natively** (billing-agreement flow,
+  card/PayPal/Wallet — [recurring billing docs](https://partner.steamgames.com/doc/features/microtransactions/recurring_billing)),
+  so "Foolish Premium" is a first-class Steam subscription; the webhook result
+  posts to our server and writes the same `entitlements` row (source `steam`,
+  §5). **Honor cross-platform subs** exactly as elsewhere — a web/Stripe or
+  Apple subscriber signing into the Steam build is entitled; the Steam build
+  simply *also* offers the Steam-Wallet subscription (mirrors Apple's 3.1.3(b)
+  logic, and Steam has no equivalent objection to honoring outside entitlements
+  as long as in-app *purchases* use the Wallet).
+- **Guarding:** client-side, like iOS (§3) — `steamworks.js` verifies the
+  subscription/ownership in the Electron main process before the Oracle fleet
+  starts; the natively-shipped binary is a higher bar than the open web asset.
+  Still issue oracle tokens for the free-tier daily counter.
+- **Store model:** ship as a **free-to-play** app (free game, Premium = the
+  Oracle subscription/IAP). Steam free-to-play has no Direct-fee waiver but the
+  $100 is trivial. A Steam page is also a durable, SEO-strong "durak" search
+  surface in the exact language the audience uses.
+- **Reality check:** Steam's discovery is brutal for unknown titles and the
+  existing Durak apps have middling traction — treat Steam as a *credible
+  secondary storefront and a RU payment rail*, not a growth engine. Its ceiling
+  is real but modest; its cost to enter (given the web client already exists)
+  is the lowest of any store here.
+
+Effort: **~1 week** on top of the finished web product (Electron shell +
+`steamworks.js` ownership/subscription check + `ISteamMicroTxn` webhook →
+`entitlements`), plus Steam page setup and the ~30-day Steam review/wait for a
+new app.
+
+---
+
 ## 9. Platform: Telegram Mini App
 
 **Why it's strategic, restated with 2026 facts:** Apple stopped processing all
@@ -638,6 +708,7 @@ semantics without a browser.
 | Android System WebView (Capacitor) | ✅ | ❌ SAB unsupported in WebView ([caniwebview](https://caniwebview.com/features/mdn-javascript-builtin-sharedarraybuffer/)) | — | Reason to prefer TWA on Android |
 | iOS WKWebView (Capacitor shell) | ✅ | ⚠️ unreliable/undocumented — do not plan on it | ✅ via native plugin | Native plugin replaces both modes (§7.1) |
 | Telegram webviews (iOS/Android/Desktop) | ✅ | ❌ assume absent | — | Cap workers at 4 on low-end Androids; honor `deviceMemory` |
+| **Steam (Electron)** | ✅ | ✅ Chromium main window, we control the headers | — | Desktop cores + full SAB → **best Oracle platform after native iOS** (§8b); set COOP/COEP in the Electron `session` |
 | iMessage extension | ❌ don't try | ❌ | ❌ | Tens-of-MB jetsam ceiling (§7.5); "Analyze" deep-links to the main app's native oracle |
 | Server (Deno edge) | single instance, 2s CPU | ❌ | — | Tokens & spot verdicts only |
 
@@ -699,6 +770,7 @@ against 250M users for a decade; steal it and A/B later, not before launch.
 | Apple IAP (standard, yr-1 subs >$1M) | 30% | $3.49 | $24.49 | ✅ |
 | Google Play Billing (new regime) | 10%+5% = 15% | $4.24 | $29.74 | ✅ Google is MoR |
 | US iOS/Play web-link-out | 0% store fee **today** + Stripe fees | ~$4.49 | ~$33.2 | ❌ ours |
+| Steam (Steam Wallet) | flat 30% | $3.49 | $24.49 | ✅ Steam is MoR |
 | Telegram Stars (150/mo) | user pays ~$3.00; payout ~150×$0.013 | ~$1.95 (≈65%) + 21-day hold + TON volatility | n/a (30-day subs only) | ❌ income tax on TON at receipt |
 
 Read: **web annual is king; store IAP is fine at 15%; Stars is the price of
@@ -762,8 +834,9 @@ Why the paid flip is non-negotiable at first revenue:
    never acceptable in production.
 
 **Budget:** Pro $25/mo + Resend free tier + Vercel (current plan) + $99/yr Apple
-+ $25 Google. Total fixed burn to run all four platforms ≈ **$35–45/mo** — the
-first ~10 subscribers cover it.
++ $25 Google + $100 one-time Steam Direct. Total fixed burn to run all five
+platforms ≈ **$35–45/mo** (the Apple/Google/Steam fees are annual/one-time, not
+monthly) — the first ~10 subscribers cover it.
 
 ---
 
@@ -775,10 +848,11 @@ first ~10 subscribers cover it.
 | 2 | Entitlements + oracle tokens + free-tier metering (§3, §5) | ~1 wk | The paywall exists |
 | 3 | Stripe checkout/portal/webhook + paywall UI (§6) + Supabase Pro | ~1 wk | **First revenue (~week 3–4)** |
 | 4 | Telegram Mini App + Stars (§9) | 2–4 wk | RU/CIS revenue, viral channel |
-| 5 | iOS: Capacitor shell + native oracle plugin + StoreKit 2 (§7) | 4–8 wk | Highest-ARPU store |
-| 6 | Play: TWA + Digital Goods API + RTDN (§8; start the 12-tester clock at step 4) | 1–2 wk | Android store |
-| 7 | iMessage extension: MSSession turns over the replay codec + deep-link Oracle funnel (§7.5) | 2–3 wk | Person-to-person iOS distribution — optional, requires step 5 |
-| 8 | Mode B `wasm-oracle-mt` on `oracle-mode-b` branch (§10) | 1–2 wk | Desktop "Turbo" polish — optional, last |
+| 5 | Steam: Electron shell + `steamworks.js` sub check + `ISteamMicroTxn` webhook (§8b) | ~1 wk | Desktop store + 2nd RU rail + best desktop Oracle |
+| 6 | iOS: Capacitor shell + native oracle plugin + StoreKit 2 (§7) | 4–8 wk | Highest-ARPU store |
+| 7 | Play: TWA + Digital Goods API + RTDN (§8; start the 12-tester clock at step 4) | 1–2 wk | Android store |
+| 8 | iMessage extension: MSSession turns over the replay codec + deep-link Oracle funnel (§7.5) | 2–3 wk | Person-to-person iOS distribution — optional, requires step 6 |
+| 9 | Mode B `wasm-oracle-mt` on `oracle-mode-b` branch (§10) | 1–2 wk | Desktop "Turbo" polish — optional, last |
 
 Cross-cutting rules: every webhook idempotent; nightly entitlement
 reconciliation job; remote flags on all store-steering links; price experiments

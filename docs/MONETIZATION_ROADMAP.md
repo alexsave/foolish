@@ -184,7 +184,13 @@ estimable, churn < 8%/mo. Blended revenue run-rate ≥ $15–25k/mo.
    low ($0.10–0.40 via VK Ads/Yandex, myTarget; Telegram Ads for the TMA). With
    measured LTV from Phase 2 you can buy growth profitably instead of praying.
    Add **VK Games and Yandex Games** platform builds — both accept web builds
-   (yours is tiny) and have native RU payments and discovery.
+   (yours is tiny) and have native RU payments and discovery. Also ship a
+   **Steam build** (Electron wrapper over the same web client, ~1 week — see
+   `docs/ORACLE_MONETIZATION_ENGINEERING.md` §8b): Durak has a real PC audience,
+   Steam is one of the few Western storefronts still transacting with Russian
+   users (Steam Wallet), and no Durak on Steam offers analysis — the same
+   whitespace as everywhere. Treat it as a credible secondary storefront and a
+   second RU payment rail, not a growth engine.
 2. **Tournaments and seasons.**
    - Free sponsored weekly tournaments first (prizes = cosmetics/premium) to
      build the habit; then paid-entry tournaments with prize pools where legal.
