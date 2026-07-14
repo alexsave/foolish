@@ -1,26 +1,27 @@
-# Octogen information-hiding tax: pick up instead of partial-covering
+# Octogen information-hiding rule: pick up instead of partial-covering
 
-**Experiment.** When octogen is defending and *cannot cover every card on the
-table*, it sometimes still covers SOME of them before the inevitable pickup.
-Because a pickup returns the defender's own cover cards to its hand **and logs
-them** (`handle_pickup`, `game.c`: `log_add_card(l, b->defense)`), every card it
-played to partially cover is now public — free knowledge for the memory-keeping
-MC opponents (octogen pins observed cards to a seat). This experiment adds a rule
-— *if you can't cover it all, pick up immediately* — and measures whether hiding
-that information is worth anything.
+**Status: SHIPPED (always on).** When octogen is defending and *cannot cover every
+card on the table*, it used to still cover SOME of them before the inevitable
+pickup. Because a pickup returns the defender's own cover cards to its hand **and
+logs them** (`handle_pickup`, `game.c`: `log_add_card(l, b->defense)`), every card
+it played to partially cover became public — free knowledge for the memory-keeping
+MC opponents (octogen pins observed cards to a seat). The rule below closes that
+leak, and a paired A/B (below) measured a real, significant win.
 
-Everything here is compiled ONLY under `-DOG_HIDE_UNCOVERABLE`; the shipped
-`bots.wasm` / `rules.wasm` / `guards.wasm` are byte-identical without it (verified
-by rebuilding the wasm with and without the change — same SHA-256).
+The rule ships unconditionally in `bots.wasm` (server) and `oracle.wasm` (client
+analyzer). The `-DOG_HIDE_UNCOVERABLE` macro is now **A/B scaffolding only**: in an
+eval build it re-gates the rule to the seats set in `OG_HIDE_MASK` (and counts
+fires) so `hide_eval` can isolate one seat; the shipped build defines no such
+macro, so the rule is simply always on. `rules.wasm` / `guards.wasm` do not embed
+octogen and are unaffected.
 
 ## The rule
 
-In `octogen_strategy_choose` (gated by `-DOG_HIDE_UNCOVERABLE`, active per-seat via
-the `OG_HIDE_MASK` bitmask), right after the move is chosen:
+In `octogen_strategy_choose`, right after the move is chosen:
 
-> If this seat hides, and octogen is about to play a **cover** while **no full
-> cover of all currently-uncovered table cards exists** in its legal set, replace
-> the move with **pickup**.
+> If octogen is about to play a **cover** while **no full cover of all
+> currently-uncovered table cards exists** in its legal set, replace the move with
+> **pickup**.
 
 Detection is exact and local: count the uncovered battles `U`; if no legal
 `MOVE_COVER` covers all `U` of them (`n_cards == U`), any cover octogen picks is a
