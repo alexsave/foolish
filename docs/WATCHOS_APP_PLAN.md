@@ -174,13 +174,11 @@ line 11: ~11 text rows of vertical budget.
   are implicit at 6 o'clock and not drawn — the bottom strip is "you"),
   center battle strip with `attack > cover` tokens, bottom strip
   (trump · hand peek · `Pl`).
-- **Top-center back affordance** (the one addition to the sketch): a faint
-  `‹` glyph, or the current opponent's short name, in the **empty gap between
-  the deck (top-left) and discard (top-right) counts** — the sketch's
-  `│#D           #Di│` row is wide open in the middle. Tapping it returns to
-  the Games list; it also signposts the swipe-right gesture (§5.3). It lands
-  in confirmed-empty space, so it costs **no corner** — which is the point,
-  since all four corners are spoken for.
+- **Back to Games is the system control, not a content element:** the nav
+  bar's Back chevron + left-edge swipe (§5.3) sit in the system band *above*
+  the content, so the sketch's four corners — and its empty top-center gap —
+  all stay free for game state. No in-content back button is drawn; the
+  corners being full was never a problem for "back" on watchOS.
 - Names: **dropped from v1** (the study's arced-name idea is lovely and does
   not fit the real-size budget; the ring is anonymous counts. Names live in
   the game list, §5.3). Revisit on 49mm only.
@@ -212,45 +210,61 @@ line 11: ~11 text rows of vertical budget.
 - Edge: hand > ~24 cards (post-pickup monsters) — grid just scrolls; no
   special case.
 
-### 5.3 App structure & navigation — "back to Games" without a corner
+### 5.3 App structure & navigation — the standard Back, which needs no corner
 
-The problem: the Table screen's four corners are all taken (deck count,
-discard count, trump, `Pl`), so there is no corner to hang a "back to the games
-list" control on. The answer is to make the return path a **gesture, not a
-button** — it costs zero corner real estate.
+The original worry ("all four corners are taken, where does *back* go?") has a
+simpler answer than a pager — and swipe-between-screens was the wrong reach.
+watchOS sanctions exactly two navigation models
+([watchOS HIG: Navigation](https://developer.apple.com/design/human-interface-guidelines/designing-for-watchos)):
+**hierarchical** (tap to drill down; return via the system **Back** button +
+**left-edge swipe**) and **page-based** (swipe between *peer content
+categories*, with page dots). Page-based swiping is real, but it is for peers —
+**it is not the "back" mechanism**, and Games→a-game is a parent→child drill,
+not a peer swipe. So:
 
-**Structure: one horizontal three-page pager** (SwiftUI `TabView`,
-`.tabViewStyle(.page)`) — no `NavigationStack`, because a nav bar would eat the
-vertical budget the §4 sketches are calibrated to; no tab bar; no menus:
+**Use hierarchical navigation and let the system Back handle the return.** The
+Back chevron and the left-edge swipe live in the **navigation/status bar above
+the content**, not in the four content corners — on watchOS, "back" was never a
+corner's job.
 
 ```
-   ┌─────────┐      ┌─────────┐      ┌─────────┐
-   │  Games  │  ‹───│  Table  │───›  │ Action  │
-   └─────────┘ swipe└─────────┘ swipe└─────────┘
-     (root)      right  §5.1    left    §5.2
+   Games ──tap a game──▶ Table ──tap `Pl`──▶ Action
+     ▲                     │                    │
+     └─ left-edge swipe / Back chevron ◀─────────┘   (system, in the nav bar)
 ```
 
-- **Games (left page):** active games (online, from the phone's account) +
-  "Quick game vs bot" (offline); each row: opponent set, turn state ("your
-  move" in brass), hand count. Tapping a game points Table/Action at that game
-  and swipes to Table.
-- **Back to Games from Table = swipe right** — the same left/right swipe you
-  already use for Table↔Action, extended one page left. This is the whole fix:
-  a directional gesture needs no corner. Swiping right from **Action** goes to
-  Table, then Games (two swipes), or jump straight back after a move via the
-  §5.1 top-center chip.
-- **Discoverability (edge-swipes don't advertise themselves on watchOS):** the
-  Table screen shows a faint **top-center "‹" / opponent-name chip** in the
-  confirmed-empty gap between the two count corners (§5.1) that also returns to
-  Games. The gesture is the mechanism; the chip is the sign that it exists.
-- **Settings** is reached from the Games page (a footer row), not the pager —
-  it's rare and doesn't deserve a page or a corner.
+- **Games (root):** a `List` in a `NavigationStack` — active games (online,
+  from the phone's account) + "Quick game vs bot" (offline); rows show opponent
+  set, turn state ("your move" in brass), hand count. Tapping a game **pushes**
+  Table.
+- **Table → Action:** the sketch's `Pl` button **pushes** Action. The sketch
+  already draws a drill-down *button*, not a page edge — that is itself the
+  tell that this flow is hierarchical, not paged.
+- **Back — to Games from Table, and to Table from Action:** the **left-edge
+  swipe** and the **Back chevron** the system draws at the top-left of the nav
+  bar. Zero corner cost, zero custom code, and it is the exact gesture every
+  Apple Watch owner already knows.
+- **Depth** is Games ▸ Table ▸ Action = **3 levels**, the HIG's stated maximum
+  ("two to three"). Acceptable; do not add a fourth.
+- **Settings** hangs off the Games screen (a footer row), not the game flow.
 
-Gesture budget (important): **horizontal swipe is reserved globally for the
-pager**, so no screen may use a horizontal swipe for in-content actions. This
-is already true — Table's battle-strip overflow pans by **Crown** (§5.1, not
-swipe), Action's grid scrolls by **Crown** and selects by **tap** (§5.2). One
-axis for navigation, the Crown for within-page — they never collide.
+**Vertical-budget note:** watchOS always reserves the top strip for the clock,
+so every screen already begins below a system band regardless of our choices;
+the Back chevron rides in that same band at negligible extra cost. The §4
+sketches are idealized full-bleed — in reality line 1 (`#D … #Di`) sits just
+under the system bar. Keep the nav bar minimal (no large title) to preserve the
+content budget.
+
+**Considered and rejected — page-based Table↔Action:** defensible per the HIG
+(they are two peer views of one game), but it puts a horizontal page-swipe on
+the same screen as the left-edge back-swipe (they overlap and get finicky) and
+contradicts the sketch's `Pl` button. Pure hierarchical is more reliable and
+matches what you drew.
+
+**Gesture map (no conflicts):** left-edge swipe = system Back (the *only*
+horizontal gesture in the app); Crown = within-screen (Table battle-strip pan,
+Action grid scroll); tap = select / commit / drill. We add **no** custom swipe
+navigation.
 
 ---
 
@@ -419,13 +433,14 @@ wants anyway.
    the both-devices-offline-a-month case; the §8.2 re-auth path is the net.
 9. **Do not port the phone's Boards/** — the design languages must not blend
    (§3); duplication of ~4 small views is cheaper than a themable board.
-10. **The pager must not wrap and must open on the right page** (§5.3): Games
-    is a hard left end, Action a hard right end — no carousel wrap (swiping
-    right off Games or left off Action goes nowhere, not around). Opening a
-    game from the list lands on **Table**, not Games; a "your move" push opens
-    directly on **Action**. Horizontal swipe is reserved for the pager
-    globally — no in-content horizontal swipes (§5.3 gesture budget); combine
-    with gotcha #6 (Crown = within-page) for the full input map.
+10. **Navigation is hierarchical, not swipe-paged** (§5.3): back is the system
+    Back chevron + left-edge swipe, which live in the nav bar above the four
+    content corners — do not invent a horizontal-swipe pager or an in-content
+    back button (an earlier draft did; it's wrong for watchOS). The **only**
+    horizontal gesture is the system left-edge back; Crown = within-screen
+    (gotcha #6); tap = drill/select/commit. Deep-link a "your move" push
+    straight to **Action**; opening a game from the list lands on **Table**.
+    Keep depth at 3 levels max (Games ▸ Table ▸ Action).
 
 ## 13. Open questions (owner input wanted, none blocking W0–W1)
 
