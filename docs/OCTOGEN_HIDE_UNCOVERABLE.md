@@ -57,10 +57,30 @@ exercised, not a corner case).
 
 ## Results
 
-_(filled in from the paired runs; see the commit that adds this file)_
+Paired by seed (same deals played with seat 0 hiding vs not). Seat 0 is octogen;
+opponents are normal octogen with full memory. Lower finish position = better.
 
-- **4-player** (seat 0 hides vs 3 normal octogens), N pairs: _TBD_
-- **2-player** (hide-octogen vs normal octogen), N pairs: _TBD_
+**4-player** (seat 0 hides vs 3 normal octogens), 5,999 paired games, rule fired
+~1.37×/game:
+
+| metric | hide | normal | delta | SE | z |
+|---|---|---|---|---|---|
+| win rate (seat 0 finishes 1st) | 23.97% | 22.59% | **+1.38%** | 0.41% | **+3.36** |
+| mean finish position | 2.514 | 2.575 | **−0.061** | 0.012 | **−4.92** |
+
+Both significant. Hiding the doomed-defense cover cards makes octogen win ~1.4
+points more often and finish ~0.06 places higher against memory-keeping MC
+opponents. Per-seed: better in 1227, worse in 1010, equal in 3762.
+
+**2-player** (hide-octogen vs one normal octogen), 6,000 paired games: _TBD (run
+in progress)_.
+
+**Reading.** The effect is real but modest, which fits the mechanism: the rule is
+card-neutral, so it only ever changes what opponents *know*, and the leak matters
+only in the fraction of rounds that (a) reach an uncoverable multi-card table and
+(b) whose revealed cards actually inform a later opponent decision. The upside is
+free (never costs cards or tempo), so it is a strictly-worth-taking information
+tax — larger with more opponents watching (4p > 2p expected).
 
 ## Reproduce
 
