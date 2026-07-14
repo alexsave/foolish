@@ -20,8 +20,8 @@ struct WatchFoolishApp: App {
                 GamesListView(game: game)
                     .navigationDestination(for: Route.self) { route in
                         switch route {
-                        case .table:
-                            TableScreen(game: game, onPlay: { path.append(.action) })
+                        case .table(let id):
+                            TableScreen(game: game, gameId: id, onPlay: { path.append(.action) })
                                 .navigationTitle("")
                         case .action:
                             ActionScreen(game: game)
@@ -31,8 +31,12 @@ struct WatchFoolishApp: App {
             }
             .tint(WColor.brass)
             .preferredColorScheme(.dark)
+            // The fool reveal is reached in-flow when a game resolves (§4b).
+            .onChange(of: game.foolName) { showOver = $0 != nil }
             .fullScreenCover(isPresented: $showOver) {
-                GameOverScreen(foolName: game.foolName ?? "Boris", onRematch: { showOver = false })
+                GameOverScreen(foolName: game.foolName ?? "Boris", onRematch: {
+                    game.rematch(); showOver = false; path = []
+                })
             }
             .onAppear(perform: applyLaunchScreen)
         }
@@ -43,6 +47,8 @@ struct WatchFoolishApp: App {
     private func applyLaunchScreen() {
         let args = ProcessInfo.processInfo.arguments
         if args.contains("-table") { path = [.table("g1")] }
+        else if args.contains("-defend") { path = [.table("g2")] }   // you defend
+        else if args.contains("-attack") { path = [.table("bot")] }  // empty table
         else if args.contains("-action") { path = [.table("g1"), .action] }
         else if args.contains("-over") { game.foolName = "Boris"; showOver = true }
     }

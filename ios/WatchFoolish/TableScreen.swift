@@ -8,6 +8,7 @@ import SwiftUI
 
 struct TableScreen: View {
     @ObservedObject var game: MockGame
+    var gameId: String = "g1"
     let onPlay: () -> Void
 
     var body: some View {
@@ -42,6 +43,7 @@ struct TableScreen: View {
         }
         .background(WColor.bg)
         .ignoresSafeArea(edges: .bottom)
+        .onAppear { game.load(gameId) }
     }
 
     // MARK: ring

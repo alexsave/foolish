@@ -10,7 +10,7 @@ struct GamesListView: View {
     var body: some View {
         List {
             ForEach(game.games) { g in
-                NavigationLink(value: g.id) {
+                NavigationLink(value: Route.table(g.id)) {
                     HStack(spacing: 6) {
                         Text(g.opponent).font(WFont.label(17)).foregroundStyle(WColor.ink)
                         Spacer()
@@ -30,7 +30,7 @@ struct GamesListView: View {
                 )
             }
 
-            NavigationLink(value: "bot") {
+            NavigationLink(value: Route.table("bot")) {
                 HStack(spacing: 6) {
                     Image(systemName: "plus.circle.fill").foregroundStyle(WColor.dim)
                     Text("Bot game").font(WFont.label(16)).foregroundStyle(WColor.ink)
