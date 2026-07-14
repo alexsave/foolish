@@ -18,6 +18,9 @@ struct LobbyView: View {
     @State private var botIndex = 0
     /// Local seat order for optimistic drag-reorder; re-synced from the feed.
     @State private var order: [LobbyPlayer] = []
+    /// A real binding (not `.constant`) so the List renders the reorder handles,
+    /// not just the delete controls.
+    @State private var editMode: EditMode = .active
 
     private var seatedBotIds: Set<String> { Set(game.roster.filter(\.isAI).map(\.playerId)) }
     private var selectableBots: [OnlineService.BotOption] { allBots.filter { !seatedBotIds.contains($0.id) } }
@@ -76,7 +79,10 @@ struct LobbyView: View {
                 plaque(p)
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
-                    .listRowInsets(EdgeInsets(top: FSpace.xs, leading: 0, bottom: FSpace.xs, trailing: 0))
+                    // Keep the default trailing inset — that's the margin the List
+                    // reserves for the reorder handle in edit mode (zeroing it hid
+                    // the grip behind the full-width plaque).
+                    .listRowInsets(EdgeInsets(top: FSpace.xs, leading: FSpace.xs, bottom: FSpace.xs, trailing: FSpace.xs))
                     .deleteDisabled(!p.isAI)      // only bots can be removed
             }
             .onMove(perform: move)
@@ -84,7 +90,7 @@ struct LobbyView: View {
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
-        .environment(\.editMode, .constant(.active))   // always show reorder / remove affordances
+        .environment(\.editMode, $editMode)   // always show reorder / remove affordances
         .frame(height: CGFloat(max(order.count, 1)) * 70)
     }
 
