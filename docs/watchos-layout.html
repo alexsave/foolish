@@ -540,9 +540,9 @@ body.showz .zoneso{display:block}
 .gfocus{position:absolute;left:16px;top:264px;z-index:4}
 .gfocus .gcard{font-size:100px;width:112px;height:124px}
 .gfocus .gcard .grank{font-size:46px}
-.gpill{position:absolute;right:14px;top:292px;height:54px;min-width:124px;
-  border-radius:27px;display:flex;align-items:center;justify-content:center;
-  gap:7px;font-size:26px;font-weight:800;z-index:5;padding:0 18px}
+.gpill{position:absolute;right:14px;top:292px;height:56px;min-width:172px;
+  border-radius:28px;display:flex;align-items:center;justify-content:center;
+  gap:7px;font-size:26px;font-weight:800;z-index:5;padding:0 24px}
 .gpill.act{background:#E7B84A;color:#241a02}
 .gpill.take{background:#ff453a;color:#2b0300}
 .gpill.pass{background:#0a84ff;color:#001b38}
@@ -555,6 +555,15 @@ body.showz .zoneso{display:block}
 .gchips .gcard{font-size:42px;width:44px;height:50px;flex:none}
 .gchips .gcard .grank{font-size:20px}
 .gchips .gcard.focus{outline-offset:2px}
+.gchips .gterm{flex:none;width:44px;height:50px;display:flex;align-items:center;
+  justify-content:center;font-size:36px;font-weight:800;color:#30d158;
+  border-radius:8px}
+.gchips .gterm.take{color:#ff453a;font-size:24px;letter-spacing:-.5px}
+.gchips .gterm.focus{outline:2.5px solid #f2f2f4;outline-offset:2px}
+.gchips .gterm.dim{opacity:.32}
+.gfocus .bigcheck{font-size:96px;font-weight:800;color:#30d158;line-height:1;
+  width:112px;height:124px;display:flex;align-items:center;justify-content:center}
+.gfocus .bigcheck.take{color:#ff453a;font-size:60px}
 .grej{position:absolute;inset:0;border-radius:60px;z-index:9;pointer-events:none;
   box-shadow:inset 0 0 30px 9px #ff453a}
 .gover{position:absolute;inset:0;background:rgba(0,0,0,.88);z-index:8;
@@ -2035,9 +2044,20 @@ function gscreen(o){
     let d='';for(let i=0;i<o.pages[0];i++)d+=`<i${i===o.pages[1]?' class="on"':''}></i>`;
     h+=`<div class="gpgdots">${d}</div>`;
   }
-  if(o.focus)h+=`<div class="gfocus">${gcard(o.focus.r,o.focus.s,o.focus.dim?'dim':'')}</div>`;
+  if(o.focus){
+    let f;
+    if(o.focus.check)f=`<div class="bigcheck">✓</div>`;
+    else if(o.focus.take!=null)f=`<div class="bigcheck take">+${o.focus.take}</div>`;
+    else f=gcard(o.focus.r,o.focus.s,o.focus.dim?'dim':'');
+    h+=`<div class="gfocus">${f}</div>`;
+  }
   if(o.pill)h+=`<div class="gpill ${o.pill[0]}">${o.pill[1]}</div>`;
-  if(o.chips)h+=`<div class="gchips">${o.chips.map(c=>gcard(c.r,c.s,(c.focus?'focus':'')+(c.dim?' dim':''))).join('')}</div>`;
+  if(o.chips)h+=`<div class="gchips">${o.chips.map(c=>{
+    const mods=(c.focus?' focus':'')+(c.dim?' dim':'');
+    if(c.check)return `<div class="gterm${mods}">✓</div>`;
+    if(c.take!=null)return `<div class="gterm take${mods}">+${c.take}</div>`;
+    return gcard(c.r,c.s,mods.trim());
+  }).join('')}</div>`;
   h+=o.extra||'';
   return h+`<div class="fingero"></div><div class="zoneso"></div>`;
 }
@@ -2051,7 +2071,7 @@ fig(galG,'G1 · Attacker','chevron-aware anatomy',gscreen({
   focus:{r:'K',s:'♥'},
   pill:['act','ATTACK'],
   chips:[{r:'K',s:'♥',focus:1},{r:'6',s:'♥',dim:1},{r:'A',s:'♥',dim:1},
-         {r:'6',s:'♠',dim:1},{r:'10',s:'♣',dim:1},{r:'J',s:'♦',dim:1}],
+         {r:'6',s:'♠',dim:1},{r:'10',s:'♣',dim:1},{r:'J',s:'♦',dim:1},{check:1}],
 }),[
 '<b>The chevron is law</b> — measured off the sim (~66 px circle, top-left): nothing else lives in that corner. The clock owns top-right.',
 '<b>The line under the time</b> — flip glyph · deck · discard (6♠ ▤8 ▨7), right-aligned as the clock\'s column. Capacity needs no number: it\'s the shield count minus the open attacks you can see.',
@@ -2067,12 +2087,12 @@ fig(galG,'G2 · Defending','pill says COVER, nothing more',gscreen({
   focus:{r:'K',s:'♠'},
   pill:['act','COVER'],
   chips:[{r:'K',s:'♠',focus:1},{r:'A',s:'♣'},{r:'7',s:'♠'},
-         {r:'6',s:'♥',dim:1},{r:'10',s:'♣',dim:1}],
+         {r:'6',s:'♥',dim:1},{r:'10',s:'♣',dim:1},{take:4}],
 }),[
 '<b>Shield on your gold seat</b> — you defend; no banner, no role text.',
 '<b>The pill says COVER, not the target</b> — tap it (or the focus card): if the card can beat exactly one open attack it covers <i>immediately</i>; if several qualify, the chooser overlay opens (next frame).',
 '<b>No selection state on the table</b> — the gold ring is gone; targeting happens in the overlay only when it\'s actually ambiguous.',
-'<b>When the focused card can\'t cover</b> — the pill becomes TAKE n (red); PASS appears for a matching-rank card pre-cover (both-legal cards resolve in the same chooser).',
+'<b>TAKE is the defender\'s terminal stop</b> — the red +4 at the strip\'s end (defenders can never say GOOD, game.c:844); crown to it, the pill reads TAKE 4. A matching-rank card pre-cover offers PASS; cover-and-pass both legal opens the chooser (next frame).',
 ]);
 
 fig(galG,'G2b · Choose the target','only when ambiguous',gscreen({
@@ -2081,11 +2101,12 @@ fig(galG,'G2b · Choose the target','only when ambiguous',gscreen({
   pairs:[{t:'res',d:['J','♣'],a:['8','♣']},{t:'open',a:['K','♣']},{t:'open',a:['K','♦']}],
   focus:{r:'K',s:'♠'},
   extra:`<div class="gover"><div class="gx">✕</div>
-    <div class="ttl">K♠ covers which?</div>
-    <div class="row">${gcard('K','♣')}${gcard('K','♦')}</div></div>`,
+    <div class="ttl">K♠ — cover or pass?</div>
+    <div class="row">${gcard('K','♣')}${gcard('K','♦')}</div>
+    <div class="gpill pass" style="position:static">PASS ▸ LENA</div></div>`,
 }),[
-'<b>The overlay is the exception path</b> — it exists only when one card can beat two or more open attacks (exact-card targeting, game.c:621-629).',
-'<b>Two giant targets + ✕</b> — 98 px cards, the ✕ sits exactly where the system chevron lives, so "top-left = back out" stays one motor habit.',
+'<b>The overlay is the single exception path</b> — it opens when a tap is ambiguous for any reason: the card beats 2+ open attacks (exact-card targeting, game.c:621-629), or it can both cover and pass (here: K♠ is trump AND matches the table rank, game.c:716). Unambiguous cards never see it.',
+'<b>Giant targets + one blue row + ✕</b> — cover targets as 98 px cards, PASS as a labeled pill with the receiver; ✕ sits where the system chevron lives, so "top-left = back out" stays one motor habit.',
 '<b>No text beyond the question</b> — five words.',
 ]);
 
@@ -2094,14 +2115,13 @@ fig(galG,'G3 · Table pages, trump drawn','two big pairs per page',gscreen({
   strip:[[3],[2],[8,'d'],[4],[2],[5],[1],[5,'y']],
   pairs:[{t:'res',d:['9','♠'],a:['6','♠']},{t:'open',a:['K','♣']}],
   pages:[3,0],
-  focus:{r:'9',s:'♦'},
-  pill:['good','GOOD'],
-  chips:[{r:'9',s:'♦',focus:1},{r:'6',s:'♥',dim:1},{r:'A',s:'♥',dim:1},
-         {r:'4',s:'♣',dim:1},{r:'Q',s:'♠',dim:1}],
+  focus:{r:'9',s:'♦',dim:1},
+  chips:[{r:'9',s:'♦',focus:1,dim:1},{r:'6',s:'♥',dim:1},{r:'A',s:'♥',dim:1},
+         {r:'4',s:'♣',dim:1},{r:'Q',s:'♠',dim:1},{check:1}],
 }),[
 '<b>Pairs stay big by paging</b> — two per page, swipe, dots. Six pairs = three dots; no shrinking, no clipped words (the G4 text cutoff is structurally gone — there is no text).',
 '<b>Status decayed to ♠ ▤0</b> — the flip is in someone\'s hand now; bare suit = endgame.',
-'<b>The pill here reads GOOD</b> — focused 9♦ isn\'t legal (9 not on this table), so ATTACK doesn\'t show; GOOD is what tapping offers.',
+'<b>No pill on a dead card</b> — focused 9♦ isn\'t legal here, so nothing is offered; GOOD is its own ✓ stop at the strip\'s end, one crown flick away.',
 ]);
 
 fig(galG,'G4 · Massive table','same mechanism, more dots',gscreen({
@@ -2111,7 +2131,7 @@ fig(galG,'G4 · Massive table','same mechanism, more dots',gscreen({
   pages:[5,1],
   focus:{r:'Q',s:'♥'},
   pill:['act','ATTACK'],
-  chips:[{r:'Q',s:'♥',focus:1},{r:'7',s:'♦',dim:1},{r:'3',s:'♣',dim:1},{r:'5',s:'♠',dim:1}],
+  chips:[{r:'Q',s:'♥',focus:1},{r:'7',s:'♦',dim:1},{r:'3',s:'♣',dim:1},{r:'5',s:'♠',dim:1},{check:1}],
 }),[
 '<b>Nine pairs = five dots</b> — the post-pickup defender case (no slot cap, game.c:557) costs swipes, never legibility.',
 '<b>The shield\'s 12 tells the capacity story</b> — a 12-card defender minus four open attacks = room for eight more; no cap number needed anywhere.',
@@ -2125,7 +2145,7 @@ fig(galG,'G5 · Big hand','crown scrolls, right edge fades',gscreen({
   pill:['act','ATTACK'],
   chips:[{r:'9',s:'♦',focus:1},{r:'9',s:'♥'},{r:'6',s:'♥',dim:1},{r:'A',s:'♥',dim:1},
          {r:'4',s:'♣',dim:1},{r:'Q',s:'♠',dim:1},{r:'J',s:'♦',dim:1},{r:'7',s:'♣',dim:1},
-         {r:'3',s:'♦',dim:1},{r:'8',s:'♦',dim:1},{r:'2',s:'♣',dim:1}],
+         {r:'3',s:'♦',dim:1},{r:'8',s:'♦',dim:1},{r:'2',s:'♣',dim:1},{check:1}],
 }),[
 '<b>Eleven cards, one fade</b> — the strip clips flush on the left and fades only at the right edge (the earlier double-fade artifact is gone); the crown scrolls the viewport.',
 '<b>Browse everything</b> — dim cards are reachable detents now; the pill just won\'t offer ATTACK on them.',
@@ -2136,25 +2156,24 @@ fig(galG,'G6 · Rejected','red edge + buzz, zero words',gscreen({
   strip:GSTRIP,
   pairs:[{t:'res',d:['K','♠'],a:['Q','♠']},{t:'open',a:['K','♣']}],
   focus:{r:'K',s:'♥',dim:1},
-  pill:['good','GOOD'],
   chips:[{r:'K',s:'♥',focus:1,dim:1},{r:'6',s:'♥',dim:1},{r:'A',s:'♥',dim:1},
-         {r:'6',s:'♠',dim:1},{r:'10',s:'♣',dim:1},{r:'J',s:'♦',dim:1}],
+         {r:'6',s:'♠',dim:1},{r:'10',s:'♣',dim:1},{r:'J',s:'♦',dim:1},{check:1}],
   extra:'<div class="grej"></div>',
 }),[
 '<b>Rejection is a flash, not a sentence</b> — a red glow around the screen edge (~600 ms) + the ✗ failure haptic; the card is already back in the strip, cap already reads 0.',
-'<b>The pill has moved on</b> — shield 6, six attacks visible: full. Tapping now offers GOOD; the board explains itself.',
+'<b>No pill after the bounce</b> — the card is dead again (shield 6, table full), so nothing is offered; the ✓ stop waits at the strip\'s end.',
 ]);
 
 fig(galG,'G7 · GOOD','green counts are the tally',gscreen({
   flip:['6','♠'],deck:8,disc:6,
   strip:[[4],[2,'g'],[6,'d'],[5,'g'],[3,'g'],[6],[2,'g'],[6,'y']],
   pairs:[{t:'res',d:['K','♠'],a:['Q','♠']},{t:'res',d:['A','♣'],a:['K','♣']}],
-  focus:{r:'K',s:'♥',dim:1},
+  focus:{check:1},
   pill:['good','GOOD'],
-  chips:[{r:'K',s:'♥',focus:1,dim:1},{r:'6',s:'♥',dim:1},{r:'A',s:'♥',dim:1},
-         {r:'6',s:'♠',dim:1},{r:'10',s:'♣',dim:1},{r:'J',s:'♦',dim:1}],
+  chips:[{r:'K',s:'♥',dim:1},{r:'6',s:'♥',dim:1},{r:'A',s:'♥',dim:1},
+         {r:'6',s:'♠',dim:1},{r:'10',s:'♣',dim:1},{r:'J',s:'♦',dim:1},{check:1,focus:1}],
 }),[
-'<b>One pill, one place</b> — GOOD is only ever the pill; no checkmark chips, no boxed ✓ card. After tapping it greys to ✓ until the table changes (legal.c:377).',
+'<b>GOOD is a crown stop</b> — the bare ✓ (no background) at the strip\'s end; reaching it fills the focus slot with a large ✓ and the pill reads GOOD. After tapping, the pill greys to ✓ voted until the table changes (legal.c:377).',
 '<b>Votes live in the strip only</b> — green counts (public state, view.c:27-31); four of seven at a glance, no sentence, and the roster stays clean.',
 ]);
 
@@ -2205,20 +2224,25 @@ fig(galG,'G10 · Short look','the glance before the long look',
   let hand=[{r:'K',s:'♥'},{r:'Q',s:'♦'},{r:'6',s:'♥'},{r:'6',s:'♠'},{r:'10',s:'♣'},{r:'J',s:'♦'}];
   const live=['K','Q'];
   const legal=c=>!said&&cap>0&&live.includes(c.r);
+  const nItems=()=>hand.length+1;            // cards + terminal ✓
   function render(){
-    const n=hand.length;
-    const c=n?hand[focus%n]:null;
+    const isTerm=focus>=hand.length;
+    const c=isTerm?null:hand[focus];
     const ok=c&&legal(c);
     const pairs=[{t:'res',d:['K','♠'],a:['Q','♠']},{t:'open',a:['K','♣']}];
     if(fly)pairs.push({t:'fly',a:[fly.r,fly.s]});
     const shown=pairs.slice(-2);
+    let pill=null;
+    if(isTerm)pill=said?['gray','✓ voted']:['good','GOOD'];
+    else if(ok)pill=['act','ATTACK'];
     mount(host,gscreen({flip:['6','♠'],deck:8,disc:7,
-      strip:[[4],[2],[6,'d'],[5],[3,said?'g':undefined],[6],[2],[n,'y']],
+      strip:[[4],[2],[6,'d'],[5],[3,said?'g':undefined],[6],[2],[hand.length,'y']],
       pairs:shown,
       pages:pairs.length>2?[Math.ceil(pairs.length/2),Math.ceil(pairs.length/2)-1]:null,
-      focus:c?{r:c.r,s:c.s,dim:!ok}:null,
-      pill:ok?['act','ATTACK']:(said?['gray','✓ voted']:['good','GOOD']),
-      chips:hand.map((x,i)=>({r:x.r,s:x.s,dim:!legal(x),focus:i===focus%Math.max(n,1)})),
+      focus:isTerm?{check:1}:{r:c.r,s:c.s,dim:!ok},
+      pill,
+      chips:hand.map((x,i)=>({r:x.r,s:x.s,dim:!legal(x),focus:i===focus}))
+        .concat([{check:1,focus:isTerm,dim:said}]),
       extra:rej?'<div class="grej"></div>':'',
     }));
     const scr=host.querySelector('.screen');
@@ -2232,13 +2256,11 @@ fig(galG,'G10 · Short look','the glance before the long look',
   }
   let last=0;
   function spin(d){const now=Date.now();if(now-last<110)return;last=now;
-    if(!hand.length)return;
-    focus=(focus+d+hand.length)%hand.length;render();}
+    focus=Math.max(0,Math.min(nItems()-1,focus+d));render();}
   function commit(){
-    const n=hand.length;
-    if(!n)return;
-    const c=hand[focus%n];
-    if(!legal(c)){if(!said){said=true;render();}return;}
+    if(focus>=hand.length){if(!said){said=true;render();}return;}
+    const c=hand[focus];
+    if(!legal(c))return;
     fly={r:c.r,s:c.s};render();
     setTimeout(()=>{
       if(Math.random()<0.33){
@@ -2247,7 +2269,7 @@ fig(galG,'G10 · Short look','the glance before the long look',
       }else{
         fly=null;cap-=1;
         hand=hand.filter(x=>x!==c);
-        if(focus>=hand.length)focus=0;
+        if(focus>=hand.length)focus=Math.max(0,hand.length-1);
         render();
       }
     },650);

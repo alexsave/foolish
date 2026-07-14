@@ -7,8 +7,11 @@ Deliverables:
   monitor-calibration control), a 10 mm-finger overlay, a 2×3 tap-zone
   overlay, and four live crown/tap demos. Seven design options (A–G) with
   per-element rationale; **Option G is the build spec**.
+- **`docs/WATCHOS_G_SPEC.md`** — the implementation handoff: Option G as a
+  self-contained SwiftUI spec (points, decision tables, FoolishKit
+  integration, acceptance checklist). **Give the implementor that file.**
 - **This doc** — the verified rules (with citations), the Apple HIG
-  constraints (with quotes), the two design reviews and their engine verdicts,
+  constraints (with quotes), the design reviews and their engine verdicts,
   and ASCII reference frames.
 
 How this converged, in four rounds:
