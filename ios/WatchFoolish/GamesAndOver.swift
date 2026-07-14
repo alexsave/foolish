@@ -19,10 +19,10 @@ struct GamesListView: View {
             ForEach(options, id: \.players) { o in
                 Button { onNew(o.players) } label: {
                     HStack(spacing: 8) {
-                        Text("\(o.players)").font(WFont.token(18)).foregroundStyle(WColor.brass)
+                        Text("\(o.players)").font(WFont.token(18)).foregroundStyle(WColor.gold)
                             .frame(minWidth: 18)
                         VStack(alignment: .leading, spacing: 0) {
-                            Text(o.label).font(WFont.label(16)).foregroundStyle(WColor.ink)
+                            Text(o.label).font(WFont.label(16)).foregroundStyle(WColor.suitBlack)
                             Text(o.sub).font(WFont.label(11)).foregroundStyle(WColor.dim)
                         }
                         Spacer()
@@ -40,36 +40,40 @@ struct GamesListView: View {
     }
 }
 
-/// Game over — the fool reveal (§4b, §3.1 cue 1: the `Д` is the hero).
+/// Game over (§10): a small ДУРАК label, the loser large in red, the escape order on
+/// one line, and a CLOSE button back to the New-game list.
 struct GameOverScreen: View {
     let foolName: String
-    let onRematch: () -> Void
+    let escapeOrder: [String]
+    let onClose: () -> Void
 
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 6) {
             Spacer()
-            VStack(spacing: 0) {
-                Text("\(foolName.uppercased()) is").foregroundStyle(WColor.ink)
-                Text("the FOOL").foregroundStyle(WColor.ink)
+            Text("ДУРАК")
+                .font(WFont.label(13)).tracking(2)
+                .foregroundStyle(WColor.dim)
+            Text(foolName)
+                .font(.system(size: 34, weight: .heavy, design: .rounded))
+                .foregroundStyle(WColor.red)
+                .lineLimit(1).minimumScaleFactor(0.5)
+            if !escapeOrder.isEmpty {
+                Text(escapeOrder.joined(separator: " › "))
+                    .font(WFont.label(11)).foregroundStyle(WColor.dim)
+                    .lineLimit(1).minimumScaleFactor(0.7)
             }
-            .font(WFont.label(17))
-            .multilineTextAlignment(.center)
-            .lineLimit(1)
-            .minimumScaleFactor(0.7)
-            Text("Д")
-                .font(.system(size: 56, weight: .heavy, design: .rounded))
-                .foregroundStyle(WColor.brass)
             Spacer()
-            Button(action: onRematch) {
-                Text("Rematch")
+            Button(action: onClose) {
+                Text("Close")
                     .font(WFont.label(15)).foregroundStyle(WColor.bg)
                     .frame(maxWidth: .infinity, minHeight: 34)
-                    .background(Capsule().fill(WColor.brass))
+                    .background(Capsule().fill(WColor.gold))
             }
             .buttonStyle(.plain)
         }
         .padding(.horizontal, 10)
         .padding(.bottom, 4)
-        .background(WColor.bg)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(WColor.bg.ignoresSafeArea())
     }
 }
