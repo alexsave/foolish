@@ -48,8 +48,9 @@ enum WMove: Equatable {
 final class MockGame: ObservableObject {
     // Games list (root)
     let games: [GameSummary] = [
-        GameSummary(id: "g1", opponent: "Sveta", yourTurn: true,  handCount: 5, bot: false),
-        GameSummary(id: "g2", opponent: "Boris", yourTurn: true,  handCount: 6, bot: false),
+        GameSummary(id: "g1", opponent: "Sveta",  yourTurn: true,  handCount: 5, bot: false),
+        GameSummary(id: "g2", opponent: "Boris",  yourTurn: true,  handCount: 6, bot: false),
+        GameSummary(id: "g8", opponent: "8-seat", yourTurn: true,  handCount: 7, bot: false),
     ]
 
     // The live table
@@ -104,6 +105,25 @@ final class MockGame: ObservableObject {
             hand = [Card(suit: .spades, value: 13), Card(suit: .hearts, value: 10), Card(suit: .diamonds, value: 12),
                     Card(suit: .spades, value: 7), Card(suit: .clubs, value: 8), Card(suit: .diamonds, value: 6)]
             deckCount = 20; discardCount = 2; isEndgame = false
+        case "g8":   // 8-seat stress: 7 opponents on the ring, several battles
+            opponentName = "Table"
+            opponents = [
+                Opponent(id: 0, name: "A", handCount: 6), Opponent(id: 1, name: "B", handCount: 3),
+                Opponent(id: 2, name: "C", handCount: 2), Opponent(id: 3, name: "D", handCount: 8),
+                Opponent(id: 4, name: "E", handCount: 9), Opponent(id: 5, name: "F", handCount: 1, isOut: true),
+                Opponent(id: 6, name: "G", handCount: 6),
+            ]
+            attackerSeat = -1; defenderSeat = 3      // seat D defends; you (and others) attack
+            trump = Card(suit: .hearts, value: 6)
+            battles = [
+                Battle(id: 0, attack: Card(suit: .spades, value: 12), cover: Card(suit: .spades, value: 13)),
+                Battle(id: 1, attack: Card(suit: .diamonds, value: 9)),
+                Battle(id: 2, attack: Card(suit: .clubs, value: 7), cover: Card(suit: .hearts, value: 8)),
+            ]
+            hand = [Card(suit: .hearts, value: 14), Card(suit: .spades, value: 6), Card(suit: .clubs, value: 10),
+                    Card(suit: .diamonds, value: 11), Card(suit: .hearts, value: 13), Card(suit: .spades, value: 8),
+                    Card(suit: .clubs, value: 9)]
+            deckCount = 8; discardCount = 14; isEndgame = false
         case "bot":  // fresh offline game — you ATTACK an empty table
             opponentName = "Espresso"
             opponents = [Opponent(id: 0, name: "Espresso", handCount: 6)]

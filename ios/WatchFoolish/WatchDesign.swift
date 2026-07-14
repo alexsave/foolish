@@ -1,7 +1,6 @@
 // WatchDesign.swift — the watch design language (docs/WATCHOS_APP_PLAN.md §3).
 // Deliberately NOT the phone's wool/wood/fern: a true-black OLED canvas, token
-// cards (value-first, suit as color), SF Rounded Bold, one brass accent. Built
-// at 41/40mm first (§3, §12.7).
+// cards (value nested inside a larger suit), SF Rounded Bold, one brass accent.
 
 import SwiftUI
 
@@ -15,8 +14,6 @@ enum WColor {
 }
 
 enum WFont {
-    // SF Rounded Bold throughout (§3): reads better than the phone's condensed
-    // face at token size.
     static func token(_ pt: CGFloat) -> Font { .system(size: pt, weight: .bold, design: .rounded) }
     static func label(_ pt: CGFloat) -> Font { .system(size: pt, weight: .semibold, design: .rounded) }
 }
@@ -39,35 +36,65 @@ struct Card: Identifiable, Equatable, Hashable {
     }
 }
 
-/// The token card — the atom of the whole watch UI (§3). Value-first; the suit
-/// is the color plus a tiny glyph. Trump gets the brass ring (the one accent).
+/// The token card — the atom of the whole watch UI. The value sits INSIDE a
+/// larger suit glyph (same center, value on top): the suit is the shape, the
+/// value is knocked into it (white on red suits, black on the white ones).
+/// Compact and iconic; used everywhere, including the flipped trump.
 struct TokenCard: View {
     let card: Card
     var size: CGFloat = 30
     var selected: Bool = false
-    var trump: Bool = false
+
+    private var valueColor: Color { card.suit.isRed ? WColor.ink : WColor.bg }
 
     var body: some View {
-        VStack(spacing: -2) {
-            Text(card.label)
-                .font(WFont.token(size))
-                .foregroundStyle(card.suit.color)
+        ZStack {
             Text(card.suit.glyph)
-                .font(WFont.token(size * 0.42))
+                .font(WFont.token(size * 1.5))
                 .foregroundStyle(card.suit.color)
+            Text(card.label)
+                .font(.system(size: size * (card.value == 10 ? 0.5 : 0.62), weight: .heavy, design: .rounded))
+                .foregroundStyle(valueColor)
+                .monospacedDigit()
+                .offset(y: size * 0.06)          // nudge into the suit's solid body
         }
-        .monospacedDigit()
-        .frame(width: size * 1.35, height: size * 1.5)
+        .frame(width: size * 1.2, height: size * 1.4)
         .background(
             RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(selected ? Color(white: 0.12) : .clear)
+                .fill(selected ? Color(white: 0.16) : .clear)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .strokeBorder(trump ? WColor.brass : (selected ? WColor.ink : .clear),
-                              lineWidth: trump ? 1.5 : (selected ? 1.5 : 0))
+                .strokeBorder(selected ? WColor.ink : .clear, lineWidth: 1.5)
         )
-        .offset(y: selected ? -2 : 0)                // token lift on select (§5.2)
-        .animation(.easeOut(duration: 0.12), value: selected)
+    }
+}
+
+/// A minimal upward sword (§ owner request): a pointed blade, a short crossguard,
+/// grip + pommel. Drawn in a Canvas so it's monochrome, takes the tint, and reads
+/// as a sword (not a plus) even at chip size — SF Symbols has no sword.
+struct SwordIcon: View {
+    var size: CGFloat = 16
+    var color: Color = WColor.bg
+
+    var body: some View {
+        Canvas { ctx, sz in
+            let w = sz.width, h = sz.height, cx = w / 2
+            var blade = Path()                                   // pointed tip → down to the guard
+            blade.move(to: CGPoint(x: cx, y: 0))
+            blade.addLine(to: CGPoint(x: cx + w * 0.09, y: h * 0.16))
+            blade.addLine(to: CGPoint(x: cx + w * 0.09, y: h * 0.60))
+            blade.addLine(to: CGPoint(x: cx - w * 0.09, y: h * 0.60))
+            blade.addLine(to: CGPoint(x: cx - w * 0.09, y: h * 0.16))
+            blade.closeSubpath()
+            ctx.fill(blade, with: .color(color))
+            ctx.fill(Path(roundedRect: CGRect(x: cx - w * 0.30, y: h * 0.58, width: w * 0.60, height: h * 0.10),
+                          cornerRadius: h * 0.05), with: .color(color))    // crossguard
+            ctx.fill(Path(roundedRect: CGRect(x: cx - w * 0.055, y: h * 0.68, width: w * 0.11, height: h * 0.22),
+                          cornerRadius: w * 0.05), with: .color(color))    // grip
+            ctx.fill(Path(ellipseIn: CGRect(x: cx - w * 0.09, y: h * 0.88, width: w * 0.18, height: h * 0.12)),
+                     with: .color(color))                                  // pommel
+        }
+        .frame(width: size, height: size)
     }
 }

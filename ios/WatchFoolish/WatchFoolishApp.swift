@@ -49,6 +49,8 @@ struct WatchFoolishApp: App {
         if args.contains("-table") { path = [.table("g1")] }
         else if args.contains("-defend") { path = [.table("g2")] }   // you defend
         else if args.contains("-attack") { path = [.table("bot")] }  // empty table
+        else if args.contains("-stress") { path = [.table("g8")] }   // 8-seat ring
+        else if args.contains("-action8") { path = [.table("g8"), .action] }
         else if args.contains("-action") { path = [.table("g1"), .action] }
         else if args.contains("-over") { game.foolName = "Boris"; showOver = true }
     }
