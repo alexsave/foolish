@@ -86,6 +86,42 @@ public final class OnlineGame: ObservableObject, GameSession {
         return mask
     }
 
+    // MARK: - lobby (pre-game, §16.D5). The roster/deal live behind the `meta`
+    // endpoint (add-bot / start / exit); the authoritative lobby + dealt state
+    // then arrive on the same player_views feed, so the UI just reacts to `view`.
+
+    /// True until the game is dealt — the lobby is shown for this window.
+    public var isWaiting: Bool { (view?.gameStatus ?? .waiting) == .waiting && !(view?.isOver ?? false) }
+
+    /// Disables the lobby buttons while a meta action is in flight.
+    @Published public private(set) var lobbyBusy = false
+
+    private struct MetaBody: Encodable { let type: String; let game_id: String }
+
+    /// Add a bot opponent (the server picks one from the roster).
+    public func addBot() { metaAction("add-bot") }
+
+    /// Mark ready + deal. The server deals once ≥2 players are ready; the dealt
+    /// state lands on the feed and flips `isWaiting` false.
+    public func startGame() { metaAction("start") }
+
+    /// Leave the lobby (removes our seat / deletes an empty game) — best effort.
+    public func leaveLobby() { metaAction("exit") }
+
+    private func metaAction(_ type: String) {
+        guard let client = Backend.shared.client, !spectator else { return }
+        lobbyBusy = true
+        Task {
+            defer { lobbyBusy = false }
+            do {
+                try await client.functions.invoke(
+                    "meta", options: FunctionInvokeOptions(method: .post, body: MetaBody(type: type, game_id: gameId)))
+            } catch {
+                lastReject = (error as? EngineError) ?? .unknown(-1)
+            }
+        }
+    }
+
     // MARK: - outgoing moves (Stage C1)
 
     public func play(_ move: Move) {

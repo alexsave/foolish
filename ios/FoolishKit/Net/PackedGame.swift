@@ -66,6 +66,26 @@ public enum PackedGame {
         let stateStart = q + 2
         let stateBytes = Data(b[stateStart..<(q + viewLen)])
 
+        // A WAITING game is a lobby: the masked state carries no dealt board (no
+        // deck/hands/battles), and the kernel view decode is only defined over a
+        // dealt game — so build the lobby view straight from the roster JSON,
+        // which already holds everything the lobby renders (id, names, roster).
+        // Only DEALT (playing / over) states go through the kernel (view.c).
+        if roster.status == "waiting" {
+            let players = roster.players.enumerated().map { (seatIdx, rp) -> PlayerView in
+                PlayerView(seat: seatIdx, name: rp.name,
+                           status: rp.is_ai ? SeatStatus.ready.rawValue : SeatStatus.idle.rawValue,
+                           handCount: 0, awaitingAttack: false,
+                           strategyKey: rp.is_ai ? 1 : 0, hand: nil)
+            }
+            let lobby = GameView(
+                status: GameStatus.waiting.rawValue, numPlayers: players.count, powerSuit: 0,
+                deckCount: 0, discardCount: 0, hasFlipped: false, firstAttacker: -1, defender: -1,
+                viewer: seat, goodMask: 0, gameOver: -1, flipped: nil,
+                battles: [], eliminationOrder: [], players: players)
+            return DecodedGame(view: lobby, gameId: roster.id, seat: seat, version: version, stateBytes: stateBytes)
+        }
+
         // Decode the masked state through the kernel (viewer = the local seat).
         guard let raw = try? await engine.viewFromPacked(stateBytes, viewer: seat) else { return nil }
 

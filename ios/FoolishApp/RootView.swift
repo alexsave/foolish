@@ -30,7 +30,7 @@ struct RootView: View {
                 }
             case .onlineTable:
                 if let game = coordinator.onlineGame {
-                    onlineTableStack(game)
+                    OnlineStack(game: game, onHome: { coordinator.goHome() })
                 }
             }
         }
@@ -43,12 +43,52 @@ struct RootView: View {
             Text(coordinator.onlineError ?? "")
         }
         .onOpenURL { coordinator.handle(url: $0) }
-        .onAppear { coordinator.maybeAutostartFromLaunchArgs() }
+        .onAppear {
+            coordinator.maybeAutostartFromLaunchArgs()
+            #if DEBUG
+            maybeAutostartOnline()
+            #endif
+        }
         .sheet(item: $coordinator.pendingReplay) { pending in
             NavigationStack { ReplayPlayerView(replay: pending.replay) }
                 .preferredColorScheme(.dark)
         }
     }
+
+    #if DEBUG
+    /// QA hook: `-onlineAutostart` signs in a throwaway user and quick-matches on
+    /// launch, dropping straight into the online lobby so the online flow can be
+    /// driven/screenshotted without hand-tapping auth. Needs a configured backend
+    /// (a local `supabase start`). No effect in normal launches.
+    private func maybeAutostartOnline() {
+        guard ProcessInfo.processInfo.arguments.contains("-onlineAutostart"),
+              Backend.shared.isConfigured, coordinator.screen == .home,
+              coordinator.onlineGame == nil else { return }
+        let autoplay = ProcessInfo.processInfo.arguments.contains("-onlineAutoplay")
+        Task {
+            if !auth.isSignedIn {
+                let name = "SIM" + String(UUID().uuidString.prefix(6).uppercased())
+                try? await auth.signUp(username: name, password: "password123")
+            }
+            guard let uid = auth.userId else { return }
+            coordinator.startOnline(userId: uid)
+            guard autoplay else { return }
+            // Drive the real lobby actions (OnlineGame.addBot/startGame) so the
+            // full flow can be screenshotted: wait for the session, add a bot,
+            // wait for the roster to catch up on the feed, then deal.
+            for _ in 0..<60 where coordinator.onlineGame == nil { try? await Task.sleep(nanoseconds: 100_000_000) }
+            guard let g = coordinator.onlineGame else { return }
+            try? await Task.sleep(nanoseconds: 600_000_000)
+            g.addBot()
+            for _ in 0..<60 where (g.view?.players.count ?? 0) < 2 { try? await Task.sleep(nanoseconds: 100_000_000) }
+            g.startGame()
+            // Once dealt and it's our turn, fire one real move through the packed
+            // action path to prove the outgoing move round-trip end to end.
+            for _ in 0..<80 where g.isWaiting || g.humanLegal.isEmpty { try? await Task.sleep(nanoseconds: 100_000_000) }
+            if let move = g.humanLegal.first { g.play(move) }
+        }
+    }
+    #endif
 
     @ViewBuilder
     private func tableStack(_ game: LocalGame) -> some View {
@@ -87,13 +127,26 @@ struct RootView: View {
         }
     }
 
-    // Online table: same board (§16.D5 — one TableView), no offline rematch
-    // config (rematch online is a fresh quick-match, wired when the create seam
-    // lands). Leave returns home and tears down the feed.
-    @ViewBuilder
-    private func onlineTableStack(_ game: OnlineGame) -> some View {
+}
+
+// Online stack: WAITING → the lobby (add bots / start); dealt → the board; over
+// → the win screen. A dedicated `@ObservedObject` view (not a ViewBuilder func on
+// RootView) so it re-renders on the game's own @Published transitions — the
+// lobby→table flip is driven by `view` arriving on the feed, which RootView
+// itself doesn't observe. Leave returns home and tears down the feed (§16.D5).
+private struct OnlineStack: View {
+    @ObservedObject var game: OnlineGame
+    let onHome: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var confirmLeave = false
+
+    var body: some View {
         ZStack(alignment: .topLeading) {
-            TableView(game: game, onLeave: { confirmLeave = true })
+            if game.isWaiting {
+                LobbyView(game: game, onLeave: { confirmLeave = true })
+            } else {
+                TableView(game: game, onLeave: { confirmLeave = true })
+            }
             if game.foolSeat == nil {
                 Button(action: { confirmLeave = true }) {
                     Image(systemName: "xmark")
@@ -105,13 +158,16 @@ struct RootView: View {
             }
             if let fool = game.foolSeat {
                 WinView(game: game, foolSeat: fool, humanSeat: game.humanSeat,
-                        onRematch: { coordinator.goHome() }, onHome: { coordinator.goHome() })
+                        onRematch: onHome, onHome: onHome)
                     .transition(.opacity)
             }
         }
         .animation(FMotion.chrome, value: game.foolSeat)
         .confirmationDialog(FStrings.t("leave_game_title"), isPresented: $confirmLeave, titleVisibility: .visible) {
-            Button(FStrings.t("leave"), role: .destructive) { coordinator.goHome() }
+            Button(FStrings.t("leave"), role: .destructive) {
+                if game.isWaiting { game.leaveLobby() }   // best-effort tidy of an abandoned lobby
+                onHome()
+            }
             Button(FStrings.t("cancel"), role: .cancel) {}
         } message: {
             Text(FStrings.t("leave_game_body"))
