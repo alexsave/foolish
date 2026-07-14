@@ -29,7 +29,7 @@ struct HomeView: View {
 
     var body: some View {
         ZStack {
-            FColor.table.ignoresSafeArea()
+            WoolBackground()
             VStack(spacing: FSpace.xl) {
                 header
                 onlineButton

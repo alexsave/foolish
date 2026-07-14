@@ -5,18 +5,34 @@
 
 import SwiftUI
 
+/// Reports each battle's frame (in a named coordinate space) so a drag can
+/// hit-test which battle is under the finger.
+public struct BattleFramesKey: PreferenceKey {
+    public static var defaultValue: [Int: CGRect] = [:]
+    public static func reduce(value: inout [Int: CGRect], nextValue: () -> [Int: CGRect]) {
+        value.merge(nextValue()) { _, new in new }
+    }
+}
+
 public struct FBattleGrid: View {
     public let battles: [BattleView]
     public let trumpSuit: Suit?
     /// Battle indices the local defender may currently cover (highlight them).
     public let coverable: Set<Int>
+    /// The battle currently under a drag (strong gold highlight), if any.
+    public let activeTarget: Int?
+    /// Named coordinate space to report battle frames in (for drag hit-testing).
+    public let coordinateSpace: String?
     public let onTapBattle: (Int) -> Void
 
     public init(battles: [BattleView], trumpSuit: Suit?, coverable: Set<Int> = [],
+                activeTarget: Int? = nil, coordinateSpace: String? = nil,
                 onTapBattle: @escaping (Int) -> Void = { _ in }) {
         self.battles = battles
         self.trumpSuit = trumpSuit
         self.coverable = coverable
+        self.activeTarget = activeTarget
+        self.coordinateSpace = coordinateSpace
         self.onTapBattle = onTapBattle
     }
 
@@ -52,11 +68,24 @@ public struct FBattleGrid: View {
         .frame(width: 74, height: 92)
         .background(
             RoundedRectangle(cornerRadius: FRadius.card)
-                .strokeBorder(coverable.contains(index) ? FColor.win : .clear, lineWidth: 2)
+                .strokeBorder(highlightColor(index), lineWidth: activeTarget == index ? 3 : 2)
                 .padding(-3)
+        )
+        .background(
+            GeometryReader { g in
+                if let space = coordinateSpace {
+                    Color.clear.preference(key: BattleFramesKey.self,
+                                           value: [index: g.frame(in: .named(space))])
+                } else { Color.clear }
+            }
         )
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(a11y(battle))
+    }
+
+    private func highlightColor(_ index: Int) -> Color {
+        if activeTarget == index { return FColor.win }
+        return coverable.contains(index) ? FColor.win.opacity(0.7) : .clear
     }
 
     private func a11y(_ b: BattleView) -> String {

@@ -1,13 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
-<dict>
-	<!-- Universal links for foolish.cards (§16.C5). Inert on unsigned simulator
-	     builds; becomes live once signing + the AASA are in place (Milestone F).
-	     The App Group is added in F for the iMessage extension (§16.F1). -->
-	<key>com.apple.developer.associated-domains</key>
-	<array>
-		<string>applinks:foolish.cards</string>
-	</array>
-</dict>
+<dict/>
 </plist>

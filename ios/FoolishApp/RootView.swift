@@ -34,7 +34,7 @@ struct RootView: View {
                 }
             }
         }
-        .background(FColor.table.ignoresSafeArea())
+        .background(WoolBackground())
         .alert("Couldn’t start online game",
                isPresented: Binding(get: { coordinator.onlineError != nil },
                                     set: { if !$0 { coordinator.onlineError = nil } })) {
@@ -43,6 +43,7 @@ struct RootView: View {
             Text(coordinator.onlineError ?? "")
         }
         .onOpenURL { coordinator.handle(url: $0) }
+        .onAppear { coordinator.maybeAutostartFromLaunchArgs() }
         .sheet(item: $coordinator.pendingReplay) { pending in
             NavigationStack { ReplayPlayerView(replay: pending.replay) }
                 .preferredColorScheme(.dark)

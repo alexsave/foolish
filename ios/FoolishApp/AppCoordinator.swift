@@ -49,6 +49,17 @@ final class AppCoordinator: ObservableObject {
 
     func rematch(_ config: OfflineConfig) { startOffline(config) }
 
+    /// Debug/QA hook: `-offlinePlayers N` auto-starts an N-player offline game on
+    /// launch so any table configuration (e.g. an 8-player game on a small phone)
+    /// can be inspected without driving the UI. No effect in normal launches.
+    func maybeAutostartFromLaunchArgs() {
+        let args = ProcessInfo.processInfo.arguments
+        guard let i = args.firstIndex(of: "-offlinePlayers"), i + 1 < args.count,
+              let n = Int(args[i + 1]), n >= 2, n <= 8 else { return }
+        guard screen == .home, offlineGame == nil else { return }
+        startOffline(OfflineConfig(opponentStrategyId: 0, opponentName: "Random", opponents: n - 1))
+    }
+
     /// Quick-match online (§16.D5). Requires a signed-in user; the caller gates
     /// on auth first. Surfaces the create/seam error rather than failing silently.
     func startOnline(userId: UUID) {

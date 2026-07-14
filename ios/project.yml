@@ -90,6 +90,10 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: cards.foolish.kit
         DEFINES_MODULE: "YES"
+        # A framework needs an Info.plist; with no INFOPLIST_FILE we let Xcode
+        # synthesize one (XcodeGen leaves GENERATE_INFOPLIST_FILE=NO otherwise,
+        # so the .framework ships without a plist and packaging fails).
+        GENERATE_INFOPLIST_FILE: "YES"
         # APPLICATION_EXTENSION_API_ONLY is turned on in Milestone G, when the
         # iMessage extension actually links FoolishKit and an extension-safe
         # subset (Engine/DesignSystem/Boards, no app-only APIs) is split out.
@@ -110,6 +114,22 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: cards.foolish.tests
+        # Same as FoolishKit: let Xcode synthesize the test bundle's Info.plist.
+        GENERATE_INFOPLIST_FILE: "YES"
+
+  # ---- UI tests: drive a full offline game end-to-end (§6 screen 3/4) ------
+  FoolishUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: FoolishUITests
+    dependencies:
+      - target: Foolish
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: cards.foolish.uitests
+        GENERATE_INFOPLIST_FILE: "YES"
+        TEST_TARGET_NAME: Foolish
 
 schemes:
   Foolish:
@@ -123,3 +143,4 @@ schemes:
       config: Debug
       targets:
         - FoolishTests
+        - FoolishUITests

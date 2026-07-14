@@ -17,10 +17,14 @@ final class ComponentSnapshotTests: XCTestCase {
     // Flip to true on a Mac to (re)record references, then flip back and commit.
     private let record = false
 
+    // swift-snapshot-testing 1.19's `record:` takes a `Record`, not a `Bool`
+    // (and its boolean-literal shim is deprecated), so map the toggle explicitly:
+    // `.all` re-records everything, `.missing` records only absent references and
+    // fails on a diff — the normal compare mode.
+    private var recordMode: SnapshotTestingConfiguration.Record { record ? .all : .missing }
+
     override func setUp() {
         super.setUp()
-        // isRecording is global to the library.
-        // SnapshotTesting.isRecording = record
     }
 
     private func host<V: View>(_ view: V, width: CGFloat = 320, height: CGFloat = 200) -> UIViewController {
@@ -31,12 +35,12 @@ final class ComponentSnapshotTests: XCTestCase {
 
     func testFCardFace() {
         assertSnapshot(of: host(FCard(card: Card(s: 1, v: 13), trump: true), width: 120, height: 140),
-                       as: .image, record: record)
+                       as: .image, record: recordMode)
     }
 
     func testFCardBack() {
         assertSnapshot(of: host(FCard(card: nil, backSeed: 42), width: 120, height: 140),
-                       as: .image, record: record)
+                       as: .image, record: recordMode)
     }
 
     func testFHandFan() {
@@ -44,7 +48,7 @@ final class ComponentSnapshotTests: XCTestCase {
         assertSnapshot(of: host(FHandFan(cards: cards, trumpSuit: .hearts,
                                          selection: .constant([]), onTap: { _ in }),
                                 width: 320, height: 140),
-                       as: .image, record: record)
+                       as: .image, record: recordMode)
     }
 
     func testFActionBarRu() {
@@ -53,6 +57,6 @@ final class ComponentSnapshotTests: XCTestCase {
         assertSnapshot(of: host(FActionBar(canPickup: true, canDone: true, canTransfer: true,
                                            onPickup: {}, onDone: {}, onTransfer: {}),
                                 width: 340, height: 80),
-                       as: .image, record: record)
+                       as: .image, record: recordMode)
     }
 }

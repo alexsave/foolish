@@ -71,7 +71,14 @@ int main(void) {
         // seats are strategy 0 and we never call fio_bot_step) → fully repeatable.
         uint64_t playHash = 1469598103934665603ULL;
         int steps = 0;
-        char move[4096], legal[1 << 16];
+        // These must be at least as large as the Swift decoder's grow ceiling
+        // (EngineC.json() doubles from 16 KiB up to 8 MiB), or the two drivers
+        // diverge: a legal menu bigger than the buffer makes fio_legal_moves_json
+        // return FIO_ECAP, the C loop breaks early (fool = -1), while Swift grows
+        // its buffer and plays the game out. With MAX_LEGAL_MOVES=4096 a single
+        // seat's menu can exceed 64 KiB, so the old legal[1<<16] truncated 7 of
+        // the 20 games. `static` keeps them off the stack. §16.A3/§16.A6.
+        static char move[1 << 16], legal[1 << 23];
         while (fio_game_over() < 0 && steps < 5000) {
             int mask = fio_actor_mask();
             if (mask <= 0) break;

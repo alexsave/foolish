@@ -13,14 +13,27 @@ public struct FHandFan: View {
     public let disabled: Set<String>
     @Binding public var selection: Set<String>
     public let onTap: (Card) -> Void
+    /// Drag-to-play: reports the dragged card + finger location in the named
+    /// coordinate space `dragSpace` (default no-op so tap-only hosts still work).
+    public let dragSpace: String
+    public let onDragChanged: (Card, CGPoint) -> Void
+    public let onDragEnded: (Card, CGPoint) -> Void
+
+    @State private var draggingId: String?
 
     public init(cards: [Card], trumpSuit: Suit?, disabled: Set<String> = [],
-                selection: Binding<Set<String>>, onTap: @escaping (Card) -> Void) {
+                selection: Binding<Set<String>>, onTap: @escaping (Card) -> Void,
+                dragSpace: String = "table",
+                onDragChanged: @escaping (Card, CGPoint) -> Void = { _, _ in },
+                onDragEnded: @escaping (Card, CGPoint) -> Void = { _, _ in }) {
         self.cards = cards
         self.trumpSuit = trumpSuit
         self.disabled = disabled
         self._selection = selection
         self.onTap = onTap
+        self.dragSpace = dragSpace
+        self.onDragChanged = onDragChanged
+        self.onDragEnded = onDragEnded
     }
 
     public var body: some View {
@@ -48,12 +61,27 @@ public struct FHandFan: View {
                         // Expanded hit slop for one-handed reach (a11y 44pt floor).
                         .contentShape(Rectangle().inset(by: -8))
                         .matchedGeometryEffect(id: card.identity, in: fanNamespace, isSource: true)
-                        .zIndex(selection.contains(card.identity) ? 100 : Double(idx))
+                        // Dim the source while its drag shadow is in flight.
+                        .opacity(draggingId == card.identity ? 0.25 : 1)
+                        .zIndex(draggingId == card.identity ? 200 : (selection.contains(card.identity) ? 100 : Double(idx)))
                         .onTapGesture {
                             guard !disabled.contains(card.identity) else { Haptics.fire(.reject); return }
                             Haptics.fire(.pickUp)
                             onTap(card)
                         }
+                        .gesture(
+                            DragGesture(minimumDistance: 12, coordinateSpace: .named(dragSpace))
+                                .onChanged { v in
+                                    guard !disabled.contains(card.identity) else { return }
+                                    if draggingId == nil { draggingId = card.identity; Haptics.fire(.pickUp) }
+                                    onDragChanged(card, v.location)
+                                }
+                                .onEnded { v in
+                                    let wasDragging = draggingId == card.identity
+                                    draggingId = nil
+                                    if wasDragging { onDragEnded(card, v.location) }
+                                }
+                        )
                 }
             }
         }

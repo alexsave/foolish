@@ -19,35 +19,34 @@ public struct FButton: View {
     }
 
     public var body: some View {
-        Button(action: { Haptics.fire(.drop); action() }) {
+        // A per-title wood seed so adjacent buttons show different grain.
+        let seed = Double(abs(title.hashValue % 100)) / 100.0
+        return Button(action: { Haptics.fire(.drop); action() }) {
             Text(title)
-                .font(FType.title(17))
+                .font(FType.title(18))
+                .tracking(0.5)
                 .frame(maxWidth: .infinity, minHeight: 52)     // 44pt+ hit target (a11y floor)
-                .foregroundColor(foreground)
-                .background(background)
-                .overlay(
-                    RoundedRectangle(cornerRadius: FRadius.card)
-                        .strokeBorder(border, lineWidth: kind == .secondary ? 1.5 : 0)
+                .foregroundColor(FColor.textPrimary)
+                .shadow(color: .black.opacity(0.75), radius: 1, x: 0, y: 1)   // legible on wood
+                .background(WoodSurface(seed: seed, cornerRadius: FRadius.button))
+                .overlay( // primary gets a warm brand-red edge to stay the one CTA
+                    RoundedRectangle(cornerRadius: FRadius.button, style: .continuous)
+                        .strokeBorder(FColor.accent, lineWidth: kind == .primary ? 2 : 0)
                 )
-                .clipShape(RoundedRectangle(cornerRadius: FRadius.card))
         }
+        .buttonStyle(FPressStyle())
         .disabled(!enabled)
         .opacity(enabled ? 1 : 0.4)
     }
+}
 
-    private var foreground: Color {
-        switch kind {
-        case .primary, .destructive: return FColor.textPrimary
-        case .secondary: return FColor.textPrimary
-        }
-    }
-    private var background: Color {
-        switch kind {
-        case .primary, .destructive: return FColor.accent
-        case .secondary: return .clear
-        }
-    }
-    private var border: Color {
-        kind == .secondary ? FColor.textDim.opacity(0.6) : .clear
+/// A tiny press feedback: the plank pushes down 1pt and dims, like the web's
+/// translateY on :active.
+struct FPressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .offset(y: configuration.isPressed ? 1 : 0)
+            .brightness(configuration.isPressed ? -0.06 : 0)
+            .animation(.easeOut(duration: 0.1), value: configuration.isPressed)
     }
 }

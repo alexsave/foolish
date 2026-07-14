@@ -64,6 +64,11 @@ public enum CardRank {
 public struct BattleView: Codable, Equatable, Sendable {
     public let attack: Card
     public let defense: Card?    // nil when the attack is still uncovered
+
+    public init(attack: Card, defense: Card?) {
+        self.attack = attack
+        self.defense = defense
+    }
 }
 
 /// Game / player status integers mirror game.h (GAME_STATUS_*, PLAYER_STATUS_*).

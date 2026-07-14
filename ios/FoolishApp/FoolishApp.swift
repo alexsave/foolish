@@ -13,15 +13,18 @@ struct FoolishApp: App {
     // Online auth (§9). Nil-backed when the build has no Supabase config; the
     // app stays fully usable offline (guest-first, §2).
     @StateObject private var auth = AuthService()
+    // The wool / wood / fern materials, generated once per install (§ redesign).
+    @StateObject private var textures = TextureStore.shared
 
     var body: some Scene {
         WindowGroup {
             RootView()
                 .environmentObject(entitlements)
                 .environmentObject(auth)
+                .environmentObject(textures)
                 .tint(FColor.accent)
-                .preferredColorScheme(.dark)
                 .task { await auth.restore() }
+                .onAppear { textures.warm() }
         }
     }
 }

@@ -9,26 +9,35 @@
 import SwiftUI
 
 public enum FColor {
-    // Surfaces. "Light" mode only lifts surfaces ~6% — the app is dark-first
-    // and forces UIUserInterfaceStyle=Dark, so the light values exist mainly
-    // for snapshot coverage and future opt-in.
-    public static let table   = Color(hex: 0x14231C)   // deep green-black felt
-    public static let tableLo = Color(hex: 0x1B2E24)   // light-mode felt (+lift)
-    public static let surface = Color(hex: 0x1E2A24)
-    public static let card    = Color(hex: 0xF4EFE6)   // bone white
-    public static let ink     = Color(hex: 0x17140F)   // pips / type on a card
-    public static let accent  = Color(hex: 0xC82B24)   // Soviet red
-    public static let textPrimary = Color(hex: 0xEDE9DF)
-    public static let textDim     = Color(hex: 0x9AA69E)
-    public static let win     = Color(hex: 0xD8B24A)   // brass — victories, streaks
+    // The warm "wool table" world (ported from the web palette,
+    // src/styles/variables.css). The wool texture is the real background; these
+    // are the fallbacks and the panel/ink colors that sit on top of it.
+    public static let table   = Color(hex: 0x8A6A54)   // warm wool-brown fallback bg
+    public static let tableLo = Color(hex: 0xAD826E)   // lighter taupe (light-mode)
+    public static let surface = Color(hex: 0x3A2418)   // dark wood panel
+    public static let card    = Color(hex: 0xFFFFFF)   // card face — white
+    public static let ink     = Color(hex: 0x000000)   // black suit pips / type
+    public static let accent  = Color(hex: 0xB22222)   // brand red (title, accents)
+    public static let textPrimary = Color(hex: 0xFFFFFF)
+    public static let textDim     = Color(hex: 0xE7D9C9)   // warm off-white dim
+    public static let win     = Color(hex: 0xE0B84C)   // brass — victories
 
-    /// Suit ink on a bone card: red suits use the accent red, black suits the ink.
-    public static func suitColor(_ suit: Suit) -> Color { suit.isRed ? accent : ink }
+    // Wood (buttons) + card ink specifics.
+    public static let wood     = Color(hex: 0x6B3A18)   // wood plank fallback
+    public static let woodDark = Color(hex: 0x5D3A1A)   // wooden button border
+    public static let cardRed  = Color(hex: 0xDC2626)   // red suits on a card
+    public static let cardBlack = Color(hex: 0x000000)  // black suits on a card
+    /// A translucent scrim over wool so content/panels read (web --color-vignette).
+    public static let vignette = Color(hex: 0x3A2010, alpha: 0.55)
+
+    /// Suit ink on a white card: red suits red, black suits black (web values).
+    public static func suitColor(_ suit: Suit) -> Color { suit.isRed ? cardRed : cardBlack }
 }
 
 public enum FRadius {
-    public static let card: CGFloat = 10
-    public static let sheet: CGFloat = 16
+    public static let card: CGFloat = 6      // web card radius 5px, softened a touch
+    public static let button: CGFloat = 4    // wooden plaque: near-square, softened
+    public static let sheet: CGFloat = 14
     public static let chip: CGFloat = 999
 }
 
@@ -44,11 +53,15 @@ public enum FSpace {
 
 public enum FType {
     public static func body(_ size: CGFloat = 15) -> Font { .system(size: size, weight: .regular, design: .default) }
-    public static func title(_ size: CGFloat = 22) -> Font { .system(size: size, weight: .semibold, design: .default) }
-    /// The signature: SF Compressed Bold for BIG numerals (deck count, timers,
-    /// ranks). Used NOWHERE else. `.width(.compressed)` is the SF Compressed axis.
+    /// Titles/labels evoke the web's condensed Oswald/Impact: a condensed, heavy
+    /// system face. Warm, bold, a little vintage.
+    public static func title(_ size: CGFloat = 22) -> Font {
+        .system(size: size, weight: .bold).width(.condensed)
+    }
+    /// The signature: SF Compressed Bold for BIG numerals (deck count, ranks,
+    /// the brand wordmark). `.width(.compressed)` is the SF Compressed axis.
     public static func numeral(_ size: CGFloat) -> Font {
-        .system(size: size, weight: .bold).width(.compressed)
+        .system(size: size, weight: .heavy).width(.compressed)
     }
 }
 

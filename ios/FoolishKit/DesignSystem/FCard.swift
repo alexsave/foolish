@@ -57,7 +57,6 @@ public struct FCard: View {
                     .font(.system(size: size.width * 0.42))
                     .foregroundColor(color)
             }
-            .overlay(alignment: .topTrailing) { if trump { trumpBadge } }
     }
 
     private func corner(_ card: Card, suit: Suit, color: Color) -> some View {
@@ -71,24 +70,12 @@ public struct FCard: View {
         .padding(size.width * 0.08)
     }
 
-    /// Trump is marked by badge SHAPE + color, never color alone (§16.E5).
-    private var trumpBadge: some View {
-        Image(systemName: "seal.fill")
-            .font(.system(size: size.width * 0.2))
-            .foregroundColor(FColor.accent)
-            .padding(3)
-    }
-
     // MARK: back
 
     private var back: some View {
-        Image(uiImage: FernCardBack.image(seed: backSeed, size: size))
-            .resizable()
-            .clipShape(RoundedRectangle(cornerRadius: FRadius.card))
-            .overlay(
-                RoundedRectangle(cornerRadius: FRadius.card)
-                    .strokeBorder(FColor.textDim.opacity(0.25), lineWidth: 1)
-            )
+        // The shared procedural fern back (gold/red/amber on black), matching the
+        // web card backs. One fern per install, drawn by TextureStore.
+        FernBack(cornerRadius: FRadius.card)
     }
 
     private var selectionRing: some View {

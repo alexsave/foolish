@@ -1,7 +1,8 @@
-// FActionBar.swift — Pass/Pickup/Done (§5.4). EVERY enable state is driven by
-// the kernel's legal-move menu passed in — never hand-computed (§3, §5.4). The
-// bar owns only the zero-card and selection-based control moves; attacks and
-// covers are played by tapping cards (TableView).
+// FActionBar.swift — Pass / Take / Done (§5.4). Compact wooden plaques, not
+// full-width slabs: the web's action buttons are small corner controls. EVERY
+// enable state is driven by the kernel's legal-move menu passed in — never
+// hand-computed (§3, §5.4). Attacks and covers are played by tapping/dragging
+// cards (TableView); the bar owns only the zero-card and selection control moves.
 
 import SwiftUI
 
@@ -25,21 +26,33 @@ public struct FActionBar: View {
     }
 
     public var body: some View {
-        HStack(spacing: FSpace.m) {
-            if canTransfer {
-                FButton(FStrings.t("pass"), kind: .secondary, action: onTransfer)
-            }
-            if canPickup {
-                FButton(FStrings.t("pickup"), kind: .secondary, action: onPickup)
-            }
-            if canDone {
-                FButton(FStrings.t("good"), kind: .primary, action: onDone)
-            }
+        HStack(spacing: FSpace.s) {
+            if canTransfer { plaque(FStrings.t("pass"), seed: 0.2, action: onTransfer) }
+            if canPickup { plaque(FStrings.t("pickup"), seed: 0.5, action: onPickup) }
+            if canDone { plaque(FStrings.t("good"), seed: 0.85, primary: true, action: onDone) }
         }
         .frame(maxWidth: .infinity)
-        .padding(.horizontal, FSpace.l)
         .animation(FMotion.chrome, value: canPickup)
         .animation(FMotion.chrome, value: canDone)
         .animation(FMotion.chrome, value: canTransfer)
+    }
+
+    private func plaque(_ label: String, seed: Double, primary: Bool = false,
+                        action: @escaping () -> Void) -> some View {
+        Button(action: { Haptics.fire(.drop); action() }) {
+            Text(label)
+                .font(FType.title(16))
+                .tracking(0.5)
+                .foregroundColor(FColor.textPrimary)
+                .shadow(color: .black.opacity(0.75), radius: 1, x: 0, y: 1)
+                .frame(minWidth: 92, minHeight: 46)
+                .padding(.horizontal, FSpace.m)
+                .background(WoodSurface(seed: seed, cornerRadius: FRadius.button))
+                .overlay(
+                    RoundedRectangle(cornerRadius: FRadius.button, style: .continuous)
+                        .strokeBorder(primary ? FColor.accent : FColor.woodDark, lineWidth: primary ? 2 : 1)
+                )
+        }
+        .buttonStyle(FPressStyle())
     }
 }
