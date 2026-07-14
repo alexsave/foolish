@@ -1,0 +1,20 @@
+{
+  "applinks": {
+    "apps": [],
+    "details": [
+      {
+        "appID": "TEAMID.cards.foolish.app",
+        "components": [
+          { "/": "/", "exclude": true, "comment": "homepage stays in the browser" },
+          { "/": "/dashboard*", "exclude": true },
+          { "/": "/tutorial*", "exclude": true },
+          { "/": "/about*", "exclude": true },
+          { "/": "/api/*", "exclude": true },
+          { "/": "/.well-known/*", "exclude": true },
+          { "/": "/m/*", "comment": "iMessage-game viewer links" },
+          { "/": "/*", "comment": "replay codes and game ids at the root — the app routes by decode success (§16.C5)" }
+        ]
+      }
+    ]
+  }
+}

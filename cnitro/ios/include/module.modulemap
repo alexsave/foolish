@@ -1,0 +1,8 @@
+// Clang module for the Foolish C engine bridge. Bundled into
+// Foolish.xcframework by `make ios-lib` (xcodebuild -create-xcframework copies
+// this whole headers directory), which lets Swift `import CFoolish` and call
+// the fio_* API directly (FoolishKit/Engine/EngineC.swift).
+module CFoolish {
+    header "ios_api.h"
+    export *
+}
