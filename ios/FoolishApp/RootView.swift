@@ -10,6 +10,18 @@ struct RootView: View {
     @EnvironmentObject private var auth: AuthService
     @State private var lastConfig: OfflineConfig?
     @State private var confirmLeave = false
+    @State private var showJoinAuth = false
+
+    /// Consume a pending universal-link join: join now if signed in, else prompt.
+    private func tryPendingJoin() {
+        guard let code = coordinator.pendingJoinCode, Backend.shared.isConfigured else { return }
+        if let uid = auth.userId {
+            coordinator.pendingJoinCode = nil
+            coordinator.joinOnline(gameId: code, userId: uid)
+        } else {
+            showJoinAuth = true
+        }
+    }
 
     var body: some View {
         ZStack {
@@ -22,6 +34,9 @@ struct RootView: View {
                     },
                     onQuickMatch: {
                         if let uid = auth.userId { coordinator.startOnline(userId: uid) }
+                    },
+                    onJoin: { code in
+                        if let uid = auth.userId { coordinator.joinOnline(gameId: code, userId: uid) }
                     }
                 )
             case .table:
@@ -43,6 +58,13 @@ struct RootView: View {
             Text(coordinator.onlineError ?? "")
         }
         .onOpenURL { coordinator.handle(url: $0) }
+        // A universal link that decoded as a live game (not a replay): join it
+        // once a user is available, prompting auth first if needed.
+        .onChange(of: coordinator.pendingJoinCode) { _ in tryPendingJoin() }
+        .onChange(of: auth.userId) { _ in tryPendingJoin() }
+        .sheet(isPresented: $showJoinAuth) {
+            AuthView(onSignedIn: { tryPendingJoin() })
+        }
         .onAppear {
             coordinator.maybeAutostartFromLaunchArgs()
             #if DEBUG
@@ -64,7 +86,8 @@ struct RootView: View {
         guard ProcessInfo.processInfo.arguments.contains("-onlineAutostart"),
               Backend.shared.isConfigured, coordinator.screen == .home,
               coordinator.onlineGame == nil else { return }
-        let autoplay = ProcessInfo.processInfo.arguments.contains("-onlineAutoplay")
+        let args = ProcessInfo.processInfo.arguments
+        let autoplay = args.contains("-onlineAutoplay")
         Task {
             if !auth.isSignedIn {
                 let name = "SIM" + String(UUID().uuidString.prefix(6).uppercased())
@@ -72,15 +95,25 @@ struct RootView: View {
             }
             guard let uid = auth.userId else { return }
             coordinator.startOnline(userId: uid)
-            guard autoplay else { return }
-            // Drive the real lobby actions (OnlineGame.addBot/startGame) so the
-            // full flow can be screenshotted: wait for the session, add a bot,
-            // wait for the roster to catch up on the feed, then deal.
+            // `-onlineLobbyBots N` adds N bots and STAYS in the lobby (to inspect
+            // the picker / reorder / remove UI). `-onlineAutoplay` goes further.
+            let lobbyBots = ProcessInfo.processInfo.arguments.firstIndex(of: "-onlineLobbyBots")
+                .flatMap { i in i + 1 < args.count ? Int(args[i + 1]) : nil } ?? 0
+            guard autoplay || lobbyBots > 0 else { return }
             for _ in 0..<60 where coordinator.onlineGame == nil { try? await Task.sleep(nanoseconds: 100_000_000) }
             guard let g = coordinator.onlineGame else { return }
             try? await Task.sleep(nanoseconds: 600_000_000)
-            g.addBot()
-            for _ in 0..<60 where (g.view?.players.count ?? 0) < 2 { try? await Task.sleep(nanoseconds: 100_000_000) }
+            let wanted = autoplay ? 1 : lobbyBots
+            for target in 1...max(wanted, 1) {
+                g.addBot()
+                for _ in 0..<60 where g.roster.count < target + 1 { try? await Task.sleep(nanoseconds: 100_000_000) }
+            }
+            // `-onlineReorder` exercises the drag→rearrange path programmatically.
+            if args.contains("-onlineReorder"), g.roster.count >= 2 {
+                try? await Task.sleep(nanoseconds: 400_000_000)
+                g.rearrange(newOrder: g.roster.map(\.playerId).reversed())
+            }
+            guard autoplay else { return }
             g.startGame()
             // Once dealt and it's our turn, fire one real move through the packed
             // action path to prove the outgoing move round-trip end to end.

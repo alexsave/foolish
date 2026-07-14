@@ -1003,6 +1003,12 @@ GRANT ALL ON ALL TABLES    IN SCHEMA public TO service_role;
 GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO service_role;
 GRANT ALL ON ALL ROUTINES  IN SCHEMA public TO service_role;
 
+-- Clients read the bot roster to populate the lobby's bot picker (the "Bots
+-- access policy" RLS above already allows SELECT USING(true); this is the table
+-- GRANT it assumes — stripped locally by the DROP+CREATE, present on hosted via
+-- platform default-privileges). Read-only; writes stay service-role via RLS.
+GRANT SELECT ON public.bots TO anon, authenticated;
+
 -- =============================================================================
 -- SETUP COMPLETE!
 -- Your database schema is now secure and ready for the game application.

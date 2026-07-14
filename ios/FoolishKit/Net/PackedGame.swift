@@ -23,6 +23,17 @@
 
 import Foundation
 
+/// A seated player as the roster JSON carries it — includes the real player_id
+/// (the masked view is seat-only), which the lobby needs to remove/reorder a
+/// specific bot.
+public struct LobbyPlayer: Identifiable, Equatable, Sendable {
+    public let seat: Int
+    public let playerId: String
+    public let name: String
+    public let isAI: Bool
+    public var id: String { playerId }
+}
+
 public struct DecodedGame: Sendable {
     public let view: GameView
     public let gameId: String
@@ -30,6 +41,8 @@ public struct DecodedGame: Sendable {
     public let version: Int
     /// The inner masked-state bytes (for kernel legal-move computation).
     public let stateBytes: Data
+    /// The seated roster with real player_ids (for lobby remove/reorder).
+    public let roster: [LobbyPlayer]
 }
 
 public enum PackedGame {
@@ -58,6 +71,9 @@ public enum PackedGame {
         guard 9 + rosterLen + 2 <= b.count else { return nil }
 
         guard let roster = try? JSONDecoder().decode(Roster.self, from: Data(b[9..<(9 + rosterLen)])) else { return nil }
+        let rosterPlayers = roster.players.enumerated().map { (i, rp) in
+            LobbyPlayer(seat: i, playerId: rp.player_id, name: rp.name, isAI: rp.is_ai)
+        }
         var q = 9 + rosterLen
         let viewLen = Int(b[q]) | (Int(b[q + 1]) << 8)
         q += 2
@@ -83,7 +99,8 @@ public enum PackedGame {
                 deckCount: 0, discardCount: 0, hasFlipped: false, firstAttacker: -1, defender: -1,
                 viewer: seat, goodMask: 0, gameOver: -1, flipped: nil,
                 battles: [], eliminationOrder: [], players: players)
-            return DecodedGame(view: lobby, gameId: roster.id, seat: seat, version: version, stateBytes: stateBytes)
+            return DecodedGame(view: lobby, gameId: roster.id, seat: seat, version: version,
+                               stateBytes: stateBytes, roster: rosterPlayers)
         }
 
         // Decode the masked state through the kernel (viewer = the local seat).
@@ -102,7 +119,8 @@ public enum PackedGame {
             goodMask: raw.goodMask, gameOver: raw.gameOver, flipped: raw.flipped,
             battles: raw.battles, eliminationOrder: raw.eliminationOrder, players: named
         )
-        return DecodedGame(view: view, gameId: roster.id, seat: seat, version: version, stateBytes: stateBytes)
+        return DecodedGame(view: view, gameId: roster.id, seat: seat, version: version,
+                           stateBytes: stateBytes, roster: rosterPlayers)
     }
 
     /// Decode from the bare-hex `player_views.view` column string.

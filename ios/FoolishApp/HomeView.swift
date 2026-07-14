@@ -11,9 +11,16 @@ struct HomeView: View {
     let onStartOffline: (OfflineConfig) -> Void
     /// Called once the user is signed in and wants to quick-match online.
     let onQuickMatch: () -> Void
+    /// Called once the user is signed in and wants to join a game by code.
+    let onJoin: (String) -> Void
+
+    /// What to run after an auth sheet completes (quick-match vs join-by-code).
+    private enum OnlineIntent: Equatable { case quickMatch, join(String) }
 
     @EnvironmentObject private var auth: AuthService
     @State private var showAuth = false
+    @State private var pendingOnline: OnlineIntent?
+    @State private var joinCode = ""
     @State private var roster = EngineC.roster()
     @State private var opponentIndex = 0
     @State private var opponentCount = 1
@@ -32,7 +39,7 @@ struct HomeView: View {
             WoolBackground()
             VStack(spacing: FSpace.xl) {
                 header
-                onlineButton
+                onlineSection
                 offlineCard
                 Spacer()
                 footer
@@ -69,19 +76,55 @@ struct HomeView: View {
         #endif
     }
 
-    private var onlineButton: some View {
-        FButton(FStrings.t("play"), kind: .secondary) { handlePlay() }
-            .sheet(isPresented: $showAuth) {
-                AuthView(onSignedIn: { onQuickMatch() })
+    private var onlineSection: some View {
+        VStack(spacing: FSpace.m) {
+            FButton(FStrings.t("play"), kind: .secondary) { begin(.quickMatch) }
+            // Join by code: paste/type a game code (or the tail of a shared link).
+            HStack(spacing: FSpace.s) {
+                TextField(FStrings.t("join_code_prompt"), text: $joinCode)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .font(FType.body(15))
+                    .foregroundColor(FColor.textPrimary)
+                    .padding(.horizontal, FSpace.m)
+                    .frame(height: 44)
+                    .background(FColor.surface)
+                    .clipShape(RoundedRectangle(cornerRadius: FRadius.button, style: .continuous))
+                Button(FStrings.t("join")) {
+                    let code = joinCode.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !code.isEmpty else { return }
+                    begin(.join(code))
+                }
+                .font(FType.title(15))
+                .foregroundColor(FColor.textPrimary)
+                .padding(.horizontal, FSpace.l)
+                .frame(height: 44)
+                .background(WoodSurface(seed: 0.7, cornerRadius: FRadius.button))
+                .disabled(joinCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
+        }
+        .sheet(isPresented: $showAuth) {
+            AuthView(onSignedIn: { resolvePendingOnline() })
+        }
     }
 
-    private func handlePlay() {
+    /// Gate an online action on config + auth; run now if signed in, else prompt.
+    private func begin(_ intent: OnlineIntent) {
         guard Backend.shared.isConfigured else {
             toast = FStrings.t("ios.online_soon")   // offline build: no backend config
             return
         }
-        if auth.isSignedIn { onQuickMatch() } else { showAuth = true }
+        pendingOnline = intent
+        if auth.isSignedIn { resolvePendingOnline() } else { showAuth = true }
+    }
+
+    private func resolvePendingOnline() {
+        switch pendingOnline {
+        case .quickMatch: onQuickMatch()
+        case .join(let code): onJoin(code)
+        case .none: break
+        }
+        pendingOnline = nil
     }
 
     private var offlineCard: some View {

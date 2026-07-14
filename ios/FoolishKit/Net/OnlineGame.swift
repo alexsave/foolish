@@ -22,6 +22,9 @@ public final class OnlineGame: ObservableObject, GameSession {
     @Published public private(set) var lastReject: EngineError?
     @Published public private(set) var foolSeat: Int?
     @Published public private(set) var inFlight: Set<String> = []
+    /// The seated roster with real player_ids (lobby remove/reorder needs ids;
+    /// the masked `view` is seat-only).
+    @Published public private(set) var roster: [LobbyPlayer] = []
 
     public let gameId: String
     private let userId: UUID
@@ -29,6 +32,9 @@ public final class OnlineGame: ObservableObject, GameSession {
     /// Learned from the decoded envelope; -1 until the first row arrives.
     @Published private var seat: Int
     public var humanSeat: Int { seat }
+    /// The local player's id (roster/lobby ids are strings; match against this
+    /// instead of seat, which reorders during the lobby).
+    public var myPlayerId: String { userId.uuidString.lowercased() }
 
     private let engine = EngineC()
     private var feed: GameFeed?
@@ -70,6 +76,7 @@ public final class OnlineGame: ObservableObject, GameSession {
 
     private func apply(_ decoded: DecodedGame) {
         view = decoded.view
+        roster = decoded.roster
         seat = decoded.seat
         intentVersion = UInt32(max(0, decoded.version))
         foolSeat = decoded.view.isOver ? decoded.view.gameOver : nil
@@ -96,26 +103,42 @@ public final class OnlineGame: ObservableObject, GameSession {
     /// Disables the lobby buttons while a meta action is in flight.
     @Published public private(set) var lobbyBusy = false
 
-    private struct MetaBody: Encodable { let type: String; let game_id: String }
+    private struct MetaBody: Encodable {
+        let type: String
+        let game_id: String
+        var bot_id: String? = nil
+        var player_id: String? = nil
+        var new_order: [String]? = nil
+    }
 
-    /// Add a bot opponent (the server picks one from the roster).
-    public func addBot() { metaAction("add-bot") }
+    /// Add a bot. `botId` names a specific bot (the lobby picker); nil lets the
+    /// server pick one at random.
+    public func addBot(botId: String? = nil) { metaAction(MetaBody(type: "add-bot", game_id: gameId, bot_id: botId)) }
+
+    /// Remove a seated bot by its player_id (lobby ✕).
+    public func removeBot(_ botId: String) { metaAction(MetaBody(type: "exit", game_id: gameId, bot_id: botId)) }
+
+    /// Reorder the lobby seats (drag). Seat order sets turn order at the deal.
+    /// `new_order` must be a permutation of exactly the seated player_ids.
+    public func rearrange(newOrder: [String]) {
+        metaAction(MetaBody(type: "rearrange-players", game_id: gameId, new_order: newOrder))
+    }
 
     /// Mark ready + deal. The server deals once ≥2 players are ready; the dealt
     /// state lands on the feed and flips `isWaiting` false.
-    public func startGame() { metaAction("start") }
+    public func startGame() { metaAction(MetaBody(type: "start", game_id: gameId)) }
 
     /// Leave the lobby (removes our seat / deletes an empty game) — best effort.
-    public func leaveLobby() { metaAction("exit") }
+    public func leaveLobby() { metaAction(MetaBody(type: "exit", game_id: gameId)) }
 
-    private func metaAction(_ type: String) {
+    private func metaAction(_ body: MetaBody) {
         guard let client = Backend.shared.client, !spectator else { return }
         lobbyBusy = true
         Task {
             defer { lobbyBusy = false }
             do {
                 try await client.functions.invoke(
-                    "meta", options: FunctionInvokeOptions(method: .post, body: MetaBody(type: type, game_id: gameId)))
+                    "meta", options: FunctionInvokeOptions(method: .post, body: body))
             } catch {
                 lastReject = (error as? EngineError) ?? .unknown(-1)
             }

@@ -29,6 +29,10 @@ final class AppCoordinator: ObservableObject {
     /// A replay opened from a universal link (foolish.cards/<code>), presented
     /// over whatever is on screen (§16.C5).
     @Published var pendingReplay: PendingReplay?
+    /// A live-game code from a universal link that decoded as a game (not a
+    /// replay). RootView joins it once a user is available (prompting auth if
+    /// needed), then clears it.
+    @Published var pendingJoinCode: String?
 
     private let linkEngine = EngineC()
 
@@ -74,6 +78,22 @@ final class AppCoordinator: ObservableObject {
         }
     }
 
+    /// Join an existing online game by id/code (§16.D5): from the Home "join by
+    /// code" field or a universal link. On failure (full / already playing) fall
+    /// back to spectating so the link is never a dead end.
+    func joinOnline(gameId: String, userId: UUID) {
+        Task {
+            do {
+                let game = try await OnlineService.shared.join(gameId: gameId, userId: userId)
+                onlineGame = game
+                screen = .onlineTable
+            } catch {
+                onlineGame = OnlineService.shared.spectate(gameId: gameId, userId: userId)
+                screen = .onlineTable
+            }
+        }
+    }
+
     func goHome() {
         offlineGame = nil
         onlineGame = nil
@@ -89,8 +109,12 @@ final class AppCoordinator: ObservableObject {
         let path = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         guard !path.isEmpty, !path.hasPrefix("m/") else { return }
         Task {
+            // Same path space as the web (§16.C5): a valid replay code opens the
+            // replay viewer; anything else is treated as a live-game code to join.
             if let decoded = try? await linkEngine.replayDecode(code: path) {
                 pendingReplay = PendingReplay(replay: decoded)
+            } else {
+                pendingJoinCode = path.lowercased()   // game ids are lowercase hex
             }
         }
     }
