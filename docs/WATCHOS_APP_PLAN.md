@@ -181,8 +181,9 @@ line 11: ~11 text rows of vertical budget.
   screen with that battle pre-targeted (this quietly solves the study's
   "cover targeting" gap: ambiguous covers are resolved by entering from the
   battle you mean to cover).
-- Update model: re-render on every accepted feed sequence (§7); a subtle
-  1-second brass flash on whatever changed.
+- Update model: re-render on every fresh snapshot from the polling probe or a
+  push-triggered resync (§7); a subtle 1-second brass flash on whatever
+  changed.
 
 ### 5.2 Action screen (play)
 
@@ -226,10 +227,14 @@ pagination (swipe or the `Pl`/back affordances). No tab bar, no menus.
   watchOS 10+, bundled in the `cards.foolish.app` record, independent-capable
   flag on. New UI module `WatchUI/` (the phone's `Boards/` is not reused —
   different design language by §3; reusing it would drag the felt identity in).
-- **FoolishKit compiles for watchOS:** `Engine/` (the C bridge), `Models.swift`,
-  `Net/` (supabase-swift is URLSession-based and supports watchOS),
-  `GameSession.swift` — all UI-agnostic, as the study noted. Add a watchOS
-  destination to the FoolishKit target; CI builds both.
+- **FoolishKit compiles for watchOS — with one carve-out:** `Engine/` (the C
+  bridge), `Models.swift`, `GameSession.swift`, and `Net/`'s auth +
+  edge-function-invoke + packed-action code all reuse cleanly (supabase-swift
+  auth/functions are URLSession-based and run on watchOS). **`Net/GameFeed`
+  (Supabase Realtime, a websocket) does NOT come along** — websockets are
+  banned on watchOS (§7); the watch gets a small `WatchNet/PollingFeed`
+  implementing the same feed-facing interface via the §7 version probe. Add a
+  watchOS destination to the FoolishKit target; CI builds both.
 - **libfoolish.a gains watchOS slices** (`arm64-apple-watchos`,
   simulator slice) in the `ios-lib` Makefile target — same plain-C compile,
   minutes of work.
@@ -241,20 +246,56 @@ pagination (swipe or the `Pl`/back affordances). No tab bar, no menus.
   reduced that hand-rolled shortcuts will tempt ("just show Pickup when
   defending") — every button still comes from the kernel's legal menu.
 
-## 7. Connectivity model (online play)
+## 7. Connectivity model (online play) — and the phone-free answer
 
-- **Foreground:** the watch talks to Supabase directly through `Net/GameFeed`
-  — websocket realtime while the app is frontmost, same channels and version
-  gate as the phone (`docs/PROTOCOL.md`). watchOS transparently routes
-  networking via the paired iPhone or Wi-Fi/LTE.
-- **Not foreground:** there is no background websocket on watchOS. State
-  freshness comes from (a) push notifications (§9) and (b) on-activate resync
-  (same foreground-resync pattern as the phone, `IOS_APP_DESIGN.md` §8 D6).
-  Design every screen to render instantly from the last snapshot, then
-  refresh.
+**Can the watch play online without the phone nearby? Yes — by design.**
+watchOS routes networking transparently over three transports: the paired
+iPhone when nearby, **known Wi-Fi networks when the phone is away**, and
+**LTE on cellular models**. All of our traffic is plain HTTPS (below), which
+works identically on all three. Once auth has been handed off once (§8), the
+watch refreshes its own Supabase tokens over HTTPS and needs the phone for
+nothing. Sign-in is the only phone-required moment.
+
+**The constraint that shapes the transport: no WebSockets on watchOS.**
+Apple restricts low-level networking (including `URLSessionWebSocketTask`)
+to audio-streaming apps — third-party watch apps get HTTP only
+([TN3135: Low-level networking on watchOS](https://developer.apple.com/documentation/technotes/tn3135-low-level-networking-on-watchos),
+[forums](https://developer.apple.com/forums/thread/714796)). So Supabase
+Realtime (a websocket) **cannot run on the watch**, phone nearby or not.
+Consequence: **the watch is a polling client, not a realtime client** — which
+happens to fit the §2 thesis (turn-latency device, correspondence pace)
+perfectly:
+
+- **Actions (the write path):** unchanged — the same `action` edge-function
+  HTTPS POST the phone uses (`docs/PROTOCOL.md`). Works phone-free as-is.
+- **State freshness (the read path), while frontmost:** short-poll the
+  authoritative snapshot every **~3s while it's not your move** (and stop
+  polling entirely once it is — the state can only change again after *you*
+  act, modulo multi-actor throw-ins, so poll at ~10s then). Implement as a
+  cheap **version probe**: the client sends its last-applied `games.version`;
+  a tiny edge-function path answers "unchanged" (no body) or returns the
+  fresh per-viewer snapshot. The version field already exists on every game
+  row and response (`action/index.ts:17` wire); the probe is a ~20-line
+  addition to the `meta`/fetch path, and the phone can use it for foreground
+  resync too.
+- **Not foreground:** no polling, no sockets — freshness comes from APNs (§9)
+  and on-activate resync. Every screen renders instantly from the last
+  snapshot, then refreshes.
+- **Budget check:** polls happen only while the app is frontmost (watchOS
+  suspends it when the wrist drops, throttling this naturally). A 10-minute
+  wrist-heavy game ≈ 100–200 probe invocations; at the §2 usage pattern this
+  is noise against the Supabase quota (and Pro is assumed once money moves —
+  `ORACLE_MONETIZATION_ENGINEERING.md` §14). Revisit only if watch DAU gets
+  large enough to matter, in which case: longer poll interval, not sockets.
+- **Optional later (W5): phone-proxy fast path.** When the iPhone *is*
+  reachable and has the app open, WatchConnectivity could push feed updates
+  to the watch and pause the polling. Pure optimization — do not build it
+  until polling demonstrably annoys someone; the polling path must remain,
+  since it is the only phone-free path.
 - **Latency posture:** server-confirmed play only (no optimistic layer on the
   watch, ever — the phone's Stage C2 explicitly does not port here; the
-  in-flight token lock is the entire affordance).
+  in-flight token lock is the entire affordance). A 3s-stale table is fine on
+  a device you glance at; a wrong table is not.
 
 ## 8. Auth
 
@@ -309,7 +350,7 @@ because it's server-side.
 | **W0** | APNs turn-notification pipeline (server): edge-function hook on turn advance → APNs to iOS + watchOS; token registration in `Net/` | ~1 wk (server + phone) | phone gets a turn push in prod; watch inherits it |
 | **W1** | Target scaffolding: `WatchFoolish` in project.yml, FoolishKit watchOS destination, libfoolish watchOS slices, golden tests green on watch simulator | 2–3 d | `xcodebuild test` on watchOS simulator passes engine goldens |
 | **W2** | Offline vertical slice: token components, Action screen (Crown grid + kernel pill bar), Table screen (§5.1), quick game vs cheap bot, haptics map | 1.5–2 wk | full offline game on a real 41mm watch; every element within the §4 density budget |
-| **W3** | Online: auth handoff, game list, live play via `GameFeed`, on-activate resync, in-flight/reject UX | 1–1.5 wk | play a live prod game phone-created, watch-played; kill/relaunch recovers |
+| **W3** | Online: auth handoff, game list, the version-probe endpoint (server) + `PollingFeed`, on-activate resync, in-flight/reject UX | 1–1.5 wk | play a live prod game phone-created, watch-played **with the iPhone powered off** (known Wi-Fi); kill/relaunch recovers |
 | **W4** | Complication + notification actions (§9), always-on dimming pass, 45/49mm layout pass, screenshots, ship with the next iOS app update | ~1 wk | complication flips to "your move" within seconds of the turn (with W0 live); approved |
 
 Total: **~5–6 weeks** solo, of which W0 is shared infrastructure the phone
@@ -319,8 +360,12 @@ wants anyway.
 
 1. **Independence is one-way** (§1) — fine, intended; but never ship a
    *separate* watch-only app record.
-2. **No background websockets** — any design that assumes live updates while
-   the wrist is down is wrong; push + on-activate resync is the whole model.
+2. **No websockets at all, ever, on watchOS** (TN3135 — restricted to audio
+   apps; §7). Do not import supabase-swift's Realtime module into the watch
+   target (CI lint: `import Realtime` forbidden in `WatchFoolish`/`WatchUI`);
+   the polling probe is the only read path. Any design that assumes live
+   updates — foreground or not — is wrong; poll + push + on-activate resync
+   is the whole model.
 3. **Complication budget:** without push, WidgetKit refresh is quota-limited —
    don't promise freshness the OS won't give (§9's staleness timestamp).
 4. **WatchConnectivity is flaky by nature** (queued, eventual): the auth
