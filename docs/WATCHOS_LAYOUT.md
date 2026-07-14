@@ -152,37 +152,37 @@ chip strip + ✓ (look-zone + terminal detent) · page dots.
 
 ## 4.5 · Option G — "First person, refined" (ships)
 
-F after the owner review, plus D's notifications. The deltas:
+F's architecture, twice refined against the owner's running 40 mm simulator
+build (measurements taken from its screenshot):
 
-- **Pairs read cover-first** — the covering card sits left, a small arrow
-  points at the card it covered (`K♠ ▸ Q♠`); an open attack is a dashed slot
-  (`▢ ▸ K♣`). One reading direction everywhere.
-- **The grid breathes** — 1–2 pairs render large, 3–6 compact, 7+ pages the
-  table with a **horizontal swipe** + dots (the one gesture the crown can't
-  take, since the crown owns the hand). Covers the no-slot-cap rule
-  (`game.c:557`) without shrinking below legibility.
-- **Trump is always on screen** — the status line carries the actual flipped
-  card as a mini glyph (`6♠ ▤8 · cap 2`), decaying to a bare suit icon once
-  it's drawn. Legal: the flip is public wire state (`view.c:19-26`) and is
-  always the final draw (`game.c:321-333`). The roster shows the long form
-  ("flip: 6♠ under deck").
-- **You are in the strip** — eighth seat, gold, in rotation order; when you
-  defend, the shield sits on your gold count. No separate "You" rendering.
-- **Words became pills** — the label column is gone; one terse D-style pill
-  (ATTACK · COVER K♣ · TAKE 5 · PASS ▸ LEV · GOOD), color = verb, no icon
-  glyphs. Snipes flash **✗ SNIPED** in the pill; the board explains the rest.
-- **One card per action** — no count sheets, no multi-select. Multi-card
-  *lead* is reachable sequentially (value goes live after the first card);
-  multi-card **pass is not** (`game.c:759`) and stays web-only — the one
-  documented capability cost.
-- **Goods** — shown only as green counts in the table strip; dropped from the
-  roster as noise. (They are public wire state either way: `view.c:27-31`,
-  `player_views.ts:46`, `clientGuards.ts:153-158` — not hidden state.)
-- **Notification, trimmed** — title only ("Kat passed to you") + Open Hand /
-  Take 2 / Dismiss. Layer 0 otherwise unchanged from D (widget, complication,
-  haptic vocabulary, wrist-down pre-focus).
-- **Big hands** — past ~7 options the chip strip becomes a crown-scrolled
-  viewport with edge fades; legal-first ordering keeps ✓ near.
+- **The back chevron is immovable** — ~66 px circle, top-left; nothing else
+  lives in that corner. The clock is large, top-right.
+- **The line under the time** — the empty band below the clock carries
+  flip-card glyph · deck · discard (`6♠ ▤8 ▨7`), right-aligned as the
+  clock's column. **No capacity number**: cap is derivable — the defender's
+  shield count minus the open attacks in view. The flip glyph decays to a
+  bare suit icon once drawn (`view.c:19-26`, `game.c:321-333`).
+- **One context pill** — the only action chrome. ATTACK (gold) on a legal
+  focused card; COVER while defending; TAKE n when the focused card can't
+  cover; GOOD (green) otherwise. The crown browses the **whole hand** — the
+  pill simply doesn't offer ATTACK on dead cards. No terminal ✓ chip, no
+  boxed checkmark anywhere.
+- **Covers commit immediately when unambiguous** — if the focused card beats
+  exactly one open attack, tap = cover. Only a genuine tie opens a chooser
+  overlay: giant target cards + ✕ (top-left, same spot as the system
+  chevron). No selection state on the table itself — no gold rings, and open
+  attacks are **bare glyphs** (no red ring, no dashed slot).
+- **Table = two big pairs per swipe page** — 62 px glyphs, dots below;
+  six pairs = three dots, nine = five. No text to clip, ever.
+- **Rejection = red edge-glow + ✗ haptic** — ~600 ms, zero words; the card
+  is already back in the strip.
+- **Goods** — green counts in the strip only; the roster shows the shield
+  icon (not the word "defending") and carries names, counts, the flip, and
+  who's out.
+- **Notifications** — D0's anatomy with five-word copy ("Kat passed to you" ·
+  one fact line · Open Hand / Take 2 / Dismiss), plus the **short-look
+  glance** (icon · FOOLISH · title) for the wrist-raise moment.
+- **One card per action** — multi-card pass stays web-only (`game.c:759`).
 
 ## 5 · The other options (all kept in the HTML)
 
