@@ -18,38 +18,27 @@ enum WFont {
     static func label(_ pt: CGFloat) -> Font { .system(size: pt, weight: .semibold, design: .rounded) }
 }
 
-/// suit 0..3 = spades, hearts, clubs, diamonds (same as FoolishKit Models).
-enum Suit: Int, CaseIterable {
-    case spades = 0, hearts = 1, clubs = 2, diamonds = 3
-    var glyph: String { ["♠", "♥", "♣", "♦"][rawValue] }
-    var isRed: Bool { self == .hearts || self == .diamonds }
+/// SwiftUI color for a suit (from FoolishKit's Models.Suit) — red suits #FF453A,
+/// black suits render white on black. Presentation only, not a rule.
+extension Suit {
     var color: Color { isRed ? WColor.red : WColor.ink }
 }
 
-/// A card: value 6…14 (11=J,12=Q,13=K,14=A) in the 36-card Durak deck.
-struct Card: Identifiable, Equatable, Hashable {
-    let suit: Suit
-    let value: Int
-    var id: String { "\(suit.rawValue):\(value)" }
-    var label: String {
-        switch value { case 14: return "A"; case 13: return "K"; case 12: return "Q"; case 11: return "J"; default: return "\(value)" }
-    }
-}
-
-/// The token card — the atom of the whole watch UI. The value sits INSIDE a
-/// larger suit glyph (same center, value on top): the suit is the shape, the
-/// value is knocked into it (white on red suits, black on the white ones).
-/// Compact and iconic; used everywhere, including the flipped trump.
+/// The token card — the atom of the whole watch UI, driven by the real engine's
+/// `Card` (Models). The value sits INSIDE a larger suit glyph (same center, value
+/// on top): the suit is the shape, the value is knocked into it (white on red
+/// suits, black on the white ones). Used everywhere, including the flipped trump.
 struct TokenCard: View {
     let card: Card
     var size: CGFloat = 30
     var selected: Bool = false
 
-    private var valueColor: Color { card.suit.isRed ? WColor.ink : WColor.bg }
+    private var suit: Suit { card.suit ?? .spades }
+    private var valueColor: Color { suit.isRed ? WColor.ink : WColor.bg }
     /// Suit glyphs sit high in their line box; nudge the value onto each suit's
     /// visual center (spade/club have a stem below, so they need more lift).
     private var nudge: CGFloat {
-        switch card.suit {
+        switch suit {
         case .spades:   return -size * 0.05
         case .clubs:    return -size * 0.04
         case .hearts:   return -size * 0.01
@@ -59,11 +48,11 @@ struct TokenCard: View {
 
     var body: some View {
         ZStack {
-            Text(card.suit.glyph)
+            Text(suit.glyph)
                 .font(WFont.token(size * 1.4))
-                .foregroundStyle(card.suit.color)
-            Text(card.label)
-                .font(.system(size: size * (card.value == 10 ? 0.5 : 0.58), weight: .heavy, design: .rounded))
+                .foregroundStyle(suit.color)
+            Text(CardRank.label(card.v))
+                .font(.system(size: size * (card.v == 10 ? 0.5 : 0.58), weight: .heavy, design: .rounded))
                 .foregroundStyle(valueColor)
                 .monospacedDigit()
                 .offset(y: nudge)

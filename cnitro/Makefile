@@ -124,6 +124,7 @@ difftests: build/sim_difftest build/apply_difftest build/solver_difftest build/r
 # (src/leafbook_data.h is committed). NO -flto here — the xcframework is linked
 # by Xcode, and per-TU objects keep the archive portable across Xcode versions.
 IOS_MIN_VERSION := 15.0
+WATCHOS_MIN_VERSION := 10.0
 IOS_CAPS   := -DMAX_LOG_PAIRS=64 -DMAX_BATTLES=64 -DMAX_MOVE_CARDS=28 \
               -DMAX_LEGAL_MOVES=4096 -DCD_LEAFBOOK
 IOS_SRC    := $(CORE_SRC) ios/ios_api.c
@@ -150,13 +151,23 @@ ios-lib:
 	@mkdir -p build/ios/sim
 	lipo -create build/ios/sim-arm64/libfoolish.a build/ios/sim-x86_64/libfoolish.a \
 	     -output build/ios/sim/libfoolish.a
+	@echo "== watchOS device slice (arm64) =="
+	$(call IOS_BUILD_SLICE,arm64-apple-watchos$(WATCHOS_MIN_VERSION),watchos,build/watch/device)
+	@echo "== watchOS simulator slices (arm64 + x86_64) =="
+	$(call IOS_BUILD_SLICE,arm64-apple-watchos$(WATCHOS_MIN_VERSION)-simulator,watchsimulator,build/watch/sim-arm64)
+	$(call IOS_BUILD_SLICE,x86_64-apple-watchos$(WATCHOS_MIN_VERSION)-simulator,watchsimulator,build/watch/sim-x86_64)
+	@mkdir -p build/watch/sim
+	lipo -create build/watch/sim-arm64/libfoolish.a build/watch/sim-x86_64/libfoolish.a \
+	     -output build/watch/sim/libfoolish.a
 	@rm -rf ../ios/vendor/Foolish.xcframework
 	@mkdir -p ../ios/vendor
 	xcodebuild -create-xcframework \
-	  -library build/ios/device/libfoolish.a -headers ios/include \
-	  -library build/ios/sim/libfoolish.a    -headers ios/include \
+	  -library build/ios/device/libfoolish.a    -headers ios/include \
+	  -library build/ios/sim/libfoolish.a        -headers ios/include \
+	  -library build/watch/device/libfoolish.a   -headers ios/include \
+	  -library build/watch/sim/libfoolish.a      -headers ios/include \
 	  -output ../ios/vendor/Foolish.xcframework
-	@echo "wrote ../ios/vendor/Foolish.xcframework"
+	@echo "wrote ../ios/vendor/Foolish.xcframework (iOS + watchOS)"
 
 # Portable bridge smoke test (Linux/CI-friendly). Compiles the bridge + core
 # fresh at the iOS caps (self-consistent struct layout — never mix cap sets)

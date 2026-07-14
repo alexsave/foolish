@@ -1,79 +1,88 @@
 // WatchFoolishApp.swift — @main + hierarchical navigation
-// (docs/WATCHOS_APP_PLAN.md §5.3): Games ▸ Table ▸ Action, return via the system
-// Back chevron / left-edge swipe. Three levels, the HIG maximum. This is the
-// design-warm-up shell driving MockGame; W1/W2 swap in FoolishKit's engine.
+// (docs/WATCHOS_APP_PLAN.md §5.3): New-game ▸ Table ▸ Action in ONE NavigationStack,
+// so each pushed screen gets the SYSTEM back button — a thin brass ‹ inline with
+// the clock (not a nav-bar strip below it), the native watchOS header. Return via
+// that chevron / left-edge swipe. Every game is a REAL offline game driven by
+// FoolishKit's LocalGame over the C kernel (W1/W2); the kernel is a single global,
+// so exactly one game is live at a time.
 
 import SwiftUI
 
-/// Drill-down routes. The only navigation is this hierarchy + system Back.
-enum Route: Hashable { case table(String), action }
+/// The drill-down past the root list. Table is a push, Action a push on top.
+enum Route: Hashable { case table, action }
 
-extension View {
-    /// Replace watchOS 10's big circular back button with a small chevron chip
-    /// (like the classic ‹ back), freeing the top-left corner for game data.
-    func smallBack(_ pop: @escaping () -> Void) -> some View {
-        navigationBarBackButtonHidden(true)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button(action: pop) {
-                        Image(systemName: "chevron.backward")
-                            .font(.system(size: 17, weight: .semibold))
-                            .foregroundStyle(WColor.brass)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
+/// Owns the live game + nav path so a New-game tap can set the game BEFORE the
+/// push (no nil-race when the destination for `.table` is first evaluated).
+@MainActor final class Nav: ObservableObject {
+    @Published var path: [Route] = []
+    @Published var game: WatchGame?
+
+    func start(_ players: Int) {
+        game = WatchGame(players: players, botStrategy: WatchGame.defaultStrategy)
+        path = [.table]
     }
 }
 
 @main
 struct WatchFoolishApp: App {
-    @StateObject private var game = MockGame()
-    @State private var path: [Route] = []
-    @State private var showOver = false
+    @StateObject private var nav = Nav()
 
     var body: some Scene {
         WindowGroup {
-            NavigationStack(path: $path) {
-                GamesListView(game: game)
+            NavigationStack(path: $nav.path) {
+                GamesListView(onNew: nav.start)
                     .navigationDestination(for: Route.self) { route in
                         switch route {
-                        case .table(let id):
-                            TableScreen(game: game, gameId: id, onPlay: { path.append(.action) })
-                                .navigationTitle("")
-                                .smallBack { if !path.isEmpty { path.removeLast() } }
+                        case .table:
+                            if let g = nav.game {
+                                TableContainer(game: g,
+                                               onPlay: { nav.path.append(.action) },
+                                               onRematch: { nav.path = [.table] })
+                            }
                         case .action:
-                            ActionScreen(game: game)
-                                .navigationTitle("")
-                                .smallBack { if !path.isEmpty { path.removeLast() } }
+                            if let g = nav.game {
+                                ActionScreen(game: g).navigationTitle("")
+                            }
                         }
                     }
             }
-            .tint(WColor.brass)
+            .tint(WColor.brass)          // tints the system back chevron brass
             .preferredColorScheme(.dark)
-            // The fool reveal is reached in-flow when a game resolves (§4b).
-            .onChange(of: game.foolName) { showOver = $0 != nil }
-            .fullScreenCover(isPresented: $showOver) {
-                GameOverScreen(foolName: game.foolName ?? "Boris", onRematch: {
-                    game.rematch(); showOver = false; path = []
-                })
-            }
             .onAppear(perform: applyLaunchScreen)
         }
     }
 
-    /// `-table` / `-action` / `-over` open directly on that screen so each can be
-    /// inspected without hand-tapping through the flow. Default: Games.
+    /// `-table`/`-bot` open a heads-up game, `-stress` the 8-seat ring, and the
+    /// `-action*` variants drill straight to the play screen for inspection.
     private func applyLaunchScreen() {
         let args = ProcessInfo.processInfo.arguments
-        if args.contains("-table") { path = [.table("g1")] }
-        else if args.contains("-defend") { path = [.table("g2")] }   // you defend
-        else if args.contains("-attack") { path = [.table("bot")] }  // empty table
-        else if args.contains("-stress") { path = [.table("g8")] }   // 8-seat ring
-        else if args.contains("-bot") { path = [.table("bot")] }     // real bot game
-        else if args.contains("-botplay") { path = [.table("bot"), .action] }
-        else if args.contains("-action8") { path = [.table("g8"), .action] }
-        else if args.contains("-action") { path = [.table("g1"), .action] }
-        else if args.contains("-over") { game.foolName = "Boris"; showOver = true }
+        if args.contains("-stress") || args.contains("-action8") { nav.start(8) }
+        else if args.contains("-table") || args.contains("-bot") || args.contains("-botplay")
+                    || args.contains("-defend") || args.contains("-attack") || args.contains("-action") { nav.start(2) }
+        else { return }
+        if args.contains("-action") || args.contains("-action8") || args.contains("-botplay") { nav.path.append(.action) }
+    }
+}
+
+/// Wraps the table and owns the fool-reveal cover. It observes the game (the App
+/// root can't see the wrapped object's own publishes), so `foolName` becoming
+/// non-nil presents. The system supplies the back button — no custom chrome here.
+private struct TableContainer: View {
+    @ObservedObject var game: WatchGame
+    let onPlay: () -> Void
+    let onRematch: () -> Void
+    @State private var showOver = false
+
+    var body: some View {
+        TableScreen(game: game, onPlay: onPlay)
+            .navigationTitle(game.turnText)      // the title line beside the clock
+            .onChange(of: game.foolName) { showOver = $0 != nil }
+            .fullScreenCover(isPresented: $showOver) {
+                GameOverScreen(foolName: game.foolName ?? "Bot") {
+                    game.rematch()
+                    showOver = false
+                    onRematch()
+                }
+            }
     }
 }

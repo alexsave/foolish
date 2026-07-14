@@ -2,13 +2,13 @@
 // grid of your hand; the CROWN moves the selection through the cards (it does
 // not scroll), and a tap selects too. The bottom pill(s) are the kernel's legal
 // menu for the current selection — nothing else. Index −1 = nothing selected
-// (the defender's Pickup / the attacker's Done rest state).
+// (the defender's Pickup / the attacker's Good rest state).
 
 import SwiftUI
 import WatchKit
 
 struct ActionScreen: View {
-    @ObservedObject var game: MockGame
+    @ObservedObject var game: WatchGame
 
     @State private var crown: Double = -1
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 6), count: 4)
@@ -45,26 +45,22 @@ struct ActionScreen: View {
 
     private var pillBar: some View {
         HStack(spacing: 6) {
-            ForEach(Array(game.legalMoves.enumerated()), id: \.offset) { _, move in
+            ForEach(game.pills) { pill in
                 Button {
-                    game.play(move)
+                    game.play(pill.move)
                     crown = -1
                     WKInterfaceDevice.current().play(.click)
                 } label: {
-                    Text(move.label)
+                    Text(pill.label)
                         .font(WFont.label(15))
                         .lineLimit(1).minimumScaleFactor(0.7)
                         .frame(maxWidth: .infinity, minHeight: 34)
                 }
-                .buttonStyle(LongPillStyle(primary: isPrimary(move)))
+                .buttonStyle(LongPillStyle(primary: pill.isPrimary))
             }
         }
         .padding(.horizontal, 8)
         .padding(.bottom, 3)
-    }
-
-    private func isPrimary(_ move: WMove) -> Bool {
-        switch move { case .pass: return false; default: return true }
     }
 }
 

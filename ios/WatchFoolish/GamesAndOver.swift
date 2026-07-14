@@ -1,45 +1,41 @@
-// GamesAndOver.swift — the root Games list (§5.3) and the fool-reveal screen
-// (§4b). Games rows follow the Weather-forecast grammar (§3.1 cue 5): opponent
-// left, right-aligned state glyph + hand count, "HOD!" (your move) in brass.
+// GamesAndOver.swift — the root New-game list (§5.3) and the fool-reveal screen
+// (§4b). The C kernel is a single global game, so the root is a menu of table
+// sizes; picking one deals a REAL offline game vs the C bots.
 
 import SwiftUI
 
 struct GamesListView: View {
-    @ObservedObject var game: MockGame
+    /// player count (you + bots) for the game to deal.
+    let onNew: (Int) -> Void
+
+    private let options: [(label: String, players: Int, sub: String)] = [
+        ("Heads-up",   2, "you + 1 bot"),
+        ("Four-hand",  4, "you + 3 bots"),
+        ("Full table", 8, "you + 7 bots"),
+    ]
 
     var body: some View {
         List {
-            ForEach(game.games) { g in
-                NavigationLink(value: Route.table(g.id)) {
-                    HStack(spacing: 6) {
-                        Text(g.opponent).font(WFont.label(17)).foregroundStyle(WColor.ink)
-                        Spacer()
-                        if g.yourTurn {
-                            Text("HOD!").font(WFont.token(13)).foregroundStyle(WColor.brass)
-                        } else {
-                            Text("wait").font(WFont.label(12)).foregroundStyle(WColor.dim)
+            ForEach(options, id: \.players) { o in
+                Button { onNew(o.players) } label: {
+                    HStack(spacing: 8) {
+                        Text("\(o.players)").font(WFont.token(18)).foregroundStyle(WColor.brass)
+                            .frame(minWidth: 18)
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text(o.label).font(WFont.label(16)).foregroundStyle(WColor.ink)
+                            Text(o.sub).font(WFont.label(11)).foregroundStyle(WColor.dim)
                         }
-                        Text("\(g.handCount)").font(WFont.token(15)).foregroundStyle(WColor.dim)
-                            .frame(minWidth: 16, alignment: .trailing)
+                        Spacer()
+                        SwordIcon(size: 13, color: WColor.dim).frame(width: 20, height: 20)
                     }
                     .padding(.vertical, 2)
                 }
-                .listRowBackground(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(g.yourTurn ? WColor.brass.opacity(0.14) : Color(white: 0.08))
-                )
+                .buttonStyle(.plain)
+                .listRowBackground(RoundedRectangle(cornerRadius: 10).fill(Color(white: 0.08)))
             }
-
-            NavigationLink(value: Route.table("bot")) {
-                HStack(spacing: 6) {
-                    Image(systemName: "plus.circle.fill").foregroundStyle(WColor.dim)
-                    Text("Bot game").font(WFont.label(16)).foregroundStyle(WColor.ink)
-                }
-            }
-            .listRowBackground(RoundedRectangle(cornerRadius: 10).fill(Color(white: 0.08)))
         }
         .listStyle(.carousel)
-        .navigationTitle("Games")
+        .navigationTitle("New game")
         .background(WColor.bg)
     }
 }

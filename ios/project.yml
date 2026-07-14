@@ -100,15 +100,24 @@ targets:
         # Enabling it now would forbid app-only APIs the app legitimately uses.
 
   # ---- watchOS app (docs/WATCHOS_APP_PLAN.md) ----------------------------
-  # Standalone design-warm-up shell: its own reduced design language (§3), no
-  # FoolishKit dependency yet — the engine/Net wire in at W1/W2. Watch-only /
-  # independent-capable (WKWatchOnly), so the sim runs it without a companion.
+  # Own reduced design language (§3), driving REAL offline games through the C
+  # kernel: reuses FoolishKit's Engine/ (EngineC, Models, GameSession, LocalGame)
+  # and links the watchOS slice of Foolish.xcframework — same rules/bots as the
+  # phone (W1/W2). Net/ stays out (no Supabase/websockets on the watch, §7).
+  # Watch-only / independent-capable (WKWatchOnly).
   WatchFoolish:
     type: application
     platform: watchOS
     deploymentTarget: "10.0"
     sources:
       - path: WatchFoolish
+      - path: FoolishKit/Engine
+      # LocalGame.makeShareURL persists finished games here; Foundation-only, so
+      # it compiles into the watch module without pulling in the rest of Net/.
+      - path: FoolishKit/Net/ReplayStore.swift
+    dependencies:
+      - framework: vendor/Foolish.xcframework
+        embed: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: cards.foolish.watch
