@@ -12,7 +12,11 @@ import Foundation
 import SwiftUI
 
 @MainActor
-public final class LocalGame: ObservableObject {
+public final class LocalGame: ObservableObject, GameSession {
+
+    /// Offline moves apply synchronously against the local kernel — there is no
+    /// in-flight state (that's an online-only affordance, §8.2).
+    public var inFlight: Set<String> { [] }
 
     /// The human seat's masked view of the table. nil until the first refresh.
     @Published public private(set) var view: GameView?

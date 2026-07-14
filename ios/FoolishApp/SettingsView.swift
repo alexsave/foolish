@@ -9,9 +9,13 @@ import FoolishKit
 
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var auth: AuthService
     @AppStorage("ios.haptics") private var hapticsOn = true
     @State private var language = FStrings.override
     @State private var flagRefresh = false
+    @State private var confirmDelete = false
+    @State private var deleting = false
+    @State private var accountError: String?
 
     var body: some View {
         NavigationStack {
@@ -57,17 +61,43 @@ struct SettingsView: View {
 
     private var accountSection: some View {
         Section("Account") {
-            // Auth lands in M-D; these are the reserved slots (§9 email/verify/
-            // reset stubbed from day one). Disabled until wired — never faked.
-            Text("Guest").foregroundColor(FColor.textDim)
-            Button("Sign out") {}.disabled(true).foregroundColor(FColor.textDim)
-            // 5.1.1(v): in-app deletion is mandatory. Calls the deletion edge
-            // function once it exists (§16.E3) — blocks submission until then.
-            Button(role: .destructive) {} label: { Text("Delete account") }
-                .disabled(true)
-            Text("Account features arrive with online play.")
-                .font(FType.body(12)).foregroundColor(FColor.textDim)
+            if let name = auth.username, auth.isSignedIn {
+                HStack { Text("Signed in as"); Spacer(); Text(name).foregroundColor(FColor.textDim) }
+                Button("Sign out") { Task { await auth.signOut() } }
+                // 5.1.1(v): in-app account deletion is mandatory. Calls the
+                // delete-account edge function (this repo's supabase/functions).
+                Button(role: .destructive) { confirmDelete = true } label: {
+                    HStack { Text("Delete account"); if deleting { Spacer(); ProgressView() } }
+                }
+                .disabled(deleting)
+            } else {
+                Text("Guest").foregroundColor(FColor.textDim)
+                Text(Backend.shared.isConfigured
+                     ? "Sign in from the Play screen to use an account."
+                     : "Account features arrive with online play.")
+                    .font(FType.body(12)).foregroundColor(FColor.textDim)
+            }
+            if let accountError {
+                Text(accountError).font(FType.body(12)).foregroundColor(FColor.accent)
+            }
         }
+        .confirmationDialog("Delete your account? This is permanent.",
+                            isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button("Delete account", role: .destructive) { Task { await deleteAccount() } }
+            Button(FStrings.t("cancel"), role: .cancel) {}
+        }
+    }
+
+    private func deleteAccount() async {
+        deleting = true
+        accountError = nil
+        do {
+            try await AccountService(auth: auth).deleteAccount()
+            dismiss()
+        } catch {
+            accountError = error.localizedDescription
+        }
+        deleting = false
     }
 
     private var aboutSection: some View {

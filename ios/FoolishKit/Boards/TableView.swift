@@ -10,8 +10,8 @@
 
 import SwiftUI
 
-public struct TableView: View {
-    @ObservedObject var game: LocalGame
+public struct TableView<Session: GameSession>: View {
+    @ObservedObject var game: Session
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var selection: Set<String> = []
     @State private var toast: String?
@@ -19,7 +19,7 @@ public struct TableView: View {
     /// Called when the local player asks to leave a live game (confirmed upstream).
     public let onLeave: () -> Void
 
-    public init(game: LocalGame, onLeave: @escaping () -> Void) {
+    public init(game: Session, onLeave: @escaping () -> Void) {
         self.game = game
         self.onLeave = onLeave
     }
@@ -123,7 +123,7 @@ public struct TableView: View {
         return FHandFan(
             cards: hand,
             trumpSuit: view.trumpSuit,
-            disabled: [],
+            disabled: game.inFlight,          // Stage C1 in-flight lock (§8.2)
             selection: $selection,
             onTap: { card in tapCard(card, view) }
         )

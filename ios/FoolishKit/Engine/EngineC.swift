@@ -116,6 +116,30 @@ public actor EngineC {
         return String(decoding: d, as: UTF8.self)
     }
 
+    // MARK: online packed-view decode (§16.D4)
+
+    /// Decode a server packed masked-view blob (player_views / spectator_views
+    /// wire) into a GameView through the shared kernel — the same decode offline
+    /// play uses, never a reimplemented wire. `viewer` is the local seat, or
+    /// -1 for the spectator feed.
+    public func viewFromPacked(_ bytes: Data, viewer: Int) throws -> GameView {
+        let data = try bytes.withUnsafeBytes { raw -> Data in
+            let base = raw.bindMemory(to: UInt8.self).baseAddress
+            return try json { fio_view_from_packed_json(base, Int32(bytes.count), Int32(viewer), $0, $1) }
+        }
+        return try JSONDecoder().decode(GameView.self, from: data)
+    }
+
+    /// Legal moves for `seat` computed from a server packed masked-view blob —
+    /// online enable-states, kernel-computed (§3).
+    public func legalFromPacked(_ bytes: Data, seat: Int) throws -> [Move] {
+        let data = try bytes.withUnsafeBytes { raw -> Data in
+            let base = raw.bindMemory(to: UInt8.self).baseAddress
+            return try json { fio_legal_from_packed_json(base, Int32(bytes.count), Int32(seat), $0, $1) }
+        }
+        return try JSONDecoder().decode([Move].self, from: data)
+    }
+
     // MARK: replays (§7.3)
 
     /// Encode the CURRENT game's history to a shareable base32 code.

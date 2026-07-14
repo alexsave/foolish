@@ -216,16 +216,20 @@ static void emit_move_obj(J *j, const LegalMove *m) {
     j_putc(j, '}');
 }
 
-int fio_legal_moves_json(int seat, char *out, int cap) {
-    if (!g_has_game) return FIO_ENOGAME;
-    if (seat < 0 || seat >= g_game.num_players) return FIO_EBADARG;
+static int emit_legal_of(const Game *g, int seat, char *out, int cap) {
     LegalMoves moves;
-    calculate_legal_moves(&g_game, seat, &moves);
+    calculate_legal_moves(g, seat, &moves);
     J j; j_init(&j, out, cap);
     j_putc(&j, '[');
     for (int i = 0; i < moves.n; i++) { if (i) j_putc(&j, ','); emit_move_obj(&j, &moves.moves[i]); }
     j_putc(&j, ']');
     return j_finish(&j);
+}
+
+int fio_legal_moves_json(int seat, char *out, int cap) {
+    if (!g_has_game) return FIO_ENOGAME;
+    if (seat < 0 || seat >= g_game.num_players) return FIO_EBADARG;
+    return emit_legal_of(&g_game, seat, out, cap);
 }
 
 // ---------- a tiny JSON move parser ---------------------------------------
@@ -390,6 +394,20 @@ int fio_view_from_packed_json(const uint8_t *buf, int len, int viewer, char *out
     if (tmp.num_players < 2 || tmp.num_players > MAX_PLAYERS) return FIO_EPARSE;
     if (viewer != VIEW_SPECTATOR && (viewer < 0 || viewer >= tmp.num_players)) return FIO_EBADARG;
     return emit_state_of(&tmp, viewer, out, cap);
+}
+
+// Legal moves for `seat` computed from a SERVER packed masked-view blob, so
+// online enable-states are kernel-driven like offline (§3). My own hand and the
+// table are real in my masked view — all that MY legal moves depend on — so the
+// kernel enumerates them correctly even though other seats are counts-only.
+int fio_legal_from_packed_json(const uint8_t *buf, int len, int seat, char *out, int cap) {
+    if (!buf || len <= 0) return FIO_EBADARG;
+    static Game tmp;
+    memset(&tmp, 0, sizeof(tmp));
+    state_get(&tmp, buf, /*masked=*/1);
+    if (tmp.num_players < 2 || tmp.num_players > MAX_PLAYERS) return FIO_EPARSE;
+    if (seat < 0 || seat >= tmp.num_players) return FIO_EBADARG;
+    return emit_legal_of(&tmp, seat, out, cap);
 }
 
 int fio_actor_mask(void) {

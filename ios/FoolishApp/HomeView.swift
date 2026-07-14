@@ -9,7 +9,11 @@ import FoolishKit
 
 struct HomeView: View {
     let onStartOffline: (OfflineConfig) -> Void
+    /// Called once the user is signed in and wants to quick-match online.
+    let onQuickMatch: () -> Void
 
+    @EnvironmentObject private var auth: AuthService
+    @State private var showAuth = false
     @State private var roster = EngineC.roster()
     @State private var opponentIndex = 0
     @State private var opponentCount = 1
@@ -66,9 +70,18 @@ struct HomeView: View {
     }
 
     private var onlineButton: some View {
-        FButton(FStrings.t("play"), kind: .secondary) {
-            toast = FStrings.t("ios.online_soon")   // wired in Milestone D
+        FButton(FStrings.t("play"), kind: .secondary) { handlePlay() }
+            .sheet(isPresented: $showAuth) {
+                AuthView(onSignedIn: { onQuickMatch() })
+            }
+    }
+
+    private func handlePlay() {
+        guard Backend.shared.isConfigured else {
+            toast = FStrings.t("ios.online_soon")   // offline build: no backend config
+            return
         }
+        if auth.isSignedIn { onQuickMatch() } else { showAuth = true }
     }
 
     private var offlineCard: some View {

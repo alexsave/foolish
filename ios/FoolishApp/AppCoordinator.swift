@@ -20,10 +20,12 @@ public struct OfflineConfig: Equatable {
 
 @MainActor
 final class AppCoordinator: ObservableObject {
-    enum Screen: Equatable { case home, table }
+    enum Screen: Equatable { case home, table, onlineTable }
 
     @Published var screen: Screen = .home
     @Published private(set) var offlineGame: LocalGame?
+    @Published private(set) var onlineGame: OnlineGame?
+    @Published var onlineError: String?
     /// A replay opened from a universal link (foolish.cards/<code>), presented
     /// over whatever is on screen (§16.C5).
     @Published var pendingReplay: PendingReplay?
@@ -47,8 +49,23 @@ final class AppCoordinator: ObservableObject {
 
     func rematch(_ config: OfflineConfig) { startOffline(config) }
 
+    /// Quick-match online (§16.D5). Requires a signed-in user; the caller gates
+    /// on auth first. Surfaces the create/seam error rather than failing silently.
+    func startOnline(userId: UUID) {
+        Task {
+            do {
+                let game = try await OnlineService.shared.quickMatch(userId: userId)
+                onlineGame = game
+                screen = .onlineTable
+            } catch {
+                onlineError = error.localizedDescription
+            }
+        }
+    }
+
     func goHome() {
         offlineGame = nil
+        onlineGame = nil
         screen = .home
     }
 

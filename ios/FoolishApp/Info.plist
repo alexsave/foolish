@@ -30,6 +30,12 @@
 	<!-- Standard HTTPS only; no non-exempt encryption (§11). -->
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<!-- Backend config, substituted from Config/*.xcconfig at build (§16.D1).
+	     Blank in v1 offline builds; set for online play. -->
+	<key>SupabaseURL</key>
+	<string>$(SUPABASE_URL)</string>
+	<key>SupabaseKey</key>
+	<string>$(SUPABASE_KEY)</string>
 	<!-- Dark-first identity (§5.1): the app forces its own dark palette. -->
 	<key>UIUserInterfaceStyle</key>
 	<string>Dark</string>

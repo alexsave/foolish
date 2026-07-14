@@ -84,6 +84,8 @@ targets:
       # The C engine, built by `make ios-lib` in ../cnitro. Static (embed:false).
       - framework: vendor/Foolish.xcframework
         embed: false
+      # Online play (§16.D): auth, edge functions, realtime.
+      - package: Supabase
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: cards.foolish.kit

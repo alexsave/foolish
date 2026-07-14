@@ -89,6 +89,17 @@ int main(void) {
         if (strcmp(a, b) != 0) { printf("FAIL %s: ref=%s dec=%s\n", scalars[i], a, b); return 1; }
     }
     printf("packed-view decode matches offline decode (hand + scalars)\n");
+
+    // Legal moves from the packed view must match the live-game legal moves for
+    // the same seat (online enable-states are kernel-driven, §3).
+    static char lref[1 << 16], lpk[1 << 16];
+    if (fio_legal_moves_json(0, lref, sizeof(lref)) < 0) { printf("FAIL legal ref\n"); return 1; }
+    if (fio_legal_from_packed_json(packed, plen, 0, lpk, sizeof(lpk)) < 0) { printf("FAIL legal packed\n"); return 1; }
+    if (strcmp(lref, lpk) != 0) {
+        printf("FAIL legal mismatch\n ref=%.200s\n pk=%.200s\n", lref, lpk); return 1;
+    }
+    printf("packed-view legal moves match offline (%zu bytes)\n", strlen(lref));
+
     printf("VIEW TEST OK\n");
     return 0;
 }

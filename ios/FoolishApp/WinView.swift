@@ -7,8 +7,8 @@ import SwiftUI
 import UIKit
 import FoolishKit
 
-struct WinView: View {
-    @ObservedObject var game: LocalGame
+struct WinView<Session: GameSession>: View {
+    @ObservedObject var game: Session
     let foolSeat: Int
     let humanSeat: Int
     let onRematch: () -> Void

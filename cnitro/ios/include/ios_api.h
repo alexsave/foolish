@@ -79,6 +79,10 @@ int fio_public_state_json(char *out, int cap);
 // or -1 (VIEW_SPECTATOR) for the public feed. Does not touch the current game.
 int fio_view_from_packed_json(const uint8_t *buf, int len, int viewer, char *out, int cap);
 
+// Legal moves for `seat` from a server packed masked-view blob — online
+// enable-states, kernel-computed (§3). `seat` must be the local player's seat.
+int fio_legal_from_packed_json(const uint8_t *buf, int len, int seat, char *out, int cap);
+
 // Legal moves available to `seat` right now, as a JSON array. Empty array []
 // when the seat has no pending action.
 int fio_legal_moves_json(int seat, char *out, int cap);
