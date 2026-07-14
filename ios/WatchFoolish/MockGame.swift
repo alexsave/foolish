@@ -116,10 +116,10 @@ final class MockGame: ObservableObject {
         case "g8":   // 8-seat stress: 7 opponents on the ring, several battles
             opponentName = "Table"
             opponents = [
-                Opponent(id: 0, name: "A", handCount: 6), Opponent(id: 1, name: "B", handCount: 3),
-                Opponent(id: 2, name: "C", handCount: 2), Opponent(id: 3, name: "D", handCount: 8),
-                Opponent(id: 4, name: "E", handCount: 9), Opponent(id: 5, name: "F", handCount: 1, isOut: true),
-                Opponent(id: 6, name: "G", handCount: 6),
+                Opponent(id: 0, name: "Sveta", handCount: 6), Opponent(id: 1, name: "Boris", handCount: 3),
+                Opponent(id: 2, name: "Katya", handCount: 2), Opponent(id: 3, name: "Dima", handCount: 8),
+                Opponent(id: 4, name: "Lena", handCount: 9), Opponent(id: 5, name: "Max", handCount: 1, isOut: true),
+                Opponent(id: 6, name: "Nina", handCount: 6),
             ]
             attackerSeat = -1; defenderSeat = 3      // seat D defends; you (and others) attack
             trump = Card(suit: .hearts, value: 6)

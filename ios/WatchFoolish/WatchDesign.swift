@@ -50,10 +50,10 @@ struct TokenCard: View {
     /// visual center (spade/club have a stem below, so they need more lift).
     private var nudge: CGFloat {
         switch card.suit {
-        case .spades:   return -size * 0.11
-        case .clubs:    return -size * 0.09
-        case .hearts:   return -size * 0.06
-        case .diamonds: return -size * 0.05
+        case .spades:   return -size * 0.05
+        case .clubs:    return -size * 0.04
+        case .hearts:   return -size * 0.01
+        case .diamonds: return  size * 0.00
         }
     }
 
