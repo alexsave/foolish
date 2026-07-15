@@ -45,7 +45,8 @@ CORE_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/replay_steps.
             src/distilled_strategy.c src/semtex_strategy.c \
             src/octogen_strategy.c src/torpex_strategy.c \
             src/torpex_value.c src/novichok_strategy.c \
-            src/bot_knobs.c src/bot_roster.c src/bot_drive.c
+            src/bot_knobs.c src/bot_roster.c src/bot_drive.c \
+            src/sha256.c src/msg_wire.c
 CORE_OBJ := $(CORE_SRC:src/%.c=build/%.o)
 
 .PHONY: all clean tests print-core
@@ -103,8 +104,13 @@ build/replay_difftest: tests/replay_difftest.c $(CORE_OBJ)
 # mid-game + size (docs/IMESSAGE_GAME_DESIGN.md §16 option 3).
 build/replay_v6_test: tests/replay_v6_test.c $(CORE_OBJ)
 	$(CC) $(CFLAGS) tests/replay_v6_test.c $(CORE_OBJ) -o $@ $(LDFLAGS)
-difftests: build/sim_difftest build/apply_difftest build/solver_difftest build/replay_difftest build/replay_v6_test
+# FMSG v1 envelope (the iMessage payload): round-trip, replay fidelity, tamper
+# matrix, size guardrail (docs/IMESSAGE_GAME_DESIGN.md §4/§7, src/msg_wire.h).
+build/msg_wire_test: tests/msg_wire_test.c $(CORE_OBJ)
+	$(CC) $(CFLAGS) tests/msg_wire_test.c $(CORE_OBJ) -o $@ $(LDFLAGS)
+difftests: build/sim_difftest build/apply_difftest build/msg_wire_test build/solver_difftest build/replay_difftest build/replay_v6_test
 	./build/sim_difftest 4 1000 && ./build/apply_difftest 4 200 && \
+	./build/msg_wire_test 20 && \
 	./build/solver_difftest 2 40 "" 200000 && \
 	./build/solver_difftest 3 40 "" 200000 && \
 	./build/solver_difftest 4 40 "" 200000 && \
@@ -533,7 +539,7 @@ WASM_RULES_FLAGS := $(filter-out -DMAX_LEGAL_MOVES=4096,$(WASM_FLAGS)) \
 # Blanket header dependency, same rationale as the native objects: a header
 # edit must rebuild BOTH wasm modules or they ship divergent kernels.
 WASM_RULES_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/view.c src/awire.c \
-                  src/evwire.c wasm/wasm_api.c
+                  src/evwire.c src/sha256.c src/msg_wire.c wasm/wasm_api.c
 
 # Built from per-file OBJECTS (not one single-step `clang *.c -o` invocation),
 # for the same reason bots is: single-step clang emits NO function-name section

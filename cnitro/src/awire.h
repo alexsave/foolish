@@ -37,4 +37,17 @@ typedef struct {
 // (bad kind, n out of range, or length mismatch). Never reads past len.
 int awire_decode(const unsigned char *buf, int len, AwireAction *out);
 
+// Byte length of the frame at the head of `buf`, or 0 if the head is malformed
+// or the frame would run past `len`. A frame is self-delimiting given its kind
+// and n, so this lets a CONTAINER walk a stream of concatenated frames with no
+// per-frame length prefix — what the iMessage action chain does (msg_wire.h).
+// awire_decode is the exact-length form of the same check.
+int awire_frame_len(const unsigned char *buf, int len);
+
+// Serializes `a` into `buf` (cap bytes). Returns bytes written, or 0 if the
+// action is malformed or does not fit. Inverse of awire_decode: the encoder the
+// chain container needs, since only a decoder existed while the browser was the
+// only producer.
+int awire_encode(const AwireAction *a, unsigned char *buf, int cap);
+
 #endif
