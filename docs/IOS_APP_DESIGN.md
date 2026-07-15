@@ -997,7 +997,27 @@ against a staging Supabase project. `docs/PROTOCOL.md` §9 lists it.
 - `game_snapshots.extras` replay-name blob is not anonymized on deletion
   (documented in the migration) — needs replay re-encoding.
 
-### 17.8 watchOS (designed, parked)
+### 17.8 Phone layout, naming, and consolidation studies (2026-07-15)
+
+Four companion docs landed after this section was last updated; where they
+conflict with the body above, they win:
+
+- **`docs/IOS_PHONE_LAYOUT.md` + `docs/ios-phone-layout.html`** — the SE
+  8-player table study. Confirms §16.B3's banded skeleton, fixes its numbers
+  (opponent *arc* with zigzag at 6+ seats), and reverses one §5 decision:
+  the table wears the website's wool/wood/fern materials, not flat felt.
+- **`docs/IOS_BOT_NAMING.md`** — iOS-only display mapping of the explosive
+  bot names to Russian cities (octogen → Moscow), localized (en/ru/ko now,
+  verified exonym table for later locales). Also fixes the raw-`%` name bug
+  on the online table in passing.
+- **`docs/IMESSAGE_GAME_DESIGN.md` §20** — the extension's updated
+  implementation handoff (most of its M1–M2 fell out of this app's build;
+  seed is 32 bytes; format 6 shipped as the *other* design).
+- **`docs/C_CORE_CONSOLIDATION.md`** — before writing `BoardDiff.swift`
+  (§16.B4), read this: the plan is to consume kernel-emitted events instead
+  (action A1), and to share the bot-cycle/pacing in C (action A2).
+
+### 17.9 watchOS (designed, parked)
 
 The watch client's design study is complete and merged (#96): final layout is
 Option H, implementor handoff in `docs/WATCHOS_SPEC.md`, interactive mockups in
