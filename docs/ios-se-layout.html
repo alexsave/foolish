@@ -1,0 +1,801 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Foolish on the iPhone SE — 8 players on a 375×667 stage</title>
+<style>
+/* =====================================================================
+   Page chrome: same Soviet-poster system as docs/watchos-layout.html.
+   The PHONE SCREENS inside the bezels are NOT page-themed: they render the
+   app's own "Gosizdat Card Table" tokens (ios/FoolishKit/DesignSystem/
+   Tokens.swift): felt #14231C, bone #F4EFE6, red #C82B24, brass #D8B24A.
+   ===================================================================== */
+:root{
+  --ink:#0f0d0b; --paper:#F5E6C8; --paper2:#EDDCB9; --red:#B32929;
+  --gold:#E79743; --green:#5A8F3E; --line:#c9b58a; --mut:#6b5d43;
+  --disp:'Oswald','Bebas Neue','Arial Narrow','Helvetica Neue Condensed',Impact,sans-serif;
+  --body:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+  --mono:ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+  /* SE 4.7" panel: 375pt across 58.4mm -> 1pt = 0.1557mm; css px = 0.2646mm
+     at 96dpi -> real-size factor 0.588. --cal calibrates the monitor. */
+  --cal:1; --zoom:0.66; --zk:calc(var(--cal) * var(--zoom));
+}
+@media (prefers-color-scheme: dark){
+  :root{ --ink:#EDDCB9; --paper:#171310; --paper2:#211b15; --line:#463a28;
+         --mut:#a08d67; --gold:#d98f3f; }
+}
+:root[data-theme="dark"]{ --ink:#EDDCB9; --paper:#171310; --paper2:#211b15;
+  --line:#463a28; --mut:#a08d67; --gold:#d98f3f; }
+:root[data-theme="light"]{ --ink:#0f0d0b; --paper:#F5E6C8; --paper2:#EDDCB9;
+  --line:#c9b58a; --mut:#6b5d43; --gold:#E79743; }
+
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.55 var(--body)}
+main{max-width:1120px;margin:0 auto;padding:0 20px 90px}
+h1,h2,h3{font-family:var(--disp);font-weight:600;letter-spacing:.5px;text-wrap:balance}
+code,.cite{font-family:var(--mono);font-size:.82em;background:var(--paper2);
+  padding:1px 5px;border:1px solid var(--line)}
+a{color:var(--red)} :root[data-theme="dark"] a{color:var(--gold)}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]) a{color:var(--gold)} }
+p{max-width:74ch}
+
+header.mast{border-bottom:6px solid var(--red);padding:34px 0 18px;margin-bottom:22px}
+.kicker{font-family:var(--disp);text-transform:uppercase;letter-spacing:3px;
+  font-size:13px;color:var(--red);font-weight:600}
+header.mast h1{font-size:clamp(32px,5.6vw,54px);line-height:1.02;margin:8px 0 10px;
+  text-transform:uppercase}
+header.mast .sub{color:var(--mut);max-width:78ch}
+
+section{margin-top:64px}
+h2{font-size:clamp(24px,3.4vw,34px);text-transform:uppercase;margin:0 0 6px;
+  padding-left:14px;border-left:10px solid var(--red)}
+h2 .tag{font-size:14px;letter-spacing:2px;color:var(--gold);margin-left:10px}
+.lede{color:var(--mut);margin-top:2px;max-width:78ch}
+
+.controls{position:sticky;top:0;z-index:50;background:var(--paper);
+  border:2px solid var(--ink);box-shadow:5px 5px 0 var(--red);
+  display:flex;flex-wrap:wrap;gap:10px 22px;align-items:center;
+  padding:10px 14px;margin:18px 0 8px}
+.controls .lab{font-family:var(--disp);text-transform:uppercase;font-size:12px;
+  letter-spacing:1.5px;color:var(--mut)}
+.seg{display:flex;border:2px solid var(--ink)}
+.seg button{font:600 13px var(--disp);letter-spacing:1px;text-transform:uppercase;
+  background:transparent;color:var(--ink);border:0;border-right:2px solid var(--ink);
+  padding:6px 12px;cursor:pointer}
+.seg button:last-child{border-right:0}
+.seg button.on{background:var(--red);color:#F5E6C8}
+details.cal{font-size:13px;color:var(--mut)}
+details.cal .cardref{width:calc(85.6mm * var(--cal));height:calc(53.98mm * var(--cal));
+  border:2px dashed var(--red);margin:8px 0;display:flex;align-items:center;
+  justify-content:center;font-size:12px;max-width:100%}
+
+.nums{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin:16px 0}
+.num{border:2px solid var(--ink);background:var(--paper2);padding:10px 12px}
+.num .v{font-family:var(--disp);font-size:30px;line-height:1;font-variant-numeric:tabular-nums}
+.num .k{font-size:12px;color:var(--mut);text-transform:uppercase;letter-spacing:1px;margin-top:4px}
+
+table.facts{border-collapse:collapse;width:100%;font-size:14px;margin-top:14px}
+table.facts th,table.facts td{border:1px solid var(--line);padding:8px 10px;
+  text-align:left;vertical-align:top}
+table.facts th{font-family:var(--disp);text-transform:uppercase;letter-spacing:1px;
+  font-size:12px;background:var(--paper2)}
+.tablewrap{overflow-x:auto}
+
+.pushback{border:2px solid var(--ink);border-left:10px solid var(--red);
+  background:var(--paper2);padding:12px 16px;margin:14px 0;max-width:80ch}
+.pushback b{font-family:var(--disp);text-transform:uppercase;letter-spacing:1px;color:var(--red)}
+:root[data-theme="dark"] .pushback b{color:var(--gold)}
+
+.gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));
+  gap:26px 22px;margin-top:20px;align-items:start}
+figure.mock{margin:0;border:2px solid var(--ink);background:var(--paper2);
+  box-shadow:5px 5px 0 rgba(0,0,0,.28);padding:14px}
+figure.mock .stagebox{display:flex;justify-content:center;padding:8px 0 14px;overflow-x:auto}
+figcaption h4{margin:2px 0 6px;font-family:var(--disp);text-transform:uppercase;
+  letter-spacing:1px;font-size:16px}
+figcaption h4 .st{color:var(--gold);font-size:12px;letter-spacing:2px;margin-left:6px}
+ul.why{margin:0;padding-left:16px;font-size:12.5px;color:var(--mut);line-height:1.5}
+ul.why li{margin:3px 0} ul.why b{color:var(--ink);font-weight:600}
+ul.cuts{padding-left:18px;max-width:80ch} ul.cuts li{margin:6px 0}
+footer{margin-top:70px;border-top:2px solid var(--line);padding-top:14px;
+  color:var(--mut);font-size:13px}
+
+/* =====================================================================
+   PHONE FRAME — iPhone SE (3rd gen): 375x667pt panel, forehead + home button.
+   All inner dimensions are CSS px == pt at scale 1, scaled by --zk.
+   ===================================================================== */
+.phonebox{width:calc(399px * var(--zk));height:calc(809px * var(--zk));
+  position:relative;flex:none}
+.pcase{width:399px;height:809px;transform:scale(var(--zk));transform-origin:top left;
+  position:absolute;left:0;top:0;background:#101012;border-radius:52px;
+  box-shadow:inset 0 0 0 2px #2e2e31, 0 8px 26px rgba(0,0,0,.45)}
+.pspeaker{position:absolute;left:50%;top:32px;width:56px;height:6px;margin-left:-28px;
+  border-radius:3px;background:#26262a}
+.phome{position:absolute;left:50%;bottom:16px;width:44px;height:44px;margin-left:-22px;
+  border-radius:50%;background:#0a0a0b;box-shadow:inset 0 0 0 2px #2e2e31}
+.pscreen{position:absolute;left:12px;top:66px;width:375px;height:667px;background:#14231C;
+  color:#EDE9DF;overflow:hidden;
+  font-family:-apple-system,'SF Pro Text','Helvetica Neue',system-ui,sans-serif;
+  user-select:none}
+.pscreen::after{content:"";position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(ellipse at 50% 42%, transparent 34%, rgba(0,0,0,.35) 100%)}
+.pscreen *{line-height:1.25}
+
+/* status bar */
+.pstatus{position:absolute;left:0;top:0;right:0;height:20px;display:flex;
+  align-items:center;justify-content:center;font-size:12px;font-weight:600;
+  color:#9AA69E;z-index:5}
+.pstatus .batt{position:absolute;right:8px;top:4px;width:20px;height:10px;
+  border:1px solid #9AA69E;border-radius:2px}
+.pstatus .batt i{display:block;margin:1px;width:12px;height:6px;background:#9AA69E}
+.pleave{position:absolute;left:10px;top:24px;width:28px;height:28px;z-index:6;
+  color:#9AA69E66;font-size:20px;font-weight:600;display:flex;align-items:center;
+  justify-content:center}
+
+/* seat strip */
+.pseats{position:absolute;left:8px;right:8px;top:28px;height:72px;display:flex;
+  gap:5px;justify-content:center;align-items:flex-start;z-index:4}
+.pseat{width:46px;flex:none;text-align:center}
+.pseat .stack{width:42px;height:28px;margin:0 auto;border-radius:7px;background:#1E2A24;
+  display:flex;align-items:center;justify-content:center;position:relative;
+  font-family:'Oswald','Arial Narrow',sans-serif;font-stretch:condensed;
+  font-weight:700;font-size:17px;color:#EDE9DF}
+.pseat.atk .stack{box-shadow:inset 0 0 0 1.5px #C82B24}
+.pseat.def .stack{box-shadow:inset 0 0 0 1.5px #D8B24A}
+.pseat .nm{margin-top:3px;font-size:8.5px;color:#EDE9DF;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
+.pseat.out{opacity:.4}
+.pseat .role{height:12px;font-size:9px;line-height:12px}
+.pseat .role .shield{display:inline-block;width:9px;height:11px;vertical-align:-1px}
+.pseat .role .good{color:#30D158;font-weight:700}
+.pseat .role .think i{display:inline-block;width:3px;height:3px;border-radius:50%;
+  background:#9AA69E;margin:0 1px;vertical-align:2px}
+.pseat.me .nm{color:#D8B24A;font-weight:600}
+
+/* battles stage */
+.pstage{position:absolute;left:8px;right:78px;top:100px;bottom:243px;z-index:3}
+.pgrid{display:flex;flex-wrap:wrap;gap:10px 6px;align-content:center;
+  justify-content:center;height:100%;overflow:hidden;position:relative}
+.pgrid.toptight{align-content:flex-start}
+.pfade{position:absolute;left:0;right:0;bottom:0;height:26px;z-index:4;
+  background:linear-gradient(transparent,#14231C);pointer-events:none;
+  display:flex;align-items:flex-end;justify-content:center;font-size:10px;color:#9AA69E}
+.pbattle{width:92px;height:100px;position:relative;flex:none}
+.pbattle.covd{filter:grayscale(.35);opacity:.85}
+.pbattle.target::before{content:"";position:absolute;inset:-5px;border-radius:12px;
+  border:2px solid #D8B24A;box-shadow:0 0 10px #D8B24A55}
+
+/* cards */
+.pc{position:absolute;background:#F4EFE6;color:#17140F;border-radius:7px;
+  box-shadow:0 1px 4px rgba(0,0,0,.5);width:56px;height:78px}
+.pc .ix{position:absolute;left:5px;top:3px;font-weight:700;font-size:13px;line-height:1.05;
+  text-align:center}
+.pc .ix i{display:block;font-style:normal;font-size:11px}
+.pc .big{position:absolute;left:0;right:0;top:50%;transform:translateY(-42%);
+  text-align:center;font-size:26px}
+.pc.r{color:#C82B24}
+.pc.trumpmark::after{content:"";position:absolute;right:5px;top:5px;width:6px;height:6px;
+  border-radius:50%;background:#D8B24A}
+.pc.att{left:6px;top:8px}
+.pc.cov{left:24px;top:16px;transform:rotate(12deg)}
+.pc.inflight{opacity:.45}
+.pback{position:absolute;border-radius:7px;width:56px;height:78px;
+  background:#20342a;box-shadow:0 1px 4px rgba(0,0,0,.5), inset 0 0 0 2px #2c4636;
+  background-image:
+    radial-gradient(circle at 30% 25%, #2e4a39 0 8%, transparent 9%),
+    radial-gradient(circle at 68% 38%, #2e4a39 0 7%, transparent 8%),
+    radial-gradient(circle at 42% 58%, #2e4a39 0 9%, transparent 10%),
+    radial-gradient(circle at 72% 76%, #2e4a39 0 7%, transparent 8%),
+    radial-gradient(circle at 25% 82%, #2e4a39 0 6%, transparent 7%),
+    repeating-linear-gradient(115deg, transparent 0 7px, #263d3033 7px 9px)}
+
+/* deck well */
+.pdeck{position:absolute;right:8px;top:100px;width:64px;z-index:3;text-align:center}
+.pdeck .flip{position:absolute;left:2px;top:22px;transform:rotate(90deg) scale(.68);
+  transform-origin:center}
+.pdeck .stackb{position:relative;margin:0 auto;width:56px;height:78px}
+.pdeck .cnt{position:absolute;left:0;right:0;top:26px;z-index:3;
+  font-family:'Oswald','Arial Narrow',sans-serif;font-weight:700;font-size:24px;
+  color:#EDE9DF;text-shadow:0 1px 3px #000}
+.pdeck .sub{margin-top:6px;font-size:10px;color:#9AA69E}
+
+/* action bar */
+.pactions{position:absolute;left:12px;right:12px;bottom:191px;height:44px;display:flex;
+  gap:10px;z-index:4}
+.pbtn{flex:1;border-radius:10px;display:flex;align-items:center;justify-content:center;
+  font-size:15px;font-weight:600;color:#EDE9DF;border:1.5px solid #9AA69E88}
+.pbtn.primary{background:#C82B24;border-color:#C82B24}
+.pbtn.off{opacity:.35}
+
+/* hand fan */
+.pfan{position:absolute;left:0;right:0;bottom:0;height:183px;z-index:5}
+.pfan .fc{position:absolute;bottom:14px;width:66px;height:92px;background:#F4EFE6;
+  color:#17140F;border-radius:8px;box-shadow:-2px 0 6px rgba(0,0,0,.45)}
+.pfan .fc .ix{position:absolute;left:5px;top:4px;font-weight:700;font-size:15px;
+  line-height:1.02;text-align:center}
+.pfan .fc .ix i{display:block;font-style:normal;font-size:13px}
+.pfan .fc .big{position:absolute;left:0;right:0;top:52%;transform:translateY(-40%);
+  text-align:center;font-size:30px}
+.pfan .fc.r{color:#C82B24}
+.pfan .fc.sel{box-shadow:0 0 0 2.5px #D8B24A, -2px 0 8px rgba(0,0,0,.5)}
+.pfan .fc.dim{filter:brightness(.72)}
+.pfan .fc.trumpmark::after{content:"";position:absolute;right:5px;top:5px;width:7px;
+  height:7px;border-radius:50%;background:#D8B24A}
+.ppeek{position:absolute;z-index:8;width:84px;height:117px;background:#F4EFE6;
+  color:#17140F;border-radius:10px;box-shadow:0 4px 18px rgba(0,0,0,.6);
+  pointer-events:none}
+.ppeek .ix{position:absolute;left:7px;top:5px;font-weight:700;font-size:19px;
+  line-height:1.02;text-align:center}
+.ppeek .ix i{display:block;font-style:normal;font-size:16px}
+.ppeek .big{position:absolute;left:0;right:0;top:52%;transform:translateY(-40%);
+  text-align:center;font-size:40px}
+.ppeek.r{color:#C82B24}
+
+/* zone tags (SE1 annotation) */
+.ztag{position:absolute;z-index:9;width:22px;height:22px;border-radius:50%;
+  background:#B32929;color:#F5E6C8;font:700 13px/22px var(--disp);text-align:center;
+  box-shadow:0 1px 4px rgba(0,0,0,.5)}
+
+/* roster sheet */
+.psheet{position:absolute;left:0;right:0;bottom:0;z-index:10;background:#1E2A24;
+  border-radius:16px 16px 0 0;padding:14px 16px 18px;box-shadow:0 -6px 24px rgba(0,0,0,.55)}
+.psheet .grab{width:36px;height:4px;border-radius:2px;background:#9AA69E66;margin:0 auto 10px}
+.psheet h5{margin:0 0 8px;font-size:13px;color:#9AA69E;font-weight:600;
+  text-transform:uppercase;letter-spacing:1px}
+.psheet .row{display:flex;align-items:center;gap:8px;padding:6px 2px;font-size:14px}
+.psheet .row .n{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.psheet .row .c{font-family:'Oswald','Arial Narrow',sans-serif;font-weight:700;
+  font-size:16px;width:26px;text-align:right}
+.psheet .row.you .n{color:#D8B24A;font-weight:600}
+.psheet .row.out{opacity:.4}
+.psheet .foot{margin-top:10px;padding-top:8px;border-top:1px solid #9AA69E33;
+  font-size:11.5px;color:#9AA69E}
+.pdimmer{position:absolute;inset:0;background:rgba(0,0,0,.45);z-index:9}
+
+/* home screen bits */
+.phw{position:absolute;left:0;right:0;top:84px;text-align:center;z-index:3}
+.phw .wm{font-family:'Oswald','Arial Narrow',sans-serif;font-weight:700;font-size:46px;
+  letter-spacing:2px;color:#EDE9DF}
+.phw .du{margin-top:2px;font-size:14px;letter-spacing:7px;color:#C82B24;font-weight:600}
+.pcardpanel{position:absolute;left:24px;right:24px;top:236px;background:#1E2A24;
+  border-radius:16px;padding:16px;z-index:3}
+.pcardpanel .cap{font-size:13px;color:#9AA69E;text-align:center}
+.pcardpanel .cyc{display:flex;align-items:center;margin-top:10px}
+.pcardpanel .cyc .ar{width:44px;height:44px;display:flex;align-items:center;
+  justify-content:center;font-size:20px;color:#EDE9DF}
+.pcardpanel .cyc .mid{flex:1;text-align:center}
+.pcardpanel .cyc .mid .bn{font-size:23px;font-weight:600;color:#EDE9DF}
+.pcardpanel .cyc .mid .fl{margin-top:2px;font-size:12px;color:#9AA69E}
+.pcardpanel .step{display:flex;align-items:center;justify-content:space-between;
+  margin-top:14px;font-size:14px;color:#EDE9DF}
+.pcardpanel .step .pm{display:flex;border:1px solid #9AA69E66;border-radius:8px}
+.pcardpanel .step .pm b{width:38px;height:30px;display:flex;align-items:center;
+  justify-content:center;font-weight:600;color:#EDE9DF}
+.pcardpanel .step .pm b:first-child{border-right:1px solid #9AA69E66}
+.pbig{margin-top:16px;height:52px;border-radius:10px;background:#C82B24;display:flex;
+  align-items:center;justify-content:center;font-size:17px;font-weight:600;color:#EDE9DF}
+.psec{position:absolute;left:24px;right:24px;top:170px;height:52px;border-radius:10px;
+  border:1.5px solid #9AA69E88;display:flex;align-items:center;justify-content:center;
+  font-size:17px;font-weight:600;color:#EDE9DF;z-index:3}
+.pfoot{position:absolute;left:0;right:0;bottom:22px;display:flex;justify-content:center;
+  gap:38px;font-size:11px;color:#9AA69E;z-index:3;text-align:center}
+.pfoot div i{display:block;font-size:17px;font-style:normal;margin-bottom:2px}
+</style>
+</head>
+<body>
+<main>
+
+<header class="mast">
+  <div class="kicker">Foolish · design study nº3 · phone</div>
+  <h1>8 players on an iPhone SE</h1>
+  <p class="sub">The barebones iOS app plays offline against the bot roster on the
+  smallest modern iPhone stage: <b>375×667&nbsp;pt</b>, home button, no safe-area
+  tricks. This study fits the full 8-seat Durak table onto that stage — leaning on
+  the website's board for layout and the watch study
+  (<code>docs/watchos-layout.html</code>) for density lessons — and answers the two
+  ship-order questions (watch later? network later?) with sources. Companion docs:
+  <code>docs/IOS_APP_DESIGN.md</code> (the app), <code>docs/IOS_BOT_NAMES.md</code>
+  (the city roster shown in every frame). Design only — no code has changed;
+  §7 lists the deltas an implementer applies to the existing SwiftUI.</p>
+</header>
+
+<div class="controls">
+  <div class="lab">Scale</div>
+  <div class="seg" id="zoomseg">
+    <button data-z="0.5">Fit</button>
+    <button data-z="0.66" class="on">66%</button>
+    <button data-z="0.588">Real size</button>
+    <button data-z="1">100%</button>
+  </div>
+  <details class="cal">
+    <summary>Calibrate “real size”</summary>
+    <p>Hold a credit card to this box and drag until they match, then use Real size.</p>
+    <div class="cardref">credit card 85.60 × 53.98 mm</div>
+    <input type="range" id="cal" min="0.7" max="1.6" step="0.005" value="1">
+  </details>
+</div>
+
+<!-- ================================================================ -->
+<section id="budget">
+  <h2>1 · The stage, and why the SE is the target</h2>
+  <p class="lede">If it's tasteful on the SE it's tasteful everywhere — every other
+  iPhone only adds points. The SE is also the honest worst case for one-handed
+  reach: no Dynamic Island to push content down, but only 667&nbsp;pt of height for
+  five stacked zones.</p>
+  <div class="nums">
+    <div class="num"><div class="v">375×667</div><div class="k">pt, iPhone SE 3rd gen</div></div>
+    <div class="num"><div class="v">7</div><div class="k">opponent seats worst case</div></div>
+    <div class="num"><div class="v">∞</div><div class="k">table pairs (no slot cap)</div></div>
+    <div class="num"><div class="v">~20</div><div class="k">hand cards worst case</div></div>
+    <div class="num"><div class="v">44 pt</div><div class="k">Apple minimum hit target</div></div>
+    <div class="num"><div class="v">0</div><div class="k">chrome while a round is live</div></div>
+  </div>
+  <div class="pushback"><b>Engine facts that shape this layout</b> (same list the
+  watch obeys, <code>WATCHOS_SPEC.md</code> §0): several seats can act at once, so
+  there is no "your turn" banner to design around; rounds close only by unanimous
+  GOOD; there is <em>no table-slot cap</em> — a post-pickup defender can face 10+
+  pairs; the flipped trump is public and always drawn last; hands can exceed a
+  dozen cards after a bad pickup. The board must degrade gracefully, not assume
+  6 pairs and 6 cards.</div>
+</section>
+
+<!-- ================================================================ -->
+<section id="prov">
+  <h2>2 · What carries over from where</h2>
+  <p class="lede">Nothing here is invented from scratch: each element is lifted
+  from the surface that already solved it.</p>
+  <div class="tablewrap"><table class="facts">
+    <tr><th>Element</th><th>Comes from</th><th>Anchor</th></tr>
+    <tr><td>Zone stack (opponents / battles / actions / fan)</td>
+        <td>the website's game page and the existing SwiftUI table</td>
+        <td><code>src/components/GameDisplay/*</code>, <code>ios/FoolishKit/Boards/TableView.swift</code></td></tr>
+    <tr><td>Count-first seat chips, roster one tap away</td>
+        <td>watch Option H SeatStrip + RosterScreen</td>
+        <td><code>WATCHOS_SPEC.md</code> §2–3</td></tr>
+    <tr><td>Battle rows: centered while small, top-align + scroll past a threshold, edge fade</td>
+        <td>watch TableList rule</td>
+        <td><code>WATCHOS_SPEC.md</code> §2</td></tr>
+    <tr><td>Cover lands rotated 12° on its attack</td>
+        <td>app design system</td>
+        <td><code>IOS_APP_DESIGN.md</code> §5.4 (FBattleGrid)</td></tr>
+    <tr><td>Tap-to-attack, arm-then-target to cover, kernel-driven enables</td>
+        <td>web interaction + the one iOS pattern</td>
+        <td><code>TableView.swift</code> tapCard/tapBattle</td></tr>
+    <tr><td>Tokens: felt, bone, one red, brass, condensed numerals</td>
+        <td>Gosizdat Card Table</td>
+        <td><code>Tokens.swift</code>, <code>IOS_APP_DESIGN.md</code> §5</td></tr>
+    <tr><td>Fern card backs (procedural, seeded)</td>
+        <td>the website's zero-asset materials</td>
+        <td><code>src/utils/</code>, §5.3 port rule</td></tr>
+    <tr><td>Bot names: Russian cities, localized per locale</td>
+        <td>the iOS naming layer</td>
+        <td><code>docs/IOS_BOT_NAMES.md</code></td></tr>
+  </table></div>
+</section>
+
+<!-- ================================================================ -->
+<section id="layout">
+  <h2>3 · The layout <span class="tag">fixed-pt bands, flexible middle</span></h2>
+  <p class="lede">The current SwiftUI table splits by percentage (22/40/26). On the
+  SE with 8 players that starves the battles. The SE-tuned layout pins the bands
+  that have intrinsic size and gives every leftover point to the battle stage:</p>
+  <div class="tablewrap"><table class="facts">
+    <tr><th>Zone</th><th>Frame (pt)</th><th>Content &amp; rules</th></tr>
+    <tr><td>Status bar</td><td>y 0–20</td><td>System. The app is full-bleed felt behind it.</td></tr>
+    <tr><td><b>Seat strip</b></td><td>y 28–100 (72)</td>
+      <td>Up to 7 chips, 46 pt wide, centered. Chip = card-stack silhouette with the
+      hand count (condensed 17 pt) + name (8.5 pt, tail-truncated) + role row
+      (shield = defender, red ring = attacker, green ✓ = said good, dots = thinking).
+      Eliminated seats at 40%. <b>The whole strip is one tap target → roster sheet</b>
+      (SE4) — names are legible there, not here. With ≤3 opponents chips relax to
+      84 pt (the current FSeatBadge).</td></tr>
+    <tr><td><b>Battle stage</b></td><td>y 100–424 (324), right inset 70</td>
+      <td>Pairs on a 3-column flow grid, cell 92×100: attack card 56×78, cover
+      overlaps rotated 12°. Covered pairs desaturate; armed-card cover targets get a
+      brass ring; in-flight cards render at 45%. <b>≤9 pairs: centered. 10+: top-align
+      and scroll vertically</b> under an edge fade (watch rule, scaled ×3).</td></tr>
+    <tr><td><b>Deck well</b></td><td>x 305–367, y 100–210</td>
+      <td>Deck as a fern back with the count numeral punched over it (condensed 24 pt),
+      flipped trump peeking out rotated 90° beneath, discard count + trump glyph
+      caption under. After the flip is drawn: bare suit glyph (watch rule).</td></tr>
+    <tr><td><b>Action bar</b></td><td>y 432–476 (44)</td>
+      <td>Take / Done / Pass as full-height buttons, enable-states strictly from the
+      kernel's legal menu. The contextually-primary verb is the red fill; the rest
+      are outlines. Hidden verbs collapse (bar never shows a dead button).</td></tr>
+    <tr><td><b>Hand fan</b></td><td>y 480–667 (187)</td>
+      <td>One arc, 66×92 cards, exposure = (375−32−66)/(n−1), floor ≈ 17 pt at 19
+      cards. Below ~26 pt exposure, <b>press-drag scrub</b> activates: sliding a
+      finger along the fan lifts + magnifies the touched card in a peek bubble
+      (SE-D demo); release plays/arms it. Tap still works at any density. Trump
+      cards carry the brass dot; illegal cards dim while a card is armed.</td></tr>
+  </table></div>
+  <p>One-handed reach honesty: everything time-critical (fan, action bar) lives in
+  the bottom 240 pt. The battle stage is mid-screen — fine, cover-targeting is a
+  deliberate act. The seat strip is top-screen but purely informational; its tap
+  (roster) is never urgent.</p>
+</section>
+
+<!-- ================================================================ -->
+<section id="frames">
+  <h2>4 · The frames</h2>
+  <p class="lede">All frames are the 375×667 stage in the app's own tokens. SE1
+  wears numbered zone tags matching §3's table. SE6 is the Korean locale — note the
+  seat chips: this is <code>IOS_BOT_NAMES.md</code>'s render-time localization on
+  the board (모스크바, not Moscow).</p>
+  <div class="gallery" id="g-frames"></div>
+</section>
+
+<!-- ================================================================ -->
+<section id="demo">
+  <h2>5 · Live demo — fan scrub at 14 cards <span class="tag">mouse / touch</span></h2>
+  <p class="lede">The one novel interaction this layout adds. Slide across the fan:
+  the touched card lifts and a peek bubble magnifies it; release (or click) arms it.
+  This is what makes a 19-card post-pickup hand playable at 17 pt exposure without
+  a second row or horizontal scrolling.</p>
+  <div class="gallery" id="g-demo"></div>
+</section>
+
+<!-- ================================================================ -->
+<section id="decisions">
+  <h2>6 · Decisions &amp; rejected alternatives</h2>
+  <ul class="cuts">
+    <li><b>Seats in a strip, not arced around the table (⇐ web).</b> The website
+    arcs opponents around an oval — right for landscape desktop, wrong at 375 pt:
+    arcing eats the battle stage's corners and turns seat labels into confetti. The
+    watch already proved a count-first strip communicates 8 seats in one glance.</li>
+    <li><b>Count-first chips, names second.</b> With the city roster
+    (<code>IOS_BOT_NAMES.md</code>) names run long (Yekaterinburg, Brighton Beach,
+    상트페테르부르크). Truncated names stay on the chip for identity, but counts are
+    the live signal; full names live one tap away in the roster sheet. Rejected:
+    two-row seat strip (steals 40 pt from battles for data nobody scans mid-round).</li>
+    <li><b>3-column battle grid, vertical scroll past 9</b> — never a pager, never
+    horizontal (the watch's hard-won gesture lesson: one axis, one meaning; vertical
+    = table). Rejected: shrinking battle cards to fit 12+ pairs statically (below
+    ~48 pt attack cards, cover-targeting misses exceed Apple's 44 pt floor).</li>
+    <li><b>One fan row + scrub, never two rows</b> (two rows occlude the action bar
+    or halve the battle stage; scrub keeps card identity readable at any count and
+    matches the watch's "one representation, magnify in place" fisheye principle).</li>
+    <li><b>Deck well pinned top-right of the stage, not a side column.</b> The
+    current SwiftUI gives the deck a full trailing column — at 375 pt that's 17% of
+    the width for two numbers and a card. Pinning it over the grid's top-right
+    corner returns a full battle column.</li>
+    <li><b>Chrome-free stays.</b> No turn banners, no timers (none exist in the
+    rules), no score header. The leave affordance is a 40%-opacity chevron in the
+    status region with a confirm dialog (§5.5: confirmations only for destructive
+    acts).</li>
+    <li><b>Portrait only.</b> Landscape on an SE is 375 pt tall — the fan plus
+    battles cannot coexist; the web serves landscape desktop already.</li>
+  </ul>
+</section>
+
+<!-- ================================================================ -->
+<section id="later">
+  <h2>7 · Ship order: what can safely come later</h2>
+  <p class="lede">Owner constraints: no physical watch for ~a month; iMessage is
+  the next push; the barebones offline app ships first. Both "later" questions
+  check out — with receipts:</p>
+  <div class="tablewrap"><table class="facts">
+    <tr><th>Question</th><th>Answer</th><th>Evidence</th></tr>
+    <tr><td><b>Can the watch app be added later without penalty?</b></td>
+      <td><b>Yes.</b> A watchOS app is a new target added to the existing Xcode
+      project and ships inside a normal app-version update on the <em>same App
+      Store record</em> — no new record, no migration, no user-visible seam. (This
+      is unlike iMessage apps, where standalone-vs-bundled is a day-one trap —
+      already handled: the extension is specced as bundled.)</td>
+      <td><a href="https://developer.apple.com/help/app-store-connect/create-an-app-record/add-watchos-app-information">App Store Connect: add watchOS app information</a>;
+      <a href="https://developer.apple.com/documentation/watchos-apps/setting-up-a-watchos-project">Setting up a watchOS project</a>;
+      repo decision already recorded in <code>WATCHOS_APP_PLAN.md</code> ("ship after
+      Milestone F") and <code>IOS_APP_DESIGN.md</code> §17.8</td></tr>
+    <tr><td>Anything to do NOW so the watch add stays cheap?</td>
+      <td>Only hygiene, all already planned: keep rules in C (done by policy); keep
+      FoolishKit's Engine/Net layers UIKit-free (the one exception, Haptics, is
+      already flagged for a WatchKit backend in <code>WATCHOS_SPEC.md</code> §0);
+      later add watchOS slices to <code>make ios-lib</code>. No design debt in this
+      layout affects the watch.</td>
+      <td><code>WATCHOS_SPEC.md</code> §0, §12</td></tr>
+    <tr><td><b>Can network play be added later?</b></td>
+      <td><b>Yes — it's already a seam, not a rewrite.</b> The board renders any
+      <code>GameSession</code>; the online session + protocol layer exist in the
+      tree (written, pending first xcodebuild); the Home screen already gates the
+      PLAY button on backend config and shows "online arrives in a later update"
+      when unconfigured. Shipping offline-only v1 = ship without backend keys.
+      Apple accepts offline-only games (4.2 substance = offline bots, replays,
+      tutorial). The server needs zero changes on either timeline.</td>
+      <td><code>ios/FoolishKit/Engine/GameSession.swift</code>,
+      <code>ios/FoolishApp/HomeView.swift</code> (<code>Backend.shared.isConfigured</code> gate),
+      <code>IOS_APP_DESIGN.md</code> §17.5, <code>docs/PROTOCOL.md</code></td></tr>
+    <tr><td>Barebones MVP cut for the first TestFlight</td>
+      <td>Offline table (this layout) + win/rematch + tutorial + settings +
+      local replay save. Defer: online (keys absent), camera QR scan, iMessage,
+      watch, Oracle (flagged off by design).</td>
+      <td><code>IOS_APP_DESIGN.md</code> §14 A–C, §17</td></tr>
+  </table></div>
+</section>
+
+<!-- ================================================================ -->
+<section id="handoff">
+  <h2>8 · Handoff — deltas to the existing SwiftUI <span class="tag">nothing applied yet</span></h2>
+  <p class="lede">The app's table (<code>TableView.swift</code> + Boards components)
+  already implements the right architecture; this study changes proportions and
+  adds density behaviors. The implementer's list:</p>
+  <ul class="cuts">
+    <li><b>TableView bands:</b> replace the 22/40/26 percentage split with §3's
+    fixed bands (seat strip 72 pt, action bar 44 pt, fan 187 pt, battles = the rest).</li>
+    <li><b>FSeatBadge compact variant:</b> 46 pt chip (count-first, 8.5 pt name,
+    role row) selected automatically when opponents ≥ 4; whole strip becomes a
+    Button presenting the roster sheet.</li>
+    <li><b>Roster sheet (new, small):</b> the SE4 bottom sheet — rows of full name +
+    count + role marks, footer with deck/discard/flip + out list. Reuses
+    FSeatBadge data; content mirrors watch RosterScreen §3.</li>
+    <li><b>FBattleGrid:</b> 3-column flow layout, cell 92×100; centered ≤9 pairs,
+    top-aligned vertical <code>ScrollView</code> + edge fades past 9; keep the
+    92×100 cell as the tap target (≥44 pt rule).</li>
+    <li><b>FDeckWell:</b> move from trailing-column HStack into a top-right overlay
+    of the battle stage; count numeral overlays the fern back; flip → bare glyph
+    after it's drawn.</li>
+    <li><b>FHandFan:</b> exposure compression to a 17 pt floor + press-drag scrub
+    with the peek bubble (SE-D); keep plain tap; dim illegal cards while armed.</li>
+    <li><b>Home stepper:</b> <code>1...3</code> → <code>1...7</code> opponents
+    (engine seats 2–8; this layout is why the cap can lift), and OfflineConfig's
+    comment updated to match.</li>
+    <li><b>Seat names:</b> wire the city roster display per
+    <code>docs/IOS_BOT_NAMES.md</code> (BotNames + seatNames — spec'd there).</li>
+    <li><b>Accessibility:</b> chips get combined VoiceOver labels ("Moscow, 4 cards,
+    defending"); scrub honors Reduce Motion (peek without lift animation); the
+    battle grid remains navigable card-by-card.</li>
+  </ul>
+</section>
+
+<footer>
+  Foolish design study — iPhone SE table layout · 2026-07-15 ·
+  siblings: <code>docs/watchos-layout.html</code> (wrist),
+  <code>docs/imessage-layout.html</code> (Messages) ·
+  spec home: <code>docs/IOS_APP_DESIGN.md</code> §5–6 ·
+  bot names: <code>docs/IOS_BOT_NAMES.md</code>
+</footer>
+
+</main>
+<script>
+/* ============ controls ============ */
+const root=document.documentElement;
+document.querySelectorAll('#zoomseg button').forEach(b=>{
+  b.onclick=()=>{document.querySelectorAll('#zoomseg button').forEach(x=>x.classList.remove('on'));
+    b.classList.add('on');root.style.setProperty('--zoom',b.dataset.z);}
+});
+document.getElementById('cal').oninput=e=>root.style.setProperty('--cal',e.target.value);
+
+/* ============ card helpers ============ */
+const RED={'♥':1,'♦':1};
+function pc(rank,suit,cls='',trump=false){
+  return `<div class="pc ${RED[suit]?'r':''} ${cls} ${trump?'trumpmark':''}">
+    <div class="ix">${rank}<i>${suit}</i></div><div class="big">${suit}</div></div>`;
+}
+function fanCard(rank,suit,x,rot,dy,cls='',trump=false){
+  return `<div class="fc ${RED[suit]?'r':''} ${cls} ${trump?'trumpmark':''}"
+    style="left:${x}px;transform:rotate(${rot}deg) translateY(${dy}px)">
+    <div class="ix">${rank}<i>${suit}</i></div><div class="big">${suit}</div></div>`;
+}
+function battle(a,c,opts={}){
+  const covd=c?'covd':''; const tgt=opts.target?'target':'';
+  return `<div class="pbattle ${covd} ${tgt}">
+    ${pc(a[0],a[1],'att'+(opts.inflight?' inflight':''),a[2])}
+    ${c?pc(c[0],c[1],'cov',c[2]):''}</div>`;
+}
+const SHIELD=`<svg class="shield" width="11" height="13" viewBox="0 0 40 48"><path d="M20 1 L38 8 L38 26 Q38 38 20 47 Q2 38 2 26 L2 8 Z" fill="none" stroke="#D8B24A" stroke-width="4"/></svg>`;
+function seat(name,count,o={}){
+  const cls=['pseat',o.atk?'atk':'',o.def?'def':'',o.out?'out':'',o.me?'me':''].join(' ');
+  const role=o.def?SHIELD:(o.good?'<span class="good">✓</span>':(o.think?'<span class="think"><i></i><i></i><i></i></span>':''));
+  return `<div class="${cls}"><div class="stack">${o.out?'—':count}</div>
+    <div class="nm">${name}</div><div class="role">${role}</div></div>`;
+}
+function deckWell(count,flip,disc,trumpGlyph){
+  return `<div class="pdeck"><div class="stackb">
+      <div class="flip">${pc(flip[0],flip[1],'',true)}</div>
+      <div class="pback" style="left:0;top:0"></div>
+      <div class="cnt">${count}</div></div>
+    <div class="sub">▨ ${disc} · ${trumpGlyph}</div></div>`;
+}
+function actions(list){ // [label, primary?, off?]
+  return `<div class="pactions">${list.map(([l,p,off])=>
+    `<div class="pbtn ${p?'primary':''} ${off?'off':''}">${l}</div>`).join('')}</div>`;
+}
+function fan(cards,sel=-1,dimIllegal=null){
+  const n=cards.length,W=375,pad=16,cw=66;
+  const exp=Math.min(46,(W-2*pad-cw)/Math.max(n-1,1));
+  const total=cw+exp*(n-1),x0=(W-total)/2,c=(n-1)/2;
+  return `<div class="pfan">${cards.map((cd,i)=>{
+    const rot=(i-c)*(n>10?1.4:3.2), dy=Math.pow(Math.abs(i-c),1.6)*(n>10?0.55:1.6);
+    const cls=(i===sel?'sel':'')+(dimIllegal&&!dimIllegal[i]?' dim':'');
+    return fanCard(cd[0],cd[1],x0+i*exp,rot,dy+(i===sel?-16:0),cls,cd[2]);
+  }).join('')}</div>`;
+}
+function status(){return `<div class="pstatus">9:41<span class="batt"><i></i></span></div><div class="pleave">‹</div>`}
+function phone(inner){
+  return `<div class="phonebox"><div class="pcase"><div class="pspeaker"></div>
+    <div class="pscreen">${inner}</div><div class="phome"></div></div></div>`;
+}
+function fig(host,title,st,inner,why){
+  const f=document.createElement('figure');f.className='mock';
+  f.innerHTML=`<div class="stagebox">${phone(inner)}</div>
+    <figcaption><h4>${title}<span class="st">${st}</span></h4>
+    <ul class="why">${why.map(w=>`<li>${w}</li>`).join('')}</ul></figcaption>`;
+  document.getElementById(host).appendChild(f);
+}
+
+/* ============ shared game state (the "journey" table) ============ */
+/* 8p, trump ♦ (flip 9♦), me = seat 0 vs the seven weakest cities. */
+const SEATS_EN=[
+  ['Miami',3,{out:1}],['Brighton B.',5,{}],['Vladivostok',6,{think:1}],
+  ['Khabarovsk',2,{def:1}],['Novosibirsk',4,{good:1}],
+  ['Yekaterinb.',7,{atk:1}],['Samara',5,{}]
+];
+const SEATS_KO=[
+  ['마이애미',3,{out:1}],['브라이턴 비치',5,{}],['블라디보스토크',6,{think:1}],
+  ['하바롭스크',2,{def:1}],['노보시비르스크',4,{good:1}],
+  ['예카테린부르크',7,{atk:1}],['사마라',5,{}]
+];
+function seatStrip(seats){return `<div class="pseats">${seats.map(s=>seat(s[0],s[1],s[2])).join('')}</div>`}
+
+const BATTLES_MID=[
+  [['7','♠'],['10','♠']],
+  [['8','♥'],['K','♥']],
+  [['Q','♣'],null],
+  [['6','♥'],['8','♦',true]],
+  [['9','♠'],null],
+];
+function grid(battles,opts={}){
+  const cls=opts.top?'pgrid toptight':'pgrid';
+  const fade=opts.more?`<div class="pfade">${opts.more} more below ↓</div>`:'';
+  return `<div class="pstage"><div class="${cls}">${battles.map(b=>battle(b[0],b[1],b[2]||{})).join('')}${fade}</div></div>`;
+}
+const HAND6=[['6','♦',true],['J','♣'],['Q','♦',true],['8','♣'],['A','♦',true],['10','♥']];
+
+/* ============ SE1 — anatomy ============ */
+fig('g-frames','SE1 · The table, 8 players','anatomy',
+  status()+seatStrip(SEATS_EN)
+  +grid(BATTLES_MID)
+  +deckWell(7,['9','♦'],12,'♦')
+  +actions([['Take',0,1],['Done',1,0],['Pass',0,1]])
+  +fan(HAND6)
+  +`<div class="ztag" style="left:178px;top:38px">1</div>
+    <div class="ztag" style="left:140px;top:200px">2</div>
+    <div class="ztag" style="left:340px;top:104px">3</div>
+    <div class="ztag" style="left:8px;top:442px">4</div>
+    <div class="ztag" style="left:8px;top:580px">5</div>`,
+  ['① seat strip (7 chips, count-first; whole strip taps → roster) · ② battle stage, 3-col flow · ③ deck well: count over fern back, trump flip beneath · ④ kernel-driven action bar (Done is primary: I attacked, table is covered) · ⑤ hand fan',
+   'Mixed-city table straight from <b>IOS_BOT_NAMES.md</b>: Miami is already out, Khabarovsk defends (shield), Yekaterinburg attacks (red ring), Novosibirsk said good (✓), Vladivostok is thinking (dots)',
+   'Covered pairs desaturate; open attacks stay bright; trump cards wear the brass dot']);
+
+/* ============ SE2 — defender, armed card ============ */
+fig('g-frames','SE2 · Defending: Q♠ armed','interaction',
+  status()+seatStrip([
+    ['Miami',3,{out:1}],['Brighton B.',5,{}],['Vladivostok',6,{}],
+    ['Khabarovsk',2,{atk:1}],['Novosibirsk',4,{}],
+    ['Yekaterinb.',7,{think:1}],['Samara',5,{}]
+  ])
+  +grid([
+    [['7','♠'],null,{target:1}],
+    [['9','♠'],null,{target:1}],
+    [['J','♥'],['A','♥']],
+  ])
+  +deckWell(7,['9','♦'],12,'♦')
+  +actions([['Take',1,0],['Pass',0,0]])
+  +fan([['6','♦',true],['Q','♠'],['8','♣'],['A','♦',true],['10','♥']],1,[1,1,0,1,0]),
+  ['Tap Q♠ → it lifts with the brass ring (armed); both spade attacks it can beat get target rings; tap one to cover',
+   'Cards that can do nothing right now dim (8♣, 10♥) — legality read from the kernel menu, never computed in Swift',
+   'I\'m the defender: Take is the red primary; Pass shown because no cover has landed yet (transfer window open); Done absent — defenders can never say good']);
+
+/* ============ SE3 — stress: 12 pairs, 17 cards ============ */
+const stressPairs=[
+  [['6','♠'],['7','♠']],[['8','♥'],['10','♥']],[['7','♣'],['9','♣']],
+  [['10','♠'],['K','♠']],[['9','♥'],['A','♥']],[['6','♣'],['J','♣']],
+  [['J','♠'],null],[['Q','♥'],null],[['8','♦',true],null],
+];
+const HAND17=[['6','♠'],['7','♠'],['8','♠'],['10','♠'],['6','♥'],['9','♥'],['J','♥'],
+  ['K','♥'],['7','♣'],['8','♣'],['10','♣'],['A','♣'],['6','♦',true],['8','♦',true],
+  ['10','♦',true],['Q','♦',true],['K','♦',true]];
+fig('g-frames','SE3 · Worst case: big table, 17-card hand','stress',
+  status()+seatStrip([
+    ['Miami',9,{def:1}],['Brighton B.',2,{}],['Vladivostok',1,{good:1}],
+    ['Khabarovsk',3,{}],['Novosibirsk',2,{good:1}],
+    ['Yekaterinb.',1,{atk:1}],['Samara',4,{}]
+  ])
+  +grid(stressPairs,{top:1,more:3})
+  +deckWell(0,['9','♦'],18,'♦')
+  +actions([['Done',1,0]])
+  +fan(HAND17),
+  ['12 pairs on the table: grid top-aligns and scrolls vertically with an edge fade — the watch rule at phone scale; never a pager',
+   '17-card hand compresses to ~17 pt exposure; identity survives via corner indexes; scrub (SE-D) makes selection precise',
+   'Deck is empty: the well shows 0 and the bare trump glyph — endgame is visible at a glance']);
+
+/* ============ SE4 — roster sheet ============ */
+fig('g-frames','SE4 · Roster sheet','one tap',
+  status()+seatStrip(SEATS_EN)+grid(BATTLES_MID)+deckWell(7,['9','♦'],12,'♦')
+  +`<div class="pdimmer"></div>
+   <div class="psheet"><div class="grab"></div><h5>Round 9</h5>
+     ${[['You',6,'you',''],['Brighton Beach',5,'',''],['Vladivostok',6,'',''],
+        ['Khabarovsk',2,'',SHIELD],['Novosibirsk',4,'','<span class="good" style="color:#30D158">✓</span>'],
+        ['Yekaterinburg',7,'',''],['Samara',5,'','']]
+       .map(r=>`<div class="row ${r[2]}"><div class="n">${r[0]}</div>${r[3]}<div class="c">${r[1]}</div></div>`).join('')}
+     <div class="row out"><div class="n">Miami</div><div class="c">—</div></div>
+     <div class="foot">deck 7 · discard 12 · flip 9♦ under deck · out: Miami</div>
+   </div>`,
+  ['Tap anywhere on the seat strip → this sheet: full city names untruncated, defender shield, good ✓, your row in brass',
+   'Mirrors the watch RosterScreen content (WATCHOS_SPEC §3) — same data, bottom-sheet idiom',
+   'Footer settles every count question (deck/discard/flip/out) so the board itself never grows chrome']);
+
+/* ============ SE5 — home / bot picker ============ */
+fig('g-frames','SE5 · Home: the bot picker','ties it together',
+  status().replace('<div class="pleave">‹</div>','')
+  +`<div class="phw"><div class="wm">FOOLISH</div><div class="du">ДУРАК</div></div>
+   <div class="psec">Play</div>
+   <div class="pcardpanel">
+     <div class="cap">Choose opponent</div>
+     <div class="cyc"><div class="ar">‹</div>
+       <div class="mid"><div class="bn">Moscow</div><div class="fl">The Kremlin itself</div></div>
+       <div class="ar">›</div></div>
+     <div class="step"><span>Players: 8</span><span class="pm"><b>−</b><b>+</b></span></div>
+     <div class="pbig">Start game</div>
+   </div>
+   <div class="pfoot"><div><i>▤</i>Replays</div><div><i>◉</i>Tutorial</div><div><i>⚙</i>Settings</div></div>`,
+  ['The renamed roster in situ: Octogen shows as <b>Moscow</b>, flavor line "The Kremlin itself" (weaker bots show "N km from Moscow" — strength you can feel without an ELO number)',
+   'Players stepper runs to 8 (engine ceiling) — §8 lists the one-line stepper delta',
+   'Online Play stays as the quiet secondary until backend keys ship (§7); Start is the screen\'s single red primary']);
+
+/* ============ SE6 — Korean locale ============ */
+fig('g-frames','SE6 · 한국어 — same table, ko locale','localization proof',
+  status()+seatStrip(SEATS_KO)
+  +grid(BATTLES_MID)
+  +deckWell(7,['9','♦'],12,'♦')
+  +actions([['가져오기',0,1],['완료',1,0],['패스',0,1]])
+  +fan(HAND6),
+  ['The owner\'s requirement verbatim: the ko locale shows <b>모스크바</b>-family names, never "Moscow" — render-time keys, not stored strings (IOS_BOT_NAMES.md §2)',
+   'Long Korean exonyms (블라디보스토크, 노보시비르스크) truncate on chips exactly like English — the roster sheet carries the full forms',
+   'Verbs from the existing FStrings table: 가져오기 / 완료 / 패스']);
+
+/* ============ live demo: fan scrub ============ */
+(function(){
+  const host=document.getElementById('g-demo');
+  const f=document.createElement('figure');f.className='mock';
+  const cards=[['6','♠'],['9','♠'],['J','♠'],['6','♥'],['8','♥'],['Q','♥'],['7','♣'],
+    ['10','♣'],['K','♣'],['6','♦',true],['9','♦',true],['J','♦',true],['Q','♦',true],['A','♦',true]];
+  f.innerHTML=`<div class="stagebox">${phone(
+    status()+seatStrip(SEATS_EN)+grid(BATTLES_MID)+deckWell(7,['9','♦'],12,'♦')
+    +actions([['Take',0,1],['Done',1,0],['Pass',0,1]])
+    +`<div id="dfan"></div><div id="dpeek"></div>`)}</div>
+    <figcaption><h4>SE-D · Scrub the fan<span class="st">interactive</span></h4>
+    <ul class="why"><li>Move across the fan — the touched card lifts, the peek bubble magnifies it; click to arm (brass ring)</li>
+    <li>14 cards at ~22 pt exposure stay fully identifiable; the same physics carry to 19</li>
+    <li>Matches the watch fisheye principle: one representation, magnified in place — no second row, no scroll</li></ul></figcaption>`;
+  host.appendChild(f);
+  const fanHost=f.querySelector('#dfan'),peekHost=f.querySelector('#dpeek');
+  let sel=-1,hover=-1;
+  function render(){
+    fanHost.innerHTML=fan(cards,sel>=0?sel:hover);
+    if(hover>=0&&hover!==sel){
+      const cd=cards[hover],n=cards.length,W=375,pad=16,cw=66;
+      const exp=Math.min(46,(W-2*pad-cw)/(n-1)),total=cw+exp*(n-1),x0=(W-total)/2;
+      const px=Math.min(375-92,Math.max(8,x0+hover*exp-14));
+      peekHost.innerHTML=`<div class="ppeek ${RED[cd[1]]?'r':''}" style="left:${px}px;top:388px">
+        <div class="ix">${cd[0]}<i>${cd[1]}</i></div><div class="big">${cd[1]}</div></div>`;
+    } else peekHost.innerHTML='';
+  }
+  render();
+  const screen=f.querySelector('.pscreen');
+  function idxFromEvent(e){
+    const r=screen.getBoundingClientRect(),zk=r.width/375;
+    const x=(e.clientX-r.left)/zk,y=(e.clientY-r.top)/zk;
+    if(y<470){return -1}
+    const n=cards.length,W=375,pad=16,cw=66;
+    const exp=Math.min(46,(W-2*pad-cw)/(n-1)),total=cw+exp*(n-1),x0=(W-total)/2;
+    let i=Math.floor((x-x0)/exp); if(x>x0+total)i=n-1;
+    return (i<0||i>=n)?-1:i;
+  }
+  screen.addEventListener('pointermove',e=>{const i=idxFromEvent(e);if(i!==hover){hover=i;render();}});
+  screen.addEventListener('pointerleave',()=>{hover=-1;render();});
+  screen.addEventListener('click',e=>{const i=idxFromEvent(e);if(i>=0){sel=(sel===i?-1:i);render();}});
+})();
+</script>
+</body>
+</html>
