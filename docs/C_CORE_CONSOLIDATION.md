@@ -36,7 +36,7 @@ field** (§3). Findings, ranked by leverage:
 | F1 | **Bot roster: key → brain + tuning knobs + logs flag** | TS registry (`bot_strategy.ts:63-99`) · C table in `ios_api.c:37-48` **without knobs** → live strength/latency divergence (§3) | **DONE** (§4.1): `cnitro/src/bot_roster.c` is the one table; the phone's knob + arena/prod drift is fixed. |
 | F2 | **The bot drive cycle** (eligibility → fair pick → apply → passive bundling → stop conditions) | TS (`bot_actions.ts:262-411`) · Swift+C first-eligible walk (`LocalGame.runBots`) — with a second live divergence: iOS picks first-eligible, not shuffled | **DONE (§4.2)**: `bot_drive` is the one cycle on the kernel, iOS AND the server; both hosts are one call. The differential harness found three kernel bugs on the way — one of them live in the iOS path. |
 | F3 | **Pacing policy** (what a move is worth pausing for) | TS constants 3000/300 ms + silent-skip · Swift 600–1200 ms jitter, no bundling | **DONE (§4.3)**: `bot_pacing_ms` is the one class→ms table; the server's values won. |
-| F4 | **The animation plan** (which card flies where, in what order) | C (`evwire.c`, server-only today) · TS decode mirrors · **planned Swift re-derivation `BoardDiff.swift` (unwritten)** · TS replay twin (`src/replay/view.ts`+`animate.ts`, ~800 lines) | **F4.1 DONE (§4.4)**: `evwire_walk` + sinks; local play consumes kernel events and BoardDiff was never born. F4.2 (replay steps) = A5. |
+| F4 | **The animation plan** (which card flies where, in what order) | C (`evwire.c`, server-only today) · TS decode mirrors · **planned Swift re-derivation `BoardDiff.swift` (unwritten)** · TS replay twin (`src/replay/view.ts`+`animate.ts`, ~800 lines) | **F4.1 DONE (§4.4)**: `evwire_walk` + sinks; local play consumes kernel events and BoardDiff was never born. **F4.2 / A5: kernel half DONE (§4.6)** — a v6 replay is the game REBUILT (`start_game_with_deck`) and replayed through the engine, so its events come from the same `evwire_walk`; the specced "step-emitting decode via the same hooks" was impossible (`replay.c` replays an `RModel`, not a `Game` — no hooks fire). v5 refused: it hides the deal. Remaining: the web consumer. |
 | F5 | **v6 replay production** (reveal-stream assembly at game end) | TS choreography (`finalizeEndedGame` + `reconstructSeededDeal` + `replay/encode.ts`) · absent on iOS (offline shares are v5-only) | **DONE (§4.5)**: `replay_encode_v6_from_game` is the one producer on both hosts; finalize is call-verify-store and offline shares carry exact hands. The specced `from_game` signature could not work as written (a finished game does not know its own deal), so the seed is a parameter and the kernel re-deals. |
 | F6 | **Rematch / reset-to-lobby transform** | TS 10-field mutation (`meta_actions.ts:188`) · client mirror (`clientReconcile.ts:10-40`, "must match byte-for-byte") · specced for a third port in iOS M-D5 | `wasm_reset_to_lobby` / `fio_reset_to_lobby`; all mirrors become decode-and-render. |
 | F7 | **Wire decode on the web** (packed view/evwire/awire → JS) | C codecs · ~960 lines of parity-policed TS mirrors (`@shared/wire/*`); iOS already decodes in C | Fold into client wasm opportunistically, format-by-format (⚠ guards.wasm memory budget, §4.7). |
@@ -359,8 +359,8 @@ events the website plays, and no client works out which card flew where.
   bridge clears its log per call. The emitter therefore SLICES this action's
   logs (`log_start`) instead of clearing — clearing would silently break offline
   replay codes.
-- Remaining in F4: **A5**, replay steps from the kernel (`src/replay/view.ts` +
-  `animate.ts`), which now has a sink to reuse.
+- **F4.2 / A5 — kernel half DONE (§4.6).** Remaining: the web consumer
+  (`src/replay/view.ts` + `animate.ts`).
 
 **Consolidation (as originally specced).**
 
@@ -488,7 +488,63 @@ mode that STREAMS the action stream from the caller's log-wire bytes with no
 storage at all — which removes the ceiling entirely and is the same shape as the
 LOGS mode. The second is the better answer if this ever bites.
 
-### 4.6 F6 — Rematch/reset-to-lobby as a kernel transform
+### 4.6 F4.2 / A5 — replay steps: the game rebuilt, not steps re-derived
+
+**The spec's premise was wrong, and the correction is the design.** This file
+said (§4.4 Consolidation 2) *"`replay.c` already replays the game to decode it;
+add a step-emitting decode returning per-event snapshots via the same hooks."*
+It does not replay a game. It replays an **`RModel`** — a belief/bitmask model
+(`unseen`, `known[]`, `unknown[]`, `deck_count`) with its own `apply_*` mirrors
+of the server's `execute*`. `engine_snap_hook` never fires there, and
+`evwire_walk` needs real `Game` snapshots. There were no hooks to reuse.
+
+So A5 does not emit steps beside the decoder. It **rebuilds the game and plays
+it**: v6 is hidden-state-lossless, and its exact opening hands plus its stock
+draws in pop order ARE a deck. `start_game_with_deck` (`game.c`) feeds that deck
+through the identical path `start_game` runs — same deal, same flip, same seats,
+same hooks — so `replay_steps_v6` (`replay_steps.c`) gets its events from
+`evwire_walk` over real engine hooks. The one derivation, unchanged. A replay is
+not a second kind of game, so there is no replay-side projection left to drift.
+
+Two things the decoder had to start saying out loud:
+
+- **The atoms** (`replay_decode_atoms_v6`). `replay_decode`'s output is a *log*
+  stream, and a round end is genuinely not recoverable from it: `LOG_DISCARD`
+  does not mean round-end (a clean-sweep cover discards too — `apply_cover`),
+  and neither does `LOG_GOOD` (a round whose attackers are all out logs none).
+  The decoder knows each atom's kind for certain, so it reports it.
+- **The header as fields** (`ReplayHeader`), so the atom path needs no log
+  buffer. Decode's callers really pass 2 MB; that is not something to hand a
+  phone or spend a wasm page budget on.
+
+**v5 is refused, not supported** (`REPLAY_EVERSION`). v5 hides the deal, so its
+hands are *retrodiction* — a known / unknown-slot / never-surfaces tri-state
+that a `Game`'s concrete `Card hand[]` cannot hold. Dead format (owner call,
+July 2026); nothing produces v5 codes any more.
+
+Verified as invariants in C (`cnitro/tests/tests.c`), both mutation-checked:
+
+- the rebuilt game's final board is **byte-identical** (unmasked, so hands are
+  compared) to the board the engine actually finished on, np=2..6, and it finds
+  the same fool the code claims. Deleting the trump-skip in the deck rebuild
+  fails it.
+- a **mid-game cut conserves the deck**. This one earns its keep: a finished
+  game has drained the stock, so a deck missing its never-drawn tail still ends
+  at `deck_count` 0 and looks right — the first version of this test passed with
+  that bug in place. Cut the stream early and the stock is still on the table,
+  where a missing tail is simply a wrong number on screen.
+
+`ios-smoke` drives `fio_replay_events_json` over the whole 48-game v6 sweep.
+
+**Remaining (the web consumer).** `src/replay/view.ts` (461 lines) +
+`animate.ts` (333) still build steps in TS. Note for whoever takes it: a replay
+canNOT be one packed evwire frame — `evwire_serialize` backpatches `n_events` as
+a **u8** (255 max) and a whole game exceeds it. Either frame per action, or take
+JSON as iOS does. Also note `view.ts`'s `slots` retrodiction has a second
+consumer, `src/oracle/replayOracleInput.ts:72` (`nullSlots`), which is v5-shaped
+and should die with v5 rather than be ported.
+
+### 4.7 F6 — Rematch/reset-to-lobby as a kernel transform
 
 `handleContinue` (`meta_actions.ts:188-232`) hand-zeroes ten `Game` fields;
 `clientReconcile.ts:10-40` mirrors the list ("must match byte-for-byte or
@@ -497,7 +553,7 @@ time. That is a state transition — kernel property. Add
 `wasm_reset_to_lobby` / `fio_reset_to_lobby` producing the post-reset blob;
 all three mirrors become decode-and-render.
 
-### 4.7 F7 — Web wire decode (TS mirrors of C codecs)
+### 4.8 F7 — Web wire decode (TS mirrors of C codecs)
 
 `view.ts` (358) + `evwire.ts` (253) + `awire.ts` (170) + `logwire.ts` (181)
 ≈ 960 lines of pure TS shadowing C structs byte-for-byte, kept honest by
@@ -510,7 +566,7 @@ event decode + JSON emit will not fit — a second tiny module or a
 deliberate, documented budget bump, decided with the memory-plan
 discipline, not by accident.
 
-### 4.8 F8 — Retire the TS rules projections (cleanup, after F2)
+### 4.9 F8 — Retire the TS rules projections (cleanup, after F2)
 
 `common_utils.ts` keeps four kernel-mirrored projections for synchronous
 client use — parity-tested but still a second implementation of rules. The
@@ -520,7 +576,7 @@ and delete — or, where a synchronous JS answer is genuinely needed before
 wasm warms, keep but demote to documented render-only hints. Zero new C;
 deletion work.
 
-### 4.9 F9 — Small shared invariants & accessors (batch)
+### 4.10 F9 — Small shared invariants & accessors (batch)
 
 - `#define FOOLISH_SEED_LEN 32` beside `game_set_deal_seed_bytes` +
   encode/decode-side rejects (a short seed silently degrades to the legacy
@@ -558,7 +614,7 @@ mirror → parity harness → cutover → freeze the old path as test oracle)
 | A2 | **F2 `bot_drive` + F3 pacing classes** — **DONE** (§4.2/§4.3): the cycle, the pacing table, `fio_bot_drive_json`, `wasm_bot_drive`, `LocalGame.runBots` **and `bot_actions.ts`** are one call per cycle. Lease/CAS/broadcast/CPU budget stayed TS-side; the cached-move replay became `BotDrivePref` (the kernel re-checks legality) | with A1 | **done**: fairness/bundling/determinism + pacing + snapshot + seeding-hook tests in `cnitro/tests/tests.c` (fairness, snapshot and hook ones are negative-tested), ios-smoke, Swift tests, difftests, and **`e2e/bot_drive_parity.test.ts`** — seeded games, TS cycle vs kernel cycle, byte-comparing committed products (state blob, log records, per-viewer event streams) across 5 configs incl. belief bots and the pref path |
 | A3 | **F4.1 kernel events for local play** — **DONE** (§4.4): `evwire_walk` + sinks; `fio_bot_drive_json` events inline + `fio_last_events_json`; `GameEvent`/`lastEvents` in Swift; `IOS_APP_DESIGN.md` §16.B4 amended to "consume kernel events" and `BoardDiff.swift` cancelled | before iOS Milestone-B animation work | **done**: kernel events verified for bot cycles AND human moves through the real bridge; evwire byte-parity with the TS twin unchanged (`packed_wire_parity`); Swift decodes them; C suites + `ios-smoke` + Swift tests green. **Amended July 2026**: each event now also carries `state` — the viewer-masked board as of that step, the counterpart of the web evwire's per-event `snap_len` payload — because a `bot_drive` cycle applies several actions and the intermediate boards were otherwise unreachable without the diff engine F4 cancelled (`j_state` in `ios_api.c`; `GameEvent.state` in Swift; asserted by `ios-smoke`, which previously had NO coverage of the events path at all). **Remains**: rendering them (Milestone B) |
 | A4 | **F5 v6-from-game** — **DONE** (§4.5): `replay_encode_v6_from_game` + `wasm_replay_encode_v6_from_game` + `fio_replay_encode_v6_b32` / `fio_replay_share_code_b32`; `finalizeEndedGame` is one call; `reconstructSeededDeal` + `encodeReplayV6` + `marshalInputV6` keep NO production caller and are frozen as the oracle | after A1–A3 | **done**: `replay_v6_test.c` extended with the seeded from-game path — byte-equal to the marshalled oracle, mid-game cuts, wrong-seed rejection, and the hook/deal-RNG restores (all negative-tested); `ios-smoke` proves 48/48 seeded games share as v6 with no hidden card surviving; and **`e2e/replay_v6_parity.test.ts`** byte-compares the kernel against the TS choreography on real seeded games, through BOTH the JS-log and packed-`logs_packed` paths. It found the trump-witness bug (§4.5.2) on its first run |
-| A5 | **F4.2 replay steps from the kernel** | after A3 (reuses emitter), before native replay polish | web replay renders identically (snapshot tests); iOS plays a web-generated code step-for-step |
+| A5 | **F4.2 replay steps from the kernel** — **KERNEL HALF DONE (§4.6)**: `replay_steps_v6` rebuilds the game from a v6 code (`start_game_with_deck`) and replays it through the real engine, so the events are `evwire_walk`'s, not a replay-side projection; `replay_decode_atoms_v6` + `ReplayHeader` are what the decoder had to say out loud (a round end is NOT recoverable from the log stream). `fio_replay_events_json` gives the phone the live event stream for a shared code. **v5 refused** — it hides the deal (owner: v5 is dead). | after A3 (reuses emitter), before native replay polish | **done (kernel)**: C invariants, both mutation-checked — rebuilt final board byte-identical to the played game's (np=2..6, unmasked) and a mid-game cut conserves the deck (this one caught a real missing-deck-tail bug that the finished-game test could not see); `ios-smoke` replays all 48 sweep games as live events, no hand leaked to a spectator. **Remaining**: the web consumer (`view.ts`+`animate.ts`) — note `evwire_serialize`'s `n_events` is a u8 (255 max), so a whole game is NOT one frame |
 | A6 | **F6 reset transform**, then **F8 projection deletions** | cleanup wave | `resetToLobby` mirrors deleted; rematch e2e green on web + iOS |
 | A7 | **F9 batch**: seed-len header + rejects — **`FOOLISH_SEED_LEN` DONE** (A4 needed it; `game.h`, and `game_set_deal_seed_bytes` rejects against it — the encode/decode-side rejects still ride the iMessage M0) —, `unambiguous_cover` (with the first surface that needs it), `%`-name tidies (with the naming work), and the **`console`+`gpt` drop** — delete the `CONSOLE` key (`types.ts:254`), the gpt lazy-load path + `strategies/gpt_strategy.ts`, and, once unreferenced, `move_stats.ts` + `pass_prob.ts` (neither strategy was ever seeded in production; `registerBotStrategy` itself STAYS — the offlinefun research harnesses use it) | opportunistic | per-item; grep proves no `console`/`gpt` strategy reference survives |
 | A8 | **F7 wire-decode moves**, format-by-format on next wire change; module/budget decision documented | opportunistic | mirror file deleted per format; parity test flips to wasm-vs-fixture |
