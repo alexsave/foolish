@@ -937,7 +937,17 @@ INSERT INTO bots (nickname, strategy_key) VALUES
 -- falls back to `random` — a bot that plays nothing like its name and pollutes
 -- the Elo leaderboard. Only strategy keys the wasm actually dispatches are
 -- seeded: random, simple_heuristic, handwritten (→handwritten_prod),
--- firecracker, blackpowder, cordite/cordite_max, octogen/octogen_max.
+-- firecracker, blackpowder, cordite, octogen.
+--
+-- The seeded set must equal the `seeded` column of the C bot roster
+-- (cnitro/src/bot_roster.c) — that table is the canonical roster
+-- (docs/C_CORE_CONSOLIDATION.md F1).
+--
+-- The `_max` tiers were retired (migration 20260715120000_drop_max_bot_tiers):
+-- octogen_max was a plain alias of octogen (identical knobs), and cordite_max's
+-- CD_BUDGET=max is a FLAT world budget that only exceeds the player-count-aware
+-- `prod` schedule at 2-4 players and is about HALF of it at 6-8 — so "Max" was
+-- the weaker bot in the larger games. One cordite, on the prod budget.
 
 -- Firecracker strategy bots — shipped ladder "Medium" rung (Durak Bot Ordnance
 -- Chart). Public-info Monte Carlo: robusta's sampled-world MC with espresso as
@@ -960,11 +970,6 @@ INSERT INTO bots (nickname, strategy_key) VALUES
 ('Cordite 2', 'cordite'),
 ('Cordite 3', 'cordite'),
 
--- Cordite Max (same brain, larger sampled-world budget, <2s per decision)
-('Cordite Max 1', 'cordite_max'),
-('Cordite Max 2', 'cordite_max'),
-('Cordite Max 3', 'cordite_max'),
-
 -- (semtex / semtex_max are not seeded — not dispatched by bots.wasm; see the
 -- note above. Octogen is semtex's shipped successor and IS dispatched.)
 
@@ -972,12 +977,7 @@ INSERT INTO bots (nickname, strategy_key) VALUES
 -- semtex, strictly better in deep heads-up endgames — see cnitro/OCTOGEN.md)
 ('Octogen 1', 'octogen'),
 ('Octogen 2', 'octogen'),
-('Octogen 3', 'octogen'),
-
--- Octogen Max (same brain, semtex_max world budget)
-('Octogen Max 1', 'octogen_max'),
-('Octogen Max 2', 'octogen_max'),
-('Octogen Max 3', 'octogen_max');
+('Octogen 3', 'octogen');
 
 -- Bots carry the reserved '%' prefix so bot-vs-human is recoverable from the
 -- name-only replay codec. Done as an UPDATE (rather than prefixing every literal

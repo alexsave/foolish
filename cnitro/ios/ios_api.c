@@ -13,6 +13,7 @@
 #include "view.h"
 #include "replay.h"
 #include "strategy.h"
+#include "bot_roster.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,50 +28,29 @@ static int   g_last_replay_error = 0;
 
 // ---------- strategy roster (offline bots, §7.2) --------------------------
 //
-// The exposed offline roster mirrors the seeded bot personalities
-// (supabase/seed.sql): the ladder the website's players know by name. Each maps
-// to a STRAT_* id the native library links (Makefile CORE_SRC). `cordite_max` /
-// `octogen_max` on the site are the same solvers at a bigger world budget; the
-// offline library ships them as the base solver (the deliberation cap is applied
-// Swift-side per the thermal/battery rules in §7.2), so they map to the same id.
-typedef struct { const char *name; int strat; } RosterEntry;
-static const RosterEntry ROSTER[] = {
-    { "random",           STRAT_RANDOM      },
-    { "simple_heuristic", STRAT_SIMPLE_HEURISTIC },
-    { "handwritten",      STRAT_HANDWRITTEN },
-    { "espresso",         STRAT_ESPRESSO    },
-    { "robusta",          STRAT_ROBUSTA     },
-    { "firecracker",      STRAT_FIRECRACKER },
-    { "gunpowder",        STRAT_GUNPOWDER   },
-    { "blackpowder",      STRAT_BLACKPOWDER },
-    { "cordite",          STRAT_CORDITE     },
-    { "octogen",          STRAT_OCTOGEN     },
-};
-static const int ROSTER_N = (int)(sizeof(ROSTER) / sizeof(ROSTER[0]));
-
-// dispatch_choose: mirror of the arena's dispatch (src/main_elo.c). Given a
-// STRAT_* id, run that strategy's chooser over the precomputed legal moves.
-static int dispatch_choose(int strat, const Game *g, int seat, const LegalMoves *moves) {
-    switch (strat) {
-        case STRAT_RANDOM:          return random_strategy_choose(g, seat, moves, NULL);
-        case STRAT_SIMPLE_HEURISTIC:return simple_heuristic_strategy_choose(g, seat, moves, NULL);
-        case STRAT_ESPRESSO:        return espresso_strategy_choose(g, seat, moves, NULL);
-        case STRAT_HANDWRITTEN:     return handwritten_strategy_choose(g, seat, moves, NULL);
-        case STRAT_ROBUSTA:         return robusta_strategy_choose(g, seat, moves, NULL);
-        case STRAT_FIRECRACKER:     return firecracker_strategy_choose(g, seat, moves, NULL);
-        case STRAT_GUNPOWDER:       return gunpowder_strategy_choose(g, seat, moves, NULL);
-        case STRAT_BLACKPOWDER:     return blackpowder_strategy_choose(g, seat, moves, NULL);
-        case STRAT_CORDITE:         return cordite_strategy_choose(g, seat, moves, NULL);
-        case STRAT_OCTOGEN:         return octogen_strategy_choose(g, seat, moves, NULL);
-        default:                    return -1;
-    }
+// The roster itself lives in the kernel (src/bot_roster.c) — one table shared
+// with the server and every future client, so a bot named "cordite" here is
+// the same brain at the same tuning as the website's cordite. This file used
+// to carry its own copy, which mapped the player-facing rungs at the arena
+// variants of handwritten/espresso and applied no tuning knobs at all; both
+// bugs are gone with the table (docs/C_CORE_CONSOLIDATION.md §3.1, §4.1).
+//
+// A FIO strategy id is an index into the OFFLINE projection of the roster (the
+// picker's rungs in strength order, docs/IOS_BOT_NAMING.md §1) — not a raw
+// roster index and not a STRAT_* id, so the ids stay stable as unshipped
+// research brains come and go from the table.
+static int fio_roster_idx(int strategy_id) {
+    return bot_roster_offline_at(strategy_id);
 }
 
-// roster_strat: map a FIO strategy id (index into ROSTER) to its STRAT_* id.
-static int roster_strat(int id) {
-    if (id < 0 || id >= ROSTER_N) return -1;
-    return ROSTER[id].strat;
-}
+// Per-seat roster index for the seats fio_set_seat_strategy assigned.
+// players[].strategy_key cannot carry this: it holds a STRAT_* id by
+// kernel-wide convention and the kernel reads it (espresso_prod_strategy.c
+// checks strategy_key == STRAT_RANDOM to mirror the TS bot's random-opponent
+// special case). Seats default to the `random` entry, matching the old
+// strategy_key == 0 == STRAT_RANDOM default: a seat nobody assigned but that
+// fio_bot_step_json(-1) drives anyway still plays random, as before.
+static int8_t g_seat_roster[MAX_PLAYERS];
 
 // ---------- a tiny JSON string builder ------------------------------------
 //
@@ -351,6 +331,7 @@ int fio_new_game(const uint8_t *seed, int seed_len, int n_players) {
     for (int i = 0; i < n_players; i++) {
         g_game.players[i].status = PLAYER_STATUS_READY;
         g_game.players[i].strategy_key = 0; // all human until fio_set_seat_strategy
+        g_seat_roster[i] = (int8_t)bot_roster_find("random");
         snprintf(g_game.players[i].player_id, sizeof(g_game.players[i].player_id), "p%d", i);
     }
     start_game(&g_game);
@@ -362,9 +343,11 @@ int fio_new_game(const uint8_t *seed, int seed_len, int n_players) {
 int fio_set_seat_strategy(int seat, int strategy_id) {
     if (!g_has_game) return FIO_ENOGAME;
     if (seat < 0 || seat >= g_game.num_players) return FIO_EBADARG;
-    int strat = roster_strat(strategy_id);
-    if (strat < 0) return FIO_ENOSTRAT;
-    g_game.players[seat].strategy_key = (int8_t)strat;
+    int idx = fio_roster_idx(strategy_id);
+    const BotRosterEntry *e = bot_roster_at(idx);
+    if (!e) return FIO_ENOSTRAT;
+    g_seat_roster[seat] = (int8_t)idx;
+    g_game.players[seat].strategy_key = (int8_t)e->strat;
     return FIO_EOK;
 }
 
@@ -438,7 +421,7 @@ int fio_bot_step_json(int human_seat, char *out, int cap) {
         calculate_legal_moves(&g_game, seat, &moves);
         if (moves.n == 0) continue;
 
-        int idx = dispatch_choose(g_game.players[seat].strategy_key, &g_game, seat, &moves);
+        int idx = bot_roster_choose(g_seat_roster[seat], &g_game, seat, &moves);
         if (idx < 0 || idx >= moves.n) idx = 0; // never freeze: fall back to first legal move
         const LegalMove *m = &moves.moves[idx];
 
@@ -475,24 +458,25 @@ int fio_bot_step_json(int human_seat, char *out, int cap) {
 
 // ---------- strategies -----------------------------------------------------
 
-int fio_strategy_count(void) { return ROSTER_N; }
+int fio_strategy_count(void) { return bot_roster_offline_count(); }
 
 int fio_strategy_name(int id, char *out, int cap) {
-    if (id < 0 || id >= ROSTER_N) return FIO_ENOSTRAT;
+    const BotRosterEntry *e = bot_roster_at(fio_roster_idx(id));
+    if (!e) return FIO_ENOSTRAT;
     J j; j_init(&j, out, cap);
-    j_puts(&j, ROSTER[id].name);
+    j_puts(&j, e->key);
     return j_finish(&j);
 }
 
 int fio_bot_choose_json(int strategy_id, int seat, char *out, int cap) {
     if (!g_has_game) return FIO_ENOGAME;
     if (seat < 0 || seat >= g_game.num_players) return FIO_EBADARG;
-    int strat = roster_strat(strategy_id);
-    if (strat < 0) return FIO_ENOSTRAT;
+    int ridx = fio_roster_idx(strategy_id);
+    if (!bot_roster_at(ridx)) return FIO_ENOSTRAT;
     LegalMoves moves;
     calculate_legal_moves(&g_game, seat, &moves);
     if (moves.n == 0) { J j; j_init(&j, out, cap); j_puts(&j, "null"); return j_finish(&j); }
-    int idx = dispatch_choose(strat, &g_game, seat, &moves);
+    int idx = bot_roster_choose(ridx, &g_game, seat, &moves);
     if (idx < 0 || idx >= moves.n) idx = 0;
     J j; j_init(&j, out, cap);
     emit_move_obj(&j, &moves.moves[idx]);

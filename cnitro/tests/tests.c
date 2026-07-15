@@ -10,6 +10,8 @@
 #include "../src/deal_rng.h"
 #include "../src/legal.h"
 #include "../src/strategy.h"
+#include "../src/bot_roster.h"
+#include "../src/bot_knobs.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -918,7 +920,153 @@ static void test_whole_game_reproducible(void) {
     CHECK(a != c, "a different seed yields a different game trajectory");
 }
 
+/* ---------------------- bot roster + knobs (F1/A1) ----------------------- */
+
+// The roster is the one place a bot's identity is written down
+// (docs/C_CORE_CONSOLIDATION.md §4.1); these pin the invariants that the TS
+// registry, seed.sql and ios_api.c used to each restate in their own words.
+
+static void test_bot_roster_table(void) {
+    int n = 0;
+    const BotRosterEntry *r = bot_roster(&n);
+    CHECK(n > 0 && r != NULL, "roster is non-empty");
+    CHECK(n == bot_roster_count(), "bot_roster(&n) and bot_roster_count() agree");
+
+    // Keys unique, tiers strictly increasing (the table IS the strength
+    // ladder — the offline picker renders it in order).
+    int dup = 0, unordered = 0;
+    for (int i = 0; i < n; i++) {
+        for (int j = i + 1; j < n; j++)
+            if (!strcmp(r[i].key, r[j].key)) dup = 1;
+        if (i && r[i].tier <= r[i - 1].tier) unordered = 1;
+    }
+    CHECK(!dup, "roster keys are unique");
+    CHECK(!unordered, "roster is in strictly increasing tier order");
+
+    // Round-trip every key through find().
+    int roundtrip = 1;
+    for (int i = 0; i < n; i++) if (bot_roster_find(r[i].key) != i) roundtrip = 0;
+    CHECK(roundtrip, "bot_roster_find round-trips every key to its index");
+    CHECK(bot_roster_find("nope") == -1, "unknown key is -1, not a silent fallback");
+    CHECK(bot_roster_find(NULL) == -1, "NULL key is -1");
+    // A prefix of a real key must not match it (the scan is exact).
+    CHECK(bot_roster_find("cord") == -1, "a prefix of a key does not match");
+    CHECK(bot_roster_at(-1) == NULL && bot_roster_at(n) == NULL, "bot_roster_at bounds-checks");
+
+    // The rungs the site seeds and the phone shows. These are the sets whose
+    // drift this table exists to prevent, so they are asserted by name.
+    CHECK(bot_roster_find("cordite") >= 0 && bot_roster_find("octogen") >= 0,
+          "the top two rungs are present");
+    CHECK(bot_roster_find("cordite_max") == -1 && bot_roster_find("octogen_max") == -1,
+          "the _max tiers are gone (octogen_max aliased octogen; cordite_max's flat "
+          "budget was weaker than prod at 6-8 players)");
+
+    // handwritten/espresso must be the PRODUCTION mirrors, not the arena
+    // variants — ios_api.c pointed at the arena ones, so offline Handwritten
+    // was not the site's Handwritten (§3).
+    const BotRosterEntry *hw = bot_roster_at(bot_roster_find("handwritten"));
+    const BotRosterEntry *es = bot_roster_at(bot_roster_find("espresso"));
+    CHECK(hw && hw->strat == STRAT_HANDWRITTEN_PROD, "handwritten -> the _PROD mirror");
+    CHECK(es && es->strat == STRAT_ESPRESSO_PROD, "espresso -> the _PROD mirror");
+
+    // Knobs: cordite must carry the deployed budget, or the phone silently
+    // runs arena-mode cordite (CD_BUDGET's C default is 0 = arena).
+    const BotRosterEntry *cd = bot_roster_at(bot_roster_find("cordite"));
+    CHECK(cd && strstr(cd->knobs, "CD_BUDGET=prod"), "cordite carries CD_BUDGET=prod");
+    CHECK(cd && strstr(cd->knobs, "CD_RACE=1"), "cordite carries CD_RACE=1");
+    CHECK(cd && cd->uses_logs, "cordite is a belief bot (needs the session log)");
+
+    const BotRosterEntry *rnd = bot_roster_at(bot_roster_find("random"));
+    CHECK(rnd && !rnd->uses_logs, "random needs no session log");
+
+    // The offline projection: every offline entry resolves, in tier order.
+    int on = bot_roster_offline_count();
+    CHECK(on > 0 && on <= n, "offline count is a subset of the roster");
+    int proj_ok = 1, last = -1;
+    for (int i = 0; i < on; i++) {
+        int idx = bot_roster_offline_at(i);
+        const BotRosterEntry *e = bot_roster_at(idx);
+        if (!e || !e->offline || idx <= last) proj_ok = 0;
+        last = idx;
+    }
+    CHECK(proj_ok, "offline projection is in-order and only offline entries");
+    CHECK(bot_roster_offline_at(on) == -1 && bot_roster_offline_at(-1) == -1,
+          "offline projection bounds-check");
+}
+
+static void test_bot_knobs_precedence(void) {
+    bot_knobs_clear();
+    unsetenv("FOOLISH_TEST_KNOB");
+
+    // Nothing set anywhere -> the default.
+    CHECK(bot_knob("FOOLISH_TEST_KNOB") == NULL, "unset knob reads NULL");
+    CHECK(bot_knob_int("FOOLISH_TEST_KNOB", 7) == 7, "unset knob falls back to the default");
+
+    // Roster spec supplies a value.
+    bot_knobs_set("FOOLISH_TEST_KNOB=3,OTHER=xyz");
+    CHECK(bot_knob_int("FOOLISH_TEST_KNOB", 7) == 3, "roster spec supplies the value");
+    CHECK(!strcmp(bot_knob("OTHER"), "xyz"), "roster spec reads a string value");
+    CHECK(bot_knob("MISSING") == NULL, "a key absent from the spec reads NULL");
+
+    // Env overrides the roster — the research-override rule (bot_knobs.h).
+    setenv("FOOLISH_TEST_KNOB", "9", 1);
+    CHECK(bot_knob_int("FOOLISH_TEST_KNOB", 7) == 9, "env overrides the roster spec");
+    unsetenv("FOOLISH_TEST_KNOB");
+    CHECK(bot_knob_int("FOOLISH_TEST_KNOB", 7) == 3, "roster value returns once env is gone");
+
+    // Exact key matching: a prefix key must not shadow a longer one.
+    bot_knobs_set("CD_RACE=1,CD_RACE_C=75");
+    CHECK(bot_knob_int("CD_RACE", 0) == 1, "CD_RACE reads its own value");
+    CHECK(bot_knob_int("CD_RACE_C", 0) == 75, "CD_RACE_C is not shadowed by CD_RACE");
+    bot_knobs_set("CD_RACE_C=75,CD_RACE=1");
+    CHECK(bot_knob_int("CD_RACE", 0) == 1, "order-independent: CD_RACE after CD_RACE_C");
+    CHECK(bot_knob_int("CD_RACE_C", 0) == 75, "order-independent: CD_RACE_C first");
+
+    // Flags.
+    bot_knobs_set("ON=1,OFF=0");
+    CHECK(bot_knob_flag("ON") && !bot_knob_flag("OFF"), "flags read 1/0");
+    CHECK(!bot_knob_flag("ABSENT"), "an absent flag is off");
+
+    // Clearing removes the spec.
+    bot_knobs_clear();
+    CHECK(bot_knob("CD_RACE") == NULL, "clear drops the spec");
+    CHECK(bot_knob_int("CD_RACE", 42) == 42, "after clear, defaults apply");
+}
+
+// bot_roster_choose must leave no knobs installed behind it: the arena and the
+// MC rollout policies call the strategies directly and must see C defaults.
+static void test_bot_roster_choose_scopes_knobs(void) {
+    Game g;
+    make_2p_game(&g);
+    start_game(&g);
+    LegalMoves m;
+    int seat = g.first_attacker;
+    calculate_legal_moves(&g, seat, &m);
+
+    bot_knobs_clear();
+    int idx = bot_roster_choose(bot_roster_find("cordite"), &g, seat, &m);
+    CHECK(idx >= 0 && idx < m.n, "bot_roster_choose returns a legal move index");
+    CHECK(bot_knob("CD_BUDGET") == NULL, "choose leaves no knob spec installed");
+
+    CHECK(bot_roster_choose(-1, &g, seat, &m) == -1, "unknown roster index is -1");
+    CHECK(bot_roster_choose(bot_roster_count(), &g, seat, &m) == -1, "out-of-range index is -1");
+
+    // Every offline rung must actually dispatch — a roster entry pointing at a
+    // brain this build did not link would otherwise fail only at runtime.
+    int all_ok = 1;
+    for (int i = 0; i < bot_roster_offline_count(); i++) {
+        calculate_legal_moves(&g, seat, &m);
+        int r = bot_roster_choose(bot_roster_offline_at(i), &g, seat, &m);
+        if (r < 0 || r >= m.n) all_ok = 0;
+    }
+    CHECK(all_ok, "every offline rung dispatches to a linked brain");
+}
+
 int main(void) {
+    test_bot_roster_table();
+    test_bot_knobs_precedence();
+    test_bot_roster_choose_scopes_knobs();
+
     test_deal_rng_kat();
     test_whole_game_reproducible();
     test_deal_wide_reproducible();

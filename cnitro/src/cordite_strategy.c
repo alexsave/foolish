@@ -29,6 +29,7 @@
 
 #include "cordite_strategy.h"
 #include "strategy.h"
+#include "bot_knobs.h"
 #include "card.h"
 #include "game.h"
 #include "cordite_sim.h"
@@ -63,13 +64,14 @@ static uint32_t cd_mix(uint32_t a, uint32_t b) {
 // Ablation switches (read once): CD_NO_SOLVE / CD_NO_VOIDS / CD_NO_FLIP /
 // CD_NO_FLOORS / CD_NO_LEAF / CD_NO_AVOID / CD_VERIFY, plus CD_W1/CD_W2
 // world-count overrides for tuning.
+// Values come from the bot roster's knob spec, with env still overriding for
+// research/ablation sweeps (bot_knobs.h). Reading getenv directly here is what
+// made the phone run un-knobbed cordite (docs/C_CORE_CONSOLIDATION.md §3.1).
 static int cd_flag(const char *name) {
-    const char *v = getenv(name);
-    return v && v[0] && v[0] != '0';
+    return bot_knob_flag(name);
 }
 static int cd_env_int(const char *name, int def) {
-    const char *v = getenv(name);
-    return (v && v[0]) ? atoi(v) : def;
+    return bot_knob_int(name, def);
 }
 static _Thread_local int cd_flags_loaded = 0;
 // Force the CD_* knobs to be re-read on the next choose call. The wasm bridge
@@ -1392,7 +1394,7 @@ static int cordite_choose_impl(const Game *g, int bot_idx,
             // port shipped with (see cd_params / the keep counts below). The
             // server's bots.wasm adapter sets this; the arena default stays
             // the C-tuned budget.
-            const char *bm = getenv("CD_BUDGET");
+            const char *bm = bot_knob("CD_BUDGET");
             cd_budget_mode = (bm && !strcmp(bm, "prod")) ? 1
                            : (bm && !strcmp(bm, "max"))  ? 2 : 0;
         }

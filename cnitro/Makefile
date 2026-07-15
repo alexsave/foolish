@@ -43,7 +43,8 @@ CORE_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/view.c src/aw
             src/handwritten_prod_strategy.c src/distill_feat.c \
             src/distilled_strategy.c src/semtex_strategy.c \
             src/octogen_strategy.c src/torpex_strategy.c \
-            src/torpex_value.c src/novichok_strategy.c
+            src/torpex_value.c src/novichok_strategy.c \
+            src/bot_knobs.c src/bot_roster.c
 CORE_OBJ := $(CORE_SRC:src/%.c=build/%.o)
 
 .PHONY: all clean tests print-core
@@ -690,6 +691,19 @@ wasm-guards: build/guards.wasm
 # those were stack locals (fine on native's 8 MB stack) and are hoisted to
 # lazily-malloc'd per-thread scratch so they fit the 22 KiB bots.wasm shadow
 # stack (see the stack-hoist notes in robusta_strategy.c / blackpowder_strategy.c).
+#
+# bot_knobs.c is here because cordite/octogen read their CD_*/OG_* knobs through
+# it. It is a no-op for this module as long as the TS adapter keeps setting the
+# env table: with no roster spec installed, bot_knob() is just getenv() (see
+# bot_knobs.h), so bots.wasm behaves byte-for-byte as before.
+#
+# bot_roster.c is deliberately NOT here yet (docs/C_CORE_CONSOLIDATION.md A1,
+# phase 2). It dispatches the whole offline ladder, so linking it would drag
+# espresso_prod_strategy.c + gunpowder_strategy.c into the module for two rungs
+# the server never seeds — against the memory plan. Folding wasm_choose_move's
+# switch onto the roster is the same change that rewrites bots.wasm.gz, and
+# wants the CI toolchain (a local wasm-opt/clang skew produces a different
+# artifact), so it rides with the TS env-table deletion.
 WASM_BOT_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/view.c src/awire.c \
                 src/evwire.c src/random_strategy.c \
                 src/espresso_strategy.c src/handwritten_strategy.c \
@@ -698,7 +712,9 @@ WASM_BOT_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/view.c sr
                 src/cordite_strategy.c src/cordite_sim.c \
                 src/simple_heuristic_strategy.c \
                 src/handwritten_prod_strategy.c \
-                src/octogen_strategy.c wasm/wasm_api.c wasm/wasm_bots_api.c
+                src/octogen_strategy.c \
+                src/bot_knobs.c \
+                wasm/wasm_api.c wasm/wasm_bots_api.c
 
 # PER-FILE opt (a mix one clang invocation can't express): the profiled hot MC
 # core is built at -O3, everything else at -Oz. -O3 on those five files cuts the

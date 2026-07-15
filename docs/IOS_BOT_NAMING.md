@@ -40,9 +40,16 @@ wider than the website's *seeded* roster; see §2).
 | 9 | `cordite` | St. Petersburg | Петербург | 상트페테르부르크 | 635 | The second capital — the previous champion |
 | 10 | `octogen` | Moscow | Москва | 모스크바 | 0 | Top dog. Non-negotiable. |
 
-Max tiers compose: the site's `Cordite Max` / `Octogen Max` render as
+Max tiers compose: `Cordite Max` / `Octogen Max` render as
 `St. Petersburg Max` / `Москва Макс` / `모스크바 맥스` (localized "Max"
-suffix, key `ios.bot.max`). Instance numbers carry over verbatim:
+suffix, key `ios.bot.max`). **No live bot carries a Max key any more** — the
+tiers were retired in July 2026 (migration `20260715120000_drop_max_bot_tiers`;
+`octogen_max` was a plain alias of `octogen`, and `cordite_max`'s flat world
+budget was *weaker* than plain cordite at 6-8 players — see
+`docs/C_CORE_CONSOLIDATION.md` §4.1). The suffix stays in the parser purely for
+**historical replay blobs**, which embed nicknames at encode time — the same
+reason the base table keeps Espresso/Robusta/Gunpowder. Instance numbers carry
+over verbatim:
 `%Octogen 2` → **⚙ Moscow 2** (ko: **⚙ 모스크바 2**). The easter egg
 `%0x00C0FFEE` renders unchanged everywhere — hex is culture-neutral and
 beloved.
@@ -77,7 +84,7 @@ are in play — the mapping must serve both:
 | Source | Shape | Roster |
 |---|---|---|
 | Offline picker / offline seats | strategy key from `EngineC.roster()` (`fio_strategy_name`) | all 10 rungs above |
-| Online nicknames (DB rows) | raw string `"% <Base> [Max] <n>"` in `players[].name` — there is NO strategy enum on the wire (`_shared/wire/view.ts:29-30`; `strategy_key` is server-only) | the *seeded* subset: Random ×7, Simple Heuristic ×3, Handwritten ×4 (incl. `0x00C0FFEE`), Firecracker ×3, Blackpowder ×3, Cordite/Cordite Max ×3+3, Octogen/Octogen Max ×3+3 (`supabase/seed.sql:912-986`) |
+| Online nicknames (DB rows) | raw string `"% <Base> [Max] <n>"` in `players[].name` — there is NO strategy enum on the wire (`_shared/wire/view.ts:29-30`; `strategy_key` is server-only) | the *seeded* subset = the C roster's `seeded` column (`cnitro/src/bot_roster.c`): Random ×7, Simple Heuristic ×3, Handwritten ×4 (incl. `0x00C0FFEE`), Firecracker ×3, Blackpowder ×3, Cordite ×3, Octogen ×3 (`supabase/seed.sql`). The `[Max]` slot no longer occurs on live rows — only in old replay blobs. |
 | Replay blobs / history | names embedded at encode time | anything ever seeded — **including dropped families** (`Espresso` rows existed before migration `20260711130000_drop_non_wasm_bots`), so the nickname parser keeps Espresso/Robusta/Gunpowder in its base table for historical replays |
 
 **Rule: strategy-derived bot names are treated as KEYS and localized at

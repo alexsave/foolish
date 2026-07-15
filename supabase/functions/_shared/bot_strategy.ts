@@ -53,9 +53,18 @@ export class WasmBotStrategy implements BotStrategy {
     }
 }
 
-// Strategy registry. CD_BUDGET selects the kernel cordite's world/pruning
-// budget: 'prod' mirrors the deployed v2.4 player-count-aware budget,
-// 'max' the larger cordite_max tier (see cnitro/src/cordite_strategy.c).
+// Strategy registry.
+//
+// The canonical roster now lives in the C kernel (cnitro/src/bot_roster.c):
+// key -> brain + knobs + logs flag, one table shared with the phone and every
+// future client (docs/C_CORE_CONSOLIDATION.md F1). The env values below are
+// kept deliberately identical to that table's knob specs for now — env
+// overrides the roster (bot_knobs.h), so the server's behavior is unchanged
+// while both exist. Deleting these `env` blocks is the cutover step that makes
+// the roster authoritative here too; do it as its own change, not as a drive-by.
+//
+// CD_BUDGET selects the kernel cordite's world/pruning budget: 'prod' is the
+// deployed v2.4 player-count-aware schedule (see cnitro/src/cordite_strategy.c).
 // Single revert knob for the octogen trump-conservation tie-break. '40' = on
 // (default); '0' = pre-fix behavior. See the octogen registration below.
 const OCTOGEN_TRUMP_KEEP = '40';
@@ -82,10 +91,8 @@ export const BOT_STRATEGIES: Map<string, BotStrategy> = new Map<string, BotStrat
     // identical, pc2/pc6 within noise; landslide decisions finish in ~50
     // worlds instead of ~900).
     ['cordite', new WasmBotStrategy('cordite', STRAT.cordite, { env: { CD_BUDGET: 'prod', CD_RACE: '1', CD_RACE_C: '75' }, logs: true })],
-    ['cordite_max', new WasmBotStrategy('cordite_max', STRAT.cordite, { env: { CD_BUDGET: 'max', CD_RACE: '1', CD_RACE_C: '75' }, logs: true })],
     ['fulminate', new WasmBotStrategy('fulminate', STRAT.fulminate, { env: { CD_BUDGET: 'prod', CD_RACE: '1', CD_RACE_C: '75' }, logs: true })],
-    // Self-budgeted C brains — no env knobs. The _max keys alias the base
-    // strategy until a kernel-side max-budget knob exists (TODO).
+    // Self-budgeted C brains — no env knobs.
     ['semtex', new WasmBotStrategy('semtex', STRAT.semtex, { logs: true })],
     // OCTOGEN_TRUMP_KEEP (see octogen_strategy.c OG_TRUMP_KEEP): milli-units of
     // mean-finish taxed per trump LED while the deck is alive, tipping
@@ -94,8 +101,6 @@ export const BOT_STRATEGIES: Map<string, BotStrategy> = new Map<string, BotStrat
     // handwritten; ~0 latency/memory cost. <<< SET TO '0' TO REVERT to the
     // pre-fix behavior — takes effect on edge redeploy, no wasm rebuild. >>>
     ['octogen', new WasmBotStrategy('octogen', STRAT.octogen, { env: { OG_TRUMP_KEEP: OCTOGEN_TRUMP_KEEP }, logs: true })],
-    ['semtex_max', new WasmBotStrategy('semtex_max', STRAT.semtex, { logs: true })],
-    ['octogen_max', new WasmBotStrategy('octogen_max', STRAT.octogen, { env: { OG_TRUMP_KEEP: OCTOGEN_TRUMP_KEEP }, logs: true })],
 ]);
 
 // Lazy-load GPT strategy to avoid requiring API key at module load time

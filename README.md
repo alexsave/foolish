@@ -106,7 +106,7 @@ keeps policing the seams.
 
 **The bot brains are C too.** Every algorithmic strategy (`random`,
 `espresso`, `handwritten`, `simple_heuristic`, `champion`,
-`ultimate_champion`, `hacker`, `cordite`, `cordite_max`, `fulminate`) lives
+`ultimate_champion`, `hacker`, `cordite`, `octogen`, `fulminate`) lives
 in `cnitro/src/*_strategy.c` and ships as a second module, `bots.wasm`
 (`make wasm-bots` → `_shared/wasm/bots_wasm.ts`, ~150 KB): the rules kernel
 plus all bots plus a choose-move bridge. A bot turn marshals the game in
@@ -197,9 +197,11 @@ every other bot at every player count) — plus tools for head-to-head evals, a
 mixed-pool ELO arena, and seeded move-by-move replays. Cordite is a
 **belief-constrained determinized Monte-Carlo** player with an exact endgame solver
 that derives hidden information by deduction rather than peeking, under a strict
-**no-LLM / no-cheating** contract. It runs live as the `cordite` /
-`cordite_max` / `fulminate` bots — the C implementation itself, compiled into
-`bots.wasm`. See `cnitro/README.md`, `cnitro/CORDITE.md`,
+**no-LLM / no-cheating** contract. It runs live as the `cordite` bot (and is
+the base of `octogen`, the top rung) — the C implementation itself, compiled
+into `bots.wasm`. Which key maps to which brain, at which tuning, is the C bot
+roster (`cnitro/src/bot_roster.c`) — one table shared by the server, the phone
+and every future client. See `cnitro/README.md`, `cnitro/CORDITE.md`,
 `cnitro/BLACKPOWDER.md`, and `cnitro/CORDITE_RESEARCH.md`.
 
 ```bash

@@ -33,10 +33,10 @@ field** (§3). Findings, ranked by leverage:
 
 | # | Finding | Duplicated today in | Verdict |
 |---|---|---|---|
-| F1 | **Bot roster: key → brain + tuning knobs + logs flag** | TS registry (`bot_strategy.ts:63-99`) · C table in `ios_api.c:37-48` **without knobs** → live strength/latency divergence (§3) | **Do first.** One C roster table; fixes the drift immediately. |
-| F2 | **The bot drive cycle** (eligibility → fair pick → apply → passive bundling → stop conditions) | TS (`bot_actions.ts:262-411`) · Swift+C first-eligible walk (`LocalGame.runBots`) — with a second live divergence: iOS picks first-eligible, not shuffled | **One kernel entry point (`bot_drive`).** Server keeps lease/CAS/broadcast; iOS keeps timers/thermal. |
-| F3 | **Pacing policy** (what a move is worth pausing for) | TS constants 3000/300 ms + silent-skip · Swift 600–1200 ms jitter, no bundling | Kernel returns a `pacing_class` per action; ONE class→ms table shared by TS and Swift. |
-| F4 | **The animation plan** (which card flies where, in what order) | C (`evwire.c`, server-only today) · TS decode mirrors · **planned Swift re-derivation `BoardDiff.swift` (unwritten)** · TS replay twin (`src/replay/view.ts`+`animate.ts`, ~800 lines) | **Consolidate before BoardDiff is born** — kernel emits events for local play and replay stepping too. |
+| F1 | **Bot roster: key → brain + tuning knobs + logs flag** | TS registry (`bot_strategy.ts:63-99`) · C table in `ios_api.c:37-48` **without knobs** → live strength/latency divergence (§3) | **DONE** (§4.1): `cnitro/src/bot_roster.c` is the one table; the phone's knob + arena/prod drift is fixed. |
+| F2 | **The bot drive cycle** (eligibility → fair pick → apply → passive bundling → stop conditions) | TS (`bot_actions.ts:262-411`) · Swift+C first-eligible walk (`LocalGame.runBots`) — with a second live divergence: iOS picks first-eligible, not shuffled | **`bot_drive` (§4.2): kernel + iOS DONE**; the server port remains. |
+| F3 | **Pacing policy** (what a move is worth pausing for) | TS constants 3000/300 ms + silent-skip · Swift 600–1200 ms jitter, no bundling | **DONE (§4.3)**: `bot_pacing_ms` is the one class→ms table; the server's values won. |
+| F4 | **The animation plan** (which card flies where, in what order) | C (`evwire.c`, server-only today) · TS decode mirrors · **planned Swift re-derivation `BoardDiff.swift` (unwritten)** · TS replay twin (`src/replay/view.ts`+`animate.ts`, ~800 lines) | **F4.1 DONE (§4.4)**: `evwire_walk` + sinks; local play consumes kernel events and BoardDiff was never born. F4.2 (replay steps) = A5. |
 | F5 | **v6 replay production** (reveal-stream assembly at game end) | TS choreography (`finalizeEndedGame` + `reconstructSeededDeal` + `replay/encode.ts`) · absent on iOS (offline shares are v5-only) | `replay_encode_v6_from_game` in C; server finalize becomes call-verify-store; offline shares gain exact hands. |
 | F6 | **Rematch / reset-to-lobby transform** | TS 10-field mutation (`meta_actions.ts:188`) · client mirror (`clientReconcile.ts:10-40`, "must match byte-for-byte") · specced for a third port in iOS M-D5 | `wasm_reset_to_lobby` / `fio_reset_to_lobby`; all mirrors become decode-and-render. |
 | F7 | **Wire decode on the web** (packed view/evwire/awire → JS) | C codecs · ~960 lines of parity-policed TS mirrors (`@shared/wire/*`); iOS already decodes in C | Fold into client wasm opportunistically, format-by-format (⚠ guards.wasm memory budget, §4.7). |
@@ -78,6 +78,14 @@ would need, which is where F4/F7/F9 come from.
 
 ## 3. The motivating bugs (found by this audit — live divergences)
 
+*Bug 1 is FIXED by A1 (§4.1), along with a third divergence this audit missed:
+`ios_api.c` pointed the `handwritten`/`espresso` rungs at the arena variants
+rather than the production mirrors, so offline Handwritten was a different bot
+from the site's regardless of knobs. Bug 2 is FIXED on the phone by A2 (§4.2):
+`bot_drive` is the one cycle, so the seat-order advantage and the per-passive
+padding are gone. The server still runs its own loop until the A2 port, but the
+two now agree by construction rather than by hope.*
+
 1. **Offline cordite is not the website's cordite.** The C strategies read
    tuning through env: `CD_BUDGET` defaults to **0 = arena mode**
    (`cordite_strategy.c:90`), and the server sets `CD_BUDGET=prod|max`,
@@ -103,7 +111,45 @@ would need, which is where F4/F7/F9 come from.
 
 ### 4.1 F1 — One canonical bot roster table, in C
 
-New `cnitro/src/bot_roster.{h,c}`:
+**STATUS: LANDED (A1, July 2026)** — `cnitro/src/bot_roster.{h,c}` +
+`cnitro/src/bot_knobs.{h,c}` exist; `ios_api.c` consumes them (§3.1 and the
+arena/prod mix-up below are fixed); the `_max` tiers are gone; parity is pinned
+by `e2e/bot_roster_parity.test.ts` + the roster tests in `cnitro/tests/tests.c`.
+Four notes on how it landed versus how it was specced here:
+
+1. **Two flags, not one `shipped`.** The seeded site ladder and the offline
+   picker are different sets in *both* directions — `espresso`/`robusta`/
+   `gunpowder` are offline-only rungs, and the `_max` tiers were seeded-only —
+   so one boolean could not express membership. The entry carries `seeded` and
+   `offline`; `fio_strategy_*` is the `offline` projection in tier order.
+2. **The `_max` tiers were deleted, not modelled** (owner decision). They were
+   never distinct bots: `octogen_max` registered the *same* brain with the
+   *same* knobs as `octogen` (an admitted alias), and `cordite_max` was
+   `CD_BUDGET=max` — a FLAT 120/240/168 world budget, versus `prod`'s
+   player-count-aware schedule (240/480/336 at 6p). So "Max" only out-sampled
+   plain Cordite at 2-4 players and ran at ~HALF its budget at 6-8: the tier
+   advertised as stronger was the weaker bot in the bigger games. One
+   `cordite`, on `prod`. Migration `20260715120000_drop_max_bot_tiers`.
+3. **A third live divergence, found while doing this.** `ios_api.c` mapped
+   `handwritten`→`STRAT_HANDWRITTEN` and `espresso`→`STRAT_ESPRESSO` — the
+   *arena/rollout* variants, which drifted from the production bots and stay
+   frozen because cordite's rollout policy is tuned against them. The site maps
+   `handwritten`→`STRAT_HANDWRITTEN_PROD`. Offline "Handwritten" was therefore
+   not the site's Handwritten at all, independent of any knob. The roster points
+   both rungs at the `_PROD` mirrors.
+4. **Knob precedence is env > roster > C default** ("env vars kept as research
+   overrides", below). This is what let A1 land as a **no-op on the server**:
+   the TS registry still writes an identical env table, so bots.wasm is
+   unchanged and the parity suites cannot move, while the phone — which set no
+   env at all — gets the right knobs immediately. Deleting the TS `env` blocks
+   is the cutover, and it rides with folding `wasm_choose_move`'s switch onto
+   the roster (that pairing is deliberate: linking `bot_roster.c` into bots.wasm
+   drags in `espresso_prod`/`gunpowder` for two rungs the server never seeds, so
+   it is the same change that rewrites `bots.wasm.gz` and wants the CI
+   toolchain). `bot_knobs.c` alone is already in the wasm module and is inert
+   there — with no roster spec installed, `bot_knob()` *is* `getenv()`.
+
+The specced shape, for reference:
 
 ```c
 typedef struct {
@@ -293,9 +339,9 @@ mirror → parity harness → cutover → freeze the old path as test oracle)
 
 | # | Action | When | Verification |
 |---|---|---|---|
-| A1 | **F1 roster table** — smallest, fixes §3.1 immediately, F2 depends on it | now | bot-parity e2e + new assertion: roster choices ≡ registry behavior knob-for-knob (fixture the env table); seed.sql `shipped`-set check |
-| A2 | **F2 `bot_drive` + F3 pacing classes** — port the server loop onto it behind the differential harness; collapse `LocalGame.runBots` onto `fio_bot_drive_json` | with A1 | seeded games, TS cycle vs kernel cycle, byte-compare committed products; arena fingerprint + determinism suites unchanged; iOS and server share the pacing table |
-| A3 | **F4.1 kernel events for local play** — and delete `BoardDiff.swift` from the iOS plan (amend `IOS_APP_DESIGN.md` §16.B4 to "consume kernel events") | before iOS Milestone-B animation work | offline move animates from kernel events in simulator; e2e asserts native events ≡ server evwire for a seeded game |
+| A1 | **F1 roster table** — smallest, fixes §3.1 immediately, F2 depends on it — **DONE** (§4.1; server-side cutover = deleting the TS `env` blocks, rides with the bots.wasm rebuild) | now | **done**: `e2e/bot_roster_parity.test.ts` (roster ≡ registry knob-for-knob; seed.sql ≡ the `seeded` set; `_max` stays dead) + roster/knob tests in `cnitro/tests/tests.c`; ios-smoke + difftests green |
+| A2 | **F2 `bot_drive` + F3 pacing classes** — **kernel + iOS DONE** (§4.2/§4.3): the cycle, the pacing table, `fio_bot_drive_json`, `wasm_bot_drive`, and `LocalGame.runBots` collapsed onto one call. **REMAINS:** port `bot_actions.ts` onto `wasm_bot_drive` behind the differential harness (the lease/CAS/broadcast/CPU budget stay TS-side; the cached-move replay after a CAS conflict stays too) | with A1 | **done**: fairness/bundling/determinism + pacing tests in `cnitro/tests/tests.c` (the fairness one fails if the shuffle is removed), ios-smoke, Swift `EngineGoldenTests`, bot-parity + determinism e2e unchanged against the rebuilt bots.wasm. **Remains**: seeded games, TS cycle vs kernel cycle, byte-compare committed products |
+| A3 | **F4.1 kernel events for local play** — **DONE** (§4.4): `evwire_walk` + sinks; `fio_bot_drive_json` events inline + `fio_last_events_json`; `GameEvent`/`lastEvents` in Swift; `IOS_APP_DESIGN.md` §16.B4 amended to "consume kernel events" and `BoardDiff.swift` cancelled | before iOS Milestone-B animation work | **done**: kernel events verified for bot cycles AND human moves through the real bridge; evwire byte-parity with the TS twin unchanged (`packed_wire_parity`); Swift decodes them; C suites + `ios-smoke` + Swift tests green. **Remains**: rendering them (Milestone B) |
 | A4 | **F5 v6-from-game** | after A1–A3 | extend `replay_v6_test.c`; server finalize diff-tested against the TS assembly on real finished games |
 | A5 | **F4.2 replay steps from the kernel** | after A3 (reuses emitter), before native replay polish | web replay renders identically (snapshot tests); iOS plays a web-generated code step-for-step |
 | A6 | **F6 reset transform**, then **F8 projection deletions** | cleanup wave | `resetToLobby` mirrors deleted; rematch e2e green on web + iOS |

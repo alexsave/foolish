@@ -32,6 +32,7 @@
 
 #include "octogen_strategy.h"
 #include "strategy.h"
+#include "bot_knobs.h"
 #include "card.h"
 #include "game.h"
 #include "cordite_sim.h"
@@ -66,23 +67,23 @@ static uint32_t og_mix(uint32_t a, uint32_t b) {
 // Ablation switches (read once): OG_NO_SOLVE / OG_NO_VOIDS / OG_NO_FLIP /
 // OG_NO_FLOORS / OG_NO_LEAF / OG_NO_AVOID / OG_VERIFY, plus OG_W1/OG_W2
 // world-count overrides for tuning.
+// Values come from the bot roster's knob spec, with env still overriding for
+// research/ablation sweeps (bot_knobs.h).
 static int og_flag(const char *name) {
-    const char *v = getenv(name);
-    return v && v[0] && v[0] != '0';
+    return bot_knob_flag(name);
 }
 static int og_env_int(const char *name, int def) {
-    const char *v = getenv(name);
-    return (v && v[0]) ? atoi(v) : def;
+    return bot_knob_int(name, def);
 }
 static _Thread_local int og_flags_loaded = 0;
-#ifdef FOOLISH_ORACLE_BUILD
-// Infinite-oracle hook (client replay analysis, docs/INFINITE_ORACLE_DESIGN.md
-// §6.2): let the browser bridge re-read the OG_* env between deliberation
-// batches, so the per-batch world budget can adapt to the measured device
-// speed. Mirrors cordite_reload_flags (cordite_strategy.c). Compiled ONLY into
-// oracle.wasm; shipped builds carry no trace of it.
+// Drop the latched OG_* values so the next choose re-reads them. Two callers:
+// bot_roster_choose, which installs a different knob spec per named bot; and
+// the infinite-oracle bridge (client replay analysis,
+// docs/INFINITE_ORACLE_DESIGN.md §6.2), which re-reads OG_* between
+// deliberation batches so the per-batch world budget can adapt to the measured
+// device speed. Mirrors cordite_reload_flags (cordite_strategy.c). Only the
+// oracle's *wasm export* is oracle-build-only (wasm_bots_api.c).
 void og_reload_flags(void) { og_flags_loaded = 0; }
-#endif
 static _Thread_local int og_no_solve = 0, og_no_voids = 0, og_no_flip = 0;
 static _Thread_local int og_no_floors = 0, og_no_leaf = 0, og_no_avoid = 0;
 static _Thread_local int og_no_earlyexit = 0;

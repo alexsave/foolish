@@ -256,8 +256,7 @@ export const STRATEGY_KEY = {
     ESPRESSO: 'espresso',
     FIRECRACKER: 'firecracker',
     BLACKPOWDER: 'blackpowder',
-    CORDITE: 'cordite',
-    CORDITE_MAX: 'cordite_max'
+    CORDITE: 'cordite'
 } as const;
 
 export type StrategyKey = typeof STRATEGY_KEY[keyof typeof STRATEGY_KEY];

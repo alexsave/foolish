@@ -216,9 +216,15 @@ function importStrategyKeys(ex: BotsExports, game: Game): void {
     ex.wasm_import_strategy_keys();
 }
 
-// Tuning knobs (CD_* for the Monte-Carlo bots) go through the kernel's tiny
-// env table. Rewritten per decision because one module instance serves
-// strategies with different knobs (cordite vs cordite_max).
+// Tuning knobs (CD_*/OG_* for the Monte-Carlo bots) go through the kernel's
+// tiny env table. Rewritten per decision because one module instance serves
+// strategies with different knobs (cordite's CD_* vs octogen's OG_*), and the
+// bots latch their knobs on first read.
+//
+// The knob VALUES are canonically the C roster's (cnitro/src/bot_roster.c);
+// env overrides it, so what this writes is what the server plays
+// (docs/C_CORE_CONSOLIDATION.md F1). e2e/bot_roster_parity.test.ts holds the
+// two in lockstep until the env table is deleted.
 function setEnv(ex: BotsExports, env: Record<string, string>): void {
     ex.wasm_clearenv();
     const base = ex.wasm_io_ptr();
