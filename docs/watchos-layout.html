@@ -585,8 +585,9 @@ body.showz .zoneso{display:block}
    hand as a crown-driven fisheye lane (right, hugging the crown edge).
    One representation of the hand: the focused chip IS the big card.
    ===================================================================== */
-.htable{position:absolute;left:16px;top:144px;width:186px;display:flex;
-  flex-direction:column;gap:7px;z-index:1}
+.htable{position:absolute;left:16px;top:144px;width:186px;height:236px;
+  display:flex;flex-direction:column;gap:7px;z-index:1;justify-content:center}
+.htable.scrollv{justify-content:flex-start}
 .htable.scrollv{-webkit-mask-image:linear-gradient(#0000,#000 18px,#000 calc(100% - 18px),#0000);
   mask-image:linear-gradient(#0000,#000 18px,#000 calc(100% - 18px),#0000)}
 .hrow{display:flex;align-items:center;gap:10px;height:44px;flex:none}
@@ -601,11 +602,9 @@ body.showz .zoneso{display:block}
   display:flex;align-items:center;justify-content:center}
 .hlane .hcheck{font-weight:800;color:#30d158}
 .hlane .htake{font-weight:800;color:#ff453a}
-.hcap{position:absolute;right:0;width:124px;top:316px;text-align:center;
-  font-size:21px;font-weight:700;letter-spacing:.3px;z-index:4;
-  text-transform:lowercase}
-.hcap.act{color:#E7B84A}.hcap.pass{color:#409cff}.hcap.good{color:#30d158}
-.hcap.pickup{color:#ff453a}.hcap.gray{color:#98989e}
+.hcap{position:absolute;right:8px;width:116px;top:348px;text-align:center;
+  font-size:18px;font-weight:700;letter-spacing:1px;z-index:4;
+  text-transform:uppercase;color:#98989e}
 /* HIG receipts */
 .quotewall{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));
   gap:12px;margin:16px 0}
@@ -1008,8 +1007,11 @@ table.audit th{font-family:var(--disp);text-transform:uppercase;font-size:12px;
   hugging the crown edge</b>: one representation — the focused chip <i>is</i> the big card,
   growing in place as the crown turns, one neighbor peeking above and below. No chip strip, no
   separate focus slot — and <b>no pills</b>: the verb is a complication-sized caption under
-  the fisheye, always one of <b>attack · good · pickup · cover · pass · cover/pass</b> (blank
-  on a dead card). cover and cover/pass sometimes need the disambiguation screen — accepted.
+  the fisheye — gray, ALL CAPS, watch-style: <b>ATTACK · GOOD · PICKUP · COVER · PASS ·
+  COVER/PASS</b> (blank on a dead card). The fisheye + caption anchor the bottom-right corner,
+  with up to three small neighbors stacked above; the table list stays vertically centered
+  until it passes five rows, then scrolls. cover and cover/pass sometimes need the
+  disambiguation screen — accepted.
   Roster moves behind a <b>seat-strip tap</b> (the system chevron brings you back), so there is
   no root pager at all. Gesture map: crown = hand lane · vertical drag = table list · tap =
   focus/commit/strip. Nothing moves horizontally.</p>
@@ -2362,21 +2364,21 @@ function hrowH(pr){
   if(pr.t==='fly')return `<div class="hrow"><span class="hcell"></span><span class="harr"></span><span class="hcell"><span class="inflight">${g(pr.a)}</span></span></div>`;
   return `<div class="hrow"><span class="hcell"></span><span class="harr"></span><span class="hcell">${g(pr.a)}</span></div>`;
 }
-// Fisheye lane: focus ±1 visible (focused 84px, neighbors 34px, edges clip).
+// Fisheye lane, bottom-right anchor: focus card low (abs y≈300), up to three
+// small neighbors stacked above; caption sits under the focus card.
 function hlaneH(items,focus){
-  const CY=118;
+  const YS={'0':162,'-1':102,'-2':58,'-3':14};
   let h='';
-  for(let off=-1;off<=1;off++){
+  for(let off=-3;off<=0;off++){
     const i=focus+off;
     if(i<0||i>=items.length)continue;
-    const size=off===0?84:34, rank=off===0?38:16, op=off===0?1:.75;
-    const y=CY+off*(off<0?92:122);
+    const size=off===0?84:34, rank=off===0?38:16, op=off===0?1:(.75-0.12*(-off-1));
     const it=items[i];
     let inner;
     if(it.check)inner=`<span class="hcheck" style="font-size:${Math.round(size*.82)}px">✓</span>`;
     else if(it.take!=null)inner=`<span class="htake" style="font-size:${Math.round(size*.52)}px">+${it.take}</span>`;
     else inner=hcard(it.r,it.s,size,rank,it.dim);
-    h+=`<div class="hitem" style="top:${y}px;opacity:${op}">${inner}</div>`;
+    h+=`<div class="hitem" style="top:${YS[off]}px;opacity:${op.toFixed(2)}">${inner}</div>`;
   }
   return `<div class="hlane">${h}</div>`;
 }
@@ -2402,8 +2404,8 @@ fig(galH,'H1 · Attacker','table is a list · hand is a lane',hscreen({
   cap:['act','attack'],
 }),[
 '<b>The whole table, no pages</b> — pairs as list rows: cover column ▸ attack column; open attacks alone, full bright; resolved rows desaturate. Up to five pairs are just… visible.',
-'<b>One hand representation</b> — the focused chip IS the big card (42 pt); one neighbor peeks above and below; the ✓ is the lane\'s last stop.',
-'<b>The verb is a caption, not a pill</b> — complication-sized text under the fisheye: always one of attack · good · pickup · cover · pass · cover/pass. Nothing when the focused card is dead. Tap the big card to commit.',
+'<b>One hand representation</b> — the focused chip IS the big card (42 pt), anchored bottom-right; up to three small neighbors stack above it (they\'re small — so more fit); the ✓ is the lane\'s last stop.',
+'<b>The verb is a caption, not a pill</b> — complication-sized gray CAPS under the fisheye (ATTACK · GOOD · PICKUP · COVER · PASS · COVER/PASS), watch-style; blank when the focused card is dead. Tap the big card to commit.',
 '<b>Nothing moves horizontally</b> — crown = lane, vertical drag = table list (only when it overflows), seat-strip tap = roster (chevron returns).',
 ]);
 
@@ -2431,7 +2433,7 @@ fig(galH,'H3 · Seven pairs','five rows visible, then scroll',hscreen({
   focus:0,
   cap:['act','attack'],
 }),[
-'<b>Five rows fit now</b> — the pill\'s old footprint went back to the table; past five, the list scrolls vertically with edge fades (the app\'s only drag), newest landing at the bottom.',
+'<b>Centered until five</b> — the list sits vertically centered while it fits; past five rows it top-aligns and scrolls with edge fades (the app\'s only drag), newest landing at the bottom.',
 '<b>Better than dots for huge tables</b> — a 10-pair post-pickup bout is a scroll, not five blind pages.',
 '<b>Bare ♠, deck 0</b> — same InfoLine decay as G.',
 ]);
@@ -2499,8 +2501,8 @@ fig(galH,'H5 · GOOD','the ✓ enlarges like any card',hscreen({
       el.style.cursor='pointer';
       el.addEventListener('click',ev=>{ev.stopPropagation();
         const y=parseInt(el.style.top);
-        if(Math.abs(y-118)<10)commit();
-        else spin(y>118?1:-1);
+        if(Math.abs(y-162)<10)commit();
+        else spin(-1);
       });});
     const cp=scr.querySelector('.hcap');
     if(cp)cp.addEventListener('click',commit);

@@ -5,11 +5,12 @@ Deliverables:
 - **`docs/watchos-layout.html`** — the canonical mockups: every screen state as
   HTML/CSS/JS at native watch pixels, viewable at true physical size (with a
   monitor-calibration control), a 10 mm-finger overlay, a 2×3 tap-zone
-  overlay, and four live crown/tap demos. Seven design options (A–G) with
-  per-element rationale; **Option G is the build spec**.
-- **`docs/WATCHOS_G_SPEC.md`** — the implementation handoff: Option G as a
-  self-contained SwiftUI spec (points, decision tables, FoolishKit
-  integration, acceptance checklist). **Give the implementor that file.**
+  overlay, and five live crown/tap demos. Eight design options (A–H) with
+  per-element rationale; **Option H (§8) is the final layout**.
+- **`docs/WATCHOS_SPEC.md`** — the implementation handoff: the final Option H
+  layout as a self-contained SwiftUI spec (points, decision tables,
+  FoolishKit integration, acceptance checklist). **Give the implementor that
+  file.**
 - **This doc** — the verified rules (with citations), the Apple HIG
   constraints (with quotes), the design reviews and their engine verdicts,
   and ASCII reference frames.
@@ -22,9 +23,16 @@ How this converged, in four rounds:
    one tap zone, everything ≥ 24 px. Correct but board-blind.
 3. **Foolish40 prototype + second design review → Option F** ("First person")
    — the synthesis chassis.
-4. **Owner review of F → Option G** ("First person, refined") — **the build
-   spec.** A/B/C were confirmed illegible at real size; D's full-screen card
-   and notifications survive inside G.
+4. **Owner review of F → Option G** ("First person, refined") — pills,
+   swipe-paged table, terse verbs. A/B/C were confirmed illegible at real
+   size; D's notifications survive.
+5. **Owner reviews of G against the running simulator → Option H** ("All
+   vertical") — **the final layout.** Single fisheye hand representation
+   anchored bottom-right (three small neighbors stacked above), table as a
+   vertically-centered list (scrolls past five rows), gray ALL-CAPS caption
+   verbs instead of pills (ATTACK · GOOD · PICKUP · COVER · PASS ·
+   COVER/PASS), zero horizontal gestures, roster behind a seat-strip tap.
+   Handoff: `docs/WATCHOS_SPEC.md`.
 
 ---
 
