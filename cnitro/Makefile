@@ -724,11 +724,18 @@ wasm-guards: build/guards.wasm
 # What is left of A1 is the SWITCH, not the link: wasm_choose_move still
 # dispatches its own way, and the TS env blocks in bot_strategy.ts still set
 # the knobs the roster already specifies. Folding the two is one change,
-# because it rewrites bots.wasm.gz — and that rebuild wants the CI toolchain:
-# a local clang/wasm-opt skew produces a DIFFERENT artifact (verified July
-# 2026 — Homebrew clang 22 + wasm-opt 130 rebuilds this module 670 bytes
-# larger than the committed one, from identical source), and CI ships the
-# committed .gz rather than rebuilding it.
+# because it rewrites bots.wasm.gz.
+#
+# There is NO toolchain skew, and the old warning here that there was one is
+# retracted: from a clean tree, `make wasm-bots
+# WASM_CC=/opt/homebrew/opt/llvm/bin/clang` (Homebrew LLVM 22.1.8, wasm-opt
+# 130) reproduces the committed bots.wasm.gz md5-identically — re-verified
+# July 2026. A byte delta therefore means YOUR CHANGE, not the compiler.
+# The trap that keeps manufacturing this phantom: WASM_CC defaults to plain
+# `clang`, which on macOS is APPLE clang and cannot target wasm32 at all
+# ("No available targets are compatible with triple wasm32"). It is WASM_CC=,
+# not CC=. CI ships the committed .gz rather than rebuilding, so the committed
+# artifact is the baseline to reproduce before you touch it.
 WASM_BOT_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/view.c src/awire.c \
                 src/evwire.c src/random_strategy.c \
                 src/espresso_strategy.c src/handwritten_strategy.c \
