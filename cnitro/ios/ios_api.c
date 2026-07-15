@@ -596,7 +596,24 @@ static int build_encode_input(const Game *g, unsigned char *out, int cap) {
     }
     out[0] = (unsigned char)g->num_players;
     out[1] = (unsigned char)trump_id;
-    out[2] = (unsigned char)g->first_attacker;
+    // Header slot 2 is "the seat that made the OPENING attack" — the decoder
+    // seeds its model with it and, on the first atom, offers attack options to
+    // that seat alone (replay.c build_top_menu). g->first_attacker cannot be
+    // used: it is set at the deal (lowest trump) but then REASSIGNED on every
+    // bout transition (game.c), so by the time a finished game is encoded it
+    // holds the LAST round's attacker. Whenever the game's last attacker was
+    // not its first, the opening ATTACK log had no matching menu option and
+    // encode died with REPLAY_ENOTINMENU on step 0 — ~50% of 2p and ~75% of 4p
+    // finished games. Derive it from the log, as the other three encoders
+    // already do (tests/replay_difftest.c, tests/replay_v6_test.c,
+    // _shared/replay/encode.ts). NOTE: fio_state_json's read of
+    // g->first_attacker is correct and must stay — a live view wants the
+    // CURRENT round's attacker.
+    int first_attacker = -1;
+    for (int i = 0; i < g->num_logs && first_attacker < 0; i++)
+        if (g->logs[i].log_type == LOG_ATTACK) first_attacker = g->logs[i].player_idx;
+    if (first_attacker < 0) return -1;   // no attack logged → nothing to encode
+    out[2] = (unsigned char)first_attacker;
     out[3] = (unsigned char)(n_actions & 0xff);
     out[4] = (unsigned char)((n_actions >> 8) & 0xff);
     return q;

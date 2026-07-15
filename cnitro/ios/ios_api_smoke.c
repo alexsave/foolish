@@ -17,6 +17,73 @@ static const char *strrchr_upto(const char *lo, const char *hi, char c) {
     return NULL;
 }
 
+// Replay round-trip over MANY seeds and player counts.
+//
+// The single-seed round-trip at the end of main() is not enough: it hid a bug
+// that broke ~50% of 2p and ~75% of 4p offline share codes for months. The
+// encoder stamped g->first_attacker (which is REASSIGNED every bout) into the
+// header slot meaning "the seat that opened the game", so encode died with
+// REPLAY_ENOTINMENU on step 0 for every game whose last attacker was not its
+// first. The one hard-coded seed happened to be a game where those coincided.
+// Whether a given seed trips it is a property of the DEAL, so the only honest
+// guard is a sweep.
+//
+// handwritten (fast, no sampling) keeps this cheap enough for CI.
+static int replay_sweep(void) {
+    int strat = -1;
+    for (int i = 0; i < fio_strategy_count(); i++) {
+        char nm[64];
+        if (fio_strategy_name(i, nm, sizeof(nm)) > 0 && !strcmp(nm, "handwritten")) { strat = i; break; }
+    }
+    if (strat < 0) { printf("FAIL replay sweep: no handwritten rung\n"); return 1; }
+
+    const int counts[] = { 2, 3, 4, 6 };
+    int checked = 0, skipped = 0;
+    for (int ci = 0; ci < (int)(sizeof(counts) / sizeof(counts[0])); ci++) {
+        for (int s = 0; s < 12; s++) {
+            int players = counts[ci];
+            unsigned char seed[32];
+            for (int i = 0; i < 32; i++) seed[i] = (unsigned char)(i * 31 + s * 7 + players);
+
+            if (fio_new_game(seed, 32, players) != FIO_EOK) { printf("FAIL sweep new_game\n"); return 1; }
+            for (int p = 0; p < players; p++) fio_set_seat_strategy(p, strat);
+
+            int steps = 0;
+            while (fio_game_over() < 0 && steps++ < 5000)
+                if (fio_bot_step_json(-1, buf, sizeof(buf)) <= 0) break;
+
+            int fool = fio_game_over();
+            if (fool < 0) { printf("FAIL sweep p=%d seed=%d did not finish\n", players, s); return 1; }
+
+            static char code[8192];
+            int clen = fio_replay_encode_b32(code, sizeof(code));
+            if (clen < 0) {
+                // A game longer than MAX_LOGS cannot be encoded at all — a
+                // documented build limit, not an encoder fault (the same skip
+                // as tests/replay_difftest.c).
+                if (fio_last_replay_error() == 21 /* REPLAY_EINPUT */) { skipped++; continue; }
+                printf("FAIL sweep encode p=%d seed=%d err=%d detail=%d steps=%d\n",
+                       players, s, clen, fio_last_replay_error(), steps);
+                return 1;
+            }
+            if (fio_replay_decode_json(code, buf, sizeof(buf)) < 0) {
+                printf("FAIL sweep decode p=%d seed=%d err=%d\n", players, s, fio_last_replay_error());
+                return 1;
+            }
+            const char *fp = strstr(buf, "\"fool\":");
+            int decoded_fool = fp ? atoi(fp + 7) : -999;
+            if (decoded_fool != fool) {
+                printf("FAIL sweep fool mismatch p=%d seed=%d decoded=%d game=%d\n",
+                       players, s, decoded_fool, fool);
+                return 1;
+            }
+            checked++;
+        }
+    }
+    printf("replay sweep OK (%d games round-tripped, %d skipped as over-long)\n", checked, skipped);
+    return 0;
+}
+
 int main(void) {
     unsigned char seed[32];
     for (int i = 0; i < 32; i++) seed[i] = (unsigned char)(i * 7 + 1);
@@ -94,6 +161,8 @@ int main(void) {
     int decoded_fool = fp ? atoi(fp + 7) : -999;
     if (decoded_fool != fool) { printf("FAIL replay fool mismatch: decoded=%d game=%d\n", decoded_fool, fool); return 1; }
     printf("replay round-trip OK (fool=%d)\n", decoded_fool);
+
+    if (replay_sweep() != 0) return 1;
 
     printf("SMOKE OK\n");
     return 0;
