@@ -1,0 +1,2672 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Foolish on the wrist — 40mm layout study</title>
+<style>
+/* =====================================================================
+   Page chrome: Foolish's own Soviet-poster system (src/styles/variables.css
+   [data-theme=soviet]) — red/concrete/ink, hard offset shadows, zero radius.
+   The watch screens inside the bezels are deliberately NOT themed: they are
+   watchOS-accurate (pure black OLED, SF-style type, watchOS accent colors).
+   ===================================================================== */
+:root{
+  --ink:#0f0d0b; --paper:#F5E6C8; --paper2:#EDDCB9; --red:#B32929;
+  --red-deep:#8B1E1E; --gold:#E79743; --green:#5A8F3E; --line:#c9b58a;
+  --mut:#6b5d43;
+  --disp:'Oswald','Bebas Neue','Arial Narrow','Helvetica Neue Condensed',Impact,sans-serif;
+  --body:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+  --mono:ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+  /* mockup scale: --zoom is the preset (1=real), --cal the monitor calibration.
+     real size: CSS assumes 96dpi -> 3.7795 css-px/mm; panel is 12.827 dev-px/mm
+     -> base factor 0.2947. */
+  --cal:1; --zoom:1; --zk:calc(0.2947 * var(--cal) * var(--zoom));
+}
+@media (prefers-color-scheme: dark){
+  :root{ --ink:#EDDCB9; --paper:#171310; --paper2:#211b15; --line:#463a28;
+         --mut:#a08d67; --gold:#d98f3f; }
+}
+:root[data-theme="dark"]{ --ink:#EDDCB9; --paper:#171310; --paper2:#211b15;
+  --line:#463a28; --mut:#a08d67; --gold:#d98f3f; }
+:root[data-theme="light"]{ --ink:#0f0d0b; --paper:#F5E6C8; --paper2:#EDDCB9;
+  --line:#c9b58a; --mut:#6b5d43; --gold:#E79743; }
+
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.55 var(--body)}
+main{max-width:1060px;margin:0 auto;padding:0 20px 90px}
+h1,h2,h3{font-family:var(--disp);font-weight:600;letter-spacing:.5px;text-wrap:balance}
+code,.cite{font-family:var(--mono);font-size:.82em;background:var(--paper2);
+  padding:1px 5px;border:1px solid var(--line)}
+a{color:var(--red)} :root[data-theme="dark"] a{color:var(--gold)}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]) a{color:var(--gold)} }
+p{max-width:70ch}
+button:focus-visible,input:focus-visible{outline:3px solid var(--gold);outline-offset:2px}
+
+/* masthead */
+header.mast{border-bottom:6px solid var(--red);padding:34px 0 18px;margin-bottom:22px}
+.kicker{font-family:var(--disp);text-transform:uppercase;letter-spacing:3px;
+  font-size:13px;color:var(--red);font-weight:600}
+:root[data-theme="dark"] .kicker{color:var(--gold)}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]) .kicker{color:var(--gold)} }
+header.mast h1{font-size:clamp(34px,6vw,58px);line-height:1.02;margin:8px 0 10px;
+  text-transform:uppercase}
+header.mast .sub{color:var(--mut);max-width:74ch}
+
+/* section headers */
+section{margin-top:64px}
+h2{font-size:clamp(24px,3.4vw,34px);text-transform:uppercase;margin:0 0 6px;
+  padding-left:14px;border-left:10px solid var(--red)}
+h2 .tag{font-size:14px;letter-spacing:2px;color:var(--gold);vertical-align:middle;
+  margin-left:10px}
+.lede{color:var(--mut);margin-top:2px}
+
+/* controls strip */
+.controls{position:sticky;top:0;z-index:50;background:var(--paper);
+  border:2px solid var(--ink);box-shadow:5px 5px 0 var(--red);
+  display:flex;flex-wrap:wrap;gap:10px 22px;align-items:center;
+  padding:10px 14px;margin:18px 0 8px}
+.controls .grp{display:flex;align-items:center;gap:8px}
+.controls .lab{font-family:var(--disp);text-transform:uppercase;font-size:12px;
+  letter-spacing:1.5px;color:var(--mut)}
+.seg{display:flex;border:2px solid var(--ink)}
+.seg button{font:600 13px var(--disp);letter-spacing:1px;text-transform:uppercase;
+  background:transparent;color:var(--ink);border:0;border-right:2px solid var(--ink);
+  padding:6px 12px;cursor:pointer}
+.seg button:last-child{border-right:0}
+.seg button.on{background:var(--red);color:#F5E6C8}
+.controls label.tog{display:flex;gap:6px;align-items:center;font-size:13px;cursor:pointer}
+.controls input[type=range]{accent-color:var(--red)}
+details.cal{font-size:13px;color:var(--mut)}
+details.cal .cardref{width:calc(85.6mm * var(--cal));height:calc(53.98mm * var(--cal));
+  border:2px dashed var(--red);margin:8px 0;display:flex;align-items:center;
+  justify-content:center;color:var(--mut);font-size:12px;max-width:100%}
+
+/* facts table */
+table.facts{border-collapse:collapse;width:100%;font-size:14px;margin-top:14px}
+table.facts th,table.facts td{border:1px solid var(--line);padding:8px 10px;
+  text-align:left;vertical-align:top}
+table.facts th{font-family:var(--disp);text-transform:uppercase;letter-spacing:1px;
+  font-size:12px;background:var(--paper2)}
+table.facts td:first-child{font-weight:600;white-space:nowrap}
+.tablewrap{overflow-x:auto}
+
+.pushback{border:2px solid var(--ink);border-left:10px solid var(--red);
+  background:var(--paper2);padding:12px 16px;margin:14px 0;max-width:78ch}
+.pushback b{font-family:var(--disp);text-transform:uppercase;letter-spacing:1px;
+  color:var(--red)}
+:root[data-theme="dark"] .pushback b{color:var(--gold)}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]) .pushback b{color:var(--gold)} }
+
+/* budget numbers */
+.nums{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin:16px 0}
+.num{border:2px solid var(--ink);background:var(--paper2);padding:10px 12px}
+.num .v{font-family:var(--disp);font-size:30px;line-height:1;font-variant-numeric:tabular-nums}
+.num .k{font-size:12px;color:var(--mut);text-transform:uppercase;letter-spacing:1px;margin-top:4px}
+
+/* mock gallery */
+.gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));
+  gap:26px 22px;margin-top:20px;align-items:start}
+figure.mock{margin:0;border:2px solid var(--ink);background:var(--paper2);
+  box-shadow:5px 5px 0 rgba(0,0,0,.28);padding:14px}
+figure.mock .stagebox{display:flex;justify-content:center;padding:8px 0 14px;
+  overflow-x:auto}
+figcaption h4{margin:2px 0 6px;font-family:var(--disp);text-transform:uppercase;
+  letter-spacing:1px;font-size:16px}
+figcaption h4 .st{color:var(--gold);font-size:12px;letter-spacing:2px;margin-left:6px}
+ul.why{margin:0;padding-left:16px;font-size:12.5px;color:var(--mut);line-height:1.5}
+ul.why li{margin:3px 0} ul.why b{color:var(--ink);font-weight:600}
+
+.verdict{border:2px solid var(--ink);padding:12px 16px;margin-top:18px;
+  background:var(--paper2);max-width:80ch}
+.verdict b{font-family:var(--disp);text-transform:uppercase;letter-spacing:1px}
+.rec{border-color:var(--green);border-width:3px;box-shadow:5px 5px 0 var(--green)}
+
+/* comparison */
+table.cmp{border-collapse:collapse;width:100%;font-size:13.5px}
+table.cmp th,table.cmp td{border:1px solid var(--line);padding:7px 10px;text-align:left}
+table.cmp th{font-family:var(--disp);text-transform:uppercase;font-size:12px;
+  letter-spacing:1px;background:var(--paper2)}
+.good{color:var(--green);font-weight:700}.bad{color:var(--red);font-weight:700}
+.meh{color:var(--gold);font-weight:700}
+
+ul.cuts{padding-left:18px;max-width:78ch}
+ul.cuts li{margin:6px 0}
+ul.cuts b{font-weight:600}
+
+footer{margin-top:70px;border-top:2px solid var(--line);padding-top:14px;
+  color:var(--mut);font-size:13px}
+
+/* =====================================================================
+   WATCH FRAME — native 324x394 panel inside a 352x430 case, scaled by --zk
+   ===================================================================== */
+.watchbox{width:calc(376px * var(--zk));height:calc(438px * var(--zk));
+  position:relative;flex:none}
+.case{width:352px;height:430px;transform:scale(var(--zk));transform-origin:top left;
+  position:absolute;left:0;top:0;background:#1b1b1d;border-radius:78px;
+  box-shadow:inset 0 0 0 2px #3a3a3c, 0 6px 22px rgba(0,0,0,.45)}
+.crown{position:absolute;right:-9px;top:96px;width:11px;height:52px;
+  background:linear-gradient(90deg,#4a4a4e,#232325);border-radius:5px;
+  box-shadow:inset 0 2px 3px rgba(255,255,255,.25)}
+.sideb{position:absolute;right:-6px;top:172px;width:7px;height:64px;
+  background:#2c2c2e;border-radius:4px}
+.screen{position:absolute;left:14px;top:18px;width:324px;height:394px;
+  border-radius:60px;background:#000;color:#fff;overflow:hidden;
+  font-family:-apple-system,'SF Pro Text','Helvetica Neue',system-ui,sans-serif;
+  display:flex;flex-direction:column;user-select:none}
+.screen *{line-height:1.25}
+
+/* zones */
+.zstatus{height:34px;flex:none;display:flex;align-items:flex-end;
+  justify-content:space-between;padding:0 30px;font-size:15px;font-weight:600}
+.zstatus .l{color:#e9e2cf}.zstatus .l .dk{color:#8e8e93;font-weight:500}
+.zstatus .clock{color:#8e8e93;font-variant-numeric:tabular-nums}
+.zctx{height:32px;flex:none;margin:6px 12px 0;border-radius:16px;background:#1c1c1e;
+  display:flex;align-items:center;justify-content:center;gap:6px;
+  font-size:13.5px;font-weight:600;color:#e9e2cf;position:relative}
+.zctx .chev{color:#8e8e93;font-size:11px}
+.zctx.warn{background:#2b1d00;color:#ffd60a}
+.zctx.def{background:#2a0f0e;color:#ff8b84}
+.zstage{position:relative;flex:1;overflow:hidden}
+.zdots{height:16px;flex:none;text-align:center;font-size:10px;color:#8e8e93;
+  letter-spacing:2px}
+.zhint{height:26px;flex:none;text-align:center;font-size:13px;font-weight:600;
+  color:#8e8e93;padding:0 20px;white-space:nowrap}
+.zhint.ok{color:#30d158}.zhint.warn{color:#ffd60a}.zhint.err{color:#ff453a}
+.zact{height:82px;flex:none;display:flex;gap:8px;margin:4px 12px 12px}
+
+/* cards */
+.wcard{position:absolute;background:#f4f1e8;color:#16181c;border-radius:11px;
+  box-shadow:0 3px 10px rgba(0,0,0,.6);display:flex;flex-direction:column}
+.wcard .cr{position:absolute;font-weight:700;font-size:19px;letter-spacing:-.5px}
+.wcard .cr.tl{top:7px;left:9px}
+.wcard .cr.br{bottom:7px;right:9px;transform:rotate(180deg)}
+.wcard .pip{flex:1;display:flex;align-items:center;justify-content:center;
+  font-size:52px}
+.wcard.red{color:#c9252d}
+.wcard .act{flex:none;height:27px;border-top:1.5px solid #d8d2c2;color:#0a7a34;
+  display:flex;align-items:center;justify-content:center;font-size:12px;
+  font-weight:700;letter-spacing:.5px;white-space:nowrap;overflow:hidden}
+.wcard .act.gray{color:#7a7a7e}
+.wcard .badge{position:absolute;top:7px;right:8px;background:#16181c;color:#f4f1e8;
+  font-size:9.5px;font-weight:700;padding:2px 6px;border-radius:8px;letter-spacing:.3px}
+.wcard .badge.tr{background:#b8860b}
+.wcard.focus{width:118px;height:176px;left:103px;top:10px;font-size:20px}
+.wcard.focus .pip{font-size:56px}
+.wcard.nb{width:100px;height:150px;top:24px}
+.wcard.nb .pip{font-size:40px}.wcard.nb .cr{font-size:16px}
+.wcard.nb.left{left:-40px}.wcard.nb.right{left:264px}
+.wcard.dim{filter:grayscale(.75) brightness(.5)}
+.wcard.atk{box-shadow:0 0 0 2px #ff453a,0 3px 10px rgba(0,0,0,.6)}
+
+/* buttons */
+.wbtn{flex:1;border-radius:22px;background:#2c2c2e;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;font-weight:600;font-size:19px;gap:1px;
+  cursor:pointer}
+.wbtn .sub{font-size:10.5px;font-weight:500;color:#8e8e93;letter-spacing:.2px}
+.wbtn.good{color:#30d158}
+.wbtn.primary{background:#30d158;color:#04220f}
+.wbtn.primary .sub{color:#0a4a24}
+.wbtn.take{color:#ff453a}.wbtn.pass{color:#0a84ff}.wbtn.ghost{color:#8e8e93}
+.wbtn.disabled{opacity:.4}
+.wbtn.seatsbtn{font-size:12.5px;letter-spacing:.2px}
+
+/* toast + sheet */
+.wtoast{position:absolute;left:16px;right:16px;top:76px;background:#2c2c2e;
+  border-radius:16px;padding:11px 14px;box-shadow:0 8px 24px rgba(0,0,0,.7);z-index:6}
+.wtoast .t{color:#ff453a;font-weight:700;font-size:14px}
+.wtoast .b{color:#d5d5d9;font-size:12.5px;margin-top:2px}
+.wsheet{position:absolute;left:0;right:0;bottom:0;background:#161618;z-index:6;
+  border-top:1.5px solid #2c2c2e;border-radius:24px 24px 0 0;padding:10px 12px 16px}
+.wsheet .st{font-size:12px;font-weight:700;color:#8e8e93;text-align:center;
+  letter-spacing:1px;text-transform:uppercase;margin-bottom:8px}
+.wsheet .row{display:flex;gap:8px}
+.wsheet .wbtn{height:56px}
+
+/* pair chips (table strip / peek) */
+.pairc{position:relative;flex:none;width:66px;height:92px}
+.pairc .pc{position:absolute;width:50px;height:72px;border-radius:7px;
+  background:#f4f1e8;color:#16181c;font-size:14px;font-weight:700;
+  display:flex;align-items:flex-start;justify-content:flex-start;
+  padding:3px 0 0 6px;white-space:nowrap;
+  box-shadow:0 2px 6px rgba(0,0,0,.55)}
+.pairc .pc.red{color:#c9252d}
+.pairc .pc.dfn{left:15px;top:19px}
+.pairc .pc.open{left:15px;top:19px;background:transparent;color:#5a5a5e;
+  border:1.5px dashed #5a5a5e;box-shadow:none;font-size:11px;font-weight:600;
+  align-items:center;justify-content:center;padding:0}
+.pairc.big{width:120px;height:160px}
+.pairc.big .pc{width:88px;height:124px;font-size:22px;border-radius:10px;
+  padding:6px 0 0 9px}
+.pairc.big .pc.dfn,.pairc.big .pc.open{left:30px;top:34px}
+.pairc.big .pc.open{font-size:13px;padding:0}
+.pairc.sel .pc:first-child{box-shadow:0 0 0 2.5px #30d158,0 2px 6px rgba(0,0,0,.55)}
+
+/* misc stage content */
+.centermsg{position:absolute;inset:0;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:8px;padding:0 18px;text-align:center}
+.centermsg .big{font-family:-apple-system,system-ui;font-size:30px;font-weight:800;
+  letter-spacing:-.5px}
+.centermsg .big.red{color:#ff453a}.centermsg .big.green{color:#30d158}
+.centermsg .mid{font-size:14px;color:#d5d5d9;font-weight:600}
+.centermsg .small{font-size:12px;color:#8e8e93}
+.seats{display:flex;flex-wrap:wrap;gap:4px;justify-content:center}
+.seat{font-size:11.5px;font-weight:700;background:#1c1c1e;color:#8e8e93;
+  border-radius:9px;padding:2px 7px}
+.seat.ok{color:#30d158}.seat.def{color:#ff8b84}
+.minipairs{display:flex;gap:5px;justify-content:center;flex-wrap:wrap}
+.mp{font-size:12.5px;font-weight:700;background:#1c1c1e;border-radius:8px;
+  padding:3px 7px;color:#e9e2cf}
+.mp .r{color:#ff6961}.mp .arrow{color:#48484a;margin:0 2px}
+.mp .open{color:#8e8e93;font-weight:600}
+
+/* option A specifics */
+.zstrip{height:104px;flex:none;display:flex;gap:7px;align-items:center;
+  padding:4px 12px 0;overflow:hidden}
+.zstageA{position:relative;flex:1;overflow:hidden}
+.zstageA .wcard.focus{width:92px;height:136px;left:116px;top:4px}
+.zstageA .wcard.focus .pip{font-size:40px}
+.zstageA .wcard.nb{width:76px;height:114px;top:15px}
+.zstageA .wcard.nb.left{left:-26px}.zstageA .wcard.nb.right{left:274px}
+.zstageA .wcard.nb .pip{font-size:30px}
+.zstageA .wcard .act{font-size:10px}
+.zactA{height:62px;flex:none;display:flex;gap:8px;margin:4px 12px 12px}
+.zactA .wbtn{font-size:17px;border-radius:18px}
+
+/* option C specifics */
+.csum{height:38px;flex:none;margin:4px 12px 0;display:flex;align-items:center;
+  justify-content:center;font-size:13px;font-weight:600;color:#e9e2cf;
+  background:#1c1c1e;border-radius:12px;gap:8px}
+.clist{flex:1;overflow:hidden;padding:6px 10px;display:flex;flex-direction:column;gap:6px}
+.crow{flex:none;height:58px;border-radius:15px;background:#1c1c1e;display:flex;
+  align-items:center;padding:0 14px;font-size:17px;font-weight:600;gap:10px}
+.crow .r{color:#ff6961}
+.crow.focusring{box-shadow:0 0 0 2.5px #30d158}
+.crow.dim{opacity:.42}
+.crow .note{margin-left:auto;font-size:11px;color:#8e8e93;font-weight:500}
+.crow.action{color:#30d158}.crow.takeR{color:#ff453a}.crow.passR{color:#0a84ff}
+.cmore{text-align:center;font-size:11px;color:#8e8e93}
+
+/* finger overlay + zones */
+.fingero{display:none;position:absolute;width:128px;height:128px;border-radius:50%;
+  left:98px;top:114px;background:rgba(231,151,67,.24);border:2px dashed #E79743;
+  z-index:9;pointer-events:none}
+.fingero::after{content:'10 mm';position:absolute;bottom:-20px;left:50%;
+  transform:translateX(-50%);font-size:11px;color:#E79743;font-weight:700}
+.zoneso{display:none;position:absolute;inset:0;z-index:8;pointer-events:none;
+  background:
+    linear-gradient(#0000 0,#0000 calc(33.3% - 1px),#E7974388 calc(33.3% - 1px),#E7974388 33.3%,#0000 33.3%,#0000 calc(66.6% - 1px),#E7974388 calc(66.6% - 1px),#E7974388 66.6%,#0000 66.6%),
+    linear-gradient(90deg,#0000 0,#0000 calc(50% - 1px),#E7974388 calc(50% - 1px),#E7974388 50%,#0000 50%)}
+body.showf .fingero{display:block}
+body.showz .zoneso{display:block}
+
+/* =====================================================================
+   OPTION D — full-bleed crown pages. Every string >= 24px (12pt @2x);
+   default voice 26-32px (13-16pt). One tap zone: the whole screen.
+   ===================================================================== */
+.dtop{position:absolute;top:0;left:0;right:0;height:44px;display:flex;
+  justify-content:space-between;align-items:center;padding:8px 24px 0 26px;
+  z-index:5;font-size:24px;font-weight:700;color:#fff;white-space:nowrap;gap:8px}
+.dtop span:first-child{overflow:hidden;text-overflow:ellipsis}
+.dtop .dclock{color:#e9e2cf;font-variant-numeric:tabular-nums;font-weight:600}
+.dcard{position:absolute;inset:0;background:#f4f1e8;color:#16181c}
+.dcard::before{content:'';position:absolute;top:0;left:0;right:0;height:64px;
+  background:linear-gradient(rgba(0,0,0,.62),rgba(0,0,0,0));z-index:2}
+.dcard.red{color:#c9252d}
+.dcard .drank{position:absolute;top:52px;left:24px;font-size:58px;
+  font-weight:800;letter-spacing:-2px;line-height:1;z-index:1}
+.dcard .dpip{position:absolute;inset:20px 0 40px;display:flex;align-items:center;
+  justify-content:center;font-size:170px}
+.dcard.dim{filter:grayscale(.75) brightness(.5)}
+.dcard.atkcard{box-shadow:inset 0 0 0 5px #ff453a}
+.dact{position:absolute;left:0;right:0;bottom:0;height:56px;display:flex;
+  align-items:center;justify-content:center;gap:8px;font-size:27px;font-weight:800;
+  letter-spacing:.3px;z-index:5;white-space:nowrap;padding:0 34px 6px}
+.dact.ok{background:#30d158;color:#03210e}
+.dact.no{background:rgba(28,28,30,.94);color:#98989e;font-size:24px;font-weight:700}
+.dact.take{background:#ff453a;color:#2b0300}
+.vdots{position:absolute;right:8px;top:50%;transform:translateY(-50%);
+  display:flex;flex-direction:column;gap:8px;z-index:6}
+.vdots i{width:7px;height:7px;border-radius:50%;background:#48484a;display:block}
+.vdots i.on{background:#fff}
+.dstate{position:absolute;inset:0;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:12px;text-align:center;
+  padding:34px 22px 40px}
+.dstate .t1{font-size:54px;font-weight:850;line-height:1.02;letter-spacing:-1px}
+.dstate .t2{font-size:27px;font-weight:700;line-height:1.3}
+.dstate .t3{font-size:24px;font-weight:600;opacity:.72;line-height:1.3}
+.dstate.goodP{background:#30d158;color:#03210e}
+.dstate.takeP{background:#2b0503;color:#ff8177}
+.dstate.takeP .t1{color:#ff453a}
+.dstate.passP{background:#04203d;color:#9ecbff}
+.dstate.passP .t1{color:#409cff}
+.dstate.plain{color:#fff}
+.dstate .drow{display:flex;flex-wrap:wrap;gap:6px;justify-content:center}
+.dstate .dchip{font-size:24px;font-weight:700;background:#1c1c1e;color:#98989e;
+  border-radius:14px;padding:4px 14px}
+.dstate .dchip.ok{color:#30d158}
+.dstate .dchip.def{color:#ff8b84}
+.dtable{position:absolute;inset:0;padding:52px 20px 16px;display:flex;
+  flex-direction:column;gap:8px}
+.dtable .dpair{flex:none;height:64px;border-radius:18px;background:#1c1c1e;
+  display:flex;align-items:center;justify-content:center;gap:10px;
+  font-size:33px;font-weight:800}
+.dtable .dpair .sep{color:#48484a;font-size:26px}
+.dtable .dpair .openx{color:#8e8e93;font-size:26px;font-weight:700}
+.dtable .dpair .redt{color:#ff6961}
+.dbanner{position:absolute;top:46px;left:14px;right:14px;background:#2c2c2e;
+  border-radius:20px;padding:14px 18px;z-index:8;box-shadow:0 10px 30px rgba(0,0,0,.7)}
+.dbanner .t{color:#ff453a;font-weight:800;font-size:26px}
+.dbanner .b{color:#d5d5d9;font-size:24px;font-weight:600;margin-top:3px;line-height:1.25}
+/* notification + widget mocks */
+.dnotif{position:absolute;inset:0;display:flex;flex-direction:column;
+  padding:40px 14px 14px;gap:8px}
+.dnotif .nh{display:flex;align-items:center;gap:8px;font-size:24px;font-weight:700;
+  color:#98989e;padding-left:6px}
+.dnotif .nh i{width:26px;height:26px;border-radius:8px;background:#B32929;
+  display:inline-flex;align-items:center;justify-content:center;font-style:normal;
+  color:#F5E6C8;font-size:17px}
+.dnotif .nt{font-size:32px;font-weight:800;color:#fff;padding-left:6px}
+.dnotif .nb{font-size:25px;font-weight:600;color:#d5d5d9;padding-left:6px;line-height:1.3}
+.dnotif .nbtn{margin-top:auto;flex:none;height:56px;border-radius:18px;
+  background:#2c2c2e;display:flex;align-items:center;justify-content:center;
+  font-size:26px;font-weight:750}
+.dnotif .nbtn.g{color:#30d158}.dnotif .nbtn.r{color:#ff453a}.dnotif .nbtn.gr{color:#98989e}
+.dwidget{position:absolute;inset:0;display:flex;flex-direction:column;
+  align-items:center;justify-content:flex-end;padding:0 12px 18px;
+  background:radial-gradient(140px 140px at 50% 26%, #223 0%, #000 70%)}
+.dwidget .wclock{position:absolute;top:34px;left:0;right:0;text-align:center;
+  font-size:64px;font-weight:300;color:#e9e2cf;letter-spacing:2px}
+.dwidget .wcardw{width:100%;height:132px;border-radius:24px;background:#15151a;
+  border:1px solid #2c2c2e;padding:14px 18px;display:flex;flex-direction:column;
+  justify-content:center;gap:2px}
+.dwidget .wt{display:flex;align-items:center;gap:8px;font-size:22px;font-weight:700;
+  color:#98989e}
+.dwidget .wt i{width:22px;height:22px;border-radius:7px;background:#B32929;
+  display:inline-flex;align-items:center;justify-content:center;font-style:normal;
+  color:#F5E6C8;font-size:14px}
+.dwidget .wb{font-size:31px;font-weight:800;color:#fff}
+.dwidget .ws{font-size:24px;font-weight:600;color:#30d158}
+/* =====================================================================
+   OPTION E — the user's Foolish40 prototype (glyph cards, radial ring,
+   shield/sword) combined with Option D's mechanics.
+   ===================================================================== */
+.gcard{position:relative;display:inline-flex;align-items:center;justify-content:center;
+  line-height:1}
+.gcard .gsuit{color:#f2f2f4}
+.gcard.red .gsuit{color:#e8352e}
+.gcard .grank{position:absolute;font-weight:800;color:#111;
+  top:54%;left:50%;transform:translate(-50%,-50%)}
+.gcard.red .grank{color:#fff}
+.gcard.dim{opacity:.32}
+.gcard.focus{outline:2.5px solid #f2f2f4;outline-offset:3px;border-radius:8px}
+.estrip{position:absolute;bottom:10px;left:12px;right:12px;display:flex;gap:8px;
+  align-items:flex-end;justify-content:center;z-index:4}
+.estrip .gcard{font-size:38px;width:40px;height:46px}
+.estrip .gcard .grank{font-size:19px}
+.ebig{position:absolute;bottom:60px;left:16px;font-size:104px;width:112px;
+  height:124px;z-index:3}
+.ebig .grank{font-size:48px}
+.epill{position:absolute;right:10px;bottom:82px;height:56px;min-width:120px;
+  border-radius:28px;background:#E7B84A;color:#241a02;display:flex;
+  align-items:center;justify-content:center;gap:6px;font-size:24px;font-weight:800;
+  z-index:5;padding:0 16px}
+.epill.gray{background:#2c2c2e;color:#30d158}
+.epill.red{background:#ff453a;color:#2b0300}
+.ering{position:absolute;inset:0;z-index:1}
+.ering span{font-size:15px;font-weight:650;color:#8e8e93;letter-spacing:.5px}
+.ering .ecnt{position:absolute;transform:translate(-50%,-50%);font-size:25px;
+  font-weight:800;color:#eee;letter-spacing:0}
+.eshield{position:absolute;transform:translate(-50%,-50%);width:44px;height:53px;
+  z-index:2;display:flex;align-items:center;justify-content:center}
+.eshield svg{position:absolute;inset:0;width:100%;height:100%}
+.eshield b{position:relative;font-size:25px;font-weight:800;color:#fff;z-index:1}
+.estat{position:absolute;top:40px;font-size:27px;font-weight:800;color:#fff;
+  line-height:1.05;z-index:2}
+.estat small{display:block;font-size:16px;font-weight:600;color:#8e8e93}
+.estat.l{left:22px}.estat.r{right:22px;text-align:right}
+.ebattle{position:absolute;top:126px;left:0;right:0;display:flex;
+  align-items:center;justify-content:center;gap:10px;z-index:1}
+.ebattle .gcard{font-size:86px;width:90px;height:100px}
+.ebattle .gcard .grank{font-size:42px}
+.ebattle .sep{color:#5a5a5e;font-size:34px;font-weight:800}
+.ebattle .openlbl{color:#8e8e93;font-size:24px;font-weight:700}
+.edots{position:absolute;top:238px;left:0;right:0;text-align:center;
+  font-size:24px;font-weight:700;color:#8e8e93;letter-spacing:1px;z-index:1}
+.eyou{position:absolute;bottom:118px;right:26px;text-align:center;z-index:2;
+  color:#E7B84A;font-weight:800;font-size:24px;line-height:1.1}
+.eyou small{display:block;font-size:16px;letter-spacing:1px}
+/* =====================================================================
+   OPTION F — the synthesis: first-person zones, full table grid, crown as
+   the legality oracle, snipe-loop haptics. Look-zones may run small (grid
+   ranks ~10pt, chips) — every touch-zone and action string stays >= 24px.
+   ===================================================================== */
+.fstatus{position:absolute;top:8px;left:24px;right:24px;display:flex;
+  justify-content:space-between;font-size:24px;font-weight:700;color:#e9e2cf;z-index:3}
+.fstatus .clockf{color:#8e8e93;font-variant-numeric:tabular-nums}
+.fstrip{position:absolute;top:40px;left:0;right:0;display:flex;
+  justify-content:center;gap:13px;align-items:center;z-index:3}
+.fseat{min-width:30px;height:40px;display:flex;align-items:center;
+  justify-content:center;font-size:25px;font-weight:800;color:#98989e;position:relative}
+.fseat.good{color:#30d158}
+.fseat.def{color:#fff}
+.fseat.def svg{position:absolute;inset:-4px -7px;width:calc(100% + 14px);
+  height:calc(100% + 8px)}
+.fseat.def b{position:relative;z-index:1;font-weight:800}
+.fgrid{position:absolute;top:86px;left:16px;right:16px;display:grid;
+  grid-template-columns:1fr 1fr;gap:6px 10px;z-index:1}
+.fcell{height:44px;border-radius:11px;display:flex;align-items:center;
+  justify-content:center;gap:5px;background:#131315}
+.fcell .gcard{font-size:34px;width:36px;height:40px}
+.fcell .gcard .grank{font-size:17px}
+.fcell .fsep{color:#5a5a5e;font-size:20px;font-weight:800}
+.fcell.res{opacity:.38}
+.fcell.open{box-shadow:inset 0 0 0 2px #ff453a}
+.fcell.open.sel{box-shadow:inset 0 0 0 3px #ffd60a}
+.fcell.empty{background:transparent;border:1.5px dashed #2c2c2e;color:#48484a;
+  font-size:22px;font-weight:700}
+.fcell .inflight{opacity:.45}
+.fcell .slot{color:#ff8b84;font-size:20px;font-weight:700}
+.ffocus{position:absolute;left:22px;bottom:64px;z-index:4}
+.ffocus .gcard{font-size:86px;width:96px;height:106px}
+.ffocus .gcard .grank{font-size:40px}
+.ffocus .gcard.term{outline:none;font-size:30px;width:96px;height:106px;
+  border-radius:16px;background:#1c1c1e;display:flex;font-weight:800}
+.ffocus .gcard.term.goodT{color:#30d158;box-shadow:inset 0 0 0 2.5px #30d158}
+.ffocus .gcard.term.takeT{color:#ff453a;box-shadow:inset 0 0 0 2.5px #ff453a}
+.flabel{position:absolute;left:132px;bottom:72px;right:12px;z-index:4;
+  display:flex;flex-direction:column;gap:5px}
+.flabel .l1{font-size:25px;font-weight:800;color:#fff;line-height:1.15}
+.flabel .l2{font-size:24px;font-weight:600;color:#8e8e93;line-height:1.2}
+.flabel .l1.ok{color:#30d158}.flabel .l1.warn{color:#ffd60a}
+.flabel .l1.err{color:#ff453a}.flabel .l1.pass{color:#409cff}
+.fchips{position:absolute;bottom:22px;left:14px;right:14px;display:flex;
+  gap:8px;justify-content:center;align-items:flex-end;z-index:4}
+.fchips .gcard{font-size:34px;width:36px;height:42px}
+.fchips .gcard .grank{font-size:17px}
+.fchips .gcard.focus{outline-offset:2px}
+.fchips .term{font-size:22px;font-weight:800;color:#30d158;width:36px;height:42px;
+  display:flex;align-items:center;justify-content:center;border-radius:9px;
+  background:#1c1c1e}
+.fchips .term.dimT{color:#48484a}
+.fdots{position:absolute;bottom:6px;left:0;right:0;text-align:center;
+  font-size:11px;letter-spacing:4px;color:#5a5a5e;z-index:3}
+.fdots b{color:#fff}
+/* roster page */
+.froster{position:absolute;inset:0;padding:44px 26px 30px;display:flex;
+  flex-direction:column;gap:2px;z-index:2}
+.frow{display:flex;align-items:center;gap:10px;font-size:25px;font-weight:700;
+  color:#d5d5d9;height:33px}
+.frow .nm{width:104px}
+.frow .ct{width:34px;text-align:right;font-variant-numeric:tabular-nums}
+.frow .role{font-size:22px;color:#8e8e93;font-weight:600}
+.frow.defR .role{color:#ff8b84}
+.frow.youR{color:#E7B84A}
+.frow.goodR .role{color:#30d158}
+.ffoot{margin-top:auto;font-size:22px;font-weight:600;color:#8e8e93;
+  text-align:center;line-height:1.35}
+/* =====================================================================
+   OPTION G v2 — measured against the 40mm sim screenshot: back chevron
+   (~66px circle, top-left, immovable), big clock, info line under the
+   clock. Single context pill. Table = big pairs, 2 per swipe page.
+   ===================================================================== */
+.gchev{position:absolute;left:16px;top:18px;width:66px;height:66px;
+  border-radius:50%;background:#1f1f21;display:flex;align-items:center;
+  justify-content:center;z-index:6;color:#e9e2cf;font-size:34px;font-weight:600;
+  padding-bottom:4px}
+.gclock{position:absolute;top:20px;right:26px;font-size:34px;font-weight:600;
+  color:#fff;z-index:5;font-variant-numeric:tabular-nums}
+.ginfo{position:absolute;top:64px;right:26px;display:flex;gap:8px;
+  align-items:center;font-size:24px;font-weight:700;color:#b8b8be;z-index:5}
+.ginfo .gtrump .gcard{font-size:24px;width:24px;height:28px}
+.gtrump{display:inline-flex;align-items:center}
+.gtrump .gcard .grank{font-size:12px}
+.fseat.you{color:#E7B84A}
+.gstrip{position:absolute;top:104px;left:0;right:0;display:flex;
+  justify-content:center;gap:12px;align-items:center;z-index:3}
+.gtable{position:absolute;top:150px;left:0;right:0;display:flex;
+  justify-content:center;align-items:center;gap:30px;z-index:1}
+.gpairv{display:flex;align-items:center;gap:9px}
+.gpairv .gcard{font-size:62px;width:64px;height:72px}
+.gpairv .gcard .grank{font-size:29px}
+.gpairv .fsep{color:#5a5a5e;font-size:24px;font-weight:800}
+.gpairv.res{opacity:.42}
+.gpairv .inflight{opacity:.45}
+.gpgdots{position:absolute;top:266px;left:0;right:0;display:flex;
+  justify-content:center;gap:9px;z-index:1}
+.gpgdots i{width:8px;height:8px;border-radius:50%;background:#48484a;display:block}
+.gpgdots i.on{background:#fff}
+.gfocus{position:absolute;left:16px;top:264px;z-index:4}
+.gfocus .gcard{font-size:100px;width:112px;height:124px}
+.gfocus .gcard .grank{font-size:46px}
+.gpill{position:absolute;right:14px;top:292px;height:56px;min-width:172px;
+  border-radius:28px;display:flex;align-items:center;justify-content:center;
+  gap:7px;font-size:26px;font-weight:800;z-index:5;padding:0 24px}
+.gpill.act{background:#E7B84A;color:#241a02}
+.gpill.take{background:#ff453a;color:#2b0300}
+.gpill.pass{background:#0a84ff;color:#001b38}
+.gpill.good{background:#30d158;color:#03210e}
+.gpill.gray{background:#2c2c2e;color:#98989e}
+.gchips{position:absolute;left:142px;right:8px;top:340px;display:flex;gap:9px;
+  align-items:flex-end;overflow:hidden;z-index:4;
+  -webkit-mask-image:linear-gradient(90deg,#000 0,#000 calc(100% - 30px),#0000);
+  mask-image:linear-gradient(90deg,#000 0,#000 calc(100% - 30px),#0000)}
+.gchips .gcard{font-size:42px;width:44px;height:50px;flex:none}
+.gchips .gcard .grank{font-size:20px}
+.gchips .gcard.focus{outline-offset:2px}
+.gchips .gterm{flex:none;width:44px;height:50px;display:flex;align-items:center;
+  justify-content:center;font-size:36px;font-weight:800;color:#30d158;
+  border-radius:8px}
+.gchips .gterm.take{color:#ff453a;font-size:24px;letter-spacing:-.5px}
+.gchips .gterm.focus{outline:2.5px solid #f2f2f4;outline-offset:2px}
+.gchips .gterm.dim{opacity:.32}
+.gfocus .bigcheck{font-size:96px;font-weight:800;color:#30d158;line-height:1;
+  width:112px;height:124px;display:flex;align-items:center;justify-content:center}
+.gfocus .bigcheck.take{color:#ff453a;font-size:60px}
+.grej{position:absolute;inset:0;border-radius:60px;z-index:9;pointer-events:none;
+  box-shadow:inset 0 0 30px 9px #ff453a}
+.gover{position:absolute;inset:0;background:rgba(0,0,0,.88);z-index:8;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:20px}
+.gover .gx{position:absolute;top:18px;left:16px;width:66px;height:66px;
+  border-radius:50%;background:#2c2c2e;display:flex;align-items:center;
+  justify-content:center;font-size:28px;color:#e9e2cf}
+.gover .ttl{font-size:25px;font-weight:700;color:#b8b8be}
+.gover .row{display:flex;gap:30px}
+.gover .row .gcard{font-size:88px;width:98px;height:108px}
+.gover .row .gcard .grank{font-size:42px}
+/* roster shield */
+.frow .rshield{position:relative;width:24px;height:29px;display:inline-flex;
+  align-items:center;justify-content:center;margin-left:2px}
+.frow .rshield svg{position:absolute;inset:0;width:100%;height:100%}
+/* =====================================================================
+   OPTION H — all-vertical alternative: table as a vertical list (left),
+   hand as a crown-driven fisheye lane (right, hugging the crown edge).
+   One representation of the hand: the focused chip IS the big card.
+   ===================================================================== */
+.htable{position:absolute;left:16px;top:144px;width:186px;height:236px;
+  display:flex;flex-direction:column;gap:7px;z-index:1;justify-content:center}
+.htable.scrollv{justify-content:flex-start}
+.htable.scrollv{-webkit-mask-image:linear-gradient(#0000,#000 18px,#000 calc(100% - 18px),#0000);
+  mask-image:linear-gradient(#0000,#000 18px,#000 calc(100% - 18px),#0000)}
+.hrow{display:flex;align-items:center;gap:10px;height:44px;flex:none}
+.hrow .gcard{font-size:38px;width:40px;height:44px}
+.hrow .gcard .grank{font-size:18px}
+.hrow .harr{color:#5a5a5e;font-size:20px;font-weight:800;width:16px;text-align:center}
+.hrow.res{filter:grayscale(1) brightness(.62)}
+.hrow .hcell{width:40px;display:flex;justify-content:center}
+.hrow .inflight{opacity:.45}
+.hlane{position:absolute;right:6px;top:138px;bottom:6px;width:112px;z-index:3}
+.hlane .hitem{position:absolute;left:50%;transform:translate(-50%,-50%);
+  display:flex;align-items:center;justify-content:center}
+.hlane .hcheck{font-weight:800;color:#30d158}
+.hlane .htake{font-weight:800;color:#ff453a}
+.hcap{position:absolute;right:8px;width:116px;top:348px;text-align:center;
+  font-size:18px;font-weight:700;letter-spacing:1px;z-index:4;
+  text-transform:uppercase;color:#98989e}
+/* HIG receipts */
+.quotewall{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));
+  gap:12px;margin:16px 0}
+.q{border:2px solid var(--ink);background:var(--paper2);padding:12px 16px;
+  font-size:14.5px;line-height:1.5}
+.q em{display:block;font-style:italic}
+.q .src{display:block;margin-top:8px;font-family:var(--mono);font-size:11px;
+  color:var(--mut)}
+table.audit{border-collapse:collapse;width:100%;font-size:13.5px;margin-top:8px}
+table.audit th,table.audit td{border:1px solid var(--line);padding:7px 10px;text-align:left}
+table.audit th{font-family:var(--disp);text-transform:uppercase;font-size:12px;
+  letter-spacing:1px;background:var(--paper2)}
+
+/* demo */
+.demoWrap{display:flex;gap:26px;flex-wrap:wrap;align-items:flex-start;
+  border:3px solid var(--green);background:var(--paper2);
+  box-shadow:5px 5px 0 var(--green);padding:18px;margin-top:20px}
+.demoWrap .side{flex:1;min-width:260px;font-size:14px}
+.demoWrap .side h4{font-family:var(--disp);text-transform:uppercase;margin:0 0 8px;
+  letter-spacing:1px}
+.demoWrap kbd{font-family:var(--mono);font-size:.85em;border:1px solid var(--line);
+  padding:0 5px;background:var(--paper)}
+@media (prefers-reduced-motion: no-preference){
+  .wcard.focus{transition:transform .12s ease}
+  .screen .flash{animation:flash .5s ease}
+  @keyframes flash{0%{opacity:.0}30%{opacity:1}100%{opacity:1}}
+}
+</style>
+</head>
+<body>
+<main>
+
+<header class="mast">
+  <div class="kicker">Foolish · design study · branch claude/watchos-durak-layout-1toekd</div>
+  <h1>Durak on a 40&nbsp;mm wrist</h1>
+  <p class="sub">Layout options for a watchOS client of the Foolish engine — 8 players,
+  free-for-all throw-ins, transfer rules, no round timer. Every rule claim was read out of the
+  engine (<code>cnitro/src/game.c</code>, <code>legal.c</code>, the wasm bridges), and every
+  sizing claim is held to Apple's Human Interface Guidelines (quoted in §3 — 12&nbsp;pt text
+  floor, crown-first navigation, single-screen interactions). Mockups are HTML at native watch
+  pixels; use the controls to view them at true physical size.</p>
+</header>
+
+<div class="controls" id="controls">
+  <div class="grp"><span class="lab">Scale</span>
+    <div class="seg" id="zoomseg">
+      <button data-z="1">Real size</button>
+      <button data-z="2" class="on">2×</button>
+      <button data-z="3">3×</button>
+    </div>
+  </div>
+  <div class="grp"><label class="tog"><input type="checkbox" id="tfing"> 10&nbsp;mm finger</label></div>
+  <div class="grp"><label class="tog"><input type="checkbox" id="tzone"> 2×3 tap zones</label></div>
+  <div class="grp" style="flex-basis:100%">
+    <details class="cal">
+      <summary>Calibrate real size (CSS assumes a 96&nbsp;dpi monitor — most aren't)</summary>
+      <p>Drag until this outline matches a real bank card, then “Real size” is physically accurate:</p>
+      <input type="range" id="cal" min="0.6" max="2" step="0.01" value="1" style="width:260px">
+      <span id="calv" class="cite">×1.00</span>
+      <div class="cardref">85.60 × 53.98 mm</div>
+    </details>
+  </div>
+</div>
+
+<!-- ============================================================ FACTS -->
+<section id="facts">
+  <h2>1 · What the engine actually does</h2>
+  <p class="lede">Verified in the C kernel (single source of truth for rules — the TS server and
+  browser both run it compiled to wasm). Citations are file:line in this repo.</p>
+  <div class="tablewrap">
+  <table class="facts">
+    <tr><th>Question</th><th>Answer from the code</th><th>Where</th></tr>
+    <tr><td>Deck</td>
+      <td>2–5 players: 36 cards (ranks 6–A). <b>6–8 players: full 52</b> (ranks 2–A). An
+      8-seat game deals 6×8=48, flips one trump — the stock is <b>3 cards + the flip</b>
+      and dies almost immediately. One card of each suit/rank; hands refill to 6.</td>
+      <td><code>card.h:15-29</code> <code>constants.ts:33-39</code> <code>card.h:25</code></td></tr>
+    <tr><td>Duplicates in hand</td>
+      <td><b>Impossible.</b> The deck is built one-of-each; moves containing duplicates are
+      rejected (<code>ENGINE_REJECT_DUPLICATES</code>); the rearrange endpoint explicitly
+      guards against duplicate-minting. (Opponents' masked cards are placeholder duplicates
+      on the wire — rendered by count only, never identity.)</td>
+      <td><code>game.c:305-316</code> <code>game.c:545</code> <code>rearrange.ts:23-32</code>
+      <code>view.c:61-64</code> <code>clientGuards.ts:15-20</code></td></tr>
+    <tr><td>Table slots</td>
+      <td><b>No fixed slot count.</b> The only cap: defender's current hand must hold
+      <code>uncovered + n</code> new attacks. Buffer limits are build params
+      (32 native / 64 wasm+iOS); one submit carries ≤28 cards. Covering frees capacity 1:1,
+      so a bout against a fresh 6-card hand tops out at 6 pairs — but a post-pickup defender
+      can legally face dozens.</td>
+      <td><code>game.c:557-559</code> <code>game.h:15-19</code> <code>Makefile:127</code>
+      <code>awire.h:26-27</code></td></tr>
+    <tr><td>Throw-in eligibility</td>
+      <td>After the opening attack, <b>any non-defender, any time</b> — no seat adjacency,
+      no turn order. Card values must already be on the table, and <b>defense cards count</b>:
+      a cover opens its value for new throw-ins. Opening attack: first-attacker only, one
+      value, 1–n cards.</td>
+      <td><code>game.c:538,552-554</code> <code>game.c:507-513</code> <code>game.c:547-550</code></td></tr>
+    <tr><td>Round close</td>
+      <td>Three ways, <b>no timer</b> (the old 60s auto-discard is disabled):
+      ① every in-play attacker explicitly says GOOD while all attacks are covered — and any
+      new attack/cover/pass <b>resets everyone's GOOD</b>;
+      ② the defender's covering play empties their hand → instant close;
+      ③ defender picks up → round ends, defender is skipped for the next lead.
+      The opening attacker cannot say GOOD before attacking. Saying GOOD <b>locks you out
+      of attacking</b> until the table changes.</td>
+      <td><code>good.ts:7-8</code> <code>game.c:852-868</code> <code>game.c:572,696,747</code>
+      <code>game.c:657-694</code> <code>game.c:799-802</code> <code>game.c:845</code>
+      <code>legal.c:377-384</code></td></tr>
+    <tr><td>Transfer (perevod)</td>
+      <td><b>Legal.</b> Defender plays card(s) matching the (single) attack value before any
+      cover exists; the whole table slides to the next in-play player, who needs
+      <code>hand ≥ passed + battles</code>. Chains are legal. No “show trump to pass”
+      variant. Pre-cover the table is always single-valued, so the gate is simply: hold a
+      matching card + receiver capacity.</td>
+      <td><code>game.c:716-772</code> <code>game.c:731,732</code> <code>game.c:734-735,759</code></td></tr>
+    <tr><td>Legality API</td>
+      <td>Full enumerator exists kernel-side (bots, capped 65,536 moves). The browser ships a
+      <b>23&nbsp;KB validate-only kernel</b> (guards.wasm): synchronous per-candidate gates —
+      <code>canAttack / canCover / canPass / canPickup / canCoverPair</code> — same C code the
+      server runs. A watch client can legality-shade every card cheaply without enumerating.</td>
+      <td><code>legal.c:358-386</code> <code>bot_strategy.ts:143-151</code>
+      <code>clientGuards.ts:1-27,219-285</code></td></tr>
+    <tr><td>What it emits</td>
+      <td>Both: per action an <b>event stream</b> (evwire — per-viewer masked animation events,
+      each carrying a full masked state snapshot, plus a final-state trailer) and, standing,
+      <b>per-player pre-masked snapshots</b> pushed via the <code>player_views</code> table
+      (Supabase Realtime). A watch can ignore events entirely and just render snapshots.</td>
+      <td><code>evwire.h:8-27</code> <code>player_views.ts:1-13</code> <code>game.h:166-190</code></td></tr>
+    <tr><td>Nitro's observation</td>
+      <td>Bots run wholly in-kernel: per decision the bridge marshals full state + per-seat
+      strategy keys + game key + the session log (hidden cards = <code>0xFE</code>) + a
+      server-secret-derived RNG. Belief bots reconstruct hidden cards from the public log;
+      the distilled policy scores a 55-feature vector per candidate move. Nothing here needs
+      wrist UI — the human analogue (discard memory) is deliberately cut.</td>
+      <td><code>bots.ts:244-289,126-162</code> <code>strategy.h:41</code>
+      <code>distill_feat.h:15</code></td></tr>
+  </table>
+  </div>
+
+  <div class="pushback"><b>Your brief, corrected #1 — “max table slots”:</b> there is no slot
+  grid to design. The cap is the defender's live hand size (<code>game.c:557-559</code>), so the
+  table view must be a scrollable strip/carousel that survives 10+ pairs, not a fixed 6-slot mat.</div>
+  <div class="pushback"><b>Corrected #2 — “timer, passes, or defender beats last pair”:</b> no
+  timer exists (<code>good.ts:7-8</code>). The everyday close is <i>unanimous explicit GOOD</i>,
+  reset by any table change. “Defender beats the last pair” only closes the round in the special
+  case that the play empties their hand (<code>game.c:657</code>). Consequence: GOOD is a
+  first-class, always-reachable button — it is load-bearing, not chrome.</div>
+  <div class="pushback"><b>Corrected #3 — “duplicate card in hand”:</b> impossible by
+  construction (<code>game.c:305-316</code>, <code>rearrange.ts:23-32</code>); that screen state
+  is cut. The real multi-card states the UI must carry instead: leading several same-rank cards
+  (<code>game.c:549</code>) and multi-card transfer (<code>game.c:724</code>) — both get a
+  two-button count sheet because they are the only moves that must be atomic.</div>
+  <div class="pushback"><b>Confirmed — “it's a race”:</b> between attackers only. Actions
+  serialize server-side under a version fence (<code>utils.ts:63</code>,
+  <code>utils.ts:829-837</code>); the loser gets a typed reject —
+  <code>DEFENDER_CAPACITY</code>, or <code>STALE_ROUND</code> if the round closed first
+  (<code>rejectMessages.ts:16,30-39</code>). Covers cannot be sniped (only the defender plays
+  them, targeting exact cards, <code>game.c:621-629</code>); what a throw-in <i>can</i> snipe is
+  attack capacity and the defender's transfer window (<code>game.c:734-735</code>). So: optimistic
+  send + honest toast, never a blocking confirm.</div>
+</section>
+
+<!-- ============================================================ BUDGET -->
+<section id="budget">
+  <h2>2 · The physical budget</h2>
+  <p class="lede">40&nbsp;mm Apple Watch — this is the constraint that designs the screen.</p>
+  <div class="nums">
+    <div class="num"><div class="v">324 × 394</div><div class="k">panel px (326 ppi)</div></div>
+    <div class="num"><div class="v">25.3 × 30.7</div><div class="k">panel mm · r ≈ 4.7 mm (60 px)</div></div>
+    <div class="num"><div class="v">128 px</div><div class="k">a 10 mm fingertip — 40% of panel width</div></div>
+    <div class="num"><div class="v">2 × 3</div><div class="k">max simultaneous tap zones</div></div>
+    <div class="num"><div class="v">1</div><div class="k">crown — the only precise pointer</div></div>
+  </div>
+  <p>Everything follows from column three: <b>a finger is 40% of the screen wide</b>, so no more
+  than two targets may share a row and three a column. Anything finer — picking one of six cards,
+  one of ten table pairs — must go through the Digital Crown. The system clock always owns the
+  top-right corner on watchOS; the top band is designed around it. Corners are real: the 60&nbsp;px
+  radius eats the corner cells, so nothing rectangular lives within 18&nbsp;px of them.</p>
+  <div class="gallery" style="grid-template-columns:repeat(auto-fill,minmax(300px,1fr))">
+    <figure class="mock"><div class="stagebox" id="m-budget"></div>
+      <figcaption><h4>The finger problem<span class="st">overlay forced on</span></h4>
+      <ul class="why">
+        <li><b>Orange disc</b> — 10 mm ≈ 128 px fingertip at 326 ppi; it covers the focused card entirely.</li>
+        <li><b>Grid</b> — the 2×3 zone budget every screen below respects.</li>
+        <li><b>Toggle</b> — use the controls above to project both onto any mockup on this page.</li>
+      </ul></figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- ============================================================ HIG -->
+<section id="hig">
+  <h2>3 · What Apple actually says</h2>
+  <p class="lede">Quoted from the Human Interface Guidelines (fetched, not remembered). These four
+  ideas invalidate parts of every board-shaped design below — and they produce Option D.</p>
+  <div class="quotewall">
+    <div class="q"><em>“People glance at the Always On display many times throughout the day,
+      performing concise app interactions that can last for <b>less than a minute</b> each.
+      People frequently use a watchOS app's related experiences — like complications,
+      notifications, and Siri interactions — <b>more than they use the app itself</b>.”</em>
+      <span class="src">HIG · Designing for watchOS · “App interactions”</span></div>
+    <div class="q"><em>“Support quick, glanceable, <b>single-screen interactions</b> that deliver
+      critical information succinctly and help people perform targeted actions with a
+      <b>simple gesture or two</b>. Minimize the depth of hierarchy … use the Digital Crown to
+      provide vertical navigation for scrolling or <b>switching between screens</b>.”</em>
+      <span class="src">HIG · Designing for watchOS · “Best practices”</span></div>
+    <div class="q"><em>“Starting with watchOS 10, the Digital Crown takes on an elevated role as
+      <b>the primary input for navigation</b> … within apps, people turn the Digital Crown to
+      switch between <b>vertically paginated tabs</b>.” “Anchor your app's navigation to the
+      Digital Crown … back them up with corresponding touch screen interactions.”</em>
+      <span class="src">HIG · Digital Crown</span></div>
+    <div class="q"><em>Text sizes — watchOS default <b>16&nbsp;pt</b>, minimum <b>12&nbsp;pt</b>
+      (= 32 / 24 px on this 2× panel; SF&nbsp;Compact). “The Apple Watch bezel provides a
+      <b>natural visual padding</b> around your content” — design full-bleed, not framed.</em>
+      <span class="src">HIG · Typography (“Specifications”) · Layout</span></div>
+  </div>
+
+  <p><b>The audit that killed Option B as the recommendation.</b> Held to the 12 pt floor, the
+  “Focus flow” layout below is illegally small almost everywhere — it is a phone information
+  hierarchy miniaturized, which is exactly what the HIG warns against:</p>
+  <div class="tablewrap">
+  <table class="audit">
+    <tr><th>Element (Option B)</th><th>Size</th><th>vs 12 pt floor (24 px)</th>
+        <th>Option D replacement</th></tr>
+    <tr><td>Context band (defender · open · cap)</td><td>13.5 px ≈ 7 pt</td>
+        <td class="bad">−46 %</td><td>Top overlay line, 25 px, over full-bleed content</td></tr>
+    <tr><td>Hint line (“Legal — J is on the table”)</td><td>13 px ≈ 6.5 pt</td>
+        <td class="bad">−46 %</td><td>Bottom action strip, 27 px — the hint <i>is</i> the button</td></tr>
+    <tr><td>Card corner ranks</td><td>19–20 px ≈ 10 pt</td>
+        <td class="bad">−17 %</td><td>58 px rank + 170 px pip — the card is the screen</td></tr>
+    <tr><td>Button subtext, badges, dots caption</td><td>9.5–10.5 px ≈ 5 pt</td>
+        <td class="bad">−58 %</td><td>Deleted, or promoted to 24 px page text</td></tr>
+    <tr><td>Tap zones per screen</td><td>3–4</td><td class="meh">within 2×3 budget</td>
+        <td class="good">1 — the whole screen commits the visible page</td></tr>
+  </table>
+  </div>
+</section>
+
+<!-- ============================================================ OPTION D -->
+<section id="optd">
+  <h2>4 · Option D — “One thing at a time” <span class="tag">recommended</span></h2>
+  <p class="lede">The watch is not a board renderer; it is a decision surface. Every choice is a
+  full-bleed, crown-paginated screen: turn the crown through [TABLE] → [your cards, best first] →
+  [GOOD], tap <b>anywhere</b> to commit the visible page. The app opens directly on your best
+  legal card, so the common race play is <b>zero detents + one tap</b>. Layer 0 — notification,
+  Smart Stack widget, complication — covers the 90 % of an 8-player game when it isn't your
+  moment, exactly as the HIG prescribes.</p>
+
+  <div class="demoWrap">
+    <div class="stagebox" id="m-demo2" style="padding:0"></div>
+    <div class="side">
+      <h4>Live demo — crown pages, tap anywhere</h4>
+      <p>Hover the watch and <b>scroll</b> (or <kbd>↑</kbd><kbd>↓</kbd> after clicking it) to
+      page vertically: table → cards (legal first) → GOOD. The strip does not wrap — pages have
+      ends, like a watchOS 10 TabView, with edge dots as the pagination indicator.</p>
+      <p><b>Tap anywhere</b> on a legal card page to throw it (~1 in 3 loses the race and shows
+      the <code>DEFENDER_CAPACITY</code> banner). Illegal pages state their reason in the bottom
+      strip and ignore taps. The GOOD page commits the round-close vote and locks.</p>
+      <p>Legality still comes per card from guards.wasm gates
+      (<code>canAttack([card])</code>, <code>clientGuards.ts:219</code>) — this option changes
+      presentation, not the rules plumbing.</p>
+    </div>
+  </div>
+
+  <div class="gallery" id="gal-d"></div>
+
+  <div class="verdict"><b>Verdict:</b> the HIG-purist baseline — every string ≥ 24 px (12 pt),
+  one tap zone per screen, faster for the race (opens on your best card). Its weakness is
+  situational awareness: the board lives behind one detent. The prototype below fixes exactly
+  that — see Option E, which is the recommendation.</div>
+</section>
+
+<!-- ============================================================ OPTION E -->
+<section id="opte">
+  <h2>5 · Option E — “Foolish40 × D” <span class="tag">the merge, v1</span></h2>
+  <p class="lede">Your working prototype (Foolish40, watchOS 26.2) got three things righter than
+  any option above: <b>rank-inside-suit glyphs</b> (a card compressed to one readable shape),
+  the <b>radial name ring</b> that spends the corner space rectangles can't use, and the
+  <b>shield/sword role language</b>. What it's missing is exactly what the engine facts made
+  load-bearing: a GOOD affordance (the only way rounds normally close, <code>game.c:852</code>),
+  TAKE/PASS on defense, the capacity number, and finger-sized commits. Option E keeps your board
+  and installs D's mechanics under it.</p>
+
+  <div class="demoWrap">
+    <div class="stagebox" id="m-demo3" style="padding:0"></div>
+    <div class="side">
+      <h4>Live demo — your board, D's hands</h4>
+      <p><b>Scroll</b> over the watch (or <kbd>←</kbd><kbd>→</kbd> after clicking) to crown
+      through the hand strip — the focused chip enlarges to a readable glyph and the gold pill
+      renames itself to the exact commit (“ATTACK 8♠”). Illegal chips dim via the same
+      <code>canAttack</code> gates; when nothing is legal the pill morphs to GOOD.</p>
+      <p><b>Tap the pill or the big glyph</b> to commit — same optimistic-send race
+      (~1 in 3 gets sniped). Chips are selection-only: tapping one just focuses it, so the tiny
+      targets are safe. Crown past the strip's end reaches the GOOD / TAKE / PASS full-screen
+      pages from Option D.</p>
+      <p>The ring, corner stats, battle pager and shield are your prototype's, rebuilt; the
+      capacity number now rides the pager caption — it's the number attackers race against
+      (<code>game.c:557</code>).</p>
+    </div>
+  </div>
+
+  <div class="gallery" id="gal-e"></div>
+
+  <div class="verdict"><b>Verdict:</b> the board answers “what's happening” ambiently while
+  every actionable element obeys D's rules — but it still renders <i>you</i> in the ring,
+  paginates the table behind dots, and spends prime pixels on curved names. The critique that
+  became Option F below dismantles all three. E is superseded; its glyph language and shield
+  survive.</div>
+</section>
+
+<!-- ============================================================ OPTION F -->
+<section id="optf">
+  <h2>6 · Option F — “First person” <span class="tag">the synthesis, v1</span></h2>
+  <p class="lede">Take the best of all four contributors. From the second design review:
+  <b>you are not on the board</b> — the watch is a first-person view, so opponents run across
+  the top (counts, defender shield — no curved names), the <b>full table grid</b> replaces the
+  pager (open attacks are the one thing you must see whole), and <b>small things you look at,
+  big things you touch</b>: chips are read-only, the crown is the legality oracle (detents =
+  legal cards + terminal action only), the focus card is the single big commit. From the
+  engine: the goods tally replaces the proposed <code>bito</code> countdown (no timer exists,
+  <code>good.ts:7-8</code> — rounds close by unanimous ✓, <code>game.c:852</code>), anyone may
+  throw at any time (<code>game.c:538</code> — the race reframe is correct), the grid gets a
+  “+N” overflow cell (no 6-slot cap, <code>game.c:557</code>), and the single-52 deck kills the
+  ×2-chip idea — the review's double-deck deduction came from mock numbers of mine that
+  violated card conservation; every count below now sums to 52.</p>
+
+  <div class="demoWrap">
+    <div class="stagebox" id="m-demo4" style="padding:0"></div>
+    <div class="side">
+      <h4>Live demo — crown skips illegal cards</h4>
+      <p><b>Scroll</b> over the watch: the crown steps only through <b>legal</b> throw-ins and
+      lands on ✓ at the end — six cards collapse to three detents. Chips stay visible (dim,
+      <code>·</code>-quiet) so the hand is honest, but the finger never has to find them.</p>
+      <p><b>Tap the focus card</b> to commit: the card renders on the grid instantly,
+      translucent (⟨in flight⟩), then solidifies — or bounces back with an ✗ tick if sniped
+      (~1 in 3). No confirmation dialogs, ever: in a race, a confirm step is a self-imposed
+      handicap. Tap ✓ to vote the round closed; the strip's counts go green as votes land.</p>
+      <p>The status line shows trump + deck; the label column narrates the last haptic event —
+      the invariant: <b>a buzz always means you can act right now</b>, and focus is never
+      stolen while you're browsing (pre-focus fires only from wrist-down).</p>
+    </div>
+  </div>
+
+  <div class="gallery" id="gal-f"></div>
+
+  <div class="verdict"><b>Verdict:</b> the right chassis — full grid, first-person zones, crown
+  as legality oracle, snipe-loop haptics — but the owner review found the words too many, the
+  pairs too dense, the trump invisible, and “you” missing from the strip. All fixed in
+  Option G below, which supersedes F.</div>
+</section>
+
+<!-- ============================================================ OPTION G -->
+<section id="optg">
+  <h2>7 · Option G — “First person, refined” <span class="tag">recommended · ships</span></h2>
+  <p class="lede">F's architecture, twice refined against the owner's 40&nbsp;mm simulator
+  build. Measured realities from the sim screenshot: the <b>back chevron is immovable</b>
+  (~66&nbsp;px circle, top-left) and the clock is large — so the status moved into the empty
+  band <b>under the time</b>: flip-card glyph · deck · discard (<code>6♠ ▤8 ▨7</code>),
+  right-aligned as the clock's column. No capacity number — it's derivable (the defender's
+  shield count minus the open attacks in view). One context <b>pill</b> is the only action
+  chrome: ATTACK on a legal card, COVER while defending, GOOD otherwise — the crown browses
+  the <b>whole hand</b>, the pill just declines to offer ATTACK on dead cards. Covers commit
+  <b>immediately when unambiguous</b>; only a genuine tie opens a chooser overlay (✕ to back
+  out). The table shows <b>two big pairs per swipe page</b> (open attacks are bare glyphs —
+  no rings, no dashed slots), rejection is a <b>red edge-glow + haptic</b> with zero words,
+  and notifications keep D0's anatomy with five-word copy plus a short-look glance.</p>
+
+  <div class="demoWrap">
+    <div class="stagebox" id="m-demo5" style="padding:0"></div>
+    <div class="side">
+      <h4>Live demo — G</h4>
+      <p><b>Scroll</b> = crown across all six cards (dim ones included); the pill offers
+      ATTACK only when guards.wasm says the focused card is legal, and GOOD the rest of the
+      time. <b>Tap the focus card or the pill</b> to commit: the card renders in-flight on
+      the table, then lands — or the screen edge <b>flashes red</b> (with the ✗ haptic) and
+      the card is back in the strip (~1 in 3).</p>
+      <p>Watch the info line and the shield: deck and discard hold steady while the
+      defender's count and the open attacks tell you the capacity story without a number.</p>
+    </div>
+  </div>
+
+  <div class="gallery" id="gal-g"></div>
+
+  <div class="verdict rec"><b>Verdict — the build spec:</b> two screens (Table · Roster),
+  one pill, one overlay (ambiguous covers only), swipe-paged big pairs, chevron-safe layout,
+  status under the clock, red-glow rejection, D0-anatomy notifications with a short look.
+  Costs, accepted: multi-card pass stays web-only (one card per action, game.c:759); chip and
+  pair ranks are look-zones; the full table is never on one screen past two pairs — the dots
+  and the shield arithmetic carry it.</div>
+</section>
+
+<!-- ============================================================ OPTION H -->
+<section id="opth">
+  <h2>8 · Option H — “All vertical” <span class="tag">alternative · evaluating</span></h2>
+  <p class="lede">G with every horizontally-movable thing rotated vertical — and the double
+  hand display removed. The <b>table is a vertical list</b> (cover column ▸ attack column, one
+  pair per row): up to four pairs are simply <i>visible</i>, no paging; past that the list
+  scrolls under a vertical drag — the only drag in the app. The <b>hand is a fisheye lane
+  hugging the crown edge</b>: one representation — the focused chip <i>is</i> the big card,
+  growing in place as the crown turns, one neighbor peeking above and below. No chip strip, no
+  separate focus slot — and <b>no pills</b>: the verb is a complication-sized caption under
+  the fisheye — gray, ALL CAPS, watch-style: <b>ATTACK · GOOD · PICKUP · COVER · PASS ·
+  COVER/PASS</b> (blank on a dead card). The fisheye + caption anchor the bottom-right corner,
+  with up to three small neighbors stacked above; the table list stays vertically centered
+  until it passes five rows, then scrolls. cover and cover/pass sometimes need the
+  disambiguation screen — accepted.
+  Roster moves behind a <b>seat-strip tap</b> (the system chevron brings you back), so there is
+  no root pager at all. Gesture map: crown = hand lane · vertical drag = table list · tap =
+  focus/commit/strip. Nothing moves horizontally.</p>
+
+  <div class="demoWrap">
+    <div class="stagebox" id="m-demo6" style="padding:0"></div>
+    <div class="side">
+      <h4>Live demo — the chip becomes the card</h4>
+      <p><b>Scroll</b> over the watch: the lane slides vertically past the focus point and the
+      focused card magnifies in place — small ones above and below are the same objects, not a
+      second display. The ✓ (or the defender's +n) is the last stop in the lane.</p>
+      <p><b>Tap the big card</b> (or its caption) to commit — same optimistic flow, same
+      red-glow rejection. Watch the caption flip between <i>attack</i>, nothing, and
+      <i>good</i> as you turn; it is the entire action UI.</p>
+      <p>Note the spatial logic: the lane hugs the right edge — where the crown physically is.
+      Turning the crown visibly turns <i>that</i> column.</p>
+    </div>
+  </div>
+
+  <div class="gallery" id="gal-h"></div>
+
+  <div class="verdict"><b>Trade-offs vs G (owner to decide):</b>
+  <b>H wins</b> — single hand representation (no chip-strip + focus-slot duplication); the
+  whole table visible at once up to 4 pairs (G shows 2 per page); zero horizontal gestures and
+  zero pagers (roster is a pushed page behind the strip tap, chevron returns — the chevron
+  finally earns its space); crown gets a physical spatial mapping (right lane).
+  <b>G wins</b> — bigger focused card (56 pt vs 42 pt), bigger table glyphs (31 pt vs 19 pt,
+  though H shows more at once), and a big labeled commit button where H commits on the card
+  itself with a caption-sized verb; simpler to build (no fisheye, no region-scoped scroll).
+  Both keep: the same action decision table (H renders it as captions: attack · good · pickup ·
+  cover · pass · cover/pass), chooser overlay, red-glow rejection, InfoLine, seat strip, one
+  card per action.</div>
+</section>
+
+<!-- ============================================================ OPTION B -->
+<section id="optb">
+  <h2>9 · Option B — “Focus flow” <span class="tag">the dense compromise</span></h2>
+  <p class="lede">The first 40&nbsp;mm attempt: one decision per screen, crown-driven carousel,
+  three fat tap zones. Kept because its interaction grammar (crown = aim, tap = commit) survives
+  into Option D — but its information density does not: see the type audit above. At true scale,
+  half its text sits below Apple's 12&nbsp;pt floor.</p>
+
+  <div class="demoWrap">
+    <div class="stagebox" id="m-demo" style="padding:0"></div>
+    <div class="side">
+      <h4>Live demo — attacker turn</h4>
+      <p>Hover the watch and <b>scroll</b> (or use <kbd>←</kbd><kbd>→</kbd> after clicking it)
+      to turn the crown through your hand. Illegal cards stay in the ring but render dim with a
+      reason — legality comes from the same gates guards.wasm exposes
+      (<code>canAttack([card])</code> per card, <code>clientGuards.ts:219</code>).</p>
+      <p><b>Tap the focused card</b> to throw it in — the demo plays the optimistic-send flow,
+      including losing the race (~1 in 3 sends hits <code>DEFENDER_CAPACITY</code> so you can
+      see the snipe toast). Tap <b>GOOD</b> to feel the lock-until-table-changes rule.</p>
+      <p>Compare it with the Option D demo above: same rules, same crown grammar — but count
+      what you can actually read at “Real size”.</p>
+    </div>
+  </div>
+
+  <div class="gallery" id="gal-b"></div>
+
+  <div class="verdict"><b>Verdict:</b> every tap target survives the 128&nbsp;px finger and it
+  scales to any table size — but it fails the typography floor on five elements, which is
+  disqualifying at 40&nbsp;mm. Its screen-state inventory (the 13 states below) carries over to
+  Option D one-for-one.</div>
+</section>
+
+<!-- ============================================================ OPTION A -->
+<section id="opta">
+  <h2>10 · Option A — “Dense board”</h2>
+  <p class="lede">The web layout miniaturized: persistent table strip + hand carousel + actions,
+  all on one screen. Included because it's everyone's first instinct — and to show where it
+  breaks at 40&nbsp;mm.</p>
+  <div class="gallery" id="gal-a"></div>
+  <div class="verdict"><b>Verdict:</b> best situational awareness per glance, and viable on
+  44/46&nbsp;mm. At 40&nbsp;mm the pair chips are 66&nbsp;px — half a fingertip — so defender
+  targeting must fall back to the crown anyway, and two crown-scrollable strips on one screen
+  fight for the one crown. Keep as the large-watch variant, not the baseline.</div>
+</section>
+
+<!-- ============================================================ OPTION C -->
+<section id="optc">
+  <h2>11 · Option C — “Action list”</h2>
+  <p class="lede">Pure watchOS: every legal move is a full-width row in a crown-scrolled list.
+  The move space is small enough per moment (throwable cards + GOOD; or covers-for-current-target
+  + TAKE + PASS) that rows stay countable.</p>
+  <div class="gallery" id="gal-c"></div>
+  <div class="verdict"><b>Verdict:</b> bulletproof targets and free accessibility, but it throws
+  away the card metaphor, and rows <i>reorder under you</i> as rivals' throw-ins change legality
+  mid-race — the list jumps exactly when speed matters. Right answer for an accessibility mode or
+  a v0 spike; wrong default.</div>
+</section>
+
+<!-- ============================================================ COMPARE -->
+<section id="compare">
+  <h2>12 · Side by side</h2>
+  <div class="tablewrap">
+  <table class="cmp">
+    <tr><th></th><th>E · Foolish40 × D</th><th>D · One thing at a time</th><th>B · Focus flow</th>
+        <th>A · Dense board</th><th>C · Action list</th></tr>
+    <tr><td>Meets the 12 pt type floor</td>
+        <td class="meh">All actionable text ≥ 24 px; ring names ~15 px, ambient only</td>
+        <td class="good">Yes — smallest string 24 px</td>
+        <td class="bad">No — 5 elements at 5–10 pt</td><td class="bad">No — worse than B</td>
+        <td class="meh">Rows yes, summary bar no</td></tr>
+    <tr><td>Tap zones per screen</td><td class="good">2 fat commits (pill + big glyph); chips are focus-only</td>
+        <td class="good">1 (whole screen)</td>
+        <td class="good">3–4, all ≥ finger</td><td class="bad">chips at half-finger</td>
+        <td class="good">full-width rows</td></tr>
+    <tr><td>Race speed (throw-in)</td><td class="good">opens on best card: 0 detents + 1 tap</td>
+        <td class="good">opens on best card: 0 detents + 1 tap</td>
+        <td class="good">crown + 1 tap</td><td class="good">crown + 1 tap</td>
+        <td class="meh">crown + 1 tap, list reorders mid-aim</td></tr>
+    <tr><td>Table visibility</td><td class="good">always on: ring + shield + pager + cap</td>
+        <td class="meh">cap/values overlay + table page (1 detent)</td>
+        <td class="meh">ticker + 1-tap peek</td><td class="good">always on</td>
+        <td class="bad">text summary only</td></tr>
+    <tr><td>Defender flow</td><td class="good">crown covers on the board; TAKE/PASS as crown-end pages</td>
+        <td class="good">pages all the way down (attacks → covers)</td>
+        <td class="good">two-step wizard</td><td class="meh">tap chip + tap card</td>
+        <td class="meh">pair×cover rows explode</td></tr>
+    <tr><td>Post-pickup scale (10–20 pairs)</td><td class="good">pager pages; strip scrolls under crown</td>
+        <td class="good">unchanged (longer strip)</td>
+        <td class="good">unchanged</td><td class="bad">strip overflows</td>
+        <td class="bad">row count explodes</td></tr>
+    <tr><td>HIG conformance (crown-first, single-screen, layer 0)</td>
+        <td class="good">crown-first + layer 0; one deliberate density exception</td>
+        <td class="good">native</td><td class="meh">partial</td><td class="bad">phone-shaped</td>
+        <td class="good">native but joyless</td></tr>
+  </table>
+  </div>
+  <p><b>Recommendation:</b> ship <b>G</b> (§7) — F's chassis refined by the owner review —
+  with layer 0 (trimmed notification + Smart Stack + complication) treated as half the
+  product. <b>D</b> is the purist fallback. Keep C's row anatomy as the VoiceOver projection;
+  A/B/C were all illegible at real size and survive only as the audit trail.</p>
+</section>
+
+<!-- ============================================================ CUTS -->
+<section id="cuts">
+  <h2>13 · Cut list</h2>
+  <p class="lede">If an element can't justify itself, it's gone. What didn't earn pixels:</p>
+  <ul class="cuts">
+    <li><b>8-player avatar ring</b> — seat identity only matters twice (who defends, who receives a
+      pass); both are named in the context band. Full roster lives in the table peek footer.</li>
+    <li><b>Discard pile / counts</b> — card-counting is the Oracle's job on web; on the wrist it's
+      noise. Deck count survives (three characters, decides endgame urgency).</li>
+    <li><b>Animations / evwire stream</b> — the watch renders snapshot trailers only
+      (<code>evwire.h:24-27</code> makes this legal); motion is a luxury the round-trip budget
+      can't fund.</li>
+    <li><b>Chat, emotes, replay, Oracle</b> — different session, different device.</li>
+    <li><b>Hand rearrange</b> — <code>rearrange.ts</code> exists for the web; the crown carousel
+      has no drag affordance and auto-grouping by rank is strictly better here.</li>
+    <li><b>Multi-card cover batching</b> — the engine takes covers pair-at-a-time happily
+      (<code>game.c:638-655</code>); sequential taps reach the same states, including the
+      hand-empty instant win. Only lead-count and pass-count need atomic sheets.</li>
+    <li><b>“Slots” meter as a graphic</b> — capacity is one number; it rides in the ticker as
+      <code>cap n</code>.</li>
+  </ul>
+</section>
+
+<!-- ============================================================ PROTOCOL -->
+<section id="proto">
+  <h2>14 · What the watch client actually consumes</h2>
+  <ul class="cuts">
+    <li><b>State in:</b> subscribe the player's <code>player_views</code> row — already
+      per-seat masked server-side, decoded by the shared packed-game codec
+      (<code>player_views.ts:1-13</code>). No per-frame masking logic on the watch.</li>
+    <li><b>Legality:</b> embed guards.wasm (~23 KB, fixed memory,
+      <code>clientGuards.ts:1-27</code>) — per-card gates paint the carousel; the same awire
+      bytes validated locally are POSTed verbatim (<code>awire.h:1-13</code>).</li>
+    <li><b>Moves out:</b> one POST per action; on reject, map
+      <code>ENGINE_REJECT_*</code>/<code>STALE_ROUND</code> to the toast strings
+      (<code>rejectMessages.ts</code>) and re-render the pushed snapshot.</li>
+    <li><b>No timers to render:</b> nothing in the engine counts down
+      (<code>good.ts:7-8</code>) — the only “hurry” signal is social, and the design leaves it
+      that way.</li>
+  </ul>
+</section>
+
+<footer>
+  Foolish watchOS layout study · geometry: 324×394 px @ 326 ppi, r 60 px · finger model 10 mm =
+  128 px · rules verified against <code>cnitro/src</code> at branch time. Mockups are HTML/CSS at
+  native panel pixels, scaled; “Real size” is calibration-dependent — use the bank-card check.
+</footer>
+</main>
+
+<script>
+/* ============================================================ controls */
+const root=document.documentElement;
+document.querySelectorAll('#zoomseg button').forEach(b=>{
+  b.addEventListener('click',()=>{
+    document.querySelectorAll('#zoomseg button').forEach(x=>x.classList.remove('on'));
+    b.classList.add('on');
+    root.style.setProperty('--zoom',b.dataset.z);
+  });
+});
+root.style.setProperty('--zoom','2');
+const cal=document.getElementById('cal'),calv=document.getElementById('calv');
+cal.addEventListener('input',()=>{root.style.setProperty('--cal',cal.value);
+  calv.textContent='×'+Number(cal.value).toFixed(2);});
+document.getElementById('tfing').addEventListener('change',e=>
+  document.body.classList.toggle('showf',e.target.checked));
+document.getElementById('tzone').addEventListener('change',e=>
+  document.body.classList.toggle('showz',e.target.checked));
+
+/* ============================================================ renderer */
+const RED=new Set(['♥','♦']);
+const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+function cardHTML(c,cls){
+  if(!c)return'';
+  const red=RED.has(c.s)?' red':'', dim=c.dim?' dim':'', atk=c.atk?' atk':'';
+  let h=`<div class="wcard ${cls}${red}${dim}${atk}">`;
+  h+=`<div class="cr tl">${c.r}${c.s}</div><div class="pip">${c.s}</div>`;
+  if(!c.act)h+=`<div class="cr br">${c.r}${c.s}</div>`;
+  if(c.badge)h+=`<div class="badge${c.tr?' tr':''}">${esc(c.badge)}</div>`;
+  if(c.act)h+=`<div class="act${c.actGray?' gray':''}">${esc(c.act)}</div>`;
+  return h+'</div>';
+}
+function btnHTML(b){
+  return `<div class="wbtn ${b.cls||''}" ${b.id?`id="${b.id}"`:''}>${esc(b.t)}`+
+    (b.sub?`<div class="sub">${esc(b.sub)}</div>`:'')+`</div>`;
+}
+function screenHTML(s){
+  let h='';
+  h+=`<div class="zstatus"><span class="l">${s.status||'♠ trump <span class="dk">· deck 3</span>'}</span><span class="clock">${s.clock||'12:41'}</span></div>`;
+  if(s.ctx!==null)h+=`<div class="zctx ${s.ctxCls||''}">${s.ctx}${s.noChev?'':' <span class="chev">▾ table</span>'}</div>`;
+  h+=`<div class="zstage">${s.stage||''}</div>`;
+  h+=`<div class="zdots">${esc(s.dots||'')}</div>`;
+  h+=`<div class="zhint ${s.hintCls||''}">${esc(s.hint||'')}</div>`;
+  h+=`<div class="zact">${(s.actions||[]).map(btnHTML).join('')}</div>`;
+  h+=(s.overlay||'');
+  h+=`<div class="fingero"></div><div class="zoneso"></div>`;
+  return h;
+}
+function watchHTML(inner){
+  return `<div class="watchbox"><div class="case"><div class="crown"></div>`+
+    `<div class="sideb"></div><div class="screen">${inner}</div></div></div>`;
+}
+function mount(el,inner){el.innerHTML=watchHTML(inner);}
+function fig(host,title,st,inner,why){
+  const f=document.createElement('figure');f.className='mock';
+  f.innerHTML=`<div class="stagebox"></div><figcaption><h4>${esc(title)}`+
+    (st?`<span class="st">${esc(st)}</span>`:'')+`</h4>`+
+    `<ul class="why">${why.map(w=>`<li>${w}</li>`).join('')}</ul></figcaption>`;
+  mount(f.querySelector('.stagebox'),inner);host.appendChild(f);
+}
+const stage3=(l,c,r)=>cardHTML(l,'nb left')+cardHTML(c,'focus')+cardHTML(r,'nb right');
+
+/* ============================================================ Option B */
+const galB=document.getElementById('gal-b');
+
+fig(galB,'B1 · Attacker, legal throw-in','happy path',screenHTML({
+  ctx:`vs <b>KAT</b>(4) · open 2 · cap 2`,
+  stage:stage3({r:'8',s:'♦',dim:1},{r:'J',s:'♦',act:'TAP = THROW'},{r:'7',s:'♠'}),
+  dots:'○ ● ○ ○ ○ ○   hand 2/6',
+  hint:'Legal — J is on the table',hintCls:'ok',
+  actions:[{t:'GOOD',cls:'good',sub:'2 of 6 said it'}],
+}),[
+'<b>Status</b> — trump suit + stock count: the two facts that reprice every card; clock corner is system-owned.',
+'<b>Context band</b> — defender, open attacks, remaining capacity (game.c:557): the whole race state in one line; the band is the full-width tap target for the table peek.',
+'<b>Carousel</b> — crown-driven; neighbors peek to show direction; dim = canAttack([card]) false (clientGuards.ts:219).',
+'<b>Focused card</b> — the one destructive tap target, one finger wide; its footer states the verb so the tap is informed.',
+'<b>GOOD</b> — load-bearing (only way rounds close, good.ts:7); shows the vote count so you know what your tap finishes.',
+]);
+
+fig(galB,'B2 · Nothing legal','requested state',screenHTML({
+  ctx:`vs <b>KAT</b>(4) · open 2 · cap 2`,
+  stage:stage3({r:'8',s:'♦',dim:1},{r:'9',s:'♥',dim:1,act:'NO PLAY',actGray:1},{r:'Q',s:'♠',dim:1}),
+  dots:'○ ○ ● ○ ○ ○   hand 3/6',
+  hint:'Nothing legal — table is 7 · J only',
+  actions:[{t:'GOOD',cls:'primary',sub:'your only move'}],
+}),[
+'<b>Hand stays visible</b> — dim, not hidden: you still need to plan for values that might open (covers add values, game.c:507-513).',
+'<b>Hint names the reason</b> — “table is 7·J only” teaches the throw-in rule instead of just refusing.',
+'<b>GOOD promotes to filled</b> — when it becomes the only legal act (legal.c:377-384) it visually becomes the default.',
+]);
+
+fig(galB,'B3 · Table capped','requested state',screenHTML({
+  ctx:`vs <b>KAT</b>(5) · open 5 · <b>cap 0</b>`,ctxCls:'warn',
+  stage:stage3({r:'7',s:'♠',dim:1},{r:'J',s:'♦',dim:1,act:'NO ROOM',actGray:1},{r:'A',s:'♣',dim:1}),
+  dots:'○ ● ○ ○ ○ ○   hand 2/6',
+  hint:'Capacity 0 — KAT must cover or take',hintCls:'warn',
+  actions:[{t:'GOOD',cls:'primary',sub:'5 attacks stand'}],
+}),[
+'<b>cap 0 turns the band amber</b> — same layout, one token change: the rule that dims your J♦ (game.c:557-559) is the number you\'ve been watching all along.',
+'<b>Distinct from B2</b> — your cards match but the defender is full; the copy blames capacity, not your hand.',
+'<b>No dead-end</b> — GOOD remains actionable; the state resolves only through KAT (cover/take/pass).',
+]);
+
+fig(galB,'B4 · Sniped','requested state',screenHTML({
+  ctx:`vs <b>KAT</b>(4) · open 3 · <b>cap 0</b>`,ctxCls:'warn',
+  stage:stage3({r:'8',s:'♦',dim:1},{r:'J',s:'♦',dim:1,act:'NO ROOM',actGray:1},{r:'7',s:'♠',dim:1}),
+  dots:'○ ● ○ ○ ○ ○   hand 2/6',
+  hint:'server: DEFENDER_CAPACITY',
+  actions:[{t:'GOOD',cls:'good',sub:'2 of 6 said it'}],
+  overlay:`<div class="wtoast"><div class="t">✕ Too late</div>
+  <div class="b">BOR filled KAT's last slot first.<br>Your J♦ is back in hand.</div></div>`,
+}),[
+'<b>Toast, not modal</b> — the race loss (utils.ts:63 serialization) is information, not an error you must acknowledge; it self-dismisses.',
+'<b>State already reconciled</b> — behind the toast the ticker shows the world that beat you (open 3, cap 0) from the pushed snapshot.',
+'<b>Card visibly home</b> — the J♦ sits re-dimmed in the carousel: optimistic send reverted, nothing lost.',
+]);
+
+fig(galB,'B5 · Leading — count sheet','replaces “duplicate” state',screenHTML({
+  ctx:`<b>YOU LEAD</b> · table empty`,
+  stage:stage3({r:'6',s:'♦'},{r:'9',s:'♣',act:'LEAD…'},{r:'9',s:'♥'}),
+  dots:'○ ● ○ ○ ○ ○   hand 2/6',
+  hint:'You hold two 9s',
+  actions:[],
+  overlay:`<div class="wsheet"><div class="st">Lead with</div><div class="row">
+  ${btnHTML({t:'9♣ only',cls:'good'})}${btnHTML({t:'9♣ + 9♥',cls:'good'})}</div></div>`,
+}),[
+'<b>Why a sheet exists at all</b> — duplicates are impossible (game.c:305-316), but multi-same-rank leads are real (game.c:549) and must be atomic: two taps, both targets 150 px.',
+'<b>Only two moves that need this</b> — lead count and pass count; ordinary throw-ins stay single-tap because sequential singles reach the same states.',
+'<b>Every card legal when leading</b> — nothing dim: the opener may lead any rank (game.c:547-550).',
+]);
+
+fig(galB,'B6 · Defending, 3 open pairs','requested state',screenHTML({
+  status:'♠ trump <span class="dk">· deck 0</span>',clock:'12:44',
+  ctx:`<b>DEFEND</b> · 3 open · 1 covered`,ctxCls:'def',
+  stage:stage3({r:'J',s:'♦',badge:'1 cover',atk:1},{r:'J',s:'♥',atk:1,badge:'3 covers',act:'PICK COVER'},{r:'8',s:'♥',badge:'3 covers',atk:1}),
+  dots:'open attack 2/3',
+  hint:'Crown: next open attack',
+  actions:[{t:'TAKE 5',cls:'take',sub:'pass locked — a cover is down'}],
+}),[
+'<b>Center card is the ATTACK</b> (red ring), not your card — the defender\'s question is “which fire first”, so targets get the stage.',
+'<b>Badges count your outs</b> — per-pair cover counts from canCoverPair sweeps (clientGuards.ts:251): triage before you commit.',
+'<b>TAKE carries its price</b> — 5 = every table card you\'d absorb (game.c:787-795).',
+'<b>PASS absent, explained</b> — a cover on the table kills the transfer (game.c:731); the subline says so instead of hiding the rule.',
+'<b>No timer anywhere</b> — nothing counts down (good.ts:7); the defender thinks as long as the wolves allow.',
+]);
+
+fig(galB,'B7 · Picking the cover','step 2 of defense',screenHTML({
+  status:'♠ trump <span class="dk">· deck 0</span>',clock:'12:44',
+  ctx:`<b>COVER J♥</b> · 3 options`,ctxCls:'def',
+  stage:stage3({r:'A',s:'♥'},{r:'Q',s:'♥',act:'TAP = COVER'},{r:'4',s:'♠',badge:'TRUMP',tr:1}),
+  dots:'cover 1/3',
+  hint:'♠ is trump — 4♠ beats any ♥',hintCls:'ok',
+  actions:[{t:'◂ BACK',cls:'ghost'},{t:'TAKE 5',cls:'take'}],
+}),[
+'<b>Carousel now holds only legal covers</b> — the illegal rest of your hand is not even scrollable here; choice ≠ clutter.',
+'<b>Trump badged gold</b> — the one card whose spend is strategic; the hint prices it.',
+'<b>BACK is cheap, commit is central</b> — same motor pattern as attacking: crown to aim, center tap to fire (game.c:600-655 takes pairs one at a time).',
+'<b>TAKE stays reachable</b> — surrender is legal mid-flow (game.c:776-780); no trap states.',
+]);
+
+fig(galB,'B8 · Transfer window','pass legal',screenHTML({
+  status:'♠ trump <span class="dk">· deck 0</span>',clock:'12:47',
+  ctx:`<b>DEFEND</b> · 2 open · 0 covered`,ctxCls:'def',
+  stage:stage3({r:'7',s:'♣',badge:'2 covers',atk:1},{r:'7',s:'♦',atk:1,badge:'3 covers',act:'PICK COVER'},null),
+  dots:'open attack 2/2',
+  hint:'Pass 7♠ — defense moves to LEV',hintCls:'ok',
+  actions:[{t:'TAKE 2',cls:'take'},{t:'PASS ▸ LEV',cls:'pass',sub:'LEV holds 5 — fits 3'}],
+}),[
+'<b>PASS appears only when true</b> — gate is canPass (game.c:716-772): pre-cover, matching card in hand, receiver capacity (LEV: 5 ≥ 1+2, game.c:734).',
+'<b>Receiver named with count</b> — you\'re aiming the table at a person; their hand size is the whole gamble.',
+'<b>Cover vs pass tension stays visible</b> — 7♠ is both a trump cover and the pass card; the two buttons price the fork explicitly.',
+'<b>Two 7s in hand → count sheet on tap</b> — same atomic-move sheet as B5 (multi-pass can\'t be sequential: after one pass you\'re not the defender, game.c:759).',
+]);
+
+fig(galB,'B9 · You said GOOD','requested “out of round”',screenHTML({
+  status:'♠ trump <span class="dk">· deck 0</span>',clock:'12:46',
+  ctx:`WAITING · you said <b style="color:#30d158">GOOD ✓</b>`,noChev:1,
+  stage:`<div class="centermsg">
+    <div class="big green">ALL COVERED</div>
+    <div class="minipairs"><span class="mp">7♣<span class="arrow">▸</span>9♣</span>
+    <span class="mp">7♦<span class="arrow">▸</span><span class="r">J♦</span></span>
+    <span class="mp">7♥<span class="arrow">▸</span><span class="r">A♥</span></span></div>
+    <div class="seats"><span class="seat ok">YOU ✓</span><span class="seat ok">ANN ✓</span>
+    <span class="seat ok">LEV ✓</span><span class="seat ok">PET ✓</span>
+    <span class="seat">BOR</span><span class="seat">MIA</span><span class="seat">SAM</span></div>
+    <div class="small">4 of 7 said good · KAT defends</div></div>`,
+  dots:'',hint:'A new throw-in reopens the table',
+  actions:[],
+}),[
+'<b>Hand is gone</b> — saying GOOD legally locks you out until the table changes (legal.c:378-384); showing tappable cards would be a lie.',
+'<b>Vote board is the content</b> — the round now closes only through these people (game.c:852-868); the checklist is the live state of “when”.',
+'<b>Reopen warning</b> — one line carries the reset rule (game.c:572): don\'t walk away yet.',
+'<b>Auto-unlock</b> — any table change resets the mask server-side; the pushed snapshot flips this screen back to B1 with zero user action.',
+]);
+
+fig(galB,'B10 · Out of the game','escaped, watching',screenHTML({
+  status:'♠ trump <span class="dk">· deck 0</span>',clock:'12:52',
+  ctx:`<b>OUT</b> · 2nd of 8 · watching`,noChev:1,
+  stage:`<div class="centermsg">
+    <div class="big green">YOU'RE OUT ✓</div>
+    <div class="mid">still holding:</div>
+    <div class="seats"><span class="seat def">KAT 9</span><span class="seat">LEV 3</span>
+    <span class="seat">MIA 1</span><span class="seat">BOR 6</span></div>
+    <div class="minipairs"><span class="mp"><span class="r">J♥</span><span class="arrow">▸</span><span class="open">—</span></span>
+    <span class="mp">J♠<span class="arrow">▸</span><span class="open">—</span></span></div></div>`,
+  dots:'',hint:'Last one holding cards is the durak',
+  actions:[],
+}),[
+'<b>Escape is a win state</b> — green, ranked (“2nd of 8”, elimination_order game.c:580-584); the game has no winner, only a loser.',
+'<b>Hand counts replace names+avatars</b> — the endgame story is who\'s shedding; four chips tell it.',
+'<b>Crown still peeks the table</b> — spectating stays live via the same masked snapshots (view.h:12-18); no controls to mis-tap.',
+]);
+
+fig(galB,'B11 · Table peek','crown-scrolled overlay',screenHTML({
+  status:'table <span class="dk">· 4 pairs · 2 open</span>',clock:'12:45',
+  ctx:null,
+  stage:`<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;gap:14px">
+    <div class="pairc big sel"><div class="pc">8♣</div><div class="pc dfn">J♣</div></div>
+    <div class="pairc big"><div class="pc red">J♦</div><div class="pc open">open</div></div>
+  </div>`,
+  dots:'pair 1/4',
+  hint:'Crown: pairs · tap anywhere: close',
+  actions:[{t:'ANN 3 · BOR 6 · LEV 5 · MIA 1 · KAT 5°',cls:'ghost seatsbtn'}],
+}),[
+'<b>Full-screen because pairs deserve pixels</b> — the only place attack/cover suits are readable; entered from any screen\'s top band.',
+'<b>Crown scrolls pairs</b> — 4 or 40, same interaction (the no-slot-cap rule, game.c:557, is why this view exists).',
+'<b>Seat strip rides the button slot</b> — the cut avatar ring compressed to hand counts; ° marks the defender.',
+'<b>Tap-anywhere closes</b> — a peek must cost nothing to leave; there is nothing else to hit.',
+]);
+
+fig(galB,'B12 · Round closes','interstitial · auto 2 s',screenHTML({
+  status:'♠ trump <span class="dk">· deck 0</span>',clock:'12:49',
+  ctx:null,
+  stage:`<div class="centermsg">
+    <div class="big red">KAT TAKES 5</div>
+    <div class="mid">KAT is skipped — LEV defends</div>
+    <div class="mid">BOR leads</div>
+    <div class="small">you drew 2 → hand of 6</div></div>`,
+  dots:'',hint:'Tap to skip',
+  actions:[],
+}),[
+'<b>One breath between rounds</b> — pickup consequences (skip rule, game.c:799-802) and your refill (game.c:438-497) land while the table is empty anyway.',
+'<b>Names the next defender</b> — the only orientation that matters for your next three seconds.',
+'<b>Skippable, auto-dismissing</b> — no engine timer exists; this 2 s is pure client pacing and yields to a tap.',
+]);
+
+fig(galB,'B13 · Game over','the fool',screenHTML({
+  status:'game over',clock:'12:58',
+  ctx:null,
+  stage:`<div class="centermsg">
+    <div class="small" style="letter-spacing:2px">ДУРАК</div>
+    <div class="big red">KAT</div>
+    <div class="small">out: ANN · YOU · LEV · MIA · BOR · SAM · PET</div></div>`,
+  dots:'',hint:'',
+  actions:[{t:'CLOSE',cls:'ghost'}],
+}),[
+'<b>Loser announced, not scores</b> — game_done returns exactly one thing: the fool (game.c:208-216).',
+'<b>Escape order as one line</b> — the bragging rights ledger (elimination_order), smallest possible form.',
+]);
+
+/* ============================================================ Option A */
+const galA=document.getElementById('gal-a');
+function stripHTML(pairs){
+  return `<div class="zstrip">${pairs.map(p=>{
+    const sel=p.sel?' sel':'';
+    const atkRed=RED.has(p.a.slice(-1))?' red':'';
+    let d;
+    if(p.d) d=`<div class="pc dfn${RED.has(p.d.slice(-1))?' red':''}">${p.d}</div>`;
+    else d=`<div class="pc open">open</div>`;
+    return `<div class="pairc${sel}"><div class="pc${atkRed}">${p.a}</div>${d}</div>`;}).join('')}
+  </div>`;
+}
+function screenA(s){
+  let h=`<div class="zstatus"><span class="l">${s.status||'♠ trump <span class="dk">· deck 3</span>'}</span><span class="clock">12:41</span></div>`;
+  h+=stripHTML(s.pairs);
+  h+=`<div class="zstageA">${s.stage}</div>`;
+  h+=`<div class="zhint ${s.hintCls||''}">${esc(s.hint||'')}</div>`;
+  h+=`<div class="zactA">${s.actions.map(btnHTML).join('')}</div>`;
+  h+=`<div class="fingero"></div><div class="zoneso"></div>`;
+  return h;
+}
+fig(galA,'A1 · Attacker','everything at once',screenA({
+  pairs:[{a:'7♣',d:'J♣'},{a:'7♥'},{a:'J♠'},{a:'',d:''}].slice(0,3),
+  stage:stage3({r:'8',s:'♦',dim:1},{r:'J',s:'♦',act:'TAP = THROW'},{r:'7',s:'♠'}),
+  hint:'cap 2 · J and 7 are live',hintCls:'ok',
+  actions:[{t:'GOOD',cls:'good',sub:'2/6'}],
+}),[
+'<b>Persistent strip</b> — covered vs open readable at a glance; the win over B.',
+'<b>Everything else shrinks to pay for it</b> — focused card 92 px (0.7 fingers), buttons 62 px tall.',
+'<b>Strip is display-only for attackers</b> — taps here do nothing; only the defender needs to target pairs.',
+]);
+fig(galA,'A2 · Defender','the breaking point',screenA({
+  status:'♠ trump <span class="dk">· deck 0</span>',
+  pairs:[{a:'8♣',d:'J♣'},{a:'J♦',sel:1},{a:'J♥'},{a:'8♥'}],
+  stage:stage3({r:'A',s:'♥'},{r:'Q',s:'♥',act:'COVER J♦'},{r:'4',s:'♠',badge:'TRUMP',tr:1}),
+  hint:'tap a pair, then a card',hintCls:'',
+  actions:[{t:'TAKE 5',cls:'take'}],
+}),[
+'<b>Select pair → select card</b> — two selection layers on one screen; natural with a pointer, cramped with a finger.',
+'<b>66 px chips vs 128 px finger</b> — adjacent-chip mis-taps are ~coin-flip; fixing it means crown-selecting chips, which steals the crown from the hand.',
+'<b>This screen is why Option B exists</b> — the same flow split into two full-screen steps costs one tap and zero precision.',
+]);
+fig(galA,'A3 · Six-pair bout','strip at capacity',screenA({
+  status:'♠ trump <span class="dk">· deck 0</span>',
+  pairs:[{a:'6♣',d:'8♣'},{a:'6♦'},{a:'8♥'},{a:'8♠'},{a:'Q♦'}],
+  stage:stage3({r:'9',s:'♥',dim:1},{r:'Q',s:'♠',dim:1,act:'NO ROOM',actGray:1},{r:'A',s:'♣',dim:1}),
+  hint:'cap 0 — strip already clipping',hintCls:'warn',
+  actions:[{t:'GOOD',cls:'primary'}],
+}),[
+'<b>Five chips fill the row</b> — a fresh-hand bout (≤6 pairs) barely fits; a post-pickup bout (10+, game.c:557) cannot.',
+'<b>Horizontal strip scroll has no input</b> — the crown is spoken for by the hand; that\'s the structural dead end at 40 mm.',
+]);
+
+/* ============================================================ Option C */
+const galC=document.getElementById('gal-c');
+function screenC(s){
+  let h=`<div class="zstatus"><span class="l">${s.status||'♠ trump <span class="dk">· deck 3</span>'}</span><span class="clock">12:41</span></div>`;
+  h+=`<div class="csum">${s.sum}</div>`;
+  h+=`<div class="clist">${s.rows.map(r=>`<div class="crow ${r.cls||''}">${r.h}${r.note?`<span class="note">${esc(r.note)}</span>`:''}</div>`).join('')}`+
+     (s.more?`<div class="cmore">${esc(s.more)}</div>`:'')+`</div>`;
+  h+=`<div class="fingero"></div><div class="zoneso"></div>`;
+  return h;
+}
+fig(galC,'C1 · Attacker as a list','watchOS-native',screenC({
+  sum:'live 7 · J &nbsp;·&nbsp; cap 2 &nbsp;·&nbsp; vs KAT(4)',
+  rows:[
+    {h:'GOOD ✓',cls:'action focusring',note:'2/6 said'},
+    {h:'Throw&nbsp;<span class="r">J♦</span>'},
+    {h:'Throw&nbsp;7♠'},
+    {h:'8♦',cls:'dim',note:'8 not live'},
+  ],more:'+2 more cards',
+}),[
+'<b>Every legal move is a 58 px full-width row</b> — the crown scrolls, a tap commits; zero precision needed.',
+'<b>Dim rows keep the hand honest</b> — you still see what you hold and why it\'s stuck.',
+'<b>The flaw is temporal, not spatial</b> — a rival\'s throw-in inserts/removes rows mid-scroll; your aimed row moves at the worst moment.',
+]);
+fig(galC,'C2 · Defender as a list','combinatorial smell',screenC({
+  status:'♠ trump <span class="dk">· deck 0</span>',
+  sum:'DEFEND · 3 open · 1 covered',
+  rows:[
+    {h:'TAKE 5',cls:'takeR focusring'},
+    {h:'<span class="r">J♥</span> ⟵ <span class="r">Q♥</span>'},
+    {h:'<span class="r">J♥</span> ⟵ <span class="r">A♥</span>'},
+    {h:'<span class="r">J♥</span> ⟵ 4♠',note:'trump'},
+  ],more:'+3 more covers',
+}),[
+'<b>Pair×cover rows</b> — correct and complete, but 3 open × 3 covers is already 9 rows plus TAKE; a big table scrolls forever.',
+'<b>Reads like a spreadsheet</b> — legal, joyless; the card game disappears.',
+'<b>Keep the anatomy</b> — this exact row structure is the right VoiceOver/assistive projection of Option B.',
+]);
+
+/* ============================================================ Option D */
+function dTop(ctx,clock){
+  return `<div class="dtop"><span>${ctx||''}</span><span class="dclock">${clock||'12:41'}</span></div>`;
+}
+function dDots(n,on){
+  let h='<div class="vdots">';
+  for(let i=0;i<n;i++)h+=`<i${i===on?' class="on"':''}></i>`;
+  return h+'</div>';
+}
+function dCardPage(o){
+  const red=RED.has(o.s)?' red':'';
+  let h=`<div class="dcard${red}${o.dim?' dim':''}${o.atk?' atkcard':''}">`+
+    `<div class="drank">${o.r}${o.s}</div><div class="dpip">${o.s}</div></div>`;
+  h+=dTop(o.ctx,o.clock);
+  if(o.act)h+=`<div class="dact ${o.act[0]}">${o.act[1]}</div>`;
+  if(o.dots)h+=dDots(o.dots[0],o.dots[1]);
+  return h+(o.extra||'');
+}
+function dStatePage(o){
+  let h=`<div class="dstate ${o.cls||'plain'}">`;
+  if(o.pre)h+=`<div class="t3">${o.pre}</div>`;
+  h+=`<div class="t1"${o.t1c?` style="color:${o.t1c}"`:''}>${o.t1}</div>`;
+  if(o.t2)h+=`<div class="t2">${o.t2}</div>`;
+  if(o.chips)h+=`<div class="drow">${o.chips}</div>`;
+  if(o.t3)h+=`<div class="t3">${o.t3}</div>`;
+  h+='</div>'+dTop(o.ctx,o.clock);
+  if(o.act)h+=`<div class="dact ${o.act[0]}">${o.act[1]}</div>`;
+  if(o.dots)h+=dDots(o.dots[0],o.dots[1]);
+  return h+(o.extra||'');
+}
+function dTablePage(pairs,ctx,clock,dots,actTxt){
+  let rows=pairs.map(p=>{
+    const a=`<span class="${RED.has(p[0].slice(-1))?'redt':''}">${p[0]}</span>`;
+    const d=p[1]?`<span class="${RED.has(p[1].slice(-1))?'redt':''}">${p[1]}</span>`
+             :'<span class="openx">open</span>';
+    return `<div class="dpair">${a}<span class="sep">▸</span>${d}</div>`;
+  }).join('');
+  return `<div class="dtable">${rows}</div>`+dTop(ctx,clock)+
+    `<div class="dact no">${actTxt||'CROWN ▾ YOUR CARDS'}</div>`+
+    (dots?dDots(dots[0],dots[1]):'');
+}
+const galD=document.getElementById('gal-d');
+
+fig(galD,'D0 · Notification','layer 0 — most of the game',
+  `<div class="dnotif"><div class="nh"><i>♠</i> FOOLISH</div>
+   <div class="nt">Your defense</div>
+   <div class="nb">KAT passed the table to you.<br>2 attacks · you hold 5</div>
+   <div class="nbtn g">Open hand</div><div class="nbtn r">Take 2</div>
+   <div class="nbtn gr">Dismiss</div></div>`,[
+'<b>HIG, verbatim</b> — “people frequently use notifications … more than the app itself”; in an 8-player game 90 % of wall-clock is not your moment, so the notification IS the primary UI.',
+'<b>Safe actions inline</b> — Take is offerable without opening (it\'s always legal for the defender, game.c:776-780); throwing/covering needs card choice, so “Open hand” deep-links into a D page.',
+'<b>Fires on decision moments only</b> — you\'re defender / you can throw in / all-covered-say-GOOD; anything else stays silent.',
+]);
+
+fig(galD,'D0b · Smart Stack + complication','glance layer',
+  `<div class="dwidget"><div class="wclock">12:41</div>
+   <div class="wcardw"><div class="wt"><i>♠</i> FOOLISH · vs KAT</div>
+   <div class="wb">Your move</div><div class="ws">J♦ 7♠ playable · cap 2</div></div></div>`,[
+'<b>Wrist-raise = game state</b> — the widget answers “do I need to act?” without opening anything (“actionable content that\'s relevant in the moment” — HIG).',
+'<b>One line of truth</b> — playable cards + capacity; tap dives straight to the best-card page.',
+'<b>Corner complication</b> — a ♠ glyph with a badge when a decision is pending; the watch face is the home screen of this app.',
+]);
+
+fig(galD,'D1 · Table page','crown stop №1',
+  dTablePage([['7♣','J♣'],['7♥',null],['J♠',null]],
+    'TABLE · cap 2','12:41',[8,0]),[
+'<b>The board is a page, not a pane</b> — full-width 33 px rows instead of 15 px chips; covered vs open readable at arm\'s length.',
+'<b>First crown stop</b> — one detent up from your cards; the strip has ends, not wraparound (watchOS TabView convention).',
+'<b>Scales by growing, not shrinking</b> — 10 post-pickup pairs = a scrolling list (game.c:557 allows dozens); row height never changes.',
+]);
+
+fig(galD,'D2 · Your best card','app opens here',
+  dCardPage({r:'J',s:'♦',ctx:'KAT · cap 2',act:['ok','TAP TO PLAY J♦'],dots:[8,1]}),[
+'<b>The card is the screen</b> — 58 px rank, 170 px pip: readable from a dropped wrist; “the bezel provides natural visual padding” (HIG Layout).',
+'<b>Whole screen commits</b> — one tap zone; the race play is 0 detents + 1 tap because the app opens on the best legal card (“proactively anticipating people\'s needs” — HIG).',
+'<b>Top overlay = the two live numbers</b> — defender and capacity (25 px), under the system clock\'s scrim.',
+'<b>Bottom strip is button and hint at once</b> — 27 px; green only when guards.wasm says legal.',
+]);
+
+fig(galD,'D3 · Illegal card','requested “nothing legal” state',
+  dCardPage({r:'9',s:'♥',dim:1,ctx:'KAT · cap 2',act:['no','9 NOT ON THE TABLE'],dots:[8,4]}),[
+'<b>Still a page</b> — dim, with the rule as the strip text; taps are ignored (haptic tick only). You keep planning with it in view.',
+'<b>Legal-first ordering</b> — dead cards sink to the strip\'s end, so “nothing legal” is discovered by the strip being gray from page one.',
+'<b>When the whole hand is dead</b> — every card page is gray and the GOOD page (D6) is one detent away; no separate empty-state screen needed.',
+]);
+
+fig(galD,'D4 · Table capped','requested state',
+  dCardPage({r:'J',s:'♦',dim:1,ctx:'KAT · cap 0',act:['no','TABLE CAPPED'],dots:[8,1]}),[
+'<b>Same anatomy, one number changed</b> — cap 0 in the overlay dims even matching ranks (game.c:557-559); the strip blames capacity, not your card.',
+'<b>No dead end</b> — GOOD page stays reachable; the state resolves only through KAT (cover / take / pass).',
+]);
+
+fig(galD,'D5 · Sniped','requested state',
+  dCardPage({r:'J',s:'♦',dim:1,ctx:'KAT · cap 0',act:['no','TABLE CAPPED'],dots:[8,1],
+    extra:`<div class="dbanner"><div class="t">✕ Too late</div>
+    <div class="b">BOR filled KAT's last slot.<br>J♦ is back in your hand.</div></div>`}),[
+'<b>Banner, not modal</b> — the race loss (serialized server-side, utils.ts:63) announces itself at notification scale (26 px) with a failure haptic, then dissolves.',
+'<b>The page already reconciled</b> — behind the banner the same card sits re-dimmed under cap 0: optimistic send reverted, world updated.',
+]);
+
+fig(galD,'D6 · GOOD page','end of the strip',
+  dStatePage({cls:'goodP',t1:'GOOD',t2:'2 of 6 have said it',
+    t3:'tap anywhere · resets if the table changes',ctx:'KAT · open 2',dots:[8,7]}),[
+'<b>The round-closer is a destination</b> — the last crown stop, full green, unmissable and unfumbleable: the mechanism of progress (game.c:852-868) gets a whole screen.',
+'<b>Vote count at 27 px</b> — you see exactly what your tap finishes.',
+'<b>After tapping</b> — the page becomes the lock state (legal.c:377-384): “GOOD ✓ — locked until the table changes”, and unlocks itself on the next pushed snapshot.',
+]);
+
+fig(galD,'D7 · Lead both','atomic multi-card as a page',
+  dStatePage({cls:'plain',pre:'YOU LEAD · you hold two 9s',t1:'9♣ + 9♥',t1c:'#fff',
+    t2:'lead both nines together',ctx:'',act:['ok','TAP TO LEAD BOTH'],dots:[9,2]}),[
+'<b>Sheets become pages</b> — cleverer than a popup: “9♣ alone” and “9♣ + 9♥” are adjacent crown stops, each full-screen, each one tap (multi-lead must be atomic, game.c:549).',
+'<b>Same trick for multi-pass</b> — “PASS 7♠” and “PASS 7♠ + 7♥” as adjacent pages (after one pass you\'re no longer defender, game.c:759 — sequential is impossible).',
+]);
+
+fig(galD,'D8 · Defending — an open attack','requested “3 open pairs”, page 2 of 3',
+  dCardPage({r:'J',s:'♥',atk:1,ctx:'DEFEND 2/3',clock:'12:44',
+    act:['ok','TAP — 3 COVERS FIT'],dots:[6,1]}),[
+'<b>Each open attack is a page</b> — red-ringed so table cards never read as yours; crown cycles the 3 open pairs, then TAKE and PASS pages (game.c:776, :716).',
+'<b>The badge became the button</b> — “3 covers fit” (canCoverPair sweep, clientGuards.ts:251) is now 27 px strip text, not a 9 px pill.',
+'<b>No timer pressure</b> — nothing counts down (good.ts:7-8); page count grows with throw-ins, live.',
+]);
+
+fig(galD,'D9 · Picking the cover','sub-strip: legal covers only',
+  dCardPage({r:'Q',s:'♥',ctx:'COVER J♥ 1/3',clock:'12:44',
+    act:['ok','TAP TO COVER J♥'],dots:[4,0]}),[
+'<b>The sub-strip holds only legal covers</b> — Q♥, A♥, 4♠ (trump), plus a back stop; illegal cards never enter this ring.',
+'<b>Trump is priced on its page</b> — 4♠\'s strip reads “TAP — SPENDS A TRUMP”; strategy surfaces as copy, not iconography.',
+'<b>Partial covers are free</b> — the engine takes pairs one at a time (game.c:638-655); after each commit the strip re-derives.',
+]);
+
+fig(galD,'D10 · TAKE page','surrender with its price',
+  dStatePage({cls:'takeP',t1:'TAKE 5',t2:'end the round — you absorb the table',
+    t3:'tap anywhere · next round skips you',ctx:'DEFEND 2/3',clock:'12:44',dots:[6,4]}),[
+'<b>Full-screen red = deliberate</b> — a whole-page destination can\'t be fat-fingered while aiming at a cover; crown distance is the confirmation.',
+'<b>Price and consequence at 27 px</b> — card count (game.c:787-795) and the skip rule (game.c:799-802) — the two facts that decide surrender.',
+]);
+
+fig(galD,'D11 · PASS page','transfer window',
+  dStatePage({cls:'passP',t1:'PASS → LEV',t2:'7♠ slides the table to LEV (holds 5)',
+    t3:'tap anywhere · LEV can pass it on',ctx:'DEFEND 2/2',clock:'12:47',dots:[5,3]}),[
+'<b>Appears only when true</b> — page exists iff canPass (game.c:716-772): pre-cover, matching card, receiver capacity; it vanishes the moment a cover lands.',
+'<b>Receiver named with hand count</b> — you\'re aiming the table at a person; that\'s the gamble, at headline size.',
+'<b>Snipeable, honestly</b> — a rival throw-in can kill this page mid-aim (game.c:734-735); it dissolves with the same banner pattern as D5.',
+]);
+
+fig(galD,'D12 · Locked — you said GOOD','requested “out of round”',
+  dStatePage({cls:'plain',t1:'ALL COVERED',t1c:'#30d158',
+    chips:'<span class="dchip ok">YOU ✓</span><span class="dchip ok">ANN ✓</span><span class="dchip ok">LEV ✓</span><span class="dchip ok">PET ✓</span><span class="dchip">BOR</span><span class="dchip">MIA</span><span class="dchip">SAM</span>',
+    t3:'4 of 7 · a throw-in reopens the table',ctx:'GOOD ✓ SAID',clock:'12:46',dots:[2,1]}),[
+'<b>Hand pages are gone</b> — GOOD locks you out until the table changes (legal.c:377-384); the strip shrinks to [TABLE] and this vote board.',
+'<b>Chips at 24 px</b> — exactly the 12 pt floor; seven names is the densest thing in Option D, and it\'s still legal.',
+'<b>Self-unlocking</b> — the next pushed snapshot (player_views row) regrows the card pages; zero user action.',
+]);
+
+fig(galD,'D13 · Round closes','interstitial · auto 2 s',
+  dStatePage({cls:'plain',t1:'KAT TAKES 5',t1c:'#ff453a',
+    t2:'LEV defends · BOR leads',t3:'you drew 2 → hand of 6 · tap to skip',
+    ctx:'',clock:'12:49'}),[
+'<b>One breath between rounds</b> — consequences (skip rule game.c:799-802, refill game.c:438-497) land while the table is empty anyway.',
+'<b>Names the next defender</b> — the only orientation that matters for the next ten seconds.',
+]);
+
+fig(galD,'D14 · Game over','the fool',
+  dStatePage({cls:'plain',pre:'ДУРАК',t1:'KAT',t1c:'#ff453a',
+    t3:'out: ANN · YOU · LEV · MIA · BOR · SAM · PET',ctx:'',clock:'12:58',
+    act:['no','TAP TO CLOSE']}),[
+'<b>Loser announced, not scores</b> — game_done returns one thing: the fool (game.c:208-216).',
+'<b>Escape order as one 24 px line</b> — the bragging-rights ledger at exactly the floor.',
+]);
+
+/* ============================================================ Option E */
+const SHIELD_SVG='<svg viewBox="0 0 40 48"><path d="M20 1 L38 8 L38 26 Q38 38 20 47 Q2 38 2 26 L2 8 Z" fill="rgba(0,0,0,.72)" stroke="#E7B84A" stroke-width="2.5"/></svg>';
+function gcard(r,s,cls){
+  const red=RED.has(s)?' red':'';
+  return `<div class="gcard${red}${cls?' '+cls:''}"><span class="gsuit">${s}</span>`+
+    `<span class="grank">${r}</span></div>`;
+}
+// Curved seat name + hand count (or defender shield) on an ellipse around
+// the screen center. Angles in degrees, y-down screen coords.
+function eseat(name,count,angDeg,opts={}){
+  const cx=162,cy=190,rx=132,ry=150;
+  const a0=angDeg*Math.PI/180;
+  const stepDeg=8, n=name.length;
+  let h='';
+  const flip=Math.sin(a0)>0.35;           // lower arc: flip so text isn't upside down
+  for(let i=0;i<n;i++){
+    const t=i-(n-1)/2;
+    const a=(angDeg+(flip?-t:t)*stepDeg)*Math.PI/180;
+    const x=cx+rx*Math.cos(a), y=cy+ry*Math.sin(a);
+    const rot=a*180/Math.PI+(flip?-90:90);
+    h+=`<span style="position:absolute;left:${x.toFixed(1)}px;top:${y.toFixed(1)}px;`+
+       `transform:translate(-50%,-50%) rotate(${rot.toFixed(1)}deg)">${name[i]}</span>`;
+  }
+  const ix=cx+(rx-32)*Math.cos(a0), iy=cy+(ry-32)*Math.sin(a0);
+  if(opts.shield){
+    h+=`<div class="eshield" style="left:${ix.toFixed(1)}px;top:${iy.toFixed(1)}px">`+
+       `${SHIELD_SVG}<b>${count}</b></div>`;
+  }else{
+    h+=`<div class="ecnt" style="left:${ix.toFixed(1)}px;top:${iy.toFixed(1)}px">${count}</div>`;
+  }
+  return h;
+}
+// Standard 7-opponent ring (you are at the bottom, outside the ring).
+function ering(defIdx,counts){
+  const seats=[['Boris',168],['Katya',204],['Sveta',237],['Dima',270],['Lena',303],
+               ['Nina',336],['Max',12]];
+  let h='<div class="ering">';
+  seats.forEach((s,i)=>{h+=eseat(s[0],counts[i],s[1],{shield:i===defIdx});});
+  return h+'</div>';
+}
+function escreen(o){
+  let h=`<div class="zstatus" style="position:absolute;top:0;left:0;right:0;z-index:6">`+
+    `<span class="l"></span><span class="clock">${o.clock||'11:17'}</span></div>`;
+  h+=`<div class="estat l">${o.deck}<small>deck</small></div>`;
+  h+=`<div class="estat r">${o.disc}<small>disc</small></div>`;
+  h+=o.ring||'';
+  if(o.battle)h+=`<div class="ebattle">${o.battle}</div>`;
+  if(o.dots)h+=`<div class="edots">${o.dots}</div>`;
+  if(o.you)h+=`<div class="eyou">${o.you}<small>YOU</small></div>`;
+  if(o.big)h+=`<div class="ebig">${o.big}</div>`;
+  if(o.strip)h+=`<div class="estrip">${o.strip}</div>`;
+  if(o.pill)h+=`<div class="epill ${o.pill[0]}">${o.pill[1]}</div>`;
+  h+=o.extra||'';
+  return h+`<div class="fingero"></div><div class="zoneso"></div>`;
+}
+const galE=document.getElementById('gal-e');
+const RING_A=ering(3,[3,2,6,8,9,6,1]);      // Dima defends
+
+fig(galE,'E1 · Attacker board','your 7402, plus commit mechanics',escreen({
+  deck:3,disc:0,ring:RING_A,
+  battle:gcard('Q','♠')+'<span class="sep">›</span>'+gcard('K','♠'),
+  dots:'● ○ ○ · cap 2',
+  big:gcard('8','♠','focus'),
+  strip:[gcard('6','♥','dim'),gcard('A','♥','dim'),gcard('6','♠','dim'),
+         gcard('10','♣','dim'),gcard('8','♠','focus'),gcard('K','♥','dim')].join(''),
+  pill:['','⚔ 8♠'],
+}),[
+'<b>Your ring, kept</b> — 7 curved names + hand counts + gold shield on the defender: the whole social state, ambient, in corner space rectangles can\'t use.',
+'<b>Your glyph cards, kept</b> — rank-inside-suit compresses a card to one readable shape; the strip shows the whole hand at 40 px because chips are focus-only (tap = focus, never play).',
+'<b>Added: the enlarged focus glyph</b> — crown selection blows the current card up to 118 px so you read it without squinting; it\'s also the second commit target.',
+'<b>Added: cap in the pager caption</b> — the number attackers race against (game.c:557) now exists on screen.',
+'<b>Your gold pill, renamed</b> — it says the exact commit (“⚔ 8♠”), 25 px; controls say what happens.',
+]);
+
+fig(galE,'E2 · Defender board','your 7403, plus TAKE/PASS reachability',escreen({
+  clock:'11:18',deck:10,disc:2,
+  ring:ering(-1,[3,2,6,6,9,6,1]),
+  battle:gcard('9','♥'),dots:'1 of 2 open',
+  extra:`<div class="eshield" style="left:162px;top:300px">${SHIELD_SVG}<b>6</b></div>`,
+  big:gcard('Q','♦','focus'),
+  strip:[gcard('6','♠','dim'),gcard('K','♠','dim'),gcard('10','♥'),
+         gcard('Q','♦','focus'),gcard('7','♠'),gcard('8','♠','dim')].join(''),
+  pill:['','🛡 Q♦'],
+}),[
+'<b>The shield moves to you</b> — your prototype\'s role language, kept exactly; the center pager now cycles OPEN attacks (crown-tap on it, or it advances as you cover).',
+'<b>Strip shows legal covers bright</b> — canCoverPair per chip against the shown attack (clientGuards.ts:251); the pill commits “🛡 Q♦ covers 9♥”.',
+'<b>TAKE and PASS are crown-end pages</b> — one flick past the strip reaches D10/D11 full-screen; surrender can\'t be fat-fingered, and it\'s never missing (your prototype had no path to either).',
+'<b>No timer</b> — nothing counts down (good.ts:7-8); throw-ins landing mid-think just update the pager count live.',
+]);
+
+fig(galE,'E3 · You lead','your 7404 — empty table',escreen({
+  clock:'11:19',deck:3,disc:10,
+  ring:ering(3,[3,2,6,6,9,6,1]),
+  battle:'<span class="openlbl">— lead any card —</span>',dots:'',
+  big:gcard('Q','♦','focus'),
+  strip:[gcard('Q','♦','focus'),gcard('Q','♠'),gcard('8','♥'),
+         gcard('J','♥'),gcard('A','♥'),gcard('8','♣')].join(''),
+  pill:['','⚔ Q♦'],
+}),[
+'<b>Nothing dim when leading</b> — the opener may lead any rank (game.c:547); the strip is fully lit for once.',
+'<b>Multi-card leads = crown-end pages</b> — “Q♦ + Q♠ lead both” sits one flick past the strip (atomic, game.c:549), replacing sheets, same as Option D.',
+'<b>Bob\'s shield says who eats it</b> — the defender is visible before you commit the lead.',
+]);
+
+fig(galE,'E4 · Nothing legal — pill morphs','GOOD is never far',escreen({
+  deck:3,disc:0,ring:RING_A,
+  battle:gcard('Q','♠')+'<span class="sep">›</span>'+gcard('K','♠'),
+  dots:'● ○ ○ · cap 2',
+  big:gcard('9','♥','focus dim'),
+  strip:[gcard('6','♥','dim'),gcard('9','♥','focus dim'),gcard('6','♠','dim'),
+         gcard('10','♣','dim'),gcard('4','♦','dim'),gcard('K','♥','dim')].join(''),
+  pill:['gray','GOOD ✓ 2/6'],
+}),[
+'<b>The pill is the state machine</b> — no legal throw-in → it becomes GOOD with the vote count; one gesture, always (the rule your prototype had no button for, game.c:852-868).',
+'<b>Dim strip still teaches</b> — the enlarged 9♥ reads “9 not on the table” in its own right; you keep planning.',
+'<b>After tapping GOOD</b> — board stays live (ring, pager) but the strip locks until the table changes (legal.c:377-384).',
+]);
+
+fig(galE,'E5 · Sniped, on the board','race loss without leaving context',escreen({
+  deck:3,disc:0,ring:RING_A,
+  battle:gcard('Q','♠')+'<span class="sep">›</span>'+gcard('K','♠'),
+  dots:'● ● ○ · cap 0',
+  big:gcard('8','♠','focus dim'),
+  strip:[gcard('6','♥','dim'),gcard('A','♥','dim'),gcard('6','♠','dim'),
+         gcard('10','♣','dim'),gcard('8','♠','focus dim'),gcard('K','♥','dim')].join(''),
+  pill:['gray','GOOD ✓ 0/6'],
+  extra:`<div class="dbanner" style="top:64px"><div class="t">✕ Too late</div>
+  <div class="b">Max filled Dima's last slot.<br>8♠ is back in your hand.</div></div>`,
+}),[
+'<b>Banner over the live board</b> — you watch the world that beat you (cap 0, pager grew a dot) while the failure haptic fires.',
+'<b>Pill already re-morphed</b> — capacity gone → GOOD is the remaining act; the reconcile is visible, not narrated.',
+]);
+
+/* ---- Option E live demo ---- */
+(function(){
+  const host=document.getElementById('m-demo3');
+  const live=['7','J'];
+  let cap=2,open=1,said=false,banner=null,focus=1;
+  let hand=[{r:'6',s:'♥'},{r:'J',s:'♦'},{r:'7',s:'♠'},{r:'10',s:'♣'},{r:'Q',s:'♠'},{r:'K',s:'♥'}];
+  const legal=c=>!said&&cap>0&&live.includes(c.r);
+  function render(){
+    const n=hand.length,c=n?hand[focus%n]:null;
+    const ok=c&&legal(c);
+    mount(host,escreen({
+      deck:3,disc:0,ring:ering(3,[3,2,6,8,9,6,1]),
+      battle:gcard('7','♣')+'<span class="sep">›</span>'+gcard('J','♣'),
+      dots:`● ${open>1?'●':'○'} ○ · cap ${cap}`,
+      big:c?gcard(c.r,c.s,'focus'+(ok?'':' dim')):'',
+      strip:hand.map((x,i)=>gcard(x.r,x.s,(i===focus%n?'focus':'')+(legal(x)?'':' dim'))).join(''),
+      pill:ok?['','⚔ '+c.r+c.s]:['gray',said?'GOOD ✓ said':'GOOD ✓ 2/6'],
+      extra:banner?`<div class="dbanner flash" style="top:64px"><div class="t">${banner.t}</div><div class="b">${banner.b}</div></div>`:'',
+    }));
+    const scr=host.querySelector('.screen');
+    scr.setAttribute('tabindex','0');scr.style.cursor='pointer';
+    scr.addEventListener('wheel',e=>{e.preventDefault();spin(e.deltaY>0||e.deltaX>0?1:-1);},{passive:false});
+    scr.addEventListener('keydown',e=>{
+      if(e.key==='ArrowRight'){spin(1);e.preventDefault()}
+      if(e.key==='ArrowLeft'){spin(-1);e.preventDefault()}});
+    scr.querySelectorAll('.estrip .gcard').forEach((el,i)=>{
+      el.addEventListener('click',ev=>{ev.stopPropagation();focus=i;banner=null;render();});});
+    const commitEls=[scr.querySelector('.epill'),scr.querySelector('.ebig')];
+    commitEls.forEach(el=>{if(el)el.addEventListener('click',ev=>{ev.stopPropagation();commit();});});
+  }
+  let last=0;
+  function spin(d){const now=Date.now();if(now-last<110)return;last=now;
+    if(!hand.length)return;
+    focus=(focus+d+hand.length)%hand.length;banner=null;render();}
+  function commit(){
+    const n=hand.length;
+    if(!n)return;
+    const c=hand[focus%n];
+    if(!legal(c)){if(!said){said=true;render();}return;}
+    if(Math.random()<0.33){
+      cap=0;open+=1;
+      banner={t:'✕ Too late',b:`Max filled Dima's last slot.<br>${c.r}${c.s} is back in your hand.`};
+      render();setTimeout(()=>{banner=null;render();},2200);return;
+    }
+    banner={t:'✓ Thrown',b:`${c.r}${c.s} is on the table — cap ${cap-1} left.`};
+    cap-=1;open+=1;hand.splice(focus%n,1);
+    if(focus>=hand.length)focus=Math.max(0,hand.length-1);
+    render();setTimeout(()=>{banner=null;render();},1500);
+  }
+  render();
+})();
+
+/* ============================================================ Option F */
+function fseatH(count,def,good){
+  if(def)return `<div class="fseat def">${SHIELD_SVG}<b>${count}</b></div>`;
+  return `<div class="fseat${good?' good':''}">${count}</div>`;
+}
+function fcellH(c){
+  if(!c||c.t==='empty')return `<div class="fcell empty">┄</div>`;
+  if(c.t==='plus')return `<div class="fcell empty">+${c.n} more</div>`;
+  const g=(x,cls)=>gcard(x[0],x[1],cls);
+  if(c.t==='res')return `<div class="fcell res">${g(c.a)}<span class="fsep">▸</span>${g(c.d)}</div>`;
+  if(c.t==='open')return `<div class="fcell open${c.sel?' sel':''}">${g(c.a)}<span class="fsep">▸</span><span class="slot">▢</span></div>`;
+  if(c.t==='fly')return `<div class="fcell open">${g(c.a)}<span class="fsep">▸</span><span class="inflight">${g(c.d)}</span></div>`;
+  return '';
+}
+function fchipH(c){
+  if(c.term)return `<div class="term${c.dim?' dimT':''}">✓</div>`;
+  return gcard(c.r,c.s,(c.focus?'focus':'')+(c.dim?' dim':''));
+}
+function ffocusH(c){
+  if(c.term)return `<div class="gcard term ${c.term}">${c.txt}</div>`;
+  return gcard(c.r,c.s,c.dim?'dim':'');
+}
+function fscreen(o){
+  let h=`<div class="fstatus"><span>♠ ▤${o.deck}</span><span class="clockf">${o.clock||'12:41'}</span></div>`;
+  h+=`<div class="fstrip">${o.strip.map(s=>fseatH(s[0],s[1]==='d',s[1]==='g')).join('')}</div>`;
+  h+=`<div class="fgrid">${o.grid.map(fcellH).join('')}</div>`;
+  if(o.focus)h+=`<div class="ffocus">${ffocusH(o.focus)}</div>`;
+  if(o.label)h+=`<div class="flabel"><div class="l1 ${o.label[0]}">${o.label[1]}</div>`+
+    (o.label[2]?`<div class="l2">${o.label[2]}</div>`:'')+`</div>`;
+  if(o.chips)h+=`<div class="fchips">${o.chips.map(fchipH).join('')}</div>`;
+  h+=`<div class="fdots">${o.page===1?'○ <b>●</b>':'<b>●</b> ○'}</div>`;
+  h+=o.extra||'';
+  return h+`<div class="fingero"></div><div class="zoneso"></div>`;
+}
+const galF=document.getElementById('gal-f');
+// conservation check: hands 28+6=34, table 3, deck 8 (incl flip), disc 7 -> 52
+const FSTRIP=[[4],[2],[6,'d'],[5],[3,'g'],[6],[2]];
+
+fig(galF,'F1 · Table — attacker','the only screen you need in play',fscreen({
+  deck:8,
+  strip:FSTRIP,
+  grid:[{t:'res',a:['Q','♠'],d:['K','♠']},{t:'open',a:['K','♣']},
+        {t:'empty'},{t:'empty'},{t:'empty'},{t:'empty'}],
+  focus:{r:'K',s:'♥'},
+  label:['ok','▸ throw in K♥','cap 2 · disc 7'],
+  chips:[{r:'6',s:'♥',dim:1},{r:'A',s:'♥',dim:1},{r:'6',s:'♠',dim:1},
+         {r:'10',s:'♣',dim:1},{r:'J',s:'♦',dim:1},{r:'K',s:'♥',focus:1},{term:1}],
+}),[
+'<b>You are not on the board</b> — first-person: opponents\' counts across the top (shield = defender, green = said good, game.c:846), table in the middle, hand at the bottom. No curved names — identity lives one page right.',
+'<b>Full grid, no pagination</b> — every pair visible at once: resolved dimmed, open red-ringed with an empty slot. Open attacks are the one thing you must see whole to know your legal throws.',
+'<b>Small things you look at, big things you touch</b> — chips (36 px) and grid ranks (17 px) are look-zones, deliberately under the floor; the 106 px focus card and its 26 px label are where reading and tapping are guaranteed.',
+'<b>Crown = the legality oracle</b> — detents are [legal cards…, ✓]: this six-card hand is two detents. The ✓ chip is the GOOD vote — the only way rounds close (game.c:852, no timer).',
+'<b>cap 2 · disc 7 in the label column</b> — capacity is the race number (game.c:557); counts sum to 52, checked.',
+]);
+
+fig(galF,'F2 · The snipe loop','~1 second, zero scrolling',fscreen({
+  deck:8,
+  strip:FSTRIP,
+  grid:[{t:'res',a:['Q','♠'],d:['K','♠']},{t:'open',a:['9','♣']},
+        {t:'fly',a:['9','♦'],d:['9','♦']},{t:'empty'},{t:'empty'},{t:'empty'}],
+  focus:{r:'9',s:'♦'},
+  label:['warn','auto ⌁ 9♦ ready','9s live · ⟨9♦⟩ in flight'],
+  chips:[{r:'6',s:'♥',dim:1},{r:'9',s:'♦',focus:1},{r:'A',s:'♥',dim:1},
+         {r:'6',s:'♠',dim:1},{r:'10',s:'♣',dim:1},{r:'K',s:'♥'},{term:1}],
+}),[
+'<b>The centerpiece</b> — 9♣ lands → ⌁ buzz → wrist raise: your 9♦ is already in focus (pre-focused from wrist-down only, never while browsing) → tap → in flight → ✓ tick.',
+'<b>Optimistic, translucent, honest</b> — the thrown card renders on the grid instantly at half-opacity, solidifies on server confirm, or slides home with an ✗ tick if sniped (serialized server-side, utils.ts:63). No banners needed; no confirm dialogs, ever.',
+'<b>Haptic vocabulary, strict</b> — ⌁ rank went live & slot open · ⌁⌁ you defend · ✓/✗ throw result · long = pickup/game over. Everything else silent: a buzz always means you can act right now.',
+]);
+
+fig(galF,'F3 · Defending','requested state — beat, pass, or take',fscreen({
+  clock:'12:44',deck:8,
+  strip:[[4],[2],[6],[5],[3],[6],[2]],
+  grid:[{t:'res',a:['8','♣'],d:['J','♣']},{t:'open',a:['K','♣'],sel:1},
+        {t:'open',a:['K','♦']},{t:'empty'},{t:'empty'},{t:'empty'}],
+  focus:{r:'K',s:'♠'},
+  label:['ok','▸ beat K♣ (trump)','⇄ pass → Lena (9)'],
+  chips:[{r:'6',s:'♥',dim:1},{r:'A',s:'♣'},{r:'K',s:'♠',focus:1},
+         {r:'10',s:'♣',dim:1},{r:'7',s:'♠'},{term:1,dim:1}],
+}),[
+'<b>⌁⌁ made you defender</b> — open pairs ring red; the selected target rings gold. One open pair auto-selects; with several, tap a pair to retarget (grid cells ~150 px wide — and a mis-tap only changes selection, never commits).',
+'<b>Crown cycles legal beats only</b> — canCoverPair per chip (clientGuards.ts:251); A♣, K♠, 7♠ survive for K♣. The ⇄ line appears exactly when the focused card can both beat and pass (K♠: trump beats K♣, and matches the table\'s single value, game.c:716) — receiver named with hand count (game.c:734).',
+'<b>TAKE is the last detent, with a live price</b> — “TAKE +4” climbing as vultures pile on IS the pressure mechanic (game.c:787). New pairs queue in arrival order and never steal focus mid-decision.',
+'<b>No timer anywhere</b> — the proposed bito-countdown died against good.ts:7-8; pressure is social, not clocked.',
+]);
+
+fig(galF,'F4 · Table capped','silence means nothing to do',fscreen({
+  deck:8,
+  strip:[[4],[2,'g'],[6,'d'],[5,'g'],[3,'g'],[6],[2,'g']],
+  grid:[{t:'res',a:['Q','♠'],d:['K','♠']},{t:'res',a:['7','♥'],d:['10','♥']},
+        {t:'open',a:['K','♣']},{t:'open',a:['9','♣']},{t:'open',a:['6','♦']},
+        {t:'open',a:['8','♣']}],
+  focus:{term:'goodT',txt:'✓ GOOD'},
+  label:['warn','table capped','good 4/7 — votes close it'],
+  chips:[{r:'6',s:'♥',dim:1},{r:'A',s:'♥',dim:1},{r:'6',s:'♠',dim:1},
+         {r:'10',s:'♣',dim:1},{r:'J',s:'♦',dim:1},{r:'K',s:'♥',dim:1},{term:1}],
+}),[
+'<b>Cap 0 → every chip dims and the focus slot becomes ✓</b> — the terminal detent surfaces itself when it\'s the only act (legal.c:377 locks you after voting until the table changes).',
+'<b>The goods tally is the round-end UI</b> — strip counts turn green as votes land; 4 of 7 visible at a glance. This replaces the countdown the review proposed — no timer exists in the engine.',
+'<b>Post-pickup overflow</b> — a 7th+ pair renders as a “+N more” cell (no slot cap in the rules, game.c:557); tap the grid to page it. Rare, contained.',
+]);
+
+fig(galF,'F5 · Roster','page 2 — identity, one swipe away',
+  `<div class="fstatus"><span>round 4</span><span class="clockf">12:41</span></div>
+   <div class="froster" style="padding-top:46px">
+     <div class="frow defR"><span class="nm">▸ Dima</span><span class="ct">6</span><span class="role">defending</span></div>
+     <div class="frow goodR"><span class="nm">Katya</span><span class="ct">2</span><span class="role">good ✓</span></div>
+     <div class="frow"><span class="nm">Lena</span><span class="ct">5</span><span class="role"></span></div>
+     <div class="frow goodR"><span class="nm">Max</span><span class="ct">3</span><span class="role">good ✓</span></div>
+     <div class="frow"><span class="nm">Nina</span><span class="ct">6</span><span class="role"></span></div>
+     <div class="frow"><span class="nm">Boris</span><span class="ct">4</span><span class="role"></span></div>
+     <div class="frow"><span class="nm">Sveta</span><span class="ct">2</span><span class="role"></span></div>
+     <div class="frow youR"><span class="nm">you</span><span class="ct">6</span><span class="role">throwing</span></div>
+     <div class="ffoot">deck 8 · disc 7 · trump ♠<br>last draw: 6♠ · out: —</div>
+   </div>
+   <div class="fdots">○ <b>●</b></div>
+   <div class="fingero"></div><div class="zoneso"></div>`,[
+'<b>Names live here, legally</b> — 25 px rows instead of 15 px curved arcs; role and vote per seat; the strip up front stays pure signal (count · shield · green).',
+'<b>“last draw: 6♠”</b> — the flipped trump is literally the final card drawn (game.c:321-333): real endgame information for three characters, low-frequency, so it lives on page 2.',
+'<b>Exact discard, who\'s out</b> — the counting-adjacent facts, one swipe away instead of never.',
+]);
+
+/* ---- Option F live demo ---- */
+(function(){
+  const host=document.getElementById('m-demo4');
+  let cap=2,said=false,fly=null,tick=null;
+  let hand=[{r:'6',s:'♥'},{r:'Q',s:'♦'},{r:'6',s:'♠'},{r:'10',s:'♣'},{r:'J',s:'♦'},{r:'K',s:'♥'}];
+  const live=['K','Q'];
+  const legal=c=>!said&&cap>0&&live.includes(c.r);
+  let sel=0; // index into detents
+  function detents(){
+    const d=hand.map((c,i)=>({c,i})).filter(x=>legal(x.c));
+    d.push({term:true});
+    return d;
+  }
+  function render(){
+    const ds=detents();
+    if(sel>=ds.length)sel=ds.length-1;
+    const cur=ds[sel];
+    const grid=[{t:'res',a:['Q','♠'],d:['K','♠']},{t:'open',a:['K','♣']},
+                {t:'empty'},{t:'empty'},{t:'empty'},{t:'empty'}];
+    if(fly)grid[2]={t:'fly',a:[fly.r,fly.s],d:[fly.r,fly.s]};
+    const strip=[[4],[2],[6,'d'],[5],[3,said?'g':undefined],[6],[2]];
+    let focus,label;
+    if(cur.term){
+      focus={term:'goodT',txt:said?'✓ VOTED':'✓ GOOD'};
+      label=said?['warn','locked until table changes','a throw-in resets every vote']
+                :['ok','vote the round closed','2 of 6 have said good'];
+    }else{
+      focus={r:cur.c.r,s:cur.c.s};
+      label=tick||['ok',`▸ throw in ${cur.c.r}${cur.c.s}`,`cap ${cap} · crown: ${ds.length-1} legal + ✓`];
+    }
+    mount(host,fscreen({deck:8,strip,grid,focus,label,
+      chips:hand.map((c,i)=>({r:c.r,s:c.s,dim:!legal(c),
+        focus:!cur.term&&cur.i===i})).concat([{term:1,dim:!cur.term}]),
+    }));
+    const scr=host.querySelector('.screen');
+    scr.setAttribute('tabindex','0');scr.style.cursor='pointer';
+    scr.addEventListener('wheel',e=>{e.preventDefault();spin(e.deltaY>0||e.deltaX>0?1:-1);},{passive:false});
+    scr.addEventListener('keydown',e=>{
+      if(e.key==='ArrowRight'){spin(1);e.preventDefault()}
+      if(e.key==='ArrowLeft'){spin(-1);e.preventDefault()}});
+    const fc=scr.querySelector('.ffocus');
+    if(fc)fc.addEventListener('click',commit);
+  }
+  let last=0;
+  function spin(d){const now=Date.now();if(now-last<110)return;last=now;
+    const n=detents().length;
+    sel=(sel+d+n)%n;tick=null;render();}
+  function commit(){
+    const ds=detents(),cur=ds[sel];
+    if(cur.term){if(!said){said=true;render();}return;}
+    const c=cur.c;
+    fly={r:c.r,s:c.s};tick=null;render();
+    setTimeout(()=>{
+      if(Math.random()<0.33){
+        fly=null;cap=0;
+        tick=['err',`✗ ${c.r}${c.s} bounced`,'Max was faster — slot gone'];
+      }else{
+        fly=null;cap-=1;
+        hand=hand.filter(x=>x!==c);
+        tick=['ok',`✓ ${c.r}${c.s} confirmed`,`cap ${cap} left`];
+      }
+      sel=0;render();
+      setTimeout(()=>{tick=null;render();},1600);
+    },650);
+  }
+  render();
+})();
+
+/* ============================================================ Option G */
+function gseatH(seat){
+  const[count,flag]=seat;
+  if(flag==='d'||flag==='dy'){
+    return `<div class="fseat def${flag==='dy'?' you':''}">${SHIELD_SVG}<b${flag==='dy'?' style="color:#E7B84A"':''}>${count}</b></div>`;
+  }
+  return `<div class="fseat${flag==='g'?' good':''}${flag==='y'?' you':''}">${count}</div>`;
+}
+function gpairH(pr){
+  const g=(x,cls)=>gcard(x[0],x[1],cls);
+  if(pr.t==='res')return `<div class="gpairv res">${g(pr.d)}<span class="fsep">▸</span>${g(pr.a)}</div>`;
+  if(pr.t==='fly')return `<div class="gpairv"><span class="inflight">${g(pr.a)}</span></div>`;
+  return `<div class="gpairv">${g(pr.a)}</div>`;   // open: bare glyph, no ring, no slot
+}
+function gscreen(o){
+  let h=`<div class="gchev">‹</div><div class="gclock">${o.clock||'12:41'}</div>`;
+  const trump=o.flip?`<span class="gtrump">${gcard(o.flip[0],o.flip[1])}</span>`:`<span>♠</span>`;
+  h+=`<div class="ginfo">${trump}<span>▤${o.deck}</span><span>▨${o.disc}</span></div>`;
+  h+=`<div class="gstrip">${o.strip.map(gseatH).join('')}</div>`;
+  h+=`<div class="gtable">${o.pairs.map(gpairH).join('')}</div>`;
+  if(o.pages&&o.pages[0]>1){
+    let d='';for(let i=0;i<o.pages[0];i++)d+=`<i${i===o.pages[1]?' class="on"':''}></i>`;
+    h+=`<div class="gpgdots">${d}</div>`;
+  }
+  if(o.focus){
+    let f;
+    if(o.focus.check)f=`<div class="bigcheck">✓</div>`;
+    else if(o.focus.take!=null)f=`<div class="bigcheck take">+${o.focus.take}</div>`;
+    else f=gcard(o.focus.r,o.focus.s,o.focus.dim?'dim':'');
+    h+=`<div class="gfocus">${f}</div>`;
+  }
+  if(o.pill)h+=`<div class="gpill ${o.pill[0]}">${o.pill[1]}</div>`;
+  if(o.chips)h+=`<div class="gchips">${o.chips.map(c=>{
+    const mods=(c.focus?' focus':'')+(c.dim?' dim':'');
+    if(c.check)return `<div class="gterm${mods}">✓</div>`;
+    if(c.take!=null)return `<div class="gterm take${mods}">+${c.take}</div>`;
+    return gcard(c.r,c.s,mods.trim());
+  }).join('')}</div>`;
+  h+=`<div class="vdots" style="right:4px"><i class="on"></i><i></i></div>`;
+  h+=o.extra||'';
+  return h+`<div class="fingero"></div><div class="zoneso"></div>`;
+}
+const galG=document.getElementById('gal-g');
+const GSTRIP=[[4],[2],[6,'d'],[5],[3,'g'],[6],[2],[6,'y']];
+
+fig(galG,'G1 · Attacker','chevron-aware anatomy',gscreen({
+  flip:['6','♠'],deck:8,disc:7,
+  strip:GSTRIP,
+  pairs:[{t:'res',d:['K','♠'],a:['Q','♠']},{t:'open',a:['K','♣']}],
+  focus:{r:'K',s:'♥'},
+  pill:['act','ATTACK'],
+  chips:[{r:'K',s:'♥',focus:1},{r:'6',s:'♥',dim:1},{r:'A',s:'♥',dim:1},
+         {r:'6',s:'♠',dim:1},{r:'10',s:'♣',dim:1},{r:'J',s:'♦',dim:1},{check:1}],
+}),[
+'<b>The chevron is law</b> — measured off the sim (~66 px circle, top-left): nothing else lives in that corner. The clock owns top-right.',
+'<b>The line under the time</b> — flip glyph · deck · discard (6♠ ▤8 ▨7), right-aligned as the clock\'s column. Capacity needs no number: it\'s the shield count minus the open attacks you can see.',
+'<b>Bigger everywhere</b> — table glyphs 62 px, focus card 112 px, chips 44 px. Open attacks are bare glyphs: no red ring, no dashed slot — presence at full opacity IS the "uncovered" signal; resolved pairs dim.',
+'<b>One pill</b> — ATTACK shows only while the focused card is legal; the crown browses the whole hand regardless.',
+'<b>One axis, one meaning</b> — crown = hand · horizontal swipe = table pages only · vertical swipe (or tapping the seat strip) = roster. The root pager is vertical, so its dots sit on the right edge, not the bottom.',
+]);
+
+fig(galG,'G2 · Defending','pill says COVER, nothing more',gscreen({
+  flip:['6','♠'],deck:8,disc:7,clock:'12:44',
+  strip:[[4],[2],[6],[5],[3],[6],[2],[5,'dy']],
+  pairs:[{t:'res',d:['J','♣'],a:['8','♣']},{t:'open',a:['K','♣']},{t:'open',a:['K','♦']}],
+  pages:[2,0],
+  focus:{r:'K',s:'♠'},
+  pill:['act','COVER'],
+  chips:[{r:'K',s:'♠',focus:1},{r:'A',s:'♣'},{r:'7',s:'♠'},
+         {r:'6',s:'♥',dim:1},{r:'10',s:'♣',dim:1},{take:4}],
+}),[
+'<b>Shield on your gold seat</b> — you defend; no banner, no role text.',
+'<b>The pill says COVER, not the target</b> — tap it (or the focus card): if the card can beat exactly one open attack it covers <i>immediately</i>; if several qualify, the chooser overlay opens (next frame).',
+'<b>No selection state on the table</b> — the gold ring is gone; targeting happens in the overlay only when it\'s actually ambiguous.',
+'<b>TAKE is the defender\'s terminal stop</b> — the red +4 at the strip\'s end (defenders can never say GOOD, game.c:844); crown to it, the pill reads TAKE 4. A matching-rank card pre-cover offers PASS; cover-and-pass both legal opens the chooser (next frame).',
+]);
+
+fig(galG,'G2b · Choose the target','only when ambiguous',gscreen({
+  flip:['6','♠'],deck:8,disc:7,clock:'12:44',
+  strip:[[4],[2],[6],[5],[3],[6],[2],[5,'dy']],
+  pairs:[{t:'res',d:['J','♣'],a:['8','♣']},{t:'open',a:['K','♣']},{t:'open',a:['K','♦']}],
+  focus:{r:'K',s:'♠'},
+  extra:`<div class="gover"><div class="gx">✕</div>
+    <div class="ttl">K♠ — cover or pass?</div>
+    <div class="row">${gcard('K','♣')}${gcard('K','♦')}</div>
+    <div class="gpill pass" style="position:static">PASS ▸ LENA</div></div>`,
+}),[
+'<b>The overlay is the single exception path</b> — it opens when a tap is ambiguous for any reason: the card beats 2+ open attacks (exact-card targeting, game.c:621-629), or it can both cover and pass (here: K♠ is trump AND matches the table rank, game.c:716). Unambiguous cards never see it.',
+'<b>Giant targets + one blue row + ✕</b> — cover targets as 98 px cards, PASS as a labeled pill with the receiver; ✕ sits where the system chevron lives, so "top-left = back out" stays one motor habit.',
+'<b>No text beyond the question</b> — five words.',
+]);
+
+fig(galG,'G3 · Table pages, trump drawn','two big pairs per page',gscreen({
+  flip:null,deck:0,disc:12,clock:'12:52',
+  strip:[[3],[2],[8,'d'],[4],[2],[5],[1],[5,'y']],
+  pairs:[{t:'res',d:['9','♠'],a:['6','♠']},{t:'open',a:['K','♣']}],
+  pages:[3,0],
+  focus:{r:'9',s:'♦',dim:1},
+  chips:[{r:'9',s:'♦',focus:1,dim:1},{r:'6',s:'♥',dim:1},{r:'A',s:'♥',dim:1},
+         {r:'4',s:'♣',dim:1},{r:'Q',s:'♠',dim:1},{check:1}],
+}),[
+'<b>Pairs stay big by paging</b> — two per page, swipe, dots. Six pairs = three dots; no shrinking, no clipped words (the G4 text cutoff is structurally gone — there is no text).',
+'<b>Status decayed to ♠ ▤0</b> — the flip is in someone\'s hand now; bare suit = endgame.',
+'<b>No pill on a dead card</b> — focused 9♦ isn\'t legal here, so nothing is offered; GOOD is its own ✓ stop at the strip\'s end, one crown flick away.',
+]);
+
+fig(galG,'G4 · Massive table','same mechanism, more dots',gscreen({
+  flip:null,deck:0,disc:11,clock:'13:01',
+  strip:[[2],[1],[12,'d'],[3],[2],[2],[1],[4,'y']],
+  pairs:[{t:'open',a:['Q','♣']},{t:'open',a:['Q','♦']}],
+  pages:[5,1],
+  focus:{r:'Q',s:'♥'},
+  pill:['act','ATTACK'],
+  chips:[{r:'Q',s:'♥',focus:1},{r:'7',s:'♦',dim:1},{r:'3',s:'♣',dim:1},{r:'5',s:'♠',dim:1},{check:1}],
+}),[
+'<b>Nine pairs = five dots</b> — the post-pickup defender case (no slot cap, game.c:557) costs swipes, never legibility.',
+'<b>The shield\'s 12 tells the capacity story</b> — a 12-card defender minus four open attacks = room for eight more; no cap number needed anywhere.',
+]);
+
+fig(galG,'G5 · Big hand','crown scrolls, right edge fades',gscreen({
+  flip:['6','♠'],deck:8,disc:5,clock:'12:57',
+  strip:[[4],[3],[5,'d'],[2],[6],[3],[4],[11,'y']],
+  pairs:[{t:'open',a:['9','♣']}],
+  focus:{r:'9',s:'♦'},
+  pill:['act','ATTACK'],
+  chips:[{r:'9',s:'♦',focus:1},{r:'9',s:'♥'},{r:'6',s:'♥',dim:1},{r:'A',s:'♥',dim:1},
+         {r:'4',s:'♣',dim:1},{r:'Q',s:'♠',dim:1},{r:'J',s:'♦',dim:1},{r:'7',s:'♣',dim:1},
+         {r:'3',s:'♦',dim:1},{r:'8',s:'♦',dim:1},{r:'2',s:'♣',dim:1},{check:1}],
+}),[
+'<b>Eleven cards, one fade</b> — the strip clips flush on the left and fades only at the right edge (the earlier double-fade artifact is gone); the crown scrolls the viewport.',
+'<b>Browse everything</b> — dim cards are reachable detents now; the pill just won\'t offer ATTACK on them.',
+]);
+
+fig(galG,'G6 · Rejected','red edge + buzz, zero words',gscreen({
+  flip:['6','♠'],deck:8,disc:7,
+  strip:GSTRIP,
+  pairs:[{t:'res',d:['K','♠'],a:['Q','♠']},{t:'open',a:['K','♣']}],
+  focus:{r:'K',s:'♥',dim:1},
+  chips:[{r:'K',s:'♥',focus:1,dim:1},{r:'6',s:'♥',dim:1},{r:'A',s:'♥',dim:1},
+         {r:'6',s:'♠',dim:1},{r:'10',s:'♣',dim:1},{r:'J',s:'♦',dim:1},{check:1}],
+  extra:'<div class="grej"></div>',
+}),[
+'<b>Rejection is a flash, not a sentence</b> — a red glow around the screen edge (~600 ms) + the ✗ failure haptic; the card is already back in the strip, cap already reads 0.',
+'<b>No pill after the bounce</b> — the card is dead again (shield 6, table full), so nothing is offered; the ✓ stop waits at the strip\'s end.',
+]);
+
+fig(galG,'G7 · GOOD','green counts are the tally',gscreen({
+  flip:['6','♠'],deck:8,disc:6,
+  strip:[[4],[2,'g'],[6,'d'],[5,'g'],[3,'g'],[6],[2,'g'],[6,'y']],
+  pairs:[{t:'res',d:['K','♠'],a:['Q','♠']},{t:'res',d:['A','♣'],a:['K','♣']}],
+  focus:{check:1},
+  pill:['good','GOOD'],
+  chips:[{r:'K',s:'♥',dim:1},{r:'6',s:'♥',dim:1},{r:'A',s:'♥',dim:1},
+         {r:'6',s:'♠',dim:1},{r:'10',s:'♣',dim:1},{r:'J',s:'♦',dim:1},{check:1,focus:1}],
+}),[
+'<b>GOOD is a crown stop</b> — the bare ✓ (no background) at the strip\'s end; reaching it fills the focus slot with a large ✓ and the pill reads GOOD. After tapping, the pill greys to ✓ voted until the table changes (legal.c:377).',
+'<b>Votes live in the strip only</b> — green counts (public state, view.c:27-31); four of seven at a glance, no sentence, and the roster stays clean.',
+]);
+
+fig(galG,'G8 · Roster','shield, not the word',
+  `<div class="gchev">‹</div><div class="gclock">12:41</div>
+   <div class="ginfo"><span>round 4</span></div>
+   <div class="froster" style="padding-top:104px;padding-bottom:24px">
+     <div class="frow defR"><span class="nm">Dima <span class="rshield">${SHIELD_SVG}</span></span><span class="ct">6</span><span class="role"></span></div>
+     <div class="frow"><span class="nm">Katya</span><span class="ct">2</span><span class="role"></span></div>
+     <div class="frow"><span class="nm">Lena</span><span class="ct">5</span><span class="role"></span></div>
+     <div class="frow"><span class="nm">Max</span><span class="ct">3</span><span class="role"></span></div>
+     <div class="frow"><span class="nm">Nina</span><span class="ct">6</span><span class="role"></span></div>
+     <div class="frow"><span class="nm">Boris</span><span class="ct">4</span><span class="role"></span></div>
+     <div class="frow"><span class="nm">Sveta</span><span class="ct">2</span><span class="role"></span></div>
+     <div class="frow youR"><span class="nm">you</span><span class="ct">6</span><span class="role"></span></div>
+     <div class="ffoot">deck 8 · disc 7 · flip: 6♠ under deck<br>out: —</div>
+   </div>
+   <div class="vdots" style="right:4px"><i></i><i class="on"></i></div>
+   <div class="fingero"></div><div class="zoneso"></div>`,[
+'<b>The shield replaces the word</b> — same mark as the strip and your prototype; roles read as iconography everywhere.',
+'<b>No goods here</b> — names, counts, the flip, who\'s out. Votes belong to the strip.',
+]);
+
+fig(galG,'G9 · Notification','D0\'s anatomy, G\'s brevity',
+  `<div class="dnotif"><div class="nh"><i>♠</i> FOOLISH</div>
+   <div class="nt">Kat passed to you</div>
+   <div class="nb">2 attacks · you hold 5</div>
+   <div class="nbtn g">Open Hand</div><div class="nbtn r">Take 2</div>
+   <div class="nbtn gr">Dismiss</div></div>`,[
+'<b>D0\'s structure, trimmed copy</b> — icon row, bold title, one short fact line, three verbs. The body earns its line by carrying the two numbers that decide Open-vs-Take.',
+'<b>Take 2 inline</b> — always defender-legal (game.c:776); card-choice actions deep-link via Open Hand.',
+]);
+
+fig(galG,'G10 · Short look','the glance before the long look',
+  `<div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px">
+    <div style="width:88px;height:88px;border-radius:22px;background:#B32929;display:flex;align-items:center;justify-content:center;font-size:52px;color:#F5E6C8">♠</div>
+    <div style="font-size:27px;font-weight:800;color:#fff">FOOLISH</div>
+    <div style="font-size:25px;font-weight:600;color:#b8b8be">Kat passed to you</div>
+  </div><div class="fingero"></div><div class="zoneso"></div>`,[
+'<b>The wrist-raise view</b> — watchOS shows this before the long look: icon, app, one line. If the wrist drops here, that\'s fine — the ⌁⌁ haptic already said "you defend".',
+'<b>Same five words as the long look title</b> — the glance and the notification never disagree.',
+]);
+
+/* ---- Option G live demo ---- */
+(function(){
+  const host=document.getElementById('m-demo5');
+  let cap=2,said=false,fly=null,rej=false,focus=0;
+  let hand=[{r:'K',s:'♥'},{r:'Q',s:'♦'},{r:'6',s:'♥'},{r:'6',s:'♠'},{r:'10',s:'♣'},{r:'J',s:'♦'}];
+  const live=['K','Q'];
+  const legal=c=>!said&&cap>0&&live.includes(c.r);
+  const nItems=()=>hand.length+1;            // cards + terminal ✓
+  function render(){
+    const isTerm=focus>=hand.length;
+    const c=isTerm?null:hand[focus];
+    const ok=c&&legal(c);
+    const pairs=[{t:'res',d:['K','♠'],a:['Q','♠']},{t:'open',a:['K','♣']}];
+    if(fly)pairs.push({t:'fly',a:[fly.r,fly.s]});
+    const shown=pairs.slice(-2);
+    let pill=null;
+    if(isTerm)pill=said?['gray','✓ voted']:['good','GOOD'];
+    else if(ok)pill=['act','ATTACK'];
+    mount(host,gscreen({flip:['6','♠'],deck:8,disc:7,
+      strip:[[4],[2],[6,'d'],[5],[3,said?'g':undefined],[6],[2],[hand.length,'y']],
+      pairs:shown,
+      pages:pairs.length>2?[Math.ceil(pairs.length/2),Math.ceil(pairs.length/2)-1]:null,
+      focus:isTerm?{check:1}:{r:c.r,s:c.s,dim:!ok},
+      pill,
+      chips:hand.map((x,i)=>({r:x.r,s:x.s,dim:!legal(x),focus:i===focus}))
+        .concat([{check:1,focus:isTerm,dim:said}]),
+      extra:rej?'<div class="grej"></div>':'',
+    }));
+    const scr=host.querySelector('.screen');
+    scr.setAttribute('tabindex','0');scr.style.cursor='pointer';
+    scr.addEventListener('wheel',e=>{e.preventDefault();spin(e.deltaY>0||e.deltaX>0?1:-1);},{passive:false});
+    scr.addEventListener('keydown',e=>{
+      if(e.key==='ArrowRight'){spin(1);e.preventDefault()}
+      if(e.key==='ArrowLeft'){spin(-1);e.preventDefault()}});
+    [scr.querySelector('.gfocus'),scr.querySelector('.gpill')].forEach(el=>{
+      if(el)el.addEventListener('click',commit);});
+  }
+  let last=0;
+  function spin(d){const now=Date.now();if(now-last<110)return;last=now;
+    focus=Math.max(0,Math.min(nItems()-1,focus+d));render();}
+  function commit(){
+    if(focus>=hand.length){if(!said){said=true;render();}return;}
+    const c=hand[focus];
+    if(!legal(c))return;
+    fly={r:c.r,s:c.s};render();
+    setTimeout(()=>{
+      if(Math.random()<0.33){
+        fly=null;cap=0;rej=true;render();
+        setTimeout(()=>{rej=false;render();},700);
+      }else{
+        fly=null;cap-=1;
+        hand=hand.filter(x=>x!==c);
+        if(focus>=hand.length)focus=Math.max(0,hand.length-1);
+        render();
+      }
+    },650);
+  }
+  render();
+})();
+
+/* ============================================================ Option H */
+function hcard(r,su,size,rank,dim){
+  const red=RED.has(su)?' red':'';
+  return `<div class="gcard${red}${dim?' dim':''}" style="font-size:${size}px;width:${Math.round(size*1.1)}px;height:${Math.round(size*1.19)}px"><span class="gsuit">${su}</span><span class="grank" style="font-size:${rank}px">${r}</span></div>`;
+}
+function hrowH(pr){
+  const g=(x)=>`<div class="gcard${RED.has(x[1])?' red':''}" style="font-size:38px;width:40px;height:44px"><span class="gsuit">${x[1]}</span><span class="grank" style="font-size:18px">${x[0]}</span></div>`;
+  if(pr.t==='res')return `<div class="hrow res"><span class="hcell">${g(pr.d)}</span><span class="harr">▸</span><span class="hcell">${g(pr.a)}</span></div>`;
+  if(pr.t==='fly')return `<div class="hrow"><span class="hcell"></span><span class="harr"></span><span class="hcell"><span class="inflight">${g(pr.a)}</span></span></div>`;
+  return `<div class="hrow"><span class="hcell"></span><span class="harr"></span><span class="hcell">${g(pr.a)}</span></div>`;
+}
+// Fisheye lane, bottom-right anchor: focus card low (abs y≈300), up to three
+// small neighbors stacked above; caption sits under the focus card.
+function hlaneH(items,focus){
+  const YS={'0':162,'-1':102,'-2':58,'-3':14};
+  let h='';
+  for(let off=-3;off<=0;off++){
+    const i=focus+off;
+    if(i<0||i>=items.length)continue;
+    const size=off===0?84:34, rank=off===0?38:16, op=off===0?1:(.75-0.12*(-off-1));
+    const it=items[i];
+    let inner;
+    if(it.check)inner=`<span class="hcheck" style="font-size:${Math.round(size*.82)}px">✓</span>`;
+    else if(it.take!=null)inner=`<span class="htake" style="font-size:${Math.round(size*.52)}px">+${it.take}</span>`;
+    else inner=hcard(it.r,it.s,size,rank,it.dim);
+    h+=`<div class="hitem" style="top:${YS[off]}px;opacity:${op.toFixed(2)}">${inner}</div>`;
+  }
+  return `<div class="hlane">${h}</div>`;
+}
+function hscreen(o){
+  let h=`<div class="gchev">‹</div><div class="gclock">${o.clock||'12:41'}</div>`;
+  const trump=o.flip?`<span class="gtrump">${gcard(o.flip[0],o.flip[1])}</span>`:`<span>♠</span>`;
+  h+=`<div class="ginfo">${trump}<span>▤${o.deck}</span><span>▨${o.disc}</span></div>`;
+  h+=`<div class="gstrip">${o.strip.map(gseatH).join('')}</div>`;
+  h+=`<div class="htable${o.scroll?' scrollv':''}">${o.pairs.map(hrowH).join('')}</div>`;
+  h+=hlaneH(o.items,o.focus);
+  if(o.cap)h+=`<div class="hcap ${o.cap[0]}">${o.cap[1]}</div>`;
+  h+=o.extra||'';
+  return h+`<div class="fingero"></div><div class="zoneso"></div>`;
+}
+const galH=document.getElementById('gal-h');
+
+fig(galH,'H1 · Attacker','table is a list · hand is a lane',hscreen({
+  flip:['6','♠'],deck:8,disc:7,strip:GSTRIP,
+  pairs:[{t:'res',d:['K','♠'],a:['Q','♠']},{t:'open',a:['K','♣']}],
+  items:[{r:'6',s:'♥',dim:1},{r:'A',s:'♥',dim:1},{r:'K',s:'♥'},{r:'6',s:'♠',dim:1},
+         {r:'10',s:'♣',dim:1},{r:'J',s:'♦',dim:1},{check:1}],
+  focus:2,
+  cap:['act','attack'],
+}),[
+'<b>The whole table, no pages</b> — pairs as list rows: cover column ▸ attack column; open attacks alone, full bright; resolved rows desaturate. Up to five pairs are just… visible.',
+'<b>One hand representation</b> — the focused chip IS the big card (42 pt), anchored bottom-right; up to three small neighbors stack above it (they\'re small — so more fit); the ✓ is the lane\'s last stop.',
+'<b>The verb is a caption, not a pill</b> — complication-sized gray CAPS under the fisheye (ATTACK · GOOD · PICKUP · COVER · PASS · COVER/PASS), watch-style; blank when the focused card is dead. Tap the big card to commit.',
+'<b>Nothing moves horizontally</b> — crown = lane, vertical drag = table list (only when it overflows), seat-strip tap = roster (chevron returns).',
+]);
+
+fig(galH,'H2 · Defending','the cover/pass case',hscreen({
+  flip:['6','♠'],deck:8,disc:7,clock:'12:44',
+  strip:[[4],[2],[6],[5],[3],[6],[2],[5,'dy']],
+  pairs:[{t:'res',d:['J','♣'],a:['8','♣']},{t:'open',a:['K','♣']},{t:'open',a:['K','♦']}],
+  items:[{r:'A',s:'♣'},{r:'K',s:'♠'},{r:'7',s:'♠'},{r:'6',s:'♥',dim:1},
+         {r:'10',s:'♣',dim:1},{take:4}],
+  focus:1,
+  cap:['act','cover/pass'],
+}),[
+'<b>“cover/pass”</b> — K♠ beats both kings AND matches the table rank, so the caption says both; tapping opens the disambiguation screen (targets + pass). A plain “cover” with one target commits immediately.',
+'<b>Both open attacks visible while you choose</b> — the list shows K♣ and K♦ at once.',
+'<b>“pickup” is the lane\'s last stop</b> — the red +4 (engine vocabulary; defenders can never say good, game.c:844); its caption reads pickup.',
+]);
+
+fig(galH,'H3 · Seven pairs','five rows visible, then scroll',hscreen({
+  flip:null,deck:0,disc:10,clock:'12:58',
+  strip:[[3],[2],[9,'d'],[4],[2],[5],[1],[4,'y']],
+  scroll:1,
+  pairs:[{t:'res',d:['9','♠'],a:['6','♠']},{t:'res',d:['Q','♣'],a:['J','♣']},
+         {t:'res',d:['A','♦'],a:['J','♦']},{t:'open',a:['K','♣']},{t:'open',a:['9','♣']}],
+  items:[{r:'9',s:'♦'},{r:'6',s:'♥',dim:1},{r:'A',s:'♥',dim:1},{r:'Q',s:'♠',dim:1},{check:1}],
+  focus:0,
+  cap:['act','attack'],
+}),[
+'<b>Centered until five</b> — the list sits vertically centered while it fits; past five rows it top-aligns and scrolls with edge fades (the app\'s only drag), newest landing at the bottom.',
+'<b>Better than dots for huge tables</b> — a 10-pair post-pickup bout is a scroll, not five blind pages.',
+'<b>Bare ♠, deck 0</b> — same InfoLine decay as G.',
+]);
+
+fig(galH,'H4 · Eleven cards','same lane, more turns',hscreen({
+  flip:['6','♠'],deck:8,disc:5,clock:'12:57',
+  strip:[[4],[3],[5,'d'],[2],[6],[3],[4],[11,'y']],
+  pairs:[{t:'open',a:['9','♣']}],
+  items:[{r:'3',s:'♦',dim:1},{r:'9',s:'♥'},{r:'9',s:'♦'},{r:'8',s:'♦',dim:1},
+         {r:'2',s:'♣',dim:1},{r:'Q',s:'♠',dim:1},{r:'J',s:'♦',dim:1},{r:'7',s:'♣',dim:1},
+         {r:'6',s:'♥',dim:1},{r:'A',s:'♥',dim:1},{r:'4',s:'♣',dim:1},{check:1}],
+  focus:2,
+  cap:['act','attack'],
+}),[
+'<b>A post-pickup hand changes nothing structurally</b> — same ±1 window, more crown travel; no overflow mask, no special case.',
+'<b>Legal cards cluster at the focus</b> — both 9s adjacent; the window shows the neighborhood before you get there.',
+]);
+
+fig(galH,'H5 · GOOD','the ✓ enlarges like any card',hscreen({
+  flip:['6','♠'],deck:8,disc:6,
+  strip:[[4],[2,'g'],[6,'d'],[5,'g'],[3,'g'],[6],[2,'g'],[6,'y']],
+  pairs:[{t:'res',d:['K','♠'],a:['Q','♠']},{t:'res',d:['A','♣'],a:['K','♣']}],
+  items:[{r:'6',s:'♥',dim:1},{r:'A',s:'♥',dim:1},{r:'K',s:'♥',dim:1},{r:'6',s:'♠',dim:1},
+         {r:'10',s:'♣',dim:1},{r:'J',s:'♦',dim:1},{check:1}],
+  focus:6,
+  cap:['good','good'],
+}),[
+'<b>The terminal item obeys the same physics</b> — crown to the end, the bare ✓ grows in the lane; the caption reads good; green strip counts are the tally.',
+'<b>After voting</b> — the caption greys to voted, lane cards stay dim until the table changes (legal.c:377).',
+]);
+
+/* ---- Option H live demo ---- */
+(function(){
+  const host=document.getElementById('m-demo6');
+  let cap2=2,said=false,rej=false,focus=0,fly=null;
+  let hand=[{r:'K',s:'♥'},{r:'Q',s:'♦'},{r:'6',s:'♥'},{r:'6',s:'♠'},{r:'10',s:'♣'},{r:'J',s:'♦'}];
+  const live=['K','Q'];
+  const legal=c=>!said&&cap2>0&&live.includes(c.r);
+  function items(){
+    return hand.map(c=>({r:c.r,s:c.s,dim:!legal(c)})).concat([{check:1}]);
+  }
+  function render(){
+    const its=items();
+    if(focus>=its.length)focus=its.length-1;
+    const isTerm=focus===its.length-1;
+    const c=isTerm?null:hand[focus];
+    const ok=c&&legal(c);
+    const pairs=[{t:'res',d:['K','♠'],a:['Q','♠']},{t:'open',a:['K','♣']}];
+    if(fly)pairs.push({t:'fly',a:[fly.r,fly.s]});
+    let capn=null;
+    if(isTerm)capn=said?['gray','voted']:['good','good'];
+    else if(ok)capn=['act','attack'];
+    mount(host,hscreen({flip:['6','♠'],deck:8,disc:7,
+      strip:[[4],[2],[6,'d'],[5],[3,said?'g':undefined],[6],[2],[hand.length,'y']],
+      pairs,items:its,focus,cap:capn,
+      extra:rej?'<div class="grej"></div>':'',
+    }));
+    const scr=host.querySelector('.screen');
+    scr.setAttribute('tabindex','0');scr.style.cursor='pointer';
+    scr.addEventListener('wheel',e=>{e.preventDefault();spin(e.deltaY>0||e.deltaX>0?1:-1);},{passive:false});
+    scr.addEventListener('keydown',e=>{
+      if(e.key==='ArrowDown'||e.key==='ArrowRight'){spin(1);e.preventDefault()}
+      if(e.key==='ArrowUp'||e.key==='ArrowLeft'){spin(-1);e.preventDefault()}});
+    scr.querySelectorAll('.hlane .hitem').forEach(el=>{
+      el.style.cursor='pointer';
+      el.addEventListener('click',ev=>{ev.stopPropagation();
+        const y=parseInt(el.style.top);
+        if(Math.abs(y-162)<10)commit();
+        else spin(-1);
+      });});
+    const cp=scr.querySelector('.hcap');
+    if(cp)cp.addEventListener('click',commit);
+  }
+  let last=0;
+  function spin(d){const now=Date.now();if(now-last<110)return;last=now;
+    focus=Math.max(0,Math.min(items().length-1,focus+d));render();}
+  function commit(){
+    const its=items();
+    if(focus===its.length-1){if(!said){said=true;render();}return;}
+    const c=hand[focus];
+    if(!legal(c))return;
+    fly={r:c.r,s:c.s};render();
+    setTimeout(()=>{
+      if(Math.random()<0.33){
+        fly=null;cap2=0;rej=true;render();
+        setTimeout(()=>{rej=false;render();},700);
+      }else{
+        fly=null;cap2-=1;
+        hand=hand.filter(x=>x!==c);
+        render();
+      }
+    },650);
+  }
+  render();
+})();
+
+/* ---- Option D live demo ---- */
+(function(){
+  const host=document.getElementById('m-demo2');
+  const live=['7','J'];
+  let cap=2,open=2,said=false,banner=null,idx=1;
+  let pages=[{k:'table'},
+    {k:'card',r:'J',s:'♦'},{k:'card',r:'7',s:'♠'},
+    {k:'card',r:'8',s:'♦'},{k:'card',r:'9',s:'♥'},{k:'card',r:'Q',s:'♠'},{k:'card',r:'A',s:'♣'},
+    {k:'good'}];
+  const legal=c=>!said&&cap>0&&live.includes(c.r);
+  function render(){
+    const p=pages[idx];
+    let inner='';
+    const dots=[pages.length,idx];
+    if(p.k==='table'){
+      const prs=[['7♣','J♣'],['7♥',null],['J♠',null]];
+      while(prs.length<open+1)prs.push(['J♦',null]);
+      inner=dTablePage(prs.slice(0,4),`TABLE · cap ${cap}`,'12:41',dots);
+    }else if(p.k==='card'){
+      const ok=legal(p);
+      inner=dCardPage({r:p.r,s:p.s,dim:!ok,ctx:`KAT · cap ${cap}`,
+        act:ok?['ok',`TAP TO PLAY ${p.r}${p.s}`]
+          :['no',said?'GOOD SAID — LOCKED':cap<=0?'TABLE CAPPED':`${p.r} NOT ON THE TABLE`],
+        dots});
+    }else{
+      inner=dStatePage(said?{cls:'goodP',t1:'GOOD ✓',t2:'locked until the table changes',
+          t3:'a throw-in resets every vote',ctx:'WAITING',dots}
+        :{cls:'goodP',t1:'GOOD',t2:'2 of 6 have said it',
+          t3:'tap anywhere to commit',ctx:`KAT · open ${open}`,dots});
+    }
+    if(banner)inner+=`<div class="dbanner flash"><div class="t">${banner.t}</div><div class="b">${banner.b}</div></div>`;
+    mount(host,inner);
+    const scr=host.querySelector('.screen');
+    scr.setAttribute('tabindex','0');scr.style.cursor='pointer';
+    scr.addEventListener('wheel',e=>{e.preventDefault();spin(e.deltaY>0?1:-1);},{passive:false});
+    scr.addEventListener('keydown',e=>{
+      if(e.key==='ArrowDown'){spin(1);e.preventDefault()}
+      if(e.key==='ArrowUp'){spin(-1);e.preventDefault()}});
+    scr.addEventListener('click',commit);
+  }
+  let last=0;
+  function spin(d){const now=Date.now();if(now-last<130)return;last=now;
+    const n=Math.max(0,Math.min(pages.length-1,idx+d));
+    if(n!==idx){idx=n;banner=null;render();}}
+  function commit(){
+    const p=pages[idx];
+    if(p.k==='good'&&!said){said=true;render();return;}
+    if(p.k!=='card'||!legal(p))return;
+    if(Math.random()<0.33){
+      cap=0;open+=1;
+      banner={t:'✕ Too late',b:`BOR filled KAT's last slot.<br>${p.r}${p.s} is back in your hand.`};
+      render();setTimeout(()=>{banner=null;render();},2200);return;
+    }
+    banner={t:'✓ Thrown',b:`${p.r}${p.s} is on the table — cap ${cap-1} left.`};
+    cap-=1;open+=1;pages.splice(idx,1);
+    if(idx>=pages.length)idx=pages.length-1;
+    render();setTimeout(()=>{banner=null;render();},1500);
+  }
+  render();
+})();
+
+/* ============================================================ budget frame */
+mount(document.getElementById('m-budget'),screenHTML({
+  ctx:`vs <b>KAT</b>(4) · open 2 · cap 2`,
+  stage:stage3({r:'8',s:'♦',dim:1},{r:'J',s:'♦',act:'TAP = THROW'},{r:'7',s:'♠'}),
+  dots:'○ ● ○ ○ ○ ○   hand 2/6',
+  hint:'Legal — J is on the table',hintCls:'ok',
+  actions:[{t:'GOOD',cls:'good',sub:'2 of 6 said it'}],
+}));
+(function(){const s=document.querySelector('#m-budget .screen');
+  s.querySelector('.fingero').style.display='block';
+  s.querySelector('.zoneso').style.display='block';})();
+
+/* ============================================================ live demo */
+(function(){
+  const host=document.getElementById('m-demo');
+  const live=['7','J'];
+  let cap=2, open=2, hand=[
+    {r:'8',s:'♦'},{r:'J',s:'♦'},{r:'7',s:'♠'},{r:'9',s:'♥'},{r:'Q',s:'♠'},{r:'A',s:'♣'}],
+    focus=1, said=false, toast=null, sheetGone=null;
+  const legal=c=>!said&&cap>0&&live.includes(c.r);
+  const why=c=>said?'GOOD said — locked until the table changes'
+    :cap<=0?'Capacity 0 — KAT must act'
+    :live.includes(c.r)?`Legal — ${c.r} is on the table`
+    :`${c.r} is not on the table`;
+  function render(){
+    const n=hand.length;
+    const L=n?hand[(focus-1+n)%n]:null, C=n?hand[focus%n]:null, R=n?hand[(focus+1)%n]:null;
+    const mk=(c,isC)=>c?{r:c.r,s:c.s,dim:!legal(c),
+      act:isC?(legal(c)?'TAP = THROW':(said?'LOCKED':'NO PLAY')):undefined,
+      actGray:isC&&!legal(c)}:null;
+    const dots=hand.map((_,i)=>i===focus%Math.max(n,1)?'●':'○').join(' ');
+    mount(host,screenHTML({
+      ctx:`vs <b>KAT</b>(4) · open ${open} · cap ${cap}`,ctxCls:cap<=0?'warn':'',
+      stage:n?stage3(mk(L),mk(C,true),mk(R)):`<div class="centermsg"><div class="big green">HAND EMPTY</div></div>`,
+      dots:n?`${dots}   hand ${(focus%n)+1}/${n}`:'',
+      hint:n?why(C):'', hintCls:n&&legal(C)?'ok':(cap<=0||said?'warn':''),
+      actions:[{t:said?'GOOD ✓':'GOOD',cls:said?'primary':'good',id:'demogood',
+        sub:said?'locked in':'2 of 6 said it'}],
+      overlay:toast?`<div class="wtoast flash"><div class="t">${toast.t}</div><div class="b">${toast.b}</div></div>`:'',
+    }));
+    const scr=host.querySelector('.screen');
+    scr.setAttribute('tabindex','0');
+    scr.addEventListener('wheel',e=>{e.preventDefault();
+      spin(e.deltaY>0||e.deltaX>0?1:-1);},{passive:false});
+    scr.addEventListener('keydown',e=>{
+      if(e.key==='ArrowRight'){spin(1);e.preventDefault()}
+      if(e.key==='ArrowLeft'){spin(-1);e.preventDefault()}});
+    scr.querySelectorAll('.wcard').forEach((el,i)=>{
+      el.style.cursor='pointer';
+      el.addEventListener('click',()=>{
+        if(el.classList.contains('focus'))play();
+        else spin(el.classList.contains('left')?-1:1);
+      });});
+    const g=scr.querySelector('#demogood');
+    if(g)g.addEventListener('click',()=>{if(!said){said=true;render();}});
+  }
+  let last=0;
+  function spin(d){const now=Date.now();if(now-last<110)return;last=now;
+    if(!hand.length)return;
+    focus=(focus+d+hand.length)%hand.length;toast=null;render();}
+  function play(){
+    if(!hand.length)return;
+    const c=hand[focus%hand.length];
+    if(!legal(c)){toast=null;render();return;}
+    if(Math.random()<0.33){ // lose the race
+      cap=0;open+=1;
+      toast={t:'✕ Too late',b:`BOR filled KAT's last slot first.<br>Your ${c.r}${c.s} is back in hand.`};
+      render();setTimeout(()=>{toast=null;render();},2200);return;
+    }
+    hand.splice(focus%hand.length,1);cap-=1;open+=1;
+    toast={t:'✓ Thrown',b:`${c.r}${c.s} is on the table — cap ${cap} left.`};
+    if(focus>=hand.length)focus=0;
+    render();setTimeout(()=>{toast=null;render();},1400);
+  }
+  render();
+})();
+</script>
+</body>
+</html>
