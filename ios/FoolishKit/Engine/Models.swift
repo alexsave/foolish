@@ -197,6 +197,59 @@ public struct BotAction: Codable, Equatable, Sendable {
     public var move: Move { Move(type: type, cards: cards, attackCards: attackCards, seat: seat) }
 }
 
+/// Where a card came from / went to (EVW_LOC_* in cnitro/src/evwire.h).
+public enum EventLoc: Int, Codable, Sendable {
+    case deck = 0, hand = 1, table = 2, discard = 3, flipped = 4
+    case none = 0xFF
+}
+
+/// What happened (EVW_T_* in cnitro/src/evwire.h).
+public enum EventType: Int, Codable, Sendable {
+    case magicTransition = 0
+    case deal = 1
+    case flipped = 2
+    case defenderMove = 3
+    case attackPass = 4
+    case cover = 5
+    case pickup = 6
+    case discard = 7
+    case out = 8
+    case refill = 9
+    case cardsToTrash = 10
+}
+
+/// One animation event — the kernel's answer to "which card flies where".
+///
+/// This is the SAME stream the website plays (it decodes evwire and renders it;
+/// it has never derived animations either). The board consumes these with
+/// `matchedGeometryEffect`; it must never diff two `GameView`s to work out what
+/// moved. `BoardDiff.swift` is cancelled for exactly this reason —
+/// docs/C_CORE_CONSOLIDATION.md F4, docs/IOS_APP_DESIGN.md §16.B4.
+public struct GameEvent: Codable, Equatable, Sendable {
+    /// Raw code; use `kind`.
+    public let type: Int
+    /// The event's player seat, or -1.
+    public let seat: Int
+    /// Message template id (EVW_MSG_*). The UI renders its own copy.
+    public let msg: Int
+    /// Raw codes; use `fromLoc` / `toLoc`.
+    public let from: Int
+    public let to: Int
+    /// `nil` entries are cards the kernel redacted — dealt/drawn into a hand
+    /// that is not the viewer's. Render a card back; the identity never arrived.
+    public let cards: [Card?]
+    /// Cover only: the attack card being covered.
+    public let target: Card?
+    /// Cover only: which battle.
+    public let battle: Int?
+
+    public var kind: EventType? { EventType(rawValue: type) }
+    public var fromLoc: EventLoc { EventLoc(rawValue: from) ?? .none }
+    public var toLoc: EventLoc { EventLoc(rawValue: to) ?? .none }
+    /// nil seat for the "no particular player" events (discard, magic).
+    public var actorSeat: Int? { seat >= 0 ? seat : nil }
+}
+
 /// One turn of the kernel's bot cycle (fio_bot_drive_json).
 ///
 /// The cycle applies 0..n actions and stops on the same conditions as the
@@ -205,6 +258,8 @@ public struct BotAction: Codable, Equatable, Sendable {
 /// and how to draw (docs/C_CORE_CONSOLIDATION.md §5).
 public struct BotDrive: Codable, Sendable {
     public let actions: [BotAction]
+    /// The cycle's animation plan, from the kernel — play these, don't diff.
+    public let events: [GameEvent]
     /// Raw stop reason; use `stop`.
     public let stopRaw: Int
     /// Loser seat once the game is over, else -1.
@@ -218,7 +273,7 @@ public struct BotDrive: Codable, Sendable {
     public var lastVisible: BotAction? { actions.last { $0.pacing != .bundledPassive } }
 
     private enum CodingKeys: String, CodingKey {
-        case actions, ended, delayMs
+        case actions, events, ended, delayMs
         case stopRaw = "stop"
     }
 }

@@ -55,6 +55,36 @@ static void put_event(Emit *e, int type, int seat, int msg, int from, int to,
     e->n_events++;
 }
 
+// ---------- the one derivation ---------------------------------------------
+//
+// evwire_walk below turns (hook snapshots + this action's logs) into the event
+// sequence, and hands each event to a SINK. The packed evwire writer is one
+// sink; the iOS bridge's JSON emitter is another (docs/C_CORE_CONSOLIDATION.md
+// F4). Which card flies where is therefore derived exactly once, whatever the
+// destination — a second derivation per platform is the whole finding.
+
+static void sink_packed(void *ctx, const EvwEvent *ev) {
+    Emit *e = (Emit *)ctx;
+    put_event(e, ev->type, ev->seat, ev->msg, ev->from, ev->to,
+              ev->cards, ev->n_cards, ev->mask_cards,
+              ev->has_target, ev->target, ev->has_battle, ev->battle, ev->snap);
+}
+
+// Same argument order as put_event, so the derivation below reads unchanged.
+static void ev_emit(EvwSink sink, void *ctx, int type, int seat, int msg,
+                    int from, int to, const Card *cards, int n_cards,
+                    int mask_cards, int has_target, Card target,
+                    int has_battle, int battle, const Game *snap) {
+    EvwEvent ev;
+    ev.type = type; ev.seat = seat; ev.msg = msg;
+    ev.from = from; ev.to = to;
+    ev.cards = cards; ev.n_cards = n_cards; ev.mask_cards = mask_cards;
+    ev.has_target = has_target; ev.target = target;
+    ev.has_battle = has_battle; ev.battle = battle;
+    ev.snap = snap;
+    sink(ctx, &ev);
+}
+
 // First log of a type, or NULL — buildEvents' `find`.
 static const GameLog *find_log(const GameLog *logs, int n, int type) {
     for (int i = 0; i < n; i++) if (logs[i].log_type == type) return &logs[i];
@@ -66,6 +96,134 @@ static int log_primaries(const GameLog *l, Card *buf) {
     if (!l) return 0;
     for (int i = 0; i < l->num_pairs; i++) buf[i] = l->pairs[i].primary;
     return l->num_pairs;
+}
+
+void evwire_walk(const EvSnap *snaps, int n_snaps,
+                 const GameLog *logs, int n_logs, int viewer,
+                 EvwSink sink, void *ctx) {
+    // Sequential readers (each DRAW/COVER hook consumes the next matching
+    // log) and single-instance logs — mirrors buildEvents exactly.
+    const GameLog *discard_log = find_log(logs, n_logs, LOG_DISCARD);
+    int draw_i = 0, cover_i = 0;
+    Card cards[MAX_LOG_PAIRS];
+
+    for (int si = 0; si < n_snaps; si++) {
+        const EvSnap *s = &snaps[si];
+        switch (s->tag) {
+            case ENGINE_HOOK_ATTACK: {
+                const int n = log_primaries(find_log(logs, n_logs, LOG_ATTACK), cards);
+                ev_emit(sink, ctx, EVW_T_ATTACK_PASS, s->aux, EVW_MSG_ATTACKED,
+                          EVW_LOC_HAND, EVW_LOC_TABLE, cards, n, 0,
+                          0, CARD_NONE, 0, 0, s->g);
+                break;
+            }
+            case ENGINE_HOOK_PASS: {
+                const int n = log_primaries(find_log(logs, n_logs, LOG_PASS), cards);
+                ev_emit(sink, ctx, EVW_T_ATTACK_PASS, s->aux, EVW_MSG_PASSED,
+                          EVW_LOC_HAND, EVW_LOC_TABLE, cards, n, 0,
+                          0, CARD_NONE, 0, 0, s->g);
+                break;
+            }
+            case ENGINE_HOOK_OUT:
+                ev_emit(sink, ctx, EVW_T_OUT, s->aux, EVW_MSG_OUT,
+                          EVW_LOC_NONE, EVW_LOC_NONE, 0, 0, 0,
+                          0, CARD_NONE, 0, 0, s->g);
+                break;
+            case ENGINE_HOOK_COVER: {
+                // Next COVER log: [cover card, attack card being covered].
+                const GameLog *l = 0;
+                for (int i = 0, seen = 0; i < n_logs; i++) {
+                    if (logs[i].log_type == LOG_COVER && seen++ == cover_i) { l = &logs[i]; break; }
+                }
+                cover_i++;
+                if (!l || l->num_pairs < 1) break; // corrupt input: skip, never crash
+                // The seat that covered is the defender at snapshot time.
+                ev_emit(sink, ctx, EVW_T_COVER, s->g->defender, EVW_MSG_COVERED,
+                          EVW_LOC_HAND, EVW_LOC_TABLE, &l->pairs[0].primary, 1, 0,
+                          1, l->pairs[0].target, 1, s->aux, s->g);
+                break;
+            }
+            case ENGINE_HOOK_DISCARD: {
+                const int n = log_primaries(discard_log, cards);
+                ev_emit(sink, ctx, EVW_T_DISCARD, -1, EVW_MSG_DISCARDED,
+                          EVW_LOC_TABLE, EVW_LOC_DISCARD, cards, n, 0,
+                          0, CARD_NONE, 0, 0, s->g);
+                break;
+            }
+            case ENGINE_HOOK_TRASH: {
+                const int n = log_primaries(discard_log, cards);
+                if (n > 0) {
+                    ev_emit(sink, ctx, EVW_T_CARDS_TO_TRASH, -1, EVW_MSG_DISCARDED,
+                              EVW_LOC_TABLE, EVW_LOC_DISCARD, cards, n, 0,
+                              0, CARD_NONE, 0, 0, s->g);
+                }
+                break;
+            }
+            case ENGINE_HOOK_DRAW: {
+                // Next DRAW log; real identities only for the drawing seat.
+                const GameLog *l = 0;
+                for (int i = 0, seen = 0; i < n_logs; i++) {
+                    if (logs[i].log_type == LOG_DRAW && seen++ == draw_i) { l = &logs[i]; break; }
+                }
+                draw_i++;
+                const int n = log_primaries(l, cards);
+                ev_emit(sink, ctx, EVW_T_REFILL, s->aux, EVW_MSG_DREW,
+                          EVW_LOC_DECK, EVW_LOC_HAND, cards, n, viewer != s->aux,
+                          0, CARD_NONE, 0, 0, s->g);
+                break;
+            }
+            case ENGINE_HOOK_DEFENDER_MOVE:
+                ev_emit(sink, ctx, EVW_T_DEFENDER_MOVE, s->aux, EVW_MSG_DEFENDER_MOVE,
+                          EVW_LOC_NONE, EVW_LOC_NONE, 0, 0, 0,
+                          0, CARD_NONE, 0, 0, s->g);
+                break;
+            case ENGINE_HOOK_PICKUP: {
+                const int n = log_primaries(find_log(logs, n_logs, LOG_PICKUP), cards);
+                ev_emit(sink, ctx, EVW_T_PICKUP, s->aux, EVW_MSG_PICKUP,
+                          EVW_LOC_TABLE, EVW_LOC_HAND, cards, n, 0,
+                          0, CARD_NONE, 0, 0, s->g);
+                break;
+            }
+            case ENGINE_HOOK_MAGIC_TRANSITION:
+                ev_emit(sink, ctx, EVW_T_MAGIC_TRANSITION, -1, EVW_MSG_GOOD_TRANSITION,
+                          EVW_LOC_NONE, EVW_LOC_NONE, 0, 0, 0,
+                          0, CARD_NONE, 0, 0, s->g);
+                break;
+            case ENGINE_HOOK_START_MAGIC:
+                ev_emit(sink, ctx, EVW_T_MAGIC_TRANSITION, -1, EVW_MSG_START_MAGIC,
+                          EVW_LOC_NONE, EVW_LOC_NONE, 0, 0, 0,
+                          0, CARD_NONE, 0, 0, s->g);
+                break;
+            case ENGINE_HOOK_DEAL: {
+                // Cards = the dealt hand at snapshot time, masked per viewer.
+                const Player *pl = (s->aux >= 0 && s->aux < s->g->num_players)
+                    ? &s->g->players[s->aux] : 0;
+                ev_emit(sink, ctx, EVW_T_DEAL, s->aux, EVW_MSG_NONE,
+                          EVW_LOC_DECK, EVW_LOC_HAND,
+                          pl ? pl->hand : 0, pl ? pl->hand_count : 0,
+                          viewer != s->aux,
+                          0, CARD_NONE, 0, 0, s->g);
+                break;
+            }
+            case ENGINE_HOOK_FLIPPED: {
+                Card f = s->g->flipped;
+                ev_emit(sink, ctx, EVW_T_FLIPPED, -1, EVW_MSG_NONE,
+                          EVW_LOC_DECK, EVW_LOC_FLIPPED, &f, 1, 0,
+                          0, CARD_NONE, 0, 0, s->g);
+                break;
+            }
+            case ENGINE_HOOK_START_DEFENDER:
+                ev_emit(sink, ctx, EVW_T_DEFENDER_MOVE, s->aux, EVW_MSG_NONE,
+                          EVW_LOC_NONE, EVW_LOC_NONE, 0, 0, 0,
+                          0, CARD_NONE, 0, 0, s->g);
+                ev_emit(sink, ctx, EVW_T_MAGIC_TRANSITION, -1, EVW_MSG_FIRST_ATTACKER,
+                          EVW_LOC_NONE, EVW_LOC_NONE, 0, 0, 0,
+                          0, CARD_NONE, 0, 0, s->g);
+                break;
+            default:
+                break; // unknown hook: skip
+        }
+    }
 }
 
 int evwire_serialize(const EvSnap *snaps, int n_snaps,
@@ -80,137 +238,15 @@ int evwire_serialize(const EvSnap *snaps, int n_snaps,
     const int count_at = e.len;
     put_u8(&e, 0); // n_events, backpatched
 
-    // Sequential readers (each DRAW/COVER hook consumes the next matching
-    // log) and single-instance logs — mirrors buildEvents exactly.
-    const GameLog *discard_log = find_log(logs, n_logs, LOG_DISCARD);
-    int draw_i = 0, cover_i = 0;
-    Card cards[MAX_LOG_PAIRS];
-
-    for (int si = 0; si < n_snaps; si++) {
-        const EvSnap *s = &snaps[si];
-        switch (s->tag) {
-            case ENGINE_HOOK_ATTACK: {
-                const int n = log_primaries(find_log(logs, n_logs, LOG_ATTACK), cards);
-                put_event(&e, EVW_T_ATTACK_PASS, s->aux, EVW_MSG_ATTACKED,
-                          EVW_LOC_HAND, EVW_LOC_TABLE, cards, n, 0,
-                          0, CARD_NONE, 0, 0, s->g);
-                break;
-            }
-            case ENGINE_HOOK_PASS: {
-                const int n = log_primaries(find_log(logs, n_logs, LOG_PASS), cards);
-                put_event(&e, EVW_T_ATTACK_PASS, s->aux, EVW_MSG_PASSED,
-                          EVW_LOC_HAND, EVW_LOC_TABLE, cards, n, 0,
-                          0, CARD_NONE, 0, 0, s->g);
-                break;
-            }
-            case ENGINE_HOOK_OUT:
-                put_event(&e, EVW_T_OUT, s->aux, EVW_MSG_OUT,
-                          EVW_LOC_NONE, EVW_LOC_NONE, 0, 0, 0,
-                          0, CARD_NONE, 0, 0, s->g);
-                break;
-            case ENGINE_HOOK_COVER: {
-                // Next COVER log: [cover card, attack card being covered].
-                const GameLog *l = 0;
-                for (int i = 0, seen = 0; i < n_logs; i++) {
-                    if (logs[i].log_type == LOG_COVER && seen++ == cover_i) { l = &logs[i]; break; }
-                }
-                cover_i++;
-                if (!l || l->num_pairs < 1) break; // corrupt input: skip, never crash
-                // The seat that covered is the defender at snapshot time.
-                put_event(&e, EVW_T_COVER, s->g->defender, EVW_MSG_COVERED,
-                          EVW_LOC_HAND, EVW_LOC_TABLE, &l->pairs[0].primary, 1, 0,
-                          1, l->pairs[0].target, 1, s->aux, s->g);
-                break;
-            }
-            case ENGINE_HOOK_DISCARD: {
-                const int n = log_primaries(discard_log, cards);
-                put_event(&e, EVW_T_DISCARD, -1, EVW_MSG_DISCARDED,
-                          EVW_LOC_TABLE, EVW_LOC_DISCARD, cards, n, 0,
-                          0, CARD_NONE, 0, 0, s->g);
-                break;
-            }
-            case ENGINE_HOOK_TRASH: {
-                const int n = log_primaries(discard_log, cards);
-                if (n > 0) {
-                    put_event(&e, EVW_T_CARDS_TO_TRASH, -1, EVW_MSG_DISCARDED,
-                              EVW_LOC_TABLE, EVW_LOC_DISCARD, cards, n, 0,
-                              0, CARD_NONE, 0, 0, s->g);
-                }
-                break;
-            }
-            case ENGINE_HOOK_DRAW: {
-                // Next DRAW log; real identities only for the drawing seat.
-                const GameLog *l = 0;
-                for (int i = 0, seen = 0; i < n_logs; i++) {
-                    if (logs[i].log_type == LOG_DRAW && seen++ == draw_i) { l = &logs[i]; break; }
-                }
-                draw_i++;
-                const int n = log_primaries(l, cards);
-                put_event(&e, EVW_T_REFILL, s->aux, EVW_MSG_DREW,
-                          EVW_LOC_DECK, EVW_LOC_HAND, cards, n, viewer != s->aux,
-                          0, CARD_NONE, 0, 0, s->g);
-                break;
-            }
-            case ENGINE_HOOK_DEFENDER_MOVE:
-                put_event(&e, EVW_T_DEFENDER_MOVE, s->aux, EVW_MSG_DEFENDER_MOVE,
-                          EVW_LOC_NONE, EVW_LOC_NONE, 0, 0, 0,
-                          0, CARD_NONE, 0, 0, s->g);
-                break;
-            case ENGINE_HOOK_PICKUP: {
-                const int n = log_primaries(find_log(logs, n_logs, LOG_PICKUP), cards);
-                put_event(&e, EVW_T_PICKUP, s->aux, EVW_MSG_PICKUP,
-                          EVW_LOC_TABLE, EVW_LOC_HAND, cards, n, 0,
-                          0, CARD_NONE, 0, 0, s->g);
-                break;
-            }
-            case ENGINE_HOOK_MAGIC_TRANSITION:
-                put_event(&e, EVW_T_MAGIC_TRANSITION, -1, EVW_MSG_GOOD_TRANSITION,
-                          EVW_LOC_NONE, EVW_LOC_NONE, 0, 0, 0,
-                          0, CARD_NONE, 0, 0, s->g);
-                break;
-            case ENGINE_HOOK_START_MAGIC:
-                put_event(&e, EVW_T_MAGIC_TRANSITION, -1, EVW_MSG_START_MAGIC,
-                          EVW_LOC_NONE, EVW_LOC_NONE, 0, 0, 0,
-                          0, CARD_NONE, 0, 0, s->g);
-                break;
-            case ENGINE_HOOK_DEAL: {
-                // Cards = the dealt hand at snapshot time, masked per viewer.
-                const Player *pl = (s->aux >= 0 && s->aux < s->g->num_players)
-                    ? &s->g->players[s->aux] : 0;
-                put_event(&e, EVW_T_DEAL, s->aux, EVW_MSG_NONE,
-                          EVW_LOC_DECK, EVW_LOC_HAND,
-                          pl ? pl->hand : 0, pl ? pl->hand_count : 0,
-                          viewer != s->aux,
-                          0, CARD_NONE, 0, 0, s->g);
-                break;
-            }
-            case ENGINE_HOOK_FLIPPED: {
-                Card f = s->g->flipped;
-                put_event(&e, EVW_T_FLIPPED, -1, EVW_MSG_NONE,
-                          EVW_LOC_DECK, EVW_LOC_FLIPPED, &f, 1, 0,
-                          0, CARD_NONE, 0, 0, s->g);
-                break;
-            }
-            case ENGINE_HOOK_START_DEFENDER:
-                put_event(&e, EVW_T_DEFENDER_MOVE, s->aux, EVW_MSG_NONE,
-                          EVW_LOC_NONE, EVW_LOC_NONE, 0, 0, 0,
-                          0, CARD_NONE, 0, 0, s->g);
-                put_event(&e, EVW_T_MAGIC_TRANSITION, -1, EVW_MSG_FIRST_ATTACKER,
-                          EVW_LOC_NONE, EVW_LOC_NONE, 0, 0, 0,
-                          0, CARD_NONE, 0, 0, s->g);
-                break;
-            default:
-                break; // unknown hook: skip
-        }
-        if (e.fail) return -1;
-    }
+    evwire_walk(snaps, n_snaps, logs, n_logs, viewer, sink_packed, &e);
+    if (e.fail) return -1;
 
     // The game-over MAGIC_TRANSITION executeWithGameLock appended after
     // finalizeEndedGame — final state as its snapshot, no message.
     if (append_final_transition) {
-        put_event(&e, EVW_T_MAGIC_TRANSITION, -1, EVW_MSG_NONE,
-                  EVW_LOC_NONE, EVW_LOC_NONE, 0, 0, 0,
-                  0, CARD_NONE, 0, 0, final_g);
+        ev_emit(sink_packed, &e, EVW_T_MAGIC_TRANSITION, -1, EVW_MSG_NONE,
+                EVW_LOC_NONE, EVW_LOC_NONE, 0, 0, 0,
+                0, CARD_NONE, 0, 0, final_g);
     }
 
     // Trailer: the committed final state (the JSON payload's `game`).

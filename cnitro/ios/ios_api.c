@@ -15,6 +15,7 @@
 #include "strategy.h"
 #include "bot_roster.h"
 #include "bot_drive.h"
+#include "evwire.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -213,6 +214,90 @@ int fio_legal_moves_json(int seat, char *out, int cap) {
     return emit_legal_of(&g_game, seat, out, cap);
 }
 
+// ---------- animation events (§4.4 / A3) -----------------------------------
+//
+// The animation plan — which card flies where, in what order — is derived by
+// the kernel and always has been: the website decodes the evwire stream and
+// plays it, never deriving anything. Offline there is no server to send that
+// stream, and the iOS design's answer used to be a Swift diff engine
+// (`BoardDiff.swift`, "given (old GameView, new GameView) produce moves").
+// That would have been a THIRD implementation of the same derivation, and
+// legacy the day it was written.
+//
+// So: the same kernel hooks that feed the web's evwire feed this too
+// (evwire_walk, the one derivation), and Swift gets JSON — never packed bytes,
+// per this file's bridge rule.
+
+#define FIO_MAX_SNAPS 48
+#define GAME_PREFIX_SIZE (__builtin_offsetof(Game, num_logs))
+typedef struct { _Alignas(8) unsigned char bytes[GAME_PREFIX_SIZE]; } FioSnapSlot;
+
+static FioSnapSlot g_snaps[FIO_MAX_SNAPS];
+static int         g_snap_tags[FIO_MAX_SNAPS];
+static int         g_snap_aux[FIO_MAX_SNAPS];
+static int         g_n_snaps = 0;
+// Where the last apply's / drive's own logs begin in the resident game log.
+static int         g_last_event_log_start = 0;
+
+// state_put/put_state only read prefix fields, which is exactly what a slot
+// holds — so a slot can stand in for a Game when an event is rendered.
+static void fio_snap_cb(const Game *g, int tag, int aux) {
+    if (g_n_snaps >= FIO_MAX_SNAPS) return;
+    memcpy(g_snaps[g_n_snaps].bytes, g, GAME_PREFIX_SIZE);
+    g_snap_tags[g_n_snaps] = tag;
+    g_snap_aux[g_n_snaps] = aux;
+    g_n_snaps++;
+}
+
+static void fio_snaps_reset(void) { g_n_snaps = 0; }
+
+// The JSON sink for evwire_walk. Mirrors the evwire field names so the Swift
+// decoder and the web's decoder describe the same event.
+typedef struct { J *j; int n; } FioEvCtx;
+
+static void fio_ev_sink(void *ctx, const EvwEvent *ev) {
+    FioEvCtx *c = (FioEvCtx *)ctx;
+    if (c->n++) j_putc(c->j, ',');
+    j_puts(c->j, "{\"type\":");   j_puti(c->j, ev->type);
+    j_puts(c->j, ",\"seat\":");   j_puti(c->j, ev->seat);
+    j_puts(c->j, ",\"msg\":");    j_puti(c->j, ev->msg);
+    j_puts(c->j, ",\"from\":");   j_puti(c->j, ev->from);
+    j_puts(c->j, ",\"to\":");     j_puti(c->j, ev->to);
+    j_puts(c->j, ",\"cards\":[");
+    for (int i = 0; i < ev->n_cards; i++) {
+        if (i) j_putc(c->j, ',');
+        // The DEAL/REFILL redaction: a card bound for someone else's hand is a
+        // card back. The kernel masks it; the app cannot leak what it never got.
+        if (ev->mask_cards) j_puts(c->j, "null");
+        else j_card(c->j, ev->cards[i]);
+    }
+    j_putc(c->j, ']');
+    if (ev->has_target) { j_puts(c->j, ",\"target\":"); j_card(c->j, ev->target); }
+    if (ev->has_battle) { j_puts(c->j, ",\"battle\":"); j_puti(c->j, ev->battle); }
+    j_putc(c->j, '}');
+}
+
+// Emit the events captured since the last reset, as seen by `viewer`.
+//
+// `log_start` is where THIS action's logs begin. The wasm bridge can hand
+// evwire the whole log buffer because it clears it per call (it re-marshals
+// the game every time); this file keeps ONE resident Game whose log is the
+// game's entire history — the replay encoder and the belief bots both read it
+// — so the fresh entries are sliced off, never cleared.
+static void j_events(J *j, int viewer, int log_start) {
+    EvSnap refs[FIO_MAX_SNAPS];
+    for (int i = 0; i < g_n_snaps; i++) {
+        refs[i].g = (const Game *)(const void *)g_snaps[i].bytes;
+        refs[i].tag = g_snap_tags[i];
+        refs[i].aux = g_snap_aux[i];
+    }
+    FioEvCtx ctx = { j, 0 };
+    j_putc(j, '[');
+    evwire_walk(refs, g_n_snaps, g_game.logs + log_start, g_game.num_logs - log_start,
+                viewer, fio_ev_sink, &ctx);
+    j_putc(j, ']');
+}
+
 // ---------- a tiny JSON move parser ---------------------------------------
 //
 // Only the exact move shape is parsed: {"type":"attack","cards":[{"s":0,"v":6}],
@@ -292,6 +377,12 @@ int fio_apply_json(int actor_seat, const char *move_json) {
     const char *ap = find_key(move_json, "attackCards");
     if (ap) { nac = parse_card_array(ap, acards, MAX_MOVE_CARDS); if (nac < 0) return FIO_EPARSE; }
 
+    // Capture this move's animation events too — a human's card flies exactly
+    // like a bot's, and both plans come from the kernel (§4.4).
+    fio_snaps_reset();
+    g_last_event_log_start = g_game.num_logs;
+    engine_snap_hook = fio_snap_cb;
+
     engine_last_reject = ENGINE_REJECT_NONE;
     bool ok = false;
     if      (!strcmp(type, "attack")) ok = handle_attack(&g_game, actor_seat, cards, nc);
@@ -299,13 +390,23 @@ int fio_apply_json(int actor_seat, const char *move_json) {
     else if (!strcmp(type, "pickup")) ok = handle_pickup(&g_game, actor_seat);
     else if (!strcmp(type, "good"))   ok = handle_good(&g_game, actor_seat);
     else if (!strcmp(type, "cover")) {
+        engine_snap_hook = 0;
         if (nac != nc) return FIO_EPARSE;
+        engine_snap_hook = fio_snap_cb;
         ok = handle_cover(&g_game, actor_seat, cards, acards, nc);
-    } else return FIO_EPARSE;
+    } else { engine_snap_hook = 0; return FIO_EPARSE; }
 
-    if (!ok) { g_last_reject = engine_last_reject; return FIO_EREJECT; }
+    engine_snap_hook = 0;
+    if (!ok) { fio_snaps_reset(); g_last_reject = engine_last_reject; return FIO_EREJECT; }
     g_last_reject = 0;
     return FIO_EOK;
+}
+
+int fio_last_events_json(int viewer, char *out, int cap) {
+    if (!g_has_game) return FIO_ENOGAME;
+    J j; j_init(&j, out, cap);
+    j_events(&j, viewer, g_last_event_log_start);
+    return j_finish(&j);
 }
 
 int fio_last_reject(void) { return g_last_reject; }
@@ -477,8 +578,17 @@ static void j_drive_action(J *j, const BotDriveAction *a) {
 int fio_bot_drive_json(int human_mask, char *out, int cap) {
     if (!g_has_game) return FIO_ENOGAME;
 
+    // Events for the WHOLE cycle: the hooks accumulate across the bundled
+    // actions, which is exactly the sequence the board should play.
+    fio_snaps_reset();
+    const int log_start = g_game.num_logs;
+    g_last_event_log_start = log_start;
+    engine_snap_hook = fio_snap_cb;
+
     static BotDriveOut drv;   // ~1KB of LegalMoves; not a stack citizen
     bot_drive(&g_game, (uint32_t)human_mask, BOT_DRIVE_MAX_ACTIONS, &drv);
+
+    engine_snap_hook = 0;
 
     // A human still in the game is what makes a pause worth taking. Offline
     // that is the seat the app is playing; a spectate/replay drive passes
@@ -493,10 +603,18 @@ int fio_bot_drive_json(int human_mask, char *out, int cap) {
     for (int i = 0; i < drv.n; i++)
         if (drv.actions[i].pacing_class > pace) pace = drv.actions[i].pacing_class;
 
+    // The lowest human seat is the viewer — offline that is the seat the app
+    // plays. A spectate/replay drive (human_mask 0) watches as a spectator.
+    int viewer = VIEW_SPECTATOR;
+    for (int seat = 0; seat < g_game.num_players; seat++)
+        if (human_mask & (1 << seat)) { viewer = seat; break; }
+
     J j; j_init(&j, out, cap);
     j_puts(&j, "{\"actions\":[");
     for (int i = 0; i < drv.n; i++) { if (i) j_putc(&j, ','); j_drive_action(&j, &drv.actions[i]); }
-    j_puts(&j, "],\"stop\":");    j_puti(&j, drv.stop);
+    j_puts(&j, "],\"events\":");
+    j_events(&j, viewer, log_start);
+    j_puts(&j, ",\"stop\":");    j_puti(&j, drv.stop);
     j_puts(&j, ",\"ended\":");   j_puti(&j, drv.ended);
     j_puts(&j, ",\"delayMs\":"); j_puti(&j, bot_pacing_ms(pace, humans_present));
     j_putc(&j, '}');

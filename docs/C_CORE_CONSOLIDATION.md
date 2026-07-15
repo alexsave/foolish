@@ -279,7 +279,29 @@ The web client never derives animations — it decodes and plays. But:
   its own twin (`DecodedReplay.swift`; board projection is a listed §17.7
   gap).
 
-**Consolidation.**
+**STATUS: F4.1 LANDED (A3, July 2026) — `BoardDiff.swift` is cancelled and was
+never written.** The derivation now has exactly one home: `evwire_walk`
+(`evwire.c`) turns hook snapshots + the action's logs into the event sequence
+and hands each event to a **sink**. The packed evwire writer is one sink (the
+web path, byte-identical — `e2e/packed_wire_parity.test.ts` still green); the
+iOS bridge's JSON emitter is the other. So offline play animates from the SAME
+events the website plays, and no client works out which card flew where.
+
+- `fio_bot_drive_json` carries its cycle's `events` inline; `fio_last_events_json`
+  is the apply-path companion, so a human's card flies by the same plan a bot's
+  does. Swift decodes them as `GameEvent` (`Models.swift`) and `LocalGame`
+  publishes `lastEvents`.
+- The kernel's redaction rides along: a card dealt/drawn into someone else's
+  hand arrives as `null`, so the app cannot leak an identity it never got.
+- One iOS-specific care point: this file keeps ONE resident `Game` whose log is
+  the whole history (the replay encoder and belief bots read it), where the wasm
+  bridge clears its log per call. The emitter therefore SLICES this action's
+  logs (`log_start`) instead of clearing — clearing would silently break offline
+  replay codes.
+- Remaining in F4: **A5**, replay steps from the kernel (`src/replay/view.ts` +
+  `animate.ts`), which now has a sink to reuse.
+
+**Consolidation (as originally specced).**
 
 1. `fio_apply_json` / `bot_drive` gain an **events output** (a JSON emitter
    over the same evwire data the kernel already records). `LocalGame` then

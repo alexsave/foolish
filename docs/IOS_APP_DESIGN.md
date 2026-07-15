@@ -652,13 +652,20 @@ tap card → EngineC.legalMoves → is this card in a legal move?
   yes → LocalGame.play(move) → new GameView → diff → AnimationPlan → render
 ```
 
-**B4. Animation = state diff.** Write `BoardDiff.swift`: given (old GameView,
-new GameView) produce moves: `cardMoved(card, from: .hand(seat), to:
-.battle(i, .attack))`, `handCountChanged`, `deckCountChanged`, `roundSwept`.
-Render with `matchedGeometryEffect` ids = card identity (`"\(s)-\(v)"`, back
-cards use synthetic slot ids), animated with the single §5.2 spring; deal
-choreography staggers cards 40ms apart. This diff engine is reused verbatim
-by replays (C) and online (D) — invest here.
+**B4. Animation = kernel events.** ⚠️ **`BoardDiff.swift` is CANCELLED — do not
+write it** (`docs/C_CORE_CONSOLIDATION.md` F4/A3, owner decision July 2026).
+The animation plan is not something a client derives: the kernel already emits
+it as the evwire stream, and the website only decodes and plays it. A Swift
+diff engine would be a third implementation of "which card flies where" — the
+web's `buildEvents` twin and the replay projection being the others — and it
+would be legacy the day it was written.
+
+Instead: `fio_apply_json` / `bot_drive` gain an events output (A3), and
+SwiftUI renders THAT stream. Everything below still holds — only the source of
+the moves changes: `matchedGeometryEffect` ids = card identity (`"\(s)-\(v)"`,
+back cards use synthetic slot ids), animated with the single §5.2 spring; deal
+choreography staggers cards 40ms apart. Replays (C) and online (D) then play
+the same events rather than reusing a diff engine.
 
 **B5. Home (offline path) + Win screen + bot picker** per §6 specs. Bot
 picker cycles the roster with left/right arrows (web precedent: commit
@@ -999,8 +1006,9 @@ against a staging Supabase project. `docs/PROTOCOL.md` §9 lists it.
 
 - Replay **board playback** renders the decoded event stream under a transport;
   projecting each step onto the full board via the diff engine is a follow-up.
-- Cross-zone card-flight animation (shared-namespace BoardDiff) — today the board
-  springs on state change.
+- Cross-zone card-flight animation — today the board springs on state change.
+  Blocked on A3 (kernel events), NOT on a Swift diff engine: `BoardDiff.swift`
+  is cancelled (§16.B4).
 - Camera QR **scan** (paste works); full a11y checklist pass; snapshot references.
 - `game_snapshots.extras` replay-name blob is not anonymized on deletion
   (documented in the migration) — needs replay re-encoding.

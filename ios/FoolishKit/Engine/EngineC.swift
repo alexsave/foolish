@@ -108,6 +108,14 @@ public actor EngineC {
         return try JSONDecoder().decode(BotDrive.self, from: d)
     }
 
+    /// The animation events of the LAST apply/botDrive, as seen by `viewer` —
+    /// the kernel's plan for which card flies where. Use these to animate; never
+    /// diff two views to work it out (docs/C_CORE_CONSOLIDATION.md F4).
+    public func lastEvents(viewer: Int) throws -> [GameEvent] {
+        let d = try json { fio_last_events_json(Int32(viewer), $0, $1) }
+        return try JSONDecoder().decode([GameEvent].self, from: d)
+    }
+
     // MARK: strategies
 
     public func strategyCount() -> Int { Int(fio_strategy_count()) }

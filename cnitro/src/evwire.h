@@ -78,6 +78,38 @@ typedef struct {
     int aux;   // acting/affected seat, or battle index for COVER
 } EvSnap;
 
+// One derived animation event, before anything writes it down.
+//
+// The kernel already knows which card flies where — it is the only thing that
+// does. Exposing the derived event (rather than only the packed evwire bytes)
+// lets a second destination consume it without re-deriving anything: the iOS
+// bridge emits these as JSON, which is why `BoardDiff.swift` is cancelled
+// (docs/C_CORE_CONSOLIDATION.md F4). `cards`/`snap` point into the caller's
+// buffers and are valid only for the duration of the sink call.
+typedef struct {
+    int         type;        // EVW_T_*
+    int         seat;        // event player seat, or -1
+    int         msg;         // EVW_MSG_*
+    int         from, to;    // EVW_LOC_*
+    const Card *cards;
+    int         n_cards;
+    int         mask_cards;  // DEAL/REFILL redaction: emit card backs
+    int         has_target;
+    Card        target;
+    int         has_battle;
+    int         battle;
+    const Game *snap;        // board state at this step
+} EvwEvent;
+
+typedef void (*EvwSink)(void *ctx, const EvwEvent *ev);
+
+// Derive the event sequence for `viewer` from the hook snapshots + this
+// action's logs, handing each event to `sink`. THE one derivation; both
+// evwire_serialize (packed, for the web) and the iOS JSON emitter drive it.
+void evwire_walk(const EvSnap *snaps, int n_snaps,
+                 const GameLog *logs, int n_logs, int viewer,
+                 EvwSink sink, void *ctx);
+
 // Serialize the full sequence for `viewer` (seat index, or VIEW_SPECTATOR).
 // `logs`/`n_logs` are THIS action's kernel logs (the resident game's fresh
 // log buffer). `final_g` is the post-action (post-finalize) state for the

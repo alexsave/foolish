@@ -24,6 +24,11 @@ public final class LocalGame: ObservableObject, GameSession {
     @Published public private(set) var thinking: Bool = false
     /// The last move a bot made — the animation layer diffs against it (B4).
     @Published public private(set) var lastBotMove: Move?
+    /// The kernel's animation plan for the last thing that happened — a bot
+    /// cycle or the human's own move. The board plays these
+    /// (matchedGeometryEffect, §16.B4); it never derives them by diffing two
+    /// `GameView`s, which is why `BoardDiff.swift` does not exist.
+    @Published public private(set) var lastEvents: [GameEvent] = []
     /// A transient reject surfaced to the UI (rigid haptic + toast, §8.2 C1).
     @Published public private(set) var lastReject: EngineError?
     /// Fool seat once the game ends, else nil.
@@ -84,6 +89,8 @@ public final class LocalGame: ObservableObject, GameSession {
             do {
                 try await engine.apply(seat: humanSeat, move: move)
                 lastReject = nil
+                // The human's own card flies by the same kernel plan a bot's does.
+                lastEvents = (try? await engine.lastEvents(viewer: humanSeat)) ?? []
                 await refresh()
                 drive()
             } catch {
@@ -134,6 +141,7 @@ public final class LocalGame: ObservableObject, GameSession {
             // Show what happened before waiting on it. Silent actions bundle
             // into this same cycle and carry no delay of their own.
             if let visible = drive.lastVisible { lastBotMove = visible.move }
+            if !drive.events.isEmpty { lastEvents = drive.events }
             if !drive.actions.isEmpty { await refresh() }
 
             if drive.isOver { foolSeat = drive.ended; break }
