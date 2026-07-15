@@ -5,7 +5,8 @@
 
 import SwiftUI
 
-/// The one drill-down past the root list: the live game (Table/Roster pager).
+/// The one drill-down past the root list: the live game (Table, with the Roster one page
+/// to its right — docs/WATCHOS_LAYOUT.md §4.6.1).
 enum Route: Hashable { case game }
 
 /// Owns the live game + nav path so a New-game tap can set the game BEFORE the push.
@@ -42,18 +43,19 @@ struct WatchFoolishApp: App {
                     }
                 }
             }
-            .tint(WColor.gold)               // tints the system back chevron gold
+            .tint(WColor.plain)              // system back chevron — neutral; colour means state
             .preferredColorScheme(.dark)
             .onAppear(perform: applyLaunchScreen)
         }
     }
 
     /// Launch flags for inspection: `-stress`/`-table8` deal the 8-seat game;
-    /// `-table`/`-bot` deal heads-up.
+    /// `-table`/`-bot` deal heads-up; `-roster` opens on the roster page.
     private func applyLaunchScreen() {
         let args = ProcessInfo.processInfo.arguments
         if args.contains("-stress") || args.contains("-table8") { nav.start(8) }
         else if args.contains("-table4") { nav.start(4) }
         else if args.contains("-table") || args.contains("-bot") { nav.start(2) }
+        else if args.contains("-roster") { nav.start(4) }
     }
 }

@@ -1,6 +1,7 @@
-// RosterScreen.swift — Option G page 2 (docs/WATCHOS_G_SPEC.md §3). The player list +
+// RosterScreen.swift — the roster page (docs/WATCHOS_G_SPEC.md §3). The player list +
 // game state: one row per seat (name · count · shield if defending), you in gold; a
-// footer with deck/discard/flip and who's out. Swipe left from the table to reach it.
+// footer with deck/discard/flip and who's out. Under Option H this is a page PUSHED by
+// tapping the table's seat strip — the system back chevron returns (§4.6).
 
 import SwiftUI
 
@@ -18,35 +19,44 @@ struct RosterScreen: View {
 
             Spacer(minLength: 4)
 
-            VStack(alignment: .leading, spacing: 1) {
-                Text(flipLine).font(WFont.label(11)).foregroundStyle(WColor.dim)
-                Text(outLine).font(WFont.label(11)).foregroundStyle(WColor.dim)
-            }
-            .lineLimit(1).minimumScaleFactor(0.8)
+            // No "out: …" line — an eliminated player is SHOWN by their row going dark
+            // gray (owner review), not announced in a footer.
+            Text(flipLine).font(WFont.label(11)).foregroundStyle(WColor.dim)
+                .lineLimit(1).minimumScaleFactor(0.8)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .padding(.horizontal, 6)
         .background(WColor.bg)
     }
 
+    /// Escaped players read as dark gray — no strikethrough, no label, no footer entry.
+    /// They keep their place at the bottom of the list and simply recede.
     private func row(_ r: RosterRow) -> some View {
         HStack(spacing: 5) {
             Text(r.name)
-                .font(WFont.label(12.5))
-                .strikethrough(r.isOut, color: WColor.faint)
-                .foregroundStyle(r.isOut ? WColor.faint : (r.isSelf ? WColor.gold : WColor.suitBlack))
+                .font(.system(size: 12.5, weight: r.isSelf ? HTuning.stripSelfWeight : .regular, design: .rounded))
+                .foregroundStyle(color(r))
                 .lineLimit(1)
             if r.isDefender {
-                ShieldShape().stroke(WColor.gold, lineWidth: 1)
+                ShieldShape().stroke(WColor.defender, lineWidth: 1)
                     .frame(width: 9, height: 11)
             }
             Spacer(minLength: 2)
             Text("\(r.count)")
-                .font(WFont.heavy(12.5))
-                .foregroundStyle(r.isOut ? WColor.faint : (r.isSelf ? WColor.gold : WColor.seat))
+                .font(.system(size: 12.5, weight: r.isSelf ? HTuning.stripSelfWeight : .regular, design: .rounded))
+                .foregroundStyle(color(r))
         }
         .frame(height: 16.5)
-        .opacity(r.isOut ? 0.6 : 1)
+    }
+
+    /// Same colour language as the strip (§4.6.1): out ▸ defender ▸ good ▸ opening ▸ plain.
+    /// You are bold, not gold — colour is reserved for state.
+    private func color(_ r: RosterRow) -> Color {
+        if r.isOut { return WColor.out }
+        if r.isDefender { return WColor.defender }
+        if r.isGood { return WColor.green }
+        if r.isOpening { return WColor.attacker }
+        return WColor.plain
     }
 
     private var header: String {
@@ -62,9 +72,5 @@ struct RosterScreen: View {
             return base + " · trump \(s.glyph)"
         }
         return base
-    }
-    private var outLine: String {
-        let names = game.outNames
-        return "out: " + (names.isEmpty ? "—" : names.joined(separator: ", "))
     }
 }

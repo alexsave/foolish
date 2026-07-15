@@ -16,6 +16,9 @@ struct SeatChip: Identifiable {
     let count: Int
     let isSelf: Bool
     let isDefender: Bool
+    /// The seat that still OWES the opening attack — the strip's red. Transient: red says
+    /// "the table is waiting on them", so it clears the moment they attack.
+    let isOpening: Bool
     let isGood: Bool
     let isOut: Bool
     var id: Int { seat }
@@ -28,6 +31,8 @@ struct RosterRow: Identifiable {
     let count: Int
     let isSelf: Bool
     let isDefender: Bool
+    let isOpening: Bool
+    let isGood: Bool
     let isOut: Bool
     var id: Int { seat }
 }
@@ -41,70 +46,70 @@ enum FocusItem: Equatable {
 }
 
 /// What the terminal item *is* for this role (§4). Attacker/bystander vote GOOD;
-/// the defender takes the table.
+/// the defender takes the table. Both are bare icons — the count the mock printed next to
+/// pickup is gone (owner review); the table list already shows what you'd be taking.
 enum TerminalKind: Equatable {
     case good          // bare green ✓
-    case take(Int)     // red +n
+    case pickup        // red ↓ — the cards come down into your hand
 }
 
-/// The colour pair of a pill (§2 Pill Color Palette): foreground on background.
-enum PillStyle {
-    case attack, cover, pass, take, good, voted
-    var fg: Color {
-        switch self {
-        case .attack, .cover: return WColor.gold
-        case .pass:  return WColor.blue
-        case .take:  return WColor.red
-        case .good:  return WColor.green
-        case .voted: return Color(hex: 0x2C2C2E)
-        }
-    }
-    var bg: Color {
-        switch self {
-        case .attack, .cover: return Color(hex: 0x241A02)
-        case .pass:  return Color(hex: 0x001B38)
-        case .take:  return Color(hex: 0x2B0300)
-        case .good:  return Color(hex: 0x03210E)
-        case .voted: return WColor.seat
-        }
-    }
+/// The verb under the fisheye (§4.6). H replaces G's coloured pill with a
+/// complication-sized caption; per owner review it is uppercase and gray for every
+/// verb — the lane, not the caption, carries the colour.
+enum Verb: String {
+    case attack    = "ATTACK"
+    case cover     = "COVER"
+    case coverPass = "COVER/PASS"
+    case pass      = "PASS"
+    case pickup    = "PICKUP"       // engine vocabulary for the defender's terminal
+    case good      = "GOOD"
+    case voted     = "VOTED"
 }
 
 /// One cover target inside the chooser (§5 G2b).
 struct CoverOption: Identifiable { let attack: Card; let move: Move; var id: String { attack.identity } }
-struct PassOption { let receiver: String; let move: Move }
+/// The pass choice. It carries no receiver name — the chooser shows a bare ↑ (owner
+/// review); who catches it is the engine's business, and naming them cluttered the screen.
+struct PassOption { let move: Move }
 
-/// The modal presented for an ambiguous cover/pass (§5 G2b).
+/// The modal presented for an ambiguous cover/pass (§5 G2b). In play this is always built
+/// from the kernel's legal-move list (see `decision(for:)`) — never hand-assembled.
 struct ChooserSpec: Identifiable {
     let id = UUID()
     let card: Card
-    let title: String
     let coverTargets: [CoverOption]
     let pass: PassOption?
 
     /// A sample spec for inspecting the ChooserOverlay layout (`-chooser` flag).
+    ///
+    /// It must be a state the kernel could actually deal, so: you hold 9♥ with hearts
+    /// trump, and the table's attacks are 9♠ and 9♣. The trump 9 beats both (cover), and
+    /// because every attack shares rank 9 it may also be passed on (`game.c:731` — pass
+    /// requires the table's attacks to share the passed value). A card that could cover
+    /// *different* ranks could never also pass.
     static let demo = ChooserSpec(
-        card: Card(s: 0, v: 9),
-        title: "9♠ — cover or pass?",
+        card: Card(s: 1, v: 9),
         coverTargets: [
-            CoverOption(attack: Card(s: 0, v: 7), move: Move(type: .cover)),
-            CoverOption(attack: Card(s: 0, v: 8), move: Move(type: .cover)),
+            CoverOption(attack: Card(s: 0, v: 9), move: Move(type: .cover)),
+            CoverOption(attack: Card(s: 2, v: 9), move: Move(type: .cover)),
         ],
-        pass: PassOption(receiver: "Mira", move: Move(type: .pass)))
+        pass: PassOption(move: Move(type: .pass)))
 }
 
-/// The resolved pill + tap outcome for a focused item (§5). `action` is what a tap on
-/// the FocusSlot/Pill commits — a move, a chooser to present, or nothing.
-struct PillDecision {
-    let label: String
-    let style: PillStyle
+/// The resolved caption + tap outcome for a focused item (§5, rendered per §4.6).
+/// `action` is what a tap on the focused lane card (or the caption) commits — a move,
+/// a chooser to present, or nothing.
+struct ActionDecision {
+    let verb: Verb
     let action: Action
     enum Action { case commit(Move); case chooser(ChooserSpec); case none }
+    var caption: String { verb.rawValue }
 }
 
 @MainActor
 final class WatchGame: ObservableObject {
-    @Published private(set) var local: LocalGame
+    /// nil ONLY for a preview game (see `init(preview:)`), which has no kernel behind it.
+    @Published private(set) var local: LocalGame!
     /// Bumped whenever the kernel rejects a commit — the Table flashes RejectGlow (§7).
     @Published private(set) var rejectPulse = 0
     /// A card thrown/covered optimistically, rendered translucent until the next
@@ -115,21 +120,56 @@ final class WatchGame: ObservableObject {
     let botStrategy: Int
     private var bag = Set<AnyCancellable>()
 
-    /// robusta is foolish's default human opponent (strong, no ML, cheap on-watch).
-    static let defaultStrategy: Int = {
+    /// octogen — the top of the ladder (semtex + a stage-3 opponent-reply tournament) and
+    /// the watch's opponent. It ships in the offline roster already (`ios_api.c` ROSTER,
+    /// built with `-DCD_LEAFBOOK` so its endgame oracle is live); the watch simply never
+    /// asked for it. The fallbacks matter only if a slimmer library is ever linked.
+    ///
+    /// It is a heavy MC solver, so a hot device still downgrades seats to espresso via
+    /// LocalGame's thermal guard (§7.2) — that guard is the reason this is safe to ask for.
+    static let defaultStrategy: Int = strategy(named: "octogen")
+
+    /// Resolve a roster name to its id, falling back down the ladder.
+    static func strategy(named want: String) -> Int {
         let roster = EngineC.roster()
-        for want in ["robusta", "cordite", "firecracker"] {
-            if let m = roster.first(where: { $0.name.lowercased().contains(want) }) { return m.id }
+        for name in [want, "cordite", "robusta", "firecracker"] {
+            if let m = roster.first(where: { $0.name.lowercased() == name }) { return m.id }
         }
         return roster.last?.id ?? 0
-    }()
+    }
+
+    /// The opponent's roster name, for display.
+    var botName: String {
+        EngineC.roster().first { $0.id == botStrategy }?.name ?? "bot"
+    }
 
     init(players: Int, botStrategy: Int) {
         self.players = players
         self.botStrategy = botStrategy
+        self.staticView = nil
+        self.staticLegal = []
         local = WatchGame.make(players: players, strategy: botStrategy)
         subscribe()
     }
+
+    // MARK: - Preview seam
+
+    /// A game backed by a FIXED view and legal menu — no kernel, no bots, no LocalGame.
+    /// This exists so `#Preview` can render any table state instantly and deterministically
+    /// (see Previews.swift); booting a real game in a preview would be slow, random, and
+    /// would fight the single-global C kernel. Nothing in the app uses this.
+    init(preview view: GameView, legal: [Move] = []) {
+        self.players = view.numPlayers
+        self.botStrategy = -1
+        self.staticView = view
+        self.staticLegal = legal
+        self.local = nil
+    }
+
+    /// Set for preview games only; when present it wins over the kernel's view.
+    private let staticView: GameView?
+    private let staticLegal: [Move]
+    private var isPreview: Bool { staticView != nil }
 
     private static func make(players: Int, strategy: Int) -> LocalGame {
         var strategies: [Int: Int] = [:]
@@ -159,17 +199,28 @@ final class WatchGame: ObservableObject {
 
     // MARK: derived table state
 
-    private var view: GameView? { local.view }
+    private var view: GameView? { staticView ?? local?.view }
     var deckCount: Int { view?.deckCount ?? 0 }
     var discardCount: Int { view?.discardCount ?? 0 }
-    /// `-pairs` injects sample battles (a covered pair, another cover, an open attack)
-    /// so the TablePager layout can be inspected without waiting for a live state.
-    static let demoBattles: [BattleView]? =
-        ProcessInfo.processInfo.arguments.contains("-pairs") ? [
+    /// `-pairs` injects sample battles so the table list can be inspected without waiting
+    /// for a live state; `-pairs7` overflows it (7 > 5 rows) to exercise the scroll+fade.
+    static let demoBattles: [BattleView]? = {
+        let args = ProcessInfo.processInfo.arguments
+        let base: [BattleView] = [
             BattleView(attack: Card(s: 0, v: 12), defense: Card(s: 0, v: 13)),  // ♠K ← ♠A
             BattleView(attack: Card(s: 1, v: 7),  defense: Card(s: 1, v: 9)),   // ♥7 ← ♥9
-            BattleView(attack: Card(s: 2, v: 6),  defense: nil),               // ♣6 open
-        ] : nil
+            BattleView(attack: Card(s: 2, v: 6),  defense: nil),                // ♣6 open
+        ]
+        if args.contains("-pairs7") {
+            return base + [
+                BattleView(attack: Card(s: 3, v: 10), defense: Card(s: 3, v: 11)), // ♦Q ← ♦J
+                BattleView(attack: Card(s: 0, v: 4),  defense: Card(s: 0, v: 8)),
+                BattleView(attack: Card(s: 1, v: 11), defense: nil),
+                BattleView(attack: Card(s: 2, v: 9),  defense: nil),
+            ]
+        }
+        return args.contains("-pairs") ? base : nil
+    }()
     var battles: [BattleView] { Self.demoBattles ?? view?.battles ?? [] }
     var hand: [Card] { view?.me?.hand ?? [] }
     var flipped: Card? { view?.flipped }
@@ -183,12 +234,12 @@ final class WatchGame: ObservableObject {
     var tableCardCount: Int { battles.reduce(0) { $0 + 1 + ($1.defense == nil ? 0 : 1) } }
 
     var foolName: String? {
-        guard let f = local.foolSeat, let v = view else { return nil }
+        guard let f = local?.foolSeat, let v = view else { return nil }
         return f == v.viewer ? "You" : (v.player(f)?.name ?? "Bot")
     }
 
     /// Whether the human has any legal action right now.
-    var canAct: Bool { !local.humanLegal.isEmpty && !isOver }
+    var canAct: Bool { !legal.isEmpty && !isOver }
 
     /// Seat strip in seat order from your left, wrapping, you last (§2 SeatStrip).
     var seatStrip: [SeatChip] {
@@ -201,6 +252,7 @@ final class WatchGame: ObservableObject {
                             count: p?.handCount ?? 0,
                             isSelf: s == v.viewer,
                             isDefender: v.defender == s,
+                            isOpening: v.firstAttacker == s && v.battles.isEmpty,
                             isGood: v.hasSaidGood(s),
                             isOut: p?.isOut ?? false)
         }
@@ -221,7 +273,9 @@ final class WatchGame: ObservableObject {
         let rows = v.players.map { p in
             RosterRow(seat: p.seat, name: name(for: p),
                       count: p.handCount, isSelf: p.seat == v.viewer,
-                      isDefender: v.defender == p.seat, isOut: p.isOut)
+                      isDefender: v.defender == p.seat,
+                      isOpening: v.firstAttacker == p.seat && v.battles.isEmpty,
+                      isGood: v.hasSaidGood(p.seat), isOut: p.isOut)
         }
         return rows.sorted { a, b in
             if a.isOut != b.isOut { return !a.isOut }   // in-play first
@@ -236,7 +290,7 @@ final class WatchGame: ObservableObject {
 
     // MARK: legality lookups (built once per snapshot, §4)
 
-    private var legal: [Move] { local.humanLegal }
+    private var legal: [Move] { isPreview ? staticLegal : (local?.humanLegal ?? []) }
 
     /// card → the single-card attack/throw-in move that plays it.
     private var attackMoves: [Card: Move] {
@@ -266,18 +320,6 @@ final class WatchGame: ObservableObject {
     private var pickupMove: Move? { legal.first { $0.type == .pickup } }
     private var goodMove: Move? { legal.first { $0.type == .good } }
 
-    /// The receiver a pass would hand the defence to: next in-play seat clockwise.
-    private var passReceiverName: String {
-        guard let v = view else { return "next" }
-        let n = v.numPlayers
-        for off in 1...n {
-            let s = (v.defender + off) % n
-            if s == v.defender { break }
-            if let p = v.player(s), !p.isOut { return p.seat == v.viewer ? "you" : p.name }
-        }
-        return "next"
-    }
-
     // MARK: focus list (§4)
 
     /// hand cards (server order) + one terminal item, unless you're out/over.
@@ -285,7 +327,7 @@ final class WatchGame: ObservableObject {
     func item(at index: Int) -> FocusItem {
         index < hand.count ? .card(hand[index]) : .terminal
     }
-    var terminalKind: TerminalKind { amDefender ? .take(tableCardCount) : .good }
+    var terminalKind: TerminalKind { amDefender ? .pickup : .good }
 
     /// Auto-focus target on activation: first legal card, else the terminal (§4).
     var firstLegalIndex: Int {
@@ -293,46 +335,45 @@ final class WatchGame: ObservableObject {
         return hand.count   // terminal
     }
 
-    /// Whether a hand card is playable right now (drives chip dimming, §2 ChipStrip).
+    /// Whether a hand card is playable right now (dims it in the fisheye lane, §4.6).
     func isLegal(_ card: Card) -> Bool { decision(for: .card(card)) != nil }
 
     // MARK: the §5 decision — one outcome per focused item
 
-    func decision(for item: FocusItem) -> PillDecision? {
+    func decision(for item: FocusItem) -> ActionDecision? {
         switch item {
         case .terminal:
             if amDefender {
                 guard tableCardCount > 0, pickupMove != nil else { return nil }
-                return PillDecision(label: "TAKE \(tableCardCount)", style: .take,
-                                    action: .commit(.pickup))
+                return ActionDecision(verb: .pickup, action: .commit(.pickup))
             }
             if let g = goodMove {
-                return PillDecision(label: "GOOD", style: .good, action: .commit(g))
+                return ActionDecision(verb: .good, action: .commit(g))
             }
             if iVoted {
-                return PillDecision(label: "✓ voted", style: .voted, action: .none)
+                return ActionDecision(verb: .voted, action: .none)
             }
             return nil
 
         case .card(let c):
             if let a = attackMoves[c] {
-                return PillDecision(label: "ATTACK", style: .attack, action: .commit(a))
+                return ActionDecision(verb: .attack, action: .commit(a))
             }
             if amDefender {
                 let covers = coverMoves[c] ?? []
                 let pass = passMoves[c]
                 if covers.count == 1 && pass == nil {
-                    return PillDecision(label: "COVER", style: .cover, action: .commit(covers[0].move))
+                    return ActionDecision(verb: .cover, action: .commit(covers[0].move))
                 }
+                // Ambiguous cover (≥2 targets) or the cover-or-pass fork: the caption
+                // names the fork, the tap opens the chooser.
                 if covers.count >= 2 || (covers.count >= 1 && pass != nil) {
-                    let title = pass != nil ? "\(CardRank.label(c.v))\(c.suit?.glyph ?? "") — cover or pass?"
-                                            : "\(CardRank.label(c.v))\(c.suit?.glyph ?? "") covers which?"
-                    let spec = ChooserSpec(card: c, title: title, coverTargets: covers,
-                                           pass: pass.map { PassOption(receiver: passReceiverName, move: $0) })
-                    return PillDecision(label: "COVER", style: .cover, action: .chooser(spec))
+                    let spec = ChooserSpec(card: c, coverTargets: covers,
+                                           pass: pass.map { PassOption(move: $0) })
+                    return ActionDecision(verb: pass != nil ? .coverPass : .cover, action: .chooser(spec))
                 }
                 if covers.isEmpty, let p = pass {
-                    return PillDecision(label: "PASS ▸ \(passReceiverName)", style: .pass, action: .commit(p))
+                    return ActionDecision(verb: .pass, action: .commit(p))
                 }
             }
             return nil
@@ -342,6 +383,7 @@ final class WatchGame: ObservableObject {
     // MARK: intents (§7 optimistic commit)
 
     func commit(_ move: Move) {
+        guard !isPreview else { return }        // a preview table is a still life
         // Optimistically show the played card translucent until the next snapshot.
         if move.type == .attack || move.type == .cover || move.type == .pass {
             optimistic = move.cards.first

@@ -1,18 +1,32 @@
-// TableScreen.swift — Option G page 1 (docs/WATCHOS_G_SPEC.md §2). Play happens here.
-// Top→bottom: InfoLine · SeatStrip · TablePager · then a split bottom band — the big
-// Crown-FocusSlot on the left, the action Pill and the hand ChipStrip on the right.
-// Every value is the kernel's masked GameView + legal menu (via WatchGame); no rule
-// logic lives in the view. All frames reference the 40 mm baseline (162×197 pt) and
-// scale proportionally.
+// TableScreen.swift — Option H, "all vertical" (docs/WATCHOS_LAYOUT.md §4.6). The only
+// screen needed in play. Top→bottom: InfoLine · SeatStrip (tap → Roster) · then a split
+// band — the table as a VERTICAL LIST on the left (cover ▸ attack, one pair per row) and
+// the hand as a crown-driven FISHEYE LANE hugging the right (crown) edge, with the action
+// verb as a caption beneath it. Nothing moves horizontally; there is no pager, no chip
+// strip, no focus slot and no pill.
+//
+// Every value is the kernel's masked GameView + legal menu (via WatchGame); no rule logic
+// lives in the view. All frames reference the 40 mm baseline (162×197 pt) and scale
+// proportionally.
 
 import SwiftUI
 
 struct TableScreen: View {
     @ObservedObject var game: WatchGame
+    let onOpenRoster: () -> Void
+
 
     @State private var focusRaw: Double = 0
     @State private var chooser: ChooserSpec?
     @State private var glow: Double = 0        // RejectGlow opacity (§7)
+
+    /// `-focus N` parks the lane on item N so the full ±2 fisheye window can be inspected
+    /// without a Crown (the simulator has none).
+    static let launchFocus: Int? = {
+        let args = ProcessInfo.processInfo.arguments
+        guard let i = args.firstIndex(of: "-focus"), i + 1 < args.count else { return nil }
+        return Int(args[i + 1])
+    }()
 
     private var focusIndex: Int {
         min(max(Int(focusRaw.rounded()), 0), max(game.focusCount - 1, 0))
@@ -26,47 +40,52 @@ struct TableScreen: View {
             ZStack {
                 WColor.bg
 
+                // Right-aligned as the clock's column (trailing inset 13).
                 infoLine
-                    .frame(width: w - 26 * sx, alignment: .trailing)
-                    .position(x: w / 2, y: 40 * sy)
+                    .position(x: HTuning.headerX * sx, y: HTuning.headerY * sy)
 
+                // Tapping the strip is the roster's second door (the page swipe is the
+                // other); the system back chevron pops to the games list.
                 SeatStrip(chips: game.seatStrip, width: w - 10)
-                    .position(x: w / 2, y: 61 * sy)
+                    .contentShape(Rectangle())
+                    .onTapGesture(perform: onOpenRoster)
+                    .position(x: w / 2, y: HTuning.stripY * sy)
 
-                TablePager(battles: game.battles, optimistic: game.optimistic, sx: sx, sy: sy)
-                    .frame(width: w, height: 62 * sy)
-                    .position(x: w / 2, y: 104 * sy)
+                TableList(battles: game.battles, optimistic: game.optimistic, sx: sx, sy: sy)
+                    .frame(width: HTuning.tableW * sx, height: HTuning.tableH * sy)
+                    .position(x: HTuning.tableX * sx, y: HTuning.tableY * sy)
 
                 if game.focusCount > 0 {
-                    focusSlot
-                        .frame(width: 60 * sx, height: 62 * sy)
-                        .position(x: 36 * sx, y: 163 * sy)
+                    FisheyeLane(game: game, focusIndex: focusIndex, sx: sx, sy: sy,
+                                onCommit: { commitFocused() },
+                                onFocus: { focusRaw = Double($0) })
+                        .frame(width: HTuning.laneW * sx, height: h)
+                        .position(x: HTuning.laneX * sx, y: h / 2)
 
-                    if let d = game.decision(for: focusedItem) {
-                        pill(d, sx: sx)
-                            .position(x: 112 * sx, y: 152 * sy)
-                    }
-
-                    chipStrip(sx: sx)
-                        .frame(width: 88 * sx, height: 28 * sy, alignment: .leading)
-                        .position(x: 115 * sx, y: 184 * sy)
+                    caption
+                        .frame(width: HTuning.captionW * sx)
+                        .position(x: HTuning.laneX * sx, y: HTuning.captionY * sy)
                 }
             }
             .frame(width: w, height: h)
             // RejectGlow — inset red edge flash on a reject (§7).
             .overlay(
                 RoundedRectangle(cornerRadius: w * 0.5, style: .continuous)
-                    .strokeBorder(WColor.red, lineWidth: 4 * sx)
-                    .blur(radius: 5 * sx)
+                    .strokeBorder(WColor.red, lineWidth: HTuning.glowWidth * sx)
+                    .blur(radius: HTuning.glowBlur * sx)
                     .opacity(glow)
                     .allowsHitTesting(false)
             )
         }
+        // H's y-coordinates are absolute on the 197 pt face (the InfoLine tucks under the
+        // clock, §2), so the canvas must span the whole screen — not the nav-bar-inset
+        // content area a pushed page gets by default.
+        .ignoresSafeArea()
         .background(WColor.bg.ignoresSafeArea())
         .focusable(game.focusCount > 1)
         .modifier(FocusCrown(value: $focusRaw, count: game.focusCount))
         .onAppear {
-            focusRaw = Double(game.firstLegalIndex)
+            focusRaw = Double(Self.launchFocus ?? game.firstLegalIndex)
             if ProcessInfo.processInfo.arguments.contains("-chooser") { chooser = .demo }
         }
         .onChange(of: game.hand) { _ in clampFocus() }
@@ -86,7 +105,9 @@ struct TableScreen: View {
 
     // MARK: commit + focus housekeeping
 
-    private func tap(_ d: PillDecision) {
+    /// A tap on the focused lane card (or its caption) is the only commit gesture (§4.6).
+    private func commitFocused() {
+        guard let d = game.decision(for: focusedItem) else { return }
         switch d.action {
         case .commit(let m): commit(m)
         case .chooser(let c): chooser = c
@@ -110,104 +131,197 @@ struct TableScreen: View {
     private func flashGlow() {
         WHaptics.fire(.rejected)
         glow = 1
-        withAnimation(.easeOut(duration: 0.6)) { glow = 0 }
+        withAnimation(.easeOut(duration: HTuning.glowDuration)) { glow = 0 }
     }
 
-    // MARK: InfoLine (§2)
+    // MARK: InfoLine (§2) — a label line naming the columns, values under it
+
+    /// Owner review: the header carries the words, so the row beneath is just
+    /// `card icon / number / number` — no SF-symbol deck/discard glyphs to decode. The
+    /// first column names itself: FLIP while the flipped card is still in the deck,
+    /// TRUMP once it's been drawn (`game.c:321-333`).
+    private var cols: [CGFloat] { [HTuning.colFlip, HTuning.colDeck, HTuning.colDisc] }
 
     private var infoLine: some View {
-        HStack(spacing: 6) {
-            if let f = game.flipped {
-                Glyph(card: f, size: 11)
-            } else if let s = game.trumpSuit {
-                Text(s.glyph).font(WFont.token(12)).foregroundStyle(s.glyphColor)
+        VStack(spacing: HTuning.headerRowGap) {
+            HStack(spacing: HTuning.headerColGap) {
+                label(game.flipped != nil ? "FLIP" : "TRUMP", 0)
+                label("DECK", 1)
+                label("DISC", 2)
             }
-            HStack(spacing: 2) {
-                Image(systemName: "rectangle.portrait.on.rectangle.portrait.fill").font(.system(size: 8))
-                Text("\(game.deckCount)").font(WFont.label(12))
-            }
-            HStack(spacing: 2) {
-                Image(systemName: "square.stack.3d.down.right.fill").font(.system(size: 8))
-                Text("\(game.discardCount)").font(WFont.label(12))
+            HStack(spacing: HTuning.headerColGap) {
+                Group {
+                    if let f = game.flipped {
+                        Glyph(card: f, size: HTuning.flipGlyphSize)
+                    } else if let s = game.trumpSuit {
+                        Text(s.glyph).font(WFont.token(HTuning.trumpGlyphSize)).foregroundStyle(s.glyphColor)
+                    }
+                }
+                .frame(width: cols[0])
+                value("\(game.deckCount)", 1)
+                value("\(game.discardCount)", 2)
             }
         }
-        .foregroundStyle(WColor.info)
+    }
+    private func label(_ s: String, _ i: Int) -> some View {
+        Text(s).font(.system(size: HTuning.labelSize)).foregroundStyle(WColor.dim)
+            .frame(width: cols[i])
+    }
+    private func value(_ s: String, _ i: Int) -> some View {
+        Text(s).font(WFont.label(HTuning.valueSize)).foregroundStyle(WColor.info)
+            .frame(width: cols[i])
     }
 
-    // MARK: FocusSlot (§2) — big preview of the focused item
+    // MARK: caption (§4.6) — the whole action UI
 
-    @ViewBuilder private var focusSlot: some View {
-        switch focusedItem {
+    /// The verb, sitting directly under the focused card: uppercase, gray, and the same
+    /// size as the header's column labels (owner review — one size for all chrome words).
+    /// Blank on a dead card.
+    private var caption: some View {
+        Text(game.decision(for: focusedItem)?.caption ?? "")
+            .font(.system(size: HTuning.captionSize))
+            .foregroundStyle(WColor.seat)
+            .lineLimit(1).minimumScaleFactor(0.8)
+            .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
+            .onTapGesture { commitFocused() }
+    }
+}
+
+// MARK: - TableList (§4.6) — the whole table as rows; no pages
+
+/// One pair per row: cover column ▸ attack column. Open attacks sit alone in the attack
+/// column at full brightness; resolved rows desaturate. Rows are simply visible (centred);
+/// past that the list scrolls — the app's only drag.
+///
+/// Owner review made the glyphs and the ▸ larger, which costs a row: four fit now, not
+/// five (which is what H §4.6 asked for in the first place).
+private struct TableList: View {
+    let battles: [BattleView]
+    let optimistic: Card?
+    let sx: CGFloat
+    let sy: CGFloat
+
+    private var rowH: CGFloat { HTuning.tableRowH }
+
+    var body: some View {
+        if battles.isEmpty {
+            Text("—").font(WFont.token(HTuning.tableEmptySize)).foregroundStyle(WColor.faint)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if battles.count <= HTuning.tableVisibleRows {
+            rows.frame(maxWidth: .infinity, maxHeight: .infinity)   // centred
+        } else {
+            ScrollView(.vertical, showsIndicators: false) { rows }
+                .mask(LinearGradient(stops: [.init(color: .clear, location: 0),
+                                             .init(color: .black, location: HTuning.tableFadeInset),
+                                             .init(color: .black, location: 1 - HTuning.tableFadeInset),
+                                             .init(color: .clear, location: 1)],
+                                     startPoint: .top, endPoint: .bottom))
+        }
+    }
+
+    private var rows: some View {
+        VStack(spacing: HTuning.tableRowGap * sy) {
+            ForEach(Array(battles.enumerated()), id: \.offset) { _, b in row(b) }
+        }
+    }
+
+    private func row(_ b: BattleView) -> some View {
+        let resolved = b.defense != nil
+        let isOptimistic = optimistic != nil && (b.attack == optimistic || b.defense == optimistic)
+        return HStack(spacing: HTuning.tableColGap * sx) {
+            cell(b.defense)
+            Text("▸")
+                .font(.system(size: HTuning.tableArrowSize, weight: .heavy))
+                .foregroundStyle(WColor.arrow)
+                .opacity(resolved ? 1 : 0)
+                .frame(width: HTuning.tableArrowW * sx)
+            cell(b.attack)
+        }
+        .frame(height: rowH * sy)
+        // grayscale + dim-toward-black: on a pure-black canvas opacity IS brightness, so
+        // this matches the mock's `grayscale(1) brightness(.62)` exactly.
+        .grayscale(resolved ? 1 : 0)
+        .opacity(isOptimistic ? HTuning.tableOptimisticOpacity : (resolved ? HTuning.tableResolvedOpacity : 1))
+    }
+
+    /// A fixed-width column slot. An empty cover cell must still hold its width, so open
+    /// attacks stay in the attack column instead of sliding left.
+    private func cell(_ card: Card?) -> some View {
+        ZStack {
+            Color.clear
+            if let c = card { Glyph(card: c, size: HTuning.tableGlyph) }
+        }
+        .frame(width: HTuning.tableCellW * sx, height: rowH * sy)
+    }
+}
+
+// MARK: - FisheyeLane (§4.6) — the hand, and the only hand rendering
+
+/// The crown-driven lane hugging the right (crown) edge: the focused chip IS the big
+/// card, growing in place; two neighbours shrink away above and below. The terminal item
+/// (✓ GOOD / red +n pickup) is the lane's last stop and obeys the same physics.
+private struct FisheyeLane: View {
+    @ObservedObject var game: WatchGame
+    let focusIndex: Int
+    let sx: CGFloat
+    let sy: CGFloat
+    let onCommit: () -> Void
+    let onFocus: (Int) -> Void
+
+
+    /// Ring spec by |offset| from the focus: Glyph size, centre offset above / below the
+    /// focus (pt), opacity — all live from HTuning. Owner's calls: the focus is ~36 pt
+    /// (suit glyph) — the mock's 42 pt cannot fit a ±2 window on a 197 pt face — and ±2 is
+    /// drawn at the ±1 size, separated only by opacity. The down-offsets are the larger
+    /// pair because the caption sits in that gap.
+    private var ring: [(size: CGFloat, up: CGFloat, down: CGFloat, op: Double)] {
+        [(HTuning.focusSize, 0, 0, 1.0),
+         (HTuning.ring1Size, HTuning.ring1Up, HTuning.ring1Down, Double(HTuning.ring1Opacity)),
+         (HTuning.ring2Size, HTuning.ring2Up, HTuning.ring2Down, Double(HTuning.ring2Opacity))]
+    }
+
+    var body: some View {
+        ZStack {
+            ForEach(-2...2, id: \.self) { off in
+                let i = focusIndex + off
+                if i >= 0 && i < game.focusCount {
+                    let spec = ring[abs(off)]
+                    item(at: i, size: spec.size)
+                        .opacity(spec.op)
+                        .contentShape(Rectangle())
+                        .onTapGesture { off == 0 ? onCommit() : onFocus(i) }
+                        .position(x: HTuning.laneW / 2 * sx,
+                                  y: (HTuning.laneFocusY + (off < 0 ? -spec.up : spec.down)) * sy)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private func item(at index: Int, size: CGFloat) -> some View {
+        switch game.item(at: index) {
         case .card(let c):
-            Glyph(card: c, size: 38, dim: !game.isLegal(c))
+            Glyph(card: c, size: size, dim: !game.isLegal(c))
         case .terminal:
+            terminal(size: size)
+        }
+    }
+
+    /// Bare ✓ / ↓ — no background, sized off the same scale as a card at this ring.
+    @ViewBuilder private func terminal(size: CGFloat) -> some View {
+        Group {
             switch game.terminalKind {
             case .good:
-                Image(systemName: "checkmark").font(.system(size: 44, weight: .bold))
+                Image(systemName: "checkmark")
+                    .font(.system(size: size * HTuning.checkScale, weight: .heavy))
                     .foregroundStyle(game.iVoted ? WColor.seat : WColor.green)
-            case .take(let n):
-                Text("+\(n)").font(WFont.heavy(30)).foregroundStyle(WColor.red)
+            case .pickup:
+                Image(systemName: "arrow.down")
+                    .font(.system(size: size * HTuning.arrowScale, weight: .heavy))
+                    .foregroundStyle(WColor.red)
             }
         }
-    }
-
-    // MARK: Pill (§2, §5)
-
-    private func pill(_ d: PillDecision, sx: CGFloat) -> some View {
-        Text(d.label)
-            .font(WFont.heavy(13))
-            .lineLimit(1).minimumScaleFactor(0.75)
-            .foregroundStyle(d.style.fg)
-            .padding(.horizontal, 12 * sx)
-            .frame(minWidth: 86 * sx, minHeight: 28 * sx)
-            .background(RoundedRectangle(cornerRadius: 14 * sx, style: .continuous).fill(d.style.bg))
-            .contentShape(Rectangle())
-            .onTapGesture { tap(d) }
-    }
-
-    // MARK: ChipStrip (§2) — hand cards + terminal, Crown-scrollable
-
-    private func chipStrip(sx: CGFloat) -> some View {
-        ScrollViewReader { proxy in
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 4.5 * sx) {
-                    ForEach(Array(game.hand.enumerated()), id: \.element) { i, c in
-                        Glyph(card: c, size: 15, focused: i == focusIndex, dim: !game.isLegal(c))
-                            .id(i)
-                            .onTapGesture { focusRaw = Double(i) }
-                    }
-                    terminalChip.id(game.hand.count)
-                        .onTapGesture { focusRaw = Double(game.hand.count) }
-                }
-                .padding(.trailing, 15 * sx)   // room for the right-edge fade
-            }
-            .mask(
-                LinearGradient(colors: [.black, .black, .clear],
-                               startPoint: .leading, endPoint: .trailing)
-            )
-            .onChange(of: focusIndex) { i in
-                withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(i, anchor: .center) }
-            }
-        }
-    }
-
-    @ViewBuilder private var terminalChip: some View {
-        switch game.terminalKind {
-        case .good:
-            Image(systemName: "checkmark")
-                .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(game.iVoted ? WColor.seat : WColor.green)
-                .frame(width: 22, height: 25)
-                .overlay(chipOutline(focusIndex == game.hand.count))
-        case .take(let n):
-            Text("+\(n)").font(WFont.heavy(11)).foregroundStyle(WColor.red)
-                .frame(width: 22, height: 25)
-                .overlay(chipOutline(focusIndex == game.hand.count))
-        }
-    }
-    private func chipOutline(_ on: Bool) -> some View {
-        RoundedRectangle(cornerRadius: 4, style: .continuous)
-            .strokeBorder(.white, lineWidth: 1.25).opacity(on ? 1 : 0)
+        .frame(width: size * HTuning.glyphFrameW, height: size * HTuning.glyphFrameH)
     }
 }
 
@@ -216,84 +330,110 @@ struct TableScreen: View {
 private struct SeatStrip: View {
     let chips: [SeatChip]
     let width: CGFloat
-    private let gap: CGFloat = 3
 
-    var body: some View {
+
+    /// The shield is drawn ONCE, floating over the row, and slides between seats; the seats
+    /// themselves never draw it. `slot` is its rendered position and deliberately leaves
+    /// 0..<n mid-wrap — that overshoot is what carries it off the end. See `moveShield`.
+    @State private var slot: Int?
+    @State private var shieldOpacity: Double = 1
+
+    private var gap: CGFloat { HTuning.stripGap }
+    private var cell: CGFloat {
         let n = max(chips.count, 1)
-        // Eight 22 pt cells overflow a 40 mm face; size the cell to fit the row so the
-        // edge seats (you're always last) never clip.
-        let cell = min(22, (width - CGFloat(n - 1) * gap) / CGFloat(n))
-        HStack(spacing: gap) {
-            ForEach(chips) { c in seat(c, cell: cell) }
-        }
-        .frame(width: width)
+        // Eight cells overflow a 40 mm face; size the cell to fit the row so the edge
+        // seats (you're always last) never clip. The 18 pt cap (G specified 22) buys the
+        // two-line header its band without pushing the lane off the bottom.
+        return min(HTuning.stripCellMax, (width - CGFloat(n - 1) * gap) / CGFloat(n))
     }
-    private func seat(_ c: SeatChip, cell: CGFloat) -> some View {
-        ZStack {
-            if c.isDefender {
-                ShieldShape().stroke(WColor.gold, lineWidth: 1.25)
-                    .frame(width: cell * 0.92, height: cell * 1.12)
-            }
-            Text("\(c.count)")
-                .font(WFont.heavy(min(12.5, cell * 0.78)))
-                .minimumScaleFactor(0.7)
-                .foregroundStyle(color(c))
-        }
-        .frame(width: cell, height: cell * 1.2)
-        .opacity(c.isOut ? 0.3 : 1)
-    }
-    private func color(_ c: SeatChip) -> Color {
-        if c.isSelf { return WColor.gold }
-        if c.isGood { return WColor.green }
-        return WColor.seat
-    }
-}
+    private var pitch: CGFloat { cell + gap }
+    private var defenderIndex: Int? { chips.firstIndex { $0.isDefender } }
 
-// MARK: - TablePager (§2) — two pairs per page; cover ▸ attack
-
-private struct TablePager: View {
-    let battles: [BattleView]
-    let optimistic: Card?
-    let sx: CGFloat
-    let sy: CGFloat
-
-    /// Pages of at most two battles each.
-    private var pages: [[Int]] {
-        let idx = Array(battles.indices)
-        return stride(from: 0, to: max(idx.count, 1), by: 2).map { Array(idx[$0..<min($0 + 2, idx.count)]) }
+    /// Centre of seat `i` in the strip's own coordinates. Indices outside 0..<n keep
+    /// marching, which is what lets the shield exit one end and re-enter the other.
+    private func x(_ i: Int) -> CGFloat {
+        let n = max(chips.count, 1)
+        let rowW = CGFloat(n) * cell + CGFloat(n - 1) * gap
+        return (width - rowW) / 2 + cell / 2 + CGFloat(i) * pitch
     }
 
     var body: some View {
-        if battles.isEmpty {
-            Text("—").font(WFont.token(18)).foregroundStyle(WColor.faint)
-        } else if pages.count == 1 {
-            page(pages[0])
-        } else {
-            TabView {
-                ForEach(Array(pages.enumerated()), id: \.offset) { _, p in page(p) }
+        ZStack(alignment: .leading) {
+            HStack(spacing: gap) {
+                ForEach(chips) { c in seat(c, cell: cell) }
             }
-            .tabViewStyle(.page(indexDisplayMode: .automatic))
+            .frame(width: width)
+
+            if defenderIndex != nil, let s = slot {
+                ShieldShape()
+                    .stroke(WColor.defender, lineWidth: 1.25)
+                    .frame(width: cell * HTuning.shieldW, height: cell * HTuning.shieldH)
+                    .position(x: x(s), y: cell * HTuning.stripCellAspect / 2)
+                    .opacity(shieldOpacity)
+            }
+        }
+        .frame(width: width, height: cell * HTuning.stripCellAspect)
+        .onAppear { slot = defenderIndex; shieldOpacity = 1 }
+        .onChange(of: defenderIndex) { old, new in moveShield(from: old, to: new) }
+    }
+
+    /// The strip is a ring drawn as a line, so when the defence wraps from the last seat to
+    /// the first the shield must NOT slide backwards across the whole row. It keeps going:
+    /// out past the right edge, then an unanimated teleport (while invisible) to a matching
+    /// slot off the left edge, then in from there. Ordinary moves are a plain spring.
+    private func moveShield(from old: Int?, to new: Int?) {
+        let n = chips.count
+        guard let new else { slot = nil; return }
+        guard let old, n > 1, old != new else {
+            slot = new; shieldOpacity = 1; return
+        }
+        let forward = (new - old + n) % n          // distance travelling right around the ring
+        let wraps = new < old && forward <= n / 2  // a leftward jump that's really a short hop right
+
+        guard wraps else {
+            withAnimation(.spring(response: 0.34, dampingFraction: 0.72)) { slot = new }
+            return
+        }
+        withAnimation(.easeIn(duration: 0.17)) {
+            slot = old + forward                   // march off the right edge
+            shieldOpacity = 0
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.17) {
+            slot = new - forward                   // teleport off-screen left, still invisible
+            shieldOpacity = 0
+            DispatchQueue.main.async {             // next tick, or SwiftUI coalesces the two
+                withAnimation(.easeOut(duration: 0.22)) {
+                    slot = new
+                    shieldOpacity = 1
+                }
+            }
         }
     }
 
-    private func page(_ ids: [Int]) -> some View {
-        HStack(spacing: 15 * sx) {
-            ForEach(ids, id: \.self) { i in pair(battles[i]) }
-        }
-        .frame(maxWidth: .infinity)
+    /// You are the one seat you must find instantly, and the mark is the digit's **weight**:
+    /// your count is heavy, everyone else's is light. Colour never says "you" — it says
+    /// state, and only state. (Two dead ends got here: an underline, which the shield sits
+    /// on top of when you defend; and an outline, which SwiftUI cannot draw before watchOS
+    /// 11's `textRenderer(_:)`.)
+    private func seat(_ c: SeatChip, cell: CGFloat) -> some View {
+        let size = min(HTuning.stripCountSize, cell * 0.78)
+        return Text("\(c.count)")
+            .font(.system(size: size,
+                          weight: c.isSelf ? HTuning.stripSelfWeight : HTuning.stripOtherWeight,
+                          design: .rounded))
+            .foregroundStyle(color(c))
+            .minimumScaleFactor(0.7)
+            .frame(width: cell, height: cell * HTuning.stripCellAspect)
     }
-
-    private func pair(_ b: BattleView) -> some View {
-        let resolved = b.defense != nil
-        let isOptimistic = optimistic != nil && (b.attack == optimistic || b.defense == optimistic)
-        return HStack(spacing: 3 * sx) {
-            if let cov = b.defense {
-                Glyph(card: cov, size: 20)
-                Text("▸").font(.system(size: 9)).foregroundStyle(WColor.arrow)
-            }
-            Glyph(card: b.attack, size: 20)
-        }
-        .opacity(isOptimistic ? 0.45 : (resolved ? 0.42 : 1))
+    /// Colour is state and ONLY state (§4.6.1): out ▸ defender ▸ good ▸ opening ▸ plain.
+    /// Red is transient — it marks the seat the table is WAITING ON to open the bout, and
+    /// clears to white the moment they attack, so it never fights the green tally.
+    private func color(_ c: SeatChip) -> Color {
+        if c.isOut { return WColor.out }
+        if c.isDefender { return WColor.defender }
+        if c.isGood { return WColor.green }
+        if c.isOpening { return WColor.attacker }
+        return WColor.plain
     }
 }
 

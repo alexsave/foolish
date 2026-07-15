@@ -1,7 +1,12 @@
-// GameRoot.swift — Option G root (docs/WATCHOS_G_SPEC.md §1). A horizontal TabView(.page)
-// with two pages: the TableScreen (play) and the RosterScreen (state). The system back
-// chevron (from the NavigationStack push) owns the top-left; horizontal swipe moves
-// between the two pages. Game over presents the fool reveal (§10).
+// GameRoot.swift — Option H root (docs/WATCHOS_LAYOUT.md §4.6). The TableScreen is the
+// whole game screen; the Roster sits one page to its right. Two ways there, both owner-
+// specified: drag right→left (the page swipe) or tap the seat strip. There are no page
+// dots — the face is too tight for them, and the strip is the discoverable door.
+//
+// This is the one place H relaxes its "zero horizontal gestures" rule (§4.6.1). Opening
+// on the table keeps the system back-swipe (left edge → pop to the games list) unshadowed;
+// putting the roster on the LEFT would have cost that.
+// Game over presents the fool reveal (§10).
 
 import SwiftUI
 
@@ -13,10 +18,10 @@ struct GameRootView: View {
 
     var body: some View {
         TabView(selection: $page) {
-            TableScreen(game: game).tag(0)
+            TableScreen(game: game, onOpenRoster: { withAnimation { page = 1 } }).tag(0)
             RosterScreen(game: game).tag(1)
         }
-        .tabViewStyle(.page(indexDisplayMode: .automatic))
+        .tabViewStyle(.page(indexDisplayMode: .never))
         .background(WColor.bg.ignoresSafeArea())
         .onChange(of: game.foolName) { showOver = $0 != nil }
         .onAppear { if game.foolName != nil { showOver = true } }

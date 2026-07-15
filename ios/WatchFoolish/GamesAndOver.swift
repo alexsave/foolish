@@ -8,10 +8,10 @@ struct GamesListView: View {
     /// player count (you + bots) for the game to deal.
     let onNew: (Int) -> Void
 
-    private let options: [(label: String, players: Int, sub: String)] = [
-        ("Heads-up",   2, "you + 1 bot"),
-        ("Four-hand",  4, "you + 3 bots"),
-        ("Full table", 8, "you + 7 bots"),
+    private let options: [(label: String, players: Int, bots: Int)] = [
+        ("Heads-up",   2, 1),
+        ("Four-hand",  4, 3),
+        ("Full table", 8, 7),
     ]
 
     var body: some View {
@@ -19,11 +19,13 @@ struct GamesListView: View {
             ForEach(options, id: \.players) { o in
                 Button { onNew(o.players) } label: {
                     HStack(spacing: 8) {
-                        Text("\(o.players)").font(WFont.token(18)).foregroundStyle(WColor.gold)
+                        Text("\(o.players)").font(WFont.token(18)).foregroundStyle(WColor.plain)
                             .frame(minWidth: 18)
                         VStack(alignment: .leading, spacing: 0) {
                             Text(o.label).font(WFont.label(16)).foregroundStyle(WColor.suitBlack)
-                            Text(o.sub).font(WFont.label(11)).foregroundStyle(WColor.dim)
+                            Text("you + \(o.bots) \(botLabel)").font(WFont.label(11))
+                                .foregroundStyle(WColor.dim)
+                                .lineLimit(1).minimumScaleFactor(0.7)
                         }
                         Spacer()
                         SwordIcon(size: 13, color: WColor.dim).frame(width: 20, height: 20)
@@ -33,10 +35,18 @@ struct GamesListView: View {
                 .buttonStyle(.plain)
                 .listRowBackground(RoundedRectangle(cornerRadius: 10).fill(Color(white: 0.08)))
             }
+
         }
         .listStyle(.carousel)
         .navigationTitle("New game")
         .background(WColor.bg)
+    }
+
+    /// The opponent every row deals against — named, because "7 bots" and "7 octogen bots"
+    /// are very different games. Read straight off the roster: building a WatchGame here
+    /// would boot a second kernel game (the C kernel is a single global).
+    private var botLabel: String {
+        EngineC.roster().first { $0.id == WatchGame.defaultStrategy }?.name ?? "bots"
     }
 }
 
@@ -67,7 +77,7 @@ struct GameOverScreen: View {
                 Text("Close")
                     .font(WFont.label(15)).foregroundStyle(WColor.bg)
                     .frame(maxWidth: .infinity, minHeight: 34)
-                    .background(Capsule().fill(WColor.gold))
+                    .background(Capsule().fill(WColor.plain))
             }
             .buttonStyle(.plain)
         }

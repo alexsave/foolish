@@ -119,9 +119,15 @@ public final class LocalGame: ObservableObject, GameSession {
             if over >= 0 { foolSeat = over; break }
 
             guard let mask = try? await engine.actorMask() else { break }
-            // Human's turn (they're eligible): stop and wait for input.
-            if (mask & (1 << humanSeat)) != 0 { break }
-            if mask == 0 { break }
+            // Bots act ASYNCHRONOUSLY to the human, exactly as the server does: a Durak
+            // table has no turn order for throw-ins (any non-defender, any time —
+            // game.c:538), so the human and the bots are routinely eligible at the same
+            // moment. Stopping because the human *could* act froze every bot until the
+            // human played — which made GOOD feel like a "let the bots move" button.
+            // Only the human being the sole eligible actor ends the loop; nothing can
+            // change until they move anyway.
+            let botMask = mask & ~(1 << humanSeat)
+            if botMask == 0 { break }
 
             await applyThermalPolicy()
 
