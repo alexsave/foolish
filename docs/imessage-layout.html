@@ -245,6 +245,17 @@ ul{max-width:78ch}
     <tr><td>summaryText</td><td>Past-tense transcript line, sender-locale-resolved: "Alex attacked with 7♠ and Q♠". Written to read as a game log when bubbles collapse (§17.4).</td></tr>
     <tr><td>message.url</td><td><code>https://foolish.cards/m/1&lt;base32&gt;</code> — the FULL game (seed + action chain). Documented MSMessage cap: 5,000 chars; our P95 full-game envelope guardrail is &lt;1,000 (§4.4). Mac/Android tap-through lands on the /m/ web viewer.</td></tr>
   </table>
+  <p class="lede" style="margin-top:14px">Snapshot zone spec (what the
+  300×195 renderer draws, top to bottom) — this is the build contract for
+  the bubble image:</p>
+  <table class="facts">
+    <tr><th>Zone</th><th>Content</th><th>Reuses</th></tr>
+    <tr><td>Seat line (top)</td><td>Per-seat fern-back count chips + nicknames; defender count inside the gold shield; green = said GOOD. Public info only.</td><td>seat-chip grammar from the phone table (<code>FSeatBadge</code> semantics)</td></tr>
+    <tr><td>Battle rows (center-left)</td><td>One row per pair: cover glyph ▸ attack glyph; open attacks alone, full-bright; resolved rows desaturated; max 3 rows + "+N".</td><td>watch Option-H glyph-card language (<code>FGlyphCard</code>)</td></tr>
+    <tr><td>Deck well (center-right)</td><td>Fern mini-back + count numeral; trump glyph beneath (bare suit once the flip is drawn).</td><td><code>FDeckWell</code>, miniaturized</td></tr>
+    <tr><td>Status (bottom)</td><td>Nothing — state words live in <code>caption</code>/<code>summaryText</code>, never in the image (Messages recompresses).</td><td>—</td></tr>
+    <tr><td>Material</td><td>Wool table + vignette; fern backs. Drawn by the shared CGContext generators.</td><td><code>FernCardBack.swift</code> pattern</td></tr>
+  </table>
 </section>
 
 <!-- ================================================================ -->
@@ -286,8 +297,18 @@ ul{max-width:78ch}
 </section>
 
 <!-- ================================================================ -->
+<section id="lobbyweb">
+  <h2>5 · Group lobby & the /m/ fallback</h2>
+  <p class="lede">Two more surfaces the extension must ship: seat-claiming in
+  a group thread (WAITING phase — zero kernel actions, so claim races merge
+  trivially), and the web page every Mac/Android/SMS recipient lands on
+  (§13 of the spec: it IS the non-iPhone experience, not polish).</p>
+  <div class="frames" id="framesG"></div>
+</section>
+
+<!-- ================================================================ -->
 <section id="notes">
-  <h2>5 · Mock-to-build notes</h2>
+  <h2>6 · Mock-to-build notes</h2>
   <ul>
     <li><b>Bubble snapshot renderer:</b> a pure SwiftUI view (public
       GameView → glyph battle rows + count chips on wool) rendered by
@@ -609,6 +630,106 @@ frame('framesF','M5 · FINISHED bubble · dark','Result card snapshot; url = the
     const b2=el('bubble bub-in');px(b2,14,392);b2.textContent='gg 🃏 pelmeni’s on you';scr.append(b2);
     inputBar(scr,false);
   }));
+
+/* ===== M6: group lobby (WAITING) ===== */
+frame('framesG','M6 · Group lobby — claiming seats','4-player game in a group thread, phase=WAITING. Creator is always seat 0; joiners take the lowest free seat. Nickname entry is why this screen is expanded-only (no text input in compact — platform rule). Claims carry zero kernel actions, so races merge by Rule P digest.',
+  msgScreen(false,scr=>{
+    const sh=el('sheet');
+    const wool=el('wool');wool.style.backgroundImage=`url(${WOOL})`;
+    wool.style.backgroundSize='cover';sh.append(wool,el('grab'));
+    const h=el('',{left:0,top:Z(30),width:'100%',textAlign:'center',
+      color:'#fff',fontFamily:'Georgia,serif',fontWeight:'900',
+      fontSize:Z(22),textShadow:'0 2px 5px #000'});
+    h.textContent='Waiting for players — 2 of 4';sh.append(h);
+    const rows=[['0','Alex','claimed · creator',1],
+                ['1','Sveta','claimed',1],
+                ['2','—','free',0],
+                ['3','—','free',0]];
+    rows.forEach((r,i)=>{
+      const row=el('',{left:Z(48),top:Z(78+i*54),width:Z(280),height:Z(46),
+        border:`calc(2*var(--zk)) solid #5D3A1A`,borderRadius:Z(8),
+        background:r[3]?'rgba(0,0,0,.4)':'rgba(0,0,0,.18)',zIndex:3});
+      const t1=el('',{left:Z(12),top:Z(5),color:r[3]?'#fff':'#d9c9a8',
+        fontWeight:'800',fontSize:Z(14)});
+      t1.textContent=`Seat ${r[0]} · ${r[1]}`;
+      const t2=el('',{left:Z(12),top:Z(25),color:'#d9c9a8',fontSize:Z(10)});
+      t2.textContent=r[2];row.append(t1,t2);
+      if(r[3]){const ok=el('',{right:Z(12),top:Z(11),color:'#4ADE80',
+        fontSize:Z(16),fontWeight:'900'});ok.textContent='✓';row.append(ok);}
+      sh.append(row);
+    });
+    const cb=el('btn-wood hot');cb.style.backgroundImage=`url(${WOOD})`;
+    px(cb,57,310,260,46);cb.style.fontSize=Z(15);
+    cb.textContent='CLAIM SEAT 2 AS “BORIS”';sh.append(cb);
+    const hint=el('',{left:0,top:Z(368),width:'100%',textAlign:'center',
+      color:'#ffd9a0',fontSize:Z(10.5),textShadow:'0 1px 2px #000'});
+    hint.textContent='Whoever fills the last seat deals — the seed is already fixed';
+    sh.append(hint);
+    const hint2=el('',{left:0,top:Z(388),width:'100%',textAlign:'center',
+      color:'#8e8e93',fontSize:Z(9.5)});
+    hint2.textContent='Friendly game — fair play on the honor system';
+    sh.append(hint2);
+    scr.append(sh);
+    inputBar(scr,false);
+  }));
+
+/* ===== M7: /m/ web fallback (Mac / Android / SMS) ===== */
+frame('framesG','M7 · The /m/ page — every non-iMessage tap','macOS Messages does not run iOS extensions; Android/SMS see the raw URL. The link IS a real page: kernel-in-browser decodes the payload (full rules module — guards.wasm cannot re-deal from a seed) and renders the PUBLIC table read-only, with the funnel CTAs. OG tags unfurl the same snapshot in other messengers.',
+  (()=>{ // a Safari-ish phone frame, light chrome
+    const scr=el('screen');scr.className='screen';
+    const sb=el('sbar');const l=el('l');l.textContent='●●●○○';
+    const t=el('t');t.textContent='9:41';const r=el('r');r.textContent='100% ▮';
+    sb.append(l,t,r);scr.append(sb);
+    const bar=el('',{left:0,top:Z(20),width:'100%',height:Z(36),
+      background:'#f1f1f3',borderBottom:`calc(1*var(--zk)) solid #d0d0d3`,zIndex:30});
+    const url=el('',{left:Z(40),top:Z(7),width:Z(295),height:Z(22),
+      background:'#e2e2e6',borderRadius:Z(11),color:'#333',
+      fontSize:Z(10.5),textAlign:'center',paddingTop:Z(4),
+      overflow:'hidden'});
+    url.textContent='🔒 foolish.cards/m/1KJ3MQ7Z…';bar.append(url);scr.append(bar);
+    // page: wool board strip
+    const board=el('',{left:0,top:Z(56),width:'100%',height:Z(230),overflow:'hidden'});
+    const wool=el('wool');wool.style.backgroundImage=`url(${WOOL})`;
+    wool.style.backgroundSize='cover';board.append(wool);
+    const mk=(y,count,label)=>{
+      const g=el('',{left:Z(28),top:Z(y),width:Z(90),height:Z(34)});
+      for(let i=0;i<3;i++){const b=cardBack(18,25);px(b,i*9,4);
+        b.style.transform=`rotate(${(i-1)*8}deg)`;g.append(b);}
+      const bd=el('badge');px(bd,38,8);bd.style.fontSize=Z(11);
+      bd.style.padding=`0 ${Z(5)}`;bd.textContent=count;g.append(bd);
+      const tt=el('',{left:0,top:Z(-12),color:'#fff',fontSize:Z(9),
+        fontWeight:'700',textShadow:'0 1px 2px #000'});tt.textContent=label;
+      g.append(tt);return g;};
+    board.append(mk(40,6,'ALEX'),mk(170,5,'KAT ⛨'));
+    const g1=glyphCard('7',0,36);px(g1,150,88);g1.style.opacity=.55;board.append(g1);
+    const g1c=glyphCard('K',0,36);px(g1c,163,97);g1c.style.transform='rotate(12deg)';board.append(g1c);
+    const g2=glyphCard('9',1,40);px(g2,225,88);board.append(g2);
+    const db=cardBack(30,42);px(db,305,92);db.style.transform='rotate(90deg)';board.append(db);
+    const dbd=el('badge');px(dbd,314,78);dbd.style.fontSize=Z(10);
+    dbd.style.padding=`0 ${Z(4)}`;dbd.textContent='10';board.append(dbd);
+    const tg=el('',{left:Z(312),top:Z(132),fontSize:Z(18),color:'#ff5b52',
+      textShadow:'0 1px 2px #000'});tg.textContent='♥';board.append(tg);
+    scr.append(board);
+    // copy + CTAs
+    const t1=el('',{left:Z(20),top:Z(300),width:Z(335),textAlign:'center',
+      color:'#111',fontWeight:'800',fontSize:Z(16)});
+    t1.textContent='A live iMessage Durak game — turn 12';scr.append(t1);
+    const t2=el('',{left:Z(28),top:Z(326),width:Z(319),textAlign:'center',
+      color:'#666',fontSize:Z(11.5),lineHeight:1.4});
+    t2.textContent='Hands stay hidden here. Watching is free; playing this game needs Foolish in Messages on iPhone.';
+    scr.append(t2);
+    const cta=el('',{left:Z(57),top:Z(378),width:Z(260),height:Z(46),
+      background:'#B32929',borderRadius:Z(10),color:'#fff',fontWeight:'800',
+      fontSize:Z(14),display:'flex',alignItems:'center',justifyContent:'center'});
+    cta.textContent='📲 Get Foolish on the App Store';scr.append(cta);
+    const cta2=el('',{left:0,top:Z(438),width:'100%',textAlign:'center',
+      color:'#B32929',fontSize:Z(12.5),fontWeight:'700'});
+    cta2.textContent='…or play Durak free right here ›';scr.append(cta2);
+    const foot=el('',{left:0,top:Z(600),width:'100%',textAlign:'center',
+      color:'#999',fontSize:Z(9.5)});
+    foot.textContent='foolish.cards — the game a QR code can hold';scr.append(foot);
+    return scr;
+  })());
 
 /* controls */
 document.querySelectorAll('#segzoom button').forEach(b=>{

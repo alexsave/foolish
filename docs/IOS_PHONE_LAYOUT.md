@@ -52,6 +52,20 @@ bots-on-the-phone with zero network, then iMessage.
   a fallback if Dynamic-Type-XL breaks the arc chips. On SE portrait it
   wastes its won space in typical rounds and erases identity. (Frame C1.)
 
+### 2b. The parallel study (merged 2026-07-15)
+
+A second, independent design pass (`ios-se-layout.html`, since retired)
+attacked the same brief and landed on the strip + a one-tap roster sheet,
+skinned in the flat "Gosizdat" felt. Where the two passes disagreed:
+
+| Question | This study | Parallel study | Kept |
+|---|---|---|---|
+| Opponent zone | horseshoe arc (seating order preserved) | flat strip + roster sheet | **Arc** — identity on-screen matters on a phone; but the **roster sheet is adopted** as the arc's tap-through detail view |
+| Materials | website's wool/wood/fern | flat felt + wool tint | **Wool/wood/fern** — the owner's "lean on the website" direction |
+| Big-hand handling | tighter overlap (~21 pt exposure) | **press-drag fan scrub** (touched card lifts/magnifies; release arms) | **Both** — overlap to ~15 cards, scrub as the interaction from ~12 up; keeps a 19-card hand playable with no second row |
+| Cover interaction | tap-select, tap/drag commit | **arm-then-target** (tap card, tap open attack) | **Both** — arm-then-target ships as the precision path alongside drag |
+| Convergences | — | zone-stack bands, kernel-only gating, count+shield chips, ko-locale proof | agreement counts as evidence: the banded skeleton is right |
+
 ## 3 · The Option B zone spec (SE reference; layout is proportional above SE)
 
 | Zone | Frame (pt) | Content |
@@ -125,7 +139,8 @@ added this doc):
   `IOS_APP_DESIGN.md` §17.4) — this study adjusts their composition/skins,
   not their contracts. First Mac session checklist in §17.6 still governs.
 - Bot names on all picker/table surfaces go through the display mapping in
-  `docs/IOS_BOT_NAMING.md` (Moscow ladder; ⚙ icon; `%` never renders).
+  `docs/IOS_BOT_NAMING.md` (the 10-rung km-to-Moscow ladder; ⚙ icon; `%`
+  never renders; the picker shows the km flavor line — mockup frames R1–R3).
 - The iMessage extension reuses this exact table at 2–4 players inside its
   expanded sheet — see `docs/imessage-layout.html` M4.
 - Acceptance items to add to milestone B's DoD: B1/B2/S1/S2 frames

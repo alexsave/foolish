@@ -14,10 +14,10 @@ everything this document does not explicitly correct in §3.*
 | Doc | What it gives you |
 | --- | --- |
 | `docs/IMESSAGE_GAME_DESIGN.md` | THE spec: product, `FMSG` payload, message protocol, identity/seats, the git-style concurrency model (Rule P / rebase), Messages API wiring, worked race examples, test plan. Read it fully. |
-| `docs/imessage-layout.html` | The UI mockups (open in a browser): thread bubble, compact drawer, expanded table, staged state, group lobby, finished card, `/m/` fallback — plus the 300×195 bubble-snapshot spec. Build these screens. |
+| `docs/imessage-layout.html` | The UI mockups (open in a browser): thread bubble (M1 faces vs M2 glyphs, light+dark), compact drawer (M3), expanded table + staged state (M4/M4b), finished card (M5), group lobby (M6), `/m/` fallback (M7) — plus the 300×195 bubble-snapshot zone spec. Build these screens. |
 | `docs/IOS_APP_DESIGN.md` §17 | State of the host iOS app (built; Swift pending first `xcodebuild`). The extension ships INSIDE this app. |
 | `docs/REPLAY_FORMAT6_HIDDEN_STATE.md` | The shipped v6 replay codec — what "mid-game encoding" now exists (and §3.3 below: what it does and doesn't give this project). |
-| `docs/IOS_BOT_NAMES.md` | iOS bot display names (no bots in iMessage v1 — relevant only for shared strings hygiene). |
+| `docs/IOS_BOT_NAMING.md` | iOS bot display names (no bots in iMessage v1 — relevant only for shared strings hygiene). |
 | `README.md` + `docs/ARCHITECTURE_AS_A_PATTERN.md` | The repo's one law: game rules exist ONCE, in C, compiled to wasm (server/web) and a static lib (iOS). TS/Swift marshal and render. |
 
 **The one hard rule, repeated:** no Durak rule is ever reimplemented in Swift
@@ -194,6 +194,39 @@ encodings**. Precisely:
 target. The one-app-record decision (bundled extension, never standalone)
 stands and is already reflected in the bundle ids.
 
+### 3.5 Verified platform facts (July 2026 — cite these, not memory)
+
+- **`MSMessage.url` cap is documented: 5,000 characters** (Apple docs,
+  MSMessage.url). Our P95 guardrail (<1,000 base32 chars) sits at ~⅕ of the
+  platform cap. Custom schemes forbidden; https required — ours is a real
+  web page by design.
+- **MSSession semantics confirmed by the docs:** a same-session send removes
+  the previous bubble and inserts the new one at the transcript bottom; a
+  summary line is left in the old position **only if `summaryText` was
+  non-nil** — so ALWAYS set summaryText, or the game's history evaporates
+  from the thread.
+- **Compact style = the keyboard area:** no text fields there (no keyboard
+  available — the nickname entry in the join flow must
+  `requestPresentationStyle(.expanded)` first) and no horizontal scrollers.
+- **No background execution, no push; `didReceive` fires only while
+  visible** — as the spec assumed.
+- **Messages extensions remain supported and reviewable in the iOS 26 era**
+  (no deprecations in the Messages framework). Discoverability is poor
+  (buried under the "+" menu since iOS 17): the HOST APP drives installs —
+  do not build a growth plan on the Messages drawer.
+- **Bubble image:** 300×195 pt @3x render guidance stands (WWDC16); Messages
+  crops ~6 pt off the sides and recompresses — never bake text into the
+  image; captions carry the words.
+- **Shipping the extension later is a normal update** to the app record —
+  M5 here does not need to ride the app's first submission.
+- Two kernel-side cautions: the durable **state blob does NOT carry the deal
+  seed** (only a deterministic-deck flag + remaining deck order) — cache the
+  envelope, never "the blob + assume seed"; and **guards.wasm cannot back
+  the `/m/` route** (built without `legal.c`/`replay.c` and with
+  `-DDEAL_RNG_DISABLED`, so it cannot re-deal from a seed) — the route
+  lazy-loads the full rules module via the engine bridge, exactly as §4 M0.6
+  specifies.
+
 ---
 
 ## 4. Build order
@@ -235,7 +268,7 @@ Mac and de-risks the entire design in CI — start there.
 6. **`/m/` route** `src/app/m/[payload]/page.tsx`: client-side only, parse
    the leading text-version char, `base32Decode`, `kernelMsgDecode`,
    render the PUBLIC view read-only with existing board components + the
-   install/play CTAs (mockup IM7). OG meta tags with the public snapshot.
+   install/play CTAs (mockup M7). OG meta tags with the public snapshot.
 
 ### M1 — Xcode target + shim additions (2–4 d, first Mac work)
 
@@ -267,11 +300,11 @@ Mac and de-risks the entire design in CI — start there.
 ### M2 — the extension UI (5–8 d)
 
 Build the screens of `docs/imessage-layout.html` with FoolishKit components:
-compact drawer (IM2: App-Group game list + New game), expanded table (IM3:
+compact drawer (M3: App-Group game list + New game), expanded table (M4:
 seat chips / battle grid / deck well / fan — TableView's grammar, ≤4 seats),
 the bubble snapshot renderer (300×195 pt `UIGraphicsImageRenderer`, PUBLIC
-state only, per the mockup page §3 zone spec: watch-style glyph-card rows +
-felt/wool/fern materials), lobby (IM5). Interaction: tap-to-attack,
+state only, per the mockup page §1 snapshot zone spec: watch-style glyph-card rows +
+wool/fern materials), lobby (M6). Interaction: tap-to-attack,
 arm-then-target to cover, kernel-driven action bar, Send-move enabling on
 ≥1 applied action with the "others may be playing too" hint.
 
@@ -281,7 +314,7 @@ arm-then-target to cover, kernel-driven action bar, Send-move enabling on
 (the callback table is exact). Implement in Swift: chain cache + pending
 ledger in the App Group (§9.3 JSON shape), Rule P adoption, Rule R rebase
 with the round-boundary guard, staged/`didStartSending`/`didCancelSending`
-handling (mockup IM4), seat identity layers §6 (cache → sender inference →
+handling (mockup M4b), seat identity layers §6 (cache → sender inference →
 nickname picker). **Port the M0 pure functions with the same JSON fixtures
 run in both CIs** — the e2e suite is the oracle. Manual matrix: two
 simulators (Xcode Messages harness), then a device pair (§17.12 warns the
@@ -289,7 +322,7 @@ timing differs).
 
 ### M4 — game end + localization (2–3 d)
 
-FINISHED bubble (mockup IM6): terminal-action device encodes the replay
+FINISHED bubble (mockup M5): terminal-action device encodes the replay
 (v6 preferred — add the shim entry if M1 skipped it), `message.url` = the
 standard `foolish.cards/<code>` (NOT `/m/`), trophy row in the drawer.
 All strings through the shared localization keys (FStrings/xcstrings;
@@ -300,7 +333,7 @@ phrasing (§17.13).
 
 Extension icon set (fern mark), privacy labels (extension adds nothing —
 still "no data collected" for iMessage play), age rating unchanged (card
-game, no gambling; bot-name rationale in `IOS_BOT_NAMES.md` §5), TestFlight
+game, no gambling; bot-name rationale in `IOS_BOT_NAMING.md` §5), TestFlight
 device-pair pass, submit riding the app's record.
 
 ---
@@ -330,7 +363,7 @@ device-pair pass, submit riding the app's record.
 | Full protocol/concurrency spec | `docs/IMESSAGE_GAME_DESIGN.md` |
 | This work order | `docs/IMESSAGE_IMPLEMENTATION_HANDOFF.md` |
 | UI mockups + snapshot spec | `docs/imessage-layout.html` |
-| Phone-app layout study (board grammar) | `docs/ios-se-layout.html` |
+| Phone-app layout study (board grammar) | `docs/ios-phone-layout.html` (+ `docs/IOS_PHONE_LAYOUT.md`) |
 | Kernel | `cnitro/src/{game,legal,view,replay}.c` |
 | Seeded deal API | `cnitro/src/game.h` (§ RNG, `game_set_deal_seed_bytes`) |
 | Action wire | `cnitro/src/awire.{h,c}` |

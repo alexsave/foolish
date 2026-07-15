@@ -308,7 +308,12 @@ ul{max-width:78ch}
   typical 3–4 pair rounds, and names disappear entirely (identity moves one
   tap away, which the phone, unlike the watch, does not need to do). Keep as
   the degradation target if Dynamic-Type-XL testing shows the arc chips
-  can't hold names.</p>
+  can't hold names. A parallel design pass (the retired
+  <code>ios-se-layout.html</code> study) independently arrived at this strip
+  as its primary — evidence it is a sturdy fallback — and contributed the
+  <b>one-tap roster sheet</b> (tap the strip/arc → full-name sheet with
+  counts, flip, and who's out), which Option B adopts as the arc's
+  tap-through detail regardless.</p>
 </section>
 
 <!-- ================================================================ -->
@@ -365,7 +370,16 @@ ul{max-width:78ch}
       <code>fio_legal_from_packed_json</code> — never a Swift boolean.</li>
     <li><b>Bot names</b> render via the display-mapping layer
       (<code>docs/IOS_BOT_NAMING.md</code>): strip <code>%</code>, map family →
-      localized city, keep the instance number.</li>
+      localized city, keep the instance number; the picker adds the
+      km-to-Moscow flavor line.</li>
+    <li><b>Absorbed from the parallel SE study</b> (retired
+      <code>ios-se-layout.html</code>): the one-tap roster sheet (arc
+      tap-through); <b>press-drag fan scrub</b> for 15+ card hands — slide a
+      finger along the fan, the touched card lifts and magnifies, release
+      (or click) arms it — which keeps a 19-card hand playable at ~17 pt
+      exposure with no second row and no horizontal scroll; and
+      <b>arm-then-target covering</b> (tap your card to arm, tap the open
+      attack to place) as the precision alternative to drag.</li>
   </ul>
 </section>
 
@@ -690,57 +704,73 @@ frame('framesS','S2 · The 15-card hand','After a brutal pickup the fan compress
           ['Q',0],['Q',1],['K',2],['K',0],['A',0],['A',2],['6',2]],
     buttons:[{l:'GOOD',off:1},{l:'ATTACK'}]}));
 
-/* roster picker */
-frame('framesR','R1 · Offline bot picker (en)','Home → OFFLINE. The city ladder, weakest at the wheel’s left. ⚙ marks bots everywhere; the % prefix never renders.',
-  uiScreen(scr=>{
-    const h=el('',{left:0,top:Z(40),width:'100%',textAlign:'center',
+/* roster picker — the merged 10-rung "road to Moscow" ladder
+   (docs/IOS_BOT_NAMING.md §1): strength = closeness to the Kremlin,
+   surfaced as a km flavor line. */
+function rosterScreen(title,rows,dealLabel){
+  return uiScreen(scr=>{
+    const h=el('',{left:0,top:Z(34),width:'100%',textAlign:'center',
       color:'#fff',fontFamily:'Georgia,serif',fontWeight:'900',
-      fontSize:Z(30),textShadow:'0 2px 6px #000'});h.textContent='Offline table';scr.append(h);
-    const sub=el('',{left:0,top:Z(80),width:'100%',textAlign:'center',
-      color:'#ffd9a0',fontSize:Z(12)});sub.textContent='Pick your opponent — no network needed';
-    scr.append(sub);
-    const names=[['Brighton Beach','random · chaotic'],['Miami','simple heuristic'],
-      ['Khabarovsk','handwritten'],['Vladivostok','firecracker · medium'],
-      ['Samara','blackpowder · hard'],['St Petersburg','cordite · very hard'],
-      ['Moscow','octogen · top dog']];
-    names.forEach((nm,i)=>{
-      const row=el('',{left:Z(48),top:Z(120+i*56),width:Z(280),height:Z(46),
+      fontSize:Z(26),textShadow:'0 2px 6px #000'});h.textContent=title;scr.append(h);
+    rows.forEach((nm,i)=>{
+      const last=i===rows.length-1;
+      const row=el('',{left:Z(48),top:Z(76+i*47),width:Z(280),height:Z(41),
         border:`calc(2*var(--zk)) solid #5D3A1A`,borderRadius:Z(8),
-        background:i===6?'rgba(178,34,34,.35)':'rgba(0,0,0,.35)',zIndex:3});
-      const t1=el('',{left:Z(12),top:Z(5),color:'#fff',fontWeight:'800',
-        fontSize:Z(15)});t1.textContent='⚙ '+nm[0];
-      const t2=el('',{left:Z(12),top:Z(25),color:'#d9c9a8',fontSize:Z(10)});
+        background:last?'rgba(178,34,34,.35)':'rgba(0,0,0,.35)',zIndex:3});
+      const t1=el('',{left:Z(12),top:Z(3),color:'#fff',fontWeight:'800',
+        fontSize:Z(14)});t1.textContent='⚙ '+nm[0];
+      const t2=el('',{left:Z(12),top:Z(22),color:'#d9c9a8',fontSize:Z(9.5)});
       t2.textContent=nm[1];
       row.append(t1,t2);
-      if(i===6){const star=el('',{right:Z(10),top:Z(10),color:'#E79743',
-        fontSize:Z(18)});star.textContent='★';row.append(star);}
+      if(last){const star=el('',{right:Z(10),top:Z(8),color:'#E79743',
+        fontSize:Z(17)});star.textContent='★';row.append(star);}
       scr.append(row);
     });
-    scr.append(woodBtnBig('DEAL — 4 PLAYERS',560,true));
-  }));
+    scr.append(woodBtnBig(dealLabel,590,true));
+  });
+}
+frame('framesR','R1 · Offline bot picker (en)','Home → OFFLINE: the full 10-rung offline roster (EngineC.roster()), weakest first. Strength reads as distance — the km flavor line replaces any ELO number. ⚙ marks bots; the % prefix never renders.',
+  rosterScreen('Offline table',[
+    ['Miami','random · 9,100 km from Moscow'],
+    ['Brighton Beach','simple heuristic · 7,520 km from Moscow'],
+    ['Vladivostok','handwritten · 6,430 km from Moscow'],
+    ['Khabarovsk','espresso · 6,140 km from Moscow'],
+    ['Novosibirsk','robusta · 2,810 km from Moscow'],
+    ['Yekaterinburg','firecracker · 1,420 km from Moscow'],
+    ['Samara','gunpowder · 860 km from Moscow'],
+    ['Kazan','blackpowder · 720 km from Moscow'],
+    ['St. Petersburg','cordite · 635 km from Moscow'],
+    ['Moscow','octogen · The Kremlin itself'],
+  ],'DEAL — 4 PLAYERS'));
 
-frame('framesR','R2 · Same screen, Korean locale','Names localize through the client mapping table: 모스크바, never "Moscow". Instance numbers and ⚙ are locale-neutral.',
-  uiScreen(scr=>{
-    const h=el('',{left:0,top:Z(40),width:'100%',textAlign:'center',
-      color:'#fff',fontWeight:'900',fontSize:Z(28),textShadow:'0 2px 6px #000'});
-    h.textContent='오프라인 테이블';scr.append(h);
-    const names=[['브라이턴 비치','랜덤'],['마이애미','단순 휴리스틱'],
-      ['하바롭스크','핸드리튼'],['블라디보스토크','중급'],
-      ['사마라','상급'],['상트페테르부르크','최상급'],['모스크바','최강']];
-    names.forEach((nm,i)=>{
-      const row=el('',{left:Z(48),top:Z(120+i*56),width:Z(280),height:Z(46),
-        border:`calc(2*var(--zk)) solid #5D3A1A`,borderRadius:Z(8),
-        background:i===6?'rgba(178,34,34,.35)':'rgba(0,0,0,.35)',zIndex:3});
-      const t1=el('',{left:Z(12),top:Z(5),color:'#fff',fontWeight:'800',
-        fontSize:Z(15)});t1.textContent='⚙ '+nm[0];
-      const t2=el('',{left:Z(12),top:Z(25),color:'#d9c9a8',fontSize:Z(10)});
-      t2.textContent=nm[1];row.append(t1,t2);
-      if(i===6){const star=el('',{right:Z(10),top:Z(10),color:'#E79743',
-        fontSize:Z(18)});star.textContent='★';row.append(star);}
-      scr.append(row);
-    });
-    scr.append(woodBtnBig('시작 — 4명',560,true));
-  }));
+frame('framesR','R2 · Same screen, Korean locale','Names localize through the client mapping table (BotNames.swift): 모스크바, never "Moscow". Instance numbers, km, and ⚙ are locale-neutral.',
+  rosterScreen('오프라인 테이블',[
+    ['마이애미','모스크바에서 9,100 km'],
+    ['브라이턴비치','모스크바에서 7,520 km'],
+    ['블라디보스토크','모스크바에서 6,430 km'],
+    ['하바롭스크','모스크바에서 6,140 km'],
+    ['노보시비르스크','모스크바에서 2,810 km'],
+    ['예카테린부르크','모스크바에서 1,420 km'],
+    ['사마라','모스크바에서 860 km'],
+    ['카잔','모스크바에서 720 km'],
+    ['상트페테르부르크','모스크바에서 635 km'],
+    ['모스크바','크렘린 그 자체'],
+  ],'시작 — 4명'));
+
+frame('framesR','R3 · ko names on the live board','Localization proof where it matters — the table itself: seat chips render 모스크바 1, 사마라 1… via the same render-time mapping. Long names (상트페테르부르크) truncate on chips; the roster sheet shows them in full.',
+  board({youDefend:1,players:[
+      {name:'하바롭스크 1',bot:1,count:6},
+      {name:'블라디보스토크 2',bot:1,count:4},
+      {name:'모스크바 1',bot:1,count:6,think:1},
+      {name:'SVETA',count:5},
+      {name:'상트페테르부르크 3',bot:1,count:2,good:1},
+      {name:'사마라 1',bot:1,count:7},
+      {name:'브라이턴비치 2',bot:1,count:0,out:1},
+    ],deck:4,trump:['9',1],discard:12,
+    battles:[{a:['7',0],c:['K',0]},{a:['J',2],c:['Q',2]},{a:['8',2],target:1}],
+    hand:[['6',3],['9',0],['J',1],['Q',2],['K',3],['A',1]],
+    status:'8♣를 막거나 5장을 가져가세요',
+    buttons:[{l:'패스',off:1},{l:'가져가기',hot:1}]}));
 
 /* demo */
 (function(){

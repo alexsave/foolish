@@ -999,23 +999,30 @@ against a staging Supabase project. `docs/PROTOCOL.md` §9 lists it.
 
 ### 17.8 Phone layout, naming, and consolidation studies (2026-07-15)
 
-Four companion docs landed after this section was last updated; where they
-conflict with the body above, they win:
+Companion docs landed after this section was last updated (each merged from
+two independent design passes on 2026-07-15); where they conflict with the
+body above, they win:
 
 - **`docs/IOS_PHONE_LAYOUT.md` + `docs/ios-phone-layout.html`** — the SE
   8-player table study. Confirms §16.B3's banded skeleton, fixes its numbers
-  (opponent *arc* with zigzag at 6+ seats), and reverses one §5 decision:
-  the table wears the website's wool/wood/fern materials, not flat felt.
+  (opponent *arc* with zigzag at 6+ seats, one-tap roster sheet, fan scrub
+  for big hands), and reverses one §5 decision: the table wears the
+  website's wool/wood/fern materials, not flat felt.
 - **`docs/IOS_BOT_NAMING.md`** — iOS-only display mapping of the explosive
-  bot names to Russian cities (octogen → Moscow), localized (en/ru/ko now,
-  verified exonym table for later locales). Also fixes the raw-`%` name bug
-  on the online table in passing.
-- **`docs/IMESSAGE_GAME_DESIGN.md` §20** — the extension's updated
-  implementation handoff (most of its M1–M2 fell out of this app's build;
-  seed is 32 bytes; format 6 shipped as the *other* design).
+  bot names to Russian cities: the 10-rung km-to-Moscow ladder
+  (octogen → Moscow), localized (en/ru/ko now, verified exonym table for
+  later locales), `BotNames.swift` spec. Also fixes the raw-`%` name bug on
+  the online table in passing.
+- **`docs/IMESSAGE_IMPLEMENTATION_HANDOFF.md`** — the extension's canonical
+  work order (most of the old plan's M1–M2 fell out of this app's build;
+  seed is 32 bytes; actions are seat-prefixed awire frames; format 6
+  shipped as the *other* design). `IMESSAGE_GAME_DESIGN.md` stays the
+  protocol spec; its §20 points here.
 - **`docs/C_CORE_CONSOLIDATION.md`** — before writing `BoardDiff.swift`
-  (§16.B4), read this: the plan is to consume kernel-emitted events instead
-  (action A1), and to share the bot-cycle/pacing in C (action A2).
+  (§16.B4), read this: the plan is to consume kernel-emitted events instead,
+  and to move the bot roster/knobs + drive cycle + pacing into C (it also
+  documents a live divergence: offline cordite currently runs un-knobbed at
+  arena budget).
 
 ### 17.9 watchOS (designed, parked)
 

@@ -1,239 +1,266 @@
-# iOS bot naming — explosives → Russia, with localization
+# iOS bot names — the Russia map (explosives → cities), with localization
 
-*Design + decision record, July 2026. Scope: the **iOS app (and its iMessage /
-watch surfaces) only**. The website, the database, the wire, replays, and the
-C engine keep the explosive codenames unchanged. This is a pure client-side
-display mapping. Nothing in this doc requires a server or schema change, and
-nothing here may leak back into stored names — `%Octogen 1` stays `%Octogen 1`
-everywhere except pixels on Apple screens.*
+*Design doc + implementation spec (NOT yet implemented — this is the work
+order). Merged 2026-07-15 from two independent design passes; where they
+clashed, the better idea won (clash log in §8). The iOS app renames the bot
+roster from explosives to Russian cities and Russian-diaspora hubs so the
+App Store age-rating questionnaire stays boring. **The website keeps the
+explosive names.** Strategy KEYS never change anywhere — this is a
+render-time display map, implemented entirely client-side; nothing here may
+leak into stored names, replay blobs, or the wire.*
 
-Companions: mockups showing the names in situ —
-`docs/ios-phone-layout.html` §6 (offline picker, en + ko). Verified research
-on exonyms/CLDR/sensitivities is summarized in §5–§7 below.
+*Mockups showing the names in situ: `docs/ios-phone-layout.html` §6
+(offline picker + Korean-locale frames).*
 
 ---
 
-## 1. Why
+## 1. The mapping (primary scheme: cities — "the road to Moscow")
 
-1. **Age rating.** Apple's July-2025 rating overhaul (4+/9+/13+/16+/18+, new
-   "violent themes" questionnaire, in force since Jan 31 2026) invites broader
-   readings than the old depiction-based descriptors. A card game whose bots
-   are *named* after military explosives would *probably* still pass 4+/9+ —
-   but a reviewer reading "Semtex"/"Novichok" as real-world-violence references
-   is a nonzero risk, and renaming is the zero-risk path. (Novichok — a nerve
-   agent tied to real assassinations — is research-only and never player-facing,
-   but the theme guilt-by-associates.)
-2. **Theme fit.** Durak is *the* Russian card game. A ladder of Russian cities
-   culminating in Moscow is warmer, funnier, and more on-brand than munitions —
-   and it gives the strength ladder a legible geography: **you start against
-   the diaspora and fight your way to the Kremlin.**
+**The gimmick: a bot's strength is its closeness to Moscow.** The ladder is
+a journey home — the weakest bot suns itself in Miami; the strongest IS
+Moscow. Air distance to the Kremlin decreases **strictly monotonically** as
+strength climbs, and the bot picker surfaces it as a flavor line
+("1,420 km from Moscow" / Moscow: "The Kremlin itself"), which makes the
+strength order legible without showing a number of ELO.
 
-## 2. The production roster (what actually needs mapping)
+The table covers the full **offline strategy roster** (10 rungs — the C
+table in `cnitro/ios/ios_api.c:37-48` exposes `random … octogen`, which is
+wider than the website's *seeded* roster; see §2).
 
-Only strategies that are (a) seeded in `bots` and (b) dispatched by
-`bots.wasm` are production (`supabase/seed.sql:912-986`,
-`cnitro/wasm/wasm_bots_api.c:216-252`). Weakest → strongest, with instance
-counts as seeded:
+| # | Strategy key | en | ru | ko | ~km | Why this city |
+|---|---|---|---|---|---|---|
+| 1 | `random` | Miami | Майами | 마이애미 | 9,100 | Sunny Isles Beach = "Little Moscow", the farthest diaspora outpost; beach chaos for the chaos bot |
+| 2 | `simple_heuristic` | Brighton Beach | Брайтон-Бич | 브라이턴비치 | 7,520 | Brooklyn's Russian-speaking hub; plays the old-school basics |
+| 3 | `handwritten` | Vladivostok | Владивосток | 블라디보스토크 | 6,430 | Where the long road home starts — end of the Trans-Siberian |
+| 4 | `espresso` | Khabarovsk | Хабаровск | 하바롭스크 | 6,140 | One stop closer, Far East, on the 5,000-ruble note |
+| 5 | `robusta` | Novosibirsk | Новосибирск | 노보시비르스크 | 2,810 | Siberia's science capital (Akademgorodok) — fitting for the first Monte-Carlo bot |
+| 6 | `firecracker` | Yekaterinburg | Екатеринбург | 예카테린부르크 | 1,420 | The Urals — the Europe/Asia border; the ladder's "Medium" rung |
+| 7 | `gunpowder` | Samara | Самара | 사마라 | 860 | Volga aerospace city; WWII reserve capital (owner-requested city) |
+| 8 | `blackpowder` | Kazan | Казань | 카잔 | 720 | Volga powerhouse, "third capital"; the ladder's "Hard" rung |
+| 9 | `cordite` | St. Petersburg | Петербург | 상트페테르부르크 | 635 | The second capital — the previous champion |
+| 10 | `octogen` | Moscow | Москва | 모스크바 | 0 | Top dog. Non-negotiable. |
 
-| Rung | strategy_key | Seeded nicknames (after `%` prefix) |
+Max tiers compose: the site's `Cordite Max` / `Octogen Max` render as
+`St. Petersburg Max` / `Москва Макс` / `모스크바 맥스` (localized "Max"
+suffix, key `ios.bot.max`). Instance numbers carry over verbatim:
+`%Octogen 2` → **⚙ Moscow 2** (ko: **⚙ 모스크바 2**). The easter egg
+`%0x00C0FFEE` renders unchanged everywhere — hex is culture-neutral and
+beloved.
+
+Notes on the picks (verified research, §6–§7):
+
+- **Brighton Beach** — "Little Odessa," formed by the 1970s Soviet Jewish
+  emigration wave; one of the largest Russian-*speaking* communities in the
+  West. We use the place's own name, never "Little Odessa" (Odesa is a
+  Ukrainian city), and in any copy we say Russian-*speaking* / Soviet-émigré,
+  never "a Russian city."
+- **Miami** — Sunny Isles Beach is the real "Little Moscow" referent;
+  "Miami" is the display name because it's globally recognizable.
+- All Russian-Federation picks are large, neutral, recognizable cities.
+  Deliberately avoided: Ukrainian/Belarusian/Kazakh cities, anything in
+  Crimea, gulag-connoted towns (Magadan, Norilsk, Vorkuta), Kaliningrad
+  (militarized-exclave headlines), politician-adjacent names.
+- **ru uses the colloquial-official short form «Петербург»** — the 15-char
+  «Санкт-Петербург» wrecks seat badges; «Питер» is too slangy for UI. The
+  ko 상트페테르부르크 has no comparable sanctioned short form: chips truncate
+  with `minimumScaleFactor` + ellipsis, picker/roster show it in full.
+- ko 브라이턴비치 is written **without a space** (ko.wikipedia title).
+- zh note for a future locale: CLDR/iOS emit the historic Chinese name
+  **海参崴** for Vladivostok, not the transliteration 符拉迪沃斯托克 — a
+  politically loaded dual naming. Ship what CLDR says; don't editorialize.
+
+## 2. Which roster is which (offline keys vs online nicknames)
+
+Bot identity reaches the UI from three sources, and two different rosters
+are in play — the mapping must serve both:
+
+| Source | Shape | Roster |
 |---|---|---|
-| 1 | `random` | Random 1–7 |
-| 2 | `simple_heuristic` | Simple Heuristic 1–3 |
-| 3 | `handwritten` | Handwritten 1, **0x00C0FFEE**, Handwritten 3–4 |
-| 4 | `firecracker` | Firecracker 1–3 |
-| 5 | `blackpowder` | Blackpowder 1–3 |
-| 6 | `cordite` / `cordite_max` | Cordite 1–3 / Cordite Max 1–3 |
-| 7 | `octogen` / `octogen_max` | Octogen 1–3 / Octogen Max 1–3 |
+| Offline picker / offline seats | strategy key from `EngineC.roster()` (`fio_strategy_name`) | all 10 rungs above |
+| Online nicknames (DB rows) | raw string `"% <Base> [Max] <n>"` in `players[].name` — there is NO strategy enum on the wire (`_shared/wire/view.ts:29-30`; `strategy_key` is server-only) | the *seeded* subset: Random ×7, Simple Heuristic ×3, Handwritten ×4 (incl. `0x00C0FFEE`), Firecracker ×3, Blackpowder ×3, Cordite/Cordite Max ×3+3, Octogen/Octogen Max ×3+3 (`supabase/seed.sql:912-986`) |
+| Replay blobs / history | names embedded at encode time | anything ever seeded — **including dropped families** (`Espresso` rows existed before migration `20260711130000_drop_non_wasm_bots`), so the nickname parser keeps Espresso/Robusta/Gunpowder in its base table for historical replays |
 
-Key wire fact (verified): bot identity reaches clients **only as the raw
-`name` string + `is_ai`** — there is no strategy enum on the wire
-(`_shared/wire/view.ts:29-30`; `strategy_key` is server-only). So the iOS
-mapping keys off the *name*, and because the roster is a fixed seeded set, an
-**exact-match table of the ~26 nicknames** is the robust approach (regex
-parsing of "Family N" is the fallback for future bots; unknown names render
-raw). Offline is cleaner still: roster names come from the C strategy table
-(`fio_strategy_name` → `EngineC.roster()`), so offline maps by strategy id
-directly with no string parsing at all.
+**Rule: strategy-derived bot names are treated as KEYS and localized at
+render time — never at storage time.** Replay codes stay byte-identical
+across locales, DB rows never carry localized strings, and switching the app
+language re-renders every bot name instantly. Never reverse-map: display
+names must never be typed back into any server-bound field.
 
-## 3. The mapping (recommended: cities — "the road to Moscow")
+## 3. Implementation spec (one new file + five small touches)
 
-Strength = closeness to the capital. Diaspora → Far East → Volga → the two
-capitals. The user-fixed anchor: **octogen = Moscow, top dog.**
+**New file `ios/FoolishKit/DesignSystem/BotNames.swift`** with exactly three
+public entry points (every current and future surface calls these, never
+re-derives):
 
-| strategy_key | Explosive (web) | **iOS display (en)** | Why this rung |
-|---|---|---|---|
-| `random` | Random | **Brighton Beach** | The boardwalk hustler; learned Durak on the Coney Island boardwalk; chaotic, lovable, weakest. (7 instances — the crowd you meet first.) |
-| `simple_heuristic` | Simple Heuristic | **Miami** | Sunny Isles "Little Moscow": all bling, simple fundamentals. |
-| `handwritten` | Handwritten | **Khabarovsk** | Far-east workhorse on the 5,000-ruble note: solid, provincial, rule-book player. |
-| `firecracker` | Firecracker | **Vladivostok** | End of the Trans-Siberian, Pacific-fleet fortress — the "Medium" rung where the mainland starts fighting back. |
-| `blackpowder` | Blackpowder | **Samara** | Volga workhorse; WWII *reserve capital*; builds Soyuz rockets. The "Hard" rung guarding the road to the capitals. |
-| `cordite` | Cordite | **St Petersburg** | The imperial second capital: cultured, exacting, beats almost everyone. |
-| `cordite_max` | Cordite Max | **St Petersburg Max** | Same brain, bigger budget (see §4 on "Max"). |
-| `octogen` | Octogen | **Moscow** | Top dog. ★ |
-| `octogen_max` | Octogen Max | **Moscow Max** | The final boss budget. |
+```swift
+public enum BotNames {
+    /// Roster strategy key (EngineC.roster() name, e.g. "octogen") →
+    /// localized display name. Unknown keys degrade to .capitalized.
+    public static func display(strategy key: String) -> String {
+        let lookup = "ios.bot.\(key)"
+        let s = FStrings.t(lookup)
+        return s == lookup ? key.capitalized : s
+    }
 
-Instance numbers carry over verbatim: `%Octogen 2` → displays **⚙ Moscow 2**
-(ko: **⚙ 모스크바 2**). The easter egg `%0x00C0FFEE` is left untouched on all
-platforms — hex is culture-neutral and beloved.
+    /// Localized picker flavor line ("1,420 km from Moscow"; Moscow:
+    /// "The Kremlin itself"), from the §1 km table keyed by strategy.
+    public static func flavorLine(strategy key: String) -> String?
 
-Notes on the choices (from the verified research, §7):
-- "St Petersburg" is written without the period (`St Petersburg`) on chips —
-  it is the longest name in every locale (ko 상트페테르부르크 = 8 syllables);
-  seat chips truncate with an ellipsis, and the picker/roster show it in full.
-  If truncation grates in practice, the sanctioned short form is the Russian
-  colloquial **Piter** (Питер) — hold in reserve, don't ship two names at once.
-- **Brighton Beach framing:** its "Little Odessa" identity is historically
-  *Ukrainian-Jewish* diaspora. In any copy, call it a *Russian-speaking* /
-  Soviet-émigré enclave, never "a Russian city." As a bot name with zero
-  captioning it's charming and safe.
-- Deliberately avoided: Ukrainian cities, anything in Crimea, Magadan/Norilsk
-  (gulag), Kaliningrad (militarized-exclave headlines), and non-Russian
-  Russophone cities (Riga, Almaty, Tel Aviv) — claiming those as "Russia" is
-  the one way this theme can offend.
-- zh-Hans note for a future locale: Chinese uses **海参崴** (Haishenwai) for
-  Vladivostok — the politically loaded native name, and also what CLDR/iOS
-  produce. Ship what CLDR says; do not editorialize.
+    /// Server / replay nicknames: "% <Base> [Max] [<n>]" → localized,
+    /// preserving the % prefix and index ("% Octogen Max 2" →
+    /// ru "% Москва Макс 2"). Parse: strip "%", peel trailing integer,
+    /// peel " Max", look Base up in a website-base→strategy-key table
+    /// (Random / Simple Heuristic / Handwritten / Espresso / Robusta /
+    /// Firecracker / Gunpowder / Blackpowder / Cordite / Octogen — the
+    /// dropped families stay for historical replays, §2). Unknown bases
+    /// (humans, "% 0x00C0FFEE") return unchanged.
+    public static func displayNickname(_ raw: String) -> String
+}
+```
 
-### 3b. The "Max" suffix
+**Strings**: add the `ios.bot.*` keys to FStrings/xcstrings (en/ru/ko in the
+same commit, per the §16.E4 identical-key-sets rule): the ten city names
+from §1, plus `ios.bot.max` ("Max"/"Макс"/"맥스"),
+`ios.bot.km` ("{km} km from Moscow"/"{km} км от Москвы"/"모스크바에서 {km} km"),
+`ios.bot.km0` ("The Kremlin itself"/"Сам Кремль"/"크렘린 그 자체").
 
-Keep it as a suffix word, localized once: en `Max`, ru `Макс`, ko `맥스`.
-It survives every locale, keeps the instance-number parser trivial, and reads
-gamer-natural. (Considered and rejected: "Moscow-City" for octogen_max — cute
-skyscraper joke, but it breaks the `<city> <Max?> <n>` grammar and needs its
-own translations.)
+**Wiring** (all display-side, no engine changes):
 
-## 4. Alternative mapping (Russian first names — "the table of regulars")
+1. `HomeView` bot picker: `Text(currentBot.name.capitalized)` →
+   `Text(BotNames.display(strategy: currentBot.name))`, plus `flavorLine`
+   as a dim caption (`lineLimit(1)` + `minimumScaleFactor` — Yekaterinburg
+   and 상트페테르부르크 are long).
+2. Offline seat names: the kernel's offline view carries no names —
+   `AppCoordinator.startOffline` builds `[seat: localizedName]` (numbered
+   "Moscow 1/2/3"-style when several copies sit down) and passes it to a new
+   `LocalGame.seatNames` property, exposed on the `GameSession` protocol
+   with a `[:]` default so `OnlineGame` is untouched.
+3. `TableView` seat badges + `WinView` fool line: read
+   `session.seatNames[seat]` first, else run the view's name through
+   `BotNames.displayNickname` — **this also fixes a live bug: iOS currently
+   renders the raw `%`-prefixed nickname on online tables** (no
+   `botDisplayName` port exists; `PackedGame.swift` roster merge →
+   `FSeatBadge` shows `%Octogen 1` today) — else the existing `P<seat>`
+   fallback. The ⚙ bot icon accompanies the name everywhere (it is the
+   is-bot signal once `%` is stripped).
 
-Kept as a fully-designed alternative in case the city ladder tests poorly.
-Ladder logic: the folkloric card table, weakest = **Vanya** (*Ivan-durak*,
-the fool of Russian folklore who sometimes wins anyway — the perfect
-weakest-bot name in a game literally called Fool).
+The same calls are the contract for every future surface: watchOS roster
+rows, iMessage lobby labels, native leaderboard. (iMessage v1 ships no bots.)
 
-| strategy_key | Name | Flavor |
+## 4. The alternative considered: Russian first names
+
+Owner-suggested alternative (Vladimir top dog), fully designed so it can be
+swapped in by editing one table (the `ios.bot.*` values):
+
+| Strategy | Name (en / ru / ko) | Logic |
 |---|---|---|
-| `random` | **Vanya** | Ivan-durak, the holy fool. |
-| `simple_heuristic` | **Petya** | The kid at the table (diminutives read junior). |
-| `handwritten` | **Nikolai** | Old-regime solidity, plays by the book. |
-| `firecracker` | **Boris** | Spassky — aggressive, uneven. |
-| `blackpowder` | **Sergei** | Korolyov — the engineer. |
-| `cordite` / `_max` | **Dmitri** / Dmitri Max | Mendeleev/Shostakovich — the eternal, formidable #2. |
-| `octogen` / `_max` | **Vladimir** / Vladimir Max | Top dog, per the owner's anchor. |
+| `random` | Vanya / Ваня / 바냐 | *Ivan-durak*, the folkloric fool who sometimes wins anyway — the perfect weakest bot in a game literally called Fool |
+| `simple_heuristic` | Alyosha / Алёша / 알료샤 | diminutives read junior… |
+| `handwritten` | Olya / Оля / 올랴 | |
+| `espresso` | Zhenya / Женя / 제냐 | |
+| `robusta` | Katya / Катя / 카탸 | |
+| `firecracker` | Misha / Миша / 미샤 | Tal — the swashbuckler |
+| `gunpowder` | Nadya / Надя / 나댜 | |
+| `blackpowder` | Sergei / Сергей / 세르게이 | …formal names at the top |
+| `cordite` | Tatiana / Татьяна / 타티아나 | |
+| `octogen` | Vladimir / Владимир / 블라디미르 | top dog, per the owner |
 
-Two honest flags from research: (a) in 2026, "Vladimir, the strongest" will be
-read as a Putin reference by nearly everyone — that's either the joke or a
-liability; decide with eyes open (neutral-prestige alternative top:
-**Alexander**). (b) Personal names have **no CLDR data at all** — every CJK
-locale needs hand transliteration (블라디미르 / ウラジーミル / 弗拉基米尔 …),
-so names are ~30 hand strings vs the cities' partially-CLDR-backed table.
-**Recommendation stands: cities.** More flavor, better geography-as-difficulty
-metaphor, no head-of-state pun to defend in review.
+**Why cities won** (merged reasoning from both passes):
 
-## 5. Localization design ("I want ⚙ 모스크바 1, not ⚙ Moscow 1")
+- (a) personal names collide with real players' names in mixed online
+  lobbies and iMessage threads, where opponents are actual people with first
+  names — a bot called "Sergei" reads as a human; that ambiguity is a
+  support burden;
+- (b) cities scale to Max tiers less awkwardly ("Vladimir Max" reads like a
+  nightclub bouncer);
+- (c) the km-to-Moscow ladder gives the roster order a legible story;
+- (d) in 2026, "Vladimir, the strongest" will be read as a Putin reference
+  by nearly everyone — that's either the joke or a liability;
+- (e) personal names have **zero CLDR support** — every CJK locale needs
+  hand transliteration, vs the cities' partially-CLDR-backed table (§6);
+- (f) diminutive gender/register choices invite endless bikeshedding.
 
-**Decision: hardcode a per-locale display table in FoolishKit, generated into
-`Localizable.xcstrings` keys, seeded from the verified exonym table below.**
-Rationale, in order of what was investigated:
+Bonus bridge: Vladimir *is also a Golden-Ring city* 180 km from Moscow — if
+the roster ever gains an 11th rung, `Vladimir` slots between Kazan and
+St. Petersburg and both schemes meet in the middle.
 
-1. **The "free" CLDR ride is real but partial.** Moscow, Samara, Vladivostok
-   (and Novosibirsk/Omsk/Yekaterinburg/Kirov) are IANA tz zones, and ICU's
-   `VVV` date pattern emits the localized *exemplar city* for them in every
-   locale — `DateFormatter` with `dateFormat="VVV"`, `timeZone=Europe/Moscow`,
-   `locale=ko_KR` → "모스크바". **But**: Khabarovsk is *not* a tz zone
-   (it lives inside Asia/Vladivostok — the task's premise was wrong), and
-   neither are St Petersburg, Brighton Beach, or Miami-as-Miami. A mechanism
-   that covers 3 of 7 names is not a mechanism; it's a trap. Use CLDR as the
-   *build-time data source*, not a runtime API.
-2. **Only three locales ship today** (en/ru/ko, identical on web and iOS —
-   `Localizable.xcstrings`, `FStrings.swift`). 7 city names + "Max" × 3
-   locales ≈ 24 strings. This is not a scale problem; it's an afternoon.
-3. **Future locales are pre-solved:** the 12-language exonym table (§6) is
-   verified against Wikipedia/CLDR and lives here; when a locale ships, copy
-   its column.
+## 5. Age-rating context (why this exists)
 
-### Mechanics (for the implementer)
+Apple's July-2025 rating overhaul (tiers 4+/9+/13+/16+/18+, new
+"violent themes" questionnaire questions, in force since Jan 31 2026)
+invites broader readings than the old depiction-based descriptors. A card
+game whose opponents are literally named after military explosives
+(octogen = HMX, cordite, gunpowder…) invites at minimum a conversation —
+and "Novichok" (research-only, never player-facing, but one grep away) is a
+nerve agent tied to real assassinations. A card game whose opponents are
+named Moscow and Brighton Beach invites nothing. Renaming is the zero-risk
+path to the 4+/9+ band. The Russia theming also *fits the product* — Durak
+is the Russian national card game, the ru locale already ships a Soviet
+visual theme, and the diaspora nods are affectionate, not political.
 
-- New file `ios/FoolishKit/Net/BotName.swift` (mirror of the web's
-  `src/common/botName.ts`, which iOS currently lacks — today iOS shows the raw
-  `%`-prefixed name on the online table, a bug this work fixes in passing):
-  - `isBotName(_:)` / `botDisplayName(_:)` — port of the web pair
-    (strip `%`, gate on prefix).
-  - `botLocalizedName(_ raw: String) -> String` — exact-match the stripped
-    name against the 26 seeded nicknames → `(familyKey, isMax, instance)`;
-    fallback: regex `^(.+?)( Max)? (\d+)$` against the family list; fallback:
-    raw. Then compose
-    `FStrings.t("bot.city.\(familyKey)") + (isMax ? " " + t("bot.max") : "") + " \(instance)"`.
-  - Unknown names (future bots, `0x00C0FFEE`) render raw minus `%` — graceful
-    by construction.
-- Apply at exactly **two** choke points: `PackedGame.swift`'s roster merge
-  (covers every online seat, lobby, win screen) and `EngineC.roster()`'s
-  display path (offline picker; offline maps by strategy id → familyKey with
-  no parsing). The ⚙ bot icon accompanies the name everywhere (it is the
-  is-bot signal once `%` is stripped).
-- String keys (all three locales in the same commit — repo rule):
-  `bot.city.random`, `bot.city.simple_heuristic`, `bot.city.handwritten`,
-  `bot.city.firecracker`, `bot.city.blackpowder`, `bot.city.cordite`,
-  `bot.city.octogen`, `bot.max`.
-- **Never reverse-map.** Display names must never be typed back into any
-  server-bound field. Replay share codes, `add_bot` flows, chat mentions —
-  all operate on raw names. The mapping is render-only, one-directional.
-- Cross-platform note (accepted, deliberate): the same finished game shows
-  "Cordite 1" in a web replay and "St Petersburg 1" in the iOS replay viewer.
-  The name in the *stored* replay is the raw one; consistency-of-record wins.
+## 6. Localization mechanics & the CLDR investigation
 
-### Shipped-locale values (copy-paste ready)
+**Decision: hardcode the per-locale table (en/ru/ko today; §7 pre-solves
+future locales). The "free CLDR ride" was investigated and rejected as a
+runtime mechanism:**
 
-| key | en | ru | ko |
-|---|---|---|---|
-| bot.city.random | Brighton Beach | Брайтон-Бич | 브라이턴비치 |
-| bot.city.simple_heuristic | Miami | Майами | 마이애미 |
-| bot.city.handwritten | Khabarovsk | Хабаровск | 하바롭스크 |
-| bot.city.firecracker | Vladivostok | Владивосток | 블라디보스토크 |
-| bot.city.blackpowder | Samara | Самара | 사마라 |
-| bot.city.cordite | St Petersburg | Санкт-Петербург | 상트페테르부르크 |
-| bot.city.octogen | Moscow | Москва | 모스크바 |
-| bot.max | Max | Макс | 맥스 |
+- Moscow, Samara, Vladivostok, Novosibirsk, Omsk, Yekaterinburg, Kirov ARE
+  IANA tz zones, and ICU's `VVV` date pattern emits the localized exemplar
+  city (`DateFormatter`, `dateFormat="VVV"`, `timeZone=Europe/Moscow`,
+  `locale=ko_KR` → "모스크바").
+- **But Khabarovsk is NOT a tz zone** (it lives inside Asia/Vladivostok —
+  `Asia/Khabarovsk` has never existed), and neither are St. Petersburg,
+  Kazan, Brighton Beach, or Miami-as-Miami. A mechanism covering ~6 of 10
+  names is a trap. Use CLDR as a build-time data source and cross-check,
+  not an API.
+- Scale check: 10 cities + 3 flavor keys × 3 shipped locales ≈ 40 strings —
+  an afternoon, not a system.
 
-(ko forms verified against Korean Wikipedia titles; 브라이턴비치 is written
-without a space, per the ko.wikipedia article.)
-
-## 6. Future-locale exonym reference (verified)
+## 7. Future-locale exonym reference (verified)
 
 For when locales beyond en/ru/ko ship. Sources: CLDR 47 exemplar-city data
-and live Wikipedia article titles (spot-verified on the ambiguous cells).
++ live Wikipedia article titles (ambiguous cells spot-verified; the
+Yekaterinburg row is standard encyclopedic forms — re-verify when shipping).
 
 | en | ja | zh-Hans | es | fr | de | pt-BR | it | pl | tr | uk |
 |---|---|---|---|---|---|---|---|---|---|---|
 | Moscow | モスクワ | 莫斯科 | Moscú | Moscou | Moskau | Moscou | Mosca | Moskwa | Moskova | Москва |
 | St. Petersburg | サンクトペテルブルク | 圣彼得堡 | San Petersburgo | Saint-Pétersbourg | Sankt Petersburg | São Petersburgo | San Pietroburgo | Petersburg | Sankt-Peterburg | Санкт-Петербург |
+| Kazan | カザン | 喀山 | Kazán | Kazan | Kasan | Cazã | Kazan' | Kazań | Kazan | Казань |
 | Samara | サマーラ | 萨马拉 | Samara | Samara | Samara | Samara | Samara | Samara | Samara | Самара |
-| Vladivostok | ウラジオストク | 海参崴* | Vladivostok | Vladivostok | Wladiwostok | Vladivostok | Vladivostok | Władywostok | Vladivostok | Владивосток |
+| Yekaterinburg | エカテリンブルク | 叶卡捷琳堡 | Ekaterimburgo | Iekaterinbourg | Jekaterinburg | Ecaterimburgo | Ekaterinburg | Jekaterynburg | Yekaterinburg | Єкатеринбург |
+| Novosibirsk | ノヴォシビルスク | 新西伯利亚 | Novosibirsk | Novossibirsk | Nowosibirsk | Novosibirsk | Novosibirsk | Nowosybirsk | Novosibirsk | Новосибірськ |
 | Khabarovsk | ハバロフスク | 哈巴罗夫斯克 | Jabárovsk | Khabarovsk | Chabarowsk | Khabarovsk | Chabarovsk | Chabarowsk | Habarovsk | Хабаровськ |
+| Vladivostok | ウラジオストク | 海参崴* | Vladivostok | Vladivostok | Wladiwostok | Vladivostok | Vladivostok | Władywostok | Vladivostok | Владивосток |
 | Brighton Beach | ブライトン・ビーチ | 布莱顿海滩 | Brighton Beach | Brighton Beach | Brighton Beach | Brighton Beach | Brighton Beach | Brighton Beach | Brighton Beach | Брайтон-Біч |
 | Miami | マイアミ | 迈阿密 | Miami | Miami | Miami | Miami | Miami | Miami | Miami | Маямі |
 
-\* zh: CLDR/iOS emit the historic Chinese name 海参崴 for Vladivostok, not the
-transliteration 符拉迪沃斯托克; ship what CLDR says (see §3 note).
+\* zh: CLDR/iOS emit 海参崴 (see §1 note). pt-PT differs from pt-BR on
+Moscow (Moscovo). Latin-script locales DO respell Russian cities (kh→j in
+Spanish, kh→ch in German/Polish, v→w in German/Polish) — "Latin script
+needs no localization" is false for this list; only Brighton Beach and
+Miami are verbatim everywhere.
 
-## 7. Research provenance & sensitivities (summary)
+## 8. Clash log (what the two passes disagreed on, and what won)
 
-- Apple age-rating overhaul: developer.apple.com/news `ks775ehf` (Jul 24 2025);
-  new tiers in force since Jan 31 2026. Renaming = guaranteed-clean
-  questionnaire; current names are *probably* fine but nonzero reviewer risk.
-- tz/CLDR facts: IANA `zone1970.tab` (Khabarovsk is NOT a zone), CLDR 47
-  `timeZoneNames` exemplar cities, UTS #35 `VVV` pattern. Korean CLDR coverage
-  verified (419 exemplar cities, all Hangul).
-- Cultural flags: Brighton Beach = Ukrainian-Jewish-rooted "Little Odessa"
-  (frame as Russian-*speaking*); avoid Ukrainian/Crimean cities, gulag towns,
-  Kaliningrad; zh dual naming of Vladivostok is politically loaded both ways.
-- 2026 context: the war continues; city names are geography, not endorsement,
-  and Durak is pan-ex-Soviet — but the framing rules above are load-bearing.
+| Question | Pass A (naming branch) | Pass B (this branch pre-merge) | Kept |
+|---|---|---|---|
+| Roster width | 10 strategy keys (offline roster) | 7 seeded families (online roster) | **A's table, B's §2 distinction** — both rosters are real; the mapping keys on strategy, the parser on nickname base |
+| Weakest city | Miami = random | Brighton Beach = random | **A** — required for strict km monotonicity; flavor works both ways |
+| Ladder story | explicit km-to-Moscow flavor line | implicit geography | **A** — the flavor line makes strength legible; adopted into mockups |
+| ru Petersburg | «Петербург» short form | full + "Piter in reserve" | **A** — solves the badge today |
+| ko Brighton Beach | 브라이턴 비치 | 브라이턴비치 (wiki-verified) | **B** |
+| API home | `DesignSystem/BotNames.swift`, 3 entry points, `seatNames` on `GameSession` | `Net/BotName.swift`, exact-match table | **A's shape** (display is a DesignSystem concern; seatNames is the right offline seam) + **B's robustness note**: prefer exact-match of known nicknames before the peel-parser when both are cheap |
+| Names alternative | diminutive ladder, collision argument | Vanya=Ivan-durak, Putin-read flag, CJK cost | **merged** (§4) |
+| Future locales | none | verified exonym table + CLDR/tz findings | **B** (§6–§7) |
 
-## 8. What is explicitly NOT changing
+## 9. What does NOT change
 
-- `supabase/seed.sql`, `bots` table, migrations — untouched.
-- Wire formats, replay codec, `game_snapshots.extras` names — untouched.
-- Web client rendering — untouched (still explosives; still has its own
-  pre-existing quirk of showing the raw `%` on the live board, tracked
-  separately in the consolidation report).
-- The `%` reservation system (`botName.ts`, DB trigger) — untouched and
-  still the source of truth for is-a-bot.
+- Website: explosive names stay (`supabase/seed.sql` nicknames, leaderboard,
+  web replays). The explosive ladder is the research lab's identity.
+  (Separate web tidy, tracked in `docs/C_CORE_CONSOLIDATION.md`: the live
+  board currently shows the raw `%` prefix — `PlayerRing.tsx:184`.)
+- Strategy keys in C, TS, DB, wire formats, replay blobs: untouched.
+- The `%` bot-name prefix and numbering: untouched (load-bearing for the
+  name-only replay codec's bot-vs-human recovery; enforced by the
+  `enforce_username_not_bot` trigger).

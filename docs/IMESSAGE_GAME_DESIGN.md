@@ -143,10 +143,10 @@ the numeric trigger).
 
 ## 4. Payload format
 
-> **⚠ Correction (2026-07-15, see §20.2):** the deal seed is **32 bytes**, not
-> 16 — `game_set_deal_seed_bytes` requires `len >= 32` (`cnitro/src/game.c`).
-> Read every "16" about the seed in this section as 32; the reference layout
-> in §20.2 is authoritative.
+> **⚠ Correction (2026-07-15):** the deal seed is **32 bytes**, not 16 —
+> `game_set_deal_seed_bytes` requires `len >= 32` (`cnitro/src/game.c`). Read
+> every "16" about the seed in this section as 32; the reference layout in
+> `IMESSAGE_IMPLEMENTATION_HANDOFF.md` §3.1 is authoritative.
 
 ### 4.1 Envelope `FMSG` v1 (binary, little-endian, before text encoding)
 
@@ -192,6 +192,13 @@ for Sveta") and used for seat recovery (§6.3). The `joins` list is
 protocol-layer data, not kernel actions — the kernel replay never sees it.
 
 ### 4.2 Action encoding (3 bytes/action)
+
+> **⚠ Superseded (2026-07-15):** actions are stored as **seat-prefixed awire
+> frames** (`u8 seat` + the self-delimiting awire frame), not fixed 3-byte
+> triples — chains interleave DIFFERENT seats' actions, and multi-card moves
+> are single kernel actions with n>1. See
+> `IMESSAGE_IMPLEMENTATION_HANDOFF.md` §3.2; the paragraph below stands only
+> for the card-byte conventions it cites.
 
 Reuse the existing packed-action wire encoding — do **not** invent a new one.
 The canonical definitions are `supabase/functions/_shared/packed_action.ts`
@@ -746,12 +753,13 @@ proves a seat by presenting the preimage.
 
 ## 16. Format 6
 
-> **⚠ Superseded by shipped work (2026-07-15, see §20.3):** a format 6 now
+> **⚠ Superseded by shipped work (2026-07-15):** a format 6 now
 > EXISTS (`docs/REPLAY_FORMAT6_HIDDEN_STATE.md`) but it is the *other* design —
 > inline hidden-card reveals, **no seed**, mid-game cut legal. It cannot drive
 > continued play by itself (future stock order is absent) and therefore does
 > NOT replace the FMSG seed+actions payload. Do not build the sketch below as
-> written; §20.3 explains what shipped and what an eventual FMSG v2 would do.
+> written; `IMESSAGE_IMPLEMENTATION_HANDOFF.md` §3.3 explains what shipped and
+> what an eventual FMSG v2 would do.
 
 The true partial-game entropy-coded format — build **only** if §4.4's size
 guardrail trips or QR-able mid-game states become a product need:
@@ -893,154 +901,22 @@ Swift exists.
 
 ## 20. Implementation handoff — repo state 2026-07-15 {#20-handoff}
 
-*Appended after the iOS-app build pass (`IOS_APP_DESIGN.md` §17) and the
-format-6 hidden-state codec landed. This section is the ACTUAL to-do list: it
-maps §19's milestones onto what now already exists, corrects three stale
-facts in the body above, folds in verified 2026 platform facts, and points at
-the mockups. An implementer should read §1–§17 for the design, then execute
-THIS section. Mockups: `docs/imessage-layout.html` (bubble M1–M2, drawer M3,
-expanded table M4/M4b, finished bubble M5).*
+**The implementation work order now lives in its own doc:
+[`docs/IMESSAGE_IMPLEMENTATION_HANDOFF.md`](IMESSAGE_IMPLEMENTATION_HANDOFF.md)
+— read it after this spec; where the two disagree, the handoff wins.** It was
+merged from two independent passes on 2026-07-15 and contains: what already
+exists (most of §19's M1–M2 fell out of the iOS app build — engine bridge,
+board, design system, native replay), the spec corrections summarized below,
+verified July-2026 platform facts (documented 5,000-char `MSMessage.url`
+cap, exact `MSSession`/`summaryText` semantics, compact-style constraints),
+the updated M0–M5 build order, and an invariants checklist. Mockups:
+`docs/imessage-layout.html` (M1–M7).
 
-### 20.1 What already exists (do not rebuild)
-
-The original plan assumed a from-scratch iOS surface. The iOS app work
-(`IOS_APP_DESIGN.md` §17, all merged to `main`) has since built most of
-M1–M2's deliverables:
-
-| §19 item | Status today | Where |
-| --- | --- | --- |
-| M1 `ios-lib` xcframework | **DONE** (built+tested on Linux via `make ios-lib`/`ios-smoke`/`ios-goldens`) | `cnitro/Makefile`, `cnitro/ios/ios_api.c` |
-| M1 Swift bridge + parity tests | **DONE** — `EngineC.swift` (actor over the `fio_*` API), golden XCTests written | `ios/FoolishKit/Engine/` |
-| M2 SwiftUI board | **DONE for 2–8 seats** — `TableView` + `FSeatBadge/FBattleGrid/FDeckWell/FActionBar/FHandFan` + tokens/haptics (never yet compiled on a Mac — that caveat governs everything Swift) | `ios/FoolishKit/Boards/`, `DesignSystem/` |
-| M2 local play loop | **DONE** — `LocalGame` runs full offline games incl. bot pacing | `ios/FoolishKit/Engine/LocalGame.swift` |
-| Replay encode (game end, §12) | **DONE natively** — base32 encode/decode through shared `replay.c` | `cnitro/ios/ios_api.c` (`fio_replay_*`) |
-| Localization plumbing (en/ru/ko) | **DONE** | `FoolishKit/Localizable.xcstrings`, `FStrings.swift` |
-| Host-app record decision (§9.1) | **Executed** — the host is the full app; one record | `ios/project.yml` |
-
-**Not built anywhere yet (the real work):** `cnitro/src/msg_wire.{h,c}`,
-`fio_msg_*`/`wasm_msg_encode|decode` exports, the `FoolishMessages` target
-(absent from `ios/project.yml`), the App-Group cache + pending ledger, Rule
-P/rebase logic, the drawer/expanded Messages UI, the bubble snapshot
-renderer, `/m/` web route, and every §18 test file (`e2e/msg_wire.test.ts`,
-`e2e/msg_concurrency.test.ts`).
-
-### 20.2 Corrections to the body (verified against the kernel)
-
-1. **The deal seed is 32 bytes, not 16.** `game_set_deal_seed_bytes` requires
-   `len >= 32` (ChaCha20 key; `cnitro/src/game.c:124-131`;
-   `REPLAY_FORMAT6_HIDDEN_STATE.md` flags §16's "16 bytes" as wrong).
-   Authoritative FMSG v1 layout — §4.1 with the seed field widened, all
-   offsets after it +16:
-
-   ```
-   0   1  magic 0xF7          17  1  variant (=0)
-   1   1  format (=1)         18  8  parent8
-   2   1  flags               26  32 seed  ← was 16
-   3   1  phase               58  1  n_joins
-   4   8  game_id             59  var joins
-   12  2  turn                var 2  n_actions
-   14  1  last_actor_seat     var 3n actions
-   15  1  n_players           (fair-deal extras per §15)
-   16  1  round(u8) — as §4.1
-   ```
-
-   Size math shifts by +16 bytes: header+seed = 60; a long heads-up game is
-   ~240–330 bytes → ~380–530 base32 chars. The §4.4 guardrail (P95 < 1,000
-   chars) still holds with 2× headroom, and the platform cap is far above it
-   (20.4).
-2. **The durable state blob does NOT carry the deal seed** (§1's table says
-   it does). It carries a `deterministic_deck` flag + the remaining deck
-   order (`wasm_api.c` `STATE_FORMAT_VERSION 2`, `view.c` `state_put`);
-   `game_seed` is a server-only column. Irrelevant to the FMSG design (which
-   never used the blob) but do not "cache the seed via the blob" — cache the
-   envelope.
-3. **Bot RNG note if bots ever join iMessage games** (not v1): the server
-   folds a secret into bot RNG (`wasm_set_rng_base`). Serverless, both
-   devices must derive the base from the shared seed instead, or bot moves
-   diverge between devices. v1 ships no bots in the extension; keep it that
-   way (§17.5 memory ceiling).
-
-### 20.3 What the format-6 work changes here (and what it doesn't)
-
-`docs/REPLAY_FORMAT6_HIDDEN_STATE.md` shipped a hidden-state-lossless codec:
-every dealt/drawn card's identity is entropy-coded inline, an explicit atom
-count replaces "decode until fool known", so a v6 stream **may terminate
-mid-game** with fool=0xFF. Exports exist in rules.wasm and bots.wasm
-(`wasm_replay_encode_v6`), TS bridge (`encodeReplayV6(input, maxActions)`),
-and the server now emits v6 at game end.
-
-Consequences for this design:
-
-- **The FMSG v1 payload is unchanged: seed + action chain (§3).** A v6
-  mid-game blob reconstructs the exact current position but NOT the future
-  stock order (it deliberately carries no seed), so it cannot drive continued
-  play alone. §3's insight stands.
-- **Game end (§12) gets better:** `fio_replay_encode` should emit **v6**
-  (fall back v5 on any error, mirroring the server's `finalizeEndedGame`
-  discipline) — the resulting replay is Oracle-exact with zero retrodiction.
-  Decode is version-dispatched, so web/app playback needs no change.
-- **FMSG v2 (future, only if §4.4 trips):** body = seed (32B) + v6's
-  rANS-coded action atoms (~1–2 bits/move) instead of 3-byte packed actions.
-  The v6 machinery (menus/weights/varint) is exactly the §16 sketch's engine,
-  minus its wrong seed-in-replay idea. Budget: whole-game payloads ~100 B.
-  Do not build until real games breach the guardrail.
-- **`/m/` route bonus:** a v6 prefix could also power a "spectate with exact
-  hands revealed at game end" toggle — noted, not v1.
-
-### 20.4 Verified platform facts (July 2026 — cite these, not memory)
-
-- **`MSMessage.url` cap is documented: 5,000 characters** (developer.apple.com,
-  MSMessage.url). Our worst case is ~½0 of that. Custom schemes forbidden;
-  https URL required — ours is a real web page by design (§13).
-- **MSSession semantics confirmed:** same-session send removes the previous
-  bubble, inserts the new one at the transcript bottom, and leaves a
-  summary line **only if `summaryText` was non-nil** — so ALWAYS set
-  summaryText, or history evaporates (§17.4 stands, now doc-backed).
-- **Compact style = keyboard area:** no text fields (no keyboard available —
-  nickname entry must request `.expanded` first; this affects the §5.2 join
-  flow UI), no horizontal scrollers in compact.
-- **No background execution, no push, `didReceive` only while visible** —
-  as assumed (§11.4, §17.7).
-- **Extensions still supported and reviewable in the iOS 26 era**; Messages
-  framework carries no deprecations. Discoverability is poor (buried under
-  the "+" menu since iOS 17) — the HOST APP drives installs; do not build a
-  growth plan on the Messages drawer.
-- **Bubble image:** 300×195 pt render size stands (WWDC16 guidance); Messages
-  crops ~6 pt off the sides and recompresses — no text baked into the image.
-- **Adding the extension to the already-planned app record is a normal
-  update** — it does not need to ride the app's first submission (§19 M5 can
-  trail the app's F milestone without penalty).
-
-### 20.5 UI deltas from the mockups (`docs/imessage-layout.html`)
-
-- **Bubble snapshot uses the glyph-card language** (M2, recommended): battles
-  as rank-in-suit-glyph marks (34–38 pt), opponent hands as fern-back count
-  chips on the wool table. Full card faces at bubble size are illegible (M1
-  shows why). Add a shared `FGlyphCard` to DesignSystem — the same component
-  the parked watch build (WATCHOS_SPEC §2) needs; build once.
-- **Expanded = the phone table** (M4): `TableView` with a reduced-chrome
-  flag + a SEND ▸ button in the action bar; do not fork the board. The
-  staged state (M4b) dims the board, shows "Move staged — hit send!", and
-  resolves only on `didStartSending`/`didCancelSending`.
-- **Drawer rows** (M3) come from the App-Group cache; rows are date+turn
-  labeled ("Game from July 12 · turn 24 · your move") because conversation
-  identity is invisible to extensions.
-- Wool/wood/fern generators: fern already in Swift; wool+wood ports are
-  specified in `docs/IOS_PHONE_LAYOUT.md` §4 (shared with the phone table).
-- Bot names never appear in the extension (no bots in v1); if replays
-  rendered in-extension ever show bot seats, they go through the
-  `docs/IOS_BOT_NAMING.md` display mapping like every other iOS surface.
-
-### 20.6 Execution order (updated M-table; original §19 in parentheses)
-
-| # | Deliverable | Notes |
-| --- | --- | --- |
-| **H0 (=M0)** | `msg_wire.{h,c}` (32-byte seed layout above) + `fio_msg_encode/decode` in `ios_api.c` + `wasm_msg_encode/decode` exported from **rules.wasm** (and bots.wasm for parity tooling) + TS bridge + `e2e/msg_wire.test.ts` + `e2e/msg_concurrency.test.ts` (Rule P total order, §14's seven cases, N-player fuzz) + `/m/` route. **Still first; still pure repo work; still de-risks everything.** One nuance: guards.wasm CANNOT back the `/m/` route (no `legal.c`, no replay, `-DDEAL_RNG_DISABLED` compiles the seeded deal OUT) — the route lazy-loads the full rules module via the existing engine bridge on that page only. |
-| **H1 (=M1, mostly done)** | Add `msg_wire.c` to `IOS_SRC`; regenerate xcframework; golden vectors for FMSG hex fixtures asserted from wasm (e2e) AND libfoolish (XCTest) — the §8.2 discipline. Days, not weeks. |
-| **H2 (=M2 remainder)** | `FoolishMessages` target in `project.yml` (extension-safe FoolishKit subset: Engine+DesignSystem+Boards, **never Net** — enforce with the existing import-lint pattern); App Group `group.cards.foolish` for cache+ledger; `FGlyphCard`; bubble snapshot renderer (300×195@3x). |
-| **H3 (=M3)** | Messages wiring per §11 + §7: lifecycle, Rule P adoption, pending-ledger rebase with round-boundary guard, seat claim flow, staged-state UX (M4b). The §18 manual matrix runs here on two simulators. |
-| **H4 (=M4)** | Game end → **v6** replay bubble (v5 fallback), summaryText log-lines, localization sweep. |
-| **H5 (=M5)** | Review prep: extension icons, privacy labels unchanged ("no data collected" still true — the extension adds no collection), age-rating answers unchanged. Ships as an update to the app record whenever the app itself is live; no coupling to the app's first submission. |
-
-Dependency spine unchanged: H0 → H1 → H2 → H3; H4/H5 tails. H0 needs no Mac
-and no Apple account — it is the correct next commit after this doc.
+Corrections it makes to THIS doc (each also flagged with a ⚠ banner in
+place): the deal seed is **32 bytes**, not 16 (§4.1; envelope offsets shift);
+actions are **seat-prefixed awire frames**, not 3-byte triples (§4.2 — chains
+interleave seats, multi-card moves are one action); the durable state blob
+does NOT carry the deal seed (§1's table); a format 6 **shipped** but as the
+no-seed inline-reveal design, so it is not the continuation format — FMSG v1
+= seed + action chain stands, v6 upgrades the FINISHED replay and is the
+FMSG-v2 compression template (§16).
