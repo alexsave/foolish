@@ -638,6 +638,30 @@ int wasm_replay_encode_v6(int in_len) {
     if (in_len < 0 || in_len > REPLAY_IO_CAP) return -REPLAY_ECAP;
     return replay_encode_v6(g_replay_io, in_len, g_replay_io, REPLAY_IO_CAP);
 }
+
+// Format 6 from the RESIDENT game (replay.h replay_encode_v6_from_game) — the
+// one v6 producer, the same call the phone makes through fio_replay_encode_v6_b32.
+// The host stages the game exactly as a bot decision does (wasm_import_state
+// then wasm_import_logs) and puts the deal seed at the front of the replay IO
+// buffer; the kernel re-derives the deal from the seed and reads the actions
+// out of the imported logs, so no caller assembles a reveal stream or marshals
+// an action ever again.
+//
+//   in:  g_replay_io[0 .. FOOLISH_SEED_LEN) = the 32-byte deal seed
+//   out: the replay integer, written back over g_replay_io
+//
+// Exported from bots.wasm ONLY (see the Makefile): this needs a whole session
+// log resident, and the rules module is built at MAX_LOGS=128 with no log
+// import — it cannot hold one.
+int wasm_replay_encode_v6_from_game(int max_atoms) {
+    // The seed is copied out first: `out` aliases the buffer it arrived in, and
+    // the encoder is free to write output before it has finished with its input.
+    unsigned char seed[FOOLISH_SEED_LEN];
+    memcpy(seed, g_replay_io, sizeof seed);
+    return replay_encode_v6_from_game(&g_game, seed, (int)sizeof seed, max_atoms,
+                                      g_replay_io, REPLAY_IO_CAP);
+}
+
 int wasm_replay_error_detail(void) { return replay_last_error_detail(); }
 
 // ---------- legal moves --------------------------------------------------------

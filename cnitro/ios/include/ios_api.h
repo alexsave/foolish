@@ -41,6 +41,8 @@ extern "C" {
 #define FIO_EREJECT     -5   // move was rejected by the kernel (see fio_last_reject)
 #define FIO_ENOSTRAT    -6   // unknown strategy id
 #define FIO_EREPLAY     -7   // replay encode/decode failed (see fio_last_replay_error)
+#define FIO_ENOSEED     -8   // this game was not dealt from a wide seed, so its
+                             // deal cannot be re-derived (v6 needs it; use v5)
 
 // ---------- lifecycle ------------------------------------------------------
 
@@ -166,6 +168,20 @@ int fio_bot_choose_json(int strategy_id, int seat, char *out, int cap);
 // into `out` as the short shareable code (foolish.cards/<code>). Bytes written
 // or negative. (v5 codec; byte-parity with the server's shared C — replay.c.)
 int fio_replay_encode_b32(char *out, int cap);
+
+// Same, as a v6 code: the exact game including every hidden card, where v5's
+// decoder has to retrodict the hands. Prefer this — it is what the site
+// produces, and the Oracle reads real hands instead of guesses.
+//
+// Takes no seed: the kernel kept the one fio_new_game was given. Returns
+// FIO_ENOSEED if this game was dealt without a wide seed (its deal cannot be
+// re-derived) — fall back to fio_replay_encode_b32 then, and only then.
+int fio_replay_encode_v6_b32(char *out, int cap);
+
+// The one a CLIENT should call: the best code this game can produce (v6 when its
+// deal is re-derivable, else v5), so choosing a replay format never becomes app
+// code. The two calls above are for tests that must pin a format.
+int fio_replay_share_code_b32(char *out, int cap);
 
 // Decode a shareable `code` into the step list as JSON (the DecodedReplay
 // shape: header + logs). Does NOT touch the current game. Bytes written or

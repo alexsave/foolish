@@ -28,6 +28,12 @@ static int   g_has_game = 0;
 static int   g_last_reject = 0;
 static int   g_last_replay_error = 0;
 
+// The deal seed this game was dealt from, kept from fio_new_game (see there).
+// Zero when the game came from a short/absent seed, i.e. the legacy LCG deal —
+// which cannot be re-derived, so those games can only ever encode as v5.
+static uint8_t g_deal_seed[FOOLISH_SEED_LEN];
+static int     g_has_deal_seed = 0;
+
 // ---------- strategy roster (offline bots, §7.2) --------------------------
 //
 // The roster itself lives in the kernel (src/bot_roster.c) — one table shared
@@ -419,8 +425,15 @@ int fio_new_game(const uint8_t *seed, int seed_len, int n_players) {
     // Deal RNG: wide (ChaCha) mode when 32+ seed bytes are supplied — the whole
     // deal space, reproducible on any platform (deal_rng.h). Otherwise fall back
     // to the legacy 32-bit LCG seed from the first 4 bytes (golden fixtures).
-    if (seed && seed_len >= 32) {
+    g_has_deal_seed = 0;
+    if (seed && seed_len >= FOOLISH_SEED_LEN) {
         game_set_deal_seed_bytes(seed, seed_len);
+        // Keep it: it is what makes this game's replay v6 (exact hands) instead
+        // of v5 (retrodicted). Held here rather than handed back to Swift at
+        // share time so the app never has to know a replay needs a deal seed —
+        // fio_replay_encode_v6_b32 takes no arguments.
+        memcpy(g_deal_seed, seed, FOOLISH_SEED_LEN);
+        g_has_deal_seed = 1;
     } else {
         uint32_t s = 0;
         if (seed) for (int i = 0; i < seed_len && i < 4; i++) s |= ((uint32_t)seed[i]) << (8 * i);
@@ -768,6 +781,8 @@ static int build_encode_input(const Game *g, unsigned char *out, int cap) {
     return q;
 }
 
+// v5: no seed needed, and no exact hidden state — a decoder retrodicts the
+// hands. Kept for games this process did not deal from a wide seed.
 int fio_replay_encode_b32(char *out, int cap) {
     if (!g_has_game) return FIO_ENOGAME;
     g_last_replay_error = 0;
@@ -780,6 +795,47 @@ int fio_replay_encode_b32(char *out, int cap) {
     int w = b32_encode(encout, enclen, out, cap);
     if (w < 0) return FIO_ECAP;
     return w;
+}
+
+// v6: the exact game, hidden state and all. One kernel call — the deal seed was
+// kept at fio_new_game, the actions are this game's own logs, and the reveal
+// stream is re-derived inside the kernel, so the app assembles nothing. This is
+// the same replay_encode_v6_from_game the server calls through
+// wasm_replay_encode_v6_from_game; an offline share is now byte-identical in
+// KIND to one the site produces, and the Oracle gets exact hands instead of
+// v5's retrodiction.
+//
+// Returns FIO_ENOSEED for a game dealt without a wide seed (nothing to
+// re-derive) — the caller should fall back to fio_replay_encode_b32.
+int fio_replay_encode_v6_b32(char *out, int cap) {
+    if (!g_has_game) return FIO_ENOGAME;
+    if (!g_has_deal_seed) return FIO_ENOSEED;
+    g_last_replay_error = 0;
+    static unsigned char encout[16384];
+    int enclen = replay_encode_v6_from_game(&g_game, g_deal_seed, FOOLISH_SEED_LEN,
+                                            1 << 30, encout, sizeof(encout));
+    if (enclen < 0) { g_last_replay_error = -enclen; return FIO_EREPLAY; }
+    int w = b32_encode(encout, enclen, out, cap);
+    if (w < 0) return FIO_ECAP;
+    return w;
+}
+
+// The best code this game can produce — v6 when its deal can be re-derived,
+// else v5. WHICH FORMAT TO SHARE IS NOT AN APP DECISION: the server already
+// makes exactly this choice (finalizeEndedGame prefers v6 and falls back to v5),
+// and if it lived in Swift then the watch, the iMessage extension and every
+// later client would each reimplement the same three lines and drift on them.
+// The explicit fio_replay_encode_b32 / _v6_b32 stay for callers that must pin
+// one format (tests, fixtures).
+int fio_replay_share_code_b32(char *out, int cap) {
+    if (!g_has_game) return FIO_ENOGAME;
+    if (g_has_deal_seed) {
+        int w = fio_replay_encode_v6_b32(out, cap);
+        if (w >= 0) return w;
+        // v6 could not be built for this game (see fio_last_replay_error): a
+        // share still beats no share, and v5 encodes from the logs alone.
+    }
+    return fio_replay_encode_b32(out, cap);
 }
 
 int fio_replay_decode_json(const char *code, char *out, int cap) {

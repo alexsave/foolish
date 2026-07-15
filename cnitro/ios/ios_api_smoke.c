@@ -38,7 +38,7 @@ static int replay_sweep(void) {
     if (strat < 0) { printf("FAIL replay sweep: no handwritten rung\n"); return 1; }
 
     const int counts[] = { 2, 3, 4, 6 };
-    int checked = 0, skipped = 0;
+    int checked = 0, skipped = 0, v6_checked = 0;
     for (int ci = 0; ci < (int)(sizeof(counts) / sizeof(counts[0])); ci++) {
         for (int s = 0; s < 12; s++) {
             int players = counts[ci];
@@ -77,10 +77,45 @@ static int replay_sweep(void) {
                        players, s, decoded_fool, fool);
                 return 1;
             }
+
+            // Same game as v6 (A4): these games are dealt from a 32-byte seed,
+            // so the kernel can re-derive the deal and the share carries exact
+            // hands. Goes through fio_replay_share_code_b32 — the call the app
+            // actually makes — so this proves the format CHOICE too, not just
+            // the encoder: a seeded game must come out as v6.
+            static char code6[8192];
+            int c6 = fio_replay_share_code_b32(code6, sizeof(code6));
+            if (c6 < 0) {
+                printf("FAIL sweep v6 encode p=%d seed=%d err=%d detail=%d\n",
+                       players, s, c6, fio_last_replay_error());
+                return 1;
+            }
+            if (fio_replay_decode_json(code6, buf, sizeof(buf)) < 0) {
+                printf("FAIL sweep v6 decode p=%d seed=%d err=%d\n", players, s,
+                       fio_last_replay_error());
+                return 1;
+            }
+            const char *vp = strstr(buf, "\"version\":");
+            if (!vp || atoi(vp + 10) != 6) {
+                printf("FAIL sweep v6 version p=%d seed=%d\n", players, s);
+                return 1;
+            }
+            fp = strstr(buf, "\"fool\":");
+            if ((fp ? atoi(fp + 7) : -999) != fool) {
+                printf("FAIL sweep v6 fool mismatch p=%d seed=%d\n", players, s);
+                return 1;
+            }
+            // No hidden card survives a v6 decode — that is the whole point.
+            if (strstr(buf, "\"s\":-1")) {
+                printf("FAIL sweep v6 leaked a hidden card p=%d seed=%d\n", players, s);
+                return 1;
+            }
+            v6_checked++;
             checked++;
         }
     }
-    printf("replay sweep OK (%d games round-tripped, %d skipped as over-long)\n", checked, skipped);
+    printf("replay sweep OK (%d games round-tripped, %d as v6 with exact hands, "
+           "%d skipped as over-long)\n", checked, v6_checked, skipped);
     return 0;
 }
 

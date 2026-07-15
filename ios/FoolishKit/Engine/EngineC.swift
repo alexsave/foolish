@@ -167,8 +167,15 @@ public actor EngineC {
     // MARK: replays (§7.3)
 
     /// Encode the CURRENT game's history to a shareable base32 code.
+    ///
+    /// The kernel picks the format: v6 (carrying every hidden card, so a viewer
+    /// sees the real hands instead of a retrodiction) when the game's deal can
+    /// be re-derived from its seed, else v5. That choice is deliberately not
+    /// made here — the server makes the same one, and app code that duplicated
+    /// it would be one more thing the watch and iMessage extension had to
+    /// reimplement (docs/C_CORE_CONSOLIDATION.md F5/A4).
     public func replayEncodeCode() throws -> String {
-        let d = try json { fio_replay_encode_b32($0, $1) }
+        let d = try json { fio_replay_share_code_b32($0, $1) }
         return String(decoding: d, as: UTF8.self)
     }
 
