@@ -1,9 +1,11 @@
-import { PrivatePlayer, GAME_STATUS, PLAYER_STATUS, GAME_MOVE_TYPE } from './types.ts';
+import { GAME_STATUS, PLAYER_STATUS } from './types.ts';
 import { executeWithGameLock, loadSessionLogBytes, PackedOpProducts } from './utils.ts';
-import { calculateLegalMoves, strategyUsesLogs, LegalMove } from './bot_strategy.ts';
+import { strategyUsesLogs, LegalMove } from './bot_strategy.ts';
 import { createClient } from 'jsr:@supabase/supabase-js';
-import { processBotActionPacked, executeBotMovePacked, shouldBotActCore, PackedBotMove } from './pure_bot_actions.ts';
-import { __botsWasmMB, __ensureBots } from './wasm/bots.ts';
+import {
+    __botsWasmMB, __ensureBots, wasmBotDrive, wasmBotEligibleMask, wasmBotPacingMs,
+    BOT_PACE, BotDrivePref,
+} from './wasm/bots.ts';
 import { __kernelWasmMB } from './wasm/engine.ts';
 import { bytesToHex, hexToBytes } from './replay/codec.ts';
 import { bytesToBareHex } from './wire/bytes.ts';
@@ -26,12 +28,12 @@ const supabaseClient = createClient(
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
 );
 
-// Bot timing constants
-// Inter-bot pacing so humans can follow the moves. 4500ms felt sluggish but 1500ms
-// was too fast to follow — 3000ms is the middle ground (the freeze that made it
-// feel even slower was a separate bug, now fixed). Tune here if needed.
-const BOT_PROCESSING_DELAY_WITH_HUMANS = 3000;
-const BOT_PROCESSING_DELAY_BOTS_ONLY = 300; // Delay when only bots remain (ms)
+// Bot timing is NOT a constant here any more: what a move is worth pausing for
+// is one table in the kernel (bot_pacing_ms, cnitro/src/bot_drive.c), reached
+// through wasmBotPacingMs and shared with every other client
+// (docs/C_CORE_CONSOLIDATION.md F3). Its values are the ones this file used to
+// hold — 3000ms with a human watching, 300ms bots-only — so the feel is
+// unchanged; tune them there and the phone changes with the site.
 
 // --- Adaptive CPU budgeting (instead of a hardcoded wall cap) ---------------
 // Supabase caps CPU at ~2s per request (async I/O / setTimeout sleeps don't count;
@@ -197,20 +199,21 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
     // (set inside the lock), so the recursion can carry a resident log forward.
     let hydratedBelief: Uint8Array | undefined;
     let botsOnlyCycle = false;
-    // Pacing for THIS cycle, derived from THIS game's players. Must not be
-    // module state: one warm isolate can drive several games (heartbeat SCAN),
-    // and a bots-only game writing 300ms there leaked into a concurrent
-    // humans game expecting 3000ms, and vice versa.
-    let cycleDelay = BOT_PROCESSING_DELAY_WITH_HUMANS;
+    // Pacing for THIS cycle, from the kernel's table. Must not be module state:
+    // one warm isolate can drive several games (heartbeat SCAN), and a bots-only
+    // game writing 300ms there leaked into a concurrent humans game expecting
+    // 3000ms, and vice versa.
+    let cycleDelay = 0;
     // Strategy decisions carried across CAS attempts within this cycle. On a
     // version conflict executeWithGameLock re-runs the whole operation; without
     // this a bot recomputes its move from scratch each attempt — for cordite's
     // Monte-Carlo search that can be seconds of CPU, and up to 5 attempts blows
-    // the ~2s budget and gets the isolate killed holding the lease. A cached
-    // move is replayed iff it is still LEGAL in the reloaded state (a legal,
-    // slightly-stale choice beats a CPU kill); otherwise we recompute.
-    const movesFromFailedAttempts = new Map<string, LegalMove>();
-    const canonMove = (m: LegalMove) => JSON.stringify({ t: m.type, c: m.cards ?? null, a: m.attack_cards ?? null });
+    // the ~2s budget and gets the isolate killed holding the lease. The kernel
+    // replays a cached move iff it is still LEGAL in the reloaded state (a
+    // legal, slightly-stale choice beats a CPU kill) and otherwise re-chooses,
+    // so the legality re-check that used to live here is gone — it was a rule,
+    // and rules are the kernel's (see BotDrivePref).
+    const movesFromFailedAttempts = new Map<number, LegalMove>();
 
     // Do everything within a single lock: find eligible bots, choose one, execute action
     try {
@@ -234,7 +237,7 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
             const humanPlayersStillIn = game.players.filter(player =>
                 !player.is_ai && player.status === PLAYER_STATUS.IN
             ).length;
-            cycleDelay = humanPlayersStillIn > 0 ? BOT_PROCESSING_DELAY_WITH_HUMANS : BOT_PROCESSING_DELAY_BOTS_ONLY;
+            cycleDelay = 0;
 
             // Capture game state for broadcasting later
             // Only process bot actions if game is in a state where bots can act
@@ -259,155 +262,114 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
             console.log(`Found ${botCount} bots in game`);
 
 
-            // Find all bots that can currently move
-            const eligibleBots: { bot: PrivatePlayer; index: number }[] = [];
-            for (let index = 0; index < game.players.length; index++) {
-                const player = game.players[index];
-                if (!player.is_ai) continue;
+            // The cycle itself is the kernel's (docs/C_CORE_CONSOLIDATION.md
+            // F2): eligibility, the fair shuffle among simultaneously-eligible
+            // bots, the roster dispatch, the apply, the bundling of silent
+            // actions and the stop conditions were all game logic in a TS coat,
+            // and are now one call — the same call the phone makes. What stays
+            // here is what the kernel cannot do: the lease, the CAS commit, the
+            // broadcast, the CPU budget, and the two I/O reads below.
+            //
+            // human_mask is "seats the kernel must not drive". It is NOT "seats
+            // to wait for": a human being able to act is not a stop condition
+            // (owner decision) — the site has always thrown bots in while a
+            // human deliberates, and yielding would stall a bout on an idle
+            // player, since the defender and every attacker are eligible at once.
+            let humanMask = 0, aiMask = 0;
+            const humanSeats: number[] = [];
+            game.players.forEach((p, i) => {
+                if (p.is_ai) aiMask |= 1 << i;
+                else { humanMask |= 1 << i; humanSeats.push(i); }
+            });
 
-                // Check if this bot should act based on current game state
-                const shouldAct = shouldBotActCore(game, player, index);
-                if (shouldAct) {
-                    // Double-check that they have legal moves
-                    const legalMoves = calculateLegalMoves(game, player.player_id);
-                    if (legalMoves.length > 0) {
-                        eligibleBots.push({ bot: player, index });
-                    }
+            const eligible = wasmBotEligibleMask(game, humanMask);
+            if (eligible === 0) {
+                console.log(`No eligible bots found for game ${game_id}, ending bot processing cycle`);
+                return { game, events: [] };
+            }
+            const eligibleSeats = game.players.map((_, i) => i).filter(i => eligible & (1 << i));
+            console.log(`Found ${eligibleSeats.length} eligible bots: ${eligibleSeats.map(i => game.players[i].name).join(', ')}`);
+
+            // Belief bots (octogen/semtex/cordite/fulminate/espresso) deduce
+            // hidden cards from the whole current session, but the hot-path
+            // loader (loadCompleteGame) leaves game.logs empty. Hand them the
+            // persisted, DRAW-masked session log as its RAW PACKED BYTES —
+            // once per cycle, only when a belief bot is actually eligible so
+            // the beliefless bots keep the fast path. This is the I/O the
+            // kernel cannot do, which is why the drive is asked who is eligible
+            // BEFORE it is asked to drive. The kernel importer splices these
+            // bytes in directly (no JS-object decode/marshal; see
+            // importLogsPacked). It stays off game.logs on purpose: the commit
+            // path re-encodes game.logs, so putting the whole session there
+            // would re-append it every move. Without this the belief bots play
+            // blind (the octogen regression from the loadCompleteGame log-load
+            // removal).
+            const usesLogs = eligibleSeats.some(i => strategyUsesLogs(game.players[i].strategy_key!));
+            if (usesLogs) {
+                // Bots-only games have no concurrent writer under the lease, so
+                // a resident log carried from the previous cycle is still exactly
+                // logs_packed — reuse it and skip the DB read. Human games might
+                // be written between cycles, so always reload fresh.
+                botsOnlyCycle = humanPlayersStillIn === 0;
+                if (residentBelief && botsOnlyCycle) {
+                    game.belief_log_bytes = residentBelief;
+                } else {
+                    game.belief_log_bytes = (await loadSessionLogBytes(game_id)) ?? undefined;
                 }
+                hydratedBelief = game.belief_log_bytes;
+                console.log(`[BELIEF] ${residentBelief && botsOnlyCycle ? 'resident' : 'loaded'} ${game.belief_log_bytes?.length ?? 0} session-log bytes for belief bots`);
             }
 
-            // If we have eligible bots, try them until one succeeds
-            if (eligibleBots.length > 0) {
-                console.log(`Found ${eligibleBots.length} eligible bots: ${eligibleBots.map(b => b.bot.name).join(', ')}`);
+            // Moves this cycle already chose in an attempt that then lost the
+            // CAS. Offered back, not trusted: the kernel replays one only while
+            // the reloaded state still makes it legal.
+            const prefs: BotDrivePref[] = [...movesFromFailedAttempts]
+                .map(([seat, move]) => ({ seat, move }));
 
-                // Belief bots (octogen/semtex/cordite/fulminate/espresso) deduce
-                // hidden cards from the whole current session, but the hot-path
-                // loader (loadCompleteGame) leaves game.logs empty. Hand them the
-                // persisted, DRAW-masked session log as its RAW PACKED BYTES —
-                // once per cycle, only when a belief bot is actually eligible so
-                // the beliefless bots keep the fast path. The kernel importer
-                // splices these bytes in directly (no JS-object decode/marshal;
-                // see importLogsPacked). It stays off game.logs on purpose: the
-                // commit path re-encodes game.logs, so putting the whole session
-                // there would re-append it every move. Without this the belief
-                // bots play blind (the octogen regression from the
-                // loadCompleteGame log-load removal).
-                if (eligibleBots.some(b => strategyUsesLogs(b.bot.strategy_key))) {
-                    // Bots-only games have no concurrent writer under the lease, so
-                    // a resident log carried from the previous cycle is still exactly
-                    // logs_packed — reuse it and skip the DB read. Human games might
-                    // be written between cycles, so always reload fresh.
-                    botsOnlyCycle = humanPlayersStillIn === 0;
-                    if (residentBelief && botsOnlyCycle) {
-                        game.belief_log_bytes = residentBelief;
-                    } else {
-                        game.belief_log_bytes = (await loadSessionLogBytes(game_id)) ?? undefined;
-                    }
-                    hydratedBelief = game.belief_log_bytes;
-                    console.log(`[BELIEF] ${residentBelief && botsOnlyCycle ? 'resident' : 'loaded'} ${game.belief_log_bytes?.length ?? 0} session-log bytes for belief bots`);
+            console.log(`[MEM] before drive: ${memLine()}`);
+            const driveStartTime = Date.now();
+            const drive = wasmBotDrive(game, {
+                humanMask, aiMask, humanSeats, logs: usesLogs, prefs,
+            });
+            const driveDuration = Date.now() - driveStartTime;
+            console.log(`[MEM] after  drive: ${memLine()}`);
+
+            // Feed the CPU predictor. The unit is now the CYCLE, which is also
+            // the unit the loop bails in — one drive can deliberate for several
+            // seats, so predicting from per-move costs would under-estimate the
+            // next iteration and risk the ~2s cap.
+            cpu.computeMs += driveDuration;
+            cpu.decisions += 1;
+            if (driveDuration > cpu.maxMs) cpu.maxMs = driveDuration;
+
+            for (const a of drive.actions) movesFromFailedAttempts.set(a.seat, a.move);
+
+            if (drive.run) {
+                // The whole cycle's products, straight from the kernel: the
+                // final state blob, every bundled action's logwire records, and
+                // the per-viewer streams of the one event-bearing action
+                // (passives only bundle when they have none).
+                const r = drive.run;
+                packedLogsHex = bytesToBareHex(logsFromKernelExport(r.logsWire, Date.now()));
+                packedStateHex = bytesToHex(r.stateBlob);
+                packedEnded = r.ended;
+                if (r.nEvents > 0) {
+                    packedEvents = r.events;
+                    packedNEvents = r.nEvents;
                 }
+                botProcessed = true;
+            }
 
-                // Fisher-Yates shuffle. A comparator-based shuffle
-                // (sort(() => Math.random() - 0.5)) violates V8 TimSort's
-                // transitivity contract and can livelock the sort on certain
-                // arrays — confirmed via offline stress tests at 3+ players.
-                const shuffledBots = [...eligibleBots];
-                for (let i = shuffledBots.length - 1; i > 0; i--) {
-                    const j = Math.floor(Math.random() * (i + 1));
-                    [shuffledBots[i], shuffledBots[j]] = [shuffledBots[j], shuffledBots[i]];
-                }
-                
-                // Track if we processed any passive actions without animations
-                let anyPassiveProcessed = false;
+            // What the cycle is worth pausing for: the most visible thing that
+            // happened in it, priced by the kernel's one table.
+            const pace = drive.actions.reduce((m, a) => Math.max(m, a.pacingClass), BOT_PACE.NONE);
+            cycleDelay = wasmBotPacingMs(pace, humanPlayersStillIn > 0);
 
-                for (const selectedBot of shuffledBots) {
-                    console.log(`[ACTION] Trying bot ${selectedBot.bot.name} from ${eligibleBots.length} eligible bots`);
-                    const actionStartTime = Date.now();
-
-                    // Replay a move computed in a failed CAS attempt if it is
-                    // still legal against the reloaded state; else run the
-                    // strategy and remember its choice for a possible retry.
-                    let botActionResult: false | PackedBotMove = false;
-                    const cached = movesFromFailedAttempts.get(selectedBot.bot.player_id);
-                    if (cached) {
-                        const stillLegal = calculateLegalMoves(game, selectedBot.bot.player_id)
-                            .some((m) => canonMove(m) === canonMove(cached));
-                        if (stillLegal) {
-                            const replayed = executeBotMovePacked(game, selectedBot.bot, cached);
-                            if (replayed) {
-                                console.log(`[ACTION] Replayed ${selectedBot.bot.name}'s cached ${cached.type} from a conflicted attempt`);
-                                botActionResult = replayed;
-                            }
-                        }
-                        if (!botActionResult) movesFromFailedAttempts.delete(selectedBot.bot.player_id);
-                    }
-                    if (!botActionResult) {
-                        console.log(`[MEM] before ${selectedBot.bot.name} (${selectedBot.bot.strategy_key}): ${memLine()}`);
-                        const fresh = await processBotActionPacked(game, selectedBot.bot);
-                        console.log(`[MEM] after  ${selectedBot.bot.name} (${selectedBot.bot.strategy_key}): ${memLine()}`);
-                        if (fresh) {
-                            movesFromFailedAttempts.set(selectedBot.bot.player_id, fresh.move);
-                            botActionResult = fresh;
-                        }
-                    }
-
-                    const actionDuration = Date.now() - actionStartTime;
-                    // Feed the CPU predictor (count every attempt — failed ones burn CPU too).
-                    cpu.computeMs += actionDuration;
-                    cpu.decisions += 1;
-                    if (actionDuration > cpu.maxMs) cpu.maxMs = actionDuration;
-                    if (botActionResult) {
-                        const moveEvents = botActionResult.run?.nEvents ?? 0;
-                        if (botActionResult.run) {
-                            const r = botActionResult.run;
-                            // Bundle: the logwire records concatenate; the
-                            // state blob is cumulative so the last one wins;
-                            // at most one bundled move carries events
-                            // (passives only bundle when they have none).
-                            packedLogsHex += bytesToBareHex(logsFromKernelExport(r.logsWire, Date.now()));
-                            packedStateHex = bytesToHex(r.stateBlob);
-                            packedEnded = r.ended;
-                            if (r.nEvents > 0) {
-                                packedEvents = r.events;
-                                packedNEvents = r.nEvents;
-                            }
-                        }
-
-                        const isPassiveAction = botActionResult.moveType === GAME_MOVE_TYPE.GOOD || botActionResult.moveType === GAME_MOVE_TYPE.WAIT;
-
-                        console.log(`[ACTION] ✓ Bot ${selectedBot.bot.name} completed ${botActionResult.moveType} action in ${actionDuration}ms`);
-
-                        // For passive actions (good/wait) without animations, continue to try more bots
-                        // This bundles multiple passive actions together for snappier feel
-                        // Exception: if good causes round transition, it will have events (animations)
-                        if (isPassiveAction && moveEvents === 0) {
-                            console.log(`[ACTION] Passive action without animations, bundling with next bot action`);
-                            anyPassiveProcessed = true;
-                            continue;
-                        }
-                        
-                        botProcessed = true;
-                        // If we break here, we have either:
-                        // - A non-passive action (attack, cover, etc.) that needs delay for humans to see
-                        // - A passive action WITH animations (round transition) that also needs delay
-                        // So we never skip delay when breaking
-                        break;
-                    } else {
-                        console.log(`[ACTION] ✗ Bot ${selectedBot.bot.name} move failed after ${actionDuration}ms, trying next bot`);
-                    }
-                }
-
-                // Handle case where we only processed passive actions without animations
-                if (!botProcessed && anyPassiveProcessed) {
-                    botProcessed = true;
-                    console.log(`[ACTION] Only passive actions processed this cycle`);
-                }
-
-                if (!botProcessed) {
-                    console.log(`[ACTION] No eligible bots could make valid moves in game ${game_id}`);
-                }
-            } else {
-                console.log(`No eligible bots found for game ${game_id}, ending bot processing cycle`);
+            console.log(`[ACTION] ${drive.actions.length ? '✓' : '✗'} drove ${drive.actions.length} action(s) in ${driveDuration}ms: `
+                + `${drive.actions.map(a => `${game.players[a.seat].name}:${a.move.type}`).join(', ') || 'none'}`
+                + ` (stop ${drive.stop}, pace ${pace} -> ${cycleDelay}ms)`);
+            if (!botProcessed) {
+                console.log(`[ACTION] No eligible bots could make valid moves in game ${game_id}`);
             }
 
             console.log(`[TIMING] Lock work completed in ${Date.now() - lockWorkStartTime}ms`);
@@ -445,17 +407,17 @@ const processBotActions = async (game_id: string, cycle: number = 0, loopStartTi
 
     // Continue the loop if a bot was processed or auto-transition occurred
     if (botProcessed) {
-        // Skip pacing when there are no humans watching AND this cycle produced no
-        // animations — bots churning through silent goods shouldn't feel padded.
-        const skipDelay = packedNEvents === 0 && cycleDelay === BOT_PROCESSING_DELAY_BOTS_ONLY;
-
-        if (skipDelay) {
-            console.log(`[CYCLE ${cycle}] Cycle took ${totalCycleTime}ms, skipping ${cycleDelay}ms delay (no events, no humans)`);
-        } else if (cycleDelay > 0) {
+        // How long to wait was decided in the lock, by the kernel's pacing
+        // table (F3). Zero means nothing became visible — a cycle of silent
+        // goods, which bundling exists to make free. NOTE this is the one
+        // deliberate behavior change of the port: this loop used to skip its
+        // wait only in bots-only games and otherwise pause the full 3000ms for
+        // a cycle that changed nothing on screen.
+        if (cycleDelay > 0) {
             console.log(`[CYCLE ${cycle}] Cycle took ${totalCycleTime}ms, waiting ${cycleDelay}ms to maintain ${cycleDelay}ms interval`);
             await new Promise(resolve => setTimeout(resolve, cycleDelay));
         } else {
-            console.log(`[CYCLE ${cycle}] Cycle took ${totalCycleTime}ms (>= ${cycleDelay}ms target), continuing immediately`);
+            console.log(`[CYCLE ${cycle}] Cycle took ${totalCycleTime}ms, nothing to watch — continuing immediately`);
         }
 
         return await processBotActions(game_id, cycle + 1, loopStartTime, cpu, leaseToken, nextResident);

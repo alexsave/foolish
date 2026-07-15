@@ -717,14 +717,31 @@ function packedActionCore(
     return exportPackedProducts(ex, seat, fool, humanSeats);
 }
 
+// The log-offset exports, which only bots.wasm carries (the rules module never
+// imports a session log, so it has nothing to skip). Reached only when
+// logStart > 0, i.e. from the bot drive on the adopted bots instance.
+interface LogSliceExports {
+    wasm_export_logs_masked_from(start: number): number;
+    wasm_events_serialize_from(viewer: number, actor: number, ended: number, logStart: number): number;
+}
+
 // The export tail every packed mutation shares: durable blob + public-dual
 // state + masked log records + per-recipient event streams, all read out of
 // the resident kernel synchronously.
+//
+// `logStart` is where this action's own log records begin. Zero for every
+// path that marshals fresh — wasm_import_state restarts the log at 0, so the
+// resident log IS the action's. The bot drive is the exception: its belief
+// bots need the session log resident while they choose, so it reports where
+// the cycle's records start and only those are exported (see wasm_api.c
+// export_logs). Passing 0 reproduces the previous calls exactly.
 function exportPackedProducts(
     ex: EngineExports, actorSeat: number, fool: number, humanSeats: number[],
+    logStart = 0,
 ): PackedRunOk {
     const base = ex.wasm_io_ptr();
     const ended = fool >= 0;
+    const slice = ex as unknown as LogSliceExports;
 
     const blobLen = ex.wasm_state_serialize();
     const stateBlob = mem(ex).slice(base, base + blobLen);
@@ -733,7 +750,9 @@ function exportPackedProducts(
     // The DRAW-privacy masking happens inside the kernel (it captured the
     // pre-action flip in begin_action); these bytes go straight to the
     // packed session-log column — no JS log objects on this path.
-    const logsLen = ex.wasm_export_logs_masked();
+    const logsLen = logStart > 0
+        ? slice.wasm_export_logs_masked_from(logStart)
+        : ex.wasm_export_logs_masked();
     const logsWire = mem(ex).slice(base, base + logsLen);
 
     // Per-recipient event streams — serialized before anything else touches
@@ -741,13 +760,38 @@ function exportPackedProducts(
     const events = new Map<number, Uint8Array>();
     let nEvents = 0;
     for (const viewer of [...humanSeats, -1]) {
-        const len = ex.wasm_events_serialize(viewer, actorSeat, ended ? 1 : 0);
+        const len = logStart > 0
+            ? slice.wasm_events_serialize_from(viewer, actorSeat, ended ? 1 : 0, logStart)
+            : ex.wasm_events_serialize(viewer, actorSeat, ended ? 1 : 0);
         if (len < 0) throw new Error('event stream serialization overflow');
         const bytes = mem(ex).slice(base, base + len);
         nEvents = bytes[3];
         events.set(viewer, bytes);
     }
     return { ok: true, fool, ended, stateBlob, post, logsWire, nEvents, events };
+}
+
+// The export tail for a whole bot CYCLE (docs/C_CORE_CONSOLIDATION.md F2).
+// wasm_bot_drive applied 0..n actions to the resident kernel game inside ONE
+// action scope, so this reads exactly what the server commits: the final state
+// blob, every bundled action's log records concatenated, and the per-viewer
+// event streams of the one visible action that ended the cycle (bundled
+// passives are zero-event by definition).
+//
+// Must be called synchronously on the state the drive left resident — same
+// discipline as every packed path. Lives here rather than in bots.ts because
+// the export tail is engine property; bots.ts owns the drive itself.
+export function exportPackedDriveProducts(
+    actorSeat: number, aiMask: number, humanSeats: number[], logStart: number,
+): PackedRunOk {
+    const ex = engine();
+    const fool = ex.wasm_finalize_win(aiMask >>> 0);
+    // The kernel has moved past every TS Game object: the cycle applied actions
+    // the caller's `game` has not seen yet. Whatever mark was outstanding is
+    // stale, and a reader that trusted it would search a superseded position —
+    // the cordite thrown-endgame class of bug.
+    residentFor = null;
+    return exportPackedProducts(ex, actorSeat, fool, humanSeats, logStart);
 }
 
 // The game start (deal/flip/first-attacker) as a packed mutation — the

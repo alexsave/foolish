@@ -34,7 +34,7 @@ field** (§3). Findings, ranked by leverage:
 | # | Finding | Duplicated today in | Verdict |
 |---|---|---|---|
 | F1 | **Bot roster: key → brain + tuning knobs + logs flag** | TS registry (`bot_strategy.ts:63-99`) · C table in `ios_api.c:37-48` **without knobs** → live strength/latency divergence (§3) | **DONE** (§4.1): `cnitro/src/bot_roster.c` is the one table; the phone's knob + arena/prod drift is fixed. |
-| F2 | **The bot drive cycle** (eligibility → fair pick → apply → passive bundling → stop conditions) | TS (`bot_actions.ts:262-411`) · Swift+C first-eligible walk (`LocalGame.runBots`) — with a second live divergence: iOS picks first-eligible, not shuffled | **`bot_drive` (§4.2): kernel + iOS DONE**; the server port remains. |
+| F2 | **The bot drive cycle** (eligibility → fair pick → apply → passive bundling → stop conditions) | TS (`bot_actions.ts:262-411`) · Swift+C first-eligible walk (`LocalGame.runBots`) — with a second live divergence: iOS picks first-eligible, not shuffled | **DONE (§4.2)**: `bot_drive` is the one cycle on the kernel, iOS AND the server; both hosts are one call. The differential harness found three kernel bugs on the way — one of them live in the iOS path. |
 | F3 | **Pacing policy** (what a move is worth pausing for) | TS constants 3000/300 ms + silent-skip · Swift 600–1200 ms jitter, no bundling | **DONE (§4.3)**: `bot_pacing_ms` is the one class→ms table; the server's values won. |
 | F4 | **The animation plan** (which card flies where, in what order) | C (`evwire.c`, server-only today) · TS decode mirrors · **planned Swift re-derivation `BoardDiff.swift` (unwritten)** · TS replay twin (`src/replay/view.ts`+`animate.ts`, ~800 lines) | **F4.1 DONE (§4.4)**: `evwire_walk` + sinks; local play consumes kernel events and BoardDiff was never born. F4.2 (replay steps) = A5. |
 | F5 | **v6 replay production** (reveal-stream assembly at game end) | TS choreography (`finalizeEndedGame` + `reconstructSeededDeal` + `replay/encode.ts`) · absent on iOS (offline shares are v5-only) | `replay_encode_v6_from_game` in C; server finalize becomes call-verify-store; offline shares gain exact hands. |
@@ -185,12 +185,59 @@ column for the localized display names (`docs/IOS_BOT_NAMING.md`).
 
 ### 4.2 F2 — The bot drive cycle becomes a kernel entry point
 
-**STATUS: kernel + iOS LANDED (A2, July 2026); the server port is the next
-step.** `cnitro/src/bot_drive.{h,c}` is the cycle; `fio_bot_drive_json` and
-`wasm_bot_drive` expose it; `LocalGame.runBots` is now one call per cycle, so
-the phone's fairness and bundling divergences (§3.2) are gone. `bot_actions.ts`
-still runs its own loop — porting it onto `wasm_bot_drive` behind the
-differential harness is what remains. Decisions taken while building it:
+**STATUS: DONE (A2, July 2026) — kernel, iOS AND the server.**
+`cnitro/src/bot_drive.{h,c}` is the cycle; `fio_bot_drive_json` and
+`wasm_bot_drive` expose it; `LocalGame.runBots` and `bot_actions.ts` are each
+ONE call per cycle. The fairness and bundling divergences (§3.2) are gone on
+both hosts, and `bot_actions.ts:262-411` — eligibility, the shuffle, the roster
+dispatch, the apply, the bundling, the stop conditions, the pacing and the
+legality re-check on the CAS-retry path — is deleted, not mirrored. The server
+keeps exactly what §5 says it should: lease, CAS, broadcast, CPU budget, and
+the two I/O reads (the session log, the deal seed).
+
+**What the differential harness found** (`e2e/bot_drive_parity.test.ts`, the
+step this port was gated behind — seeded games, TS cycle vs kernel cycle,
+byte-comparing committed products). It paid for itself three times:
+
+1. **A strategy's search was leaking into the animation plan.** The
+   Monte-Carlo bots deliberate by running real `handle_*` calls over scratch
+   games, and `engine_snap_hook` is global — so a cycle that left it installed
+   across the choose built the host's event stream out of a rollout's IMAGINARY
+   cards, and saturated `MAX_SNAPS` before the real move landed (a 1-action
+   cycle reported 12 events). One-move-per-call hosts never saw it: they reset
+   the snapshot buffer when they open the apply, which is AFTER the choose. A
+   cycle does both in one call, so `bot_drive` now brackets the choose
+   explicitly. **This was live in `fio_bot_drive_json` too** — A3's iOS events
+   were being built from blackpowder's imagination — so the fix is in
+   `bot_drive.c`, where both hosts get it. Guarded by
+   `test_bot_drive_choose_emits_no_snapshots` (negative-tested).
+2. **Seeding is per DECISION, and has two phases.** The RNG is re-seeded from
+   `state_fnv` before every choose (strategy LCG) and every apply (draw LCG);
+   a cycle drives several seats per call, so `bot_drive_pre_action_hook` fires
+   at both phases per seat. Seeding once per cycle shifts the stream for every
+   seat after a stream-CONSUMING bot (`random`, `handwritten_prod`), and
+   seeding the draw LCG before the choose feeds the search a value the
+   single-move path never gave it — the Monte-Carlo bots SAMPLE from whatever
+   the last apply left (`robusta_strategy.c` calls `game_random`;
+   blackpowder/cordite/octogen save and restore it). Both changed a real bot
+   move in the harness. Guarded by `test_bot_drive_pre_action_hook`
+   (negative-tested).
+3. **The belief log must be sliced, not exported from zero.** A cycle whose
+   bots read the session log has that whole log resident BENEATH the records it
+   writes, so `wasm_export_logs_masked_from` / `wasm_events_serialize_from` take
+   the offset `wasm_bot_drive_log_start` reports. Exporting from zero would have
+   appended the entire session to `logs_packed` a second time, every cycle.
+
+**The one behavioral change in the choose path** (deliberate, and the only one
+the harness could not make disappear): inside a bundle, a belief bot now sees
+the records of the bundle's earlier actions. The server hydrates once per cycle,
+so a bot acting second could not see the `good` the first bot just said; the
+kernel keeps the log resident, so it can. That is strictly more information, and
+only a public fact the bot would have seen one cycle later anyway. With that
+held equal the products match to the byte — which is the proof that it is the
+ONLY difference. (A blackpowder seat covered where the TS cycle had it pick up.)
+
+Decisions taken while building it:
 
 1. **A human being able to act is NOT a stop condition** (owner decision). The
    spec above reads "stop: human seat eligible", which is the *phone's* rule;
@@ -214,10 +261,23 @@ differential harness is what remains. Decisions taken while building it:
    brains a build can RUN differs, which was already true of CORE_SRC vs
    WASM_BOT_SRC. This is §4.7's "deliberate, documented budget decision".
 
-The server loop's INNER CYCLE (`bot_actions.ts:262-411`) is game logic in a
+4. **Knobs come from the roster on the drive path, not from the TS env table.**
+   `wasmBotDrive` clears the kernel env before driving, so `bot_roster_choose`'s
+   per-seat knob spec is authoritative — env beats roster by design
+   (`bot_knobs.h`), which is right for a research override and wrong for a table
+   a previous decision happened to leave installed. The values are identical
+   either way (`e2e/bot_roster_parity.test.ts` pins them knob-for-knob), so this
+   is the A1 server-side cutover for this path, proven by the byte-compare.
+5. **The CPU predictor's unit is now the CYCLE**, which is also the unit the
+   loop bails in. One drive can deliberate for several seats, so predicting the
+   next iteration from per-move costs would under-estimate it and risk the ~2s
+   cap.
+
+The server loop's INNER CYCLE (`bot_actions.ts:262-411`) was game logic in a
 TS coat: find eligible bot seats, pick one **shuffled** (fairness), choose
 via roster, apply, **bundle zero-event passives**, stop when a human becomes
-eligible / game ends / an event-bearing move lands. Proposal:
+eligible / game ends / an event-bearing move lands. Proposal (as specced, now
+built):
 
 ```c
 // Drive bot seats until a stop condition. Applies 0..n actions.
@@ -240,17 +300,18 @@ the old TS cycle vs `bot_drive`, byte-compare committed products.
 
 ### 4.3 F3 — Pacing policy as shared data, not per-host constants
 
-**STATUS: LANDED (A2).** `bot_pacing_ms(class, humans_present)` in
+**STATUS: LANDED (A2), both hosts.** `bot_pacing_ms(class, humans_present)` in
 `bot_drive.c` is the one table, reaching Swift as `BotDrive.delayMs` and TS as
-`wasm_bot_pacing_ms`. **The server's values won** (owner decision): 3000ms with
-a human watching, 300ms bots-only. The phone had been pacing at 600–1200ms
-while its own comment claimed to "mirror the server" — it never did — so
-offline bot moves are now ~3.3x slower, partly offset by bundling (a
-passive-heavy 8-player round was five separate ~900ms waits and is now one
-cycle). One deliberate change to the *server's* behavior rides along, landing
-with the port: `BUNDLED_PASSIVE` is 0ms, where `bot_actions.ts` today skips its
-delay only in bots-only games and otherwise pauses the full 3000ms for a cycle
-that changed nothing on screen. Bundling exists so those cost nothing.
+`wasm_bot_pacing_ms` — `bot_actions.ts` holds no timing constants at all now.
+**The server's values won** (owner decision): 3000ms with a human watching,
+300ms bots-only. The phone had been pacing at 600–1200ms while its own comment
+claimed to "mirror the server" — it never did — so offline bot moves are now
+~3.3x slower, partly offset by bundling (a passive-heavy 8-player round was five
+separate ~900ms waits and is now one cycle). One deliberate change to the
+*server's* behavior landed with the port: `BUNDLED_PASSIVE` is 0ms, where
+`bot_actions.ts` used to skip its delay only in bots-only games and otherwise
+pause the full 3000ms for a cycle that changed nothing on screen. Bundling
+exists so those cost nothing.
 
 Three "feels" exist today (server 3000 ms with humans / 300 ms bots-only /
 skip-when-silent; iOS 600–1200 ms jitter always; docs claiming they match).
@@ -403,7 +464,7 @@ mirror → parity harness → cutover → freeze the old path as test oracle)
 | # | Action | When | Verification |
 |---|---|---|---|
 | A1 | **F1 roster table** — smallest, fixes §3.1 immediately, F2 depends on it — **DONE** (§4.1; server-side cutover = deleting the TS `env` blocks, rides with the bots.wasm rebuild) | now | **done**: `e2e/bot_roster_parity.test.ts` (roster ≡ registry knob-for-knob; seed.sql ≡ the `seeded` set; `_max` stays dead) + roster/knob tests in `cnitro/tests/tests.c`; ios-smoke + difftests green |
-| A2 | **F2 `bot_drive` + F3 pacing classes** — **kernel + iOS DONE** (§4.2/§4.3): the cycle, the pacing table, `fio_bot_drive_json`, `wasm_bot_drive`, and `LocalGame.runBots` collapsed onto one call. **REMAINS:** port `bot_actions.ts` onto `wasm_bot_drive` behind the differential harness (the lease/CAS/broadcast/CPU budget stay TS-side; the cached-move replay after a CAS conflict stays too) | with A1 | **done**: fairness/bundling/determinism + pacing tests in `cnitro/tests/tests.c` (the fairness one fails if the shuffle is removed), ios-smoke, Swift `EngineGoldenTests`, bot-parity + determinism e2e unchanged against the rebuilt bots.wasm. **Remains**: seeded games, TS cycle vs kernel cycle, byte-compare committed products |
+| A2 | **F2 `bot_drive` + F3 pacing classes** — **DONE** (§4.2/§4.3): the cycle, the pacing table, `fio_bot_drive_json`, `wasm_bot_drive`, `LocalGame.runBots` **and `bot_actions.ts`** are one call per cycle. Lease/CAS/broadcast/CPU budget stayed TS-side; the cached-move replay became `BotDrivePref` (the kernel re-checks legality) | with A1 | **done**: fairness/bundling/determinism + pacing + snapshot + seeding-hook tests in `cnitro/tests/tests.c` (fairness, snapshot and hook ones are negative-tested), ios-smoke, Swift tests, difftests, and **`e2e/bot_drive_parity.test.ts`** — seeded games, TS cycle vs kernel cycle, byte-comparing committed products (state blob, log records, per-viewer event streams) across 5 configs incl. belief bots and the pref path |
 | A3 | **F4.1 kernel events for local play** — **DONE** (§4.4): `evwire_walk` + sinks; `fio_bot_drive_json` events inline + `fio_last_events_json`; `GameEvent`/`lastEvents` in Swift; `IOS_APP_DESIGN.md` §16.B4 amended to "consume kernel events" and `BoardDiff.swift` cancelled | before iOS Milestone-B animation work | **done**: kernel events verified for bot cycles AND human moves through the real bridge; evwire byte-parity with the TS twin unchanged (`packed_wire_parity`); Swift decodes them; C suites + `ios-smoke` + Swift tests green. **Remains**: rendering them (Milestone B) |
 | A4 | **F5 v6-from-game** | after A1–A3 | extend `replay_v6_test.c`; server finalize diff-tested against the TS assembly on real finished games |
 | A5 | **F4.2 replay steps from the kernel** | after A3 (reuses emitter), before native replay polish | web replay renders identically (snapshot tests); iOS plays a web-generated code step-for-step |
