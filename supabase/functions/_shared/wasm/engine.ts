@@ -1552,7 +1552,13 @@ export function kernelLegalMoves(game: Game, player_id: string): { type: string;
 // duplicating it. Underscore-prefixed: internal surface, not part of the
 // kernel API the actions/ handlers use.
 export type { EngineExports };
-export { decodeBase64 as __decodeBase64, marshalGame as __marshalGame, mem as __mem };
+export {
+    decodeBase64 as __decodeBase64, marshalGame as __marshalGame, mem as __mem,
+    // bots.ts drives the v6-from-game encode (only that module can hold a
+    // session log) and maps kernel errors with the same table as every other
+    // replay call.
+    replayError as __replayError,
+};
 // Map, not a plain object: the per-log lookup in the bots bridge showed up
 // as a megamorphic keyed load (~10% of the heuristic-bot pipeline profile).
 export const __LOG_TYPE_TO_INT: Map<string, number> = new Map(

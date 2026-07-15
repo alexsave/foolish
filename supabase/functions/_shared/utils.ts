@@ -924,6 +924,7 @@ export const finalizeEndedGame = async (game: Game): Promise<void> => {
     // is the source; decode is the ONE place session logs become JS objects.
     // Falls back to the in-memory final move if the column is somehow empty.
     let sessionLogs: GameLog[] = [];
+    let packedLogBytes: Uint8Array | undefined;
     let dealSeed: string | null = game.game_seed ?? null;
     try {
         const { data } = await supabaseClient
@@ -932,12 +933,19 @@ export const finalizeEndedGame = async (game: Game): Promise<void> => {
         if (data?.logs_packed) {
             const { decodeLogs } = await import('./wire/logwire.ts');
             const { hexToBytes } = await import('./replay/codec.ts');
-            sessionLogs = decodeLogs(hexToBytes(data.logs_packed), game.id, game.players);
+            // The bytes go to the v6 encoder as-is (the kernel reads the action
+            // stream out of them); the decoded objects are still needed for the
+            // extras blob's timestamps, the round-trip verification reference,
+            // and the v5 fallback.
+            packedLogBytes = hexToBytes(data.logs_packed);
+            sessionLogs = decodeLogs(packedLogBytes, game.id, game.players);
         }
     } catch (e) {
         console.error(`[REPLAY] packed session log read failed for ${game.id}:`, e);
     }
     const replayLogs = sessionLogs.length > 0 ? sessionLogs : game.logs;
+    // Only hand the kernel bytes that cover the same session `replayLogs` does.
+    if (sessionLogs.length === 0) packedLogBytes = undefined;
 
     // Compress the finished session into a replay snapshot (game_snapshots
     // row) and retire its logs. verifyRoundTrip both encodes and proves the
@@ -945,27 +953,32 @@ export const finalizeEndedGame = async (game: Game): Promise<void> => {
     // we retire the packed session log.
     try {
         // Lazy import: the replay codec is only needed here, at game end.
-        const { verifyRoundTrip, verifyRoundTripV6 } = await import('./replay/encode.ts');
+        const { verifyRoundTrip, verifyRoundTripV6FromGame } = await import('./replay/encode.ts');
         const { encodeExtras, moveTimesFromLogs } = await import('./replay/extras.ts');
-        const { base32Decode, bytesToHex } = await import('./replay/codec.ts');
+        const { base32Decode, bytesToHex, hexToBytes } = await import('./replay/codec.ts');
 
         const playerIds = game.players.map(player => player.player_id);
 
         // Prefer Format 6 (hidden-state-lossless): the masked session log can't
         // supply the hidden cards, but a seeded game's deal is reproducible — so
-        // re-deal from the stored seed to recover the true initial hands + stock,
-        // and encode a replay that carries every hidden identity. This is what
+        // the kernel re-derives the true initial hands + stock from the stored
+        // seed and encodes a replay carrying every hidden identity. This is what
         // lets the Oracle read exact hands at every step instead of retrodicting
-        // (docs/REPLAY_FORMAT6_HIDDEN_STATE.md). Any failure (no seed, deal drift)
-        // falls back to the frozen v5 codec so game-end never breaks.
+        // (docs/REPLAY_FORMAT6_HIDDEN_STATE.md).
+        //
+        // ONE kernel call (docs/C_CORE_CONSOLIDATION.md A4). This used to be the
+        // choreography: re-deal in TS, walk the logs into a reveal stream and an
+        // action stream, hand-marshal the codec's header, encode. All of that is
+        // now inside replay_encode_v6_from_game — which is also exactly what the
+        // phone calls, so an offline share and a site share are the same code.
+        //
+        // Any failure (no seed, a legacy game, deal drift) falls back to the
+        // frozen v5 codec so game-end never breaks.
         let encoded: EncodedReplay | undefined;
         if (dealSeed) {
             try {
-                const { reconstructSeededDeal } = await import('./game_lifecycle.ts');
-                const { initialHands, stock, flip } = reconstructSeededDeal(dealSeed, game.players);
-                ({ encoded } = await verifyRoundTripV6({
-                    playerIds, logs: replayLogs, flipped: flip, initialHands, stock,
-                }));
+                ({ encoded } = await verifyRoundTripV6FromGame(
+                    game, hexToBytes(dealSeed), replayLogs, packedLogBytes));
             } catch (e) {
                 console.error(`[REPLAY] v6 encode failed for ${game.id}, falling back to v5:`, e);
             }

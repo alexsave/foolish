@@ -62,6 +62,14 @@ export const start_game_packed = (game: Game): PackedRunOk => {
 // masked session log can't provide it. Deterministic: same seed + same roster
 // order => the exact deal the game was played on. Server-only (loads the wasm
 // kernel). Throws if the seed is malformed.
+//
+// NOT ON ANY PRODUCTION PATH since A4 (docs/C_CORE_CONSOLIDATION.md F5): the
+// kernel re-derives the deal inside replay_encode_v6_from_game, without
+// materializing a card into JS and without the throwaway packed export this
+// runs. It survives as the frozen ORACLE that e2e/replay_v6_parity.test.ts
+// byte-compares the kernel against — which is the only reason to keep it, and
+// the reason not to "fix" it. Note it CLOBBERS the kernel's resident game state
+// with its re-deal; callers must marshal fresh afterwards.
 export const reconstructSeededDeal = (
     seedHex: string,
     roster: Pick<PrivatePlayer, 'player_id' | 'name' | 'is_ai' | 'strategy_key'>[],

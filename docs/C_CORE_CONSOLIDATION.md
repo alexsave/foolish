@@ -37,7 +37,7 @@ field** (§3). Findings, ranked by leverage:
 | F2 | **The bot drive cycle** (eligibility → fair pick → apply → passive bundling → stop conditions) | TS (`bot_actions.ts:262-411`) · Swift+C first-eligible walk (`LocalGame.runBots`) — with a second live divergence: iOS picks first-eligible, not shuffled | **DONE (§4.2)**: `bot_drive` is the one cycle on the kernel, iOS AND the server; both hosts are one call. The differential harness found three kernel bugs on the way — one of them live in the iOS path. |
 | F3 | **Pacing policy** (what a move is worth pausing for) | TS constants 3000/300 ms + silent-skip · Swift 600–1200 ms jitter, no bundling | **DONE (§4.3)**: `bot_pacing_ms` is the one class→ms table; the server's values won. |
 | F4 | **The animation plan** (which card flies where, in what order) | C (`evwire.c`, server-only today) · TS decode mirrors · **planned Swift re-derivation `BoardDiff.swift` (unwritten)** · TS replay twin (`src/replay/view.ts`+`animate.ts`, ~800 lines) | **F4.1 DONE (§4.4)**: `evwire_walk` + sinks; local play consumes kernel events and BoardDiff was never born. F4.2 (replay steps) = A5. |
-| F5 | **v6 replay production** (reveal-stream assembly at game end) | TS choreography (`finalizeEndedGame` + `reconstructSeededDeal` + `replay/encode.ts`) · absent on iOS (offline shares are v5-only) | `replay_encode_v6_from_game` in C; server finalize becomes call-verify-store; offline shares gain exact hands. |
+| F5 | **v6 replay production** (reveal-stream assembly at game end) | TS choreography (`finalizeEndedGame` + `reconstructSeededDeal` + `replay/encode.ts`) · absent on iOS (offline shares are v5-only) | **DONE (§4.5)**: `replay_encode_v6_from_game` is the one producer on both hosts; finalize is call-verify-store and offline shares carry exact hands. The specced `from_game` signature could not work as written (a finished game does not know its own deal), so the seed is a parameter and the kernel re-deals. |
 | F6 | **Rematch / reset-to-lobby transform** | TS 10-field mutation (`meta_actions.ts:188`) · client mirror (`clientReconcile.ts:10-40`, "must match byte-for-byte") · specced for a third port in iOS M-D5 | `wasm_reset_to_lobby` / `fio_reset_to_lobby`; all mirrors become decode-and-render. |
 | F7 | **Wire decode on the web** (packed view/evwire/awire → JS) | C codecs · ~960 lines of parity-policed TS mirrors (`@shared/wire/*`); iOS already decodes in C | Fold into client wasm opportunistically, format-by-format (⚠ guards.wasm memory budget, §4.7). |
 | F8 | **TS rules projections** (`shouldBotActCore`, `canCover`, `game_done`, `get_next_player_index`) | sanctioned, parity-policed mirrors in `common_utils.ts` | After F2 removes their last real consumer: migrate callers to kernel calls and delete (or demote to documented render-hints). |
@@ -383,19 +383,110 @@ the Swift diff engine gets written and becomes legacy on day one.
 
 ### 4.5 F5 — v6 replay production from the kernel game
 
-Game end on the server is TS choreography (`finalizeEndedGame`): re-deal
-from the stored seed (`reconstructSeededDeal`), assemble the v6 reveal
-stream (initial hands + stock in draw order, `replay/encode.ts`), verify
-round-trip, fall back to v5. The phone can't reuse any of it —
-`fio_replay_encode_b32` emits v5, so offline replays lose exact hidden-hand
-fidelity (worse Oracle input). Proposal:
-`replay_encode_v6_from_game(const Game *g, ...)` in `replay.c` — a seeded,
-kernel-resident game already knows the true deck and draw order
-(`REPLAY_FORMAT6_HIDDEN_STATE.md` producer note), so reveal assembly is a C
-loop. Export via wasm (server finalize becomes call-verify-store) and
-`fio_` (offline and iMessage FINISHED shares become v6). The extras blob
-(names + timing) needs per-move timestamps only the server records —
-follows later; flag, don't block.
+**STATUS: DONE (A4, July 2026) — kernel, the server AND iOS.**
+`replay_encode_v6_from_game` (`replay.c`) is the one v6 producer;
+`wasm_replay_encode_v6_from_game` and `fio_replay_encode_v6_b32` expose it.
+`finalizeEndedGame` is call-verify-store, offline shares carry exact hands, and
+`reconstructSeededDeal` + `encodeReplayV6`'s reveal assembly + `marshalInputV6`
++ `deriveTrump` have **no production caller left** — they are frozen as the
+differential oracle (`e2e/replay_v6_parity.test.ts`), per the playbook, not
+deleted.
+
+**The specced signature could not work as written.** `replay_encode_v6_from_game(
+const Game *g, ...)` rests on the producer note's "a seeded, kernel-resident
+game already knows the true deck and draw order". Half of that is false: a
+FINISHED game knows neither. `deal_initial` emits no per-seat `LOG_DRAW` (only a
+hook snapshot), and `draw_card` splices each drawn card out of `deck[]`, so at
+game end `deck_count` is 0 and the deal is simply gone from the struct. The
+alternative — capturing the 52-card deal permutation in the `Game` and carrying
+it in the durable blob — was rejected (owner decision): it costs ~52 B on every
+state write, for drift-immunity that buys nothing when finalize runs seconds
+after the deal, on the binary that dealt it. So the **seed is a parameter**, and
+the kernel re-deals a scratch game internally. From `g` come only the actions
+(its logs, read directly) and the player count.
+
+Decisions and traps, in the order they bit:
+
+1. **A re-deal is a deal: it fires the snapshot hook and moves the deal RNG.**
+   `start_game` fires `ENGINE_HOOK_DEAL` per seat and `engine_snap_hook` is
+   global — so a re-deal on a host building an animation plan would splice a
+   whole IMAGINARY deal into it. This is A2's bug #1 in a new place, and it is
+   bracketed the same way (`bot_drive.c choose_move`). It also consumes the
+   ChaCha stream and leaves wide mode SET, which `draw_index` reads for EVERY
+   game in the thread — so a warm isolate's next game would pop a pre-shuffled
+   deck instead of drawing at random. Both globals are saved and restored
+   (`game_deal_rng_get/set`), both negative-tested.
+2. **The trump is a witness, but only while `has_flipped`.** A wrong seed is
+   otherwise silent corruption — the reveals would describe a different deal and
+   the encode could still succeed, storing a replay of a game nobody played. The
+   game's own `flipped` is the cheap witness, and the producer note's "snapshot
+   the trump at deal time" is right for the SERVER but not for the kernel: this
+   kernel keeps the card and only clears the flag, while a game round-tripped
+   through the state blob comes back with `flipped` = **wire card 0** (`engine.ts
+   marshalGame` sends `game.flipped ? wireStateCard(...) : 0`), which reads as a
+   real 6, not a sentinel. Indistinguishable here — so the check trusts the flag,
+   not the card, and a dry-stock game is caught downstream instead
+   (`REPLAY_ENOTINMENU`: the logged opening attack is not in the wrong deal's
+   menu). **The harness found this**: every server-path encode failed
+   `REPLAY_EHEADER` on the first run.
+3. **No action is marshalled any more.** `Src` (the encoder's action reader)
+   gained a LOGS mode beside its BYTES mode, so the coder, the model and
+   `run_replay_v6` never learn where an action came from, and no multi-KB input
+   buffer exists on this path at all. The `GOOD`+`DISCARD` → `round_end`
+   synthesis rule now has a kernel copy (`log_atom_kind`) which is the one BOTH
+   hosts' v6 runs through — but honestly: it did not remove the others. The v5
+   producers still carry theirs (`ios_api.c build_encode_input`, `encode.ts
+   collectActions`), as do the test oracles. Those collapse when v5 production
+   does, which is not A4.
+4. **The scratch deal is a short-log slot, not a `Game`.** A `Game` is ~130 KB
+   in the production build (`MAX_LOGS` x `MAX_LOG_PAIRS`); the re-deal needs its
+   hands, deck and flip and never its logs. Same trick `cordite_sim.c` plays for
+   sampled worlds (`WORLD_SLOT_BYTES`): the slot stops just past the start of
+   `logs`, and `log_cap = 1` routes every non-DISCARD append to `log_alloc`'s own
+   sink. ~2 KB instead of ~130 KB.
+5. **It is a bots.wasm export** (owner decision: "use the big wasm everywhere;
+   split back later"). This needs a whole session log resident and rules.wasm is
+   built at `MAX_LOGS=128` with no log import — not a knob, since the `Game`
+   struct alone would go 33 KB → 133 KB and blow that module's pinned 3-page
+   memory. bots.wasm is a superset and adopts the engine slot, so a bot game pays
+   nothing; a human-only game's finalize instantiates it. Cost: **+711 B gzip**
+   (55,728 → 56,439). The follow-up — retiring rules.wasm so there is ONE module
+   — is unblocked (`bots()` is already synchronous and already adopts) but is its
+   own change, not A4's.
+6. **`FOOLISH_SEED_LEN` landed here** (A7's first item, opportunistically): this
+   work needed the constant, and a short seed silently degrading a deal to the
+   legacy LCG is exactly the trap A7 names.
+7. **Format choice is in C, not in a client.** `fio_replay_share_code_b32`
+   returns the best code a game can produce (v6 when its deal is re-derivable,
+   else v5) — the same fallback the server makes. Swift asks for "a shareable
+   code" and never learns v6 exists, so the watch and the iMessage extension
+   inherit it instead of reimplementing it.
+
+The extras blob (names + timing) still needs per-move timestamps only the server
+records, and stays TS-side — as flagged, not blocking. The v5 fallback stays for
+legacy/seedless games.
+
+**One accepted regression, measured.** The kernel path holds the session log in
+`Game.logs[MAX_LOGS]`, so a game with **more than 512 log records cannot be v6**
+and falls back to v5 (logged, never silent). The old TS path had no such limit —
+it marshalled actions into a byte buffer and never stored a log. Truncating is
+not an option instead: a short log is a short ACTION stream, and v6 would happily
+encode it as a legal mid-game cut — a silently half-recorded game, which is worse
+than v5. Measured over 420 seeded games per config (2..8 players):
+
+| config | over the cap | longest log |
+|---|---|---|
+| all handwritten | 0% | 369 |
+| one `random` seat, rest handwritten | 0% | 413 |
+| all `random` (bot-only arena) | 29% | 512 (hit) |
+
+So no human game reaches it — but headroom is only ~20%, and bot-only arena games
+on the thrashiest rung (`random` IS a seeded rung) do lose exact hands. Two ways
+out when it matters, neither taken here: raise bots.wasm's `MAX_LOGS` (~+200 KB
+of linear memory: `g_game` plus the log-export buffer), or give `Src` a third
+mode that STREAMS the action stream from the caller's log-wire bytes with no
+storage at all — which removes the ceiling entirely and is the same shape as the
+LOGS mode. The second is the better answer if this ever bites.
 
 ### 4.6 F6 — Rematch/reset-to-lobby as a kernel transform
 
@@ -466,10 +557,10 @@ mirror → parity harness → cutover → freeze the old path as test oracle)
 | A1 | **F1 roster table** — smallest, fixes §3.1 immediately, F2 depends on it — **DONE** (§4.1; server-side cutover = deleting the TS `env` blocks, rides with the bots.wasm rebuild) | now | **done**: `e2e/bot_roster_parity.test.ts` (roster ≡ registry knob-for-knob; seed.sql ≡ the `seeded` set; `_max` stays dead) + roster/knob tests in `cnitro/tests/tests.c`; ios-smoke + difftests green |
 | A2 | **F2 `bot_drive` + F3 pacing classes** — **DONE** (§4.2/§4.3): the cycle, the pacing table, `fio_bot_drive_json`, `wasm_bot_drive`, `LocalGame.runBots` **and `bot_actions.ts`** are one call per cycle. Lease/CAS/broadcast/CPU budget stayed TS-side; the cached-move replay became `BotDrivePref` (the kernel re-checks legality) | with A1 | **done**: fairness/bundling/determinism + pacing + snapshot + seeding-hook tests in `cnitro/tests/tests.c` (fairness, snapshot and hook ones are negative-tested), ios-smoke, Swift tests, difftests, and **`e2e/bot_drive_parity.test.ts`** — seeded games, TS cycle vs kernel cycle, byte-comparing committed products (state blob, log records, per-viewer event streams) across 5 configs incl. belief bots and the pref path |
 | A3 | **F4.1 kernel events for local play** — **DONE** (§4.4): `evwire_walk` + sinks; `fio_bot_drive_json` events inline + `fio_last_events_json`; `GameEvent`/`lastEvents` in Swift; `IOS_APP_DESIGN.md` §16.B4 amended to "consume kernel events" and `BoardDiff.swift` cancelled | before iOS Milestone-B animation work | **done**: kernel events verified for bot cycles AND human moves through the real bridge; evwire byte-parity with the TS twin unchanged (`packed_wire_parity`); Swift decodes them; C suites + `ios-smoke` + Swift tests green. **Remains**: rendering them (Milestone B) |
-| A4 | **F5 v6-from-game** | after A1–A3 | extend `replay_v6_test.c`; server finalize diff-tested against the TS assembly on real finished games |
+| A4 | **F5 v6-from-game** — **DONE** (§4.5): `replay_encode_v6_from_game` + `wasm_replay_encode_v6_from_game` + `fio_replay_encode_v6_b32` / `fio_replay_share_code_b32`; `finalizeEndedGame` is one call; `reconstructSeededDeal` + `encodeReplayV6` + `marshalInputV6` keep NO production caller and are frozen as the oracle | after A1–A3 | **done**: `replay_v6_test.c` extended with the seeded from-game path — byte-equal to the marshalled oracle, mid-game cuts, wrong-seed rejection, and the hook/deal-RNG restores (all negative-tested); `ios-smoke` proves 48/48 seeded games share as v6 with no hidden card surviving; and **`e2e/replay_v6_parity.test.ts`** byte-compares the kernel against the TS choreography on real seeded games, through BOTH the JS-log and packed-`logs_packed` paths. It found the trump-witness bug (§4.5.2) on its first run |
 | A5 | **F4.2 replay steps from the kernel** | after A3 (reuses emitter), before native replay polish | web replay renders identically (snapshot tests); iOS plays a web-generated code step-for-step |
 | A6 | **F6 reset transform**, then **F8 projection deletions** | cleanup wave | `resetToLobby` mirrors deleted; rematch e2e green on web + iOS |
-| A7 | **F9 batch**: seed-len header + rejects (rides the iMessage M0), `unambiguous_cover` (with the first surface that needs it), `%`-name tidies (with the naming work), and the **`console`+`gpt` drop** — delete the `CONSOLE` key (`types.ts:254`), the gpt lazy-load path + `strategies/gpt_strategy.ts`, and, once unreferenced, `move_stats.ts` + `pass_prob.ts` (neither strategy was ever seeded in production; `registerBotStrategy` itself STAYS — the offlinefun research harnesses use it) | opportunistic | per-item; grep proves no `console`/`gpt` strategy reference survives |
+| A7 | **F9 batch**: seed-len header + rejects — **`FOOLISH_SEED_LEN` DONE** (A4 needed it; `game.h`, and `game_set_deal_seed_bytes` rejects against it — the encode/decode-side rejects still ride the iMessage M0) —, `unambiguous_cover` (with the first surface that needs it), `%`-name tidies (with the naming work), and the **`console`+`gpt` drop** — delete the `CONSOLE` key (`types.ts:254`), the gpt lazy-load path + `strategies/gpt_strategy.ts`, and, once unreferenced, `move_stats.ts` + `pass_prob.ts` (neither strategy was ever seeded in production; `registerBotStrategy` itself STAYS — the offlinefun research harnesses use it) | opportunistic | per-item; grep proves no `console`/`gpt` strategy reference survives |
 | A8 | **F7 wire-decode moves**, format-by-format on next wire change; module/budget decision documented | opportunistic | mirror file deleted per format; parity test flips to wasm-vs-fixture |
 
 **What this buys, concretely:** the offline app gets site-identical bots

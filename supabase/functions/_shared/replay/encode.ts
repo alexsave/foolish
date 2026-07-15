@@ -16,9 +16,17 @@
  * verifyRoundTrip() is the gate: it decodes the freshly encoded integer and
  * checks the result reproduces every information-bearing log. Only persist a
  * snapshot it returns; never wipe logs for a game it threw on.
+ *
+ * SCOPE NOTE (A4, docs/C_CORE_CONSOLIDATION.md F5): the "TS-shaped plumbing"
+ * above is now the V5 story only. v6 in production is verifyRoundTripV6FromGame
+ * — one kernel call that re-derives the deal from the seed and reads the actions
+ * out of the session log itself, so none of the collect/marshal/derive-trump
+ * code below runs for it. encodeReplayV6 / collectV6 / marshalInputV6 have no
+ * production caller left; they are the frozen ORACLE the kernel is byte-compared
+ * against (e2e/replay_v6_parity.test.ts). Keep them working, don't extend them.
  * ========================================================================== */
 
-import { Card, LOG_TYPE } from "../types.ts";
+import { Card, Game, GameLog, LOG_TYPE } from "../types.ts";
 import { ACE_VALUE } from "../constants.ts";
 import {
   bytesToBigint,
@@ -333,7 +341,12 @@ function checkInfoActionsMatch(input: ReplayInput, decoded: DecodedReplay): void
 
 /** v6 counterpart of verifyRoundTrip: encode a full game losslessly, decode it,
  *  and confirm every info action round-trips. The decoded stream additionally
- *  carries the true hidden state (checked by e2e/replay_v6.test.ts). */
+ *  carries the true hidden state (checked by e2e/replay_v6.test.ts).
+ *
+ *  NOTE: this is now the ORACLE, not the production path — production is
+ *  verifyRoundTripV6FromGame below. It stays because it is the only thing that
+ *  can independently produce a v6 code from an explicitly supplied deal, which
+ *  is what e2e/replay_v6_parity.test.ts byte-compares the kernel against. */
 export async function verifyRoundTripV6(input: ReplayInputV6): Promise<{
   encoded: EncodedReplay;
   decoded: DecodedReplay;
@@ -341,6 +354,49 @@ export async function verifyRoundTripV6(input: ReplayInputV6): Promise<{
   const encoded = await encodeReplayV6(input);
   const decoded = await decodeReplay(encoded.x);
   checkInfoActionsMatch(input, decoded);
+  return { encoded, decoded };
+}
+
+/** v6 the way production makes it (docs/C_CORE_CONSOLIDATION.md F5/A4): ONE
+ *  kernel call. The kernel re-derives the true deal from the game's deal seed
+ *  and reads the actions out of the session log it is handed, so this side never
+ *  assembles a reveal stream, never marshals an action, and never has to know
+ *  that v6 has a header — all of which used to live here (collectV6 /
+ *  marshalInputV6 / deriveTrump) and in game_lifecycle's reconstructSeededDeal.
+ *  Byte-identical to verifyRoundTripV6 above; e2e/replay_v6_parity.test.ts pins
+ *  that on real seeded games, which is what made this a port and not a rewrite.
+ *
+ *  The round-trip gate stays exactly as it was: encode, decode, confirm every
+ *  info action survived. It is what stands between an encoder bug and logs that
+ *  have already been retired — so it is checked against `logs`, the session as
+ *  the SERVER decoded it, not against anything the kernel handed back.
+ *
+ *  @param game       the finished game (roster in seat order + final state)
+ *  @param seed       its 32-byte deal seed (games.game_seed)
+ *  @param logs       the decoded session log — the verification reference
+ *  @param packedLogs the same session as packed bytes (games.logs_packed), fed
+ *                    to the kernel with no JS objects in between; omit and the
+ *                    kernel is handed game.logs instead. */
+export async function verifyRoundTripV6FromGame(
+  game: Game,
+  seed: Uint8Array,
+  logs: GameLog[],
+  packedLogs?: Uint8Array,
+): Promise<{ encoded: EncodedReplay; decoded: DecodedReplay }> {
+  const { kernelReplayEncodeV6FromGame } = await import("../wasm/bots.ts");
+  const bytes = kernelReplayEncodeV6FromGame(game, seed, packedLogs);
+  const x = bytesToBigint(bytes);
+  const encoded: EncodedReplay = {
+    x, bytes, byteLength: bytes.length,
+    base32: base32Encode(bytes),
+    base64: base64Encode(bytes),
+    url: gameToUrl(x),
+  };
+  const decoded = await decodeReplay(x);
+  checkInfoActionsMatch(
+    { playerIds: game.players.map((p) => p.player_id), logs, flipped: game.flipped },
+    decoded,
+  );
   return { encoded, decoded };
 }
 

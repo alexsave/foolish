@@ -19,13 +19,14 @@ import { LegalMove } from '../bot_interfaces.ts';
 import { loadWasmGz } from './wasm_asset.ts';
 import {
     EngineExports, PackedRunOk, __LOG_TYPE_TO_INT, __MOVE_TYPE, __adoptEngine,
-    __marshalGame, __mem, __pooledCard, __setResident,
+    __marshalGame, __mem, __pooledCard, __replayError, __setResident,
     __wireLogCard, __cardFromWire, applyKernelStateToGame,
     exportPackedDriveProducts, rngBaseFromSeed,
 } from './engine.ts';
 
 interface BotsExports extends EngineExports {
     wasm_import_logs(): void;
+    wasm_replay_encode_v6_from_game(max_atoms: number): number;
     wasm_clear_logs(): void;
     wasm_import_strategy_keys(): void;
     wasm_set_game_key(key: number): void;
@@ -521,4 +522,69 @@ export function wasmBotDrive(
         applyKernelStateToGame(game, run.post, game.players[a.seat].player_id);
     }
     return { actions, stop, ended, run };
+}
+
+// ---------- v6 replay production (docs/C_CORE_CONSOLIDATION.md F5/A4) --------
+
+// Encode a finished (or in-progress) seeded game as a v6 replay — the format
+// that carries every hidden card's real identity, so a decoder never retrodicts
+// a hand.
+//
+// This is ONE kernel call where the TS choreography used to be ~390 lines
+// across three modules and two wasm round-trips: re-deal from the seed
+// (reconstructSeededDeal), assemble the reveal stream and the action stream
+// (collectV6), hand-marshal them into the codec's byte layout (marshalInputV6),
+// then encode. The kernel now re-derives the deal itself and reads the actions
+// out of the session log it was handed, so nothing here knows what a reveal
+// stream is. The phone makes the same call (fio_replay_encode_v6_b32) — which
+// is the point: a third client implements none of this.
+//
+// It runs on the BOTS module, not the rules module, for one hard reason: this
+// needs the whole session log resident, and rules.wasm is built at MAX_LOGS=128
+// with no log import (raising it would blow that module's pinned 3-page memory).
+// bots.wasm is a superset and adopts the engine slot, so a game that already
+// drove bots pays nothing here.
+//
+// LIMIT: resident means MAX_KERNEL_LOGS. A session longer than that cannot be v6
+// and throws, so the caller falls back to v5 — the old TS path had no such
+// ceiling (it marshalled actions and never stored a log). Measured: no
+// human-plausible game comes close (longest 413 of 512 with a `random` seat in
+// it), but all-`random` bot games hit it ~29% of the time. NOT truncated on
+// purpose: a short log is a short ACTION stream, and v6 would encode that as a
+// perfectly legal mid-game cut — a silently half-recorded game is worse than a
+// v5 one. See docs/C_CORE_CONSOLIDATION.md §4.5 for the two ways out.
+//
+//   game     the played game — the roster (seat order) and the final state.
+//   seed     the game's 32-byte deal seed (games.game_seed), hex. This is the
+//            server-only column: it re-derives the true deal.
+//   logs     the session log as packed bytes (games.logs_packed), or omit to
+//            use game.logs / game.belief_log_bytes.
+//   maxAtoms cap on atoms — v6's mid-game cut. Default: the whole game.
+//
+// Throws on a kernel error (including a seed that did not deal this game, which
+// the kernel catches by checking the re-dealt trump against the game's own).
+export function kernelReplayEncodeV6FromGame(
+    game: Game,
+    seed: Uint8Array,
+    logs?: Uint8Array,
+    maxAtoms = 1 << 30,
+): Uint8Array {
+    if (seed.length !== 32) {
+        throw new Error(`replay: v6 needs a 32-byte deal seed, got ${seed.length}`);
+    }
+    const ex = bots();
+    // Always marshal fresh. A cached resident state can be stale in exactly the
+    // way that matters here — a dead deck still reading as alive — and this is a
+    // reader (see the residentFor note in engine.ts).
+    __setResident(null);
+    __marshalGame(ex, game);
+    if (logs) importLogsPacked(ex, logs);
+    else importLogs(ex, game);
+    // The seed goes in the replay IO buffer; the kernel copies it out before it
+    // writes the replay integer back over the same bytes.
+    const base = ex.wasm_replay_io_ptr();
+    __mem(ex).set(seed, base);
+    const n = ex.wasm_replay_encode_v6_from_game(maxAtoms);
+    if (n < 0) throw __replayError(n, ex.wasm_replay_error_detail());
+    return __mem(ex).slice(base, base + n);
 }
