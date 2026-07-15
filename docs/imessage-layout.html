@@ -1,0 +1,717 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Foolish in Messages — bubble, drawer &amp; expanded table</title>
+<style>
+/* =====================================================================
+   Page chrome: the Soviet-poster system shared with docs/watchos-layout.html
+   and docs/ios-se-layout.html. The PHONE SCREENS are dark-mode iMessage
+   chrome; the GAME SURFACES inside them wear the app's Gosizdat tokens
+   (felt/bone/red/brass) plus the web's material world: fern card backs,
+   a wool-weave tint on the felt, and a wood rail on the extension chrome.
+   ===================================================================== */
+:root{
+  --ink:#0f0d0b; --paper:#F5E6C8; --paper2:#EDDCB9; --red:#B32929;
+  --gold:#E79743; --green:#5A8F3E; --line:#c9b58a; --mut:#6b5d43;
+  --disp:'Oswald','Bebas Neue','Arial Narrow','Helvetica Neue Condensed',Impact,sans-serif;
+  --body:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+  --mono:ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+  --cal:1; --zoom:0.66; --zk:calc(var(--cal) * var(--zoom));
+}
+@media (prefers-color-scheme: dark){
+  :root{ --ink:#EDDCB9; --paper:#171310; --paper2:#211b15; --line:#463a28;
+         --mut:#a08d67; --gold:#d98f3f; }
+}
+:root[data-theme="dark"]{ --ink:#EDDCB9; --paper:#171310; --paper2:#211b15;
+  --line:#463a28; --mut:#a08d67; --gold:#d98f3f; }
+:root[data-theme="light"]{ --ink:#0f0d0b; --paper:#F5E6C8; --paper2:#EDDCB9;
+  --line:#c9b58a; --mut:#6b5d43; --gold:#E79743; }
+
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.55 var(--body)}
+main{max-width:1120px;margin:0 auto;padding:0 20px 90px}
+h1,h2,h3{font-family:var(--disp);font-weight:600;letter-spacing:.5px;text-wrap:balance}
+code,.cite{font-family:var(--mono);font-size:.82em;background:var(--paper2);
+  padding:1px 5px;border:1px solid var(--line)}
+a{color:var(--red)} :root[data-theme="dark"] a{color:var(--gold)}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]) a{color:var(--gold)} }
+p{max-width:74ch}
+header.mast{border-bottom:6px solid var(--red);padding:34px 0 18px;margin-bottom:22px}
+.kicker{font-family:var(--disp);text-transform:uppercase;letter-spacing:3px;
+  font-size:13px;color:var(--red);font-weight:600}
+header.mast h1{font-size:clamp(32px,5.6vw,54px);line-height:1.02;margin:8px 0 10px;
+  text-transform:uppercase}
+header.mast .sub{color:var(--mut);max-width:78ch}
+section{margin-top:64px}
+h2{font-size:clamp(24px,3.4vw,34px);text-transform:uppercase;margin:0 0 6px;
+  padding-left:14px;border-left:10px solid var(--red)}
+h2 .tag{font-size:14px;letter-spacing:2px;color:var(--gold);margin-left:10px}
+.lede{color:var(--mut);margin-top:2px;max-width:78ch}
+.controls{position:sticky;top:0;z-index:50;background:var(--paper);
+  border:2px solid var(--ink);box-shadow:5px 5px 0 var(--red);
+  display:flex;flex-wrap:wrap;gap:10px 22px;align-items:center;
+  padding:10px 14px;margin:18px 0 8px}
+.controls .lab{font-family:var(--disp);text-transform:uppercase;font-size:12px;
+  letter-spacing:1.5px;color:var(--mut)}
+.seg{display:flex;border:2px solid var(--ink)}
+.seg button{font:600 13px var(--disp);letter-spacing:1px;text-transform:uppercase;
+  background:transparent;color:var(--ink);border:0;border-right:2px solid var(--ink);
+  padding:6px 12px;cursor:pointer}
+.seg button:last-child{border-right:0}
+.seg button.on{background:var(--red);color:#F5E6C8}
+table.facts{border-collapse:collapse;width:100%;font-size:14px;margin-top:14px}
+table.facts th,table.facts td{border:1px solid var(--line);padding:8px 10px;
+  text-align:left;vertical-align:top}
+table.facts th{font-family:var(--disp);text-transform:uppercase;letter-spacing:1px;
+  font-size:12px;background:var(--paper2)}
+.tablewrap{overflow-x:auto}
+.pushback{border:2px solid var(--ink);border-left:10px solid var(--red);
+  background:var(--paper2);padding:12px 16px;margin:14px 0;max-width:80ch}
+.pushback b{font-family:var(--disp);text-transform:uppercase;letter-spacing:1px;color:var(--red)}
+:root[data-theme="dark"] .pushback b{color:var(--gold)}
+.gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));
+  gap:26px 22px;margin-top:20px;align-items:start}
+figure.mock{margin:0;border:2px solid var(--ink);background:var(--paper2);
+  box-shadow:5px 5px 0 rgba(0,0,0,.28);padding:14px}
+figure.mock .stagebox{display:flex;justify-content:center;padding:8px 0 14px;overflow-x:auto}
+figcaption h4{margin:2px 0 6px;font-family:var(--disp);text-transform:uppercase;
+  letter-spacing:1px;font-size:16px}
+figcaption h4 .st{color:var(--gold);font-size:12px;letter-spacing:2px;margin-left:6px}
+ul.why{margin:0;padding-left:16px;font-size:12.5px;color:var(--mut);line-height:1.5}
+ul.why li{margin:3px 0} ul.why b{color:var(--ink);font-weight:600}
+ul.cuts{padding-left:18px;max-width:80ch} ul.cuts li{margin:6px 0}
+footer{margin-top:70px;border-top:2px solid var(--line);padding-top:14px;
+  color:var(--mut);font-size:13px}
+
+/* ============== phone frame (same SE bezel as ios-se-layout.html) ========= */
+.phonebox{width:calc(399px * var(--zk));height:calc(809px * var(--zk));
+  position:relative;flex:none}
+.pcase{width:399px;height:809px;transform:scale(var(--zk));transform-origin:top left;
+  position:absolute;left:0;top:0;background:#101012;border-radius:52px;
+  box-shadow:inset 0 0 0 2px #2e2e31, 0 8px 26px rgba(0,0,0,.45)}
+.pspeaker{position:absolute;left:50%;top:32px;width:56px;height:6px;margin-left:-28px;
+  border-radius:3px;background:#26262a}
+.phome{position:absolute;left:50%;bottom:16px;width:44px;height:44px;margin-left:-22px;
+  border-radius:50%;background:#0a0a0b;box-shadow:inset 0 0 0 2px #2e2e31}
+.pscreen{position:absolute;left:12px;top:66px;width:375px;height:667px;background:#000;
+  color:#EDE9DF;overflow:hidden;
+  font-family:-apple-system,'SF Pro Text','Helvetica Neue',system-ui,sans-serif;
+  user-select:none}
+.pscreen *{line-height:1.3}
+
+/* ============== Messages chrome ============== */
+.mnav{position:absolute;left:0;right:0;top:0;height:64px;z-index:6;
+  background:rgba(22,22,24,.94);display:flex;align-items:flex-end;
+  justify-content:center;padding-bottom:6px;border-bottom:.5px solid #2c2c2e}
+.mnav .back{position:absolute;left:10px;bottom:8px;color:#0A84FF;font-size:20px}
+.mnav .who{text-align:center;font-size:11px;color:#EDE9DF}
+.mnav .who .ava{width:34px;height:34px;border-radius:50%;margin:0 auto 2px;
+  background:linear-gradient(135deg,#7a8590,#4a545e);display:flex;align-items:center;
+  justify-content:center;font-size:15px;font-weight:600;color:#fff}
+.mscroll{position:absolute;left:0;right:0;top:64px;bottom:96px;padding:10px 10px 4px;
+  overflow:hidden}
+.mday{ text-align:center;font-size:10.5px;color:#8E8E93;margin:6px 0}
+.msum{text-align:center;font-size:11px;color:#8E8E93;margin:4px 14px}
+.mrow{display:flex;margin:3px 0}
+.mrow.out{justify-content:flex-end}
+.mbub{max-width:250px;padding:7px 11px;border-radius:17px;font-size:14.5px}
+.mrow.in .mbub{background:#26252A;color:#EDE9DF;border-bottom-left-radius:5px}
+.mrow.out .mbub{background:#0A84FF;color:#fff;border-bottom-right-radius:5px}
+.msender{font-size:10px;color:#8E8E93;margin:2px 0 1px 14px}
+.minput{position:absolute;left:0;right:0;bottom:44px;height:52px;z-index:6;
+  background:rgba(22,22,24,.94);display:flex;align-items:center;gap:8px;padding:0 10px}
+.minput .plus{width:28px;height:28px;border-radius:50%;background:#26252A;color:#8E8E93;
+  display:flex;align-items:center;justify-content:center;font-size:17px}
+.minput .field{flex:1;height:34px;border:1px solid #3a3a3c;border-radius:17px;
+  display:flex;align-items:center;padding:0 12px;font-size:14px;color:#8E8E93;
+  position:relative;overflow:visible}
+.minput .send{width:28px;height:28px;border-radius:50%;background:#0A84FF;color:#fff;
+  display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700}
+.mapps{position:absolute;left:0;right:0;bottom:0;height:44px;z-index:6;
+  background:rgba(22,22,24,.94);display:flex;align-items:center;gap:22px;
+  justify-content:center;font-size:19px;border-top:.5px solid #2c2c2e}
+.mapps .ic{opacity:.4}
+.mapps .fern{width:28px;height:28px;border-radius:7px;opacity:1;
+  background:radial-gradient(circle at 35% 30%, #2e4a39 0 30%, #20342a 32%);
+  box-shadow:0 0 0 2px #D8B24A55;position:relative}
+.mapps .fern::after{content:"❦";position:absolute;inset:0;display:flex;align-items:center;
+  justify-content:center;color:#7fae8f;font-size:15px}
+
+/* ============== the game bubble (MSMessageTemplateLayout) ============== */
+.gbub{width:270px;border-radius:17px;border-bottom-left-radius:5px;overflow:hidden;
+  background:#1c1c1e;box-shadow:0 1px 6px rgba(0,0,0,.5)}
+.gbub .snap{height:175px;position:relative;background:#14231C;overflow:hidden}
+.gbub .snap::before{content:"";position:absolute;inset:0;opacity:.5;pointer-events:none;
+  background:
+   repeating-linear-gradient(0deg, transparent 0 5px, #ffffff05 5px 6px),
+   repeating-linear-gradient(90deg, transparent 0 5px, #ffffff05 5px 6px),
+   repeating-linear-gradient(90deg, transparent 0 34px, #C82B2410 34px 44px),
+   repeating-linear-gradient(0deg, transparent 0 40px, #C82B2408 40px 52px)}
+.gbub .snap::after{content:"";position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(ellipse at 50% 45%, transparent 40%, rgba(0,0,0,.4) 100%)}
+.gbub .cap{display:flex;align-items:center;gap:8px;padding:8px 12px;background:#1c1c1e}
+.gbub .cap .ic{width:26px;height:26px;border-radius:6px;flex:none;position:relative;
+  background:radial-gradient(circle at 35% 30%, #2e4a39 0 30%, #20342a 32%)}
+.gbub .cap .ic::after{content:"❦";position:absolute;inset:0;display:flex;
+  align-items:center;justify-content:center;color:#7fae8f;font-size:14px}
+.gbub .cap .t{flex:1;font-size:13.5px;color:#EDE9DF;font-weight:600}
+.gbub .cap .t small{display:block;font-weight:400;color:#8E8E93;font-size:11px}
+.gbub .cap .tr{font-size:11px;color:#8E8E93;text-align:right}
+
+/* snapshot internals: watch-style glyph cards (small-size language) */
+.gseat{position:absolute;top:8px;left:0;right:0;display:flex;justify-content:center;gap:8px;
+  font-family:'Oswald','Arial Narrow',sans-serif;font-weight:700;font-size:13px}
+.gseat .s{color:#98989E}
+.gseat .s.you{color:#E7B84A}
+.gseat .s.def{color:#E7B84A;position:relative;padding:0 3px}
+.gseat .s.def::before{content:"";position:absolute;inset:-3px -4px;border:1.2px solid #E7B84A;
+  border-radius:4px 4px 8px 8px}
+.gseat .s.good{color:#30D158}
+.gcardrow{position:absolute;left:12px;top:34px;bottom:30px;display:flex;flex-direction:column;
+  gap:5px;justify-content:center}
+.gpair{display:flex;align-items:center;gap:5px;height:26px}
+.gpair .arrow{color:#5c6a60;font-size:10px}
+.gg{width:22px;height:26px;position:relative;font-weight:800;text-align:center}
+.gg .suit{font-size:22px;line-height:26px}
+.gg .rk{position:absolute;left:0;right:0;top:54%;transform:translateY(-50%);
+  font-size:10px;font-family:'Oswald',sans-serif}
+.gg.blk .suit{color:#F2F2F4}.gg.blk .rk{color:#111}
+.gg.red .suit{color:#E8352E}.gg.red .rk{color:#fff}
+.gg.dim{filter:grayscale(.6) brightness(.75)}
+.gdeck{position:absolute;right:12px;top:40px;text-align:center}
+.gdeck .db{width:34px;height:46px;border-radius:5px;margin:0 auto;position:relative;
+  background:#20342a;box-shadow:inset 0 0 0 1.5px #2c4636;
+  background-image:radial-gradient(circle at 35% 30%, #2e4a39 0 20%, transparent 22%),
+    radial-gradient(circle at 65% 66%, #2e4a39 0 18%, transparent 20%)}
+.gdeck .db b{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  font-family:'Oswald',sans-serif;font-size:15px;color:#EDE9DF;text-shadow:0 1px 2px #000}
+.gdeck .tg{margin-top:3px;font-size:11px;color:#98989E}
+.gfoot{position:absolute;left:0;right:0;bottom:8px;text-align:center;font-size:11px;
+  color:#98989E;font-weight:600}
+.gfoot b{color:#E7B84A}
+
+/* result bubble variant */
+.gbub .snap .win{position:absolute;left:0;right:0;top:34px;text-align:center}
+.gbub .snap .win .du{font-family:'Oswald',sans-serif;font-size:13px;letter-spacing:5px;
+  color:#98989E}
+.gbub .snap .win .who{font-family:'Oswald',sans-serif;font-size:30px;color:#C82B24;
+  margin-top:2px;font-weight:700}
+.gbub .snap .win .esc{margin-top:6px;font-size:11.5px;color:#98989E}
+.gbub .snap .qr{position:absolute;right:12px;bottom:10px;width:44px;height:44px;
+  background:
+   repeating-linear-gradient(0deg,#F4EFE6 0 3px,transparent 3px 6px),
+   repeating-linear-gradient(90deg,#F4EFE6 0 3px,#17140F 3px 6px);
+  border:3px solid #F4EFE6;border-radius:2px}
+
+/* ============== extension surfaces (drawer + expanded) ============== */
+.wood{height:5px;background:
+  repeating-linear-gradient(92deg,#6d4a2c 0 14px,#7d5735 14px 26px,#5e3f24 26px 41px);
+  box-shadow:0 1px 2px rgba(0,0,0,.5)}
+.xdrawer{position:absolute;left:0;right:0;bottom:44px;height:271px;z-index:7;
+  background:#14231C;border-top:.5px solid #2c2c2e}
+.xdrawer .felt{position:absolute;inset:5px 0 0 0;overflow:hidden}
+.xhead{display:flex;align-items:center;justify-content:space-between;padding:12px 14px 6px}
+.xhead .t{font-family:'Oswald','Arial Narrow',sans-serif;font-weight:700;font-size:17px;
+  letter-spacing:1.5px;color:#EDE9DF}
+.xhead .t small{color:#C82B24;letter-spacing:4px;font-size:9px;display:block}
+.xrow{display:flex;align-items:center;gap:10px;margin:6px 12px;padding:9px 12px;
+  border-radius:10px;background:#1E2A24}
+.xrow .mini{width:30px;height:40px;border-radius:4px;flex:none;position:relative;
+  background:#20342a;box-shadow:inset 0 0 0 1.5px #2c4636}
+.xrow .mini.tro{background:#1E2A24;box-shadow:inset 0 0 0 1.5px #D8B24A}
+.xrow .mini.tro::after{content:"🏆";position:absolute;inset:0;display:flex;align-items:center;
+  justify-content:center;font-size:14px}
+.xrow .d{flex:1;font-size:13px;color:#EDE9DF}
+.xrow .d small{display:block;color:#9AA69E;font-size:11px}
+.xrow .go{font-size:12px;color:#D8B24A;font-weight:600}
+.xnew{margin:10px 12px;height:46px;border-radius:10px;background:#C82B24;display:flex;
+  align-items:center;justify-content:center;font-size:15.5px;font-weight:600;color:#EDE9DF}
+.xexp{position:absolute;left:0;right:0;top:0;bottom:0;z-index:7;background:#14231C}
+.xtop{position:absolute;left:0;right:0;top:0;height:58px;z-index:8;
+  background:rgba(20,30,25,.97);display:flex;align-items:center;gap:9px;padding:14px 12px 0}
+.xtop .ic{width:26px;height:26px;border-radius:6px;position:relative;flex:none;
+  background:radial-gradient(circle at 35% 30%, #2e4a39 0 30%, #20342a 32%)}
+.xtop .ic::after{content:"❦";position:absolute;inset:0;display:flex;align-items:center;
+  justify-content:center;color:#7fae8f;font-size:14px}
+.xtop .t{flex:1;font-size:14.5px;font-weight:600;color:#EDE9DF}
+.xtop .t small{color:#9AA69E;font-weight:400;margin-left:6px;font-size:11.5px}
+.xtop .dn{color:#9AA69E;font-size:17px}
+.xwood{position:absolute;left:0;right:0;top:58px;z-index:8}
+.xfelt{position:absolute;left:0;right:0;top:63px;bottom:0;overflow:hidden}
+.xfelt::before{content:"";position:absolute;inset:0;opacity:.55;pointer-events:none;
+  background:
+   repeating-linear-gradient(0deg, transparent 0 5px, #ffffff04 5px 6px),
+   repeating-linear-gradient(90deg, transparent 0 5px, #ffffff04 5px 6px)}
+.xfelt::after{content:"";position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(ellipse at 50% 40%, transparent 36%, rgba(0,0,0,.38) 100%)}
+.xsend{position:absolute;left:12px;right:12px;bottom:14px;height:48px;z-index:9;
+  border-radius:10px;background:#C82B24;display:flex;align-items:center;
+  justify-content:center;font-size:16px;font-weight:600;color:#EDE9DF}
+.xsend.off{background:#1E2A24;color:#9AA69E}
+.xhint{position:absolute;left:0;right:0;bottom:66px;z-index:9;text-align:center;
+  font-size:10.5px;color:#9AA69E}
+.xstaged{position:absolute;left:12px;right:12px;top:70px;z-index:9;border-radius:10px;
+  background:#2b1d00;color:#ffd60a;font-size:12.5px;padding:8px 12px;text-align:center}
+
+/* expanded-table internals: reuse SE classes at reduced scale */
+.pseats{position:absolute;left:8px;right:8px;top:8px;height:66px;display:flex;
+  gap:8px;justify-content:center;align-items:flex-start}
+.pseat{width:84px;flex:none;text-align:center}
+.pseat .stack{width:44px;height:30px;margin:0 auto;border-radius:8px;background:#1E2A24;
+  display:flex;align-items:center;justify-content:center;
+  font-family:'Oswald','Arial Narrow',sans-serif;font-weight:700;font-size:18px;color:#EDE9DF}
+.pseat.atk .stack{box-shadow:inset 0 0 0 1.5px #C82B24}
+.pseat.def .stack{box-shadow:inset 0 0 0 1.5px #D8B24A}
+.pseat .nm{margin-top:3px;font-size:11px;color:#EDE9DF;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
+.pseat .role{height:13px;font-size:10px}
+.pseat .role .good{color:#30D158;font-weight:700}
+.pstage{position:absolute;left:8px;right:78px;top:84px;height:210px}
+.pgrid{display:flex;flex-wrap:wrap;gap:10px 6px;align-content:center;
+  justify-content:center;height:100%;position:relative}
+.pbattle{width:92px;height:100px;position:relative;flex:none}
+.pbattle.covd{filter:grayscale(.35);opacity:.85}
+.pbattle.target::before{content:"";position:absolute;inset:-5px;border-radius:12px;
+  border:2px solid #D8B24A;box-shadow:0 0 10px #D8B24A55}
+.pc{position:absolute;background:#F4EFE6;color:#17140F;border-radius:7px;
+  box-shadow:0 1px 4px rgba(0,0,0,.5);width:56px;height:78px}
+.pc .ix{position:absolute;left:5px;top:3px;font-weight:700;font-size:13px;line-height:1.05;
+  text-align:center}
+.pc .ix i{display:block;font-style:normal;font-size:11px}
+.pc .big{position:absolute;left:0;right:0;top:50%;transform:translateY(-42%);
+  text-align:center;font-size:26px}
+.pc.r{color:#C82B24}
+.pc.trumpmark::after{content:"";position:absolute;right:5px;top:5px;width:6px;height:6px;
+  border-radius:50%;background:#D8B24A}
+.pc.att{left:6px;top:8px}
+.pc.cov{left:24px;top:16px;transform:rotate(12deg)}
+.pback{position:absolute;border-radius:7px;width:56px;height:78px;
+  background:#20342a;box-shadow:0 1px 4px rgba(0,0,0,.5), inset 0 0 0 2px #2c4636;
+  background-image:
+    radial-gradient(circle at 30% 25%, #2e4a39 0 8%, transparent 9%),
+    radial-gradient(circle at 68% 38%, #2e4a39 0 7%, transparent 8%),
+    radial-gradient(circle at 42% 58%, #2e4a39 0 9%, transparent 10%),
+    radial-gradient(circle at 72% 76%, #2e4a39 0 7%, transparent 8%)}
+.pdeck{position:absolute;right:8px;top:92px;width:64px;text-align:center}
+.pdeck .flip{position:absolute;left:2px;top:22px;transform:rotate(90deg) scale(.68)}
+.pdeck .stackb{position:relative;margin:0 auto;width:56px;height:78px}
+.pdeck .cnt{position:absolute;left:0;right:0;top:26px;z-index:3;
+  font-family:'Oswald','Arial Narrow',sans-serif;font-weight:700;font-size:24px;
+  color:#EDE9DF;text-shadow:0 1px 3px #000}
+.pdeck .sub{margin-top:6px;font-size:10px;color:#9AA69E}
+.pactions{position:absolute;left:12px;right:12px;bottom:196px;height:42px;display:flex;gap:10px}
+.pbtn{flex:1;border-radius:10px;display:flex;align-items:center;justify-content:center;
+  font-size:14.5px;font-weight:600;color:#EDE9DF;border:1.5px solid #9AA69E88}
+.pbtn.primary{background:#C82B24;border-color:#C82B24}
+.pbtn.off{opacity:.35}
+.pfan{position:absolute;left:0;right:0;bottom:70px;height:120px}
+.pfan .fc{position:absolute;bottom:0;width:60px;height:84px;background:#F4EFE6;
+  color:#17140F;border-radius:8px;box-shadow:-2px 0 6px rgba(0,0,0,.45)}
+.pfan .fc .ix{position:absolute;left:5px;top:4px;font-weight:700;font-size:14px;
+  line-height:1.02;text-align:center}
+.pfan .fc .ix i{display:block;font-style:normal;font-size:12px}
+.pfan .fc .big{position:absolute;left:0;right:0;top:52%;transform:translateY(-40%);
+  text-align:center;font-size:27px}
+.pfan .fc.r{color:#C82B24}
+.pfan .fc.sel{box-shadow:0 0 0 2.5px #D8B24A}
+.pfan .fc.dim{filter:brightness(.72)}
+.pfan .fc.trumpmark::after{content:"";position:absolute;right:5px;top:5px;width:7px;
+  height:7px;border-radius:50%;background:#D8B24A}
+
+/* lobby */
+.xlobby{position:absolute;left:24px;right:24px;top:120px;z-index:9;background:#1E2A24;
+  border-radius:14px;padding:16px}
+.xlobby h6{margin:0 0 10px;font-size:13px;color:#9AA69E;text-transform:uppercase;
+  letter-spacing:1px;text-align:center;font-weight:600}
+.xlobby .seatrow{display:flex;align-items:center;gap:10px;padding:8px 4px;font-size:14.5px;
+  border-bottom:1px solid #9AA69E22}
+.xlobby .seatrow:last-of-type{border-bottom:0}
+.xlobby .n{width:20px;color:#9AA69E;font-family:'Oswald',sans-serif}
+.xlobby .who{flex:1;color:#EDE9DF}
+.xlobby .who.empty{color:#9AA69E}
+.xlobby .ok{color:#30D158;font-size:12px}
+.xlobby .claim{margin-top:12px;height:44px;border-radius:10px;background:#C82B24;
+  display:flex;align-items:center;justify-content:center;font-weight:600;color:#EDE9DF}
+
+/* safari (web fallback /m/) */
+.sbar{position:absolute;left:0;right:0;top:0;height:56px;z-index:6;background:#1b1b1d;
+  display:flex;align-items:flex-end;justify-content:center;padding-bottom:8px}
+.sbar .url{width:280px;height:30px;border-radius:9px;background:#2c2c2e;color:#9AA69E;
+  font-size:12px;display:flex;align-items:center;justify-content:center;gap:5px}
+.sweb{position:absolute;left:0;right:0;top:56px;bottom:44px;overflow:hidden;
+  background:#14231C}
+.sweb .cta{position:absolute;left:20px;right:20px;bottom:18px;z-index:5}
+.sweb .cta .b1{height:44px;border-radius:10px;background:#C82B24;display:flex;
+  align-items:center;justify-content:center;font-size:14.5px;font-weight:600;color:#EDE9DF}
+.sweb .cta .b2{margin-top:8px;text-align:center;font-size:12px;color:#9AA69E}
+.sfoot{position:absolute;left:0;right:0;bottom:0;height:44px;background:#1b1b1d;z-index:6;
+  display:flex;align-items:center;justify-content:space-around;color:#0A84FF;font-size:16px}
+</style>
+</head>
+<body>
+<main>
+
+<header class="mast">
+  <div class="kicker">Foolish · design study nº4 · Messages</div>
+  <h1>Durak in an iMessage bubble</h1>
+  <p class="sub">Mockups for the Messages extension specified in
+  <code>docs/IMESSAGE_GAME_DESIGN.md</code>: the in-thread game bubble, the compact
+  drawer, the expanded table, the group lobby, the finished-game card, and the
+  <code>/m/</code> web fallback. The expanded surfaces share the iOS app's world —
+  felt, bone cards, fern backs, one red — with the web's wool weave tinting the
+  felt and a wood rail on the extension chrome. The <em>bubble snapshot</em> is the
+  small-size problem the watch already solved, so it borrows the watch's glyph-card
+  language (<code>docs/watchos-layout.html</code> §8). Build instructions live in
+  <code>docs/IMESSAGE_IMPLEMENTATION_HANDOFF.md</code>.</p>
+</header>
+
+<div class="controls">
+  <div class="lab">Scale</div>
+  <div class="seg" id="zoomseg">
+    <button data-z="0.5">Fit</button>
+    <button data-z="0.66" class="on">66%</button>
+    <button data-z="0.85">85%</button>
+    <button data-z="1">100%</button>
+  </div>
+</div>
+
+<!-- ================================================================ -->
+<section id="rules">
+  <h2>1 · The five facts that shape every frame</h2>
+  <div class="tablewrap"><table class="facts">
+    <tr><th>Fact</th><th>Design consequence</th></tr>
+    <tr><td>Extensions can't send — <code>insert</code> only stages into the input field
+      (<code>IMESSAGE_GAME_DESIGN.md</code> §17.1)</td>
+      <td>The staged state is a first-class screen (IM4): amber "staged — hit send" banner,
+      Send-move disabled until resolved</td></tr>
+    <tr><td>One bubble per game via <code>MSSession</code>; older bubbles collapse to
+      <code>summaryText</code> (§11.3)</td>
+      <td>Summaries are written as a readable transcript ("Sveta covered 7♠ and attacked 9♣") —
+      IM1 shows them inline</td></tr>
+    <tr><td>The bubble image is visible to <em>everyone</em>, incl. notifications (§10)</td>
+      <td>The snapshot renders only public state: card backs, battles, counts, trump — never a hand</td></tr>
+    <tr><td>Durak is multi-actor — several seats may act at once (§5.1)</td>
+      <td>No "your turn" framing anywhere; Send-move enables on ≥1 applied action with the
+      "others may be playing too" hint (IM3)</td></tr>
+    <tr><td>Mac/Android/SMS recipients see a raw URL (§17.6)</td>
+      <td>The <code>/m/</code> page (IM7) is a real product surface, not an error page</td></tr>
+  </table></div>
+</section>
+
+<!-- ================================================================ -->
+<section id="frames">
+  <h2>2 · The frames</h2>
+  <p class="lede">IM1–IM4 are one 2-player game seen from Boris's phone; IM5 is a
+  4-player group lobby; IM6 ends the game; IM7 is what a Mac/Android friend sees.
+  v1 caps the UI at 4 players (protocol runs 2–8) — seat chips here relax to the
+  84&nbsp;pt size, so Messages never needs the SE study's 7-chip compression.</p>
+  <div class="gallery" id="g-frames"></div>
+</section>
+
+<!-- ================================================================ -->
+<section id="snapspec">
+  <h2>3 · Bubble snapshot spec <span class="tag">300×195 pt @3x</span></h2>
+  <p class="lede">Rendered with <code>UIGraphicsImageRenderer</code> into
+  <code>MSMessageTemplateLayout.image</code>. Zones, at the 270 pt rendered width
+  the bubble actually gets:</p>
+  <div class="tablewrap"><table class="facts">
+    <tr><th>Zone</th><th>Content</th><th>Language</th></tr>
+    <tr><td>Seat line (top, centered)</td><td>per-seat hand counts; defender count inside
+      the gold shield outline; green = said good; brass = the viewer is never marked
+      (public image!)</td><td>watch SeatStrip, unchanged semantics</td></tr>
+    <tr><td>Battle rows (left ⅔)</td><td>one row per pair: cover glyph ▸ attack glyph;
+      open attack = bare bright glyph; resolved rows desaturated; max 5 rows then
+      "+n more" row</td><td>watch TableList glyph-cards (rank punched over suit)</td></tr>
+    <tr><td>Deck well (right)</td><td>fern mini-back + count numeral, trump glyph beneath
+      (bare glyph once the flip is drawn)</td><td>app FDeckWell, miniaturized</td></tr>
+    <tr><td>Status line (bottom, centered)</td><td>"Turn 12 · Boris to act" or
+      "waiting for Sveta / Boris" — names in brass</td><td>summaryText phrasing, shared strings</td></tr>
+    <tr><td>Material</td><td>felt + wool weave tint + vignette; fern backs</td>
+      <td>web's procedural world, CGContext-drawn (no assets)</td></tr>
+  </table></div>
+  <div class="pushback"><b>Template fields</b> (§11.3 recipe): <code>layout.image</code> =
+  this snapshot · <code>layout.caption</code> = localized "Your move" / "Game on" ·
+  <code>layout.trailingCaption</code> = "Turn n" · <code>message.summaryText</code> =
+  the transcript line. The app icon slot in the caption bar is drawn by Messages,
+  not by us.</div>
+</section>
+
+<!-- ================================================================ -->
+<section id="materials">
+  <h2>4 · Fern, wood, wool — where each lives</h2>
+  <ul class="cuts">
+    <li><b>Fern</b> (the brand): card backs everywhere — bubble snapshot, drawer
+    row thumbnails, expanded table, app icon. Same seeded IFS port the app uses
+    (<code>IOS_APP_DESIGN.md</code> §5.3); the extension reuses FoolishKit's cached
+    CGImage, no second implementation.</li>
+    <li><b>Wool</b> (the web's table): a low-alpha weave tint over the felt on the
+    two big surfaces (bubble snapshot, expanded table). Kept at ≤6% alpha so the
+    Gosizdat felt stays dominant and text contrast is untouched.</li>
+    <li><b>Wood</b> (the web's chrome): one 5 pt grain rail under the extension's
+    top bar and above the drawer — a nod to the site's wooden buttons without
+    importing skeuomorphic buttons wholesale.</li>
+    <li>Everything else is the app's token set verbatim — this keeps FoolishKit's
+    DesignSystem the single source for both targets (§9.2: extension links FoolishKit).</li>
+  </ul>
+</section>
+
+<footer>
+  Foolish design study — Messages extension · 2026-07-15 ·
+  siblings: <code>docs/ios-se-layout.html</code> (phone),
+  <code>docs/watchos-layout.html</code> (wrist) ·
+  spec: <code>docs/IMESSAGE_GAME_DESIGN.md</code> ·
+  build order: <code>docs/IMESSAGE_IMPLEMENTATION_HANDOFF.md</code>
+</footer>
+
+</main>
+<script>
+/* ============ controls ============ */
+const root=document.documentElement;
+document.querySelectorAll('#zoomseg button').forEach(b=>{
+  b.onclick=()=>{document.querySelectorAll('#zoomseg button').forEach(x=>x.classList.remove('on'));
+    b.classList.add('on');root.style.setProperty('--zoom',b.dataset.z);}
+});
+
+/* ============ shared helpers ============ */
+const RED={'♥':1,'♦':1};
+function gg(rank,suit,dim=false){
+  return `<div class="gg ${RED[suit]?'red':'blk'} ${dim?'dim':''}">
+    <div class="suit">${suit}</div><div class="rk">${rank}</div></div>`;
+}
+function gpair(cover,attack){
+  if(cover) return `<div class="gpair">${gg(cover[0],cover[1],true)}<span class="arrow">▸</span>${gg(attack[0],attack[1],true)}</div>`;
+  return `<div class="gpair" style="padding-left:27px">${gg(attack[0],attack[1])}</div>`;
+}
+function snapshot(o){
+  return `<div class="snap">
+    <div class="gseat">${o.seats.map(s=>`<span class="s ${s[1]||''}">${s[0]}</span>`).join('')}</div>
+    <div class="gcardrow">${o.pairs.map(p=>gpair(p[1],p[0])).join('')}</div>
+    <div class="gdeck"><div class="db"><b>${o.deck}</b></div><div class="tg">${o.trump}</div></div>
+    <div class="gfoot">${o.foot}</div></div>`;
+}
+function gbubble(o){
+  return `<div class="gbub">${o.snapHTML}
+    <div class="cap"><div class="ic"></div>
+      <div class="t">${o.caption}<small>Foolish</small></div>
+      <div class="tr">${o.trailing}</div></div></div>`;
+}
+function pc(rank,suit,cls='',trump=false){
+  return `<div class="pc ${RED[suit]?'r':''} ${cls} ${trump?'trumpmark':''}">
+    <div class="ix">${rank}<i>${suit}</i></div><div class="big">${suit}</div></div>`;
+}
+function battle(a,c,opts={}){
+  return `<div class="pbattle ${c?'covd':''} ${opts.target?'target':''}">
+    ${pc(a[0],a[1],'att',a[2])}${c?pc(c[0],c[1],'cov',c[2]):''}</div>`;
+}
+function seat(name,count,o={}){
+  const cls=['pseat',o.atk?'atk':'',o.def?'def':'',o.out?'out':''].join(' ');
+  const role=o.def?'<span style="color:#D8B24A">⛨</span>':(o.good?'<span class="good">✓</span>':'');
+  return `<div class="${cls}"><div class="stack">${count}</div>
+    <div class="nm">${name}</div><div class="role">${role}</div></div>`;
+}
+function deckWell(count,flip,disc,tg){
+  return `<div class="pdeck"><div class="stackb">
+    <div class="flip">${pc(flip[0],flip[1],'',true)}</div>
+    <div class="pback" style="left:0;top:0"></div><div class="cnt">${count}</div></div>
+    <div class="sub">▨ ${disc} · ${tg}</div></div>`;
+}
+function fan(cards,sel=-1,dimIllegal=null){
+  const n=cards.length,W=375,pad=18,cw=60;
+  const exp=Math.min(44,(W-2*pad-cw)/Math.max(n-1,1));
+  const total=cw+exp*(n-1),x0=(W-total)/2,c=(n-1)/2;
+  return `<div class="pfan">${cards.map((cd,i)=>{
+    const rot=(i-c)*3, dy=Math.pow(Math.abs(i-c),1.6)*1.4;
+    const cls=(i===sel?'sel':'')+(dimIllegal&&!dimIllegal[i]?' dim':'');
+    return `<div class="fc ${RED[cd[1]]?'r':''} ${cls} ${cd[2]?'trumpmark':''}"
+      style="left:${x0+i*exp}px;transform:rotate(${rot}deg) translateY(${dy+(i===sel?-14:0)}px)">
+      <div class="ix">${cd[0]}<i>${cd[1]}</i></div><div class="big">${cd[1]}</div></div>`;
+  }).join('')}</div>`;
+}
+function phone(inner){
+  return `<div class="phonebox"><div class="pcase"><div class="pspeaker"></div>
+    <div class="pscreen">${inner}</div><div class="phome"></div></div></div>`;
+}
+function fig(host,title,st,inner,why){
+  const f=document.createElement('figure');f.className='mock';
+  f.innerHTML=`<div class="stagebox">${phone(inner)}</div>
+    <figcaption><h4>${title}<span class="st">${st}</span></h4>
+    <ul class="why">${why.map(w=>`<li>${w}</li>`).join('')}</ul></figcaption>`;
+  document.getElementById(host).appendChild(f);
+}
+function mnav(who){
+  return `<div class="mnav"><span class="back">‹</span>
+    <div class="who"><div class="ava">${who[0]}</div>${who}</div></div>`;
+}
+function apps(){return `<div class="mapps"><span class="ic">🅰</span><span class="ic">♫</span>
+  <div class="fern"></div><span class="ic">📷</span><span class="ic">✦</span></div>`}
+function input(txt='iMessage'){
+  return `<div class="minput"><div class="plus">+</div>
+    <div class="field">${txt}</div><div class="send">↑</div></div>`;
+}
+
+/* the running 2p game snapshot (public view) */
+const SNAP_LIVE=snapshot({
+  seats:[['6','def'],['5','']],
+  pairs:[ [['7','♠'],['10','♠']], [['9','♥'],['K','♥']], [['Q','♣'],null] ],
+  deck:9, trump:'♦ 9', foot:'Turn 12 · <b>Boris</b> to act'
+});
+
+/* ============ IM1 — the thread ============ */
+fig('g-frames','IM1 · The bubble in a thread','compact in-thread',
+  mnav('Sveta')
+  +`<div class="mscroll">
+     <div class="mday">Today 1:22 PM</div>
+     <div class="mrow out"><div class="mbub">rematch? loser buys pelmeni 🥟</div></div>
+     <div class="mrow in"><div class="mbub">давай</div></div>
+     <div class="msum">Sveta started a game of Durak</div>
+     <div class="msum">You attacked with 7♠ · Sveta covered</div>
+     <div class="msender">Sveta</div>
+     <div class="mrow in" style="margin-top:0">${gbubble({snapHTML:SNAP_LIVE,
+        caption:'Your move',trailing:'Turn 12'})}</div>
+     <div class="mrow out"><div class="mbub">that Q♣ is a problem…</div></div>
+   </div>`
+  +input()+apps(),
+  ['The MSMessageTemplateLayout bubble exactly as Messages draws it: snapshot image, app icon, caption "Your move", trailing "Turn 12"',
+   'Older bubbles of the same MSSession collapse to their summaryText — the two gray transcript lines above ("You attacked with 7♠ · Sveta covered")',
+   'The snapshot is PUBLIC state only: both hands as counts (6 in the defender shield, 5), battles as watch-style glyph rows, deck 9 + trump 9♦ — safe for lock screens',
+   'The fern app icon sits highlighted in the Messages app strip below']);
+
+/* ============ IM2 — compact drawer ============ */
+fig('g-frames','IM2 · Compact drawer','app-strip tap',
+  mnav('Sveta')
+  +`<div class="mscroll" style="bottom:315px">
+     <div class="mday">Today 1:22 PM</div>
+     <div class="msender">Sveta</div>
+     <div class="mrow in">${gbubble({snapHTML:SNAP_LIVE,caption:'Your move',trailing:'Turn 12'})}</div>
+   </div>`
+  +`<div class="xdrawer"><div class="wood"></div><div class="felt">
+     <div class="xhead"><div class="t">FOOLISH<small>ДУРАК · MESSAGES</small></div></div>
+     <div class="xrow"><div class="mini"></div>
+       <div class="d">Game with Sveta<small>turn 12 · your move</small></div>
+       <div class="go">Open ›</div></div>
+     <div class="xrow"><div class="mini tro"></div>
+       <div class="d">Group от July 12<small>finished · Boris was the fool</small></div>
+       <div class="go">Replay ›</div></div>
+     <div class="xnew">New game</div>
+   </div></div>`
+  +apps(),
+  ['~271 pt keyboard-area drawer: known games from the App Group cache + the one primary action',
+   'Conversations can\'t be named by the extension — rows say what the cache knows: turn, whose move, finished+fool',
+   'Wood rail on the chrome seam, felt below — the web\'s materials, the app\'s tokens',
+   'New game requests .expanded and opens IM5\'s flow']);
+
+/* ============ IM3 — expanded table ============ */
+fig('g-frames','IM3 · Expanded: the table','MSMessagesAppVC .expanded',
+  `<div class="xexp">
+    <div class="xtop"><div class="ic"></div><div class="t">Foolish<small>vs Sveta · turn 12</small></div><div class="dn">˅</div></div>
+    <div class="xwood wood"></div>
+    <div class="xfelt">
+      <div class="pseats">${seat('Sveta',6,{def:1})}</div>
+      <div class="pstage"><div class="pgrid">
+        ${battle(['7','♠'],['10','♠'])}${battle(['9','♥'],['K','♥'])}${battle(['Q','♣'],null)}
+      </div></div>
+      ${deckWell(9,['9','♦'],4,'♦')}
+      <div class="pactions">${['Done'].map(l=>`<div class="pbtn">${l}</div>`).join('')}</div>
+      ${fan([['6','♣'],['8','♠'],['J','♣'],['A','♦',true],['10','♥']],-1)}
+      <div class="xhint">⚠ Sveta may be playing too — moves merge when you both send</div>
+      <div class="xsend off">Send move — play a card first</div>
+    </div></div>`,
+  ['Same board grammar as the phone app (seat chips, 3-col battles, deck well, fan) — FoolishKit Boards renders both; only the chrome differs',
+   'The Messages top bar: app icon, context line, ˅ collapses to compact — Apple\'s transition, never fought',
+   'Send-move is the extension\'s one special control: disabled until ≥1 local action applies; the multi-actor hint sits above it (§5.1 — there is no "your turn is over")',
+   '2-player game: one relaxed 84 pt chip; the v1 UI cap is 4 (protocol handles 8)']);
+
+/* ============ IM4 — staged ============ */
+fig('g-frames','IM4 · Staged — the human sends','§17.1, the honest state',
+  mnav('Sveta')
+  +`<div class="mscroll" style="bottom:315px">
+     <div class="msum">You attacked with 7♠ · Sveta covered</div>
+     <div class="msender">Sveta</div>
+     <div class="mrow in">${gbubble({snapHTML:SNAP_LIVE,caption:'Your move',trailing:'Turn 12'})}</div>
+   </div>`
+  +`<div class="xdrawer"><div class="wood"></div><div class="felt">
+     <div class="xstaged" style="position:static;margin:12px 12px 0">Move staged — hit the blue send arrow to play it</div>
+     <div class="xhead" style="padding-top:8px"><div class="t" style="font-size:13px;letter-spacing:.5px;color:#9AA69E;font-family:inherit;font-weight:400">
+       Your J♣ attack is in the message field. Until it\'s sent, Sveta can\'t see it —
+       and if she moves first, yours rebases or bounces (the game will tell you).</div></div>
+   </div></div>`
+  +`<div class="minput"><div class="plus">+</div>
+     <div class="field" style="height:44px;border-color:#0A84FF">
+       <div style="transform:scale(.24);transform-origin:left center;width:270px;flex:none">${gbubble({snapHTML:SNAP_LIVE,caption:'Your move',trailing:'Turn 13'})}</div>
+       <span style="margin-left:8px;font-size:12px;color:#8E8E93">Durak · turn 13</span>
+     </div><div class="send" style="box-shadow:0 0 0 3px #0A84FF55">↑</div></div>`
+  +apps(),
+  ['insert() only STAGES — the miniature bubble sits in the input field and the human taps send; the amber banner narrates it',
+   'didStartSending / didCancelSending drive the cache + pending ledger; canceling rolls the UI back (§7.6)',
+   'The copy pre-explains the race: concurrent moves rebase or bounce with a toast — no surprise merges (§7.4)']);
+
+/* ============ IM5 — group lobby ============ */
+fig('g-frames','IM5 · Group lobby — claiming seats','WAITING phase',
+  `<div class="xexp">
+    <div class="xtop"><div class="ic"></div><div class="t">Foolish<small>new game · 4 players</small></div><div class="dn">˅</div></div>
+    <div class="xwood wood"></div>
+    <div class="xfelt">
+      <div class="xlobby">
+        <h6>Waiting for players · 2 of 4</h6>
+        <div class="seatrow"><span class="n">1</span><span class="who">Alex</span><span class="ok">✓ creator</span></div>
+        <div class="seatrow"><span class="n">2</span><span class="who">Sveta</span><span class="ok">✓</span></div>
+        <div class="seatrow"><span class="n">3</span><span class="who empty">open seat</span></div>
+        <div class="seatrow"><span class="n">4</span><span class="who empty">open seat</span></div>
+        <div class="claim">Claim seat 3 as “Boris”</div>
+      </div>
+      <div class="xhint" style="bottom:84px">Seats fill in message order · deal starts when seat 4 claims</div>
+      <div class="xsend off">Claim a seat to join</div>
+    </div></div>`,
+  ['Group thread, phase=WAITING: the envelope carries seed + joins only; each claim stages a new bubble (zero kernel actions — races merge trivially, §5.2)',
+   'Nicknames are the only identity (12 UTF-8 bytes) — typed once, shown forever; seat 0 is always the creator',
+   'The joiner who fills the last seat deals (the seed is already fixed) and stages "Game on"']);
+
+/* ============ IM6 — finished ============ */
+fig('g-frames','IM6 · Game over — the funnel','FINISHED bubble',
+  mnav('Sveta')
+  +`<div class="mscroll">
+     <div class="msum">You covered Q♣ · deck empty</div>
+     <div class="msum">Sveta attacked with 8♦</div>
+     <div class="msender">Sveta</div>
+     <div class="mrow in">${gbubble({
+        snapHTML:`<div class="snap">
+          <div class="win"><div class="du">ДУРАК</div><div class="who">BORIS</div>
+          <div class="esc">Sveta escaped first · 41 turns</div></div>
+          <div class="qr"></div>
+          <div class="gfoot">foolish.cards/K7Q2MB9R</div></div>`,
+        caption:'Sveta won 🎉',trailing:'Replay'})}</div>
+     <div class="mrow out"><div class="mbub">пельмени с меня 😩</div></div>
+     <div class="mrow in"><div class="mbub">watch the replay — that endgame!</div></div>
+   </div>`
+  +input()+apps(),
+  ['The terminal action\'s sender stages this card; message.url is the STANDARD replay link (v6 codec) — not /m/ — so every tap lands on the real replay page, Oracle button included (§12)',
+   'The loser in Soviet-poster type; QR corner mirrors the app\'s win screen so the artifact reads as one product',
+   'The drawer\'s game row flips to the trophy state (IM2, second row)']);
+
+/* ============ IM7 — /m/ web fallback ============ */
+fig('g-frames','IM7 · The /m/ page — Mac &amp; Android','web fallback',
+  `<div class="sbar"><div class="url">🔒 foolish.cards/m/1KQ7…</div></div>
+   <div class="sweb">
+     <div class="gseat" style="top:16px">${[['6','def'],['5','']].map(s=>`<span class="s ${s[1]}">${s[0]}</span>`).join('')}</div>
+     <div class="gcardrow" style="top:44px;bottom:auto;height:170px;left:40px">
+       ${gpair([['10','♠'],['7','♠']][0]===undefined?null:['10','♠'],['7','♠'])}
+       ${gpair(['K','♥'],['9','♥'])}
+       ${gpair(null,['Q','♣'])}
+     </div>
+     <div class="gdeck" style="top:60px;right:46px"><div class="db"><b>9</b></div><div class="tg">♦ 9</div></div>
+     <div style="position:absolute;left:0;right:0;top:236px;text-align:center;font-size:13px;color:#9AA69E">
+       Live iMessage game · turn 12<br><span style="color:#EDE9DF">Boris to act</span></div>
+     <div class="cta">
+       <div class="b1">📲 Get Foolish — play Durak in Messages</div>
+       <div class="b2">or play free in the browser at foolish.cards ›</div>
+     </div>
+   </div>
+   <div class="sfoot"><span>‹</span><span>›</span><span>⇪</span><span>▤</span></div>`,
+  ['macOS Messages doesn\'t run iOS extensions and Android gets SMS — for them the URL IS the product (§17.6): the same public snapshot, read-only, rendered by the existing kernel-wasm bridge',
+   'Decodes the FMSG payload client-side via wasm_msg_decode (§13) — no server call, no auth',
+   'Two CTAs: the App Store funnel and the existing web game — the link unfurls with OG tags of this same snapshot']);
+</script>
+</body>
+</html>
