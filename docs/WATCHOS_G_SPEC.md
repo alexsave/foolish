@@ -266,6 +266,14 @@ Match against the mockups (`watchos-layout.html` §7, G1–G10 + live demo):
 
 ## 12 · Known open items (not v1 blockers)
 
+- **Option H (all-vertical) is under evaluation** — see
+  `watchos-layout.html` §8: table as a vertical list, hand as a crown-driven
+  fisheye lane (single representation), roster behind a seat-strip tap. If
+  the owner picks H, §1's gesture map and §2's TablePager/FocusSlot/ChipStrip
+  rows are replaced by the H layout; everything else (pill table, chooser,
+  haptics, data layer) is unchanged. Do not start the TablePager/ChipStrip
+  views before this is decided.
+
 - Push latency budget for the snipe loop — measure APNs → wrist; if slow,
   prefer complication/background refresh for the "rank live" signal.
 - Smart Stack widget + corner complication (glance layer).

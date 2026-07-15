@@ -580,6 +580,36 @@ body.showz .zoneso{display:block}
 .frow .rshield{position:relative;width:24px;height:29px;display:inline-flex;
   align-items:center;justify-content:center;margin-left:2px}
 .frow .rshield svg{position:absolute;inset:0;width:100%;height:100%}
+/* =====================================================================
+   OPTION H — all-vertical alternative: table as a vertical list (left),
+   hand as a crown-driven fisheye lane (right, hugging the crown edge).
+   One representation of the hand: the focused chip IS the big card.
+   ===================================================================== */
+.htable{position:absolute;left:16px;top:144px;width:186px;display:flex;
+  flex-direction:column;gap:7px;z-index:1}
+.htable.scrollv{-webkit-mask-image:linear-gradient(#0000,#000 18px,#000 calc(100% - 18px),#0000);
+  mask-image:linear-gradient(#0000,#000 18px,#000 calc(100% - 18px),#0000)}
+.hrow{display:flex;align-items:center;gap:10px;height:44px;flex:none}
+.hrow .gcard{font-size:38px;width:40px;height:44px}
+.hrow .gcard .grank{font-size:18px}
+.hrow .harr{color:#5a5a5e;font-size:20px;font-weight:800;width:16px;text-align:center}
+.hrow.res{filter:grayscale(1) brightness(.62)}
+.hrow .hcell{width:40px;display:flex;justify-content:center}
+.hrow .inflight{opacity:.45}
+.hlane{position:absolute;right:6px;top:138px;bottom:6px;width:112px;z-index:3}
+.hlane .hitem{position:absolute;left:50%;transform:translate(-50%,-50%);
+  display:flex;align-items:center;justify-content:center}
+.hlane .hitem .gcard{transition:none}
+.hlane .hcheck{font-weight:800;color:#30d158}
+.hlane .htake{font-weight:800;color:#ff453a}
+.hpill{position:absolute;left:16px;bottom:14px;width:186px;height:56px;
+  border-radius:28px;display:flex;align-items:center;justify-content:center;
+  font-size:26px;font-weight:800;z-index:5}
+.hpill.act{background:#E7B84A;color:#241a02}
+.hpill.take{background:#ff453a;color:#2b0300}
+.hpill.pass{background:#0a84ff;color:#001b38}
+.hpill.good{background:#30d158;color:#03210e}
+.hpill.gray{background:#2c2c2e;color:#98989e}
 /* HIG receipts */
 .quotewall{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));
   gap:12px;margin:16px 0}
@@ -972,9 +1002,49 @@ table.audit th{font-family:var(--disp);text-transform:uppercase;font-size:12px;
   and the shield arithmetic carry it.</div>
 </section>
 
+<!-- ============================================================ OPTION H -->
+<section id="opth">
+  <h2>8 · Option H — “All vertical” <span class="tag">alternative · evaluating</span></h2>
+  <p class="lede">G with every horizontally-movable thing rotated vertical — and the double
+  hand display removed. The <b>table is a vertical list</b> (cover column ▸ attack column, one
+  pair per row): up to four pairs are simply <i>visible</i>, no paging; past that the list
+  scrolls under a vertical drag — the only drag in the app. The <b>hand is a fisheye lane
+  hugging the crown edge</b>: one representation — the focused chip <i>is</i> the big card,
+  growing in place as the crown turns, neighbors shrinking above and below. No chip strip, no
+  separate focus slot. Roster moves behind a <b>seat-strip tap</b> (the system chevron brings
+  you back), so there is no root pager at all. Gesture map: crown = hand lane · vertical drag =
+  table list · tap = focus/commit/strip. Nothing moves horizontally.</p>
+
+  <div class="demoWrap">
+    <div class="stagebox" id="m-demo6" style="padding:0"></div>
+    <div class="side">
+      <h4>Live demo — the chip becomes the card</h4>
+      <p><b>Scroll</b> over the watch: the lane slides vertically past the focus point and the
+      focused card magnifies in place — small ones above and below are the same objects, not a
+      second display. The ✓ (or the defender's +n) is the last stop in the lane.</p>
+      <p><b>Tap the big card or the pill</b> to commit — same optimistic flow, same red-glow
+      rejection. The pill sits bottom-left, under the table column, full ~93 pt wide.</p>
+      <p>Note the spatial logic: the lane hugs the right edge — where the crown physically is.
+      Turning the crown visibly turns <i>that</i> column.</p>
+    </div>
+  </div>
+
+  <div class="gallery" id="gal-h"></div>
+
+  <div class="verdict"><b>Trade-offs vs G (owner to decide):</b>
+  <b>H wins</b> — single hand representation (no chip-strip + focus-slot duplication); the
+  whole table visible at once up to 4 pairs (G shows 2 per page); zero horizontal gestures and
+  zero pagers (roster is a pushed page behind the strip tap, chevron returns — the chevron
+  finally earns its space); crown gets a physical spatial mapping (right lane).
+  <b>G wins</b> — bigger focused card (56 pt vs 42 pt) and bigger table glyphs (31 pt vs
+  19 pt, though H shows twice as many at once); simpler to build (no fisheye magnification,
+  no region-scoped scroll). Both keep: the pill decision table, chooser overlay, red-glow
+  rejection, InfoLine under the clock, seat strip, one card per action.</div>
+</section>
+
 <!-- ============================================================ OPTION B -->
 <section id="optb">
-  <h2>8 · Option B — “Focus flow” <span class="tag">the dense compromise</span></h2>
+  <h2>9 · Option B — “Focus flow” <span class="tag">the dense compromise</span></h2>
   <p class="lede">The first 40&nbsp;mm attempt: one decision per screen, crown-driven carousel,
   three fat tap zones. Kept because its interaction grammar (crown = aim, tap = commit) survives
   into Option D — but its information density does not: see the type audit above. At true scale,
@@ -1006,7 +1076,7 @@ table.audit th{font-family:var(--disp);text-transform:uppercase;font-size:12px;
 
 <!-- ============================================================ OPTION A -->
 <section id="opta">
-  <h2>9 · Option A — “Dense board”</h2>
+  <h2>10 · Option A — “Dense board”</h2>
   <p class="lede">The web layout miniaturized: persistent table strip + hand carousel + actions,
   all on one screen. Included because it's everyone's first instinct — and to show where it
   breaks at 40&nbsp;mm.</p>
@@ -1019,7 +1089,7 @@ table.audit th{font-family:var(--disp);text-transform:uppercase;font-size:12px;
 
 <!-- ============================================================ OPTION C -->
 <section id="optc">
-  <h2>10 · Option C — “Action list”</h2>
+  <h2>11 · Option C — “Action list”</h2>
   <p class="lede">Pure watchOS: every legal move is a full-width row in a crown-scrolled list.
   The move space is small enough per moment (throwable cards + GOOD; or covers-for-current-target
   + TAKE + PASS) that rows stay countable.</p>
@@ -1032,7 +1102,7 @@ table.audit th{font-family:var(--disp);text-transform:uppercase;font-size:12px;
 
 <!-- ============================================================ COMPARE -->
 <section id="compare">
-  <h2>11 · Side by side</h2>
+  <h2>12 · Side by side</h2>
   <div class="tablewrap">
   <table class="cmp">
     <tr><th></th><th>E · Foolish40 × D</th><th>D · One thing at a time</th><th>B · Focus flow</th>
@@ -1076,7 +1146,7 @@ table.audit th{font-family:var(--disp);text-transform:uppercase;font-size:12px;
 
 <!-- ============================================================ CUTS -->
 <section id="cuts">
-  <h2>12 · Cut list</h2>
+  <h2>13 · Cut list</h2>
   <p class="lede">If an element can't justify itself, it's gone. What didn't earn pixels:</p>
   <ul class="cuts">
     <li><b>8-player avatar ring</b> — seat identity only matters twice (who defends, who receives a
@@ -1099,7 +1169,7 @@ table.audit th{font-family:var(--disp);text-transform:uppercase;font-size:12px;
 
 <!-- ============================================================ PROTOCOL -->
 <section id="proto">
-  <h2>13 · What the watch client actually consumes</h2>
+  <h2>14 · What the watch client actually consumes</h2>
   <ul class="cuts">
     <li><b>State in:</b> subscribe the player's <code>player_views</code> row — already
       per-seat masked server-side, decoded by the shared packed-game codec
@@ -2272,6 +2342,184 @@ fig(galG,'G10 · Short look','the glance before the long look',
         fly=null;cap-=1;
         hand=hand.filter(x=>x!==c);
         if(focus>=hand.length)focus=Math.max(0,hand.length-1);
+        render();
+      }
+    },650);
+  }
+  render();
+})();
+
+/* ============================================================ Option H */
+function hcard(r,su,size,rank,dim){
+  const red=RED.has(su)?' red':'';
+  return `<div class="gcard${red}${dim?' dim':''}" style="font-size:${size}px;width:${Math.round(size*1.1)}px;height:${Math.round(size*1.19)}px"><span class="gsuit">${su}</span><span class="grank" style="font-size:${rank}px">${r}</span></div>`;
+}
+function hrowH(pr){
+  const g=(x)=>`<div class="gcard${RED.has(x[1])?' red':''}" style="font-size:38px;width:40px;height:44px"><span class="gsuit">${x[1]}</span><span class="grank" style="font-size:18px">${x[0]}</span></div>`;
+  if(pr.t==='res')return `<div class="hrow res"><span class="hcell">${g(pr.d)}</span><span class="harr">▸</span><span class="hcell">${g(pr.a)}</span></div>`;
+  if(pr.t==='fly')return `<div class="hrow"><span class="hcell"></span><span class="harr"></span><span class="hcell"><span class="inflight">${g(pr.a)}</span></span></div>`;
+  return `<div class="hrow"><span class="hcell"></span><span class="harr"></span><span class="hcell">${g(pr.a)}</span></div>`;
+}
+// items: [{r,s,dim}|{check:1}|{take:n}], focus = index. Fisheye: ±2 visible.
+function hlaneH(items,focus){
+  const CY=125, spec=[[0,84,38,1],[1,36,17,.9],[2,24,11,.45]];
+  let h='';
+  for(let off=-2;off<=2;off++){
+    const i=focus+off;
+    if(i<0||i>=items.length)continue;
+    const [_,size,rank,op]=spec[Math.abs(off)];
+    const y=CY+Math.sign(off)*(Math.abs(off)===1?88:138);
+    const it=items[i];
+    let inner;
+    if(it.check)inner=`<span class="hcheck" style="font-size:${Math.round(size*.86)}px">✓</span>`;
+    else if(it.take!=null)inner=`<span class="htake" style="font-size:${Math.round(size*.55)}px">+${it.take}</span>`;
+    else inner=hcard(it.r,it.s,size,rank,it.dim);
+    h+=`<div class="hitem" style="top:${y}px;opacity:${op}">${inner}</div>`;
+  }
+  return `<div class="hlane">${h}</div>`;
+}
+function hscreen(o){
+  let h=`<div class="gchev">‹</div><div class="gclock">${o.clock||'12:41'}</div>`;
+  const trump=o.flip?`<span class="gtrump">${gcard(o.flip[0],o.flip[1])}</span>`:`<span>♠</span>`;
+  h+=`<div class="ginfo">${trump}<span>▤${o.deck}</span><span>▨${o.disc}</span></div>`;
+  h+=`<div class="gstrip">${o.strip.map(gseatH).join('')}</div>`;
+  h+=`<div class="htable${o.scroll?' scrollv':''}">${o.pairs.map(hrowH).join('')}</div>`;
+  h+=hlaneH(o.items,o.focus);
+  if(o.pill)h+=`<div class="hpill ${o.pill[0]}">${o.pill[1]}</div>`;
+  h+=o.extra||'';
+  return h+`<div class="fingero"></div><div class="zoneso"></div>`;
+}
+const galH=document.getElementById('gal-h');
+
+fig(galH,'H1 · Attacker','table is a list · hand is a lane',hscreen({
+  flip:['6','♠'],deck:8,disc:7,strip:GSTRIP,
+  pairs:[{t:'res',d:['K','♠'],a:['Q','♠']},{t:'open',a:['K','♣']}],
+  items:[{r:'6',s:'♥',dim:1},{r:'A',s:'♥',dim:1},{r:'K',s:'♥'},{r:'6',s:'♠',dim:1},
+         {r:'10',s:'♣',dim:1},{r:'J',s:'♦',dim:1},{check:1}],
+  focus:2,
+  pill:['act','ATTACK'],
+}),[
+'<b>The whole table, no pages</b> — pairs as list rows: cover column ▸ attack column; open attacks sit alone in the attack column, full bright; resolved rows desaturate. Up to four pairs are just… visible.',
+'<b>One hand representation</b> — the lane on the right holds the hand in order; the focused chip IS the big card (42 pt), neighbors shrink above and below. No chip strip, no separate focus slot.',
+'<b>The lane hugs the crown</b> — turning the physical wheel visibly turns that column; the ✓ is the lane\'s last stop.',
+'<b>Nothing moves horizontally</b> — crown = lane, vertical drag = table list (only when it overflows), seat-strip tap = roster (chevron returns).',
+]);
+
+fig(galH,'H2 · Defending','covers in the lane, targets in the list',hscreen({
+  flip:['6','♠'],deck:8,disc:7,clock:'12:44',
+  strip:[[4],[2],[6],[5],[3],[6],[2],[5,'dy']],
+  pairs:[{t:'res',d:['J','♣'],a:['8','♣']},{t:'open',a:['K','♣']},{t:'open',a:['K','♦']}],
+  items:[{r:'A',s:'♣'},{r:'K',s:'♠'},{r:'7',s:'♠'},{r:'6',s:'♥',dim:1},
+         {r:'10',s:'♣',dim:1},{take:4}],
+  focus:1,
+  pill:['act','COVER'],
+}),[
+'<b>Both open attacks visible while you choose</b> — the list shows K♣ and K♦ at once; G\'s pager could hide one on another page.',
+'<b>Same commit semantics as G</b> — unambiguous covers commit on tap; K♠ here beats both kings AND matches rank, so tapping opens the chooser overlay (cover K♣ / cover K♦ / pass).',
+'<b>TAKE is the lane\'s last stop</b> — the red +4; the shield on your gold seat says why.',
+]);
+
+fig(galH,'H3 · Seven pairs','the list scrolls — the only drag',hscreen({
+  flip:null,deck:0,disc:10,clock:'12:58',
+  strip:[[3],[2],[9,'d'],[4],[2],[5],[1],[4,'y']],
+  scroll:1,
+  pairs:[{t:'res',d:['9','♠'],a:['6','♠']},{t:'res',d:['Q','♣'],a:['J','♣']},
+         {t:'open',a:['K','♣']},{t:'open',a:['9','♣']}],
+  items:[{r:'9',s:'♦'},{r:'6',s:'♥',dim:1},{r:'A',s:'♥',dim:1},{r:'Q',s:'♠',dim:1},{check:1}],
+  focus:0,
+  pill:['act','ATTACK'],
+}),[
+'<b>Past four pairs the list scrolls vertically</b> — edge fades say "more"; newest lands at the bottom and auto-scrolls into view only while you\'re idle.',
+'<b>Better than dots for huge tables</b> — a 10-pair post-pickup bout is a scroll, not five blind pages.',
+'<b>Bare ♠, deck 0</b> — same InfoLine decay as G.',
+]);
+
+fig(galH,'H4 · Eleven cards','same lane, more turns',hscreen({
+  flip:['6','♠'],deck:8,disc:5,clock:'12:57',
+  strip:[[4],[3],[5,'d'],[2],[6],[3],[4],[11,'y']],
+  pairs:[{t:'open',a:['9','♣']}],
+  items:[{r:'3',s:'♦',dim:1},{r:'9',s:'♥'},{r:'9',s:'♦'},{r:'8',s:'♦',dim:1},
+         {r:'2',s:'♣',dim:1},{r:'Q',s:'♠',dim:1},{r:'J',s:'♦',dim:1},{r:'7',s:'♣',dim:1},
+         {r:'6',s:'♥',dim:1},{r:'A',s:'♥',dim:1},{r:'4',s:'♣',dim:1},{check:1}],
+  focus:2,
+  pill:['act','ATTACK'],
+}),[
+'<b>A post-pickup hand changes nothing structurally</b> — the lane shows the same ±2 window; eleven cards just means more crown travel. No overflow mask, no special case.',
+'<b>Legal cards cluster at the focus</b> — both 9s adjacent; the fisheye makes the neighborhood readable before you get there.',
+]);
+
+fig(galH,'H5 · GOOD','the ✓ enlarges like any card',hscreen({
+  flip:['6','♠'],deck:8,disc:6,
+  strip:[[4],[2,'g'],[6,'d'],[5,'g'],[3,'g'],[6],[2,'g'],[6,'y']],
+  pairs:[{t:'res',d:['K','♠'],a:['Q','♠']},{t:'res',d:['A','♣'],a:['K','♣']}],
+  items:[{r:'6',s:'♥',dim:1},{r:'A',s:'♥',dim:1},{r:'K',s:'♥',dim:1},{r:'6',s:'♠',dim:1},
+         {r:'10',s:'♣',dim:1},{r:'J',s:'♦',dim:1},{check:1}],
+  focus:6,
+  pill:['good','GOOD'],
+}),[
+'<b>The terminal item obeys the same physics</b> — crown to the end, the bare ✓ grows to 60 px in the lane; the pill reads GOOD; green strip counts are the tally.',
+'<b>After voting</b> — pill greys to ✓ voted, lane cards stay dim until the table changes (legal.c:377).',
+]);
+
+/* ---- Option H live demo ---- */
+(function(){
+  const host=document.getElementById('m-demo6');
+  let cap=2,said=false,rej=false,focus=0,fly=null;
+  let hand=[{r:'K',s:'♥'},{r:'Q',s:'♦'},{r:'6',s:'♥'},{r:'6',s:'♠'},{r:'10',s:'♣'},{r:'J',s:'♦'}];
+  const live=['K','Q'];
+  const legal=c=>!said&&cap>0&&live.includes(c.r);
+  function items(){
+    return hand.map(c=>({r:c.r,s:c.s,dim:!legal(c)})).concat([{check:1}]);
+  }
+  function render(){
+    const its=items();
+    if(focus>=its.length)focus=its.length-1;
+    const isTerm=focus===its.length-1;
+    const c=isTerm?null:hand[focus];
+    const ok=c&&legal(c);
+    const pairs=[{t:'res',d:['K','♠'],a:['Q','♠']},{t:'open',a:['K','♣']}];
+    if(fly)pairs.push({t:'fly',a:[fly.r,fly.s]});
+    let pill=null;
+    if(isTerm)pill=said?['gray','✓ voted']:['good','GOOD'];
+    else if(ok)pill=['act','ATTACK'];
+    mount(host,hscreen({flip:['6','♠'],deck:8,disc:7,
+      strip:[[4],[2],[6,'d'],[5],[3,said?'g':undefined],[6],[2],[hand.length,'y']],
+      pairs,items:its,focus,pill,
+      extra:rej?'<div class="grej"></div>':'',
+    }));
+    const scr=host.querySelector('.screen');
+    scr.setAttribute('tabindex','0');scr.style.cursor='pointer';
+    scr.addEventListener('wheel',e=>{e.preventDefault();spin(e.deltaY>0||e.deltaX>0?1:-1);},{passive:false});
+    scr.addEventListener('keydown',e=>{
+      if(e.key==='ArrowDown'||e.key==='ArrowRight'){spin(1);e.preventDefault()}
+      if(e.key==='ArrowUp'||e.key==='ArrowLeft'){spin(-1);e.preventDefault()}});
+    const lane=scr.querySelector('.hlane');
+    if(lane)lane.querySelectorAll('.hitem').forEach(el=>{
+      el.style.cursor='pointer';
+      el.addEventListener('click',ev=>{ev.stopPropagation();
+        const y=parseInt(el.style.top);
+        if(Math.abs(y-125)<10)commit();       // center item = commit
+        else{spin(y>125?1:-1);}               // neighbor = step toward it
+      });});
+    const pl=scr.querySelector('.hpill');
+    if(pl)pl.addEventListener('click',commit);
+  }
+  let last=0;
+  function spin(d){const now=Date.now();if(now-last<110)return;last=now;
+    focus=Math.max(0,Math.min(items().length-1,focus+d));render();}
+  function commit(){
+    const its=items();
+    if(focus===its.length-1){if(!said){said=true;render();}return;}
+    const c=hand[focus];
+    if(!legal(c))return;
+    fly={r:c.r,s:c.s};render();
+    setTimeout(()=>{
+      if(Math.random()<0.33){
+        fly=null;cap=0;rej=true;render();
+        setTimeout(()=>{rej=false;render();},700);
+      }else{
+        fly=null;cap-=1;
+        hand=hand.filter(x=>x!==c);
         render();
       }
     },650);

@@ -187,6 +187,32 @@ build (measurements taken from its screenshot):
   glance** (icon · FOOLISH · title) for the wrist-raise moment.
 - **One card per action** — multi-card pass stays web-only (`game.c:759`).
 
+## 4.6 · Option H — "All vertical" (alternative, under evaluation)
+
+Owner-directed variant of G: every horizontally-movable thing rotated
+vertical, and the double hand display removed.
+
+- **Table = vertical list** (left column): one pair per row, cover column ▸
+  attack column; open attacks alone in the attack column, full bright;
+  resolved rows desaturated. Up to 4 pairs visible at once — no paging;
+  beyond that the list scrolls under a vertical drag (the app's only drag),
+  with edge fades and idle-only auto-scroll to the newest attack.
+- **Hand = fisheye lane** hugging the crown edge (right): one representation —
+  the focused chip IS the big card (42 pt), neighbors shrink above/below
+  (±1 at 18 pt, ±2 at 12 pt, faded). The terminal ✓ / TAKE +n is the lane's
+  last stop and magnifies like any card. No chip strip, no focus slot.
+- **Roster** = seat-strip tap, pushed page, system chevron returns. No root
+  pager, no page dots, zero horizontal gestures.
+- Everything else identical to G: pill decision table (pill sits bottom-left,
+  ~93 pt wide), chooser overlay, red-glow rejection, InfoLine, one card per
+  action.
+
+Trade-offs vs G: H shows the whole table at once (≤4 pairs) and has a single
+hand representation with a physical crown-to-lane mapping; G has a bigger
+focused card (56 vs 42 pt) and bigger table glyphs (31 vs 19 pt), and is
+simpler to build (no fisheye, no region-scoped scroll). Mocked as H1–H5 +
+live demo in the HTML (§8).
+
 ## 5 · The other options (all kept in the HTML)
 
 - **F · First person** — G's chassis; superseded by G's refinements.
