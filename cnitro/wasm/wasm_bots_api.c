@@ -336,10 +336,81 @@ int wasm_bot_drive_log_start(void) { return g_drive_log_start; }
 extern void wasm_set_strategy_seed_deterministic(void);
 extern void wasm_seed_rng_deterministic(void);
 
+// ---------- belief probe (observability) ----------------------------------
+//
+// "Did the bot actually SEE the session log?" — answered by the kernel rather
+// than inferred from outside it.
+//
+// The loop hands the belief bots the persisted session log as packed bytes
+// (importLogsPacked). A host-side spy can only prove the bytes were HANDED
+// OVER; it cannot prove the importer spliced them into the Game the strategy
+// then read. That gap is exactly where the octogen-blind and cordite
+// stale-belief regressions lived. Since the choose step moved in-kernel
+// (docs/C_CORE_CONSOLIDATION.md F2/A2) there is no TS seam left to spy on
+// anyway, so the observation belongs where the read happens.
+//
+// Records, per SEARCH, the log the strategy was about to read. A reused
+// preferred move never fires the CHOOSE phase (no search, no belief read), so
+// it correctly records nothing.
+//
+// Behavior-neutral and OFF until a harness calls reset(): production drives
+// never pay the log pass.
+#define BELIEF_PROBE_CAP 64
+
+typedef struct {
+    uint8_t  seat;
+    uint16_t n_logs;
+    uint64_t cards;   // bit (suit*16 + value) per real card visible in the log
+} BeliefProbe;
+
+static BeliefProbe g_probe[BELIEF_PROBE_CAP];
+static int g_n_probe = 0;
+static int g_probe_on = 0;
+
+static void probe_capture(const Game *g, int seat) {
+    if (!g_probe_on || g_n_probe >= BELIEF_PROBE_CAP) return;
+    BeliefProbe *p = &g_probe[g_n_probe++];
+    p->seat   = (uint8_t)seat;
+    p->n_logs = (uint16_t)g->num_logs;
+    p->cards  = 0;
+    for (int i = 0; i < g->num_logs; i++) {
+        const GameLog *l = &g->logs[i];
+        for (int k = 0; k < l->num_pairs; k++) {
+            const Card cs[2] = { l->pairs[k].primary, l->pairs[k].target };
+            for (int c = 0; c < 2; c++) {
+                // Card backs (WIRE_CARD_HIDDEN -> suit/value < 0) are not cards.
+                if (cs[c].suit >= 0 && cs[c].value > 0)
+                    p->cards |= 1ull << ((unsigned)cs[c].suit * 16u + (unsigned)cs[c].value);
+            }
+        }
+    }
+}
+
+// Clear + arm. Records accumulate across drives until the next reset, so a
+// harness can read the decisions of several cycles in order.
+void wasm_belief_probe_reset(void) { g_n_probe = 0; g_probe_on = 1; }
+
+// Dump the records into the IO buffer; returns the count. 11 bytes each:
+// u8 seat, u16 n_logs (LE), u64 card mask (LE).
+int wasm_belief_probe_dump(void) {
+    unsigned char *out = wasm_io_ptr();
+    int w = 0;
+    for (int i = 0; i < g_n_probe; i++) {
+        out[w++] = g_probe[i].seat;
+        out[w++] = (unsigned char)(g_probe[i].n_logs & 0xFF);
+        out[w++] = (unsigned char)(g_probe[i].n_logs >> 8);
+        for (int b = 0; b < 8; b++) out[w++] = (unsigned char)(g_probe[i].cards >> (8 * b));
+    }
+    return g_n_probe;
+}
+
 static void drive_seed_hook(const Game *g, int seat, int phase) {
-    (void)g; (void)seat;
-    if (phase == BOT_DRIVE_PHASE_CHOOSE) wasm_set_strategy_seed_deterministic();
-    else                                 wasm_seed_rng_deterministic();
+    if (phase == BOT_DRIVE_PHASE_CHOOSE) {
+        probe_capture(g, seat);
+        wasm_set_strategy_seed_deterministic();
+    } else {
+        wasm_seed_rng_deterministic();
+    }
 }
 
 int wasm_bot_drive(int human_mask, int max_actions, int n_pref) {

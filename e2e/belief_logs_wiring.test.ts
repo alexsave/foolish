@@ -11,23 +11,56 @@
 // This test closes that gap. It drives the REAL server bot loop (lockedBotLoop
 // → processBotActions → loadCompleteGame → the belief hydration → the kernel
 // chooser) against a REAL Postgres via the harness, and asserts that octogen
-// actually SEES the accumulating session log at choose time. It spies at the
-// exact seam the bug lived behind: what game.belief_logs holds when the bot's
-// chooser is invoked. Pre-fix, that was always empty; post-fix it is the
-// current session, loaded from games.logs_packed.
+// actually SEES the accumulating session log at choose time.
+//
+// It observes the two halves at the two places they are true:
+//
+//   - WHAT THE BOT SAW comes from the kernel (wasmBeliefProbe*). The choose step
+//     moved in-kernel (bot_drive, F2/A2), so the TS seam this used to patch
+//     (WasmBotStrategy.chooseMoveDirect) is no longer on the loop's path — and
+//     even when it was, it could only prove the bytes were HANDED OVER, never
+//     that the importer spliced them into the Game octogen read. That gap is
+//     where "octogen chose blind" lived, so the probe reports the log as the
+//     strategy was about to read it.
+//   - THE FED BYTES stay observed here, because the resident log's arithmetic
+//     (concat-and-carry across cycles) is this side's job, not the kernel's.
 
 import './harness.ts'; // sets Deno globals BEFORE any server module loads
-import { test, before, beforeEach, after } from 'node:test';
+import { test, before, beforeEach, after, mock } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { applySchema, resetDb, seedGame, uuid, pgPool } from './harness.ts';
 import { executeWithGameLock } from '../supabase/functions/_shared/utils.ts';
 import { start_game } from '../supabase/functions/_shared/game_lifecycle.ts';
-import { lockedBotLoop } from '../supabase/functions/_shared/bot_actions.ts';
-import { WasmBotStrategy } from '../supabase/functions/_shared/bot_strategy.ts';
 import { __setBotSeedSource } from '../supabase/functions/_shared/wasm/bots.ts';
 import { __setKernelSeedSource } from '../supabase/functions/_shared/wasm/engine.ts';
 import { AnimationEvent, Game } from '../supabase/functions/_shared/types.ts';
+import { bytesToBareHex } from '../supabase/functions/_shared/wire/bytes.ts';
+
+// The bytes the loop hands the kernel, captured per drive.
+// BARE hex (no \x) — matches how logs_packed is stored, so a prefix compare works.
+const fed: string[] = [];
+
+// Wrap the ONE call the loop makes into the kernel, so the bytes it hands over
+// are captured without touching production code, and hand back a lockedBotLoop
+// bound to the wrapper. The mock must be installed before bot_actions.ts is
+// imported, since that binds wasmBotDrive at load — hence the dynamic imports
+// (tsx transforms these files to CJS, where top-level await is unavailable).
+async function wireLoop() {
+  const realBots = await import('../supabase/functions/_shared/wasm/bots.ts');
+  mock.module('../supabase/functions/_shared/wasm/bots.ts', {
+    namedExports: {
+      ...realBots,
+      wasmBotDrive: (game: Game, opts: Parameters<typeof realBots.wasmBotDrive>[1]) => {
+        const b = game.belief_log_bytes;
+        if (opts.logs) fed.push(b ? bytesToBareHex(b).toLowerCase() : '');
+        return realBots.wasmBotDrive(game, opts);
+      },
+    },
+  });
+  const { lockedBotLoop } = await import('../supabase/functions/_shared/bot_actions.ts');
+  return { lockedBotLoop, ...realBots };
+}
 
 const mkLcgU32 = (seed: number) => {
   let s = (seed >>> 0) || 1;
@@ -68,61 +101,44 @@ test('the server bot loop feeds octogen the whole session log (not an empty one)
   await executeWithGameLock(gameId,
     async (g: Game) => ({ game: g, events: start_game(g) as AnimationEvent[] }), 'start', false);
 
-  // Spy at the exact seam: what does game.belief_log_bytes hold when the bot
-  // loop asks octogen to choose? Decode the packed bytes to a record count, and
-  // capture the raw hex so we can prove the RESIDENT log (this is a bots-only
-  // game, so the loop carries + appends it across cycles instead of re-reading)
-  // never drifts from the DB.
-  const { decodeLogs } = await import('../supabase/functions/_shared/wire/logwire.ts');
-  // BARE hex (no \x) — matches how logs_packed is stored, so a prefix compare works.
-  const { bytesToBareHex } = await import('../supabase/functions/_shared/wire/bytes.ts');
-  const seen: { beliefLen: number; hex: string }[] = [];
-  const orig = WasmBotStrategy.prototype.chooseMoveDirect;
-  WasmBotStrategy.prototype.chooseMoveDirect = function (game: Game, botPlayerId: string) {
-    // `this.logs` is true only for the belief bots (octogen here).
-    if ((this as unknown as { logs: boolean }).logs) {
-      const bytes = game.belief_log_bytes;
-      let cnt = -1;
-      if (bytes) { try { cnt = decodeLogs(bytes, game.id, game.players).length; } catch { cnt = -1; } }
-      seen.push({ beliefLen: cnt, hex: bytes ? bytesToBareHex(bytes).toLowerCase() : '' });
-    }
-    return orig.call(this, game, botPlayerId);
-  };
-
-  try {
-    // One drive segment. Octogen is heavy, so the CPU predictor may bail after a
-    // handful of cycles — that's fine: a handful is enough for the session log to
-    // grow past empty and prove the wiring delivers it.
-    await lockedBotLoop(gameId);
-  } finally {
-    WasmBotStrategy.prototype.chooseMoveDirect = orig;
-  }
+  // One drive segment. Octogen is heavy, so the CPU predictor may bail after a
+  // handful of cycles — that's fine: a handful is enough for the session log to
+  // grow past empty and prove the wiring delivers it.
+  const { lockedBotLoop, wasmBeliefProbeReset, wasmBeliefProbeDump } = await wireLoop();
+  fed.length = 0;
+  wasmBeliefProbeReset();
+  await lockedBotLoop(gameId);
+  // Every search the kernel ran, with the log as the strategy was about to read it.
+  const searches = wasmBeliefProbeDump();
 
   const sessionLen = await persistedLogCount(gameId);
-  console.error(`[wiring] octogen choices=${seen.length} maxBeliefLen=${Math.max(-1, ...seen.map(s => s.beliefLen))} persistedSessionLen=${sessionLen}`);
+  const maxSeen = Math.max(0, ...searches.map(s => s.nLogs));
+  console.error(`[wiring] octogen searches=${searches.length} maxKernelLogs=${maxSeen} fedBuffers=${fed.length} persistedSessionLen=${sessionLen}`);
 
   // octogen actually got to choose through the real loop.
-  assert.ok(seen.length > 0, 'octogen never chose through the real bot loop');
-  // Never chose with a broken/undefined belief field.
-  assert.ok(seen.every(s => s.beliefLen >= 0), 'belief_log_bytes was undefined at a belief-bot choose — hydration wiring missing');
+  assert.ok(searches.length > 0, 'octogen never chose through the real bot loop');
+  // The loop hydrated on every cycle a belief bot was eligible.
+  assert.ok(fed.length > 0 && fed.every(h => h.length > 0),
+    'belief_log_bytes was empty at a belief-bot drive — hydration wiring missing');
+
   // THE REGRESSION GUARD: once the session has accumulated records, octogen must
-  // see them. Pre-fix, maxBeliefLen was pinned at 0 no matter how long the game
-  // ran. The game produces several log records per bout (attack/cover/draw/
-  // discard), so a non-trivial max proves the whole session reaches the chooser.
-  const maxBeliefLen = Math.max(0, ...seen.map(s => s.beliefLen));
+  // see them. Pre-fix, the log the chooser saw was pinned at 0 no matter how long
+  // the game ran. The game produces several log records per bout (attack/cover/
+  // draw/discard), so a non-trivial max proves the whole session reaches the
+  // kernel — and this now asserts it of the Game the strategy read, not of the
+  // bytes handed to the importer.
   assert.ok(sessionLen >= 4, `precondition: the drive should persist a real session (got ${sessionLen})`);
-  assert.ok(maxBeliefLen >= 4,
-    `octogen chose with a near-empty log (max=${maxBeliefLen}) while ${sessionLen} records were persisted — belief bot is running blind`);
+  assert.ok(maxSeen >= 4,
+    `octogen searched with a near-empty log (max=${maxSeen}) while ${sessionLen} records were persisted — belief bot is running blind`);
 
   // RESIDENT-LOG CORRECTNESS: the loop carried the log across cycles and appended
   // each committed move's bytes instead of re-reading the DB. Every buffer it fed
-  // octogen must therefore be a byte-exact PREFIX of the final persisted
+  // the kernel must therefore be a byte-exact PREFIX of the final persisted
   // logs_packed — if the append ever drifted from what commit_game wrote, the
   // resident would diverge and this fails.
   const finalHex = ((await pgPool.query('SELECT logs_packed FROM games WHERE id=$1', [gameId])).rows[0]?.logs_packed ?? '').toLowerCase();
-  for (const s of seen) {
-    if (!s.hex) continue;
-    assert.ok(finalHex.startsWith(s.hex),
-      `resident belief log drifted from logs_packed: a fed buffer (${s.hex.length / 2} B) is not a prefix of the final persisted log (${finalHex.length / 2} B)`);
+  for (const hex of fed) {
+    assert.ok(finalHex.startsWith(hex),
+      `resident belief log drifted from logs_packed: a fed buffer (${hex.length / 2} B) is not a prefix of the final persisted log (${finalHex.length / 2} B)`);
   }
 });

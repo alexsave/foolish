@@ -471,7 +471,8 @@ WASM_BOTS_API_EXPORTS := \
   -Wl,--export=wasm_bot_pacing_ms -Wl,--export=wasm_bot_drive_log_start \
   -Wl,--export=wasm_export_logs_masked_from \
   -Wl,--export=wasm_events_serialize_from \
-  -Wl,--export=wasm_replay_encode_v6_from_game
+  -Wl,--export=wasm_replay_encode_v6_from_game \
+  -Wl,--export=wasm_belief_probe_reset -Wl,--export=wasm_belief_probe_dump
 
 # The rules module's move buffer only feeds the exported menu — production
 # validation is direct rule-checking, and production menus/bot enumeration

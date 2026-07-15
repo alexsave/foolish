@@ -40,6 +40,9 @@ interface BotsExports extends EngineExports {
     wasm_bot_pacing_ms(pacingClass: number, humansPresent: number): number;
     wasm_bot_drive(humanMask: number, maxActions: number, nPref: number): number;
     wasm_bot_drive_log_start(): number;
+    // Belief probe (observability; off until reset arms it)
+    wasm_belief_probe_reset(): void;
+    wasm_belief_probe_dump(): number;
 }
 
 // Mirrors STRAT_* in cnitro/src/strategy.h (only the ids the server uses).
@@ -397,6 +400,49 @@ export function wasmBotEligibleMask(game: Game, humanMask: number): number {
     __setResident(null);
     __marshalGame(ex, game);
     return ex.wasm_bot_eligible_mask(humanMask) >>> 0;
+}
+
+/** One recorded bot SEARCH, as the kernel saw it (wasm_belief_probe_dump). */
+export interface BeliefProbeRecord {
+    seat: number;
+    /** Log records spliced into the Game the strategy was about to read. */
+    nLogs: number;
+    /** Real cards visible in that log — `${suit}:${value}` ids. */
+    cards: Set<string>;
+}
+
+/**
+ * Arm the kernel's belief probe (clears any prior records).
+ *
+ * Observability for "did the bot actually SEE the session log", answered by the
+ * kernel instead of inferred from this side. A spy here could only prove the
+ * bytes were handed over, not that the importer spliced them into the Game the
+ * strategy read — and since the choose step moved in-kernel (F2/A2) there is no
+ * TS seam left to spy on. Off in production until this is called.
+ */
+export function wasmBeliefProbeReset(): void { bots().wasm_belief_probe_reset(); }
+
+/** Read back the searches recorded since the last reset, in order. */
+export function wasmBeliefProbeDump(): BeliefProbeRecord[] {
+    const ex = bots();
+    const n = ex.wasm_belief_probe_dump();
+    const base = ex.wasm_io_ptr();
+    const buf = new Uint8Array(ex.memory.buffer, base, n * 11);
+    const out: BeliefProbeRecord[] = [];
+    for (let i = 0; i < n; i++) {
+        const o = i * 11;
+        const cards = new Set<string>();
+        for (let b = 0; b < 8; b++) {
+            const byte = buf[o + 3 + b];
+            for (let bit = 0; bit < 8; bit++) {
+                if (!(byte & (1 << bit))) continue;
+                const code = b * 8 + bit;          // suit*16 + value
+                cards.add(`${code >> 4}:${code & 0xf}`);
+            }
+        }
+        out.push({ seat: buf[o], nLogs: buf[o + 1] | (buf[o + 2] << 8), cards });
+    }
+    return out;
 }
 
 // class -> milliseconds, from the kernel's one pacing table. Never mirrored

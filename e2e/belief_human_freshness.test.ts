@@ -10,6 +10,16 @@
 // octogen decision, its belief log already contains EVERY public card the human
 // has committed so far. If the resident were (wrongly) reused across a human
 // move, octogen's belief would lag and this fails.
+//
+// OBSERVED FROM THE KERNEL (wasmBeliefProbe*), not from a spy on this side.
+// Two reasons. The choose step moved in-kernel (bot_drive, F2/A2), so the TS
+// seam this used to patch (WasmBotStrategy.chooseMoveDirect) is no longer on
+// the bot loop's path at all — patching it captured nothing and the test only
+// failed on "octogen never chose". And the stronger reason: a spy here could
+// only ever prove the loop HANDED the bytes over, never that the importer
+// spliced them into the Game octogen actually read — which is precisely the
+// gap the stale-belief bugs lived in. The probe records the log as the
+// strategy was about to read it.
 
 import './harness.ts';
 import { test, before, beforeEach, after } from 'node:test';
@@ -19,15 +29,15 @@ import { applySchema, resetDb, seedGame, uuid } from './harness.ts';
 import { executeWithGameLock } from '../supabase/functions/_shared/utils.ts';
 import { start_game } from '../supabase/functions/_shared/game_lifecycle.ts';
 import { lockedBotLoop } from '../supabase/functions/_shared/bot_actions.ts';
-import { WasmBotStrategy } from '../supabase/functions/_shared/bot_strategy.ts';
+import { wasmBeliefProbeReset, wasmBeliefProbeDump } from '../supabase/functions/_shared/wasm/bots.ts';
 import { game_done } from '../supabase/functions/_shared/common_utils.ts';
 import { legalMovesFor, applyPlayerMove } from './dispatch.ts';
 import { AnimationEvent, Game, Card } from '../supabase/functions/_shared/types.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 
+// Matches the probe's card ids (wasm_belief_probe_dump packs suit*16 + value).
 const cid = (c: Card) => `${c.suit}:${c.value}`;
-const isReal = (c: Card | null | undefined) => !!c && c.suit >= 0 && c.value >= 1;
 
 before(async () => { await applySchema(); });
 beforeEach(async () => { await resetDb(); });
@@ -39,10 +49,10 @@ async function loadGame(gameId: string): Promise<Game> {
 }
 
 test('human+octogen: octogen always sees the human’s committed moves (resident never stale)', async () => {
-  const { decodeLogs } = await import('../supabase/functions/_shared/wire/logwire.ts');
-
   const gameId = `hf${uuid().slice(0, 6)}`;
   const humanId = uuid(), botId = uuid();
+  // Seat order is the players array order: human = 0, octogen = 1.
+  const OCTO_SEAT = 1;
   await seedGame(gameId, [
     { id: humanId, name: 'Human', is_ai: false, strategy_key: 'human' },
     { id: botId, name: 'Octo', is_ai: true, strategy_key: 'octogen' },
@@ -52,50 +62,31 @@ test('human+octogen: octogen always sees the human’s committed moves (resident
 
   // Every public card the human has committed so far (attack/cover/pass cards).
   const humanCards = new Set<string>();
-  // Per octogen decision: the set of real cards visible in its belief log, and a
-  // snapshot of humanCards at that instant (what it MUST already contain).
+  // Per octogen decision: the set of real cards the KERNEL saw in its belief log,
+  // and a snapshot of humanCards at that instant (what it MUST already contain).
   const captures: { belief: Set<string>; expected: Set<string> }[] = [];
 
-  const orig = WasmBotStrategy.prototype.chooseMoveDirect;
-  WasmBotStrategy.prototype.chooseMoveDirect = function (game: Game, botPlayerId: string) {
-    if ((this as unknown as { logs: boolean }).logs) {
-      const belief = new Set<string>();
-      const bytes = game.belief_log_bytes;
-      if (bytes) {
-        try {
-          for (const l of decodeLogs(bytes, game.id, game.players)) {
-            for (const p of l.card_pairs) {
-              if (isReal(p.primary)) belief.add(cid(p.primary));
-              if (isReal(p.target)) belief.add(cid(p.target));
-            }
-          }
-        } catch { /* leave empty → will fail the assert if a human card is missing */ }
-      }
-      captures.push({ belief, expected: new Set(humanCards) });
+  let guard = 0;
+  while (game_done(await loadGame(gameId)) === null && ++guard < 60) {
+    const game = await loadGame(gameId);
+    // A human move to make? (ignore 'wait' — it commits nothing.)
+    const humanMoves = legalMovesFor(game, (id) => id === humanId).filter(pm => pm.move.type !== 'wait');
+    if (humanMoves.length > 0) {
+      const pm = humanMoves[guard % humanMoves.length];
+      for (const c of pm.move.cards ?? []) humanCards.add(cid(c));
+      await executeWithGameLock(gameId,
+        async (g: Game) => ({ game: g, events: applyPlayerMove(g, pm) }), `h${guard}`, true);
+    } else {
+      // Octogen's turn — the REAL bot loop (fresh reload each cycle, human IN).
+      // Arm per drive segment rather than once for the game: the probe's ring is
+      // bounded, and the human cannot move while the loop holds the lease, so
+      // every search this records belongs to the humanCards snapshot below.
+      wasmBeliefProbeReset();
+      await lockedBotLoop(gameId);
+      const searches = wasmBeliefProbeDump().filter(r => r.seat === OCTO_SEAT);
+      for (const r of searches) captures.push({ belief: r.cards, expected: new Set(humanCards) });
+      if (searches.length === 0) break; // bot couldn't act → avoid spinning
     }
-    return orig.call(this, game, botPlayerId);
-  };
-
-  try {
-    let guard = 0;
-    while (game_done(await loadGame(gameId)) === null && ++guard < 60) {
-      const game = await loadGame(gameId);
-      // A human move to make? (ignore 'wait' — it commits nothing.)
-      const humanMoves = legalMovesFor(game, (id) => id === humanId).filter(pm => pm.move.type !== 'wait');
-      if (humanMoves.length > 0) {
-        const pm = humanMoves[guard % humanMoves.length];
-        for (const c of pm.move.cards ?? []) humanCards.add(cid(c));
-        await executeWithGameLock(gameId,
-          async (g: Game) => ({ game: g, events: applyPlayerMove(g, pm) }), `h${guard}`, true);
-      } else {
-        // Octogen's turn — the REAL bot loop (fresh reload each cycle, human IN).
-        const before = captures.length;
-        await lockedBotLoop(gameId);
-        if (captures.length === before) break; // bot couldn't act → avoid spinning
-      }
-    }
-  } finally {
-    WasmBotStrategy.prototype.chooseMoveDirect = orig;
   }
 
   // Octogen actually chose, and the human actually committed public cards.
