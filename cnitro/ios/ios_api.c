@@ -109,70 +109,78 @@ static int j_finish(J *j) {
 // other hand collapses to a count; the deck and flip-under-deck stay hidden.
 // viewer == VIEW_SPECTATOR masks every hand. This is the "you only see your own
 // hand" rule (view.h) rendered as JSON rather than the packed blob.
-static int emit_state_of(const Game *g, int viewer, char *out, int cap) {
-    J j; j_init(&j, out, cap);
-
-    j_puts(&j, "{\"status\":");        j_puti(&j, g->status);
-    j_puts(&j, ",\"numPlayers\":");    j_puti(&j, g->num_players);
-    j_puts(&j, ",\"powerSuit\":");     j_puti(&j, g->power_suit);
-    j_puts(&j, ",\"deckCount\":");     j_puti(&j, g->deck_count);
-    j_puts(&j, ",\"discardCount\":");  j_puti(&j, g->discard_pile_length);
-    j_puts(&j, ",\"hasFlipped\":");    j_puts(&j, g->has_flipped ? "true" : "false");
-    j_puts(&j, ",\"firstAttacker\":"); j_puti(&j, g->first_attacker);
-    j_puts(&j, ",\"defender\":");      j_puti(&j, g->defender);
-    j_puts(&j, ",\"viewer\":");        j_puti(&j, viewer);
-    j_puts(&j, ",\"goodMask\":");      j_puti(&j, (long)g->good_players_mask);
-    j_puts(&j, ",\"gameOver\":");      j_puti(&j, game_done(g));
+//
+// Written into an EXISTING writer so a state object can nest inside a larger
+// document — the event stream carries one per step (j_events). emit_state_of
+// below is the standalone-buffer form.
+static void j_state(J *j, const Game *g, int viewer) {
+    j_puts(j, "{\"status\":");        j_puti(j, g->status);
+    j_puts(j, ",\"numPlayers\":");    j_puti(j, g->num_players);
+    j_puts(j, ",\"powerSuit\":");     j_puti(j, g->power_suit);
+    j_puts(j, ",\"deckCount\":");     j_puti(j, g->deck_count);
+    j_puts(j, ",\"discardCount\":");  j_puti(j, g->discard_pile_length);
+    j_puts(j, ",\"hasFlipped\":");    j_puts(j, g->has_flipped ? "true" : "false");
+    j_puts(j, ",\"firstAttacker\":"); j_puti(j, g->first_attacker);
+    j_puts(j, ",\"defender\":");      j_puti(j, g->defender);
+    j_puts(j, ",\"viewer\":");        j_puti(j, viewer);
+    j_puts(j, ",\"goodMask\":");      j_puti(j, (long)g->good_players_mask);
+    j_puts(j, ",\"gameOver\":");      j_puti(j, game_done(g));
 
     // The flipped trump card is public whenever it is still known (has_flipped).
-    j_puts(&j, ",\"flipped\":");
-    if (g->has_flipped) j_card(&j, g->flipped); else j_puts(&j, "null");
+    j_puts(j, ",\"flipped\":");
+    if (g->has_flipped) j_card(j, g->flipped); else j_puts(j, "null");
 
     // Battles: attack always real; defense null when uncovered.
-    j_puts(&j, ",\"battles\":[");
+    j_puts(j, ",\"battles\":[");
     for (int i = 0; i < g->num_battles; i++) {
-        if (i) j_putc(&j, ',');
+        if (i) j_putc(j, ',');
         const Battle *b = &g->table_battles[i];
-        j_puts(&j, "{\"attack\":"); j_card(&j, b->attack);
-        j_puts(&j, ",\"defense\":");
-        if (card_is_none(b->defense)) j_puts(&j, "null"); else j_card(&j, b->defense);
-        j_putc(&j, '}');
+        j_puts(j, "{\"attack\":"); j_card(j, b->attack);
+        j_puts(j, ",\"defense\":");
+        if (card_is_none(b->defense)) j_puts(j, "null"); else j_card(j, b->defense);
+        j_putc(j, '}');
     }
-    j_putc(&j, ']');
+    j_putc(j, ']');
 
     // Elimination order (seat indices, in the order they cleared).
-    j_puts(&j, ",\"eliminationOrder\":[");
-    for (int i = 0; i < g->num_eliminated; i++) { if (i) j_putc(&j, ','); j_puti(&j, g->elimination_order[i]); }
-    j_putc(&j, ']');
+    j_puts(j, ",\"eliminationOrder\":[");
+    for (int i = 0; i < g->num_eliminated; i++) { if (i) j_putc(j, ','); j_puti(j, g->elimination_order[i]); }
+    j_putc(j, ']');
 
     // Players. Every seat exposes seat/name/status/handCount/awaitingAttack/
     // strategyKey; ONLY the viewer seat exposes its real `hand`. Others emit
     // "hand":null so Swift renders card backs from handCount.
-    j_puts(&j, ",\"players\":[");
+    j_puts(j, ",\"players\":[");
     for (int p = 0; p < g->num_players; p++) {
-        if (p) j_putc(&j, ',');
+        if (p) j_putc(j, ',');
         const Player *pl = &g->players[p];
         int is_viewer = (viewer == p);
-        j_puts(&j, "{\"seat\":");         j_puti(&j, p);
-        j_puts(&j, ",\"name\":");         j_putstr(&j, pl->name);
-        j_puts(&j, ",\"status\":");       j_puti(&j, pl->status);
-        j_puts(&j, ",\"handCount\":");    j_puti(&j, pl->hand_count);
+        j_puts(j, "{\"seat\":");         j_puti(j, p);
+        j_puts(j, ",\"name\":");         j_putstr(j, pl->name);
+        j_puts(j, ",\"status\":");       j_puti(j, pl->status);
+        j_puts(j, ",\"handCount\":");    j_puti(j, pl->hand_count);
         // awaiting_attack is private turn state — only surface it for the viewer.
-        j_puts(&j, ",\"awaitingAttack\":");
-        j_puts(&j, (is_viewer && pl->awaiting_attack) ? "true" : "false");
-        j_puts(&j, ",\"strategyKey\":");  j_puti(&j, pl->strategy_key);
-        j_puts(&j, ",\"hand\":");
+        j_puts(j, ",\"awaitingAttack\":");
+        j_puts(j, (is_viewer && pl->awaiting_attack) ? "true" : "false");
+        j_puts(j, ",\"strategyKey\":");  j_puti(j, pl->strategy_key);
+        j_puts(j, ",\"hand\":");
         if (is_viewer) {
-            j_putc(&j, '[');
-            for (int c = 0; c < pl->hand_count; c++) { if (c) j_putc(&j, ','); j_card(&j, pl->hand[c]); }
-            j_putc(&j, ']');
+            j_putc(j, '[');
+            for (int c = 0; c < pl->hand_count; c++) { if (c) j_putc(j, ','); j_card(j, pl->hand[c]); }
+            j_putc(j, ']');
         } else {
-            j_puts(&j, "null");
+            j_puts(j, "null");
         }
-        j_putc(&j, '}');
+        j_putc(j, '}');
     }
-    j_putc(&j, ']');
-    j_putc(&j, '}');
+    j_putc(j, ']');
+    j_putc(j, '}');
+}
+
+// The standalone-buffer form: one masked state as a whole JSON document.
+static int emit_state_of(const Game *g, int viewer, char *out, int cap) {
+    J j; j_init(&j, out, cap);
+    j_state(&j, g, viewer);
     return j_finish(&j);
 }
 
@@ -259,7 +267,7 @@ static void fio_snaps_reset(void) { g_n_snaps = 0; }
 
 // The JSON sink for evwire_walk. Mirrors the evwire field names so the Swift
 // decoder and the web's decoder describe the same event.
-typedef struct { J *j; int n; } FioEvCtx;
+typedef struct { J *j; int n; int viewer; } FioEvCtx;
 
 static void fio_ev_sink(void *ctx, const EvwEvent *ev) {
     FioEvCtx *c = (FioEvCtx *)ctx;
@@ -280,6 +288,13 @@ static void fio_ev_sink(void *ctx, const EvwEvent *ev) {
     j_putc(c->j, ']');
     if (ev->has_target) { j_puts(c->j, ",\"target\":"); j_card(c->j, ev->target); }
     if (ev->has_battle) { j_puts(c->j, ",\"battle\":"); j_puti(c->j, ev->battle); }
+    // The board AS OF this step, masked for this viewer — the same thing the
+    // web's evwire carries per event (the `snap_len` payload) and commits when
+    // the step's animation lands. Without it a multi-action cycle could only be
+    // drawn at its final state, and the only way back to the intermediate boards
+    // would be for the client to re-derive them — which is precisely what
+    // BoardDiff.swift was cancelled for (§16.B4).
+    if (ev->snap) { j_puts(c->j, ",\"state\":"); j_state(c->j, ev->snap, c->viewer); }
     j_putc(c->j, '}');
 }
 
@@ -297,7 +312,7 @@ static void j_events(J *j, int viewer, int log_start) {
         refs[i].tag = g_snap_tags[i];
         refs[i].aux = g_snap_aux[i];
     }
-    FioEvCtx ctx = { j, 0 };
+    FioEvCtx ctx = { j, 0, viewer };
     j_putc(j, '[');
     evwire_walk(refs, g_n_snaps, g_game.logs + log_start, g_game.num_logs - log_start,
                 viewer, fio_ev_sink, &ctx);

@@ -667,6 +667,20 @@ back cards use synthetic slot ids), animated with the single §5.2 spring; deal
 choreography staggers cards 40ms apart. Replays (C) and online (D) then play
 the same events rather than reusing a diff engine.
 
+Each event carries **`state`** — the board as of that step, already masked for
+the viewer (`GameEvent.state: GameView?`, July 2026). This is the same per-step
+snapshot the web's evwire has always carried (`snap_len`, `evwire.h`) and
+commits as each event's animation lands, and it is what makes the rule above
+enforceable: a `bot_drive` cycle applies several actions, so without it the
+board could only be drawn at the cycle's FINAL state and the only route back to
+the intermediate boards would be a client-side diff. Play an event, commit its
+`state`, play the next. `state` is absent (nil) only for an event the kernel
+emitted no snapshot for — never a cue to derive one.
+
+Redaction stays the kernel's call: `cards` entries arrive `null` where a card
+was dealt/drawn into a hand that is not the viewer's (`mask_cards`). Render a
+back — the identity never crossed the bridge.
+
 **B5. Home (offline path) + Win screen + bot picker** per §6 specs. Bot
 picker cycles the roster with left/right arrows (web precedent: commit
 `7f22749`).

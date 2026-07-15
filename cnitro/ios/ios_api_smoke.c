@@ -10,11 +10,22 @@
 #include <stdlib.h>
 
 static char buf[1 << 16];
+// The animation plan is read into its own buffer: `buf` still holds the legal
+// menu the current move was picked out of.
+static char evbuf[1 << 18];
 
 // last occurrence of c in [lo, hi] — find the '{' that opens the object at hi.
 static const char *strrchr_upto(const char *lo, const char *hi, char c) {
     for (const char *p = hi; p >= lo; p--) if (*p == c) return p;
     return NULL;
+}
+
+// How many times `needle` occurs in `s` (non-overlapping).
+static int count_of(const char *s, const char *needle) {
+    int n = 0;
+    size_t len = strlen(needle);
+    for (const char *p = strstr(s, needle); p; p = strstr(p + len, needle)) n++;
+    return n;
 }
 
 // Replay round-trip over MANY seeds and player counts.
@@ -140,7 +151,7 @@ int main(void) {
 
     // Drive the game to completion: at each step, if seat 0 (human) is eligible,
     // play its first legal move via apply_json; then let bots step.
-    int steps = 0;
+    int steps = 0, ev_moves = 0, ev_total = 0;
     while (fio_game_over() < 0 && steps++ < 5000) {
         int mask = fio_actor_mask();
         if (mask & 1) {
@@ -166,6 +177,24 @@ int main(void) {
                     int r = fio_apply_json(0, move);
                     if (r == FIO_EREJECT) { printf("human reject code=%d for %s\n", fio_last_reject(), move); break; }
                     if (r < 0) { printf("human apply error r=%d for %s\n", r, move); break; }
+
+                    // The animation plan for the move just applied (§16.B4): the
+                    // human's own card flies by the kernel's plan exactly as a
+                    // bot's does. Every event must carry "state" — the board AS
+                    // OF that step, masked for this viewer — because a cycle that
+                    // applied several actions is otherwise only drawable at its
+                    // final state, and re-deriving the intermediate boards client
+                    // -side is the thing BoardDiff.swift was cancelled for.
+                    int el = fio_last_events_json(0, evbuf, sizeof(evbuf));
+                    if (el < 0) { printf("FAIL last_events err=%d\n", el); return 1; }
+                    int n_ev = count_of(evbuf, "{\"type\":");
+                    int n_state = count_of(evbuf, "\"state\":{");
+                    if (n_ev != n_state) {
+                        printf("FAIL events: %d events but %d carried state\n", n_ev, n_state);
+                        return 1;
+                    }
+                    ev_moves++;
+                    ev_total += n_ev;
                 }
             } else break; // seat 0 flagged eligible but no concrete move — shouldn't happen
         } else {
@@ -178,6 +207,9 @@ int main(void) {
     int fool = fio_game_over();
     printf("game over after %d steps, fool seat = %d\n", steps, fool);
     if (fool < 0) { printf("FAIL game did not finish\n"); return 1; }
+
+    printf("events: %d moves produced %d events, all carrying per-step state\n", ev_moves, ev_total);
+    if (ev_moves == 0 || ev_total == 0) { printf("FAIL no animation events observed\n"); return 1; }
 
     fio_state_json(0, buf, sizeof(buf));
     printf("final state head=%.160s\n", buf);

@@ -242,6 +242,12 @@ public struct GameEvent: Codable, Equatable, Sendable {
     public let target: Card?
     /// Cover only: which battle.
     public let battle: Int?
+    /// The board AS OF this step, already masked for this viewer — commit it
+    /// when this event's animation lands, exactly as the website commits the
+    /// same per-event snapshot off the wire. It is what makes a multi-action
+    /// cycle playable step by step instead of only at its final state, and why
+    /// the board never has to work out the intermediate boards for itself.
+    public let state: GameView?
 
     public var kind: EventType? { EventType(rawValue: type) }
     public var fromLoc: EventLoc { EventLoc(rawValue: from) ?? .none }
