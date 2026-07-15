@@ -367,7 +367,15 @@ endef
 #   animation frames (visual, not corruption), so a modest margin is safe.
 #   Cuts g_snaps 55.7KB->27.8KB->18.6KB (M4, docs/BOTS_WASM_MEMORY_PLAN.md;
 #   was 24). Shared by bots + rules; guards keeps its own MAX_SNAPS=1.
+# -mno-nontrapping-fptoint pins the wasm FEATURE SET, the same way -mbulk-memory
+# does. clang >= 22 emits i32.trunc_sat_* by default; a wasm-opt built without
+# that feature enabled then rejects the module outright ("all used features
+# should be allowed"), so the toolchain that produced the committed artifact
+# built fine while a newer clang cannot build at all. Pinning the feature keeps
+# the module's instruction set identical across clang versions instead of
+# letting the local compiler decide what the shipped artifact requires.
 WASM_FLAGS := --target=wasm32 $(WASM_OPT) -nostdlib -ffreestanding -mbulk-memory \
+              -mno-nontrapping-fptoint \
               -isystem wasm/include -Isrc -D_Thread_local= -DMAX_LOG_PAIRS=64 \
               -DMAX_LEGAL_MOVES=4096 -DMAX_MOVE_CARDS=28 -DMAX_BATTLES=64 \
               -DWORLD_LOG_CAP=40 \
