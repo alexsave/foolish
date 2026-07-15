@@ -16,22 +16,44 @@ struct TableScreen: View {
     let onOpenRoster: () -> Void
 
 
-    @State private var focusRaw: Double = 0
+    /// `focusDetent` snaps to whole items — it drives legality, the caption and commits.
+    /// `focusLive` is the crown's continuous position and drives ONLY the lane's rendering.
+    /// See FocusCrown for why both exist.
+    @State private var focusDetent: Double = 0
+    @State private var focusLive: Double = 0
     @State private var chooser: ChooserSpec?
     @State private var glow: Double = 0        // RejectGlow opacity (§7)
 
-    /// `-focus N` parks the lane on item N so the full ±2 fisheye window can be inspected
-    /// without a Crown (the simulator has none).
-    static let launchFocus: Int? = {
+    /// `-focus N` parks the lane at position N so the fisheye can be inspected without a
+    /// Crown (the simulator has none). N is FRACTIONAL on purpose: `-focus 2.5` freezes the
+    /// lane exactly halfway between two cards, which is the only way to see the
+    /// interpolation the crown does while turning.
+    static let launchFocus: Double? = {
         let args = ProcessInfo.processInfo.arguments
         guard let i = args.firstIndex(of: "-focus"), i + 1 < args.count else { return nil }
-        return Int(args[i + 1])
+        return Double(args[i + 1])
     }()
 
     private var focusIndex: Int {
-        min(max(Int(focusRaw.rounded()), 0), max(game.focusCount - 1, 0))
+        min(max(Int(focusDetent.rounded()), 0), max(game.focusCount - 1, 0))
+    }
+
+    /// Move the lane as one — the snapped value and the drawn value must not drift apart.
+    private func setFocus(_ i: Int, animated: Bool = true) {
+        focusDetent = Double(i)
+        if animated {
+            withAnimation(.spring(response: HTuning.laneSettleResponse,
+                                  dampingFraction: HTuning.laneSettleDamping)) { focusLive = Double(i) }
+        } else {
+            focusLive = Double(i)
+        }
     }
     private var focusedItem: FocusItem { game.item(at: focusIndex) }
+
+    /// True when the lane has settled onto a card. The verb names what a tap will do, so it
+    /// must not be shown mid-scroll — while the lane is moving there is no "the" card, and
+    /// a caption flickering through ATTACK/GOOD/nothing as cards slide past reads as noise.
+    private var isResting: Bool { abs(focusLive - focusDetent) < 0.02 }
 
     var body: some View {
         GeometryReader { geo in
@@ -56,14 +78,15 @@ struct TableScreen: View {
                     .position(x: HTuning.tableX * sx, y: HTuning.tableY * sy)
 
                 if game.focusCount > 0 {
-                    FisheyeLane(game: game, focusIndex: focusIndex, sx: sx, sy: sy,
-                                onCommit: { commitFocused() },
-                                onFocus: { focusRaw = Double($0) })
+                    FisheyeLane(game: game, position: focusLive, sx: sx, sy: sy,
+                                onCommit: { commitFocused() })
                         .frame(width: HTuning.laneW * sx, height: h)
                         .position(x: HTuning.laneX * sx, y: h / 2)
 
                     caption
                         .frame(width: HTuning.captionW * sx)
+                        .opacity(isResting ? 1 : 0)
+                        .animation(.easeOut(duration: HTuning.captionFade), value: isResting)
                         .position(x: HTuning.laneX * sx, y: HTuning.captionY * sy)
                 }
             }
@@ -83,9 +106,14 @@ struct TableScreen: View {
         .ignoresSafeArea()
         .background(WColor.bg.ignoresSafeArea())
         .focusable(game.focusCount > 1)
-        .modifier(FocusCrown(value: $focusRaw, count: game.focusCount))
+        .modifier(FocusCrown(detent: $focusDetent, live: $focusLive, count: game.focusCount))
         .onAppear {
-            focusRaw = Double(Self.launchFocus ?? game.firstLegalIndex)
+            if let f = Self.launchFocus {
+                focusDetent = f.rounded()      // legality still snaps to a real card
+                focusLive = f                  // …but the lane can sit between two
+            } else {
+                setFocus(game.firstLegalIndex, animated: false)
+            }
             if ProcessInfo.processInfo.arguments.contains("-chooser") { chooser = .demo }
         }
         .onChange(of: game.hand) { _ in clampFocus() }
@@ -118,14 +146,14 @@ struct TableScreen: View {
         game.commit(move)
         chooser = nil
         WHaptics.fire(.confirmed)
-        focusRaw = Double(game.firstLegalIndex)
+        setFocus(game.firstLegalIndex)
     }
     private func clampFocus() {
         // Focus never wraps; if the focused card left the hand, fall back to first legal.
         if case .card(let c) = focusedItem, !game.hand.contains(c) {
-            focusRaw = Double(game.firstLegalIndex)
+            setFocus(game.firstLegalIndex)
         } else {
-            focusRaw = Double(min(max(focusIndex, 0), max(game.focusCount - 1, 0)))
+            setFocus(min(max(focusIndex, 0), max(game.focusCount - 1, 0)), animated: false)
         }
     }
     private func flashGlow() {
@@ -147,7 +175,7 @@ struct TableScreen: View {
             HStack(spacing: HTuning.headerColGap) {
                 label(game.flipped != nil ? "FLIP" : "TRUMP", 0)
                 label("DECK", 1)
-                label("DISC", 2)
+                label("DISCARD", 2)
             }
             HStack(spacing: HTuning.headerColGap) {
                 Group {
@@ -220,39 +248,62 @@ private struct TableList: View {
         }
     }
 
+    /// Cards arrive from the direction the play came from: an **attack rises from the
+    /// bottom** (thrown in by a player) and a **cover drops from the top** (laid down onto
+    /// it). Driven off `battles` itself, so a bot's move animates exactly like your own —
+    /// the snapshot is the only source either way.
     private var rows: some View {
         VStack(spacing: HTuning.tableRowGap * sy) {
             ForEach(Array(battles.enumerated()), id: \.offset) { _, b in row(b) }
         }
+        .animation(.spring(response: HTuning.tableDealResponse,
+                           dampingFraction: HTuning.tableDealDamping),
+                   value: battles)
     }
 
     private func row(_ b: BattleView) -> some View {
         let resolved = b.defense != nil
         let isOptimistic = optimistic != nil && (b.attack == optimistic || b.defense == optimistic)
         return HStack(spacing: HTuning.tableColGap * sx) {
-            cell(b.defense)
+            cell(b.defense, from: .top)        // the cover comes down onto the attack
             Text("▸")
                 .font(.system(size: HTuning.tableArrowSize, weight: .heavy))
                 .foregroundStyle(WColor.arrow)
                 .opacity(resolved ? 1 : 0)
                 .frame(width: HTuning.tableArrowW * sx)
-            cell(b.attack)
+            cell(b.attack, from: .bottom)      // the attack comes up off the hand
         }
         .frame(height: rowH * sy)
-        // grayscale + dim-toward-black: on a pure-black canvas opacity IS brightness, so
-        // this matches the mock's `grayscale(1) brightness(.62)` exactly.
-        .grayscale(resolved ? 1 : 0)
+        // A whole new row IS a new attack, so it enters from below like one. It must NOT
+        // leave the same way: a pickup moves these very cards INTO your hand, so any slow
+        // exit paints them on the table while the lane already holds them — a card in two
+        // places, which this game can never actually do (single 52-card deck,
+        // game.c:305-316). Leaving is a quick fade, and it is deliberately not the deal
+        // spring.
+        .transition(.asymmetric(
+            insertion: .move(edge: .bottom).combined(with: .opacity),
+            removal: .opacity.animation(.easeOut(duration: HTuning.tableClearFade))))
+        // A beaten pair recedes by OPACITY ALONE. The mock desaturated it as well, but that
+        // throws away the suit colour — the fastest thing you read a card by — and you can
+        // still be thrown more of that rank. Dim, still red.
         .opacity(isOptimistic ? HTuning.tableOptimisticOpacity : (resolved ? HTuning.tableResolvedOpacity : 1))
     }
 
     /// A fixed-width column slot. An empty cover cell must still hold its width, so open
-    /// attacks stay in the attack column instead of sliding left.
-    private func cell(_ card: Card?) -> some View {
+    /// attacks stay in the attack column instead of sliding left. `edge` is where the card
+    /// flies in from when it lands.
+    private func cell(_ card: Card?, from edge: Edge) -> some View {
         ZStack {
             Color.clear
-            if let c = card { Glyph(card: c, size: HTuning.tableGlyph) }
+            if let c = card {
+                Glyph(card: c, size: HTuning.tableGlyph)
+                    .transition(.asymmetric(
+                        insertion: .move(edge: edge).combined(with: .opacity),
+                        removal: .opacity.animation(.easeOut(duration: HTuning.tableClearFade))))
+            }
         }
         .frame(width: HTuning.tableCellW * sx, height: rowH * sy)
+        .clipped()                              // the card slides in, it doesn't overhang
     }
 }
 
@@ -263,38 +314,73 @@ private struct TableList: View {
 /// (✓ GOOD / red +n pickup) is the lane's last stop and obeys the same physics.
 private struct FisheyeLane: View {
     @ObservedObject var game: WatchGame
-    let focusIndex: Int
+    /// The crown's CONTINUOUS position, in item indices — 2.4 means "40 % of the way from
+    /// item 2 to item 3". Not an index: that's the whole point.
+    let position: Double
     let sx: CGFloat
     let sy: CGFloat
     let onCommit: () -> Void
-    let onFocus: (Int) -> Void
 
 
-    /// Ring spec by |offset| from the focus: Glyph size, centre offset above / below the
-    /// focus (pt), opacity — all live from HTuning. Owner's calls: the focus is ~36 pt
-    /// (suit glyph) — the mock's 42 pt cannot fit a ±2 window on a 197 pt face — and ±2 is
-    /// drawn at the ±1 size, separated only by opacity. The down-offsets are the larger
-    /// pair because the caption sits in that gap.
-    private var ring: [(size: CGFloat, up: CGFloat, down: CGFloat, op: Double)] {
-        [(HTuning.focusSize, 0, 0, 1.0),
-         (HTuning.ring1Size, HTuning.ring1Up, HTuning.ring1Down, Double(HTuning.ring1Opacity)),
-         (HTuning.ring2Size, HTuning.ring2Up, HTuning.ring2Down, Double(HTuning.ring2Opacity))]
+    /// The ring values are STOPS on a continuous curve, sampled at |d| = 0, 1, 2 — not five
+    /// fixed slots. Every item's size, offset and opacity is interpolated from its real
+    /// distance `d` to the crown's position, so a card grows into the focus as you turn
+    /// instead of teleporting between rings. The down-offsets are the larger pair because
+    /// the caption sits in that gap. (Owner's calls: focus ~36 pt — the mock's 42 cannot fit
+    /// a ±2 window on a 197 pt face — and ±2 draws at the ±1 size, graded by opacity alone.)
+    private var sizes: [CGFloat] { [HTuning.focusSize, HTuning.ring1Size, HTuning.ring2Size] }
+    private var ups: [CGFloat] { [0, HTuning.ring1Up, HTuning.ring2Up] }
+    private var downs: [CGFloat] { [0, HTuning.ring1Down, HTuning.ring2Down] }
+    private var opacities: [CGFloat] { [1, HTuning.ring1Opacity, HTuning.ring2Opacity] }
+
+    /// Sample the stops at |d|. Linear between 0→1 and 1→2; past 2 it keeps the last
+    /// segment's slope, which is what walks the outer items off the face.
+    private func sample(_ stops: [CGFloat], _ d: Double) -> CGFloat {
+        let x = CGFloat(abs(d))
+        if x <= 1 { return stops[0] + (stops[1] - stops[0]) * x }
+        if x <= 2 { return stops[1] + (stops[2] - stops[1]) * (x - 1) }
+        return stops[2] + (stops[2] - stops[1]) * (x - 2)
+    }
+
+    private func size(_ d: Double) -> CGFloat { max(1, sample(sizes, d)) }
+    private func dy(_ d: Double) -> CGFloat { d < 0 ? -sample(ups, d) : sample(downs, d) }
+    /// Past the last stop, fade out over one more index so items leave rather than pop.
+    private func opacity(_ d: Double) -> Double {
+        let x = abs(d)
+        let base = Double(sample(opacities, min(x, 2)))
+        return x <= 2 ? base : base * max(0, 3 - x)
+    }
+
+    /// Only the items near enough to be visible; beyond ±3 they're fully faded anyway.
+    private var window: [Int] {
+        let lo = max(0, Int((position - 3).rounded(.down)))
+        let hi = min(game.focusCount - 1, Int((position + 3).rounded(.up)))
+        return lo <= hi ? Array(lo...hi) : []
     }
 
     var body: some View {
         ZStack {
-            ForEach(-2...2, id: \.self) { off in
-                let i = focusIndex + off
-                if i >= 0 && i < game.focusCount {
-                    let spec = ring[abs(off)]
-                    item(at: i, size: spec.size)
-                        .opacity(spec.op)
-                        .contentShape(Rectangle())
-                        .onTapGesture { off == 0 ? onCommit() : onFocus(i) }
-                        .position(x: HTuning.laneW / 2 * sx,
-                                  y: (HTuning.laneFocusY + (off < 0 ? -spec.up : spec.down)) * sy)
-                }
+            // ONE tap target for the whole lane, and it always commits the focused card.
+            // Per-card taps used to re-focus, which was worse than useless: the cards are
+            // far too small to aim at, so "tap to act" mostly landed on a neighbour and
+            // scrolled the lane instead of doing the thing. The crown moves the lane; a tap
+            // only ever acts. Sits below the strip so it can't swallow the strip's own tap.
+            Color.clear
+                .frame(height: (197 - HTuning.laneTapTop) * sy)
+                .contentShape(Rectangle())
+                .onTapGesture(perform: onCommit)
+                .position(x: HTuning.laneW / 2 * sx,
+                          y: (HTuning.laneTapTop + (197 - HTuning.laneTapTop) / 2) * sy)
+
+            ForEach(window, id: \.self) { i in
+                let d = Double(i) - position
+                item(at: i, size: size(d))
+                    .opacity(opacity(d))
+                    .zIndex(2 - min(abs(d), 2))          // the nearest card draws on top
+                    .position(x: HTuning.laneW / 2 * sx,
+                              y: (HTuning.laneFocusY + dy(d)) * sy)
             }
+            .allowsHitTesting(false)                     // taps belong to the target above
         }
     }
 
@@ -439,16 +525,41 @@ private struct SeatStrip: View {
 
 // MARK: - Crown focus modifier
 
-/// Binds the Crown to the focus index. Applied only when there's more than one item
-/// (a `from: 0, through: 0` range is degenerate and can crash the rotation).
+/// Binds the Crown to the lane. Applied only when there's more than one item (a
+/// `from: 0, through: 0` range is degenerate and can crash the rotation).
+///
+/// TWO values, and the split is the whole trick:
+///
+/// - `detent` snaps to whole items. It is what the caption reads and what a tap commits —
+///   the game only ever deals in real cards.
+/// - `live` is the crown's raw continuous offset, which the lane draws. It is why cards
+///   grow smoothly into the focus instead of jumping ring to ring.
+///
+/// The plain `digitalCrownRotation(_:…by: 1)` binding only ever hands you the snapped
+/// value, so the lane could never render anything between two cards. The `detent:` overload
+/// gives both at once: `onChange` streams the continuous offset while you turn, and
+/// `onIdle` springs `live` onto the settled detent so the lane always comes to rest
+/// centred on a card rather than parked at 2.37.
 private struct FocusCrown: ViewModifier {
-    @Binding var value: Double
+    @Binding var detent: Double
+    @Binding var live: Double
     let count: Int
+
     func body(content: Content) -> some View {
         if count > 1 {
-            content.digitalCrownRotation($value, from: 0, through: Double(count - 1),
-                                         by: 1, sensitivity: .low, isContinuous: false,
-                                         isHapticFeedbackEnabled: true)
+            content.digitalCrownRotation(
+                detent: $detent,
+                from: 0, through: Double(count - 1), by: 1,
+                sensitivity: .low,
+                isContinuous: false,
+                isHapticFeedbackEnabled: true,
+                onChange: { event in live = event.offset },
+                onIdle: {
+                    withAnimation(.spring(response: HTuning.laneSettleResponse,
+                                          dampingFraction: HTuning.laneSettleDamping)) {
+                        live = detent
+                    }
+                })
         } else {
             content
         }

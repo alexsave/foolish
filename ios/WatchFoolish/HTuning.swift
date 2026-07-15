@@ -19,12 +19,12 @@ import SwiftUI
 enum HTuning {
 
     // MARK: Header — InfoLine (label line over values, right-aligned under the clock)
-    static let headerX: CGFloat = 108        // centre of the 3-column block
+    static let headerX: CGFloat = 104        // centre of the 3-column block
     static let headerY: CGFloat = 40
     static let headerColGap: CGFloat = 6
     static let colFlip: CGFloat = 26         // column widths; labels + values share them
     static let colDeck: CGFloat = 22
-    static let colDisc: CGFloat = 22
+    static let colDisc: CGFloat = 30         // fits the word DISCARD
     static let headerRowGap: CGFloat = 1     // label baseline → value row
     static let labelSize: CGFloat = 7        // == captionSize by design; see §4.6.1
     static let valueSize: CGFloat = 12
@@ -73,6 +73,13 @@ enum HTuning {
     static let tableOptimisticOpacity: CGFloat = 0.45
     static let tableFadeInset: CGFloat = 0.07 // scroll edge fade, fraction of height
     static let tableEmptySize: CGFloat = 18   // the "—" when there's no table
+    /// Cards deal in from the direction the play came from — attacks up from the bottom,
+    /// covers down from the top. This spring is that flight.
+    static let tableDealResponse: Double = 0.32
+    static let tableDealDamping: Double = 0.78
+    /// How fast cards LEAVE the table. Short on purpose: a pickup moves them into your
+    /// hand, so a lingering exit shows the same card on the table and in the lane at once.
+    static let tableClearFade: Double = 0.14
 
     // MARK: Fisheye lane — the hand
     static let laneX: CGFloat = 131          // centre; hugs the crown edge
@@ -89,11 +96,19 @@ enum HTuning {
     static let ring2Opacity: Double = 0.6    // 0.45 crushed the rank away
     static let checkScale: CGFloat = 1.10    // × ring size — the GOOD ✓
     static let arrowScale: CGFloat = 1.05    // × ring size — the pickup ↓
+    /// The lane tracks the crown continuously; this spring is only how it comes to REST on
+    /// a card once you let go (and how a tap glides to a card). Lower response = snappier.
+    static let laneSettleResponse: Double = 0.26
+    static let laneSettleDamping: Double = 0.85
+    /// Top of the lane's single tap target. Below the seat strip, so a tap meant for the
+    /// strip (→ roster) is never eaten by the lane.
+    static let laneTapTop: CGFloat = 78
 
     // MARK: Action caption
     static let captionY: CGFloat = 158
     static let captionW: CGFloat = 62
     static let captionSize: CGFloat = 7
+    static let captionFade: Double = 0.12      // in/out as the lane settles / starts moving
 
     // MARK: Chooser overlay
     static let chooserIcon: CGFloat = 30

@@ -155,12 +155,21 @@ public final class LocalGame: ObservableObject, GameSession {
 
     // MARK: - Pacing & thermal guard (§7.2, §16.B2)
 
-    /// Deliberate inter-bot UX pacing, 600–1200ms (mirrors the server's
-    /// e2e/bench_bot_e2e.ts "deliberate inter-bot UX pacing"). Deterministic
-    /// jitter from the current battle count so replays feel identical.
+    /// Deliberate inter-bot UX pacing (mirrors the server's e2e/bench_bot_e2e.ts
+    /// "deliberate inter-bot UX pacing"). Deterministic jitter from the current battle
+    /// count so replays feel identical.
+    ///
+    /// Tunable because the right pace is per-surface, not universal: the phone keeps the
+    /// server's 600–1200 ms, while the watch sets this slower (see `WatchGame`). Bots move
+    /// asynchronously to you now, so on a wrist this is the difference between reading the
+    /// table and watching it rewrite itself.
+    public static var botPacingMS: ClosedRange<UInt64> = 600...1200
+
     private func botDelayNanos() -> UInt64 {
-        let jitter = UInt64(abs((view?.battles.count ?? 0) * 137) % 600)
-        return (600 + jitter) * 1_000_000
+        let range = Self.botPacingMS
+        let span = max(range.upperBound - range.lowerBound, 1)
+        let jitter = UInt64(abs((view?.battles.count ?? 0) * 137)) % span
+        return (range.lowerBound + jitter) * 1_000_000
     }
 
     /// When the device is hot, temporarily run heavy solvers as espresso so the

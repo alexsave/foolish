@@ -258,6 +258,14 @@ which the mocks do **not** show:
    clinging to the top of the column reads as a bug. Its glyphs and the ▸ are
    **larger** than the mock's (17 pt / 13 pt), which costs a row: **four** are
    visible, not v2's five — i.e. back to what §4.6 asked for originally.
+   A beaten pair recedes by **opacity alone** — G's spec desaturates it as well,
+   but that throws away the suit colour, which is the fastest thing you read a
+   card by, and you can still be thrown more of that rank.
+   Cards **arrive from the direction the play came from**: an attack rises from
+   the bottom, a cover drops from the top. They **leave** on a short fade, NOT
+   the deal spring — a pickup moves those very cards into your hand, so a slow
+   exit paints the same card on the table and in the lane at once, a state the
+   single 52-card deck makes impossible (`game.c:305-316`).
 4. **The chooser is a row of captioned choices** — no tiles, no prompt string,
    no receiver name. Each item is a bare icon that IS its own button with one
    word under it: a cover target renders as its glyph captioned `COVER`; pass
@@ -381,6 +389,15 @@ bot until you played, which made GOOD feel like a "let the bots move" button. It
 now only stops when the human is the *sole* eligible actor (nothing can change
 until you move anyway). This lives in shared FoolishKit, so **the phone app gets
 the same fix**.
+
+Because of that, **pacing is per-surface** (`LocalGame.botPacingMS`): the phone
+keeps the server's 600–1200 ms, the watch runs 1500–2600. Once bots stop waiting
+for you, an 8-seat table at phone pace rewrites itself faster than a wrist can
+read it.
+
+**The lane's terminal item only exists when it acts.** The opener cannot say GOOD
+before attacking (`legal.c:377-384`), so during that window there is no ✓ in the
+lane at all — offering one advertises a move the kernel would refuse.
 
 Inspection flags (simulator has no Crown): `-table`/`-table4`/`-table8` deal a
 real offline game, `-focus N` parks the lane on item N, `-pairs`/`-pairs7`

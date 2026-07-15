@@ -143,11 +143,18 @@ final class WatchGame: ObservableObject {
         EngineC.roster().first { $0.id == botStrategy }?.name ?? "bot"
     }
 
+    /// The watch reads slower than the phone. Bots act asynchronously to you now (they no
+    /// longer wait for your move), so at the server's 600–1200 ms an 8-seat table rewrites
+    /// itself faster than you can follow it on a wrist — especially the one column you're
+    /// actually reading. Tunable per surface; the phone keeps the server's pace.
+    static let botPacing: ClosedRange<UInt64> = 1500...2600
+
     init(players: Int, botStrategy: Int) {
         self.players = players
         self.botStrategy = botStrategy
         self.staticView = nil
         self.staticLegal = []
+        LocalGame.botPacingMS = WatchGame.botPacing
         local = WatchGame.make(players: players, strategy: botStrategy)
         subscribe()
     }
@@ -322,8 +329,13 @@ final class WatchGame: ObservableObject {
 
     // MARK: focus list (§4)
 
-    /// hand cards (server order) + one terminal item, unless you're out/over.
-    var focusCount: Int { (amOut || isOver) ? 0 : hand.count + 1 }
+    /// The terminal item exists ONLY when it actually does something. The opener cannot say
+    /// GOOD before attacking (`legal.c:377-384`), so during that window the lane is just
+    /// your hand — showing a ✓ there offers an option the kernel would refuse.
+    var hasTerminal: Bool { decision(for: .terminal) != nil }
+
+    /// hand cards (server order) + the terminal if it's live, unless you're out/over.
+    var focusCount: Int { (amOut || isOver) ? 0 : hand.count + (hasTerminal ? 1 : 0) }
     func item(at index: Int) -> FocusItem {
         index < hand.count ? .card(hand[index]) : .terminal
     }
@@ -332,7 +344,7 @@ final class WatchGame: ObservableObject {
     /// Auto-focus target on activation: first legal card, else the terminal (§4).
     var firstLegalIndex: Int {
         for (i, c) in hand.enumerated() where decision(for: .card(c)) != nil { return i }
-        return hand.count   // terminal
+        return hasTerminal ? hand.count : 0
     }
 
     /// Whether a hand card is playable right now (dims it in the fisheye lane, §4.6).
