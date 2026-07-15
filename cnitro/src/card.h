@@ -48,6 +48,16 @@ static inline bool card_eq(Card a, Card b) {
     return a.suit == b.suit && a.value == b.value;
 }
 
+// Card <-> dense id (0..51): id = suit*13 + (value-1). The replay codec's
+// alphabets and the wire card byte are both this numbering.
+static inline Card card_of_id(int id) {
+    Card c;
+    c.suit  = (int8_t)(id / 13);
+    c.value = (int8_t)(id % 13 + 1);
+    return c;
+}
+static inline int card_to_id(Card c) { return c.suit * 13 + (c.value - 1); }
+
 // "No card" sentinel: replaces the has_defense/has_target booleans (an
 // uncovered battle stores CARD_NONE as its defense; a single-card log pair
 // stores CARD_NONE as its target). Distinct from the -1/-1 hidden card.

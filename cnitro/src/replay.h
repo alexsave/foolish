@@ -185,4 +185,58 @@ int replay_first_attacker_from_logs(const GameLog *logs, int num_logs);
 // for ENOTINMENU, 0 otherwise).
 int replay_last_error_detail(void);
 
+// ---------- the v6 atom stream (A5) -----------------------------------------
+//
+// What a v6 code actually says, as the decoder understands it. This exists
+// because replay_decode's OUTPUT cannot be read back as moves: it is a game
+// LOG stream, with derived records (DEFENDER_CHANGE, PLAYER_OUT, DISCARD)
+// folded in among the real ones, and a round end is genuinely NOT recoverable
+// from it —
+//   * LOG_DISCARD does not mean "round end": a cover that empties the
+//     defender's hand discards too (apply_cover's clean-sweep branch), and
+//   * LOG_GOOD does not mean "round end" either: a round whose every attacker
+//     is already out emits no GOOD at all.
+// The decoder knows each atom's kind for certain, so it reports it rather than
+// leaving a reader to infer it. replay_steps.c rebuilds a real Game from this.
+//
+// DEAL/DRAW carry REAL cards (v6 is hidden-state-lossless); DRAW atoms arrive
+// in the exact order the refill cascade pops them, which is what makes the
+// stream a deck. The trump appears as the LAST DRAW when the stock runs dry
+// and the flip itself is taken (game.c draw_card's has_flipped branch).
+#define REPLAY_ATOM_DEAL      0  // `seat`'s initial hand, ascending
+#define REPLAY_ATOM_DRAW      1  // one refill's cards, in pop order
+#define REPLAY_ATOM_ATTACK    2
+#define REPLAY_ATOM_COVER     3  // `target` = the attack card being covered
+#define REPLAY_ATOM_PASS      4
+#define REPLAY_ATOM_PICKUP    5
+#define REPLAY_ATOM_ROUND_END 6  // every IN attacker said good
+
+typedef struct {
+    int  kind;                     // REPLAY_ATOM_*
+    int  seat;                     // acting/receiving seat, or -1
+    Card cards[REPLAY_MAX_PAIRS];
+    int  n_cards;
+    Card target;                   // COVER only
+} ReplayAtom;
+
+typedef void (*ReplayAtomSink)(void *ctx, const ReplayAtom *a);
+
+// The decode header, as fields instead of the 20 packed bytes.
+typedef struct {
+    int version, n, trump_id, first_attacker;
+    int fool;            // -1 when the stream is a mid-game cut
+    int discard_count;
+    int num_eliminated;
+    int elim[MAX_PLAYERS];   // -1 past num_eliminated
+} ReplayHeader;
+
+// Decode a v6 code for its atoms. Same decode as replay_decode (same coder,
+// same model — the menus ARE the probability model, so there is no cheaper
+// way in), reporting each atom as it resolves. `hdr` optional. v5 codes are
+// refused with REPLAY_EVERSION: v5 hides the deal, so its atoms are not a deck.
+// Costs no log buffer — see decode_impl.
+// Returns REPLAY_EOK (0) or -REPLAY_E*.
+int replay_decode_atoms_v6(const unsigned char *in, int in_len,
+                           ReplayHeader *hdr, ReplayAtomSink sink, void *ctx);
+
 #endif

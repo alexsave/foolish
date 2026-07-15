@@ -31,7 +31,8 @@ endif
 CFLAGS += -DCD_LEAFBOOK
 
 # The engine + all heuristic / Monte-Carlo bots. Linked into every binary.
-CORE_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/view.c src/awire.c \
+CORE_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/replay_steps.c \
+            src/view.c src/awire.c \
             src/evwire.c src/random_strategy.c src/espresso_strategy.c \
             src/handwritten_strategy.c src/robusta_strategy.c \
             src/firecracker_strategy.c src/gunpowder_strategy.c \

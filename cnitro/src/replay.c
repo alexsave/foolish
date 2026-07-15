@@ -320,6 +320,26 @@ static Card id_to_card(int id) {
     return c;
 }
 
+/* ---------------------------- the atom sink ------------------------------ */
+// Only replay_decode_atoms_v6 installs this; every other path through apply_*
+// (v5, and both encode directions) leaves it null and pays nothing. It fires
+// from inside the deal/draw/apply_* points because those are where a move is
+// fully RESOLVED — the coder above them still holds only a menu index.
+
+static ReplayAtomSink g_atom_sink = 0;
+static void          *g_atom_ctx  = 0;
+
+static void atom_out(int kind, int seat, const int *ids, int n, int target_id) {
+    if (!g_atom_sink) return;
+    ReplayAtom a;
+    a.kind = kind;
+    a.seat = seat;
+    a.n_cards = n > REPLAY_MAX_PAIRS ? REPLAY_MAX_PAIRS : n;
+    for (int i = 0; i < a.n_cards; i++) a.cards[i] = id_to_card(ids[i]);
+    a.target = target_id >= 0 ? id_to_card(target_id) : CARD_NONE;
+    g_atom_sink(g_atom_ctx, &a);
+}
+
 static int hand_len(const RModel *m, int s) {
     return __builtin_popcountll(m->known[s]) + m->unknown[s];
 }
@@ -499,6 +519,12 @@ static void draw_for(RModel *m, int seat) {
         }
     }
     if (nd > 0) emit(m, LOG_DRAW, seat, -1, pairs, nd);
+    if (nd > 0 && g_atom_sink) {
+        int wide[REPLAY_MAX_PAIRS];
+        int nn = nd > REPLAY_MAX_PAIRS ? REPLAY_MAX_PAIRS : nd;
+        for (int i = 0; i < nn; i++) wide[i] = pairs[i][0];
+        atom_out(REPLAY_ATOM_DRAW, seat, wide, nn, -1);
+    }
 }
 
 static void refill(RModel *m) {
@@ -545,6 +571,12 @@ static void discard_table(RModel *m) {
 // including the exact order of emitted logs and rotation updates.
 
 static void apply_attack(RModel *m, int seat, const int8_t *ids, int n) {
+    if (g_atom_sink) {
+        int wide[REPLAY_MAX_PAIRS];
+        int nn = n > REPLAY_MAX_PAIRS ? REPLAY_MAX_PAIRS : n;
+        for (int i = 0; i < nn; i++) wide[i] = ids[i];
+        atom_out(REPLAY_ATOM_ATTACK, seat, wide, nn, -1);
+    }
     unsigned char pairs[REPLAY_MAX_PAIRS][2];
     for (int i = 0; i < n; i++) {
         if (m->num_battles >= RMAX_BATTLES) { m->err = REPLAY_ECAP; return; }
@@ -565,6 +597,11 @@ static void apply_attack(RModel *m, int seat, const int8_t *ids, int n) {
 }
 
 static void apply_cover(RModel *m, int b, int cover_id) {
+    // Read the attack card BEFORE the assignment below: it is the atom's target.
+    if (g_atom_sink) {
+        int one = cover_id;
+        atom_out(REPLAY_ATOM_COVER, m->defender, &one, 1, m->battles[b].attack);
+    }
     m->battles[b].defense = (int8_t)cover_id;
     unsigned char pair[1][2];
     pair[0][0] = (unsigned char)cover_id;
@@ -591,6 +628,12 @@ static void apply_cover(RModel *m, int b, int cover_id) {
 }
 
 static void apply_pass(RModel *m, int seat, const int8_t *ids, int n) {
+    if (g_atom_sink) {
+        int wide[REPLAY_MAX_PAIRS];
+        int nn = n > REPLAY_MAX_PAIRS ? REPLAY_MAX_PAIRS : n;
+        for (int i = 0; i < nn; i++) wide[i] = ids[i];
+        atom_out(REPLAY_ATOM_PASS, seat, wide, nn, -1);
+    }
     unsigned char pairs[REPLAY_MAX_PAIRS][2];
     for (int i = 0; i < n; i++) {
         if (m->num_battles >= RMAX_BATTLES) { m->err = REPLAY_ECAP; return; }
@@ -612,6 +655,7 @@ static void apply_pass(RModel *m, int seat, const int8_t *ids, int n) {
 }
 
 static void apply_pickup(RModel *m) {
+    atom_out(REPLAY_ATOM_PICKUP, m->defender, 0, 0, -1);
     unsigned char pairs[2 * RMAX_BATTLES][2];
     int np = table_pairs(m, pairs);
     emit(m, LOG_PICKUP, m->defender, -1, pairs, np);
@@ -626,6 +670,7 @@ static void apply_pickup(RModel *m) {
 // executeRoundTransition: before the discard, every IN attacker says good,
 // in seat order (good presses cost no wire bits — v4).
 static void apply_round_end(RModel *m) {
+    atom_out(REPLAY_ATOM_ROUND_END, -1, 0, 0, -1);
     for (int s = 0; s < m->n; s++) {
         if (s != m->defender && m->status[s]) emit(m, LOG_GOOD, s, -1, 0, 0);
     }
@@ -1362,6 +1407,11 @@ static void deal_hand_v6(RModel *m, Coder *c, int seat) {
         pairs[k][1] = REPLAY_CARD_NONE;
     }
     emit(m, LOG_DRAW, seat, -1, pairs, CARDS_PER_PLAYER);
+    if (g_atom_sink) {
+        int wide[CARDS_PER_PLAYER];
+        for (int k = 0; k < CARDS_PER_PLAYER; k++) wide[k] = pairs[k][0];
+        atom_out(REPLAY_ATOM_DEAL, seat, wide, CARDS_PER_PLAYER, -1);
+    }
 }
 
 static void run_replay_v6(RModel *m, Coder *c, Src *s, uint32_t n_atoms) {
@@ -1645,12 +1695,18 @@ int replay_encode_v6_from_game(const Game *g, const unsigned char *seed, int see
                          reveals, n_reveals, &s, out, out_cap);
 }
 
-int replay_decode(const unsigned char *in, int in_len,
-                  unsigned char *out, int out_cap) {
+// The shared decode. `out` NULL = decode for the atoms alone: the RModel's
+// emit() already no-ops without a buffer, so the atom path costs no log
+// memory (a 2 MB scratch, the size decode's callers really pass, is not
+// something to hand a phone or spend a wasm page budget on).
+// `hdr` optional. Returns bytes written to `out` (0 when out is NULL) or
+// -REPLAY_E*.
+static int decode_impl(const unsigned char *in, int in_len,
+                       unsigned char *out, int out_cap, ReplayHeader *hdr) {
     g_err_detail = 0;
     comb_init();
     if (in_len < 0 || in_len > REPLAY_MAX_INT_BYTES) return -REPLAY_ECAP;
-    if (out_cap < REPLAY_DEC_HDR) return -REPLAY_ECAP;
+    if (out && out_cap < REPLAY_DEC_HDR) return -REPLAY_ECAP;
     if (!bn_from_bytes_be(&g_bn, in, in_len)) return -REPLAY_ECAP;
 
     Coder c;
@@ -1671,8 +1727,8 @@ int replay_decode(const unsigned char *in, int in_len,
     if (c.err) return -c.err;
 
     RModel *m = &g_model;
-    model_init(m, n, trump_id, first_attacker, out, REPLAY_DEC_HDR, out_cap,
-               version);
+    model_init(m, n, trump_id, first_attacker, out, REPLAY_DEC_HDR,
+               out ? out_cap : 0, version);
     if (version == REPLAY_FORMAT_VERSION_V6) {
         uint32_t atoms = 0;
         code_varint(&c, &atoms);
@@ -1693,6 +1749,19 @@ int replay_decode(const unsigned char *in, int in_len,
         return -REPLAY_ENOFOOL;
     }
 
+    if (hdr) {
+        hdr->version = version;
+        hdr->n = n;
+        hdr->trump_id = trump_id;
+        hdr->first_attacker = first_attacker;
+        hdr->fool = fool;
+        hdr->discard_count = m->discard;
+        hdr->num_eliminated = m->num_elim;
+        for (int i = 0; i < MAX_PLAYERS; i++)
+            hdr->elim[i] = i < m->num_elim ? m->elim[i] : -1;
+    }
+    if (!out) return 0;
+
     out[0] = (unsigned char)version;
     out[1] = (unsigned char)n;
     out[2] = (unsigned char)trump_id;
@@ -1708,4 +1777,30 @@ int replay_decode(const unsigned char *in, int in_len,
     out[18] = (unsigned char)((m->out_logs >> 16) & 0xff);
     out[19] = (unsigned char)((m->out_logs >> 24) & 0xff);
     return m->out_pos;
+}
+
+int replay_decode(const unsigned char *in, int in_len,
+                  unsigned char *out, int out_cap) {
+    return decode_impl(in, in_len, out, out_cap, 0);
+}
+
+// The atoms, not the logs — see replay.h. Same decode, same model (the menus
+// ARE the coder's probability model, so the walk is unavoidable either way);
+// only the reporting differs.
+int replay_decode_atoms_v6(const unsigned char *in, int in_len,
+                           ReplayHeader *hdr, ReplayAtomSink sink, void *ctx) {
+    ReplayHeader local;
+    if (!hdr) hdr = &local;
+    g_atom_sink = sink;
+    g_atom_ctx  = ctx;
+    int r = decode_impl(in, in_len, 0, 0, hdr);
+    g_atom_sink = 0;
+    g_atom_ctx  = 0;
+    if (r < 0) return r;
+    // v5 hides the deal, so its atoms are not a deck and cannot rebuild a Game.
+    if (hdr->version != REPLAY_FORMAT_VERSION_V6) {
+        g_err_detail = hdr->version;
+        return -REPLAY_EVERSION;
+    }
+    return REPLAY_EOK;
 }

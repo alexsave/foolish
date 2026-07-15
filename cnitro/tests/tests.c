@@ -13,6 +13,10 @@
 #include "../src/bot_roster.h"
 #include "../src/bot_knobs.h"
 #include "../src/bot_drive.h"
+#include "../src/replay.h"
+#include "../src/replay_steps.h"
+#include "../src/evwire.h"
+#include "../src/view.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -1409,7 +1413,215 @@ static void test_bot_drive_preferred(void) {
           "NULL pref reproduces the plain cycle");
 }
 
+/* ---------------- A5: replay steps from the kernel ----------------------- */
+//
+// The invariant, stated once: a v6 replay is the SAME GAME, rebuilt. Not a
+// projection that has to be kept in step with one — so what it renders is
+// checked against what the engine actually played, not against a mirror.
+
+typedef struct {
+    int n_events;
+    int n_deals;
+    unsigned char last[8192];
+    int last_len;
+    _Alignas(8) unsigned char last_snap[sizeof(Game)];
+    Card deal_hand[MAX_PLAYERS][MAX_HAND_SIZE];
+    int  deal_n[MAX_PLAYERS];
+} RsTestCtx;
+
+static void rs_test_sink(void *ctx, const EvwEvent *ev) {
+    RsTestCtx *c = (RsTestCtx *)ctx;
+    c->n_events++;
+    // The opening deal, as the replay renders it: cards come from the snapshot,
+    // so this is the rebuilt hand itself.
+    if (ev->type == EVW_T_DEAL && ev->seat >= 0 && ev->seat < MAX_PLAYERS &&
+        c->deal_n[ev->seat] == 0) {
+        c->deal_n[ev->seat] = ev->n_cards;
+        for (int i = 0; i < ev->n_cards && i < MAX_HAND_SIZE; i++)
+            c->deal_hand[ev->seat][i] = ev->cards[i];
+        c->n_deals++;
+    }
+    if (ev->snap) {
+        c->last_len = state_put(ev->snap, VIEW_UNMASKED, c->last);
+        // Keep the board itself, not just its bytes: the mid-game test reads
+        // fields off it. Only prefix fields are touched, which is all a snap has.
+        memcpy(c->last_snap, ev->snap, __builtin_offsetof(Game, num_logs));
+    }
+}
+
+// Every card the deck started with is somewhere: stock, a hand, the table, the
+// discard, or the flip. Nothing else is a legal board.
+static void rs_check_conservation(const RsTestCtx *c, int np, const char *what) {
+    const Game *g = (const Game *)(const void *)c->last_snap;
+    const int deck_size = NUM_SUITS * (ACE_VALUE - min_value_for(np) + 1);
+    int total = g->deck_count + g->discard_pile_length + (g->has_flipped ? 1 : 0);
+    for (int s = 0; s < np; s++) total += g->players[s].hand_count;
+    for (int b = 0; b < g->num_battles; b++)
+        total += 1 + (card_is_none(g->table_battles[b].defense) ? 0 : 1);
+    CHECK(total == deck_size, what);
+}
+
+// A seeded game played to the end with the handwritten bot, plus the seed that
+// dealt it (replay_encode_v6_from_game re-derives the deal from it).
+static bool rs_play_seeded(Game *g, int np, int seed, unsigned char *seed_out) {
+    for (int i = 0; i < FOOLISH_SEED_LEN; i++)
+        seed_out[i] = (unsigned char)(i * 31 + seed * 13 + np);
+    game_set_seed((uint32_t)(seed + 1));
+    random_strategy_set_seed((uint32_t)(seed + 1));
+    game_set_deal_seed_bytes(seed_out, FOOLISH_SEED_LEN);
+
+    memset(g, 0, sizeof(*g));
+    g->num_players = (int8_t)np;
+    for (int i = 0; i < np; i++) g->players[i].status = PLAYER_STATUS_READY;
+    start_game(g);
+
+    static LegalMoves moves;
+    for (int guard = 0; guard < 20000 && game_done(g) < 0; guard++) {
+        bool acted = false;
+        for (int pi = 0; pi < np && !acted; pi++) {
+            if (!should_bot_act(g, pi)) continue;
+            calculate_legal_moves(g, pi, &moves);
+            if (moves.n == 0) continue;
+            const LegalMove *m = &moves.moves[handwritten_strategy_choose(g, pi, &moves, 0)];
+            switch (m->type) {
+                case MOVE_ATTACK: acted = handle_attack(g, pi, m->cards, m->n_cards); break;
+                case MOVE_COVER:  acted = handle_cover(g, pi, m->cards, m->attack_cards, m->n_cards); break;
+                case MOVE_PASS:   acted = handle_pass(g, pi, m->cards, m->n_cards); break;
+                case MOVE_PICKUP: acted = handle_pickup(g, pi); break;
+                case MOVE_GOOD:   acted = handle_good(g, pi); break;
+                default: break;
+            }
+        }
+        if (!acted) return false;
+    }
+    return game_done(g) >= 0;
+}
+
+static void test_replay_steps_rebuilds_the_played_game(void) {
+    static unsigned char code[1 << 20];
+    static RsTestCtx ctx;
+    static unsigned char want[8192];
+
+    for (int np = 2; np <= 6; np++) {
+        Game g;
+        unsigned char seed[FOOLISH_SEED_LEN];
+        if (!rs_play_seeded(&g, np, 900 + np, seed)) { CHECK(0, "seeded game plays out"); continue; }
+
+        // The truth to beat: the board the engine really finished on.
+        const int want_len = state_put(&g, VIEW_UNMASKED, want);
+        const int want_fool = game_done(&g);
+        Card want_hand[MAX_PLAYERS][MAX_HAND_SIZE];
+        int  want_hand_n[MAX_PLAYERS];
+        for (int s = 0; s < np; s++) want_hand_n[s] = 0;
+
+        int enc = replay_encode_v6_from_game(&g, seed, FOOLISH_SEED_LEN, 1 << 30,
+                                             code, (int)sizeof code);
+        CHECK(enc > 0, "a played game encodes as v6");
+        if (enc <= 0) continue;
+
+        memset(&ctx, 0, sizeof ctx);
+        ReplayHeader hdr;
+        int r = replay_steps_v6(code, enc, VIEW_UNMASKED, &hdr, rs_test_sink, &ctx);
+        CHECK(r == REPLAY_EOK, "a v6 code replays through the engine");
+        if (r != REPLAY_EOK) continue;
+
+        CHECK(ctx.n_events > 0, "a replay produces animation events");
+        CHECK(ctx.n_deals == np, "every seat's opening deal is an event");
+        CHECK(hdr.fool == want_fool, "the rebuilt game finds the same fool the code claims");
+        // THE assertion: same final board, byte for byte, as the game that was
+        // actually played. Unmasked, so hands are compared too and not hidden.
+        CHECK(ctx.last_len == want_len && memcmp(ctx.last, want, (size_t)want_len) == 0,
+              "the replay's last board is the board the engine finished on");
+        (void)want_hand; (void)want_hand_n;
+    }
+}
+
+// v6's mid-game cut is where the deck's never-drawn tail earns its keep: a
+// FINISHED game has drained the stock, so a short deck still ends at
+// deck_count 0 and looks right. Cut the stream early and the stock is still on
+// the table, where a missing tail is simply a wrong number on screen.
+static void test_replay_steps_mid_game_cut_conserves_the_deck(void) {
+    static unsigned char code[1 << 20];
+    static RsTestCtx ctx;
+
+    for (int np = 2; np <= 6; np++) {
+        Game g;
+        unsigned char seed[FOOLISH_SEED_LEN];
+        if (!rs_play_seeded(&g, np, 700 + np, seed)) { CHECK(0, "seeded game plays out"); continue; }
+
+        // Few enough atoms that the stock cannot have run out.
+        int enc = replay_encode_v6_from_game(&g, seed, FOOLISH_SEED_LEN, 6,
+                                             code, (int)sizeof code);
+        CHECK(enc > 0, "a mid-game cut encodes as v6");
+        if (enc <= 0) continue;
+
+        memset(&ctx, 0, sizeof ctx);
+        ReplayHeader hdr;
+        int r = replay_steps_v6(code, enc, VIEW_UNMASKED, &hdr, rs_test_sink, &ctx);
+        CHECK(r == REPLAY_EOK, "a mid-game v6 cut replays through the engine");
+        if (r != REPLAY_EOK) continue;
+
+        CHECK(hdr.fool == -1, "a mid-game cut has no fool yet");
+        rs_check_conservation(&ctx, np, "a mid-game replay board holds every card in the deck");
+
+        const Game *last = (const Game *)(const void *)ctx.last_snap;
+        CHECK(last->deck_count > 0, "a mid-game cut still has stock left to draw");
+    }
+}
+
+// v5 hides the deal, so its atoms are not a deck — there is nothing to rebuild
+// from and the kernel says so rather than inventing hands.
+static void test_replay_steps_refuses_v5(void) {
+    static unsigned char v5[1 << 16];
+    static unsigned char in[1 << 16];
+    Game g;
+    unsigned char seed[FOOLISH_SEED_LEN];
+    if (!rs_play_seeded(&g, 4, 4242, seed)) { CHECK(0, "seeded game plays out"); return; }
+
+    // A real v5 code for the same game: version byte 5 through the v5 encoder.
+    int fa = replay_first_attacker_from_logs(g.logs, g.num_logs);
+    int pos = 0;
+    in[pos++] = 4;
+    in[pos++] = (unsigned char)card_to_id(g.flipped);
+    in[pos++] = (unsigned char)(fa < 0 ? 0 : fa);
+    int n_actions = 0, count_at = pos;
+    in[pos++] = 0; in[pos++] = 0;
+    for (int i = 0; i < g.num_logs; i++) {
+        const GameLog *l = &g.logs[i];
+        int kind = -1;
+        if (l->log_type == LOG_ATTACK) kind = LOG_ATTACK;
+        else if (l->log_type == LOG_COVER) kind = LOG_COVER;
+        else if (l->log_type == LOG_PASS) kind = LOG_PASS;
+        else if (l->log_type == LOG_PICKUP) kind = LOG_PICKUP;
+        else continue;
+        in[pos++] = (unsigned char)kind;
+        in[pos++] = (unsigned char)(l->player_idx < 0 ? 0xFF : l->player_idx);
+        in[pos++] = (unsigned char)l->num_pairs;
+        for (int p = 0; p < l->num_pairs; p++) {
+            in[pos++] = (unsigned char)card_to_id(l->pairs[p].primary);
+            in[pos++] = card_is_none(l->pairs[p].target)
+                        ? (unsigned char)REPLAY_CARD_NONE
+                        : (unsigned char)card_to_id(l->pairs[p].target);
+        }
+        n_actions++;
+    }
+    in[count_at] = (unsigned char)(n_actions & 0xff);
+    in[count_at + 1] = (unsigned char)((n_actions >> 8) & 0xff);
+
+    int enc = replay_encode(in, pos, v5, (int)sizeof v5);
+    if (enc <= 0) return;  // the v5 oracle is frozen; if it will not encode, nothing to assert
+
+    RsTestCtx ctx;
+    memset(&ctx, 0, sizeof ctx);
+    int r = replay_steps_v6(v5, enc, VIEW_SPECTATOR, 0, rs_test_sink, &ctx);
+    CHECK(r == -REPLAY_EVERSION, "a v5 code is refused: it hides the deal");
+    CHECK(ctx.n_events == 0, "a refused code renders nothing");
+}
+
 int main(void) {
+    test_replay_steps_rebuilds_the_played_game();
+    test_replay_steps_mid_game_cut_conserves_the_deck();
+    test_replay_steps_refuses_v5();
     test_bot_drive_preferred();
     test_bot_pacing_table();
     test_bot_roster_strat_unique();

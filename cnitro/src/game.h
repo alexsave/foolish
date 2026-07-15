@@ -248,6 +248,19 @@ int  get_next_player_index(const Game *g, int current);
 int  game_done(const Game *g);   // returns loser index, or -1
 void start_game(Game *g);
 
+// start_game with the deck supplied instead of shuffled: `deck` is the
+// PRE-deal pile in pop order (deal_initial takes CARDS_PER_PLAYER per seat,
+// player-major, then the flip). Everything after the deck exists — the deal,
+// the flip, first_attacker/defender, and every snapshot hook — is the SAME
+// code start_game runs, so a game rebuilt this way is a real played game and
+// not a projection of one.
+//
+// This is how a v6 replay comes back to life (replay_steps.c): its decode
+// yields the exact hands and the exact draw order, which is exactly a deck.
+// The caller owns feasibility — a deck that cannot produce the recorded game
+// simply produces a different one; replay_steps_v6 is the checked entry.
+void start_game_with_deck(Game *g, const Card *deck, int n_deck);
+
 // In-place game clone (used by collect's `before` snapshot).
 void game_clone(Game *dst, const Game *src);
 

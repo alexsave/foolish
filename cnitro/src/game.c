@@ -386,7 +386,8 @@ static int determine_lowest_power_index(Game *g) {
     return lowest_p;
 }
 
-void start_game(Game *g) {
+// The lobby->playing reset every start path shares.
+static void start_game_reset(Game *g) {
     g->status = GAME_STATUS_PLAYING;
     g->num_battles = 0;
     g->num_eliminated = 0;
@@ -401,18 +402,14 @@ void start_game(Game *g) {
     for (int i = 0; i < g->num_players; i++) {
         g->players[i].status = PLAYER_STATUS_IN;
     }
+}
 
-    refill_deck(g);
-    // Record how this game draws, so mid-game kernel calls (which restore this
-    // from the durable blob, not the thread-local) keep popping the pre-shuffled
-    // deck. Legacy deals leave it false and draw at random, exactly as before.
-    g->deterministic_deck = g_deal_wide ? true : false;
-#ifndef DEAL_RNG_DISABLED
-    // Seed-dealt game: shuffle the whole deck once from the ChaCha stream, then
-    // every draw below (and every mid-game refill) pops the top — the full deal
-    // and game are reproducible from the seed.
-    if (g_deal_wide) deal_shuffle(g);
-#endif
+// Everything downstream of "the deck is sitting there in pop order": the deal,
+// the flip, the opening seats. Split out of start_game so a rebuilt deck runs
+// the identical path (start_game_with_deck) — the alternative was a second
+// deal in replay_steps.c, which is the duplication this consolidation exists
+// to delete.
+static void start_game_dealt(Game *g) {
     // TS emits its opening MAGIC_TRANSITION here: PLAYING status, full deck,
     // hands still empty from the lobby.
     SNAP(g, ENGINE_HOOK_START_MAGIC, -1);
@@ -438,6 +435,38 @@ void start_game(Game *g) {
     g->first_attacker = (int8_t)lowest;
     g->defender = (int8_t)((lowest + 1) % g->num_players);
     SNAP(g, ENGINE_HOOK_START_DEFENDER, g->defender);
+}
+
+void start_game(Game *g) {
+    start_game_reset(g);
+
+    refill_deck(g);
+    // Record how this game draws, so mid-game kernel calls (which restore this
+    // from the durable blob, not the thread-local) keep popping the pre-shuffled
+    // deck. Legacy deals leave it false and draw at random, exactly as before.
+    g->deterministic_deck = g_deal_wide ? true : false;
+#ifndef DEAL_RNG_DISABLED
+    // Seed-dealt game: shuffle the whole deck once from the ChaCha stream, then
+    // every draw below (and every mid-game refill) pops the top — the full deal
+    // and game are reproducible from the seed.
+    if (g_deal_wide) deal_shuffle(g);
+#endif
+    start_game_dealt(g);
+}
+
+void start_game_with_deck(Game *g, const Card *deck, int n_deck) {
+    start_game_reset(g);
+
+    if (n_deck < 0) n_deck = 0;
+    if (n_deck > MAX_DECK) n_deck = MAX_DECK;
+    for (int i = 0; i < n_deck; i++) g->deck[i] = deck[i];
+    g->deck_count = (int16_t)n_deck;
+    // Pop the top, never at random: draw_index reads this, and it is what makes
+    // the supplied order mean anything. A rebuilt game is a deterministic-deck
+    // game in the same sense a seeded one is.
+    g->deterministic_deck = true;
+
+    start_game_dealt(g);
 }
 
 // Refill phase: defender first if their hand is empty, then around starting
