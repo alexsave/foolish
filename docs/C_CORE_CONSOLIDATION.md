@@ -9,11 +9,11 @@ not repeat yourself: rules live once, in C." This doc inventories everything
 that sits BETWEEN the C kernel and each platform, finds what is duplicated
 (including two live behavior divergences), and proposes the C additions that
 make the server, the iOS offline client, and every future client (watchOS,
-iMessage, Telegram, `/m/` web-play) thin shells around the same machine
-code. (Scope trim, owner decision 2026-07-15: a Steam/console client and
-the `gpt` LLM-adapter bot are DROPPED from the roadmap — neither is worth
-dragging through every plan; the deletion rides A7 in §6.) No code has been
-changed; this is the report + work order.*
+iMessage, Telegram, Steam, `/m/` web-play) thin shells around the same
+machine code. (Scope trim, owner decision 2026-07-15: the two I/O-adapter
+bot strategies — **`console`** (stdin) and **`gpt`** (LLM) — are DROPPED;
+neither is worth dragging through every plan. Deletion rides A7 in §6.)
+No code has been changed; this is the report + work order.*
 
 *Companions: `ARCHITECTURE_AS_A_PATTERN.md` (the doctrine),
 `RULES_DUPLICATION_FINDINGS.md` (the earlier rules sweep this extends),
@@ -73,7 +73,7 @@ kernel; CAS commit; packed broadcast) and iOS offline (`LocalGame.swift` →
 every responsibility in the game path, classify: **[K]** already kernel,
 **[D]** duplicated per-host logic that belongs in C, **[P]**
 platform-inherent. The [D]s are §0's findings. The client sweep additionally
-inventoried every pure-logic module a THIRD client (watch/telegram)
+inventoried every pure-logic module a THIRD client (watch/telegram/steam)
 would need, which is where F4/F7/F9 come from.
 
 ## 3. The motivating bugs (found by this audit — live divergences)
@@ -121,12 +121,14 @@ int  bot_roster_choose(int idx, const Game *g, int seat,
 ```
 
 Consumers: `wasm_bots_api.c` (replaces its dispatch switch; the TS registry
-shrinks to a thin `key → wasm call` shim with NO exceptions — the `gpt`
-LLM-adapter strategy, the last TS-brained bot, is dropped from the roadmap:
-delete its registry entry and, once unreferenced, its advisory helpers
-`strategies/move_stats.ts` / `pass_prob.ts`, which retires the deliberate
-heuristic-layer duplication documented in `RULES_DUPLICATION_FINDINGS.md`),
-`ios_api.c`
+shrinks to a thin `key → wasm call` shim with NO exceptions — the two
+I/O-adapter strategies, `console` (stdin; only ever the `CONSOLE` key in
+`types.ts:254` plus the "manually include" comment) and `gpt` (LLM; the
+lazy-load path in `getBotStrategy` + `strategies/gpt_strategy.ts`), are
+dropped rather than carried; with `gpt` go its advisory helpers
+`strategies/move_stats.ts` / `pass_prob.ts` once unreferenced, retiring the
+deliberate heuristic-layer duplication documented in
+`RULES_DUPLICATION_FINDINGS.md`), `ios_api.c`
 (replaces `ROSTER[]` + `dispatch_choose`, fixing §3.1), and a tiny wasm
 export so e2e can assert `seed.sql` seeds exactly the `shipped` set (today
 that invariant lives in a SQL comment). `uses_logs` rides along so every
@@ -157,7 +159,7 @@ Exported as wasm + `fio_bot_drive_json`. The server keeps: lease, CAS commit
 of returned products, broadcast, CPU budget (`max_actions`/repeat-call maps
 onto its measured-cost bailout), cached-move replay after CAS conflict. iOS
 keeps: timers, thermal downgrade (a roster-tier override between calls),
-rendering. Telegram later: the same three calls (`new_game`, `apply`,
+rendering. Telegram/Steam later: the same three calls (`new_game`, `apply`,
 `bot_drive`). Verification is the standing playbook: seeded games through
 the old TS cycle vs `bot_drive`, byte-compare committed products.
 
@@ -297,7 +299,7 @@ mirror → parity harness → cutover → freeze the old path as test oracle)
 | A4 | **F5 v6-from-game** | after A1–A3 | extend `replay_v6_test.c`; server finalize diff-tested against the TS assembly on real finished games |
 | A5 | **F4.2 replay steps from the kernel** | after A3 (reuses emitter), before native replay polish | web replay renders identically (snapshot tests); iOS plays a web-generated code step-for-step |
 | A6 | **F6 reset transform**, then **F8 projection deletions** | cleanup wave | `resetToLobby` mirrors deleted; rematch e2e green on web + iOS |
-| A7 | **F9 batch**: seed-len header + rejects (rides the iMessage M0), `unambiguous_cover` (with the first surface that needs it), `%`-name tidies (with the naming work), and the **`gpt` drop** — delete its `bot_strategy.ts` registry entry and, once unreferenced, `strategies/move_stats.ts` + `pass_prob.ts` (never seeded in production; nothing else consumes them) | opportunistic | per-item; grep proves no `gpt` reference survives |
+| A7 | **F9 batch**: seed-len header + rejects (rides the iMessage M0), `unambiguous_cover` (with the first surface that needs it), `%`-name tidies (with the naming work), and the **`console`+`gpt` drop** — delete the `CONSOLE` key (`types.ts:254`), the gpt lazy-load path + `strategies/gpt_strategy.ts`, and, once unreferenced, `move_stats.ts` + `pass_prob.ts` (neither strategy was ever seeded in production; `registerBotStrategy` itself STAYS — the offlinefun research harnesses use it) | opportunistic | per-item; grep proves no `console`/`gpt` strategy reference survives |
 | A8 | **F7 wire-decode moves**, format-by-format on next wire change; module/budget decision documented | opportunistic | mirror file deleted per format; parity test flips to wasm-vs-fixture |
 
 **What this buys, concretely:** the offline app gets site-identical bots
@@ -305,7 +307,7 @@ mirror → parity harness → cutover → freeze the old path as test oracle)
 pacing divergences die; offline/iMessage replays become Oracle-exact v6;
 the watch inherits everything (it was already snapshot-driven by design);
 the iMessage extension's hardest logic is CI-testable without a Mac;
-Telegram becomes "the same three calls"; and the web sheds up to
+Telegram/Steam become "the same three calls"; and the web sheds up to
 ~1,800 lines of parity-maintained TS over time (960 wire + ~800 replay).
 "The bots feel the same everywhere" becomes a compile-time property instead
 of a hope.
