@@ -823,7 +823,7 @@ build/named/bots.named.wasm: $(WASM_BOT_OBJ)
 # --use-api, no Docker) — a real 47KB binary, not a 155KB base64 .ts embed.
 # Loaded by _shared/wasm/wasm_asset.ts (server-only; bots never run in browser).
 wasm-bots: build/bots.wasm
-	gzip -9 -c build/bots.wasm > ../supabase/functions/_shared/wasm/bots.wasm.gz
+	gzip -9 -n -c build/bots.wasm > ../supabase/functions/_shared/wasm/bots.wasm.gz
 
 # ---------------------------------------------------------------------------
 # oracle.wasm — the client-side "infinite oracle" replay analyzer
