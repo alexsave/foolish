@@ -203,9 +203,16 @@ vertical, and the double hand display removed.
   last stop and magnifies like any card. No chip strip, no focus slot.
 - **Roster** = seat-strip tap, pushed page, system chevron returns. No root
   pager, no page dots, zero horizontal gestures.
-- Everything else identical to G: pill decision table (pill sits bottom-left,
-  ~93 pt wide), chooser overlay, red-glow rejection, InfoLine, one card per
-  action.
+- **No pills** — the verb is a complication-sized caption (≈10.5 pt) under
+  the fisheye: always one of **attack · good · pickup · cover · pass ·
+  cover/pass**, blank on a dead card. Commit = tap the big focused card (or
+  the caption). cover / cover-pass ambiguity still routes to the chooser
+  screen. Note the vocabulary shift: the take action is labeled **pickup**
+  (engine term).
+- Everything else identical to G: the same action decision table (rendered
+  as captions), chooser overlay, red-glow rejection, InfoLine, one card per
+  action. The pill's old bottom-left footprint returns to the table list —
+  five rows visible instead of four.
 
 Trade-offs vs G: H shows the whole table at once (≤4 pairs) and has a single
 hand representation with a physical crown-to-lane mapping; G has a bigger
