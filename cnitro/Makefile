@@ -714,13 +714,21 @@ wasm-guards: build/guards.wasm
 # env table: with no roster spec installed, bot_knob() is just getenv() (see
 # bot_knobs.h), so bots.wasm behaves byte-for-byte as before.
 #
-# bot_roster.c is deliberately NOT here yet (docs/C_CORE_CONSOLIDATION.md A1,
-# phase 2). It dispatches the whole offline ladder, so linking it would drag
-# espresso_prod_strategy.c + gunpowder_strategy.c into the module for two rungs
-# the server never seeds — against the memory plan. Folding wasm_choose_move's
-# switch onto the roster is the same change that rewrites bots.wasm.gz, and
-# wants the CI toolchain (a local wasm-opt/clang skew produces a different
-# artifact), so it rides with the TS env-table deletion.
+# bot_roster.c IS here — A2 brought it in, because bot_drive.c dispatches
+# through the roster and the module does not link without it. (This comment
+# used to say the opposite, "deliberately NOT here yet"; it predates A2. The
+# feared cost did not materialize: linking the roster does NOT drag
+# espresso_prod_strategy.c / gunpowder_strategy.c in, so the module still
+# carries only the rungs the server seeds.)
+#
+# What is left of A1 is the SWITCH, not the link: wasm_choose_move still
+# dispatches its own way, and the TS env blocks in bot_strategy.ts still set
+# the knobs the roster already specifies. Folding the two is one change,
+# because it rewrites bots.wasm.gz — and that rebuild wants the CI toolchain:
+# a local clang/wasm-opt skew produces a DIFFERENT artifact (verified July
+# 2026 — Homebrew clang 22 + wasm-opt 130 rebuilds this module 670 bytes
+# larger than the committed one, from identical source), and CI ships the
+# committed .gz rather than rebuilding it.
 WASM_BOT_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/view.c src/awire.c \
                 src/evwire.c src/random_strategy.c \
                 src/espresso_strategy.c src/handwritten_strategy.c \
