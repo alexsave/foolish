@@ -25,6 +25,7 @@
 #include "replay.h"
 #include "wasm_overlay.h"
 #include "rules_overlay.h"
+#include <stddef.h>   // offsetof (the re-deal's short-log Game slot)
 #include <string.h>
 
 static int g_err_detail = 0;
@@ -873,13 +874,26 @@ static void code_varint(Coder *c, uint32_t *val) {
 }
 
 /* ------------------------------ info source ------------------------------ */
-// Encode-side reader over the marshaled action bytes (replay.h format). The
-// player_id -> seat mapping and the round_end synthesis stay TS-side.
+// Encode-side reader over the action stream, from either of two sources:
+//
+//   BYTES — the marshaled action bytes (replay.h format), for replay_encode /
+//     replay_encode_v6. Here the player_id -> seat mapping and the round_end
+//     synthesis stay caller-side.
+//   LOGS  — a played game's own GameLog array, for replay_encode_v6_from_game.
+//     Seats are already seats and the round_end rule is applied here, so no
+//     action ever has to be marshaled into a buffer at all.
+//
+// Everything downstream (find_top_index, run_replay, run_replay_v6, the coder,
+// the model) reads only the loaded fields, so it never learns which source it
+// is on — that is the point of keeping this behind one struct.
 
 typedef struct {
-    const unsigned char *buf;
+    const unsigned char *buf;   // BYTES source; NULL on the LOGS source
+    const GameLog *logs;        // LOGS source; NULL on the BYTES source
+    int num_logs;
     int len;
-    int pos;    // read cursor: start of the next unloaded action
+    int pos;    // read cursor: next unloaded action — a byte offset on the
+                // BYTES source, a log index on the LOGS source
     int count;  // total actions
     int idx;    // current action index
     bool loaded;
@@ -892,8 +906,90 @@ typedef struct {
 
 static bool src_exhausted(const Src *s) { return s->idx >= s->count; }
 
+// A Card as a 1-byte wire id (replay.h): a real card, 0xFF for CARD_NONE
+// ({-2,-2}: a log pair with no target), 0xFE for the hidden card ({-1,-1}).
+// The two sentinels are kept apart on purpose — a hidden PRIMARY means a masked
+// log reached an encoder that needs real cards, and must fail, not encode as
+// "no card".
+static unsigned char rep_wire_of(Card c) {
+    if (card_is_none(c)) return REPLAY_CARD_NONE;
+    if (c.suit < 0 || c.value < 0) return REPLAY_CARD_HIDDEN;
+    return (unsigned char)(c.suit * 13 + (c.value - 1));
+}
+
+// Is this log an atom, and which kind? The action stream is the info logs
+// (attack/cover/pass/pickup) plus a round_end marker for every DISCARD directly
+// preceded by a GOOD — a rule that had four independent copies (encode.ts
+// collectV6, ios_api.c build_encode_input, tests/replay_difftest.c,
+// tests/replay_v6_test.c). This is the kernel's copy; `i` indexes `logs`
+// because the round_end rule reads the PREVIOUS log.
+static int log_atom_kind(const GameLog *logs, int i) {
+    int kind = logs[i].log_type;
+    if (kind == LOG_ATTACK || kind == LOG_COVER
+        || kind == LOG_PASS || kind == LOG_PICKUP) return kind;
+    if (kind == LOG_DISCARD && i > 0 && logs[i - 1].log_type == LOG_GOOD)
+        return REPLAY_ROUND_END;
+    return 0;   // not an atom (GOOD, DRAW, GAME_START, a swept DISCARD, ...)
+}
+
+int replay_first_attacker_from_logs(const GameLog *logs, int num_logs) {
+    for (int i = 0; i < num_logs; i++)
+        if (logs[i].log_type == LOG_ATTACK) return logs[i].player_idx;
+    return -1;
+}
+
+// Atoms a game's logs would produce, capped at max_atoms. v6 codes the count
+// into the header before the stream runs, so it must be known up front.
+static int count_atoms_from_logs(const GameLog *logs, int num_logs, int max_atoms) {
+    int n = 0;
+    for (int i = 0; i < num_logs && n < max_atoms; i++)
+        if (log_atom_kind(logs, i)) n++;
+    return n;
+}
+
+// LOGS source: scan to the next atom and load it. Validates exactly what the
+// BYTES source validates, because the logs of a game that ran in THIS process
+// are not automatically trustworthy input — the server's arrive over the wire
+// (wasm_import_logs) and are masked, so a hidden card here is reachable and
+// must be rejected rather than coded.
+static int src_load_logs(Src *s, int n_seats) {
+    for (int i = s->pos; i < s->num_logs; i++) {
+        int kind = log_atom_kind(s->logs, i);
+        if (!kind) continue;
+        const GameLog *l = &s->logs[i];
+        if (kind == REPLAY_ROUND_END) {
+            s->kind = REPLAY_ROUND_END;
+            s->seat = -1;
+            s->n_pairs = 0;
+        } else {
+            int np = l->num_pairs;
+            if (np > REPLAY_MAX_PAIRS) return REPLAY_EINPUT;
+            if (l->player_idx < 0 || l->player_idx >= n_seats) return REPLAY_EINPUT;
+            if (kind != LOG_PICKUP && np == 0) return REPLAY_EINPUT;
+            for (int j = 0; j < np; j++) {
+                unsigned char prim = rep_wire_of(l->pairs[j].primary);
+                unsigned char tgt  = rep_wire_of(l->pairs[j].target);
+                if (prim > 51) return REPLAY_EINPUT;
+                if (tgt > 51 && tgt != REPLAY_CARD_NONE) return REPLAY_EINPUT;
+                s->pairs[j][0] = prim;
+                s->pairs[j][1] = tgt;
+            }
+            s->kind = kind;
+            s->seat = l->player_idx;
+            s->n_pairs = np;
+        }
+        s->adv = i + 1 - s->pos;   // src_advance moves the log cursor past it
+        s->loaded = true;
+        return 0;
+    }
+    // count_atoms_from_logs promised another atom and the logs disagree — only
+    // reachable if the two walks ever fall out of step.
+    return REPLAY_EINPUT;
+}
+
 static int src_load(Src *s, int n_seats) {
     if (s->loaded) return 0;
+    if (s->logs) return src_load_logs(s, n_seats);
     const unsigned char *p = s->buf;
     int pos = s->pos;
     if (pos + 3 > s->len) return REPLAY_EINPUT;
@@ -1370,6 +1466,45 @@ int replay_encode(const unsigned char *in, int in_len,
     return len;
 }
 
+// The v6 header + run, shared by both producers. Everything above this differs
+// only in where the actions and the reveals came from; from here down there is
+// one v6 encoder, so the two entry points cannot drift on the wire format.
+static int encode_v6_run(int n, int trump_id, int fa, int n_actions,
+                         const unsigned char *reveals, int n_reveals,
+                         Src *s, unsigned char *out, int out_cap) {
+    Coder c;
+    memset(&c, 0, sizeof c);
+    c.encode = true;
+
+    coder_uniform(&c, REPLAY_VERSION_ALPHABET, REPLAY_FORMAT_VERSION_V6);
+    coder_uniform(&c, 7, n - 2);
+    int8_t alpha[48];
+    int alen = trump_alphabet(n, alpha);
+    int t = -1;
+    for (int i = 0; i < alen; i++)
+        if (alpha[i] == trump_id) { t = i; break; }
+    if (t < 0) return -REPLAY_EHEADER;  // trump not in alphabet (incl. aces)
+    coder_uniform(&c, alen, t);
+    coder_uniform(&c, n, fa);
+    uint32_t atoms = (uint32_t)n_actions;
+    code_varint(&c, &atoms);
+    if (c.err) return -c.err;
+
+    RModel *m = &g_model;
+    model_init(m, n, trump_id, fa, 0, 0, 0, REPLAY_FORMAT_VERSION_V6);
+    m->rev = reveals;
+    m->rev_n = n_reveals;
+    m->rev_pos = 0;
+    run_replay_v6(m, &c, s, atoms);
+    if (m->err) return -m->err;
+    if (c.err) return -c.err;
+
+    if (!coder_finish(&c, &g_bn)) return -REPLAY_ECAP;
+    int len = bn_to_bytes_be(&g_bn, out, out_cap);
+    if (len < 0) return -REPLAY_ECAP;
+    return len;
+}
+
 int replay_encode_v6(const unsigned char *in, int in_len,
                      unsigned char *out, int out_cap) {
     g_err_detail = 0;
@@ -1393,37 +1528,121 @@ int replay_encode_v6(const unsigned char *in, int in_len,
     s.pos = rev_off + n_reveals;
     s.count = n_actions;
 
-    Coder c;
-    memset(&c, 0, sizeof c);
-    c.encode = true;
+    return encode_v6_run(n, trump_id, fa, n_actions,
+                         in + rev_off, n_reveals, &s, out, out_cap);
+}
 
-    coder_uniform(&c, REPLAY_VERSION_ALPHABET, REPLAY_FORMAT_VERSION_V6);
-    coder_uniform(&c, 7, n - 2);
-    int8_t alpha[48];
-    int alen = trump_alphabet(n, alpha);
-    int t = -1;
-    for (int i = 0; i < alen; i++)
-        if (alpha[i] == trump_id) { t = i; break; }
-    if (t < 0) return -REPLAY_EHEADER;
-    coder_uniform(&c, alen, t);
-    coder_uniform(&c, n, fa);
-    uint32_t atoms = (uint32_t)n_actions;
-    code_varint(&c, &atoms);
-    if (c.err) return -c.err;
+/* ------------------- v6 from a played game: the re-deal ------------------- */
 
-    RModel *m = &g_model;
-    model_init(m, n, trump_id, fa, 0, 0, 0, REPLAY_FORMAT_VERSION_V6);
-    m->rev = in + rev_off;
-    m->rev_n = n_reveals;
-    m->rev_pos = 0;
-    run_replay_v6(m, &c, &s, atoms);
-    if (m->err) return -m->err;
-    if (c.err) return -c.err;
+// The re-deal needs a Game to deal INTO, but only its hands, deck and flip —
+// never its logs. A full Game is ~130 KB in the production build (MAX_LOGS x
+// MAX_LOG_PAIRS), which is not worth a second static in a wasm module that
+// already carries one, so this slot stops just past the start of the logs
+// array: the same short-log trick cordite_sim.c plays for its sampled worlds
+// (WORLD_SLOT_BYTES). log_cap = 1 then makes log_alloc route every non-DISCARD
+// append — during a deal, all of them — to its own sink instead of the array.
+// Plain statics, like the coder and model above: this codec is single-threaded
+// by design.
+#define DEAL_SLOT_BYTES (offsetof(Game, logs) + sizeof(GameLog))
+typedef struct { _Alignas(16) unsigned char bytes[DEAL_SLOT_BYTES]; } DealSlot;
+static DealSlot g_deal_slot;
 
-    if (!coder_finish(&c, &g_bn)) return -REPLAY_ECAP;
-    int len = bn_to_bytes_be(&g_bn, out, out_cap);
-    if (len < 0) return -REPLAY_ECAP;
-    return len;
+// Re-derive a seeded game's deal: the true initial hands (seat-major) followed
+// by the whole remaining stock in draw order, which is the reveal stream v6
+// wants, plus the trump. The flip is deliberately absent from the stock —
+// start_game draws it out — and v6 never lists it, because it IS the header
+// trump. Passing the whole stock rather than only the cards this game went on
+// to draw is what the TS producer did too, and costs nothing: run_replay_v6
+// pops reveals as draws happen and never reads the tail.
+static int deal_reveals_from_seed(const unsigned char *seed, int seed_len, int n,
+                                  unsigned char *reveals, int *out_nr, int *out_trump) {
+    Game *d = (Game *)g_deal_slot.bytes;
+    memset(d, 0, sizeof g_deal_slot.bytes);
+    d->num_players = (int8_t)n;
+    d->log_cap = 1;   // short-log slot: this deal's logs are never read
+
+    // A deal fires the snapshot hook (ENGINE_HOOK_DEAL per seat, plus
+    // START_MAGIC and FLIPPED) and engine_snap_hook is GLOBAL, so a re-deal on
+    // a host that has one installed would splice a whole imaginary deal into
+    // the animation plan it is building — the exact bug the bot_drive harness
+    // found in the choose path (bot_drive.c choose_move). And start_game
+    // consumes the deal RNG and leaves wide mode set, which draw_index reads
+    // for every game in this thread. Both are global, so both get put back.
+    unsigned char saved_rng[GAME_DEAL_RNG_STATE_MAX];
+    void (*saved_hook)(const Game *, int, int) = engine_snap_hook;
+    game_deal_rng_get(saved_rng);
+    engine_snap_hook = 0;
+
+    game_set_deal_seed_bytes(seed, seed_len);
+    start_game(d);
+
+    engine_snap_hook = saved_hook;
+    game_deal_rng_set(saved_rng);
+
+    if (!d->has_flipped) return REPLAY_EHEADER;   // deck too small to flip
+    *out_trump = d->flipped.suit * 13 + (d->flipped.value - 1);
+
+    int nr = 0;
+    for (int s = 0; s < n; s++) {
+        // v6 slices the reveal stream CARDS_PER_PLAYER per seat, so a short
+        // hand would silently shift every later seat's deal.
+        if (d->players[s].hand_count != CARDS_PER_PLAYER) return REPLAY_EINPUT;
+        for (int k = 0; k < CARDS_PER_PLAYER; k++)
+            reveals[nr++] = rep_wire_of(d->players[s].hand[k]);
+    }
+    for (int i = 0; i < d->deck_count; i++)
+        reveals[nr++] = rep_wire_of(d->deck[i]);
+    for (int i = 0; i < nr; i++)
+        if (reveals[i] > 51) return REPLAY_EINPUT;   // a real deal has real cards
+    *out_nr = nr;
+    return 0;
+}
+
+int replay_encode_v6_from_game(const Game *g, const unsigned char *seed, int seed_len,
+                               int max_atoms, unsigned char *out, int out_cap) {
+    g_err_detail = 0;
+    comb_init();
+    if (!g || !seed || seed_len < FOOLISH_SEED_LEN) return -REPLAY_EINPUT;
+    if (g->num_logs >= MAX_LOGS) return -REPLAY_EINPUT;  // overflowed → untrusted
+    int n = g->num_players;
+    if (n < 2 || n > MAX_PLAYERS) return -REPLAY_EINPUT;
+    if (max_atoms <= 0) return -REPLAY_EINPUT;
+
+    int fa = replay_first_attacker_from_logs(g->logs, g->num_logs);
+    if (fa < 0 || fa >= n) return -REPLAY_EINPUT;   // no attack logged → nothing to encode
+
+    unsigned char reveals[MAX_PLAYERS * CARDS_PER_PLAYER + MAX_DECK];
+    int n_reveals = 0, trump_id = 0;
+    int rc = deal_reveals_from_seed(seed, seed_len, n, reveals, &n_reveals, &trump_id);
+    if (rc) return -rc;
+
+    // Did this seed actually deal this game? Check it against the trump while
+    // the game still carries one. ONLY while has_flipped: once the trump has
+    // been drawn, `flipped` is not a reliable witness. This kernel keeps the
+    // card and only clears the flag, but a game that has round-tripped through
+    // the server's state blob does NOT — engine.ts marshals a drawn-out trump as
+    // wire card 0 (marshalGame: `game.flipped ? wireStateCard(...) : 0`), which
+    // reads back as a real 6, not a sentinel. There is no way to tell that apart
+    // from a genuine 6 here, so trust the flag, not the card.
+    //
+    // This is a cheap early guard, not the whole defense: a seed that did not
+    // deal `g` mainly fails downstream, where the logged opening attack is not
+    // in the menu the wrong deal produces (REPLAY_ENOTINMENU — the v6 test's
+    // wrong-seed case takes exactly that path on a dry-stock game).
+    if (g->has_flipped && rep_wire_of(g->flipped) != (unsigned char)trump_id)
+        return -REPLAY_EHEADER;
+
+    int n_actions = count_atoms_from_logs(g->logs, g->num_logs, max_atoms);
+    if (n_actions <= 0) return -REPLAY_EINPUT;
+
+    Src s;
+    memset(&s, 0, sizeof s);
+    s.logs = g->logs;
+    s.num_logs = g->num_logs;
+    s.count = n_actions;
+
+    return encode_v6_run(n, trump_id, fa, n_actions,
+                         reveals, n_reveals, &s, out, out_cap);
 }
 
 int replay_decode(const unsigned char *in, int in_len,

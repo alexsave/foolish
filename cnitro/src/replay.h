@@ -136,6 +136,51 @@ int replay_decode(const unsigned char *in, int in_len,
 int replay_encode_v6(const unsigned char *in, int in_len,
                      unsigned char *out, int out_cap);
 
+// ---------- Format 6 from a played game (the one v6 producer) ---------------
+//
+// Encode `g` — a game DEALT FROM `seed` — as a v6 replay. This is the whole of
+// what the server's finalize choreography used to do across three TS modules
+// and two wasm round-trips (reconstructSeededDeal + collectV6 + marshalInputV6
+// + encodeReplayV6), and it is what lets an offline host produce a v6 share at
+// all: assembling the reveal stream is the only reason v6 needed a server.
+//
+// WHY THE SEED IS A PARAMETER, and not read back off `g`. A finished Game
+// cannot answer "what was dealt": deal_initial (game.c) emits no per-seat
+// LOG_DRAW — only a hook snapshot — and draw_card splices each drawn card out
+// of deck[], so by game end the deal is gone from the struct and deck_count is
+// 0. The seed reproduces it exactly, and nothing else in the struct can. (The
+// seed is deliberately NOT in the Game or the durable blob: it stays in a
+// server-only column, away from the client boundary — see game.c's deal notes.)
+//
+// From `g` come the ACTIONS (its logs, read directly — no marshalling) and the
+// player count; from the re-deal come the true initial hands, the stock draw
+// order, and the trump.
+//
+//   g         a game dealt from `seed` and played; its logs are the action
+//             stream. Rejected if the log buffer overflowed (num_logs >=
+//             MAX_LOGS) — a truncated stream is untrusted, not encodable.
+//   seed      the FOOLISH_SEED_LEN-byte deal seed this game was dealt from. A
+//             seed that did not deal `g` does not encode: while the game still
+//             holds a trump it is caught up front (REPLAY_EHEADER), and
+//             otherwise downstream, where the logged actions do not fit the
+//             wrong deal's menus (REPLAY_ENOTINMENU).
+//   max_atoms cap on top-level atoms — v6's legal mid-game cut. Pass a huge
+//             value (INT_MAX) for the whole game.
+//
+// Safe to call on a live, in-progress game and on a host with a snapshot hook
+// installed: the scratch re-deal restores both the deal RNG and the hook.
+//
+// Returns bytes written to `out` (>= 0) or -REPLAY_E* on failure.
+int replay_encode_v6_from_game(const Game *g, const unsigned char *seed, int seed_len,
+                               int max_atoms, unsigned char *out, int out_cap);
+
+// The opening attacker, read off a played game's logs: the seat of the first
+// LOG_ATTACK, or -1 if none was logged. NOT g->first_attacker, which is set at
+// the deal but REASSIGNED every bout, so a finished game holds the LAST round's
+// attacker (see ios_api.c build_encode_input for what that cost). Shared so the
+// v5 and v6 producers cannot drift on it.
+int replay_first_attacker_from_logs(const GameLog *logs, int num_logs);
+
 // Parameter of the last error (version for EVERSION, log_type<<16|menu size
 // for ENOTINMENU, 0 otherwise).
 int replay_last_error_detail(void);

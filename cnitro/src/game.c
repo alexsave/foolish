@@ -122,7 +122,7 @@ void game_set_seed(uint32_t s) {
 
 #ifndef DEAL_RNG_DISABLED
 void game_set_deal_seed_bytes(const uint8_t *seed, int len) {
-    if (!seed || len < 32) return;   // too little entropy: leave wide mode off
+    if (!seed || len < FOOLISH_SEED_LEN) return;  // too little entropy: leave wide mode off
     deal_rng_seed(&g_deal_rng, seed);
     g_deal_wide = 1;                 // start_game will shuffle; draws then pop
 #ifdef GRPO_RNG_DEBUG
@@ -134,6 +134,26 @@ void game_set_deal_seed_bytes(const uint8_t *seed, int len) { (void)seed; (void)
 #endif
 
 int game_deal_seed_active(void) { return g_deal_wide; }
+
+// Deal-RNG save/restore (see game.h). Layout is private to this file: byte 0 is
+// the wide flag, the rest is the ChaCha state. Nothing persists or ships it, so
+// it needs no wire discipline — only enough room, which the assert pins.
+void game_deal_rng_get(unsigned char *out) {
+    memset(out, 0, GAME_DEAL_RNG_STATE_MAX);
+    out[0] = (unsigned char)g_deal_wide;
+#ifndef DEAL_RNG_DISABLED
+    _Static_assert(1 + sizeof(DealRng) <= GAME_DEAL_RNG_STATE_MAX,
+                   "GAME_DEAL_RNG_STATE_MAX too small for the wide flag + DealRng");
+    memcpy(out + 1, &g_deal_rng, sizeof g_deal_rng);
+#endif
+}
+
+void game_deal_rng_set(const unsigned char *in) {
+    g_deal_wide = in[0];
+#ifndef DEAL_RNG_DISABLED
+    memcpy(&g_deal_rng, in + 1, sizeof g_deal_rng);
+#endif
+}
 uint32_t game_random_u32(void) {
 #ifdef GRPO_RNG_DEBUG
     if (!g_seed_set) {
