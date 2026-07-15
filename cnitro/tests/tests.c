@@ -1130,16 +1130,16 @@ static void test_bot_drive_basic(void) {
     seat_all(&g, STRAT_HANDWRITTEN_PROD);
 
     BotDriveOut out;
-    CHECK(bot_drive(NULL, 0, 4, &out) == -1, "bot_drive rejects a NULL game");
-    CHECK(bot_drive(&g, 0, 4, NULL) == -1, "bot_drive rejects a NULL out");
+    CHECK(bot_drive(NULL, 0, 4, 0, 0, &out) == -1, "bot_drive rejects a NULL game");
+    CHECK(bot_drive(&g, 0, 4, 0, 0, NULL) == -1, "bot_drive rejects a NULL out");
 
     // human_mask covering every seat: nothing for the kernel to drive.
-    int n = bot_drive(&g, 0x3, BOT_DRIVE_MAX_ACTIONS, &out);
+    int n = bot_drive(&g, 0x3, BOT_DRIVE_MAX_ACTIONS, 0, 0, &out);
     CHECK(n == 0 && out.n == 0, "a fully human table applies nothing");
     CHECK(out.stop == BOT_STOP_NO_ELIGIBLE, "...and says so");
 
     // All-bot: the cycle applies at least one action and stops on something real.
-    n = bot_drive(&g, 0, BOT_DRIVE_MAX_ACTIONS, &out);
+    n = bot_drive(&g, 0, BOT_DRIVE_MAX_ACTIONS, 0, 0, &out);
     CHECK(n >= 1, "an all-bot table applies at least one action");
     CHECK(out.n == n, "the returned count is out.n");
     CHECK(out.stop == BOT_STOP_EVENTS || out.stop == BOT_STOP_ENDED
@@ -1148,7 +1148,7 @@ static void test_bot_drive_basic(void) {
 
     // A drive never drives a masked seat.
     for (int i = 0; i < 40 && game_done(&g) < 0; i++) {
-        bot_drive(&g, 0x1, BOT_DRIVE_MAX_ACTIONS, &out);   // seat 0 is "human"
+        bot_drive(&g, 0x1, BOT_DRIVE_MAX_ACTIONS, 0, 0, &out);   // seat 0 is "human"
         int touched_human = 0;
         for (int a = 0; a < out.n; a++) if (out.actions[a].seat == 0) touched_human = 1;
         CHECK(!touched_human, "bot_drive never moves a seat in human_mask");
@@ -1167,7 +1167,7 @@ static void test_bot_drive_bundles_only_silent(void) {
 
         BotDriveOut out;
         for (int step = 0; step < 400 && game_done(&g) < 0; step++) {
-            int n = bot_drive(&g, 0, BOT_DRIVE_MAX_ACTIONS, &out);
+            int n = bot_drive(&g, 0, BOT_DRIVE_MAX_ACTIONS, 0, 0, &out);
             if (n == 0) break;
             cycles++;
             if (n > 1) bundles++;
@@ -1198,7 +1198,7 @@ static void test_bot_drive_fairness(void) {
             int n_elig = 0;
             for (int s = 0; s < g.num_players; s++) if (elig & (1u << s)) n_elig++;
 
-            if (bot_drive(&g, 0, BOT_DRIVE_MAX_ACTIONS, &out) == 0) break;
+            if (bot_drive(&g, 0, BOT_DRIVE_MAX_ACTIONS, 0, 0, &out) == 0) break;
             if (n_elig > 1) { first_actor[out.actions[0].seat]++; total++; }
         }
     }
@@ -1228,7 +1228,7 @@ static void test_bot_drive_deterministic(void) {
         unsigned acc = 2166136261u;
         BotDriveOut out;
         for (int step = 0; step < 300 && game_done(&g) < 0; step++) {
-            if (bot_drive(&g, 0, BOT_DRIVE_MAX_ACTIONS, &out) == 0) break;
+            if (bot_drive(&g, 0, BOT_DRIVE_MAX_ACTIONS, 0, 0, &out) == 0) break;
             for (int a = 0; a < out.n; a++) {
                 acc = (acc ^ (unsigned)out.actions[a].seat) * 16777619u;
                 acc = (acc ^ (unsigned)out.actions[a].move.type) * 16777619u;
@@ -1240,7 +1240,76 @@ static void test_bot_drive_deterministic(void) {
     CHECK(h[0] == h[1], "the same seeded game drives to the same bot order and moves");
 }
 
+// The CAS-retry path: a preferred move is reused when still legal, ignored
+// when not, and never lets a host smuggle an illegal move past the kernel.
+static void test_bot_drive_preferred(void) {
+    Game g;
+    make_seeded_game(&g, 4, 5);
+    seat_all(&g, STRAT_HANDWRITTEN_PROD);
+
+    // What would this cycle do on its own?
+    Game base = g;
+    BotDriveOut plain;
+    bot_drive(&g, 0, BOT_DRIVE_MAX_ACTIONS, 0, 0, &plain);
+    CHECK(plain.n >= 1, "the baseline cycle acted");
+    int seat = plain.actions[0].seat;
+
+    // Offer that seat a DIFFERENT legal move and it must be taken verbatim —
+    // that is the retry reusing a decision instead of re-running the search.
+    g = base;
+    LegalMoves m;
+    calculate_legal_moves(&g, seat, &m);
+    int other = -1;
+    for (int i = 0; i < m.n; i++) {
+        if (m.moves[i].type != plain.actions[0].move.type
+            || m.moves[i].n_cards != plain.actions[0].move.n_cards) { other = i; break; }
+    }
+    if (other >= 0) {
+        BotDrivePref pref = { (int8_t)seat, m.moves[other] };
+        BotDriveOut out;
+        bot_drive(&g, 0, BOT_DRIVE_MAX_ACTIONS, &pref, 1, &out);
+        int used = 0;
+        for (int i = 0; i < out.n; i++)
+            if (out.actions[i].seat == seat && out.actions[i].move.type == m.moves[other].type
+                && out.actions[i].move.n_cards == m.moves[other].n_cards) used = 1;
+        CHECK(used, "a still-legal preferred move is reused verbatim");
+    }
+
+    // An ILLEGAL preference must be ignored, not applied: legality is never
+    // taken on the host's word. Offer a card the seat does not hold.
+    g = base;
+    LegalMove bogus;
+    memset(&bogus, 0, sizeof bogus);
+    bogus.type = MOVE_ATTACK;
+    bogus.n_cards = 1;
+    bogus.cards[0] = g.players[seat].hand[0];
+    bogus.cards[0].value = 2;   // not a 36-card-deck value: cannot be in any hand
+    BotDrivePref bad = { (int8_t)seat, bogus };
+    BotDriveOut out2;
+    bot_drive(&g, 0, BOT_DRIVE_MAX_ACTIONS, &bad, 1, &out2);
+    int played_bogus = 0;
+    for (int i = 0; i < out2.n; i++)
+        if (out2.actions[i].move.n_cards == 1 && out2.actions[i].move.cards[0].value == 2) played_bogus = 1;
+    CHECK(!played_bogus, "an illegal preferred move is never applied");
+    CHECK(out2.n >= 1, "...and the seat falls back to choosing normally");
+
+    // A preference for a seat that cannot act changes nothing.
+    g = base;
+    BotDriveOut out3;
+    BotDrivePref none = { (int8_t)((seat + 1) % 4), bogus };
+    bot_drive(&g, 0, BOT_DRIVE_MAX_ACTIONS, &none, 1, &out3);
+    CHECK(out3.n >= 1, "an irrelevant preference does not stall the cycle");
+
+    // NULL pref is exactly the no-preference cycle.
+    g = base;
+    BotDriveOut out4;
+    bot_drive(&g, 0, BOT_DRIVE_MAX_ACTIONS, 0, 0, &out4);
+    CHECK(out4.n == plain.n && out4.actions[0].seat == plain.actions[0].seat,
+          "NULL pref reproduces the plain cycle");
+}
+
 int main(void) {
+    test_bot_drive_preferred();
     test_bot_pacing_table();
     test_bot_roster_strat_unique();
     test_bot_drive_basic();

@@ -586,7 +586,7 @@ int fio_bot_drive_json(int human_mask, char *out, int cap) {
     engine_snap_hook = fio_snap_cb;
 
     static BotDriveOut drv;   // ~1KB of LegalMoves; not a stack citizen
-    bot_drive(&g_game, (uint32_t)human_mask, BOT_DRIVE_MAX_ACTIONS, &drv);
+    bot_drive(&g_game, (uint32_t)human_mask, BOT_DRIVE_MAX_ACTIONS, 0, 0, &drv);
 
     engine_snap_hook = 0;
 

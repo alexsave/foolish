@@ -68,6 +68,20 @@ typedef struct {
     int ended;    // game_done() after the drive: loser seat, or -1
 } BotDriveOut;
 
+// A move a seat already decided on, to be reused IF it is still legal.
+//
+// Only for the server's CAS-retry path. executeWithGameLock re-runs the whole
+// operation on a version conflict, and a bot that re-chooses from scratch each
+// attempt re-runs its search — for cordite's Monte-Carlo that is seconds of
+// CPU, and a few attempts blow the edge's ~2s budget and get the isolate killed
+// while holding the lease. So the host hands back what the failed attempt
+// chose. The kernel still decides whether it may be played: a legal,
+// slightly-stale choice beats a CPU kill, an illegal one is simply re-chosen.
+typedef struct {
+    int8_t    seat;
+    LegalMove move;
+} BotDrivePref;
+
 // Drive bot seats until a stop condition, applying 0..n actions to `g`.
 //
 // `human_mask` is a bitmask of seats the kernel must NOT drive. It does NOT
@@ -83,8 +97,13 @@ typedef struct {
 // in replays and tests. It deliberately consumes no RNG: the deal/refill stream
 // must not shift (deterministic_deck games are reproducible from their seed).
 //
+// `pref`/`n_pref` (may be NULL/0) offer per-seat moves to reuse when still
+// legal — see BotDrivePref. They change only whether a seat SEARCHES, never
+// which seats are eligible, the order they are picked in, or what is legal.
+//
 // Returns the number of actions applied, or -1 on a bad argument.
-int bot_drive(Game *g, uint32_t human_mask, int max_actions, BotDriveOut *out);
+int bot_drive(Game *g, uint32_t human_mask, int max_actions,
+              const BotDrivePref *pref, int n_pref, BotDriveOut *out);
 
 // The bot seats that could act right now (bitmask), ignoring human_mask seats.
 // Hosts use this to decide I/O the kernel cannot do — the server hydrates the

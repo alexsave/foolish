@@ -286,7 +286,7 @@ int wasm_bot_pacing_ms(int pacing_class, int humans_present) {
 int wasm_bot_drive(int human_mask, int max_actions) {
     static BotDriveOut drv;
     Game *g = wasm_game_ptr_internal();
-    if (bot_drive(g, (uint32_t)human_mask, max_actions, &drv) < 0) return -1;
+    if (bot_drive(g, (uint32_t)human_mask, max_actions, 0, 0, &drv) < 0) return -1;
 
     unsigned char *out = wasm_io_ptr();
     *out++ = (unsigned char)drv.stop;

@@ -128,7 +128,36 @@ static int classify(int move_type, const BoardMark *before, const Game *after) {
 
 // ---------- the cycle ------------------------------------------------------
 
-int bot_drive(Game *g, uint32_t human_mask, int max_actions, BotDriveOut *out) {
+// Same move? Compares what the kernel's enumerator produced, so this is an
+// exact structural match (type + cards + cover targets), not a heuristic.
+static int same_move(const LegalMove *a, const LegalMove *b) {
+    if (a->type != b->type || a->n_cards != b->n_cards) return 0;
+    for (int i = 0; i < a->n_cards; i++) {
+        if (a->cards[i].suit != b->cards[i].suit || a->cards[i].value != b->cards[i].value) return 0;
+        if (a->type == MOVE_COVER
+            && (a->attack_cards[i].suit != b->attack_cards[i].suit
+                || a->attack_cards[i].value != b->attack_cards[i].value)) return 0;
+    }
+    return 1;
+}
+
+// The seat's preferred move, but only if the CURRENT menu still contains it —
+// legality is never taken on the host's word. Returns its index in `moves`, or
+// -1 to mean "search normally".
+static int pref_index(const BotDrivePref *pref, int n_pref, int seat,
+                      const LegalMoves *moves) {
+    if (!pref) return -1;
+    for (int p = 0; p < n_pref; p++) {
+        if (pref[p].seat != seat) continue;
+        for (int i = 0; i < moves->n; i++)
+            if (same_move(&moves->moves[i], &pref[p].move)) return i;
+        return -1;   // stale: the reloaded state took it away — re-choose
+    }
+    return -1;
+}
+
+int bot_drive(Game *g, uint32_t human_mask, int max_actions,
+              const BotDrivePref *pref, int n_pref, BotDriveOut *out) {
     if (!g || !out) return -1;
     out->n = 0;
     out->stop = BOT_STOP_NO_ELIGIBLE;
@@ -166,12 +195,18 @@ int bot_drive(Game *g, uint32_t human_mask, int max_actions, BotDriveOut *out) {
         // seat's move away.
         if (!seat_can_act(g, seat, human_mask, &g_scratch)) continue;
 
-        // Seats carry a STRAT_* id by kernel-wide convention (the kernel itself
-        // reads it — espresso_prod checks strategy_key == STRAT_RANDOM), so the
-        // roster entry is resolved back from the brain. That mapping is 1:1 and
-        // the roster tests pin it that way.
-        int ridx = bot_roster_find_by_strat(g->players[seat].strategy_key);
-        int idx = bot_roster_choose(ridx, g, seat, &g_scratch);
+        // A move this seat already chose in a failed CAS attempt, if the
+        // reloaded state still allows it — reusing it skips the search, which
+        // is the entire point (see BotDrivePref).
+        int idx = pref_index(pref, n_pref, seat, &g_scratch);
+        if (idx < 0) {
+            // Seats carry a STRAT_* id by kernel-wide convention (the kernel
+            // itself reads it — espresso_prod checks strategy_key ==
+            // STRAT_RANDOM), so the roster entry is resolved back from the
+            // brain. That mapping is 1:1 and the roster tests pin it that way.
+            int ridx = bot_roster_find_by_strat(g->players[seat].strategy_key);
+            idx = bot_roster_choose(ridx, g, seat, &g_scratch);
+        }
         if (idx < 0 || idx >= g_scratch.n) continue;
 
         LegalMove move = g_scratch.moves[idx];
