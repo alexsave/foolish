@@ -12,6 +12,7 @@
 #include "../src/strategy.h"
 #include "../src/bot_roster.h"
 #include "../src/bot_knobs.h"
+#include "../src/bot_drive.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -1062,7 +1063,191 @@ static void test_bot_roster_choose_scopes_knobs(void) {
     CHECK(all_ok, "every offline rung dispatches to a linked brain");
 }
 
+/* ------------------------- bot drive cycle (F2/F3) ----------------------- */
+
+// An n-player game dealt from a pinned wide seed, so the sweeps below are
+// reproducible and every seed is a genuinely different deal.
+static void make_seeded_game(Game *g, int n_players, int seed) {
+    unsigned char s[32];
+    for (int i = 0; i < 32; i++) s[i] = (unsigned char)(i * 29 + seed * 7 + n_players);
+    game_set_seed((uint32_t)(seed + 1));
+    random_strategy_set_seed((uint32_t)(seed + 1));
+    game_set_deal_seed_bytes(s, 32);
+
+    memset(g, 0, sizeof(*g));
+    g->num_players = (int8_t)n_players;
+    for (int i = 0; i < n_players; i++) {
+        g->players[i].status = PLAYER_STATUS_READY;
+        snprintf(g->players[i].player_id, sizeof(g->players[i].player_id), "p%d", i);
+        snprintf(g->players[i].name, sizeof(g->players[i].name), "P%d", i);
+    }
+    start_game(g);
+}
+
+static void test_bot_pacing_table(void) {
+    // The one class->ms table. The server's values, which the phone adopts.
+    CHECK(bot_pacing_ms(BOT_PACE_MOVE, 1) == 3000, "a visible move with humans waits 3000ms");
+    CHECK(bot_pacing_ms(BOT_PACE_MOVE, 0) == 300, "bots-only games pace at 300ms");
+    CHECK(bot_pacing_ms(BOT_PACE_ROUND_TRANSITION, 1) == 3000, "a round transition waits like a move");
+    CHECK(bot_pacing_ms(BOT_PACE_ROUND_TRANSITION, 0) == 300, "bots-only round transition paces at 300ms");
+    // Bundling only pays off if silent actions cost nothing — including with a
+    // human watching, where the server currently still burns its full delay.
+    CHECK(bot_pacing_ms(BOT_PACE_BUNDLED_PASSIVE, 1) == 0, "a silent action never delays, even with humans");
+    CHECK(bot_pacing_ms(BOT_PACE_BUNDLED_PASSIVE, 0) == 0, "a silent action never delays, bots-only");
+    CHECK(bot_pacing_ms(BOT_PACE_NONE, 1) == 0 && bot_pacing_ms(BOT_PACE_NONE, 0) == 0,
+          "nothing applied, nothing to wait for");
+    CHECK(bot_pacing_ms(999, 1) == 0, "an unknown class does not invent a delay");
+}
+
+// Every roster entry must name a DISTINCT brain: bot_drive resolves a seat's
+// roster entry back from its STRAT_* id, which is only sound 1:1. The old
+// cordite/cordite_max pair (two entries, one brain, different knobs) is exactly
+// what would break it.
+static void test_bot_roster_strat_unique(void) {
+    int n = 0;
+    const BotRosterEntry *r = bot_roster(&n);
+    int dup = 0;
+    for (int i = 0; i < n; i++)
+        for (int j = i + 1; j < n; j++)
+            if (r[i].strat == r[j].strat) dup = 1;
+    CHECK(!dup, "no two roster entries share a brain (bot_roster_find_by_strat is 1:1)");
+
+    int rt = 1;
+    for (int i = 0; i < n; i++) if (bot_roster_find_by_strat(r[i].strat) != i) rt = 0;
+    CHECK(rt, "bot_roster_find_by_strat round-trips every entry");
+    CHECK(bot_roster_find_by_strat(-1) == -1, "an unassigned seat resolves to no entry");
+    CHECK(bot_roster_find_by_strat(STRAT_NOVICHOK) == -1, "an unrostered brain resolves to -1");
+}
+
+static void seat_all(Game *g, int strat) {
+    for (int i = 0; i < g->num_players; i++) g->players[i].strategy_key = (int8_t)strat;
+}
+
+static void test_bot_drive_basic(void) {
+    Game g;
+    make_2p_game(&g);
+    start_game(&g);
+    seat_all(&g, STRAT_HANDWRITTEN_PROD);
+
+    BotDriveOut out;
+    CHECK(bot_drive(NULL, 0, 4, &out) == -1, "bot_drive rejects a NULL game");
+    CHECK(bot_drive(&g, 0, 4, NULL) == -1, "bot_drive rejects a NULL out");
+
+    // human_mask covering every seat: nothing for the kernel to drive.
+    int n = bot_drive(&g, 0x3, BOT_DRIVE_MAX_ACTIONS, &out);
+    CHECK(n == 0 && out.n == 0, "a fully human table applies nothing");
+    CHECK(out.stop == BOT_STOP_NO_ELIGIBLE, "...and says so");
+
+    // All-bot: the cycle applies at least one action and stops on something real.
+    n = bot_drive(&g, 0, BOT_DRIVE_MAX_ACTIONS, &out);
+    CHECK(n >= 1, "an all-bot table applies at least one action");
+    CHECK(out.n == n, "the returned count is out.n");
+    CHECK(out.stop == BOT_STOP_EVENTS || out.stop == BOT_STOP_ENDED
+          || out.stop == BOT_STOP_NO_ELIGIBLE || out.stop == BOT_STOP_MAX, "stop reason is a known one");
+    CHECK(out.actions[0].seat >= 0 && out.actions[0].seat < g.num_players, "the acting seat is real");
+
+    // A drive never drives a masked seat.
+    for (int i = 0; i < 40 && game_done(&g) < 0; i++) {
+        bot_drive(&g, 0x1, BOT_DRIVE_MAX_ACTIONS, &out);   // seat 0 is "human"
+        int touched_human = 0;
+        for (int a = 0; a < out.n; a++) if (out.actions[a].seat == 0) touched_human = 1;
+        CHECK(!touched_human, "bot_drive never moves a seat in human_mask");
+        if (out.n == 0) break;   // only the human can act — a real stop
+    }
+}
+
+// A cycle stops on the FIRST visible action: everything before it must be
+// silent, or the host would render a move it was never told about.
+static void test_bot_drive_bundles_only_silent(void) {
+    int bad_order = 0, cycles = 0, bundles = 0;
+    for (int seed = 0; seed < 12; seed++) {
+        Game g;
+        make_seeded_game(&g, 6, seed);
+        seat_all(&g, STRAT_HANDWRITTEN_PROD);
+
+        BotDriveOut out;
+        for (int step = 0; step < 400 && game_done(&g) < 0; step++) {
+            int n = bot_drive(&g, 0, BOT_DRIVE_MAX_ACTIONS, &out);
+            if (n == 0) break;
+            cycles++;
+            if (n > 1) bundles++;
+            for (int a = 0; a < out.n - 1; a++)
+                if (out.actions[a].pacing_class != BOT_PACE_BUNDLED_PASSIVE) bad_order = 1;
+        }
+    }
+    CHECK(cycles > 0, "the bundling sweep actually drove games");
+    CHECK(!bad_order, "only silent actions are bundled; a visible one ends the cycle");
+    // The whole point of F3: 6-player games are full of silent goods.
+    CHECK(bundles > 0, "silent actions really do bundle at 6 players (the padding F3 removes)");
+}
+
+// The divergence F2 exists to kill: a first-eligible seat walk gives low seats
+// a systematic tempo advantage. Over many decisions the shuffle must not.
+static void test_bot_drive_fairness(void) {
+    int first_actor[MAX_PLAYERS] = { 0 };
+    int total = 0;
+    for (int seed = 0; seed < 60; seed++) {
+        Game g;
+        make_seeded_game(&g, 4, seed + 1000);
+        seat_all(&g, STRAT_RANDOM);
+
+        BotDriveOut out;
+        for (int step = 0; step < 200 && game_done(&g) < 0; step++) {
+            // Only score cycles where more than one seat COULD have gone first.
+            uint32_t elig = bot_drive_eligible_mask(&g, 0);
+            int n_elig = 0;
+            for (int s = 0; s < g.num_players; s++) if (elig & (1u << s)) n_elig++;
+
+            if (bot_drive(&g, 0, BOT_DRIVE_MAX_ACTIONS, &out) == 0) break;
+            if (n_elig > 1) { first_actor[out.actions[0].seat]++; total++; }
+        }
+    }
+    CHECK(total > 50, "the fairness sweep saw enough contended cycles");
+
+    // A first-eligible walk would put ~100% on the lowest eligible seat. Assert
+    // no seat takes an absurd share; this is a bias detector, not a uniformity
+    // proof (the eligible SET differs per cycle, so shares are not equal).
+    int worst = 0;
+    for (int s = 0; s < 4; s++) if (first_actor[s] > worst) worst = first_actor[s];
+    CHECK(worst < (total * 3) / 4, "no seat monopolises the first move (a seat walk would)");
+    int silent_seats = 0;
+    for (int s = 0; s < 4; s++) if (first_actor[s] == 0) silent_seats++;
+    CHECK(silent_seats == 0, "every seat gets to go first sometimes");
+}
+
+// The shuffle must be a pure function of public state: replays and the
+// differential harness depend on the same game producing the same bot order,
+// and it must not disturb the deal/refill RNG stream.
+static void test_bot_drive_deterministic(void) {
+    unsigned h[2];
+    for (int rep = 0; rep < 2; rep++) {
+        Game g;
+        make_seeded_game(&g, 4, 77);
+        seat_all(&g, STRAT_HANDWRITTEN_PROD);
+
+        unsigned acc = 2166136261u;
+        BotDriveOut out;
+        for (int step = 0; step < 300 && game_done(&g) < 0; step++) {
+            if (bot_drive(&g, 0, BOT_DRIVE_MAX_ACTIONS, &out) == 0) break;
+            for (int a = 0; a < out.n; a++) {
+                acc = (acc ^ (unsigned)out.actions[a].seat) * 16777619u;
+                acc = (acc ^ (unsigned)out.actions[a].move.type) * 16777619u;
+                acc = (acc ^ (unsigned)out.actions[a].pacing_class) * 16777619u;
+            }
+        }
+        h[rep] = acc;
+    }
+    CHECK(h[0] == h[1], "the same seeded game drives to the same bot order and moves");
+}
+
 int main(void) {
+    test_bot_pacing_table();
+    test_bot_roster_strat_unique();
+    test_bot_drive_basic();
+    test_bot_drive_bundles_only_silent();
+    test_bot_drive_fairness();
+    test_bot_drive_deterministic();
+
     test_bot_roster_table();
     test_bot_knobs_precedence();
     test_bot_roster_choose_scopes_knobs();

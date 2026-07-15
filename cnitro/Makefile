@@ -44,7 +44,7 @@ CORE_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/view.c src/aw
             src/distilled_strategy.c src/semtex_strategy.c \
             src/octogen_strategy.c src/torpex_strategy.c \
             src/torpex_value.c src/novichok_strategy.c \
-            src/bot_knobs.c src/bot_roster.c
+            src/bot_knobs.c src/bot_roster.c src/bot_drive.c
 CORE_OBJ := $(CORE_SRC:src/%.c=build/%.o)
 
 .PHONY: all clean tests print-core
@@ -456,7 +456,9 @@ WASM_BOTS_API_EXPORTS := \
   -Wl,--export=wasm_import_logs -Wl,--export=wasm_clear_logs \
   -Wl,--export=wasm_set_game_key -Wl,--export=wasm_import_strategy_keys \
   -Wl,--export=wasm_set_strategy_seed -Wl,--export=wasm_reload_bot_flags \
-  -Wl,--export=wasm_choose_move
+  -Wl,--export=wasm_choose_move \
+  -Wl,--export=wasm_bot_drive -Wl,--export=wasm_bot_eligible_mask \
+  -Wl,--export=wasm_bot_pacing_ms
 
 # The rules module's move buffer only feeds the exported menu — production
 # validation is direct rule-checking, and production menus/bot enumeration
@@ -713,7 +715,7 @@ WASM_BOT_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/view.c sr
                 src/simple_heuristic_strategy.c \
                 src/handwritten_prod_strategy.c \
                 src/octogen_strategy.c \
-                src/bot_knobs.c \
+                src/bot_knobs.c src/bot_roster.c src/bot_drive.c \
                 wasm/wasm_api.c wasm/wasm_bots_api.c
 
 # PER-FILE opt (a mix one clang invocation can't express): the profiled hot MC
@@ -735,7 +737,13 @@ WASM_BOT_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/view.c sr
 # ≤K-card subtrees with a proven-exact value for ~15% faster e2e p50. The book
 # data (~27 KiB read-only) is dwarfed by the runtime TT peak, so the wasm memory
 # footprint is unchanged; only the module SIZE grows by the book bytes.
-WASM_BOT_CFLAGS  := $(filter-out -Wl% $(WASM_OPT),$(WASM_FLAGS)) -DCD_WASM_OVERLAY -DCD_LEAFBOOK
+# -DFOOLISH_SEEDED_BOTS_ONLY: bot_roster.c dispatches only the brains this
+# module links (the seeded ladder). Without it the roster's dispatch would drag
+# espresso_prod + gunpowder in for two offline-only rungs the server can never
+# seed — measured at +5.1 KB gzip (54.1 -> 59.2 KB) on every edge cold start.
+# The roster TABLE is unaffected: same keys, knobs, flags, tiers everywhere.
+WASM_BOT_CFLAGS  := $(filter-out -Wl% $(WASM_OPT),$(WASM_FLAGS)) -DCD_WASM_OVERLAY -DCD_LEAFBOOK \
+                    -DFOOLISH_SEEDED_BOTS_ONLY
 # bots-only 22 KiB shadow stack. Adversarial canary (e2e/rules_stack_canary.mts
 # for the cover path + e2e/stack_canary.mts for the solver path) measures the
 # PRODUCTION worst at 14.3 KiB — the cover enumeration (calc_cover_moves'

@@ -113,27 +113,38 @@ public final class LocalGame: ObservableObject, GameSession {
         driveTask = Task { await self.runBots() }
     }
 
+    /// The bot loop is now one kernel call per cycle
+    /// (docs/C_CORE_CONSOLIDATION.md F2/F3). Everything it used to decide in
+    /// Swift — which of several eligible bots goes next, whether a silent action
+    /// deserves a pause, how long to wait — is the kernel's answer, so the phone
+    /// and the website run the same cycle. What stays here is what the doc calls
+    /// the host's job: timers, thermal policy, and rendering.
     private func runBots() async {
         while !Task.isCancelled {
-            guard let over = try? await engine.gameOver() else { break }
-            if over >= 0 { foolSeat = over; break }
-
-            guard let mask = try? await engine.actorMask() else { break }
-            // Human's turn (they're eligible): stop and wait for input.
-            if (mask & (1 << humanSeat)) != 0 { break }
-            if mask == 0 { break }
-
             await applyThermalPolicy()
 
             thinking = true
-            try? await Task.sleep(nanoseconds: botDelayNanos())
-            if Task.isCancelled { thinking = false; break }
-
-            let move = try? await engine.botStep(humanSeat: humanSeat)
+            guard let drive = try? await engine.botDrive(humanSeats: [humanSeat]) else {
+                thinking = false
+                break
+            }
             thinking = false
-            guard let move, !Task.isCancelled else { break }
-            lastBotMove = move
-            await refresh()
+            if Task.isCancelled { break }
+
+            // Show what happened before waiting on it. Silent actions bundle
+            // into this same cycle and carry no delay of their own.
+            if let visible = drive.lastVisible { lastBotMove = visible.move }
+            if !drive.actions.isEmpty { await refresh() }
+
+            if drive.isOver { foolSeat = drive.ended; break }
+            // No bot could act: the human owes a move. Wait for their input —
+            // drive() is called again once they play.
+            if drive.actions.isEmpty && drive.stop == .noEligible { break }
+
+            if drive.delayMs > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(drive.delayMs) * 1_000_000)
+                if Task.isCancelled { break }
+            }
         }
         await refresh()
         if let over = try? await engine.gameOver(), over >= 0 { foolSeat = over }
@@ -147,15 +158,12 @@ public final class LocalGame: ObservableObject, GameSession {
         actorMask = (try? await engine.actorMask()) ?? 0
     }
 
-    // MARK: - Pacing & thermal guard (§7.2, §16.B2)
-
-    /// Deliberate inter-bot UX pacing, 600–1200ms (mirrors the server's
-    /// e2e/bench_bot_e2e.ts "deliberate inter-bot UX pacing"). Deterministic
-    /// jitter from the current battle count so replays feel identical.
-    private func botDelayNanos() -> UInt64 {
-        let jitter = UInt64(abs((view?.battles.count ?? 0) * 137) % 600)
-        return (600 + jitter) * 1_000_000
-    }
+    // MARK: - Thermal guard (§7.2, §16.B2)
+    //
+    // Pacing used to live here as a 600-1200ms jitter whose comment claimed to
+    // mirror the server — it never did (the server paces at 3000ms with a human
+    // watching). It is now one kernel table, bot_pacing_ms, and arrives as
+    // BotDrive.delayMs.
 
     /// When the device is hot, temporarily run heavy solvers as espresso so the
     /// game never freezes and the phone never cooks (§7.2, §15 risk 2). When it

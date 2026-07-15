@@ -107,13 +107,48 @@ int fio_apply_json(int actor_seat, const char *move_json);
 // FIO_EREJECT (an ENGINE_REJECT_* value from game.h), else 0.
 int fio_last_reject(void);
 
+// The animation events of the LAST fio_apply_json / fio_bot_drive_json, as seen
+// by `viewer` (a seat, or -1 for a spectator), e.g.
+//   [{"type":5,"seat":3,"msg":4,"from":1,"to":2,"cards":[...],
+//     "target":{...},"battle":0}]
+// type/msg/from/to are EVW_* codes (cnitro/src/evwire.h) — the SAME event
+// stream the website plays, derived once in the kernel (evwire_walk). This is
+// why `BoardDiff.swift` is cancelled: a client never works out which card flew
+// where (docs/C_CORE_CONSOLIDATION.md F4). `cards` entries are null where the
+// kernel redacted them (a card dealt/drawn into someone else's hand).
+// Returns bytes written, or a negative error. fio_bot_drive_json already
+// includes its cycle's events inline; this is the apply-path companion.
+int fio_last_events_json(int viewer, char *out, int cap);
+
 // Drive ONE eligible bot seat (any seat with a pending action other than
 // human_seat): choose its move with that seat's assigned strategy, apply it,
 // and emit the applied move as JSON: {"seat":i,"type":...,"cards":[...]}.
 // Returns bytes written (> 0) when a bot acted, 0 when no bot seat is eligible
 // (it is the human's turn, or the game is over), or a negative error.
 // Pass human_seat = -1 to let every seat be driven (used by replays/spectate).
+//
+// DEPRECATED for the app's bot loop — it walks seats and drives the FIRST
+// eligible one, which hands low seats a tempo advantage the website does not
+// have, and it cannot bundle silent actions. Use fio_bot_drive_json.
+// Kept for tests and single-step tooling.
 int fio_bot_step_json(int human_seat, char *out, int cap);
+
+// Drive the bot cycle (docs/C_CORE_CONSOLIDATION.md F2/F3): apply 0..n bot
+// actions and stop on the same conditions as the website's loop — game over, a
+// visible action landed, or no bot can act. Silent actions (a `good` that does
+// not end the bout) bundle into one cycle instead of costing a delay each.
+// `human_mask` is a bitmask of seats the kernel must NOT drive; a human being
+// able to act is NOT a stop condition (bots throw in while you deliberate,
+// exactly as they do online).
+//
+// Emits:
+//   {"actions":[{"seat":i,"pace":c,"type":...,"cards":[...]}...],
+//    "stop":s,"ended":foolSeatOr-1,"delayMs":ms}
+//
+// `delayMs` is how long the host should wait before the next cycle — the one
+// pacing table (bot_pacing_ms), not a Swift constant. Returns bytes written
+// (always > 0; "actions" may be empty), or a negative error.
+int fio_bot_drive_json(int human_mask, char *out, int cap);
 
 // ---------- strategies (offline bot roster, §7.2) --------------------------
 

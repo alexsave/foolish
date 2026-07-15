@@ -624,11 +624,19 @@ entry the server bridge uses (`_shared/bot_strategy.ts:37` shows the call
 shape). Map `strategy_id` ↔ roster names in one C table; expose
 `fio_strategy_count/name`.
 
-**B2. Bot pacing & thermal guard.** In `LocalGame`: after a human move, while
-`fio_actor_mask()` includes a bot seat — pick its move on a background queue,
-then apply after a UX delay (600–1200ms randomized; the server does the same
-deliberately — `e2e/bench_bot_e2e.ts:12` "deliberate inter-bot UX pacing").
-Cordite-class strategies: show the thinking indicator immediately; skip
+**B2. Bot pacing & thermal guard.** ✅ DONE, and the pacing half moved to C
+(`docs/C_CORE_CONSOLIDATION.md` F2/F3, July 2026). `LocalGame.runBots` is now
+one `EngineC.botDrive` call per cycle: the KERNEL picks fairly among
+simultaneously-eligible bots, applies the cycle (bundling silent actions), and
+returns `delayMs` from the one pacing table. The old plan here — a 600–1200ms
+randomized delay, "the server does the same deliberately" — was wrong on both
+counts: the server paces at 3000ms with a human watching, and the phone drove
+the FIRST eligible seat where the server shuffles. Do NOT reintroduce a Swift
+delay constant; `BotDrive.delayMs` is the answer. Note bots now throw in while
+the player deliberates, exactly as they do online.
+
+What stays Swift-side is the host's job only: timers, and the thermal guard —
+show the thinking indicator immediately for cordite-class strategies; skip
 deliberation entirely when `ProcessInfo.processInfo.thermalState >= .serious`
 (fall back to `espresso` for that move — never freeze the game).
 

@@ -185,6 +185,35 @@ column for the localized display names (`docs/IOS_BOT_NAMING.md`).
 
 ### 4.2 F2 — The bot drive cycle becomes a kernel entry point
 
+**STATUS: kernel + iOS LANDED (A2, July 2026); the server port is the next
+step.** `cnitro/src/bot_drive.{h,c}` is the cycle; `fio_bot_drive_json` and
+`wasm_bot_drive` expose it; `LocalGame.runBots` is now one call per cycle, so
+the phone's fairness and bundling divergences (§3.2) are gone. `bot_actions.ts`
+still runs its own loop — porting it onto `wasm_bot_drive` behind the
+differential harness is what remains. Decisions taken while building it:
+
+1. **A human being able to act is NOT a stop condition** (owner decision). The
+   spec above reads "stop: human seat eligible", which is the *phone's* rule;
+   the site has always driven bots regardless. They are not interchangeable:
+   `should_bot_act` makes the defender and every not-yet-good attacker eligible
+   AT ONCE, so yielding to any eligible human stops bots throwing in while a
+   human deliberates — a large online gameplay change that can also stall a
+   bout on an idle player. `human_mask` therefore means "seats the kernel must
+   not drive", full stop, and the phone adopts the site's rule.
+2. **The shuffle is seeded from PUBLIC state, not the game RNG.** The spec says
+   "seeded shuffle (game RNG)", but drawing from that stream would shift every
+   subsequent refill and break "reproducible from the deal seed". A hash of the
+   public board varies per action, is identical on every host, and replays
+   exactly — with none of that cost.
+3. **The offline-only rungs are not linked into bots.wasm.** The roster's
+   dispatch would otherwise drag `espresso_prod` + `gunpowder` in for two rungs
+   the server can never seed: measured at **+5.1 KB gzip** (54.1 → 59.2 KB) on
+   every edge cold start. `-DFOOLISH_SEEDED_BOTS_ONLY` keeps the shipped module
+   to the seeded ladder (net cost of the whole A1+A2 kernel: +0.3 KB gzip over
+   the pre-A1 artifact). The roster TABLE is unchanged everywhere; only which
+   brains a build can RUN differs, which was already true of CORE_SRC vs
+   WASM_BOT_SRC. This is §4.7's "deliberate, documented budget decision".
+
 The server loop's INNER CYCLE (`bot_actions.ts:262-411`) is game logic in a
 TS coat: find eligible bot seats, pick one **shuffled** (fairness), choose
 via roster, apply, **bundle zero-event passives**, stop when a human becomes
@@ -210,6 +239,18 @@ rendering. Telegram/Steam later: the same three calls (`new_game`, `apply`,
 the old TS cycle vs `bot_drive`, byte-compare committed products.
 
 ### 4.3 F3 — Pacing policy as shared data, not per-host constants
+
+**STATUS: LANDED (A2).** `bot_pacing_ms(class, humans_present)` in
+`bot_drive.c` is the one table, reaching Swift as `BotDrive.delayMs` and TS as
+`wasm_bot_pacing_ms`. **The server's values won** (owner decision): 3000ms with
+a human watching, 300ms bots-only. The phone had been pacing at 600–1200ms
+while its own comment claimed to "mirror the server" — it never did — so
+offline bot moves are now ~3.3x slower, partly offset by bundling (a
+passive-heavy 8-player round was five separate ~900ms waits and is now one
+cycle). One deliberate change to the *server's* behavior rides along, landing
+with the port: `BUNDLED_PASSIVE` is 0ms, where `bot_actions.ts` today skips its
+delay only in bots-only games and otherwise pauses the full 3000ms for a cycle
+that changed nothing on screen. Bundling exists so those cost nothing.
 
 Three "feels" exist today (server 3000 ms with humans / 300 ms bots-only /
 skip-when-silent; iOS 600–1200 ms jitter always; docs claiming they match).

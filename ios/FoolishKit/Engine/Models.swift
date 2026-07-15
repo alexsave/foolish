@@ -129,7 +129,7 @@ public enum MoveType: String, Codable, Sendable {
 }
 
 /// One move — a legal-move menu entry, an intent to apply, or (with `seat`) the
-/// move a bot just made (fio_bot_step_json result).
+/// move a bot just made (fio_bot_drive_json result).
 public struct Move: Codable, Equatable, Sendable {
     public let type: MoveType
     public let cards: [Card]
@@ -157,5 +157,68 @@ public struct Move: Codable, Equatable, Sendable {
             return "{\"type\":\"\(type.rawValue)\",\"cards\":[]}"
         }
         return s
+    }
+}
+
+/// What a move is worth pausing for — the kernel's classification
+/// (BOT_PACE_* in cnitro/src/bot_drive.h). The app never turns these into
+/// milliseconds itself: `BotDrive.delayMs` already carries the kernel's answer.
+public enum PacingClass: Int, Codable, Sendable {
+    case none = 0
+    /// A silent action folded into this cycle — nothing to watch, no delay.
+    case bundledPassive = 1
+    /// A visible move — cards changed hands.
+    case move = 2
+    /// The bout resolved (discard / pickup / new defender).
+    case roundTransition = 3
+}
+
+/// Why the kernel's bot cycle stopped (BOT_STOP_* in bot_drive.h).
+public enum BotStop: Int, Codable, Sendable {
+    /// No bot can act — a human's move is owed.
+    case noEligible = 0
+    case ended = 1
+    /// Something visible landed; render it, wait `delayMs`, then drive again.
+    case events = 2
+    /// Hit the per-cycle action cap; call again to continue.
+    case maxActions = 3
+}
+
+/// One action the kernel's bot cycle applied.
+public struct BotAction: Codable, Equatable, Sendable {
+    public let seat: Int
+    public let type: MoveType
+    public let cards: [Card]
+    public let attackCards: [Card]?
+    /// Raw pacing class; use `pacing`.
+    public let pace: Int
+
+    public var pacing: PacingClass { PacingClass(rawValue: pace) ?? .move }
+    public var move: Move { Move(type: type, cards: cards, attackCards: attackCards, seat: seat) }
+}
+
+/// One turn of the kernel's bot cycle (fio_bot_drive_json).
+///
+/// The cycle applies 0..n actions and stops on the same conditions as the
+/// website's loop; silent actions bundle rather than costing a delay each.
+/// Everything here is the kernel's answer — the app decides only how to wait
+/// and how to draw (docs/C_CORE_CONSOLIDATION.md §5).
+public struct BotDrive: Codable, Sendable {
+    public let actions: [BotAction]
+    /// Raw stop reason; use `stop`.
+    public let stopRaw: Int
+    /// Loser seat once the game is over, else -1.
+    public let ended: Int
+    /// How long to wait before driving again — from the ONE pacing table.
+    public let delayMs: Int
+
+    public var stop: BotStop { BotStop(rawValue: stopRaw) ?? .noEligible }
+    public var isOver: Bool { ended >= 0 }
+    /// The last visible action, for the board to animate.
+    public var lastVisible: BotAction? { actions.last { $0.pacing != .bundledPassive } }
+
+    private enum CodingKeys: String, CodingKey {
+        case actions, ended, delayMs
+        case stopRaw = "stop"
     }
 }

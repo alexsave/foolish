@@ -14,6 +14,7 @@
 #include "replay.h"
 #include "strategy.h"
 #include "bot_roster.h"
+#include "bot_drive.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -454,6 +455,52 @@ int fio_bot_step_json(int human_seat, char *out, int cap) {
         return j_finish(&j);
     }
     return 0; // no eligible bot seat
+}
+
+// Emit one applied action: the move's fields, plus its seat and pacing class.
+static void j_drive_action(J *j, const BotDriveAction *a) {
+    const LegalMove *m = &a->move;
+    j_puts(j, "{\"seat\":");  j_puti(j, a->seat);
+    j_puts(j, ",\"pace\":");  j_puti(j, a->pacing_class);
+    j_puts(j, ",\"type\":");  j_putstr(j, move_type_name(m->type));
+    j_puts(j, ",\"cards\":[");
+    for (int c = 0; c < m->n_cards; c++) { if (c) j_putc(j, ','); j_card(j, m->cards[c]); }
+    j_putc(j, ']');
+    if (m->type == MOVE_COVER) {
+        j_puts(j, ",\"attackCards\":[");
+        for (int c = 0; c < m->n_cards; c++) { if (c) j_putc(j, ','); j_card(j, m->attack_cards[c]); }
+        j_putc(j, ']');
+    }
+    j_putc(j, '}');
+}
+
+int fio_bot_drive_json(int human_mask, char *out, int cap) {
+    if (!g_has_game) return FIO_ENOGAME;
+
+    static BotDriveOut drv;   // ~1KB of LegalMoves; not a stack citizen
+    bot_drive(&g_game, (uint32_t)human_mask, BOT_DRIVE_MAX_ACTIONS, &drv);
+
+    // A human still in the game is what makes a pause worth taking. Offline
+    // that is the seat the app is playing; a spectate/replay drive passes
+    // human_mask = 0 and gets the bots-only pace.
+    int humans_present = 0;
+    for (int seat = 0; seat < g_game.num_players; seat++)
+        if ((human_mask & (1 << seat)) && g_game.players[seat].status == PLAYER_STATUS_IN)
+            humans_present = 1;
+
+    // The cycle waits for the most visible thing that happened in it.
+    int pace = BOT_PACE_NONE;
+    for (int i = 0; i < drv.n; i++)
+        if (drv.actions[i].pacing_class > pace) pace = drv.actions[i].pacing_class;
+
+    J j; j_init(&j, out, cap);
+    j_puts(&j, "{\"actions\":[");
+    for (int i = 0; i < drv.n; i++) { if (i) j_putc(&j, ','); j_drive_action(&j, &drv.actions[i]); }
+    j_puts(&j, "],\"stop\":");    j_puti(&j, drv.stop);
+    j_puts(&j, ",\"ended\":");   j_puti(&j, drv.ended);
+    j_puts(&j, ",\"delayMs\":"); j_puti(&j, bot_pacing_ms(pace, humans_present));
+    j_putc(&j, '}');
+    return j_finish(&j);
 }
 
 // ---------- strategies -----------------------------------------------------

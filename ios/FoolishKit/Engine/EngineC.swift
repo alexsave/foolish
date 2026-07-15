@@ -84,12 +84,28 @@ public actor EngineC {
 
     /// Drive one eligible bot seat (any seat but `humanSeat`). Returns the
     /// move it made, or nil when it is the human's turn / the game is over.
+    ///
+    /// Deprecated for the app's bot loop: it drives the FIRST eligible seat and
+    /// cannot bundle silent actions. `botDrive` is the cycle the website runs.
     public func botStep(humanSeat: Int) throws -> Move? {
         var data: Data?
         let rc = try jsonAllowingEmpty({ fio_bot_step_json(Int32(humanSeat), $0, $1) }, into: &data)
         if rc == 0 { return nil }          // no bot acted
         guard let d = data, !d.isEmpty else { return nil }
         return try JSONDecoder().decode(Move.self, from: d)
+    }
+
+    /// Run one bot cycle (docs/C_CORE_CONSOLIDATION.md F2/F3): the kernel picks
+    /// fairly among simultaneously-eligible bots, applies 0..n actions, bundles
+    /// the silent ones, and hands back how long to wait. `humanSeats` are the
+    /// seats the kernel must not drive — note that a human being able to act is
+    /// NOT a stop condition, so bots throw in while the player deliberates,
+    /// exactly as they do online.
+    public func botDrive(humanSeats: [Int]) throws -> BotDrive {
+        var mask: Int32 = 0
+        for s in humanSeats where s >= 0 { mask |= (1 << Int32(s)) }
+        let d = try json { fio_bot_drive_json(mask, $0, $1) }
+        return try JSONDecoder().decode(BotDrive.self, from: d)
     }
 
     // MARK: strategies

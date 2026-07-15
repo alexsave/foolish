@@ -14,6 +14,7 @@
 #include "wire.h"
 #include "legal.h"
 #include "strategy.h"
+#include "bot_drive.h"
 #include <string.h>
 #include <stdlib.h>
 
@@ -249,4 +250,56 @@ int wasm_choose_move(int strat, int bot_idx) {
     for (int i = 0; i < m->n_cards; i++) *out++ = wire_from_card(m->cards[i]);
     for (int i = 0; i < m->n_cards; i++) *out++ = wire_from_card(m->attack_cards[i]);
     return idx;
+}
+
+// ---------- the bot drive cycle (docs/C_CORE_CONSOLIDATION.md F2/F3) --------
+
+// Which bot seats could act right now (bitmask), ignoring `human_mask` seats.
+// The server calls this BEFORE driving, to decide an I/O the kernel cannot do:
+// hydrating the DRAW-masked session log, but only when a belief bot is about to
+// choose (strategyUsesLogs today; the roster's uses_logs flag once the registry
+// is gone).
+int wasm_bot_eligible_mask(int human_mask) {
+    return (int)bot_drive_eligible_mask(wasm_game_ptr_internal(), (uint32_t)human_mask);
+}
+
+// class -> milliseconds, from the ONE pacing table. Exported rather than
+// mirrored in TS: the whole point of F3 is that the site and the phone cannot
+// answer "how long is this worth watching" differently.
+int wasm_bot_pacing_ms(int pacing_class, int humans_present) {
+    return bot_pacing_ms(pacing_class, humans_present);
+}
+
+// Run one bot cycle against the resident game. Applies 0..n actions, bundling
+// silent ones, and lays the result out in the IO buffer:
+//
+//   u8 stop        BOT_STOP_*
+//   i8 ended       loser seat, or -1
+//   u8 n           actions applied
+//   per action:
+//     u8 seat, u8 pacing_class, u8 type, u8 n_cards,
+//     n_cards x u8 wire card, n_cards x u8 wire attack card
+//
+// Returns n, or -1 on error. The caller exports state/logs/events with the
+// existing exports afterwards — the products of the WHOLE cycle, which is
+// exactly what the server commits.
+int wasm_bot_drive(int human_mask, int max_actions) {
+    static BotDriveOut drv;
+    Game *g = wasm_game_ptr_internal();
+    if (bot_drive(g, (uint32_t)human_mask, max_actions, &drv) < 0) return -1;
+
+    unsigned char *out = wasm_io_ptr();
+    *out++ = (unsigned char)drv.stop;
+    *out++ = (unsigned char)(signed char)drv.ended;
+    *out++ = (unsigned char)drv.n;
+    for (int i = 0; i < drv.n; i++) {
+        const BotDriveAction *a = &drv.actions[i];
+        *out++ = (unsigned char)a->seat;
+        *out++ = a->pacing_class;
+        *out++ = (unsigned char)a->move.type;
+        *out++ = (unsigned char)a->move.n_cards;
+        for (int c = 0; c < a->move.n_cards; c++) *out++ = wire_from_card(a->move.cards[c]);
+        for (int c = 0; c < a->move.n_cards; c++) *out++ = wire_from_card(a->move.attack_cards[c]);
+    }
+    return drv.n;
 }
