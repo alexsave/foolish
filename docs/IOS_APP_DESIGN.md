@@ -894,34 +894,33 @@ turn on App Store Connect crash reports review as a weekly habit.
 
 ---
 
-## 17. Implementation status & handoff (2026-07-14)
+## 17. Implementation status & handoff (2026-07-14 · updated 2026-07-15)
 
 *What has actually been built vs. what remains, so a fresh implementer (with a
 Mac + Apple account) can finish. Written after a from-scratch build pass that had
 no Mac/Xcode and no live backend — so the C engine is proven on Linux, and the
 Swift is written-to-compile but has NOT yet been through `xcodebuild`.*
 
-### 17.1 Branches
+### 17.1 Branches — all merged; work from `main`
 
-- **`claude/account-deletion`** (off `main`): the account-deletion prerequisite —
-  migration `20260714120000_account_deletion.sql`, `supabase/functions/
-  delete-account`, and `src/app/delete-account` web page. Mergeable to `main`
-  independently; deploys the endpoint the app's submission needs (§9, §11).
-- **`claude/ios-app-design-98t5ap`**: the app, **rebased onto
-  `claude/account-deletion`** so it includes the endpoint. All iOS work is here.
+Both branches this section used to track are on `main`: the account-deletion
+endpoint merged (`4108a5e`), and the app itself (`ios/`, `cnitro/ios/`) is on
+`main` with subsequent D-milestone commits on top (kernel packed-view decode,
+realtime feed, online session/service — see 17.5). There is no in-flight iOS
+branch; start new work from `main`. Live milestone summary:
+`ios/README.md` § "Milestone status".
 
 ### 17.2 Prerequisites (both handled)
 
-1. **Stale-round guard** (`WEB_RACE_BUG_HANDOFF.md`) — **already landed** before
-   this work (migration `20260713120000_round_epoch_stale_guard.sql`,
-   `e2e/race_conditions.test.ts`, `intent_version` in the wire, `REJECT_STALE_
-   ROUND`, localized strings). The iOS `PackedAction` already sends
-   `intent_version` and decodes stale-round, so the app never reintroduces the
-   bug. Nothing to do.
-2. **Account deletion** (`ORACLE_MONETIZATION_ENGINEERING.md` §4) — **built** on
-   `claude/account-deletion` (see 17.1). Not yet deployed (deploys on merge to
-   `main`). Not yet run against a live DB — review the migration + function
-   before merging.
+1. **Stale-round guard** (`WEB_RACE_BUG_HANDOFF.md`) — **landed** (migration
+   `20260713120000_round_epoch_stale_guard.sql`, `e2e/race_conditions.test.ts`,
+   `intent_version` in the wire, `REJECT_STALE_ROUND`, localized strings). The
+   iOS `PackedAction` already sends `intent_version` and decodes stale-round,
+   so the app never reintroduces the bug. Nothing to do.
+2. **Account deletion** (`ORACLE_MONETIZATION_ENGINEERING.md` §4) — **merged to
+   `main`** (`4108a5e`: migration `20260714120000_account_deletion.sql`,
+   `supabase/functions/delete-account`, web page). Deploys with `main`; still
+   verify once against a live DB before the F submission relies on it.
 
 ### 17.3 What is DONE and verified (Linux, no Mac)
 
@@ -984,8 +983,8 @@ against a staging Supabase project. `docs/PROTOCOL.md` §9 lists it.
 2. `brew install xcodegen`; `cd ios && xcodegen generate`.
 3. `xcodebuild -scheme Foolish -destination 'platform=iOS Simulator,name=iPhone 16' build test` — fix compile nits (Engine/DesignSystem/Boards first, then Net/ supabase-swift shapes).
 4. Record snapshot references (`ComponentSnapshotTests`, set `record=true` once, commit `__Snapshots__`, set back).
-5. Fill the three `TODO(D0)` seams against the web client; smoke-test online vs a staging Supabase project (never prod, §16.D DoD).
-6. Merge `claude/account-deletion` to `main` (review the migration first) so the deletion endpoint deploys; set `SUPABASE_URL`/`KEY` in `ios/Config/*.xcconfig`.
+5. Smoke-test online end-to-end vs a staging Supabase project (never prod, §16.D DoD). The wire is resolved (§17.5, `docs/PROTOCOL.md`) — this step is runtime verification, not protocol work.
+6. Set `SUPABASE_URL`/`KEY` in `ios/Config/*.xcconfig` (account-deletion endpoint is already merged/deployed with `main`; verify it once against a live DB).
 7. Milestone F (needs Apple account): signing (`DEVELOPMENT_TEAM` in project.yml), render the app icon (`swift run --package-path ios/Tools/IconGen icongen …`), screenshots, privacy labels (`ios/Compliance.md`), TestFlight, submit.
 
 ### 17.7 Known gaps / deferred (not blockers)
@@ -997,3 +996,13 @@ against a staging Supabase project. `docs/PROTOCOL.md` §9 lists it.
 - Camera QR **scan** (paste works); full a11y checklist pass; snapshot references.
 - `game_snapshots.extras` replay-name blob is not anonymized on deletion
   (documented in the migration) — needs replay re-encoding.
+
+### 17.8 watchOS (designed, parked)
+
+The watch client's design study is complete and merged (#96): final layout is
+Option H, implementor handoff in `docs/WATCHOS_SPEC.md`, interactive mockups in
+`docs/watchos-layout.html`, decision record in `docs/WATCHOS_LAYOUT.md`. The
+structural plan (`docs/WATCHOS_APP_PLAN.md`) still governs App-Store bundling,
+connectivity, and sequencing: a watchOS target inside this app's record,
+shipped **after Milestone F**. Only build-system prerequisite: watchOS slices
+in `make ios-lib`. Do not start it before the phone app ships.
