@@ -1618,7 +1618,48 @@ static void test_replay_steps_refuses_v5(void) {
     CHECK(ctx.n_events == 0, "a refused code renders nothing");
 }
 
+/* ---------------- A6: reset to lobby is one transform -------------------- */
+
+static void test_reset_to_lobby(void) {
+    Game g;
+    unsigned char seed[FOOLISH_SEED_LEN];
+    // A real finished game, so the fields being cleared are genuinely dirty.
+    CHECK(rs_play_seeded(&g, 4, 5150, seed), "seeded game plays out");
+    CHECK(game_done(&g) >= 0, "the game is over before the reset");
+
+    // Seats 1 and 3 are the bots.
+    game_reset_to_lobby(&g, (1u << 1) | (1u << 3));
+
+    CHECK(g.status == GAME_STATUS_WAITING, "reset returns the game to the lobby");
+    CHECK(g.players[1].status == PLAYER_STATUS_READY, "a bot seat comes back READY");
+    CHECK(g.players[3].status == PLAYER_STATUS_READY, "a bot seat comes back READY");
+    CHECK(g.players[0].status == PLAYER_STATUS_IDLE, "a human seat comes back IDLE");
+    CHECK(g.players[2].status == PLAYER_STATUS_IDLE, "a human seat comes back IDLE");
+
+    for (int i = 0; i < 4; i++) {
+        CHECK(g.players[i].hand_count == 0, "every hand is empty in the lobby");
+        CHECK(!g.players[i].awaiting_attack, "nobody is awaiting an attack in the lobby");
+    }
+    CHECK(g.deck_count == 0, "the deck is cleared");
+    CHECK(g.discard_pile_length == 0, "the discard is cleared");
+    CHECK(!g.has_flipped, "the trump is cleared");
+    CHECK(g.power_suit == 0, "the power suit is cleared");
+    CHECK(g.first_attacker == 0, "first_attacker is cleared");
+    CHECK(g.defender == 0, "defender is cleared");
+    CHECK(g.num_battles == 0, "the table is cleared");
+    CHECK(g.num_eliminated == 0, "the elimination order is cleared");
+    CHECK(g.good_players_mask == 0, "good presses are cleared");
+    CHECK(!g.has_good_timestamp, "the good timestamp is cleared");
+
+    // A reset lobby must be dealable again — the point of the rematch.
+    start_game(&g);
+    CHECK(g.status == GAME_STATUS_PLAYING, "a reset lobby starts a new game");
+    for (int i = 0; i < 4; i++)
+        CHECK(g.players[i].hand_count == CARDS_PER_PLAYER, "the rematch deals a full hand");
+}
+
 int main(void) {
+    test_reset_to_lobby();
     test_replay_steps_rebuilds_the_played_game();
     test_replay_steps_mid_game_cut_conserves_the_deck();
     test_replay_steps_refuses_v5();

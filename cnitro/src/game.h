@@ -261,6 +261,21 @@ void start_game(Game *g);
 // simply produces a different one; replay_steps_v6 is the checked entry.
 void start_game_with_deck(Game *g, const Card *deck, int n_deck);
 
+// The lobby a finished game resets to on "continue"/rematch — the one
+// definition of that transition (docs/C_CORE_CONSOLIDATION.md F6). Three hosts
+// hand-zeroed this list independently: the server (handleContinue), the web
+// client (clientReconcile.resetToLobby, which had to "match byte-for-byte or
+// the UI snaps"), and iOS was specced to port it a third time.
+//
+// `bot_mask` bit s = seat s is a bot, which resets to READY; humans reset to
+// IDLE. It is a PARAMETER because it cannot be a guess: seat identity
+// (is_ai/strategy_key/player_id/name) is deliberately not in the state blob —
+// it lives with the caller — so the kernel is told, not left to infer.
+//
+// Logs are left alone: this is a board reset, not a new game. start_game
+// clears them.
+void game_reset_to_lobby(Game *g, unsigned int bot_mask);
+
 // In-place game clone (used by collect's `before` snapshot).
 void game_clone(Game *dst, const Game *src);
 

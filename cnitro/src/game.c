@@ -454,6 +454,34 @@ void start_game(Game *g) {
     start_game_dealt(g);
 }
 
+void game_reset_to_lobby(Game *g, unsigned int bot_mask) {
+    g->status = GAME_STATUS_WAITING;
+
+    for (int i = 0; i < g->num_players; i++) {
+        Player *p = &g->players[i];
+        p->status = (bot_mask & (1u << i)) ? PLAYER_STATUS_READY : PLAYER_STATUS_IDLE;
+        p->hand_count = 0;
+        p->awaiting_attack = false;
+    }
+
+    g->deck_count = 0;
+    g->discard_pile_length = 0;
+    g->has_flipped = false;
+    g->flipped = CARD_NONE;
+    g->power_suit = 0;
+    g->first_attacker = 0;
+    g->defender = 0;
+    g->num_battles = 0;
+    g->num_eliminated = 0;
+    // The server's handleContinue left these two set and leaned on the next
+    // start_game to clear them; the web client's mirror cleared them here. The
+    // client was right — between the reset and the deal the lobby is on screen,
+    // and stale good state is visible in it. One definition, so the divergence
+    // is settled rather than mirrored.
+    g->good_players_mask = 0;
+    g->has_good_timestamp = false;
+}
+
 void start_game_with_deck(Game *g, const Card *deck, int n_deck) {
     start_game_reset(g);
 
