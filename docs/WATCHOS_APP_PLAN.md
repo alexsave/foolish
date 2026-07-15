@@ -1,15 +1,25 @@
 # Foolish on watchOS — Full Design Plan
 
-*Fills out the design study `docs/WATCHOS_LAYOUT.md` (branch
-`claude/ios-redesign`, commit `adb76a6`) into a buildable plan, incorporating
-the owner's real-size screen sketches (July 2026, reproduced verbatim in §4).
-The study's core decisions stand — token cards, circular seats, Crown + tap,
-no drag, plain high-contrast design distinct from the phone's wool/wood/fern
-identity. This doc adds: the App-Store structural answer (§1), the sketch-driven
-screen revisions (§4–§5), architecture and connectivity (§6–§8), complications
-(§9), milestones (§11), and gotchas (§12). That file stays untouched on its
-branch; this is the plan of record. The iOS app this builds on is merged on
-main (`ios/`, FoolishKit with Engine/Net/DesignSystem/Boards).*
+> **Status (2026-07-15): the screen design this plan anticipated is now
+> finished.** A five-round design study (options A–H, merged in #96) settled
+> the final layout — **Option H**: first-person board, vertical table list,
+> crown-driven fisheye hand lane, caption verbs. For building the watch UI,
+> use **`docs/WATCHOS_SPEC.md`** (implementor handoff) with
+> `docs/watchos-layout.html` (interactive mockups) and `docs/WATCHOS_LAYOUT.md`
+> (decision record + engine-verified rules facts). The screen sections below
+> (§4–§5) are **superseded** by that study; this doc remains the plan of
+> record for everything structural — App-Store bundling (§1), architecture &
+> connectivity (§6–§8), complications (§9), milestones & sequencing (§11:
+> after the phone app's Milestone F), and gotchas (§12).
+
+*Fills out the original design study (branch `claude/ios-redesign`, commit
+`adb76a6`) into a buildable plan, incorporating the owner's real-size screen
+sketches (July 2026, reproduced verbatim in §4). This doc adds: the App-Store
+structural answer (§1), the sketch-driven screen revisions (§4–§5, now
+superseded — see status note), architecture and connectivity (§6–§8),
+complications (§9), milestones (§11), and gotchas (§12). The iOS app this
+builds on is merged on main (`ios/`, FoolishKit with
+Engine/Net/DesignSystem/Boards).*
 
 ---
 
