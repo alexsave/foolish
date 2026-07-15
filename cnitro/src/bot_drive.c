@@ -128,6 +128,34 @@ static int classify(int move_type, const BoardMark *before, const Game *after) {
 
 // ---------- the cycle ------------------------------------------------------
 
+void (*bot_drive_pre_action_hook)(const Game *g, int seat, int phase) = 0;
+
+// Choose with the snapshot hook OFF.
+//
+// A strategy's deliberation is not the board. The Monte-Carlo bots search by
+// running real handle_* calls over scratch games (world/trial), and
+// engine_snap_hook is global — so a cycle that left it installed across the
+// choose would hand the host an animation plan built from a rollout's imaginary
+// cards, and fill MAX_SNAPS with them before the real move even landed.
+//
+// Hosts that choose and apply in SEPARATE calls never see this: they reset the
+// snapshot buffer when they open the apply, which is after the choose (the wasm
+// bridge's begin_action). A cycle does both in one call, so it must say so.
+// Restores rather than clears: whether snapshots are wanted at all is the
+// host's call, and a bundle's earlier actions have already recorded theirs.
+static int choose_move(const Game *g, int seat, const LegalMoves *moves) {
+    void (*saved)(const Game *, int, int) = engine_snap_hook;
+    engine_snap_hook = 0;
+    // Seats carry a STRAT_* id by kernel-wide convention (the kernel itself
+    // reads it — espresso_prod checks strategy_key == STRAT_RANDOM), so the
+    // roster entry is resolved back from the brain. That mapping is 1:1 and the
+    // roster tests pin it that way.
+    int ridx = bot_roster_find_by_strat(g->players[seat].strategy_key);
+    int idx = bot_roster_choose(ridx, g, seat, moves);
+    engine_snap_hook = saved;
+    return idx;
+}
+
 // Same move? Compares what the kernel's enumerator produced, so this is an
 // exact structural match (type + cards + cover targets), not a heuristic.
 static int same_move(const LegalMove *a, const LegalMove *b) {
@@ -197,20 +225,25 @@ int bot_drive(Game *g, uint32_t human_mask, int max_actions,
 
         // A move this seat already chose in a failed CAS attempt, if the
         // reloaded state still allows it — reusing it skips the search, which
-        // is the entire point (see BotDrivePref).
+        // is the entire point (see BotDrivePref). No CHOOSE phase then: there
+        // is no search to seed, exactly as on the host's own replay path.
         int idx = pref_index(pref, n_pref, seat, &g_scratch);
         if (idx < 0) {
-            // Seats carry a STRAT_* id by kernel-wide convention (the kernel
-            // itself reads it — espresso_prod checks strategy_key ==
-            // STRAT_RANDOM), so the roster entry is resolved back from the
-            // brain. That mapping is 1:1 and the roster tests pin it that way.
-            int ridx = bot_roster_find_by_strat(g->players[seat].strategy_key);
-            idx = bot_roster_choose(ridx, g, seat, &g_scratch);
+            if (bot_drive_pre_action_hook)
+                bot_drive_pre_action_hook(g, seat, BOT_DRIVE_PHASE_CHOOSE);
+            idx = choose_move(g, seat, &g_scratch);
         }
         if (idx < 0 || idx >= g_scratch.n) continue;
 
         LegalMove move = g_scratch.moves[idx];
         BoardMark before = mark(g);
+        // Per-DECISION, not per-cycle, and after the search: a strategy's
+        // rollouts refill scratch games off the draw stream, so this both
+        // undoes that consumption and is the point a one-move-per-call host
+        // seeds at. Choosing cannot change the real board, so the seed is the
+        // same value it would have been before the search.
+        if (bot_drive_pre_action_hook)
+            bot_drive_pre_action_hook(g, seat, BOT_DRIVE_PHASE_APPLY);
         if (!apply_move(g, seat, &move)) continue;   // rejected: try the next bot
 
         BotDriveAction *a = &out->actions[out->n++];

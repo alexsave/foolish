@@ -110,4 +110,34 @@ int bot_drive(Game *g, uint32_t human_mask, int max_actions,
 // belief log only when a bot that reads it is about to choose.
 uint32_t bot_drive_eligible_mask(const Game *g, uint32_t human_mask);
 
+// The two points a host may re-seed at, in the order they happen.
+#define BOT_DRIVE_PHASE_CHOOSE 0  // about to run the strategy
+#define BOT_DRIVE_PHASE_APPLY  1  // about to apply the chosen move
+
+// Called at each phase of each seat's action, if installed. NULL by default.
+//
+// For hosts that re-seed their RNG per decision. The server does: the strategy
+// LCG is seeded from state_fnv before every choose and the mid-game draw LCG
+// before every apply (wasm_api.c), so both streams are a pure function of the
+// secret deal seed and the public board — reproducible to the server, and
+// unpredictable to everyone else. A cycle drives several seats per call, so
+// without this the seeding would happen once per CYCLE instead of once per
+// DECISION, and bundling would silently change how bots play:
+//
+//   * seats acting after a stream-CONSUMING bot would draw from a shifted
+//     stream (`random` and `handwritten_prod` call random_strategy_random; the
+//     Monte-Carlo bots only read the state via random_strategy_rng_get);
+//   * the two phases are SEPARATE because a strategy's search consumes the draw
+//     stream (its rollouts refill scratch games), so a host that re-seeds the
+//     draw LCG before the choose would both feed the search a value the
+//     single-move path never gave it and leave the real refill drawing from
+//     whatever the search consumed. Both were caught by
+//     e2e/bot_drive_parity.test.ts as a changed bot move.
+//
+// It is a hook rather than a bot_drive() argument because the derivation is
+// host property: g_rng_base is a server-only secret the phone and the native
+// arena do not have. They install nothing and keep their own seeding, which is
+// why this must default to NULL. Same shape as engine_snap_hook (game.h).
+extern void (*bot_drive_pre_action_hook)(const Game *g, int seat, int phase);
+
 #endif

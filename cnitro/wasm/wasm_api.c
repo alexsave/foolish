@@ -345,16 +345,22 @@ int wasm_state_format_version(void) { return STATE_FORMAT_VERSION; }
 static Card g_pre_flip;
 static int g_pre_has_flip;
 
-static int export_logs(int mask_draws) {
+// `start` is the log index this action's records begin at. It is 0 for every
+// path that marshals fresh (wasm_import_state zeroes the log), and non-zero
+// only for the bot drive, whose belief bots need the SESSION log resident
+// while they choose — see wasm_export_logs_masked_from.
+static int export_logs(int mask_draws, int start) {
     // The DRAW-privacy rule (the TS appendLogs convention, now kernel-side):
     // drawn-card identities are hidden EXCEPT the flipped trump, whose draw
     // is public. "The flip was drawn during this action" is the pre-action
     // has_flipped (captured by begin_action) going false.
     const int flip_drawn = g_pre_has_flip && !g_game.has_flipped;
+    if (start < 0 || start > g_game.num_logs) start = 0;
+    const int n = g_game.num_logs - start;
     unsigned char *q = g_io;
-    *q++ = (unsigned char)(g_game.num_logs & 0xff);
-    *q++ = (unsigned char)((g_game.num_logs >> 8) & 0xff);
-    for (int i = 0; i < g_game.num_logs; i++) {
+    *q++ = (unsigned char)(n & 0xff);
+    *q++ = (unsigned char)((n >> 8) & 0xff);
+    for (int i = start; i < g_game.num_logs; i++) {
         const GameLog *l = &g_game.logs[i];
         const int hide = mask_draws && l->log_type == LOG_DRAW;
         *q++ = (unsigned char)l->log_type;
@@ -374,12 +380,20 @@ static int export_logs(int mask_draws) {
     return (int)(q - g_io);
 }
 
-int wasm_export_logs(void) { return export_logs(0); }
+int wasm_export_logs(void) { return export_logs(0, 0); }
 
 // The durable/session variant: what leaves the kernel for storage and (via
 // the packed session log) other players' belief imports — draw identities
 // masked per the rule above. See docs/PACKED_WIRE_CUTOVER.md.
-int wasm_export_logs_masked(void) { return export_logs(1); }
+int wasm_export_logs_masked(void) { return export_logs(1, 0); }
+
+// The same, from a log offset — the bot drive's export (F2). A cycle whose
+// bots read the session log has that whole log resident BENEATH the records
+// the cycle just wrote (wasm_import_logs loads it into the game's log store,
+// which is where the belief bots read it from), so exporting from zero would
+// hand the commit the entire session again, to be appended a second time.
+// `start` is where the drive began — see wasm_bot_drive_log_start.
+int wasm_export_logs_masked_from(int start) { return export_logs(1, start); }
 
 // ---------- snapshots -------------------------------------------------------
 
@@ -400,6 +414,14 @@ static void begin_action(void) {
     g_pre_flip = g_game.flipped;
     g_pre_has_flip = g_game.has_flipped ? 1 : 0;
 }
+
+// The same reset, for the bot bridge (wasm_bot_drive). bot_drive applies a
+// whole CYCLE through the kernel's handlers directly rather than through
+// wasm_apply_action, so it opens the action ONCE and lets the snapshots, the
+// logs and the pre-action flip span the bundle. That accumulation is the
+// point: the cycle's products are what the server commits and broadcasts, so
+// they must be read as one action's worth (docs/C_CORE_CONSOLIDATION.md F2).
+void wasm_begin_action_internal(void) { begin_action(); }
 
 int wasm_start_game(void) {
     begin_action();
@@ -499,7 +521,12 @@ int wasm_view_serialize(int viewer) {
 // post-finalize) state as the trailer. Call once per recipient BEFORE any
 // other kernel call disturbs the snapshots. Returns length, or -1 on
 // overflow/corrupt input.
-int wasm_events_serialize(int viewer, int actor, int append_final_transition) {
+//
+// `log_start` is where the action's fresh logs begin; everything below it is
+// resident session log the emitter must not read as new (see
+// wasm_export_logs_masked_from). Zero for every path that marshals fresh.
+int wasm_events_serialize_from(int viewer, int actor, int append_final_transition,
+                               int log_start) {
     EvSnap refs[MAX_SNAPS];
     for (int i = 0; i < g_n_snaps; i++) {
         // put_state/state_put only read prefix fields, which is exactly what
@@ -508,9 +535,15 @@ int wasm_events_serialize(int viewer, int actor, int append_final_transition) {
         refs[i].tag = g_snap_tags[i];
         refs[i].aux = g_snap_aux[i];
     }
-    return evwire_serialize(refs, g_n_snaps, g_game.logs, g_game.num_logs,
+    if (log_start < 0 || log_start > g_game.num_logs) log_start = 0;
+    return evwire_serialize(refs, g_n_snaps, g_game.logs + log_start,
+                            g_game.num_logs - log_start,
                             &g_game, viewer < 0 ? VIEW_SPECTATOR : viewer,
                             actor, append_final_transition, g_io, IO_CAP);
+}
+
+int wasm_events_serialize(int viewer, int actor, int append_final_transition) {
+    return wasm_events_serialize_from(viewer, actor, append_final_transition, 0);
 }
 
 // Reorder a seat's own hand to the given index order — the rearrange-hand

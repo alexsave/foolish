@@ -270,6 +270,36 @@ int wasm_bot_pacing_ms(int pacing_class, int humans_present) {
     return bot_pacing_ms(pacing_class, humans_present);
 }
 
+// Opens ONE action scope for the whole cycle: resets the snapshot buffer and
+// captures the pre-action flip the DRAW-privacy log mask reads. See wasm_api.c.
+extern void wasm_begin_action_internal(void);
+
+// A cycle's per-seat preferred moves, read from the IO buffer (same per-move
+// layout as the output below, minus the pacing byte):
+//
+//   per pref: u8 seat, u8 type, u8 n_cards,
+//             n_cards x u8 wire card, n_cards x u8 wire attack card
+//
+// Only the server's CAS-retry path sends these — see BotDrivePref. The kernel
+// re-checks each against the CURRENT menu, so a stale one costs nothing but a
+// re-choose. Decoded up front because the IO buffer is the output slot too.
+static BotDrivePref g_pref[MAX_PLAYERS];
+
+static int decode_prefs(const unsigned char *in, int n_pref) {
+    if (n_pref < 0 || n_pref > MAX_PLAYERS) return -1;
+    for (int p = 0; p < n_pref; p++) {
+        g_pref[p].seat = (int8_t)*in++;
+        LegalMove *m = &g_pref[p].move;
+        m->type = (int8_t)*in++;
+        int n = (int)*in++;
+        if (n < 0 || n > MAX_MOVE_CARDS) return -1;
+        m->n_cards = (int8_t)n;
+        for (int c = 0; c < n; c++) m->cards[c] = card_from_wire_state(*in++);
+        for (int c = 0; c < n; c++) m->attack_cards[c] = card_from_wire_state(*in++);
+    }
+    return n_pref;
+}
+
 // Run one bot cycle against the resident game. Applies 0..n actions, bundling
 // silent ones, and lays the result out in the IO buffer:
 //
@@ -280,13 +310,52 @@ int wasm_bot_pacing_ms(int pacing_class, int humans_present) {
 //     u8 seat, u8 pacing_class, u8 type, u8 n_cards,
 //     n_cards x u8 wire card, n_cards x u8 wire attack card
 //
+// `n_pref` preferred moves are read from the IO buffer first (see above).
 // Returns n, or -1 on error. The caller exports state/logs/events with the
 // existing exports afterwards — the products of the WHOLE cycle, which is
 // exactly what the server commits.
-int wasm_bot_drive(int human_mask, int max_actions) {
+// Where the cycle's own log records begin. Non-zero whenever a belief bot was
+// eligible: its session log is resident beneath them (wasm_import_logs), and
+// the commit must see only what the cycle wrote — see
+// wasm_export_logs_masked_from / wasm_events_serialize_from, which the caller
+// passes this to. Mirrors ios_api.c's g_last_event_log_start.
+static int g_drive_log_start;
+
+int wasm_bot_drive_log_start(void) { return g_drive_log_start; }
+
+// Re-seed from the CURRENT board at each phase, exactly where the
+// one-move-per-call path does: the strategy LCG as a decision starts
+// (wasmChooseMove) and the draw LCG as the move is applied (packedActionCore).
+// This is the whole per-decision seeding policy, and it lives here rather than
+// in the TS bridge: the caller only ever hands the kernel the secret it cannot
+// derive (wasm_set_rng_base from the deal seed), and the kernel decides what
+// every decision draws.
+//
+// Both read the resident g_game — the game bot_drive is mutating — so each
+// decision seeds off the state in front of it.
+extern void wasm_set_strategy_seed_deterministic(void);
+extern void wasm_seed_rng_deterministic(void);
+
+static void drive_seed_hook(const Game *g, int seat, int phase) {
+    (void)g; (void)seat;
+    if (phase == BOT_DRIVE_PHASE_CHOOSE) wasm_set_strategy_seed_deterministic();
+    else                                 wasm_seed_rng_deterministic();
+}
+
+int wasm_bot_drive(int human_mask, int max_actions, int n_pref) {
     static BotDriveOut drv;
     Game *g = wasm_game_ptr_internal();
-    if (bot_drive(g, (uint32_t)human_mask, max_actions, 0, 0, &drv) < 0) return -1;
+    if (decode_prefs(wasm_io_ptr(), n_pref) < 0) return -1;
+
+    g_drive_log_start = g->num_logs;
+    wasm_begin_action_internal();
+    // Scoped to the cycle: a *_strategy_choose called on its own afterwards
+    // (wasm_choose_move) seeds itself through the TS bridge, as it always has.
+    bot_drive_pre_action_hook = drive_seed_hook;
+    int n = bot_drive(g, (uint32_t)human_mask, max_actions,
+                      n_pref > 0 ? g_pref : 0, n_pref, &drv);
+    bot_drive_pre_action_hook = 0;
+    if (n < 0) return -1;
 
     unsigned char *out = wasm_io_ptr();
     *out++ = (unsigned char)drv.stop;

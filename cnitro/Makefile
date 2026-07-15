@@ -451,6 +451,11 @@ WASM_API_EXPORTS := \
   -Wl,--export=wasm_set_rng_base
 
 # bots.wasm exports the rules API above PLUS the bot bridge (wasm_bots_api.c).
+# The two log-offset variants live in wasm_api.c but are exported ONLY here:
+# they exist for the drive cycle, whose belief bots keep the session log
+# resident under the records the cycle writes (see wasm_export_logs_masked_from).
+# The rules module never imports a session log, so its exports stay as they
+# were and rules.wasm/guards.wasm do not move.
 WASM_BOTS_API_EXPORTS := \
   -Wl,--export=wasm_setenv_from_io -Wl,--export=wasm_clearenv \
   -Wl,--export=wasm_import_logs -Wl,--export=wasm_clear_logs \
@@ -458,7 +463,9 @@ WASM_BOTS_API_EXPORTS := \
   -Wl,--export=wasm_set_strategy_seed -Wl,--export=wasm_reload_bot_flags \
   -Wl,--export=wasm_choose_move \
   -Wl,--export=wasm_bot_drive -Wl,--export=wasm_bot_eligible_mask \
-  -Wl,--export=wasm_bot_pacing_ms
+  -Wl,--export=wasm_bot_pacing_ms -Wl,--export=wasm_bot_drive_log_start \
+  -Wl,--export=wasm_export_logs_masked_from \
+  -Wl,--export=wasm_events_serialize_from
 
 # The rules module's move buffer only feeds the exported menu — production
 # validation is direct rule-checking, and production menus/bot enumeration

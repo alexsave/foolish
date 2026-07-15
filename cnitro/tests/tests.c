@@ -1240,6 +1240,107 @@ static void test_bot_drive_deterministic(void) {
     CHECK(h[0] == h[1], "the same seeded game drives to the same bot order and moves");
 }
 
+// A strategy's deliberation must not reach the host's animation plan.
+//
+// The Monte-Carlo bots search by running real handle_* calls over scratch
+// games, and engine_snap_hook is global — so a cycle that left it installed
+// across the choose hands the host a board full of a rollout's IMAGINARY cards
+// (and, since the snapshot ring is small, crowds out the real move's). Hosts
+// that choose and apply in separate calls never see this: they reset the
+// buffer when they open the apply, after the choose. A cycle must bracket it
+// itself, which is what bot_drive does.
+//
+// Found by e2e/bot_drive_parity.test.ts (a 1-action cycle reported 12 events);
+// it hit the server's drive AND fio_bot_drive_json, so the guard lives here,
+// where both get it.
+static int g_snaps_seen;
+static void counting_snap_cb(const Game *g, int tag, int aux) {
+    (void)g; (void)tag; (void)aux;
+    g_snaps_seen++;
+}
+
+static void test_bot_drive_choose_emits_no_snapshots(void) {
+    int applied_total = 0, mc_cycles = 0;
+    for (int seed = 0; seed < 4; seed++) {
+        Game g;
+        make_seeded_game(&g, 3, seed + 500);
+        // A searching brain: its rollouts apply moves to scratch games.
+        seat_all(&g, STRAT_BLACKPOWDER);
+
+        BotDriveOut out;
+        for (int step = 0; step < 40 && game_done(&g) < 0; step++) {
+            g_snaps_seen = 0;
+            engine_snap_hook = counting_snap_cb;
+            int n = bot_drive(&g, 0, BOT_DRIVE_MAX_ACTIONS, 0, 0, &out);
+            engine_snap_hook = 0;
+            if (n == 0) break;
+            applied_total += n;
+            mc_cycles++;
+            // A real action fires a bounded handful of hooks; a search fires
+            // hundreds. The exact count is a rules detail, so assert the
+            // property with room: a cycle cannot out-snapshot its own actions
+            // by an order of magnitude unless the search leaked in.
+            CHECK(g_snaps_seen <= n * 8,
+                  "a cycle's snapshots come from its actions, not from the search");
+        }
+    }
+    CHECK(mc_cycles > 0 && applied_total > 0, "the snapshot sweep actually drove games");
+
+    // ...and the hook is left exactly as the host set it, since whether
+    // snapshots are wanted at all is the host's call.
+    engine_snap_hook = counting_snap_cb;
+    Game g;
+    make_seeded_game(&g, 3, 909);
+    seat_all(&g, STRAT_BLACKPOWDER);
+    BotDriveOut out;
+    bot_drive(&g, 0, BOT_DRIVE_MAX_ACTIONS, 0, 0, &out);
+    CHECK(engine_snap_hook == counting_snap_cb, "bot_drive restores the host's snapshot hook");
+    engine_snap_hook = 0;
+}
+
+// The per-decision seeding hook (bot_drive_pre_action_hook): a host that
+// re-seeds per decision must be called once per seat, at each phase, in order —
+// CHOOSE before the search, APPLY before the move lands. Seeding once per CYCLE
+// instead would shift the stream for every seat after a stream-consuming bot,
+// and seeding the draw LCG before the search would feed the search a value the
+// single-move path never gave it (both were real, and both changed a bot move
+// in e2e/bot_drive_parity.test.ts).
+static int g_phase_seq[64];
+static int g_phase_n;
+static void recording_phase_hook(const Game *g, int seat, int phase) {
+    (void)g;
+    if (g_phase_n < 64) g_phase_seq[g_phase_n++] = (seat << 4) | phase;
+}
+
+static void test_bot_drive_pre_action_hook(void) {
+    Game g;
+    make_seeded_game(&g, 4, 4242);
+    seat_all(&g, STRAT_HANDWRITTEN_PROD);
+
+    CHECK(bot_drive_pre_action_hook == 0, "the hook is NULL unless a host installs it");
+
+    g_phase_n = 0;
+    bot_drive_pre_action_hook = recording_phase_hook;
+    BotDriveOut out;
+    int n = bot_drive(&g, 0, BOT_DRIVE_MAX_ACTIONS, 0, 0, &out);
+    bot_drive_pre_action_hook = 0;
+
+    CHECK(n >= 1, "the hook sweep drove at least one action");
+    // Every APPLIED action contributes CHOOSE then APPLY for its own seat. A
+    // seat whose move is rejected can add a CHOOSE with no APPLY, so match the
+    // applied actions against the tail of the sequence rather than demand equality.
+    int k = 0;
+    for (int a = 0; a < out.n; a++) {
+        const int seat = out.actions[a].seat;
+        while (k < g_phase_n && g_phase_seq[k] != ((seat << 4) | BOT_DRIVE_PHASE_CHOOSE)) k++;
+        CHECK(k < g_phase_n, "each action was preceded by a CHOOSE for its seat");
+        CHECK(k + 1 < g_phase_n && g_phase_seq[k + 1] == ((seat << 4) | BOT_DRIVE_PHASE_APPLY),
+              "...and an APPLY for that seat immediately after it, before the move landed");
+        k += 2;
+    }
+    CHECK(g_phase_n >= out.n * 2, "the hook fires per decision, not once per cycle");
+}
+
 // The CAS-retry path: a preferred move is reused when still legal, ignored
 // when not, and never lets a host smuggle an illegal move past the kernel.
 static void test_bot_drive_preferred(void) {
@@ -1316,6 +1417,8 @@ int main(void) {
     test_bot_drive_bundles_only_silent();
     test_bot_drive_fairness();
     test_bot_drive_deterministic();
+    test_bot_drive_choose_emits_no_snapshots();
+    test_bot_drive_pre_action_hook();
 
     test_bot_roster_table();
     test_bot_knobs_precedence();
