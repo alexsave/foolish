@@ -79,9 +79,10 @@ ios/
 
 Everything below the C engine has been developed against the design doc without a
 Mac in the loop, so the Swift compiles-in-principle but has **not been run through
-`xcodebuild` yet** — the first Mac session should `make ios-lib && xcodegen
-generate && xcodebuild ... build test` and fix any surfaced nits. The C bridge,
-by contrast, is proven on Linux (`make ios-smoke`, green).
+`xcodebuild` yet**. **The single next step for this workstream is a Mac session:**
+`make ios-lib && xcodegen generate && xcodebuild ... build test`, fix surfaced
+nits, and capture snapshot reference images. The C bridge, by contrast, is proven
+on Linux (`make ios-smoke`, green).
 
 - **A — foundation:** ✅ engine bridge (`ios_api`), `make ios-lib`/`ios-smoke`/
   `ios-goldens`, `project.yml`, Engine (EngineC actor, Models, LocalGame),
@@ -89,24 +90,36 @@ by contrast, is proven on Linux (`make ios-smoke`, green).
   DEBUG component gallery.
 - **B — offline slice:** ✅ Home (bot picker, left/right cycle), Table
   (kernel-driven interaction), Win (rematch/share/home), LocalGame bot loop with
-  600–1200ms pacing + thermal downgrade guard, trilingual FStrings.
-  **Remaining:** the scripted Tutorial (§16.B6); cross-zone card-flight animation
-  (shared-namespace BoardDiff — today the board springs on state change).
+  600–1200ms pacing + thermal downgrade guard, trilingual FStrings, and the
+  scripted Tutorial (coach over a real offline game).
+  **Remaining:** cross-zone card-flight animation (shared-namespace BoardDiff —
+  today the board springs on state change).
 - **C — replays:** ✅ native encode+decode (base32 + shared `replay.c`, round-trip
   proven), ReplayStore, Replays screen (paste/decode + transport), QR share,
   universal-link routing + AASA. **Remaining:** render playback on the full board
   (project decoded logs through the diff engine); camera QR scan (§16.C4).
-- **D — online:** `docs/PROTOCOL.md` (D0 skeleton), `Net/PackedAction` (awire wire,
-  tested), `Net/Auth` (nameToEmail + reserved prefix), `Net/VersionGate`, xcconfig
-  + supabase-swift declared. **Remaining:** the realtime feed, auth calls, lobby,
-  online Table/spectate, resync — the long pole (§16.D).
+- **D — online:** ✅ layers written and source-verified against the web client +
+  supabase-swift: `docs/PROTOCOL.md`, `Net/PackedAction` (awire, byte-tested),
+  `Net/PackedGame` (envelope → kernel via `fio_view_from_packed_json`),
+  `Net/GameFeed` (`player_views` realtime), `Net/OnlineGame` (full session:
+  in-flight cards, rejects, resync-on-decode), `Net/OnlineService`
+  (create / join-by-code / spectate), `Net/Auth`+`AuthService`+`AccountService`,
+  `Net/VersionGate`, AuthView + online routing in the app.
+  **Remaining:** first end-to-end run against the live backend (needs the Mac
+  session above); `action_goldens.json` parity fixture (§16.D3); online-specific
+  UX polish once it runs (reconnect toasts, spectator chrome).
 - **E — seams/settings/l10n/a11y:** ✅ Entitlements (FreeEntitlements), Flags,
   Settings (language/haptics/account seams/flags), `Localizable.xcstrings` +
   generator, architecture lint, per-component a11y labels. **Remaining:** the full
   a11y checklist pass + snapshot reference images (Mac).
-- **F — hardening/submission:** `Compliance.md` mirror. **Remaining (needs Apple
-  Developer account + Mac):** signing, app icon render, screenshots, TestFlight,
-  submission — all human-in-the-loop (§16.F).
+- **F — hardening/submission:** `Compliance.md` mirror; ✅ procedural app-icon
+  generator tool (1024px fern). **Remaining (needs Apple Developer account +
+  Mac):** signing, screenshots, TestFlight, submission — all human-in-the-loop
+  (§16.F).
+- **Watch (parked):** the watchOS client is designed but not scheduled — final
+  layout + SwiftUI handoff spec in `docs/WATCHOS_SPEC.md`, interactive mockups in
+  `docs/watchos-layout.html`. Pick it up after F; it reuses FoolishKit and needs
+  only watchOS slices in `make ios-lib`.
 
 ### External dependencies (other work-streams, not this repo's iOS code)
 - Stale-round server guard (`WEB_RACE_BUG_HANDOFF.md` §5) — must land before D.
