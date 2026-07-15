@@ -46,14 +46,31 @@ the defender) and is intentionally **web-only**. Never build multi-select.
 
 ```
 WatchApp
-└─ GameRootView            — horizontal TabView (.page), 2 pages, dots at bottom
+└─ GameRootView            — VERTICAL TabView (.verticalPage), 2 pages
    ├─ TableScreen  (page 1)   ← the only screen needed during play
    │    ├─ ChooserOverlay     (modal, ambiguous cover/pass only)
    │    └─ RejectGlow         (600 ms red edge flash)
-   └─ RosterScreen (page 2)
+   └─ RosterScreen (page 2, below — swipe up; system vertical dots, right edge)
 Notifications: category FOOLISH_TURN (long look per G9, actions below)
 Later milestones (not v1): Smart Stack widget, corner complication.
 ```
+
+**The gesture map is one-axis-one-meaning — this is load-bearing:**
+
+| Gesture | Meaning | Never means |
+|---|---|---|
+| Crown | hand browsing (cards + terminal item) | page navigation |
+| Horizontal swipe | table pair pages — **only** | hand, roster |
+| Vertical swipe | Table ↔ Roster (root vertical TabView) | table pairs |
+| Tap | focus (chips, seat strip) or commit (FocusSlot, Pill) | — |
+
+Consequences: the root TabView is **vertical** (`.verticalPage` /
+`.tabViewStyle(.verticalPage)`), so the table pager is the only horizontal
+pager — no nested same-axis conflict. The **chip strip must not be
+horizontally draggable**: it is a crown-bound viewport (offset driven by the
+focus index), chips accept taps only. Tapping the **seat strip** also opens
+the Roster (redundant, discoverable path). There are **no bottom page
+dots** — the system's vertical-page indicator (right edge) replaces them.
 
 Navigation: the app is pushed from a game list; the **system back chevron
 exists and is not fought** — the top-left ~33 pt circle belongs to it. All
@@ -66,13 +83,13 @@ layout below assumes it is present.
 | Zone | Frame (pt) | Content |
 |---|---|---|
 | System chrome | top-left chevron ~33 ø; top-right clock | Untouched. |
-| **InfoLine** | trailing-aligned under clock, y ≈ 32–48, trailing inset 13 | `[flip glyph] ▤{deck} ▨{discard}` — SF semibold 12 pt, secondary gray `#B8B8BE`. Flip glyph = 12 pt mini glyph-card of `GameView.flippedCard` while it exists; after it's drawn, render the bare trump suit glyph instead. |
-| **SeatStrip** | y ≈ 52–70, centered HStack, gap 4.5 | 8 items, seat order starting from your left neighbor, **you included**. Item = hand count, SF heavy 12.5 pt. Defender = count inside the gold **shield** (22×26.5 outline shape, see §6). You = gold `#E7B84A` (if you defend: shield + gold count). Said-GOOD = green `#30D158`. Others gray `#98989E`. Eliminated seats render dimmed at 30 % opacity. |
-| **TablePager** | y ≈ 75–131, horizontal `TabView(.page)`, index dots ~4 pt at y ≈ 133 | **Two pairs per page**, centered, gap 15. Pair = `[cover glyph] ▸ [attack glyph]` — **cover on the left**, 4 pt arrow `▸` in `#5A5A5E` pointing at the covered card. Open attack = the attack glyph **alone**, full opacity — no ring, no placeholder slot. Resolved pair = 42 % opacity. Optimistic in-flight card = 45 % opacity. Glyph size 31 pt (rank 14.5 pt). Dots appear only when pages > 1. Auto-advance to the page containing the newest open attack **only when the user is not interacting** (see focus invariant, §4). |
+| **InfoLine** | trailing-aligned **directly under the clock**: top edge ≈ 4 pt below the clock's baseline (y ≈ 32–46), trailing inset 13 — same right edge as the clock | `[flip glyph] ▤{deck} ▨{discard}` — SF semibold 12 pt, secondary gray `#B8B8BE`. Flip glyph = 12 pt mini glyph-card of `GameView.flippedCard` while it exists; after it's drawn, render the bare trump suit glyph instead. **This is not its own centered row** — it shares the header band with the clock; there must be no blank band between the header and the strip. |
+| **SeatStrip** | y ≈ 50–68, centered HStack, gap 4.5. Whole strip is a tap target → opens Roster. | 8 items, seat order starting from your left neighbor, **you included**. Item = hand count, SF heavy 12.5 pt. Defender = count inside the gold **shield** (22×26.5 outline shape, see §6). You = gold `#E7B84A` (if you defend: shield + gold count). Said-GOOD = green `#30D158`. Others gray `#98989E`. Eliminated seats render dimmed at 30 % opacity. |
+| **TablePager** | y ≈ 72–132, horizontal `TabView(.page)` — the app's **only** horizontal pager; index dots ~4 pt at y ≈ 134 | **Two pairs per page**, centered, gap 15. Pair = `[cover glyph] ▸ [attack glyph]` — **cover on the left**, 4 pt arrow `▸` in `#5A5A5E` pointing at the covered card. Open attack = the attack glyph **alone**, full opacity — no ring, no placeholder slot. Resolved pair: dim by **desaturating toward gray** (`#6E6E73`-ish), not by pure opacity — a red glyph at 40 % opacity on black is illegible; target roughly `Color.secondary` luminance for both suits. Optimistic in-flight card = 45 % opacity (it is transient, legibility matters less). Glyph size 31 pt (rank 14.5 pt). Dots appear only when pages > 1. Auto-advance to the page containing the newest open attack **only when the user is not interacting** (see focus invariant, §4). |
 | **FocusSlot** | leading 8, y ≈ 132–194 | The crown-focused item, large: glyph card 56×62 (rank 23 pt); dim (32 % opacity + desaturate) when the item has no action. Terminal items render as a bare green ✓ (48 pt, **no background**) or red `+n` (30 pt) — see §4. |
 | **Pill** | trailing 7, y ≈ 146–174, height 28, **min-width 86**, corner radius 14, horizontal padding 12 | SF heavy 13 pt. The single action control; see the decision table (§5). When the focused item offers nothing, the pill is **absent** (not disabled). |
 | **ChipStrip** | x 71 → trailing 4, y ≈ 170–195 | All hand cards as 22×25 glyph chips (rank 10 pt), gap 4.5, in server hand order, followed by the **terminal item** (§4). Focused item: 1.25 pt white outline, 1 pt offset. Illegal-now cards: 32 % opacity. When the strip overflows, it becomes a crown-followed viewport with a 15 pt fade mask on the **right edge only**; keep the focused chip visible. Chips are **display + focus targets only**: tapping a chip focuses it, never commits. |
-| Page dots | bottom center, ~y 191 | Table/Roster indicator (from the root TabView). |
+| *(no bottom dots)* | — | Table↔Roster paging is vertical; the system draws its vertical indicator on the right edge. |
 
 Colors: card face glyphs — black suits `#F2F2F4`, red suits `#E8352E`; rank
 text on black-suit glyph `#111`, on red-suit glyph `#FFF`. Pill variants —
@@ -236,6 +253,9 @@ Match against the mockups (`watchos-layout.html` §7, G1–G10 + live demo):
    in-flight translucent; dots only when > 1 page; a 10-pair table works.
 7. Chip strip crown-scrolls past ~7 items with right-edge fade only.
 8. Rejection = red glow + `.failure`, zero text; optimistic card returns.
+8b. Gesture map holds: horizontal swipe pages table pairs only; vertical
+    swipe (or seat-strip tap) reaches the Roster; the chip strip cannot be
+    dragged; nothing else responds to horizontal drags.
 9. GOOD: attacker-only terminal ✓ (bare, no background); vote → gray lock →
    auto-unlock on table change. Defender terminal is TAKE n.
 10. Roster per §3 (shield icon, no GOOD column, flip line).

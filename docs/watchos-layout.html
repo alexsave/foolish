@@ -2058,6 +2058,7 @@ function gscreen(o){
     if(c.take!=null)return `<div class="gterm take${mods}">+${c.take}</div>`;
     return gcard(c.r,c.s,mods.trim());
   }).join('')}</div>`;
+  h+=`<div class="vdots" style="right:4px"><i class="on"></i><i></i></div>`;
   h+=o.extra||'';
   return h+`<div class="fingero"></div><div class="zoneso"></div>`;
 }
@@ -2077,6 +2078,7 @@ fig(galG,'G1 · Attacker','chevron-aware anatomy',gscreen({
 '<b>The line under the time</b> — flip glyph · deck · discard (6♠ ▤8 ▨7), right-aligned as the clock\'s column. Capacity needs no number: it\'s the shield count minus the open attacks you can see.',
 '<b>Bigger everywhere</b> — table glyphs 62 px, focus card 112 px, chips 44 px. Open attacks are bare glyphs: no red ring, no dashed slot — presence at full opacity IS the "uncovered" signal; resolved pairs dim.',
 '<b>One pill</b> — ATTACK shows only while the focused card is legal; the crown browses the whole hand regardless.',
+'<b>One axis, one meaning</b> — crown = hand · horizontal swipe = table pages only · vertical swipe (or tapping the seat strip) = roster. The root pager is vertical, so its dots sit on the right edge, not the bottom.',
 ]);
 
 fig(galG,'G2 · Defending','pill says COVER, nothing more',gscreen({
@@ -2191,7 +2193,7 @@ fig(galG,'G8 · Roster','shield, not the word',
      <div class="frow youR"><span class="nm">you</span><span class="ct">6</span><span class="role"></span></div>
      <div class="ffoot">deck 8 · disc 7 · flip: 6♠ under deck<br>out: —</div>
    </div>
-   <div class="fdots">○ <b>●</b></div>
+   <div class="vdots" style="right:4px"><i></i><i class="on"></i></div>
    <div class="fingero"></div><div class="zoneso"></div>`,[
 '<b>The shield replaces the word</b> — same mark as the strip and your prototype; roles read as iconography everywhere.',
 '<b>No goods here</b> — names, counts, the flip, who\'s out. Votes belong to the strip.',
