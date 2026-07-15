@@ -4,6 +4,12 @@ Foolish.xcodeproj/
 # The C engine, built by `make ios-lib` in ../cnitro. Regenerated, not tracked.
 vendor/Foolish.xcframework/
 
+# Per-machine Debug overrides (points the app at a LOCAL `supabase start` stack
+# and carries its key). Config/Debug.xcconfig pulls it in via `#include?`, so
+# its absence elsewhere is a no-op. The file's own header already claimed to be
+# ignored here; it was not, so `git add -A` would have committed it.
+Config/Local.xcconfig
+
 # Xcode / SwiftPM build products & user state.
 build/
 DerivedData/

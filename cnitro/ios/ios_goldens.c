@@ -71,14 +71,25 @@ int main(void) {
         // seats are strategy 0 and we never call fio_bot_step) → fully repeatable.
         uint64_t playHash = 1469598103934665603ULL;
         int steps = 0;
-        char move[4096], legal[1 << 16];
+        // A mid-game menu is combinatorial (every legal cover assignment), so it
+        // runs to a few hundred KB — comfortably past the 64KB this used to
+        // give it. fio_legal_moves_json then returned FIO_ECAP, the loop broke,
+        // and the golden recorded a TRUNCATED game: every "fool": -1 in the
+        // fixture is a game that never actually finished, frozen at the step
+        // where the menu first outgrew the buffer. EngineGoldenTests drives the
+        // same walk from Swift with a growing buffer, so it played on and
+        // disagreed with the fixture on every count — the keystone Swift-vs-C
+        // test could not have passed. Static: too big for the stack.
+        static char move[4096], legal[1 << 20];
         while (fio_game_over() < 0 && steps < 5000) {
             int mask = fio_actor_mask();
             if (mask <= 0) break;
             int seat = -1;
             for (int s = 0; s < N_PLAYERS; s++) if (mask & (1 << s)) { seat = s; break; }
             if (seat < 0) break;
-            if (fio_legal_moves_json(seat, legal, sizeof(legal)) < 0) break;
+            // Bail loudly rather than silently freezing a half-played golden.
+            int lrc = fio_legal_moves_json(seat, legal, sizeof(legal));
+            if (lrc < 0) { fprintf(stderr, "goldens: legal menu did not fit (rc=%d)\n", lrc); return 1; }
             if (!first_move(legal, move, sizeof(move))) break;
             if (fio_apply_json(seat, move) != FIO_EOK) break;
             int sl = fio_state_json(0, buf, sizeof(buf));

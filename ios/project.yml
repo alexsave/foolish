@@ -90,6 +90,11 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: cards.foolish.kit
         DEFINES_MODULE: "YES"
+        # Without this the framework ships with no Info.plist and the app's
+        # embed phase refuses it ("did not contain an Info.plist"). The app
+        # target points at a checked-in plist; the framework has none, so Xcode
+        # has to synthesize one.
+        GENERATE_INFOPLIST_FILE: "YES"
         # APPLICATION_EXTENSION_API_ONLY is turned on in Milestone G, when the
         # iMessage extension actually links FoolishKit and an extension-safe
         # subset (Engine/DesignSystem/Boards, no app-only APIs) is split out.

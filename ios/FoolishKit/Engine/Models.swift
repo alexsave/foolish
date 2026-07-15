@@ -64,6 +64,14 @@ public enum CardRank {
 public struct BattleView: Codable, Equatable, Sendable {
     public let attack: Card
     public let defense: Card?    // nil when the attack is still uncovered
+
+    // A synthesized memberwise init is internal, so FoolishApp (a separate
+    // module) could not build one — which is why GalleryView's previews did not
+    // compile. Decoding a kernel view never needs this; previews do.
+    public init(attack: Card, defense: Card?) {
+        self.attack = attack
+        self.defense = defense
+    }
 }
 
 /// Game / player status integers mirror game.h (GAME_STATUS_*, PLAYER_STATUS_*).
