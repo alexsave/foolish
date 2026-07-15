@@ -188,6 +188,18 @@ int fio_replay_share_code_b32(char *out, int cap);
 // negative; on FIO_EREPLAY see fio_last_replay_error().
 int fio_replay_decode_json(const char *code, char *out, int cap);
 
+// Play a v6 `code` back and return the animation events, masked for `viewer`
+// (a seat, or -1 to spectate) — the SAME GameEvent stream live play emits
+// (fio_bot_drive_json / fio_last_events_json), each event carrying its step's
+// board in `state`. A shared code therefore renders on the real table with the
+// real animations and no replay-specific code (docs/C_CORE_CONSOLIDATION.md
+// A5): the kernel rebuilds the game and replays it through the engine.
+//
+// Does NOT touch the current game. Bytes written or negative; v5 codes fail
+// with FIO_EREPLAY / REPLAY_EVERSION — they hide the deal, so there is no game
+// to rebuild (use fio_replay_decode_json for those).
+int fio_replay_events_json(const char *code, int viewer, char *out, int cap);
+
 // Detail of the last replay error (a REPLAY_E* code from replay.h), else 0.
 int fio_last_replay_error(void);
 

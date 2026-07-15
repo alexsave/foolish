@@ -49,7 +49,7 @@ static int replay_sweep(void) {
     if (strat < 0) { printf("FAIL replay sweep: no handwritten rung\n"); return 1; }
 
     const int counts[] = { 2, 3, 4, 6 };
-    int checked = 0, skipped = 0, v6_checked = 0;
+    int checked = 0, skipped = 0, v6_checked = 0, ev_checked = 0;
     for (int ci = 0; ci < (int)(sizeof(counts) / sizeof(counts[0])); ci++) {
         for (int s = 0; s < 12; s++) {
             int players = counts[ci];
@@ -121,12 +121,41 @@ static int replay_sweep(void) {
                 printf("FAIL sweep v6 leaked a hidden card p=%d seed=%d\n", players, s);
                 return 1;
             }
+            // A5: the same code plays back as the board's own animation events
+            // — the kernel rebuilds the game and replays it (replay_steps.c),
+            // so this is the live stream, not a replay-shaped imitation.
+            static char ev[1 << 20];
+            int elen = fio_replay_events_json(code6, -1, ev, sizeof(ev));
+            if (elen < 0) {
+                printf("FAIL sweep v6 events p=%d seed=%d err=%d detail=%d\n",
+                       players, s, elen, fio_last_replay_error());
+                return 1;
+            }
+            if (!strstr(ev, "\"type\":")) {
+                printf("FAIL sweep v6 events empty p=%d seed=%d\n", players, s);
+                return 1;
+            }
+            // Every event carries its step's board (the A3 amendment) — without
+            // it a replay could only be drawn at its final state.
+            if (!strstr(ev, "\"state\":")) {
+                printf("FAIL sweep v6 events carry no per-step state p=%d seed=%d\n",
+                       players, s);
+                return 1;
+            }
+            // Spectating: no seat's hand may come back real.
+            if (strstr(ev, "\"hand\":[")) {
+                printf("FAIL sweep v6 events leaked a hand to a spectator p=%d seed=%d\n",
+                       players, s);
+                return 1;
+            }
+            ev_checked++;
             v6_checked++;
             checked++;
         }
     }
     printf("replay sweep OK (%d games round-tripped, %d as v6 with exact hands, "
-           "%d skipped as over-long)\n", checked, v6_checked, skipped);
+           "%d replayed as live events, %d skipped as over-long)\n",
+           checked, v6_checked, ev_checked, skipped);
     return 0;
 }
 

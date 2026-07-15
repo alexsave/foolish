@@ -12,6 +12,7 @@
 #include "legal.h"
 #include "view.h"
 #include "replay.h"
+#include "replay_steps.h"
 #include "strategy.h"
 #include "bot_roster.h"
 #include "bot_drive.h"
@@ -851,6 +852,37 @@ int fio_replay_share_code_b32(char *out, int cap) {
         // share still beats no share, and v5 encodes from the logs alone.
     }
     return fio_replay_encode_b32(out, cap);
+}
+
+// A replay, as the event stream the board already animates.
+//
+// This is the whole point of A5 for the app: a v6 code plays natively STEP FOR
+// STEP because the kernel rebuilds the game and plays it back through the
+// engine (replay_steps.c), so these are the same events — same shape, same
+// per-step `state`, same redaction — that fio_bot_drive_json and
+// fio_last_events_json emit for live play. Swift decodes them with the
+// GameEvent it already has; there is no replay-specific rendering path to
+// write, and nothing to keep in step with live play, because it IS live play.
+//
+// v6 only: a v5 code returns FIO_EREPLAY with REPLAY_EVERSION (v5 hides the
+// deal, so there is no game to rebuild). Callers wanting v5's flat log listing
+// still have fio_replay_decode_json.
+int fio_replay_events_json(const char *code, int viewer, char *out, int cap) {
+    if (!code) return FIO_EBADARG;
+    g_last_replay_error = 0;
+
+    static unsigned char intbuf[16384];
+    int ilen = b32_decode(code, intbuf, sizeof(intbuf));
+    if (ilen < 0) return FIO_ECAP;
+
+    J j;
+    j_init(&j, out, cap);
+    j_putc(&j, '[');
+    FioEvCtx ctx = { &j, 0, viewer };
+    int r = replay_steps_v6(intbuf, ilen, viewer, 0, fio_ev_sink, &ctx);
+    if (r < 0) { g_last_replay_error = -r; return FIO_EREPLAY; }
+    j_putc(&j, ']');
+    return j_finish(&j);
 }
 
 int fio_replay_decode_json(const char *code, char *out, int cap) {
