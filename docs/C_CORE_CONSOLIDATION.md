@@ -590,6 +590,21 @@ deletion work.
   (`IMESSAGE_IMPLEMENTATION_HANDOFF.md` M0): concurrency rules are game
   rules; e2e drives them through wasm, XCTest through libfoolish — never a
   TS/Swift reimplementation.
+- **The `console` + `gpt` drop — DONE (A7).** `STRATEGY_KEY.CONSOLE`/`.GPT`,
+  `strategies/gpt_strategy.ts`, and the lazy-load path in `bot_strategy.ts` are
+  gone. Two live consumers went with them, both of which existed only to keep
+  gpt out of everyone's way: the one-user gate in `handleAddBot`
+  (`GPT_ALLOWED_USER_ID`, "to control API costs") and `Lobby.tsx`'s filter that
+  hid gpt bots from the picker. Safe because gpt was never seeded — no `gpt` row
+  in `seed.sql` or any migration — so no roster row is now exposed by dropping
+  the filter.
+  **`registerBotStrategy` STAYS** (offlinefun harnesses), and so do
+  `move_stats.ts` + `pass_prob.ts`: F9 gates their deletion on being
+  unreferenced and they are NOT —
+  `offlinefun/localtest/console_strategy.ts` still imports `move_stats`, which
+  imports `pass_prob`. That file is a research harness, imported by nothing and
+  not using `STRATEGY_KEY`, so the production drop does not touch it. Delete
+  those two if and when that harness goes.
 - Display-name tidies found in passing: iOS renders raw `%` nicknames
   online (fixed by `BotNames.swift`, see the naming doc); the web live
   board does too (`PlayerRing.tsx:184`) — cheap web tidy.

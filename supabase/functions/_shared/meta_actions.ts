@@ -34,9 +34,6 @@ const supabaseClient = createClient(
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
 );
 
-// Only this user can add GPT bots (to control API costs)
-const GPT_ALLOWED_USER_ID = '60a5c562-0922-40a6-b416-77e3285d87b2';
-
 // `deleted` marks that the handler removed the games row itself (last player
 // exiting); executeWithGameLock then skips the version-CAS commit, which would
 // otherwise miss the deleted row, read as a conflict, and 400 a clean teardown.
@@ -96,18 +93,14 @@ export async function handleAddBot({ body, game, user, botsPrefetch }: Execution
     }
 
     const existingBotIds = game.players.filter(p => p.is_ai).map(p => p.player_id);
-    const availableBots = allBots.filter(bot => {
-        if (existingBotIds.includes(bot.id)) return false;
-        if (bot.strategy_key === STRATEGY_KEY.GPT && user.id !== GPT_ALLOWED_USER_ID) return false;
-        return true;
-    });
+    const availableBots = allBots.filter(bot => !existingBotIds.includes(bot.id));
 
     if (availableBots.length === 0) {
         throw new Error(`No available bots to add to the game`);
     }
 
     // If the caller named a specific bot (lobby bot picker), add exactly that one;
-    // it must pass the same availability gate (not already in game, GPT allowed).
+    // it must pass the same availability gate (not already in game).
     // Without a bot_id we keep the original random pick (backwards compatible).
     const availableBot = bot_id
         ? availableBots.find(b => b.id === bot_id)

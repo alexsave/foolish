@@ -30,7 +30,7 @@ g.IS_REACT_ACT_ENVIRONMENT = true;
 
 const GAME_STATUS = { WAITING: 'waiting', PLAYING: 'playing', GAME_OVER: 'game_over' };
 const PLAYER_STATUS = { IDLE: 'idle', READY: 'ready', IN: 'in' };
-const STRATEGY_KEY = { HUMAN: 'human', GPT: 'gpt' };
+const STRATEGY_KEY = { HUMAN: 'human' };
 
 // Roster the picker fetches, newest first. Real bot ids on every row.
 const ROSTER = [

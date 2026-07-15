@@ -2,7 +2,6 @@ import { Game } from './types.ts';
 import { kernelLegalMoves } from './wasm/engine.ts';
 import { STRAT, wasmChooseMove, wasmChooseMoveDirect } from './wasm/bots.ts';
 import { BotStrategy, LegalMove } from './bot_interfaces.ts';
-import { GPTBotStrategy } from './strategies/gpt_strategy.ts';
 
 // Re-export interfaces for backwards compatibility
 export type { BotStrategy, LegalMove };
@@ -13,8 +12,9 @@ export type { BotStrategy, LegalMove };
 // moves and choose, and maps the returned index onto the caller's list (the
 // orderings are identical: both come from the kernel's enumerator).
 //
-// The only remaining TS-brained strategies are deliberate exceptions:
-//   - gpt/console: I/O-bound adapters (LLM calls, stdin), not game logic.
+// There are no TS-brained strategies left: the two exceptions — `gpt` (LLM
+// calls) and `console` (stdin), I/O adapters rather than game logic — were
+// never seeded in production and are deleted (C_CORE_CONSOLIDATION.md A7).
 export class WasmBotStrategy implements BotStrategy {
     readonly name: string;
     private strat: number;
@@ -103,31 +103,15 @@ export const BOT_STRATEGIES: Map<string, BotStrategy> = new Map<string, BotStrat
     ['octogen', new WasmBotStrategy('octogen', STRAT.octogen, { env: { OG_TRUMP_KEEP: OCTOGEN_TRUMP_KEEP }, logs: true })],
 ]);
 
-// Lazy-load GPT strategy to avoid requiring API key at module load time
-let gptStrategyInstance: GPTBotStrategy | null = null;
-
-// So we can manuall include console or gpt strategy
+// Lets a harness register a strategy that is not in the table above. The
+// offlinefun research harnesses use it, so it STAYS (the `console`/`gpt` I/O
+// adapters that motivated it are gone — C_CORE_CONSOLIDATION.md A7).
 export const registerBotStrategy = (strategyKey: string, strategy: BotStrategy) => {
     BOT_STRATEGIES.set(strategyKey, strategy);
 }
 
 // Get strategy by key
 export function getBotStrategy(strategyKey: string): BotStrategy {
-    // Handle GPT strategy separately with lazy loading
-    if (strategyKey === 'gpt') {
-        if (!gptStrategyInstance) {
-            try {
-                gptStrategyInstance = new GPTBotStrategy();
-                BOT_STRATEGIES.set('gpt', gptStrategyInstance);
-            } catch (error) {
-                console.error('Failed to initialize GPT strategy:', error);
-                console.log('Falling back to random strategy');
-                return BOT_STRATEGIES.get('random')!;
-            }
-        }
-        return gptStrategyInstance;
-    }
-
     const strategy = BOT_STRATEGIES.get(strategyKey);
     if (!strategy) {
         // Fall back to random strategy if unknown

@@ -4,7 +4,7 @@ import { useEffect, useState, useRef, useMemo } from "react";
 import { WEBSITE_DOMAIN } from "../constants/constants";
 import { useAuth } from "../contexts/AuthContext";
 import { QRCodeSVG } from "qrcode.react";
-import { PLAYER_STATUS, PublicPlayer, GAME_STATUS, STRATEGY_KEY } from "@shared/types.ts";
+import { PLAYER_STATUS, PublicPlayer, GAME_STATUS } from "@shared/types.ts";
 import supabase from "../backend/Connector";
 import { usePreventScroll } from "../hooks/usePreventScroll";
 import { MAX_PLAYERS } from "@shared/constants.ts";
@@ -219,7 +219,7 @@ export const Lobby = () => {
             .then(({ data, error }) => {
                 if (cancelled) return;
                 if (!error && data) {
-                    setAllBots(data.filter((b: BotOption) => b.strategy_key !== STRATEGY_KEY.GPT));
+                    setAllBots(data);
                 }
                 // Mark the roster settled even on error, so a deferred add doesn't
                 // wait forever — it falls back to the server's pick only when the
