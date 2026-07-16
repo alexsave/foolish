@@ -1,5 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
-<dict/>
+<dict>
+	<!-- The seat cache + preferred chain (§6.1/§9.3). Shared with the host app so
+	     both read the same games. Regenerated from project.yml `properties`, so
+	     unlike the app's file this survives `xcodegen generate`. Inert on an
+	     unsigned simulator build; MessageGameStore degrades to "no games". -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.cards.foolish</string>
+	</array>
+</dict>
 </plist>

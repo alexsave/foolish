@@ -85,7 +85,16 @@ targets:
     type: app-extension.messages
     platform: iOS
     entitlements:
+      # Declared here as `properties` so `xcodegen generate` REGENERATES the
+      # App Group into the file instead of blanking it (the host app's
+      # entitlements need a git-checkout after every run; this one does not).
+      # The shared group is where the seat cache + preferred chain live (§9.3):
+      # the extension has no database and no background time, so its only durable
+      # store is this group, and the host app reads the same games.
       path: FoolishMessages/FoolishMessages.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.cards.foolish
     sources:
       - path: FoolishMessages
     dependencies:
