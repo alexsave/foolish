@@ -72,7 +72,11 @@ public final class OnlineGame: ObservableObject, GameSession {
         view = decoded.view
         seat = decoded.seat
         intentVersion = UInt32(max(0, decoded.version))
-        foolSeat = decoded.view.isOver ? decoded.view.gameOver : nil
+        // The fool is the kernel's call (game_done, emitted as gameOver) — no
+        // rule derivation in Swift (§3). FOLLOW-UP: the end-of-game view isn't
+        // reliably reaching both clients (WinView sometimes missed) — under
+        // investigation; the fix belongs in the kernel/server, not here.
+        foolSeat = decoded.view.gameOver >= 0 ? decoded.view.gameOver : nil
         actorMask = Self.actorMask(from: decoded.view)
         inFlight.removeAll()   // authoritative state supersedes any in-flight
         thinking = !spectator && !decoded.view.isOver && (actorMask & (1 << max(seat, 0))) == 0

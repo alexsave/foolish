@@ -126,9 +126,13 @@ final class AppCoordinator: ObservableObject {
     private func autoplayOnline() {
         Task { @MainActor in
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 800_000_000)
+                try? await Task.sleep(nanoseconds: 700_000_000)
                 guard let g = onlineGame, g.foolSeat == nil else { break }
-                if let mv = g.humanLegal.randomElement() { g.play(mv) }
+                // Shed cards so the test game converges quickly: prefer
+                // attack/cover, fall back to any legal move.
+                let legal = g.humanLegal
+                let shed = legal.filter { $0.type == .attack || $0.type == .cover }
+                if let mv = (shed.randomElement() ?? legal.randomElement()) { g.play(mv) }
             }
         }
     }
