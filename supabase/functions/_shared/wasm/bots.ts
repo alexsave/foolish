@@ -16,9 +16,7 @@
 
 import { Card, Game } from '../types.ts';
 import { LegalMove } from '../bot_interfaces.ts';
-import { loadWasmGz } from './wasm_asset.ts';
-import { takeBOTS_WASM_B64 } from './bots_wasm.ts';
-import { gunzip } from './gunzip.ts';
+import { loadWasmGz, loadWasmGzAsync } from './wasm_asset.ts';
 import { parseMaskedState, type ViewState } from '../wire/view.ts';
 
 // view.h: mask every hand and the deck.
@@ -26,7 +24,7 @@ const VIEW_SPECTATOR = -1;
 // view.c's wasm_view_serialize prefixes [format, viewer] before the state.
 const VIEW_FORMAT_VERSION = 1;
 import {
-    EngineExports, PackedRunOk, __LOG_TYPE_TO_INT, __MOVE_TYPE, __adoptEngine, __decodeBase64,
+    EngineExports, PackedRunOk, __LOG_TYPE_TO_INT, __MOVE_TYPE, __adoptEngine,
     __marshalGame, __mem, __pooledCard, __replayError, __setResident,
     __wireLogCard, __cardFromWire, __residentLegalMoves, applyKernelStateToGame,
     exportPackedDriveProducts, rngBaseFromSeed,
@@ -135,28 +133,37 @@ export function __strategySeedProbe(): number {
     return ex.wasm_strategy_seed_probe ? (ex.wasm_strategy_seed_probe() >>> 0) : -1;
 }
 
-// The module's bytes, from whichever door this host has.
-//
-// Server (Deno edge, Node tests): the static .gz next to this file — a real
-// binary, never base64-expanded. Browser: the base64 twin, because a browser has
-// neither node:fs nor Deno.readFileSync. SAME build/bots.wasm, emitted by the
-// same Makefile rule, so the two cannot drift.
-//
-// The browser needs this door at all because FMSG (the iMessage envelope) lives
-// only in the big module — sealing reads a resident session log, which
-// rules.wasm structurally cannot hold — and /m/ is a web page. One module behind
-// every host is the steer; this is the web's way in.
-function botsWasmBytes(): Uint8Array {
-    // deno-lint-ignore no-explicit-any
-    const hasFs = typeof (globalThis as any).Deno?.readFileSync === 'function'
-        || typeof process !== 'undefined' && !!process.versions?.node;
-    if (hasFs) return loadWasmGz('bots');
-    return gunzip(__decodeBase64(takeBOTS_WASM_B64()));
+/**
+ * Prepare bots.wasm where it cannot be read synchronously — i.e. the browser,
+ * which has no filesystem and must FETCH the .gz. Await this once before any
+ * bots() call; on the server it is a no-op fast path (fs is synchronous).
+ *
+ * The browser needs the big module for two independent reasons, and both landed
+ * the same day:
+ *   * FMSG — the iMessage envelope — lives only here, because sealing reads a
+ *     resident session log that rules.wasm structurally cannot hold, and /m/ is
+ *     a web page; and
+ *   * A5 — replaying a shared code rebuilds the game and plays it through the
+ *     real engine, and replay_steps.c cannot live in rules.wasm either: its
+ *     decoded-action buffer alone is ~272 KB against a linear memory PINNED at
+ *     196,608 B.
+ * One module behind every host is the steer (A10). This is the web's way in.
+ *
+ * Deliberately a fetched ASSET rather than a base64 twin of the same bytes: a
+ * second carrier is exactly how rules_wasm.ts went stale for weeks while
+ * bots.wasm.gz kept being rebuilt, leaving two kernels in the tree — and 80 KB
+ * of single-line base64, rewritten on every kernel build, is miserable in git.
+ * The cost is that the browser's door is async; callers await this first.
+ */
+export async function ensureBotsAsync(): Promise<void> {
+    if (exportsCache) return;
+    await loadWasmGzAsync('bots');   // caches the inflated bytes for bots()
+    bots();
 }
 
 function bots(): BotsExports {
     if (exportsCache) return exportsCache;
-    const module = new WebAssembly.Module(botsWasmBytes() as BufferSource);
+    const module = new WebAssembly.Module(loadWasmGz('bots') as BufferSource);
     const instance = new WebAssembly.Instance(module, {});
     const ex = instance.exports as unknown as BotsExports;
     ex.wasm_init();

@@ -49,8 +49,13 @@ export default function MessagePayloadPage() {
                 // The BIG module (bots.wasm), because FMSG lives only there —
                 // sealing reads a session log the small module cannot hold, and
                 // splitting decode out to dodge that would be a second kernel in
-                // the tree. It reaches the browser via its base64 twin.
-                const { kernelMsgDecode, kernelMsgPublicView } = await import('@shared/wasm/bots.ts');
+                // the tree. The browser fetches it as a static asset — one
+                // tracked binary, no base64 twin to drift (see wasm_asset.ts).
+                const { kernelMsgDecode, kernelMsgPublicView, ensureBotsAsync } =
+                    await import('@shared/wasm/bots.ts');
+                // The bytes arrive over the network here, so the module has to be
+                // ready before any of the synchronous kernel calls below.
+                await ensureBotsAsync();
                 const { base32Decode } = await import('@shared/replay/codec.ts');
                 const { viewToGame } = await import('@shared/wire/view.ts');
 
