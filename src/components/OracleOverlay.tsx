@@ -5,6 +5,10 @@
  * bars, expected-finish ± SE, a chess.com-style classification chip, and the
  * "come into focus" animation as the standard errors shrink. Switches to verdict
  * mode when the exact endgame solver proves win/loss.
+ *
+ * Styled as a vintage car-stereo graphic-equalizer faceplate: brushed-metal
+ * bezel, amber LED digital readouts, teal illuminated hardware buttons, and
+ * segmented EQ-style bargraphs standing in for the plain progress bars.
  * ========================================================================== */
 
 import React, { useMemo } from 'react';
@@ -45,6 +49,19 @@ const VERDICT_COLOR: Record<string, string> = {
     loss: '#D45B4E', none: 'rgba(200,200,210,0.35)', illegal: 'rgba(120,120,130,0.4)',
 };
 
+// ---- faceplate palette -----------------------------------------------------
+const AMBER = '#FFA53C';
+const TEAL = '#5EEAD4';
+const LCD_MONO = "'Consolas', 'Menlo', 'SFMono-Regular', monospace";
+
+const ledText = (color: string): React.CSSProperties => ({
+    fontFamily: LCD_MONO,
+    fontWeight: 700,
+    letterSpacing: '0.05em',
+    color,
+    textShadow: `0 0 4px ${color}99, 0 0 9px ${color}44`,
+});
+
 interface Props {
     snapshot: OracleSnapshot | null;
     onClose: () => void;
@@ -53,14 +70,30 @@ interface Props {
     renderCard: (card: Card, w?: number) => React.ReactNode;
 }
 
-const chipStyle = (bg: string, fg = '#fff'): React.CSSProperties => ({
+// Filled "hardware label" chip — mimics the amber/colored solid indicator
+// tags stenciled onto old car-stereo faceplates (e.g. "PLAYED", "WIN").
+const solidChipStyle = (bg: string, fg = '#fff'): React.CSSProperties => ({
+    fontFamily: LCD_MONO,
     fontSize: '0.6rem',
     fontWeight: 700,
-    letterSpacing: '0.02em',
+    letterSpacing: '0.03em',
     padding: '1px 5px',
-    borderRadius: 6,
+    borderRadius: 4,
     background: bg,
     color: fg,
+    whiteSpace: 'nowrap',
+});
+
+// Outline "LCD segment" chip — dark display glass with glowing colored text,
+// like the small backlit labels (MONO / TRCL / SEEK) on the reference units.
+const ledChipStyle = (color: string): React.CSSProperties => ({
+    ...ledText(color),
+    fontSize: '0.58rem',
+    textTransform: 'uppercase',
+    padding: '1px 6px',
+    borderRadius: 4,
+    background: 'rgba(0,0,0,0.5)',
+    border: `1px solid ${color}55`,
     whiteSpace: 'nowrap',
 });
 
@@ -73,6 +106,29 @@ function CardTokens({ tokens, renderCard }: { tokens: string[]; renderCard: Prop
                     : <span key={i} style={{ fontSize: '0.66rem' }}>{tk}</span>;
             })}
         </span>
+    );
+}
+
+// Segmented LED bargraph — a row of discrete lit/unlit blocks standing in for
+// a plain progress bar, echoing the graphic-equalizer displays in the refs.
+const EQ_SEGMENTS = 20;
+function EqBar({ pct, color }: { pct: number; color: string }) {
+    const lit = Math.round((Math.max(0, Math.min(100, pct)) / 100) * EQ_SEGMENTS);
+    return (
+        <div style={{ display: 'flex', gap: 1.5, flex: '1 1 auto', height: 7 }}>
+            {Array.from({ length: EQ_SEGMENTS }).map((_, i) => (
+                <div
+                    key={i}
+                    style={{
+                        flex: 1,
+                        borderRadius: 1,
+                        background: i < lit ? color : 'rgba(255,255,255,0.07)',
+                        boxShadow: i < lit ? `0 0 3px ${color}aa` : 'none',
+                        transition: 'background 160ms ease, box-shadow 160ms ease',
+                    }}
+                />
+            ))}
+        </div>
     );
 }
 
@@ -92,6 +148,7 @@ function McRow({ c, best, worst, bestAdj, renderCard, t }: {
     const isBest = scored && bestAdj != null && Math.abs(eff! - bestAdj) < 1e-9;
     const delta = scored && bestAdj != null ? eff! - bestAdj : 0;
     const cls = scored ? oracleClassify(delta) : null;
+    const barColor = isBest ? CLASS_COLOR.best : (cls ? CLASS_COLOR[cls] : '#8a8a92');
 
     const cards = c.cards.length
         ? <CardTokens tokens={c.cards} renderCard={renderCard} />
@@ -100,10 +157,10 @@ function McRow({ c, best, worst, bestAdj, renderCard, t }: {
     return (
         <div
             style={{
-                display: 'flex', flexDirection: 'column', gap: 2,
-                padding: '5px 7px', borderRadius: 7,
-                border: c.played ? '1px solid #E79743' : '1px solid transparent',
-                background: c.played ? 'rgba(231,151,67,0.08)' : 'transparent',
+                display: 'flex', flexDirection: 'column', gap: 3,
+                padding: '5px 7px', borderRadius: 5,
+                border: c.played ? '1px solid rgba(255,165,60,0.5)' : '1px solid rgba(255,255,255,0.04)',
+                background: c.played ? 'rgba(255,165,60,0.07)' : 'rgba(0,0,0,0.28)',
                 opacity: scored ? 1 : 0.7,
             }}
         >
@@ -114,35 +171,26 @@ function McRow({ c, best, worst, bestAdj, renderCard, t }: {
                             <CardTokens tokens={c.target} renderCard={renderCard} /></>
                     ) : cards}
                 </div>
-                {c.played && <span style={chipStyle('#E79743', '#231404')}>{t('oracle_played')}</span>}
-                {isBest && <span style={chipStyle(CLASS_COLOR.best)}>{t('oracle_best')}</span>}
-                {!isBest && cls && <span style={chipStyle(CLASS_COLOR[cls])}>{t(`oracle_class_${cls}`)}</span>}
-                {c.pruned && !scored && <span style={chipStyle('rgba(120,120,130,0.45)')}>{t('oracle_pruned')}</span>}
-                {c.forcedLoss && <span style={chipStyle(VERDICT_COLOR.loss)}>{t('oracle_forced_loss')}</span>}
+                {c.played && <span style={solidChipStyle(AMBER, '#231404')}>{t('oracle_played')}</span>}
+                {isBest && <span style={ledChipStyle(CLASS_COLOR.best)}>{t('oracle_best')}</span>}
+                {!isBest && cls && <span style={ledChipStyle(CLASS_COLOR[cls])}>{t(`oracle_class_${cls}`)}</span>}
+                {c.pruned && !scored && <span style={ledChipStyle('rgba(180,180,190,0.7)')}>{t('oracle_pruned')}</span>}
+                {c.forcedLoss && <span style={solidChipStyle(VERDICT_COLOR.loss)}>{t('oracle_forced_loss')}</span>}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <div style={{
-                    flex: '1 1 auto', height: 7, borderRadius: 4,
-                    background: 'rgba(255,255,255,0.08)', overflow: 'hidden',
-                }}>
-                    {scored && (
-                        <div style={{
-                            width: `${barW}%`, height: '100%', borderRadius: 4,
-                            background: isBest ? CLASS_COLOR.best : (cls ? CLASS_COLOR[cls] : '#8a8a92'),
-                            transition: 'width 220ms ease, background 220ms ease',
-                        }} />
-                    )}
-                </div>
+                {scored ? <EqBar pct={barW} color={barColor} />
+                    : <div style={{ flex: '1 1 auto', height: 7 }} />}
                 <span
                     title={t('oracle_ef_tip')}
                     style={{
-                        fontVariantNumeric: 'tabular-nums', fontSize: '0.68rem',
-                        color: 'var(--color-text-muted)', minWidth: 66, textAlign: 'right',
+                        ...ledText(AMBER),
+                        fontVariantNumeric: 'tabular-nums', fontSize: '0.66rem',
+                        minWidth: 66, textAlign: 'right',
                     }}
                 >
                     {scored
                         ? <>EF {c.mean!.toFixed(decimals)}{c.se < 0.5 && c.se !== Infinity
-                            ? <span style={{ opacity: 0.6 }}> ±{c.se.toFixed(2)}</span> : null}</>
+                            ? <span style={{ opacity: 0.65 }}> ±{c.se.toFixed(2)}</span> : null}</>
                         : (c.pruned ? '—' : '…')}
                 </span>
             </div>
@@ -166,21 +214,29 @@ function VerdictRow({ c, renderCard, t }: {
         : c.verdict === 'draw' ? 'DRAW' : c.verdict === 'unknown' ? '?' : '';
     return (
         <div style={{
-            display: 'flex', flexDirection: 'column', gap: 2, padding: '5px 7px', borderRadius: 7,
-            border: c.played ? '1px solid #E79743' : '1px solid transparent',
-            background: c.played ? 'rgba(231,151,67,0.08)' : 'transparent',
+            display: 'flex', flexDirection: 'column', gap: 3, padding: '5px 7px', borderRadius: 5,
+            border: c.played ? '1px solid rgba(255,165,60,0.5)' : '1px solid rgba(255,255,255,0.04)',
+            background: c.played ? 'rgba(255,165,60,0.07)' : 'rgba(0,0,0,0.28)',
         }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <div style={{ flex: '1 1 auto', display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>{cards}</div>
-                {c.played && <span style={chipStyle('#E79743', '#231404')}>{t('oracle_played')}</span>}
-                {badge && <span style={chipStyle(color, c.verdict === 'unknown' ? '#222' : '#fff')}>{badge}</span>}
+                {c.played && <span style={solidChipStyle(AMBER, '#231404')}>{t('oracle_played')}</span>}
+                {badge && <span style={solidChipStyle(color, c.verdict === 'unknown' ? '#222' : '#fff')}>{badge}</span>}
             </div>
-            <div style={{ height: 7, borderRadius: 4, background: 'rgba(255,255,255,0.08)', overflow: 'hidden' }}>
-                <div style={{ width: `${barW}%`, height: '100%', background: color, borderRadius: 4 }} />
-            </div>
+            <EqBar pct={barW} color={color} />
         </div>
     );
 }
+
+// Corner rivet — the tiny mounting screws visible on every reference unit.
+const Rivet = ({ style }: { style: React.CSSProperties }) => (
+    <div style={{
+        position: 'absolute', width: 4, height: 4, borderRadius: '50%',
+        background: 'radial-gradient(circle at 35% 30%, #8a8a90, #222226)',
+        boxShadow: '0 0 1px rgba(0,0,0,0.8)',
+        ...style,
+    }} />
+);
 
 export const OracleOverlay = ({ snapshot, onClose, onToggleMemory, onRetry, renderCard }: Props) => {
     const { t } = useLocalization();
@@ -199,11 +255,11 @@ export const OracleOverlay = ({ snapshot, onClose, onToggleMemory, onRetry, rend
 
     const statusChip = (() => {
         if (!s) return null;
-        if (s.status === 'exact') return <span style={chipStyle('#4CAF7D')}>{t('oracle_exact')}</span>;
-        if (s.status === 'converged') return <span style={chipStyle('#5b7fb0')}>{t('oracle_converged')}</span>;
-        if (s.status === 'forced') return <span style={chipStyle('rgba(150,150,160,0.5)')}>{t('oracle_forced_move')}</span>;
+        if (s.status === 'exact') return <span style={ledChipStyle(CLASS_COLOR.best)}>{t('oracle_exact')}</span>;
+        if (s.status === 'converged') return <span style={ledChipStyle('#7FB6E8')}>{t('oracle_converged')}</span>;
+        if (s.status === 'forced') return <span style={ledChipStyle('rgba(190,190,200,0.75)')}>{t('oracle_forced_move')}</span>;
         if (running) return (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.68rem', color: 'var(--color-text-muted)' }}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.66rem', ...ledText(AMBER) }}>
                 <Spinner />
                 {t('oracle_analyzing', { n: (s.totalWorlds || 0).toLocaleString(), rate: (s.worldsPerSec || 0).toLocaleString() })}
             </span>
@@ -222,32 +278,48 @@ export const OracleOverlay = ({ snapshot, onClose, onToggleMemory, onRetry, rend
                 width: 'min(88vw, 340px)',
                 maxHeight: '70vh',
                 display: 'flex', flexDirection: 'column',
-                borderRadius: 12,
-                border: '1px solid rgba(255,255,255,0.14)',
-                background: 'linear-gradient(180deg, rgba(26,26,30,0.97) 0%, rgba(18,18,20,0.98) 100%)',
-                boxShadow: '0 8px 28px rgba(0,0,0,0.55)',
+                borderRadius: 10,
+                border: '1px solid rgba(255,255,255,0.16)',
+                background: 'linear-gradient(180deg, #2b2b2f 0%, #17171a 8%, #101012 100%)',
+                boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.12), inset 0 -1px 0 rgba(0,0,0,0.7), 0 10px 30px rgba(0,0,0,0.6)',
                 color: 'var(--color-text-primary)',
                 overflow: 'hidden',
             }}
         >
             <style>{'@keyframes oracle-spin{to{transform:rotate(360deg)}}'}</style>
-            {/* header */}
-            <div style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+            {/* faint brushed-metal texture */}
+            <div style={{
+                position: 'absolute', inset: 0, pointerEvents: 'none', opacity: 0.5,
+                background: 'repeating-linear-gradient(115deg, rgba(255,255,255,0.025) 0px, rgba(255,255,255,0.025) 1px, transparent 1px, transparent 3px)',
+            }} />
+            <Rivet style={{ top: 4, left: 4 }} />
+            <Rivet style={{ top: 4, right: 4 }} />
+            <Rivet style={{ bottom: 4, left: 4 }} />
+            <Rivet style={{ bottom: 4, right: 4 }} />
+
+            {/* header — dark LCD readout strip */}
+            <div style={{
+                position: 'relative', padding: '8px 12px 7px',
+                borderBottom: '1px solid rgba(255,255,255,0.09)',
+                background: 'linear-gradient(180deg, rgba(0,0,0,0.35), rgba(0,0,0,0.15))',
+            }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ fontSize: '0.78rem', fontWeight: 800, letterSpacing: '0.04em' }}>
+                    <span style={{ ...ledText(AMBER), fontSize: '0.8rem', textTransform: 'uppercase' }}>
                         🔮 {t('oracle_panel_title')}
                     </span>
                     <span style={{ flex: '1 1 auto' }} />
                     {statusChip}
                     <button onClick={onClose} aria-label="close" style={{
-                        width: 20, height: 20, borderRadius: '50%', border: 'none', cursor: 'pointer',
-                        background: 'rgba(255,255,255,0.08)', color: 'var(--color-text-primary)', fontSize: '0.8rem', lineHeight: 1,
+                        width: 18, height: 18, borderRadius: '50%', border: '1px solid rgba(0,0,0,0.5)', cursor: 'pointer',
+                        background: `radial-gradient(circle at 35% 30%, ${TEAL}, #0f3a35)`,
+                        boxShadow: `0 0 5px ${TEAL}88, inset 0 1px 1px rgba(255,255,255,0.5)`,
+                        color: '#062421', fontSize: '0.72rem', fontWeight: 900, lineHeight: 1, padding: 0,
                     }}>×</button>
                 </div>
                 {s && s.status !== 'error' && (
-                    <div style={{ marginTop: 4, fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
-                        <span style={{ fontWeight: 700, color: 'var(--color-text-primary)' }}>P{s.seat + 1}</span>
-                        {' · '}<span style={{ textTransform: 'capitalize' }}>{s.recordedLabel}</span>
+                    <div style={{ marginTop: 4, fontSize: '0.68rem', ...ledText('#7CE38C') }}>
+                        <span>P{s.seat + 1}</span>
+                        {' · '}<span style={{ textTransform: 'uppercase' }}>{s.recordedLabel}</span>
                     </div>
                 )}
                 {/* memory toggle */}
@@ -258,10 +330,12 @@ export const OracleOverlay = ({ snapshot, onClose, onToggleMemory, onRetry, rend
                         title={s.memoryOn ? t('oracle_memory_on') : t('oracle_memory_off')}
                         style={{
                             marginTop: 6, display: 'inline-flex', alignItems: 'center', gap: 6,
-                            padding: '2px 8px', borderRadius: 999, cursor: 'pointer',
-                            border: '1px solid rgba(255,255,255,0.16)',
-                            background: s.memoryOn ? 'rgba(231,151,67,0.18)' : 'rgba(255,255,255,0.05)',
-                            color: 'var(--color-text-primary)', fontSize: '0.66rem', fontWeight: 700,
+                            padding: '2px 9px', borderRadius: 3, cursor: 'pointer',
+                            border: s.memoryOn ? `1px solid ${TEAL}88` : '1px solid rgba(255,255,255,0.14)',
+                            background: s.memoryOn ? 'rgba(94,234,212,0.14)' : 'rgba(255,255,255,0.04)',
+                            boxShadow: s.memoryOn ? `0 0 6px ${TEAL}44` : 'none',
+                            ...ledText(s.memoryOn ? TEAL : 'rgba(220,220,225,0.55)'),
+                            fontSize: '0.62rem', textTransform: 'uppercase',
                         }}
                     >
                         {t('oracle_memory')}: {s.memoryOn ? 'on' : 'off'}
@@ -270,18 +344,19 @@ export const OracleOverlay = ({ snapshot, onClose, onToggleMemory, onRetry, rend
             </div>
 
             {/* body */}
-            <div style={{ overflowY: 'auto', padding: '6px 6px 8px' }}>
+            <div style={{ position: 'relative', overflowY: 'auto', padding: '6px 6px 8px' }}>
                 {!s || s.status === 'loading' ? (
-                    <div style={{ padding: 16, textAlign: 'center', color: 'var(--color-text-muted)', fontSize: '0.74rem' }}>
+                    <div style={{ padding: 16, textAlign: 'center', fontSize: '0.74rem', ...ledText(AMBER) }}>
                         <Spinner /> …
                     </div>
                 ) : s.status === 'error' ? (
                     <div style={{ padding: 14, textAlign: 'center' }}>
-                        <div style={{ fontSize: '0.78rem', marginBottom: 8 }}>{t('oracle_unavailable')}</div>
+                        <div style={{ fontSize: '0.78rem', marginBottom: 8, color: 'var(--color-text-primary)' }}>{t('oracle_unavailable')}</div>
                         <button onClick={onRetry} style={{
-                            padding: '4px 12px', borderRadius: 8, cursor: 'pointer',
-                            border: '1px solid rgba(255,255,255,0.2)', background: 'rgba(255,255,255,0.06)',
-                            color: 'var(--color-text-primary)', fontSize: '0.72rem', fontWeight: 700,
+                            padding: '4px 14px', borderRadius: 4, cursor: 'pointer',
+                            border: `1px solid ${TEAL}88`, background: 'rgba(94,234,212,0.12)',
+                            boxShadow: `0 0 6px ${TEAL}33`,
+                            ...ledText(TEAL), fontSize: '0.7rem', textTransform: 'uppercase',
                         }}>{t('oracle_retry')}</button>
                     </div>
                 ) : (
@@ -292,7 +367,7 @@ export const OracleOverlay = ({ snapshot, onClose, onToggleMemory, onRetry, rend
                                 : <McRow key={c.key} c={c} best={best} worst={worst} bestAdj={bestAdj} renderCard={renderCard} t={t} />
                         ))}
                         {!s.recordedPresent && s.status !== 'forced' && (
-                            <div style={{ padding: '6px 7px', fontSize: '0.66rem', color: 'var(--color-text-muted)', fontStyle: 'italic' }}
+                            <div style={{ padding: '6px 7px', fontSize: '0.64rem', fontStyle: 'italic', ...ledText('rgba(210,210,216,0.6)') }}
                                 title={t('oracle_pruned_tip')}>
                                 <span style={{ textTransform: 'capitalize' }}>{s.recordedLabel}</span> — {t('oracle_pruned')}
                             </div>
@@ -313,7 +388,7 @@ export const OracleOverlay = ({ snapshot, onClose, onToggleMemory, onRetry, rend
 };
 
 const Footnote = ({ text, muted }: { text: string; muted?: boolean }) => (
-    <div style={{ fontSize: '0.62rem', color: 'var(--color-text-muted)', opacity: muted ? 0.6 : 0.85 }}>{text}</div>
+    <div style={{ fontSize: '0.6rem', ...ledText('rgba(200,200,210,0.7)'), fontWeight: 500, opacity: muted ? 0.6 : 0.9 }}>{text}</div>
 );
 
 const Spinner = () => (
@@ -321,7 +396,7 @@ const Spinner = () => (
         aria-hidden
         style={{
             display: 'inline-block', width: 10, height: 10, borderRadius: '50%',
-            border: '1.6px solid rgba(255,255,255,0.25)', borderTopColor: '#E79743',
+            border: `1.6px solid rgba(255,255,255,0.2)`, borderTopColor: TEAL,
             animation: 'oracle-spin 0.7s linear infinite',
         }}
     />
