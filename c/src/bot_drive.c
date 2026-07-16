@@ -212,7 +212,7 @@ int bot_drive(Game *g, uint32_t human_mask, int max_actions,
         max_actions = BOT_DRIVE_MAX_ACTIONS;
 
     out->ended = game_done(g);
-    if (out->ended >= 0) { out->stop = BOT_STOP_ENDED; return 0; }
+    if (out->ended >= 0) { game_settle_status(g); out->stop = BOT_STOP_ENDED; return 0; }
 
     // Collect the eligible bot seats, then shuffle ONCE and walk that order —
     // exactly the server's cycle. Re-collecting after each bundled passive
@@ -269,7 +269,7 @@ int bot_drive(Game *g, uint32_t human_mask, int max_actions,
         a->pacing_class = (uint8_t)classify(move.type, &before, g);
 
         out->ended = game_done(g);
-        if (out->ended >= 0) { out->stop = BOT_STOP_ENDED; return out->n; }
+        if (out->ended >= 0) { game_settle_status(g); out->stop = BOT_STOP_ENDED; return out->n; }
 
         // Silent actions bundle: keep going and let the next bot ride the same
         // cycle. Anything visible ends the cycle so the host can render it.

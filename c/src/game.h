@@ -300,6 +300,12 @@ extern int engine_last_reject;
 bool can_cover(Card attack, Card defense, int power_suit);
 int  get_next_player_index(const Game *g, int current);
 int  game_done(const Game *g);   // returns loser index, or -1
+// Records the end of a game on its OWN status: once game_done fires, the kernel
+// (not each host) flips g->status to GAME_OVER, so g->status is the single
+// lifecycle truth every view carries and no server recomputes game_done to keep
+// a parallel status of its own. Idempotent; a no-op mid-game or in a lobby. The
+// apply paths (awire_apply, bot_drive) call it after a move settles.
+void game_settle_status(Game *g);
 void start_game(Game *g);
 
 // start_game with the deck supplied instead of shuffled: `deck` is the

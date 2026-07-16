@@ -115,6 +115,48 @@ static void test_awire_apply_roundtrip(void) {
     CHECK(!awire_apply(&g, 7, &dec), "awire_apply: seat out of range rejected");
 }
 
+// Test: the kernel records its OWN game-over. A full game played through the
+// apply chokepoint (awire_apply — the native server + iOS path) must leave
+// g->status == GAME_OVER when it ends, so no host recomputes game_done to keep a
+// status of its own (server-consolidation #3). handle_* alone never touch
+// g->status; awire_apply/bot_drive settle it.
+static void test_awire_apply_settles_game_over(void) {
+    game_set_seed(99);
+    random_strategy_set_seed(99);
+    Game g; memset(&g, 0, sizeof g);
+    g.num_players = 3;
+    for (int i = 0; i < 3; i++) {
+        g.players[i].status = PLAYER_STATUS_READY;
+        snprintf(g.players[i].player_id, sizeof g.players[i].player_id, "p%d", i);
+    }
+    start_game(&g);
+    CHECK(g.status == GAME_STATUS_PLAYING, "settle: a dealt game is PLAYING");
+
+    int iters = 0;
+    while (game_done(&g) < 0 && iters++ < 4000) {
+        int eligible[MAX_PLAYERS]; int n_elig = 0;
+        for (int i = 0; i < g.num_players; i++) if (should_bot_act(&g, i)) eligible[n_elig++] = i;
+        if (n_elig == 0) break;
+        bool acted = false;
+        for (int k = 0; k < n_elig && !acted; k++) {
+            int idx = eligible[k];
+            LegalMoves moves; calculate_legal_moves(&g, idx, &moves);
+            if (moves.n == 0) continue;
+            int chosen = handwritten_strategy_choose(&g, idx, &moves, NULL);
+            if (chosen < 0) continue;
+            const LegalMove *m = &moves.moves[chosen];
+            if (m->type > MOVE_GOOD) continue;   // 'wait' is not an awire action
+            AwireAction a; memset(&a, 0, sizeof a);
+            a.kind = m->type; a.n = m->n_cards;
+            for (int c = 0; c < m->n_cards; c++) { a.cards[c] = m->cards[c]; a.attacks[c] = m->attack_cards[c]; }
+            acted = awire_apply(&g, idx, &a);
+        }
+        if (!acted) break;
+    }
+    CHECK(game_done(&g) >= 0, "settle: the game terminates under awire_apply");
+    CHECK(g.status == GAME_STATUS_GAME_OVER, "settle: the kernel flipped g->status to GAME_OVER");
+}
+
 // Test: with two cards of the same value, first attack also includes a
 // 2-card combination (3 moves total: two singles + one pair).
 static void test_legal_first_attack_duplicate(void) {
@@ -2444,6 +2486,7 @@ int main(void) {
     test_deal_rng_unbiased();
     test_start_game();
     test_awire_apply_roundtrip();
+    test_awire_apply_settles_game_over();
     test_legal_first_attack();
     test_legal_first_attack_duplicate();
     test_can_cover();
