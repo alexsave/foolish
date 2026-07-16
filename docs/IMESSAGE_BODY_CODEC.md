@@ -252,31 +252,44 @@ unevaluated:
 
 ## 6. Next
 
-1. **Finding 4 (MAX_LOGS)** — the one open item. See §4.
-2. Resume M0's spine: `wasm_msg_*` exports + TS bridge, `e2e/msg_wire.test.ts`,
-   `e2e/msg_concurrency.test.ts` (Rule P/R as pure TS — the oracle the Swift port
-   must match in M3), `/m/[payload]`.
-   Two things scoped but not yet built, both non-obvious:
+M0's remaining spine, in order:
 
-   - **The exports split across the two modules, and the split is forced.**
-     `wasm_msg_decode` belongs in `wasm/wasm_api.c` (both modules): `/m/` only
-     ever DECODES, and a decode's log overflow is harmless because nothing
-     re-encodes it. `wasm_msg_seal` belongs in `wasm/wasm_bots_api.c`
-     (**bots-only**): sealing reads the resident session log, which is exactly
-     why `wasm_replay_encode_v6_from_game` is bots-only already
-     (`cnitro/Makefile:458` — `rules.wasm` builds at `MAX_LOGS=128` and its
-     3-page pin cannot be raised). Keeping `msg_seal`'s scratch `Game` (~33KB) in
-     the bots-only file also keeps it out of that pin.
-   - **LANDMINE: the envelope must live in `g_replay_io`, never `g_io`.**
-     `rules.wasm` builds with `-DCD_RULES_OVERLAY`, which aliases the replay
-     scratch family (`g_rec` + `g_bn` + `g_replay_io`) OVER the action family
-     (`g_moves` + `g_snaps` + `g_io`) in one arena — legal because "replay
-     encode/decode vs action/menu are top-level exports that never nest"
-     (`cnitro/Makefile`). An FMSG export breaks that assumption: it is a replay
-     call, so its bignum scratch would **silently clobber an envelope parked in
-     `g_io` mid-decode** — and `MsgEnvelope` BORROWS those bytes. Park it in
-     `g_replay_io` and the msg exports stay inside the replay family, where they
-     belong.
-3. `IMESSAGE_IMPLEMENTATION_HANDOFF.md` §3.2/§3.3 and `IMESSAGE_GAME_DESIGN.md`
-   §4.2/§16 still describe the raw chain and defer v6. They are now wrong; this
-   doc supersedes them.
+1. **`e2e/msg_concurrency.test.ts`** — Rule P + Rule R as PURE TS over the
+   exports. This is the oracle the Swift port must match fixture-for-fixture in
+   M3, so it is the highest-value thing left. Rule P is a straight comparison
+   over `kernelMsgDecode`'s `{round, turn, digest}` (all three already cross).
+   Rule R needs to BUILD chains, i.e. `kernelMsgSeal` — which is **bots.wasm
+   only**, and `engine()` loads rules.wasm. That wiring (`bots.ts` /
+   `__adoptEngine`) is the first thing to solve.
+2. **`/m/[payload]`** — `base32Decode` (reuse `replay/codec.ts`, do not invent)
+   → `kernelMsgDecode` → render. Note decode leaves the game RESIDENT, so the
+   existing view exports already read it: there is no new rendering path, and
+   rules.wasm is enough (it decodes; it just cannot seal).
+3. **Finding 4 (MAX_LOGS)** — see §4. Still open, still never observed at 2-4p.
+
+Not blocking, worth knowing: `IMESSAGE_IMPLEMENTATION_HANDOFF.md` §3.2/§3.3 and
+`IMESSAGE_GAME_DESIGN.md` §4.2/§16 still describe the raw chain and defer v6.
+They are wrong; this doc supersedes them.
+
+## 7. The wasm half (done)
+
+- `wasm_msg_decode` (rules + bots) / `wasm_msg_seal` (**bots only** — sealing
+  reads the resident session log; rules.wasm is `MAX_LOGS=128` with no log
+  import). Both live in `wasm/wasm_api.c` and differ only in the export list —
+  the pattern `wasm_replay_encode_v6_from_game` already established.
+- **The envelope crosses in `g_replay_io`, never `g_io`.** rules.wasm aliases the
+  replay scratch family OVER the action family because "replay encode/decode vs
+  action/menu never nest". An FMSG call IS a replay call, so an envelope in
+  `g_io` would be clobbered by the codec's own bignum scratch mid-decode — and
+  `MsgEnvelope` borrows those bytes.
+- Decode leaves the game **resident**: `kernelViewSerialize` and the legal-move
+  exports then read exactly what the payload describes.
+- `engine.ts`: `kernelMsgDecode` / `kernelMsgSeal`, envelope as fields not
+  offsets, every `MSG_E*` mapped to a sentence.
+- `e2e/msg_wire.test.ts` — **the cross-engine gate** (design §8.2). Fixtures are
+  sealed by the NATIVE kernel (`msg_wire_test --fixture`) and decoded by the
+  WASM one; they must agree on turn/round/seats/seed, and since `msg_replay` only
+  returns when the body backs those claims, agreement means both kernels replayed
+  the identical chain. A diff there is a wire break.
+- `rules_wasm.ts` was regenerated — it had not been rebuilt since Format 6, so
+  the browser/e2e kernel was missing A2-A5. That drift is now paid off.
