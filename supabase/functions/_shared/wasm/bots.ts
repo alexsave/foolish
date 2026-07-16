@@ -17,7 +17,6 @@
 import { Card, Game } from '../types.ts';
 import { LegalMove } from '../bot_interfaces.ts';
 import { loadWasmGz, loadWasmGzAsync } from './wasm_asset.ts';
-import { parseMaskedState, type ViewState } from '../wire/view.ts';
 
 // view.h: mask every hand and the deck.
 const VIEW_SPECTATOR = -1;
@@ -879,7 +878,7 @@ export function kernelMsgRebase(pendingRound: number, seat: number, wire: Uint8A
 // the envelope already put the game in the kernel. The masking itself is in
 // view.c, like every other view in the product — nothing here decides what a
 // stranger may see.
-export function kernelMsgPublicView(): { view: ViewState } {
+export function kernelMsgPublicView(): { view: KernelState } {
     const ex = bots() as unknown as EngineExports;
     const base = ex.wasm_io_ptr();
     const len = ex.wasm_view_serialize(VIEW_SPECTATOR);
@@ -890,7 +889,10 @@ export function kernelMsgPublicView(): { view: ViewState } {
     if (blob[0] !== VIEW_FORMAT_VERSION) {
         throw new Error(`view: format ${blob[0]}, this build reads ${VIEW_FORMAT_VERSION}`);
     }
-    return { view: parseMaskedState(blob, 2).state };
+    // Serialized by the kernel, read back by the kernel. It used to hand the
+    // blob to a TS parser, which meant this one call crossed the wire format
+    // twice in two different implementations of it.
+    return { view: kernelViewFromPacked(blob.subarray(2), VIEW_SPECTATOR) };
 }
 
 // ---------------------------------------------------------------------------

@@ -32,7 +32,7 @@ import { handlePickup } from '../supabase/functions/_shared/actions/pickup.ts';
 import { handleGood } from '../supabase/functions/_shared/actions/good.ts';
 import { encodeAction, AwireKindName } from '../supabase/functions/_shared/wire/awire.ts';
 import { encodeEventWire, decodeEventWire } from '../supabase/functions/_shared/wire/evwire.ts';
-import { parseMaskedState } from '../supabase/functions/_shared/wire/view.ts';
+import { kernelEventsFromPacked } from '../supabase/functions/_shared/wasm/bots.ts';
 import { encodeLogs, logsFromKernelExport, decodeLogs } from '../supabase/functions/_shared/wire/logwire.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
@@ -91,38 +91,39 @@ const hexDiff = (a: Uint8Array, b: Uint8Array): string => {
   return 'equal';
 };
 
-// Raw-byte personalization scan: walk every event snapshot + trailer of a
-// viewer's stream and assert non-viewer hands are fully masked, plus event
-// cards of DEAL/REFILL for other seats are card backs.
+// Personalization scan: every event snapshot + the trailer of a viewer's stream
+// must carry no non-viewer hand, and DEAL/REFILL card identities must reach only
+// the receiving seat.
+//
+// This used to walk the bytes by hand with parseMaskedState. That parser is gone
+// (A8/F7) and the kernel reads its own format now, so the scan asks the kernel —
+// which is also the honest way round: it inspects what a CLIENT would actually
+// be able to see, rather than what a second parser thinks is in there.
 function assertNoLeaks(bytes: Uint8Array, viewer: number, numPlayers: number): void {
   assert.equal(bytes[0], 1, 'evwire format version');
-  const nEvents = bytes[3];
-  let q = 4;
-  const checkSnap = (at: number): number => {
-    const len = bytes[at] | (bytes[at + 1] << 8);
-    const { state, end } = parseMaskedState(bytes, at + 2);
-    assert.equal(end, at + 2 + len, 'snapshot length matches its parse');
-    state.players.forEach((p, i) => {
-      if (i === viewer) return;
-      for (const c of p.hand) assert.equal(c, null, `seat ${i} hand masked for viewer ${viewer}`);
-    });
-    return at + 2 + len;
+  const seq = kernelEventsFromPacked(bytes);
+  assert.equal(seq.viewer, viewer, 'the stream is addressed to this viewer');
+
+  const noForeignHand = (state: { players: { seat: number; hand: unknown }[] }, where: string) => {
+    for (const p of state.players) {
+      if (p.seat === viewer) continue;
+      assert.equal(p.hand, null, `seat ${p.seat} hand masked for viewer ${viewer} (${where})`);
+    }
   };
-  for (let e = 0; e < nEvents; e++) {
-    const type = bytes[q]; const seat = bytes[q + 1]; const flags = bytes[q + 5];
-    const nCards = bytes[q + 6];
-    const cardsAt = q + 7;
-    if ((type === 1 /* deal */ || type === 9 /* refill */) && seat !== viewer) {
-      for (let c = 0; c < nCards; c++) {
-        assert.equal(bytes[cardsAt + c], 0xfe, `deal/refill cards masked (viewer ${viewer}, seat ${seat})`);
+
+  let checked = 0;
+  for (const ev of seq.events) {
+    // 1 = deal, 9 = refill (EVW_T_*); a card bound for someone else's hand.
+    if ((ev.type === 1 || ev.type === 9) && ev.seat !== viewer) {
+      for (const c of ev.cards) {
+        assert.equal(c, null, `deal/refill cards masked (viewer ${viewer}, seat ${ev.seat})`);
       }
     }
-    q = cardsAt + nCards;
-    if (flags & 1) q++;
-    if (flags & 2) q++;
-    q = checkSnap(q);
+    noForeignHand(ev.state, `event ${ev.type}`);
+    checked++;
   }
-  checkSnap(q); // trailer
+  noForeignHand(seq.game, 'trailer');
+  assert.equal(checked, seq.events.length, 'every event was scanned');
   assert.ok(numPlayers >= 2);
 }
 

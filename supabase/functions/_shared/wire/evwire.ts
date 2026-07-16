@@ -12,8 +12,9 @@
 // Pure TS, no wasm imports.
 import { AnimationEvent, ANIMATION_EVENT_TYPE, Card, Game, PersonalGame, PublicGame } from "../types.ts";
 import { SUIT_MAP, VALUE_MAP } from "../constants.ts";
-import { cardFromWireByte, WIRE_HIDDEN, WIRE_NONE, wireCard } from "./awire.ts";
-import { parseMaskedState, ViewDecodeCtx, ViewRoster, viewToGame, writeMaskedState } from "./view.ts";
+import { WIRE_HIDDEN, wireCard } from "./awire.ts";
+import { ViewDecodeCtx, ViewRoster, viewToGame, writeMaskedState } from "./view.ts";
+import { KernelState, kernelEventsFromPacked } from "../wasm/bots.ts";
 
 export const EVWIRE_FORMAT_VERSION = 1;
 export const EVW_SEAT_NONE = 0xff;
@@ -97,76 +98,54 @@ export interface DecodedSequence {
     game: PersonalGame | PublicGame; // the committed final state (trailer)
 }
 
-// Packed sequence -> client-shape events. Returns null on an unknown format
-// version (callers must treat the payload as unreadable, never as empty).
+// Packed sequence -> client-shape events. Returns null on anything the kernel
+// cannot read — an unknown format version, a truncated payload — because a
+// caller must treat that as unreadable, never as empty.
+//
+// The bytes are read by the KERNEL (kernelEventsFromPacked -> evwire.c's own
+// reader). What is left here is the join the kernel cannot do: seat -> player_id
+// and name, the message prose, and the location/type enums the app speaks. That
+// is why this function still exists and why it is now this short.
 export function decodeEventWire(buf: Uint8Array, roster: ViewRoster, ctx: ViewDecodeCtx): DecodedSequence | null {
-    if (buf.length < 4 || buf[0] !== EVWIRE_FORMAT_VERSION) return null;
+    let seq;
     try {
-        return decodeEventWireInner(buf, roster, ctx);
+        seq = kernelEventsFromPacked(buf);
     } catch {
-        // Truncated/corrupt payload (parseMaskedState throws RangeError, and
-        // the bounds guards below do too): unreadable, never a partial parse.
         return null;
     }
-}
 
-function decodeEventWireInner(buf: Uint8Array, roster: ViewRoster, ctx: ViewDecodeCtx): DecodedSequence {
-    const need = (at: number, n: number) => {
-        if (at + n > buf.length) throw new RangeError(`evwire: truncated at ${at}+${n}/${buf.length}`);
-    };
-    const viewerSeat = buf[1] === EVW_SEAT_NONE ? -1 : buf[1];
-    const actorSeat = buf[2] === EVW_SEAT_NONE ? -1 : buf[2];
-    const nEvents = buf[3];
-    let q = 4;
-    const events: DecodedEvent[] = [];
-    for (let i = 0; i < nEvents; i++) {
-        need(q, 7);
-        const type = EVENT_TYPE_FROM_INT[buf[q++]];
-        const seat = buf[q++];
-        const msg = buf[q++];
-        const fromLoc = buf[q++];
-        const toLoc = buf[q++];
-        const flags = buf[q++];
-        const nCards = buf[q++];
-        need(q, nCards + (flags & 1 ? 1 : 0) + (flags & 2 ? 1 : 0) + 2);
-        const cards: Card[] = [];
-        for (let j = 0; j < nCards; j++) cards.push(cardFromWireByte(buf[q++]));
-        let target: Card | null = null;
-        let battle = -1;
-        if (flags & 1) target = cardFromWireByte(buf[q++]);
-        if (flags & 2) battle = buf[q++];
-        const snapLen = buf[q] | (buf[q + 1] << 8); q += 2;
-        need(q, snapLen);
-        const { state } = parseMaskedState(buf, q); q += snapLen;
+    const viewerSeat = seq.viewer;
+    const actorSeat = seq.actor;
+    const events: DecodedEvent[] = seq.events.map((e) => {
+        const type = EVENT_TYPE_FROM_INT[e.type];
+        // A masked card (the DEAL/REFILL redaction) arrives as null and renders
+        // as a back; the kernel never sent the identity, so there is none to lose.
+        const cards: Card[] = e.cards.map((c) => (c ? { suit: c.s, value: c.v } : { suit: -1, value: -1 }));
+        const target: Card | null = e.target ? { suit: e.target.s, value: e.target.v } : null;
 
         const ev: DecodedEvent = {
             type,
-            game_state: viewToGame(state, roster, viewerSeat, ctx),
+            game_state: viewToGame(e.state, roster, viewerSeat, ctx),
         };
-        if (seat !== EVW_SEAT_NONE) ev.player_id = roster.players[seat]?.player_id ?? `seat-${seat}`;
-        if (nCards > 0 || type === ANIMATION_EVENT_TYPE.ATTACK_PASS
+        if (e.seat >= 0) ev.player_id = roster.players[e.seat]?.player_id ?? `seat-${e.seat}`;
+        if (cards.length > 0 || type === ANIMATION_EVENT_TYPE.ATTACK_PASS
             || type === ANIMATION_EVENT_TYPE.DISCARD || type === ANIMATION_EVENT_TYPE.PICKUP
             || type === ANIMATION_EVENT_TYPE.DEAL || type === ANIMATION_EVENT_TYPE.CARDS_TO_TRASH
             || type === ANIMATION_EVENT_TYPE.REFILL || type === ANIMATION_EVENT_TYPE.FLIPPED
             || type === ANIMATION_EVENT_TYPE.COVER) ev.cards = cards;
-        if (fromLoc !== LOC_NONE) ev.from_location = LOC_FROM_INT[fromLoc];
-        if (toLoc !== LOC_NONE) ev.to_location = LOC_FROM_INT[toLoc];
-        if (flags & 1) ev.target_card = target!;
-        if (flags & 2) ev.battle_index = battle;
-        const seatName = seat !== EVW_SEAT_NONE
-            ? (roster.players[seat]?.name ?? `seat-${seat}`)
-            : '';
-        const message = reconstructMessage(msg, seatName, cards, target, state, roster);
+        if (e.from !== LOC_NONE) ev.from_location = LOC_FROM_INT[e.from];
+        if (e.to !== LOC_NONE) ev.to_location = LOC_FROM_INT[e.to];
+        if (target) ev.target_card = target;
+        if (e.battle !== undefined) ev.battle_index = e.battle;
+        const seatName = e.seat >= 0 ? (roster.players[e.seat]?.name ?? `seat-${e.seat}`) : '';
+        const message = reconstructMessage(e.msg, seatName, cards, target, e.state, roster);
         if (message !== undefined) ev.message = message;
-        events.push(ev);
-    }
-    need(q, 2);
-    const finalLen = buf[q] | (buf[q + 1] << 8); q += 2;
-    need(q, finalLen);
-    const { state: finalState } = parseMaskedState(buf, q);
+        return ev;
+    });
+
     return {
         viewerSeat, actorSeat, events,
-        game: viewToGame(finalState, roster, viewerSeat, ctx),
+        game: viewToGame(seq.game, roster, viewerSeat, ctx),
     };
 }
 

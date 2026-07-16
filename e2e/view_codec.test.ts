@@ -28,9 +28,10 @@ import { handlePickup } from '../supabase/functions/_shared/actions/pickup.ts';
 import { handleGood } from '../supabase/functions/_shared/actions/good.ts';
 import { AwireKindName } from '../supabase/functions/_shared/wire/awire.ts';
 import {
-    decodePackedGame, encodeGameResponse, PackedGameRoster, parseMaskedState,
+    decodePackedGame, encodeGameResponse, PackedGameRoster,
     VIEW_FORMAT_VERSION,
 } from '../supabase/functions/_shared/wire/view.ts';
+import { kernelViewFromPacked } from '../supabase/functions/_shared/wasm/bots.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 
@@ -87,16 +88,22 @@ function checkView(game: Game, blob: Uint8Array, seat: number, version: number, 
     // Personalization on the raw bytes: parse the masked payload — every
     // non-viewer hand must be fully hidden (counts intact), the viewer's own
     // hand fully real. The deck is always masked but its LENGTH is real.
-    const { state } = parseMaskedState(viewBlob, 2);
+    // Read back by the kernel (A8/F7) — the TS parser that used to shadow
+    // view.c's layout here is gone. The blob leads with [fmt | viewer].
+    const state = kernelViewFromPacked(viewBlob.subarray(2), seat);
     state.players.forEach((vp, i) => {
-        assert.equal(vp.hand.length, game.players[i].hand.length, `${tag}: seat ${i} hand count real for viewer ${seat}`);
+        assert.equal(vp.handCount, game.players[i].hand.length, `${tag}: seat ${i} hand count real for viewer ${seat}`);
         if (i === seat) {
-            vp.hand.forEach((c, j) => assert.deepEqual(c, game.players[i].hand[j], `${tag}: own hand card ${j} real`));
+            assert.ok(vp.hand, `${tag}: the viewer's own hand is present`);
+            vp.hand!.forEach((c, j) => assert.deepEqual({ suit: c.s, value: c.v }, game.players[i].hand[j],
+                                                        `${tag}: own hand card ${j} real`));
         } else {
-            for (const c of vp.hand) assert.equal(c, null, `${tag}: seat ${i} hand masked for viewer ${seat}`);
+            // The kernel says "hand":null for a seat that is not the viewer —
+            // the count is real, the identities never crossed.
+            assert.equal(vp.hand, null, `${tag}: seat ${i} hand masked for viewer ${seat}`);
         }
     });
-    assert.equal(state.deckLen, game.deck.length, `${tag}: deck length real`);
+    assert.equal(state.deckCount, game.deck.length, `${tag}: deck length real`);
 
     // Envelope round trip — the exact get_game packed response.
     const roster = rosterFor(game);

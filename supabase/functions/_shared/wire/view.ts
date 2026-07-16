@@ -6,10 +6,11 @@
 // paths (bot loop, meta actions) emit byte-identical streams.
 // Pure TS, no wasm imports — shared by client, edge functions and e2e.
 import {
-    Battle, Card, Game, GAME_STATUS, PersonalGame, PLAYER_STATUS,
+    Card, Game, GAME_STATUS, PersonalGame, PLAYER_STATUS,
     PrivatePlayer, PublicGame, PublicPlayer,
 } from "../types.ts";
-import { cardFromWireByte, WIRE_HIDDEN, WIRE_NONE, wireCard } from "./awire.ts";
+import { WIRE_HIDDEN, WIRE_NONE, wireCard } from "./awire.ts";
+import { KernelCard, KernelState, kernelViewFromPacked } from "../wasm/bots.ts";
 
 export const VIEW_FORMAT_VERSION = 1;
 
@@ -30,84 +31,11 @@ export interface ViewRoster {
     players: { player_id: string; name: string; is_ai: boolean; strategy_key?: string }[];
 }
 
-// A parsed masked put_state payload. Hidden cards (WIRE_HIDDEN) parse to
-// null; hand/deck COUNTS are always real.
-export interface ViewState {
-    status: number;
-    numPlayers: number;
-    powerSuit: number;
-    firstAttacker: number;
-    defender: number;
-    discard: number;
-    flipped: Card | null;
-    goodMask: number;
-    hasGoodTs: boolean;
-    deckLen: number;
-    battles: Battle[];
-    players: { status: number; awaiting: boolean; hand: (Card | null)[] }[];
-    elimination: number[];
-}
-
-const i8 = (b: number) => (b > 127 ? b - 256 : b);
-
-// Parse one masked put_state payload starting at `off`; returns the state
-// and the offset just past it. Throws RangeError on a truncated buffer —
-// wrap callers that receive untrusted/corruptible bytes (decodeEventWire and
-// decodePackedGame catch and surface null).
-export function parseMaskedState(buf: Uint8Array, off: number): { state: ViewState; end: number } {
-    let q = off;
-    const need = (n: number) => {
-        if (q + n > buf.length) throw new RangeError(`view: truncated state payload at ${q}+${n}/${buf.length}`);
-    };
-    need(17); // the fixed-size header through deck_count
-    const status = buf[q++];
-    const numPlayers = buf[q++];
-    const powerSuit = i8(buf[q++]);
-    const firstAttacker = i8(buf[q++]);
-    const defender = i8(buf[q++]);
-    const discard = buf[q] | (buf[q + 1] << 8); q += 2;
-    const hasFlipped = buf[q++] !== 0;
-    const flippedWire = buf[q++];
-    const goodMask = (buf[q] | (buf[q + 1] << 8) | (buf[q + 2] << 16) | (buf[q + 3] << 24)) >>> 0; q += 4;
-    const hasGoodTs = buf[q++] !== 0;
-    const deckLen = buf[q] | (buf[q + 1] << 8); q += 2;
-    need(deckLen + 1);
-    q += deckLen; // masked deck bytes carry no information beyond the count
-    const nBattles = buf[q++];
-    need(nBattles * 2 + 1);
-    const battles: Battle[] = [];
-    for (let i = 0; i < nBattles; i++) {
-        const attack = cardFromWireByte(buf[q++]);
-        const dw = buf[q++];
-        battles.push({ attack, defense: dw === WIRE_NONE ? null : cardFromWireByte(dw) });
-    }
-    const players: ViewState['players'] = [];
-    for (let i = 0; i < numPlayers; i++) {
-        need(3);
-        const pStatus = buf[q++];
-        const awaiting = buf[q++] !== 0;
-        const handN = buf[q++];
-        need(handN + 1);
-        const hand: (Card | null)[] = new Array(handN);
-        for (let j = 0; j < handN; j++) {
-            const b = buf[q++];
-            hand[j] = b === WIRE_HIDDEN ? null : cardFromWireByte(b);
-        }
-        players.push({ status: pStatus, awaiting, hand });
-    }
-    const elimN = buf[q++];
-    need(elimN);
-    const elimination: number[] = [];
-    for (let i = 0; i < elimN; i++) elimination.push(i8(buf[q++]));
-    return {
-        state: {
-            status, numPlayers, powerSuit, firstAttacker, defender, discard,
-            flipped: hasFlipped ? cardFromWireByte(flippedWire) : null,
-            goodMask, hasGoodTs, deckLen, battles, players, elimination,
-        },
-        end: q,
-    };
-}
+// This file used to carry a parseMaskedState that read view.c's layout byte for
+// byte — the offsets existed twice, here and in C, and a parity test was what
+// kept them honest. The kernel reads its own format now (src/json_out.c, reached
+// through kernelViewFromPacked), so the only thing left here is the part the
+// kernel structurally cannot do: joining the board to the roster.
 
 // Reconstruct the good_players array (insertion-ordered) from the mask.
 // The pre-known order survives; at most ONE player can be newly added per
@@ -135,32 +63,44 @@ export interface ViewDecodeCtx {
     now?: () => number;             // injectable clock for tests
 }
 
-// Materialize the React-facing view model from a parsed masked state — the
-// ONE place packed bytes become JS objects on the client. viewerSeat < 0
-// yields a spectator PublicGame (no self).
+// The kernel speaks {s,v}; the app speaks {suit,value}.
+const card = (c: KernelCard): Card => ({ suit: c.s, value: c.v });
+
+// Materialize the React-facing view model from a board the KERNEL decoded — the
+// one place a kernel board becomes a JS game object. viewerSeat < 0 yields a
+// spectator PublicGame (no self).
+//
+// Everything this adds is something the kernel does not have and should not:
+// identity (game.h keeps it out of the blob deliberately), the good-players
+// INSERTION order (needs the caller's prior order), and the good_timestamp VALUE
+// (a host clock reading). The kernel says what the board is; this says who the
+// seats are.
 export function viewToGame(
-    view: ViewState, roster: ViewRoster, viewerSeat: number, ctx: ViewDecodeCtx,
+    view: KernelState, roster: ViewRoster, viewerSeat: number, ctx: ViewDecodeCtx,
 ): PersonalGame | PublicGame {
     const players: PublicPlayer[] = view.players.map((vp, i) => ({
         player_id: roster.players[i]?.player_id ?? `seat-${i}`,
         name: roster.players[i]?.name ?? `seat-${i}`,
         is_ai: roster.players[i]?.is_ai ?? false,
         status: P_STATUS_FROM_INT[vp.status] ?? PLAYER_STATUS.IDLE,
-        hand_length: vp.hand.length,
+        hand_length: vp.handCount,
     }));
     const base: PublicGame = {
         id: roster.id,
         name: roster.name,
-        deck_length: view.deckLen,
-        discard_pile_length: view.discard,
-        flipped: view.flipped,
+        deck_length: view.deckCount,
+        discard_pile_length: view.discardCount,
+        flipped: view.flipped ? card(view.flipped) : null,
         players,
         status: G_STATUS_FROM_INT[view.status] ?? GAME_STATUS.WAITING,
         power_suit: view.powerSuit,
         first_attacker: view.firstAttacker,
         defender: view.defender,
-        table_battles: view.battles,
-        elimination_order: view.elimination.map(s => roster.players[s]?.player_id ?? `seat-${s}`),
+        table_battles: view.battles.map(b => ({
+            attack: card(b.attack),
+            defense: b.defense ? card(b.defense) : null,
+        })),
+        elimination_order: view.eliminationOrder.map(s => roster.players[s]?.player_id ?? `seat-${s}`),
         good_players: goodPlayersFromViewMask(view.goodMask, roster, ctx.preGood),
         good_timestamp: view.hasGoodTs ? (ctx.prevGoodTs ?? (ctx.now ?? Date.now)()) : null,
     };
@@ -168,10 +108,11 @@ export function viewToGame(
     const vp = view.players[viewerSeat];
     const self: PrivatePlayer = {
         ...players[viewerSeat],
-        // A masked byte in the viewer's own hand cannot happen on a
-        // well-formed view; render a card back rather than crash if it does.
-        hand: vp.hand.map(c => c ?? { suit: -1, value: -1 }),
-        awaiting_attack: vp.awaiting,
+        // The kernel emits "hand":null for any seat that is not the viewer. On a
+        // well-formed view that cannot be the viewer's own seat; render card
+        // backs rather than crash if it ever is.
+        hand: vp.hand ? vp.hand.map(card) : new Array(vp.handCount).fill({ suit: -1, value: -1 }),
+        awaiting_attack: vp.awaitingAttack,
         strategy_key: roster.players[viewerSeat]?.strategy_key ?? 'human',
     };
     return { ...base, self } as PersonalGame;
@@ -288,13 +229,17 @@ export function decodePackedGame(
     const rosterLen = buf[7] | (buf[8] << 8);
     if (9 + rosterLen + 2 > buf.length) return null;
     let roster: PackedGameRoster;
-    let state: ViewState;
+    let state: KernelState;
     let q = 9 + rosterLen;
     try {
         roster = JSON.parse(new TextDecoder().decode(buf.subarray(9, 9 + rosterLen))) as PackedGameRoster;
         const viewLen = buf[q] | (buf[q + 1] << 8); q += 2;
         if (q + viewLen > buf.length || buf[q] !== VIEW_FORMAT_VERSION) return null;
-        ({ state } = parseMaskedState(buf, q + 2)); // skip [fmt | viewer]
+        // The envelope around the blob is this file's own invention (it is
+        // written by encodeGameResponse a few lines up, in TypeScript, with no C
+        // twin), so reading it here duplicates nothing. The BLOB inside it is
+        // view.c's, and that goes to the kernel. Skip [fmt | viewer].
+        state = kernelViewFromPacked(buf.subarray(q + 2, q + viewLen), seat);
     } catch {
         return null; // truncated/corrupt payload — caller treats as unreadable
     }
