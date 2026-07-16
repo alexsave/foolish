@@ -12,7 +12,7 @@ import './harness.ts';
 import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { applySchema, resetDb, seedGame, uuid, pgPool } from './harness.ts';
-import { executeWithGameLock } from '../supabase/functions/_shared/utils.ts';
+import { executeWithGameLock } from '../supabase/functions/_shared/adapter/utils.ts';
 import { verify_player_in_game } from '../supabase/functions/_shared/common_utils.ts';
 import { start_game } from '../supabase/functions/_shared/game_lifecycle.ts';
 import { Game, AnimationEvent, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY, PrivatePlayer, Card } from '../supabase/functions/_shared/types.ts';
@@ -106,7 +106,7 @@ function isCrashClass(e: any): boolean {
 }
 
 async function loadGame(gameId: string): Promise<Game> {
-    const { loadCompleteGame } = await import('../supabase/functions/_shared/utils.ts');
+    const { loadCompleteGame } = await import('../supabase/functions/_shared/adapter/utils.ts');
     return loadCompleteGame(gameId);
 }
 async function freshGame(): Promise<string> {

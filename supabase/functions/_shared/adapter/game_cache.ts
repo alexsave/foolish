@@ -9,7 +9,7 @@
 // and a reload, never a wrong write. commitGame keeps the cache current for
 // EVERY dealt commit (packed and JS paths alike) and evicts on any
 // non-PLAYING transition; cross-isolate writers surface as conflicts.
-import { GAME_STATUS, Game } from './types.ts';
+import { GAME_STATUS, Game } from '../types.ts';
 
 export interface CachedGame {
     version: number;

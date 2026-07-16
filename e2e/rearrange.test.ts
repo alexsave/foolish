@@ -13,7 +13,7 @@ import './harness.ts';
 import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { applySchema, resetDb, seedGame, uuid, pgPool } from './harness.ts';
-import { executeWithGameLock, loadCompleteGame } from '../supabase/functions/_shared/utils.ts';
+import { executeWithGameLock, loadCompleteGame } from '../supabase/functions/_shared/adapter/utils.ts';
 import { start_game } from '../supabase/functions/_shared/game_lifecycle.ts';
 import { handleRearrangeHand } from '../supabase/functions/_shared/actions/rearrange.ts';
 import { AnimationEvent, Card, Game, GAME_STATUS, PLAYER_STATUS, PrivatePlayer, STRATEGY_KEY } from '../supabase/functions/_shared/types.ts';

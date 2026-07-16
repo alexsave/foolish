@@ -15,7 +15,7 @@ import './harness.ts';
 import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { applySchema, resetDb, seedGame, uuid, pgPool } from './harness.ts';
-import { executeWithGameLock } from '../supabase/functions/_shared/utils.ts';
+import { executeWithGameLock } from '../supabase/functions/_shared/adapter/utils.ts';
 import { personalize_game } from '../supabase/functions/_shared/common_utils.ts';
 import { start_game } from '../supabase/functions/_shared/game_lifecycle.ts';
 import { Game, AnimationEvent, PersonalGame, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, STRATEGY_KEY, Card } from '../supabase/functions/_shared/types.ts';
@@ -149,7 +149,7 @@ if (!process.env.VALIDATION_ONLY) {
     const pick = <T>(a: T[]): T => a[ri(a.length)];
 
     const loadGame = async (gameId: string): Promise<Game> => {
-        const { loadCompleteGame } = await import('../supabase/functions/_shared/utils.ts');
+        const { loadCompleteGame } = await import('../supabase/functions/_shared/adapter/utils.ts');
         return loadCompleteGame(gameId);
     };
     const freshGame = async (): Promise<string> => {

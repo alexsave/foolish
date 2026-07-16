@@ -1,15 +1,15 @@
-import { GAME_STATUS, PLAYER_STATUS } from './types.ts';
+import { GAME_STATUS, PLAYER_STATUS } from '../types.ts';
 import { executeWithGameLock, loadSessionLogBytes, PackedOpProducts } from './utils.ts';
-import { strategyUsesLogs, LegalMove } from './bot_strategy.ts';
+import { strategyUsesLogs, LegalMove } from '../bot_strategy.ts';
 import { createClient } from 'jsr:@supabase/supabase-js';
 import {
     __botsWasmMB, __ensureBots, wasmBotDrive, wasmBotEligibleMask, wasmBotPacingMs,
     BOT_PACE, BotDrivePref,
-} from './wasm/bots.ts';
-import { __kernelWasmMB } from './wasm/engine.ts';
-import { bytesToHex, hexToBytes } from './replay/codec.ts';
-import { bytesToBareHex } from './wire/bytes.ts';
-import { logsFromKernelExport } from './wire/logwire.ts';
+} from '../wasm/bots.ts';
+import { __kernelWasmMB } from '../wasm/engine.ts';
+import { bytesToHex, hexToBytes } from '../replay/codec.ts';
+import { bytesToBareHex } from '../wire/bytes.ts';
+import { logsFromKernelExport } from '../wire/logwire.ts';
 
 // One-line memory snapshot against the edge limits (150MB heap + 150MB
 // external, where wasm linear memory counts as external). Logged around every

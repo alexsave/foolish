@@ -17,7 +17,7 @@
 
 import './harness.ts';
 import { applySchema, resetDb, seedGame, uuid, pgPool } from './harness.ts';
-import { executeWithGameLock } from '../supabase/functions/_shared/utils.ts';
+import { executeWithGameLock } from '../supabase/functions/_shared/adapter/utils.ts';
 import { start_game } from '../supabase/functions/_shared/game_lifecycle.ts';
 import { calculateLegalMoves } from '../supabase/functions/_shared/bot_strategy.ts';
 import { processBotActionPacked, shouldBotActCore } from '../supabase/functions/_shared/pure_bot_actions.ts';
@@ -105,7 +105,7 @@ async function benchStrategy(strategy: string): Promise<{ strategy: string; n: n
 
 async function main() {
   try {
-    const u = await import('../supabase/functions/_shared/utils.ts');
+    const u = await import('../supabase/functions/_shared/adapter/utils.ts');
     if (typeof (u as Record<string, unknown>).loadSessionLogBytes === 'function') {
       loadSessionLogBytes = (u as Record<string, unknown>).loadSessionLogBytes as typeof loadSessionLogBytes;
     }

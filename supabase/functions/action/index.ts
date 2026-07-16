@@ -1,11 +1,11 @@
-import { wrap400, ExecutionParams, scheduleBotLoop } from "../_shared/utils.ts";
+import { wrap400, ExecutionParams, scheduleBotLoop } from "../_shared/adapter/utils.ts";
 import { handleAttack } from "../_shared/actions/attack.ts";
 import { handleCover } from "../_shared/actions/cover.ts";
 import { handlePass } from "../_shared/actions/pass.ts";
 import { handlePickup } from "../_shared/actions/pickup.ts";
 import { handleGood } from "../_shared/actions/good.ts";
 import { verify_player_in_game } from "../_shared/common_utils.ts";
-import { corsHeaders } from "../_shared/cors.ts";
+import { corsHeaders } from "../_shared/adapter/cors.ts";
 import { GAME_STATUS } from "../_shared/types.ts";
 import { ACTION_STATUS, decodeActionRequest, encodeActionResponse } from "../_shared/wire/awire.ts";
 
@@ -23,7 +23,7 @@ const packedAction = async (req: Request, user: { id: string }, reqId: string): 
             status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
     }
-    const { executePackedAction } = await import('../_shared/packed_action.ts');
+    const { executePackedAction } = await import('../_shared/adapter/packed_action.ts');
     const out = await executePackedAction(parsed.gameId, user.id, parsed.wire, reqId, parsed.intentVersion);
     // Same bot nudge as the JSON path: an APPLIED human move wakes the bots.
     // (A rejection never did on the legacy path — it threw before run_bots.)

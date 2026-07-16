@@ -10,9 +10,9 @@ import {
     broadcastPackedEventBuffers, commitGame, executeWithGameLock,
     finalizeEndedGame, supabaseClient,
 } from './utils.ts';
-import { GAME_STATUS } from './types.ts';
-import { verify_player_in_game } from './common_utils.ts';
-import { ACTION_STATUS, AwireMove, decodeAction, REJECT_STALE_ROUND } from './wire/awire.ts';
+import { GAME_STATUS } from '../types.ts';
+import { verify_player_in_game } from '../common_utils.ts';
+import { ACTION_STATUS, AwireMove, decodeAction, REJECT_STALE_ROUND } from '../wire/awire.ts';
 import { getCachedGame, invalidateCachedGame } from './game_cache.ts';
 
 export interface PackedActionOutcome {
@@ -121,10 +121,10 @@ export async function executePackedAction(
         // ONE synchronous kernel section: load blob -> apply wire -> finalize
         // win -> serialize state + logs + every recipient's masked event
         // stream. Lazy import keeps the wasm embed off lobby-only cold starts.
-        const { hexToBytes, bytesToHex } = await import('./replay/codec.ts');
-        const { runPackedAction, materializeKernelGame } = await import('./wasm/engine.ts');
-        const { logsFromKernelExport } = await import('./wire/logwire.ts');
-        const { bytesToBareHex } = await import('./wire/bytes.ts');
+        const { hexToBytes, bytesToHex } = await import('../replay/codec.ts');
+        const { runPackedAction, materializeKernelGame } = await import('../wasm/engine.ts');
+        const { logsFromKernelExport } = await import('../wire/logwire.ts');
+        const { bytesToBareHex } = await import('../wire/bytes.ts');
         const run = runPackedAction(hexToBytes(row.state), seat, wire, aiMask, humanSeats);
 
         if (!run.ok) {
@@ -205,11 +205,11 @@ async function legacyFallback(
 ): Promise<PackedActionOutcome> {
     const move = decodeAction(wire);
     if (!move) throw new Error('malformed action wire');
-    const { handleAttack } = await import('./actions/attack.ts');
-    const { handleCover } = await import('./actions/cover.ts');
-    const { handlePass } = await import('./actions/pass.ts');
-    const { handlePickup } = await import('./actions/pickup.ts');
-    const { handleGood } = await import('./actions/good.ts');
+    const { handleAttack } = await import('../actions/attack.ts');
+    const { handleCover } = await import('../actions/cover.ts');
+    const { handlePass } = await import('../actions/pass.ts');
+    const { handlePickup } = await import('../actions/pickup.ts');
+    const { handleGood } = await import('../actions/good.ts');
     let rejected = false;
     const result = await executeWithGameLock(gameId, async (game) => {
         rejected = false; // reset per CAS attempt — the op re-runs on conflict

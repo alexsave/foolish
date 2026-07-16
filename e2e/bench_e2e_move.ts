@@ -8,14 +8,14 @@
 //   BENCH_E2E_MOVES=300 node --import tsx e2e/bench_e2e_move.ts
 import './harness.ts';
 import { applySchema, resetDb, seedGame, uuid } from './harness.ts';
-import { executeWithGameLock, loadCompleteGame } from '../supabase/functions/_shared/utils.ts';
-import { handleMetaAction } from '../supabase/functions/_shared/meta_actions.ts';
+import { executeWithGameLock, loadCompleteGame } from '../supabase/functions/_shared/adapter/utils.ts';
+import { handleMetaAction } from '../supabase/functions/_shared/adapter/meta_actions.ts';
 import { handleAttack } from '../supabase/functions/_shared/actions/attack.ts';
 import { handleCover } from '../supabase/functions/_shared/actions/cover.ts';
 import { handlePass } from '../supabase/functions/_shared/actions/pass.ts';
 import { handlePickup } from '../supabase/functions/_shared/actions/pickup.ts';
 import { handleGood } from '../supabase/functions/_shared/actions/good.ts';
-import { executePackedAction } from '../supabase/functions/_shared/packed_action.ts';
+import { executePackedAction } from '../supabase/functions/_shared/adapter/packed_action.ts';
 import { encodeAction, AwireKindName } from '../supabase/functions/_shared/wire/awire.ts';
 import { kernelLegalMoves, kernelShouldAct } from '../supabase/functions/_shared/wasm/engine.ts';
 import { GAME_STATUS } from '../supabase/functions/_shared/types.ts';

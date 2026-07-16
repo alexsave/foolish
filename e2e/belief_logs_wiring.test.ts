@@ -30,7 +30,7 @@ import { test, before, beforeEach, after, mock } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { applySchema, resetDb, seedGame, uuid, pgPool } from './harness.ts';
-import { executeWithGameLock } from '../supabase/functions/_shared/utils.ts';
+import { executeWithGameLock } from '../supabase/functions/_shared/adapter/utils.ts';
 import { start_game } from '../supabase/functions/_shared/game_lifecycle.ts';
 import { __setBotSeedSource } from '../supabase/functions/_shared/wasm/bots.ts';
 import { __setKernelSeedSource } from '../supabase/functions/_shared/wasm/engine.ts';
@@ -58,7 +58,7 @@ async function wireLoop() {
       },
     },
   });
-  const { lockedBotLoop } = await import('../supabase/functions/_shared/bot_actions.ts');
+  const { lockedBotLoop } = await import('../supabase/functions/_shared/adapter/bot_actions.ts');
   return { lockedBotLoop, ...realBots };
 }
 

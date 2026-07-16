@@ -16,8 +16,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'jsr:@supabase/supabase-js';
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { lockedBotLoop } from '../_shared/bot_actions.ts';
-import { corsHeaders } from '../_shared/cors.ts';
+import { lockedBotLoop } from '../_shared/adapter/bot_actions.ts';
+import { corsHeaders } from '../_shared/adapter/cors.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';

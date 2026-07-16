@@ -12,7 +12,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { verifyJwtLocal, __setJwksForTest, unverifiedSubFromToken } from '../supabase/functions/_shared/auth.ts';
+import { verifyJwtLocal, __setJwksForTest, unverifiedSubFromToken } from '../supabase/functions/_shared/adapter/auth.ts';
 
 const enc = new TextEncoder();
 const b64url = (bytes: Uint8Array): string => {

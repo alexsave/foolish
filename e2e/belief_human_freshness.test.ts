@@ -26,9 +26,9 @@ import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { applySchema, resetDb, seedGame, uuid } from './harness.ts';
-import { executeWithGameLock } from '../supabase/functions/_shared/utils.ts';
+import { executeWithGameLock } from '../supabase/functions/_shared/adapter/utils.ts';
 import { start_game } from '../supabase/functions/_shared/game_lifecycle.ts';
-import { lockedBotLoop } from '../supabase/functions/_shared/bot_actions.ts';
+import { lockedBotLoop } from '../supabase/functions/_shared/adapter/bot_actions.ts';
 import { wasmBeliefProbeReset, wasmBeliefProbeDump } from '../supabase/functions/_shared/wasm/bots.ts';
 import { game_done } from '../supabase/functions/_shared/common_utils.ts';
 import { legalMovesFor, applyPlayerMove } from './dispatch.ts';
@@ -44,7 +44,7 @@ beforeEach(async () => { await resetDb(); });
 after(() => {});
 
 async function loadGame(gameId: string): Promise<Game> {
-  const { loadCompleteGame } = await import('../supabase/functions/_shared/utils.ts');
+  const { loadCompleteGame } = await import('../supabase/functions/_shared/adapter/utils.ts');
   return loadCompleteGame(gameId);
 }
 

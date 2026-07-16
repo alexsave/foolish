@@ -16,8 +16,8 @@ import './harness.ts';
 import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { applySchema, resetDb, seedGame, uuid, pgPool } from './harness.ts';
-import { executeWithGameLock, loadCompleteGame } from '../supabase/functions/_shared/utils.ts';
-import { handleMetaAction } from '../supabase/functions/_shared/meta_actions.ts';
+import { executeWithGameLock, loadCompleteGame } from '../supabase/functions/_shared/adapter/utils.ts';
+import { handleMetaAction } from '../supabase/functions/_shared/adapter/meta_actions.ts';
 import {
   Game, PersonalGame, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY, PrivatePlayer,
 } from '../supabase/functions/_shared/types.ts';
