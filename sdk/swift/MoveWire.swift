@@ -18,6 +18,24 @@ public enum MoveWire {
         let v = Int(b); return Card(s: v / 13, v: (v % 13) + 1)
     }
 
+    /// Encode a move as the awire action frame [kind, n, cards, (attacks for
+    /// cover)] — what fio_apply_awire / awire_decode reads. Kinds: attack 0,
+    /// cover 1, pass 2, pickup 3, good 4 (AWIRE_KIND). Card byte = suit*13+value-1.
+    public static func encodeAction(_ move: Move) -> [UInt8] {
+        func byte(_ c: Card) -> UInt8 { c.isHidden ? 0xFE : UInt8(c.s * 13 + (c.v - 1)) }
+        let kind: UInt8
+        switch move.type {
+        case .attack: kind = 0; case .cover: kind = 1; case .pass: kind = 2
+        case .pickup: kind = 3; case .good: kind = 4
+        default: return []      // wait/unknown never reach apply
+        }
+        if move.type == .pickup || move.type == .good { return [kind, 0] }
+        var out: [UInt8] = [kind, UInt8(move.cards.count)]
+        out.append(contentsOf: move.cards.map(byte))
+        if move.type == .cover { out.append(contentsOf: (move.attackCards ?? []).map(byte)) }
+        return out
+    }
+
     public static func decode(_ data: Data) -> [Move] {
         let b = [UInt8](data)
         guard b.count >= 4 else { return [] }
