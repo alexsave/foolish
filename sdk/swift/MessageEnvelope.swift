@@ -115,6 +115,17 @@ public actor MessageKernel {
         }
     }
 
+    /// Deal a fresh game as the resident one — the start of the send path (a new
+    /// invite). `seed` MUST be 32 bytes (the wide ChaCha deal both devices
+    /// reproduce); `seal` then reads that seed into the envelope header, so the
+    /// recipient re-deals the identical stock. Throws on a bad seed / seat count.
+    public func newGame(seed: Data, players: Int) throws {
+        let rc = seed.withUnsafeBytes { raw -> Int32 in
+            fio_new_game(raw.bindMemory(to: UInt8.self).baseAddress, Int32(seed.count), Int32(players))
+        }
+        guard rc == 0 else { throw MessageEnvelope.Failure.damaged(code: Int(rc)) }
+    }
+
     /// Seal the resident game — the send path, after the local player moved.
     /// The kernel derives turn/round from the body it writes, so a device cannot
     /// emit a payload it would itself reject.

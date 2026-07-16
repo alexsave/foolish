@@ -91,6 +91,38 @@ final class MessageEnvelopeTests: XCTestCase {
         _ = await k.residentLegal(seat: 0)   // kernel-computed; must not trap on a live game
     }
 
+    /// The OUTGOING path (M3 oracle, no Messages harness). Two halves:
+    /// (a) newGame makes a fresh dealt board resident; (b) seal of the resident
+    /// game round-trips through the link format. An FMSG bubble is sent AFTER a
+    /// move, so the seal oracle re-seals a real mid-game turn rather than a
+    /// 0-action opening (which is not a valid body — MSG_EBODY).
+    func testNewGameAndSealRoundTrip() async throws {
+        let k = MessageKernel.shared
+
+        // (a) newGame → a fresh 2p deal is 6 cards a seat.
+        let seed = Data((0..<32).map { UInt8(($0 &* 7 &+ 3) | 1) })   // 32 bytes, non-zero
+        try await k.newGame(seed: seed, players: 2)
+        guard let fresh = await k.residentView(viewer: 0) else {
+            return XCTFail("newGame left no resident board")
+        }
+        XCTAssertEqual(fresh.numPlayers, 2)
+        XCTAssertEqual(fresh.players.first?.handCount, 6, "a fresh 2p deal is 6 cards")
+
+        // (b) adopt a real mid-game turn, re-seal it, decode the result — the
+        // header the sender claims survives the seal→decode both sides do.
+        let orig = try await MessageEnvelope.decode(payload: bytes(fixtures[0].hex), viewer: 0)
+        let payload = try await k.seal(phase: orig.phase, lastActorSeat: orig.lastActorSeat,
+                                       gameId: UInt64(orig.gameId)!,
+                                       parent8: Data(repeating: 0, count: 8), joins: orig.joins)
+        XCTAssertFalse(payload.isEmpty, "seal produced a payload")
+        let url = URL(string: "https://foolish.cards/m/1" + Base32.encode(payload))!
+        let env = try await MessageEnvelope.decode(url: url, viewer: -1)
+        XCTAssertEqual(env.nPlayers, orig.nPlayers)
+        XCTAssertEqual(env.turn, orig.turn, "the atom count survived reseal")
+        XCTAssertEqual(env.round, orig.round)
+        XCTAssertEqual(env.joins, orig.joins, "identities survived")
+    }
+
     // MARK: - Rule P, decided in C
 
     func testRulePIsReflexiveAndSymmetric() async throws {
