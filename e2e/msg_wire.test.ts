@@ -5,10 +5,13 @@
 // web as in libfoolish.a, or an iMessage game forks between a phone and a
 // browser. Fixtures here are hex so a Swift port (M3) can be held to them too.
 //
+// Imported from bots.ts, not engine.ts: FMSG lives on the one big module (only
+// it can hold the session log a seal reads), and calling in instantiates it.
+//
 // Run: npx tsx --test e2e/msg_wire.test.ts
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { kernelMsgDecode } from '../supabase/functions/_shared/wasm/engine.ts';
+import { kernelMsgDecode } from '../supabase/functions/_shared/wasm/bots.ts';
 
 // Sealed by the NATIVE producer (`cnitro/build/msg_wire_test --fixture`) from
 // seeded games, cut mid-game — a turn bubble, which is what actually ships.

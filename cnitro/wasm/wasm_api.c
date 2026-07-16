@@ -676,10 +676,20 @@ int wasm_replay_error_detail(void) { return replay_last_error_detail(); }
 // BORROWS the bytes it decoded from. Keeping it in the replay family's own
 // buffer keeps that invariant true.
 //
-// Both entries below replay into the resident g_game, so after a decode the
-// ordinary exports (wasm_view_serialize, wasm_legal_moves, wasm_apply_action)
-// all read the game the payload describes — the /m/ route needs no new
-// rendering path, and a turn continues from exactly what it decoded.
+// Both entries are exported from bots.wasm ONLY — not because decode needs
+// anything rules.wasm lacks (it does not), but because FMSG runs on the ONE big
+// module everywhere, by owner steer: every host (server, web, phone, watch,
+// iMessage) builds on one wasm, and the split comes back later once they all do.
+// Sealing genuinely needs the resident session log, which rules.wasm cannot hold
+// (MAX_LOGS=128, no log import, 3-page pin) — and splitting decode away from
+// seal to work around that is exactly the contortion the steer forbids. Two
+// kernels in the tree is the trap: rules_wasm.ts went stale at 32b5b38 while
+// bots.wasm kept being rebuilt, so a C change reached one and not the other.
+//
+// Both replay into the resident g_game, so after a decode the ordinary exports
+// (wasm_view_serialize, wasm_legal_moves, wasm_apply_action) all read the game
+// the payload describes — the /m/ route needs no new rendering path, and a turn
+// continues from exactly what it decoded.
 
 // The unpacked header, the private ABI between msg_wire and its TS/Swift
 // bridges. Fixed offsets and fixed-size join slots: this side is ours, so it
@@ -769,11 +779,6 @@ int wasm_msg_decode(int in_len) {
 // out: the envelope bytes, written back over g_replay_io
 // Seals the RESIDENT g_game — the game the caller just played a move on.
 // Returns the envelope length, or a negative MSG_E*.
-//
-// Exported from bots.wasm ONLY (see the Makefile). Sealing reads the game's
-// session log through replay_encode_v6_from_game, and rules.wasm is built at
-// MAX_LOGS=128 with no log import: it cannot hold one. rules.wasm only ever
-// decodes, which is all the /m/ route does.
 int wasm_msg_seal(int in_len) {
     if (in_len < 0 || in_len > REPLAY_IO_CAP) return MSG_ECAP;
     MsgEnvelope e;

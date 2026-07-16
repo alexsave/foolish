@@ -447,7 +447,6 @@ WASM_API_EXPORTS := \
   -Wl,--export=wasm_replay_encode -Wl,--export=wasm_replay_decode \
   -Wl,--export=wasm_replay_encode_v6 \
   -Wl,--export=wasm_replay_error_detail \
-  -Wl,--export=wasm_msg_decode \
   -Wl,--export=wasm_legal_moves -Wl,--export=wasm_export_moves \
   -Wl,--export=wasm_apply_action -Wl,--export=wasm_finalize_win \
   -Wl,--export=wasm_view_serialize -Wl,--export=wasm_events_serialize \
@@ -458,7 +457,11 @@ WASM_API_EXPORTS := \
   -Wl,--export=wasm_strategy_seed_probe \
   -Wl,--export=wasm_set_rng_base
 
-# bots.wasm exports the rules API above PLUS the bot bridge (wasm_bots_api.c).
+# bots.wasm exports the rules API above PLUS the bot bridge (wasm_bots_api.c),
+# and PLUS the FMSG pair (wasm_msg_decode/seal). FMSG is bots-only by steer, not
+# by necessity: decode would run in rules.wasm, but every host is consolidating
+# onto the ONE big module (see docs/IMESSAGE_BODY_CODEC.md), and seal cannot live
+# anywhere else anyway — it reads a resident session log.
 # Three entry points live in wasm_api.c but are exported ONLY here, for the same
 # reason: they need a whole SESSION LOG resident, which only this module can
 # hold. Two are the log-offset variants for the drive cycle, whose belief bots
@@ -480,7 +483,7 @@ WASM_BOTS_API_EXPORTS := \
   -Wl,--export=wasm_export_logs_masked_from \
   -Wl,--export=wasm_events_serialize_from \
   -Wl,--export=wasm_replay_encode_v6_from_game \
-  -Wl,--export=wasm_msg_seal \
+  -Wl,--export=wasm_msg_decode -Wl,--export=wasm_msg_seal \
   -Wl,--export=wasm_belief_probe_reset -Wl,--export=wasm_belief_probe_dump
 
 # The rules module's move buffer only feeds the exported menu — production
@@ -862,6 +865,13 @@ build/named/bots.named.wasm: $(WASM_BOT_OBJ)
 # Loaded by _shared/wasm/wasm_asset.ts (server-only; bots never run in browser).
 wasm-bots: build/bots.wasm
 	gzip -9 -n -c build/bots.wasm > ../supabase/functions/_shared/wasm/bots.wasm.gz
+	@# Browser-loadable twin of the SAME bytes. The static .gz above is read with
+	@# node:fs/Deno.readFileSync, which a browser has neither of — and the FMSG
+	@# route (/m/) is a browser page that needs the big module (msg decode/seal
+	@# live only here). One module behind every host is the standing steer; this
+	@# is what lets the web reach it without a second kernel. Both artifacts come
+	@# from build/bots.wasm in the same rule, so they cannot drift.
+	node wasm/embed.mjs build/bots.wasm ../supabase/functions/_shared/wasm/bots_wasm.ts BOTS_WASM_B64 --gzip
 
 # ---------------------------------------------------------------------------
 # oracle.wasm — the client-side "infinite oracle" replay analyzer

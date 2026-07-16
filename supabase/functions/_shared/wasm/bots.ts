@@ -17,8 +17,10 @@
 import { Game } from '../types.ts';
 import { LegalMove } from '../bot_interfaces.ts';
 import { loadWasmGz } from './wasm_asset.ts';
+import { takeBOTS_WASM_B64 } from './bots_wasm.ts';
+import { gunzip } from './gunzip.ts';
 import {
-    EngineExports, PackedRunOk, __LOG_TYPE_TO_INT, __MOVE_TYPE, __adoptEngine,
+    EngineExports, PackedRunOk, __LOG_TYPE_TO_INT, __MOVE_TYPE, __adoptEngine, __decodeBase64,
     __marshalGame, __mem, __pooledCard, __replayError, __setResident,
     __wireLogCard, __cardFromWire, applyKernelStateToGame,
     exportPackedDriveProducts, rngBaseFromSeed,
@@ -123,9 +125,28 @@ export function __strategySeedProbe(): number {
     return ex.wasm_strategy_seed_probe ? (ex.wasm_strategy_seed_probe() >>> 0) : -1;
 }
 
+// The module's bytes, from whichever door this host has.
+//
+// Server (Deno edge, Node tests): the static .gz next to this file — a real
+// binary, never base64-expanded. Browser: the base64 twin, because a browser has
+// neither node:fs nor Deno.readFileSync. SAME build/bots.wasm, emitted by the
+// same Makefile rule, so the two cannot drift.
+//
+// The browser needs this door at all because FMSG (the iMessage envelope) lives
+// only in the big module — sealing reads a resident session log, which
+// rules.wasm structurally cannot hold — and /m/ is a web page. One module behind
+// every host is the steer; this is the web's way in.
+function botsWasmBytes(): Uint8Array {
+    // deno-lint-ignore no-explicit-any
+    const hasFs = typeof (globalThis as any).Deno?.readFileSync === 'function'
+        || typeof process !== 'undefined' && !!process.versions?.node;
+    if (hasFs) return loadWasmGz('bots');
+    return gunzip(__decodeBase64(takeBOTS_WASM_B64()));
+}
+
 function bots(): BotsExports {
     if (exportsCache) return exportsCache;
-    const module = new WebAssembly.Module(loadWasmGz('bots') as BufferSource);
+    const module = new WebAssembly.Module(botsWasmBytes() as BufferSource);
     const instance = new WebAssembly.Instance(module, {});
     const ex = instance.exports as unknown as BotsExports;
     ex.wasm_init();
@@ -633,4 +654,154 @@ export function kernelReplayEncodeV6FromGame(
     const n = ex.wasm_replay_encode_v6_from_game(maxAtoms);
     if (n < 0) throw __replayError(n, ex.wasm_replay_error_detail());
     return __mem(ex).slice(base, base + n);
+}
+
+// ---------- FMSG: the iMessage envelope (cnitro/src/msg_wire.h) -------------
+//
+// An iMessage game has no server: the whole game is (32-byte deal seed, v6
+// replay code) in an MSMessage URL, and every device rebuilds it by re-dealing
+// from the seed and replaying the code through the kernel. These two calls are
+// the only way in — the envelope's layout lives in C, once, so the phone and
+// the web can never read the same bytes as different games.
+//
+// They live HERE, on the big module, and not in engine.ts, because that is where
+// the kernel puts them: sealing reads a resident session log, which rules.wasm
+// structurally cannot hold (MAX_LOGS=128, no log import, 3-page pin). Splitting
+// decode into the small module to dodge that would be a per-host kernel — the
+// thing one-big-wasm exists to prevent. Calling either of these instantiates the
+// big module and adopts the engine slot, so a caller cannot forget to.
+//
+// Both ride the REPLAY io buffer, never g_io. The rules build aliases the replay
+// scratch family over the action family (CD_RULES_OVERLAY) on the grounds that
+// the two never nest; an FMSG call IS a replay call (its body is a v6 code), so
+// an envelope in g_io would be clobbered by the codec's own bignum scratch
+// mid-decode. See wasm_api.c.
+
+// The unpacked header — the private ABI msg_blob_write/msg_blob_read define in
+// cnitro/wasm/wasm_api.c. Fixed offsets, fixed-size join slots.
+const MSG_BLOB_HDR = 90;
+const MSG_BLOB_JOIN = 14;
+
+export interface MsgJoin { seat: number; name: string }
+
+export interface MsgEnvelope {
+    format: number;
+    flags: number;
+    phase: number;          // 0 WAITING, 1 ACCEPT, 2 LIVE, 3 FINISHED
+    n_players: number;
+    variant: number;
+    round: number;          // completed bouts — Rule P's first key
+    last_actor_seat: number;
+    game_id: bigint;
+    turn: number;           // atoms applied — Rule P's second key
+    parent8: Uint8Array;    // first 8 bytes of SHA-256(parent envelope)
+    seed: Uint8Array;       // 32
+    digest: Uint8Array;     // SHA-256 of THIS envelope — Rule P's tiebreak
+    joins: MsgJoin[];
+}
+
+function msgError(code: number): Error {
+    switch (code) {
+        case -1: return new Error('iMessage payload: truncated');
+        case -2: return new Error('iMessage payload: not an FMSG envelope');
+        case -3: return new Error('iMessage payload: unsupported format');
+        case -4: return new Error('iMessage payload: unsupported flags');
+        case -5: return new Error('iMessage payload: bad phase');
+        case -6: return new Error('iMessage payload: bad player count');
+        case -7: return new Error('iMessage payload: unknown variant');
+        case -8: return new Error('iMessage payload: bad seat');
+        case -9: return new Error('iMessage payload: bad nickname');
+        case -10: return new Error('iMessage payload: dead deal seed');
+        case -11: return new Error('iMessage payload: malformed action');
+        case -12: return new Error('iMessage payload: turn does not match the chain');
+        case -13: return new Error('iMessage payload: round does not match the chain');
+        case -14: return new Error('iMessage payload: capacity exceeded');
+        case -15: return new Error('iMessage payload: trailing bytes');
+        case -16: return new Error('iMessage payload: illegal chain');
+        case -17: return new Error('iMessage payload: bad joins');
+        case -18: return new Error('iMessage payload: body is not a replay code for this game');
+        default: return new Error(`iMessage payload: kernel error ${code}`);
+    }
+}
+
+function readBlob(buf: Uint8Array, base: number, len: number): MsgEnvelope {
+    const b = buf.subarray(base, base + len);
+    const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
+    const n_joins = b[7];
+    const joins: MsgJoin[] = [];
+    for (let i = 0; i < n_joins; i++) {
+        const o = MSG_BLOB_HDR + i * MSG_BLOB_JOIN;
+        const nameLen = b[o + 1];
+        joins.push({
+            seat: b[o],
+            name: new TextDecoder().decode(b.subarray(o + 2, o + 2 + nameLen)),
+        });
+    }
+    return {
+        format: b[0], flags: b[1], phase: b[2], n_players: b[3],
+        variant: b[4], round: b[5], last_actor_seat: b[6],
+        game_id: dv.getBigUint64(8, true),
+        turn: dv.getUint16(16, true),
+        parent8: b.slice(18, 26),
+        seed: b.slice(26, 58),
+        digest: b.slice(58, 90),
+        joins,
+    };
+}
+
+function writeBlob(e: MsgEnvelope): Uint8Array {
+    const out = new Uint8Array(MSG_BLOB_HDR + e.joins.length * MSG_BLOB_JOIN);
+    const dv = new DataView(out.buffer);
+    out[0] = e.format; out[1] = e.flags; out[2] = e.phase; out[3] = e.n_players;
+    out[4] = e.variant; out[5] = e.round; out[6] = e.last_actor_seat;
+    out[7] = e.joins.length;
+    dv.setBigUint64(8, e.game_id, true);
+    dv.setUint16(16, e.turn, true);
+    out.set(e.parent8.subarray(0, 8), 18);
+    out.set(e.seed.subarray(0, 32), 26);
+    // 58..90 is the digest: decode-only (an envelope cannot carry its own).
+    e.joins.forEach((j, i) => {
+        const o = MSG_BLOB_HDR + i * MSG_BLOB_JOIN;
+        const name = new TextEncoder().encode(j.name);
+        if (name.length > 12) throw new Error(`nickname over 12 bytes: ${j.name}`);
+        out[o] = j.seat;
+        out[o + 1] = name.length;
+        out.set(name, o + 2);
+    });
+    return out;
+}
+
+// Decode + VALIDATE an envelope: the chain is replayed through the kernel, so a
+// corrupt or hand-edited payload throws rather than half-loading (§7.3 —
+// validation IS replay). Leaves the game RESIDENT: kernelViewSerialize and the
+// legal-move exports then read exactly the state the payload describes, which is
+// what the /m/ route renders and what a turn continues from.
+export function kernelMsgDecode(envelope: Uint8Array): MsgEnvelope {
+    const ex = bots();
+    if (!ex.wasm_msg_decode) throw new Error('kernelMsgDecode: module has no FMSG support');
+    if (envelope.length > ex.wasm_replay_io_cap()) throw new Error('iMessage payload: capacity exceeded');
+    const base = ex.wasm_replay_io_ptr();
+    __mem(ex).set(envelope, base);
+    const r = ex.wasm_msg_decode(envelope.length);
+    if (r < 0) throw msgError(r);
+    // The chain replayed into the kernel's resident game; nothing may assume a
+    // previously-marshalled object still describes it.
+    __setResident(null);
+    return readBlob(__mem(ex), base, r);
+}
+
+// Seal the RESIDENT game into an envelope. `header` supplies what the protocol
+// owns (game_id, phase, seed, joins, parent8, last_actor_seat); the kernel fills
+// in what the BODY owns — turn, round — by decoding the code it just wrote, so a
+// host cannot emit a payload it would itself reject. Returns the wire bytes.
+//
+export function kernelMsgSeal(header: Omit<MsgEnvelope, 'digest' | 'turn' | 'round' | 'format'>): Uint8Array {
+    const ex = bots();
+    if (!ex.wasm_msg_seal) throw new Error('kernelMsgSeal: module has no FMSG support');
+    const blob = writeBlob({ ...header, format: 2, turn: 0, round: 0, digest: new Uint8Array(32) });
+    const base = ex.wasm_replay_io_ptr();
+    __mem(ex).set(blob, base);
+    const r = ex.wasm_msg_seal(blob.length);
+    if (r < 0) throw msgError(r);
+    return __mem(ex).slice(base, base + r);
 }
