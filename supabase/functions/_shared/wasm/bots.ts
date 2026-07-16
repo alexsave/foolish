@@ -22,7 +22,7 @@ import { gunzip } from './gunzip.ts';
 import {
     EngineExports, PackedRunOk, __LOG_TYPE_TO_INT, __MOVE_TYPE, __adoptEngine, __decodeBase64,
     __marshalGame, __mem, __pooledCard, __replayError, __setResident,
-    __wireLogCard, __cardFromWire, applyKernelStateToGame,
+    __wireLogCard, __cardFromWire, __residentLegalMoves, applyKernelStateToGame,
     exportPackedDriveProducts, rngBaseFromSeed,
 } from './engine.ts';
 
@@ -795,6 +795,57 @@ export function kernelMsgDecode(envelope: Uint8Array): MsgEnvelope {
 // in what the BODY owns — turn, round — by decoding the code it just wrote, so a
 // host cannot emit a payload it would itself reject. Returns the wire bytes.
 //
+// Rule P (§7.2): which chain does every device prefer? <0 a, >0 b, 0 the same.
+//
+// The comparison is in C (msg_rule_p) and not here, deliberately. This decides
+// which game every player sees; a browser and a phone disagreeing forks the
+// game, so there is one implementation and nothing to port to Swift. TS only
+// moves bytes.
+export function kernelMsgRuleP(a: Uint8Array, b: Uint8Array): number {
+    const ex = bots();
+    if (!ex.wasm_msg_rule_p) throw new Error('kernelMsgRuleP: module has no FMSG support');
+    if (a.length + b.length > ex.wasm_replay_io_cap()) throw new Error('iMessage payload: capacity exceeded');
+    const base = ex.wasm_replay_io_ptr();
+    __mem(ex).set(a, base);
+    __mem(ex).set(b, base + a.length);
+    const r = ex.wasm_msg_rule_p(a.length, b.length);
+    // -1/0/+1 are verdicts; anything below is a decode error (MSG_E* < -1).
+    if (r < -1) throw msgError(r);
+    return r;
+}
+
+// The legal moves of the game the last kernelMsgDecode adopted — read from the
+// kernel, never marshalled. An iMessage device does not hold the game as a TS
+// object: the envelope put it in the kernel, and that is the only copy.
+//
+// This is how the extension/route answers "what can I do?" — never by asking TS.
+// A hand-rolled "is it my turn" is a bug by policy (design §17.16).
+export function kernelMsgLegalMoves(seat: number): { type: string; cards?: Card[]; attack_cards?: Card[] }[] {
+    return __residentLegalMoves(bots() as unknown as EngineExports, seat);
+}
+
+export const MSG_REBASE_REAPPLY = 0;
+export const MSG_REBASE_DISCARD_ROUND = 1;
+export const MSG_REBASE_DISCARD_ILLEGAL = 2;
+
+// Rule R (§7.4): rebase ONE pending action onto the chain kernelMsgDecode last
+// adopted, in ledger order. REAPPLY mutates the resident game — that IS the
+// rebase — so keep folding the rest in after it; a DISCARD leaves it untouched.
+//
+// The round-boundary guard and the legality question both live in C. A throw-in
+// composed against round 5, after a pickup closed round 5, would re-validate as
+// an opening attack of round 6 — legal, and not what the player chose.
+export function kernelMsgRebase(pendingRound: number, seat: number, wire: Uint8Array): number {
+    const ex = bots();
+    if (!ex.wasm_msg_rebase) throw new Error('kernelMsgRebase: module has no FMSG support');
+    if (wire.length > 128) throw new Error('malformed action wire');
+    __mem(ex).set(wire, ex.wasm_cards_a_ptr());
+    const r = ex.wasm_msg_rebase(pendingRound, seat, wire.length);
+    if (r < 0) throw msgError(r);
+    __setResident(null);
+    return r;
+}
+
 export function kernelMsgSeal(header: Omit<MsgEnvelope, 'digest' | 'turn' | 'round' | 'format'>): Uint8Array {
     const ex = bots();
     if (!ex.wasm_msg_seal) throw new Error('kernelMsgSeal: module has no FMSG support');

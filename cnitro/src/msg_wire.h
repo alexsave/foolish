@@ -89,6 +89,7 @@
 #define CNITRO_MSG_WIRE_H
 
 #include "game.h"
+#include "awire.h"
 #include "sha256.h"
 #include <stdint.h>
 
@@ -233,6 +234,62 @@ int msg_encode(const MsgEnvelope *e, unsigned char *out, int out_cap);
 // Costs no scratch and no log buffer: the body is read at the codec's own atom
 // level (replay_decode_atoms_v6), not expanded into a log stream.
 int msg_replay(const MsgEnvelope *e, Game *g);
+
+// ---------- Rule P: which chain does every device prefer? -----------------
+//
+// Two chains for the same game_id are ordered by (§7.2):
+//
+//   1. higher round wins        — a closed bout is settled history
+//   2. else higher turn wins    — more accepted actions
+//   3. else smaller SHA-256     — arbitrary, but identical everywhere
+//
+// Delivery order is never an input. Two devices can transiently disagree about
+// which message is "newest", so the rule needs no clocks and no ordering
+// guarantee from Messages — that is the whole point.
+//
+// In C, not in each client: this decides which game every player sees, so a
+// phone and a browser disagreeing here forks the game. There is nothing to port.
+typedef struct {
+    uint8_t  round;
+    uint16_t turn;
+    uint8_t  digest[SHA256_DIGEST_LEN];
+} MsgChainKey;
+
+// Rule P's inputs, read off an envelope's bytes. Structure only — no replay, no
+// Game: comparing is cheap and happens before a device decides what to adopt.
+// Returns MSG_EOK, or a negative MSG_E* if the bytes are not an envelope.
+int msg_chain_key(const unsigned char *envelope, int len, MsgChainKey *out);
+
+// <0: `a` is preferred. >0: `b`. 0: the same chain (identical digests).
+int msg_rule_p(const MsgChainKey *a, const MsgChainKey *b);
+
+// ---------- Rule R: no legal move is silently lost ------------------------
+//
+// When a device adopts a chain that does not contain the move it staged, that
+// move is rebased onto the adopted state (§7.4). Verdicts:
+#define MSG_REBASE_REAPPLY         0  // legal on the new state; APPLIED to `adopted`
+#define MSG_REBASE_DISCARD_ROUND   1  // the round-boundary guard fired
+#define MSG_REBASE_DISCARD_ILLEGAL 2  // the kernel refused it on the new state
+
+// Decide ONE pending action, in order, against the adopted chain.
+//
+//   adopted        the game the adopted chain replayed to. On REAPPLY it is
+//                  MUTATED — that is the rebase; on either DISCARD it is
+//                  untouched, so a caller can keep folding the rest in.
+//   adopted_round  the adopted chain's completed-bout count.
+//   pending_round  the round the action was composed against.
+//
+// THE ROUND-BOUNDARY GUARD IS THE POINT. Without it a rebased action can be
+// legal but mean something else: a throw-in composed against round 5's table,
+// after the defender's pickup closed round 5, re-validates as an OPENING ATTACK
+// of round 6 — legal per the kernel, and not what the player chose. Within a
+// round, kernel legality is the only arbiter; across one, nothing survives.
+//
+// Legality is asked the only honest way — by applying it to a clone and letting
+// the handler answer. No TS or Swift ever gets to have an opinion about whether
+// a move is legal (§17.16: a hand-rolled "is it my turn" is a bug by policy).
+int msg_rebase_one(Game *adopted, int adopted_round, int pending_round,
+                   int seat, const AwireAction *a);
 
 // SHA-256 of a whole envelope's bytes. `parent8` is the first MSG_PARENT_LEN
 // bytes of the parent's digest; Rule P's tiebreak compares full digests

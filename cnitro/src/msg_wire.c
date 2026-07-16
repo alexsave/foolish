@@ -394,6 +394,49 @@ int msg_seal(MsgEnvelope *e, const Game *g, unsigned char *body, int body_cap,
     return MSG_EOK;
 }
 
+// ---------- Rule P --------------------------------------------------------
+
+int msg_chain_key(const unsigned char *envelope, int len, MsgChainKey *out) {
+    MsgEnvelope e;
+    const int rc = msg_decode(envelope, len, &e);
+    if (rc != MSG_EOK) return rc;
+    out->round = e.round;
+    out->turn  = e.turn;
+    msg_digest(envelope, len, out->digest);
+    return MSG_EOK;
+}
+
+int msg_rule_p(const MsgChainKey *a, const MsgChainKey *b) {
+    if (a->round != b->round) return a->round > b->round ? -1 : 1;
+    if (a->turn  != b->turn)  return a->turn  > b->turn  ? -1 : 1;
+    // Lexicographic over the full digest. Arbitrary, total, and identical on
+    // every device — which is all a tiebreak has to be.
+    for (int i = 0; i < SHA256_DIGEST_LEN; i++) {
+        if (a->digest[i] != b->digest[i]) return a->digest[i] < b->digest[i] ? -1 : 1;
+    }
+    return 0;
+}
+
+// ---------- Rule R --------------------------------------------------------
+
+int msg_rebase_one(Game *adopted, int adopted_round, int pending_round,
+                   int seat, const AwireAction *a) {
+    if (pending_round < adopted_round) return MSG_REBASE_DISCARD_ROUND;
+    if (seat < 0 || seat >= adopted->num_players) return MSG_REBASE_DISCARD_ILLEGAL;
+
+    // Ask by doing, on a clone: the handler's verdict IS legality, and a clone
+    // means a refusal cannot leave the adopted game half-mutated (some handlers
+    // reject after touching state — handle_pass's overflow branch aborts the
+    // game, see game.c).
+    static Game probe;
+    game_clone(&probe, adopted);
+    int rounds_ignored = 0;
+    if (apply_one(&probe, seat, a, &rounds_ignored) != MSG_EOK) return MSG_REBASE_DISCARD_ILLEGAL;
+
+    game_clone(adopted, &probe);
+    return MSG_REBASE_REAPPLY;
+}
+
 void msg_digest(const unsigned char *envelope, int len, uint8_t out[SHA256_DIGEST_LEN]) {
     sha256(envelope, (size_t)(len < 0 ? 0 : len), out);
 }

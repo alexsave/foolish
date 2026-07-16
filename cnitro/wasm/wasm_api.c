@@ -752,6 +752,11 @@ static int msg_blob_read(const unsigned char *b, int len, MsgEnvelope *e) {
     return MSG_EOK;
 }
 
+// The adopted chain's round, kept from the last successful wasm_msg_decode —
+// Rule R's guard input, and the one thing a rebase needs that the resident Game
+// does not carry (a Game has no bout counter; msg_replay derives it).
+static int g_msg_round = -1;
+
 // in:  g_replay_io[0 .. in_len) = the envelope bytes
 // out: the unpacked header blob, written back over g_replay_io
 // Replays the chain into g_game on the way. Returns the blob length, or -MSG_E*
@@ -771,8 +776,40 @@ int wasm_msg_decode(int in_len) {
     if (rrc != MSG_EOK) return rrc;
 
     // Safe now: replay is done with the borrowed body.
+    g_msg_round = e.round;   // Rule R's guard reads this against a pending move
     msg_blob_write(&e, digest, g_replay_io);
     return MSG_BLOB_HDR + e.n_joins * MSG_BLOB_JOIN;
+}
+
+// Rule P (msg_wire.h §7.2). Two envelopes laid end to end in g_replay_io:
+// a at [0, a_len), b at [a_len, a_len + b_len). Returns -1 if a is preferred,
+// +1 if b, 0 if they are the same chain — or a negative MSG_E* < -1 if either
+// is not an envelope (callers check for < -1, see the TS bridge).
+//
+// Structure only: no replay, no Game. Rule P decides which chain to adopt, and
+// a device compares far more chains than it adopts.
+int wasm_msg_rule_p(int a_len, int b_len) {
+    if (a_len < 0 || b_len < 0 || a_len + b_len > REPLAY_IO_CAP) return MSG_ECAP;
+    MsgChainKey ka, kb;
+    int rc = msg_chain_key(g_replay_io, a_len, &ka);
+    if (rc != MSG_EOK) return rc;
+    rc = msg_chain_key(g_replay_io + a_len, b_len, &kb);
+    if (rc != MSG_EOK) return rc;
+    return msg_rule_p(&ka, &kb);
+}
+
+// Rule R (msg_wire.h §7.4). Rebases ONE pending action onto the adopted chain —
+// the game wasm_msg_decode left resident — in the order the ledger holds them.
+// The awire frame is in the cards_a buffer, as for wasm_apply_action.
+//
+// Returns MSG_REBASE_* (0 re-applied and APPLIED to the resident game, 1
+// discarded by the round guard, 2 discarded as illegal), or a negative MSG_E*.
+int wasm_msg_rebase(int pending_round, int seat, int wire_len) {
+    if (g_msg_round < 0) return MSG_ECHAIN;   // nothing adopted to rebase onto
+    if (wire_len < 0 || wire_len > MAX_IN_CARDS) return MSG_EACTION;
+    AwireAction a;
+    if (!awire_decode(g_in_raw_a, wire_len, &a)) return MSG_EACTION;
+    return msg_rebase_one(&g_game, g_msg_round, pending_round, seat, &a);
 }
 
 // in:  g_replay_io[0 .. in_len) = the unpacked header blob (digest ignored)

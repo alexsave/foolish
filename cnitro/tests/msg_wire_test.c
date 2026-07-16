@@ -694,30 +694,60 @@ static void test_size_budget(int games, uint32_t seed0) {
 // These are the cross-engine goldens (design §8.2): the wasm kernel and, later,
 // libfoolish.a on a phone must decode them to the same game, or an iMessage
 // game forks between a browser and a device. e2e/msg_wire.test.ts pins them.
+// Does this state POSE the canonical race — can the defender pick up while some
+// attacker can still throw in (§7.5)? A fixture cut anywhere else cannot express
+// the case the concurrency suite exists to test.
+static int poses_the_race(const Game *g) {
+    static LegalMoves ml;
+    int can_pickup = 0, can_attack = 0;
+    for (int s = 0; s < g->num_players; s++) {
+        if (g->players[s].status != PLAYER_STATUS_IN) continue;
+        calculate_legal_moves(g, s, &ml);
+        for (int i = 0; i < ml.n; i++) {
+            if (ml.moves[i].type == MOVE_PICKUP) can_pickup = 1;
+            if (ml.moves[i].type == MOVE_ATTACK) can_attack = 1;
+        }
+    }
+    return can_pickup && can_attack;
+}
+
 static void print_fixtures(void) {
     const int pcs[] = { 2, 3, 4 };
     for (int pi = 0; pi < 3; pi++) {
         const int np = pcs[pi];
-        uint8_t seed[MSG_SEED_LEN];
-        seed_fill(seed, 20260716u + (uint32_t)np);
-        g_rng = 7u + (uint32_t)np;
-        Chain ch; memset(&ch, 0, sizeof(ch));
-        Game played;
-        // A mid-game cut: a turn bubble, which is what actually ships.
-        play_game(seed, np, 25, &ch, &played, bot_roster_find("robusta"));
+        const int bot = bot_roster_find("robusta");
+        int emitted = 0;
+        // Search seeds and cut points for a mid-bout state that poses the race
+        // AND has closed at least one round (so `round` is a live field, not 0).
+        for (uint32_t s = 0; s < 400 && !emitted; s++) {
+            uint8_t seed[MSG_SEED_LEN];
+            seed_fill(seed, 20260716u + s * 131u + (uint32_t)np);
+            for (int cut = 8; cut <= 60 && !emitted; cut++) {
+                g_rng = 7u + s;
+                Chain ch; memset(&ch, 0, sizeof(ch));
+                Game played;
+                const int rounds = play_game(seed, np, cut, &ch, &played, bot);
+                if (ch.n < cut) break;                       // the game ended first
+                if (played.status != GAME_STATUS_PLAYING) break;
+                if (rounds < 1) continue;                    // want round > 0
+                if (!poses_the_race(&played)) continue;
 
-        MsgEnvelope e;
-        env_init(&e, seed, np);
-        e.phase = MSG_PHASE_LIVE;
-        static unsigned char body[1024];
-        static Game scratch;
-        if (msg_seal(&e, &played, body, sizeof(body), &scratch) != MSG_EOK) continue;
-        unsigned char wire[ENV_CAP];
-        const int n = msg_encode(&e, wire, sizeof(wire));
-        if (n <= 0) continue;
-        printf("%d %d %d ", np, e.turn, e.round);
-        for (int i = 0; i < n; i++) printf("%02x", wire[i]);
-        printf("\n");
+                MsgEnvelope e;
+                env_init(&e, seed, np);
+                e.phase = MSG_PHASE_LIVE;
+                static unsigned char body[1024];
+                static Game scratch;
+                if (msg_seal(&e, &played, body, sizeof(body), &scratch) != MSG_EOK) continue;
+                unsigned char wire[ENV_CAP];
+                const int n = msg_encode(&e, wire, sizeof(wire));
+                if (n <= 0) continue;
+                printf("%d %d %d ", np, e.turn, e.round);
+                for (int i = 0; i < n; i++) printf("%02x", wire[i]);
+                printf("\n");
+                emitted = 1;
+            }
+        }
+        if (!emitted) fprintf(stderr, "no %dp fixture posed the race\n", np);
     }
 }
 

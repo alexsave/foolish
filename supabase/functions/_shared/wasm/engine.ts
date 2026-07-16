@@ -84,6 +84,8 @@ interface EngineExports {
     // ONLY the big module carries them — the bridge lives in bots.ts.
     wasm_msg_decode?(len: number): number;
     wasm_msg_seal?(len: number): number;
+    wasm_msg_rule_p?(aLen: number, bLen: number): number;
+    wasm_msg_rebase?(pendingRound: number, seat: number, wireLen: number): number;
     // Packed wire pipeline (docs/PACKED_WIRE_CUTOVER.md)
     wasm_export_logs_masked(): number;
     wasm_apply_action(seat: number, wireLen: number): number;
@@ -1514,6 +1516,14 @@ export function kernelLegalMoves(game: Game, player_id: string): { type: string;
     // may skip the marshal.
     residentFor = null;
     marshalGame(ex, game);
+    return residentLegalMoves(ex, seat);
+}
+
+// The enumeration itself, against whatever game is RESIDENT in the kernel — no
+// marshal. kernelLegalMoves marshals first because its caller holds the game as
+// a TS object; the iMessage bridge does not, because a decoded envelope left the
+// game in the kernel and marshalling a copy back over it would be a lie.
+function residentLegalMoves(ex: EngineExports, seat: number): { type: string; cards?: Card[]; attack_cards?: Card[] }[] {
     const total = ex.wasm_legal_moves(seat);
     const base = ex.wasm_io_ptr();
     const chunk = Math.floor((ex.wasm_io_cap() - 4) / MOVE_WIRE_MAX);
@@ -1558,6 +1568,7 @@ export function kernelLegalMoves(game: Game, player_id: string): { type: string;
 export type { EngineExports };
 export {
     decodeBase64 as __decodeBase64, marshalGame as __marshalGame, mem as __mem,
+    residentLegalMoves as __residentLegalMoves,
     // bots.ts drives the v6-from-game encode (only that module can hold a
     // session log) and maps kernel errors with the same table as every other
     // replay call.
