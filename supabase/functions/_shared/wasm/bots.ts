@@ -176,7 +176,7 @@ export function __setBotSeedSource(fn: (() => number) | null): void { seedSource
 // defender_index, u8 num_pairs, num_pairs x (u8 primary, u8 target) 1-byte
 // wire cards). Hidden cards travel as 0xFE ({-1,-1} in the log store) — the
 // belief-based bots (cordite, fulminate) read these.
-const MAX_KERNEL_LOGS = 512;   // MAX_LOGS in cnitro/src/game.h
+const MAX_KERNEL_LOGS = 1024;   // MAX_LOGS in cnitro/src/game.h — move both
 const MAX_KERNEL_PAIRS = 64;   // MAX_LOG_PAIRS in the wasm build
 
 // C-buffer fast path: splice the session log's PACKED bytes (games.logs_packed,

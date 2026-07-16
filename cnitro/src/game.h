@@ -19,10 +19,64 @@
 #endif
 #define MAX_DECK       64         // 36 for 2p, with slack.
 #ifndef MAX_LOGS
-#define MAX_LOGS       512        // build parameter; long games never
-                                  // approach this. The session-log importers
-                                  // (bots.wasm, TS MAX_KERNEL_LOGS) assume
-                                  // 512 — only log-free builds may shrink it.
+#define MAX_LOGS       1024       // build parameter, sized on p99 — NOT on max.
+                                  // Game length is unbounded (pickups can cycle,
+                                  // even at 3p), so a max is only ever whatever
+                                  // the sample happened to reach: the same config
+                                  // gave max 641 over 400 games/pc and 853 over
+                                  // 1500. p99 is stable; a max is not.
+                                  //
+                                  // MEASURED under the SHIPPED caps
+                                  // (MAX_LOG_PAIRS=64 etc.), robusta, 400 full
+                                  // games per player count, uncapped:
+                                  //
+                                  //   np   p50   p90   p99  p99.9
+                                  //   2    116   144   169   181
+                                  //   4    177   237   285   342
+                                  //   6    368   459   531   550
+                                  //   7    378   491   576   623   <- worst
+                                  //   8    375   479   567   600
+                                  //
+                                  // 6+ players deal the 52-card deck, which is
+                                  // why they run long — 7p is the worst case, not
+                                  // 8p. The old 512 sat BELOW p99 for 6-8p and so
+                                  // overflowed 2-5% of those games. 1024 is 1.8x
+                                  // the worst p99 and 1.6x its p99.9.
+                                  //
+                                  // NO cap is safe, because the tail is unbounded
+                                  // — this only makes overflow rare, it does not
+                                  // retire it. Overflow is still ungraceful:
+                                  // log_alloc DROPS records, so belief bots
+                                  // silently forget discards AND
+                                  // replay_encode_v6_from_game refuses the
+                                  // truncated stream, leaving the game
+                                  // unshareable and, over iMessage, UNSENDABLE.
+                                  // The real fix is for the encoder not to need
+                                  // the whole log (docs/IMESSAGE_BODY_CODEC.md
+                                  // §4); raising this buys time, not correctness.
+                                  //
+                                  // MEASURE before changing it: the caps are not
+                                  // independent. MAX_LOG_PAIRS truncates the CARDS
+                                  // in a record, and belief bots read discard logs
+                                  // back — so the native default (16) makes bots
+                                  // play differently, and longer, than production
+                                  // (64). A measurement at the wrong caps is not
+                                  // about this game.
+                                  //
+                                  // Costs +66KB per FULL-SIZE Game (68,680 ->
+                                  // 136,264) and nothing else; bots.wasm's linear
+                                  // memory is ~1.44MB against a 150MB edge budget.
+                                  // It does NOT touch the Monte-Carlo hot loop:
+                                  // sampled-world slots are sized by WORLD_LOG_CAP
+                                  // (cordite_sim.h WORLD_SLOT_BYTES), so a rollout
+                                  // clone is 6,376 B at ANY MAX_LOGS, and beliefs
+                                  // are built from the session log once and never
+                                  // carried down the recursion. Nothing holds an
+                                  // array of full Games.
+                                  //
+                                  // The session-log importers (bots.wasm, TS
+                                  // MAX_KERNEL_LOGS) mirror this — move both.
+                                  // rules.wasm overrides to 128 and is unaffected.
 #endif
 
 #define LOG_GAME_START      0

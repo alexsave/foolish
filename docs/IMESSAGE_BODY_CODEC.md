@@ -11,9 +11,9 @@ actually face), not estimated.*
 > FMSG body IS a v6 code, the raw format is deleted, and §4.4's budget is
 > asserted again at 4p with ~4x margin (240 chars of 1,000). Finding 3's blocker
 > was fixed on `main` by `9db2c8a` (v6 codes a pending good); the probe that found
-> it now reads `good_mask lost 0`. **Finding 4 (MAX_LOGS) is the one open item,
-> and it does not block v1** — see §6. Read §1-3 as the record of why the body is
-> what it is, §4-7 as live.
+> it now reads `good_mask lost 0`. **Finding 4 (MAX_LOGS) is fixed too** — 512 sat
+> below p99 for 6-8 player games; it is 1024 now and 8p seals 320/320 (§4). Read
+> §1-3 as the record of why the body is what it is.
 
 ---
 
@@ -177,30 +177,65 @@ the server's finalize emits v6 (`A4`), so **check `game_snapshots` before
 changing v6's coding**. That question is unresolved and is the first thing to
 settle.
 
-## 4. Finding 4 — `replay_encode_v6_from_game` refuses ~10% of full 8p games
+## 4. Finding 4 — the log buffer overflowed, and 8 players is required
 
-`replay_encode_v6_from_game` reads actions out of `g->logs` and **rejects a game
-whose log buffer overflowed** (`num_logs >= MAX_LOGS`; `replay.h`). Measured:
-**25/240 full 8p games failed to encode**, hitting `MAX_LOGS=512` exactly. 2p and
-4p: **0 failures** (max observed 176 and 335 logs).
+`replay_encode_v6_from_game` refuses a game whose log buffer overflowed
+(`num_logs >= MAX_LOGS` — a truncated stream is untrusted, `replay.c:1732`). At
+the old `MAX_LOGS=512` that hit **2-5% of 6-8 player games**, and the failure is
+not graceful: `log_alloc` DROPS records, so belief bots silently forget discards
+AND the game becomes unshareable — over iMessage, **unsendable**.
 
-The owner's steer is to fix this rather than keep a raw fallback for it. Options,
-unevaluated:
+**FIXED: `MAX_LOGS` 512 -> 1024** (`game.h`, mirrored by `MAX_KERNEL_LOGS` in
+`bots.ts`). 8-player games now seal 320/320 where 512 refused ~10%.
 
-- **The action list need not come from logs at all.** FMSG *has* the chain — the
-  device decoded the parent body and appended its own action. The only reason
-  `from_game` touches `g->logs` is to recover the action list. A sibling entry
-  that takes the action list directly (`replay_encode_v6_from_actions(seed,
-  n_players, actions...)`, with `from_game` refactored to call it) sidesteps
-  `MAX_LOGS` entirely and keeps ONE producer. **This looks like the right fix**
-  and it composes with the finding-3 work.
-- Raise `MAX_LOGS` on the encoding hosts only (iOS `libfoolish.a`, `bots.wasm`).
-  Cheap, but `rules.wasm` cannot follow (pinned 3-page memory, `MAX_LOGS=128`),
-  and it only moves the ceiling.
-- Note the terminal state may never need an FMSG encode at all: game end ships a
-  standard `foolish.cards/<code>` replay link (§12 / M4), not an FMSG payload —
-  and mid-game states carry fewer logs than the full games measured here. Worth
-  confirming before over-building.
+### Sized on p99, because there is no max
+
+Game length is **unbounded** — pickups can cycle, even at 3 players — so a "max"
+is only ever whatever the sample happened to reach. The same configuration gave
+max **641** over 400 games/pc and **853** over 1500. p99 is stable; max is not.
+Measured under the SHIPPED caps, robusta, 400 full games per player count,
+uncapped:
+
+| players | p50 | p90 | **p99** | p99.9 |
+| --- | --- | --- | --- | --- |
+| 2 | 116 | 144 | 169 | 181 |
+| 4 | 177 | 237 | 285 | 342 |
+| 6 | 368 | 459 | 531 | 550 |
+| **7** | 378 | 491 | **576** | 623 |
+| 8 | 375 | 479 | 567 | 600 |
+
+**7p is the worst case, not 8p** — 6+ players deal the 52-card deck, so they run
+long. The old 512 sat BELOW p99 for every one of 6/7/8p, which is the whole bug.
+1024 is **1.8x the worst p99**, 1.6x its p99.9.
+
+**No cap retires this**, it only makes it rare — the tail is unbounded. The real
+fix is for the encoder not to need the whole log; raising the cap buys time, not
+correctness. Sketch: its `Src` walks LOG RECORDS, not actions, so "pass the
+actions instead" means synthesizing the stream the atom mapper reads. `replay.c`
+work.
+
+### Two things that made the first measurements lie
+
+- **The caps are not independent.** `MAX_LOG_PAIRS` truncates the CARDS inside a
+  record, and belief bots read discard logs back — so at the native default (16)
+  the bots play differently, and longer, than at production (64). A measurement
+  taken at the wrong caps is not about the shipped game. Measure with
+  `-DMAX_LOG_PAIRS=64 -DMAX_LEGAL_MOVES=4096 -DMAX_MOVE_CARDS=28 -DMAX_BATTLES=64`.
+- **`MAX_LOGS` is not free of behavior either.** It changes nothing until the
+  buffer overflows — and then dropped records change what belief bots remember.
+  So 512 -> 1024 IS a (strictly more correct) behavior change in the 2-5% of 6-8p
+  games that used to overflow: those bots now remember discards they were
+  previously being lied to about.
+
+### What it does NOT cost
+
++66KB per FULL-SIZE `Game` (68,680 -> 136,264) and nothing else; bots.wasm's
+linear memory is ~1.44MB against a 150MB edge budget. It does **not** touch the
+Monte-Carlo hot loop, and an earlier claim here that it would was wrong: sampled
+worlds are sized by `WORLD_LOG_CAP` (`cordite_sim.h` `WORLD_SLOT_BYTES`), so a
+rollout clone is **6,376 B at any MAX_LOGS**, and beliefs are built from the
+session log ONCE and never carried down the recursion. Nothing holds an array of
+full Games. `rules.wasm` overrides to 128 and is untouched.
 
 ## 5. What shipped
 
@@ -277,28 +312,25 @@ decode (pinned in both suites). What remains is kernel-side and belongs to A7:
 `game_set_deal_seed_bytes` still degrades SILENTLY to the legacy LCG on a short
 seed rather than saying so.
 
-### The one open item: MAX_LOGS (finding 4)
+### MAX_LOGS: fixed, see §4
 
-`replay_encode_v6_from_game` refuses a game whose log buffer overflowed
-(`num_logs >= MAX_LOGS` — a truncated stream is untrusted, `replay.c:1732`).
-Measured: **0/240 at 2p and 4p** (max observed 176 and 335 of 512), **~10% of
-full 8-player games** (512/512).
+512 sat below p99 for 6/7/8-player games and overflowed 2-5% of them, which left
+those games unsendable. It is **1024** now — 1.8x the worst p99 — and 8p seals
+320/320.
 
-It does not bite v1: the UI caps at 4 players, where the ceiling is 65% clear,
-and a FINISHED game ships a standard `foolish.cards/<code>` replay link rather
-than an envelope (§12/M4), so the longest state never needs sealing.
+Two corrections to what this doc said before, both worth keeping:
 
-Two ways out, neither started:
+- **8 players is required.** An earlier draft leaned on "v1's UI caps at 4" to
+  argue the overflow did not matter. It does.
+- **Raising it does NOT tax the bots.** The claim that cordite memcpy-clones a
+  full Game in its Monte-Carlo hot loop was wrong on inspection: sampled worlds
+  are sized by `WORLD_LOG_CAP`, so a rollout clone is 6,376 B at any `MAX_LOGS`.
+  Beliefs are built from the session log once and never carried down the
+  recursion.
 
-- **Feed the encoder the action list instead of scraping `g->logs`.** Looks
-  right, and it is more work than it sounds: the encoder's `Src` walks LOG
-  RECORDS, not actions, so "pass the actions" means synthesizing the log stream
-  the atom mapper reads. It is a `replay.c` change and should ride whoever owns
-  that file next.
-- **Raise `MAX_LOGS` on the encoding hosts.** Rejected on inspection: 128 -> 512
-  already took the `Game` struct 33KB -> 133KB, and cordite memcpy-clones a Game
-  in its Monte-Carlo hot loop. Doubling it again to fix 8p would tax every bot
-  decision in the product to serve a player count v1 does not ship.
+What is STILL open is the thing a cap cannot fix: the tail is unbounded, so
+overflow is rare rather than gone, and it is still ungraceful when it happens.
+The encoder should not need the whole log (§4).
 
 ## 7. The wasm half
 
