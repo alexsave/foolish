@@ -323,7 +323,7 @@ static void rollout_round(const Card *first_attack, int fa_n,
     for (int i = 0; i < my_n_in; i++) my[i] = my_hand_in[i];
     for (int i = 0; i < opp_n_in; i++) opp[i] = opp_hand_in[i];
 
-    bool table_values[16] = { false };
+    bool table_values[CARD_VALUE_MARKS] = { false };
     Card attack[MAX_MOVE_CARDS]; int an = fa_n;
     for (int i = 0; i < fa_n; i++) attack[i] = first_attack[i];
 
@@ -333,7 +333,7 @@ static void rollout_round(const Card *first_attack, int fa_n,
             if (!set_contains(attack, an, my[i])) my[new_mN++] = my[i];
         }
         mN = new_mN;
-        for (int i = 0; i < an; i++) table_values[attack[i].value] = true;
+        for (int i = 0; i < an; i++) card_mark_value(table_values, attack[i].value);
 
         Card covers[MAX_MOVE_CARDS]; int cn; bool pickup;
         predict_cover(attack, an, opp, oN, power_suit, covers, &cn, &pickup);
@@ -350,11 +350,11 @@ static void rollout_round(const Card *first_attack, int fa_n,
             if (!set_contains(covers, cn, opp[i])) opp[new_oN++] = opp[i];
         }
         oN = new_oN;
-        for (int i = 0; i < cn; i++) table_values[covers[i].value] = true;
+        for (int i = 0; i < cn; i++) card_mark_value(table_values, covers[i].value);
 
         Card matching[MAX_HAND_SIZE]; int mn = 0;
         for (int i = 0; i < mN; i++) {
-            if (table_values[my[i].value] && my[i].suit != power_suit) matching[mn++] = my[i];
+            if (card_has_value(table_values, my[i].value) && my[i].suit != power_suit) matching[mn++] = my[i];
         }
         if (mn == 0) break;
 
@@ -798,10 +798,11 @@ static int robusta_choose_multi(const Game *g, int bot_idx, const LegalMoves *mo
             }
             // Multi-player: v4 formula. Trumps weighted moderately; sum_score
             // breaks ties; pile-on penalty for fresh values.
-            bool table_v[16] = { false };
+            bool table_v[CARD_VALUE_MARKS] = { false };
             for (int i = 0; i < g->num_battles; i++) {
-                table_v[g->table_battles[i].attack.value] = true;
-                if (!card_is_none(g->table_battles[i].defense)) table_v[g->table_battles[i].defense.value] = true;
+                card_mark_value(table_v, g->table_battles[i].attack.value);
+                if (!card_is_none(g->table_battles[i].defense))
+                    card_mark_value(table_v, g->table_battles[i].defense.value);
             }
             int best = full_idx[0];
             double best_eval = -1e30; bool first = true;
@@ -818,7 +819,7 @@ static int robusta_choose_multi(const Game *g, int bot_idx, const LegalMoves *mo
                 double po = 0.0;
                 for (int i = 0; i < m->n_cards; i++) {
                     Card c = m->cards[i];
-                    if (!table_v[c.value]) po += expected_pile_on(&U, g, bot_idx, c.value);
+                    if (!card_has_value(table_v, c.value)) po += expected_pile_on(&U, g, bot_idx, c.value);
                 }
                 double e = -1.0 * trumps_used - 0.002 * sum_score - 0.4 * po;
                 bool take = first

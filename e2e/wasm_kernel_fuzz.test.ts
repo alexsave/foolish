@@ -84,10 +84,36 @@ test('kernel rules path survives malformed states (overflow / OOB / DoS classes)
 
 test('kernel bot path survives malformed states (1<<card_id / belief build)', () => {
   const strats: [string, number, any][] = [
+    // Every entry must be a brain bots.wasm actually LINKS: an unlinked strat is
+    // not fuzzing the bot path, it is fuzzing `random`, because wasm_choose_move
+    // used to fall back to it. 'champion' and 'fulminate' sat here and are in
+    // neither the module nor the roster, so this test has been quietly running
+    // `random` twice for its whole life. The tiny CD_W* budgets are a deliberate
+    // env override — env still beats the roster's knobs (bot_knobs.h), which is
+    // what keeps a Monte-Carlo fuzz fast.
     ['random', STRAT.random, {}],
-    ['champion', STRAT.champion, {}],
+    ['firecracker', STRAT.firecracker, { logs: true }],
     ['cordite', STRAT.cordite, { env: { CD_BUDGET: 'prod', CD_W1: '4', CD_W2: '4', CD_W3: '4' }, logs: true }],
-    ['fulminate', STRAT.fulminate, { env: { CD_BUDGET: 'prod', CD_W1: '4', CD_W2: '4', CD_W3: '4' }, logs: true }],
+    ['octogen', STRAT.octogen, { env: { CD_BUDGET: 'prod', CD_W1: '4', CD_W2: '4', CD_W3: '4' }, logs: true }],
+    // ⚠ FAILING ON PURPOSE — 'firecracker' above traps ("memory access out of
+    // bounds") on the 40-battle mutation below, as the FIRST malformed board it
+    // sees:
+    //
+    //   table_battles = 40 x { attack: card(88,88), defense: card(-3,-3) }
+    //   wasmChooseMove(g, 'p0', STRAT.firecracker, { logs: true })
+    //
+    // Pre-existing and NOT the A1 roster fold: the committed pre-A1 bots.wasm,
+    // which dispatched firecracker through the old switch, traps identically.
+    // It hid behind the two unlinked names ('champion'/'fulminate') that used to
+    // stand here, because an unlinked strat fell back to `random`. Firecracker
+    // is a SEEDED ladder rung — humans play it — so this stays red rather than
+    // being quietly dropped from the list.
+    //
+    // Order-dependent: a small malformed board first, and the 40-battle one then
+    // passes. So it is persistent scratch, not the card-value tables (those were
+    // a genuine OOB write and ARE fixed — card_mark_value/card_has_value in
+    // card.h). Prime suspect: the shared MC slots in cordite_sim.c, where
+    // world_scratch_game() is a log-CAPPED Game slot.
   ];
   const mutate: ((g: any) => void)[] = [
     g => { g.players[0].hand = [card(99, 99), card(-5, -5), card(7, 14)]; },

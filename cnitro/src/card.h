@@ -58,6 +58,22 @@ static inline Card card_of_id(int id) {
 }
 static inline int card_to_id(Card c) { return c.suit * 13 + (c.value - 1); }
 
+// Several bots mark which VALUES are on the table in a small bool table indexed
+// by card value (`bool table_v[CARD_VALUE_MARKS]`). Values are 1..13 on a
+// well-formed board, so `marks[c.value] = true` reads as obviously safe — but a
+// BOT is handed state it never validated, and a malformed board carries
+// anything. Under bots.wasm's `--stack-first` these tables sit near address 0,
+// so a NEGATIVE value indexes below linear memory and TRAPS the whole module:
+// the fuzz's 40-battle mutation (values 88 and -3) took firecracker down
+// through exactly this, in two separate copies of the idiom. Go through these.
+#define CARD_VALUE_MARKS 16
+static inline void card_mark_value(bool *marks, int value) {
+    if (value >= 0 && value < CARD_VALUE_MARKS) marks[value] = true;
+}
+static inline bool card_has_value(const bool *marks, int value) {
+    return value >= 0 && value < CARD_VALUE_MARKS && marks[value];
+}
+
 // "No card" sentinel: replaces the has_defense/has_target booleans (an
 // uncovered battle stores CARD_NONE as its defense; a single-card log pair
 // stores CARD_NONE as its target). Distinct from the -1/-1 hidden card.

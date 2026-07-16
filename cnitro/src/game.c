@@ -861,13 +861,24 @@ bool handle_pickup(Game *g, int player_idx) {
 
     // TS pickup logs table cards attack-major (all attacks' cards in battle
     // order, defense right after its attack) — same interleaving here.
+    //
+    // The hand append is BOUNDED, like log_add_card beside it. A legal bout can
+    // never fill a 64-card hand (a defender may face at most hand_count attacks,
+    // so pickup at worst doubles a hand that was already under the cap), but
+    // this is the engine, and a caller that hands it a wide table — a corrupt
+    // row, a hostile marshal, a bot's sampled world — used to walk straight off
+    // the end of `hand`: 2 cards per battle, no check. It cost real time to find
+    // (e2e/wasm_kernel_fuzz, 40 battles: 3 + 2*40 = 83 into hand[64], a wasm trap
+    // ~19 cards past the end) because the wide table only reaches this path
+    // through a ROLLOUT, so it read as a bot bug for hours. Drop the excess: a
+    // truncated hand is a wrong game, but a corrupted Game is a wrong process.
     for (int i = 0; i < g->num_battles; i++) {
         Battle *b = &g->table_battles[i];
         log_add_card(l, b->attack);
-        def->hand[def->hand_count++] = b->attack;
+        if (def->hand_count < MAX_HAND_SIZE) def->hand[def->hand_count++] = b->attack;
         if (!card_is_none(b->defense)) {
             log_add_card(l, b->defense);
-            def->hand[def->hand_count++] = b->defense;
+            if (def->hand_count < MAX_HAND_SIZE) def->hand[def->hand_count++] = b->defense;
         }
     }
     g->num_battles = 0;

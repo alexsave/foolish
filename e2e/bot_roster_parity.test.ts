@@ -211,7 +211,7 @@ test('C roster: the _max tiers are retired', () => {
     assert.ok(!parseSeededKeys().has('octogen_max'), 'octogen_max must not be seeded');
 });
 
-test('roster == TS registry, knob for knob', () => {
+test('roster == TS registry, and the knobs are the roster\'s alone', () => {
     const roster = parseCRoster();
     const registry = parseTsRegistry();
 
@@ -236,22 +236,26 @@ test('roster == TS registry, knob for knob', () => {
 
         assert.equal(ts.strat, tsStrat, `${entry.key}: brain differs (C ${entry.strat} vs TS STRAT.${ts.strat})`);
         assert.equal(ts.logs, entry.usesLogs, `${entry.key}: uses_logs differs — one host would skip the belief log`);
-        assert.deepEqual(ts.env, entry.knobs,
-            `${entry.key}: knobs differ. The env table overrides the roster, so this IS a live ` +
-            `strength/latency divergence between the site and the phone.`);
     }
 
-    // No TS registration may name a key the roster does not know: the kernel
-    // would have no entry to run it from once the env table is deleted.
+    // A1: the knobs are the ROSTER's, and the registry must not restate them.
+    // This used to assert the two knob tables were equal, which kept a copy
+    // honest instead of removing it — and env BEATS the roster (bot_knobs.h),
+    // so any drift was a live strength divergence between the site and the
+    // phone rather than a lint failure. There is now one table; a registration
+    // that grows an `env` block has quietly taken ownership back.
+    for (const [key, ts] of registry) {
+        assert.deepEqual(ts.env, {},
+            `TS registers '${key}' with env knobs. Knobs belong to the C roster ` +
+            `(bot_roster.c) — env overrides it, so this re-forks the bot per host.`);
+    }
+
+    // No TS registration may name a key the roster does not know: the kernel has
+    // no entry to run it from, and wasm_choose_move returns -1 rather than
+    // silently substituting `random` (which is what these keys used to do).
     for (const key of registry.keys()) {
-        const known = roster.some(r => r.key === key);
-        // These predate the roster and are not dispatched by bots.wasm at all
-        // (seed.sql's note); they fall back to random today and are slated for
-        // deletion with the A7 cleanup.
-        const legacyUndispatched = ['ultimate_champion', 'champion', 'hacker', 'fulminate', 'semtex'];
-        if (!known && !legacyUndispatched.includes(key)) {
-            assert.fail(`TS registers '${key}', which is not in the C roster`);
-        }
+        assert.ok(roster.some(r => r.key === key),
+            `TS registers '${key}', which is not in the C roster`);
     }
 });
 

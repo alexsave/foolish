@@ -141,7 +141,7 @@ static void rollout_round(const Card *first_attack, int fa_n,
     for (int i = 0; i < my_n; i++) my[i] = my_hand[i];
     for (int i = 0; i < opp_n; i++) opp[i] = opp_hand[i];
 
-    bool table_values[16] = { false };
+    bool table_values[CARD_VALUE_MARKS] = { false };
 
     Card attack[MAX_MOVE_CARDS];
     int an = fa_n;
@@ -154,7 +154,7 @@ static void rollout_round(const Card *first_attack, int fa_n,
             if (!set_contains(attack, an, my[i])) my[new_mN++] = my[i];
         }
         mN = new_mN;
-        for (int i = 0; i < an; i++) table_values[attack[i].value] = true;
+        for (int i = 0; i < an; i++) card_mark_value(table_values, attack[i].value);
 
         CardSet covers; bool pickup;
         predict_cover(attack, an, opp, oN, power_suit, &covers, &pickup);
@@ -173,13 +173,13 @@ static void rollout_round(const Card *first_attack, int fa_n,
             if (!set_contains(covers.cards, covers.n, opp[i])) opp[new_oN++] = opp[i];
         }
         oN = new_oN;
-        for (int i = 0; i < covers.n; i++) table_values[covers.cards[i].value] = true;
+        for (int i = 0; i < covers.n; i++) card_mark_value(table_values, covers.cards[i].value);
 
         // Find next attack: highest-count value group from my hand whose value
         // is on table & non-trump. Tie-break by lowest sum.
         Card matching[MAX_HAND_SIZE]; int mn = 0;
         for (int i = 0; i < mN; i++) {
-            if (table_values[my[i].value] && my[i].suit != power_suit) matching[mn++] = my[i];
+            if (card_has_value(table_values, my[i].value) && my[i].suit != power_suit) matching[mn++] = my[i];
         }
         if (mn == 0) {
             r->pickup = false; r->my_n = mN; r->opp_n = oN;
@@ -489,10 +489,11 @@ int espresso_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves
                 for (int j = 0; j < g->players[i].hand_count; j++) still[sn++] = g->players[i].hand[j];
             }
 
-            bool table_v[16] = { false };
+            bool table_v[CARD_VALUE_MARKS] = { false };
             for (int i = 0; i < g->num_battles; i++) {
-                table_v[g->table_battles[i].attack.value] = true;
-                if (!card_is_none(g->table_battles[i].defense)) table_v[g->table_battles[i].defense.value] = true;
+                card_mark_value(table_v, g->table_battles[i].attack.value);
+                if (!card_is_none(g->table_battles[i].defense))
+                    card_mark_value(table_v, g->table_battles[i].defense.value);
             }
             int all_opp_trumps = 0;
             for (int i = 0; i < g->num_players; i++) {
@@ -532,7 +533,7 @@ int espresso_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves
                     int n = 0;
                     for (int t = 0; t < sn; t++) if (can_cover(still[t], c, g->power_suit)) n++;
                     disposed_utility += n;
-                    if (!table_v[c.value]) {
+                    if (!card_has_value(table_v, c.value)) {
                         for (int p2 = 0; p2 < g->num_players; p2++) {
                             if (p2 == bot_idx || g->players[p2].status != PLAYER_STATUS_IN) continue;
                             if (p2 == g->defender) continue;
