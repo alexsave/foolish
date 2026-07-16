@@ -1,5 +1,5 @@
-import { Game } from '../../../server/api/core/types.ts';
-import { BotStrategy, LegalMove } from '../../../server/api/core/bot_interfaces.ts';
+import { Game } from '@api/core/types.ts';
+import { BotStrategy, LegalMove } from '@api/core/bot_interfaces.ts';
 
 /**
  * Random bot strategy - picks a random legal move

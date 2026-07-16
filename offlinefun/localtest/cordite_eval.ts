@@ -7,12 +7,12 @@
 // decision-time distribution (mean / p95 / max ms) — the number that must
 // stay under the ~2s production budget.
 
-import { calculateLegalMoves } from '../../server/api/common/bot_strategy.ts';
-import { shouldBotActCore, executeBotMove } from '../../server/api/common/pure_bot_actions.ts';
-import { game_done } from '../../server/api/common/common_utils.ts';
-import { start_game } from '../../server/api/common/game_lifecycle.ts';
-import { getBotStrategy } from '../../server/api/common/bot_strategy.ts';
-import { Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS } from '../../server/api/core/types.ts';
+import { calculateLegalMoves } from '@api/common/bot_strategy.ts';
+import { shouldBotActCore, executeBotMove } from '@api/common/pure_bot_actions.ts';
+import { game_done } from '@api/common/common_utils.ts';
+import { start_game } from '@api/common/game_lifecycle.ts';
+import { getBotStrategy } from '@api/common/bot_strategy.ts';
+import { Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS } from '@api/core/types.ts';
 
 // Seed Math.random globally so deals are deterministic run-to-run.
 let _seed = 424242;

@@ -1,9 +1,9 @@
-import { Game } from '../../server/api/core/types.ts';
-import { BotStrategy, LegalMove } from '../../server/api/core/bot_interfaces.ts';
-import { cardDisplay, getCardValue } from '../../server/api/common/common_utils.ts';
-import { SUIT_MAP } from '../../server/api/core/constants.ts';
-import { CardTracker } from '../../server/api/common/durakai/cardTracker.ts';
-import { calculateMoveStats, formatMoveStats } from '../../server/api/common/strategies/move_stats.ts';
+import { Game } from '@api/core/types.ts';
+import { BotStrategy, LegalMove } from '@api/core/bot_interfaces.ts';
+import { cardDisplay, getCardValue } from '@api/common/common_utils.ts';
+import { SUIT_MAP } from '@api/core/constants.ts';
+import { CardTracker } from '@api/common/durakai/cardTracker.ts';
+import { calculateMoveStats, formatMoveStats } from '@api/common/strategies/move_stats.ts';
 
 /**
  * Console strategy - prompts the user for input to choose moves

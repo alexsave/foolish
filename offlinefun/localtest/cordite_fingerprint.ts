@@ -1,12 +1,12 @@
 // Deterministic outcome fingerprint: plays a fixed set of seeded games and
 // prints the sequence of hero finish positions + a hash. Used to prove a
 // refactor is behavior-identical (same fingerprint before/after).
-import { calculateLegalMoves } from '../../server/api/common/bot_strategy.ts';
-import { shouldBotActCore, executeBotMove } from '../../server/api/common/pure_bot_actions.ts';
-import { game_done } from '../../server/api/common/common_utils.ts';
-import { start_game } from '../../server/api/common/game_lifecycle.ts';
-import { getBotStrategy } from '../../server/api/common/bot_strategy.ts';
-import { Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS } from '../../server/api/core/types.ts';
+import { calculateLegalMoves } from '@api/common/bot_strategy.ts';
+import { shouldBotActCore, executeBotMove } from '@api/common/pure_bot_actions.ts';
+import { game_done } from '@api/common/common_utils.ts';
+import { start_game } from '@api/common/game_lifecycle.ts';
+import { getBotStrategy } from '@api/common/bot_strategy.ts';
+import { Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS } from '@api/core/types.ts';
 
 let _seed = 424242;
 Math.random = () => { _seed = (_seed * 1664525 + 1013904223) % 4294967296; return _seed / 4294967296; };

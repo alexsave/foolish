@@ -22,11 +22,11 @@ interface Result { pc: number; n: number; wins: number; fpSum: number; dec: numb
 function runWorker(): void {
     Promise.resolve().then(async () => {
         const { calculateLegalMoves, getBotStrategy, registerBotStrategy } =
-            await import('../../server/api/common/bot_strategy.ts');
-        const { shouldBotActCore, executeBotMove } = await import('../../server/api/common/pure_bot_actions.ts');
-        const { game_done } = await import('../../server/api/common/common_utils.ts');
-        const { start_game } = await import('../../server/api/common/game_lifecycle.ts');
-        const { GAME_STATUS, PLAYER_STATUS } = await import('../../server/api/core/types.ts');
+            await import('@api/common/bot_strategy.ts');
+        const { shouldBotActCore, executeBotMove } = await import('@api/common/pure_bot_actions.ts');
+        const { game_done } = await import('@api/common/common_utils.ts');
+        const { start_game } = await import('@api/common/game_lifecycle.ts');
+        const { GAME_STATUS, PLAYER_STATUS } = await import('@api/core/types.ts');
         const { CorditeOldStrategy } = await import('./frozen/cordite_old_strategy.ts');
         registerBotStrategy('cordite_old', new CorditeOldStrategy());
 

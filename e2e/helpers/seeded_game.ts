@@ -14,15 +14,15 @@
  * no constant to go stale.
  * ========================================================================== */
 
-import { start_game } from '../../server/api/common/game_lifecycle.ts';
-import { game_done } from '../../server/api/common/common_utils.ts';
+import { start_game } from '@api/common/game_lifecycle.ts';
+import { game_done } from '@api/common/common_utils.ts';
 import {
     Game, GAME_STATUS, PLAYER_STATUS, PrivatePlayer, StrategyKey,
-} from '../../server/api/core/types.ts';
-import { shouldBotActCore, processBotAction } from '../../server/api/common/pure_bot_actions.ts';
-import { calculateLegalMoves } from '../../server/api/common/bot_strategy.ts';
-import { kernelReplayEncodeV6FromGame } from '../../sdk/ts/wasm/bots.ts';
-import { __setDealSeedOverride } from '../../sdk/ts/wasm/engine.ts';
+} from '@api/core/types.ts';
+import { shouldBotActCore, processBotAction } from '@api/common/pure_bot_actions.ts';
+import { calculateLegalMoves } from '@api/common/bot_strategy.ts';
+import { kernelReplayEncodeV6FromGame } from '@sdk/ts/wasm/bots.ts';
+import { __setDealSeedOverride } from '@sdk/ts/wasm/engine.ts';
 
 export const seedBytes = (np: number, s: number): Uint8Array =>
     new Uint8Array(Array.from({ length: 32 }, (_, i) => (i * 31 + s * 13 + np) & 0xff));

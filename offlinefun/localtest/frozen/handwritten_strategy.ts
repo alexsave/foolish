@@ -1,6 +1,6 @@
-import { Card, Game, PrivatePlayer } from '../../../server/api/core/types.ts';
-import { BotStrategy, LegalMove } from '../../../server/api/core/bot_interfaces.ts';
-import { canCover, card_comp } from '../../../server/api/common/common_utils.ts';
+import { Card, Game, PrivatePlayer } from '@api/core/types.ts';
+import { BotStrategy, LegalMove } from '@api/core/bot_interfaces.ts';
+import { canCover, card_comp } from '@api/common/common_utils.ts';
 
 // Handwritten strategy - never done attacking, always attack with as many cards as possible
 // Replicates the logic from aiDefend() and chooseAttack() functions

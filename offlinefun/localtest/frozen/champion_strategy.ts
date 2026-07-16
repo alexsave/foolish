@@ -1,6 +1,6 @@
-import { Card, Game, PrivatePlayer } from '../../../server/api/core/types.ts';
-import { BotStrategy, LegalMove } from '../../../server/api/core/bot_interfaces.ts';
-import { get_next_player_index } from '../../../server/api/common/common_utils.ts';
+import { Card, Game, PrivatePlayer } from '@api/core/types.ts';
+import { BotStrategy, LegalMove } from '@api/core/bot_interfaces.ts';
+import { get_next_player_index } from '@api/common/common_utils.ts';
 
 /**
  * Champion Durak Strategy - Tournament Winner (TypeScript)

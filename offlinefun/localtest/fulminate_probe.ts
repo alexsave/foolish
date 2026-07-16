@@ -6,11 +6,11 @@
 //
 //   npx tsx offlinefun/localtest/fulminate_probe.ts <fillers> <pcs> <games>
 //   npx tsx offlinefun/localtest/fulminate_probe.ts espresso 4,6 40
-import { calculateLegalMoves, getBotStrategy } from '../../server/api/common/bot_strategy.ts';
-import { shouldBotActCore, executeBotMove } from '../../server/api/common/pure_bot_actions.ts';
-import { game_done } from '../../server/api/common/common_utils.ts';
-import { start_game } from '../../server/api/common/game_lifecycle.ts';
-import { GAME_STATUS, PLAYER_STATUS } from '../../server/api/core/types.ts';
+import { calculateLegalMoves, getBotStrategy } from '@api/common/bot_strategy.ts';
+import { shouldBotActCore, executeBotMove } from '@api/common/pure_bot_actions.ts';
+import { game_done } from '@api/common/common_utils.ts';
+import { start_game } from '@api/common/game_lifecycle.ts';
+import { GAME_STATUS, PLAYER_STATUS } from '@api/core/types.ts';
 
 const POL_NAMES = ['HANDWRITTEN', 'ESPRESSO', 'RANDOM', 'SIMPLE', 'GREEDY', 'HUMAN', 'PASSIVE', 'AGGRO'];
 
