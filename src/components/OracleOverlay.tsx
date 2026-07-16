@@ -119,10 +119,12 @@ const LedChip = ({ color, text, width }: { color: string; text: string; width?: 
     </span>
 );
 
-// Fixed footprint for the "EF 12.40 ±0.08" readout — sized for the widest
-// realistic case (3-digit mean, 2 decimals, ± error) so the number column
-// (and the bar beside it) don't jitter row to row.
-const EF_COL_W = 96;
+// "EF 12.40 ±0.08" as one fixed-length segment array (like the move title)
+// instead of two separately-sized SegmentText runs — those drifted out of
+// alignment with each other since a 1-digit vs 3-digit mean shifted where
+// the ± run started. 15 cells covers the widest realistic case:
+// "EF " (3) + a 3-digit 2-decimal mean (6) + " ±" (2) + "X.XX" (4) = 15.
+const EF_TITLE_LEN = 15;
 
 // Fixed footprint for the classification chip (best/excellent/.../blunder)
 // — sized to the longest label, "INACCURACY".
@@ -168,6 +170,9 @@ function McRow({ c, best, worst, bestAdj, t }: {
     const delta = scored && bestAdj != null ? eff! - bestAdj : 0;
     const cls = scored ? oracleClassify(delta) : null;
     const barColor = isBest ? CLASS_COLOR.best : (cls ? CLASS_COLOR[cls] : '#8a8a92');
+    const efText = scored
+        ? `EF ${eff!.toFixed(decimals)}${c.se < 0.5 && c.se !== Infinity ? ` ±${c.se.toFixed(2)}` : ''}`
+        : (c.pruned ? '—' : '…');
 
     const title = moveTitleText(c);
 
@@ -194,23 +199,8 @@ function McRow({ c, best, worst, bestAdj, t }: {
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 {scored ? <EqBar pct={barW} color={barColor} />
                     : <div style={{ flex: '1 1 auto', height: 7 }} />}
-                <span
-                    title={t('oracle_ef_tip')}
-                    style={{
-                        display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4,
-                        width: EF_COL_W, flex: '0 0 auto', boxSizing: 'border-box',
-                    }}
-                >
-                    {scored ? (
-                        <>
-                            <SegmentText text={`EF ${c.mean!.toFixed(decimals)}`} color={AMBER} height={10} gap={1.5} />
-                            {c.se < 0.5 && c.se !== Infinity && (
-                                <span style={{ opacity: 0.65 }}>
-                                    <SegmentText text={`±${c.se.toFixed(2)}`} color={AMBER} height={10} gap={1.5} />
-                                </span>
-                            )}
-                        </>
-                    ) : <span style={ledText(AMBER)}>{c.pruned ? '—' : '…'}</span>}
+                <span title={t('oracle_ef_tip')} style={{ display: 'inline-flex', alignItems: 'center', flex: '0 0 auto' }}>
+                    <SegmentText text={efText} color={AMBER} height={10} gap={1.5} length={EF_TITLE_LEN} />
                 </span>
             </div>
         </div>
