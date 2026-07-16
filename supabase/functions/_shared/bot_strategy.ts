@@ -55,29 +55,25 @@ export class WasmBotStrategy implements BotStrategy {
 
 // Strategy registry.
 //
-// The canonical roster now lives in the C kernel (cnitro/src/bot_roster.c):
-// key -> brain + knobs + logs flag, one table shared with the phone and every
-// future client (docs/C_CORE_CONSOLIDATION.md F1). The env values below are
-// kept deliberately identical to that table's knob specs for now — env
-// overrides the roster (bot_knobs.h), so the server's behavior is unchanged
-// while both exist. Deleting these `env` blocks is the cutover step that makes
-// the roster authoritative here too; do it as its own change, not as a drive-by.
+// The roster lives in the C kernel (cnitro/src/bot_roster.c): key -> brain +
+// knobs + logs flag, one table shared with the phone and every future client
+// (docs/C_CORE_CONSOLIDATION.md F1/A1). This map used to restate that table's
+// knobs as `env` blocks, kept "deliberately identical" by hand and by a parity
+// test. They are gone: wasm_choose_move now resolves brain AND knobs through
+// bot_roster_choose, exactly as bot_drive's cycle has since A2, so the tuning
+// that makes cordite `cordite` travels with the kernel to every host instead of
+// being re-typed per client. A bot's identity is kernel data, like the rules.
 //
-// CD_BUDGET selects the kernel cordite's world/pruning budget: 'prod' is the
-// deployed v2.4 player-count-aware schedule (see cnitro/src/cordite_strategy.c).
-// Single revert knob for the octogen trump-conservation tie-break. '40' = on
-// (default); '0' = pre-fix behavior. See the octogen registration below.
-const OCTOGEN_TRUMP_KEEP = '40';
+// What is left here is what the kernel genuinely cannot know: which key the DB
+// hands us, and whether to hydrate the session log first. `env` survives as a
+// per-call override (bot_knobs.h) for harnesses that need a fast budget.
 
 export const BOT_STRATEGIES: Map<string, BotStrategy> = new Map<string, BotStrategy>([
     ['random', new WasmBotStrategy('random', STRAT.random)],
     ['handwritten', new WasmBotStrategy('handwritten', STRAT.handwritten)],
     ['simple_heuristic', new WasmBotStrategy('simple_heuristic', STRAT.simple_heuristic)],
-    ['ultimate_champion', new WasmBotStrategy('ultimate_champion', STRAT.ultimate_champion)],
-    ['champion', new WasmBotStrategy('champion', STRAT.champion)],
-    ['hacker', new WasmBotStrategy('hacker', STRAT.hacker)],
-    // logs: espresso's discard memory reads LOG_DISCARD; cordite/fulminate
-    // build their belief from the full public log.
+    // logs: espresso's discard memory reads LOG_DISCARD; cordite and the other
+    // belief bots build their belief from the full public log.
     ['espresso', new WasmBotStrategy('espresso', STRAT.espresso, { logs: true })],
     // Ladder rungs Medium/Hard (Durak Bot Ordnance Chart). firecracker is
     // robusta's public-info MC with an espresso rollout; blackpowder is the
@@ -86,21 +82,10 @@ export const BOT_STRATEGIES: Map<string, BotStrategy> = new Map<string, BotStrat
     // before they choose (strategyUsesLogs).
     ['firecracker', new WasmBotStrategy('firecracker', STRAT.firecracker, { logs: true })],
     ['blackpowder', new WasmBotStrategy('blackpowder', STRAT.blackpowder, { logs: true })],
-    // CD_RACE stops a deliberation early once the leading candidate is
-    // statistically separated (validated strength-neutral at C=75: pc4x800
-    // identical, pc2/pc6 within noise; landslide decisions finish in ~50
-    // worlds instead of ~900).
-    ['cordite', new WasmBotStrategy('cordite', STRAT.cordite, { env: { CD_BUDGET: 'prod', CD_RACE: '1', CD_RACE_C: '75' }, logs: true })],
-    ['fulminate', new WasmBotStrategy('fulminate', STRAT.fulminate, { env: { CD_BUDGET: 'prod', CD_RACE: '1', CD_RACE_C: '75' }, logs: true })],
-    // Self-budgeted C brains — no env knobs.
-    ['semtex', new WasmBotStrategy('semtex', STRAT.semtex, { logs: true })],
-    // OCTOGEN_TRUMP_KEEP (see octogen_strategy.c OG_TRUMP_KEEP): milli-units of
-    // mean-finish taxed per trump LED while the deck is alive, tipping
-    // noise-level ties toward keeping trumps instead of dumping a low trump the
-    // weak rollout policy undervalues. Measured +2.7pp win vs espresso, flat vs
-    // handwritten; ~0 latency/memory cost. <<< SET TO '0' TO REVERT to the
-    // pre-fix behavior — takes effect on edge redeploy, no wasm rebuild. >>>
-    ['octogen', new WasmBotStrategy('octogen', STRAT.octogen, { env: { OG_TRUMP_KEEP: OCTOGEN_TRUMP_KEEP }, logs: true })],
+    // cordite's CD_BUDGET/CD_RACE and octogen's OG_TRUMP_KEEP now come from
+    // the roster (cnitro/src/bot_roster.c), which documents them.
+    ['cordite', new WasmBotStrategy('cordite', STRAT.cordite, { logs: true })],
+    ['octogen', new WasmBotStrategy('octogen', STRAT.octogen, { logs: true })],
 ]);
 
 // Lets a harness register a strategy that is not in the table above. The

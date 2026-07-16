@@ -15,6 +15,7 @@
 #include "legal.h"
 #include "strategy.h"
 #include "bot_drive.h"
+#include "bot_roster.h"
 #include <string.h>
 #include <stdlib.h>
 
@@ -220,28 +221,19 @@ int wasm_choose_move(int strat, int bot_idx) {
     calculate_legal_moves(g, bot_idx, lm);
     if (lm->n == 0) return -1;
 
-    // Shipped ladder only (docs/BOTS_WASM_MEMORY_PLAN.md, "Durak Bot Ordnance
-    // Chart"): the wasm module dispatches the deployed difficulty rungs that are
-    // ported — random, simple_heuristic, handwritten_prod, firecracker,
-    // blackpowder, cordite, octogen (the full seven-rung ladder).
-    // espresso_strategy_choose and handwritten_strategy_choose stay LINKED
-    // (cordite/octogen/firecracker/blackpowder call them as rollout policies) but
-    // are no longer reachable as a top-level bot. champion, ultimate_champion,
-    // hacker, fulminate, espresso_prod and semtex left the build entirely. Any
-    // dropped/unported strat id falls back to random.
-    StrategyFn fn = 0;
-    switch (strat) {
-        case STRAT_RANDOM:            fn = random_strategy_choose; break;
-        case STRAT_SIMPLE_HEURISTIC:  fn = simple_heuristic_strategy_choose; break;
-        case STRAT_HANDWRITTEN_PROD:  fn = handwritten_prod_strategy_choose; break;
-        case STRAT_FIRECRACKER:       fn = firecracker_strategy_choose; break;
-        case STRAT_BLACKPOWDER:       fn = blackpowder_strategy_choose; break;
-        case STRAT_CORDITE:           fn = cordite_strategy_choose; break;
-        case STRAT_OCTOGEN:           fn = octogen_strategy_choose; break;
-        default:                      fn = random_strategy_choose; break;
-    }
-    int idx = fn(g, bot_idx, lm, 0);
-    if (idx < 0 || idx >= lm->n) idx = 0;
+    // ONE roster (docs/C_CORE_CONSOLIDATION.md F1/A1). This was a switch that
+    // dispatched the brain at its C defaults and left the KNOBS to whatever env
+    // the caller had installed — so a host choosing move-by-move could play a
+    // measurably different bot than bot_drive's cycle, which has resolved brain
+    // AND knobs through the table since A2. Same lookup here, same answer.
+    //
+    // An unknown or unlinked strat returns -1 (the caller declines to act)
+    // rather than quietly falling back to random: shipping `cordite` that plays
+    // like `random` is the exact failure seed.sql warns about, and it is
+    // invisible until someone measures ELO.
+    int ridx = bot_roster_find_by_strat(strat);
+    int idx = bot_roster_choose(ridx, g, bot_idx, lm);
+    if (idx < 0 || idx >= lm->n) return -1;
 
     const LegalMove *m = &lm->moves[idx];
     unsigned char *out = wasm_io_ptr();

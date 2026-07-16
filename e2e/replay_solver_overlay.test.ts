@@ -56,9 +56,11 @@ async function playToEnd(np: number, strat: StrategyKey): Promise<Game | null> {
 // A burst of solver decisions on a fresh game — this is what writes all over
 // solve_ws (and therefore all over the aliased replay scratch) between the two
 // encodes below. Use the heaviest MC families so the endgame solver actually
-// runs and fills the arena.
+// runs and fills the arena — every one of these must be a bot bots.wasm really
+// links, or it hammers nothing. ('semtex' used to be here and is not in the
+// module: it dispatched to `random`, which never touches the solver at all.)
 async function hammerSolver(): Promise<void> {
-  for (const strat of ['octogen', 'semtex', 'cordite'] as StrategyKey[]) {
+  for (const strat of ['octogen', 'blackpowder', 'cordite'] as StrategyKey[]) {
     const g = mkGame(2, strat);
     start_game(g);
     let guard = 0;
@@ -109,7 +111,7 @@ test('M8: replay encode is byte-identical before and after a solver burst on the
   // Interleave the two families move-by-move: encode, choose, encode, choose …
   // and assert the encode never budges. This is the tightest form of the check.
   for (let k = 0; k < 3; k++) {
-    const g = mkGame(2, 'semtex' as StrategyKey);
+    const g = mkGame(2, 'blackpowder' as StrategyKey);
     start_game(g);
     for (let step = 0; step < 12 && game_done(g) === null; step++) {
       for (let i = 0; i < g.players.length; i++) {
