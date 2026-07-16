@@ -20,10 +20,20 @@
 #include "msg_wire.h"
 #include "awire.h"
 #include "sha256.h"
+#include "json_out.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+// This file used to carry its own JSON appender and board emitter. They live in
+// src/json_out.c now, because the web needed exactly the same decode and the
+// only alternative was a third implementation of the layout (A8/F7). The error
+// codes line up so json_out's returns pass straight through untranslated —
+// pinned here rather than trusted.
+_Static_assert(JSON_EBADARG == FIO_EBADARG, "json_out/ios error codes diverged");
+_Static_assert(JSON_ECAP    == FIO_ECAP,    "json_out/ios error codes diverged");
+_Static_assert(JSON_EPARSE  == FIO_EPARSE,  "json_out/ios error codes diverged");
 
 // ---------- the one game --------------------------------------------------
 
@@ -63,130 +73,6 @@ static int fio_roster_idx(int strategy_id) {
 // strategy_key == 0 == STRAT_RANDOM default: a seat nobody assigned but that
 // fio_bot_step_json(-1) drives anyway still plays random, as before.
 static int8_t g_seat_roster[MAX_PLAYERS];
-
-// ---------- a tiny JSON string builder ------------------------------------
-//
-// Bounded append helpers. `w` tracks bytes written; every append checks the cap
-// and, on overflow, sets *ok=0 so the caller can return FIO_ECAP. The buffer is
-// always NUL-terminated when there is room.
-
-typedef struct { char *buf; int cap; int w; int ok; } J;
-
-static void j_init(J *j, char *buf, int cap) { j->buf = buf; j->cap = cap; j->w = 0; j->ok = (cap > 0); }
-static void j_putc(J *j, char c) {
-    if (!j->ok) return;
-    if (j->w + 1 >= j->cap) { j->ok = 0; return; }
-    j->buf[j->w++] = c;
-}
-static void j_puts(J *j, const char *s) { while (*s) j_putc(j, *s++); }
-static void j_puti(J *j, long v) {
-    char t[24]; int n = snprintf(t, sizeof(t), "%ld", v);
-    for (int i = 0; i < n; i++) j_putc(j, t[i]);
-}
-// Emit a JSON escaped string (names may contain quotes/backslashes/control).
-static void j_putstr(J *j, const char *s) {
-    j_putc(j, '"');
-    for (; *s; s++) {
-        unsigned char c = (unsigned char)*s;
-        if (c == '"' || c == '\\') { j_putc(j, '\\'); j_putc(j, (char)c); }
-        else if (c == '\n') { j_putc(j, '\\'); j_putc(j, 'n'); }
-        else if (c == '\t') { j_putc(j, '\\'); j_putc(j, 't'); }
-        else if (c < 0x20)  { char t[8]; snprintf(t, sizeof(t), "\\u%04x", c); j_puts(j, t); }
-        else j_putc(j, (char)c);
-    }
-    j_putc(j, '"');
-}
-// {"s":<suit>,"v":<value>}  — the wire-independent Card JSON (§16.A2).
-static void j_card(J *j, Card c) {
-    j_puts(j, "{\"s\":"); j_puti(j, c.suit);
-    j_puts(j, ",\"v\":"); j_puti(j, c.value); j_putc(j, '}');
-}
-static int j_finish(J *j) {
-    if (!j->ok) return FIO_ECAP;
-    j->buf[j->w] = 0;
-    return j->w;
-}
-
-// ---------- state serialization -------------------------------------------
-//
-// Per-viewer masked view. viewer >= 0 shows only that seat's real hand; every
-// other hand collapses to a count; the deck and flip-under-deck stay hidden.
-// viewer == VIEW_SPECTATOR masks every hand. This is the "you only see your own
-// hand" rule (view.h) rendered as JSON rather than the packed blob.
-//
-// Written into an EXISTING writer so a state object can nest inside a larger
-// document — the event stream carries one per step (j_events). emit_state_of
-// below is the standalone-buffer form.
-static void j_state(J *j, const Game *g, int viewer) {
-    j_puts(j, "{\"status\":");        j_puti(j, g->status);
-    j_puts(j, ",\"numPlayers\":");    j_puti(j, g->num_players);
-    j_puts(j, ",\"powerSuit\":");     j_puti(j, g->power_suit);
-    j_puts(j, ",\"deckCount\":");     j_puti(j, g->deck_count);
-    j_puts(j, ",\"discardCount\":");  j_puti(j, g->discard_pile_length);
-    j_puts(j, ",\"hasFlipped\":");    j_puts(j, g->has_flipped ? "true" : "false");
-    j_puts(j, ",\"firstAttacker\":"); j_puti(j, g->first_attacker);
-    j_puts(j, ",\"defender\":");      j_puti(j, g->defender);
-    j_puts(j, ",\"viewer\":");        j_puti(j, viewer);
-    j_puts(j, ",\"goodMask\":");      j_puti(j, (long)g->good_players_mask);
-    j_puts(j, ",\"gameOver\":");      j_puti(j, game_done(g));
-
-    // The flipped trump card is public whenever it is still known (has_flipped).
-    j_puts(j, ",\"flipped\":");
-    if (g->has_flipped) j_card(j, g->flipped); else j_puts(j, "null");
-
-    // Battles: attack always real; defense null when uncovered.
-    j_puts(j, ",\"battles\":[");
-    for (int i = 0; i < g->num_battles; i++) {
-        if (i) j_putc(j, ',');
-        const Battle *b = &g->table_battles[i];
-        j_puts(j, "{\"attack\":"); j_card(j, b->attack);
-        j_puts(j, ",\"defense\":");
-        if (card_is_none(b->defense)) j_puts(j, "null"); else j_card(j, b->defense);
-        j_putc(j, '}');
-    }
-    j_putc(j, ']');
-
-    // Elimination order (seat indices, in the order they cleared).
-    j_puts(j, ",\"eliminationOrder\":[");
-    for (int i = 0; i < g->num_eliminated; i++) { if (i) j_putc(j, ','); j_puti(j, g->elimination_order[i]); }
-    j_putc(j, ']');
-
-    // Players. Every seat exposes seat/name/status/handCount/awaitingAttack/
-    // strategyKey; ONLY the viewer seat exposes its real `hand`. Others emit
-    // "hand":null so Swift renders card backs from handCount.
-    j_puts(j, ",\"players\":[");
-    for (int p = 0; p < g->num_players; p++) {
-        if (p) j_putc(j, ',');
-        const Player *pl = &g->players[p];
-        int is_viewer = (viewer == p);
-        j_puts(j, "{\"seat\":");         j_puti(j, p);
-        j_puts(j, ",\"name\":");         j_putstr(j, pl->name);
-        j_puts(j, ",\"status\":");       j_puti(j, pl->status);
-        j_puts(j, ",\"handCount\":");    j_puti(j, pl->hand_count);
-        // awaiting_attack is private turn state — only surface it for the viewer.
-        j_puts(j, ",\"awaitingAttack\":");
-        j_puts(j, (is_viewer && pl->awaiting_attack) ? "true" : "false");
-        j_puts(j, ",\"strategyKey\":");  j_puti(j, pl->strategy_key);
-        j_puts(j, ",\"hand\":");
-        if (is_viewer) {
-            j_putc(j, '[');
-            for (int c = 0; c < pl->hand_count; c++) { if (c) j_putc(j, ','); j_card(j, pl->hand[c]); }
-            j_putc(j, ']');
-        } else {
-            j_puts(j, "null");
-        }
-        j_putc(j, '}');
-    }
-    j_putc(j, ']');
-    j_putc(j, '}');
-}
-
-// The standalone-buffer form: one masked state as a whole JSON document.
-static int emit_state_of(const Game *g, int viewer, char *out, int cap) {
-    J j; j_init(&j, out, cap);
-    j_state(&j, g, viewer);
-    return j_finish(&j);
-}
 
 // ---------- legal moves ----------------------------------------------------
 
@@ -298,7 +184,7 @@ static void fio_ev_sink(void *ctx, const EvwEvent *ev) {
     // drawn at its final state, and the only way back to the intermediate boards
     // would be for the client to re-derive them — which is precisely what
     // BoardDiff.swift was cancelled for (§16.B4).
-    if (ev->snap) { j_puts(c->j, ",\"state\":"); j_state(c->j, ev->snap, c->viewer); }
+    if (ev->snap) { j_puts(c->j, ",\"state\":"); json_state(c->j, ev->snap, c->viewer); }
     j_putc(c->j, '}');
 }
 
@@ -527,11 +413,11 @@ int fio_has_game(void) { return g_has_game; }
 int fio_state_json(int viewer_seat, char *out, int cap) {
     if (!g_has_game) return FIO_ENOGAME;
     if (viewer_seat < 0 || viewer_seat >= g_game.num_players) return FIO_EBADARG;
-    return emit_state_of(&g_game, viewer_seat, out, cap);
+    return json_state_of(&g_game, viewer_seat, out, cap);
 }
 int fio_public_state_json(char *out, int cap) {
     if (!g_has_game) return FIO_ENOGAME;
-    return emit_state_of(&g_game, VIEW_SPECTATOR, out, cap);
+    return json_state_of(&g_game, VIEW_SPECTATOR, out, cap);
 }
 
 // Decode a SERVER packed-view blob (the player_views / spectator_views wire, the
@@ -540,14 +426,12 @@ int fio_public_state_json(char *out, int cap) {
 // a reimplemented wire in Swift (§8, §16.D4). `viewer` is the seat whose hand is
 // real in this blob (the local player's seat), or VIEW_SPECTATOR for the public
 // feed. Does not touch the current game.
+//
+// The web reaches the identical function through wasm (A8/F7) — this call and
+// that one are the same decode of the same bytes, which is the property the
+// whole exercise is for.
 int fio_view_from_packed_json(const uint8_t *buf, int len, int viewer, char *out, int cap) {
-    if (!buf || len <= 0) return FIO_EBADARG;
-    static Game tmp;
-    memset(&tmp, 0, sizeof(tmp));
-    state_get(&tmp, buf, /*masked=*/1);
-    if (tmp.num_players < 2 || tmp.num_players > MAX_PLAYERS) return FIO_EPARSE;
-    if (viewer != VIEW_SPECTATOR && (viewer < 0 || viewer >= tmp.num_players)) return FIO_EBADARG;
-    return emit_state_of(&tmp, viewer, out, cap);
+    return json_view_from_packed(buf, len, viewer, out, cap);
 }
 
 // Legal moves for `seat` computed from a SERVER packed masked-view blob, so
@@ -1057,7 +941,7 @@ int fio_msg_decode_json(const uint8_t *payload, int len, int viewer, char *out, 
     j_puts(&j, "],\"state\":");
     if (!j.ok) return FIO_ECAP;
     {
-        const int n = emit_state_of(&g_game, viewer < 0 ? VIEW_SPECTATOR : viewer,
+        const int n = json_state_of(&g_game, viewer < 0 ? VIEW_SPECTATOR : viewer,
                                     out + j.w, cap - j.w);
         if (n < 0) return n;
         j.w += n;

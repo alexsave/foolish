@@ -17,6 +17,7 @@
 #include "../src/replay_steps.h"
 #include "../src/evwire.h"
 #include "../src/view.h"
+#include "../src/json_out.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -1763,6 +1764,245 @@ static void test_replay_step_index_refuses_a_small_buffer(void) {
     CHECK(r < 0, "an index that does not fit is an error, not a truncation");
 }
 
+// ---------- json_out (A8/F7): packed bytes -> JSON --------------------------
+//
+// The web used to read view.c and evwire.c with hand-written TypeScript that
+// shadowed them byte for byte. These pin the C that replaced it. The invariant
+// that matters is NOT "the JSON looks plausible" — it is that decoding the
+// packed bytes says exactly what the live board says, because that equality is
+// the entire reason the mirror could be deleted.
+
+// Identity is deliberately not in the state blob (game.h), so a from-packed
+// decode cannot know names or strategy keys and emits ""/0. Strip them from the
+// live game so the two sides are comparable on what the blob actually carries.
+static void jt_strip_identity(Game *g) {
+    for (int i = 0; i < g->num_players; i++) {
+        g->players[i].name[0] = 0;
+        g->players[i].strategy_key = 0;
+    }
+}
+
+// A packed masked view must decode to the SAME JSON the live game emits, for
+// every viewer and for the spectator. This is the web's whole decode path in one
+// assertion: if these two ever disagree, the browser is drawing a board the
+// kernel does not have.
+static void test_json_view_from_packed_says_what_the_live_board_says(void) {
+    static unsigned char blob[65536];
+    static char from_packed[65536], from_live[65536];
+
+    for (int np = 2; np <= 6; np++) {
+        unsigned char seed[FOOLISH_SEED_LEN];
+        for (int i = 0; i < FOOLISH_SEED_LEN; i++) seed[i] = (unsigned char)(i * 17 + np * 3 + 1);
+        game_set_seed((uint32_t)(np * 101 + 7));
+        random_strategy_set_seed((uint32_t)(np * 101 + 7));
+        game_set_deal_seed_bytes(seed, FOOLISH_SEED_LEN);
+
+        Game g;
+        memset(&g, 0, sizeof g);
+        g.num_players = (int8_t)np;
+        for (int i = 0; i < np; i++) g.players[i].status = PLAYER_STATUS_READY;
+        start_game(&g);
+        jt_strip_identity(&g);
+
+        // Every seat, plus the spectator.
+        for (int viewer = -1; viewer < np; viewer++) {
+            const int v = (viewer < 0) ? VIEW_SPECTATOR : viewer;
+            int n = state_put(&g, v, blob);
+            CHECK(n > 0, "the board serializes to a masked blob");
+
+            int a = json_view_from_packed(blob, n, v, from_packed, (int)sizeof from_packed);
+            int b = json_state_of(&g, v, from_live, (int)sizeof from_live);
+            CHECK(a > 0 && b > 0, "both sides emit JSON");
+            if (a <= 0 || b <= 0) return;
+            CHECK(a == b && memcmp(from_packed, from_live, (size_t)a) == 0,
+                  "a packed view decodes to exactly the live board's JSON");
+        }
+    }
+}
+
+// The masking survives the round trip. A spectator's decoded JSON must carry no
+// hand at all: json_state emits "hand":null for every seat that is not the
+// viewer, so a real card array anywhere in a spectator decode is a leak.
+static void test_json_view_from_packed_leaks_no_hand_to_a_spectator(void) {
+    static unsigned char blob[65536];
+    static char out[65536];
+
+    unsigned char seed[FOOLISH_SEED_LEN];
+    for (int i = 0; i < FOOLISH_SEED_LEN; i++) seed[i] = (unsigned char)(i * 5 + 41);
+    game_set_seed(4242);
+    random_strategy_set_seed(4242);
+    game_set_deal_seed_bytes(seed, FOOLISH_SEED_LEN);
+
+    Game g;
+    memset(&g, 0, sizeof g);
+    g.num_players = 4;
+    for (int i = 0; i < 4; i++) g.players[i].status = PLAYER_STATUS_READY;
+    start_game(&g);
+
+    int n = state_put(&g, VIEW_SPECTATOR, blob);
+    int r = json_view_from_packed(blob, n, VIEW_SPECTATOR, out, (int)sizeof out);
+    CHECK(r > 0, "a spectator view decodes");
+    if (r <= 0) return;
+    CHECK(strstr(out, "\"hand\":[") == NULL,
+          "a spectator decode contains no hand array — every seat is a count");
+    CHECK(strstr(out, "\"hand\":null") != NULL, "and the seats say so explicitly");
+
+    // The viewer's own seat, by contrast, must show its real cards — otherwise
+    // the assertion above would pass on a decoder that simply emits nothing.
+    n = state_put(&g, 1, blob);
+    r = json_view_from_packed(blob, n, 1, out, (int)sizeof out);
+    CHECK(r > 0 && strstr(out, "\"hand\":[") != NULL,
+          "but seat 1's own decode shows seat 1's real hand");
+}
+
+// The packed evwire reader against the real thing: frames the kernel actually
+// serialized, from a game the engine actually played. The trailer is the anchor
+// — it must be the same final board the live game emits — because a reader that
+// drifts by one byte anywhere in the event loop lands the trailer somewhere else
+// and cannot reproduce it.
+static void test_json_events_from_packed_reads_the_frames_the_kernel_wrote(void) {
+    static unsigned char code[1 << 20];
+    static unsigned char frames[1 << 18];
+    static char out[1 << 18];
+
+    Game g;
+    unsigned char seed[FOOLISH_SEED_LEN];
+    if (!rs_play_seeded(&g, 3, 71, seed)) { CHECK(0, "seeded game plays out"); return; }
+    int enc = replay_encode_v6_from_game(&g, seed, FOOLISH_SEED_LEN, 1 << 20,
+                                         code, (int)sizeof code);
+    if (enc <= 0) { CHECK(0, "the played game encodes as v6"); return; }
+
+    int n_frames = 0, next = 0;
+    int wrote = replay_steps_frames_v6(code, enc, VIEW_SPECTATOR, 0, 0,
+                                       frames, (int)sizeof frames, &n_frames, &next);
+    CHECK(wrote > 0 && n_frames > 0, "the code replays to packed evwire frames");
+    if (wrote <= 0 || n_frames <= 0) return;
+
+    int q = 0, decoded = 0, with_state = 0;
+    for (int f = 0; f < n_frames; f++) {
+        const int flen = frames[q] | (frames[q + 1] << 8); q += 2;
+        int r = json_events_from_packed(frames + q, flen, out, (int)sizeof out);
+        CHECK(r > 0, "every frame the kernel wrote, the kernel reads back as JSON");
+        if (r <= 0) return;
+        // A spectator frame: viewer -1, and the sequence carries its trailer.
+        CHECK(strstr(out, "\"viewer\":-1") == out + 1, "the frame's viewer survives the header");
+        CHECK(strstr(out, "\"game\":") != NULL, "and the committed final board rides as the trailer");
+        // Per-event boards are the whole point of the format (A3/§16.B4).
+        if (strstr(out, "\"state\":") != NULL) with_state++;
+        q += flen;
+        decoded++;
+    }
+    CHECK(decoded == n_frames, "every frame decoded");
+    CHECK(with_state > 0, "and the events carry their per-step boards");
+}
+
+// The trailer is the real anchor: decode the LAST frame of a finished game and
+// insist its `game` is byte-identical to the JSON the finished game itself
+// emits. This is what makes the test above more than a shape check — it pins the
+// reader's cursor arithmetic to a value it cannot fake.
+static void test_json_events_trailer_is_the_board_the_engine_ended_on(void) {
+    static unsigned char code[1 << 20];
+    static unsigned char frames[1 << 18];
+    static char out[1 << 18];
+    static char live[65536];
+
+    Game g;
+    unsigned char seed[FOOLISH_SEED_LEN];
+    if (!rs_play_seeded(&g, 3, 71, seed)) { CHECK(0, "seeded game plays out"); return; }
+    int enc = replay_encode_v6_from_game(&g, seed, FOOLISH_SEED_LEN, 1 << 20,
+                                         code, (int)sizeof code);
+    if (enc <= 0) { CHECK(0, "the played game encodes as v6"); return; }
+
+    const int steps = replay_steps_count_v6(code, enc, 0);
+    CHECK(steps > 0, "the code reports its step count");
+    if (steps <= 0) return;
+
+    // Pull the final step's frame.
+    int n_frames = 0, next = 0;
+    int wrote = replay_steps_frames_v6(code, enc, VIEW_SPECTATOR, steps - 1, 0,
+                                       frames, (int)sizeof frames, &n_frames, &next);
+    if (wrote <= 0 || n_frames < 1) { CHECK(0, "the last step serializes"); return; }
+
+    const int flen = frames[0] | (frames[1] << 8);
+    int r = json_events_from_packed(frames + 2, flen, out, (int)sizeof out);
+    CHECK(r > 0, "the last frame decodes");
+    if (r <= 0) return;
+
+    jt_strip_identity(&g);
+    int b = json_state_of(&g, VIEW_SPECTATOR, live, (int)sizeof live);
+    CHECK(b > 0, "the finished game emits its board");
+    if (b <= 0) return;
+
+    const char *trailer = strstr(out, "\"game\":");
+    CHECK(trailer != NULL, "the decode has a trailer");
+    if (!trailer) return;
+    trailer += 7; // past "game":
+    CHECK(strncmp(trailer, live, (size_t)b) == 0,
+          "the trailer is byte-identical to the board the engine actually ended on");
+}
+
+// A truncated or foreign payload is UNREADABLE, never a partial parse. The web
+// treats a null decode as "cannot read this", and half a sequence rendered as a
+// whole one would be worse than no sequence at all.
+static void test_json_events_refuses_a_truncated_or_foreign_payload(void) {
+    static unsigned char code[1 << 20];
+    static unsigned char frames[1 << 18];
+    static char out[1 << 18];
+
+    Game g;
+    unsigned char seed[FOOLISH_SEED_LEN];
+    if (!rs_play_seeded(&g, 3, 71, seed)) { CHECK(0, "seeded game plays out"); return; }
+    int enc = replay_encode_v6_from_game(&g, seed, FOOLISH_SEED_LEN, 1 << 20,
+                                         code, (int)sizeof code);
+    if (enc <= 0) { CHECK(0, "the played game encodes as v6"); return; }
+
+    int n_frames = 0, next = 0;
+    int wrote = replay_steps_frames_v6(code, enc, VIEW_SPECTATOR, 0, 0,
+                                       frames, (int)sizeof frames, &n_frames, &next);
+    if (wrote <= 0 || n_frames < 1) { CHECK(0, "frames serialize"); return; }
+    const int flen = frames[0] | (frames[1] << 8);
+    unsigned char *frame = frames + 2;
+
+    CHECK(json_events_from_packed(frame, flen, out, (int)sizeof out) > 0,
+          "the whole frame reads (the control)");
+
+    // A foreign format version.
+    unsigned char v = frame[0];
+    frame[0] = (unsigned char)(v + 7);
+    CHECK(json_events_from_packed(frame, flen, out, (int)sizeof out) == JSON_EPARSE,
+          "a foreign format version is refused, not guessed at");
+    frame[0] = v;
+
+    // Every truncation. Not one sampled length — a reader whose bounds check is
+    // wrong is usually wrong at one specific offset.
+    //
+    // Each prefix is copied into an EXACTLY-sized heap buffer, which is the only
+    // way this proves anything. Handing the reader `frame` with a short `len`
+    // leaves the real bytes sitting right after it, so an over-read walks into
+    // the next frame, stays inside the array, and every bound here passes while
+    // the reader is in fact reading memory it was not given. Measured: deleting
+    // a bounds check does not fail this test on a static buffer. Sized to the
+    // byte, an over-read is a heap overflow — caught under ASAN
+    // (docs/SECURITY_WASM_BOUNDARY.md is the standard this holds the reader to),
+    // and the frames the browser hands us are exactly-sized too.
+    for (int len = 1; len < flen; len++) {
+        unsigned char *exact = (unsigned char *)malloc((size_t)len);
+        CHECK(exact != NULL, "the truncation probe allocates");
+        if (!exact) return;
+        memcpy(exact, frame, (size_t)len);
+        int r = json_events_from_packed(exact, len, out, (int)sizeof out);
+        free(exact);
+        CHECK(r < 0, "a truncated sequence is unreadable, never a partial parse");
+        if (r >= 0) return;
+    }
+
+    // And a cap too small to hold the answer says so rather than emitting JSON
+    // that would parse as a smaller, wrong sequence.
+    char tiny[32];
+    CHECK(json_events_from_packed(frame, flen, tiny, (int)sizeof tiny) == JSON_ECAP,
+          "an output buffer too small is an error, not truncated JSON");
+}
+
 // Play until an attacker has said good and the bout is still open — a state
 // only reachable with 3+ players (heads-up, the one attacker's good always
 // closes the round). The game is left exactly there, logs ending on the GOOD,
@@ -2039,6 +2279,11 @@ int main(void) {
     test_replay_step_index_reports_a_pending_good();
     test_replay_steps_replays_a_deal_with_no_trump();
     test_replay_step_index_refuses_a_small_buffer();
+    test_json_view_from_packed_says_what_the_live_board_says();
+    test_json_view_from_packed_leaks_no_hand_to_a_spectator();
+    test_json_events_from_packed_reads_the_frames_the_kernel_wrote();
+    test_json_events_trailer_is_the_board_the_engine_ended_on();
+    test_json_events_refuses_a_truncated_or_foreign_payload();
     test_replay_steps_refuses_v5();
     test_bot_drive_preferred();
     test_bot_pacing_table();

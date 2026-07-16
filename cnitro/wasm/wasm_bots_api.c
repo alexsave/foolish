@@ -18,6 +18,7 @@
 #include "bot_roster.h"
 #include "replay_steps.h"
 #include "view.h"
+#include "json_out.h"
 #include <string.h>
 #include <stdlib.h>
 
@@ -481,4 +482,28 @@ int wasm_replay_step_count(int code_len) {
 int wasm_replay_step_index(int code_len) {
     return replay_steps_index_v6(wasm_replay_io_ptr(), code_len, 0,
                                  wasm_io_ptr(), wasm_io_cap());
+}
+
+// ---------- packed bytes -> JSON (A8/F7) ------------------------------------
+//
+// The browser's way into the kernel's decoders. The web used to read these two
+// formats with hand-written TypeScript that shadowed view.c and evwire.c byte
+// for byte, kept true by a parity test — i.e. the layout existed twice and a
+// change meant editing both. Now the layout exists once, here, and the client
+// asks for objects. iOS already worked this way (ios_api.c); this is the same
+// C, reached through a different door.
+//
+// Buffer discipline matches every other blob-in/blob-out export on this module:
+// the packed input goes in the REPLAY io buffer, the JSON comes back in the MAIN
+// one, so the two never alias. Both return bytes written (the caller reads that
+// many from wasm_io_ptr) or a negative JSON_E* code.
+
+int wasm_view_json(int len, int viewer) {
+    return json_view_from_packed(wasm_replay_io_ptr(), len, viewer,
+                                 (char *)wasm_io_ptr(), wasm_io_cap());
+}
+
+int wasm_events_json(int len) {
+    return json_events_from_packed(wasm_replay_io_ptr(), len,
+                                   (char *)wasm_io_ptr(), wasm_io_cap());
 }
