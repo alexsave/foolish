@@ -1,5 +1,15 @@
 # Foolish on the phone — iPhone SE layout study (decision record)
 
+> **SUPERSEDED (2026-07-16, owner): the horseshoe below is PARKED.** v1 copies
+> the web app's round `PlayerRing` layout directly (self at the bottom, seats on
+> an ellipse), not the flattened "Horseshoe" arc this study chose. See
+> `IOS_APP_DESIGN.md` §17.10. This study's numbers (zone bands, materials, the
+> roster sheet, fan scrub) remain useful reference, and the horseshoe stays on
+> the shelf if the circle proves cramped at 8 seats — but the shipped layout is
+> the web's circle. The materials decision (§4, wool/wood/fern) is unchanged and
+> in force.
+
+
 *July 2026. The offline-first phone table: how an 8-player Durak game fits an
 iPhone SE tastefully, leaning on the website's design. Deliverables:*
 

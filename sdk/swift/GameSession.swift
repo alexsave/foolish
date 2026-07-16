@@ -27,8 +27,18 @@ public protocol GameSession: ObservableObject {
     /// yet — the board dims + locks them (the Stage C1 in-flight affordance, §8.2).
     var inFlight: Set<String> { get }
 
+    /// Seat → display name, for seats whose masked view carries none. Offline
+    /// games fill this with localized bot names (docs/IOS_BOT_NAMING.md); online
+    /// rows carry their own `%`-nickname, so this stays empty there. Default
+    /// `[:]` so `OnlineGame` need not implement it.
+    var seatNames: [Int: String] { get }
+
     /// Forward a move intent.
     func play(_ move: Move)
     /// Encode the game to a shareable replay URL (nil if unavailable).
     func makeShareURL() async -> URL?
+}
+
+public extension GameSession {
+    var seatNames: [Int: String] { [:] }
 }

@@ -141,9 +141,23 @@ fine).
 
 ## 5. Design system
 
-This section IS the "opinionated style" mandate. The current web UI grew
-organically; the app does not inherit it. It inherits the *world* (procedural
-materials, the Soviet-flavored ru theme, zero image assets) and formalizes it.
+> **DECISION (2026-07-16, owner): v1 COPIES THE WEB APP'S LAYOUTS DIRECTLY.**
+> The "opinionated cleanup" below is **deferred, not the v1 target.** The phone
+> app should replicate the web's screen layouts and materials
+> (`src/components/GameDisplay/*`, `src/components/GameBoard.tsx`) as closely as
+> a phone allows — same round `PlayerRing` (NOT the horseshoe of
+> `IOS_PHONE_LAYOUT.md`), same deck-top-left / discard-top-right / centred
+> battles, same wool/wood/red-Soviet-card materials (already ported:
+> `WoolTexture`, `WoodTexture`, the red+gold `FernCardBack`). When a native
+> layout question comes up, the answer is "do what the web does," not a new
+> design. The tokens (color/space/type/haptics/motion) below still hold; the
+> *composition* mirrors the web. Later agents: match the web components, don't
+> invent. See §17.10.
+
+This section WAS the "opinionated style" mandate (now deferred per the decision
+above). The current web UI grew organically; the app does not inherit it. It
+inherits the *world* (procedural materials, the Soviet-flavored ru theme, zero
+image assets) and formalizes it.
 
 ### 5.1 Identity: "Gosizdat Card Table"
 
@@ -1053,6 +1067,39 @@ body above, they win:
   and to move the bot roster/knobs + drive cycle + pacing into C (it also
   documents a live divergence: offline cordite currently runs un-knobbed at
   arena budget).
+
+### 17.10 Layout direction: copy the web (2026-07-16, owner decision)
+
+The offline app was being brought up on a Mac for the first time (build/run
+green in the simulator). Mid-bring-up the owner set the direction for v1:
+**stop doing an opinionated "slicker" redesign; replicate the web app's
+layouts.** Concretely, what this supersedes and what it means:
+
+- **Supersedes:** the §5 "opinionated cleanup" as a v1 goal, and the horseshoe
+  arc chosen in `IOS_PHONE_LAYOUT.md` §2. Both are parked, not deleted.
+- **The table** is the web's `GameBoard` composition (`src/components/
+  GameBoard.tsx`): round `PlayerRing` with the local player at the bottom
+  (`src/components/GameDisplay/PlayerRing.tsx` — `visual_index = (seat - self +
+  n) % n`, seats on an ellipse at radius ~35%), `DeckAndFlipped` pinned
+  top-left (count centred ON the card back, flipped trump hanging below it),
+  `DiscardPile` top-right (count on the back), `TableBattles` centred,
+  wooden `ActionButtons`. iOS mirrors this in `TableView` + `FDeckWell` +
+  `FSeatBadge` (mini card-back fans, not count chips).
+- **Materials** already match the web and stay: `WoolTexture`/`WoodTexture`
+  (CPU ports of `WoolBackground.tsx`/`WoodTexture.tsx`), red+gold Soviet card
+  back (`FernCardBack`, palette from `SovietCardBack.tsx`).
+- **Bot names** stay localized to the Russia ladder (`BotNames`,
+  `IOS_BOT_NAMING.md`) — that is an iOS age-rating requirement, not a layout.
+- **Rule for later agents:** when a layout/visual question arises, do what the
+  web does and cite the web component; do not invent a native-only treatment
+  in v1. The opinionated system can be revisited post-launch.
+
+Screenshot-verification harness added for this work: DEBUG env
+`FOOLISH_DEBUG_TABLE=<opponents>` drops straight into an offline table,
+`FOOLISH_DEBUG_BOT=<strategy>` picks the opponent, `FOOLISH_DEBUG_AUTOPLAY=1`
+auto-plays the human with random legal moves to reach the win screen
+(`RootView`, `#if DEBUG` only). Drive with `simctl launch` +
+`SIMCTL_CHILD_*` env, capture with `simctl io screenshot`.
 
 ### 17.9 watchOS (designed, parked)
 

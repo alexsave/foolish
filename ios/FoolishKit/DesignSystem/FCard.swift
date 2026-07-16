@@ -34,6 +34,9 @@ public struct FCard: View {
         }
         .frame(width: size.width, height: size.height)
         .overlay(selectionRing)
+        // A defining edge + lift so cards read against the busy wool (web parity:
+        // CardFace carries a border + box-shadow).
+        .shadow(color: .black.opacity(0.28), radius: 2.5, x: 0, y: 1.5)
         .opacity(disabled ? 0.55 : 1)
         .offset(y: selected ? -14 : 0)          // lift on select — the ONE spring animates this
         .accessibilityElement()
@@ -58,6 +61,10 @@ public struct FCard: View {
                     .foregroundColor(color)
             }
             .overlay(alignment: .topTrailing) { if trump { trumpBadge } }
+            .overlay(
+                RoundedRectangle(cornerRadius: FRadius.card)
+                    .strokeBorder(FColor.ink.opacity(0.45), lineWidth: 1)
+            )
     }
 
     private func corner(_ card: Card, suit: Suit, color: Color) -> some View {

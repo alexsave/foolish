@@ -97,6 +97,8 @@ struct WinView<Session: GameSession>: View {
 
     private var foolName: String? {
         guard let p = game.view?.player(foolSeat) else { return nil }
-        return p.seat == humanSeat ? FStrings.t("ios.you") : (p.name.isEmpty ? "P\(p.seat)" : p.name)
+        if p.seat == humanSeat { return FStrings.t("ios.you") }
+        if let mapped = game.seatNames[p.seat] { return mapped }
+        return p.name.isEmpty ? "P\(p.seat)" : BotNames.displayNickname(p.name)
     }
 }

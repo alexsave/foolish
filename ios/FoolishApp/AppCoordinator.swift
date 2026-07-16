@@ -41,8 +41,16 @@ final class AppCoordinator: ObservableObject {
         seedCounter &+= 1
         let players = config.opponents + 1
         var strategies: [Int: Int] = [:]
-        for seat in 1..<players { strategies[seat] = config.opponentStrategyId }
-        let game = LocalGame(seed: makeSeed(), players: players, humanSeat: 0, strategies: strategies)
+        var seatNames: [Int: String] = [:]
+        // All opponents share one strategy today, so number the duplicates
+        // ("Moscow 1/2/3"); a single opponent needs no index (§IOS_BOT_NAMING §3).
+        let base = BotNames.display(strategy: config.opponentName)
+        for seat in 1..<players {
+            strategies[seat] = config.opponentStrategyId
+            seatNames[seat] = config.opponents > 1 ? "\(base) \(seat)" : base
+        }
+        let game = LocalGame(seed: makeSeed(), players: players, humanSeat: 0,
+                             strategies: strategies, seatNames: seatNames)
         offlineGame = game
         screen = .table
     }

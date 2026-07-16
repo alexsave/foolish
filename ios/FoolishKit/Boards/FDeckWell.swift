@@ -1,6 +1,10 @@
-// FDeckWell.swift — the stock (§5.4): remaining deck count as a condensed
-// numeral, with the flipped trump laid under a card back. When the stock is
-// empty the well shows just the trump suit mark.
+// FDeckWell.swift — the stock, matching the web's DeckAndFlipped
+// (src/components/GameDisplay/DeckAndFlipped.tsx): a leaning stack of landscape
+// card backs with the remaining count centred ON the pile, and the flipped
+// trump hanging below it (upright, tucked under the stack). When the stock and
+// the flipped card are gone, the bare trump-suit glyph takes their place.
+//
+// Web-layout parity per IOS_APP_DESIGN §17.10.
 
 import SwiftUI
 
@@ -11,7 +15,7 @@ public struct FDeckWell: View {
     public let trumpSuit: Suit?
     public var backSeed: UInt64
 
-    public init(deckCount: Int, flipped: Card?, hasFlipped: Bool, trumpSuit: Suit?, backSeed: UInt64 = 7) {
+    public init(deckCount: Int, flipped: Card?, hasFlipped: Bool, trumpSuit: Suit?, backSeed: UInt64 = 42) {
         self.deckCount = deckCount
         self.flipped = flipped
         self.hasFlipped = hasFlipped
@@ -19,34 +23,47 @@ public struct FDeckWell: View {
         self.backSeed = backSeed
     }
 
-    public var body: some View {
-        VStack(spacing: FSpace.s) {
-            ZStack {
-                // The flipped trump lies across the bottom of the deck.
-                if hasFlipped, let flipped {
-                    FCard(card: flipped, trump: true, size: CGSize(width: 46, height: 66))
-                        .rotationEffect(.degrees(90))
-                        .offset(x: 18)
-                }
-                if deckCount > 0 {
-                    FCard(card: nil, backSeed: backSeed, size: CGSize(width: 46, height: 66))
-                }
-            }
-            .frame(width: 84, height: 70)
+    // The badge counts the flipped card too (web badgeTotal = deck + flipped).
+    private var badgeTotal: Int { deckCount + ((hasFlipped && flipped != nil) ? 1 : 0) }
+    private var stackLayers: Int { min(max(deckCount, 0), 6) }
 
-            HStack(spacing: FSpace.xs) {
-                Text("\(deckCount)")
-                    .font(FType.numeral(26))
-                    .foregroundColor(FColor.textPrimary)
-                if let trumpSuit {
-                    Text(trumpSuit.glyph)
-                        .font(.system(size: 16))
-                        .foregroundColor(FColor.suitColor(trumpSuit))
-                }
+    public var body: some View {
+        ZStack(alignment: .center) {
+            // The flipped trump hangs below the stack, upright, behind it.
+            if hasFlipped, let flipped {
+                FCard(card: flipped, trump: true, size: CGSize(width: 46, height: 66))
+                    .offset(y: 34)
+                    .zIndex(0)
+            }
+
+            if deckCount > 0 {
+                deckStack.zIndex(1)
+            } else if !hasFlipped, let trumpSuit {
+                // Stock and flip both gone — show the trump suit glyph.
+                Text(trumpSuit.glyph)
+                    .font(.system(size: 44))
+                    .foregroundColor(FColor.suitColor(trumpSuit))
             }
         }
+        .frame(width: 92, height: 108)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(deckCount) cards left in the deck" +
             (trumpSuit != nil ? ", trump \(["spades","hearts","clubs","diamonds"][trumpSuit!.rawValue])" : ""))
+    }
+
+    private var deckStack: some View {
+        ZStack {
+            ForEach(0..<stackLayers, id: \.self) { i in
+                FCard(card: nil, backSeed: backSeed, size: CGSize(width: 46, height: 66))
+                    .rotationEffect(.degrees(90))
+                    .offset(x: CGFloat(-i), y: CGFloat(-i * 2))
+            }
+            Text("\(badgeTotal)")
+                .font(.system(size: 17, weight: .bold))
+                .foregroundColor(.white)
+                .shadow(color: .black.opacity(0.8), radius: 1, x: 1, y: 1)
+                .offset(y: -CGFloat(stackLayers))
+        }
+        .frame(width: 78, height: 60)
     }
 }

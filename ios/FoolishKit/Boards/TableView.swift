@@ -29,17 +29,38 @@ public struct TableView<Session: GameSession>: View {
             ZStack {
                 tableBackground
                 if let view = game.view {
+                    // The felt is one round table: opponents sit on a ring, the
+                    // battle/deck well is its hub, and the local player IS the
+                    // fan along the bottom edge (§6 screen 3; the web PlayerRing
+                    // seats every player on a circle, self at the bottom — here
+                    // the fan takes self's seat). Everything shares one ZStack so
+                    // a card can fly between any two zones under one geometry.
+                    // Battles are the hub; the deck well pins top-left with the
+                    // flipped trump, the discard pile top-right (§16.B3 / the web
+                    // layout). Counts only for discard.
+                    battlesHub(view)
+                        .fixedSize()
+                        .position(x: geo.size.width / 2, y: geo.size.height * ringCenterYFraction)
+
+                    deckWell(view)
+                        .position(x: geo.size.width * 0.14, y: geo.size.height * 0.14)
+
+                    if view.discardCount > 0 {
+                        discardPile(view)
+                            .position(x: geo.size.width * 0.86, y: geo.size.height * 0.14)
+                    }
+
+                    opponentsRing(view, in: geo.size)
+
                     VStack(spacing: 0) {
-                        opponentsStrip(view)
-                            .frame(height: geo.size.height * 0.22)
-                        battlesZone(view)
-                            .frame(height: geo.size.height * 0.40)
                         Spacer(minLength: 0)
                         actionBar(view)
                             .padding(.bottom, FSpace.s)
                         handZone(view)
-                            .frame(height: geo.size.height * 0.26)
+                            .frame(height: geo.size.height * 0.22)
+                            .padding(.bottom, FSpace.l)
                     }
+                    .frame(maxHeight: .infinity, alignment: .bottom)
                     .animation(FMotion.cardMotion(reduceMotion: reduceMotion), value: view)
                 } else {
                     ProgressView().tint(FColor.textPrimary)
@@ -58,52 +79,108 @@ public struct TableView<Session: GameSession>: View {
     // MARK: zones
 
     private var tableBackground: some View {
-        // Flat felt + a subtle vignette — the only gradient allowed (§5.1).
-        FColor.table
-            .overlay(
-                RadialGradient(colors: [.clear, .black.opacity(0.35)],
-                               center: .center, startRadius: 40, endRadius: 520)
-            )
-            .ignoresSafeArea()
+        // Woven wool — the website's table material (§IOS_PHONE_LAYOUT §4) — with
+        // the subtle vignette baked into WoolBackground.
+        WoolBackground()
     }
 
-    private func opponentsStrip(_ view: GameView) -> some View {
+    // The ring geometry (fractions of the table). The hub sits a little above
+    // centre so the fan has room along the bottom; opponents ride an ellipse
+    // around it. Tuned against the 8-seat worst case so no badge collides with
+    // the fan or clips an edge.
+    // A flattened ellipse: wide enough to seat 8, short enough that the top-most
+    // side seats clear the deck/discard corners (the pure circle put an 8-seat
+    // shoulder right on the deck).
+    private let ringCenterYFraction: CGFloat = 0.46
+    private let ringRadiusXFraction: CGFloat = 0.37
+    private let ringRadiusYFraction: CGFloat = 0.30
+
+    /// Opponents on the ellipse. Seat order is preserved and rotated so the
+    /// local player's neighbours sit at the bottom corners, exactly like the
+    /// web's PlayerRing (`visual_index = (seat - self + n) % n`); self's slot
+    /// (index 0, straight down) is left to the hand fan.
+    private func opponentsRing(_ view: GameView, in size: CGSize) -> some View {
         let opponents = view.players.filter { $0.seat != game.humanSeat }
-        return HStack(alignment: .top, spacing: FSpace.m) {
-            ForEach(opponents) { p in
-                FSeatBadge(
-                    name: p.name.isEmpty ? "P\(p.seat)" : p.name,
-                    handCount: p.handCount,
-                    isDefender: view.defender == p.seat,
-                    isAttacker: view.firstAttacker == p.seat,
-                    saidGood: view.hasSaidGood(p.seat),
-                    thinking: game.thinking && (game.actorMask & (1 << p.seat)) != 0,
-                    isOut: p.isOut
-                )
-            }
+        let n = max(view.numPlayers, 2)
+        let cx = size.width / 2
+        let cy = size.height * ringCenterYFraction
+        let rx = size.width * ringRadiusXFraction
+        let ry = size.height * ringRadiusYFraction
+        return ForEach(opponents) { p in
+            let vi = Double((p.seat - game.humanSeat + n) % n)
+            let theta = 2 * Double.pi * vi / Double(n)
+            let x = cx - CGFloat(sin(theta)) * rx
+            let y = cy + CGFloat(cos(theta)) * ry
+            seatBadge(p, view).position(x: x, y: y)
         }
-        .padding(.top, FSpace.m)
-        .frame(maxWidth: .infinity)
     }
 
-    private func battlesZone(_ view: GameView) -> some View {
-        HStack(alignment: .center, spacing: FSpace.s) {
-            FBattleGrid(
-                battles: view.battles,
-                trumpSuit: view.trumpSuit,
-                coverable: coverableBattles(view),
-                onTapBattle: { idx in tapBattle(idx, view) }
-            )
-            .frame(maxWidth: .infinity)
+    private func seatBadge(_ p: PlayerView, _ view: GameView) -> some View {
+        FSeatBadge(
+            name: seatName(p),
+            handCount: p.handCount,
+            isDefender: view.defender == p.seat,
+            isAttacker: view.firstAttacker == p.seat,
+            saidGood: view.hasSaidGood(p.seat),
+            thinking: game.thinking && (game.actorMask & (1 << p.seat)) != 0,
+            isOut: p.isOut
+        )
+    }
 
-            FDeckWell(
-                deckCount: view.deckCount,
-                flipped: view.flipped,
-                hasFlipped: view.hasFlipped,
-                trumpSuit: view.trumpSuit
-            )
-            .padding(.trailing, FSpace.m)
+    /// Display name for an opponent seat. Offline views carry no names, so the
+    /// session's `seatNames` map (localized bot names, §IOS_BOT_NAMING) wins;
+    /// online rows carry a raw `%`-nickname that gets localized; else `P<seat>`.
+    private func seatName(_ p: PlayerView) -> String {
+        if let mapped = game.seatNames[p.seat] { return mapped }
+        if !p.name.isEmpty { return BotNames.displayNickname(p.name) }
+        return "P\(p.seat)"
+    }
+
+    /// The hub of the ring — the seat-free centre of the ellipse. Battles grow
+    /// out from here and wrap; the deck and discard live in the top corners.
+    private func battlesHub(_ view: GameView) -> some View {
+        FBattleGrid(
+            battles: view.battles,
+            trumpSuit: view.trumpSuit,
+            coverable: coverableBattles(view),
+            onTapBattle: { idx in tapBattle(idx, view) }
+        )
+    }
+
+    /// Stock, top-left: card back + flipped trump laid under it + remaining count.
+    private func deckWell(_ view: GameView) -> some View {
+        FDeckWell(
+            deckCount: view.deckCount,
+            flipped: view.flipped,
+            hasFlipped: view.hasFlipped,
+            trumpSuit: view.trumpSuit
+        )
+    }
+
+    /// Discard, top-right: a randomly-rotated stack of red backs with the count
+    /// centred on it — the web's DiscardPile (counts only; beaten cards are out
+    /// of play). Web-layout parity per IOS_APP_DESIGN §17.10.
+    private func discardPile(_ view: GameView) -> some View {
+        let layers = min(max(view.discardCount, 1), 5)
+        return ZStack {
+            ForEach(0..<layers, id: \.self) { i in
+                FCard(card: nil, backSeed: UInt64(3 + i), size: CGSize(width: 46, height: 66))
+                    .rotationEffect(.degrees(discardRotation(i)))
+            }
+            Text("\(view.discardCount)")
+                .font(.system(size: 17, weight: .bold))
+                .foregroundColor(.white)
+                .shadow(color: .black.opacity(0.8), radius: 1, x: 1, y: 1)
         }
+        .frame(width: 84, height: 84)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(view.discardCount) cards discarded")
+    }
+
+    /// Deterministic per-layer tilt (mirrors CardBack's seeded random rotation).
+    private func discardRotation(_ i: Int) -> Double {
+        let s = sin(Double(42 + i * 1000)) * 10000
+        return (s - floor(s)) * 40 - 20
     }
 
     @ViewBuilder
