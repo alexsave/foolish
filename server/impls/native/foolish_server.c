@@ -286,8 +286,9 @@ static void h_meta(Req *r, int fd) {
         if (all && g->status == GAME_STATUS_WAITING) {
             unsigned char seed[32]; for (int i = 0; i < 32; i++) seed[i] = (unsigned char)(rand() ^ (i * 131 + (int)g_seq));
             game_set_deal_seed_bytes(seed, 32);
-            for (int i = 0; i < g->num_players; i++) g->players[i].status = PLAYER_STATUS_READY;
-            start_game(g);                 // THE deal — kernel (sets g->status = PLAYING)
+            // Seats were wired in the lobby (strategy_key per seat), so pass NULL:
+            // the kernel owns marking them + the deal (+ g->status = PLAYING).
+            game_seat_and_deal(g, NULL, g->num_players);
             start_bot_loop(s);             // the game-loop paces bot play from here
         }
     } else if (!strcmp(type, "continue")) {

@@ -459,14 +459,15 @@ int fio_new_game(const uint8_t *seed, int seed_len, int n_players) {
     }
 
     memset(&g_game, 0, sizeof(g_game));
-    g_game.num_players = (int8_t)n_players;
+    // Identity (player_id) and the host-side roster mirror are ours to set; the
+    // seat count, per-seat kind, and the deal are the kernel's (game_seat_and_deal).
+    int8_t strategies[MAX_PLAYERS];
     for (int i = 0; i < n_players; i++) {
-        g_game.players[i].status = PLAYER_STATUS_READY;
-        g_game.players[i].strategy_key = 0; // all human until fio_set_seat_strategy
+        strategies[i] = STRATEGY_KEY_HUMAN;  // all human until fio_set_seat_strategy
         g_seat_roster[i] = (int8_t)bot_roster_find("random");
         snprintf(g_game.players[i].player_id, sizeof(g_game.players[i].player_id), "p%d", i);
     }
-    start_game(&g_game);
+    game_seat_and_deal(&g_game, strategies, n_players);
     g_has_game = 1;
     g_last_reject = 0;
     return FIO_EOK;

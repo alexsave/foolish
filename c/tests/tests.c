@@ -172,6 +172,38 @@ static void test_game_human_mask(void) {
     CHECK(!(m & (1u << 1)) && !(m & (1u << 3)), "game_human_mask: bot seats excluded");
 }
 
+// Test: game_seat_and_deal is the kernel's one lobby->dealt-board entry — seat
+// count + per-seat kind + the deal, so hosts stop hand-rolling it (#5).
+static void test_game_seat_and_deal(void) {
+    game_set_seed(7);
+    // Explicit strategies: seats, kinds, and a real deal in one call.
+    Game g; memset(&g, 0, sizeof g);
+    int8_t strat[3] = { STRATEGY_KEY_HUMAN, 0, STRATEGY_KEY_HUMAN };
+    game_seat_and_deal(&g, strat, 3);
+    CHECK(g.num_players == 3, "seat_and_deal: seat count set");
+    CHECK(g.status == GAME_STATUS_PLAYING, "seat_and_deal: dealt game is PLAYING");
+    CHECK(g.players[0].strategy_key == STRATEGY_KEY_HUMAN && g.players[1].strategy_key == 0 &&
+          g.players[2].strategy_key == STRATEGY_KEY_HUMAN, "seat_and_deal: strategy_key wired");
+    CHECK(g.players[0].hand_count == 6, "seat_and_deal: hands dealt");
+    CHECK(game_human_mask(&g) == ((1u << 0) | (1u << 2)), "seat_and_deal: human mask matches wiring");
+
+    // NULL keeps the seats' existing kinds — the incremental-lobby case.
+    Game g2; memset(&g2, 0, sizeof g2);
+    g2.num_players = 2;
+    g2.players[0].strategy_key = STRATEGY_KEY_HUMAN;
+    g2.players[1].strategy_key = 3;
+    game_seat_and_deal(&g2, NULL, 2);
+    CHECK(g2.players[0].strategy_key == STRATEGY_KEY_HUMAN && g2.players[1].strategy_key == 3,
+          "seat_and_deal(NULL): existing kinds preserved");
+    CHECK(g2.status == GAME_STATUS_PLAYING && g2.players[1].hand_count == 6,
+          "seat_and_deal(NULL): still deals");
+
+    // A bad seat count is a no-op — no deal, no seats.
+    Game g3; memset(&g3, 0, sizeof g3);
+    game_seat_and_deal(&g3, NULL, 1);
+    CHECK(g3.status != GAME_STATUS_PLAYING && g3.num_players == 0, "seat_and_deal: n<2 is a no-op");
+}
+
 // Test: with two cards of the same value, first attack also includes a
 // 2-card combination (3 moves total: two singles + one pair).
 static void test_legal_first_attack_duplicate(void) {
@@ -2503,6 +2535,7 @@ int main(void) {
     test_awire_apply_roundtrip();
     test_awire_apply_settles_game_over();
     test_game_human_mask();
+    test_game_seat_and_deal();
     test_legal_first_attack();
     test_legal_first_attack_duplicate();
     test_can_cover();

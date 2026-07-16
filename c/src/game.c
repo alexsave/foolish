@@ -253,6 +253,16 @@ uint32_t game_human_mask(const Game *g) {
     return m;
 }
 
+void game_seat_and_deal(Game *g, const int8_t *strategy_keys, int n) {
+    if (!g || n < 2 || n > MAX_PLAYERS) return;
+    g->num_players = (int8_t)n;
+    // NULL keeps whatever kind the seats already hold — the incremental-lobby
+    // case, where a host wired strategy_key as each player joined.
+    if (strategy_keys)
+        for (int i = 0; i < n; i++) g->players[i].strategy_key = strategy_keys[i];
+    start_game(g);   // deals; start_game_reset assigns each seated player's status
+}
+
 // ---------- Logs -------------------------------------------------------
 
 #ifdef GUARDS_VALIDATE_ONLY
