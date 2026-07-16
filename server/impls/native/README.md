@@ -24,8 +24,20 @@ link:
 | hold `Game` structs + lobby identities in RAM | — |
 | lock a mutex, pick the seat | — |
 | — | `start_game` (deal), `handle_attack/cover/pass/pickup/good` (apply) |
-| — | `calculate_legal_moves` + `bot_roster_choose` (bots) |
+| run the per-game bot game-loop thread | `bot_drive` (one paced cycle) + `bot_pacing_ms` (how long to wait) |
 | — | `game_done` (who is the fool), `json_state_of` (masked per-seat view) |
+
+### Bot pacing (the trampoline)
+
+Bots don't resolve instantly — they think and throw in over time. Each game has
+a loop thread that drives **one** `bot_drive` cycle, prices it with the kernel's
+`bot_pacing_ms`, **releases the lock and `usleep`s that long**, then loops. The
+kernel returns after every cycle (the `Game` struct is the continuation — no
+suspended stack), so this is a *trampoline*, not a blocking hook inside the
+kernel. It is the native twin of supabase's `await setTimeout(bot_pacing_ms…)`
+loop and the phone's `Task.sleep` — same split everywhere: **kernel decides how
+long, host decides how to wait.** `bash pacing_test.sh` shows the board
+advancing at the ~3s "human watching" cadence.
 
 Identity (names, is-ai, tokens) lives in the server beside the state blob, never
 inside it — exactly as `game.h` prescribes.
