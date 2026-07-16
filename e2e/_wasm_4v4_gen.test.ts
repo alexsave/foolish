@@ -16,7 +16,8 @@ import { encodeAction } from '../supabase/functions/_shared/wire/awire.ts';
 import { logsFromKernelExport, decodeLogs } from '../supabase/functions/_shared/wire/logwire.ts';
 import { wasmChooseMoveDirect, __ensureBots, STRAT } from '../supabase/functions/_shared/wasm/bots.ts';
 import { shouldBotActCore } from '../supabase/functions/_shared/pure_bot_actions.ts';
-import { verifyRoundTrip } from '../supabase/functions/_shared/replay/encode.ts';
+import { kernelReplayEncodeV6FromGame } from '../supabase/functions/_shared/wasm/bots.ts';
+import { base32Encode, bytesToBigint, gameToUrl } from '../supabase/functions/_shared/replay/codec.ts';
 import { encodeExtras, joinReplayCode, moveTimesFromLogs } from '../supabase/functions/_shared/replay/extras.ts';
 import { PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY } from '../supabase/functions/_shared/types.ts';
 
@@ -105,7 +106,11 @@ test('generate a kernel-path 4v4 octogen-win record', { skip: !process.env.OGX_G
         if (!OCTO.has(winnerSeat)) continue;
         let url = '';
         try {
-            const encoded = (await verifyRoundTrip({ playerIds: g.players.map((p: any) => p.player_id), logs: gameLogs, flipped: origFlip } as never)).encoded;
+            // v6 from the game + its seed — the one producer (v5 is gone).
+            const hx = (h: string) => Uint8Array.from(h.match(/../g)!.map((b) => parseInt(b, 16)));
+            const bytes = kernelReplayEncodeV6FromGame(g as never, hx((g as any).game_seed));
+            const encoded = { bytes, x: bytesToBigint(bytes), byteLength: bytes.length,
+                base32: base32Encode(bytes), url: gameToUrl(bytesToBigint(bytes)) };
             const extras = encodeExtras(g.players.map((p: any) => p.name), moveTimesFromLogs(gameLogs as never));
             url = `WWW.FOOLISH.CARDS/${joinReplayCode(encoded.base32, extras)}`;
         } catch (e: any) { process.stderr.write(`attempt ${a}: url encode failed: ${e.message}\n`); }

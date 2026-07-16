@@ -33,9 +33,14 @@ import {
 import { shouldBotActCore, processBotAction } from '../supabase/functions/_shared/pure_bot_actions.ts';
 import { calculateLegalMoves } from '../supabase/functions/_shared/bot_strategy.ts';
 import { ReplayInput, SeatLog, DecodedReplay, INFO_TYPES } from '../supabase/functions/_shared/replay/core.ts';
-import { encodeReplay, verifyRoundTrip } from '../supabase/functions/_shared/replay/encode.ts';
 import { decodeReplay } from '../supabase/functions/_shared/replay/decode.ts';
-import { urlToGame, base64Decode, bytesToBigint, codeToGame } from '../supabase/functions/_shared/replay/codec.ts';
+import {
+  urlToGame, base64Decode, base64Encode, base32Encode, bytesToBigint, codeToGame, gameToUrl,
+} from '../supabase/functions/_shared/replay/codec.ts';
+import { kernelReplayEncodeV6FromGame } from '../supabase/functions/_shared/wasm/bots.ts';
+import { __setDealSeedOverride } from '../supabase/functions/_shared/wasm/engine.ts';
+
+const hexToBytes = (h: string) => Uint8Array.from(h.match(/../g)!.map((b) => parseInt(b, 16)));
 import { TUTORIAL_MOVES_CODE } from '../src/components/tutorialGame.ts';
 import {
   encodeExtras,
@@ -88,9 +93,20 @@ const mkGame = (np: number, strategy: StrategyKey): Game => ({
   good_players: [],
 });
 
+// Seeded, because the v6 producer re-derives the deal FROM the seed. Without
+// the override the TS engine deals from its own RNG and the kernel rebuilds a
+// different game ("logged attack not in menu").
+let seedCounter = 0;
 async function playRandomGame(np: number, strategy: StrategyKey): Promise<Game | null> {
   const game = mkGame(np, strategy);
-  start_game(game);
+  const seed = Array.from({ length: 32 },
+    (_, i) => ((i * 53 + (++seedCounter) * 89 + np * 13) & 0xff).toString(16).padStart(2, '0')).join('');
+  __setDealSeedOverride(hexToBytes(seed));
+  try {
+    start_game(game);
+  } finally {
+    __setDealSeedOverride(null);
+  }
   let actions = 0;
   while (game_done(game) === null) {
     if (++actions > MAX_ACTIONS) return null; // stalled, skip (harness issue)
@@ -167,13 +183,19 @@ function diffStreams(a: SeatLog[], b: SeatLog[]): string | null {
 }
 
 // Full encode -> serialize -> decode -> verify pipeline for one finished game.
+//
+// Through the PRODUCTION producer. This used to run the v5 encoder, which is
+// gone: v5 hid the deal, so its replays retrodicted hands, and the only thing it
+// bought was covering the games v6 refuses — which trimming the dead goods took
+// to 0.05% of 8-player games. A game longer than that gets no code at all
+// (owner's call), so there is nothing left for a second encoder to do.
 async function roundTripGame(game: Game, np: number): Promise<void> {
-  const input: ReplayInput = {
-    playerIds: game.players.map((p) => p.player_id),
-    logs: game.logs,
-    flipped: game.flipped,
+  const bytes = kernelReplayEncodeV6FromGame(game, hexToBytes(game.game_seed!));
+  const x = bytesToBigint(bytes);
+  const enc = {
+    x, bytes, byteLength: bytes.length,
+    base32: base32Encode(bytes), base64: base64Encode(bytes), url: gameToUrl(x),
   };
-  const enc = await encodeReplay(input);
 
   // decode through every serialization layer
   const xUrl = urlToGame(enc.url);
@@ -181,14 +203,21 @@ async function roundTripGame(game: Game, np: number): Promise<void> {
   assert.equal(xUrl, enc.x, 'serialization round-trip mismatch (url)');
   assert.equal(xB64, enc.x, 'serialization round-trip mismatch (base64)');
 
-  // The invariant that matters, and the only one that ever did: the decode is
-  // the game the engine actually played. (This used to also assert byte
-  // parity with a frozen TS re-implementation of the codec. Agreeing with the
-  // real engine is strictly stronger than agreeing with a second copy of the
-  // codec, and the copy could only ever pin the wire format in place —
-  // docs/C_CORE_CONSOLIDATION.md A9.)
+  // The decode is the game the engine actually played — compared on the INFO
+  // actions, which is the honest common denominator between the two streams.
+  //
+  // It used to compare the FULL stream, which only worked against v5: v5 hid
+  // the deal, so its decode reproduced exactly the masked stream it was fed. v6
+  // is hidden-state-lossless, so its decode legitimately carries MORE than the
+  // TS original — a per-seat deal DRAW the TS engine never logs, and every later
+  // DRAW resolved to a real card where the original masks it. That is the fix,
+  // not a drift. The full stream's fidelity is asserted where the truth lives:
+  // cnitro/tests/replay_v6_test.c holds the decode against the ENGINE's own deal
+  // and draws, which no TS-side comparison can reach.
   const dec = await decodeReplay(enc.x);
-  assert.equal(diffStreams(normOriginal(game), normDecoded(dec)), null, 'stream mismatch');
+  const infoOf = (ls: SeatLog[]) => ls.filter((l) => INFO_TYPES.includes(l.log_type));
+  assert.equal(diffStreams(infoOf(normOriginal(game)), infoOf(normDecoded(dec))), null,
+    'info-action stream mismatch');
 
   // elimination order / fool / discard must match too
   const elim = game.elimination_order.map((pid) => game.players.findIndex((p) => p.player_id === pid));
@@ -196,9 +225,6 @@ async function roundTripGame(game: Game, np: number): Promise<void> {
   const fool = game.players.findIndex((p) => p.player_id === game_done(game));
   assert.equal(fool, dec.fool, 'fool mismatch');
   assert.equal(game.discard_pile_length, dec.discardPileLength, 'discard pile mismatch');
-
-  // the public verifier used by the UI must agree
-  await verifyRoundTrip(input);
 
   // the replay-screen view builder must fold the stream without desync
   const steps = buildReplaySteps(dec as any);

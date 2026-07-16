@@ -953,7 +953,7 @@ export const finalizeEndedGame = async (game: Game): Promise<void> => {
     // we retire the packed session log.
     try {
         // Lazy import: the replay codec is only needed here, at game end.
-        const { verifyRoundTrip, verifyRoundTripV6FromGame } = await import('./replay/encode.ts');
+        const { verifyRoundTripV6FromGame } = await import('./replay/encode.ts');
         const { encodeExtras, moveTimesFromLogs } = await import('./replay/extras.ts');
         const { base32Decode, bytesToHex, hexToBytes } = await import('./replay/codec.ts');
 
@@ -972,23 +972,21 @@ export const finalizeEndedGame = async (game: Game): Promise<void> => {
         // now inside replay_encode_v6_from_game — which is also exactly what the
         // phone calls, so an offline share and a site share are the same code.
         //
-        // Any failure (no seed, a legacy game, deal drift) falls back to the
-        // frozen v5 codec so game-end never breaks.
-        let encoded: EncodedReplay | undefined;
-        if (dealSeed) {
-            try {
-                ({ encoded } = await verifyRoundTripV6FromGame(
-                    game, hexToBytes(dealSeed), replayLogs, packedLogBytes));
-            } catch (e) {
-                console.error(`[REPLAY] v6 encode failed for ${game.id}, falling back to v5:`, e);
-            }
-        }
-        const usedV6 = encoded !== undefined;
-        if (!encoded) {
-            encoded = (await verifyRoundTrip({
-                playerIds, logs: replayLogs, flipped: game.flipped,
-            })).encoded;
-        }
+        // v6 or no code. There is no v5 fallback: it hid the deal, so its
+        // replays retrodicted hands the Oracle then had to guess at — and the
+        // only thing it bought was covering games v6 refuses. That reason is
+        // gone. v6 refuses a session whose log overflowed MAX_LOGS, and once the
+        // dead goods are trimmed (they are ~40% of a log — 52% at 8 players —
+        // because a GOOD is live only at the END of a stream) 1024 records cover
+        // all but 0.05% of 8-player games, measured over 139,515. A game long
+        // enough to beat that gets no share code, which is the owner's call and
+        // the honest one: the alternative is silently storing a worse replay.
+        //
+        // A throw here is caught below, which KEEPS the session log — the game
+        // still completes and the record survives; only the code is missing.
+        if (!dealSeed) throw new Error('no deal seed — nothing to encode a replay from');
+        const { encoded } = await verifyRoundTripV6FromGame(
+            game, hexToBytes(dealSeed), replayLogs, packedLogBytes);
 
         // Stored binary: `moves` is the rANS integer (the whole game),
         // `extras` the names + timing blob (_shared/replay/extras.ts). The
@@ -999,7 +997,7 @@ export const finalizeEndedGame = async (game: Game): Promise<void> => {
             game.players.map(player => player.name),
             moveTimesFromLogs(replayLogs),
         ));
-        console.log(`[REPLAY] Game ${game.id} encoded (v${usedV6 ? 6 : 5}) to ${encoded.byteLength}+${extrasBytes.length} bytes`);
+        console.log(`[REPLAY] Game ${game.id} encoded (v6) to ${encoded.byteLength}+${extrasBytes.length} bytes`);
 
         // Persist the snapshot BEFORE destroying the logs, so a failure
         // between the two never loses both.
