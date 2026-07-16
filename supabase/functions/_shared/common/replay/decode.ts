@@ -4,7 +4,7 @@
  * Reconstructs the full game event stream from the replay integer alone. No
  * auth, no database: the URL/base64 string IS the game.
  *
- * The rules projection runs in the C kernel (cnitro/src/replay.c) — the
+ * The rules projection runs in the C kernel (sdk/c/src/replay.c) — the
  * same codebase as the production game rules — via one wasm call; this file
  * only moves bytes and rebuilds the TS shapes. Async because the browser
  * must compile the wasm module asynchronously (the engine bridge and its
@@ -16,7 +16,7 @@ import { bigintToBytes } from "./codec.ts";
 import { DecodedReplay, SeatLog, idToCard } from "./core.ts";
 import { LogCardPair } from "../../core/types.ts";
 
-// Byte layout: REPLAY_DEC_HDR + per-log records — see cnitro/src/replay.h.
+// Byte layout: REPLAY_DEC_HDR + per-log records — see sdk/c/src/replay.h.
 const DEC_HDR = 20;
 const CARD_NONE = 0xff;
 

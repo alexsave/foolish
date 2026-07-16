@@ -38,7 +38,7 @@ fallback if they all fail.
 ### The measurement arbiter (use these, nothing else)
 
 ```sh
-cd cnitro && CORE=$(make -s print-core)
+cd sdk/c && CORE=$(make -s print-core)
 # latency (CPU-time, contention-robust): ms/decision over 40 games
 CD_LAT=1 CD_BUDGET=prod CD_RACE=1 CD_RACE_C=75 ./eval_X --strategy=octogen \
   --opp=espresso --players=2 --games=40 --seed-start=810000 2>&1 >/dev/null \
@@ -304,7 +304,7 @@ work, not assumed.
 
 Built the full pipeline (`tools/leafbook/*`, `src/leafbook.h`, generated
 `src/leafbook_data.h`, the `-DCD_LEAFBOOK` probe in `cordite_sim.c` enabled by
-octogen via `cd_sim_set_leafbook`). See `cnitro/LEAFBOOK.md`.
+octogen via `cd_sim_set_leafbook`). See `sdk/c/LEAFBOOK.md`.
 
 **Feasibility gate (`make leafbook-gate`)** — distinct canonical round-boundary
 forms (both hands non-empty): K=4 → 1,883, K=5 → 19,715, K=6 → 205,853 (201 KiB,

@@ -11,7 +11,7 @@ name: coverage
 #   server-ts      supabase/functions/_shared/*  minus strategies/durakai/wasm
 #   client-rules   src/utils/gameValidation + coverCombinations
 #
-# Floors live in cnitro/Makefile (COV_LINE_MIN/COV_BRANCH_MIN) and package.json
+# Floors live in sdk/c/Makefile (COV_LINE_MIN/COV_BRANCH_MIN) and package.json
 # (coverage:check:*). Raise them as coverage climbs; never lower to make a red
 # build pass.
 #
@@ -39,7 +39,7 @@ jobs:
         run: pipx install gcovr==8.6 || pip install --break-system-packages gcovr==8.6
 
       - name: C engine coverage gate (game / legal / replay)
-        working-directory: cnitro
+        working-directory: sdk/c
         run: make coverage
 
       # Re-run gcovr over the same covbuild data (already produced above) to pull
@@ -47,7 +47,7 @@ jobs:
       - name: Extract C coverage numbers
         id: covc
         if: always()
-        working-directory: cnitro
+        working-directory: sdk/c
         run: |
           gcovr --root . --filter 'src/game\.c' --filter 'src/legal\.c' --filter 'src/replay\.c' \
             --json-summary -o cov-summary.json || true

@@ -3,7 +3,7 @@
 // OG_EXPLAIN JSONL record per octogen decision — byte-compatible with the native
 // og_explain sink, so build_data.py consumes either identically. Lives in e2e/
 // so the deal-seed override resolves to a single engine.ts module instance
-// (from cnitro/tools it duplicated and the deal went random). Skipped in CI.
+// (from sdk/c/tools it duplicated and the deal went random). Skipped in CI.
 //
 //   RECON_SEED=<64hex> RECON_RD=<replay_decoded.json> OGX_WASM_DELIB=<out.jsonl> \
 //     TSX_TSCONFIG_PATH=e2e/tsconfig.json node --import tsx --test e2e/_wasm_drive.test.ts

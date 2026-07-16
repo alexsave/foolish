@@ -3,7 +3,7 @@ import { verify_card_array } from '../common_utils.ts';
 import { kernelPass, kernelValidatePass } from '../../../../../sdk/ts/wasm/engine.ts';
 
 // The pass (perevod / transfer) rules live in the C kernel
-// (cnitro/src/game.c handle_pass), compiled to WASM. This file keeps only
+// (sdk/c/src/game.c handle_pass), compiled to WASM. This file keeps only
 // the payload-shape guards and the exported API surface. The old TS
 // implementation's post-mutation "Uncovered cards > defender_cards" throw is
 // preserved: the kernel reports it as a rejection, so the move never commits.

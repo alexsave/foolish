@@ -14,7 +14,7 @@ out of scope).
 ## What shipped (commits on this branch)
 
 1. **Versioned state codec** — `wasm_state_serialize`/`deserialize` in the kernel
-   (`cnitro/wasm/wasm_api.c`) + `serializeGameState`/`deserializeGameState` in
+   (`sdk/c/wasm/wasm_api.c`) + `serializeGameState`/`deserializeGameState` in
    `sdk/ts/wasm/engine.ts`. Format-version byte for forward
    compat (mirrors the replay codec's v2–v5 discipline).
 2. **Blob persistence (dual-write)** — `commit_game` gained `p_state`;
@@ -85,7 +85,7 @@ exercised.** After deploying (edge functions + migration
 
 The plan below has landed: `get_game` returns the kernel-masked packed blob,
 actions POST binary wire bodies, broadcasts carry packed per-viewer event
-streams, and the mask is computed inside the kernel (`cnitro/src/view.c`).
+streams, and the mask is computed inside the kernel (`sdk/c/src/view.c`).
 Kept for history:
 
 Once the client runs the rules kernel in-browser, **`get_game` stops returning

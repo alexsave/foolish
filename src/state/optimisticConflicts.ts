@@ -86,7 +86,7 @@ export function resolveUnconfirmedAttackCovers(
     // uncovered_after ≤ defenderHand, and uncovered_after = finalUncoveredAttacks + 1,
     // so a legal attack keeps totalAttacks ≤ defenderHandSize here.
     //
-    // The rule is an ATTACK rule (cnitro/src/game.c handle_attack
+    // The rule is an ATTACK rule (sdk/c/src/game.c handle_attack
     // DEFENDER_CAPACITY): pending COVERS are the defender's own play and are
     // excluded — they merge unless the sweep branch above already cleared them.
     const pendingAttacks = myOptimisticCoverKeys

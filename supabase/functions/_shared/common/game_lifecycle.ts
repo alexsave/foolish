@@ -10,7 +10,7 @@ import { __setDealSeedOverride, applyKernelStateToGame, getLastDealSeedHex, kern
 import { hexToBytes } from './replay/codec.ts';
 
 // Starts the game with all the animations. The deal/flip/first-attacker
-// rules live in the C kernel (cnitro/src/game.c start_game): player-major
+// rules live in the C kernel (sdk/c/src/game.c start_game): player-major
 // deal, non-Ace trump flip (Aces pushed back and redrawn), lowest-trump
 // holder attacks first. The event stream (MAGIC → per-player DEAL → FLIPPED →
 // DEFENDER_MOVE → MAGIC) is reconstructed from kernel snapshots, identical

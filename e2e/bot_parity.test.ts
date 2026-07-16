@@ -1,4 +1,4 @@
-// Bot-choice parity: the C kernel strategies (cnitro/src/*_strategy.c via
+// Bot-choice parity: the C kernel strategies (sdk/c/src/*_strategy.c via
 // bots.wasm) vs the TS originals, move-for-move on identical positions with
 // identical RNG streams. This is the proof that moving bot brains into the
 // C kernel changed nothing about how they play.
@@ -6,7 +6,7 @@
 // RNG pinning: before every decision both sides are pointed at the same LCG
 // stream — Math.random (which the TS strategies consume) is patched to the
 // kernel's strategy LCG (s = s*1664525 + 1013904223; s/2^32, see
-// cnitro/src/game.c random_strategy_random) seeded identically via
+// sdk/c/src/game.c random_strategy_random) seeded identically via
 // __setBotSeedSource.
 //
 // cordite/fulminate are exercised elsewhere: they are independent
@@ -33,7 +33,7 @@ import { SimpleHeuristicStrategy } from '../offlinefun/localtest/frozen/simple_h
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 
-// The kernel's dedicated strategy LCG (cnitro/src/game.c).
+// The kernel's dedicated strategy LCG (sdk/c/src/game.c).
 const mkLcg = (seed: number) => {
   let s = (seed >>> 0) || 1;
   return () => {

@@ -1,5 +1,5 @@
 // DecodedReplay.swift — Codable mirror of fio_replay_decode_json's output
-// (cnitro/ios/ios_api.c). Matches the shape of the web's DecodedReplay
+// (sdk/c/ios/ios_api.c). Matches the shape of the web's DecodedReplay
 // (@shared/replay/core.ts): header + the log/event stream. Card values are the
 // {s,v} form; hidden cards decode to {s:-1,v:-1}, and `target` is null for
 // single-card pairs.

@@ -6,7 +6,7 @@ import { BotStrategy, LegalMove } from '../core/bot_interfaces.ts';
 // Re-export interfaces for backwards compatibility
 export type { BotStrategy, LegalMove };
 
-// Every algorithmic bot runs inside the C kernel (cnitro/src/*_strategy.c
+// Every algorithmic bot runs inside the C kernel (sdk/c/src/*_strategy.c
 // compiled to bots.wasm) — single source of truth for bot play, same as the
 // rules. This adapter marshals the game in, lets the kernel enumerate legal
 // moves and choose, and maps the returned index onto the caller's list (the
@@ -55,7 +55,7 @@ export class WasmBotStrategy implements BotStrategy {
 
 // Strategy registry.
 //
-// The roster lives in the C kernel (cnitro/src/bot_roster.c): key -> brain +
+// The roster lives in the C kernel (sdk/c/src/bot_roster.c): key -> brain +
 // knobs + logs flag, one table shared with the phone and every future client
 // (docs/C_CORE_CONSOLIDATION.md F1/A1). This map used to restate that table's
 // knobs as `env` blocks, kept "deliberately identical" by hand and by a parity
@@ -83,7 +83,7 @@ export const BOT_STRATEGIES: Map<string, BotStrategy> = new Map<string, BotStrat
     ['firecracker', new WasmBotStrategy('firecracker', STRAT.firecracker, { logs: true })],
     ['blackpowder', new WasmBotStrategy('blackpowder', STRAT.blackpowder, { logs: true })],
     // cordite's CD_BUDGET/CD_RACE and octogen's OG_TRUMP_KEEP now come from
-    // the roster (cnitro/src/bot_roster.c), which documents them.
+    // the roster (sdk/c/src/bot_roster.c), which documents them.
     ['cordite', new WasmBotStrategy('cordite', STRAT.cordite, { logs: true })],
     ['octogen', new WasmBotStrategy('octogen', STRAT.octogen, { logs: true })],
 ]);
@@ -114,7 +114,7 @@ export function strategyUsesLogs(strategyKey: string): boolean {
 }
 
 // Calculate all legal moves for a bot given current game state.
-// The enumeration lives in the C kernel (cnitro/src/legal.c
+// The enumeration lives in the C kernel (sdk/c/src/legal.c
 // calculate_legal_moves), compiled to WASM, preserving the exact move
 // ordering of the old TS enumerator (verified move-for-move by the
 // differential parity harness). One deliberate change: the kernel caps the

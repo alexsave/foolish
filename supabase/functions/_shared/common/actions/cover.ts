@@ -2,7 +2,7 @@ import { Card, Game, AnimationEvent, GAME_STATUS } from '../../core/types.ts';
 import { verify_card_array, cardDisplay } from '../common_utils.ts';
 import { kernelCover, kernelValidateCover } from '../../../../../sdk/ts/wasm/engine.ts';
 
-// The cover rules live in the C kernel (cnitro/src/game.c handle_cover),
+// The cover rules live in the C kernel (sdk/c/src/game.c handle_cover),
 // compiled to WASM — including the same-rank double-tap fix (attack cards
 // matched by exact card, not value) and the whole end-of-round cascade
 // (discard → refill → defender-out → rotation). This file keeps only the

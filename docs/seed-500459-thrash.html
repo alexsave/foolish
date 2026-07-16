@@ -270,7 +270,7 @@ collision&#8209;free TT22 keeps <i>enough</i> of the ~2,800&#8209;position worki
 <h2>Method &amp; what was pruned</h2>
 <p class="footnote">
 Traces were produced by instrumenting <span class="mono">sim_solve_rec</span> in
-<span class="mono">cnitro/src/cordite_sim.c</span> behind a compile&#8209;time <span class="mono">-DCD_TT_TRACE</span>
+<span class="mono">sdk/c/src/cordite_sim.c</span> behind a compile&#8209;time <span class="mono">-DCD_TT_TRACE</span>
 flag (off in normal builds), dumping every node ENTER/KEY/RET plus every TT STORE, HIT and EVICT for the
 move&#8209;35 win&#8209;hunt only (group 4), at TT13/TT15/TT22. The KD search visits 55k&ndash;166k nodes; this page
 shows the <b>10&#8209;candidate win&#8209;hunt summary</b> (complete) and the <b>48&#8209;ply thrash descent</b> (the exact

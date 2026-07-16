@@ -25,12 +25,12 @@ outcome ladder (see V-gates). When in doubt, measure; when still in doubt, skip.
 ## 0. Method (read this twice)
 
 This codebase has already been through two disciplined shrink rounds. The
-method is established and documented in `cnitro/Makefile:130-181` and
+method is established and documented in `sdk/c/Makefile:130-181` and
 `docs/WASM_L1_BUDGET.md`:
 
 1. **Measure the real requirement** with a harness over tens of thousands of
-   games (`cnitro/tests/l1_measure.c` is the existing tool; build rule at
-   `cnitro/Makefile:106-110` — it compiles with huge caps and reports observed
+   games (`sdk/c/tests/l1_measure.c` is the existing tool; build rule at
+   `sdk/c/Makefile:106-110` — it compiles with huge caps and reports observed
    peaks).
 2. **Cap at ~1.4–2× the measured/analytic worst case**, stated inline in the
    Makefile comment next to the flag.
@@ -43,7 +43,7 @@ Every candidate below follows that shape: measure → cap → gate.
 ### Re-measuring the memory map
 
 ```sh
-cd cnitro && make build/bots.wasm
+cd sdk/c && make build/bots.wasm
 # per-symbol data/BSS sizes (these + stack + heap = linear memory)
 llvm-nm --print-size --size-sort --defined-only build/botobj/*.o \
   | awk '$3 ~ /[dDbB]/ {print $2, $4}' | sort -r | head -30
@@ -413,7 +413,7 @@ choose → re-export, byte-identical).
 
 ## 3. V-gates (run per candidate; all must be green)
 
-Build/refresh everything first: `cd cnitro && make build/bots.wasm && make wasm-bots`.
+Build/refresh everything first: `cd sdk/c && make build/bots.wasm && make wasm-bots`.
 
 | gate | command | pass bar |
 |---|---|---|
@@ -422,7 +422,7 @@ Build/refresh everything first: `cd cnitro && make build/bots.wasm && make wasm-
 | V-mem | `npm run test:mem` | 4/4, bounded & flat |
 | V-parity | `bot_parity.test.ts` | 7/7 exact-move match |
 | V-fuzz | `e2e/wasm_kernel_fuzz.test.ts` + cover/guards e2e | green (stack + enumeration net) |
-| V4-outcome | only for M3/M5: `cnitro/tools/tt_divergence_viz/outcome_pair.sh` 2,000+ espresso seeds, flag-on vs flag-off at SAME TT config | 0 outcome flips |
+| V4-outcome | only for M3/M5: `sdk/c/tools/tt_divergence_viz/outcome_pair.sh` 2,000+ espresso seeds, flag-on vs flag-off at SAME TT config | 0 outcome flips |
 | V-latency | 40-game CPU-time probe (`CD_LAT=1`, see `SOLVER_TT_WORKING_SET_PLAN.md`) before/after | within ±5% |
 | V-size | `llvm-nm` map + anatomy regen + page count | saving matches prediction; no other block grew |
 

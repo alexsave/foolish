@@ -65,7 +65,7 @@ sources inline. Supersedes the Phase-1 monetization mix in `docs/MONETIZATION_RO
 | The same C engine already runs **on the server** (`bots.wasm` on Deno edge functions) | `sdk/ts/wasm/` | Server-side verdicts are possible — but edge functions cap at **2s CPU** per invocation, so the server can issue tokens & spot-checks, not the "infinite" convergence |
 | Replay page decodes entirely client-side, **no auth** | `src/app/[game_id]/page.tsx` | Free replays stay the viral loop; Oracle button becomes the login/paywall funnel |
 | Auth is a username hash masquerading as email; no verification, no reset | `src/contexts/AuthContext.tsx:12-33`, `supabase/config.toml` (`enable_confirmations = false`) | Rebuild required before payments (§4) |
-| `cnitro` is freestanding C (clang, `-nostdlib` for wasm; plain C11 natively), thread-safety proven under the native OMP model (`_Thread_local` scratch/RNG/TT) | `cnitro/Makefile`, design doc §3 | Compiles natively for iOS arm64 with pthreads — no wasm needed on iOS (§7) |
+| `cnitro` is freestanding C (clang, `-nostdlib` for wasm; plain C11 natively), thread-safety proven under the native OMP model (`_Thread_local` scratch/RNG/TT) | `sdk/c/Makefile`, design doc §3 | Compiles natively for iOS arm64 with pthreads — no wasm needed on iOS (§7) |
 | Backend is Supabase **free tier** | — | §14: upgrade trigger and cost model |
 
 ---

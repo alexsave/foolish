@@ -21,7 +21,7 @@ import {
     MSG_REBASE_REAPPLY, MSG_REBASE_DISCARD_ROUND, MSG_REBASE_DISCARD_ILLEGAL,
 } from '../sdk/ts/wasm/bots.ts';
 
-// Mid-game turn bubbles sealed by the native kernel (cnitro/build/msg_wire_test
+// Mid-game turn bubbles sealed by the native kernel (sdk/c/build/msg_wire_test
 // --fixture). Every chain below is grown from one of these.
 const PARENTS: Record<number, string> = {
     2: 'f7020002efcdab89674523010700000200010000000000000000ae15293755bd748b2919627cd0591ffb42d7f9b2e9b57da5c2839ed47bd7ced7020004416e6e300104416e6e31070003a9cc795118a16a9edd28d516',
@@ -34,7 +34,7 @@ const hex = (h: string) => Uint8Array.from(h.match(/../g)!.map(b => parseInt(b, 
 const AWIRE = { attack: 0, cover: 1, pass: 2, pickup: 3, good: 4 } as const;
 const wireCard = (c: { suit: number; value: number }) => c.suit * 13 + (c.value - 1);
 
-// A move, as the bytes the kernel takes (awire — cnitro/src/awire.h).
+// A move, as the bytes the kernel takes (awire — sdk/c/src/awire.h).
 function toWire(m: { type: string; cards?: { suit: number; value: number }[]; attack_cards?: { suit: number; value: number }[] }): Uint8Array {
     const kind = AWIRE[m.type as keyof typeof AWIRE];
     if (kind === AWIRE.pickup || kind === AWIRE.good) return Uint8Array.from([kind, 0]);

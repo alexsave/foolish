@@ -31,7 +31,7 @@ decoded hands).
 The v5 replay codec is lossy about *hidden state by design*. Every public fact
 (played cards, table, counts, eliminations, winner) round-trips exactly, but the
 **identity and draw-timing of hidden cards is never stored** — `draw_for`
-(`cnitro/src/replay.c`) emits a count-only `LOG_DRAW` and defers a card's
+(`sdk/c/src/replay.c`) emits a count-only `LOG_DRAW` and defers a card's
 identity until it is *played*. The replay screen then reconstructs hidden hands
 by FIFO retrodiction (`src/replay/view.ts`), which is exact only once every card
 has surfaced (end of game) and a **guess mid-game**.
@@ -88,13 +88,13 @@ Decode output is v5's header+log layout except `out[0]=6`, the stream is
 prefixed by one `LOG_DRAW` per seat = that seat's real initial hand, and every
 later `LOG_DRAW` carries a **real** card id (never `REPLAY_CARD_HIDDEN`).
 
-See `cnitro/src/replay.h` for the byte-level contract and `replay.c`
+See `sdk/c/src/replay.h` for the byte-level contract and `replay.c`
 (`code_reveal`, `run_replay_v6`, `replay_encode_v6`, the v6 branch in
 `replay_decode`) for the implementation.
 
 ## Measured
 
-`make -C cnitro build/replay_v6_test && ./cnitro/build/replay_v6_test 150` —
+`make -C cnitro build/replay_v6_test && ./sdk/c/build/replay_v6_test 150` —
 900 real engine games, pc 2–8, ~787k assertions, all passing. Asserts, per game:
 decode carries the true initial hands + every real draw (losslessness), encode
 determinism, decode→re-encode fixed point, and a mid-game prefix decodes cleanly
@@ -109,10 +109,10 @@ no bits on within-hand order — that optimization alone cut v6 from +11.5% to
 
 ## What's wired (all tested)
 
-- **Codec** — `cnitro/src/replay.{c,h}`: `code_reveal`, `deal_hand_v6`,
+- **Codec** — `sdk/c/src/replay.{c,h}`: `code_reveal`, `deal_hand_v6`,
   `code_varint`, `run_replay_v6`, `replay_encode_v6`, v6 branch in
   `replay_decode`. v5 byte-frozen.
-- **Native test** — `cnitro/tests/replay_v6_test.c` (in `make difftests`):
+- **Native test** — `sdk/c/tests/replay_v6_test.c` (in `make difftests`):
   ~787k assertions, pc 2–8. `REPLAY_STATS` peak = **465 recorded choices**
   (wasm cap `REPLAY_REC_CAP` = 4096) and 34 bignum limbs (cap 2688) — v6 fits
   the tight wasm rules overlay with large margin, so no memory-budget change

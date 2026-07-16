@@ -37,7 +37,7 @@ to the table and can invite more throw-ins into your pickup.
 
 ## Harness
 
-`cnitro/tools/hide_tax/hide_eval.c` self-plays octogen-vs-octogen (all seats
+`sdk/c/tools/hide_tax/hide_eval.c` self-plays octogen-vs-octogen (all seats
 octogen — the opponents keep perfect memory and exploit any leak) over a seed
 range and prints seat-0's finish position per seed. Seat 0 hides iff bit 0 of
 `OG_HIDE_MASK` is set. Run it twice over the SAME seeds and join with `analyze.py`

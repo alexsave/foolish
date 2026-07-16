@@ -211,7 +211,7 @@ async function roundTripGame(game: Game, np: number): Promise<void> {
   // TS original — a per-seat deal DRAW the TS engine never logs, and every later
   // DRAW resolved to a real card where the original masks it. That is the fix,
   // not a drift. The full stream's fidelity is asserted where the truth lives:
-  // cnitro/tests/replay_v6_test.c holds the decode against the ENGINE's own deal
+  // sdk/c/tests/replay_v6_test.c holds the decode against the ENGINE's own deal
   // and draws, which no TS-side comparison can reach.
   const dec = await decodeReplay(enc.x);
   const infoOf = (ls: SeatLog[]) => ls.filter((l) => INFO_TYPES.includes(l.log_type));

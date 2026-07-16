@@ -18,7 +18,7 @@ proportionally; the pt numbers below are the 40 mm reference.
 
 | Piece | Where | What you use it for |
 |---|---|---|
-| C rules engine as xcframework | `cnitro/ && make ios-lib` → `ios/vendor/Foolish.xcframework` | Add watchOS slices to the Makefile target (arm64/arm64_32 watchos + simulator). The engine is the single source of truth for legality. |
+| C rules engine as xcframework | `sdk/c/ && make ios-lib` → `ios/vendor/Foolish.xcframework` | Add watchOS slices to the Makefile target (arm64/arm64_32 watchos + simulator). The engine is the single source of truth for legality. |
 | Swift bridge | `ios/FoolishKit/Engine/EngineC.swift` | `viewFromPacked(_:viewer:) → GameView` decodes a `player_views` row; `legalFromPacked(_:seat:) → [Move]` gives the **complete legal move list** for that state. These two calls are the whole rules integration. |
 | Models | `ios/FoolishKit/Engine/Models.swift` | `Card`, `Suit` (`.glyph`, `.isRed`), `GameView` (`trumpSuit`, `deckCount`, `battles`, `players`, `me`…), `Move` (`type`, `cards`, `attackCards`). |
 | Networking | `ios/FoolishKit/Net/` (`OnlineGame.swift`, `GameFeed.swift`, `Backend.swift`) | `player_views` Realtime subscription + action POST. The watch reuses this layer (plain Swift + Supabase). |

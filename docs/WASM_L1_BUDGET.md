@@ -65,7 +65,7 @@ opcode in the binary; `memory.grow(1)` traps at runtime).
 
 ## How the maxima were measured
 
-`cnitro/tests/l1_measure.c` plays **~63,000 real engine games** — every player
+`sdk/c/tests/l1_measure.c` plays **~63,000 real engine games** — every player
 count 2–8, both the random (degenerate-game) and handwritten (realistic)
 strategies, multiple seeds — and records the peak of every quantity that sizes
 a buffer. Built with the WASM cap set plus deliberately oversized headroom
@@ -74,7 +74,7 @@ clamps. The replay coder peaks come from `-DREPLAY_STATS` counters compiled into
 `replay.c` (zero cost when the flag is absent, which is every production build).
 
 ```
-cd cnitro
+cd sdk/c
 gcc -O2 -Isrc -DMAX_LOG_PAIRS=64 -DMAX_BATTLES=64 -DMAX_LOGS=2048 \
     -DMAX_LEGAL_MOVES=16384 -DMAX_MOVE_CARDS=52 -DREPLAY_STATS \
     src/game.c src/deal_rng.c src/legal.c src/replay.c src/view.c \
@@ -319,8 +319,8 @@ set inherently larger than L1, **designed** around bitboard `SimState`s that *ar
 L1-resident during the hot rollout loop. Fitting bots in L1 is not a memory-layout
 problem; it's a different solver.
 
-Reproduce the floor vs infinite: `cnitro/tools/tt_divergence.sh octogen handwritten 2,4,6,8 4000 99 16 13 11 9 7`.
-Reproduce vs production: `BASE=16 cnitro/tools/tt_divergence.sh octogen handwritten 4 800 99001 13` (expect 0).
+Reproduce the floor vs infinite: `sdk/c/tools/tt_divergence.sh octogen handwritten 2,4,6,8 4000 99 16 13 11 9 7`.
+Reproduce vs production: `BASE=16 sdk/c/tools/tt_divergence.sh octogen handwritten 4 800 99001 13` (expect 0).
 Tip: keep runs focused (one player count, few sizes) — octogen at pc2 is the slow one.
 
 ## Validation

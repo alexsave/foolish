@@ -133,14 +133,14 @@ export const verify_cards_in_players_hand = (player: PrivatePlayer, cards: Card[
 
 
 // Dealing, drawing and first-attacker selection live in the C kernel
-// (cnitro/src/game.c): per-draw random splice, non-Ace trump flip,
+// (sdk/c/src/game.c): per-draw random splice, non-Ace trump flip,
 // lowest-trump-holder attacks first. The old TS helpers (draw, refill_deck,
 // no_cards_left, seededRandom, set_positions, initialize_hands,
 // determine_lowest_power_index) were deleted with it — nothing outside this
 // file imported them.
 
 // Turn-eligibility projection: whether the seat may act in the current
-// state. The kernel counterpart is should_bot_act in cnitro/src/game.c
+// state. The kernel counterpart is should_bot_act in sdk/c/src/game.c
 // (e2e/wasm_engine.test.ts polices parity). Lives here — NOT in
 // pure_bot_actions.ts, which pulls the wasm embeds — so the client can
 // share it (AnimationContext's bot-move poll gate).
@@ -178,7 +178,7 @@ export const shouldBotActCore = (game: Game, bot: PrivatePlayer, botIndex: numbe
 }
 
 // Thin projection kept for synchronous use; the kernel counterpart is
-// game_done in cnitro/src/game.c (e2e/wasm_engine.test.ts polices parity).
+// game_done in sdk/c/src/game.c (e2e/wasm_engine.test.ts polices parity).
 export const game_done = (game: Game): string | null => {
     // only one 1 left, everyone else is out
     const in_players = game.players.filter(player => player.status === PLAYER_STATUS.IN);
@@ -294,7 +294,7 @@ export const calculateGameRankings = (game: Game): string[] => {
     return rankings;
 };
 
-// Refill logic lives in the C kernel (cnitro/src/game.c refill_player_hands),
+// Refill logic lives in the C kernel (sdk/c/src/game.c refill_player_hands),
 // run inside the action handlers' kernel transitions; game start is the
 // kernel-delegating start_game in ./game_lifecycle.ts (kept out of this
 // module so the client bundle never pulls the wasm embed). The old TS

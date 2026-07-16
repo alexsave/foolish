@@ -2,7 +2,7 @@
  * v6 as the WEB consumes it
  * =============================================================================
  * What a v6 code IS, and that it round-trips every hidden card, is asserted
- * natively by cnitro/tests/replay_v6_test.c — on real engine games, against the
+ * natively by sdk/c/tests/replay_v6_test.c — on real engine games, against the
  * kernel's own two producers. This file used to re-run all of that through a TS
  * bridge, and kept ~390 lines of TS choreography (reconstructSeededDeal +
  * collectV6 + marshalInputV6) alive to do it. Both are gone (A9): a second

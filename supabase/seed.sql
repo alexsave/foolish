@@ -933,14 +933,14 @@ INSERT INTO bots (nickname, strategy_key) VALUES
 -- NOTE: champion, ultimate_champion, hacker, espresso, semtex and semtex_max
 -- are intentionally NOT seeded. Those strategies are not compiled into / not
 -- dispatched by the production bots.wasm (see wasm_choose_move in
--- cnitro/wasm/wasm_bots_api.c), so a bot carrying one of those keys silently
+-- sdk/c/wasm/wasm_bots_api.c), so a bot carrying one of those keys silently
 -- falls back to `random` — a bot that plays nothing like its name and pollutes
 -- the Elo leaderboard. Only strategy keys the wasm actually dispatches are
 -- seeded: random, simple_heuristic, handwritten (→handwritten_prod),
 -- firecracker, blackpowder, cordite, octogen.
 --
 -- The seeded set must equal the `seeded` column of the C bot roster
--- (cnitro/src/bot_roster.c) — that table is the canonical roster
+-- (sdk/c/src/bot_roster.c) — that table is the canonical roster
 -- (docs/C_CORE_CONSOLIDATION.md F1).
 --
 -- The `_max` tiers were retired (migration 20260715120000_drop_max_bot_tiers):
@@ -965,7 +965,7 @@ INSERT INTO bots (nickname, strategy_key) VALUES
 ('Blackpowder 3', 'blackpowder'),
 
 -- Cordite strategy bots (belief-constrained Monte Carlo, no cheating —
--- beats every other bot at every player count 2-8; see cnitro/CORDITE.md)
+-- beats every other bot at every player count 2-8; see sdk/c/CORDITE.md)
 ('Cordite 1', 'cordite'),
 ('Cordite 2', 'cordite'),
 ('Cordite 3', 'cordite'),
@@ -974,7 +974,7 @@ INSERT INTO bots (nickname, strategy_key) VALUES
 -- note above. Octogen is semtex's shipped successor and IS dispatched.)
 
 -- Octogen (semtex + extended exact-solve window; provably never worse than
--- semtex, strictly better in deep heads-up endgames — see cnitro/OCTOGEN.md)
+-- semtex, strictly better in deep heads-up endgames — see sdk/c/OCTOGEN.md)
 ('Octogen 1', 'octogen'),
 ('Octogen 2', 'octogen'),
 ('Octogen 3', 'octogen');

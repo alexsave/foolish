@@ -38,13 +38,13 @@ toolchain (mine is skewed 21 B)" was chasing a ghost:
 - `bots.wasm.gz` rebuilds **md5-identical** to the committed artifact,
   compressed and uncompressed. A byte delta means *your change*.
 - **CI never rebuilds the wasm** — it ships the committed `.gz`
-  (`cnitro/Makefile:264`). There is no "CI toolchain" to match.
+  (`sdk/c/Makefile:264`). There is no "CI toolchain" to match.
 - The real trap: the Makefile's `WASM_CC` defaults to plain `clang`, which on
   macOS is Apple clang and **cannot target wasm32 at all**. It is `WASM_CC=`,
   not `CC=`:
 
 ```
-cd cnitro && make wasm-bots WASM_CC=/opt/homebrew/opt/llvm/bin/clang
+cd sdk/c && make wasm-bots WASM_CC=/opt/homebrew/opt/llvm/bin/clang
 ```
 
 ---
@@ -71,7 +71,7 @@ Not "diff two views". Not "replay events against the final view".
   not the viewer's. Render a back; the identity never crossed the bridge.
 - Events are already per-viewer. Do not re-mask.
 
-Spec: `IOS_APP_DESIGN.md` §16.B4 (amended). Wire contract: `cnitro/src/evwire.h`.
+Spec: `IOS_APP_DESIGN.md` §16.B4 (amended). Wire contract: `sdk/c/src/evwire.h`.
 
 ---
 
@@ -159,7 +159,7 @@ TRUNCATEs shared tables and will corrupt the other run. Also: don't rebuild
 **iOS loop:**
 
 ```
-cd cnitro && make ios-lib
+cd sdk/c && make ios-lib
 cd ios && xcodegen generate
 xcodebuild -project Foolish.xcodeproj -scheme Foolish \
   -destination 'platform=iOS Simulator,name=iPhone 16' test

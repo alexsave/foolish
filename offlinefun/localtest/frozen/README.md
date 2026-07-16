@@ -1,7 +1,7 @@
 # Frozen TypeScript bots
 
 Retired reference implementations. Production bot play lives in the C kernel
-(`cnitro/src/*_strategy.c`, compiled into `bots.wasm` and dispatched through
+(`sdk/c/src/*_strategy.c`, compiled into `bots.wasm` and dispatched through
 `sdk/ts/wasm/bots.ts`) — these TS sources are kept
 verbatim as:
 

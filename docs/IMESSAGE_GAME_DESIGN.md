@@ -48,13 +48,13 @@ everywhere (see `docs/ARCHITECTURE_AS_A_PATTERN.md`):
 
 | Piece | Where | What it gives this project |
 | --- | --- | --- |
-| Rules kernel (deal, legality, apply, views) | `cnitro/src/game.c`, `legal.c`, `view.c` | The complete game engine, compiled to wasm today; compiles natively for iOS tomorrow |
-| **Seeded deals** | `cnitro/src/game.h:139-151` — `game_set_deal_seed_bytes(seed,len)`: ChaCha shuffle over the full 52!/36! space, whole game reproducible from the seed; state records `deterministic_deck` | A 16-byte seed replaces the entire hidden deal — the foundation of the payload format |
-| Durable state blob v2 | `cnitro/wasm/wasm_api.c:316-327` — `wasm_state_serialize/deserialize` (carries the deal seed) | Not used in the payload (see §3) but useful for local caching |
-| Replay codec v5 (finished games → short URL) | `cnitro/src/replay.{h,c}` (C is canonical; frozen wire format), TS bridge `supabase/functions/_shared/common/replay/` | The game-over artifact: a finished iMessage game becomes a normal `foolish.cards/<code>` replay, Oracle-analyzable |
-| Packed action wire format | `supabase/functions/_shared/packed_action.ts`, `cnitro/wasm/wire.h` | The per-move byte encoding the payload reuses verbatim |
+| Rules kernel (deal, legality, apply, views) | `sdk/c/src/game.c`, `legal.c`, `view.c` | The complete game engine, compiled to wasm today; compiles natively for iOS tomorrow |
+| **Seeded deals** | `sdk/c/src/game.h:139-151` — `game_set_deal_seed_bytes(seed,len)`: ChaCha shuffle over the full 52!/36! space, whole game reproducible from the seed; state records `deterministic_deck` | A 16-byte seed replaces the entire hidden deal — the foundation of the payload format |
+| Durable state blob v2 | `sdk/c/wasm/wasm_api.c:316-327` — `wasm_state_serialize/deserialize` (carries the deal seed) | Not used in the payload (see §3) but useful for local caching |
+| Replay codec v5 (finished games → short URL) | `sdk/c/src/replay.{h,c}` (C is canonical; frozen wire format), TS bridge `supabase/functions/_shared/common/replay/` | The game-over artifact: a finished iMessage game becomes a normal `foolish.cards/<code>` replay, Oracle-analyzable |
+| Packed action wire format | `supabase/functions/_shared/packed_action.ts`, `sdk/c/wasm/wire.h` | The per-move byte encoding the payload reuses verbatim |
 | Kernel-in-browser bridge | `src/wasm/clientGuards.ts`, `sdk/ts/wasm/engine.ts` | The web client already loads the C kernel as wasm — the `/m/` fallback route rides this |
-| Full export list of the wasm rules build | `cnitro/Makefile:331-353` | Shows every kernel entry point already exposed (`wasm_start_game`, `wasm_apply_action`, `wasm_legal_moves`, `wasm_replay_encode`, …) |
+| Full export list of the wasm rules build | `sdk/c/Makefile:331-353` | Shows every kernel entry point already exposed (`wasm_start_game`, `wasm_apply_action`, `wasm_legal_moves`, `wasm_replay_encode`, …) |
 
 **The constraint that shapes everything:** an iMessage extension has *no server
 in the loop*. Each turn is an `MSMessage` whose **URL payload must carry the
@@ -66,7 +66,7 @@ notification system. The extension only runs while the user is looking at it.
 ## 2. Product spec
 
 - **v1 supports 2–4 players from day one** (the engine allows 2–8,
-  `cnitro/src/game.h:12`; the payload format allows 8; **4 is a v1 UI cap**,
+  `sdk/c/src/game.h:12`; the payload format allows 8; **4 is a v1 UI cap**,
   not a format cap). 1v1 in a DM and 3–4 players in a group thread are the
   same protocol — 2p is just the N=2 special case. This is deliberate: Durak
   is a **multi-actor game** (several players can legally act at the same
@@ -103,13 +103,13 @@ notification system. The extension only runs while the user is looking at it.
 
 ### 3.1 Why the existing replay codec cannot carry a mid-game state
 
-The v5 replay codec (`cnitro/src/replay.c`) encodes a **finished** game. Its
+The v5 replay codec (`sdk/c/src/replay.c`) encodes a **finished** game. Its
 decoder replays the game from the start and learns hidden cards lazily: each
 reveal is entropy-coded against a hypergeometric model, and the cards the loser
 never played are recovered **by complement once the fool is known** — the
 format literally has an error for a stream that ends early:
 `REPLAY_EINCOMPLETE (=16) — "logs ended before the fool was known"`
-(`cnitro/src/replay.h:56`). There is no way to terminate a v5 stream mid-game;
+(`sdk/c/src/replay.h:56`). There is no way to terminate a v5 stream mid-game;
 the trailing backfill step is load-bearing. So the original intuition is
 correct: v5 cannot encode a partial game, and *extending v5 itself* would be
 surgery on a frozen wire format.
@@ -120,7 +120,7 @@ A partial game does not need the reveal machinery at all. In serverless
 iMessage play, **both devices must know the full deal anyway** (each device
 continues the game locally, including drawing from the deck). Since the kernel
 already supports fully deterministic seeded deals —
-`game_set_deal_seed_bytes()` (`cnitro/src/game.h:139-151`) — a mid-game state
+`game_set_deal_seed_bytes()` (`sdk/c/src/game.h:139-151`) — a mid-game state
 is exactly:
 
 ```
@@ -144,17 +144,17 @@ the numeric trigger).
 ## 4. Payload format
 
 > **⚠ Correction (2026-07-15):** the deal seed is **32 bytes**, not 16 —
-> `game_set_deal_seed_bytes` requires `len >= 32` (`cnitro/src/game.c`). Read
+> `game_set_deal_seed_bytes` requires `len >= 32` (`sdk/c/src/game.c`). Read
 > every "16" about the seed in this section as 32; the reference layout in
 > `IMESSAGE_IMPLEMENTATION_HANDOFF.md` §3.1 is authoritative.
 
 ### 4.1 Envelope `FMSG` v1 (binary, little-endian, before text encoding)
 
 A new, small, versioned envelope. Implemented **in C** — single source of truth,
-like everything else in this repo — as `cnitro/src/msg_wire.{h,c}`, compiled
+like everything else in this repo — as `sdk/c/src/msg_wire.{h,c}`, compiled
 into (a) the iOS static library (§8) and (b) the existing wasm rules build with
 two new exports `wasm_msg_encode` / `wasm_msg_decode` added to the export list
-at `cnitro/Makefile:331-353`, bridged to TS in
+at `sdk/c/Makefile:331-353`, bridged to TS in
 `sdk/ts/wasm/engine.ts` for the web route (§13) and e2e
 tests (§18).
 
@@ -202,7 +202,7 @@ protocol-layer data, not kernel actions — the kernel replay never sees it.
 
 Reuse the existing packed-action wire encoding — do **not** invent a new one.
 The canonical definitions are `supabase/functions/_shared/packed_action.ts`
-(TS) and `cnitro/wasm/wire.h` (C): action type byte + 1-byte wire cards
+(TS) and `sdk/c/wasm/wire.h` (C): action type byte + 1-byte wire cards
 (`0..51 = suit*13+(value-1)`, `0xFE` hidden, `0xFF` none — `replay.h:31-36`
 documents the same card byte). `msg_wire.c` stores each action as
 `{u8 type, u8 card_a, u8 card_b}` using those exact byte conventions; multi-card
@@ -244,7 +244,7 @@ format bump.
 
 This engine is faithful to podkidnoy: while the defender is deciding, any
 eligible attacker may throw in more cards; several non-defenders may hold
-"awaiting" status at once (`awaiting_attack` flags, `cnitro/src/game.c:591,707`);
+"awaiting" status at once (`awaiting_attack` flags, `sdk/c/src/game.c:591,707`);
 the defender may cover or pick up at any point. **Multiple seats can have
 non-empty legal-move sets simultaneously — including in 2-player games** (the
 attacker can legally add a card at the same moment the defender can legally
@@ -425,7 +425,7 @@ Rule R (rebase):
 *legal but semantically different*: e.g. the attacker's throw-in composed
 against round 5's table would, after the defender's pickup closed round 5
 (pickup closes the round immediately and rotates roles —
-`cnitro/src/game.c:776-808`), re-validate as an *opening attack of round 6* —
+`sdk/c/src/game.c:776-808`), re-validate as an *opening attack of round 6* —
 legal per the kernel, but not what the player chose to do. An action never
 survives rebase across a round boundary; within the same round, kernel
 legality is the arbiter. This rule is small, explainable to users, and
@@ -467,7 +467,7 @@ More worked examples, including 3–4 player races, in §14.
 
 ### 8.1 New build target: `libfoolish.a`
 
-Add to `cnitro/Makefile`:
+Add to `sdk/c/Makefile`:
 
 ```
 ios-lib:  # arm64 device + arm64/x86_64 simulator slices, or an .xcframework
@@ -476,13 +476,13 @@ ios-lib:  # arm64 device + arm64/x86_64 simulator slices, or an .xcframework
 ```
 
 The wasm builds prove these sources are dependency-clean (`-nostdlib
--ffreestanding` at `cnitro/Makefile:287`); natively they may use libc freely
+-ffreestanding` at `sdk/c/Makefile:287`); natively they may use libc freely
 (they already do for native builds — `cordite_sim.c` includes stdio/stdlib for
 the research binaries, but note the **bot/strategy sources are NOT in this
 library** — the iMessage v1 ships rules only, no bots, keeping the extension
 binary tiny).
 
-`ios_api.c` is a thin shim in the spirit of `cnitro/wasm/wasm_api.c` (which is
+`ios_api.c` is a thin shim in the spirit of `sdk/c/wasm/wasm_api.c` (which is
 wasm-specific — IO buffer indirection, `__builtin_wasm_memory_grow`; do not
 compile it for iOS). The shim owns one static `Game` and exposes exactly:
 
@@ -543,7 +543,7 @@ Foolish.xcodeproj
 ├─ Foolish            (iOS app target — minimal host, SwiftUI)
 ├─ FoolishMessages    (iMessage extension target, MSMessagesAppViewController)
 ├─ FoolishKit         (shared Swift framework: engine bridge, models, board UI)
-└─ libfoolish.a / Foolish.xcframework   (from cnitro/Makefile ios-lib)
+└─ libfoolish.a / Foolish.xcframework   (from sdk/c/Makefile ios-lib)
 ```
 
 Both app + extension link FoolishKit; FoolishKit links the C library. Bundle
@@ -764,7 +764,7 @@ proves a seat by presenting the preimage.
 The true partial-game entropy-coded format — build **only** if §4.4's size
 guardrail trips or QR-able mid-game states become a product need:
 
-- New `REPLAY_FORMAT_VERSION`-adjacent format id 6 in `cnitro/src/replay.c`,
+- New `REPLAY_FORMAT_VERSION`-adjacent format id 6 in `sdk/c/src/replay.c`,
   sharing the menu/weight machinery of v5 but: (a) header carries the 16-byte
   deal seed; (b) the decoder deals from the seed so **the entire reveal /
   hypergeometric / complement subsystem is bypassed** (every card is known);

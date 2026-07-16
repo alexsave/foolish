@@ -1,7 +1,7 @@
 -- The packed kernel blob in games.state is the UNMASKED volatile state —
 -- every player's hand and the exact deck order. Clients get their view
 -- through the get_game edge function (service role), which serializes a
--- per-viewer MASKED blob inside the C kernel (cnitro/src/view.c,
+-- per-viewer MASKED blob inside the C kernel (sdk/c/src/view.c,
 -- docs/PACKED_WIRE_CUTOVER.md). But the "Anyone can view games" RLS policy
 -- exposed the whole row — including state — through PostgREST, so any
 -- authenticated client could fetch and decode every hand. Row-level

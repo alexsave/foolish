@@ -30,7 +30,7 @@ when still in doubt, skip.
 
 ## 0. Method (identical to the bots round — read §0 of BOTS_WASM_MEMORY_PLAN.md)
 
-1. **Measure the real requirement** (`cnitro/tests/l1_measure.c`, the stack
+1. **Measure the real requirement** (`sdk/c/tests/l1_measure.c`, the stack
    canary, or analytic worst cases stated inline).
 2. **Cap or alias at a stated margin**, documented in a Makefile comment next
    to the flag.
@@ -41,7 +41,7 @@ when still in doubt, skip.
 ### How to measure module pages (no external tools needed)
 
 ```sh
-cd cnitro && make build/rules.wasm build/guards.wasm
+cd sdk/c && make build/rules.wasm build/guards.wasm
 node -e "
 const fs=require('fs');
 const buf=fs.readFileSync('build/rules.wasm');
@@ -56,7 +56,7 @@ The rules module builds in one clang invocation (no .o files), so compile the
 same sources to objects with the same flags and read the BSS/data symbols:
 
 ```sh
-cd cnitro && mkdir -p /tmp/rulesobj
+cd sdk/c && mkdir -p /tmp/rulesobj
 for f in src/game.c src/deal_rng.c src/legal.c src/replay.c src/view.c \
          src/awire.c src/evwire.c wasm/wasm_api.c; do
   clang --target=wasm32 -Oz -nostdlib -ffreestanding -mbulk-memory \
@@ -71,9 +71,9 @@ llvm-nm --print-size --defined-only /tmp/rulesobj/*.o | grep -iE ' [bd] ' \
 ```
 
 (If the Makefile's rules flags change, re-derive them from
-`WASM_RULES_FLAGS` at `cnitro/Makefile:310` instead of copying the above.)
+`WASM_RULES_FLAGS` at `sdk/c/Makefile:310` instead of copying the above.)
 
-Regenerate the visual layout any time: `bash cnitro/tools/wasm_anatomy/generate.sh`
+Regenerate the visual layout any time: `bash sdk/c/tools/wasm_anatomy/generate.sh`
 → `docs/wasm-anatomy.html`, "Memory layout" tab (covers all three modules).
 
 ---
@@ -204,10 +204,10 @@ The one genuinely open proof obligation:
 
 Follow the **exact** pattern already shipped in the bots build — read these
 three references first:
-- `cnitro/src/wasm_overlay.h` — offset macros + `_Static_assert` style.
-- `cnitro/src/replay.c` (search `CD_WASM_OVERLAY`) — how `g_rec`/`g_bn`
+- `sdk/c/src/wasm_overlay.h` — offset macros + `_Static_assert` style.
+- `sdk/c/src/replay.c` (search `CD_WASM_OVERLAY`) — how `g_rec`/`g_bn`
   become `#define`s over an anchor without touching native builds.
-- `cnitro/wasm/wasm_api.c` (search `CD_WASM_OVERLAY`) — same for
+- `sdk/c/wasm/wasm_api.c` (search `CD_WASM_OVERLAY`) — same for
   `g_replay_io`/`g_io`.
 
 Differences for the rules build:
@@ -264,7 +264,7 @@ Differences for the rules build:
 
 ### 4.4 Gates for R1 (all must be green; run in this order)
 
-1. Native: `cd cnitro && make tests && ./build/cnitro_tests` (161/161) —
+1. Native: `cd sdk/c && make tests && ./build/cnitro_tests` (161/161) —
    native must be BYTE-UNCHANGED (flag absent ⇒ plain statics; verify with a
    before/after `sha256sum build/cnitro_tests` if paranoid).
 2. Difftests: `./build/sim_difftest 4 1000`, `./build/apply_difftest 4 200`,

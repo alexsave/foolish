@@ -2,7 +2,7 @@ import { Card, Game, AnimationEvent, GAME_STATUS } from '../../core/types.ts';
 import { verify_card_array } from '../common_utils.ts';
 import { kernelAttack, kernelValidateAttack } from '../../../../../sdk/ts/wasm/engine.ts';
 
-// The attack rules live in the C kernel (cnitro/src/game.c handle_attack),
+// The attack rules live in the C kernel (sdk/c/src/game.c handle_attack),
 // compiled to WASM. This file keeps only the payload-shape guards (malformed
 // JSON never reaches the kernel) and the exported TS API surface. State
 // mutation, legality, logs and animation events all come from the kernel —
