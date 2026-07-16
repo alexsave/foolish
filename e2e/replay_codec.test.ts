@@ -41,7 +41,6 @@ import { kernelReplayEncodeV6FromGame } from '../supabase/functions/_shared/wasm
 import { __setDealSeedOverride } from '../supabase/functions/_shared/wasm/engine.ts';
 
 const hexToBytes = (h: string) => Uint8Array.from(h.match(/../g)!.map((b) => parseInt(b, 16)));
-import { TUTORIAL_MOVES_CODE } from '../src/components/tutorialGame.ts';
 import {
   encodeExtras,
   encodeExtrasFromGaps,
@@ -50,7 +49,7 @@ import {
   joinReplayCode,
   moveTimesFromLogs,
 } from '../supabase/functions/_shared/replay/extras.ts';
-import { buildReplaySteps } from '../src/replay/view';
+import { buildReplayFrames, REPLAY_STEP } from '../src/replay/frames';
 
 // The engine logs play-by-play; silence it so the test reporter stays readable.
 if (!process.env.E2E_VERBOSE) {
@@ -226,16 +225,19 @@ async function roundTripGame(game: Game, np: number): Promise<void> {
   assert.equal(fool, dec.fool, 'fool mismatch');
   assert.equal(game.discard_pile_length, dec.discardPileLength, 'discard pile mismatch');
 
-  // the replay-screen view builder must fold the stream without desync
-  const steps = buildReplaySteps(dec as any);
-  assert.equal(steps.length, dec.logs.length + 1, 'view steps mismatch');
-
-  // the view's silent-refill-elimination mirror (view.ts marks emptied hands
-  // OUT without a PLAYER_OUT log, like the engine's refill) must agree with
-  // the decoder: at game end everyone but the fool is out
-  const lastStep = steps[steps.length - 1];
-  lastStep.players.forEach((p: { out: boolean }, s: number) => {
-    assert.equal(p.out, s !== dec.fool, `view out-flag mismatch at seat ${s}`);
+  // The replay screen must be able to replay this code. It used to fold the log
+  // stream into boards itself, and this asserted the fold's arithmetic (one step
+  // per log, plus a synthetic end). There is no fold now — the screen renders the
+  // frames the engine produces — so what is worth asserting is that the code
+  // replays at all, and lands on the game that was played.
+  const frames = buildReplayFrames(enc.bytes, 'g', null, { fool: dec.fool });
+  assert.ok(frames.length > 1, 'the code replays to steps');
+  const lastFrame = frames[frames.length - 1];
+  lastFrame.game.players.forEach((p, s) => {
+    // The engine's own out-flags: at game end everyone but the fool is out,
+    // including the seats emptied by a refill, which log nothing.
+    assert.equal(p.status === PLAYER_STATUS.OUT, s !== dec.fool, `out-flag mismatch at seat ${s}`);
+    assert.equal(p.hand_length, game.players[s].hand.length, `seat ${s} ends on its real hand size`);
   });
 
   // extras (names + per-move timing) round-trip
@@ -275,15 +277,19 @@ async function roundTripGame(game: Game, np: number): Promise<void> {
     assert.ok(Math.abs(g - want) <= Math.max(0.08, want * 0.08), `gap ${i}: got ${g}, want ${want}`);
   });
 
-  // the derived bout leader must be the seat that actually opens each bout
-  for (let s = 1; s < steps.length; s++) {
+  // The bout leader must be the seat that actually opens each bout. This used
+  // to check the view's own DERIVATION of it (a pass moves the defender without
+  // moving the leader, and the fold had to mirror that rule by hand). Nothing
+  // derives it now — first_attacker is on the board the engine committed — so
+  // what is left to check is that the board agrees with what happened.
+  for (let s = 1; s < frames.length; s++) {
     if (
-      steps[s].kind === LOG_TYPE.ATTACK &&
-      steps[s - 1].battles.length === 0 &&
-      steps[s].seat !== steps[s - 1].firstAttacker
+      frames[s].kind === REPLAY_STEP.ATTACK &&
+      frames[s - 1].game.table_battles.length === 0 &&
+      frames[s].seat !== frames[s - 1].game.first_attacker
     ) {
       throw new Error(
-        `view firstAttacker drift at step ${s}: P${steps[s].seat} opened, derived P${steps[s - 1].firstAttacker}`,
+        `firstAttacker drift at step ${s}: P${frames[s].seat} opened, board says P${frames[s - 1].game.first_attacker}`,
       );
     }
   }
@@ -292,21 +298,10 @@ async function roundTripGame(game: Game, np: number): Promise<void> {
 // Owns the replay validation scenarios; the fast runner
 // (e2e/validation/replay_validation.test.ts) imports `registerReplayValidation`.
 export function registerReplayValidation(): void {
-  // The tutorial ships a frozen replay integer baked into the client, and a
-  // code is only readable by the kernel that cut it — the coder's probability
-  // model IS the legal-move menu, so any menu change renumbers every choice and
-  // orphans the code. These are the tutorial's own facts (3 players, 7♥ trump,
-  // Vera the fool), so a menu change that strands it fails HERE, loudly, next
-  // to the note explaining how to re-cut it — instead of shipping a tutorial
-  // that no longer decodes.
-  test('the frozen tutorial replay still decodes on this kernel', async () => {
-    const dec = await decodeReplay(codeToGame(TUTORIAL_MOVES_CODE));
-    assert.equal(dec.playerCount, 3, 'tutorial is a 3-player game');
-    assert.deepEqual({ ...dec.trumpCard }, { suit: 1, value: 6 }, 'tutorial trump is 7♥');
-    assert.equal(dec.fool, 1, 'Vera (seat 1) is left the fool');
-    assert.equal(dec.logs.length, 70, 'the tutorial script is 70 events long');
-  });
-
+  // The tutorial's own frozen code used to be guarded here. It now has a suite
+  // of its own — e2e/tutorial_game.test.ts, which replays it rather than just
+  // decoding it — registered into this same fast runner by
+  // e2e/validation/tutorial_validation.test.ts.
   test('kernel decode rejects garbage and future versions cleanly', async () => {
     // version 7 header: the smallest integer whose version field is neither the
     // frozen v5 nor the additive v6 (both are now supported); 7 stays unknown.

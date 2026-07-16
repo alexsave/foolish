@@ -240,7 +240,13 @@ static int rs_play(const unsigned char *code, int code_len, int viewer,
 
     RS_STEP_BEGIN(gp);
     g_rs_cur = 0;                       // the deal is nobody's action
+    // A deal with no trump in any hand has no derivable opening seat — the
+    // engine rolls for it, and that roll is not in the code. Hand it the seat
+    // the code recorded; on every other deal this is not consulted and the
+    // check below keeps its teeth.
+    game_force_first_attacker(hdr.first_attacker);
     start_game_with_deck(gp, deck, n_deck);
+    game_force_first_attacker(-1);
     step(gp, viewer, u);
 
     // The rebuilt deal must be the one the code describes. first_attacker is

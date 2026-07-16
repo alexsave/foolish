@@ -2,7 +2,7 @@
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Card, LOG_TYPE, LogType } from '@shared/types.ts';
+import { Card, PLAYER_STATUS } from '@shared/types.ts';
 import { TexturedSurface } from './TexturedSurface';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
 import { AuthContext } from '../contexts/AuthContext';
@@ -16,80 +16,120 @@ import { TutorialHintProvider, TutorialHint } from '../contexts/TutorialHintCont
 import { GameBoard } from './GameBoard';
 import { usePreventScroll } from '../hooks/usePreventScroll';
 import { animationFeed, AnimationSequenceMessage } from '../state/animationFeed';
-import { codeToGame } from '@shared/replay/codec.ts';
+import { bigintToBytes, codeToGame } from '@shared/replay/codec.ts';
 import { decodeReplay } from '@shared/replay/decode.ts';
 import { DecodedReplay } from '@shared/replay/core.ts';
-import { buildReplaySteps, stepToGame, ReplayStep, ReplayGameState } from '../replay/view';
-import { buildReplaySequences, preDealGame } from '../replay/animate';
+import { ensureBotsAsync } from '@shared/wasm/bots.ts';
+import {
+    buildReplayFrames, preDealGame, ReplayFrame, ReplayGameState, REPLAY_STEP,
+} from '../replay/frames';
 import { canCoverCards } from '../utils/gameValidation';
 import { tutorialStrings, tfmt, TutKey } from '../localization/tutorialStrings';
 import { TUTORIAL_MOVES_CODE, TUTORIAL_NAMES } from './tutorialGame';
 
 const SELF_ID = 'seat-0';
+const LEARNER_SEAT = 0;
 const GAME_ID = 'tutorial';
 const RESULT = { game_id: GAME_ID };
 
 const sameCard = (a: Card, b: Card) => a.suit === b.suit && a.value === b.value;
-const LEARNER_KINDS: LogType[] = [LOG_TYPE.ATTACK, LOG_TYPE.COVER, LOG_TYPE.PASS, LOG_TYPE.PICKUP, LOG_TYPE.GOOD];
+const LEARNER_KINDS: number[] = [
+    REPLAY_STEP.ATTACK, REPLAY_STEP.COVER, REPLAY_STEP.PASS, REPLAY_STEP.PICKUP, REPLAY_STEP.GOOD,
+];
 
-/* Give every committed game state a real `self` (seat 0's face-up hand, in a
- * stable display order) so the live hand + action buttons render. */
-function deriveSelf(state: ReplayGameState, powerSuit: number) {
-    const hand = (state.replay_hands?.[0] ?? []).filter((c): c is Card => !!c);
+/* A good that CLOSES the bout is not attributed to anyone: v6 records the round
+ * ending, not who ended it (replay.c apply_round_end emits seat -1), because the
+ * transition belongs to every attacker who had not yet spoken. So when the
+ * learner's own good is the one that closes a bout, the step arrives seat-less
+ * and the tutorial has to recognise it from the board instead: seat 0 was in,
+ * was not defending, and had not said good — so the good the round is waiting on
+ * is theirs to give. */
+const learnerOwesGood = (prev: ReplayFrame | undefined): boolean => {
+    if (!prev) return false;
+    const me = prev.game.players[LEARNER_SEAT];
+    return !!me
+        && me.status !== PLAYER_STATUS.OUT
+        && prev.game.defender !== LEARNER_SEAT
+        && !prev.game.good_players.includes(SELF_ID);
+};
+
+/* The learner's hand, in a stable display order. The frames are built for seat 0
+ * (buildReplayFrames viewer), so `self` is already the kernel's own masked view —
+ * the same one a real player in that seat is served. All this adds is the sort:
+ * trumps last, then by value, so the hand does not reshuffle itself under the
+ * learner as they play. */
+function sortedSelf(state: ReplayGameState, powerSuit: number) {
+    const hand = [...(state.self?.hand ?? [])];
     hand.sort((a, b) => {
         const ta = a.suit === powerSuit ? 1 : 0, tb = b.suit === powerSuit ? 1 : 0;
         return ta - tb || a.value - b.value || a.suit - b.suit;
     });
-    const p0 = state.players?.[0];
-    return {
-        player_id: SELF_ID,
-        name: p0?.name ?? 'You',
-        status: p0?.status ?? 'in',
-        hand_length: p0?.hand_length ?? hand.length,
-        is_ai: false,
-        hand,
-        awaiting_attack: false,
-        strategy_key: 'human',
-    };
+    return { ...state.self, player_id: SELF_ID, is_ai: false, hand, strategy_key: 'human' };
 }
 const mkWithSelf = (powerSuit: number) => <T extends ReplayGameState>(state: T): T =>
-    (!state || !state.players ? state : ({ ...state, self: deriveSelf(state, powerSuit) } as T));
+    (!state || !state.players ? state : ({ ...state, self: sortedSelf(state, powerSuit) } as T));
 
 /* ----------------------------- concept beats ------------------------------- */
 interface Beat { at: number; key: TutKey; extra?: TutKey; name?: string; }
 
-function buildBeats(steps: ReplayStep[], decoded: DecodedReplay, names: string[]): Beat[] {
+/* A concept is taught the first time the game shows it.
+ *
+ * A step is one ACTION now, and an action brings its consequences with it, so
+ * the concepts that used to be steps of their own are read off the step's own
+ * EVENTS instead: a refill is what a draw looks like, an out is what going out
+ * looks like. Both are the kernel's own events — the beat asks the frame what
+ * happened, it does not re-derive it.
+ *
+ * At most one beat shows at a time (the latest at or before the cursor), so a
+ * step that teaches two things at once — a round end is both "good" and
+ * "discard" — would silently drop one. Rather than lose it, that step gets ONE
+ * beat carrying both. */
+function buildBeats(frames: ReplayFrame[], decoded: DecodedReplay, names: string[]): Beat[] {
     const beats: Beat[] = [];
     const seen = new Set<string>();
     const once = (k: string) => (seen.has(k) ? false : (seen.add(k), true));
     const ps = decoded.powerSuit;
     const fa = decoded.firstAttacker;
-    beats.push({ at: 0, key: fa === 0 ? 'first_attacker_you' : 'first_attacker', name: names[fa] });
+    beats.push({ at: 0, key: fa === LEARNER_SEAT ? 'first_attacker_you' : 'first_attacker', name: names[fa] });
 
-    for (let i = 0; i < steps.length; i++) {
-        const s = steps[i];
-        const prev = steps[i - 1];
-        switch (s.kind) {
-            case LOG_TYPE.ATTACK:
-                if (prev && prev.battles.length > 0 && once('throwIn'))
+    const has = (f: ReplayFrame, type: string) => f.seq.events.some((e) => e.type === type);
+
+    for (let i = 0; i < frames.length; i++) {
+        const f = frames[i];
+        const prev = frames[i - 1];
+        switch (f.kind) {
+            case REPLAY_STEP.ATTACK:
+                if (prev && prev.game.table_battles.length > 0 && once('throwIn'))
                     beats.push({ at: i, key: 'throw_in', extra: 'capacity' });
                 break;
-            case LOG_TYPE.COVER: {
+            case REPLAY_STEP.COVER: {
                 if (once('cover')) beats.push({ at: i, key: 'cover', extra: 'stack_rule' });
-                const cov = s.cards[0], tgt = s.target;
+                const cov = f.cards[0], tgt = f.target;
                 if (cov && tgt && cov.suit === ps && tgt.suit !== ps && once('trumpCover'))
                     beats.push({ at: i, key: 'trump_cover' });
                 break;
             }
-            case LOG_TYPE.PASS: if (once('pass')) beats.push({ at: i, key: 'pass' }); break;
-            case LOG_TYPE.PICKUP: if (once('pickup')) beats.push({ at: i, key: 'pickup' }); break;
-            case LOG_TYPE.GOOD: if (once('good')) beats.push({ at: i, key: 'good' }); break;
-            case LOG_TYPE.DISCARD: if (once('discard')) beats.push({ at: i, key: 'discard' }); break;
-            case LOG_TYPE.DRAW: if (once('draw')) beats.push({ at: i, key: 'draw' }); break;
-            case LOG_TYPE.PLAYER_OUT: if (once('out')) beats.push({ at: i, key: 'out', name: names[s.seat ?? 0] }); break;
-            case 'end': beats.push({ at: i, key: 'fool', name: names[decoded.fool] }); break;
+            case REPLAY_STEP.PASS: if (once('pass')) beats.push({ at: i, key: 'pass' }); break;
+            case REPLAY_STEP.PICKUP: if (once('pickup')) beats.push({ at: i, key: 'pickup' }); break;
+            case REPLAY_STEP.GOOD: if (once('good')) beats.push({ at: i, key: 'good' }); break;
+            case REPLAY_STEP.ROUND_END: {
+                // The bout closed: everyone said good, and the table was binned.
+                const g = once('good'), d = once('discard');
+                if (g) beats.push({ at: i, key: 'good', extra: d ? 'discard' : undefined });
+                else if (d) beats.push({ at: i, key: 'discard' });
+                break;
+            }
         }
-        if (s.deckCount === 0 && s.flipped === null && once('deckEmpty')) beats.push({ at: i, key: 'deck_empty' });
+        // Draws and outs ride the action that caused them.
+        if (has(f, 'refill') && once('draw')) beats.push({ at: i, key: 'draw' });
+        if (has(f, 'out') && once('out')) {
+            const outEv = f.seq.events.find((e) => e.type === 'out');
+            const seat = frames[i].game.players.findIndex((p) => p.player_id === outEv?.player_id);
+            beats.push({ at: i, key: 'out', name: names[seat >= 0 ? seat : 0] });
+        }
+        if (f.game.deck_length === 0 && f.game.flipped === null && once('deckEmpty'))
+            beats.push({ at: i, key: 'deck_empty' });
+        if (i === frames.length - 1) beats.push({ at: i, key: 'fool', name: names[decoded.fool] });
     }
     beats.sort((a, b) => a.at - b.at);
     return beats;
@@ -97,7 +137,7 @@ function buildBeats(steps: ReplayStep[], decoded: DecodedReplay, names: string[]
 
 /* The learner's pending move, derived from the next scripted step. */
 interface Move {
-    kind: LogType;
+    kind: number;
     cards: Card[];          // cards to highlight in hand
     target: Card | null;    // attack card to cover (COVER)
     action: string | null;  // wooden button to glow, or null when a drag is needed
@@ -122,13 +162,12 @@ const useTutPlay = () => useContext(TutPlayContext)!;
 
 interface PlaybackProps {
     decoded: DecodedReplay;
-    steps: ReplayStep[];
-    sequences: AnimationSequenceMessage[];
+    frames: ReplayFrame[];
     names: string[];
     onExit: () => void;
 }
 
-const TutorialPlayback = ({ decoded, steps, sequences, names, onExit }: PlaybackProps) => {
+const TutorialPlayback = ({ decoded, frames, names, onExit }: PlaybackProps) => {
     const { updateGameState, game } = useServer();
     const real = useAnimation();
     const { isAnimating } = real;
@@ -139,33 +178,46 @@ const TutorialPlayback = ({ decoded, steps, sequences, names, onExit }: Playback
     const [stepIdx, setStepIdx] = useState(-1);
     const stepRef = useRef(stepIdx);
     stepRef.current = stepIdx;
-    const lastIdx = steps.length - 1;
+    const lastIdx = frames.length - 1;
     const publishSeq = useRef(0);
 
-    const beats = useMemo(() => buildBeats(steps, decoded, names), [steps, decoded, names]);
+    const beats = useMemo(() => buildBeats(frames, decoded, names), [frames, decoded, names]);
+    // The learner's own move: a step they acted on, or the seat-less round end
+    // their good is what the table is waiting for (see learnerOwesGood).
     const isLearnerStep = useCallback(
-        (i: number) => i >= 0 && i <= lastIdx && steps[i].seat === 0 && LEARNER_KINDS.includes(steps[i].kind as LogType),
-        [steps, lastIdx],
+        (i: number) => {
+            if (i < 0 || i > lastIdx) return false;
+            const f = frames[i];
+            if (f.kind === REPLAY_STEP.ROUND_END) return learnerOwesGood(frames[i - 1]);
+            return f.seat === LEARNER_SEAT && LEARNER_KINDS.includes(f.kind);
+        },
+        [frames, lastIdx],
     );
 
     const publishStep = useCallback((i: number) => {
-        const seq: AnimationSequenceMessage = JSON.parse(JSON.stringify(sequences[i]));
+        const seq: AnimationSequenceMessage = JSON.parse(JSON.stringify(frames[i].seq));
         seq.sequence_id = `tut-${i}-${++publishSeq.current}-${Math.random().toString(36).slice(2)}`;
         seq.timestamp = Date.now();
         if (seq.events[0]) (seq.events[0] as any)._nonce = seq.sequence_id;
         animationFeed.publish(seq);
         setStepIdx(i);
-    }, [sequences]);
+    }, [frames]);
 
     // performing a (correct) action advances the scripted game
-    const tryAdvance = useCallback((kind: LogType): boolean => {
+    const tryAdvance = useCallback((kind: number): boolean => {
         const next = stepRef.current + 1;
-        if (next <= lastIdx && steps[next].seat === 0 && steps[next].kind === kind) {
-            publishStep(next);
-            return true;
-        }
-        return false;
-    }, [steps, lastIdx, publishStep]);
+        if (next > lastIdx) return false;
+        const f = frames[next];
+        // A good that closes the bout arrives as a seat-less ROUND_END; it is
+        // still the learner's good to press.
+        const matches = kind === REPLAY_STEP.GOOD
+            ? (f.kind === REPLAY_STEP.GOOD && f.seat === LEARNER_SEAT)
+                || (f.kind === REPLAY_STEP.ROUND_END && learnerOwesGood(frames[next - 1]))
+            : f.seat === LEARNER_SEAT && f.kind === kind;
+        if (!matches) return false;
+        publishStep(next);
+        return true;
+    }, [frames, lastIdx, publishStep]);
 
     // opening deal
     useEffect(() => {
@@ -186,25 +238,26 @@ const TutorialPlayback = ({ decoded, steps, sequences, names, onExit }: Playback
 
     const skipToEnd = useCallback(() => {
         real.resetAnimations();
-        updateGameState(GAME_ID, withSelf(stepToGame(decoded, steps[lastIdx], GAME_ID, names) as ReplayGameState));
+        updateGameState(GAME_ID, withSelf(frames[lastIdx].game));
         setStepIdx(lastIdx);
-    }, [decoded, steps, names, lastIdx, real, updateGameState, withSelf]);
+    }, [frames, lastIdx, real, updateGameState, withSelf]);
 
     const awaiting = stepIdx >= 0 && stepIdx < lastIdx && !isAnimating && isLearnerStep(stepIdx + 1);
-    const pending = awaiting ? steps[stepIdx + 1] : null;
+    const pending = awaiting ? frames[stepIdx + 1] : null;
     const finished = stepIdx >= lastIdx;
 
     // derive the learner's move (which cards/button, or a drag) from the step
     const move: Move | null = useMemo(() => {
         if (!pending) return null;
-        const k = pending.kind as LogType;
-        if (k === LOG_TYPE.ATTACK || k === LOG_TYPE.PASS)
-            return { kind: k, cards: pending.cards, target: null, action: k === LOG_TYPE.ATTACK ? 'attack' : 'pass', mode: 'button' };
-        if (k === LOG_TYPE.PICKUP)
+        // A round end reaching here IS the learner's good (isLearnerStep gates it).
+        const k = pending.kind === REPLAY_STEP.ROUND_END ? REPLAY_STEP.GOOD : pending.kind;
+        if (k === REPLAY_STEP.ATTACK || k === REPLAY_STEP.PASS)
+            return { kind: k, cards: pending.cards, target: null, action: k === REPLAY_STEP.ATTACK ? 'attack' : 'pass', mode: 'button' };
+        if (k === REPLAY_STEP.PICKUP)
             return { kind: k, cards: [], target: null, action: 'pickup', mode: 'button' };
-        if (k === LOG_TYPE.GOOD)
+        if (k === REPLAY_STEP.GOOD)
             return { kind: k, cards: [], target: null, action: 'good', mode: 'button' };
-        if (k === LOG_TYPE.COVER) {
+        if (k === REPLAY_STEP.COVER) {
             const coverCard = pending.cards[0];
             // the Cover button only appears for an unambiguous single-target cover;
             // otherwise the learner drags the card onto the specific attack.
@@ -230,11 +283,11 @@ const TutorialPlayback = ({ decoded, steps, sequences, names, onExit }: Playback
 
     const animValue = useMemo(() => ({
         ...real,
-        attack: async () => { tryAdvance(LOG_TYPE.ATTACK); return RESULT; },
-        pass: async () => { tryAdvance(LOG_TYPE.PASS); return RESULT; },
-        pickup: async () => { tryAdvance(LOG_TYPE.PICKUP); return RESULT; },
-        cover: async () => { tryAdvance(LOG_TYPE.COVER); return RESULT; },
-        good: async () => { tryAdvance(LOG_TYPE.GOOD); return RESULT; },
+        attack: async () => { tryAdvance(REPLAY_STEP.ATTACK); return RESULT; },
+        pass: async () => { tryAdvance(REPLAY_STEP.PASS); return RESULT; },
+        pickup: async () => { tryAdvance(REPLAY_STEP.PICKUP); return RESULT; },
+        cover: async () => { tryAdvance(REPLAY_STEP.COVER); return RESULT; },
+        good: async () => { tryAdvance(REPLAY_STEP.GOOD); return RESULT; },
     }), [real, tryAdvance]);
 
     const play: TutPlay = { S, names, decoded, stepIdx, awaiting, finished, beatText, move, skipToEnd, onExit };
@@ -264,7 +317,7 @@ const TutorialBoard = () => {
     // on the awaiting step so it doesn't loop on every render.
     const selKey = awaiting ? `${stepIdx}` : 'none';
     useEffect(() => {
-        if (move && move.cards.length && (move.kind === LOG_TYPE.ATTACK || move.kind === LOG_TYPE.PASS || move.kind === LOG_TYPE.COVER)) {
+        if (move && move.cards.length && (move.kind === REPLAY_STEP.ATTACK || move.kind === REPLAY_STEP.PASS || move.kind === REPLAY_STEP.COVER)) {
             setSelectedCards(move.cards.map((c) => ({ ...c })));
         } else {
             setSelectedCards([]);
@@ -416,17 +469,28 @@ const IntroCard = ({ onStart, onSkip }: { onStart: () => void; onSkip: () => voi
 
 /* --------------------------------- root ------------------------------------ */
 const buildTutorialData = async () => {
-    const decoded = await decodeReplay(codeToGame(TUTORIAL_MOVES_CODE));
-    const steps = buildReplaySteps(decoded);
+    const x = codeToGame(TUTORIAL_MOVES_CODE);
+    await ensureBotsAsync();
+    const decoded = await decodeReplay(x);
     const names = TUTORIAL_NAMES.slice(0, decoded.playerCount);
     const withSelf = mkWithSelf(decoded.powerSuit);
-    const sequences = buildReplaySequences(decoded, steps, GAME_ID, names).map((seq) => ({
-        ...seq,
-        game: withSelf(seq.game as ReplayGameState),
-        events: seq.events.map((e) => ({ ...e, game_state: withSelf(e.game_state as ReplayGameState) })),
+
+    // Built for SEAT 0: the learner is a player, not a spectator, so the kernel
+    // masks their boards exactly as it would in a real game — they see their own
+    // hand and nobody else's. All withSelf adds is the display sort.
+    const frames = buildReplayFrames(bigintToBytes(x), GAME_ID, names, {
+        viewer: LEARNER_SEAT, fool: decoded.fool,
+    }).map((f) => ({
+        ...f,
+        game: withSelf(f.game),
+        seq: {
+            ...f.seq,
+            game: withSelf(f.seq.game as ReplayGameState),
+            events: f.seq.events.map((e) => ({ ...e, game_state: withSelf(e.game_state as ReplayGameState) })),
+        },
     }));
-    const initial = withSelf(preDealGame(decoded, steps[0], GAME_ID, names) as ReplayGameState);
-    return { decoded, steps, sequences, initial, names };
+    const initial = withSelf(preDealGame(frames[0]));
+    return { decoded, frames, initial, names };
 };
 
 export const Tutorial = () => {
@@ -478,8 +542,7 @@ export const Tutorial = () => {
                             ) : (
                                 <TutorialPlayback
                                     decoded={data.decoded}
-                                    steps={data.steps}
-                                    sequences={data.sequences}
+                                    frames={data.frames}
                                     names={data.names}
                                     onExit={exit}
                                 />

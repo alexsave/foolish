@@ -104,28 +104,36 @@ export const replayRoster = (
     })),
 });
 
-/**
- * Every step of a v6 code, as the frames live play broadcasts.
- *
- * `fool` marks the loser's seat in the closing board's name, the one thing the
- * board itself does not carry.
- */
+export interface ReplayFramesOpts {
+    /** Seat whose eyes the replay is watched through; -1 (default) = spectator.
+     *  The shared-replay screen is a spectator; the tutorial sits in seat 0, so
+     *  its boards mask exactly as they would for a real player in that seat. */
+    viewer?: number;
+    /** The loser's seat, marked in the closing board's name — the one thing the
+     *  board itself does not carry. */
+    fool?: number | null;
+}
+
+/** Every step of a v6 code, as the frames live play broadcasts. */
 export function buildReplayFrames(
     code: Uint8Array,
     gameId: string,
     names?: (string | null)[] | null,
-    fool?: number | null,
+    opts: ReplayFramesOpts = {},
 ): ReplayFrame[] {
+    const viewer = opts.viewer ?? -1;
+    const fool = opts.fool ?? null;
+
     const index: ReplayStepInfo[] = replayStepIndex(code);
-    const spectator = replayEventFrames(code, -1);
-    if (spectator.length !== index.length) {
-        throw new Error(`replay: ${spectator.length} frames for ${index.length} steps`);
+    const main = replayEventFrames(code, viewer);
+    if (main.length !== index.length) {
+        throw new Error(`replay: ${main.length} frames for ${index.length} steps`);
     }
 
     // Player count comes from the frames, not from a header we would have to
     // trust separately: decode step 0 once with a roster wide enough to name any
     // seat, then build the real roster from what came back.
-    const probe = decodeEventWire(spectator[0], replayRoster(gameId, 8, names), CTX);
+    const probe = decodeEventWire(main[0], replayRoster(gameId, 8, names), CTX);
     if (!probe) throw new Error('replay: the opening frame did not decode');
     const n = probe.game.players.length;
     const roster = replayRoster(gameId, n, names);
@@ -134,7 +142,7 @@ export function buildReplayFrames(
     // eye's whole source of truth — see the header.
     const perSeat = Array.from({ length: n }, (_, s) => replayEventFrames(code, s));
 
-    return spectator.map((bytes, i) => {
+    return main.map((bytes, i) => {
         const seq = decodeEventWire(bytes, roster, CTX);
         if (!seq) throw new Error(`replay: step ${i} did not decode`);
 
@@ -148,14 +156,16 @@ export function buildReplayFrames(
         });
 
         const info = index[i];
-        const atEnd = i === spectator.length - 1;
+        const atEnd = i === main.length - 1;
         const game: ReplayGameState = {
             ...(seq.game as PublicGame),
             players: seq.game.players.map((p, s) => ({
                 ...p,
                 name: `${p.name}${atEnd && fool === s ? ' 🃏' : ''}`,
             })),
-            self: REPLAY_VIEWER,
+            // A spectator holds nothing and acts on nothing; a seated viewer's
+            // `self` is the kernel's own, masked exactly as it would be live.
+            self: (seq.game as PersonalGame).self ?? REPLAY_VIEWER,
             replay_hands: hands,
         };
 

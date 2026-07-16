@@ -315,6 +315,13 @@ void start_game(Game *g);
 // simply produces a different one; replay_steps_v6 is the checked entry.
 void start_game_with_deck(Game *g, const Card *deck, int n_deck);
 
+// Pin the opening seat for the ONE deal that cannot derive it: when no player
+// holds a trump, the engine rolls for the first attacker, and a replay has no
+// way to reproduce that roll. A replay passes the seat its code recorded; -1
+// (the default) restores the roll. Consulted only on that branch — see
+// determine_lowest_power_index. Set it before start_game*, clear it after.
+void game_force_first_attacker(int seat);
+
 // The lobby a finished game resets to on "continue"/rematch — the one
 // definition of that transition (docs/C_CORE_CONSOLIDATION.md F6). Three hosts
 // hand-zeroed this list independently: the server (handleContinue), the web

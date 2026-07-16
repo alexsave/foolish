@@ -1671,6 +1671,79 @@ static void test_replay_step_index_tells_a_pass_from_an_attack(void) {
     CHECK(found_pass, "found a seeded game containing a pass");
 }
 
+// A deal where NOBODY holds a trump has no derivable opening seat: the engine
+// rolls for it (determine_lowest_power_index -> deal_index), and that roll is
+// not recorded in a replay code. So a replay must take the seat from its header
+// on that branch, or it rebuilds the right hands and then picks a different
+// opening seat at random.
+//
+// That was a real break, not a hypothetical: the replay refused the game with
+// REPLAY_EHEADER — whose message says "trump not in alphabet", a different fault
+// entirely — on ~1.4% of 2p deals (12 cards from 36, 9 of them trumps), and
+// whether it refused depended on the RNG state, so it was flaky too. The game
+// encoded and decoded perfectly; only its replay was unrenderable.
+static void test_replay_steps_replays_a_deal_with_no_trump(void) {
+    static unsigned char code[1 << 20];
+    unsigned char seed[FOOLISH_SEED_LEN];
+
+    // Find a seeded 2p deal with no trump in either hand. The search MUST use
+    // rs_play_seeded's own seed derivation, or the game found is not the game
+    // played — which is how the first cut of this test came to pass against the
+    // bug it was written to catch.
+    int found = -1;
+    for (int s = 0; s < 600 && found < 0; s++) {
+        for (int i = 0; i < FOOLISH_SEED_LEN; i++)
+            seed[i] = (unsigned char)(i * 31 + s * 13 + 2);
+        game_set_seed((uint32_t)(s + 1));
+        random_strategy_set_seed((uint32_t)(s + 1));
+        game_set_deal_seed_bytes(seed, FOOLISH_SEED_LEN);
+
+        Game d;
+        memset(&d, 0, sizeof d);
+        d.num_players = 2;
+        for (int i = 0; i < 2; i++) d.players[i].status = PLAYER_STATUS_READY;
+        start_game(&d);
+
+        int trumps = 0;
+        for (int i = 0; i < 2; i++)
+            for (int j = 0; j < d.players[i].hand_count; j++)
+                if (d.players[i].hand[j].suit == d.power_suit) trumps++;
+        if (trumps == 0) found = s;
+    }
+    CHECK(found >= 0, "found a 2p deal with no trump in either hand");
+    if (found < 0) return;
+
+    Game g;
+    if (!rs_play_seeded(&g, 2, found, seed)) { CHECK(0, "the no-trump game plays out"); return; }
+
+    // It really is the branch under test: no trump was dealt, so the opening
+    // seat was rolled for, not derived.
+    int trumps_dealt = 0;
+    for (int i = 0; i < 2; i++)
+        for (int j = 0; j < g.players[i].hand_count; j++)
+            if (g.players[i].hand[j].suit == g.power_suit) trumps_dealt++;
+
+    int enc = replay_encode_v6_from_game(&g, seed, FOOLISH_SEED_LEN, 1 << 20,
+                                         code, (int)sizeof code);
+    CHECK(enc > 0, "a no-trump game still encodes");
+    if (enc <= 0) return;
+
+    // The point: it must REPLAY, and replay the same way whatever the RNG is
+    // sitting on. Without the override the rebuilt deal re-rolls the opening
+    // seat and the replay refuses the game outright (-REPLAY_EHEADER), on a
+    // coin flip.
+    int first = -1;
+    for (int trial = 0; trial < 8; trial++) {
+        game_set_seed((uint32_t)(trial * 7919 + 13));
+        random_strategy_set_seed((uint32_t)(trial * 104729 + 7));
+        int steps = replay_steps_count_v6(code, enc, 0);
+        CHECK(steps > 0, "a no-trump game's replay rebuilds its deal (was REPLAY_EHEADER)");
+        if (steps <= 0) return;
+        if (trial == 0) first = steps;
+        else CHECK(steps == first, "and rebuilds it the same way whatever the RNG says");
+    }
+}
+
 // A buffer too small must say so, not write past it or report a short index as
 // a complete one.
 static void test_replay_step_index_refuses_a_small_buffer(void) {
@@ -1964,6 +2037,7 @@ int main(void) {
     test_replay_step_index_says_what_each_step_is();
     test_replay_step_index_tells_a_pass_from_an_attack();
     test_replay_step_index_reports_a_pending_good();
+    test_replay_steps_replays_a_deal_with_no_trump();
     test_replay_step_index_refuses_a_small_buffer();
     test_replay_steps_refuses_v5();
     test_bot_drive_preferred();

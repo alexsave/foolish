@@ -368,6 +368,24 @@ static void deal_initial(Game *g) {
     }
 }
 
+// When nobody was dealt a trump there is nothing to derive the first attacker
+// FROM, and the engine rolls for it (deal_index). That roll is unreproducible
+// from a replay code — the code records the deal, not the RNG state it was
+// rolled against — so a replay of such a game would rebuild the right hands and
+// then pick a different opening seat, at random, on every run.
+//
+// A replay sets this to the seat its header recorded, which is what that game
+// really rolled. It is only consulted on the no-trump branch: when a trump was
+// dealt, the seat is derived, and a replay that derives a different one has
+// rebuilt the wrong hands and must say so rather than paper over it.
+//
+// Rare but real: ~1.4% of 2-player deals (12 cards from 36, 9 of them trumps)
+// have no trump at all. Those replays used to fail with "trump not in alphabet"
+// — REPLAY_EHEADER's message, which is about a different fault entirely.
+static int g_forced_first_attacker = -1;
+
+void game_force_first_attacker(int seat) { g_forced_first_attacker = seat; }
+
 static int determine_lowest_power_index(Game *g) {
     int lowest_v = ACE_VALUE + 1;
     int lowest_p = -1;
@@ -381,7 +399,9 @@ static int determine_lowest_power_index(Game *g) {
         }
     }
     if (lowest_p == -1) {
-        lowest_p = deal_index(g->num_players);
+        lowest_p = (g_forced_first_attacker >= 0 && g_forced_first_attacker < g->num_players)
+                 ? g_forced_first_attacker
+                 : deal_index(g->num_players);
     }
     return lowest_p;
 }

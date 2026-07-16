@@ -97,7 +97,7 @@ test('every step of a web replay is a board the engine really played', async () 
         if (!played) continue;
         const { game, code } = played;
 
-        const frames = buildReplayFrames(code, 'g', null, null);
+        const frames = buildReplayFrames(code, 'g', null);
         assert.ok(frames.length > 1, `${np}p: the code has steps`);
 
         // The closing board is the board the engine finished on. Not "a board
@@ -137,7 +137,7 @@ test('the reveal eye shows the hand a seat REALLY held, not a guess', async () =
         if (!played) continue;
         const { game, code } = played;
 
-        const frames = buildReplayFrames(code, 'g', null, null);
+        const frames = buildReplayFrames(code, 'g', null);
         const hands = frames[frames.length - 1].game.replay_hands;
         assert.equal(hands.length, np, `${np}p: a hand per seat`);
 
@@ -173,7 +173,7 @@ test('the status line asks the kernel what happened, and gets the real game back
             if (count('pass') === 0) continue;
             sawPass = true;
 
-            const frames = buildReplayFrames(code, 'g', null, null);
+            const frames = buildReplayFrames(code, 'g', null);
             const kinds = (k: number) => frames.filter(f => f.kind === k).length;
             assert.equal(kinds(REPLAY_STEP.PASS), count('pass'), `${np}p: passes are passes`);
             assert.equal(kinds(REPLAY_STEP.ATTACK), count('attack'), `${np}p: attacks are attacks`);
@@ -209,7 +209,7 @@ test('stepping back lands on the previous step\'s real board', async () => {
     assert.ok(played);
     if (!played) return;
 
-    const frames = buildReplayFrames(played.code, 'g', null, null);
+    const frames = buildReplayFrames(played.code, 'g', null);
     const reverse = buildReverseFrames(frames);
 
     assert.equal(reverse.length, frames.length, 'a reverse per step');
@@ -230,7 +230,7 @@ test('the deal animates out of an empty table, and the clock tracks the moves', 
     assert.ok(played);
     if (!played) return;
 
-    const frames = buildReplayFrames(played.code, 'g', null, null);
+    const frames = buildReplayFrames(played.code, 'g', null);
 
     const pre = preDealGame(frames[0]);
     assert.equal(pre.deck_length, deckSizeFor(3), 'the stock starts whole');

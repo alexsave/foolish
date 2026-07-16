@@ -1462,7 +1462,12 @@ function replayError(negCode: number, detail: number): Error {
         case 17: return new Error('replay desync: logs continue after the game ended');
         case 18: return new Error('empty menu');
         case 19: return new Error('encode: chosen index out of range');
-        case 20: return new Error('trump not in alphabet');
+        // REPLAY_EHEADER covers every "the header does not fit the game" fault,
+        // not just the trump: replay_steps also raises it when the deal it
+        // rebuilt disagrees with the header's opening seat. Naming only the
+        // first sent a reader hunting through the codec for a trump bug that
+        // was not there — say what the code actually means.
+        case 20: return new Error('invalid replay header (trump not in alphabet, or the rebuilt deal contradicts it)');
         case 21: return new Error('replay: malformed encode input');
         case 22: return new Error('replay: capacity exceeded');
         default: return new Error(`replay kernel error ${negCode}`);

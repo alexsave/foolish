@@ -49,7 +49,7 @@ async function fixture(label: string, np: number, s: number): Promise<Fixture> {
     const played = await playSeededV6(np, s);
     assert.ok(played, `${label}: the seeded game finished`);
     const decoded = await decodeReplay(bytesToBigint(played!.code));
-    const frames = buildReplayFrames(played!.code, 'g', null, decoded.fool);
+    const frames = buildReplayFrames(played!.code, 'g', null, { fool: decoded.fool });
     const f = { decoded, frames, id: label };
     cache.set(label, f);
     return f;

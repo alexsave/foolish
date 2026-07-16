@@ -981,7 +981,7 @@ const buildReplayData = async (code: string, gameId: string) => {
     const names = extras.names;
     // The game, replayed by the engine: one frame per step, each the board the
     // engine really committed and the events it really produced.
-    const frames = buildReplayFrames(bigintToBytes(x), gameId, names, decoded.fool);
+    const frames = buildReplayFrames(bigintToBytes(x), gameId, names, { fool: decoded.fool });
     const reverses = buildReverseFrames(frames);
     const initial = preDealGame(frames[0]);
     const times = stepTimes(frames, extras.startTime, extras.moveGaps);

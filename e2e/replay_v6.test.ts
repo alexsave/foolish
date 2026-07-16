@@ -35,7 +35,7 @@ import { decodeReplay } from '../supabase/functions/_shared/replay/decode.ts';
 import { kernelReplayEncodeV6FromGame } from '../supabase/functions/_shared/wasm/bots.ts';
 import { bytesToBigint } from '../supabase/functions/_shared/replay/codec.ts';
 import { __setDealSeedOverride, __LOG_TYPE_TO_INT } from '../supabase/functions/_shared/wasm/engine.ts';
-import { buildReplaySteps } from '../src/replay/view.ts';
+import { buildReplayFrames } from '../src/replay/frames.ts';
 import { encodeLogsWire } from '../src/oracle/logsWire.ts';
 
 if (!process.env.E2E_VERBOSE) {
@@ -128,29 +128,30 @@ test('v6 belief wire DRAW-masks — no drawn-card identity leaks to the Oracle',
   assert.equal(leaked, 0, `${leaked} drawn-card identities leaked into the belief wire`);
 });
 
-test('v6 view.ts builds fully-resolved hands (no retrodiction — the Oracle fix)', async () => {
+test('a v6 replay knows every hand exactly (no retrodiction — the Oracle fix)', async () => {
+  // This used to assert that the screen's own fold resolved every hidden slot to
+  // an identity. The fold is gone (A5): the hands are the ones the engine really
+  // dealt and played, read back per seat from the kernel's frames. Same claim,
+  // held against the same truth — the game that was played.
   let checked = 0;
   for (let np = 2; np <= 4; np++) {
     for (let gi = 0; gi < GAMES_PER_PC; gi++) {
       const game = await playSeeded(np, gi);
       if (!game) continue;
       const dec = await v6Of(game);
-      const steps = buildReplaySteps(dec); // must not throw (conservation holds)
+      const frames = buildReplayFrames(
+        kernelReplayEncodeV6FromGame(game, hexToBytes(game.game_seed!)), 'g', null, { fool: dec.fool });
 
-      // The whole point: a v6 replay is fully identity-resolved. Hidden cards are
-      // face-DOWN slots (so the deal doesn't render face-up — the UI fix), but
-      // EVERY slot carries its true identity — the view/Oracle never retrodict.
-      for (const step of steps)
-        for (const p of step.players)
-          assert.ok(p.slots.every((s) => s !== null),
-            'every v6 hidden slot has a resolved identity (no retrodicted guess)');
+      // Nothing is ever unknown: a v6 replay does not guess, at any step.
+      for (const f of frames)
+        for (const hand of f.game.replay_hands)
+          assert.ok(hand.every((c) => c !== null),
+            'every card in every hand has an identity (no retrodicted guess)');
 
-      // Exactness: at the final step, each seat's FULL hand (public known +
-      // face-down-but-resolved slots) equals its true hand.
-      const last = steps[steps.length - 1];
+      // Exactness: at the final step, each seat's hand IS its true hand.
+      const last = frames[frames.length - 1];
       for (let s = 0; s < np; s++) {
-        const full = [...last.players[s].known, ...last.players[s].slots.filter(Boolean) as Card[]];
-        const got = new Set(full.map(cardKey));
+        const got = new Set((last.game.replay_hands[s] as Card[]).map(cardKey));
         const want = new Set(game.players[s].hand.map(cardKey));
         assert.equal(got.size, want.size, `seat ${s} final hand size`);
         for (const k of want) assert.ok(got.has(k), `seat ${s} final hand card ${k}`);
