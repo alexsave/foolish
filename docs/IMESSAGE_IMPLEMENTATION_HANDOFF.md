@@ -9,6 +9,44 @@ everything this document does not explicitly correct in §3.*
 
 ---
 
+> ## STATUS 2026-07-17 (read this first — the tree moved past §2/§4 below)
+>
+> - **M0 (the whole FMSG codec) is DONE and on main.** The body is a v6 code,
+>   not raw frames; Rule P / Rule R live in C (the Swift port is CANCELLED);
+>   `msg_wire.{c,h}` + `sha256.{c,h}` + wasm exports + TS bridge + `/m/` route +
+>   the e2e suites all shipped. `docs/IMESSAGE_BODY_CODEC.md` is the authoritative
+>   record — READ IT; it supersedes §3.3 and the "raw frames" of §3.2.
+> - **M1 (iOS shim + target) is DONE.** `fio_msg_decode_json` / `fio_msg_encode`
+>   / `fio_msg_rule_p` / `fio_msg_rebase` exist; `sdk/swift/MessageEnvelope.swift`
+>   wraps them (`decode`/`seal`/`preferred`/`rebase`, all reachable). The
+>   `FoolishMessages` target EXISTS (§2.2's "no target yet" is stale).
+> - **M2 partial (2026-07-17): the expanded bubble renders the REAL board.**
+>   `FoolishKit/Boards/MessageBoardView.swift` lays out a decoded `GameView` in the
+>   app's grammar (seats/deck/trump/battles/discard), read-only + PUBLIC-safe.
+>   `MessageKernel` gained `residentView(viewer:)` / `residentLegal(seat:)` (the
+>   decode adopts the game; these read it back through `fio_state_packed` /
+>   `fio_legal_packed` in the same actor). Verified: app+extension build on the
+>   iPhone-17 sim; `ComponentSnapshotTests.testMessageBoardMidGame` renders a
+>   faithful board and passes.
+>
+> **NEXT, in order (all still open):**
+> 1. **Seat identity (§6)** — cache → sender inference → nickname picker — so the
+>    expanded view can unmask MY hand (today it renders viewer -1, public).
+> 2. **The turn UI (M2)** — tap-to-attack / arm-then-cover / kernel-driven action
+>    bar, over the same `GameView` + `residentLegal`. Reuse `TableView`'s gestures.
+> 3. **The send/accept loop (M3)** — `MessageKernel.seal` is ready and UNUSED:
+>    New-game → `fio_new_game` + seal initial envelope; take-a-turn → `rebase` the
+>    local move + re-seal; compose the `MSMessage` (URL `foolish.cards/m/1<base32>`
+>    + 300×195 PUBLIC snapshot from `MessageBoardView` + `summaryText`) and
+>    `insert` it; wire `didStartSending`/`didCancelSending` (the App-Group cache +
+>    pending ledger). Get the phase/identity semantics from
+>    `IMESSAGE_GAME_DESIGN.md` §6 + §11 BEFORE writing seal callers — a wrong phase
+>    ships a broken invite. A seal→URL→decode round-trip is unit-testable in Swift
+>    without the Messages harness; write that as the oracle before the UI.
+> 4. **M4/M5** as below (game-end bubble, review prep).
+
+---
+
 ## 0. Read these before writing any code
 
 | Doc | What it gives you |
