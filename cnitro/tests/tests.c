@@ -1497,6 +1497,82 @@ static bool rs_play_seeded(Game *g, int np, int seed, unsigned char *seed_out) {
     return game_done(g) >= 0;
 }
 
+// Play until an attacker has said good and the bout is still open — a state
+// only reachable with 3+ players (heads-up, the one attacker's good always
+// closes the round). The game is left exactly there, logs ending on the GOOD,
+// which is what a device mid-turn actually holds.
+static bool rs_play_until_pending_good(Game *g, int np, int seed, unsigned char *seed_out) {
+    for (int i = 0; i < FOOLISH_SEED_LEN; i++)
+        seed_out[i] = (unsigned char)(i * 31 + seed * 13 + np);
+    game_set_seed((uint32_t)(seed + 1));
+    random_strategy_set_seed((uint32_t)(seed + 1));
+    game_set_deal_seed_bytes(seed_out, FOOLISH_SEED_LEN);
+
+    memset(g, 0, sizeof(*g));
+    g->num_players = (int8_t)np;
+    for (int i = 0; i < np; i++) g->players[i].status = PLAYER_STATUS_READY;
+    start_game(g);
+
+    static LegalMoves moves;
+    for (int guard = 0; guard < 20000 && game_done(g) < 0; guard++) {
+        bool acted = false;
+        for (int pi = 0; pi < np && !acted; pi++) {
+            if (!should_bot_act(g, pi)) continue;
+            calculate_legal_moves(g, pi, &moves);
+            if (moves.n == 0) continue;
+            const LegalMove *m = &moves.moves[handwritten_strategy_choose(g, pi, &moves, 0)];
+            switch (m->type) {
+                case MOVE_ATTACK: acted = handle_attack(g, pi, m->cards, m->n_cards); break;
+                case MOVE_COVER:  acted = handle_cover(g, pi, m->cards, m->attack_cards, m->n_cards); break;
+                case MOVE_PASS:   acted = handle_pass(g, pi, m->cards, m->n_cards); break;
+                case MOVE_PICKUP: acted = handle_pickup(g, pi); break;
+                case MOVE_GOOD:   acted = handle_good(g, pi); break;
+                default: break;
+            }
+        }
+        if (!acted) return false;
+        // A good that did not trigger the transition — stop on it.
+        if (g->good_players_mask != 0) return true;
+    }
+    return false;
+}
+
+// A pending good is state the engine holds (good_players_mask) that the action
+// stream cannot re-derive: it is cleared by every other handler, so the only
+// place one is live is the END of a cut stream — and there it is 47% of 4p
+// states (docs/IMESSAGE_BODY_CODEC.md §3). v6 codes it as its own atom.
+static void test_replay_v6_carries_a_pending_good(void) {
+    static unsigned char code[1 << 20];
+    static RsTestCtx ctx;
+
+    int covered = 0;
+    for (int np = 3; np <= 6; np++) {
+        Game g;
+        unsigned char seed[FOOLISH_SEED_LEN];
+        if (!rs_play_until_pending_good(&g, np, 1300 + np, seed)) continue;
+        covered++;
+
+        int enc = replay_encode_v6_from_game(&g, seed, FOOLISH_SEED_LEN, 1 << 20,
+                                             code, (int)sizeof code);
+        CHECK(enc > 0, "a game paused on a pending good encodes as v6");
+        if (enc <= 0) continue;
+
+        memset(&ctx, 0, sizeof ctx);
+        int r = replay_steps_v6(code, enc, VIEW_UNMASKED, 0, rs_test_sink, &ctx);
+        CHECK(r == REPLAY_EOK, "a pending-good cut replays through the engine");
+        if (r != REPLAY_EOK) continue;
+
+        // The invariant the atom exists for.
+        const Game *back = replay_steps_last_game();
+        CHECK(back->good_players_mask == g.good_players_mask,
+              "the rebuilt game holds the same pending goods");
+        CHECK(back->num_battles == g.num_battles,
+              "the rebuilt game's bout is still open on the same table");
+        rs_check_conservation(&ctx, np, "a pending-good replay conserves the deck");
+    }
+    CHECK(covered > 0, "some seat count reaches a pending good");
+}
+
 static void test_replay_steps_rebuilds_the_played_game(void) {
     static unsigned char code[1 << 20];
     static RsTestCtx ctx;
@@ -1662,6 +1738,7 @@ int main(void) {
     test_reset_to_lobby();
     test_replay_steps_rebuilds_the_played_game();
     test_replay_steps_mid_game_cut_conserves_the_deck();
+    test_replay_v6_carries_a_pending_good();
     test_replay_steps_refuses_v5();
     test_bot_drive_preferred();
     test_bot_pacing_table();

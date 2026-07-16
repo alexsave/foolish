@@ -155,6 +155,12 @@ static void rs_apply(Game *g, const RsAction *a) {
         case REPLAY_ATOM_PICKUP:
             handle_pickup(g, a->seat);
             break;
+        case REPLAY_ATOM_GOOD:
+            // A good the bout survived — the codec only emits one when another
+            // attacker has yet to declare, so this never reaches the transition
+            // below. Seats already good here are the ROUND_END loop's problem.
+            handle_good(g, a->seat);
+            break;
         case REPLAY_ATOM_ROUND_END:
             // The live path: every IN attacker says good, and the last one to
             // do it triggers the transition (handle_good). A round whose
@@ -174,10 +180,17 @@ static void rs_apply(Game *g, const RsAction *a) {
     }
 }
 
+// The game the last successful replay_steps_v6 rebuilt — the state a code
+// decodes TO. A mid-game code's continuation (an iMessage turn) plays on from
+// exactly this, so it outlives the call rather than being scratch.
+static Game g_rs_game;
+
+const Game *replay_steps_last_game(void) { return &g_rs_game; }
+
 int replay_steps_v6(const unsigned char *code, int code_len, int viewer,
                     ReplayHeader *hdr_out, EvwSink sink, void *ctx) {
     static RsCollect col;
-    static Game g;
+    Game *gp = &g_rs_game;
 
     memset(&col, 0, sizeof col);
     ReplayHeader hdr;
@@ -198,31 +211,31 @@ int replay_steps_v6(const unsigned char *code, int code_len, int viewer,
     int n_deck = rs_build_deck(&col, n, hdr.trump_id, deck);
     if (n_deck < 0) return -REPLAY_ECAP;
 
-    memset(&g, 0, sizeof g);
-    g.num_players = (int8_t)n;
+    memset(gp, 0, sizeof *gp);
+    gp->num_players = (int8_t)n;
 
     // The deal and the opening flip are events too — a replay opens with the
     // same deal animation live play does, for free, because it IS the deal.
     void (*saved_hook)(const Game *, int, int) = engine_snap_hook;
     engine_snap_hook = rs_snap_cb;
 
-    RS_STEP_BEGIN(&g);
-    start_game_with_deck(&g, deck, n_deck);
-    rs_walk(&g, viewer, sink, ctx);
+    RS_STEP_BEGIN(gp);
+    start_game_with_deck(gp, deck, n_deck);
+    rs_walk(gp, viewer, sink, ctx);
 
     // The rebuilt deal must be the one the code describes. first_attacker is
     // the check with teeth: the engine derives it from the lowest trump
     // (determine_lowest_power_index) while the header carries what was
     // recorded, so agreement means the hands really came back.
-    if (g.first_attacker != (int8_t)hdr.first_attacker) {
+    if (gp->first_attacker != (int8_t)hdr.first_attacker) {
         engine_snap_hook = saved_hook;
         return -REPLAY_EHEADER;
     }
 
     for (int i = 0; i < col.n_acts; i++) {
-        RS_STEP_BEGIN(&g);
-        rs_apply(&g, &col.acts[i]);
-        rs_walk(&g, viewer, sink, ctx);
+        RS_STEP_BEGIN(gp);
+        rs_apply(gp, &col.acts[i]);
+        rs_walk(gp, viewer, sink, ctx);
     }
 
     engine_snap_hook = saved_hook;

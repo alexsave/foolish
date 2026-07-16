@@ -36,7 +36,6 @@ import { ReplayInput, SeatLog, DecodedReplay, INFO_TYPES } from '../supabase/fun
 import { encodeReplay, verifyRoundTrip } from '../supabase/functions/_shared/replay/encode.ts';
 import { decodeReplay } from '../supabase/functions/_shared/replay/decode.ts';
 import { urlToGame, base64Decode, bytesToBigint, codeToGame } from '../supabase/functions/_shared/replay/codec.ts';
-import { oracleEncodeReplay, oracleDecodeReplay } from './replay_ts_oracle.ts';
 import { TUTORIAL_MOVES_CODE } from '../src/components/tutorialGame.ts';
 import {
   encodeExtras,
@@ -154,31 +153,7 @@ function normDecoded(d: DecodedReplay): SeatLog[] {
     }));
 }
 
-// kernel-vs-oracle comparisons keep GOODs: the two implementations must agree
-// on the FULL reconstructed stream, not just the info-bearing subset.
-function normFull(d: DecodedReplay): SeatLog[] {
-  return d.logs.map((l) => ({
-    log_type: l.log_type,
-    seat: l.seat,
-    card_pairs: l.card_pairs.map((p) => ({
-      primary: { suit: p.primary.suit, value: p.primary.value },
-      target: p.target ? { suit: p.target.suit, value: p.target.value } : null,
-    })),
-    defender_index: l.defender_index ?? null,
-  }));
-}
-
-/** Production (kernel) decode must exactly match the frozen TS oracle. */
-function assertKernelMatchesOracle(dec: DecodedReplay, oDec: DecodedReplay): void {
-  assert.equal(diffStreams(normFull(oDec), normFull(dec)), null, 'kernel/oracle stream mismatch');
-  assert.deepEqual(dec.eliminationOrder, oDec.eliminationOrder, 'kernel/oracle elimination mismatch');
-  assert.equal(dec.fool, oDec.fool, 'kernel/oracle fool mismatch');
-  assert.equal(dec.discardPileLength, oDec.discardPileLength, 'kernel/oracle discard mismatch');
-  assert.equal(dec.playerCount, oDec.playerCount, 'kernel/oracle player count mismatch');
-  assert.equal(dec.firstAttacker, oDec.firstAttacker, 'kernel/oracle first attacker mismatch');
-  assert.deepEqual(dec.trumpCard, { ...oDec.trumpCard }, 'kernel/oracle trump mismatch');
-}
-
+/** First differing entry between two streams, or null if identical. */
 function diffStreams(a: SeatLog[], b: SeatLog[]): string | null {
   const ja = a.map((l) => JSON.stringify(l));
   const jb = b.map((l) => JSON.stringify(l));
@@ -200,20 +175,19 @@ async function roundTripGame(game: Game, np: number): Promise<void> {
   };
   const enc = await encodeReplay(input);
 
-  // the kernel encoder must be BYTE-IDENTICAL to the frozen TS oracle — this
-  // is the wire-format guarantee for existing snapshots and shared URLs
-  const oEnc = oracleEncodeReplay(input);
-  assert.equal(enc.x, oEnc.x, 'kernel/oracle encode mismatch');
-  assert.equal(enc.base32, oEnc.base32, 'kernel/oracle base32 mismatch');
-
   // decode through every serialization layer
   const xUrl = urlToGame(enc.url);
   const xB64 = bytesToBigint(base64Decode(enc.base64));
   assert.equal(xUrl, enc.x, 'serialization round-trip mismatch (url)');
   assert.equal(xB64, enc.x, 'serialization round-trip mismatch (base64)');
 
+  // The invariant that matters, and the only one that ever did: the decode is
+  // the game the engine actually played. (This used to also assert byte
+  // parity with a frozen TS re-implementation of the codec. Agreeing with the
+  // real engine is strictly stronger than agreeing with a second copy of the
+  // codec, and the copy could only ever pin the wire format in place —
+  // docs/C_CORE_CONSOLIDATION.md A9.)
   const dec = await decodeReplay(enc.x);
-  assertKernelMatchesOracle(dec, oracleDecodeReplay(enc.x));
   assert.equal(diffStreams(normOriginal(game), normDecoded(dec)), null, 'stream mismatch');
 
   // elimination order / fool / discard must match too
@@ -292,14 +266,19 @@ async function roundTripGame(game: Game, np: number): Promise<void> {
 // Owns the replay validation scenarios; the fast runner
 // (e2e/validation/replay_validation.test.ts) imports `registerReplayValidation`.
 export function registerReplayValidation(): void {
-  // The tutorial ships a frozen v5 integer baked into the client; it decoding
-  // identically under the kernel and the TS oracle proves stored snapshots
-  // and shared URLs survive the port.
-  test('frozen tutorial replay decodes identically via kernel and oracle', async () => {
-    const x = codeToGame(TUTORIAL_MOVES_CODE);
-    const dec = await decodeReplay(x);
-    assertKernelMatchesOracle(dec, oracleDecodeReplay(x));
-    assert.ok(dec.logs.length > 0, 'tutorial replay has events');
+  // The tutorial ships a frozen replay integer baked into the client, and a
+  // code is only readable by the kernel that cut it — the coder's probability
+  // model IS the legal-move menu, so any menu change renumbers every choice and
+  // orphans the code. These are the tutorial's own facts (3 players, 7♥ trump,
+  // Vera the fool), so a menu change that strands it fails HERE, loudly, next
+  // to the note explaining how to re-cut it — instead of shipping a tutorial
+  // that no longer decodes.
+  test('the frozen tutorial replay still decodes on this kernel', async () => {
+    const dec = await decodeReplay(codeToGame(TUTORIAL_MOVES_CODE));
+    assert.equal(dec.playerCount, 3, 'tutorial is a 3-player game');
+    assert.deepEqual({ ...dec.trumpCard }, { suit: 1, value: 6 }, 'tutorial trump is 7♥');
+    assert.equal(dec.fool, 1, 'Vera (seat 1) is left the fool');
+    assert.equal(dec.logs.length, 70, 'the tutorial script is 70 events long');
   });
 
   test('kernel decode rejects garbage and future versions cleanly', async () => {

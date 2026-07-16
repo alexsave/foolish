@@ -262,6 +262,10 @@ static uint64_t comb64(int n, int k) {
 #define V1_ATTACK_FRESH_LEAD 2
 #define V1_ATTACK_FRESH      1
 #define V1_ROUND_END         3
+// A pending good only ever ends a cut stream, so it is rare against round_end
+// (which carries every completed bout). Low weight = it costs the atoms that
+// share its menu almost nothing.
+#define V1_GOOD              1
 #define V1_STOP              1
 #define V1_ID_QUANT          16384
 
@@ -296,6 +300,10 @@ typedef struct {
     int elim[MAX_PLAYERS];
     int num_elim;
     int discard;
+    // Pending "good" declarations (engine: good_players_mask). Every other
+    // action clears it, so a good only survives to the end of a cut stream —
+    // which is exactly why it needs a wire atom at all. v6 only.
+    uint32_t good_mask;
     // Decode log stream, written as it happens (NULL while encoding — the
     // stream is derived output, never read back by the run itself).
     unsigned char *out;
@@ -571,6 +579,7 @@ static void discard_table(RModel *m) {
 // including the exact order of emitted logs and rotation updates.
 
 static void apply_attack(RModel *m, int seat, const int8_t *ids, int n) {
+    m->good_mask = 0;   // every action clears it (game.c handle_attack)
     if (g_atom_sink) {
         int wide[REPLAY_MAX_PAIRS];
         int nn = n > REPLAY_MAX_PAIRS ? REPLAY_MAX_PAIRS : n;
@@ -597,6 +606,7 @@ static void apply_attack(RModel *m, int seat, const int8_t *ids, int n) {
 }
 
 static void apply_cover(RModel *m, int b, int cover_id) {
+    m->good_mask = 0;   // handle_cover, both branches
     // Read the attack card BEFORE the assignment below: it is the atom's target.
     if (g_atom_sink) {
         int one = cover_id;
@@ -628,6 +638,7 @@ static void apply_cover(RModel *m, int b, int cover_id) {
 }
 
 static void apply_pass(RModel *m, int seat, const int8_t *ids, int n) {
+    m->good_mask = 0;   // handle_pass
     if (g_atom_sink) {
         int wide[REPLAY_MAX_PAIRS];
         int nn = n > REPLAY_MAX_PAIRS ? REPLAY_MAX_PAIRS : n;
@@ -655,6 +666,7 @@ static void apply_pass(RModel *m, int seat, const int8_t *ids, int n) {
 }
 
 static void apply_pickup(RModel *m) {
+    m->good_mask = 0;   // handle_pickup
     atom_out(REPLAY_ATOM_PICKUP, m->defender, 0, 0, -1);
     unsigned char pairs[2 * RMAX_BATTLES][2];
     int np = table_pairs(m, pairs);
@@ -667,13 +679,27 @@ static void apply_pickup(RModel *m) {
     emit(m, LOG_DEFENDER_CHANGE, -1, m->defender, 0, 0);
 }
 
-// executeRoundTransition: before the discard, every IN attacker says good,
-// in seat order (good presses cost no wire bits — v4).
+// handle_good WITHOUT the round transition: `seat` declares good and the bout
+// stays open because at least one other attacker has not. Only reachable at the
+// end of a cut stream — every other action clears good_players_mask (game.c),
+// so a pending good never survives one.
+static void apply_good(RModel *m, int seat) {
+    atom_out(REPLAY_ATOM_GOOD, seat, 0, 0, -1);
+    m->good_mask |= 1u << seat;
+    emit(m, LOG_GOOD, seat, -1, 0, 0);
+}
+
+// executeRoundTransition: the good that closes the bout. The engine logs one
+// GOOD per declaration, so only the attackers who have not already declared
+// (apply_good above) log one here — in seat order, as handle_good's callers
+// reach it.
 static void apply_round_end(RModel *m) {
     atom_out(REPLAY_ATOM_ROUND_END, -1, 0, 0, -1);
     for (int s = 0; s < m->n; s++) {
-        if (s != m->defender && m->status[s]) emit(m, LOG_GOOD, s, -1, 0, 0);
+        if (s != m->defender && m->status[s] && !(m->good_mask & (1u << s)))
+            emit(m, LOG_GOOD, s, -1, 0, 0);
     }
+    m->good_mask = 0;
     discard_table(m);
     refill(m);
     m->first_attacker = m->defender;
@@ -688,6 +714,7 @@ static void apply_round_end(RModel *m) {
 #define OPT_PICKUP    2
 #define OPT_ATTACK    3
 #define OPT_ROUND_END 4
+#define OPT_GOOD      5
 
 typedef struct { int8_t kind; int8_t a; int8_t id; } Opt;  // a: battle or seat; id -1 = fresh
 
@@ -791,8 +818,27 @@ static int build_top_menu(RModel *m, Opt *opts, uint32_t *weights) {
             }
         }
     }
+    // A good that does NOT close the bout — handle_good's guards, minus the
+    // case where this seat is the last attacker still to declare (the engine
+    // would run the transition, which is OPT_ROUND_END below, so offering both
+    // would give one log sequence two encodings).
+    for (int seat = 0; seat < m->n; seat++) {
+        if (!m->status[seat] || seat == m->defender) continue;
+        if (m->num_battles == 0 && seat == m->first_attacker) continue;
+        if (m->good_mask & (1u << seat)) continue;
+        if (all_covered) {
+            bool others_pending = false;
+            for (int o = 0; o < m->n; o++) {
+                if (o == seat || o == m->defender || !m->status[o]) continue;
+                if (!(m->good_mask & (1u << o))) { others_pending = true; break; }
+            }
+            if (!others_pending) continue;   // this good closes the bout
+        }
+        ADD(OPT_GOOD, seat, 0, V1_GOOD);
+    }
     // One decision ends the bout: once everything is covered, either someone
-    // throws in (options above) or the round closes (good presses implied).
+    // throws in (options above) or the round closes (the remaining goods are
+    // implied by this one atom).
     if (all_covered) ADD(OPT_ROUND_END, 0, 0, V1_ROUND_END);
 #undef ADD
     return n_opts;
@@ -968,13 +1014,28 @@ static unsigned char rep_wire_of(Card c) {
 // collectV6, ios_api.c build_encode_input, tests/replay_difftest.c,
 // tests/replay_v6_test.c). This is the kernel's copy; `i` indexes `logs`
 // because the round_end rule reads the PREVIOUS log.
-static int log_atom_kind(const GameLog *logs, int i) {
+//
+// GOOD is the subtle one. Most GOODs are NOT atoms:
+//   * a GOOD run that ends in a DISCARD is the bout closing — that whole run
+//     is the ONE round_end atom, and apply_round_end re-emits the logs; and
+//   * a GOOD followed by any other action is dead state, because every
+//     handler clears good_players_mask (game.c) — the decoder reconstructs
+//     good_mask = 0 there whether we code the good or not.
+// What is left is a GOOD in the FINAL run of the stream: a good still pending
+// when the log ends. That is unrepresentable without an atom, and at a mid-game
+// cut it is 47% of 4p states (docs/IMESSAGE_BODY_CODEC.md §3), so it gets one.
+static int log_atom_kind(const GameLog *logs, int num_logs, int i) {
     int kind = logs[i].log_type;
     if (kind == LOG_ATTACK || kind == LOG_COVER
         || kind == LOG_PASS || kind == LOG_PICKUP) return kind;
     if (kind == LOG_DISCARD && i > 0 && logs[i - 1].log_type == LOG_GOOD)
         return REPLAY_ROUND_END;
-    return 0;   // not an atom (GOOD, DRAW, GAME_START, a swept DISCARD, ...)
+    if (kind == LOG_GOOD) {
+        for (int j = i + 1; j < num_logs; j++)
+            if (logs[j].log_type != LOG_GOOD) return 0;  // superseded, see above
+        return LOG_GOOD;                                 // pending at the cut
+    }
+    return 0;   // not an atom (DRAW, GAME_START, a swept DISCARD, ...)
 }
 
 int replay_first_attacker_from_logs(const GameLog *logs, int num_logs) {
@@ -988,7 +1049,7 @@ int replay_first_attacker_from_logs(const GameLog *logs, int num_logs) {
 static int count_atoms_from_logs(const GameLog *logs, int num_logs, int max_atoms) {
     int n = 0;
     for (int i = 0; i < num_logs && n < max_atoms; i++)
-        if (log_atom_kind(logs, i)) n++;
+        if (log_atom_kind(logs, num_logs, i)) n++;
     return n;
 }
 
@@ -999,12 +1060,17 @@ static int count_atoms_from_logs(const GameLog *logs, int num_logs, int max_atom
 // must be rejected rather than coded.
 static int src_load_logs(Src *s, int n_seats) {
     for (int i = s->pos; i < s->num_logs; i++) {
-        int kind = log_atom_kind(s->logs, i);
+        int kind = log_atom_kind(s->logs, s->num_logs, i);
         if (!kind) continue;
         const GameLog *l = &s->logs[i];
         if (kind == REPLAY_ROUND_END) {
             s->kind = REPLAY_ROUND_END;
             s->seat = -1;
+            s->n_pairs = 0;
+        } else if (kind == LOG_GOOD) {
+            if (l->player_idx < 0 || l->player_idx >= n_seats) return REPLAY_EINPUT;
+            s->kind = LOG_GOOD;
+            s->seat = l->player_idx;
             s->n_pairs = 0;
         } else {
             int np = l->num_pairs;
@@ -1044,6 +1110,10 @@ static int src_load(Src *s, int n_seats) {
     if (kind == REPLAY_ROUND_END) {
         if (np != 0) return REPLAY_EINPUT;
         s->seat = -1;
+    } else if (kind == LOG_GOOD) {
+        if (np != 0) return REPLAY_EINPUT;
+        if (seat >= n_seats) return REPLAY_EINPUT;
+        s->seat = seat;
     } else {
         if (kind != LOG_ATTACK && kind != LOG_COVER
             && kind != LOG_PASS && kind != LOG_PICKUP) return REPLAY_EINPUT;
@@ -1125,6 +1195,10 @@ static int find_top_index(RModel *m, const Opt *opts, int n_opts, const Src *s) 
         case LOG_PICKUP:
             for (int i = 0; i < n_opts; i++)
                 if (opts[i].kind == OPT_PICKUP) return i;
+            break;
+        case LOG_GOOD:
+            for (int i = 0; i < n_opts; i++)
+                if (opts[i].kind == OPT_GOOD && opts[i].a == s->seat) return i;
             break;
     }
     m->err = REPLAY_ENOTINMENU;
@@ -1351,6 +1425,7 @@ static void run_replay(RModel *m, Coder *c, Src *s) {
             case OPT_PASS:      atom_pass(m, c, s, opt); break;
             case OPT_PICKUP:    apply_pickup(m); break;
             case OPT_ROUND_END: apply_round_end(m); break;
+            case OPT_GOOD:      apply_good(m, opt.a); break;
         }
         if (m->err) return;
         if (c->err) { m->err = c->err; return; }
@@ -1449,6 +1524,7 @@ static void run_replay_v6(RModel *m, Coder *c, Src *s, uint32_t n_atoms) {
             case OPT_PASS:      atom_pass(m, c, s, opt); break;
             case OPT_PICKUP:    apply_pickup(m); break;
             case OPT_ROUND_END: apply_round_end(m); break;
+            case OPT_GOOD:      apply_good(m, opt.a); break;
         }
         if (m->err) return;
         if (c->err) { m->err = c->err; return; }

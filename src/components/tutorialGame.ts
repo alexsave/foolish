@@ -14,7 +14,14 @@
 // lead; over the game you personally lead, throw in, cover, trump-cover, pass
 // (perevod), pick up, say "good", and finally go out safely — Vera is left the
 // fool. Every gameplay element appears at least once.
-export const TUTORIAL_MOVES_CODE = 'ENSCBI2LBAVUBJJ3J7NODALIBDGEQYLLLICQ';
+//
+// A replay code is only readable by the kernel that cut it: the coder's
+// probability model IS the legal-move menu, so changing the menu renumbers
+// every choice. This code was re-cut when v6 gained the pending-good atom
+// (cnitro/src/replay.c) — same 70-log game, new integer. If a menu change ever
+// orphans it again, decode it with the kernel of the commit before the change
+// and re-encode; there is no other way back in.
+export const TUTORIAL_MOVES_CODE = 'WQBIG5WZTXKMTQRRWK4LLV5UTRRQ2CZFVWYAK';
 
 // Seat names; index 0 is the learner.
 export const TUTORIAL_NAMES = ['You', 'Vera', 'Boris'];

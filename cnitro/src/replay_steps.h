@@ -30,4 +30,10 @@
 int replay_steps_v6(const unsigned char *code, int code_len, int viewer,
                     ReplayHeader *hdr, EvwSink sink, void *ctx);
 
+// The game the last successful replay_steps_v6 rebuilt — the state its code
+// decodes TO, valid until the next call. A whole-game code leaves the finished
+// game here; a mid-game cut leaves the exact position, which is what a
+// continuation (an iMessage turn) plays on from.
+const Game *replay_steps_last_game(void);
+
 #endif

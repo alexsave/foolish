@@ -80,10 +80,10 @@
 //   u8 n (2..8), u8 trump_id (0..51), u8 first_attacker (< n)
 //   u16 LE n_actions
 //   per action:
-//     u8 kind   — LOG_ATTACK / LOG_COVER / LOG_PASS / LOG_PICKUP,
+//     u8 kind   — LOG_ATTACK / LOG_COVER / LOG_PASS / LOG_PICKUP / LOG_GOOD,
 //                 or 0xFF = round_end marker
 //     u8 seat   — acting seat for logs; 0xFF for round_end
-//     u8 n_pairs (<= REPLAY_MAX_PAIRS; 0 for round_end / pickup allowed)
+//     u8 n_pairs (<= REPLAY_MAX_PAIRS; 0 for round_end / pickup / good allowed)
 //     n_pairs x (u8 primary, u8 target) wire cards; info-log primaries must
 //     be real cards (0..51), target is 0xFF except COVER
 //
@@ -209,7 +209,9 @@ int replay_last_error_detail(void);
 #define REPLAY_ATOM_COVER     3  // `target` = the attack card being covered
 #define REPLAY_ATOM_PASS      4
 #define REPLAY_ATOM_PICKUP    5
-#define REPLAY_ATOM_ROUND_END 6  // every IN attacker said good
+#define REPLAY_ATOM_ROUND_END 6  // the good that closed the bout: the rest
+                                 // of the IN attackers said good, then discard
+#define REPLAY_ATOM_GOOD      7  // `seat` said good and the bout stayed open
 
 typedef struct {
     int  kind;                     // REPLAY_ATOM_*
