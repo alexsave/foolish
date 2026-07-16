@@ -35,6 +35,7 @@
 
 #include "game.h"
 #include "legal.h"
+#include "bot_drive.h"
 #include "bot_roster.h"
 #include "json_out.h"
 
@@ -65,6 +66,11 @@ typedef struct {
     bool seat_is_ai[MAX_PLAYERS];
     int  seat_strategy[MAX_PLAYERS];
     bool seat_ready[MAX_PLAYERS];
+    // One per-game trampoline thread paces the bots (see bot_thread). It waits on
+    // `cond` when a human is owed; /action signals it. `bot_running` guards
+    // against spawning a second driver.
+    pthread_cond_t cond;
+    bool bot_running;
 } GameSlot;
 
 static User     g_users[MAX_USERS];
@@ -148,37 +154,68 @@ static bool apply_move_json(Game *g, int seat, const char *move) {
     return false;
 }
 
-// Let every eligible bot act until none can (or the game ends). The kernel
-// picks the move (bot_roster_choose); the loop is the only server-side part.
-static void run_bots(GameSlot *s) {
-    Game *g = &s->game;
-    for (int guard = 0; guard < 512 && game_done(g) < 0; guard++) {
-        bool acted = false;
-        for (int seat = 0; seat < g->num_players; seat++) {
-            if (!s->seat_is_ai[seat]) continue;
-            LegalMoves moves;
-            calculate_legal_moves(g, seat, &moves);
-            if (moves.n == 0) continue;
-            int idx = bot_roster_choose(s->seat_strategy[seat], g, seat, &moves);
-            if (idx < 0 || idx >= moves.n) idx = 0;
-            const LegalMove *m = &moves.moves[idx];
-            switch (m->type) {
-                case MOVE_ATTACK: handle_attack(g, seat, m->cards, m->n_cards); break;
-                case MOVE_COVER:  handle_cover(g, seat, m->cards, m->attack_cards, m->n_cards); break;
-                case MOVE_PASS:   handle_pass(g, seat, m->cards, m->n_cards); break;
-                case MOVE_PICKUP: handle_pickup(g, seat); break;
-                case MOVE_GOOD:   handle_good(g, seat); break;
-                default: break;
-            }
-            acted = true;
-        }
-        if (!acted) break;
-    }
+static uint32_t human_mask_of(GameSlot *s) {
+    uint32_t m = 0;
+    for (int i = 0; i < s->game.num_players; i++) if (!s->seat_is_ai[i]) m |= (1u << i);
+    return m;
 }
 
 static void refresh_status(GameSlot *s) {
     if (s->status == GAME_STATUS_PLAYING && game_done(&s->game) >= 0)
         s->status = GAME_STATUS_GAME_OVER;
+}
+
+// The bot game-loop, one thread per game — a TRAMPOLINE, not a blocking hook.
+// Each pass drives exactly ONE kernel cycle and RETURNS from the kernel; the
+// server then decides how to wait. Same split as supabase (which `await`s a
+// setTimeout) and the phone (Task.sleep): the KERNEL owns the cycle and the
+// delay value (bot_drive + bot_pacing_ms); the host owns how it waits. The
+// `Game` struct IS the continuation, so "resume" is just the next bot_drive.
+//
+// The lock is held while touching the game and RELEASED during the pacing sleep,
+// so bots think + throw in over time while /action and /state keep serving. When
+// no bot can act (a human is owed) the thread waits on `cond` until /action
+// signals it.
+static void *bot_thread(void *arg) {
+    GameSlot *s = arg;
+    pthread_mutex_lock(&g_lock);
+    while (s->used && s->status == GAME_STATUS_PLAYING) {
+        uint32_t hmask = human_mask_of(s);
+        BotDriveOut drv;
+        bot_drive(&s->game, hmask, BOT_DRIVE_MAX_ACTIONS, 0, 0, &drv);   // ONE cycle, then returns
+
+        if (drv.ended >= 0) { s->status = GAME_STATUS_GAME_OVER; break; }
+        if (drv.stop == BOT_STOP_NO_ELIGIBLE) {              // a human's move is owed
+            pthread_cond_wait(&s->cond, &g_lock);            // sleep until /action wakes us
+            continue;
+        }
+
+        // A visible cycle landed — pace it by the kernel's table, lock released.
+        int humans = 0;
+        for (int i = 0; i < s->game.num_players; i++)
+            if ((hmask & (1u << i)) && s->game.players[i].status == PLAYER_STATUS_IN) humans = 1;
+        int pace = BOT_PACE_NONE;
+        for (int i = 0; i < drv.n; i++)
+            if (drv.actions[i].pacing_class > pace) pace = drv.actions[i].pacing_class;
+        int delay = bot_pacing_ms(pace, humans);
+        if (delay > 0) {
+            pthread_mutex_unlock(&g_lock);
+            usleep((useconds_t)delay * 1000);
+            pthread_mutex_lock(&g_lock);
+        }
+    }
+    s->bot_running = false;
+    pthread_mutex_unlock(&g_lock);
+    return NULL;
+}
+
+// Spawn the game-loop for a freshly dealt game (idempotent).
+static void start_bot_loop(GameSlot *s) {
+    if (s->bot_running) return;
+    s->bot_running = true;
+    pthread_t t;
+    if (pthread_create(&t, NULL, bot_thread, s) == 0) pthread_detach(t);
+    else s->bot_running = false;
 }
 
 // --------------------------------------------------------------------------
@@ -229,6 +266,7 @@ static void h_create(Req *r, int fd) {
     for (int i = 0; i < MAX_GAMES; i++) if (!g_games[i].used) { s = &g_games[i]; break; }
     if (!s) { pthread_mutex_unlock(&g_lock); respond(fd, 400, "{\"error\":\"full\"}"); return; }
     memset(s, 0, sizeof *s);
+    pthread_cond_init(&s->cond, NULL);
     s->used = true; s->status = GAME_STATUS_WAITING;
     gen_id(s->id, ID_LEN); snprintf(s->owner, sizeof s->owner, "%s", u->user_id);
     // Seat 0 = creator. Identity lives here; the kernel state is dealt at start.
@@ -288,7 +326,7 @@ static void h_meta(Req *r, int fd) {
             for (int i = 0; i < g->num_players; i++) g->players[i].status = PLAYER_STATUS_READY;
             start_game(g);                 // THE deal — kernel
             s->status = GAME_STATUS_PLAYING;
-            run_bots(s); refresh_status(s); // bots may open the round
+            start_bot_loop(s);             // the game-loop paces bot play from here
         }
     } else if (!strcmp(type, "continue")) {
         // Reset to the lobby for a rematch (identities kept, state re-dealt on start).
@@ -315,7 +353,9 @@ static void h_action(Req *r, int fd) {
     if (seat < 0) { pthread_mutex_unlock(&g_lock); respond(fd, 400, "{\"error\":\"not seated\"}"); return; }
     const char *move = strstr(r->body ? r->body : "", "\"move\"");
     bool ok = apply_move_json(&s->game, seat, move ? move : "");
-    if (ok) { run_bots(s); refresh_status(s); }
+    // Human changed the board — wake the game-loop so bots respond (or notice
+    // the game ended). If it's mid-sleep it re-reads the state on its own.
+    if (ok) { refresh_status(s); pthread_cond_signal(&s->cond); }
     char out[96]; snprintf(out, sizeof out, "{\"ok\":%s,\"status\":%d}", ok ? "true" : "false", s->status);
     pthread_mutex_unlock(&g_lock);
     respond(fd, ok ? 200 : 400, out);
