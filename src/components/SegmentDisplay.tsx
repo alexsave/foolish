@@ -137,13 +137,17 @@ interface SegmentTextProps {
      * unlit) glyphs, like an unused position on a fixed-width LED readout,
      * so the whole run — not just the text — occupies a constant footprint. */
     length?: number;
+    /** Per-character color override (index into `text`, pre-uppercasing) —
+     * e.g. tinting just the suit letters in a card readout red. Falls back
+     * to `color` wherever it returns undefined. */
+    colorAt?: (index: number) => string | undefined;
 }
 
 /** Renders `text` as 15-segment LED glyphs where the font has a mapping,
  * falling back to plain glowing text (space-separated runs) otherwise —
  * so lowercase, punctuation and non-Latin scripts stay legible. */
 export function SegmentText({
-    text, color, height = 12, gap = 2, dim = 'rgba(255,255,255,0.09)', style, length,
+    text, color, height = 12, gap = 2, dim = 'rgba(255,255,255,0.09)', style, length, colorAt,
 }: SegmentTextProps) {
     const chars = text.toUpperCase().split('');
     const nodes: React.ReactNode[] = [];
@@ -164,15 +168,17 @@ export function SegmentText({
         );
         plainBuf = '';
     };
-    let cells = 0;
     chars.forEach((ch, i) => {
         if (ch === ' ') { flushPlain(`p${i}`); nodes.push(<span key={`sp${i}`} style={{ display: 'inline-block', width: height * 0.32 }} />); return; }
         if (ch === '.') { flushPlain(`p${i}`); nodes.push(<Dot key={i} height={height} color={color} />); return; }
-        if (FONT[ch]) { flushPlain(`p${i}`); nodes.push(<Glyph key={i} ch={ch} height={height} color={color} dim={dim} />); cells += 1; return; }
+        if (FONT[ch]) { flushPlain(`p${i}`); nodes.push(<Glyph key={i} ch={ch} height={height} color={colorAt?.(i) ?? color} dim={dim} />); return; }
         plainBuf += ch;
     });
     flushPlain('pEnd');
-    for (let i = cells; length != null && i < length; i += 1) {
+    // Pad by total character count, not just glyph cells — text with spaces
+    // or decimal points (e.g. "EF 5.60 ±0.08") renders those as their own
+    // (narrower) nodes above, so they still count toward the fixed length.
+    for (let i = chars.length; length != null && i < length; i += 1) {
         nodes.push(<Glyph key={`blank${i}`} ch="" height={height} color={color} dim={dim} />);
     }
     return (

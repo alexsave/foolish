@@ -36,25 +36,32 @@ function tokenToCard(token: string): Card | null {
     if (suit < 0 || value == null) return null;
     return { suit, value };
 }
-// Re-render a card token as plain rank+suit-letter text (e.g. "10S") for the
-// single-strip move title — drops the decorative trump marker, same as the
-// old card-face rendering did.
-function cardToText(token: string): string {
-    const c = tokenToCard(token);
-    return c ? `${VALUE_TO_RANK[c.value]}${'SHCD'[c.suit]}` : token;
-}
 // The whole move — attacking cards, an optional "→" and the covered/target
 // cards, or the bare move type for card-less moves (pass/pickup/good/wait) —
-// as one string for a single fixed-width segment display per row.
-function moveTitleText(c: OracleCandidate): string {
-    if (!c.cards.length) return c.type === 'pass' ? 'PASS' : c.type;
-    const src = c.cards.map(cardToText).join('');
-    return c.target?.length ? `${src}→${c.target.map(cardToText).join('')}` : src;
+// as one string for a single fixed-width segment display per row. Also
+// tracks which character indices are red-suit (H/D) letters so the display
+// can tint just those glyphs — plain rank+suit letters otherwise read as an
+// undifferentiated wall of text.
+function moveTitleText(c: OracleCandidate): { text: string; redAt: Set<number> } {
+    const redAt = new Set<number>();
+    let text = '';
+    const pushCard = (token: string) => {
+        const card = tokenToCard(token);
+        if (!card) { text += token; return; }
+        text += VALUE_TO_RANK[card.value];
+        if (card.suit === 1 || card.suit === 3) redAt.add(text.length);
+        text += 'SHCD'[card.suit];
+    };
+    if (!c.cards.length) { text = c.type === 'pass' ? 'PASS' : c.type; return { text, redAt }; }
+    c.cards.forEach(pushCard);
+    if (c.target?.length) { text += '→'; c.target.forEach(pushCard); }
+    return { text, redAt };
 }
 // Fixed character budget for the move-title strip: worst realistic case is
 // three attacking tens covering three cards — 3×"10S" (9) + "→" (1) +
 // 3×"XS" (6) = 16.
 const MOVE_TITLE_LEN = 16;
+const SUIT_RED = '#E8674F';
 
 const CLASS_COLOR: Record<OracleClass, string> = {
     best: '#4CAF7D',
@@ -119,12 +126,11 @@ const LedChip = ({ color, text, width }: { color: string; text: string; width?: 
     </span>
 );
 
-// "EF 12.40 ±0.08" as one fixed-length segment array (like the move title)
-// instead of two separately-sized SegmentText runs — those drifted out of
-// alignment with each other since a 1-digit vs 3-digit mean shifted where
-// the ± run started. 15 cells covers the widest realistic case:
-// "EF " (3) + a 3-digit 2-decimal mean (6) + " ±" (2) + "X.XX" (4) = 15.
-const EF_TITLE_LEN = 15;
+// "EF 5.60 ±0.08" as one fixed-length segment array (like the move title).
+// EF and its error are always exactly "D.DD" (single digit, two decimals),
+// and the error is never omitted, so the format — not just the footprint —
+// is fixed: "EF " (3) + "D.DD" (4) + " ±" (2) + "D.DD" (4) = 13.
+const EF_TITLE_LEN = 13;
 
 // Fixed footprint for the classification chip (best/excellent/.../blunder)
 // — sized to the longest label, "INACCURACY".
@@ -165,16 +171,14 @@ function McRow({ c, best, worst, bestAdj, t }: {
     // Bar width replicates the X-ray formula (gen_html.py / multi_render.py).
     const span = Math.max(worst - best, 0.4);
     const barW = scored ? Math.max(12, Math.min(100, 96 - ((eff! - best) / span) * 84)) : 0;
-    const decimals = c.se < 0.15 ? 2 : 0;
     const isBest = scored && bestAdj != null && Math.abs(eff! - bestAdj) < 1e-9;
     const delta = scored && bestAdj != null ? eff! - bestAdj : 0;
     const cls = scored ? oracleClassify(delta) : null;
     const barColor = isBest ? CLASS_COLOR.best : (cls ? CLASS_COLOR[cls] : '#8a8a92');
-    const efText = scored
-        ? `EF ${eff!.toFixed(decimals)}${c.se < 0.5 && c.se !== Infinity ? ` ±${c.se.toFixed(2)}` : ''}`
-        : (c.pruned ? '—' : '…');
+    // EF and its error are always exactly "D.DD" and never omitted.
+    const efText = scored ? `EF ${eff!.toFixed(2)} ±${c.se.toFixed(2)}` : (c.pruned ? '—' : '…');
 
-    const title = moveTitleText(c);
+    const { text: title, redAt } = moveTitleText(c);
 
     return (
         <div
@@ -188,7 +192,10 @@ function McRow({ c, best, worst, bestAdj, t }: {
         >
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <div style={{ flex: '1 1 auto', display: 'flex', alignItems: 'center', minWidth: 0 }}>
-                    <SegmentText text={title} color={CARD_COLOR} height={10} gap={1.5} length={MOVE_TITLE_LEN} />
+                    <SegmentText
+                        text={title} color={CARD_COLOR} height={10} gap={1.5} length={MOVE_TITLE_LEN}
+                        colorAt={(i) => (redAt.has(i) ? SUIT_RED : undefined)}
+                    />
                 </div>
                 {c.played && <SolidChip bg={AMBER} fg="#231404" text={t('oracle_played')} />}
                 {isBest && <LedChip color={CLASS_COLOR.best} text={t('oracle_best')} width={CLASS_CHIP_W} />}
@@ -213,7 +220,7 @@ function VerdictRow({ c, t }: {
     const barW = VERDICT_BAR[c.verdict] ?? 30;
     const color = VERDICT_COLOR[c.verdict] ?? VERDICT_COLOR.none;
     const depth = c.verdictVal != null ? 1000 - Math.abs(c.verdictVal) : null;
-    const title = moveTitleText(c);
+    const { text: title, redAt } = moveTitleText(c);
     const badge = c.verdict === 'win' ? `WIN${depth != null ? ` in ${depth}` : ''}`
         : c.verdict === 'loss' ? `LOSS${depth != null ? ` in ${depth}` : ''}`
         : c.verdict === 'draw' ? 'DRAW' : c.verdict === 'unknown' ? '?' : '';
@@ -225,7 +232,10 @@ function VerdictRow({ c, t }: {
         }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <div style={{ flex: '1 1 auto', display: 'flex', alignItems: 'center', minWidth: 0 }}>
-                    <SegmentText text={title} color={CARD_COLOR} height={10} gap={1.5} length={MOVE_TITLE_LEN} />
+                    <SegmentText
+                        text={title} color={CARD_COLOR} height={10} gap={1.5} length={MOVE_TITLE_LEN}
+                        colorAt={(i) => (redAt.has(i) ? SUIT_RED : undefined)}
+                    />
                 </div>
                 {c.played && <SolidChip bg={AMBER} fg="#231404" text={t('oracle_played')} />}
                 {badge && <SolidChip bg={color} fg={c.verdict === 'unknown' ? '#222' : '#fff'} text={badge} />}
