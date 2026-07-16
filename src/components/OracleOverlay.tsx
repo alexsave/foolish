@@ -7,24 +7,27 @@
  * mode when the exact endgame solver proves win/loss.
  *
  * Styled as a vintage car-stereo graphic-equalizer faceplate: brushed-metal
- * bezel, amber LED digital readouts, teal illuminated hardware buttons, and
- * segmented EQ-style bargraphs standing in for the plain progress bars.
+ * bezel, amber 15-segment LED digital readouts, teal illuminated hardware
+ * buttons, and segmented EQ-style bargraphs standing in for the plain
+ * progress bars.
  * ========================================================================== */
 
 import React, { useMemo } from 'react';
 import { Card } from '@api/core/types.ts';
 import { useLocalization } from '../contexts/LocalizationContext';
+import { SegmentText } from './SegmentDisplay';
 import {
     OracleSnapshot, OracleCandidate, oracleClassify, OracleClass,
 } from '../oracle/types';
 
-// Inverse of oracleCardToken (types.ts): recover the decoded Card so the real
-// CardFace renders it. Rank strings are OG_EX_VAL; suit is "SHCD"; trailing '*'
-// (trump marker) is decorative.
+// Inverse of oracleCardToken (types.ts): recover the decoded Card so it can
+// be re-rendered as segment glyphs. Rank strings are OG_EX_VAL; suit is
+// "SHCD"; trailing '*' (trump marker) is decorative.
 const RANK_TO_VALUE: Record<string, number> = {
     '2': 1, '3': 2, '4': 3, '5': 4, '6': 5, '7': 6, '8': 7, '9': 8,
     '10': 9, J: 10, Q: 11, K: 12, A: 13,
 };
+const VALUE_TO_RANK = ['?', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
 function tokenToCard(token: string): Card | null {
     const body = token.endsWith('*') ? token.slice(0, -1) : token;
     if (body.length < 2) return null;
@@ -52,6 +55,8 @@ const VERDICT_COLOR: Record<string, string> = {
 // ---- faceplate palette -----------------------------------------------------
 const AMBER = '#FFA53C';
 const TEAL = '#5EEAD4';
+const CARD_COLOR = '#E8E3D2';
+const SUIT_RED = '#E8674F';
 const LCD_MONO = "'Consolas', 'Menlo', 'SFMono-Regular', monospace";
 
 const ledText = (color: string): React.CSSProperties => ({
@@ -67,44 +72,91 @@ interface Props {
     onClose: () => void;
     onToggleMemory: () => void;
     onRetry: () => void;
-    renderCard: (card: Card, w?: number) => React.ReactNode;
 }
 
 // Filled "hardware label" chip — mimics the amber/colored solid indicator
 // tags stenciled onto old car-stereo faceplates (e.g. "PLAYED", "WIN").
-const solidChipStyle = (bg: string, fg = '#fff'): React.CSSProperties => ({
-    fontFamily: LCD_MONO,
-    fontSize: '0.6rem',
-    fontWeight: 700,
-    letterSpacing: '0.03em',
-    padding: '1px 5px',
-    borderRadius: 4,
-    background: bg,
-    color: fg,
-    whiteSpace: 'nowrap',
-});
+// Unlit segments read as embossed dark strokes against the solid fill.
+const SolidChip = ({ bg, fg = '#fff', text }: { bg: string; fg?: string; text: string }) => (
+    <span style={{
+        display: 'inline-flex', padding: '2px 5px', borderRadius: 4, background: bg, whiteSpace: 'nowrap',
+    }}>
+        <SegmentText text={text} color={fg} height={8} gap={1.5} dim="rgba(0,0,0,0.18)" />
+    </span>
+);
 
 // Outline "LCD segment" chip — dark display glass with glowing colored text,
 // like the small backlit labels (MONO / TRCL / SEEK) on the reference units.
-const ledChipStyle = (color: string): React.CSSProperties => ({
-    ...ledText(color),
-    fontSize: '0.58rem',
-    textTransform: 'uppercase',
-    padding: '1px 6px',
-    borderRadius: 4,
-    background: 'rgba(0,0,0,0.5)',
-    border: `1px solid ${color}55`,
-    whiteSpace: 'nowrap',
-});
+const LedChip = ({ color, text }: { color: string; text: string }) => (
+    <span style={{
+        display: 'inline-flex', padding: '2px 6px', borderRadius: 4,
+        background: 'rgba(0,0,0,0.5)', border: `1px solid ${color}55`, whiteSpace: 'nowrap',
+    }}>
+        <SegmentText text={text} color={color} height={8} gap={1.5} />
+    </span>
+);
 
-function CardTokens({ tokens, renderCard }: { tokens: string[]; renderCard: Props['renderCard'] }) {
+// Minimal line-art suit glyphs (0=S 1=H 2=C 3=D, matching "SHCD") — not
+// realistic card art, just enough stroke/dot shapes to read at a glance,
+// drawn with the same round-cap glow as the segment font so a card reads
+// as one more LED-panel readout instead of a pasted-in card face.
+function SuitIcon({ suit, color, size = 9 }: { suit: number; color: string; size?: number }) {
+    const glow = { filter: `drop-shadow(0 0 2px ${color}99)` };
+    const stroke = { stroke: color, strokeWidth: 1.4, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, fill: 'none' };
+    let inner: React.ReactNode;
+    if (suit === 0) { // spade — triangle + stem
+        inner = (
+            <>
+                <path d="M6 1 L11 9.5 L1 9.5 Z" {...stroke} style={glow} />
+                <line x1={6} y1={9.5} x2={6} y2={11.5} stroke={color} strokeWidth={1.4} strokeLinecap="round" style={glow} />
+            </>
+        );
+    } else if (suit === 1) { // heart — two dots + converging V
+        inner = (
+            <>
+                <circle cx={3.4} cy={3.6} r={1.7} fill={color} style={glow} />
+                <circle cx={8.6} cy={3.6} r={1.7} fill={color} style={glow} />
+                <path d="M1.8 5.2 L6 11.5 L10.2 5.2" {...stroke} style={glow} />
+            </>
+        );
+    } else if (suit === 2) { // club — trefoil dots + stem
+        inner = (
+            <>
+                <circle cx={6} cy={3.2} r={2} fill={color} style={glow} />
+                <circle cx={2.6} cy={7} r={2} fill={color} style={glow} />
+                <circle cx={9.4} cy={7} r={2} fill={color} style={glow} />
+                <line x1={6} y1={8} x2={6} y2={11.5} stroke={color} strokeWidth={1.4} strokeLinecap="round" style={glow} />
+            </>
+        );
+    } else { // diamond — rotated square outline
+        inner = <path d="M6 1 L11 6 L6 11 L1 6 Z" {...stroke} style={glow} />;
+    }
+    return <svg width={size} height={size} viewBox="0 0 12 12" style={{ flex: 'none' }}>{inner}</svg>;
+}
+
+// A card as a tiny LED-panel readout: rank via the 15-segment font, suit via
+// SuitIcon. Falls back to the raw token (already segment-rendered) if it
+// doesn't parse as a card.
+function CardGlyph({ token, height = 11 }: { token: string; height?: number }) {
+    const c = tokenToCard(token);
+    if (!c) return <SegmentText text={token} color={CARD_COLOR} height={height} gap={1} />;
+    const isRed = c.suit === 1 || c.suit === 3;
     return (
-        <span style={{ display: 'inline-flex', gap: 1, alignItems: 'center' }}>
-            {tokens.map((tk, i) => {
-                const c = tokenToCard(tk);
-                return c ? <React.Fragment key={i}>{renderCard(c, 17)}</React.Fragment>
-                    : <span key={i} style={{ fontSize: '0.66rem' }}>{tk}</span>;
-            })}
+        <span style={{
+            display: 'inline-flex', alignItems: 'center', gap: 2,
+            padding: '1px 3px', borderRadius: 3,
+            border: `1px solid ${CARD_COLOR}2e`, background: 'rgba(255,255,255,0.03)',
+        }}>
+            <SegmentText text={VALUE_TO_RANK[c.value]} color={CARD_COLOR} height={height} gap={1} />
+            <SuitIcon suit={c.suit} color={isRed ? SUIT_RED : CARD_COLOR} size={height * 0.85} />
+        </span>
+    );
+}
+
+function CardTokens({ tokens }: { tokens: string[] }) {
+    return (
+        <span style={{ display: 'inline-flex', gap: 3, alignItems: 'center' }}>
+            {tokens.map((tk, i) => <CardGlyph key={i} token={tk} />)}
         </span>
     );
 }
@@ -132,9 +184,9 @@ function EqBar({ pct, color }: { pct: number; color: string }) {
     );
 }
 
-function McRow({ c, best, worst, bestAdj, renderCard, t }: {
+function McRow({ c, best, worst, bestAdj, t }: {
     c: OracleCandidate; best: number; worst: number; bestAdj: number | null;
-    renderCard: Props['renderCard']; t: (id: any, p?: any) => string;
+    t: (id: any, p?: any) => string;
 }) {
     // Bar, sort, classification and the displayed number ALL key off the true
     // expected finish (mean) — the 0.04/trump tie-break tax never distorts what
@@ -151,8 +203,8 @@ function McRow({ c, best, worst, bestAdj, renderCard, t }: {
     const barColor = isBest ? CLASS_COLOR.best : (cls ? CLASS_COLOR[cls] : '#8a8a92');
 
     const cards = c.cards.length
-        ? <CardTokens tokens={c.cards} renderCard={renderCard} />
-        : <span style={{ fontSize: '0.68rem', opacity: 0.8, textTransform: 'capitalize' }}>{c.type}</span>;
+        ? <CardTokens tokens={c.cards} />
+        : <SegmentText text={c.type === 'pass' ? 'PASS' : c.type} color={CARD_COLOR} height={10} gap={1.5} />;
 
     return (
         <div
@@ -168,47 +220,49 @@ function McRow({ c, best, worst, bestAdj, renderCard, t }: {
                 <div style={{ flex: '1 1 auto', display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
                     {c.target?.length ? (
                         <>{cards}<span style={{ opacity: 0.55, fontSize: '0.66rem' }}>→</span>
-                            <CardTokens tokens={c.target} renderCard={renderCard} /></>
+                            <CardTokens tokens={c.target} /></>
                     ) : cards}
                 </div>
-                {c.played && <span style={solidChipStyle(AMBER, '#231404')}>{t('oracle_played')}</span>}
-                {isBest && <span style={ledChipStyle(CLASS_COLOR.best)}>{t('oracle_best')}</span>}
-                {!isBest && cls && <span style={ledChipStyle(CLASS_COLOR[cls])}>{t(`oracle_class_${cls}`)}</span>}
-                {c.pruned && !scored && <span style={ledChipStyle('rgba(180,180,190,0.7)')}>{t('oracle_pruned')}</span>}
-                {c.forcedLoss && <span style={solidChipStyle(VERDICT_COLOR.loss)}>{t('oracle_forced_loss')}</span>}
+                {c.played && <SolidChip bg={AMBER} fg="#231404" text={t('oracle_played')} />}
+                {isBest && <LedChip color={CLASS_COLOR.best} text={t('oracle_best')} />}
+                {!isBest && cls && <LedChip color={CLASS_COLOR[cls]} text={t(`oracle_class_${cls}`)} />}
+                {c.pruned && !scored && <LedChip color="rgba(180,180,190,0.7)" text={t('oracle_pruned')} />}
+                {c.forcedLoss && <SolidChip bg={VERDICT_COLOR.loss} text={t('oracle_forced_loss')} />}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 {scored ? <EqBar pct={barW} color={barColor} />
                     : <div style={{ flex: '1 1 auto', height: 7 }} />}
                 <span
                     title={t('oracle_ef_tip')}
-                    style={{
-                        ...ledText(AMBER),
-                        fontVariantNumeric: 'tabular-nums', fontSize: '0.66rem',
-                        minWidth: 66, textAlign: 'right',
-                    }}
+                    style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4, minWidth: 66 }}
                 >
-                    {scored
-                        ? <>EF {c.mean!.toFixed(decimals)}{c.se < 0.5 && c.se !== Infinity
-                            ? <span style={{ opacity: 0.65 }}> ±{c.se.toFixed(2)}</span> : null}</>
-                        : (c.pruned ? '—' : '…')}
+                    {scored ? (
+                        <>
+                            <SegmentText text={`EF ${c.mean!.toFixed(decimals)}`} color={AMBER} height={10} gap={1.5} />
+                            {c.se < 0.5 && c.se !== Infinity && (
+                                <span style={{ opacity: 0.65 }}>
+                                    <SegmentText text={`±${c.se.toFixed(2)}`} color={AMBER} height={8} gap={1.5} />
+                                </span>
+                            )}
+                        </>
+                    ) : <span style={ledText(AMBER)}>{c.pruned ? '—' : '…'}</span>}
                 </span>
             </div>
         </div>
     );
 }
 
-function VerdictRow({ c, renderCard, t }: {
-    c: OracleCandidate; renderCard: Props['renderCard']; t: (id: any, p?: any) => string;
+function VerdictRow({ c, t }: {
+    c: OracleCandidate; t: (id: any, p?: any) => string;
 }) {
     const barW = VERDICT_BAR[c.verdict] ?? 30;
     const color = VERDICT_COLOR[c.verdict] ?? VERDICT_COLOR.none;
     const depth = c.verdictVal != null ? 1000 - Math.abs(c.verdictVal) : null;
     const cards = c.cards.length
         ? (c.target?.length
-            ? <><CardTokens tokens={c.cards} renderCard={renderCard} /><span style={{ opacity: 0.55 }}>→</span><CardTokens tokens={c.target} renderCard={renderCard} /></>
-            : <CardTokens tokens={c.cards} renderCard={renderCard} />)
-        : <span style={{ fontSize: '0.68rem', opacity: 0.8, textTransform: 'capitalize' }}>{c.type}</span>;
+            ? <><CardTokens tokens={c.cards} /><span style={{ opacity: 0.55 }}>→</span><CardTokens tokens={c.target} /></>
+            : <CardTokens tokens={c.cards} />)
+        : <SegmentText text={c.type === 'pass' ? 'PASS' : c.type} color={CARD_COLOR} height={10} gap={1.5} />;
     const badge = c.verdict === 'win' ? `WIN${depth != null ? ` in ${depth}` : ''}`
         : c.verdict === 'loss' ? `LOSS${depth != null ? ` in ${depth}` : ''}`
         : c.verdict === 'draw' ? 'DRAW' : c.verdict === 'unknown' ? '?' : '';
@@ -220,8 +274,8 @@ function VerdictRow({ c, renderCard, t }: {
         }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <div style={{ flex: '1 1 auto', display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>{cards}</div>
-                {c.played && <span style={solidChipStyle(AMBER, '#231404')}>{t('oracle_played')}</span>}
-                {badge && <span style={solidChipStyle(color, c.verdict === 'unknown' ? '#222' : '#fff')}>{badge}</span>}
+                {c.played && <SolidChip bg={AMBER} fg="#231404" text={t('oracle_played')} />}
+                {badge && <SolidChip bg={color} fg={c.verdict === 'unknown' ? '#222' : '#fff'} text={badge} />}
             </div>
             <EqBar pct={barW} color={color} />
         </div>
@@ -238,7 +292,7 @@ const Rivet = ({ style }: { style: React.CSSProperties }) => (
     }} />
 );
 
-export const OracleOverlay = ({ snapshot, onClose, onToggleMemory, onRetry, renderCard }: Props) => {
+export const OracleOverlay = ({ snapshot, onClose, onToggleMemory, onRetry }: Props) => {
     const { t } = useLocalization();
 
     const scored = useMemo(
@@ -255,9 +309,9 @@ export const OracleOverlay = ({ snapshot, onClose, onToggleMemory, onRetry, rend
 
     const statusChip = (() => {
         if (!s) return null;
-        if (s.status === 'exact') return <span style={ledChipStyle(CLASS_COLOR.best)}>{t('oracle_exact')}</span>;
-        if (s.status === 'converged') return <span style={ledChipStyle('#7FB6E8')}>{t('oracle_converged')}</span>;
-        if (s.status === 'forced') return <span style={ledChipStyle('rgba(190,190,200,0.75)')}>{t('oracle_forced_move')}</span>;
+        if (s.status === 'exact') return <LedChip color={CLASS_COLOR.best} text={t('oracle_exact')} />;
+        if (s.status === 'converged') return <LedChip color="#7FB6E8" text={t('oracle_converged')} />;
+        if (s.status === 'forced') return <span style={{ ...ledText('rgba(190,190,200,0.75)'), fontSize: '0.6rem' }}>{t('oracle_forced_move')}</span>;
         if (running) return (
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.66rem', ...ledText(AMBER) }}>
                 <Spinner />
@@ -304,9 +358,6 @@ export const OracleOverlay = ({ snapshot, onClose, onToggleMemory, onRetry, rend
                 background: 'linear-gradient(180deg, rgba(0,0,0,0.35), rgba(0,0,0,0.15))',
             }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ ...ledText(AMBER), fontSize: '0.8rem', textTransform: 'uppercase' }}>
-                        🔮 {t('oracle_panel_title')}
-                    </span>
                     <span style={{ flex: '1 1 auto' }} />
                     {statusChip}
                     <button onClick={onClose} aria-label="close" style={{
@@ -317,9 +368,8 @@ export const OracleOverlay = ({ snapshot, onClose, onToggleMemory, onRetry, rend
                     }}>×</button>
                 </div>
                 {s && s.status !== 'error' && (
-                    <div style={{ marginTop: 4, fontSize: '0.68rem', ...ledText('#7CE38C') }}>
-                        <span>P{s.seat + 1}</span>
-                        {' · '}<span style={{ textTransform: 'uppercase' }}>{s.recordedLabel}</span>
+                    <div style={{ marginTop: 4 }}>
+                        <SegmentText text={`P${s.seat + 1} · ${s.recordedLabel}`} color="#7CE38C" height={10} gap={1.5} />
                     </div>
                 )}
                 {/* memory toggle */}
@@ -330,15 +380,17 @@ export const OracleOverlay = ({ snapshot, onClose, onToggleMemory, onRetry, rend
                         title={s.memoryOn ? t('oracle_memory_on') : t('oracle_memory_off')}
                         style={{
                             marginTop: 6, display: 'inline-flex', alignItems: 'center', gap: 6,
-                            padding: '2px 9px', borderRadius: 3, cursor: 'pointer',
+                            padding: '3px 9px', borderRadius: 3, cursor: 'pointer',
                             border: s.memoryOn ? `1px solid ${TEAL}88` : '1px solid rgba(255,255,255,0.14)',
                             background: s.memoryOn ? 'rgba(94,234,212,0.14)' : 'rgba(255,255,255,0.04)',
                             boxShadow: s.memoryOn ? `0 0 6px ${TEAL}44` : 'none',
-                            ...ledText(s.memoryOn ? TEAL : 'rgba(220,220,225,0.55)'),
-                            fontSize: '0.62rem', textTransform: 'uppercase',
                         }}
                     >
-                        {t('oracle_memory')}: {s.memoryOn ? 'on' : 'off'}
+                        <SegmentText
+                            text={`${t('oracle_memory')}: ${s.memoryOn ? 'ON' : 'OFF'}`}
+                            color={s.memoryOn ? TEAL : 'rgba(220,220,225,0.55)'}
+                            height={9} gap={1.5}
+                        />
                     </button>
                 )}
             </div>
@@ -356,15 +408,16 @@ export const OracleOverlay = ({ snapshot, onClose, onToggleMemory, onRetry, rend
                             padding: '4px 14px', borderRadius: 4, cursor: 'pointer',
                             border: `1px solid ${TEAL}88`, background: 'rgba(94,234,212,0.12)',
                             boxShadow: `0 0 6px ${TEAL}33`,
-                            ...ledText(TEAL), fontSize: '0.7rem', textTransform: 'uppercase',
-                        }}>{t('oracle_retry')}</button>
+                        }}>
+                            <SegmentText text={t('oracle_retry')} color={TEAL} height={9} gap={1.5} />
+                        </button>
                     </div>
                 ) : (
                     <>
                         {s.candidates.map((c) => (
                             exact
-                                ? <VerdictRow key={c.key} c={c} renderCard={renderCard} t={t} />
-                                : <McRow key={c.key} c={c} best={best} worst={worst} bestAdj={bestAdj} renderCard={renderCard} t={t} />
+                                ? <VerdictRow key={c.key} c={c} t={t} />
+                                : <McRow key={c.key} c={c} best={best} worst={worst} bestAdj={bestAdj} t={t} />
                         ))}
                         {!s.recordedPresent && s.status !== 'forced' && (
                             <div style={{ padding: '6px 7px', fontSize: '0.64rem', fontStyle: 'italic', ...ledText('rgba(210,210,216,0.6)') }}
