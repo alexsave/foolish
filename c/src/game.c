@@ -236,6 +236,15 @@ int game_done(const Game *g) {
     return -1;
 }
 
+// The kernel records its own end. handle_* leave the loser on player statuses
+// (game_done reads it), but never touched g->status — so "is it over" was a fact
+// every host recomputed and cached in a status of its own. Now the apply paths
+// call this after a move, and g->status carries the answer for everyone.
+void game_settle_status(Game *g) {
+    if (g && g->status == GAME_STATUS_PLAYING && game_done(g) >= 0)
+        g->status = GAME_STATUS_GAME_OVER;
+}
+
 // ---------- Logs -------------------------------------------------------
 
 #ifdef GUARDS_VALIDATE_ONLY
@@ -986,14 +995,17 @@ bool handle_good(Game *g, int player_idx) {
 // on a false return; the caller owns any snapshot/event bookkeeping around it.
 bool awire_apply(Game *g, int seat, const AwireAction *a) {
     if (!g || !a || seat < 0 || seat >= g->num_players) return false;
+    bool ok;
     switch (a->kind) {
-        case AWIRE_ATTACK: return handle_attack(g, seat, a->cards, a->n);
-        case AWIRE_COVER:  return handle_cover(g, seat, a->cards, a->attacks, a->n);
-        case AWIRE_PASS:   return handle_pass(g, seat, a->cards, a->n);
-        case AWIRE_PICKUP: return handle_pickup(g, seat);
-        case AWIRE_GOOD:   return handle_good(g, seat);
+        case AWIRE_ATTACK: ok = handle_attack(g, seat, a->cards, a->n); break;
+        case AWIRE_COVER:  ok = handle_cover(g, seat, a->cards, a->attacks, a->n); break;
+        case AWIRE_PASS:   ok = handle_pass(g, seat, a->cards, a->n); break;
+        case AWIRE_PICKUP: ok = handle_pickup(g, seat); break;
+        case AWIRE_GOOD:   ok = handle_good(g, seat); break;
         default:           return false;
     }
+    if (ok) game_settle_status(g);   // the kernel records its own game-over
+    return ok;
 }
 
 // Standalone entries mirroring the TS exports (see game.h).
