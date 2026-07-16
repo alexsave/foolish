@@ -883,18 +883,25 @@ build/named/bots.named.wasm: $(WASM_BOT_OBJ)
 	          $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) $(WASM_BOT_OBJ) -o $@
 	$(if $(strip $(WASM_BOTS_POSTOPT)),$(WASM_OPT_BIN) $(WASM_OPT_FEATURES) $(WASM_BOTS_POSTOPT) --debuginfo $@ -o $@,:)
 
-# bots.wasm ships as a gzip STATIC ASSET (config.toml static_files + deploy
-# --use-api, no Docker) — a real 47KB binary, not a 155KB base64 .ts embed.
-# Loaded by _shared/wasm/wasm_asset.ts (server-only; bots never run in browser).
+# bots.wasm ships as ONE gzip STATIC ASSET (config.toml static_files + deploy
+# --use-api, no Docker) — a real binary, not a base64 .ts embed.
+#
+# EVERY host reads this one file. The server (Deno edge / Node) with
+# fs/readFileSync; the browser by FETCHING it, because it has neither — see
+# _shared/wasm/wasm_asset.ts. The browser needs the big module for two reasons
+# that arrived together: FMSG's decode/seal live only here (sealing reads a
+# resident session log rules.wasm cannot hold, and /m/ is a web page), and A5's
+# replay_steps does too (~272 KB of decoded actions vs a 196,608 B pin). One
+# module behind every host is the steer.
+#
+# There was briefly a base64 twin here for the browser. It is deliberately gone:
+# a second carrier of the same bytes is exactly how rules_wasm.ts went stale for
+# weeks while this .gz kept being rebuilt — two kernels in one tree, and a C
+# change invisible to every TS test that loaded the stale one. It also put 80 KB
+# of single-line base64, rewritten on every kernel build, into git. The price is
+# that the browser's door is async (ensureBotsAsync); that is the cheaper half.
 wasm-bots: build/bots.wasm
 	gzip -9 -n -c build/bots.wasm > ../supabase/functions/_shared/wasm/bots.wasm.gz
-	@# Browser-loadable twin of the SAME bytes. The static .gz above is read with
-	@# node:fs/Deno.readFileSync, which a browser has neither of — and the FMSG
-	@# route (/m/) is a browser page that needs the big module (msg decode/seal
-	@# live only here). One module behind every host is the standing steer; this
-	@# is what lets the web reach it without a second kernel. Both artifacts come
-	@# from build/bots.wasm in the same rule, so they cannot drift.
-	node wasm/embed.mjs build/bots.wasm ../supabase/functions/_shared/wasm/bots_wasm.ts BOTS_WASM_B64 --gzip
 
 # ---------------------------------------------------------------------------
 # oracle.wasm — the client-side "infinite oracle" replay analyzer
