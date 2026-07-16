@@ -256,10 +256,27 @@ unevaluated:
 2. Resume M0's spine: `wasm_msg_*` exports + TS bridge, `e2e/msg_wire.test.ts`,
    `e2e/msg_concurrency.test.ts` (Rule P/R as pure TS — the oracle the Swift port
    must match in M3), `/m/[payload]`.
-   Note the ENCODE export likely belongs in **`bots.wasm`**, not `rules.wasm`:
-   sealing needs a session log resident, which is exactly why
-   `wasm_replay_encode_v6_from_game` is bots-only (`cnitro/Makefile:458`).
-   `rules.wasm` only ever needs to DECODE — all `/m/` does.
+   Two things scoped but not yet built, both non-obvious:
+
+   - **The exports split across the two modules, and the split is forced.**
+     `wasm_msg_decode` belongs in `wasm/wasm_api.c` (both modules): `/m/` only
+     ever DECODES, and a decode's log overflow is harmless because nothing
+     re-encodes it. `wasm_msg_seal` belongs in `wasm/wasm_bots_api.c`
+     (**bots-only**): sealing reads the resident session log, which is exactly
+     why `wasm_replay_encode_v6_from_game` is bots-only already
+     (`cnitro/Makefile:458` — `rules.wasm` builds at `MAX_LOGS=128` and its
+     3-page pin cannot be raised). Keeping `msg_seal`'s scratch `Game` (~33KB) in
+     the bots-only file also keeps it out of that pin.
+   - **LANDMINE: the envelope must live in `g_replay_io`, never `g_io`.**
+     `rules.wasm` builds with `-DCD_RULES_OVERLAY`, which aliases the replay
+     scratch family (`g_rec` + `g_bn` + `g_replay_io`) OVER the action family
+     (`g_moves` + `g_snaps` + `g_io`) in one arena — legal because "replay
+     encode/decode vs action/menu are top-level exports that never nest"
+     (`cnitro/Makefile`). An FMSG export breaks that assumption: it is a replay
+     call, so its bignum scratch would **silently clobber an envelope parked in
+     `g_io` mid-decode** — and `MsgEnvelope` BORROWS those bytes. Park it in
+     `g_replay_io` and the msg exports stay inside the replay family, where they
+     belong.
 3. `IMESSAGE_IMPLEMENTATION_HANDOFF.md` §3.2/§3.3 and `IMESSAGE_GAME_DESIGN.md`
    §4.2/§16 still describe the raw chain and defer v6. They are now wrong; this
    doc supersedes them.
