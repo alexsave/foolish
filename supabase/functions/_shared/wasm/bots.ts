@@ -14,11 +14,17 @@
 // Loaded lazily and cached: the pure rules path (actions/) never pays for
 // the larger module; the first bot decision instantiates it.
 
-import { Game } from '../types.ts';
+import { Card, Game } from '../types.ts';
 import { LegalMove } from '../bot_interfaces.ts';
 import { loadWasmGz } from './wasm_asset.ts';
 import { takeBOTS_WASM_B64 } from './bots_wasm.ts';
 import { gunzip } from './gunzip.ts';
+import { parseMaskedState, type ViewState } from '../wire/view.ts';
+
+// view.h: mask every hand and the deck.
+const VIEW_SPECTATOR = -1;
+// view.c's wasm_view_serialize prefixes [format, viewer] before the state.
+const VIEW_FORMAT_VERSION = 1;
 import {
     EngineExports, PackedRunOk, __LOG_TYPE_TO_INT, __MOVE_TYPE, __adoptEngine, __decodeBase64,
     __marshalGame, __mem, __pooledCard, __replayError, __setResident,
@@ -844,6 +850,29 @@ export function kernelMsgRebase(pendingRound: number, seat: number, wire: Uint8A
     if (r < 0) throw msgError(r);
     __setResident(null);
     return r;
+}
+
+// The PUBLIC view of the game the last kernelMsgDecode adopted — every hand as
+// backs, the deck masked. What /m/ renders for a stranger with a link, and what
+// the bubble snapshot shows (it lands in notifications and on lock screens, so
+// it must never carry a hand — design §5 invariants).
+//
+// wasm_view_serialize reads the RESIDENT game, so this needs no re-deserialize:
+// the envelope already put the game in the kernel. The masking itself is in
+// view.c, like every other view in the product — nothing here decides what a
+// stranger may see.
+export function kernelMsgPublicView(): { view: ViewState } {
+    const ex = bots() as unknown as EngineExports;
+    const base = ex.wasm_io_ptr();
+    const len = ex.wasm_view_serialize(VIEW_SPECTATOR);
+    const blob = __mem(ex).slice(base, base + len);
+    // The blob leads with [VIEW_FORMAT_VERSION, viewer] (wasm_view_serialize);
+    // the masked state starts after it.
+    if (blob.length < 2) throw new Error('view: empty payload');
+    if (blob[0] !== VIEW_FORMAT_VERSION) {
+        throw new Error(`view: format ${blob[0]}, this build reads ${VIEW_FORMAT_VERSION}`);
+    }
+    return { view: parseMaskedState(blob, 2).state };
 }
 
 export function kernelMsgSeal(header: Omit<MsgEnvelope, 'digest' | 'turn' | 'round' | 'format'>): Uint8Array {
