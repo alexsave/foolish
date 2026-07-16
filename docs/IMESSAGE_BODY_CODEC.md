@@ -5,8 +5,15 @@ implements `cnitro/src/msg_wire.{h,c}` per
 `IMESSAGE_IMPLEMENTATION_HANDOFF.md` §4 M0. Every number below is MEASURED by
 `cnitro/tests/msg_wire_test.c` (`make build/msg_wire_test && ./build/msg_wire_test 60`)
 over 240 completed games per configuration, played by `robusta` (the bot humans
-actually face), not estimated. This doc exists because the work is PAUSED
-mid-flight pending other codec work — it is the handoff.*
+actually face), not estimated.*
+
+> **RESOLVED 2026-07-16.** Findings 1-3 are closed and the design shipped: the
+> FMSG body IS a v6 code, the raw format is deleted, and §4.4's budget is
+> asserted again at 4p with ~4x margin (240 chars of 1,000). Finding 3's blocker
+> was fixed on `main` by `9db2c8a` (v6 codes a pending good); the probe that
+> found it now reads `good_mask lost 0`. **Finding 4 (MAX_LOGS) is the one open
+> item.** Kept as the record of why the body is what it is: read §1-3 as history,
+> §4 as live.
 
 ---
 
@@ -70,6 +77,9 @@ FMSG chain: 585 B at 4p. Measured head-to-head on identical games:
 | 2p | 288 B | **34 B** | 8.4x | ~119 B ≈ **192 ch** | 19% |
 | 4p | 585 B | **45 B** | 13.0x | ~130 B ≈ **208 ch** | **21%** |
 | 8p | 1,210 B | **68 B** | 17.7x | ~153 B ≈ **248 ch** | 25% |
+
+**Confirmed after shipping** — whole sealed envelopes, `robusta`, P95: 2p **192
+ch**, 4p **240 ch**, 8p **328 ch**. The estimates held.
 
 So the v6 body takes 4p from **1.33x over budget to 5x under it**, with no new
 coder: `replay.c` already entropy-codes each action against the legal-move menu,
@@ -192,75 +202,64 @@ unevaluated:
   and mid-game states carry fewer logs than the full games measured here. Worth
   confirming before over-building.
 
-## 5. What is on the branch right now
+## 5. What shipped
 
-`claude/imessage-m0` (worktree, branched from the `NEXT_STEPS` commit). Builds
-clean; `./build/msg_wire_test 20` passes.
+`claude/imessage-m0`. `./build/msg_wire_test 20` green; `rules.wasm` links at
+36,626 B (inside its pinned 3 pages).
 
-- `cnitro/src/sha256.{h,c}` — **new**. FIPS 180-4, freestanding (no libc beyond
-  memcpy/memset), for `parent8` + Rule P's digest tiebreak. No cryptographic
-  hash existed in-tree (the FNV mixers are seeds, not commitments). KAT-pinned
-  incl. the 1e6-'a' vector. **Independent of everything above — keep.**
-- `cnitro/src/awire.{h,c}` — added `awire_frame_len` (walk concatenated frames;
-  a container needs this) and `awire_encode` (only a decoder existed, since the
-  browser was the only producer). Both refactored onto one shared head check so
-  the walk and the exact-length decode cannot disagree. **Keep.**
-- `cnitro/src/msg_wire.{h,c}` — **new**. The envelope: header per handoff §3.1
-  (32-byte seed), two layers (`msg_decode` = structure/hostile-input;
-  `msg_replay` = semantics via public kernel calls only, never a memcpy into a
-  `Game`). Zero-copy: the body is a BORROWED slice, because `rules.wasm`'s
-  memory is pinned at 3 pages and a decoded action array (~60KB) would refuse to
-  link. Format dispatch is wired (`MSG_FORMAT_RAW=1` / `MSG_FORMAT_V6=2`) and the
-  v6 replay path is **written but unproven** — it is blocked on finding 3.
-  **`MSG_FORMAT_RAW` is scaffolding the owner has decided to delete** once the
-  v6 body works; it is what the current tests exercise.
-- `cnitro/tests/msg_wire_test.c` — **new**, wired into `make difftests` (placed
-  BEFORE `solver_difftest`, which fails identically on `main` and would otherwise
-  prevent it from ever running — see `NEXT_STEPS.md` §5).
-- `cnitro/Makefile` — `sha256.c`/`msg_wire.c` into `CORE_SRC` + `WASM_RULES_SRC`;
-  `build/msg_wire_test` target. Deliberately NOT added to `WASM_GUARDS_SRC`
-  (guards is `game.c`-only and cannot re-deal from a seed — handoff §3.5).
+- `cnitro/src/sha256.{h,c}` — FIPS 180-4, freestanding. No cryptographic hash
+  existed in-tree (the FNV mixers are seeds, not commitments); `parent8` and Rule
+  P's tiebreak need one identical on every device. KAT-pinned.
+- `cnitro/src/awire.{h,c}` — `awire_frame_len` + `awire_encode`, both onto one
+  shared head check. (The raw body is gone, but these stand on their own: only a
+  decoder existed, because the browser was the only producer.)
+- `cnitro/src/msg_wire.{h,c}` — the envelope. `msg_seal` is the producer,
+  `msg_decode` is structure, `msg_replay` is semantics.
+- `cnitro/tests/msg_wire_test.c` — in `make difftests`, ahead of
+  `solver_difftest` (which fails identically on `main` and would otherwise stop
+  it ever running — `NEXT_STEPS.md` §5).
 
-### Two non-obvious things the tests pin, worth not re-deriving
+### The four things worth not re-deriving
 
-- **Round counting must not read logs.** `msg_replay` derives the `round` field
-  by watching `num_battles` fall from >0 to 0. There are **three** closure paths,
-  not two: `handle_pickup`, the all-good `execute_round_transition`, **and a
-  cover that empties the defender's hand** (`game.c:689`, discards inline). A
-  naive "count pickups and goods" misses the third. Counting `LOG_DISCARD`
-  records instead would be wrong in `rules.wasm`, which builds at `MAX_LOGS=128`
-  and **silently drops** the overflow.
-- **The tamper matrix asserts canonicality, not rejection.** A surviving bit-flip
-  is not a break (flipping `last_actor_seat` or `parent8` yields a valid, merely
-  different envelope; integrity comes from the digest checked against `parent8`).
-  The property that matters is that anything which decodes **re-encodes to
-  exactly its own bytes** — a byte the decoder silently ignored would let two
-  payloads share one digest, which breaks `parent8` and Rule P's tiebreak.
-  1,028 of 2,456 single-bit flips decode; all are canonical; none crash.
+1. **A continuation is not a replay, and that is what the seed is for.**
+   `replay_steps.c` rebuilds a Game from a code's DEAL/DRAW atoms and fills the
+   never-drawn tail in **canonical order** — right for rendering a finished game
+   ("its identities do not [matter] — nothing reveals them", `rs_build_deck`),
+   **wrong to play on from**: a continuation draws from that tail, and canonical
+   order is not the shuffled stock. So `msg_replay` deals the TRUE deck from the
+   seed and takes only the ACTIONS from the code. Seed = the future, code = the
+   past. (`replay_steps.h` advertises its last game as what "a continuation (an
+   iMessage turn) plays on from" — true of the POSITION, not of the stock.)
+2. **`turn` counts ATOMS, and atoms are not moves.** The codec folds a bout's
+   closing goods into one `round_end`, so 8 kernel actions can be 5 atoms. Only
+   the codec knows the number, and Rule P orders chains on it. `msg_seal` derives
+   `n_actions`/`turn`/`round` by decoding the body it just wrote — so a host
+   cannot emit a payload it would itself refuse.
+3. **Round counting must not read logs.** It watches `num_battles` fall to 0, and
+   there are **three** closure paths: `handle_pickup`, the all-good
+   `execute_round_transition`, and **a cover that empties the defender's hand**
+   (`game.c:689`, discards inline). Counting `LOG_DISCARD` would be wrong in
+   `rules.wasm`, which builds at `MAX_LOGS=128` and **silently drops** overflow.
+4. **The tamper matrix asserts canonicality, not rejection.** A surviving
+   bit-flip is not a break (integrity is the digest checked against `parent8`);
+   what matters is that anything which decodes **re-encodes to exactly its own
+   bytes**, or two payloads share one digest and `parent8` stops identifying a
+   unique parent. Likewise **truncation is not a decode-time verdict** any more:
+   cutting an entropy-coded body leaves a structurally perfect envelope, and a
+   short code is just a different code. The header it no longer matches is what
+   catches it — so the test asserts decode+replay, which is what "validation =
+   replay" always meant.
 
-### Test status
+## 6. Next
 
-Green, with one assertion deliberately deferred: the §4.4 `<1,000`-char budget is
-**not** asserted (it fails 1.33x on the raw body by construction — finding 1).
-The suite asserts the hard `MSMessage.url` 5,000-char cap meanwhile and REPORTS
-the full distribution. **The `<1,000` assertion lands with the v6 body**, where
-it should pass with 5x margin.
-
-## 6. Suggested order when work resumes
-
-1. ~~Run `probe_v6_midgame`~~ — done, see §3. The gap is `good_players_mask`
-   only; nothing else diverges at any cut. Keep the probe as the regression
-   oracle for the fix: **it should report `good_mask lost 0` when v6 is fixed.**
-2. Settle whether v6 codes exist in the wild (`game_snapshots`, server finalize
-   emits v6 since A4) — decides compatible-extension vs re-cut.
-3. Fix v6 in place: the `good` atom (finding 3), and probably
-   `..._from_actions` (finding 4) in the same pass.
-4. Switch FMSG to format 2 only, delete `MSG_FORMAT_RAW`, turn the `<1,000`
-   assertion back on at 4p.
-5. Then resume M0's remaining spine: `wasm_msg_encode/decode` exports + TS
-   bridge, `e2e/msg_wire.test.ts`, `e2e/msg_concurrency.test.ts` (Rule P/R as
-   pure TS — the oracle the Swift port must match in M3), `/m/[payload]`.
-   Note the exports likely need to live in **`bots.wasm`**, not `rules.wasm`:
-   encoding needs a session log resident, which is exactly why
+1. **Finding 4 (MAX_LOGS)** — the one open item. See §4.
+2. Resume M0's spine: `wasm_msg_*` exports + TS bridge, `e2e/msg_wire.test.ts`,
+   `e2e/msg_concurrency.test.ts` (Rule P/R as pure TS — the oracle the Swift port
+   must match in M3), `/m/[payload]`.
+   Note the ENCODE export likely belongs in **`bots.wasm`**, not `rules.wasm`:
+   sealing needs a session log resident, which is exactly why
    `wasm_replay_encode_v6_from_game` is bots-only (`cnitro/Makefile:458`).
-   `rules.wasm` only ever needs to DECODE, which is all `/m/` does.
+   `rules.wasm` only ever needs to DECODE — all `/m/` does.
+3. `IMESSAGE_IMPLEMENTATION_HANDOFF.md` §3.2/§3.3 and `IMESSAGE_GAME_DESIGN.md`
+   §4.2/§16 still describe the raw chain and defer v6. They are now wrong; this
+   doc supersedes them.
