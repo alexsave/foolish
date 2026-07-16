@@ -108,16 +108,14 @@ public actor EngineC {
     public func botDrive(humanSeats: [Int]) throws -> BotDrive {
         var mask: Int32 = 0
         for s in humanSeats where s >= 0 { mask |= (1 << Int32(s)) }
-        let d = try json { fio_bot_drive_json(mask, $0, $1) }
-        return try JSONDecoder().decode(BotDrive.self, from: d)
+        return BotDriveWire.decode(try json { fio_bot_drive_packed(mask, $0, $1) })
     }
 
-    /// The animation events of the LAST apply/botDrive, as seen by `viewer` —
-    /// the kernel's plan for which card flies where. Use these to animate; never
-    /// diff two views to work it out (docs/C_CORE_CONSOLIDATION.md F4).
+    /// The animation events of the LAST apply/botDrive. Not carried on the packed
+    /// wire yet — the app doesn't consume them until the B4 animation lands, at
+    /// which point they return as packed evwire. Empty for now (owner: wipe JSON).
     public func lastEvents(viewer: Int) throws -> [GameEvent] {
-        let d = try json { fio_last_events_json(Int32(viewer), $0, $1) }
-        return try JSONDecoder().decode([GameEvent].self, from: d)
+        []
     }
 
     // MARK: strategies

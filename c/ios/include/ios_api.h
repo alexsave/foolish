@@ -100,6 +100,11 @@ int fio_legal_from_packed(const uint8_t *buf, int len, int seat, char *out, int 
 // fio_apply_json. Returns FIO_EREJECT on an illegal move (see fio_last_reject).
 int fio_apply_awire(int actor_seat, const uint8_t *buf, int len);
 
+// Drive one bot cycle, result packed (no JSON, no events): u32 n_actions, per
+// action {seat, pace, type, n_cards, cards[], attacks[]}, then i32 stop, ended,
+// delayMs (LE). The BotDriveWire Swift decoder reads it.
+int fio_bot_drive_packed(int human_mask, char *out, int cap);
+
 // Bitmask over seats (bit i => seat i has a pending legal action right now).
 // Mirrors should_bot_act across all seats — the single source of "whose turn".
 int fio_actor_mask(void);
