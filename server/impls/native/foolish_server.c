@@ -36,6 +36,7 @@
 #include "game.h"
 #include "legal.h"
 #include "view.h"
+#include "awire.h"
 #include "bot_drive.h"
 #include "bot_roster.h"
 
@@ -120,40 +121,6 @@ static int seat_of(GameSlot *s, const char *user_id) {
 // Kernel-driven actions
 // --------------------------------------------------------------------------
 
-// Parse a move JSON ("type","cards":[{"s","v"}],"attackCards":[...]) and apply
-// it through the kernel handler for `seat`. Returns true on a legal move.
-static int parse_cards(const char *arr, Card *out, int max) {
-    if (!arr) return 0;
-    int n = 0; const char *p = arr;
-    while (n < max && (p = strstr(p, "\"s\"")) != NULL) {
-        const char *sc = strchr(p, ':'); if (!sc) break;
-        int s = (int)strtol(sc + 1, NULL, 10);
-        const char *vp = strstr(sc, "\"v\""); if (!vp) break;
-        const char *vc = strchr(vp, ':'); if (!vc) break;
-        int v = (int)strtol(vc + 1, NULL, 10);
-        out[n].suit = (int8_t)s; out[n].value = (int8_t)v; n++;
-        p = vc + 1;
-    }
-    return n;
-}
-
-static bool apply_move_json(Game *g, int seat, const char *move) {
-    char type[16] = {0};
-    if (!json_str(move, "type", type, sizeof type)) return false;
-    // cards / attackCards arrays: locate their brackets, parse {s,v} entries.
-    Card cards[MAX_MOVE_CARDS], atk[MAX_MOVE_CARDS];
-    const char *ca = strstr(move, "\"cards\"");
-    const char *aa = strstr(move, "\"attackCards\"");
-    int nc = parse_cards(ca, cards, MAX_MOVE_CARDS);
-    int na = parse_cards(aa, atk, MAX_MOVE_CARDS);
-    if      (!strcmp(type, "attack")) return handle_attack(g, seat, cards, nc);
-    else if (!strcmp(type, "cover"))  return (na == nc) && handle_cover(g, seat, cards, atk, nc);
-    else if (!strcmp(type, "pass"))   return handle_pass(g, seat, cards, nc);
-    else if (!strcmp(type, "pickup")) return handle_pickup(g, seat);
-    else if (!strcmp(type, "good"))   return handle_good(g, seat);
-    return false;
-}
-
 static uint32_t human_mask_of(GameSlot *s) {
     uint32_t m = 0;
     for (int i = 0; i < s->game.num_players; i++) if (!s->seat_is_ai[i]) m |= (1u << i);
@@ -222,7 +189,7 @@ static void start_bot_loop(GameSlot *s) {
 // HTTP layer (hand-rolled; swap for mongoose in a real deployment)
 // --------------------------------------------------------------------------
 
-typedef struct { char method[8]; char path[256]; char query[256]; char token[64]; char *body; } Req;
+typedef struct { char method[8]; char path[256]; char query[256]; char token[64]; char *body; int body_len; } Req;
 
 static void respond(int fd, int code, const char *json) {
     const char *msg = code == 200 ? "OK" : code == 400 ? "Bad Request"
@@ -354,8 +321,11 @@ static void h_meta(Req *r, int fd) {
 }
 
 static void h_action(Req *r, int fd) {
+    // game_id rides the query string (like /state); the body IS the packed awire
+    // frame, so it can be binary. /action?game_id=..
     char gid[ID_LEN + 1] = {0};
-    json_str(r->body, "game_id", gid, sizeof gid);
+    const char *gp = strstr(r->query, "game_id=");
+    if (gp) { gp += 8; int i = 0; while (gp[i] && gp[i] != '&' && i < ID_LEN) { gid[i] = gp[i]; i++; } gid[i] = 0; }
     pthread_mutex_lock(&g_lock);
     User *u = user_by_token(r->token);
     GameSlot *s = game_by_id(gid);
@@ -363,8 +333,13 @@ static void h_action(Req *r, int fd) {
     if (!s || s->status != GAME_STATUS_PLAYING) { pthread_mutex_unlock(&g_lock); respond(fd, 400, "{\"error\":\"not playing\"}"); return; }
     int seat = seat_of(s, u->user_id);
     if (seat < 0) { pthread_mutex_unlock(&g_lock); respond(fd, 400, "{\"error\":\"not seated\"}"); return; }
-    const char *move = strstr(r->body ? r->body : "", "\"move\"");
-    bool ok = apply_move_json(&s->game, seat, move ? move : "");
+    // The body is the same packed move the browser validates and the phone
+    // sends: [kind, n, cards, (attacks)]. The kernel decodes and dispatches —
+    // the server enumerates no move types (awire_apply owns the switch).
+    AwireAction a;
+    bool ok = r->body && r->body_len > 0
+              && awire_decode((const unsigned char *)r->body, r->body_len, &a)
+              && awire_apply(&s->game, seat, &a);
     // Human changed the board — wake the game-loop so bots respond (or notice
     // the game ended). If it's mid-sleep it re-reads the state on its own.
     if (ok) { refresh_status(s); pthread_cond_signal(&s->cond); }
@@ -441,6 +416,7 @@ static void *conn_thread(void *arg) {
     char *auth = strcasestr(buf, "authorization:");
     if (auth) sscanf(auth + 14, " Bearer %63s", r.token);
     char *body = strstr(buf, "\r\n\r\n"); r.body = body ? body + 4 : NULL;
+    r.body_len = r.body ? total - (int)(r.body - buf) : 0;   // real byte count (body may be binary awire)
     route(&r, fd);
     close(fd);
     return NULL;

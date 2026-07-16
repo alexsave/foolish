@@ -61,14 +61,19 @@ deployment would drop in mongoose/civetweb); auth is an in-memory token map
 POST /auth/signup {username}            -> {token, user_id}     (also /auth/signin)
 POST /create               (Bearer)     -> {game_id}            creator takes seat 0
 POST /meta {type,game_id[,strategy]}    (Bearer)   type: join | add-bot | start | continue
-POST /action {game_id, move:{…}}        (Bearer)   applies, then runs the bots
-GET  /state?game_id=..&seat=..          -> the kernel's masked view JSON
+POST /action?game_id=..  <awire bytes>  (Bearer)   applies, then runs the bots
+GET  /state?game_id=..&seat=..          -> the kernel's masked view (packed)
+GET  /status?game_id=..                 -> 0 waiting / 1 playing / 2 over
 GET  /health
 ```
 
 `start` deals once every seated human is ready (bots are always ready, 2+
-seats). A `move` is `{"type":"attack","cards":[{"s":0,"v":5}]}` (cover also
-carries `"attackCards"`).
+seats). A move is the packed **awire** frame — `[kind, n, cards…(, attacks…)]`,
+the SAME bytes the browser validates and the phone sends — POSTed as the raw
+request body. The server enumerates no move types: it decodes with the kernel
+(`awire_decode`) and applies through the kernel's one apply-entry
+(`awire_apply`), so the move parser + dispatch switch a server used to carry
+are gone.
 
 ## Smoke test
 
