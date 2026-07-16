@@ -245,6 +245,14 @@ void game_settle_status(Game *g) {
         g->status = GAME_STATUS_GAME_OVER;
 }
 
+uint32_t game_human_mask(const Game *g) {
+    if (!g) return 0;
+    uint32_t m = 0;
+    for (int i = 0; i < g->num_players; i++)
+        if (g->players[i].strategy_key == STRATEGY_KEY_HUMAN) m |= (1u << i);
+    return m;
+}
+
 // ---------- Logs -------------------------------------------------------
 
 #ifdef GUARDS_VALIDATE_ONLY

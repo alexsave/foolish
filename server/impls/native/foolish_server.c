@@ -63,9 +63,7 @@ typedef struct {
     char owner[ID_LEN + 1];
     char seat_user[MAX_PLAYERS][ID_LEN + 1];  // "" for a bot
     char seat_name[MAX_PLAYERS][24];
-    bool seat_is_ai[MAX_PLAYERS];
-    int  seat_strategy[MAX_PLAYERS];
-    bool seat_ready[MAX_PLAYERS];
+    bool seat_ready[MAX_PLAYERS];             // lobby "hit ready" — host state; kind (human/bot) lives in the kernel's strategy_key
     // One per-game trampoline thread paces the bots (see bot_thread). It waits on
     // `cond` when a human is owed; /action signals it. `bot_running` guards
     // against spawning a second driver.
@@ -110,20 +108,15 @@ static GameSlot *game_by_id(const char *id) {
         if (g_games[i].used && strcmp(g_games[i].id, id) == 0) return &g_games[i];
     return NULL;
 }
+// Whether a seat is a bot: the kernel's own per-seat fact now (strategy_key),
+// not a server-side is_ai array. A human seat is STRATEGY_KEY_HUMAN; a bot holds
+// its roster index.
+static bool seat_is_bot(const Game *g, int i) { return g->players[i].strategy_key != STRATEGY_KEY_HUMAN; }
+
 static int seat_of(GameSlot *s, const char *user_id) {
     for (int i = 0; i < s->game.num_players; i++)
-        if (!s->seat_is_ai[i] && strcmp(s->seat_user[i], user_id) == 0) return i;
+        if (!seat_is_bot(&s->game, i) && strcmp(s->seat_user[i], user_id) == 0) return i;
     return -1;
-}
-
-// --------------------------------------------------------------------------
-// Kernel-driven actions
-// --------------------------------------------------------------------------
-
-static uint32_t human_mask_of(GameSlot *s) {
-    uint32_t m = 0;
-    for (int i = 0; i < s->game.num_players; i++) if (!s->seat_is_ai[i]) m |= (1u << i);
-    return m;
 }
 
 // The bot game-loop, one thread per game — a TRAMPOLINE, not a blocking hook.
@@ -141,7 +134,7 @@ static void *bot_thread(void *arg) {
     GameSlot *s = arg;
     pthread_mutex_lock(&g_lock);
     while (s->used && s->game.status == GAME_STATUS_PLAYING) {
-        uint32_t hmask = human_mask_of(s);
+        uint32_t hmask = game_human_mask(&s->game);   // the kernel's own human-seat mask
         BotDriveOut drv;
         bot_drive(&s->game, hmask, BOT_DRIVE_MAX_ACTIONS, 0, 0, &drv);   // ONE cycle, then returns
 
@@ -244,6 +237,7 @@ static void h_create(Req *r, int fd) {
     snprintf(g->players[0].name, 24, "%s", u->username);
     snprintf(g->players[0].player_id, 24, "%s", u->user_id);
     g->players[0].status = PLAYER_STATUS_IDLE;
+    g->players[0].strategy_key = STRATEGY_KEY_HUMAN;   // the creator is a human seat
     char out[80]; snprintf(out, sizeof out, "{\"game_id\":\"%s\"}", s->id);
     pthread_mutex_unlock(&g_lock);
     respond(fd, 200, out);
@@ -268,26 +262,27 @@ static void h_meta(Req *r, int fd) {
             snprintf(g->players[i].name, 24, "%s", u->username);
             snprintf(g->players[i].player_id, 24, "%s", u->user_id);
             g->players[i].status = PLAYER_STATUS_IDLE;
+            g->players[i].strategy_key = STRATEGY_KEY_HUMAN;   // a human seat
         }
     } else if (!strcmp(type, "add-bot")) {
         char skey[24] = {0}; if (!json_str(r->body, "strategy", skey, sizeof skey)) snprintf(skey, sizeof skey, "random");
         if (g->num_players < MAX_PLAYERS && g->status == GAME_STATUS_WAITING) {
             int i = g->num_players++;
-            s->seat_is_ai[i] = true; s->seat_ready[i] = true;
-            s->seat_strategy[i] = bot_roster_find(skey);
-            if (s->seat_strategy[i] < 0) s->seat_strategy[i] = bot_roster_find("random");
+            s->seat_ready[i] = true;
+            int strat = bot_roster_find(skey);
+            if (strat < 0) strat = bot_roster_find("random");
             snprintf(s->seat_name[i], 24, "%%%s %d", skey, i);
             snprintf(g->players[i].name, 24, "%s", s->seat_name[i]);
             snprintf(g->players[i].player_id, 24, "bot%d", i);
             g->players[i].status = PLAYER_STATUS_READY;
-            g->players[i].strategy_key = (int8_t)s->seat_strategy[i];
+            g->players[i].strategy_key = (int8_t)strat;   // the kernel's own seat kind
         }
     } else if (!strcmp(type, "start")) {
         int me = seat_of(s, u->user_id);
         if (me >= 0) { s->seat_ready[me] = true; g->players[me].status = PLAYER_STATUS_READY; }
         // Deal once every seated human is ready (bots are always ready) and 2+ seated.
         bool all = g->num_players >= 2;
-        for (int i = 0; i < g->num_players; i++) if (!s->seat_is_ai[i] && !s->seat_ready[i]) all = false;
+        for (int i = 0; i < g->num_players; i++) if (!seat_is_bot(g, i) && !s->seat_ready[i]) all = false;
         if (all && g->status == GAME_STATUS_WAITING) {
             unsigned char seed[32]; for (int i = 0; i < 32; i++) seed[i] = (unsigned char)(rand() ^ (i * 131 + (int)g_seq));
             game_set_deal_seed_bytes(seed, 32);
@@ -301,8 +296,9 @@ static void h_meta(Req *r, int fd) {
         // kernel's to declare.
         g->status = GAME_STATUS_WAITING;
         for (int i = 0; i < g->num_players; i++) {
-            s->seat_ready[i] = s->seat_is_ai[i];
-            g->players[i].status = s->seat_is_ai[i] ? PLAYER_STATUS_READY : PLAYER_STATUS_IDLE;
+            bool ai = seat_is_bot(g, i);
+            s->seat_ready[i] = ai;
+            g->players[i].status = ai ? PLAYER_STATUS_READY : PLAYER_STATUS_IDLE;
         }
     }
     char out[80]; snprintf(out, sizeof out, "{\"game_id\":\"%s\",\"status\":%d}", s->id, g->status);
