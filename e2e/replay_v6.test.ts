@@ -1,17 +1,24 @@
 /* =============================================================================
- * Replay Format 6 (hidden-state-lossless, partial-game) — e2e through the wasm
+ * v6 as the WEB consumes it
  * =============================================================================
- * Plays real TS-engine games (the same engine replay_codec.test.ts uses, whose
- * game.logs carry REAL draw cards), captures the true initial deal, then:
+ * What a v6 code IS, and that it round-trips every hidden card, is asserted
+ * natively by cnitro/tests/replay_v6_test.c — on real engine games, against the
+ * kernel's own two producers. This file used to re-run all of that through a TS
+ * bridge, and kept ~390 lines of TS choreography (reconstructSeededDeal +
+ * collectV6 + marshalInputV6) alive to do it. Both are gone (A9): a second
+ * implementation kept byte-identical by a parity test can only ever say "the
+ * copy agrees", never "the answer is right".
  *
- *   initial hands + real logs -> encodeReplayV6 (wasm wasm_replay_encode_v6)
- *                             -> decodeReplay   (version-dispatched wasm decode)
+ * What is left is the part C cannot see — the WEB's consumption of a v6 code:
  *
- * and asserts the decoded stream is fully identity-resolved: the leading
- * per-seat LOG_DRAWs are the true initial hands, every later LOG_DRAW carries a
- * REAL card (never hidden), the info actions round-trip, and a MID-GAME cut
- * decodes cleanly with no fool. This is the wasm/bridge proof on top of the
- * exhaustive native test (cnitro/tests/replay_v6_test.c).
+ *   1. the belief wire must DRAW-mask, or a v6 replay leaks drawn-card
+ *      identities to the Oracle that a live game would never reveal; and
+ *   2. view.ts must build fully-resolved hands (the Oracle fix): v6 hides
+ *      nothing, so no slot may be a retrodicted guess.
+ *
+ * Both now source their code from the PRODUCTION producer
+ * (kernelReplayEncodeV6FromGame) — the same one call finalizeEndedGame makes, so
+ * what is tested here is what actually ships.
  * ========================================================================== */
 
 import { test } from 'node:test';
@@ -24,11 +31,12 @@ import {
 } from '../supabase/functions/_shared/types.ts';
 import { shouldBotActCore, processBotAction } from '../supabase/functions/_shared/pure_bot_actions.ts';
 import { calculateLegalMoves } from '../supabase/functions/_shared/bot_strategy.ts';
-import { encodeReplayV6, ReplayInputV6 } from '../supabase/functions/_shared/replay/encode.ts';
 import { decodeReplay } from '../supabase/functions/_shared/replay/decode.ts';
+import { kernelReplayEncodeV6FromGame } from '../supabase/functions/_shared/wasm/bots.ts';
+import { bytesToBigint } from '../supabase/functions/_shared/replay/codec.ts';
+import { __setDealSeedOverride, __LOG_TYPE_TO_INT } from '../supabase/functions/_shared/wasm/engine.ts';
 import { buildReplaySteps } from '../src/replay/view.ts';
 import { encodeLogsWire } from '../src/oracle/logsWire.ts';
-import { __LOG_TYPE_TO_INT } from '../supabase/functions/_shared/wasm/engine.ts';
 
 if (!process.env.E2E_VERBOSE) {
   console.log = () => {}; console.warn = () => {}; console.error = () => {}; console.info = () => {};
@@ -50,92 +58,59 @@ const mkGame = (np: number): Game => ({
 });
 
 const cardKey = (c: Card) => `${c.suit}:${c.value}`;
-const tableCards = (g: Game): Card[] => g.table_battles.flatMap((b) =>
-  b.defense ? [b.attack, b.defense] : [b.attack]);
 
-// Play to completion. The TS engine masks DRAW cards in game.logs (and the
-// kernel draws from a random deck index, so the deck array isn't the draw
-// order), but the kernel exposes REAL hands every step — so we recover each
-// draw's true cards exactly from the seat's hand delta and patch them into the
-// DRAW logs, yielding the unmasked stream a v6 producer must feed the encoder.
-async function playGame(np: number): Promise<{ game: Game; initialHands: Card[][]; flipped: Card; stock: Card[] } | null> {
-  const game = mkGame(np);
-  start_game(game);
-  // The flip (and power_suit) are cleared once the trump is drawn late-game, so
-  // snapshot the trump card now.
-  const flipped: Card = { suit: game.flipped!.suit, value: game.flipped!.value };
-  const flipKey = cardKey(flipped);
-  const initialHands = game.players.map((p) => p.hand.map((c) => ({ suit: c.suit, value: c.value })));
-  const stock: Card[] = []; // real drawn cards, in draw order (flip excluded)
-  let actions = 0;
-  while (game_done(game) === null) {
-    if (++actions > MAX_ACTIONS) return null;
-    const elig: PrivatePlayer[] = [];
-    for (let i = 0; i < game.players.length; i++) {
-      const p = game.players[i];
-      if (shouldBotActCore(game, p, i) && calculateLegalMoves(game, p.player_id).length > 0) elig.push(p);
-    }
-    if (elig.length === 0) return null;
-    for (let i = elig.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [elig[i], elig[j]] = [elig[j], elig[i]];
-    }
-    const before = game.players.map((pl) => new Set(pl.hand.map(cardKey)));
-    const tableBefore = new Set(tableCards(game).map(cardKey));
-    const logsBefore = game.logs.length;
-    let acted = false;
-    for (const p of elig) if (await processBotAction(game, p)) { acted = true; break; }
-    if (!acted) return null;
-    // Recover each DRAW's real cards (the seat's deck-sourced additions) in log
-    // order = draw order, and accumulate the stock the v6 encoder consumes.
-    for (let k = logsBefore; k < game.logs.length; k++) {
-      const l = game.logs[k];
-      if (l.log_type !== LOG_TYPE.DRAW) continue;
-      const seat = game.players.findIndex((pl) => pl.player_id === l.player_id);
-      const drawn = game.players[seat].hand.filter(
-        (c) => !before[seat].has(cardKey(c)) && !tableBefore.has(cardKey(c)));
-      if (drawn.length !== l.card_pairs.length) return null; // unexpected; skip game
-      for (const c of drawn) if (cardKey(c) !== flipKey) stock.push({ suit: c.suit, value: c.value });
-    }
-  }
-  return { game, initialHands, flipped, stock };
-}
+const seedFor = (np: number, gi: number) =>
+  Array.from({ length: 32 },
+    (_, i) => ((i * 41 + gi * 97 + np * 11 + 5) & 0xff).toString(16).padStart(2, '0')).join('');
 
-function inputOf(game: Game, initialHands: Card[][], flipped: Card, stock: Card[]): ReplayInputV6 {
-  return {
-    playerIds: game.players.map((p) => p.player_id),
-    logs: game.logs,
-    flipped,
-    initialHands,
-    stock,
-  };
-}
+const hexToBytes = (h: string) => Uint8Array.from(h.match(/../g)!.map((b) => parseInt(b, 16)));
 
-// A9: three tests stood here — "v6 wasm round-trips full games with real hidden
-// state", "v6 wasm encodes a MID-GAME cut that decodes with no fool", and "v6
-// finalize path: seed + masked logs -> exact hands". They are gone because
-// cnitro/tests/replay_v6_test.c asserts all three ON THE KERNEL, natively:
-// every hidden card's real identity survives an engine game's encode->decode,
-// a mid-game prefix decodes with no fool, and replay_encode_v6_from_game is
-// byte-equal to the marshalled producer. Re-asserting that through a TS bridge
-// proved nothing extra and made every codec change a two-language edit.
+// A seeded game played to the end — exactly what finalizeEndedGame holds. The
+// deal-seed override is load-bearing: the kernel re-derives the deal FROM the
+// seed to encode, so without it the encoder rebuilds a different game and the
+// logged actions do not fit its menus ("logged attack not in menu").
 //
-// What is left below is what C cannot see: the WEB's consumption of a v6 code —
-// the belief wire's DRAW masking and view.ts's fully-resolved hands. Both still
-// reach the codec through encodeReplayV6, which is why the frozen choreography
-// (collectV6 / marshalInputV6 / reconstructSeededDeal) is still alive. It
-// retires WITH A5's web consumer: view.ts is the thing being deleted there, so
-// these two tests and the choreography die in the same change, not before.
+// Nothing is reconstructed here any more. The producer reads the deal from the
+// seed and the actions out of the session log itself — which is the whole point
+// of A4. This used to snapshot the flip, mirror every DRAW back into a stock
+// array, and hand-assemble a reveal stream, just to have something to encode.
+async function playSeeded(np: number, gi: number): Promise<Game | null> {
+  const game = mkGame(np);
+  __setDealSeedOverride(hexToBytes(seedFor(np, gi)));
+  try {
+    start_game(game);
+    let actions = 0;
+    while (game_done(game) === null) {
+      if (++actions > MAX_ACTIONS) return null;
+      const elig: PrivatePlayer[] = [];
+      for (let i = 0; i < game.players.length; i++) {
+        const p = game.players[i];
+        if (shouldBotActCore(game, p, i) && calculateLegalMoves(game, p.player_id).length > 0) elig.push(p);
+      }
+      if (elig.length === 0) return null;
+      let acted = false;
+      for (const p of elig) if (await processBotAction(game, p)) { acted = true; break; }
+      if (!acted) return null;
+    }
+  } finally {
+    __setDealSeedOverride(null);
+  }
+  if (!game.game_seed || game.logs.length === 0) return null;
+  return game;
+}
+
+/** The code the site really shares: ONE kernel call, from the game and its seed. */
+const v6Of = (game: Game) =>
+  decodeReplay(bytesToBigint(kernelReplayEncodeV6FromGame(game, hexToBytes(game.game_seed!))));
 
 test('v6 belief wire DRAW-masks — no drawn-card identity leaks to the Oracle', async () => {
   const drawInt = __LOG_TYPE_TO_INT.get(LOG_TYPE.DRAW)!;
   let realDraws = 0, leaked = 0, checked = 0;
   for (let np = 2; np <= 4; np++) {
     for (let gi = 0; gi < GAMES_PER_PC; gi++) {
-      const r = await playGame(np);
-      if (!r || r.game.logs.length === 0) continue;
-      const enc = await encodeReplayV6(inputOf(r.game, r.initialHands, r.flipped, r.stock));
-      const dec = await decodeReplay(enc.x);
+      const game = await playSeeded(np, gi);
+      if (!game) continue;
+      const dec = await v6Of(game);
       for (const l of dec.logs)                        // sanity: v6 draws ARE real
         if (l.log_type === LOG_TYPE.DRAW) for (const p of l.card_pairs) if (p.primary.suit >= 0) realDraws++;
 
@@ -157,13 +132,9 @@ test('v6 view.ts builds fully-resolved hands (no retrodiction — the Oracle fix
   let checked = 0;
   for (let np = 2; np <= 4; np++) {
     for (let gi = 0; gi < GAMES_PER_PC; gi++) {
-      const r = await playGame(np);
-      if (!r) continue;
-      const { game, initialHands, flipped, stock } = r;
-      if (game.logs.length === 0) continue;
-
-      const enc = await encodeReplayV6(inputOf(game, initialHands, flipped, stock));
-      const dec = await decodeReplay(enc.x);
+      const game = await playSeeded(np, gi);
+      if (!game) continue;
+      const dec = await v6Of(game);
       const steps = buildReplaySteps(dec); // must not throw (conservation holds)
 
       // The whole point: a v6 replay is fully identity-resolved. Hidden cards are
@@ -187,5 +158,5 @@ test('v6 view.ts builds fully-resolved hands (no retrodiction — the Oracle fix
       checked++;
     }
   }
-  assert.ok(checked > 0, 'exercised at least one game');
+  assert.ok(checked > 0, 'exercised v6 replays through view.ts');
 });
