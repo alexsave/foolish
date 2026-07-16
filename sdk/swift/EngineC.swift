@@ -77,7 +77,11 @@ public actor EngineC {
     // MARK: intents
 
     public func apply(seat: Int, move: Move) throws {
-        let rc = move.jsonString().withCString { fio_apply_json(Int32(seat), $0) }
+        // Packed awire action, no JSON move (owner: wipe the JSON).
+        let awire = MoveWire.encodeAction(move)
+        let rc = awire.withUnsafeBytes { raw -> Int32 in
+            fio_apply_awire(Int32(seat), raw.bindMemory(to: UInt8.self).baseAddress, Int32(awire.count))
+        }
         if rc == Self.eReject { throw EngineError.reject(code: Int(fio_last_reject())) }
         try Self.check(rc)
     }

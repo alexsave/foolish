@@ -404,6 +404,35 @@ int fio_apply_json(int actor_seat, const char *move_json) {
     return FIO_EOK;
 }
 
+// PACKED apply — the client sends the awire action bytes (no JSON move). Same
+// handle_* dispatch and animation-snapshot bookkeeping as fio_apply_json, so
+// fio_last_events still captures the move. Owner: wipe the JSON.
+int fio_apply_awire(int actor_seat, const uint8_t *buf, int len) {
+    if (!g_has_game) return FIO_ENOGAME;
+    if (!buf || len <= 0) return FIO_EBADARG;
+    if (actor_seat < 0 || actor_seat >= g_game.num_players) return FIO_EBADARG;
+    AwireAction a;
+    if (awire_decode(buf, len, &a) < 0) return FIO_EPARSE;
+
+    fio_snaps_reset();
+    g_last_event_log_start = g_game.num_logs;
+    engine_snap_hook = fio_snap_cb;
+    engine_last_reject = ENGINE_REJECT_NONE;
+    bool ok = false;
+    switch (a.kind) {
+        case AWIRE_ATTACK: ok = handle_attack(&g_game, actor_seat, a.cards, a.n); break;
+        case AWIRE_COVER:  ok = handle_cover(&g_game, actor_seat, a.cards, a.attacks, a.n); break;
+        case AWIRE_PASS:   ok = handle_pass(&g_game, actor_seat, a.cards, a.n); break;
+        case AWIRE_PICKUP: ok = handle_pickup(&g_game, actor_seat); break;
+        case AWIRE_GOOD:   ok = handle_good(&g_game, actor_seat); break;
+        default: engine_snap_hook = 0; return FIO_EPARSE;
+    }
+    engine_snap_hook = 0;
+    if (!ok) { fio_snaps_reset(); g_last_reject = engine_last_reject; return FIO_EREJECT; }
+    g_last_reject = 0;
+    return FIO_EOK;
+}
+
 int fio_last_events_json(int viewer, char *out, int cap) {
     if (!g_has_game) return FIO_ENOGAME;
     J j; j_init(&j, out, cap);

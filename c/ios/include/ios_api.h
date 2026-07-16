@@ -96,6 +96,9 @@ int fio_legal_moves_json(int seat, char *out, int cap);
 int fio_state_packed(int viewer, char *out, int cap);
 int fio_legal_packed(int seat, char *out, int cap);
 int fio_legal_from_packed(const uint8_t *buf, int len, int seat, char *out, int cap);
+// Apply an awire action frame ([kind, n, cards, attacks]) — the packed twin of
+// fio_apply_json. Returns FIO_EREJECT on an illegal move (see fio_last_reject).
+int fio_apply_awire(int actor_seat, const uint8_t *buf, int len);
 
 // Bitmask over seats (bit i => seat i has a pending legal action right now).
 // Mirrors should_bot_act across all seats — the single source of "whose turn".
