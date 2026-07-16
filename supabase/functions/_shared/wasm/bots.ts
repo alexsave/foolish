@@ -35,6 +35,10 @@ import {
 interface BotsExports extends EngineExports {
     wasm_import_logs(): void;
     wasm_replay_encode_v6_from_game(max_atoms: number): number;
+    wasm_replay_events(viewer: number, from: number, code_len: number): number;
+    wasm_replay_events_n(): number;
+    wasm_replay_events_next(): number;
+    wasm_replay_step_count(code_len: number): number;
     wasm_clear_logs(): void;
     wasm_import_strategy_keys(): void;
     wasm_set_game_key(key: number): void;
@@ -888,4 +892,60 @@ export function kernelMsgSeal(header: Omit<MsgEnvelope, 'digest' | 'turn' | 'rou
     const r = ex.wasm_msg_seal(blob.length);
     if (r < 0) throw msgError(r);
     return __mem(ex).slice(base, base + r);
+}
+
+// ---------------------------------------------------------------------------
+// Replay steps (docs/C_CORE_CONSOLIDATION.md F4.2 / A5)
+//
+// A v6 code, rebuilt into the real Game and replayed through the real engine,
+// handed back as the SAME packed evwire frames live play broadcasts. The caller
+// decodes them with decodeEventWire — the one it already uses for live play —
+// so a replay is not a second rendering path.
+// ---------------------------------------------------------------------------
+
+/** Steps a code replays to: the deal, then one per action. */
+export function replayStepCount(code: Uint8Array): number {
+    const ex = bots();
+    __mem(ex).set(code, ex.wasm_replay_io_ptr());
+    const n = ex.wasm_replay_step_count(code.length);
+    if (n < 0) throw __replayError(n, ex.wasm_replay_error_detail());
+    return n;
+}
+
+/**
+ * Every evwire frame a code replays to, for `viewer` (-1 = spectator), in step
+ * order. Pulled in chunks because the frames of a whole game — each carrying a
+ * masked board snapshot — outgrow the wasm IO buffer, and because evwire's
+ * n_events is a u8, so one frame per game is impossible regardless.
+ */
+export function replayEventFrames(code: Uint8Array, viewer: number): Uint8Array[] {
+    const ex = bots();
+    const frames: Uint8Array[] = [];
+    const steps = replayStepCount(code);
+    let from = 0;
+    // Each chunk re-runs the replay from the start (the arithmetic decode is the
+    // cost and it is ~1ms); a game takes a couple of chunks. The guard is a
+    // no-progress backstop, not a step limit.
+    for (let guard = 0; from < steps && guard < 4096; guard++) {
+        __mem(ex).set(code, ex.wasm_replay_io_ptr());
+        const len = ex.wasm_replay_events(viewer, from, code.length);
+        if (len < 0) throw __replayError(len, ex.wasm_replay_error_detail());
+        const next = ex.wasm_replay_events_next();
+        if (next <= from) throw new Error(`replay frames stalled at step ${from}/${steps}`);
+        const buf = __mem(ex);
+        let q = ex.wasm_io_ptr();
+        const end = q + len;
+        for (let i = 0; i < ex.wasm_replay_events_n(); i++) {
+            const flen = buf[q] | (buf[q + 1] << 8);
+            q += 2;
+            if (q + flen > end) throw new Error('replay frame ran past its chunk');
+            frames.push(buf.slice(q, q + flen));
+            q += flen;
+        }
+        from = next;
+    }
+    if (frames.length !== steps) {
+        throw new Error(`replay produced ${frames.length} frames for ${steps} steps`);
+    }
+    return frames;
 }

@@ -16,6 +16,8 @@
 #include "strategy.h"
 #include "bot_drive.h"
 #include "bot_roster.h"
+#include "replay_steps.h"
+#include "view.h"
 #include <string.h>
 #include <stdlib.h>
 
@@ -434,4 +436,40 @@ int wasm_bot_drive(int human_mask, int max_actions, int n_pref) {
         for (int c = 0; c < a->move.n_cards; c++) *out++ = wire_from_card(a->move.attack_cards[c]);
     }
     return drv.n;
+}
+
+// ---------- replay steps (docs/C_CORE_CONSOLIDATION.md F4.2 / A5) -----------
+// A v6 code, replayed through the REAL engine, serialized as the SAME packed
+// evwire frames live play broadcasts — so a replay screen decodes and renders
+// what it already decodes and renders, with no replay-side projection.
+//
+// Lives in bots.wasm, not rules.wasm, and not by preference: replay_steps.c's
+// decoded-action buffer alone is ~272 KB, while rules.wasm's whole linear
+// memory is PINNED at 196,608 B (--initial-memory == --max-memory). It is 1.4x
+// the module before anything else. Per the standing steer, the fix is one big
+// module everywhere rather than shrinking the replay to fit the small one
+// (docs/C_CORE_CONSOLIDATION.md A10 / RULES_GUARDS_WASM_MEMORY_PLAN.md).
+//
+// The code goes in the REPLAY io buffer (it is a replay input, like every other
+// wasm_replay_* call); the frames come back in the MAIN io buffer, so the two
+// never alias.
+extern unsigned char *wasm_replay_io_ptr(void);
+extern int wasm_io_cap(void);
+
+static int g_rs_n_frames, g_rs_next_step;
+
+int wasm_replay_events(int viewer, int from, int code_len) {
+    g_rs_n_frames = 0;
+    g_rs_next_step = from;
+    return replay_steps_frames_v6(wasm_replay_io_ptr(), code_len,
+                                  viewer < 0 ? VIEW_SPECTATOR : viewer, from, 0,
+                                  wasm_io_ptr(), wasm_io_cap(),
+                                  &g_rs_n_frames, &g_rs_next_step);
+}
+int wasm_replay_events_n(void)    { return g_rs_n_frames; }
+int wasm_replay_events_next(void) { return g_rs_next_step; }
+
+// Steps the code replays to (the deal + one per action). Sizes the scrubber.
+int wasm_replay_step_count(int code_len) {
+    return replay_steps_count_v6(wasm_replay_io_ptr(), code_len, 0);
 }
