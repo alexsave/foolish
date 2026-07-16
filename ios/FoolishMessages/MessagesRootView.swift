@@ -45,31 +45,44 @@ private struct CompactView: View {
 
 private struct ExpandedView: View {
     let payloadURL: URL?
-    @State private var summary: String = "Reading…"
+    @State private var board: GameView?
+    @State private var names: [Int: String] = [:]
+    @State private var message: String?
 
     var body: some View {
-        VStack(spacing: 8) {
-            Text("Foolish").font(.headline)
-            Text(summary).font(.footnote).monospaced()
-                .multilineTextAlignment(.center)
-                .padding(.horizontal)
+        Group {
+            if let board {
+                MessageBoardView(view: board, names: names)
+            } else if let message {
+                VStack(spacing: 8) {
+                    Text("Foolish").font(.headline)
+                    // One sentence. Never a partial recovery, never a stack trace.
+                    Text(message).font(.footnote).multilineTextAlignment(.center).padding(.horizontal)
+                }
+            } else {
+                ProgressView()
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task { await load() }
     }
 
     private func load() async {
-        guard let url = payloadURL else { summary = "No game selected."; return }
+        guard let url = payloadURL else { message = "No game selected."; return }
         do {
             // The whole game, out of a URL, through the C kernel — the same
-            // msg_wire.c the website runs in wasm. Decoding VALIDATES: a
-            // hand-edited link throws rather than half-loading (§7.3).
-            let env = try await MessageEnvelope.decode(url: url, viewer: 0)
-            let who = env.joins.map(\.name).filter { !$0.isEmpty }.joined(separator: " vs ")
-            summary = "\(who.isEmpty ? "\(env.nPlayers) players" : who)\nturn \(env.turn) · round \(env.round)"
+            // msg_wire.c the website runs in wasm. Decoding VALIDATES and ADOPTS:
+            // a hand-edited link throws rather than half-loading (§7.3), and the
+            // resident game is now this payload's. We render the PUBLIC board
+            // (viewer -1) — the seat-identity layer that unmasks a hand is M3.
+            let env = try await MessageEnvelope.decode(url: url, viewer: -1)
+            names = Dictionary(env.joins.map { ($0.seat, $0.name) }, uniquingKeysWith: { a, _ in a })
+            guard let view = await MessageKernel.shared.residentView(viewer: -1) else {
+                message = "This game link is damaged."; return
+            }
+            board = view
         } catch {
-            // One sentence. Never a partial recovery, and never a stack trace.
-            summary = "This game link is damaged."
+            message = "This game link is damaged."
         }
     }
 }
