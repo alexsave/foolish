@@ -657,6 +657,47 @@ int fio_bot_drive_json(int human_mask, char *out, int cap) {
     return j_finish(&j);
 }
 
+// PACKED bot-drive — same one kernel cycle, result packed instead of JSON:
+//   u32 n_actions, per action {seat, pace, type, n_cards, cards[], attacks[]},
+//   then i32 stop, i32 ended, i32 delayMs (LE).
+// Events are NOT carried (the app doesn't consume them until B4 animation; they
+// come back as packed evwire then). Owner: wipe the JSON.
+static void le_i32(unsigned char **q, int v) {
+    unsigned int u = (unsigned int)v;
+    *(*q)++ = u & 0xff; *(*q)++ = (u >> 8) & 0xff; *(*q)++ = (u >> 16) & 0xff; *(*q)++ = (u >> 24) & 0xff;
+}
+int fio_bot_drive_packed(int human_mask, char *out, int cap) {
+    if (!g_has_game) return FIO_ENOGAME;
+    static BotDriveOut drv;
+    bot_drive(&g_game, (uint32_t)human_mask, BOT_DRIVE_MAX_ACTIONS, 0, 0, &drv);
+
+    int humans_present = 0;
+    for (int seat = 0; seat < g_game.num_players; seat++)
+        if ((human_mask & (1 << seat)) && g_game.players[seat].status == PLAYER_STATUS_IN) humans_present = 1;
+    int pace = BOT_PACE_NONE;
+    for (int i = 0; i < drv.n; i++) if (drv.actions[i].pacing_class > pace) pace = drv.actions[i].pacing_class;
+
+    if (cap < 4) return FIO_ECAP;
+    unsigned char *q = (unsigned char *)out;
+    unsigned int n = (unsigned int)drv.n;
+    *q++ = n & 0xff; *q++ = (n >> 8) & 0xff; *q++ = (n >> 16) & 0xff; *q++ = (n >> 24) & 0xff;
+    for (int i = 0; i < drv.n; i++) {
+        const BotDriveAction *a = &drv.actions[i];
+        const LegalMove *m = &a->move;
+        if ((int)((char *)q - out) + 4 + 2 * m->n_cards + 12 > cap) return FIO_ECAP;
+        *q++ = (unsigned char)a->seat;
+        *q++ = (unsigned char)a->pacing_class;
+        *q++ = (unsigned char)m->type;
+        *q++ = (unsigned char)m->n_cards;
+        for (int c = 0; c < m->n_cards; c++) *q++ = (unsigned char)card_to_id(m->cards[c]);
+        for (int c = 0; c < m->n_cards; c++) *q++ = (unsigned char)card_to_id(m->attack_cards[c]);
+    }
+    le_i32(&q, drv.stop);
+    le_i32(&q, drv.ended);
+    le_i32(&q, bot_pacing_ms(pace, humans_present));
+    return (int)((char *)q - out);
+}
+
 // ---------- strategies -----------------------------------------------------
 
 int fio_strategy_count(void) { return bot_roster_offline_count(); }
