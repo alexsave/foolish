@@ -662,12 +662,7 @@ int fio_bot_drive_packed(int human_mask, char *out, int cap) {
     if (!g_has_game) return FIO_ENOGAME;
     static BotDriveOut drv;
     bot_drive(&g_game, (uint32_t)human_mask, BOT_DRIVE_MAX_ACTIONS, 0, 0, &drv);
-
-    int humans_present = 0;
-    for (int seat = 0; seat < g_game.num_players; seat++)
-        if ((human_mask & (1 << seat)) && g_game.players[seat].status == PLAYER_STATUS_IN) humans_present = 1;
-    int pace = BOT_PACE_NONE;
-    for (int i = 0; i < drv.n; i++) if (drv.actions[i].pacing_class > pace) pace = drv.actions[i].pacing_class;
+    const int delay_ms = bot_cycle_delay_ms(&g_game, (uint32_t)human_mask, &drv);
 
     if (cap < 4) return FIO_ECAP;
     unsigned char *q = (unsigned char *)out;
@@ -686,7 +681,7 @@ int fio_bot_drive_packed(int human_mask, char *out, int cap) {
     }
     le_i32(&q, drv.stop);
     le_i32(&q, drv.ended);
-    le_i32(&q, bot_pacing_ms(pace, humans_present));
+    le_i32(&q, delay_ms);
     return (int)((char *)q - out);
 }
 

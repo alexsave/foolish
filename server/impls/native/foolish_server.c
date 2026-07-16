@@ -157,14 +157,9 @@ static void *bot_thread(void *arg) {
             continue;
         }
 
-        // A visible cycle landed — pace it by the kernel's table, lock released.
-        int humans = 0;
-        for (int i = 0; i < s->game.num_players; i++)
-            if ((hmask & (1u << i)) && s->game.players[i].status == PLAYER_STATUS_IN) humans = 1;
-        int pace = BOT_PACE_NONE;
-        for (int i = 0; i < drv.n; i++)
-            if (drv.actions[i].pacing_class > pace) pace = drv.actions[i].pacing_class;
-        int delay = bot_pacing_ms(pace, humans);
+        // A visible cycle landed — the kernel prices the wait; the host owns the
+        // loop and the sleep (the trampoline). Lock released while we wait.
+        int delay = bot_cycle_delay_ms(&s->game, hmask, &drv);
         if (delay > 0) {
             pthread_mutex_unlock(&g_lock);
             usleep((useconds_t)delay * 1000);

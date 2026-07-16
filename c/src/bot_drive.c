@@ -33,6 +33,23 @@ int bot_pacing_ms(int pacing_class, int humans_present) {
     }
 }
 
+// The wait for one drive cycle, in a single call: the max pacing class across
+// the cycle's visible actions, priced by bot_pacing_ms, reduced when a human is
+// still IN (they set the tempo). Zero when nothing visible happened. Every host
+// used to reduce the actions to a max and re-check humans itself (the native
+// loop, fio_bot_drive_packed); that "how long" is the kernel's to say, once, so
+// the trampoline host is left owning only the loop and the actual sleep.
+int bot_cycle_delay_ms(const Game *g, uint32_t human_mask, const BotDriveOut *drv) {
+    if (!g || !drv) return 0;
+    int humans_present = 0;
+    for (int i = 0; i < g->num_players; i++)
+        if ((human_mask & (1u << i)) && g->players[i].status == PLAYER_STATUS_IN) { humans_present = 1; break; }
+    int pace = BOT_PACE_NONE;
+    for (int i = 0; i < drv->n; i++)
+        if (drv->actions[i].pacing_class > pace) pace = drv->actions[i].pacing_class;
+    return bot_pacing_ms(pace, humans_present);
+}
+
 // ---------- eligibility ----------------------------------------------------
 
 // LegalMoves is far too big for the wasm module's 22KiB shadow stack (the same

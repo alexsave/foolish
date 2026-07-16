@@ -105,6 +105,12 @@ typedef struct {
 int bot_drive(Game *g, uint32_t human_mask, int max_actions,
               const BotDrivePref *pref, int n_pref, BotDriveOut *out);
 
+// The wait for one completed drive cycle (max visible pacing class, priced +
+// human-reduced) in one call, so no host re-reduces `drv`'s actions itself. The
+// loop and the sleep stay host-side; this is only the "how long". `drv` is the
+// output of the bot_drive that just ran; `human_mask` its seats.
+int bot_cycle_delay_ms(const Game *g, uint32_t human_mask, const BotDriveOut *drv);
+
 // The bot seats that could act right now (bitmask), ignoring human_mask seats.
 // Hosts use this to decide I/O the kernel cannot do — the server hydrates the
 // belief log only when a bot that reads it is about to choose.
