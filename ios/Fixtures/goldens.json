@@ -4,163 +4,163 @@
   "games": [
     {
       "seedByte0": 131,
-      "dealHash": "ef277e8ee8f06bfd",
+      "dealHash": "3f1e55c9311638ab",
       "seat0LegalHash": "9b8a3e00c63ea86f",
       "steps": 197,
       "fool": 3,
-      "playHash": "32866fad015587e4"
+      "playHash": "d16989e4cfb285ae"
     },
     {
       "seedByte0": 6,
-      "dealHash": "4dc46a4238755537",
+      "dealHash": "bb79a5dd89d1c03f",
       "seat0LegalHash": "9b8a3e00c63ea86f",
       "steps": 163,
       "fool": 1,
-      "playHash": "f7ba9394591b1930"
+      "playHash": "8b2fc13ff72359d4"
     },
     {
       "seedByte0": 137,
-      "dealHash": "812238ef2968fcc2",
+      "dealHash": "169fea8e82b8a910",
       "seat0LegalHash": "9b8a3e00c63ea86f",
       "steps": 216,
       "fool": 2,
-      "playHash": "100d32e64537e119"
+      "playHash": "ff74878246340cdb"
     },
     {
       "seedByte0": 12,
-      "dealHash": "923ddabfb6eb84c4",
+      "dealHash": "7816974aaced0bdc",
       "seat0LegalHash": "938cf375c81b5e08",
       "steps": 194,
       "fool": 3,
-      "playHash": "7f939ff276718ef3"
+      "playHash": "7b7d98736bcd905d"
     },
     {
       "seedByte0": 143,
-      "dealHash": "14a86d36d413cff4",
+      "dealHash": "7bc79f8fa53ba38c",
       "seat0LegalHash": "c2f6dbaae53cbff8",
       "steps": 161,
       "fool": 1,
-      "playHash": "1b7581c5c3eb1a82"
+      "playHash": "74ac1f09d26d147a"
     },
     {
       "seedByte0": 18,
-      "dealHash": "ac0b38d1846227de",
+      "dealHash": "4dd898612cf5bae8",
       "seat0LegalHash": "7fba6ea3e5726072",
       "steps": 117,
       "fool": 3,
-      "playHash": "49138c7a7bffea5a"
+      "playHash": "f0fe1196fd79697a"
     },
     {
       "seedByte0": 149,
-      "dealHash": "03e2c99e0236849c",
+      "dealHash": "a99a317556039f08",
       "seat0LegalHash": "9b8a3e00c63ea86f",
       "steps": 188,
       "fool": 3,
-      "playHash": "e8f03a37b6af3ce5"
+      "playHash": "de6df422208665a9"
     },
     {
       "seedByte0": 24,
-      "dealHash": "0610fd358486d49d",
+      "dealHash": "e8c978bce0a374ab",
       "seat0LegalHash": "9b8a3e00c63ea86f",
       "steps": 146,
       "fool": 3,
-      "playHash": "48ed22796665f5c4"
+      "playHash": "59a4405992327846"
     },
     {
       "seedByte0": 155,
-      "dealHash": "a2d4c08e58f9aa89",
+      "dealHash": "69f4f2afa39e9577",
       "seat0LegalHash": "9b8a3e00c63ea86f",
       "steps": 146,
       "fool": 1,
-      "playHash": "43df92ab483d54db"
+      "playHash": "cc7611780d2bae6d"
     },
     {
       "seedByte0": 30,
-      "dealHash": "8a87edc32afefe1a",
+      "dealHash": "b32a31b2f715d5de",
       "seat0LegalHash": "9b8a3e00c63ea86f",
       "steps": 169,
       "fool": 1,
-      "playHash": "fdf398d29230fe1f"
+      "playHash": "775d934c0ee297fd"
     },
     {
       "seedByte0": 161,
-      "dealHash": "6df8ad6cc6168190",
+      "dealHash": "72e68aa2d2d471e0",
       "seat0LegalHash": "9b8a3e00c63ea86f",
       "steps": 203,
       "fool": 0,
-      "playHash": "d77e1c9abba67b2d"
+      "playHash": "41d0fea8af3ca181"
     },
     {
       "seedByte0": 36,
-      "dealHash": "c0c3393958bd6cd4",
+      "dealHash": "4f093912552e84ae",
       "seat0LegalHash": "9b8a3e00c63ea86f",
       "steps": 211,
       "fool": 3,
-      "playHash": "f30b1fdd6a9f5a79"
+      "playHash": "b3703c40febaf949"
     },
     {
       "seedByte0": 167,
-      "dealHash": "ab85cc0af8e40ab4",
+      "dealHash": "c601366babb92c74",
       "seat0LegalHash": "9b8a3e00c63ea86f",
       "steps": 123,
       "fool": 1,
-      "playHash": "a460e79d5456d246"
+      "playHash": "ce773508318d1ce2"
     },
     {
       "seedByte0": 42,
-      "dealHash": "d2029da77fe59e4a",
+      "dealHash": "aa12e0c41a06035c",
       "seat0LegalHash": "9b8a3e00c63ea86f",
       "steps": 168,
       "fool": 1,
-      "playHash": "16868895ecf54ad4"
+      "playHash": "76db45b63e904012"
     },
     {
       "seedByte0": 173,
-      "dealHash": "040b9ff8821c8919",
+      "dealHash": "31b3a1221ce94037",
       "seat0LegalHash": "9b8a3e00c63ea86f",
       "steps": 181,
       "fool": 3,
-      "playHash": "a50699f37f0aff74"
+      "playHash": "bb7e755df548a32c"
     },
     {
       "seedByte0": 48,
-      "dealHash": "6394bf38206c7e04",
+      "dealHash": "bd4dbcc0f0b3817e",
       "seat0LegalHash": "9b8a3e00c63ea86f",
       "steps": 168,
       "fool": 2,
-      "playHash": "ba6420eabec7f086"
+      "playHash": "bb08b82069f4cbd0"
     },
     {
       "seedByte0": 179,
-      "dealHash": "9dd3b6cf5503f255",
+      "dealHash": "44fb72a8f5b4a213",
       "seat0LegalHash": "9b8a3e00c63ea86f",
       "steps": 219,
       "fool": 3,
-      "playHash": "de1e13109c020ecc"
+      "playHash": "22b32a2bb06db25e"
     },
     {
       "seedByte0": 54,
-      "dealHash": "7ea795cb57cad82f",
+      "dealHash": "27a236218c84fe77",
       "seat0LegalHash": "9b8a3e00c63ea86f",
       "steps": 170,
       "fool": 3,
-      "playHash": "403fc5d43dc13436"
+      "playHash": "a3e2ba8315cd661c"
     },
     {
       "seedByte0": 185,
-      "dealHash": "bfe10bc17981ce0a",
+      "dealHash": "51eeef595183e81a",
       "seat0LegalHash": "9b8a3e00c63ea86f",
       "steps": 175,
       "fool": 3,
-      "playHash": "ec640b05c6856a0c"
+      "playHash": "e18ed3e42339136c"
     },
     {
       "seedByte0": 60,
-      "dealHash": "2c9fddd1b2239430",
+      "dealHash": "5a0d35b935486e90",
       "seat0LegalHash": "f7e62b355b529bda",
       "steps": 183,
       "fool": 1,
-      "playHash": "0f5f131e9de0e391"
+      "playHash": "f32b30085a3a8369"
     }
   ]
 }

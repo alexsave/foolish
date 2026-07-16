@@ -315,6 +315,16 @@ int  game_done(const Game *g);   // returns loser index, or -1
 // bot_drive still takes an EXPLICIT mask, so replay/spectate can drive every
 // seat by passing 0 regardless of who is marked human.
 uint32_t game_human_mask(const Game *g);
+
+// Seat `n` players and DEAL, in one kernel call — the whole "go from a lobby to a
+// dealt board" the hosts used to hand-roll. Sets the seat count; if
+// `strategy_keys` is non-NULL, writes each seat's kind (STRATEGY_KEY_HUMAN, or a
+// bot roster index); then deals via start_game, which assigns each seated
+// player's status. Pass NULL to keep the strategy_key the seats already hold (a
+// host that wired kinds incrementally as players joined). The host owns identity
+// (names/player_id/tokens), set on the Player array before or after — the deal
+// never touches it. A bad seat count (n < 2 or > MAX_PLAYERS) is a no-op.
+void game_seat_and_deal(Game *g, const int8_t *strategy_keys, int n);
 // Records the end of a game on its OWN status: once game_done fires, the kernel
 // (not each host) flips g->status to GAME_OVER, so g->status is the single
 // lifecycle truth every view carries and no server recomputes game_done to keep
