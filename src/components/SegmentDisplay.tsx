@@ -9,7 +9,7 @@
 
 import React from 'react';
 
-type Seg = 'T' | 'B' | 'TL' | 'TR' | 'BL' | 'BR' | 'ML' | 'MR' | 'DTL' | 'DTR' | 'DBL' | 'DBR' | 'VT' | 'VB';
+type Seg = 'T' | 'B' | 'TL' | 'TR' | 'BL' | 'BR' | 'ML' | 'MR' | 'DTL' | 'DTR' | 'DBL' | 'DBR' | 'VT' | 'VB' | 'BRH';
 
 const W = 30;
 const H = 50;
@@ -24,6 +24,10 @@ const LINES: Record<Seg, [string, string]> = {
     BL: ['ML', 'BL'], BR: ['MR', 'BR'], ML: ['ML', 'C'], MR: ['C', 'MR'],
     DTL: ['TL', 'C'], DTR: ['TR', 'C'], DBL: ['C', 'BL'], DBR: ['C', 'BR'],
     VT: ['TC', 'C'], VB: ['C', 'BC'],
+    // right half of the bottom edge (BC-to-BR) — only the "→" arrowhead uses
+    // this 15th segment; every other glyph just shows it dim, same as any
+    // other segment it doesn't light.
+    BRH: ['BC', 'BR'],
 };
 const ALL_SEGS = Object.keys(LINES) as Seg[];
 
@@ -76,9 +80,11 @@ const FONT: Record<string, Seg[]> = {
     '+': ['ML', 'MR', 'VT', 'VB'],
     '±': ['VT', 'ML', 'MR', 'VB', 'B'],
     '/': ['DTR', 'DBL'],
-    // "covers" arrow: drops in (\), falls (|), runs out along the base (_) —
-    // built from the same 14 segments as everything else, not a bespoke icon.
-    '→': ['DTL', 'VB', 'B'],
+    // "covers" arrow: a diagonal shaft (DTL+DBR, top-left corner straight
+    // through to bottom-right) tipped with a two-pronged arrowhead (BR, the
+    // right side's lower half; BRH, the bottom edge's right half) meeting it
+    // at the bottom-right corner.
+    '→': ['DTL', 'DBR', 'BR', 'BRH'],
 };
 
 function inset(a: Pt, b: Pt, m: number): [Pt, Pt] {
@@ -127,13 +133,17 @@ interface SegmentTextProps {
     gap?: number;
     dim?: string;
     style?: React.CSSProperties;
+    /** Pad the display out to this many character cells with blank (fully
+     * unlit) glyphs, like an unused position on a fixed-width LED readout,
+     * so the whole run — not just the text — occupies a constant footprint. */
+    length?: number;
 }
 
 /** Renders `text` as 15-segment LED glyphs where the font has a mapping,
  * falling back to plain glowing text (space-separated runs) otherwise —
  * so lowercase, punctuation and non-Latin scripts stay legible. */
 export function SegmentText({
-    text, color, height = 12, gap = 2, dim = 'rgba(255,255,255,0.09)', style,
+    text, color, height = 12, gap = 2, dim = 'rgba(255,255,255,0.09)', style, length,
 }: SegmentTextProps) {
     const chars = text.toUpperCase().split('');
     const nodes: React.ReactNode[] = [];
@@ -154,13 +164,17 @@ export function SegmentText({
         );
         plainBuf = '';
     };
+    let cells = 0;
     chars.forEach((ch, i) => {
         if (ch === ' ') { flushPlain(`p${i}`); nodes.push(<span key={`sp${i}`} style={{ display: 'inline-block', width: height * 0.32 }} />); return; }
         if (ch === '.') { flushPlain(`p${i}`); nodes.push(<Dot key={i} height={height} color={color} />); return; }
-        if (FONT[ch]) { flushPlain(`p${i}`); nodes.push(<Glyph key={i} ch={ch} height={height} color={color} dim={dim} />); return; }
+        if (FONT[ch]) { flushPlain(`p${i}`); nodes.push(<Glyph key={i} ch={ch} height={height} color={color} dim={dim} />); cells += 1; return; }
         plainBuf += ch;
     });
     flushPlain('pEnd');
+    for (let i = cells; length != null && i < length; i += 1) {
+        nodes.push(<Glyph key={`blank${i}`} ch="" height={height} color={color} dim={dim} />);
+    }
     return (
         <span style={{ display: 'inline-flex', alignItems: 'center', gap, ...style }}>
             {nodes}

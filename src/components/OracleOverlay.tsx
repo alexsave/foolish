@@ -36,6 +36,25 @@ function tokenToCard(token: string): Card | null {
     if (suit < 0 || value == null) return null;
     return { suit, value };
 }
+// Re-render a card token as plain rank+suit-letter text (e.g. "10S") for the
+// single-strip move title — drops the decorative trump marker, same as the
+// old card-face rendering did.
+function cardToText(token: string): string {
+    const c = tokenToCard(token);
+    return c ? `${VALUE_TO_RANK[c.value]}${'SHCD'[c.suit]}` : token;
+}
+// The whole move — attacking cards, an optional "→" and the covered/target
+// cards, or the bare move type for card-less moves (pass/pickup/good/wait) —
+// as one string for a single fixed-width segment display per row.
+function moveTitleText(c: OracleCandidate): string {
+    if (!c.cards.length) return c.type === 'pass' ? 'PASS' : c.type;
+    const src = c.cards.map(cardToText).join('');
+    return c.target?.length ? `${src}→${c.target.map(cardToText).join('')}` : src;
+}
+// Fixed character budget for the move-title strip: worst realistic case is
+// three attacking tens covering three cards — 3×"10S" (9) + "→" (1) +
+// 3×"XS" (6) = 16.
+const MOVE_TITLE_LEN = 16;
 
 const CLASS_COLOR: Record<OracleClass, string> = {
     best: '#4CAF7D',
@@ -56,7 +75,6 @@ const VERDICT_COLOR: Record<string, string> = {
 const AMBER = '#FFA53C';
 const TEAL = '#5EEAD4';
 const CARD_COLOR = '#E8E3D2';
-const SUIT_RED = '#E8674F';
 const LCD_MONO = "'Consolas', 'Menlo', 'SFMono-Regular', monospace";
 
 const ledText = (color: string): React.CSSProperties => ({
@@ -110,71 +128,6 @@ const EF_COL_W = 96;
 // — sized to the longest label, "INACCURACY".
 const CLASS_CHIP_W = 80;
 
-// Minimal line-art suit glyphs (0=S 1=H 2=C 3=D, matching "SHCD") — not
-// realistic card art, just enough stroke/dot shapes to read at a glance,
-// drawn with the same round-cap glow as the segment font so a card reads
-// as one more LED-panel readout instead of a pasted-in card face.
-function SuitIcon({ suit, color, size = 9 }: { suit: number; color: string; size?: number }) {
-    const glow = { filter: `drop-shadow(0 0 2px ${color}99)` };
-    const stroke = { stroke: color, strokeWidth: 1.4, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, fill: 'none' };
-    let inner: React.ReactNode;
-    if (suit === 0) { // spade — triangle + stem
-        inner = (
-            <>
-                <path d="M6 1 L11 9.5 L1 9.5 Z" {...stroke} style={glow} />
-                <line x1={6} y1={9.5} x2={6} y2={11.5} stroke={color} strokeWidth={1.4} strokeLinecap="round" style={glow} />
-            </>
-        );
-    } else if (suit === 1) { // heart — two dots + converging V
-        inner = (
-            <>
-                <circle cx={3.4} cy={3.6} r={1.7} fill={color} style={glow} />
-                <circle cx={8.6} cy={3.6} r={1.7} fill={color} style={glow} />
-                <path d="M1.8 5.2 L6 11.5 L10.2 5.2" {...stroke} style={glow} />
-            </>
-        );
-    } else if (suit === 2) { // club — trefoil dots + stem
-        inner = (
-            <>
-                <circle cx={6} cy={3.2} r={2} fill={color} style={glow} />
-                <circle cx={2.6} cy={7} r={2} fill={color} style={glow} />
-                <circle cx={9.4} cy={7} r={2} fill={color} style={glow} />
-                <line x1={6} y1={8} x2={6} y2={11.5} stroke={color} strokeWidth={1.4} strokeLinecap="round" style={glow} />
-            </>
-        );
-    } else { // diamond — rotated square outline
-        inner = <path d="M6 1 L11 6 L6 11 L1 6 Z" {...stroke} style={glow} />;
-    }
-    return <svg width={size} height={size} viewBox="0 0 12 12" style={{ flex: 'none' }}>{inner}</svg>;
-}
-
-// A card as a tiny LED-panel readout: rank via the 15-segment font, suit via
-// SuitIcon. Falls back to the raw token (already segment-rendered) if it
-// doesn't parse as a card.
-function CardGlyph({ token, height = 11 }: { token: string; height?: number }) {
-    const c = tokenToCard(token);
-    if (!c) return <SegmentText text={token} color={CARD_COLOR} height={height} gap={1} />;
-    const isRed = c.suit === 1 || c.suit === 3;
-    return (
-        <span style={{
-            display: 'inline-flex', alignItems: 'center', gap: 2,
-            padding: '1px 3px', borderRadius: 3,
-            border: `1px solid ${CARD_COLOR}2e`, background: 'rgba(255,255,255,0.03)',
-        }}>
-            <SegmentText text={VALUE_TO_RANK[c.value]} color={CARD_COLOR} height={height} gap={1} />
-            <SuitIcon suit={c.suit} color={isRed ? SUIT_RED : CARD_COLOR} size={height * 0.85} />
-        </span>
-    );
-}
-
-function CardTokens({ tokens }: { tokens: string[] }) {
-    return (
-        <span style={{ display: 'inline-flex', gap: 3, alignItems: 'center' }}>
-            {tokens.map((tk, i) => <CardGlyph key={i} token={tk} />)}
-        </span>
-    );
-}
-
 // Segmented LED bargraph — a row of discrete lit/unlit blocks standing in for
 // a plain progress bar, echoing the graphic-equalizer displays in the refs.
 const EQ_SEGMENTS = 20;
@@ -216,9 +169,7 @@ function McRow({ c, best, worst, bestAdj, t }: {
     const cls = scored ? oracleClassify(delta) : null;
     const barColor = isBest ? CLASS_COLOR.best : (cls ? CLASS_COLOR[cls] : '#8a8a92');
 
-    const cards = c.cards.length
-        ? <CardTokens tokens={c.cards} />
-        : <SegmentText text={c.type === 'pass' ? 'PASS' : c.type} color={CARD_COLOR} height={10} gap={1.5} />;
+    const title = moveTitleText(c);
 
     return (
         <div
@@ -231,11 +182,8 @@ function McRow({ c, best, worst, bestAdj, t }: {
             }}
         >
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <div style={{ flex: '1 1 auto', display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
-                    {c.target?.length ? (
-                        <>{cards}<span style={{ opacity: 0.55, display: 'inline-flex' }}><SegmentText text="→" color={CARD_COLOR} height={11} /></span>
-                            <CardTokens tokens={c.target} /></>
-                    ) : cards}
+                <div style={{ flex: '1 1 auto', display: 'flex', alignItems: 'center', minWidth: 0 }}>
+                    <SegmentText text={title} color={CARD_COLOR} height={10} gap={1.5} length={MOVE_TITLE_LEN} />
                 </div>
                 {c.played && <SolidChip bg={AMBER} fg="#231404" text={t('oracle_played')} />}
                 {isBest && <LedChip color={CLASS_COLOR.best} text={t('oracle_best')} width={CLASS_CHIP_W} />}
@@ -275,11 +223,7 @@ function VerdictRow({ c, t }: {
     const barW = VERDICT_BAR[c.verdict] ?? 30;
     const color = VERDICT_COLOR[c.verdict] ?? VERDICT_COLOR.none;
     const depth = c.verdictVal != null ? 1000 - Math.abs(c.verdictVal) : null;
-    const cards = c.cards.length
-        ? (c.target?.length
-            ? <><CardTokens tokens={c.cards} /><span style={{ opacity: 0.55, display: 'inline-flex' }}><SegmentText text="→" color={CARD_COLOR} height={11} /></span><CardTokens tokens={c.target} /></>
-            : <CardTokens tokens={c.cards} />)
-        : <SegmentText text={c.type === 'pass' ? 'PASS' : c.type} color={CARD_COLOR} height={10} gap={1.5} />;
+    const title = moveTitleText(c);
     const badge = c.verdict === 'win' ? `WIN${depth != null ? ` in ${depth}` : ''}`
         : c.verdict === 'loss' ? `LOSS${depth != null ? ` in ${depth}` : ''}`
         : c.verdict === 'draw' ? 'DRAW' : c.verdict === 'unknown' ? '?' : '';
@@ -290,7 +234,9 @@ function VerdictRow({ c, t }: {
             background: c.played ? 'rgba(255,165,60,0.07)' : 'rgba(0,0,0,0.28)',
         }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <div style={{ flex: '1 1 auto', display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>{cards}</div>
+                <div style={{ flex: '1 1 auto', display: 'flex', alignItems: 'center', minWidth: 0 }}>
+                    <SegmentText text={title} color={CARD_COLOR} height={10} gap={1.5} length={MOVE_TITLE_LEN} />
+                </div>
                 {c.played && <SolidChip bg={AMBER} fg="#231404" text={t('oracle_played')} />}
                 {badge && <SolidChip bg={color} fg={c.verdict === 'unknown' ? '#222' : '#fff'} text={badge} />}
             </div>
