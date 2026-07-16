@@ -1,9 +1,8 @@
-// FMSG v1 envelope codec — see msg_wire.h for the layout and the two-layer
-// (structure vs semantics) split this file implements.
+// FMSG envelope codec — see msg_wire.h for the layout, the two-layer
+// (structure vs semantics) split, and why the body is a v6 replay code.
 #include "msg_wire.h"
 #include "awire.h"
 #include "replay.h"
-#include "../wasm/wire.h"
 #include <string.h>
 
 // ---------- little-endian readers/writers -------------------------------
@@ -28,6 +27,17 @@ static void wr64(unsigned char *p, uint64_t v) {
     for (int i = 0; i < 8; i++) p[i] = (unsigned char)(v >> (8 * i));
 }
 
+// Overlap-safe copy. In-place encode (out aliasing the body) is a documented
+// caller pattern, and the wasm build is freestanding: its string.h shim offers
+// only memcpy/memset (wasm/include/string.h), so memmove is not available to
+// reach for. Copying downward is sufficient here — the body always moves toward
+// a LOWER address (the header it follows is fixed at 59 + joins bytes, which is
+// never longer than the envelope it came from).
+static void move_down(unsigned char *dst, const unsigned char *src, int n) {
+    if (dst == src || n <= 0) return;
+    for (int i = 0; i < n; i++) dst[i] = src[i];
+}
+
 // ---------- shared validation -------------------------------------------
 // Encode and decode run the SAME checks, so this host can never emit a payload
 // it would itself reject — the property that keeps a chain replayable after any
@@ -49,27 +59,8 @@ static int name_is_clean(const char *s, int len) {
     return 1;
 }
 
-// Walks the packed chain, proving every frame well-formed and every actor seat
-// in range. Returns MSG_EOK and sets *n_out to the frame count, or a negative
-// MSG_E*. Reads nothing past `len`.
-static int walk_actions(const unsigned char *p, int len, int n_players, int *n_out) {
-    int off = 0, count = 0;
-    while (off < len) {
-        if (count >= MSG_MAX_ACTIONS) return MSG_EACTION;
-        const int seat = p[off];
-        if (seat >= n_players) return MSG_ESEAT;
-        off++;
-        const int flen = awire_frame_len(p + off, len - off);
-        if (flen == 0) return MSG_EACTION; // malformed head, or runs off the end
-        off += flen;
-        count++;
-    }
-    *n_out = count;
-    return MSG_EOK;
-}
-
 static int validate_fields(const MsgEnvelope *e) {
-    if (e->format < MSG_FORMAT_RAW || e->format > MSG_FORMAT_MAX) return MSG_EFORMAT;
+    if (e->format != MSG_FORMAT_V6) return MSG_EFORMAT;
     if (e->flags & ~(unsigned)(MSG_FLAG_FAIR_DEAL | MSG_FLAG_GZIP)) return MSG_EFLAGS;
     // Both defined flags are spec'd but unbuilt (fair-deal is v2 per §15; gzip
     // never paid for itself at these sizes). Refusing them is what keeps the
@@ -119,7 +110,7 @@ static int validate_fields(const MsgEnvelope *e) {
 int msg_decode(const unsigned char *in, int in_len, MsgEnvelope *out) {
     if (in_len < MSG_HEADER_LEN) return MSG_ESHORT;
     if (in[0] != MSG_MAGIC) return MSG_EMAGIC;
-    if (in[1] < MSG_FORMAT_RAW || in[1] > MSG_FORMAT_MAX) return MSG_EFORMAT;
+    if (in[1] != MSG_FORMAT_V6) return MSG_EFORMAT;
 
     memset(out, 0, sizeof(*out));
     out->format          = in[1];
@@ -163,17 +154,9 @@ int msg_decode(const unsigned char *in, int in_len, MsgEnvelope *out) {
     if (actions_len < 0) return MSG_ESHORT;
     if (actions_len > MSG_MAX_ACTION_BYTES) return MSG_EACTION;
 
-    // n_players must be sane before walk_actions can range-check actor seats.
+    // n_players must be sane before anything range-checks a seat.
     if (in[15] < 2 || in[15] > MAX_PLAYERS) return MSG_EPLAYERS;
 
-    if (out->format == MSG_FORMAT_RAW) {
-        int walked = 0;
-        const int rc = walk_actions(in + off, actions_len, in[15], &walked);
-        if (rc != MSG_EOK) return rc;
-        // The chain is self-delimiting, so a count that disagrees with the frames
-        // means the header and the body describe different games. Never guess which.
-        if (walked != n_actions) return MSG_EACTION;
-    }
     // A format-2 body is an entropy-coded integer: it has no structure this
     // layer can check, and only the codec can say whether it is well-formed.
     // msg_replay is where it earns trust (and where n_actions is confirmed).
@@ -192,15 +175,6 @@ int msg_encode(const MsgEnvelope *e, unsigned char *out, int out_cap) {
     if (rc != MSG_EOK) return rc;
 
     if (e->actions_len > 0 && !e->actions) return MSG_EACTION;
-    if (e->format == MSG_FORMAT_RAW) {
-        // Re-walk the borrowed chain: the caller may have appended to it since
-        // it was decoded (that IS the send path — Rule R rebases by appending),
-        // so its framing is not proven just because it once was.
-        int walked = 0;
-        const int wrc = walk_actions(e->actions, e->actions_len, e->n_players, &walked);
-        if (wrc != MSG_EOK) return wrc;
-        if (walked != e->n_actions) return MSG_EACTION;
-    }
 
     int need = MSG_HEADER_LEN;
     for (int i = 0; i < e->n_joins; i++) need += 2 + e->joins[i].name_len;
@@ -230,9 +204,7 @@ int msg_encode(const MsgEnvelope *e, unsigned char *out, int out_cap) {
     }
     wr16(out + off, (uint16_t)e->n_actions);
     off += 2;
-    // memmove, not memcpy: in-place encode is a documented caller pattern and
-    // the regions can overlap.
-    memmove(out + off, e->actions, (size_t)e->actions_len);
+    move_down(out + off, e->actions, e->actions_len);
     off += e->actions_len;
     return off;
 }
@@ -283,89 +255,99 @@ static int apply_one(Game *g, int seat, const AwireAction *a, int *rounds) {
     return MSG_EOK;
 }
 
-// format 1: walk the raw frames.
-static int replay_raw(const MsgEnvelope *e, Game *g, int *rounds, int *applied) {
-    int off = 0;
-    for (int i = 0; i < e->n_actions; i++) {
-        const int seat = e->actions[off];
-        off++;
-        const int flen = awire_frame_len(e->actions + off, e->actions_len - off);
-        if (flen == 0) return MSG_EACTION;   // decode proved this; belt and braces
-        AwireAction a;
-        if (!awire_decode(e->actions + off, flen, &a)) return MSG_EACTION;
-        off += flen;
-        const int rc = apply_one(g, seat, &a, rounds);
-        if (rc != MSG_EOK) return rc;
-        (*applied)++;
-    }
-    return MSG_EOK;
-}
-
-// format 2: expand the v6 code into a log stream, then re-apply its action logs.
+// Applying the body's atoms onto the seeded deal.
 //
-// The decoded stream is v5-shaped (replay.h "DECODE output"). We re-apply rather
-// than trust it: the codec tells us WHAT was played, the kernel decides whether
-// it was legal, so a hostile code gets the same verdict as a hostile raw chain.
-// Note the codec models a round's GOOD declarations as one round_end atom and
-// re-emits a LOG_GOOD per attacker on decode — so the goods we apply here are
-// the codec's reconstruction, not the original bytes. That is exactly why
-// msg_body_from_game refuses a game with goods still pending (see there).
-static int replay_v6_body(const MsgEnvelope *e, Game *g, int *rounds, int *applied,
-                          unsigned char *scratch, int scratch_cap) {
-    if (!scratch || scratch_cap < MSG_REPLAY_SCRATCH) return MSG_ESCRATCH;
-    const int d = replay_decode(e->actions, e->actions_len, scratch, scratch_cap);
-    if (d < 0) return MSG_EBODY;
-    if (d < REPLAY_DEC_HDR) return MSG_EBODY;
+// The atoms come from replay_decode_atoms_v6 — the codec's own level, not the
+// log stream, so this costs no log buffer and reads the same GOOD/ROUND_END
+// atoms replay_steps.c does. A sink cannot fail, so the first error is latched
+// and the remaining atoms are ignored.
+//
+// DEAL and DRAW atoms are DELIBERATELY SKIPPED. This is the whole difference
+// between an FMSG continuation and a replay, and it is the reason FMSG carries a
+// seed at all. replay_steps.c rebuilds a deck from those atoms and fills the
+// never-drawn tail in canonical order — correct for rendering a finished game
+// ("its identities do not [matter] — nothing reveals them", rs_build_deck), but
+// WRONG to play on from: a continuation draws from that tail, and canonical
+// order is not the shuffled stock the deal produced. So a continuation must deal
+// the TRUE deck from the seed (deal_from_envelope) and let the atoms supply only
+// the ACTIONS. The seed is the future; the code is the past.
+typedef struct {
+    Game *g;
+    int   n_players;
+    int   rounds;
+    int   applied;
+    int   err;      // first MSG_E*, latched
+} MsgApply;
 
-    const unsigned char *p = scratch;
-    if (p[1] != e->n_players) return MSG_EBODY;   // the code disagrees about the table
+static void msg_atom(void *ctx, const ReplayAtom *a) {
+    MsgApply *m = (MsgApply *)ctx;
+    if (m->err != MSG_EOK) return;
+    if (a->kind == REPLAY_ATOM_DEAL || a->kind == REPLAY_ATOM_DRAW) return; // the seed's job
 
-    const uint32_t n_logs = (uint32_t)p[16] | ((uint32_t)p[17] << 8) |
-                            ((uint32_t)p[18] << 16) | ((uint32_t)p[19] << 24);
-    int off = REPLAY_DEC_HDR;
-    for (uint32_t i = 0; i < n_logs; i++) {
-        if (off + 4 > d) return MSG_EBODY;
-        const int lt = p[off], seat = p[off + 1], npairs = p[off + 3];
-        off += 4;
-        if (off + npairs * 2 > d) return MSG_EBODY;
-        const unsigned char *pairs = p + off;
-        off += npairs * 2;
+    Game *g = m->g;
+    const int battles_before = g->num_battles;
 
-        AwireAction a;
-        switch (lt) {
-            case LOG_ATTACK: a.kind = AWIRE_ATTACK; break;
-            case LOG_COVER:  a.kind = AWIRE_COVER;  break;
-            case LOG_PASS:   a.kind = AWIRE_PASS;   break;
-            case LOG_PICKUP: a.kind = AWIRE_PICKUP; break;
-            case LOG_GOOD:   a.kind = AWIRE_GOOD;   break;
-            default: continue;   // DRAW/DISCARD/DEFENDER_CHANGE/OUT: consequences, not actions
+    if (a->kind == REPLAY_ATOM_ROUND_END) {
+        // Mirrors replay_steps.c's rs_apply: the bout closed because every IN
+        // attacker said good, and the last one triggered the transition. A round
+        // whose attackers are ALL out says nothing and would hang, so the
+        // transition is run directly — that branch is exactly why the codec
+        // reports ROUND_END as an atom instead of leaving it to be inferred.
+        for (int s = 0; s < g->num_players; s++) {
+            if (s == g->defender) continue;
+            if (g->players[s].status != PLAYER_STATUS_IN) continue;
+            handle_good(g, s);
         }
-        if (a.kind == AWIRE_PICKUP || a.kind == AWIRE_GOOD) {
-            a.n = 0;
-        } else {
-            if (npairs > AWIRE_MAX_CARDS) return MSG_EBODY;
-            a.n = npairs;
-            for (int k = 0; k < npairs; k++) {
-                a.cards[k]   = card_from_wire_state(pairs[k * 2]);
-                a.attacks[k] = card_from_wire_state(pairs[k * 2 + 1]);
-            }
-        }
-        if (seat < 0 || seat >= e->n_players) return MSG_EBODY;
-        const int rc = apply_one(g, seat, &a, rounds);
-        if (rc != MSG_EOK) return rc;
-        (*applied)++;
+        if (g->num_battles > 0) engine_run_round_transition(g);
+        if (battles_before > 0 && g->num_battles == 0) m->rounds++;
+        m->applied++;
+        return;
     }
-    return MSG_EOK;
+
+    if (a->seat < 0 || a->seat >= m->n_players) { m->err = MSG_EBODY; return; }
+
+    AwireAction w;
+    switch (a->kind) {
+        case REPLAY_ATOM_ATTACK: w.kind = AWIRE_ATTACK; break;
+        case REPLAY_ATOM_COVER:  w.kind = AWIRE_COVER;  break;
+        case REPLAY_ATOM_PASS:   w.kind = AWIRE_PASS;   break;
+        case REPLAY_ATOM_PICKUP: w.kind = AWIRE_PICKUP; break;
+        case REPLAY_ATOM_GOOD:   w.kind = AWIRE_GOOD;   break;
+        default:                 m->err = MSG_EBODY; return;
+    }
+    if (w.kind == AWIRE_PICKUP || w.kind == AWIRE_GOOD) {
+        w.n = 0;
+    } else if (w.kind == AWIRE_COVER) {
+        // A COVER atom is one pair: the card, and the attack it covers.
+        w.n = 1;
+        w.cards[0] = a->cards[0];
+        w.attacks[0] = a->target;
+    } else {
+        if (a->n_cards > AWIRE_MAX_CARDS) { m->err = MSG_EBODY; return; }
+        w.n = a->n_cards;
+        for (int i = 0; i < a->n_cards; i++) w.cards[i] = a->cards[i];
+    }
+
+    const int rc = apply_one(g, a->seat, &w, &m->rounds);
+    if (rc != MSG_EOK) { m->err = rc; return; }
+    m->applied++;
 }
 
-int msg_replay(const MsgEnvelope *e, Game *g, unsigned char *scratch, int scratch_cap) {
+int msg_replay(const MsgEnvelope *e, Game *g) {
     deal_from_envelope(e, g);
 
-    int rounds = 0, applied = 0;
-    const int rc = (e->format == MSG_FORMAT_V6)
-        ? replay_v6_body(e, g, &rounds, &applied, scratch, scratch_cap)
-        : replay_raw(e, g, &rounds, &applied);
-    if (rc != MSG_EOK) return rc;
+    MsgApply m;
+    m.g = g; m.n_players = e->n_players;
+    m.rounds = 0; m.applied = 0; m.err = MSG_EOK;
+
+    ReplayHeader hdr;
+    const int d = replay_decode_atoms_v6(e->actions, e->actions_len, &hdr, msg_atom, &m);
+    if (d < 0) return MSG_EBODY;
+    if (m.err != MSG_EOK) return m.err;
+    // The code's own header must describe the table the envelope claims.
+    if (hdr.n != e->n_players) return MSG_EBODY;
+
+    const int rounds = m.rounds, applied = m.applied;
 
     // `turn` is Rule P's input and is read BEFORE anyone replays, so it must be
     // backed by the chain. For format 1 decode already proved it; for format 2
@@ -382,12 +364,34 @@ int msg_replay(const MsgEnvelope *e, Game *g, unsigned char *scratch, int scratc
     return MSG_EOK;
 }
 
-int msg_body_from_game(const MsgEnvelope *e, const Game *g,
-                       unsigned char *body, int body_cap) {
+int msg_seal(MsgEnvelope *e, const Game *g, unsigned char *body, int body_cap,
+             Game *scratch) {
+    // 1 << 30 = every atom: a cut is what the CALLER already played to, not
+    // something this decides.
     const int n = replay_encode_v6_from_game(g, e->seed, MSG_SEED_LEN,
                                              1 << 30, body, body_cap);
     if (n < 0) return MSG_EBODY;
-    return n;
+
+    e->format      = MSG_FORMAT_V6;
+    e->actions     = body;
+    e->actions_len = n;
+
+    // Read our own body back for the counts it — and only it — knows.
+    deal_from_envelope(e, scratch);
+    MsgApply m;
+    m.g = scratch; m.n_players = e->n_players;
+    m.rounds = 0; m.applied = 0; m.err = MSG_EOK;
+    ReplayHeader hdr;
+    const int d = replay_decode_atoms_v6(body, n, &hdr, msg_atom, &m);
+    if (d < 0) return MSG_EBODY;
+    if (m.err != MSG_EOK) return m.err;
+    if (m.applied > MSG_MAX_ACTIONS) return MSG_EACTION;
+    if (m.rounds > 255) return MSG_EROUND;
+
+    e->n_actions = m.applied;
+    e->turn      = (uint16_t)m.applied;
+    e->round     = (uint8_t)m.rounds;
+    return MSG_EOK;
 }
 
 void msg_digest(const unsigned char *envelope, int len, uint8_t out[SHA256_DIGEST_LEN]) {

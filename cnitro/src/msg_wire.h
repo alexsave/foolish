@@ -4,8 +4,9 @@
 // by re-dealing from the seed and replaying the chain through the kernel, so
 // there is no server and no authority — only bytes that either replay or don't.
 // Spec: docs/IMESSAGE_GAME_DESIGN.md §4/§7, corrected by
-// docs/IMESSAGE_IMPLEMENTATION_HANDOFF.md §3.1/§3.2 (32-byte seed,
-// seat-prefixed awire frames). In C, like every other rule in this tree: the
+// docs/IMESSAGE_IMPLEMENTATION_HANDOFF.md §3.1 (32-byte seed) and by
+// docs/IMESSAGE_BODY_CODEC.md (the body is a v6 code, not raw frames — §3.2's
+// raw chain was measured and cut). In C, like every other rule in this tree: the
 // same bytes must mean the same game on the phone (libfoolish.a) and on the web
 // (rules.wasm), and one implementation is the only way to guarantee that.
 //
@@ -13,7 +14,7 @@
 //
 //   off  size  field
 //   0    1     magic      0xF7
-//   1    1     format     1 = raw body, 2 = v6-coded body (see THE BODY below)
+//   1    1     format     2 (see THE BODY below; 1 was cut before shipping)
 //   2    1     flags      bit0 fair_deal, bit1 gzip-body, bits2-7 reserved=0
 //   3    1     phase      0 WAITING, 1 ACCEPT, 2 LIVE, 3 FINISHED
 //   4    8     game_id    random u64, constant for the game
@@ -27,39 +28,34 @@
 //   58   1     n_joins
 //   59   var   joins      n_joins x { u8 seat, u8 name_len<=12, name utf8 }
 //   var  2     n_actions  u16, the action count the body must yield
-//   var  var   body       the chain — see THE BODY
+//   var  var   body       the v6 replay code — see THE BODY
 //
-// THE BODY — why there are two formats.
+// THE BODY is a v6 replay code (replay.h) — the codec that already ships. It
+// entropy-codes each action as an index into that state's legal-move menu, so an
+// action costs ~1-2 bits instead of the ~34 a raw frame spends. Measured over
+// 240 full games per size: 34 B at 2p, 45 B at 4p, 68 B at 8p — 8x to 18x
+// smaller than a raw chain, putting a 4-player envelope at ~208 base32 chars
+// against §4.4's 1,000-char budget. A raw body was tried and cut; see
+// docs/IMESSAGE_BODY_CODEC.md for the measurements that killed it.
 //
-//   format 2 (PREFERRED): the body is a **v6 replay code** (replay.h), the
-//   codec that already ships. It entropy-codes each action as an index into
-//   that state's legal-move menu, so an action costs ~1-2 bits instead of the
-//   ~34 a raw frame spends. Measured over 240 full games per size (msg_wire_
-//   test): the body is 34 B at 2p, 45 B at 4p, 68 B at 8p — 8x to 18x smaller
-//   than the raw chain, putting a 4-player envelope at ~208 base32 chars
-//   against §4.4's 1,000-char budget.
+// This is the natural fit, not a trick. docs/IMESSAGE_IMPLEMENTATION_HANDOFF
+// §3.3 rules v6 out as "the continuation format" because v6 carries NO deal
+// seed: alone, it reveals the cards dealt so far but nothing about the undealt
+// stock, so two devices cannot draw identically from it. But this envelope's
+// header carries the seed. **Seed (the future) + v6 code (the past)** is exactly
+// the pair serverless play needs, and it is what §16's "FMSG v2" asked for —
+// already built, already proven, already version-dispatched. v6's mid-game cut
+// (an explicit atom count) is what lets it encode a TURN and not just a finished
+// game, and v6 codes a pending `good` for the same reason (a mid-round good is
+// the commonest correspondence turn; without that atom 47% of 4-player mid-game
+// states were unrepresentable).
 //
-//   This is the natural fit, not a trick. docs/IMESSAGE_IMPLEMENTATION_HANDOFF
-//   §3.3 rules v6 out as "the continuation format" because v6 carries NO deal
-//   seed: alone, it reveals the cards dealt so far but nothing about the
-//   undealt stock, so two devices cannot draw identically from it. But this
-//   envelope's header carries the seed. Seed (the future) + v6 code (the past)
-//   is exactly the pair that makes serverless play work, and it is what §16's
-//   "FMSG v2" asked for — already built, already proven at ~787k assertions,
-//   already version-dispatched. v6's mid-game cut (explicit atom count) is what
-//   lets it encode a turn rather than only a finished game.
-//
-//   format 1 (FALLBACK): the body is the raw chain, n_actions x
-//   { u8 seat, awire frame } (awire.h). Kept because the v6 producer can
-//   legitimately REFUSE: replay_encode_v6_from_game reads the actions out of a
-//   game's logs and rejects a log buffer that overflowed (num_logs >= MAX_LOGS),
-//   which happens in ~10% of full 8-player games. Raw always encodes, so the
-//   protocol can never wedge on a game it cannot re-send. v1's UI caps at 4
-//   players, where the overflow was never observed.
-//
-//   Decode dispatches on the format byte — the same shape as replay.c's v5/v6
-//   dispatch. Both formats replay to the identical Game; the choice is purely
-//   how many bytes the same actions cost.
+// The seed is why a continuation is not a replay. replay_steps.c rebuilds a
+// Game from a code's DEAL/DRAW atoms and fills the never-drawn tail in canonical
+// order — right for rendering a finished game, wrong to play on from, because a
+// continuation draws from that tail and canonical order is not the shuffled
+// stock. So msg_replay deals the TRUE deck from the seed and takes only the
+// ACTIONS from the code.
 //
 // TWO LAYERS, deliberately separate:
 //
@@ -67,10 +63,9 @@
 //                 Game and answers no rules question. Hostile input is expected
 //                 here (the payload arrives from a URL), so every field is
 //                 range-checked and every length is proven against the buffer.
-//                 A format-1 body is walked frame by frame here; a format-2 body
-//                 is opaque to this layer (it is an entropy-coded integer — only
-//                 the codec can say whether it is well-formed), so it is checked
-//                 at replay instead. Nothing downstream trusts it in the meantime.
+//                 The body is opaque to this layer (an entropy-coded integer —
+//                 only the codec can say whether it is well-formed), so it is
+//                 checked at replay instead. Nothing trusts it in the meantime.
 //   msg_replay  — SEMANTICS. Re-deals from the seed and applies each action
 //                 through the PUBLIC kernel handlers, exactly as the shim does.
 //                 A corrupt or hand-edited chain fails here, loudly, because an
@@ -98,9 +93,11 @@
 #include <stdint.h>
 
 #define MSG_MAGIC        0xF7
-#define MSG_FORMAT_RAW   1   // body = seat-prefixed awire frames (fallback)
-#define MSG_FORMAT_V6    2   // body = a v6 replay code (preferred)
-#define MSG_FORMAT_MAX   2
+// Format 1 (a raw chain of seat-prefixed awire frames) was measured, rejected
+// and never shipped: it costs ~34 bits for an action worth ~1-2 and missed the
+// size budget by 1.33x at 4 players, permanently. The version byte keeps its
+// grave so nothing re-uses the number. See docs/IMESSAGE_BODY_CODEC.md.
+#define MSG_FORMAT_V6    2   // body = a v6 replay code — the only format
 
 #define MSG_PHASE_WAITING  0
 #define MSG_PHASE_ACCEPT   1
@@ -127,12 +124,6 @@
 // this was never going to fit in a URL anyway.
 #define MSG_MAX_ACTION_BYTES 4096
 
-// Scratch needed by msg_replay for a format-2 body: replay_decode expands the
-// code into a v5-shaped log stream, which is far larger than the code itself.
-// Callers in wasm pass g_replay_io (WASM_REPLAY_IO_CAP); native callers can use
-// a static buffer of this size.
-#define MSG_REPLAY_SCRATCH 32768
-
 // Errors (all negative; 0 is never an error).
 #define MSG_EOK          0
 #define MSG_ESHORT      -1   // buffer ends inside a field
@@ -153,7 +144,6 @@
 #define MSG_ECHAIN     -16   // an action was rejected by the kernel: illegal chain
 #define MSG_EJOINS     -17   // n_joins is 0 or > n_players
 #define MSG_EBODY      -18   // the v6 body did not decode (replay_last_error_detail has why)
-#define MSG_ESCRATCH   -19   // scratch buffer missing or too small for a v6 body
 
 typedef struct {
     uint8_t seat;
@@ -162,7 +152,7 @@ typedef struct {
 } MsgJoin;
 
 typedef struct {
-    uint8_t  format;   // MSG_FORMAT_V6 unless the v6 producer refused
+    uint8_t  format;   // always MSG_FORMAT_V6
     uint8_t  flags;
     uint8_t  phase;
     uint64_t game_id;
@@ -184,17 +174,34 @@ typedef struct {
     const unsigned char *actions;
 } MsgEnvelope;
 
-// Builds a format-2 body: the v6 replay code for `g`, a game dealt from
-// `e->seed` and played. Returns bytes written to `body` (>= 0), or a negative
-// MSG_E*. On MSG_EBODY the caller should fall back to a format-1 raw body — the
-// v6 producer refuses a game whose log buffer overflowed, and that is a real
-// (if rare) outcome, not a bug. See replay.h's replay_encode_v6_from_game.
+// THE PRODUCER. Fills in `e`'s body and the three header fields that describe
+// it — `n_actions`, `turn`, `round` — for `g`, a game dealt from `e->seed` and
+// played. The caller sets the rest (game_id, phase, seed, joins, parent8,
+// last_actor_seat). Returns MSG_EOK or a negative MSG_E*; `body` (>= 512 B is
+// ample; a full 8p game measures ~68) receives the code and `e->actions` is left
+// borrowing it, so it must outlive `e`.
 //
-// This is a thin wrapper over the ONE v6 producer, not a second encoder: the
-// point is that the caller never has to know a v6 code needs a deal seed, and
-// that FMSG cannot drift from the codec the rest of the product ships.
-int msg_body_from_game(const MsgEnvelope *e, const Game *g,
-                       unsigned char *body, int body_cap);
+// It derives those fields by DECODING THE BODY IT JUST WROTE and replaying it
+// into `scratch`, rather than by counting what the caller thinks it played.
+// Two reasons, both load-bearing:
+//
+//   - `turn` counts ATOMS, and atoms are not moves. The codec folds a bout's
+//     closing goods into ONE round_end atom, so a chain of 8 kernel actions can
+//     be 5 atoms. Only the codec knows the number, and Rule P orders chains on
+//     it — a producer that guessed would order the whole protocol wrong.
+//   - a header that disagrees with its body is exactly what msg_replay rejects
+//     (MSG_ETURN / MSG_EROUND). Deriving the header FROM the body means a host
+//     cannot emit a payload it would itself refuse.
+//
+// `scratch` is a caller-owned Game (a Game is ~33KB — far too big for a wasm
+// stack, and this file must not own static state that rules.wasm's pinned memory
+// would have to hold).
+//
+// MSG_EBODY means the v6 producer refused — it rejects a game whose log buffer
+// overflowed (num_logs >= MAX_LOGS), which was measured on ~10% of full 8-player
+// games and never at 2-4p. See docs/IMESSAGE_BODY_CODEC.md §4.
+int msg_seal(MsgEnvelope *e, const Game *g, unsigned char *body, int body_cap,
+             Game *scratch);
 
 // Parse + bounds-check `in` into `out`. Returns MSG_EOK or a negative MSG_E*.
 // Never reads past `in_len`, never allocates, never builds a Game. On success
@@ -223,9 +230,9 @@ int msg_encode(const MsgEnvelope *e, unsigned char *out, int out_cap);
 // every other seeded deal in this tree — see game.h's deal-RNG save/restore note
 // if you need to replay inside another game's lifetime.
 //
-// `scratch` (>= MSG_REPLAY_SCRATCH bytes) is only read for a format-2 body, to
-// expand the v6 code; pass 0/0 if you only ever handle format 1.
-int msg_replay(const MsgEnvelope *e, Game *g, unsigned char *scratch, int scratch_cap);
+// Costs no scratch and no log buffer: the body is read at the codec's own atom
+// level (replay_decode_atoms_v6), not expanded into a log stream.
+int msg_replay(const MsgEnvelope *e, Game *g);
 
 // SHA-256 of a whole envelope's bytes. `parent8` is the first MSG_PARENT_LEN
 // bytes of the parent's digest; Rule P's tiebreak compares full digests

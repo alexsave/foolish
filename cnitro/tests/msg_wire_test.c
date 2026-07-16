@@ -1,22 +1,23 @@
-// FMSG v1 envelope test — the native proof of the iMessage payload
-// (docs/IMESSAGE_GAME_DESIGN.md §4/§7, msg_wire.h).
+// FMSG envelope test — the native proof of the iMessage payload
+// (docs/IMESSAGE_GAME_DESIGN.md §4/§7, docs/IMESSAGE_BODY_CODEC.md, msg_wire.h).
 //
 // What it asserts, in the order the risks matter:
 //
 //   1. SHA-256 KATs — parent8 and Rule P's tiebreak are only "deterministic
 //      across devices" if this is the real FIPS 180-4 function.
-//   2. Round-trip: encode -> decode -> re-encode is BYTE-IDENTICAL, at 2/3/4/8
-//      players, in WAITING/LIVE/FINISHED, over real played games.
-//   3. Replay fidelity: a decoded chain reconstructs the SAME game the actions
-//      were recorded from — same hands, same table, same deck. This is the
-//      whole protocol: two devices must land on identical state or the game
-//      forks.
-//   4. Tamper matrix: flip every byte class -> a clean negative return, never a
-//      crash and never a silently different game. The payload arrives from a
-//      URL, so this is the hostile surface.
-//   5. Illegal chains are rejected (validation = replay, §7.3).
-//   6. Size guardrail: a full 4-player game's envelope stays under the P95
-//      budget (§4.4).
+//   2. Round-trip: seal -> encode -> decode -> re-encode is BYTE-IDENTICAL, at
+//      2/3/4/8 players, in WAITING/LIVE/FINISHED, over real played games.
+//   3. Replay fidelity: a decoded envelope reconstructs the SAME game its body
+//      was sealed from — same hands, same table, same deck. This is the whole
+//      protocol: two devices must land on identical state or the game forks.
+//   4. Tamper matrix: every single-bit flip is refused or CANONICAL, and never
+//      crashes. The payload arrives from a URL, so this is the hostile surface.
+//   5. Hostile bodies are refused (validation = replay, §7.3).
+//   6. Size guardrail: P95 of a full 4-player game < 1,000 base32 chars (§4.4).
+//
+// Reported, not asserted: the size distribution per player count and driver, and
+// `v6mid` — the mid-game-cut oracle that caught the codec's missing `good` atom
+// (docs/IMESSAGE_BODY_CODEC.md §3). It must keep reading `good_mask lost 0`.
 //
 // Usage: msg_wire_test [games_per_pc] [seed0]   (defaults 20, 20260716)
 
@@ -33,7 +34,6 @@
 #include <string.h>
 
 #define ENV_CAP 8192
-static unsigned char g_scratch[MSG_REPLAY_SCRATCH];
 
 static int g_fails = 0;
 
@@ -106,7 +106,7 @@ static void seed_fill(uint8_t *seed, uint32_t s) {
 
 static void env_init(MsgEnvelope *e, const uint8_t *seed, int n_players) {
     memset(e, 0, sizeof(*e));
-    e->format = MSG_FORMAT_RAW;
+    e->format = MSG_FORMAT_V6;
     e->flags = 0;
     e->phase = MSG_PHASE_LIVE;
     e->game_id = 0x0123456789abcdefULL;
@@ -167,13 +167,20 @@ static int play_game(const uint8_t *seed, int n_players, int max_actions,
     static LegalMoves ml;
     for (int step = 0; step < max_actions; step++) {
         if (game_done(&g) >= 0 || g.status != GAME_STATUS_PLAYING) break;
-        // Pick a seat that may act, then a random legal move for it.
+        // Pick a seat that may act, then a legal move for it. The scan starts at
+        // a random seat but visits ALL of them: sampling at random gave up ~1
+        // game in 80 (at 3p only the opener can act, so 12 random draws miss it
+        // 0.8% of the time) and produced empty chains that looked like codec
+        // failures.
         int seat = -1;
-        for (int t = 0; t < n_players * 4 && seat < 0; t++) {
-            const int s = (int)(rnd() % (uint32_t)n_players);
+        const int start = (int)(rnd() % (uint32_t)n_players);
+        for (int t = 0; t < n_players && seat < 0; t++) {
+            const int s = (start + t) % n_players;
             if (g.players[s].status != PLAYER_STATUS_IN) continue;
             calculate_legal_moves(&g, s, &ml);
-            if (ml.n > 0) seat = s;
+            for (int i = 0; i < ml.n; i++) {
+                if (ml.moves[i].type != MOVE_WAIT) { seat = s; break; }
+            }
         }
         if (seat < 0) break;
         calculate_legal_moves(&g, seat, &ml);
@@ -225,13 +232,19 @@ static void test_roundtrip(int games, uint32_t seed0) {
 
             MsgEnvelope e;
             env_init(&e, seed, np);
-            e.n_actions = ch.n;
-            e.actions_len = ch.len;
-            e.actions = ch.buf;
-            e.turn = (uint16_t)ch.n;
-            e.round = (uint8_t)rounds;
             const int over = game_done(&played) >= 0 || played.status == GAME_STATUS_GAME_OVER;
             e.phase = over ? MSG_PHASE_FINISHED : MSG_PHASE_LIVE;
+            static unsigned char body[1024];
+            static Game scratch;
+            const int src = msg_seal(&e, &played, body, sizeof(body), &scratch);
+            CHECK(src == MSG_EOK, "np=%d game=%d seal failed: %d (num_logs %d/%d, moves %d, replay_detail %d)", np, gi, src, played.num_logs, MAX_LOGS, ch.n, replay_last_error_detail());
+            if (src != MSG_EOK) continue;
+            // The codec folds a bout's closing goods into one round_end atom, so
+            // the sealed atom count is <= the moves played. Rounds must agree.
+            CHECK(e.round == (uint8_t)rounds, "np=%d game=%d sealed round %d != played %d",
+                  np, gi, e.round, rounds);
+            CHECK(e.n_actions <= ch.n, "np=%d game=%d atoms %d > moves %d",
+                  np, gi, e.n_actions, ch.n);
 
             unsigned char wire[ENV_CAP];
             const int n = msg_encode(&e, wire, sizeof(wire));
@@ -259,7 +272,7 @@ static void test_roundtrip(int games, uint32_t seed0) {
 
             // Replay must rebuild the very game the chain was recorded from.
             Game rg;
-            const int rrc = msg_replay(&d, &rg, g_scratch, sizeof(g_scratch));
+            const int rrc = msg_replay(&d, &rg);
             CHECK(rrc == MSG_EOK, "np=%d game=%d replay failed: %d", np, gi, rrc);
             if (rrc != MSG_EOK) continue;
             CHECK(rg.num_battles == played.num_battles && rg.defender == played.defender &&
@@ -308,10 +321,12 @@ static void test_tamper(void) {
 
     MsgEnvelope e;
     env_init(&e, seed, 4);
-    e.n_actions = ch.n; e.actions_len = ch.len; e.actions = ch.buf;
-    e.turn = (uint16_t)ch.n; e.round = (uint8_t)rounds;
     const int over = game_done(&played) >= 0 || played.status == GAME_STATUS_GAME_OVER;
     e.phase = over ? MSG_PHASE_FINISHED : MSG_PHASE_LIVE;
+    static unsigned char body[1024];
+    static Game scratch;
+    (void)rounds;
+    CHECK(msg_seal(&e, &played, body, sizeof(body), &scratch) == MSG_EOK, "tamper seal failed");
 
     unsigned char wire[ENV_CAP];
     const int n = msg_encode(&e, wire, sizeof(wire));
@@ -319,10 +334,21 @@ static void test_tamper(void) {
     if (n <= 0) return;
 
     // (a) Every truncation must fail cleanly, never read past the buffer.
+    //
+    // The verdict is decode+replay, not decode alone. Cutting into the BODY
+    // leaves a structurally perfect envelope — the body is the rest of the
+    // buffer, and an entropy-coded integer has no framing for msg_decode to find
+    // a hole in. A short code is simply a different (shorter) code. What catches
+    // it is the header it no longer matches: `turn` and `round` are the chain's
+    // claims, and msg_replay holds the body to them. That is the two-layer split
+    // doing its job, so the test asserts the pair.
     for (int cut = 0; cut < n; cut++) {
         MsgEnvelope d;
         const int rc = msg_decode(wire, cut, &d);
-        CHECK(rc != MSG_EOK, "truncation to %d/%d decoded as valid", cut, n);
+        if (rc != MSG_EOK) continue;
+        Game g;
+        CHECK(msg_replay(&d, &g) != MSG_EOK,
+              "truncation to %d/%d survived decode AND replay", cut, n);
     }
 
     // (b) Every single-byte flip must fail cleanly, or be CANONICAL: whatever
@@ -356,7 +382,7 @@ static void test_tamper(void) {
 
             // And replay must never crash on it, whatever it decides.
             Game g;
-            (void)msg_replay(&d, &g, g_scratch, sizeof(g_scratch));
+            (void)msg_replay(&d, &g);
         }
     }
     printf("  tamper: %d of %d single-bit flips decoded; all canonical, none crashed\n",
@@ -377,7 +403,7 @@ static void test_tamper(void) {
         CHECK(wn > 0, "round-lie encode should pass structure");
         MsgEnvelope d; Game g;
         CHECK(msg_decode(w, wn, &d) == MSG_EOK, "round-lie should decode");
-        CHECK(msg_replay(&d, &g, g_scratch, sizeof(g_scratch)) == MSG_EROUND, "inflated round survived replay");
+        CHECK(msg_replay(&d, &g) == MSG_EROUND, "inflated round survived replay");
     }
     {
         MsgEnvelope bad = e;
@@ -386,14 +412,15 @@ static void test_tamper(void) {
         const int wn = msg_encode(&bad, w, sizeof(w));
         MsgEnvelope d; Game g;
         if (wn > 0 && msg_decode(w, wn, &d) == MSG_EOK) {
-            CHECK(msg_replay(&d, &g, g_scratch, sizeof(g_scratch)) == MSG_EPHASE, "lying phase survived replay");
+            CHECK(msg_replay(&d, &g) == MSG_EPHASE, "lying phase survived replay");
         }
     }
 
     // (d) Field-level rejects, one per rule.
     struct { const char *what; int off; unsigned char val; int want; } cases[] = {
         { "magic",        0,  0xF6, MSG_EMAGIC },
-        { "format",       1,  MSG_FORMAT_MAX + 1, MSG_EFORMAT },
+        { "format",       1,  MSG_FORMAT_V6 + 1, MSG_EFORMAT },
+        { "format:raw",   1,  1,    MSG_EFORMAT },
         { "flags:fair",   2,  MSG_FLAG_FAIR_DEAL, MSG_EFLAGS },
         { "flags:gzip",   2,  MSG_FLAG_GZIP, MSG_EFLAGS },
         { "flags:rsvd",   2,  0x04, MSG_EFLAGS },
@@ -434,33 +461,76 @@ static void test_tamper(void) {
     }
 }
 
-// ---------- 5. an illegal chain is rejected -------------------------------
+// ---------- 5. hostile bodies are rejected (validation = replay) ----------
 
-static void test_illegal_chain(void) {
+// An "illegal chain" cannot be hand-written any more, and that is the point: a
+// v6 body codes each action as an index into the legal-move MENU, so a move the
+// rules forbid has no index and no encoding. Illegality is unrepresentable
+// rather than merely rejected. What remains reachable is a body that is not a
+// code for THIS game — garbage, a truncation, or another game's code — and each
+// must be refused without a crash.
+static void test_hostile_body(void) {
     uint8_t seed[MSG_SEED_LEN];
     seed_fill(seed, 99);
-
-    // A chain whose first action is a cover by a seat with nothing to cover:
-    // structurally perfect, semantically impossible.
+    g_rng = 99;
     Chain ch; memset(&ch, 0, sizeof(ch));
-    AwireAction a;
-    a.kind = AWIRE_COVER; a.n = 1;
-    a.cards[0].suit = 0; a.cards[0].value = 13;
-    a.attacks[0].suit = 1; a.attacks[0].value = 12;
-    CHECK(chain_append(&ch, 1, &a) == 1, "append failed");
+    Game played;
+    play_game(seed, 4, 40, &ch, &played, -1);
 
     MsgEnvelope e;
-    env_init(&e, seed, 2);
-    e.n_actions = ch.n; e.actions_len = ch.len; e.actions = ch.buf;
-    e.turn = (uint16_t)ch.n; e.round = 0; e.phase = MSG_PHASE_LIVE;
+    env_init(&e, seed, 4);
+    static unsigned char body[1024];
+    static Game scratch;
+    CHECK(msg_seal(&e, &played, body, sizeof(body), &scratch) == MSG_EOK, "seal failed");
 
     unsigned char wire[ENV_CAP];
     const int n = msg_encode(&e, wire, sizeof(wire));
-    CHECK(n > 0, "illegal-chain encode should pass structure: %d", n);
-    MsgEnvelope d;
-    CHECK(msg_decode(wire, n, &d) == MSG_EOK, "illegal chain should decode (structure is fine)");
-    Game g;
-    CHECK(msg_replay(&d, &g, g_scratch, sizeof(g_scratch)) == MSG_ECHAIN, "illegal chain survived replay");
+    CHECK(n > 0, "encode failed");
+    if (n <= 0) return;
+    const int body_off = n - e.actions_len;
+
+    // (a) Random garbage in the body: never EOK, never a crash.
+    int accepted = 0;
+    for (int t = 0; t < 2000; t++) {
+        unsigned char m[ENV_CAP];
+        memcpy(m, wire, (size_t)n);
+        for (int k = body_off; k < n; k++) m[k] = (unsigned char)(rnd() >> 11);
+        MsgEnvelope d;
+        if (msg_decode(m, n, &d) != MSG_EOK) continue;
+        Game g;
+        if (msg_replay(&d, &g) == MSG_EOK) accepted++;
+    }
+    // A random body CAN happen to be a shorter legal game — the code space is
+    // dense. It can never be one whose atom count matches this header's `turn`,
+    // which is what makes the header the anchor.
+    CHECK(accepted == 0, "%d/2000 random bodies replayed as this envelope's chain", accepted);
+
+    // (b) Another game's code under this game's seed: the actions do not fit the
+    //     deal, so the menus reject them (REPLAY_ENOTINMENU) — the codec IS the
+    //     rules check.
+    uint8_t other[MSG_SEED_LEN];
+    seed_fill(other, 4242);
+    g_rng = 4242;
+    Chain ch2; memset(&ch2, 0, sizeof(ch2));
+    Game played2;
+    play_game(other, 4, 40, &ch2, &played2, -1);
+    MsgEnvelope e2;
+    env_init(&e2, other, 4);
+    static unsigned char body2[1024];
+    if (msg_seal(&e2, &played2, body2, sizeof(body2), &scratch) == MSG_EOK) {
+        MsgEnvelope mix = e;              // this game's seed + header
+        mix.actions = body2;              // the OTHER game's code
+        mix.actions_len = e2.actions_len;
+        unsigned char w2[ENV_CAP];
+        const int wn = msg_encode(&mix, w2, sizeof(w2));
+        if (wn > 0) {
+            MsgEnvelope d; Game g;
+            if (msg_decode(w2, wn, &d) == MSG_EOK) {
+                CHECK(msg_replay(&d, &g) != MSG_EOK,
+                      "another game's code replayed under this seed");
+            }
+        }
+    }
 }
 
 // ---------- 6. size guardrail --------------------------------------------
@@ -485,8 +555,11 @@ static int measure(int games, uint32_t seed0, int np, int bot, const char *label
 
         MsgEnvelope e;
         env_init(&e, seed, np);
-        e.n_actions = ch.n; e.actions_len = ch.len; e.actions = ch.buf;
-        e.turn = (uint16_t)ch.n; e.round = (uint8_t)rounds; e.phase = MSG_PHASE_FINISHED;
+        e.phase = MSG_PHASE_FINISHED;
+        (void)rounds;
+        static unsigned char body[1024];
+        static Game scratch;
+        if (msg_seal(&e, &played, body, sizeof(body), &scratch) != MSG_EOK) continue;
         unsigned char wire[ENV_CAP];
         const int w = msg_encode(&e, wire, sizeof(wire));
         if (w > 0) { acts[n] = ch.n; sizes[n] = w; n++; }
@@ -571,41 +644,11 @@ static void probe_v6_midgame(uint32_t seed0, int np, int bot) {
             for (int s = 0; s < np; s++)
                 if (rg.players[s].hand_count != truth.players[s].hand_count) bad = 1;
             if (bad) state_bad++;
-            if (rg.good_players_mask != mask_before) good_pending_bad++;
+            if ((int)rg.good_players_mask != mask_before) good_pending_bad++;
         }
     }
     printf("  v6mid np=%d: %d cuts | enc_fail %d | dec_fail %d | STATE MISMATCH %d | "
            "good_mask lost %d\n", np, cuts, enc_fail, dec_fail, state_bad, good_pending_bad);
-}
-
-// EXPERIMENT (temporary): what would the body cost if it were a v6 replay code
-// instead of raw awire frames? Same games, same information.
-static void probe_v6_body(int games, uint32_t seed0, int np, int bot) {
-    int raw_tot = 0, v6_tot = 0, n = 0, failed = 0, max_logs_seen = 0;
-    for (int gi = 0; gi < games; gi++) {
-        uint8_t seed[MSG_SEED_LEN];
-        seed_fill(seed, seed0 + (uint32_t)gi * 7919 + (uint32_t)np);
-        g_rng = seed0 + (uint32_t)gi;
-        Chain ch; memset(&ch, 0, sizeof(ch));
-        Game played;
-        play_game(seed, np, 2000, &ch, &played, bot);
-        if (game_done(&played) < 0 && played.status == GAME_STATUS_PLAYING) continue;
-        if (played.num_logs > max_logs_seen) max_logs_seen = played.num_logs;
-
-        unsigned char body[4096];
-        const int b = replay_encode_v6_from_game(&played, seed, MSG_SEED_LEN,
-                                                 1 << 30, body, sizeof(body));
-        if (b < 0) { failed++; continue; }
-        raw_tot += ch.len;
-        v6_tot += b;
-        n++;
-    }
-    if (!n) { printf("  v6probe np=%d: nothing encoded (%d failed)\n", np, failed); return; }
-    printf("  v6probe np=%d: raw chain avg %d B -> v6 body avg %d B (%.1fx smaller); "
-           "envelope ~%d B (~%d ch); %d/%d encodes failed; max num_logs %d/%d\n",
-           np, raw_tot / n, v6_tot / n, (double)raw_tot / (double)v6_tot,
-           59 + 24 + 2 + v6_tot / n, b32_chars(59 + 24 + 2 + v6_tot / n),
-           failed, failed + n, max_logs_seen, MAX_LOGS);
 }
 
 static void test_size_budget(int games, uint32_t seed0) {
@@ -630,22 +673,19 @@ static void test_size_budget(int games, uint32_t seed0) {
         // spec'd to run there, so it is reported to size any future lift.
         measure(games, seed0, 8, robusta, "robusta");
         const int p95 = measure(games, seed0, 4, robusta, "robusta");
-        // §4.4's <1,000-char budget is NOT asserted yet, deliberately. It fails
-        // by 1.33x on the RAW body and always will: raw spends ~34 bits on an
-        // action worth ~1-2 bits. That is the known trigger for the v6-coded
-        // body (docs/IMESSAGE_BODY_CODEC.md), which measures 13x smaller and
-        // lands 4p at ~208 chars — five times UNDER budget. Asserting 1,000
-        // now would just commit a red test for a decision already taken.
+        // §4.4's guardrail, live. It passes with ~4x margin on the v6 body
+        // (measured P95 ~240 chars of the 1,000). It did NOT pass on the raw
+        // body it replaced — 1,328 chars, over by 1.33x and unfixable, which is
+        // what chose the codec (docs/IMESSAGE_BODY_CODEC.md).
         //
-        // What IS asserted meanwhile: Apple's documented MSMessage.url cap, the
-        // only hard limit. The <1,000 assertion lands with the v6 body.
-        const int url_cap_bytes = 5000 / 8 * 5;   // 3,125 B of base32
+        // If this ever trips, the payload grew ~4x: suspect the body, not the
+        // budget.
         if (p95 >= 0) {
-            CHECK(p95 <= url_cap_bytes,
-                  "P95 envelope %d B (%d base32 chars) exceeds MSMessage.url's 5,000-char cap",
-                  p95, b32_chars(p95));
+            CHECK(p95 <= budget_bytes,
+                  "P95 envelope %d B (%d base32 chars) exceeds the %d B (1,000 char) budget "
+                  "at 4p on representative play — see docs §4.4",
+                  p95, b32_chars(p95), budget_bytes);
         }
-        (void)budget_bytes;
     }
 }
 
@@ -658,12 +698,9 @@ int main(int argc, char **argv) {
     test_roundtrip(games, seed0);
     test_waiting_phase();
     test_tamper();
-    test_illegal_chain();
+    test_hostile_body();
     test_size_budget(games * 4, seed0);
     { const int rb = bot_roster_find("robusta");
-      probe_v6_body(games * 4, seed0, 2, rb);
-      probe_v6_body(games * 4, seed0, 4, rb);
-      probe_v6_body(games * 4, seed0, 8, rb);
       probe_v6_midgame(seed0, 2, rb);
       probe_v6_midgame(seed0, 4, rb); }
 
