@@ -66,8 +66,9 @@ public enum PackedGame {
         let stateStart = q + 2
         let stateBytes = Data(b[stateStart..<(q + viewLen)])
 
-        // Decode the masked state through the kernel (viewer = the local seat).
-        guard let raw = try? await engine.viewFromPacked(stateBytes, viewer: seat) else { return nil }
+        // Decode the masked state directly in Swift — no kernel JSON round-trip
+        // (owner: wipe the JSON; client↔server is packed kernel wire).
+        guard let raw = MaskedView.decode(stateBytes, viewer: seat) else { return nil }
 
         // Merge the roster's real names / is_ai (the masked state carries neither).
         let named = raw.players.map { p -> PlayerView in
