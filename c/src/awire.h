@@ -50,4 +50,14 @@ int awire_frame_len(const unsigned char *buf, int len);
 // only producer.
 int awire_encode(const AwireAction *a, unsigned char *buf, int cap);
 
+// Applies a decoded action to `g` for `seat` through the canonical handle_*
+// dispatch — the ONE place a move's kind becomes an engine call. Returns true
+// if the engine applied it, false if it was rejected (engine_last_reject
+// carries why) or the kind is unknown / seat out of range. Hosts wrap this with
+// their own snapshot/event bookkeeping; the kind->handler switch is the
+// kernel's, so no server (native /action, iOS bridge, wasm apply) re-enumerates
+// move types. Implemented in game.c beside handle_*, declared here beside
+// awire_decode since it consumes exactly what the decoder produces.
+bool awire_apply(Game *g, int seat, const AwireAction *a);
+
 #endif

@@ -9,6 +9,7 @@
 #include "../src/game.h"
 #include "../src/deal_rng.h"
 #include "../src/legal.h"
+#include "../src/awire.h"
 #include "../src/strategy.h"
 #include "../src/bot_roster.h"
 #include "../src/bot_knobs.h"
@@ -77,6 +78,41 @@ static void test_legal_first_attack(void) {
     int n_attack = 0;
     for (int i = 0; i < moves.n; i++) if (moves.moves[i].type == MOVE_ATTACK) n_attack++;
     CHECK(n_attack == 6, "all are attacks");
+}
+
+// Test: awire_apply is the shared kernel apply-entry (server /action + iOS
+// bridge route through it). An attack encoded to the wire, decoded back, and
+// applied must change the board exactly as a direct handle_attack would; a
+// malformed kind or an out-of-range seat must be rejected, not applied.
+static void test_awire_apply_roundtrip(void) {
+    Game g; make_2p_game(&g);
+    g.status = GAME_STATUS_PLAYING;
+    g.num_battles = 0;
+    g.first_attacker = 0;
+    g.defender = 1;
+    g.power_suit = SUIT_DIAMONDS;
+    g.players[0].status = PLAYER_STATUS_IN;
+    g.players[1].status = PLAYER_STATUS_IN;
+    for (int i = 0; i < 6; i++) g.players[0].hand[i] = (Card){ SUIT_SPADES, 5 + i };
+    g.players[0].hand_count = 6;
+    g.players[1].hand_count = 6;
+
+    AwireAction a = {0};
+    a.kind = AWIRE_ATTACK; a.n = 1; a.cards[0] = (Card){ SUIT_SPADES, 7 };
+    unsigned char buf[8];
+    int len = awire_encode(&a, buf, sizeof buf);
+    CHECK(len > 0, "awire_encode wrote the attack frame");
+    AwireAction dec;
+    CHECK(awire_decode(buf, len, &dec) == 1, "awire_decode read it back");
+    CHECK(awire_apply(&g, 0, &dec), "awire_apply applied the attack");
+    CHECK(g.num_battles == 1, "awire_apply: one battle on the table");
+    CHECK(g.table_battles[0].attack.suit == SUIT_SPADES &&
+          g.table_battles[0].attack.value == 7, "awire_apply: the 7s is the attack");
+    CHECK(g.players[0].hand_count == 5, "awire_apply: attacker down a card");
+
+    AwireAction bad = dec; bad.kind = 99;
+    CHECK(!awire_apply(&g, 0, &bad), "awire_apply: unknown kind rejected");
+    CHECK(!awire_apply(&g, 7, &dec), "awire_apply: seat out of range rejected");
 }
 
 // Test: with two cards of the same value, first attack also includes a
@@ -2407,6 +2443,7 @@ int main(void) {
     test_deal_wide_permutation();
     test_deal_rng_unbiased();
     test_start_game();
+    test_awire_apply_roundtrip();
     test_legal_first_attack();
     test_legal_first_attack_duplicate();
     test_can_cover();

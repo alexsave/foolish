@@ -8,6 +8,7 @@
 // `setRandomSeed(seed)`).
 
 #include "game.h"
+#include "awire.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -974,6 +975,25 @@ bool handle_good(Game *g, int player_idx) {
     }
     if (all_good && all_covered) execute_round_transition(g);
     return true;
+}
+
+// One decoded action applied — the kind->handler dispatch every host used to
+// copy (iOS fio_apply_awire, the native server's apply_move_json, bot_drive's
+// own apply_move). The switch is a kernel fact, so it lives here beside the
+// handlers, and callers route through it instead of re-enumerating move types.
+// awire_decode already guarantees a cover frame's covering/attack cards pair up
+// n-for-n, so no arity re-check is needed. engine_last_reject holds the reason
+// on a false return; the caller owns any snapshot/event bookkeeping around it.
+bool awire_apply(Game *g, int seat, const AwireAction *a) {
+    if (!g || !a || seat < 0 || seat >= g->num_players) return false;
+    switch (a->kind) {
+        case AWIRE_ATTACK: return handle_attack(g, seat, a->cards, a->n);
+        case AWIRE_COVER:  return handle_cover(g, seat, a->cards, a->attacks, a->n);
+        case AWIRE_PASS:   return handle_pass(g, seat, a->cards, a->n);
+        case AWIRE_PICKUP: return handle_pickup(g, seat);
+        case AWIRE_GOOD:   return handle_good(g, seat);
+        default:           return false;
+    }
 }
 
 // Standalone entries mirroring the TS exports (see game.h).
