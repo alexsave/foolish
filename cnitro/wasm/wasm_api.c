@@ -17,6 +17,7 @@
 #include "wire.h"
 #include "legal.h"
 #include "replay.h"
+#include "msg_wire.h"
 #include "wasm_overlay.h"
 #include "rules_overlay.h"
 #include "view.h"
@@ -663,6 +664,129 @@ int wasm_replay_encode_v6_from_game(int max_atoms) {
 }
 
 int wasm_replay_error_detail(void) { return replay_last_error_detail(); }
+
+// ---------- FMSG: the iMessage envelope (src/msg_wire.h) -----------------
+//
+// The envelope crosses in g_replay_io, NOT g_io, and that is load-bearing. In
+// rules.wasm (-DCD_RULES_OVERLAY) the replay scratch family aliases OVER the
+// action family, legal because "replay encode/decode vs action/menu are
+// top-level exports that never nest" (see the Makefile). An FMSG call IS a
+// replay call — its body is a v6 code and decoding it runs the bignum scratch —
+// so an envelope parked in g_io would be clobbered mid-decode, and MsgEnvelope
+// BORROWS the bytes it decoded from. Keeping it in the replay family's own
+// buffer keeps that invariant true.
+//
+// Both entries below replay into the resident g_game, so after a decode the
+// ordinary exports (wasm_view_serialize, wasm_legal_moves, wasm_apply_action)
+// all read the game the payload describes — the /m/ route needs no new
+// rendering path, and a turn continues from exactly what it decoded.
+
+// The unpacked header, the private ABI between msg_wire and its TS/Swift
+// bridges. Fixed offsets and fixed-size join slots: this side is ours, so it
+// trades bytes for a bridge that cannot mis-parse.
+//
+//   0  1 format      1  1 flags        2  1 phase       3  1 n_players
+//   4  1 variant     5  1 round        6  1 last_actor   7  1 n_joins
+//   8  8 game_id (LE)                 16  2 turn (LE)
+//   18 8 parent8                      26 32 seed
+//   58 32 digest — SHA-256 of the WHOLE envelope; Rule P's tiebreak compares
+//                  these lexicographically, and parent8 is a parent's first 8.
+//                  Decode-only: msg_seal ignores it (an envelope cannot contain
+//                  its own digest).
+//   90 n_joins x 14 { u8 seat, u8 name_len, 12 B name }
+#define MSG_BLOB_HDR   90
+#define MSG_BLOB_JOIN  14
+#define MSG_BLOB_MAX   (MSG_BLOB_HDR + MSG_MAX_JOINS * MSG_BLOB_JOIN)
+
+static void msg_blob_write(const MsgEnvelope *e, const uint8_t *digest, unsigned char *o) {
+    o[0] = e->format; o[1] = e->flags; o[2] = e->phase; o[3] = e->n_players;
+    o[4] = e->variant; o[5] = e->round; o[6] = e->last_actor_seat;
+    o[7] = (unsigned char)e->n_joins;
+    for (int i = 0; i < 8; i++) o[8 + i] = (unsigned char)(e->game_id >> (8 * i));
+    o[16] = (unsigned char)(e->turn & 0xff);
+    o[17] = (unsigned char)(e->turn >> 8);
+    memcpy(o + 18, e->parent8, MSG_PARENT_LEN);
+    memcpy(o + 26, e->seed, MSG_SEED_LEN);
+    if (digest) memcpy(o + 58, digest, SHA256_DIGEST_LEN);
+    else memset(o + 58, 0, SHA256_DIGEST_LEN);
+    for (int i = 0; i < e->n_joins; i++) {
+        unsigned char *j = o + MSG_BLOB_HDR + i * MSG_BLOB_JOIN;
+        j[0] = e->joins[i].seat;
+        j[1] = e->joins[i].name_len;
+        memset(j + 2, 0, MSG_MAX_NAME);
+        memcpy(j + 2, e->joins[i].name, e->joins[i].name_len);
+    }
+}
+
+static int msg_blob_read(const unsigned char *b, int len, MsgEnvelope *e) {
+    if (len < MSG_BLOB_HDR) return MSG_ESHORT;
+    memset(e, 0, sizeof(*e));
+    e->format = b[0]; e->flags = b[1]; e->phase = b[2]; e->n_players = b[3];
+    e->variant = b[4]; e->round = b[5]; e->last_actor_seat = b[6];
+    e->n_joins = b[7];
+    if (e->n_joins < 1 || e->n_joins > MSG_MAX_JOINS) return MSG_EJOINS;
+    if (len < MSG_BLOB_HDR + e->n_joins * MSG_BLOB_JOIN) return MSG_ESHORT;
+    uint64_t id = 0;
+    for (int i = 7; i >= 0; i--) id = (id << 8) | b[8 + i];
+    e->game_id = id;
+    e->turn = (uint16_t)(b[16] | (b[17] << 8));
+    memcpy(e->parent8, b + 18, MSG_PARENT_LEN);
+    memcpy(e->seed, b + 26, MSG_SEED_LEN);
+    for (int i = 0; i < e->n_joins; i++) {
+        const unsigned char *j = b + MSG_BLOB_HDR + i * MSG_BLOB_JOIN;
+        e->joins[i].seat = j[0];
+        e->joins[i].name_len = j[1];
+        if (j[1] > MSG_MAX_NAME) return MSG_ENAME;
+        memcpy(e->joins[i].name, j + 2, MSG_MAX_NAME);
+    }
+    return MSG_EOK;
+}
+
+// in:  g_replay_io[0 .. in_len) = the envelope bytes
+// out: the unpacked header blob, written back over g_replay_io
+// Replays the chain into g_game on the way. Returns the blob length, or -MSG_E*
+// negated into the same space the replay errors use (see the TS bridge).
+int wasm_msg_decode(int in_len) {
+    if (in_len < 0 || in_len > REPLAY_IO_CAP) return MSG_ECAP;
+    MsgEnvelope e;
+    const int rc = msg_decode(g_replay_io, in_len, &e);
+    if (rc != MSG_EOK) return rc;
+
+    // Digest the envelope BEFORE the blob overwrites it — Rule P needs it, and
+    // these bytes are about to stop existing.
+    uint8_t digest[SHA256_DIGEST_LEN];
+    msg_digest(g_replay_io, in_len, digest);
+
+    const int rrc = msg_replay(&e, &g_game);   // e borrows g_replay_io; still intact
+    if (rrc != MSG_EOK) return rrc;
+
+    // Safe now: replay is done with the borrowed body.
+    msg_blob_write(&e, digest, g_replay_io);
+    return MSG_BLOB_HDR + e.n_joins * MSG_BLOB_JOIN;
+}
+
+// in:  g_replay_io[0 .. in_len) = the unpacked header blob (digest ignored)
+// out: the envelope bytes, written back over g_replay_io
+// Seals the RESIDENT g_game — the game the caller just played a move on.
+// Returns the envelope length, or a negative MSG_E*.
+//
+// Exported from bots.wasm ONLY (see the Makefile). Sealing reads the game's
+// session log through replay_encode_v6_from_game, and rules.wasm is built at
+// MAX_LOGS=128 with no log import: it cannot hold one. rules.wasm only ever
+// decodes, which is all the /m/ route does.
+int wasm_msg_seal(int in_len) {
+    if (in_len < 0 || in_len > REPLAY_IO_CAP) return MSG_ECAP;
+    MsgEnvelope e;
+    const int rc = msg_blob_read(g_replay_io, in_len, &e);
+    if (rc != MSG_EOK) return rc;
+
+    // A v6 body is tens of bytes; 512 is far above any measured game (8p ~68 B).
+    static unsigned char body[512];
+    static Game scratch;
+    const int src = msg_seal(&e, &g_game, body, (int)sizeof body, &scratch);
+    if (src != MSG_EOK) return src;
+    return msg_encode(&e, g_replay_io, REPLAY_IO_CAP);
+}
 
 // ---------- legal moves --------------------------------------------------------
 // u32 n, then per move: u8 type, u8 n_cards, n_cards x u8 wire-card cards,

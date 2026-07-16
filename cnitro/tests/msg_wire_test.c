@@ -689,7 +689,40 @@ static void test_size_budget(int games, uint32_t seed0) {
     }
 }
 
+// `msg_wire_test --fixture` prints sealed envelopes as hex, one per line:
+//   <n_players> <turn> <round> <hex>
+// These are the cross-engine goldens (design §8.2): the wasm kernel and, later,
+// libfoolish.a on a phone must decode them to the same game, or an iMessage
+// game forks between a browser and a device. e2e/msg_wire.test.ts pins them.
+static void print_fixtures(void) {
+    const int pcs[] = { 2, 3, 4 };
+    for (int pi = 0; pi < 3; pi++) {
+        const int np = pcs[pi];
+        uint8_t seed[MSG_SEED_LEN];
+        seed_fill(seed, 20260716u + (uint32_t)np);
+        g_rng = 7u + (uint32_t)np;
+        Chain ch; memset(&ch, 0, sizeof(ch));
+        Game played;
+        // A mid-game cut: a turn bubble, which is what actually ships.
+        play_game(seed, np, 25, &ch, &played, bot_roster_find("robusta"));
+
+        MsgEnvelope e;
+        env_init(&e, seed, np);
+        e.phase = MSG_PHASE_LIVE;
+        static unsigned char body[1024];
+        static Game scratch;
+        if (msg_seal(&e, &played, body, sizeof(body), &scratch) != MSG_EOK) continue;
+        unsigned char wire[ENV_CAP];
+        const int n = msg_encode(&e, wire, sizeof(wire));
+        if (n <= 0) continue;
+        printf("%d %d %d ", np, e.turn, e.round);
+        for (int i = 0; i < n; i++) printf("%02x", wire[i]);
+        printf("\n");
+    }
+}
+
 int main(int argc, char **argv) {
+    if (argc > 1 && !strcmp(argv[1], "--fixture")) { print_fixtures(); return 0; }
     const int games = argc > 1 ? atoi(argv[1]) : 20;
     const uint32_t seed0 = argc > 2 ? (uint32_t)strtoul(argv[2], 0, 10) : 20260716u;
 

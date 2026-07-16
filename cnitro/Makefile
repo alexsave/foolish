@@ -447,6 +447,7 @@ WASM_API_EXPORTS := \
   -Wl,--export=wasm_replay_encode -Wl,--export=wasm_replay_decode \
   -Wl,--export=wasm_replay_encode_v6 \
   -Wl,--export=wasm_replay_error_detail \
+  -Wl,--export=wasm_msg_decode \
   -Wl,--export=wasm_legal_moves -Wl,--export=wasm_export_moves \
   -Wl,--export=wasm_apply_action -Wl,--export=wasm_finalize_win \
   -Wl,--export=wasm_view_serialize -Wl,--export=wasm_events_serialize \
@@ -479,6 +480,7 @@ WASM_BOTS_API_EXPORTS := \
   -Wl,--export=wasm_export_logs_masked_from \
   -Wl,--export=wasm_events_serialize_from \
   -Wl,--export=wasm_replay_encode_v6_from_game \
+  -Wl,--export=wasm_msg_seal \
   -Wl,--export=wasm_belief_probe_reset -Wl,--export=wasm_belief_probe_dump
 
 # The rules module's move buffer only feeds the exported menu — production
@@ -743,7 +745,7 @@ wasm-guards: build/guards.wasm
 # not CC=. CI ships the committed .gz rather than rebuilding, so the committed
 # artifact is the baseline to reproduce before you touch it.
 WASM_BOT_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/view.c src/awire.c \
-                src/evwire.c src/random_strategy.c \
+                src/evwire.c src/sha256.c src/msg_wire.c src/random_strategy.c \
                 src/espresso_strategy.c src/handwritten_strategy.c \
                 src/robusta_strategy.c src/firecracker_strategy.c \
                 src/blackpowder_strategy.c \
