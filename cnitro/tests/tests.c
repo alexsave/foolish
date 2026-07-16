@@ -1556,6 +1556,140 @@ static void test_replay_frames_are_the_replay_events(void) {
     }
 }
 
+// The step index is what lets a scrubber say "Bot 2 passed" instead of "Bot 2
+// attacked": on the wire those are one event type, separated only by a
+// reconstructed English sentence, so the web asks the kernel instead of
+// pattern-matching prose. That only holds if the index really lines up with the
+// frames it describes, and really distinguishes the two.
+static void test_replay_step_index_says_what_each_step_is(void) {
+    static unsigned char code[1 << 20];
+    static unsigned char idx[4096];
+
+    for (int np = 2; np <= 4; np++) {
+        Game g;
+        unsigned char seed[FOOLISH_SEED_LEN];
+        if (!rs_play_seeded(&g, np, 500 + np, seed)) { CHECK(0, "seeded game plays out"); continue; }
+
+        int enc = replay_encode_v6_from_game(&g, seed, FOOLISH_SEED_LEN, 1 << 20,
+                                             code, (int)sizeof code);
+        CHECK(enc > 0, "the played game encodes as v6");
+        if (enc <= 0) continue;
+
+        const int steps = replay_steps_count_v6(code, enc, 0);
+        int len = replay_steps_index_v6(code, enc, 0, idx, (int)sizeof idx);
+        CHECK(len == steps * RS_INDEX_STRIDE, "one index record per step, no more");
+        if (len != steps * RS_INDEX_STRIDE) continue;
+
+        // Step 0 is the deal: nobody's action. DEAL never appears again — it is
+        // an atom kind reused for that one step, so a later DEAL would mean an
+        // action step was mislabelled as the opening.
+        CHECK(idx[0] == REPLAY_ATOM_DEAL, "step 0 is the deal");
+        CHECK(idx[1] == RS_SEAT_NONE, "the deal is nobody's action");
+
+        int seen[8] = {0};
+        for (int i = 1; i < steps; i++) {
+            const int kind = idx[i * RS_INDEX_STRIDE];
+            const int seat = idx[i * RS_INDEX_STRIDE + 1];
+            CHECK(kind != REPLAY_ATOM_DEAL, "only step 0 is the deal");
+            CHECK(kind != REPLAY_ATOM_DRAW, "a draw is never a step of its own");
+            CHECK(kind <= REPLAY_ATOM_GOOD, "every step reports a known atom kind");
+            if (kind <= REPLAY_ATOM_GOOD) seen[kind]++;
+            // A seat acts, or the bout closed on nobody in particular.
+            if (kind == REPLAY_ATOM_ROUND_END) {
+                CHECK(seat == RS_SEAT_NONE, "a round end is nobody's action");
+            } else {
+                CHECK(seat < np, "an action's seat is a real seat");
+            }
+        }
+
+        // The index must agree with the game that was actually played, kind for
+        // kind — not merely be self-consistent. Each of these four moves is one
+        // log record and one step, so the counts are comparable directly, and
+        // any collapse (an index that called every pass an attack, say) shows up
+        // here as two counts moving in opposite directions.
+        int want[8] = {0};
+        for (int i = 0; i < g.num_logs; i++) {
+            switch (g.logs[i].log_type) {
+                case LOG_ATTACK: want[REPLAY_ATOM_ATTACK]++; break;
+                case LOG_COVER:  want[REPLAY_ATOM_COVER]++;  break;
+                case LOG_PASS:   want[REPLAY_ATOM_PASS]++;   break;
+                case LOG_PICKUP: want[REPLAY_ATOM_PICKUP]++; break;
+                default: break;
+            }
+        }
+        CHECK(seen[REPLAY_ATOM_ATTACK] == want[REPLAY_ATOM_ATTACK], "the index counts the game's attacks");
+        CHECK(seen[REPLAY_ATOM_COVER]  == want[REPLAY_ATOM_COVER],  "the index counts the game's covers");
+        CHECK(seen[REPLAY_ATOM_PASS]   == want[REPLAY_ATOM_PASS],   "the index counts the game's passes");
+        CHECK(seen[REPLAY_ATOM_PICKUP] == want[REPLAY_ATOM_PICKUP], "the index counts the game's pickups");
+        // ...and the game has to contain the moves that make those checks mean
+        // something. A 2p game passes rarely, so this only insists on the two
+        // every Durak game has; the pass-bearing case is covered at 3p+ below.
+        CHECK(want[REPLAY_ATOM_ATTACK] > 0, "the seeded game attacks");
+        CHECK(want[REPLAY_ATOM_COVER] > 0, "the seeded game covers");
+    }
+}
+
+// The counts above only bite on passes if some seeded game actually passes.
+// Find one, so a pass-collapsing index cannot hide behind a pass-free game.
+static void test_replay_step_index_tells_a_pass_from_an_attack(void) {
+    static unsigned char code[1 << 20];
+    static unsigned char idx[4096];
+
+    bool found_pass = false;
+    for (int np = 3; np <= 4 && !found_pass; np++) {
+        for (int s = 0; s < 40 && !found_pass; s++) {
+            Game g;
+            unsigned char seed[FOOLISH_SEED_LEN];
+            if (!rs_play_seeded(&g, np, 900 + s, seed)) continue;
+
+            int passes = 0, attacks = 0;
+            for (int i = 0; i < g.num_logs; i++) {
+                if (g.logs[i].log_type == LOG_PASS) passes++;
+                if (g.logs[i].log_type == LOG_ATTACK) attacks++;
+            }
+            if (passes == 0) continue;
+            found_pass = true;
+
+            int enc = replay_encode_v6_from_game(&g, seed, FOOLISH_SEED_LEN, 1 << 20,
+                                                 code, (int)sizeof code);
+            CHECK(enc > 0, "the passing game encodes as v6");
+            if (enc <= 0) return;
+            const int steps = replay_steps_count_v6(code, enc, 0);
+            int len = replay_steps_index_v6(code, enc, 0, idx, (int)sizeof idx);
+            CHECK(len == steps * RS_INDEX_STRIDE, "one index record per step");
+            if (len != steps * RS_INDEX_STRIDE) return;
+
+            int ip = 0, ia = 0;
+            for (int i = 1; i < steps; i++) {
+                if (idx[i * RS_INDEX_STRIDE] == REPLAY_ATOM_PASS) ip++;
+                if (idx[i * RS_INDEX_STRIDE] == REPLAY_ATOM_ATTACK) ia++;
+            }
+            CHECK(ip == passes, "a pass reports as a pass, not an attack");
+            CHECK(ia == attacks, "and the attacks stay attacks");
+        }
+    }
+    CHECK(found_pass, "found a seeded game containing a pass");
+}
+
+// A buffer too small must say so, not write past it or report a short index as
+// a complete one.
+static void test_replay_step_index_refuses_a_small_buffer(void) {
+    static unsigned char code[1 << 20];
+    unsigned char idx[8];
+
+    Game g;
+    unsigned char seed[FOOLISH_SEED_LEN];
+    if (!rs_play_seeded(&g, 3, 503, seed)) { CHECK(0, "seeded game plays out"); return; }
+    int enc = replay_encode_v6_from_game(&g, seed, FOOLISH_SEED_LEN, 1 << 20,
+                                         code, (int)sizeof code);
+    if (enc <= 0) { CHECK(0, "the played game encodes as v6"); return; }
+
+    unsigned char canary = 0xAB;
+    (void)canary;
+    int r = replay_steps_index_v6(code, enc, 0, idx, (int)sizeof idx);
+    CHECK(r < 0, "an index that does not fit is an error, not a truncation");
+}
+
 // Play until an attacker has said good and the bout is still open — a state
 // only reachable with 3+ players (heads-up, the one attacker's good always
 // closes the round). The game is left exactly there, logs ending on the GOOD,
@@ -1706,6 +1840,34 @@ static void test_replay_steps_mid_game_cut_conserves_the_deck(void) {
 
 // v5 hides the deal, so its atoms are not a deck — there is nothing to rebuild
 // from and the kernel says so rather than inventing hands.
+// A 3+ player game where an attacker's good leaves the bout open: the one step
+// kind that only exists because v6 keeps a trailing good. It must come back as
+// GOOD and name its seat — a ROUND_END here would replay a bout that never
+// ended.
+static void test_replay_step_index_reports_a_pending_good(void) {
+    static unsigned char code[1 << 20];
+    static unsigned char idx[4096];
+
+    Game g;
+    unsigned char seed[FOOLISH_SEED_LEN];
+    if (!rs_play_until_pending_good(&g, 3, 77, seed)) { CHECK(0, "reached a pending good"); return; }
+
+    int enc = replay_encode_v6_from_game(&g, seed, FOOLISH_SEED_LEN, 1 << 20,
+                                         code, (int)sizeof code);
+    CHECK(enc > 0, "the cut game encodes as v6");
+    if (enc <= 0) return;
+
+    const int steps = replay_steps_count_v6(code, enc, 0);
+    int len = replay_steps_index_v6(code, enc, 0, idx, (int)sizeof idx);
+    CHECK(len == steps * RS_INDEX_STRIDE, "one index record per step");
+    if (len != steps * RS_INDEX_STRIDE) return;
+
+    const int last = (steps - 1) * RS_INDEX_STRIDE;
+    CHECK(idx[last] == REPLAY_ATOM_GOOD, "the cut's last step is the pending good");
+    CHECK(idx[last + 1] != RS_SEAT_NONE, "and it names the seat that said it");
+    CHECK(idx[last + 1] < 3, "which is a real seat");
+}
+
 static void test_replay_steps_refuses_v5(void) {
     static unsigned char v5[1 << 16];
     static unsigned char in[1 << 16];
@@ -1799,6 +1961,10 @@ int main(void) {
     test_replay_steps_mid_game_cut_conserves_the_deck();
     test_replay_v6_carries_a_pending_good();
     test_replay_frames_are_the_replay_events();
+    test_replay_step_index_says_what_each_step_is();
+    test_replay_step_index_tells_a_pass_from_an_attack();
+    test_replay_step_index_reports_a_pending_good();
+    test_replay_step_index_refuses_a_small_buffer();
     test_replay_steps_refuses_v5();
     test_bot_drive_preferred();
     test_bot_pacing_table();

@@ -485,6 +485,7 @@ WASM_BOTS_API_EXPORTS := \
   -Wl,--export=wasm_replay_encode_v6_from_game \
   -Wl,--export=wasm_replay_events -Wl,--export=wasm_replay_events_n \
   -Wl,--export=wasm_replay_events_next -Wl,--export=wasm_replay_step_count \
+  -Wl,--export=wasm_replay_step_index \
   -Wl,--export=wasm_msg_decode -Wl,--export=wasm_msg_seal \
   -Wl,--export=wasm_msg_rule_p -Wl,--export=wasm_msg_rebase \
   -Wl,--export=wasm_belief_probe_reset -Wl,--export=wasm_belief_probe_dump

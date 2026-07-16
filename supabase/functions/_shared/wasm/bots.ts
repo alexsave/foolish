@@ -37,6 +37,7 @@ interface BotsExports extends EngineExports {
     wasm_replay_events_n(): number;
     wasm_replay_events_next(): number;
     wasm_replay_step_count(code_len: number): number;
+    wasm_replay_step_index(code_len: number): number;
     wasm_clear_logs(): void;
     wasm_import_strategy_keys(): void;
     wasm_set_game_key(key: number): void;
@@ -917,6 +918,48 @@ export function replayStepCount(code: Uint8Array): number {
     const n = ex.wasm_replay_step_count(code.length);
     if (n < 0) throw __replayError(n, ex.wasm_replay_error_detail());
     return n;
+}
+
+/** REPLAY_ATOM_* — what a step played. Mirrors cnitro/src/replay.h. */
+export const REPLAY_STEP = {
+    DEAL: 0,        // the opening deal; never an action
+    DRAW: 1,        // never a step (draws ride the action that caused them)
+    ATTACK: 2,
+    COVER: 3,
+    PASS: 4,
+    PICKUP: 5,
+    ROUND_END: 6,   // every remaining attacker said good and the bout closed
+    GOOD: 7,        // one seat said good and the bout stayed open
+} as const;
+
+export const REPLAY_STEP_SEAT_NONE = 0xff;
+
+export interface ReplayStepInfo {
+    /** REPLAY_STEP.* — the action this step played. */
+    kind: number;
+    /** The acting seat, or -1 (the deal, and round ends nobody in particular closes). */
+    seat: number;
+}
+
+/**
+ * What each step of a code IS, in step order. The kernel reports this rather
+ * than the web inferring it from the frames, because the frames genuinely
+ * cannot say: an attack and a pass are the same evwire event type, told apart
+ * only by a reconstructed English message. See replay_steps.h.
+ */
+export function replayStepIndex(code: Uint8Array): ReplayStepInfo[] {
+    const ex = bots();
+    __mem(ex).set(code, ex.wasm_replay_io_ptr());
+    const len = ex.wasm_replay_step_index(code.length);
+    if (len < 0) throw __replayError(len, ex.wasm_replay_error_detail());
+    const buf = __mem(ex);
+    const base = ex.wasm_io_ptr();
+    const out: ReplayStepInfo[] = [];
+    for (let q = base; q < base + len; q += 2) {
+        const seat = buf[q + 1];
+        out.push({ kind: buf[q], seat: seat === REPLAY_STEP_SEAT_NONE ? -1 : seat });
+    }
+    return out;
 }
 
 /**

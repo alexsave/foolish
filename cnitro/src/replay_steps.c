@@ -187,6 +187,12 @@ static Game g_rs_game;
 
 const Game *replay_steps_last_game(void) { return &g_rs_game; }
 
+// The action `step` is being called for, or NULL for the opening deal. The
+// step callbacks that need to know WHAT they are looking at read it here rather
+// than take it as a parameter, so the two consumers that do not care (the
+// phone's sink, the web's frames) keep the same signature.
+static const RsAction *g_rs_cur;
+
 typedef struct { EvwSink sink; void *ctx; } RsWalkCtx;
 
 // What a playback does at each step (the deal, then one per action). The two
@@ -233,6 +239,7 @@ static int rs_play(const unsigned char *code, int code_len, int viewer,
     engine_snap_hook = rs_snap_cb;
 
     RS_STEP_BEGIN(gp);
+    g_rs_cur = 0;                       // the deal is nobody's action
     start_game_with_deck(gp, deck, n_deck);
     step(gp, viewer, u);
 
@@ -247,10 +254,12 @@ static int rs_play(const unsigned char *code, int code_len, int viewer,
 
     for (int i = 0; i < col.n_acts; i++) {
         RS_STEP_BEGIN(gp);
+        g_rs_cur = &col.acts[i];
         rs_apply(gp, &col.acts[i]);
         step(gp, viewer, u);
     }
 
+    g_rs_cur = 0;
     engine_snap_hook = saved_hook;
     return REPLAY_EOK;
 }
@@ -324,6 +333,42 @@ int replay_steps_frames_v6(const unsigned char *code, int code_len, int viewer,
     // Nothing left to emit: report the cursor as the end of the stream.
     if (next_step) *next_step = f.next;
     return f.len;
+}
+
+/* ------------------------------- step index ------------------------------- */
+// One record per step saying what it is — see replay_steps.h for the layout and
+// for why the web cannot honestly derive this from the frames themselves.
+
+typedef struct {
+    unsigned char *out;
+    int cap, len, err;
+} RsIndexCtx;
+
+static void rs_step_index(const Game *g, int viewer, void *u) {
+    (void)viewer;
+    (void)g;
+    RsIndexCtx *x = (RsIndexCtx *)u;
+    if (x->err) return;
+    if (x->len + RS_INDEX_STRIDE > x->cap) { x->err = REPLAY_ECAP; return; }
+    // The deal is nobody's action; ROUND_END is every remaining attacker's, so
+    // it is nobody in particular's either (rs_apply says good for all of them).
+    const int kind = g_rs_cur ? g_rs_cur->kind : REPLAY_ATOM_DEAL;
+    const int seat = (g_rs_cur && g_rs_cur->kind != REPLAY_ATOM_ROUND_END
+                      && g_rs_cur->seat >= 0) ? g_rs_cur->seat : RS_SEAT_NONE;
+    x->out[x->len++] = (unsigned char)kind;
+    x->out[x->len++] = (unsigned char)seat;
+}
+
+int replay_steps_index_v6(const unsigned char *code, int code_len,
+                          ReplayHeader *hdr_out, unsigned char *out, int out_cap) {
+    RsIndexCtx x;
+    memset(&x, 0, sizeof x);
+    x.out = out;
+    x.cap = out_cap;
+    int r = rs_play(code, code_len, VIEW_SPECTATOR, hdr_out, rs_step_index, &x);
+    if (r < 0) return r;
+    if (x.err) return -x.err;
+    return x.len;
 }
 
 // Total steps a code replays to: the deal, then one per action. The web sizes

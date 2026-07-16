@@ -50,6 +50,34 @@ int replay_steps_frames_v6(const unsigned char *code, int code_len, int viewer,
 int replay_steps_count_v6(const unsigned char *code, int code_len,
                           ReplayHeader *hdr);
 
+// What each step IS, one RS_INDEX_STRIDE-byte record per step, in step order:
+//
+//   u8  kind     REPLAY_ATOM_* — the action this step played. The opening deal
+//                reports REPLAY_ATOM_DEAL, which is otherwise a per-seat hand
+//                atom and never an action, so the two never collide.
+//   u8  seat     the acting seat, or RS_SEAT_NONE for the deal and ROUND_END
+//                (nobody in particular closes a bout).
+//
+// A scrubber needs the kind and the seat to say what just happened, and it
+// cannot honestly get them from the frames: an attack and a pass are the same
+// evwire event type, told apart only by a reconstructed English message. That
+// would be a projection — the exact thing A5 deletes. The kernel knows what it
+// played, so it says so.
+//
+// Deliberately NOT reported: how many log records each step produced. It is
+// right there (rs_step clears the log per action), and it is useless, because
+// the replayed engine's log stream is not the stream any caller holds. A 3p
+// game logs 92 records when it is PLAYED, 79 when replay_decode reconstructs
+// it, and 76 when the engine replays it here — they disagree on goods (v6
+// trims all but a trailing one, by design) and on how draws are grouped. A
+// count against a fourth private stream would only look like a mapping.
+//
+// Returns bytes written (steps * RS_INDEX_STRIDE) or -REPLAY_E*.
+#define RS_INDEX_STRIDE 2
+#define RS_SEAT_NONE    0xFF
+int replay_steps_index_v6(const unsigned char *code, int code_len,
+                          ReplayHeader *hdr, unsigned char *out, int out_cap);
+
 // The game the last successful replay_steps_v6 rebuilt — the state its code
 // decodes TO, valid until the next call. A whole-game code leaves the finished
 // game here; a mid-game cut leaves the exact position, which is what a

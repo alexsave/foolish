@@ -473,3 +473,12 @@ int wasm_replay_events_next(void) { return g_rs_next_step; }
 int wasm_replay_step_count(int code_len) {
     return replay_steps_count_v6(wasm_replay_io_ptr(), code_len, 0);
 }
+
+// What each step is: 4 bytes per step into the MAIN io buffer (the code is in
+// the replay buffer, as for every wasm_replay_* call, so the two never alias).
+// A whole game's index is steps*4 bytes — a couple of KB — so unlike the frames
+// this needs no chunking.
+int wasm_replay_step_index(int code_len) {
+    return replay_steps_index_v6(wasm_replay_io_ptr(), code_len, 0,
+                                 wasm_io_ptr(), wasm_io_cap());
+}

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Card, LOG_TYPE } from '@shared/types.ts';
+import { Card } from '@shared/types.ts';
 import { Text } from './Text';
 import { SovietIcon } from './SovietIcon';
 import { TexturedSurface } from './TexturedSurface';
@@ -18,19 +18,21 @@ import { GameBoard } from './GameBoard';
 import { Telestrator } from './Telestrator';
 import { usePreventScroll } from '../hooks/usePreventScroll';
 import { animationFeed, AnimationSequenceMessage } from '../state/animationFeed';
-import { codeToGame } from '@shared/replay/codec.ts';
+import { bigintToBytes, codeToGame } from '@shared/replay/codec.ts';
 import { decodeReplay } from '@shared/replay/decode.ts';
 import { DecodedReplay } from '@shared/replay/core.ts';
+import { ensureBotsAsync } from '@shared/wasm/bots.ts';
 import {
-    buildReplaySteps,
-    stepToGame,
-    ReplayStep,
+    buildReplayFrames,
+    buildReverseFrames,
+    preDealGame,
+    stepTimes,
+    ReplayFrame,
     ReplayGameState,
-} from '../replay/view';
-import { buildReplaySequences, buildReverseSequences, preDealGame } from '../replay/animate';
+    REPLAY_STEP,
+} from '../replay/frames';
 import { splitReplayCode, decodeExtras, ReplayExtras } from '@shared/replay/extras.ts';
 import { INFO_TYPES } from '@shared/replay/core.ts';
-import { stepTimes } from '../replay/view';
 import { OracleOverlay } from './OracleOverlay';
 import { OracleController } from '../oracle/OracleController';
 import { buildOracleJob, findDecisionIndex } from '../oracle/replayOracleInput';
@@ -159,7 +161,17 @@ const fmtDuration = (ms: number): string => {
     return `${mm}:${ss}`;
 };
 
-const StepMessage = ({ step, names }: { step: ReplayStep; names: string[] | null }) => {
+/* What just happened, in the viewer's language. The kind comes from the kernel
+ * (frames.ts) rather than from the frame's events, because on the wire an attack
+ * and a pass are one event type told apart only by a reconstructed English
+ * sentence — and this line is localized, so that sentence is no use here anyway.
+ *
+ * A step is one ACTION, and its frame carries everything that action caused, so
+ * a cover that ends a bout narrates as the cover; the discard and refills it
+ * triggered animate under it rather than each claiming a line of their own. */
+const StepMessage = ({ frame, names }: {
+    frame: ReplayFrame; names: string[] | null;
+}) => {
     const cards = (cs: Card[]) => (
         <span style={{ display: 'inline-flex', gap: 3, verticalAlign: 'middle' }}>
             {cs.map((c, i) => (
@@ -167,83 +179,66 @@ const StepMessage = ({ step, names }: { step: ReplayStep; names: string[] | null
             ))}
         </span>
     );
-    const who = step.seat !== null ? <b>{seatName(step.seat, names)}</b> : null;
+    const who = frame.seat !== null ? <b>{seatName(frame.seat, names)}</b> : null;
 
-    switch (step.kind) {
-        case LOG_TYPE.GAME_START:
+    switch (frame.kind) {
+        case REPLAY_STEP.DEAL:
             return (
                 <span>
-                    <Text id="trump" />: {step.flipped && cards([step.flipped])}
+                    <Text id="trump" />: {frame.cards.length > 0 && cards(frame.cards)}
                 </span>
             );
-        case LOG_TYPE.ATTACK:
+        case REPLAY_STEP.ATTACK:
             return (
                 <span>
-                    {who} <SovietIcon name="sword" size={13} /> <Text id="attack" />: {cards(step.cards)}
+                    {who} <SovietIcon name="sword" size={13} /> <Text id="attack" />: {cards(frame.cards)}
                 </span>
             );
-        case LOG_TYPE.COVER:
+        case REPLAY_STEP.COVER:
             return (
                 <span>
-                    {who} <Text id="cover" />: {cards(step.cards)} → {step.target && cards([step.target])}
+                    {who} <Text id="cover" />: {cards(frame.cards)} → {frame.target && cards([frame.target])}
                 </span>
             );
-        case LOG_TYPE.PASS:
+        case REPLAY_STEP.PASS:
             return (
                 <span>
-                    {who} <Text id="pass" />: {cards(step.cards)}
+                    {who} <Text id="pass" />: {cards(frame.cards)}
                 </span>
             );
-        case LOG_TYPE.PICKUP:
+        case REPLAY_STEP.PICKUP:
             return (
                 <span>
-                    {who} <Text id="pickup" /> ({step.count})
+                    {who} <Text id="pickup" /> ({frame.count})
                 </span>
             );
-        case LOG_TYPE.GOOD:
+        case REPLAY_STEP.GOOD:
             return (
                 <span>
                     {who} ✓ <Text id="good" />
                 </span>
             );
-        case LOG_TYPE.DRAW:
+        // The bout closed: everyone still in said good, and the table went to
+        // the discard. One step, because it is one thing that happened.
+        case REPLAY_STEP.ROUND_END:
             return (
                 <span>
-                    {who} <Text id="draws" /> {step.count > 0 && <>+{step.count}</>}{' '}
-                    {step.cards.length > 0 && cards(step.cards)}
-                </span>
-            );
-        case LOG_TYPE.DISCARD:
-            return (
-                <span>
-                    {step.count} <Text id="discarded" />
-                </span>
-            );
-        case LOG_TYPE.PLAYER_OUT:
-            return (
-                <span>
-                    {who} <Text id="is_out" />
-                </span>
-            );
-        case LOG_TYPE.DEFENDER_CHANGE: {
-            const def = step.players.findIndex((p) => p.isDefender);
-            return (
-                <span>
-                    <SovietIcon name="shield" size={13} /> <Text id="defender" />:{' '}
-                    <b>{def >= 0 ? seatName(def, names) : '—'}</b>
-                </span>
-            );
-        }
-        case 'end':
-            return (
-                <span>
-                    🃏 {who} <Text id="is_the_fool" />
+                    ✓ <Text id="good" /> — {frame.count} <Text id="discarded" />
                 </span>
             );
         default:
             return null;
     }
 };
+
+/* The closing line: who was left holding cards. The board carries the 🃏 on the
+ * fool's name; this says it in words, on the last step only. */
+const FoolMessage = ({ fool, names }: { fool: number | null; names: string[] | null }) =>
+    fool === null ? null : (
+        <span>
+            🃏 <b>{seatName(fool, names)}</b> <Text id="is_the_fool" />
+        </span>
+    );
 
 /* Stable per-card key for the prefer-local-order reconciliation. Known cards
  * are identified by suit+value; face-down (null) slots are indistinguishable,
@@ -520,15 +515,14 @@ const IconOracle = () => (
 
 interface StageProps {
     decoded: DecodedReplay;
-    steps: ReplayStep[];
-    sequences: AnimationSequenceMessage[];
+    frames: ReplayFrame[];
     reverses: (AnimationSequenceMessage | null)[];
     gameId: string;
     names: string[] | null;
     times: (number | null)[];
 }
 
-const ReplayStage = ({ decoded, steps, sequences, reverses, gameId, names, times }: StageProps) => {
+const ReplayStage = ({ decoded, frames, reverses, gameId, names, times }: StageProps) => {
     usePreventScroll();
     const { updateGameState } = useServerActions();
     const { isAnimating, resetAnimations } = useAnimation();
@@ -551,7 +545,7 @@ const ReplayStage = ({ decoded, steps, sequences, reverses, gameId, names, times
     const [now, setNow] = useState(() => Date.now());
     const stepRef = useRef(stepIdx);
     stepRef.current = stepIdx;
-    const lastIdx = steps.length - 1;
+    const lastIdx = frames.length - 1;
 
     // ---- Infinite Oracle (docs/INFINITE_ORACLE_DESIGN.md) ------------------
     // A client-side octogen deliberation over the paused decision: strengths
@@ -562,7 +556,7 @@ const ReplayStage = ({ decoded, steps, sequences, reverses, gameId, names, times
     const [oracleOpen, setOracleOpen] = useState(false);
     const [oracleMemory, setOracleMemory] = useState(true);
     const [oracleSnap, setOracleSnap] = useState<OracleSnapshot | null>(null);
-    const oracleDecision = useMemo(() => findDecisionIndex(decoded, stepIdx), [decoded, stepIdx]);
+    const oracleDecision = useMemo(() => findDecisionIndex(frames, stepIdx), [frames, stepIdx]);
     const getOracle = useCallback(() => {
         if (!oracleRef.current) oracleRef.current = new OracleController();
         return oracleRef.current;
@@ -575,11 +569,11 @@ const ReplayStage = ({ decoded, steps, sequences, reverses, gameId, names, times
         if (!oracleOpen) return;
         const ctrl = getOracle();
         if (playing || isAnimating) { ctrl.stopCurrent(); return; }
-        const job = buildOracleJob(decoded, steps, stepIdx, oracleMemory, gameId);
+        const job = buildOracleJob(frames, decoded, stepIdx, oracleMemory, gameId);
         if (!job) { setOracleSnap(null); return; }
         void ctrl.start(job);
         return () => ctrl.stopCurrent();
-    }, [oracleOpen, stepIdx, isAnimating, playing, oracleMemory, decoded, steps, gameId, getOracle]);
+    }, [oracleOpen, stepIdx, isAnimating, playing, oracleMemory, decoded, frames, gameId, getOracle]);
     useEffect(() => () => { oracleRef.current?.dispose(); oracleRef.current = null; }, []);
     const renderOracleCard = useCallback(
         (card: Card, w = 18) => <InlineCard card={card} w={w} />, []);
@@ -591,14 +585,14 @@ const ReplayStage = ({ decoded, steps, sequences, reverses, gameId, names, times
     const publishSeq = useRef(0);
     const publishStep = useCallback(
         (i: number) => {
-            const seq: AnimationSequenceMessage = JSON.parse(JSON.stringify(sequences[i]));
+            const seq: AnimationSequenceMessage = JSON.parse(JSON.stringify(frames[i].seq));
             seq.sequence_id = `replay-${i}-${++publishSeq.current}-${Math.random().toString(36).slice(2)}`;
             seq.timestamp = Date.now();
             (seq.events[0] as any)._nonce = seq.sequence_id; // defeat content dedup
             animationFeed.publish(seq);
             setStepIdx(i);
         },
-        [sequences],
+        [frames],
     );
 
     const stepForward = useCallback(() => {
@@ -634,10 +628,11 @@ const ReplayStage = ({ decoded, steps, sequences, reverses, gameId, names, times
             setWaitTarget(null);
             resetAnimations();
             const target = Math.max(0, Math.min(i, lastIdx));
-            updateGameState(gameId, stepToGame(decoded, steps[target], gameId, names));
+            // The step's own board, straight from the kernel — no rebuild.
+            updateGameState(gameId, frames[target].game);
             setStepIdx(target);
         },
-        [decoded, steps, gameId, names, lastIdx, resetAnimations, updateGameState],
+        [frames, gameId, lastIdx, resetAnimations, updateGameState],
     );
 
     const stepBack = useCallback(() => {
@@ -655,12 +650,12 @@ const ReplayStage = ({ decoded, steps, sequences, reverses, gameId, names, times
     // game's first attack). Skip-to-bout jumps are animationless seeks.
     const boutStarts = useMemo(() => {
         const starts: number[] = [];
-        for (let i = 0; i < steps.length; i++) {
-            const opensEmpty = i === 0 || steps[i - 1].battles.length === 0;
-            if (steps[i].kind === LOG_TYPE.ATTACK && opensEmpty) starts.push(i);
+        for (let i = 0; i < frames.length; i++) {
+            const opensEmpty = i === 0 || frames[i - 1].game.table_battles.length === 0;
+            if (frames[i].kind === REPLAY_STEP.ATTACK && opensEmpty) starts.push(i);
         }
         return starts;
-    }, [steps]);
+    }, [frames]);
 
     const nextBout = useCallback(() => {
         const from = Math.max(0, stepRef.current);
@@ -750,7 +745,7 @@ const ReplayStage = ({ decoded, steps, sequences, reverses, gameId, names, times
         return () => window.removeEventListener('keydown', onKey);
     }, [stepForward, stepBack, drawing, toggleDrawing]);
 
-    const step = steps[Math.max(0, stepIdx)];
+    const frame = frames[Math.max(0, stepIdx)];
 
     // VHS-deck transport button: a round, dark, bevelled knob (faint top
     // highlight + drop shadow); amber when active. Holds a glyph or a short
@@ -838,7 +833,7 @@ const ReplayStage = ({ decoded, steps, sequences, reverses, gameId, names, times
                 >
                     <span style={{ fontSize: '0.82rem', fontWeight: 700 }}>
                         {Math.max(0, stepIdx) + 1}
-                        <span style={{ opacity: 0.55 }}> / {steps.length}</span>
+                        <span style={{ opacity: 0.55 }}> / {frames.length}</span>
                     </span>
                     {stepIdx >= 0 && times[stepIdx] !== null && (
                         <span style={{ fontSize: '0.7rem', opacity: 0.7, whiteSpace: 'nowrap' }}>
@@ -869,7 +864,12 @@ const ReplayStage = ({ decoded, steps, sequences, reverses, gameId, names, times
                         textAlign: 'center',
                     }}
                 >
-                    {stepIdx >= 0 && <StepMessage step={step} names={names} />}
+                    {/* The last step is a real move, not a synthetic end marker,
+                        so the closing line rides alongside it rather than
+                        replacing it — the move that ended the game is worth
+                        reading too. */}
+                    {stepIdx >= 0 && <StepMessage frame={frame} names={names} />}
+                    {stepIdx === lastIdx && <FoolMessage fool={decoded.fool} names={names} />}
                 </div>
             </div>
 
@@ -932,7 +932,7 @@ const ReplayStage = ({ decoded, steps, sequences, reverses, gameId, names, times
                     snapshot={oracleSnap}
                     onClose={() => setOracleOpen(false)}
                     onToggleMemory={() => setOracleMemory((m) => !m)}
-                    onRetry={() => { const j = buildOracleJob(decoded, steps, stepIdx, oracleMemory, gameId); if (j) void getOracle().start(j); }}
+                    onRetry={() => { const j = buildOracleJob(frames, decoded, stepIdx, oracleMemory, gameId); if (j) void getOracle().start(j); }}
                     renderCard={renderOracleCard}
                 />
             )}
@@ -955,8 +955,14 @@ const ReplayStage = ({ decoded, steps, sequences, reverses, gameId, names, times
 
 const buildReplayData = async (code: string, gameId: string) => {
     const { moves, extras: extrasCode } = splitReplayCode(code);
-    const decoded = await decodeReplay(codeToGame(moves));
-    const steps = buildReplaySteps(decoded);
+    const x = codeToGame(moves);
+    await ensureBotsAsync();
+
+    // The kernel's own decode, for the two things the frames don't carry: who
+    // the fool was, and the public log stream the Oracle reasons from. Not a
+    // projection — it is one wasm call into the same replay.c the frames come
+    // from.
+    const decoded = await decodeReplay(x);
 
     // extras (names + timing) are decoration: a malformed blob never
     // breaks the replay itself
@@ -973,11 +979,13 @@ const buildReplayData = async (code: string, gameId: string) => {
     }
 
     const names = extras.names;
-    const sequences = buildReplaySequences(decoded, steps, gameId, names);
-    const reverses = buildReverseSequences(decoded, steps, gameId, names, sequences);
-    const initial = preDealGame(decoded, steps[0], gameId, names);
-    const times = stepTimes(steps, extras.startTime, extras.moveGaps);
-    return { decoded, steps, sequences, reverses, initial, names, times };
+    // The game, replayed by the engine: one frame per step, each the board the
+    // engine really committed and the events it really produced.
+    const frames = buildReplayFrames(bigintToBytes(x), gameId, names, decoded.fool);
+    const reverses = buildReverseFrames(frames);
+    const initial = preDealGame(frames[0]);
+    const times = stepTimes(frames, extras.startTime, extras.moveGaps);
+    return { decoded, frames, reverses, initial, names, times };
 };
 
 export const ReplayScreen = ({ code }: { code: string }) => {
@@ -1032,8 +1040,7 @@ export const ReplayScreen = ({ code }: { code: string }) => {
                             <DragProvider>
                                 <ReplayStage
                                     decoded={result.decoded}
-                                    steps={result.steps}
-                                    sequences={result.sequences}
+                                    frames={result.frames}
                                     reverses={result.reverses}
                                     gameId={gameId}
                                     names={result.names}
