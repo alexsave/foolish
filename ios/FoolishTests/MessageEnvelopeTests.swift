@@ -70,6 +70,27 @@ final class MessageEnvelopeTests: XCTestCase {
         XCTAssertGreaterThan(state.count, 0, "the adopted game is readable through the normal bridge")
     }
 
+    /// The extension reads the adopted board through MessageKernel itself (same
+    /// actor as the decode, so no race on the shared static Game) — this is what
+    /// MessageBoardView renders. A seat view unmasks that seat; the spectator
+    /// (-1) view the bubble snapshot uses leaks no hand.
+    func testResidentViewReadsTheAdoptedBoard() async throws {
+        let env = try await MessageEnvelope.decode(payload: bytes(fixtures[2].hex), viewer: 0)
+        XCTAssertEqual(env.nPlayers, 4)
+        let k = MessageKernel.shared
+        guard let mine = await k.residentView(viewer: 0) else {
+            return XCTFail("residentView(0) returned nil for an adopted game")
+        }
+        XCTAssertEqual(mine.numPlayers, 4, "the adopted 4p game reads back as 4 seats")
+        XCTAssertEqual(mine.players.count, 4)
+
+        guard let pub = await k.residentView(viewer: -1) else {
+            return XCTFail("residentView(-1) returned nil")
+        }
+        XCTAssertTrue(pub.players.allSatisfy { $0.hand == nil }, "the spectator/snapshot view leaks no hand")
+        _ = await k.residentLegal(seat: 0)   // kernel-computed; must not trap on a live game
+    }
+
     // MARK: - Rule P, decided in C
 
     func testRulePIsReflexiveAndSymmetric() async throws {
