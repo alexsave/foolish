@@ -87,14 +87,23 @@ const SolidChip = ({ bg, fg = '#fff', text }: { bg: string; fg?: string; text: s
 
 // Outline "LCD segment" chip — dark display glass with glowing colored text,
 // like the small backlit labels (MONO / TRCL / SEEK) on the reference units.
-const LedChip = ({ color, text }: { color: string; text: string }) => (
+// `width`, when given, fixes the chip's footprint (and centers its text) so
+// a column of these — e.g. the classification tag on every candidate row —
+// lines up instead of jittering with "BEST" vs "INACCURACY".
+const LedChip = ({ color, text, width }: { color: string; text: string; width?: number }) => (
     <span style={{
-        display: 'inline-flex', padding: '2px 6px', borderRadius: 4,
+        display: 'inline-flex', justifyContent: width ? 'center' : 'flex-start',
+        padding: '2px 6px', borderRadius: 4, boxSizing: 'border-box',
         background: 'rgba(0,0,0,0.5)', border: `1px solid ${color}55`, whiteSpace: 'nowrap',
+        ...(width ? { width, flex: '0 0 auto' } : null),
     }}>
         <SegmentText text={text} color={color} height={8} gap={1.5} />
     </span>
 );
+
+// Fixed footprint for the classification chip (best/excellent/.../blunder)
+// — sized to the longest label, "INACCURACY".
+const CLASS_CHIP_W = 80;
 
 // Minimal line-art suit glyphs (0=S 1=H 2=C 3=D, matching "SHCD") — not
 // realistic card art, just enough stroke/dot shapes to read at a glance,
@@ -224,9 +233,9 @@ function McRow({ c, best, worst, bestAdj, t }: {
                     ) : cards}
                 </div>
                 {c.played && <SolidChip bg={AMBER} fg="#231404" text={t('oracle_played')} />}
-                {isBest && <LedChip color={CLASS_COLOR.best} text={t('oracle_best')} />}
-                {!isBest && cls && <LedChip color={CLASS_COLOR[cls]} text={t(`oracle_class_${cls}`)} />}
-                {c.pruned && !scored && <LedChip color="rgba(180,180,190,0.7)" text={t('oracle_pruned')} />}
+                {isBest && <LedChip color={CLASS_COLOR.best} text={t('oracle_best')} width={CLASS_CHIP_W} />}
+                {!isBest && cls && <LedChip color={CLASS_COLOR[cls]} text={t(`oracle_class_${cls}`)} width={CLASS_CHIP_W} />}
+                {c.pruned && !scored && <LedChip color="rgba(180,180,190,0.7)" text={t('oracle_pruned')} width={CLASS_CHIP_W} />}
                 {c.forcedLoss && <SolidChip bg={VERDICT_COLOR.loss} text={t('oracle_forced_loss')} />}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
