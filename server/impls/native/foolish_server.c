@@ -35,9 +35,9 @@
 
 #include "game.h"
 #include "legal.h"
+#include "view.h"
 #include "bot_drive.h"
 #include "bot_roster.h"
-#include "json_out.h"
 
 // --------------------------------------------------------------------------
 // In-memory store (the "fake DB"): games + users, one global lock.
@@ -237,6 +237,18 @@ static void respond(int fd, int code, const char *json) {
     write(fd, json, strlen(json));
 }
 
+// Raw bytes (the packed kernel wire) — no JSON. The client decodes with its own
+// kernel-wire reader (MaskedView etc.).
+static void respond_bin(int fd, int code, const unsigned char *data, int len) {
+    char hdr[256];
+    int n = snprintf(hdr, sizeof hdr,
+        "HTTP/1.1 %d OK\r\nContent-Type: application/octet-stream\r\n"
+        "Access-Control-Allow-Origin: *\r\nContent-Length: %d\r\nConnection: close\r\n\r\n",
+        code, len);
+    write(fd, hdr, n);
+    if (len > 0) write(fd, data, (size_t)len);
+}
+
 // --------------------------------------------------------------------------
 // Route handlers  (each locks g_lock around store access)
 // --------------------------------------------------------------------------
@@ -370,14 +382,27 @@ static void h_state(Req *r, int fd) {
     pthread_mutex_lock(&g_lock);
     GameSlot *s = game_by_id(gid);
     if (!s) { pthread_mutex_unlock(&g_lock); respond(fd, 404, "{\"error\":\"no game\"}"); return; }
-    static char buf[65536];
-    // The kernel renders the masked, per-seat view — the same json_state_of the
-    // iOS bridge uses. (Waiting lobbies decode too, since json_view fix.)
-    int n = json_state_of(&s->game, seat, buf, sizeof buf);
-    int status = s->status;
+    // The kernel renders the masked, per-seat view as the PACKED wire (view.c
+    // state_put) — no JSON. The client decodes it with its own kernel-wire
+    // reader (Swift MaskedView / the web's TS reader). Kernel-to-kernel.
+    static unsigned char buf[65536];
+    int n = state_put(&s->game, seat, buf);
     pthread_mutex_unlock(&g_lock);
-    if (n < 0) { respond(fd, 400, "{\"error\":\"view\"}"); return; }
-    respond(fd, 200, buf); (void)status;
+    respond_bin(fd, 200, buf, n);
+}
+
+// A plain status int (0 waiting / 1 playing / 2 over), for smoke tests that used
+// to read it off the JSON view. Not json_out — just an integer.
+static void h_status(Req *r, int fd) {
+    char gid[ID_LEN + 1] = {0};
+    const char *gp = strstr(r->query, "game_id=");
+    if (gp) { gp += 8; int i = 0; while (gp[i] && gp[i] != '&' && i < ID_LEN) { gid[i] = gp[i]; i++; } gid[i] = 0; }
+    pthread_mutex_lock(&g_lock);
+    GameSlot *s = game_by_id(gid);
+    int st = s ? s->status : -1;
+    pthread_mutex_unlock(&g_lock);
+    char out[16]; snprintf(out, sizeof out, "%d", st);
+    respond(fd, 200, out);
 }
 
 // --------------------------------------------------------------------------
@@ -392,6 +417,7 @@ static void route(Req *r, int fd) {
     if (!strcmp(r->path, "/meta"))   { h_meta(r, fd); return; }
     if (!strcmp(r->path, "/action")) { h_action(r, fd); return; }
     if (!strcmp(r->path, "/state"))  { h_state(r, fd); return; }
+    if (!strcmp(r->path, "/status")) { h_status(r, fd); return; }
     respond(fd, 404, "{\"error\":\"route\"}");
 }
 

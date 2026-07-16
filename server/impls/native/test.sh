@@ -17,17 +17,11 @@ curl -s -XPOST "$H/meta" -H "Authorization: Bearer $AT" -d "{\"type\":\"add-bot\
 curl -s -XPOST "$H/meta" -H "Authorization: Bearer $AT" -d "{\"type\":\"start\",\"game_id\":\"$GID\"}"; echo " (alice ready)"
 curl -s -XPOST "$H/meta" -H "Authorization: Bearer $BT" -d "{\"type\":\"start\",\"game_id\":\"$GID\"}"; echo " (bob ready → deal)"
 
-echo "── seat 0 (alice) view:"
-V0=$(curl -s "$H/state?game_id=$GID&seat=0")
-echo "$V0"
-
-# The first attacker (alice) opens with her first hand card — the kernel decides
-# whether it's legal and, if so, the defender/bot respond.
-S=$(echo "$V0" | grep -o '"hand":\[{"s":[0-9-]*' | head -1 | grep -o '[0-9-]*$')
-VV=$(echo "$V0" | grep -o '"hand":\[{"s":[0-9-]*,"v":[0-9]*' | head -1 | grep -o '[0-9]*$')
-echo "── alice attacks {s:$S,v:$VV}"
-curl -s -XPOST "$H/action" -H "Authorization: Bearer $AT" \
-  -d "{\"game_id\":\"$GID\",\"move\":{\"type\":\"attack\",\"cards\":[{\"s\":$S,\"v\":$VV}]}}"; echo
-
-echo "── seat 1 (bob, defender) view after the attack:"
-curl -s "$H/state?game_id=$GID&seat=1"; echo
+# Views are the PACKED kernel wire now (view.c state_put) — the client decodes
+# them with its own reader (Swift MaskedView), not curl. We just show the bytes
+# to prove they arrive masked per seat.
+echo "── seat 0 (alice) packed view (hex head):"
+curl -s "$H/state?game_id=$GID&seat=0" | xxd | head -3
+echo "── seat 1 (bob) packed view (hex head):"
+curl -s "$H/state?game_id=$GID&seat=1" | xxd | head -3
+echo "── status: $(curl -s "$H/status?game_id=$GID")   (0 waiting / 1 playing / 2 over)"
