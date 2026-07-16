@@ -38,10 +38,11 @@ function tokenToCard(token: string): Card | null {
 }
 // The whole move — attacking cards, an optional "→" and the covered/target
 // cards, or the bare move type for card-less moves (pass/pickup/good/wait) —
-// as one string for a single fixed-width segment display per row. Also
-// tracks which character indices are red-suit (H/D) letters so the display
-// can tint just those glyphs — plain rank+suit letters otherwise read as an
-// undifferentiated wall of text.
+// as one string for a single fixed-width segment display per row. Suits are
+// the ♠♥♣♦ characters SegmentText renders as small icons (see SuitGlyph in
+// SegmentDisplay.tsx) rather than letters — still one array element each,
+// so the fixed-length budget and blank padding are unaffected. Also tracks
+// which indices are red-suit (♥/♦) so the display can tint just those.
 function moveTitleText(c: OracleCandidate): { text: string; redAt: Set<number> } {
     const redAt = new Set<number>();
     let text = '';
@@ -50,7 +51,7 @@ function moveTitleText(c: OracleCandidate): { text: string; redAt: Set<number> }
         if (!card) { text += token; return; }
         text += VALUE_TO_RANK[card.value];
         if (card.suit === 1 || card.suit === 3) redAt.add(text.length);
-        text += 'SHCD'[card.suit];
+        text += '♠♥♣♦'[card.suit];
     };
     if (!c.cards.length) { text = c.type === 'pass' ? 'PASS' : c.type; return { text, redAt }; }
     c.cards.forEach(pushCard);

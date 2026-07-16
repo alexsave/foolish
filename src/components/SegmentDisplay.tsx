@@ -116,6 +116,57 @@ function Glyph({ ch, height, color, dim }: { ch: string; height: number; color: 
     );
 }
 
+// Suit icons (♠♥♣♦, index-matched to "SHCD") for the move-title strip.
+// Not straight-segment glyphs — hearts and spades read as blobs when forced
+// onto 14 straight lines — but drawn on the *same* dim ghost-segment
+// background as every other cell, at the same cell size and glow, so a
+// suit still reads as one more position on the LED array, not a pasted-in
+// icon that breaks the strip.
+const SUIT_CHARS = ['♠', '♥', '♣', '♦'];
+function SuitGlyph({ suit, height, color, dim }: { suit: number; height: number; color: string; dim: string }) {
+    const w = height * (W / H);
+    const glow = { filter: `drop-shadow(0 0 2px ${color}99)` };
+    const stroke = { stroke: color, strokeWidth: 1.3, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, fill: 'none' };
+    let inner: React.ReactNode;
+    if (suit === 0) { // spade — triangle + stem
+        inner = (
+            <>
+                <path d="M6 1 L11 9.5 L1 9.5 Z" {...stroke} style={glow} />
+                <line x1={6} y1={9.5} x2={6} y2={11.5} stroke={color} strokeWidth={1.3} strokeLinecap="round" style={glow} />
+            </>
+        );
+    } else if (suit === 1) { // heart — two dots + converging V
+        inner = (
+            <>
+                <circle cx={3.4} cy={3.6} r={1.6} fill={color} style={glow} />
+                <circle cx={8.6} cy={3.6} r={1.6} fill={color} style={glow} />
+                <path d="M1.8 5.2 L6 11.5 L10.2 5.2" {...stroke} style={glow} />
+            </>
+        );
+    } else if (suit === 2) { // club — trefoil dots + stem
+        inner = (
+            <>
+                <circle cx={6} cy={3.2} r={1.9} fill={color} style={glow} />
+                <circle cx={2.6} cy={7} r={1.9} fill={color} style={glow} />
+                <circle cx={9.4} cy={7} r={1.9} fill={color} style={glow} />
+                <line x1={6} y1={8} x2={6} y2={11.5} stroke={color} strokeWidth={1.3} strokeLinecap="round" style={glow} />
+            </>
+        );
+    } else { // diamond — rotated square outline
+        inner = <path d="M6 1 L11 6 L6 11 L1 6 Z" {...stroke} style={glow} />;
+    }
+    return (
+        <svg width={w} height={height} viewBox={`0 0 ${W} ${H}`} style={{ flex: 'none', overflow: 'visible' }}>
+            {ALL_SEGS.map((seg) => {
+                const [p1, p2] = LINES[seg].map((k) => P[k]) as [Pt, Pt];
+                const [a, b] = inset(p1, p2, 0.12);
+                return <line key={seg} x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]} stroke={dim} strokeWidth={2} strokeLinecap="round" />;
+            })}
+            <g transform="translate(1.8,11.8) scale(2.2)">{inner}</g>
+        </svg>
+    );
+}
+
 function Dot({ height, color }: { height: number; color: string }) {
     const w = height * 0.32;
     const r = height * 0.09;
@@ -171,6 +222,8 @@ export function SegmentText({
     chars.forEach((ch, i) => {
         if (ch === ' ') { flushPlain(`p${i}`); nodes.push(<span key={`sp${i}`} style={{ display: 'inline-block', width: height * 0.32 }} />); return; }
         if (ch === '.') { flushPlain(`p${i}`); nodes.push(<Dot key={i} height={height} color={color} />); return; }
+        const suit = SUIT_CHARS.indexOf(ch);
+        if (suit >= 0) { flushPlain(`p${i}`); nodes.push(<SuitGlyph key={i} suit={suit} height={height} color={colorAt?.(i) ?? color} dim={dim} />); return; }
         if (FONT[ch]) { flushPlain(`p${i}`); nodes.push(<Glyph key={i} ch={ch} height={height} color={colorAt?.(i) ?? color} dim={dim} />); return; }
         plainBuf += ch;
     });
