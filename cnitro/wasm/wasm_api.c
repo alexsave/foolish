@@ -56,6 +56,18 @@ void *memset(void *dst, int c, size_t n) {
 #define WASM_IO_CAP (72 * 1024)
 #endif
 #define IO_CAP WASM_IO_CAP
+
+// export_logs writes the whole log stream into g_io with NO bounds check (see
+// there), so IO_CAP being large enough is not an optimization — it is the only
+// thing standing between a long game and a heap smash. That was a COMMENT until
+// a MAX_LOGS bump compiled cleanly straight past it; it is a build error now.
+//
+//   2 (u16 count) + MAX_LOGS x (4 header bytes + MAX_LOG_PAIRS x 2 card bytes)
+#define LOG_EXPORT_WORST (2u + (unsigned)MAX_LOGS * (4u + (unsigned)MAX_LOG_PAIRS * 2u))
+_Static_assert(LOG_EXPORT_WORST <= IO_CAP,
+               "IO_CAP cannot hold the log export at this MAX_LOGS/MAX_LOG_PAIRS "
+               "- raise WASM_IO_CAP or lower MAX_LOGS (wasm_api.c export_logs "
+               "writes unchecked)");
 // Snapshot slots for ONE marshal window (the ring resets per marshal).
 // Analytic worst is num_players + 3 (deal, or a round transition: MAGIC +
 // TRASH + <=num_players+1 per-player refill draws) = 11 at 8 players;

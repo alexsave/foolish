@@ -38,7 +38,10 @@ extern unsigned char *const cd_overlay;   // == (unsigned char *)&solve_ws
 // calls it never coincides with a replay call. Disjoint placement (after the replay
 // region) also makes it trivially safe vs replay even if a flow interleaved them.
 #define CD_OVL_GIO_OFF CD_OVL_END                  // 93184 — g_io starts after replay
-#define CD_OVL_GIO_END (CD_OVL_GIO_OFF + 73728u)   // 166912 (bots WASM_IO_CAP = 72 KiB)
+#define CD_OVL_GIO_END (CD_OVL_GIO_OFF + 139264u)  // 232448 (bots WASM_IO_CAP = 136 KiB:
+                                                   // the log export at MAX_LOGS=1024 needs
+                                                   // 135,170 B — see wasm_api.c's assert.
+                                                   // Still inside solve_ws, so free.)
 #endif
 
 #endif

@@ -64,8 +64,8 @@
                                   // about this game.
                                   //
                                   // Costs +66KB per FULL-SIZE Game (68,680 ->
-                                  // 136,264) and nothing else; bots.wasm's linear
-                                  // memory is ~1.44MB against a 150MB edge budget.
+                                  // 136,264) plus the 64 KiB g_io growth, which
+                                  // the solve_ws overlay absorbs for free.
                                   // It does NOT touch the Monte-Carlo hot loop:
                                   // sampled-world slots are sized by WORLD_LOG_CAP
                                   // (cordite_sim.h WORLD_SLOT_BYTES), so a rollout
