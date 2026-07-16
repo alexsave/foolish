@@ -22,17 +22,26 @@
 // PINNED at 196,608 B. One big module everywhere; split later (A10).
 import { gunzip } from './gunzip.ts';
 
-// A filesystem read that must not be STATIC — bundlers resolve `node:fs` eagerly
-// and a browser build would fail on it, so it is reached only where it exists.
-function readAssetSync(name: string): Uint8Array | null {
-    const url = new URL(`./${name}.wasm.gz`, import.meta.url);
+// Reading the asset without a STATIC `node:fs` import, which a browser bundle
+// would choke on. Three runtimes, three doors:
+//
+//   Deno edge      -> Deno.readFileSync / Deno.readFile
+//   Node           -> require (tsx/CJS) or a dynamic node:fs (ESM)
+//   browser        -> neither; it fetches (loadWasmGzAsync)
+//
+// The ESM door is not optional. Next's server bundle is ESM: `require` is
+// undefined there, so the sync probe returns null, and falling through to
+// fetch() would try `fetch('file:///…')` — which Node does not support and which
+// fails at runtime while every tsx-run test stays green, because tsx IS CJS.
+// That is exactly how /m/'s unfurl broke in production once already.
+function readAssetSync(name: WasmModuleName): Uint8Array | null {
+    const url = wasmAssetUrl(name);
     // deno-lint-ignore no-explicit-any
     const g = globalThis as any;
     if (g.Deno?.readFileSync) return g.Deno.readFileSync(url);
-    // Node (tests / SSR): require is absent in a browser bundle.
     const req = typeof g.require === 'function' ? g.require
         : typeof module !== 'undefined' ? eval('require') : null;
-    if (!req) return null;
+    if (!req) return null;                       // ESM: use readAssetAsync
     try {
         return new Uint8Array(req('node:fs').readFileSync(url));
     } catch {
@@ -40,13 +49,31 @@ function readAssetSync(name: string): Uint8Array | null {
     }
 }
 
-export function wasmAssetUrl(name: 'rules' | 'bots'): URL {
+async function readAssetAsync(name: WasmModuleName): Promise<Uint8Array | null> {
+    const sync = readAssetSync(name);
+    if (sync) return sync;
+    // deno-lint-ignore no-explicit-any
+    const g = globalThis as any;
+    if (g.Deno?.readFile) return await g.Deno.readFile(wasmAssetUrl(name));
+    if (typeof process !== 'undefined' && process.versions?.node) {
+        // Computed specifier + webpackIgnore: the bundler must not resolve this
+        // for the client build, where node:fs does not exist.
+        const spec = 'node:fs/promises';
+        const fs = await import(/* webpackIgnore: true */ spec);
+        return new Uint8Array(await fs.readFile(wasmAssetUrl(name)));
+    }
+    return null;                                 // browser
+}
+
+export type WasmModuleName = 'rules' | 'bots';
+
+export function wasmAssetUrl(name: WasmModuleName): URL {
     return new URL(`./${name}.wasm.gz`, import.meta.url);
 }
 
 /** Synchronous load. Server only — a browser has no filesystem, so it must
  *  prefetch the bytes with loadWasmGzAsync and hand them to `seedWasmGz`. */
-export function loadWasmGz(name: 'rules' | 'bots'): Uint8Array {
+export function loadWasmGz(name: WasmModuleName): Uint8Array {
     const seeded = prefetched.get(name);
     if (seeded) return seeded;
     const gz = readAssetSync(name);
@@ -62,12 +89,12 @@ const prefetched = new Map<string, Uint8Array>();
 
 /** Fetch + inflate the module, for runtimes with no filesystem (the browser).
  *  Caches the inflated bytes so the sync loadWasmGz above can serve them. */
-export async function loadWasmGzAsync(name: 'rules' | 'bots'): Promise<Uint8Array> {
+export async function loadWasmGzAsync(name: WasmModuleName): Promise<Uint8Array> {
     const have = prefetched.get(name);
     if (have) return have;
-    const sync = readAssetSync(name);
-    const bytes = sync
-        ? gunzip(sync)
+    const local = await readAssetAsync(name);
+    const bytes = local
+        ? gunzip(local)
         : gunzip(new Uint8Array(await (await fetch(wasmAssetUrl(name))).arrayBuffer()));
     prefetched.set(name, bytes);
     return bytes;
