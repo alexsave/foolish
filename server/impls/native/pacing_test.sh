@@ -11,11 +11,12 @@ GID=$(curl -s -XPOST "$H/create" -H "Authorization: Bearer $AT" | tok game_id)
 curl -s -XPOST "$H/meta" -H "Authorization: Bearer $AT" -d "{\"type\":\"add-bot\",\"game_id\":\"$GID\",\"strategy\":\"cordite\"}"    >/dev/null
 curl -s -XPOST "$H/meta" -H "Authorization: Bearer $AT" -d "{\"type\":\"add-bot\",\"game_id\":\"$GID\",\"strategy\":\"firecracker\"}">/dev/null
 curl -s -XPOST "$H/meta" -H "Authorization: Bearer $AT" -d "{\"type\":\"start\",\"game_id\":\"$GID\"}"                              >/dev/null
-echo "game $GID dealt: alice + cordite + firecracker. Polling /state each second:"
+echo "game $GID dealt: alice + cordite + firecracker. Polling each second"
+echo "(views are packed now — we watch the status + the packed view's byte length,"
+echo " which changes as battles/hands change, proving the board advances over time):"
 for i in $(seq 0 8); do
-  V=$(curl -s "$H/state?game_id=$GID&seat=0")
-  DECK=$(echo "$V" | num deckCount); DISC=$(echo "$V" | num discardCount)
-  NB=$(echo "$V" | grep -o '"attack"' | wc -l | tr -d ' '); ST=$(echo "$V" | num status)
-  printf '  t=%ss  deck=%s discard=%s battles=%s status=%s\n' "$i" "$DECK" "$DISC" "$NB" "$ST"
+  ST=$(curl -s "$H/status?game_id=$GID")
+  BYTES=$(curl -s "$H/state?game_id=$GID&seat=0" | wc -c | tr -d ' ')
+  printf '  t=%ss  status=%s  packed_view_bytes=%s\n' "$i" "$ST" "$BYTES"
   sleep 1
 done
