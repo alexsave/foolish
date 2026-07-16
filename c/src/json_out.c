@@ -184,7 +184,11 @@ int json_view_from_packed(const unsigned char *buf, int len, int viewer,
                           char *out, int cap) {
     if (!buf || len <= 0) return JSON_EBADARG;
     Game *g = slot_decode(buf);
-    if (g->num_players < 2 || g->num_players > MAX_PLAYERS) return JSON_EPARSE;
+    // A waiting lobby legitimately holds a single player (the creator, before
+    // anyone joins) — rendering that lobby needs its view, so only 0/negative or
+    // an over-full table is malformed. (Playing needs ≥2, but that is the play
+    // path's concern, not this decoder's.)
+    if (g->num_players < 1 || g->num_players > MAX_PLAYERS) return JSON_EPARSE;
     if (viewer != VIEW_SPECTATOR && (viewer < 0 || viewer >= g->num_players)) return JSON_EBADARG;
     return json_state_of(g, viewer, out, cap);
 }

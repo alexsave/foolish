@@ -20,9 +20,15 @@ struct RootView: View {
                         lastConfig = config
                         coordinator.startOffline(config)
                     },
-                    onQuickMatch: {
-                        if let uid = auth.userId { coordinator.startOnline(userId: uid) }
-                    }
+                    // Signed-in Play lands on the Dashboard (web flow: login →
+                    // dashboard → create/join → lobby).
+                    onQuickMatch: { coordinator.screen = .dashboard }
+                )
+            case .dashboard:
+                DashboardView(
+                    onCreate: { if let uid = auth.userId { coordinator.createOnline(userId: uid) } },
+                    onJoin: { code in if let uid = auth.userId { coordinator.joinOnline(code: code, userId: uid) } },
+                    onClose: { coordinator.goHome() }
                 )
             case .table:
                 if let game = coordinator.offlineGame {
@@ -53,23 +59,38 @@ struct RootView: View {
         // board without driving the menu. Not compiled into release builds.
         .task {
             let env = ProcessInfo.processInfo.environment
-            guard let raw = env["FOOLISH_DEBUG_TABLE"], coordinator.screen == .home else { return }
-            let opponents = max(1, min(7, Int(raw) ?? 3))
-            let stratName = env["FOOLISH_DEBUG_BOT"] ?? "random"
-            let roster = EngineC.roster()
-            let pick = roster.first(where: { $0.name == stratName }) ?? roster.first ?? (0, "random")
-            let config = OfflineConfig(opponentStrategyId: pick.id, opponentName: pick.name, opponents: opponents)
-            lastConfig = config
-            coordinator.startOffline(config)
+            let autoplay = env["FOOLISH_DEBUG_AUTOPLAY"] != nil
 
-            // Optional: drive the human seat with random legal moves so a full
-            // game plays itself to the win screen — a screenshot-friendly smoke
-            // test of the whole offline loop.
-            if env["FOOLISH_DEBUG_AUTOPLAY"] != nil {
-                while !Task.isCancelled {
-                    try? await Task.sleep(nanoseconds: 650_000_000)
-                    guard let g = coordinator.offlineGame, g.foolSeat == nil else { break }
-                    if let mv = g.humanLegal.randomElement() { g.play(mv) }
+            if let raw = env["FOOLISH_DEBUG_TABLE"], coordinator.screen == .home {
+                // Offline: drop into a table (optionally auto-playing to the win screen).
+                let opponents = max(1, min(7, Int(raw) ?? 3))
+                let stratName = env["FOOLISH_DEBUG_BOT"] ?? "random"
+                let roster = EngineC.roster()
+                let pick = roster.first(where: { $0.name == stratName }) ?? roster.first ?? (0, "random")
+                let config = OfflineConfig(opponentStrategyId: pick.id, opponentName: pick.name, opponents: opponents)
+                lastConfig = config
+                coordinator.startOffline(config)
+                if autoplay {
+                    while !Task.isCancelled {
+                        try? await Task.sleep(nanoseconds: 650_000_000)
+                        guard let g = coordinator.offlineGame, g.foolSeat == nil else { break }
+                        if let mv = g.humanLegal.randomElement() { g.play(mv) }
+                    }
+                }
+            } else if let mode = env["FOOLISH_DEBUG_ONLINE"], let user = env["FOOLISH_DEBUG_USER"] {
+                // Online two-sim demo: auto sign-in, then host (create+start) or
+                // guest (join). See AppCoordinator.debugHost/debugGuest.
+                let pass = env["FOOLISH_DEBUG_PASS"] ?? "foolish-demo-pass"
+                do { try await auth.signUp(username: user, password: pass) }
+                catch { try? await auth.signIn(username: user, password: pass) }
+                guard let uid = auth.userId else { return }
+                if mode == "host" {
+                    let wait = Double(env["FOOLISH_DEBUG_START_AFTER"] ?? "18") ?? 18
+                    coordinator.debugHost(userId: uid, startAfter: wait, autoplay: autoplay)
+                } else if mode == "guest", let gid = env["FOOLISH_DEBUG_GAME"] {
+                    coordinator.debugGuest(userId: uid, gameId: gid, autoplay: autoplay)
+                } else if mode == "dashboard" {
+                    coordinator.screen = .dashboard
                 }
             }
         }
@@ -116,28 +137,39 @@ struct RootView: View {
     // Online table: same board (§16.D5 — one TableView), no offline rematch
     // config (rematch online is a fresh quick-match, wired when the create seam
     // lands). Leave returns home and tears down the feed.
+    // The online session moves through lobby → table → win → (continue) lobby,
+    // all driven by the authoritative feed (§16.D5). We pick the screen from the
+    // game's status; Continue resets the same game back to its lobby.
     @ViewBuilder
     private func onlineTableStack(_ game: OnlineGame) -> some View {
         ZStack(alignment: .topLeading) {
-            TableView(game: game, onLeave: { confirmLeave = true })
-            if game.foolSeat == nil {
+            if let fool = game.foolSeat {
+                TableView(game: game, onLeave: { confirmLeave = true })
+                WinView(game: game, foolSeat: fool, humanSeat: game.humanSeat,
+                        onRematch: { game.continueGame() },                 // → back to lobby
+                        onHome: { game.leave(); coordinator.goHome() })
+                    .transition(.opacity)
+            } else if game.isWaiting {
+                LobbyView(game: game, onLeave: { game.leave(); coordinator.goHome() })
+                Button(action: { game.leave(); coordinator.goHome() }) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(FColor.textDim).padding(FSpace.m)
+                }
+                .accessibilityLabel(FStrings.t("leave"))
+            } else {
+                TableView(game: game, onLeave: { confirmLeave = true })
                 Button(action: { confirmLeave = true }) {
                     Image(systemName: "xmark")
                         .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(FColor.textDim)
-                        .padding(FSpace.m)
+                        .foregroundColor(FColor.textDim).padding(FSpace.m)
                 }
                 .accessibilityLabel(FStrings.t("leave"))
-            }
-            if let fool = game.foolSeat {
-                WinView(game: game, foolSeat: fool, humanSeat: game.humanSeat,
-                        onRematch: { coordinator.goHome() }, onHome: { coordinator.goHome() })
-                    .transition(.opacity)
             }
         }
         .animation(FMotion.chrome, value: game.foolSeat)
         .confirmationDialog(FStrings.t("leave_game_title"), isPresented: $confirmLeave, titleVisibility: .visible) {
-            Button(FStrings.t("leave"), role: .destructive) { coordinator.goHome() }
+            Button(FStrings.t("leave"), role: .destructive) { game.leave(); coordinator.goHome() }
             Button(FStrings.t("cancel"), role: .cancel) {}
         } message: {
             Text(FStrings.t("leave_game_body"))

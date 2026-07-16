@@ -46,6 +46,18 @@ struct HomeView: View {
         }
         .fToast($toast)
         #if DEBUG
+        // Screenshot harness: open a screen straight from launch so `simctl` can
+        // capture each without driving the menu (IOS_APP_DESIGN §17.10).
+        .onAppear {
+            switch ProcessInfo.processInfo.environment["FOOLISH_DEBUG_SCREEN"] {
+            case "replays": showReplays = true
+            case "settings": showSettings = true
+            case "tutorial": showTutorial = true
+            case "gallery": showGallery = true
+            case "auth": showAuth = true
+            default: break
+            }
+        }
         .fullScreenCover(isPresented: $showGallery) {
             ZStack(alignment: .topTrailing) {
                 GalleryView()
