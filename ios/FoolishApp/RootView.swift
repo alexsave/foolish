@@ -72,9 +72,11 @@ struct RootView: View {
                 coordinator.startOffline(config)
                 if autoplay {
                     while !Task.isCancelled {
-                        try? await Task.sleep(nanoseconds: 650_000_000)
+                        try? await Task.sleep(nanoseconds: 500_000_000)
                         guard let g = coordinator.offlineGame, g.foolSeat == nil else { break }
-                        if let mv = g.humanLegal.randomElement() { g.play(mv) }
+                        let legal = g.humanLegal
+                        let shed = legal.filter { $0.type == .attack || $0.type == .cover }
+                        if let mv = (shed.randomElement() ?? legal.randomElement()) { g.play(mv) }
                     }
                 }
             } else if let mode = env["FOOLISH_DEBUG_ONLINE"], let user = env["FOOLISH_DEBUG_USER"] {
