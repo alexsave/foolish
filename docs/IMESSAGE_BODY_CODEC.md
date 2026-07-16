@@ -7,13 +7,13 @@ implements `cnitro/src/msg_wire.{h,c}` per
 over 240 completed games per configuration, played by `robusta` (the bot humans
 actually face), not estimated.*
 
-> **RESOLVED 2026-07-16.** Findings 1-3 are closed and the design shipped: the
+> **M0 IS DONE, 2026-07-16.** Findings 1-3 are closed and the design shipped: the
 > FMSG body IS a v6 code, the raw format is deleted, and §4.4's budget is
 > asserted again at 4p with ~4x margin (240 chars of 1,000). Finding 3's blocker
-> was fixed on `main` by `9db2c8a` (v6 codes a pending good); the probe that
-> found it now reads `good_mask lost 0`. **Finding 4 (MAX_LOGS) is the one open
-> item.** Kept as the record of why the body is what it is: read §1-3 as history,
-> §4 as live.
+> was fixed on `main` by `9db2c8a` (v6 codes a pending good); the probe that found
+> it now reads `good_mask lost 0`. **Finding 4 (MAX_LOGS) is the one open item,
+> and it does not block v1** — see §6. Read §1-3 as the record of why the body is
+> what it is, §4-7 as live.
 
 ---
 
@@ -250,46 +250,79 @@ unevaluated:
    catches it — so the test asserts decode+replay, which is what "validation =
    replay" always meant.
 
-## 6. Next
+## 6. M0 is done — what shipped, and the one thing that did not
 
-M0's remaining spine, in order:
+Every M0 deliverable in `IMESSAGE_IMPLEMENTATION_HANDOFF.md` §4 is landed and
+green: the envelope + its native suite (in `make difftests`), the wasm exports +
+TS bridge, `e2e/msg_wire.test.ts`, `e2e/msg_concurrency.test.ts`, and
+`/m/[payload]`. 22/22 e2e across the three iMessage suites, 509 native units,
+`msg_wire_test` OK, regressions green.
 
-1. **`e2e/msg_concurrency.test.ts`** — Rule P + Rule R as PURE TS over the
-   exports. This is the oracle the Swift port must match fixture-for-fixture in
-   M3, so it is the highest-value thing left. Rule P is a straight comparison
-   over `kernelMsgDecode`'s `{round, turn, digest}` (all three already cross).
-   Rule R needs to BUILD chains, i.e. `kernelMsgSeal` — which is **bots.wasm
-   only**, and `engine()` loads rules.wasm. That wiring (`bots.ts` /
-   `__adoptEngine`) is the first thing to solve.
-2. **`/m/[payload]`** — `base32Decode` (reuse `replay/codec.ts`, do not invent)
-   → `kernelMsgDecode` → render. Note decode leaves the game RESIDENT, so the
-   existing view exports already read it: there is no new rendering path, and
-   rules.wasm is enough (it decodes; it just cannot seal).
-3. **Finding 4 (MAX_LOGS)** — see §4. Still open, still never observed at 2-4p.
+**Two deliberate departures from the handoff, both toward less code:**
 
-Not blocking, worth knowing: `IMESSAGE_IMPLEMENTATION_HANDOFF.md` §3.2/§3.3 and
-`IMESSAGE_GAME_DESIGN.md` §4.2/§16 still describe the raw chain and defer v6.
-They are wrong; this doc supersedes them.
+1. **The body is a v6 code, not raw frames** (§1-3 above).
+2. **Rule P and Rule R are in C, so the M3 Swift port is cancelled.** The handoff
+   wanted them as pure TS, "the reference implementation the Swift port must
+   match fixture-for-fixture". But Rule P decides which game every player SEES —
+   a phone and a browser disagreeing forks it — and Rule R's guard is a rules
+   question, which §17.16 forbids Swift from answering. A second implementation
+   to keep in step is the risk, not the deliverable. `e2e/msg_concurrency.test.ts`
+   is now the model's TEST rather than its home.
 
-## 7. The wasm half (done)
+**The seed rider (A7/F9)** is satisfied structurally: the wire field is a fixed
+32 bytes and `MsgEnvelope.seed` is `uint8_t[32]`, so a short seed is
+unrepresentable; `msg_seal` hands `MSG_SEED_LEN` to a producer that rejects
+anything under `FOOLISH_SEED_LEN`; an all-zero seed is refused at encode AND
+decode (pinned in both suites). What remains is kernel-side and belongs to A7:
+`game_set_deal_seed_bytes` still degrades SILENTLY to the legacy LCG on a short
+seed rather than saying so.
 
-- `wasm_msg_decode` (rules + bots) / `wasm_msg_seal` (**bots only** — sealing
-  reads the resident session log; rules.wasm is `MAX_LOGS=128` with no log
-  import). Both live in `wasm/wasm_api.c` and differ only in the export list —
-  the pattern `wasm_replay_encode_v6_from_game` already established.
-- **The envelope crosses in `g_replay_io`, never `g_io`.** rules.wasm aliases the
-  replay scratch family OVER the action family because "replay encode/decode vs
-  action/menu never nest". An FMSG call IS a replay call, so an envelope in
-  `g_io` would be clobbered by the codec's own bignum scratch mid-decode — and
-  `MsgEnvelope` borrows those bytes.
-- Decode leaves the game **resident**: `kernelViewSerialize` and the legal-move
-  exports then read exactly what the payload describes.
-- `engine.ts`: `kernelMsgDecode` / `kernelMsgSeal`, envelope as fields not
-  offsets, every `MSG_E*` mapped to a sentence.
-- `e2e/msg_wire.test.ts` — **the cross-engine gate** (design §8.2). Fixtures are
-  sealed by the NATIVE kernel (`msg_wire_test --fixture`) and decoded by the
-  WASM one; they must agree on turn/round/seats/seed, and since `msg_replay` only
-  returns when the body backs those claims, agreement means both kernels replayed
-  the identical chain. A diff there is a wire break.
-- `rules_wasm.ts` was regenerated — it had not been rebuilt since Format 6, so
-  the browser/e2e kernel was missing A2-A5. That drift is now paid off.
+### The one open item: MAX_LOGS (finding 4)
+
+`replay_encode_v6_from_game` refuses a game whose log buffer overflowed
+(`num_logs >= MAX_LOGS` — a truncated stream is untrusted, `replay.c:1732`).
+Measured: **0/240 at 2p and 4p** (max observed 176 and 335 of 512), **~10% of
+full 8-player games** (512/512).
+
+It does not bite v1: the UI caps at 4 players, where the ceiling is 65% clear,
+and a FINISHED game ships a standard `foolish.cards/<code>` replay link rather
+than an envelope (§12/M4), so the longest state never needs sealing.
+
+Two ways out, neither started:
+
+- **Feed the encoder the action list instead of scraping `g->logs`.** Looks
+  right, and it is more work than it sounds: the encoder's `Src` walks LOG
+  RECORDS, not actions, so "pass the actions" means synthesizing the log stream
+  the atom mapper reads. It is a `replay.c` change and should ride whoever owns
+  that file next.
+- **Raise `MAX_LOGS` on the encoding hosts.** Rejected on inspection: 128 -> 512
+  already took the `Game` struct 33KB -> 133KB, and cordite memcpy-clones a Game
+  in its Monte-Carlo hot loop. Doubling it again to fix 8p would tax every bot
+  decision in the product to serve a player count v1 does not ship.
+
+## 7. The wasm half
+
+- `wasm_msg_decode` / `wasm_msg_seal` / `wasm_msg_rule_p` / `wasm_msg_rebase`,
+  exported from **bots.wasm only** — one big module behind every host, by steer.
+  Not a per-host split: seal reads a resident session log rules.wasm cannot hold,
+  and its scratch `Game` would blow that module's 3-page pin at link time.
+- **The browser reaches the big module** through a base64 twin (`bots_wasm.ts`),
+  emitted from the same Makefile rule as the static `.gz` off the same
+  `build/bots.wasm`, so the two cannot drift. `bots.ts` picks its door by whether
+  a filesystem exists. This was the one-big-wasm follow-up, done for the web.
+- **LANDMINE: the envelope lives in `g_replay_io`, never `g_io`.** The rules build
+  aliases the replay scratch family over the action family because "the two never
+  nest" — an FMSG call IS a replay call, so an envelope in `g_io` would be
+  clobbered by the codec's own bignum scratch mid-decode, and `MsgEnvelope`
+  borrows those bytes.
+- Decode leaves the game **resident**: `kernelMsgLegalMoves` and
+  `kernelMsgPublicView` read it straight from the kernel. An iMessage device does
+  not hold the game as a TS object — the envelope put it in the kernel and that
+  is the only copy.
+- `e2e/msg_wire.test.ts` is **the cross-engine gate** (design §8.2): fixtures
+  sealed by the NATIVE kernel, decoded by the WASM one, agreeing on
+  turn/round/seats/seed. Since `msg_replay` only returns when the body backs the
+  header, agreement means both replayed the identical chain. A diff is a wire
+  break.
+- `rules_wasm.ts` was regenerated — stale since Format 6, so the browser/e2e
+  kernel was missing A2-A5. That drift is paid off.
