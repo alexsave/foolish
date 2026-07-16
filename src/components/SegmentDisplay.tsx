@@ -30,8 +30,11 @@ const ALL_SEGS = Object.keys(LINES) as Seg[];
 // Straight-line approximations of each glyph. A handful of letters
 // deliberately reuse a digit's shape (B~8, D/O~0, S~5) — real segment
 // alphanumerics do the same; context (surrounded by letters or digits,
-// never both) disambiguates. Every letter-vs-letter pair is distinct —
-// Y carries the extra VT stroke V lacks, so "COVER" never reads "COYER".
+// never both) disambiguates. V is drawn as an asymmetric checkmark
+// (straight left edge + one diagonal) rather than mirrored diagonals,
+// so it stays structurally distinct from Y's fork at small sizes —
+// a shared-shape-minus-one-segment V/Y pair reads identically once
+// dim ghost segments are in the mix.
 const FONT: Record<string, Seg[]> = {
     '0': ['T', 'TL', 'TR', 'BL', 'BR', 'B'],
     '1': ['TR', 'BR'],
@@ -64,14 +67,14 @@ const FONT: Record<string, Seg[]> = {
     S: ['T', 'TL', 'ML', 'MR', 'BR', 'B'],
     T: ['T', 'VT', 'VB'],
     U: ['TL', 'BL', 'TR', 'BR', 'B'],
-    V: ['DTL', 'DTR', 'VB'],
+    V: ['TL', 'BL', 'DTR', 'DBL'],
     W: ['TL', 'BL', 'TR', 'BR', 'DBL', 'DBR'],
     X: ['DTL', 'DTR', 'DBL', 'DBR'],
     Y: ['DTL', 'DTR', 'VT', 'VB'],
     Z: ['T', 'B', 'DTR', 'DBL'],
     '-': ['ML', 'MR'],
     '+': ['ML', 'MR', 'VT', 'VB'],
-    '±': ['T', 'VT', 'ML', 'MR'],
+    '±': ['VT', 'ML', 'MR', 'VB', 'B'],
     '/': ['DTR', 'DBL'],
 };
 

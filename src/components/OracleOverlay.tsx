@@ -241,7 +241,7 @@ function McRow({ c, best, worst, bestAdj, t }: {
                             <SegmentText text={`EF ${c.mean!.toFixed(decimals)}`} color={AMBER} height={10} gap={1.5} />
                             {c.se < 0.5 && c.se !== Infinity && (
                                 <span style={{ opacity: 0.65 }}>
-                                    <SegmentText text={`±${c.se.toFixed(2)}`} color={AMBER} height={8} gap={1.5} />
+                                    <SegmentText text={`±${c.se.toFixed(2)}`} color={AMBER} height={10} gap={1.5} />
                                 </span>
                             )}
                         </>
