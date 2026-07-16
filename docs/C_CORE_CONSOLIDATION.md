@@ -553,18 +553,66 @@ time. That is a state transition — kernel property. Add
 `wasm_reset_to_lobby` / `fio_reset_to_lobby` producing the post-reset blob;
 all three mirrors become decode-and-render.
 
-### 4.8 F7 — Web wire decode (TS mirrors of C codecs)
+### 4.8 F7 — Web wire decode — DONE (July 2026)
 
-`view.ts` (358) + `evwire.ts` (253) + `awire.ts` (170) + `logwire.ts` (181)
-≈ 960 lines of pure TS shadowing C structs byte-for-byte, kept honest by
-parity e2e. iOS already decodes in C. Fold into the client wasm
-**opportunistically** — the next time a wire format changes, move that
-format's client decode into wasm instead of updating the mirror (F4.2's
-replay-steps work is a natural first domino). ⚠ Budget: guards.wasm is
-deliberately pinned at ONE wasm page (`RULES_GUARDS_WASM_MEMORY_PLAN.md`);
-event decode + JSON emit will not fit — a second tiny module or a
-deliberate, documented budget bump, decided with the memory-plan
-discipline, not by accident.
+**The ~960-line figure was never the job.** Of it, only ~215 lines actually
+shadowed a C byte-format: `parseMaskedState` (~55), `decodeEventWire`'s byte
+loop (~70), and the two encoders (~90). Those are gone. The rest was never a
+mirror — `viewToGame`'s roster join, `goodPlayersFromViewMask`, the
+`good_timestamp` clock, `reconstructMessage`, the envelopes, the enum mapping —
+and it is still here, correctly.
+
+**Judge this by "does any TS still know the byte layout", not by lines
+deleted.** By line count the fold looks like a wash and the row nearly got
+closed as won't-do on exactly that reasoning. But line count is not what hurts:
+what hurts is that a format change was a two-repo edit policed by a parity test
+that could only ever say "the copy agrees", never "the answer is right". No TS
+knows a view or evwire offset now.
+
+**How it is built.** `src/json_out.c` — the emitter iOS already had, lifted out
+of `ios/ios_api.c` so there is one of it. `json_view_from_packed` (iOS's
+`fio_view_from_packed_json` is now a one-line call into it) and
+`json_events_from_packed`, the reader evwire never had, next to the writer.
+Browser doors: `wasm_view_json` / `wasm_events_json`, packed into the REPLAY io
+buffer, JSON back in the MAIN one, so the two never alias.
+
+**The budget worry did not materialise, and the gate that dissolved was not the
+one that mattered.** guards.wasm's one page was the documented ⚠ — it became
+moot when the browser got bots.wasm. The real question was different: the render
+path was wasm-FREE (`ServerContext` imported no wasm; `layout.tsx` did not warm
+it), so this puts a fetch before first board paint. That is the `KernelGate` in
+`providers.tsx`, and it is a gate rather than a warm because the realtime
+`applyRow` is a synchronous callback. Code cost: **+1,539 B gzipped**
+(61,515 → 63,054). The pinned modules never saw it — `json_out.c` is in
+`CORE_SRC` and `WASM_BOT_SRC` only. The decode target is a **~1.1 KB slot, not a
+Game**: `state_get` writes nothing at or beyond `Game.logs`, and `json_state`
+reads only prefix fields, so the 136 KB log-laden struct is not needed.
+`_Static_assert`s pin that rather than trusting it.
+
+**No snprintf in the kernel.** The wasm build is `-nostdlib -ffreestanding` and
+its stdio shim declares `fprintf` and nothing else; the emitter's integer and
+hex formatting is hand-rolled. That dependency was invisible while the code
+lived in an iOS-only translation unit.
+
+**What stays, and why it is the boundary rather than unfinished work:**
+
+- *Identity* — `game.h` says it outright: seat identity "is deliberately not in
+  the state blob; it lives with the caller". A from-packed decode emits `""`/`0`.
+  iOS proves the split: on that path it gets `"name":""` for every seat and Swift
+  overlays identity anyway. The roster join is host work.
+- *`encodeEventWire` / `writeMaskedState`* — the kernel can only serialize an
+  event stream **it derived** from engine hooks. The surviving callers are the
+  lobby/meta path, whose events are synthetic transitions the kernel never ran
+  and whose roster is changing underneath them — which is why that path carries
+  `r`/`m` extras outside the wire in the first place. Gameplay already broadcasts
+  kernel bytes (`broadcastPackedEventBuffers`).
+- *`encodeGameResponse` / `encodeGamesList`* — this repo's own envelopes, written
+  in TS, no C twin. Reading them in TS duplicates nothing. Only the blob inside
+  goes to the kernel.
+
+**Left for a later pass:** `awire.ts` (170) and `logwire.ts` (181), untouched
+here. Same test to apply: which of their lines know a C offset, and which are
+host work?
 
 ### 4.9 F8 — Retire the TS rules projections (cleanup, after F2)
 
@@ -632,8 +680,8 @@ mirror → parity harness → cutover → freeze the old path as test oracle)
 | A5 | **F4.2 replay steps from the kernel** — **DONE (§4.6)**, kernel and web. The kernel half: `replay_steps_v6` rebuilds the game from a v6 code (`start_game_with_deck`) and replays it through the real engine, so the events are `evwire_walk`'s, not a replay-side projection; `replay_steps_frames_v6` serializes that as the SAME packed evwire frames live play broadcasts, chunked (`evwire_serialize` backpatches `n_events` as a u8, so one frame per game is impossible, and a whole game's frames outgrow any wasm IO buffer). **v5 refused** — it hides the deal (owner: v5 is dead). **The web half (July 2026):** `src/replay/frames.ts` pulls the frames and decodes them with `decodeEventWire` — the client's LIVE decoder — and `ReplayScreen.tsx` + `Tutorial.tsx` render them. `src/replay/view.ts` + `src/replay/animate.ts` are **deleted** (794 lines: the log-stream fold AND the hidden-card retrodiction). **Three things the frames could not answer, and where they come from instead.** (1) *What a step is*: an attack and a pass are ONE evwire event type, told apart only by a reconstructed English sentence — so the kernel says (`replay_steps_index_v6` → `replayStepIndex`). It deliberately does NOT report per-step log counts: that was the first cut and it was a lie, because the replayed engine's log stream is a fourth private stream (a 3p game: 92 logs played, 79 decoded, 76 replayed — they disagree on goods, which v6 trims by design). The Oracle instead pairs the two streams it holds on the moves both call moves, and CHECKS every pair. (2) *What each seat held* (the reveal eye, which used to retrodict): replay the code once per seat and read that seat's own hand — exact, and free (4 replays ≈ 1ms, ~7KB each). (3) *Stepping back*: no engine un-plays a move, so the flight is inverted for presentation only and the board committed is the previous frame's, i.e. the kernel's. **Granularity changed**: a step is one ACTION, not one log (49 vs 92 on a 3p game) — which is what live play broadcasts. INFO steps still map 1:1 to INFO logs, so the timing dial survives. **The tutorial needed a new game**: its code was v5 and v5 cannot replay. Re-cut as v6, and `tests/gen_tutorial_game.ts` is **restored** (the old one had been lost, leaving a constant nobody could regenerate). It scores the REPLAY'S STEPS, not the played game's logs — scoring the logs reported "the learner says good" about a game where the learner is never once asked to. The tutorial also now sits in **seat 0** rather than spectating, so the kernel masks its boards as it would for a real player. **Found a real bug in shipped code**: when nobody is dealt a trump the engine ROLLS for the first attacker (`determine_lowest_power_index` → `deal_index`), and that roll is not in a replay code — so the replay rebuilt the right hands, picked a different opening seat at random, and refused the game. ~1.4% of 2p deals, flaky (RNG-dependent). Encoded and decoded fine; only the replay was unrenderable. Fixed with `game_force_first_attacker`, pinned on that branch ONLY — where a trump was dealt the seat is still derived and still checked, because that check is what proves the hands came back. | after A3 (reuses emitter) | **done**: C invariants (mutation-checked) — rebuilt final board byte-identical to the played game (np=2..6, unmasked), a mid-game cut conserves the deck (caught a real missing-deck-tail bug), the step index tells a pass from an attack / reports a pending good / refuses a small buffer, and a no-trump deal replays whatever the RNG says. TS: `e2e/replay_steps_frames.test.ts` (frames decode with the live decoder), **`e2e/replay_frames_web.test.ts`** (every board is the engine's, the reveal eye is exact, kinds match the real game, step-back lands on the real prior board — all four mutation-checked), **`e2e/tutorial_game.test.ts`** (replays + walks it as a learner; registered into the FAST validate runner, so a stranded tutorial fails in seconds). `ios-smoke` replays all 48 sweep games as live events, no hand leaked to a spectator |
 | A6 | **F6 reset transform**, then **F8 projection deletions** | cleanup wave | `resetToLobby` mirrors deleted; rematch e2e green on web + iOS |
 | A7 | **F9 batch**: seed-len header + rejects — **`FOOLISH_SEED_LEN` DONE** (A4 needed it; `game.h`, and `game_set_deal_seed_bytes` rejects against it — the encode/decode-side rejects still ride the iMessage M0) —, `unambiguous_cover` (with the first surface that needs it), `%`-name tidies (with the naming work), and the **`console`+`gpt` drop** — delete the `CONSOLE` key (`types.ts:254`), the gpt lazy-load path + `strategies/gpt_strategy.ts`, and, once unreferenced, `move_stats.ts` + `pass_prob.ts` (neither strategy was ever seeded in production; `registerBotStrategy` itself STAYS — the offlinefun research harnesses use it) | opportunistic | per-item; grep proves no `console`/`gpt` strategy reference survives |
-| A8 | **F7 wire-decode moves**, format-by-format on next wire change; module/budget decision documented | opportunistic | mirror file deleted per format; parity test flips to wasm-vs-fixture |
-| A9 | **Retire the TS parity twins for C invariants** (owner steer, July 2026) — once a surface is single-sourced in C, a TS re-implementation kept "byte-identical" by a parity test is no longer proving the port, it is *pinning the format in place*: it makes every kernel change a two-repo edit and it can only ever say "the copy agrees", never "the answer is right". Test INVARIANTS in C instead. **Partly done**: `e2e/replay_ts_oracle.ts` (1,078 lines) is deleted and `replay_codec.test.ts` now asserts the decode reproduces the game the ENGINE played — strictly stronger than agreeing with a second codec. **Remaining twins**: `e2e/replay_v6_parity.test.ts`'s frozen v6 choreography (A4 left it deliberately), the evwire `packed_wire_parity` twin, and `bot_drive_parity`'s TS cycle. Each dies when its C invariant exists, NOT before | after the surface is single-sourced | the twin file is deleted and a C test fails when the behaviour breaks (mutation-check it) |
+| A8 | **F7 wire-decode moves** — **DONE (§4.8)**. The web read view.c and evwire.c with hand-written TS that shadowed them offset for offset; that is deleted and the kernel reads its own formats. `src/json_out.c` is the emitter iOS already had, lifted out of `ios/ios_api.c` so there is ONE of it (iOS's `fio_view_from_packed_json` is now a one-line call into it), plus two new things: `json_view_from_packed`, and `json_events_from_packed` — the reader evwire never had, now sitting beside the writer, because a format with a writer in C and a reader in TypeScript is two formats wearing one name. Reached from the browser via `wasm_view_json`/`wasm_events_json`. **Cost: +1,539 B gzipped** (61,515 → 63,054) and one fetch before first board paint (the `KernelGate` in `providers.tsx`). **The pinned budgets are untouched** — `json_out.c` is in `CORE_SRC` and `WASM_BOT_SRC` only, never `WASM_RULES_SRC` or guards — and the decode target is a **~1.1 KB slot, not a Game**: `state_get` writes nothing at or beyond `Game.logs` and `json_state` reads only prefix fields, so the log-laden struct (136 KB in the bots build) is not needed. `_Static_assert`s pin that. **What did NOT fold, and why it is the boundary rather than a shortfall:** identity/roster join, the good-players insertion order, the `good_timestamp` VALUE and the message prose all stay host-side — `game.h` is explicit that seat identity is *deliberately* not in the state blob, and iOS proves the split (on the from-packed path it gets `"name":""` for every seat and Swift overlays identity anyway). `encodeEventWire`/`writeMaskedState` also STAY: the kernel can only serialize an event stream IT derived from engine hooks, and the surviving callers are the lobby/meta path, whose events are synthetic transitions the kernel never ran. `encodeGameResponse`/`encodeGamesList` stay too — they are this repo's own envelopes, written in TS with no C twin, so reading them in TS duplicates nothing. **The premise that nearly killed this row:** measured by lines-that-survive it looks like a wash (only ~215 of the ~960 were real mirrors). That is the wrong metric. The right one is *does any TS still know the byte layout* — because that is what makes every format change a two-repo edit — and by that metric it is unambiguous. | opportunistic | **done**: 3130 C invariants — the load-bearing one is that a packed view decodes to EXACTLY the JSON the live board emits, every seat and the spectator (mutating `state_get` to drop a field fails 23; masking is pinned separately because both sides share `json_state` and would cancel — fails 28; an evwire cursor off by one fails 4). TS: `e2e/kernel_wire_decode.test.ts` (the decode reproduces the game the ENGINE played), `view_codec`, `packed_wire_parity`, `replay_frames_web`, `tutorial_game`, validate 42/42. Mutation-checked against a REBUILT wasm, not a rebuilt-in-my-head one |
+| A9 | **Retire the TS parity twins for C invariants** (owner steer, July 2026) — once a surface is single-sourced in C, a TS re-implementation kept "byte-identical" by a parity test is no longer proving the port, it is *pinning the format in place*: it makes every kernel change a two-repo edit and it can only ever say "the copy agrees", never "the answer is right". Test INVARIANTS in C instead. **Partly done**: `e2e/replay_ts_oracle.ts` (1,078 lines) is deleted and `replay_codec.test.ts` now asserts the decode reproduces the game the ENGINE played — strictly stronger than agreeing with a second codec. **Remaining twins**: `e2e/replay_v6_parity.test.ts`'s frozen v6 choreography (A4 left it deliberately) and `bot_drive_parity`'s TS cycle. **The evwire decode twin is GONE (A8, July 2026)**: `kernel_wire_decode.test.ts` was written as a mirror-vs-kernel harness for the cutover and, the moment the mirror was deleted, had nothing left to agree with — it now asserts the decode reproduces the game the ENGINE PLAYED, which is the strictly stronger claim. The cutover comparison is preserved in `bae4093`, which is where a cutover harness belongs once the cutover is made. **But `packed_wire_parity` does NOT die with A8, contrary to the A8 row's old expectation** — A8 killed the DECODE mirror; that test is about the ENCODER (`encodeEventWire`), which is still production for the lobby/meta path and cannot fold (the kernel only serializes streams it derived). Its hand-rolled byte scan is gone — it asks the kernel now, which is the honest way round: it inspects what a client could actually see, not what a second parser thinks is there. Each dies when its C invariant exists, NOT before | after the surface is single-sourced | the twin file is deleted and a C test fails when the behaviour breaks (mutation-check it) |
 | A10 | **Make the server code server-agnostic** (owner steer, July 2026) — the game logic under `supabase/functions/_shared/` is not actually Supabase-specific; Supabase is one *implementation* of a host (Postgres + Deno edge + realtime). Split it: a **common** part (the rules/bot/replay orchestration, host-neutral) and a **supabase** part that is only the adapter — DB reads/writes, the lease/CAS, realtime broadcast, `EdgeRuntime.waitUntil`. The test is whether a second backend could be added without touching the common part. **Plus a separate SDK layer**: one folder per language, each being the binding to the wasm/C kernel and nothing else (TS today; Swift's `EngineC.swift`/`FoolishKit` is already this shape and should move; Kotlin/etc. later). This is the structural counterpart to the whole C consolidation — the kernel is already host-neutral, but every host still reaches it through a bespoke bridge that lives inside a vendor's folder. **NOT started; do not start as a drive-by** — it is a large mechanical move that will conflict with everything in flight | after the A1–A9 waves settle; sequence against the iMessage work, which adds a THIRD host and is the natural forcing function | a backend adapter can be swapped with no diff in the common part; each SDK folder builds and tests standalone against the wasm |
 
 **What this buys, concretely:** the offline app gets site-identical bots
