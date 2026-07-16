@@ -50,6 +50,18 @@ supabase/functions/_shared/durakai/node_modules
 # cnitro
 cnitro/build/
 cnitro/*.trace/
+cnitro/tools/tt_divergence_viz/backup/
+cnitro/tools/tt_divergence_viz/backup2/
+cnitro/tools/tt_divergence_viz/data/W/
+
+# Local scratch that has snuck into commits before. Bare-name editor spill
+# (.swc..swm, not caught by .*.sw? which guards .swift), a dev server log, the
+# iOS snapshot-test output dir, and the memtest edge scratch function.
+.sw[c-m]
+.watchrealsizevim
+serve.log
+ios/FoolishTests/__Snapshots__/
+supabase/functions/memtest/
 
 # local dev overrides (shadows next.config.mjs if tracked!)
 next.config.js
