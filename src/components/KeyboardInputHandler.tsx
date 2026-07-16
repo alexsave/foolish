@@ -6,7 +6,7 @@ import { useGame } from '../contexts/GameContext';
 import { useAuth } from '../contexts/AuthContext';
 import { canCover } from '@shared/common_utils.ts';
 import { canPass } from '../utils/gameValidation';
-import { kernelUnambiguousCover } from '@shared/wasm/bots.ts';
+import { kernelUnambiguousCover } from '@shared/sdk/ts/wasm/bots.ts';
 
 export const KeyboardInputHandler = () => {
     const { user_id } = useAuth();

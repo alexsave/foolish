@@ -27,7 +27,7 @@ export async function generateMetadata(
         // The leading char is the text-level format version (§4.3) — dispatch
         // before decoding any binary.
         if (text[0] === '1') {
-            const { kernelMsgDecode, ensureBotsAsync } = await import('@shared/wasm/bots.ts');
+            const { kernelMsgDecode, ensureBotsAsync } = await import('@shared/sdk/ts/wasm/bots.ts');
             // Await the module's door even though this is the SERVER. The sync
             // read works here only if wasm_asset's `require` probe finds a real
             // require — and Next's server bundle is ESM, where it may not. The

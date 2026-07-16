@@ -145,7 +145,7 @@ trust-but-spot-check the anchors.
 - Entry: `octogen_strategy_choose` (`cnitro/src/octogen_strategy.c:1758-1764`),
   dispatched by `wasm_choose_move(strat=20, seat)`
   (`cnitro/wasm/wasm_bots_api.c:224-233`; `STRAT.octogen = 20` in
-  `supabase/functions/_shared/wasm/bots.ts:55`).
+  `supabase/functions/_shared/sdk/ts/wasm/bots.ts:55`).
 - Per-candidate score = **mean finish position**: `score[i]/nsim[i]`, finish
   1 = escaped first (best) … N = durak (worst); accumulated in
   `double score[26]` / `int nsim[26]` (`octogen_strategy.c:1602-1605,
@@ -332,7 +332,7 @@ From `wasmChooseMove` (`bots.ts:244-289`) and the C side:
 - `public/` is committed and served with zero config (`next.config.mjs` is
   6 lines; no vercel.json). A committed `public/oracle.wasm.gz` is fetchable
   at `/oracle.wasm.gz`; the vendored sync `gunzip.ts` inflates it
-  client-side (`supabase/functions/_shared/wasm/gunzip.ts:1-24`). Embeds are
+  client-side (`supabase/functions/_shared/sdk/ts/wasm/gunzip.ts:1-24`). Embeds are
   the wrong tool at this size (`Makefile:707-709` — "a real 47KB binary, not
   a 155KB base64 .ts embed").
 - CI never rebuilds wasm (`Makefile:181-183`); `collect_metrics.mjs`

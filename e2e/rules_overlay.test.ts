@@ -19,7 +19,7 @@ import assert from 'node:assert/strict';
 
 import { Game, GAME_STATUS, PLAYER_STATUS, PrivatePlayer, StrategyKey } from '../supabase/functions/_shared/types.ts';
 import { start_game } from '../supabase/functions/_shared/game_lifecycle.ts';
-import { kernelLegalMoves, serializeGameState } from '../supabase/functions/_shared/wasm/engine.ts';
+import { kernelLegalMoves, serializeGameState } from '../supabase/functions/_shared/sdk/ts/wasm/engine.ts';
 import { ReplayInput } from '../supabase/functions/_shared/replay/core.ts';
 import { encodeReplay } from '../supabase/functions/_shared/replay/encode.ts';
 import { decodeReplay } from '../supabase/functions/_shared/replay/decode.ts';

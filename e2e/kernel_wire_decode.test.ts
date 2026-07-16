@@ -21,8 +21,8 @@ import assert from 'node:assert/strict';
 
 import {
     ensureBotsAsync, kernelEventsFromPacked, replayEventFrames,
-} from '../supabase/functions/_shared/wasm/bots.ts';
-import { decodeEventWire } from '../supabase/functions/_shared/wire/evwire.ts';
+} from '../supabase/functions/_shared/sdk/ts/wasm/bots.ts';
+import { decodeEventWire } from '../supabase/functions/_shared/sdk/ts/wire/evwire.ts';
 import { PLAYER_STATUS } from '../supabase/functions/_shared/types.ts';
 import { playSeededV6 } from './helpers/seeded_game.ts';
 

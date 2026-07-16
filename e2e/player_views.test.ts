@@ -26,14 +26,14 @@ import { executeWithGameLock, loadCompleteGame, supabaseClient } from '../supaba
 import { handleMetaAction } from '../supabase/functions/_shared/adapter/meta_actions.ts';
 import { legalMovesFor, applyPlayerMove } from './dispatch.ts';
 import { buildPlayerViewRows, buildPlayerViewUpserts, buildSpectatorView } from '../supabase/functions/_shared/player_views.ts';
-import { buildPackedGameBytes, gameViewFromRow } from '../supabase/functions/_shared/packed_game.ts';
-import { decodePackedGame } from '../supabase/functions/_shared/wire/view.ts';
-import { bytesToBareHex } from '../supabase/functions/_shared/wire/bytes.ts';
+import { buildPackedGameBytes, gameViewFromRow } from '../supabase/functions/_shared/sdk/ts/packed_game.ts';
+import { decodePackedGame } from '../supabase/functions/_shared/sdk/ts/wire/view.ts';
+import { bytesToBareHex } from '../supabase/functions/_shared/sdk/ts/wire/bytes.ts';
 import { hexToBytes } from '../supabase/functions/_shared/replay/codec.ts';
 import {
   Game, GAME_STATUS, PLAYER_STATUS, STRATEGY_KEY, PersonalGame,
 } from '../supabase/functions/_shared/types.ts';
-import { __setKernelSeedSource } from '../supabase/functions/_shared/wasm/engine.ts';
+import { __setKernelSeedSource } from '../supabase/functions/_shared/sdk/ts/wasm/engine.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 __setKernelSeedSource(() => 777);

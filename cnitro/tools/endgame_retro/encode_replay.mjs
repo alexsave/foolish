@@ -13,9 +13,9 @@ const R = process.env.FOOLISH_ROOT ||
 process.env.TSX_TSCONFIG_PATH ||= `${R}/e2e/tsconfig.json`;
 
 const { start_game_packed, reconstructSeededDeal } = await import(`${R}/supabase/functions/_shared/game_lifecycle.ts`);
-const { runPackedGameAction, applyKernelStateToGame, __setDealSeedOverride } = await import(`${R}/supabase/functions/_shared/wasm/engine.ts`);
-const { encodeAction } = await import(`${R}/supabase/functions/_shared/wire/awire.ts`);
-const { logsFromKernelExport, decodeLogs } = await import(`${R}/supabase/functions/_shared/wire/logwire.ts`);
+const { runPackedGameAction, applyKernelStateToGame, __setDealSeedOverride } = await import(`${R}/supabase/functions/_shared/sdk/ts/wasm/engine.ts`);
+const { encodeAction } = await import(`${R}/supabase/functions/_shared/sdk/ts/wire/awire.ts`);
+const { logsFromKernelExport, decodeLogs } = await import(`${R}/supabase/functions/_shared/sdk/ts/wire/logwire.ts`);
 const { verifyRoundTripV6 } = await import(`${R}/supabase/functions/_shared/replay/encode.ts`);
 const { PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY } = await import(`${R}/supabase/functions/_shared/types.ts`);
 

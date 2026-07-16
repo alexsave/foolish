@@ -15,8 +15,8 @@ import { createHash } from 'node:crypto';
 import { start_game_packed } from '../supabase/functions/_shared/game_lifecycle.ts';
 import { processBotActionPacked } from '../supabase/functions/_shared/pure_bot_actions.ts';
 import { game_done } from '../supabase/functions/_shared/common_utils.ts';
-import { __setDealSeedOverride, kernelShouldAct } from '../supabase/functions/_shared/wasm/engine.ts';
-import { __ensureBots } from '../supabase/functions/_shared/wasm/bots.ts';
+import { __setDealSeedOverride, kernelShouldAct } from '../supabase/functions/_shared/sdk/ts/wasm/engine.ts';
+import { __ensureBots } from '../supabase/functions/_shared/sdk/ts/wasm/bots.ts';
 import {
   Game, PrivatePlayer, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY,
 } from '../supabase/functions/_shared/types.ts';

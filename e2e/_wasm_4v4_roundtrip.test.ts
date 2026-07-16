@@ -8,10 +8,10 @@
 // fallback), a DIFFERENT belief path, which flips co-optimal near-ties.
 import { test } from 'node:test';
 import { start_game_packed } from '../supabase/functions/_shared/game_lifecycle.ts';
-import { runPackedGameAction, applyKernelStateToGame, __setDealSeedOverride } from '../supabase/functions/_shared/wasm/engine.ts';
-import { encodeAction } from '../supabase/functions/_shared/wire/awire.ts';
-import { logsFromKernelExport } from '../supabase/functions/_shared/wire/logwire.ts';
-import { wasmChooseMoveDirect, __ensureBots, STRAT } from '../supabase/functions/_shared/wasm/bots.ts';
+import { runPackedGameAction, applyKernelStateToGame, __setDealSeedOverride } from '../supabase/functions/_shared/sdk/ts/wasm/engine.ts';
+import { encodeAction } from '../supabase/functions/_shared/sdk/ts/wire/awire.ts';
+import { logsFromKernelExport } from '../supabase/functions/_shared/sdk/ts/wire/logwire.ts';
+import { wasmChooseMoveDirect, __ensureBots, STRAT } from '../supabase/functions/_shared/sdk/ts/wasm/bots.ts';
 import { game_done } from '../supabase/functions/_shared/common_utils.ts';
 import { PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY } from '../supabase/functions/_shared/types.ts';
 

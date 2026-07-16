@@ -8,7 +8,7 @@
 import {
     Card, Game, GAME_STATUS, PersonalGame, PLAYER_STATUS,
     PrivatePlayer, PublicGame, PublicPlayer,
-} from "../types.ts";
+} from "../../../types.ts";
 import { WIRE_HIDDEN, WIRE_NONE, wireCard } from "./awire.ts";
 import { KernelCard, KernelState, kernelViewFromPacked } from "../wasm/bots.ts";
 

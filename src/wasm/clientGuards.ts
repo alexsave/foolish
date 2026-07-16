@@ -20,10 +20,10 @@
 // placeholders; the authoritative server broadcast supplies the real cards.)
 
 import { Card, PersonalGame, PublicPlayer, GAME_STATUS, PLAYER_STATUS } from '@shared/types.ts';
-import { takeGUARDS_WASM_B64 } from '@shared/wasm/guards_wasm.ts';
+import { takeGUARDS_WASM_B64 } from '@shared/sdk/ts/wasm/guards_wasm.ts';
 // guards embed is gzip+base64 (embed.mjs --gzip); a vendored sync pure-JS
 // gunzip inflates it in the browser and keeps the sync instantiate path.
-import { gunzip } from '@shared/wasm/gunzip.ts';
+import { gunzip } from '@shared/sdk/ts/wasm/gunzip.ts';
 
 // ENGINE_REJECT_* — must match cnitro/src/game.h. 0 == legal.
 const REJECT_NONE = 0;

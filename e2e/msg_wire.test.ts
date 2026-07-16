@@ -11,7 +11,7 @@
 // Run: npx tsx --test e2e/msg_wire.test.ts
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { kernelMsgDecode } from '../supabase/functions/_shared/wasm/bots.ts';
+import { kernelMsgDecode } from '../supabase/functions/_shared/sdk/ts/wasm/bots.ts';
 
 // Sealed by the NATIVE producer (`cnitro/build/msg_wire_test --fixture`) from
 // seeded games, cut mid-game — a turn bubble, which is what actually ships.

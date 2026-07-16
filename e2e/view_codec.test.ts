@@ -18,7 +18,7 @@ import {
 import {
     serializeGameState, serializeViewBlob, kernelLegalMoves, kernelShouldAct,
     __setKernelSeedSource,
-} from '../supabase/functions/_shared/wasm/engine.ts';
+} from '../supabase/functions/_shared/sdk/ts/wasm/engine.ts';
 import { start_game } from '../supabase/functions/_shared/game_lifecycle.ts';
 import { game_done, personalize_game } from '../supabase/functions/_shared/common_utils.ts';
 import { handleAttack } from '../supabase/functions/_shared/actions/attack.ts';
@@ -26,12 +26,12 @@ import { handleCover } from '../supabase/functions/_shared/actions/cover.ts';
 import { handlePass } from '../supabase/functions/_shared/actions/pass.ts';
 import { handlePickup } from '../supabase/functions/_shared/actions/pickup.ts';
 import { handleGood } from '../supabase/functions/_shared/actions/good.ts';
-import { AwireKindName } from '../supabase/functions/_shared/wire/awire.ts';
+import { AwireKindName } from '../supabase/functions/_shared/sdk/ts/wire/awire.ts';
 import {
     decodePackedGame, encodeGameResponse, PackedGameRoster,
     VIEW_FORMAT_VERSION,
-} from '../supabase/functions/_shared/wire/view.ts';
-import { kernelViewFromPacked } from '../supabase/functions/_shared/wasm/bots.ts';
+} from '../supabase/functions/_shared/sdk/ts/wire/view.ts';
+import { kernelViewFromPacked } from '../supabase/functions/_shared/sdk/ts/wasm/bots.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 

@@ -1,5 +1,5 @@
 import { Game, AnimationEvent, GAME_STATUS } from '../types.ts';
-import { kernelGood, kernelRoundTransition } from '../wasm/engine.ts';
+import { kernelGood, kernelRoundTransition } from '../sdk/ts/wasm/engine.ts';
 
 // The good rules live in the C kernel (cnitro/src/game.c handle_good),
 // compiled to WASM — including the all-attackers-good + all-covered round

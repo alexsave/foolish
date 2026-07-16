@@ -53,7 +53,7 @@ everywhere (see `docs/ARCHITECTURE_AS_A_PATTERN.md`):
 | Durable state blob v2 | `cnitro/wasm/wasm_api.c:316-327` — `wasm_state_serialize/deserialize` (carries the deal seed) | Not used in the payload (see §3) but useful for local caching |
 | Replay codec v5 (finished games → short URL) | `cnitro/src/replay.{h,c}` (C is canonical; frozen wire format), TS bridge `supabase/functions/_shared/replay/` | The game-over artifact: a finished iMessage game becomes a normal `foolish.cards/<code>` replay, Oracle-analyzable |
 | Packed action wire format | `supabase/functions/_shared/packed_action.ts`, `cnitro/wasm/wire.h` | The per-move byte encoding the payload reuses verbatim |
-| Kernel-in-browser bridge | `src/wasm/clientGuards.ts`, `supabase/functions/_shared/wasm/engine.ts` | The web client already loads the C kernel as wasm — the `/m/` fallback route rides this |
+| Kernel-in-browser bridge | `src/wasm/clientGuards.ts`, `supabase/functions/_shared/sdk/ts/wasm/engine.ts` | The web client already loads the C kernel as wasm — the `/m/` fallback route rides this |
 | Full export list of the wasm rules build | `cnitro/Makefile:331-353` | Shows every kernel entry point already exposed (`wasm_start_game`, `wasm_apply_action`, `wasm_legal_moves`, `wasm_replay_encode`, …) |
 
 **The constraint that shapes everything:** an iMessage extension has *no server
@@ -155,7 +155,7 @@ like everything else in this repo — as `cnitro/src/msg_wire.{h,c}`, compiled
 into (a) the iOS static library (§8) and (b) the existing wasm rules build with
 two new exports `wasm_msg_encode` / `wasm_msg_decode` added to the export list
 at `cnitro/Makefile:331-353`, bridged to TS in
-`supabase/functions/_shared/wasm/engine.ts` for the web route (§13) and e2e
+`supabase/functions/_shared/sdk/ts/wasm/engine.ts` for the web route (§13) and e2e
 tests (§18).
 
 ```
@@ -666,7 +666,7 @@ New Next.js route `src/app/m/[payload]/page.tsx`:
 - Client-side only (like the replay page — no auth, `src/app/[game_id]/page.tsx`
   precedent). Parse text version prefix, base32-decode, call the new
   `wasm_msg_decode` through the existing kernel bridge
-  (`supabase/functions/_shared/wasm/engine.ts` + `src/wasm/clientGuards.ts`
+  (`supabase/functions/_shared/sdk/ts/wasm/engine.ts` + `src/wasm/clientGuards.ts`
   wiring pattern), which replays and returns the state.
 - Render the table **read-only from the public viewpoint** (both hands as
   backs) with the existing board components, plus: "This is a live iMessage

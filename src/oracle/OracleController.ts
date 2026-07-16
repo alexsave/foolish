@@ -7,7 +7,7 @@
  * terminates the fleet. StrictMode-safe.
  * ========================================================================== */
 
-import { gunzip } from '@shared/wasm/gunzip.ts';
+import { gunzip } from '@shared/sdk/ts/wasm/gunzip.ts';
 import { OracleAccumulator } from './accumulator';
 import {
     OracleJob, OracleSnapshot, OracleStatus, WorkerToMain,

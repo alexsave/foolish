@@ -165,7 +165,7 @@ measured-negative value net; oracles are research budgets.
 2. `cnitro/Makefile` `WASM_BOT_SRC` (a SEPARATE list from CORE_SRC — edit BOTH
    or the wasm link fails with `undefined symbol: semtex_strategy_choose`):
    add `src/semtex_strategy.c src/octogen_strategy.c` (NOT novichok/torpex).
-3. `supabase/functions/_shared/wasm/bots.ts`, `STRAT` map: add
+3. `supabase/functions/_shared/sdk/ts/wasm/bots.ts`, `STRAT` map: add
    `semtex: 18,` and `octogen: 20,`.
 4. `supabase/functions/_shared/bot_strategy.ts` registry, after fulminate:
    ```ts
@@ -196,7 +196,7 @@ cd cnitro
 make CC=clang build/sim_difftest && ./build/sim_difftest 4 300    # 0 real divergences
 cd .. && npm run test:e2e && npm run test:validate  # all pass
 # and confirm the cheater is NOT reachable in production:
-grep -R "novichok" supabase/functions/_shared/wasm/bots.ts supabase/functions/_shared/bot_strategy.ts   # expect NO hits
+grep -R "novichok" supabase/functions/_shared/sdk/ts/wasm/bots.ts supabase/functions/_shared/bot_strategy.ts   # expect NO hits
 ```
 
 ## Step 6 — optional: funny-bohr styling

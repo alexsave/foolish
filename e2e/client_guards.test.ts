@@ -25,7 +25,7 @@ import {
 import {
   kernelValidateAttack, kernelValidatePass, kernelValidateCover, kernelValidatePickup,
   kernelNextPlayer, kernelCanCover,
-} from '../supabase/functions/_shared/wasm/engine.ts';
+} from '../supabase/functions/_shared/sdk/ts/wasm/engine.ts';
 import {
   Game, PersonalGame, PrivatePlayer, Card, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY,
 } from '../supabase/functions/_shared/types.ts';

@@ -5,7 +5,7 @@
  * both encode and decode drive — lives in the C kernel
  * (cnitro/src/replay.c), the same codebase as the production game rules it
  * mirrors (game.c / card.h). TS holds only marshaling (encode.ts /
- * decode.ts via _shared/wasm/engine.ts) and these shared types.
+ * decode.ts via _shared/sdk/ts/wasm/engine.ts) and these shared types.
  *
  * The original TS implementation is preserved verbatim as the frozen v5
  * spec / differential-test oracle in e2e/replay_ts_oracle.ts;

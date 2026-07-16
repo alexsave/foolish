@@ -1,7 +1,7 @@
 // PackedGame.swift — decodes the server's enveloped packed-game buffer (the
 // `create` response body and the `player_views.view` hex column) into a GameView
 // plus the game id, the local seat, and the version. This is the native mirror
-// of the web's decodePackedGame (supabase/functions/_shared/wire/view.ts).
+// of the web's decodePackedGame (supabase/functions/_shared/sdk/ts/wire/view.ts).
 //
 // The envelope wraps the masked-state blob with a small header; we parse that
 // header in Swift (trivial) and hand the INNER masked state to the kernel

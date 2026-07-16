@@ -50,7 +50,7 @@ import {
   canCoverCards as clientCanCoverCards,
   validateCover as clientValidateCover,
 } from '../src/utils/gameValidation.ts';
-import { kernelUnambiguousCover } from '../supabase/functions/_shared/wasm/bots.ts';
+import { kernelUnambiguousCover } from '../supabase/functions/_shared/sdk/ts/wasm/bots.ts';
 
 // The engine logs play-by-play; keep the reporter readable.
 if (!process.env.E2E_VERBOSE) {

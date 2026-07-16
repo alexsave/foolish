@@ -91,7 +91,7 @@ docs/                     design / refactor notes; ARCHITECTURE_REVIEW.md is the
 `cnitro/src/game.c` + `legal.c` (state transitions, legality, legal-move
 enumeration, dealing/refill, the log stream) is compiled to WebAssembly
 (`cd cnitro && make wasm`) and embedded as base64 in
-`supabase/functions/_shared/wasm/rules_wasm.ts`, so the same 29 KB module
+`supabase/functions/_shared/sdk/ts/wasm/rules_wasm.ts`, so the same 29 KB module
 loads with zero asset plumbing in Deno edge functions, Node (tests, offline
 sims) and browsers. The TS files in `_shared/actions/` and parts of
 `common_utils.ts` are now thin bridges: they marshal the `Game` object into
@@ -108,10 +108,10 @@ keeps policing the seams.
 `espresso`, `handwritten`, `simple_heuristic`, `champion`,
 `ultimate_champion`, `hacker`, `cordite`, `octogen`, `fulminate`) lives
 in `cnitro/src/*_strategy.c` and ships as a second module, `bots.wasm`
-(`make wasm-bots` → `_shared/wasm/bots_wasm.ts`, ~150 KB): the rules kernel
+(`make wasm-bots` → `_shared/sdk/ts/wasm/bots_wasm.ts`, ~150 KB): the rules kernel
 plus all bots plus a choose-move bridge. A bot turn marshals the game in
 once and the kernel enumerates legal moves and picks one — only the chosen
-index crosses back to TS (`_shared/wasm/bots.ts`,
+index crosses back to TS (`_shared/sdk/ts/wasm/bots.ts`,
 `WasmBotStrategy` in `bot_strategy.ts`). The seven heuristic bots are
 **exact behavioral mirrors** of the TS originals — `e2e/bot_parity.test.ts`
 proves the kernel picks the identical move on every decision of thousands

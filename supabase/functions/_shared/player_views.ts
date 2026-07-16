@@ -20,8 +20,8 @@
 import { GAME_STATUS, Game } from './types.ts';
 import {
     VIEW_FORMAT_VERSION, encodeGameResponse, writeMaskedState, PackedGameRoster,
-} from './wire/view.ts';
-import { bytesToBareHex } from './wire/bytes.ts';
+} from './sdk/ts/wire/view.ts';
+import { bytesToBareHex } from './sdk/ts/wire/bytes.ts';
 
 // One upsert-ready row per HUMAN participant. `view` is bare hex (no \x prefix,
 // like games.logs_packed) of the packed single-game envelope; `status` is
@@ -73,7 +73,7 @@ export async function buildPlayerViewRows(
     if (dealt) {
         // Lazy imports so lobby/create commits never pull the rules-wasm embed
         // (same discipline as commitGame's serializeGameState import).
-        const { serializeViewBlobs } = await import('./wasm/engine.ts');
+        const { serializeViewBlobs } = await import('./sdk/ts/wasm/engine.ts');
         const { hexToBytes } = await import('./replay/codec.ts');
         const blobs = serializeViewBlobs(hexToBytes(stateHex!), humanSeats);
         viewBlobFor = (seat) => blobs.get(seat)!;
@@ -115,7 +115,7 @@ export async function buildSpectatorView(
 
     let viewBlob: Uint8Array;
     if (dealt) {
-        const { serializeViewBlobs } = await import('./wasm/engine.ts');
+        const { serializeViewBlobs } = await import('./sdk/ts/wasm/engine.ts');
         const { hexToBytes } = await import('./replay/codec.ts');
         viewBlob = serializeViewBlobs(hexToBytes(stateHex!), [-1]).get(-1)!;
     } else {

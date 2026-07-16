@@ -4,7 +4,7 @@
 //   0xFF  = no card (uncovered battle defense, single-card log pair)
 // Halves every card crossing the boundary and removes the has_defense /
 // has_target wire bytes (in-band sentinels instead). Mirrored by
-// supabase/functions/_shared/wasm/engine.ts (wireStateCard/cardFromWire*).
+// supabase/functions/_shared/sdk/ts/wasm/engine.ts (wireStateCard/cardFromWire*).
 #ifndef CNITRO_WASM_WIRE_H
 #define CNITRO_WASM_WIRE_H
 

@@ -5,11 +5,11 @@ import { createClient } from 'jsr:@supabase/supabase-js';
 import {
     __botsWasmMB, __ensureBots, wasmBotDrive, wasmBotEligibleMask, wasmBotPacingMs,
     BOT_PACE, BotDrivePref,
-} from '../wasm/bots.ts';
-import { __kernelWasmMB } from '../wasm/engine.ts';
+} from '../sdk/ts/wasm/bots.ts';
+import { __kernelWasmMB } from '../sdk/ts/wasm/engine.ts';
 import { bytesToHex, hexToBytes } from '../replay/codec.ts';
-import { bytesToBareHex } from '../wire/bytes.ts';
-import { logsFromKernelExport } from '../wire/logwire.ts';
+import { bytesToBareHex } from '../sdk/ts/wire/bytes.ts';
+import { logsFromKernelExport } from '../sdk/ts/wire/logwire.ts';
 
 // One-line memory snapshot against the edge limits (150MB heap + 150MB
 // external, where wasm linear memory counts as external). Logged around every

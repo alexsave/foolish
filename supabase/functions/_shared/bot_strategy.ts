@@ -1,6 +1,6 @@
 import { Game } from './types.ts';
-import { kernelLegalMoves } from './wasm/engine.ts';
-import { STRAT, wasmChooseMove, wasmChooseMoveDirect } from './wasm/bots.ts';
+import { kernelLegalMoves } from './sdk/ts/wasm/engine.ts';
+import { STRAT, wasmChooseMove, wasmChooseMoveDirect } from './sdk/ts/wasm/bots.ts';
 import { BotStrategy, LegalMove } from './bot_interfaces.ts';
 
 // Re-export interfaces for backwards compatibility

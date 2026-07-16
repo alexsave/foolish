@@ -85,7 +85,7 @@ the `APPLICATION_EXTENSION_API_ONLY` step for this milestone).
 
 ### 2.3 Web/server plumbing the `/m/` route will reuse
 
-- Kernel-in-browser: `supabase/functions/_shared/wasm/engine.ts` (module
+- Kernel-in-browser: `supabase/functions/_shared/sdk/ts/wasm/engine.ts` (module
   `rules_wasm.ts`), wired to the client via `src/wasm/clientGuards.ts`
   patterns.
 - base32: `base32Encode/base32Decode` in
@@ -252,7 +252,7 @@ Mac and de-risks the entire design in CI — start there.
    rules build's export list (`cnitro/Makefile` — pattern-match
    `wasm_replay_encode_v6` at `:432`); rebuild the committed modules the
    same way existing codec changes did (see the v6 commit for the recipe).
-4. **TS bridge** in `supabase/functions/_shared/wasm/engine.ts`
+4. **TS bridge** in `supabase/functions/_shared/sdk/ts/wasm/engine.ts`
    (`kernelMsgEncode/kernelMsgDecode`, pattern: `kernelReplayEncodeV6`).
 5. **e2e**: `e2e/msg_wire.test.ts` (round-trips, goldens as hex fixtures,
    tamper matrix, the < 1,000-char P95 size guardrail at 4 players) and
@@ -369,7 +369,7 @@ device-pair pass, submit riding the app's record.
 | Action wire | `cnitro/src/awire.{h,c}` |
 | iOS shim + build | `cnitro/ios/`, `cnitro/Makefile` (`ios-lib`, `ios-smoke`) |
 | v6 codec + doc | `cnitro/src/replay.{h,c}`, `docs/REPLAY_FORMAT6_HIDDEN_STATE.md` |
-| wasm bridge (TS) | `supabase/functions/_shared/wasm/engine.ts` |
+| wasm bridge (TS) | `supabase/functions/_shared/sdk/ts/wasm/engine.ts` |
 | base32 | `supabase/functions/_shared/replay/codec.ts` |
 | e2e harness | `e2e/` (`npm run test:e2e`) |
 | Host app + design system | `ios/` (`project.yml`, `FoolishKit/*`) |

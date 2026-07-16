@@ -7,7 +7,7 @@
  * ========================================================================== */
 
 import { Game } from '@shared/types.ts';
-import { __marshalGame, __mem, __setResident } from '@shared/wasm/engine.ts';
+import { __marshalGame, __mem, __setResident } from '@shared/sdk/ts/wasm/engine.ts';
 import { OracleGameState, OracleDumpRecord } from './types';
 
 const STRAT_OCTOGEN = 20;

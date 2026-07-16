@@ -7,7 +7,7 @@
 // cannot be served packed (no blob, or a WAITING lobby — lobbies are
 // assembled from membership rows, never from a blob) falls back to the
 // personalize_game JSON, byte-wrapped for the list envelope.
-import { GAME_STATUS, Game, PrivatePlayer } from './types.ts';
+import { GAME_STATUS, Game, PrivatePlayer } from '../../types.ts';
 import { encodeGameResponse, PackedGameRoster } from './wire/view.ts';
 
 export interface GamesRowForView {
@@ -90,7 +90,7 @@ export async function buildPackedGameBytes(row: GamesRowForView, userId: string)
     };
     // Lazy import: only a dealt game pulls the rules-wasm embed.
     const { serializeViewBlob } = await import('./wasm/engine.ts');
-    const { hexToBytes } = await import('./replay/codec.ts');
+    const { hexToBytes } = await import('../../replay/codec.ts');
     const viewBlob = serializeViewBlob(hexToBytes(row.state), seat);
     return encodeGameResponse(row.version ?? 0, seat, roster, viewBlob);
 }

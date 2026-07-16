@@ -18,7 +18,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { loadWasmGz } from '../supabase/functions/_shared/wasm/wasm_asset.ts';
+import { loadWasmGz } from '../supabase/functions/_shared/sdk/ts/wasm/wasm_asset.ts';
 
 test('the shipped bots.wasm exports what the web calls', () => {
     // A5: the browser replays a shared code through the real engine. If the

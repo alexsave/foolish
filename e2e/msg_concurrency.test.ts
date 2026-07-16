@@ -19,7 +19,7 @@ import assert from 'node:assert/strict';
 import {
     kernelMsgDecode, kernelMsgSeal, kernelMsgRuleP, kernelMsgRebase, kernelMsgLegalMoves,
     MSG_REBASE_REAPPLY, MSG_REBASE_DISCARD_ROUND, MSG_REBASE_DISCARD_ILLEGAL,
-} from '../supabase/functions/_shared/wasm/bots.ts';
+} from '../supabase/functions/_shared/sdk/ts/wasm/bots.ts';
 
 // Mid-game turn bubbles sealed by the native kernel (cnitro/build/msg_wire_test
 // --fixture). Every chain below is grown from one of these.

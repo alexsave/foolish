@@ -26,9 +26,9 @@ import { writeFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { loadWasmGz, loadWasmGzAsync } from '../supabase/functions/_shared/wasm/wasm_asset.ts';
+import { loadWasmGz, loadWasmGzAsync } from '../supabase/functions/_shared/sdk/ts/wasm/wasm_asset.ts';
 
-const ASSET = new URL('../supabase/functions/_shared/wasm/wasm_asset.ts', import.meta.url).pathname;
+const ASSET = new URL('../supabase/functions/_shared/sdk/ts/wasm/wasm_asset.ts', import.meta.url).pathname;
 
 test('the CJS door (what the suite itself runs on) reads the asset', async () => {
     const sync = loadWasmGz('bots');

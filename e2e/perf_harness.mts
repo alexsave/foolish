@@ -3,8 +3,8 @@
 // Reports per-family decision timing over full games.
 import { start_game, game_done } from '../supabase/functions/_shared/common_utils.ts';
 import { processBotAction, shouldBotActCore } from '../supabase/functions/_shared/pure_bot_actions.ts';
-import { __setBotSeedSource } from '../supabase/functions/_shared/wasm/bots.ts';
-import { __setKernelSeedSource } from '../supabase/functions/_shared/wasm/engine.ts';
+import { __setBotSeedSource } from '../supabase/functions/_shared/sdk/ts/wasm/bots.ts';
+import { __setKernelSeedSource } from '../supabase/functions/_shared/sdk/ts/wasm/engine.ts';
 import { Game, PrivatePlayer, PLAYER_STATUS, GAME_STATUS } from '../supabase/functions/_shared/types.ts';
 
 const mkLcgU32 = (seed: number) => {

@@ -25,10 +25,10 @@ import { AnimationEvent, Card } from '../supabase/functions/_shared/types.ts';
 import { legalMovesFor, applyPlayerMove } from './dispatch.ts';
 import { resolveUnconfirmedAttackCovers } from '../src/state/optimisticConflicts';
 import { getTableCards, getCardKey } from '../src/utils/animationUtils';
-import { decodeEventWire } from '../supabase/functions/_shared/wire/evwire.ts';
-import { ViewRoster } from '../supabase/functions/_shared/wire/view.ts';
-import { base64ToBytes } from '../supabase/functions/_shared/wire/bytes.ts';
-import { __setKernelSeedSource } from '../supabase/functions/_shared/wasm/engine.ts';
+import { decodeEventWire } from '../supabase/functions/_shared/sdk/ts/wire/evwire.ts';
+import { ViewRoster } from '../supabase/functions/_shared/sdk/ts/wire/view.ts';
+import { base64ToBytes } from '../supabase/functions/_shared/sdk/ts/wire/bytes.ts';
+import { __setKernelSeedSource } from '../supabase/functions/_shared/sdk/ts/wasm/engine.ts';
 
 before(async () => { await applySchema(); });
 beforeEach(async () => { await resetDb(); });

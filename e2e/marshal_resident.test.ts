@@ -16,7 +16,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { STRAT, wasmChooseMoveDirect, __setBotSeedSource } from '../supabase/functions/_shared/wasm/bots.ts';
+import { STRAT, wasmChooseMoveDirect, __setBotSeedSource } from '../supabase/functions/_shared/sdk/ts/wasm/bots.ts';
 import { Card, PLAYER_STATUS, GAME_STATUS } from '../supabase/functions/_shared/types.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; console.error = () => {}; }

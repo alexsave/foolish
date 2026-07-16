@@ -19,7 +19,7 @@ import { animationFeed, AnimationSequenceMessage } from '../state/animationFeed'
 import { bigintToBytes, codeToGame } from '@shared/replay/codec.ts';
 import { decodeReplay } from '@shared/replay/decode.ts';
 import { DecodedReplay } from '@shared/replay/core.ts';
-import { ensureBotsAsync } from '@shared/wasm/bots.ts';
+import { ensureBotsAsync } from '@shared/sdk/ts/wasm/bots.ts';
 import {
     buildReplayFrames, preDealGame, ReplayFrame, ReplayGameState, REPLAY_STEP,
 } from '../replay/frames';

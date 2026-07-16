@@ -2,8 +2,8 @@
 // divergence hunting). Prints deal + each move compactly.
 import { start_game, game_done } from '../supabase/functions/_shared/common_utils.ts';
 import { processBotAction, shouldBotActCore } from '../supabase/functions/_shared/pure_bot_actions.ts';
-import { __setBotSeedSource } from '../supabase/functions/_shared/wasm/bots.ts';
-import { __setKernelSeedSource } from '../supabase/functions/_shared/wasm/engine.ts';
+import { __setBotSeedSource } from '../supabase/functions/_shared/sdk/ts/wasm/bots.ts';
+import { __setKernelSeedSource } from '../supabase/functions/_shared/sdk/ts/wasm/engine.ts';
 import { Game, PrivatePlayer, PLAYER_STATUS, GAME_STATUS } from '../supabase/functions/_shared/types.ts';
 
 const mkLcgU32 = (seed: number) => {
@@ -47,7 +47,7 @@ while (game_done(g) === null && ++guard < 2000) {
             out(`  state=${JSON.stringify({ b: g.table_battles, h: g.players.map(x => x.hand), d: g.deck.length, disc: g.discard_pile_length, def: g.defender, fa: g.first_attacker })}`);
             out(`  nlogs=${g.logs.length} logs=${JSON.stringify(g.logs.slice(-8))}`);
             out(`  legal=${JSON.stringify(lm)}`);
-            const { wasmChooseMoveDirect, STRAT, __setBotSeedSource: setSeed } = await import('../supabase/functions/_shared/wasm/bots.ts');
+            const { wasmChooseMoveDirect, STRAT, __setBotSeedSource: setSeed } = await import('../supabase/functions/_shared/sdk/ts/wasm/bots.ts');
             const strat = STRAT[p.strategy_key as keyof typeof STRAT];
             for (const logs of [true, false]) {
                 setSeed(() => 12345);

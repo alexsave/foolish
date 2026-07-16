@@ -15,9 +15,9 @@
 // re-dealing from the seed; until then this only demonstrates the query wiring.
 import { readFileSync } from 'node:fs';
 import { start_game_packed } from '/home/user/foolish/supabase/functions/_shared/game_lifecycle.ts';
-import { runPackedGameAction, applyKernelStateToGame, __setDealSeedOverride } from '/home/user/foolish/supabase/functions/_shared/wasm/engine.ts';
-import { encodeAction } from '/home/user/foolish/supabase/functions/_shared/wire/awire.ts';
-import { wasmChooseMoveDirect, __ensureBots, STRAT } from '/home/user/foolish/supabase/functions/_shared/wasm/bots.ts';
+import { runPackedGameAction, applyKernelStateToGame, __setDealSeedOverride } from '/home/user/foolish/supabase/functions/_shared/sdk/ts/wasm/engine.ts';
+import { encodeAction } from '/home/user/foolish/supabase/functions/_shared/sdk/ts/wire/awire.ts';
+import { wasmChooseMoveDirect, __ensureBots, STRAT } from '/home/user/foolish/supabase/functions/_shared/sdk/ts/wasm/bots.ts';
 import { game_done } from '/home/user/foolish/supabase/functions/_shared/common_utils.ts';
 import { PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY } from '/home/user/foolish/supabase/functions/_shared/types.ts';
 

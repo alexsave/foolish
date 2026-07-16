@@ -55,7 +55,7 @@ u16 view_len | view blob` when the request body carries `packed: true`.
 
 ### Event wire (`evwire` v1) — cnitro/src/evwire.c
 `wasm_events_serialize(viewer, actor, ended)` emits the whole animation
-sequence for one recipient; a TS encoder (`_shared/wire/evwire.ts`) produces
+sequence for one recipient; a TS encoder (`_shared/sdk/ts/wire/evwire.ts`) produces
 the byte-identical stream from JS `AnimationEvent[]` for the paths that still
 run on JS Games (bot loop, meta/lobby) — parity-tested against the C output.
 

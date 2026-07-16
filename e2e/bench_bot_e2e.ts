@@ -21,11 +21,11 @@ import { executeWithGameLock } from '../supabase/functions/_shared/adapter/utils
 import { start_game } from '../supabase/functions/_shared/game_lifecycle.ts';
 import { calculateLegalMoves } from '../supabase/functions/_shared/bot_strategy.ts';
 import { processBotActionPacked, shouldBotActCore } from '../supabase/functions/_shared/pure_bot_actions.ts';
-import { __setBotSeedSource, __botsWasmMB, __botsWasmBytes } from '../supabase/functions/_shared/wasm/bots.ts';
-import { __setKernelSeedSource, __kernelWasmMB, __kernelWasmBytes } from '../supabase/functions/_shared/wasm/engine.ts';
+import { __setBotSeedSource, __botsWasmMB, __botsWasmBytes } from '../supabase/functions/_shared/sdk/ts/wasm/bots.ts';
+import { __setKernelSeedSource, __kernelWasmMB, __kernelWasmBytes } from '../supabase/functions/_shared/sdk/ts/wasm/engine.ts';
 import { bytesToHex } from '../supabase/functions/_shared/replay/codec.ts';
-import { bytesToBareHex } from '../supabase/functions/_shared/wire/bytes.ts';
-import { logsFromKernelExport } from '../supabase/functions/_shared/wire/logwire.ts';
+import { bytesToBareHex } from '../supabase/functions/_shared/sdk/ts/wire/bytes.ts';
+import { logsFromKernelExport } from '../supabase/functions/_shared/sdk/ts/wire/logwire.ts';
 import { AnimationEvent, Game, GAME_STATUS, PLAYER_STATUS } from '../supabase/functions/_shared/types.ts';
 
 const say = (l: string) => process.stdout.write(l + '\n'); // harness silences console.log

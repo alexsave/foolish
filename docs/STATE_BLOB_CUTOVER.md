@@ -15,7 +15,7 @@ out of scope).
 
 1. **Versioned state codec** — `wasm_state_serialize`/`deserialize` in the kernel
    (`cnitro/wasm/wasm_api.c`) + `serializeGameState`/`deserializeGameState` in
-   `supabase/functions/_shared/wasm/engine.ts`. Format-version byte for forward
+   `supabase/functions/_shared/sdk/ts/wasm/engine.ts`. Format-version byte for forward
    compat (mirrors the replay codec's v2–v5 discipline).
 2. **Blob persistence (dual-write)** — `commit_game` gained `p_state`;
    `loadCompleteGame` reconstructs from the blob.

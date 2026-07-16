@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { ensureBotsAsync } from '../../supabase/functions/_shared/wasm/bots';
+import { ensureBotsAsync } from '../../supabase/functions/_shared/sdk/ts/wasm/bots';
 import { AuthProvider } from '../contexts/AuthContext';
 import { LocalizationProvider } from '../contexts/LocalizationContext';
 import { ThemeProvider } from '../contexts/ThemeContext';

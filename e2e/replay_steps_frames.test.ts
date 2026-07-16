@@ -26,10 +26,10 @@ import {
 } from '../supabase/functions/_shared/types.ts';
 import { shouldBotActCore, processBotAction } from '../supabase/functions/_shared/pure_bot_actions.ts';
 import { calculateLegalMoves } from '../supabase/functions/_shared/bot_strategy.ts';
-import { kernelReplayEncodeV6FromGame, replayEventFrames, replayStepCount } from '../supabase/functions/_shared/wasm/bots.ts';
-import { decodeEventWire } from '../supabase/functions/_shared/wire/evwire.ts';
-import { __setDealSeedOverride } from '../supabase/functions/_shared/wasm/engine.ts';
-import type { ViewRoster } from '../supabase/functions/_shared/wire/view.ts';
+import { kernelReplayEncodeV6FromGame, replayEventFrames, replayStepCount } from '../supabase/functions/_shared/sdk/ts/wasm/bots.ts';
+import { decodeEventWire } from '../supabase/functions/_shared/sdk/ts/wire/evwire.ts';
+import { __setDealSeedOverride } from '../supabase/functions/_shared/sdk/ts/wasm/engine.ts';
+import type { ViewRoster } from '../supabase/functions/_shared/sdk/ts/wire/view.ts';
 
 if (!process.env.E2E_VERBOSE) {
     console.log = () => {};
