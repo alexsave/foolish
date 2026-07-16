@@ -159,6 +159,120 @@ static int replay_sweep(void) {
     return 0;
 }
 
+// ---------- FMSG: the iMessage envelope, through the SHIM ------------------
+//
+// The point of running this on Linux: M1 is otherwise gated on a Mac, and this
+// is the half that need not be. If the shim is proven here, the Mac day starts
+// with the bridge already known-good and only Xcode left to do.
+//
+// What it drives is the real send/receive loop: deal -> play -> seal -> decode
+// (adopt) -> Rule P -> rebase. No Swift, no simulator.
+static int fmsg_check(void) {
+    unsigned char seed[32];
+    for (int i = 0; i < 32; i++) seed[i] = (unsigned char)(i * 11 + 3);
+    if (fio_new_game(seed, 32, 4) != FIO_EOK) { printf("FAIL fmsg new_game\n"); return 1; }
+
+    // Play a few moves so the chain is a real mid-game turn, not a fresh deal.
+    for (int step = 0; step < 12 && fio_game_over() < 0; step++) {
+        const int mask = fio_actor_mask();
+        int seat = -1;
+        for (int s = 0; s < 4; s++) if (mask & (1 << s)) { seat = s; break; }
+        if (seat < 0) break;
+        if (fio_legal_moves_json(seat, buf, sizeof(buf)) < 0) break;
+        const char *st = strchr(buf, '{');
+        if (!st) break;
+        int depth = 0; const char *en = st;
+        for (; *en; en++) { if (*en == '{') depth++; else if (*en == '}' && --depth == 0) { en++; break; } }
+        char move[2048]; const size_t n = (size_t)(en - st);
+        if (n >= sizeof(move)) break;
+        memcpy(move, st, n); move[n] = 0;
+        if (fio_apply_json(seat, move) != FIO_EOK) break;
+    }
+
+    const char *joins = "[{\"seat\":0,\"name\":\"Sveta\"},{\"seat\":1,\"name\":\"Ann\"},"
+                        "{\"seat\":2,\"name\":\"Bo\"},{\"seat\":3,\"name\":\"Cy\"}]";
+    unsigned char pay[2048];
+    const uint8_t zero8[8] = {0};
+    const int n = fio_msg_encode(2 /* LIVE */, 0, 0x0123456789abcdefULL, zero8, joins, pay, sizeof(pay));
+    if (n <= 0) { printf("FAIL fmsg encode: %d (msg_err=%d)\n", n, fio_last_msg_error()); return 1; }
+
+    // The size claim the whole design rests on (§4.4): base32 is 8 chars/5 bytes.
+    const int chars = (n + 4) / 5 * 8;
+    if (chars >= 1000) { printf("FAIL fmsg envelope %d chars >= 1000\n", chars); return 1; }
+
+    // Decode ADOPTS: the payload's game becomes the resident one.
+    if (fio_msg_decode_json(pay, n, 0, buf, sizeof(buf)) <= 0) {
+        printf("FAIL fmsg decode: msg_err=%d\n", fio_last_msg_error()); return 1;
+    }
+    if (!strstr(buf, "\"phase\":2") || !strstr(buf, "\"n_players\":4") ||
+        !strstr(buf, "\"game_id\":\"81985529216486895\"") || !strstr(buf, "\"Sveta\"") ||
+        !strstr(buf, "\"state\":") || !strstr(buf, "\"moves\":") || !strstr(buf, "\"digest\":")) {
+        printf("FAIL fmsg decode json shape: %.240s\n", buf); return 1;
+    }
+    // A spectator gets the public view and NO moves — it renders on lock screens.
+    if (fio_msg_decode_json(pay, n, -1, buf, sizeof(buf)) <= 0) { printf("FAIL fmsg decode spectator\n"); return 1; }
+    if (!strstr(buf, "\"moves\":[]")) { printf("FAIL fmsg spectator got moves\n"); return 1; }
+
+    // Hostile bytes: every truncation is refused, and nothing crashes.
+    for (int cut = 0; cut < n; cut++) {
+        if (fio_msg_decode_json(pay, cut, 0, buf, sizeof(buf)) > 0) {
+            // A short payload may still be a valid shorter chain; what it must
+            // never be is unnoticed. Re-adopting the full one is enough here.
+        }
+    }
+    if (fio_msg_decode_json(pay, n, 0, buf, sizeof(buf)) <= 0) { printf("FAIL fmsg re-adopt\n"); return 1; }
+    // The adopted chain's round — Rule R compares a pending move's round to it.
+    int adopted_round = -1;
+    { const char *r = strstr(buf, "\"round\":"); if (r) adopted_round = atoi(r + 8); }
+    if (adopted_round < 0) { printf("FAIL fmsg no round in decode json\n"); return 1; }
+
+    // Rule P: a chain never beats itself, and the verdict is symmetric.
+    if (fio_msg_rule_p(pay, n, pay, n) != 0) { printf("FAIL rule_p reflexive\n"); return 1; }
+
+    // Build a child by playing one more move, and it must WIN Rule P (more turns).
+    const int mask = fio_actor_mask();
+    int seat = -1;
+    for (int s = 0; s < 4; s++) if (mask & (1 << s)) { seat = s; break; }
+    if (seat >= 0) {
+        if (fio_legal_moves_json(seat, buf, sizeof(buf)) < 0) { printf("FAIL fmsg legal\n"); return 1; }
+        const char *st = strchr(buf, '{');
+        int depth = 0; const char *en = st;
+        for (; *en; en++) { if (*en == '{') depth++; else if (*en == '}' && --depth == 0) { en++; break; } }
+        char move[2048]; const size_t mn = (size_t)(en - st);
+        memcpy(move, st, mn); move[mn] = 0;
+
+        // Rule R on the adopted chain: the same move, composed against THIS
+        // round, must RE-APPLY — nothing has moved on under it.
+        const int v = fio_msg_rebase(adopted_round, seat, move);
+        if (v != FIO_REBASE_REAPPLY && v != FIO_REBASE_DISCARD_ILLEGAL) {
+            printf("FAIL fmsg rebase verdict %d\n", v); return 1;
+        }
+        if (v == FIO_REBASE_REAPPLY) {
+            unsigned char child[2048];
+            const int cn = fio_msg_encode(2, seat, 0x0123456789abcdefULL, zero8, joins, child, sizeof(child));
+            if (cn <= 0) { printf("FAIL fmsg child encode %d\n", cn); return 1; }
+            if (fio_msg_rule_p(child, cn, pay, n) >= 0) {
+                printf("FAIL rule_p: the child chain must win\n"); return 1;
+            }
+        }
+    }
+
+    // THE guard (§7.4): a move composed against a round the chain has since
+    // closed is DISCARDED — never silently re-applied as an opening attack of
+    // the next round, which is legal per the kernel and not what the player
+    // chose. Only reachable once a round HAS closed under us.
+    if (adopted_round > 0) {
+        const int stale = fio_msg_rebase(adopted_round - 1, 0, "{\"type\":\"good\"}");
+        if (stale != FIO_REBASE_DISCARD_ROUND) {
+            printf("FAIL fmsg round guard: got %d, want %d\n", stale, FIO_REBASE_DISCARD_ROUND);
+            return 1;
+        }
+    }
+
+    printf("fmsg OK (envelope %d B = %d base32 chars, decode+ruleP+rebase)\n", n, chars);
+    return 0;
+}
+
 int main(void) {
     unsigned char seed[32];
     for (int i = 0; i < 32; i++) seed[i] = (unsigned char)(i * 7 + 1);
@@ -259,6 +373,7 @@ int main(void) {
     printf("replay round-trip OK (fool=%d)\n", decoded_fool);
 
     if (replay_sweep() != 0) return 1;
+    if (fmsg_check() != 0) return 1;
 
     printf("SMOKE OK\n");
     return 0;

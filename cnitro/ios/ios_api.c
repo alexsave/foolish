@@ -17,6 +17,9 @@
 #include "bot_roster.h"
 #include "bot_drive.h"
 #include "evwire.h"
+#include "msg_wire.h"
+#include "awire.h"
+#include "sha256.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -376,6 +379,43 @@ static int parse_card_array(const char *arr, Card *out, int cap) {
         if (!close) return -1;
         p = close + 1;
     }
+}
+
+// {"type":"cover","cards":[...],"attackCards":[...]} -> AwireAction.
+// Factored out of fio_apply_json so the FMSG rebase path parses a move exactly
+// the way the play path does — two parsers would be two move languages.
+static int fio_move_to_awire(const char *move_json, AwireAction *out) {
+    const char *tp = find_key(move_json, "type");
+    if (!tp || *tp != '"') return FIO_EPARSE;
+    tp++;
+    char type[16] = {0};
+    int ti = 0;
+    while (*tp && *tp != '"' && ti < (int)sizeof(type) - 1) type[ti++] = *tp++;
+
+    Card cards[MAX_MOVE_CARDS], acards[MAX_MOVE_CARDS];
+    int nc = 0, nac = 0;
+    const char *cp = find_key(move_json, "cards");
+    if (cp) { nc = parse_card_array(cp, cards, MAX_MOVE_CARDS); if (nc < 0) return FIO_EPARSE; }
+    const char *ap = find_key(move_json, "attackCards");
+    if (ap) { nac = parse_card_array(ap, acards, MAX_MOVE_CARDS); if (nac < 0) return FIO_EPARSE; }
+
+    if      (!strcmp(type, "attack")) out->kind = AWIRE_ATTACK;
+    else if (!strcmp(type, "pass"))   out->kind = AWIRE_PASS;
+    else if (!strcmp(type, "pickup")) out->kind = AWIRE_PICKUP;
+    else if (!strcmp(type, "good"))   out->kind = AWIRE_GOOD;
+    else if (!strcmp(type, "cover")) {
+        if (nac != nc) return FIO_EPARSE;
+        out->kind = AWIRE_COVER;
+    } else return FIO_EPARSE;
+
+    if (out->kind == AWIRE_PICKUP || out->kind == AWIRE_GOOD) { out->n = 0; return FIO_EOK; }
+    if (nc > AWIRE_MAX_CARDS) return FIO_EPARSE;
+    out->n = nc;
+    for (int i = 0; i < nc; i++) {
+        out->cards[i] = cards[i];
+        if (out->kind == AWIRE_COVER) out->attacks[i] = acards[i];
+    }
+    return FIO_EOK;
 }
 
 int fio_apply_json(int actor_seat, const char *move_json) {
@@ -948,3 +988,167 @@ int fio_replay_decode_json(const char *code, char *out, int cap) {
 }
 
 int fio_last_replay_error(void) { return g_last_replay_error; }
+
+// ---------- FMSG: the iMessage envelope (src/msg_wire.h) -------------------
+//
+// The phone's door onto the SAME envelope the web reads. Nothing here decides
+// anything: decode/seal/Rule P/rebase are all msg_wire.c, and this file only
+// marshals. That is what makes a phone and a browser agree on a payload by
+// construction rather than by two implementations staying in step —
+// e2e/msg_wire.test.ts pins the wasm side against fixtures the NATIVE kernel
+// sealed, and ios_api_smoke drives these against the same bytes.
+
+static int g_last_msg_error = 0;
+static int g_msg_round = -1;      // the adopted chain's round — Rule R's guard input
+
+int fio_last_msg_error(void) { return g_last_msg_error; }
+
+static void j_hex(J *j, const unsigned char *b, int n) {
+    static const char *H = "0123456789abcdef";
+    j_putc(j, '"');
+    for (int i = 0; i < n; i++) { j_putc(j, H[b[i] >> 4]); j_putc(j, H[b[i] & 15]); }
+    j_putc(j, '"');
+}
+
+int fio_msg_decode_json(const uint8_t *payload, int len, int viewer, char *out, int cap) {
+    if (!payload || !out || cap <= 0) return FIO_EBADARG;
+    g_last_msg_error = 0;
+
+    MsgEnvelope e;
+    int rc = msg_decode(payload, len, &e);
+    if (rc != MSG_EOK) { g_last_msg_error = rc; return FIO_EMSG; }
+
+    // Digest the payload BEFORE anything reuses the bytes: it is what a child
+    // carries as parent8 and what Rule P breaks ties on.
+    uint8_t digest[SHA256_DIGEST_LEN];
+    msg_digest(payload, len, digest);
+
+    rc = msg_replay(&e, &g_game);   // validation IS replay
+    if (rc != MSG_EOK) { g_last_msg_error = rc; return FIO_EMSG; }
+
+    // Adopted: the resident game IS this payload's game now.
+    g_has_game = 1;
+    g_msg_round = e.round;
+    memcpy(g_deal_seed, e.seed, FOOLISH_SEED_LEN);
+    g_has_deal_seed = 1;
+    for (int i = 0; i < e.n_players; i++) g_seat_roster[i] = (int8_t)bot_roster_find("random");
+
+    J j; j_init(&j, out, cap);
+    j_puts(&j, "{\"phase\":");           j_puti(&j, e.phase);
+    j_puts(&j, ",\"turn\":");            j_puti(&j, e.turn);
+    j_puts(&j, ",\"round\":");           j_puti(&j, e.round);
+    j_puts(&j, ",\"n_players\":");       j_puti(&j, e.n_players);
+    j_puts(&j, ",\"last_actor_seat\":"); j_puti(&j, e.last_actor_seat);
+    // A u64 as a STRING: JSON numbers are doubles and 2^53 would round it.
+    j_puts(&j, ",\"game_id\":\"");
+    { char t[24]; snprintf(t, sizeof(t), "%llu", (unsigned long long)e.game_id); j_puts(&j, t); }
+    j_puts(&j, "\",\"parent8\":");      j_hex(&j, e.parent8, MSG_PARENT_LEN);
+    j_puts(&j, ",\"digest\":");          j_hex(&j, digest, SHA256_DIGEST_LEN);
+    j_puts(&j, ",\"joins\":[");
+    for (int i = 0; i < e.n_joins; i++) {
+        if (i) j_putc(&j, ',');
+        char name[MSG_MAX_NAME + 1];
+        memcpy(name, e.joins[i].name, e.joins[i].name_len);
+        name[e.joins[i].name_len] = 0;
+        j_puts(&j, "{\"seat\":"); j_puti(&j, e.joins[i].seat);
+        j_puts(&j, ",\"name\":");  j_putstr(&j, name);
+        j_putc(&j, '}');
+    }
+    j_puts(&j, "],\"state\":");
+    if (!j.ok) return FIO_ECAP;
+    {
+        const int n = emit_state_of(&g_game, viewer < 0 ? VIEW_SPECTATOR : viewer,
+                                    out + j.w, cap - j.w);
+        if (n < 0) return n;
+        j.w += n;
+    }
+    j_puts(&j, ",\"moves\":");
+    if (!j.ok) return FIO_ECAP;
+    if (viewer >= 0 && viewer < g_game.num_players) {
+        const int n = emit_legal_of(&g_game, viewer, out + j.w, cap - j.w);
+        if (n < 0) return n;
+        j.w += n;
+    } else {
+        j_puts(&j, "[]");   // a spectator has no moves, by construction
+    }
+    j_putc(&j, '}');
+    return j_finish(&j);
+}
+
+int fio_msg_encode(int phase, int last_actor_seat, uint64_t game_id,
+                   const uint8_t parent8[8], const char *joins_json,
+                   uint8_t *out, int cap) {
+    if (!g_has_game) return FIO_ENOGAME;
+    if (!out || cap <= 0 || !joins_json) return FIO_EBADARG;
+    if (!g_has_deal_seed) return FIO_ENOSEED;   // no seed, no serverless game
+    g_last_msg_error = 0;
+
+    MsgEnvelope e;
+    memset(&e, 0, sizeof(e));
+    e.format = MSG_FORMAT_V6;
+    e.flags = 0;
+    e.phase = (uint8_t)phase;
+    e.game_id = game_id;
+    e.last_actor_seat = (uint8_t)last_actor_seat;
+    e.n_players = (uint8_t)g_game.num_players;
+    e.variant = 0;
+    if (parent8) memcpy(e.parent8, parent8, MSG_PARENT_LEN);
+    memcpy(e.seed, g_deal_seed, FOOLISH_SEED_LEN);
+
+    // joins: [{"seat":0,"name":"Sveta"},...]
+    const char *p = joins_json;
+    while (*p && *p != '[') p++;
+    if (*p != '[') return FIO_EPARSE;
+    p++;
+    while (*p) {
+        while (*p == ' ' || *p == ',') p++;
+        if (*p == ']' || !*p) break;
+        if (*p != '{') return FIO_EPARSE;
+        if (e.n_joins >= MSG_MAX_JOINS) return FIO_EPARSE;
+        const char *sp = find_key(p, "seat");
+        const char *np = find_key(p, "name");
+        if (!sp || !np || *np != '"') return FIO_EPARSE;
+        MsgJoin *jn = &e.joins[e.n_joins];
+        jn->seat = (uint8_t)atoi(sp);
+        np++;
+        int n = 0;
+        while (*np && *np != '"' && n < MSG_MAX_NAME) jn->name[n++] = *np++;
+        if (*np != '"') return FIO_EPARSE;   // >12 bytes, or unterminated
+        jn->name_len = (uint8_t)n;
+        e.n_joins++;
+        const char *close = strchr(p, '}');
+        if (!close) return FIO_EPARSE;
+        p = close + 1;
+    }
+
+    static unsigned char body[1024];   // a v6 body measures ~68 B at 8 players
+    static Game scratch;
+    const int rc = msg_seal(&e, &g_game, body, (int)sizeof body, &scratch);
+    if (rc != MSG_EOK) { g_last_msg_error = rc; return FIO_EMSG; }
+    const int n = msg_encode(&e, out, cap);
+    if (n < 0) { g_last_msg_error = n; return n == MSG_ECAP ? FIO_ECAP : FIO_EMSG; }
+    return n;
+}
+
+int fio_msg_rule_p(const uint8_t *a, int a_len, const uint8_t *b, int b_len) {
+    if (!a || !b) return FIO_EBADARG;
+    g_last_msg_error = 0;
+    MsgChainKey ka, kb;
+    int rc = msg_chain_key(a, a_len, &ka);
+    if (rc != MSG_EOK) { g_last_msg_error = rc; return FIO_EMSG; }
+    rc = msg_chain_key(b, b_len, &kb);
+    if (rc != MSG_EOK) { g_last_msg_error = rc; return FIO_EMSG; }
+    return msg_rule_p(&ka, &kb);
+}
+
+int fio_msg_rebase(int pending_round, int seat, const char *move_json) {
+    if (!g_has_game) return FIO_ENOGAME;
+    if (!move_json) return FIO_EBADARG;
+    if (g_msg_round < 0) return FIO_ENOGAME;   // nothing adopted to rebase onto
+    if (seat < 0 || seat >= g_game.num_players) return FIO_EBADARG;
+
+    AwireAction a;
+    const int rc = fio_move_to_awire(move_json, &a);
+    if (rc != FIO_EOK) return rc;
+    return msg_rebase_one(&g_game, g_msg_round, pending_round, seat, &a);
+}

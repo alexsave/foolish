@@ -203,6 +203,83 @@ int fio_replay_events_json(const char *code, int viewer, char *out, int cap);
 // Detail of the last replay error (a REPLAY_E* code from replay.h), else 0.
 int fio_last_replay_error(void);
 
+// ---------- FMSG: the iMessage envelope (src/msg_wire.h) -------------------
+//
+// An iMessage game has no server. The whole game is one MSMessage URL —
+// (32-byte deal seed, v6 replay code) — and every device rebuilds it by
+// re-dealing from the seed and replaying the code through this kernel. The
+// extension ships inside this app and uses these five calls for all of it.
+//
+// NOTE WHAT IS NOT HERE: no Rule P, no rebase guard, no "is this move legal
+// now" for Swift to answer. Those are in C (msg_wire.c) and exposed below.
+// Rule P decides which game every player SEES — a phone disagreeing with a
+// browser forks the game — and the rebase guard is a rules question, which
+// §17.16 forbids Swift from answering. The M3 plan's Swift port of the
+// concurrency model is cancelled: there is nothing to port, and so nothing to
+// keep in step. Swift moves bytes and renders.
+//
+// Errors are the FIO_E* above, plus FIO_EMSG for a payload the envelope layer
+// rejected; fio_last_msg_error() carries the MSG_E* that says why.
+
+#define FIO_EMSG        -9   // the FMSG payload was rejected (see fio_last_msg_error)
+
+// Decode + VALIDATE a payload, and ADOPT it: the chain is replayed through the
+// kernel into the resident game, so every other call in this header then reads
+// the game the payload describes. A corrupt or hand-edited payload fails here,
+// loudly — validation IS replay, and there is no partial recovery (§7.3).
+//
+// Emits, for `viewer` (a seat, or -1 for the public/spectator view):
+//   {"phase":..,"turn":..,"round":..,"n_players":..,"last_actor_seat":..,
+//    "game_id":"<u64 as decimal string>","parent8":"<hex>","digest":"<hex>",
+//    "joins":[{"seat":..,"name":".."}],
+//    "state":{...},                 // the per-viewer masked view (§16)
+//    "moves":[...]}                 // viewer's legal moves, empty for -1
+//
+// `digest` is SHA-256 of the whole payload: it is what a CHILD envelope carries
+// as parent8, and what Rule P breaks ties on. game_id is a string because it is
+// a u64 and JSON numbers are doubles — 2^53 would silently round.
+int fio_msg_decode_json(const uint8_t *payload, int len, int viewer, char *out, int cap);
+
+// Seal the RESIDENT game into a payload — the send path, after the local player
+// has applied a move. The caller supplies what the PROTOCOL owns; the kernel
+// fills in what the BODY owns (turn, round) by decoding the code it just wrote,
+// so a device cannot emit a payload it would itself reject.
+//
+// `joins_json` is [{"seat":0,"name":"Sveta"},...]; names are <=12 UTF-8 bytes
+// and are the only identity a payload carries (no participant UUID ever goes in
+// — they do not transfer across devices, §6).
+//
+// Returns bytes written to `out`, or negative. FIO_ENOSEED if this game was not
+// dealt from a wide seed (a serverless game cannot be rebuilt without one).
+int fio_msg_encode(int phase, int last_actor_seat, uint64_t game_id,
+                   const uint8_t parent8[8], const char *joins_json,
+                   uint8_t *out, int cap);
+
+// Rule P (§7.2): which of two payloads does EVERY device prefer?
+// <0 `a`, >0 `b`, 0 the same chain. Structure only — no replay, and no clocks:
+// delivery order is never an input, because two devices can transiently
+// disagree about which message is newest.
+// Returns FIO_EMSG if either is not an envelope.
+int fio_msg_rule_p(const uint8_t *a, int a_len, const uint8_t *b, int b_len);
+
+// Rule R (§7.4): rebase ONE pending move onto the chain fio_msg_decode_json
+// last adopted — the ledger's moves, in order. Returns:
+//   0  re-applied, and APPLIED to the resident game (that IS the rebase)
+//   1  discarded by the round-boundary guard
+//   2  discarded: the kernel refuses it on the new state
+// or negative on a bad argument.
+//
+// The guard is the point: a throw-in composed against round 5's table would,
+// after a pickup closed round 5, re-validate as an OPENING ATTACK of round 6 —
+// legal, and not what the player chose.
+#define FIO_REBASE_REAPPLY         0
+#define FIO_REBASE_DISCARD_ROUND   1
+#define FIO_REBASE_DISCARD_ILLEGAL 2
+int fio_msg_rebase(int pending_round, int seat, const char *move_json);
+
+// The MSG_E* (src/msg_wire.h) behind the last FIO_EMSG, else 0.
+int fio_last_msg_error(void);
+
 #ifdef __cplusplus
 }
 #endif
