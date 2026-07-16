@@ -187,8 +187,21 @@ static Game g_rs_game;
 
 const Game *replay_steps_last_game(void) { return &g_rs_game; }
 
-int replay_steps_v6(const unsigned char *code, int code_len, int viewer,
-                    ReplayHeader *hdr_out, EvwSink sink, void *ctx) {
+typedef struct { EvwSink sink; void *ctx; } RsWalkCtx;
+
+// What a playback does at each step (the deal, then one per action). The two
+// consumers differ ONLY here: the phone walks the events to a JSON sink, the
+// web serializes the same events into the packed frame it already renders.
+// Neither re-derives anything — both are evwire_walk, once, from real hooks.
+typedef void (*RsStepFn)(const Game *g, int viewer, void *u);
+
+static void rs_step_walk(const Game *g, int viewer, void *u) {
+    RsWalkCtx *w = (RsWalkCtx *)u;
+    rs_walk(g, viewer, w->sink, w->ctx);
+}
+
+static int rs_play(const unsigned char *code, int code_len, int viewer,
+                   ReplayHeader *hdr_out, RsStepFn step, void *u) {
     static RsCollect col;
     Game *gp = &g_rs_game;
 
@@ -221,7 +234,7 @@ int replay_steps_v6(const unsigned char *code, int code_len, int viewer,
 
     RS_STEP_BEGIN(gp);
     start_game_with_deck(gp, deck, n_deck);
-    rs_walk(gp, viewer, sink, ctx);
+    step(gp, viewer, u);
 
     // The rebuilt deal must be the one the code describes. first_attacker is
     // the check with teeth: the engine derives it from the lowest trump
@@ -235,9 +248,93 @@ int replay_steps_v6(const unsigned char *code, int code_len, int viewer,
     for (int i = 0; i < col.n_acts; i++) {
         RS_STEP_BEGIN(gp);
         rs_apply(gp, &col.acts[i]);
-        rs_walk(gp, viewer, sink, ctx);
+        step(gp, viewer, u);
     }
 
     engine_snap_hook = saved_hook;
     return REPLAY_EOK;
+}
+
+int replay_steps_v6(const unsigned char *code, int code_len, int viewer,
+                    ReplayHeader *hdr_out, EvwSink sink, void *ctx) {
+    RsWalkCtx w = { sink, ctx };
+    return rs_play(code, code_len, viewer, hdr_out, rs_step_walk, &w);
+}
+
+/* ------------------------------ packed frames ----------------------------- */
+// The web renders live play from evwire FRAMES (one per action, per viewer), so
+// a replay hands it the same thing. It cannot be ONE frame for the whole game:
+// evwire_serialize backpatches n_events as a u8, so 255 events is the ceiling
+// and a 4p game clears that easily. One frame per action is also what live play
+// produces, which is the point — same bytes, same decoder, same renderer.
+//
+// Chunked because the frames of a whole game (each carrying a masked board
+// snapshot) outgrow any single wasm IO buffer: the caller asks for actions
+// [from, ...) and gets as many WHOLE frames as fit, plus the cursor to resume
+// from. Each frame is preceded by a u16 LE length.
+typedef struct {
+    unsigned char *out;
+    int cap, len;
+    int from;        // first step index to emit
+    int idx;         // step cursor
+    int n;           // frames written
+    int next;        // first step NOT written
+    int err;
+} RsFrameCtx;
+
+static void rs_step_frame(const Game *g, int viewer, void *u) {
+    RsFrameCtx *f = (RsFrameCtx *)u;
+    const int me = f->idx++;
+    if (f->err || me < f->from) return;
+    if (f->next != me) return;            // already full: stop taking frames
+
+    EvSnap refs[RS_MAX_SNAPS];
+    for (int i = 0; i < g_rs_n; i++) {
+        refs[i].g = (const Game *)(const void *)g_rs_snaps[i].bytes;
+        refs[i].tag = g_rs_tags[i];
+        refs[i].aux = g_rs_aux[i];
+    }
+    if (f->len + 2 > f->cap) return;      // no room for even the length
+    int wrote = evwire_serialize(refs, g_rs_n, g->logs, g->num_logs, g,
+                                 viewer, -1, 0, f->out + f->len + 2,
+                                 f->cap - f->len - 2);
+    if (wrote < 0) return;                // would not fit — leave `next` here
+    if (wrote > 0xFFFF) { f->err = REPLAY_ECAP; return; }
+    f->out[f->len]     = (unsigned char)(wrote & 0xFF);
+    f->out[f->len + 1] = (unsigned char)((wrote >> 8) & 0xFF);
+    f->len += 2 + wrote;
+    f->n++;
+    f->next = me + 1;
+}
+
+int replay_steps_frames_v6(const unsigned char *code, int code_len, int viewer,
+                           int from, ReplayHeader *hdr_out,
+                           unsigned char *out, int out_cap,
+                           int *n_frames, int *next_step) {
+    RsFrameCtx f;
+    memset(&f, 0, sizeof f);
+    f.out = out;
+    f.cap = out_cap;
+    f.from = from < 0 ? 0 : from;
+    f.next = f.from;
+    int r = rs_play(code, code_len, viewer, hdr_out, rs_step_frame, &f);
+    if (r < 0) return r;
+    if (f.err) return -f.err;
+    if (n_frames) *n_frames = f.n;
+    // Nothing left to emit: report the cursor as the end of the stream.
+    if (next_step) *next_step = f.next;
+    return f.len;
+}
+
+// Total steps a code replays to: the deal, then one per action. The web sizes
+// its scrubber from this before it starts pulling frames.
+int replay_steps_count_v6(const unsigned char *code, int code_len,
+                          ReplayHeader *hdr_out) {
+    RsFrameCtx f;
+    memset(&f, 0, sizeof f);
+    f.from = 0x7FFFFFFF;   // count only: every step is skipped
+    f.next = f.from;
+    int r = rs_play(code, code_len, VIEW_SPECTATOR, hdr_out, rs_step_frame, &f);
+    if (r < 0) return r;
+    return f.idx;
 }

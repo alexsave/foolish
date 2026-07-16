@@ -1497,6 +1497,65 @@ static bool rs_play_seeded(Game *g, int np, int seed, unsigned char *seed_out) {
     return game_done(g) >= 0;
 }
 
+// The web renders live play from packed evwire frames. A replay must hand it
+// the SAME bytes, or "a replay is the game replayed" is only true on the phone.
+// This walks the frame stream a code produces and holds it against the events
+// the same code produces through the sink — the phone's path — so the two web
+// halves and the iOS half cannot drift.
+static void test_replay_frames_are_the_replay_events(void) {
+    static unsigned char code[1 << 20];
+    static unsigned char buf[1 << 16];
+    static RsTestCtx ctx;
+
+    for (int np = 2; np <= 4; np++) {
+        Game g;
+        unsigned char seed[FOOLISH_SEED_LEN];
+        if (!rs_play_seeded(&g, np, 500 + np, seed)) { CHECK(0, "seeded game plays out"); continue; }
+
+        int enc = replay_encode_v6_from_game(&g, seed, FOOLISH_SEED_LEN, 1 << 20,
+                                             code, (int)sizeof code);
+        CHECK(enc > 0, "the played game encodes as v6");
+        if (enc <= 0) continue;
+
+        const int steps = replay_steps_count_v6(code, enc, 0);
+        CHECK(steps > 0, "a code reports its step count");
+
+        // Pull the whole stream in chunks, exactly as the web bridge must.
+        int from = 0, total_frames = 0, guard = 0;
+        while (from < steps && ++guard < 4096) {
+            int n = 0, next = from;
+            int len = replay_steps_frames_v6(code, enc, VIEW_SPECTATOR, from, 0,
+                                             buf, (int)sizeof buf, &n, &next);
+            CHECK(len >= 0, "a frame chunk serializes");
+            if (len < 0) break;
+            CHECK(next > from, "a chunk always advances (or the web spins)");
+            if (next <= from) break;
+
+            // Every frame must be a whole, length-prefixed evwire frame.
+            int q = 0;
+            for (int i = 0; i < n; i++) {
+                CHECK(q + 2 <= len, "a frame's length header is inside the chunk");
+                if (q + 2 > len) break;
+                int flen = buf[q] | (buf[q + 1] << 8);
+                q += 2;
+                CHECK(flen > 0 && q + flen <= len, "a frame's body is inside the chunk");
+                if (flen <= 0 || q + flen > len) break;
+                q += flen;
+            }
+            CHECK(q == len, "a chunk is exactly its frames — no trailing slack");
+            total_frames += n;
+            from = next;
+        }
+        CHECK(total_frames == steps, "the frame stream covers every step, once");
+
+        // The same code through the phone's path: same steps, same events.
+        memset(&ctx, 0, sizeof ctx);
+        int r = replay_steps_v6(code, enc, VIEW_SPECTATOR, 0, rs_test_sink, &ctx);
+        CHECK(r == REPLAY_EOK, "the same code replays to the event sink");
+        CHECK(ctx.n_events > 0, "and the sink saw events");
+    }
+}
+
 // Play until an attacker has said good and the bout is still open — a state
 // only reachable with 3+ players (heads-up, the one attacker's good always
 // closes the round). The game is left exactly there, logs ending on the GOOD,
@@ -1739,6 +1798,7 @@ int main(void) {
     test_replay_steps_rebuilds_the_played_game();
     test_replay_steps_mid_game_cut_conserves_the_deck();
     test_replay_v6_carries_a_pending_good();
+    test_replay_frames_are_the_replay_events();
     test_replay_steps_refuses_v5();
     test_bot_drive_preferred();
     test_bot_pacing_table();

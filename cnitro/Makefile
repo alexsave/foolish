@@ -472,7 +472,7 @@ WASM_BOTS_API_EXPORTS := \
   -Wl,--export=wasm_bot_pacing_ms -Wl,--export=wasm_bot_drive_log_start \
   -Wl,--export=wasm_export_logs_masked_from \
   -Wl,--export=wasm_events_serialize_from \
-  -Wl,--export=wasm_replay_encode_v6_from_game \
+  -Wl,--export=wasm_replay_encode_v6_from_game -Wl,--export=wasm_replay_events -Wl,--export=wasm_replay_events_n -Wl,--export=wasm_replay_events_next -Wl,--export=wasm_replay_step_count \
   -Wl,--export=wasm_belief_probe_reset -Wl,--export=wasm_belief_probe_dump
 
 # The rules module's move buffer only feeds the exported menu — production
@@ -736,7 +736,7 @@ wasm-guards: build/guards.wasm
 # ("No available targets are compatible with triple wasm32"). It is WASM_CC=,
 # not CC=. CI ships the committed .gz rather than rebuilding, so the committed
 # artifact is the baseline to reproduce before you touch it.
-WASM_BOT_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/view.c src/awire.c \
+WASM_BOT_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/replay_steps.c src/view.c src/awire.c \
                 src/evwire.c src/random_strategy.c \
                 src/espresso_strategy.c src/handwritten_strategy.c \
                 src/robusta_strategy.c src/firecracker_strategy.c \
