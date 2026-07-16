@@ -91,15 +91,22 @@ _Static_assert(RULES_OVL_REPLAY_END <= RULES_ARENA_SIZE, "replay family overflow
 #endif
 
 #ifdef CD_WASM_OVERLAY
-// M9 (docs/BOTS_WASM_MEMORY_PLAN.md): g_io aliases into solve_ws (see
-// wasm_overlay.h) — bots-only, saving 72 KiB. Never concurrent with the solver
-// (input is copied into g_game by wasm_import_* before a choose's solve; the
-// chosen move / exports are written after; the solver reads g_game/SimStates,
-// never g_io) nor with the replay scratch (disjoint region + separate top-level
-// calls). rules.wasm has no solve_ws, so it keeps the static buffer.
-_Static_assert(IO_CAP <= CD_OVL_GIO_END - CD_OVL_GIO_OFF, "g_io overflows its overlay slot");
+// M9 (docs/BOTS_WASM_MEMORY_PLAN.md) aliased g_io into solve_ws — a THIRD
+// non-concurrent tenant, disjoint from the replay scratch above — to save 72 KiB.
+// That holds only while g_io FITS the slot. It no longer does: g_io is now sized
+// to accept an UNTRIMMED session log on import (~3072 records, 400 KiB) so the
+// kernel can filter dead goods itself instead of making TS pre-filter to fit the
+// buffer. 400 KiB does not fit a 272 KiB arena, so on this build g_io is its own
+// static and the M9 saving is spent — deliberately, to keep a rules concern out
+// of TypeScript. The condition is compiled, not assumed: shrink IO_CAP back
+// under the slot and the overlay silently returns.
+#if IO_CAP <= (CD_OVL_GIO_END - CD_OVL_GIO_OFF)
 #define g_io ((unsigned char *)(cd_overlay + CD_OVL_GIO_OFF))
+#else
+static unsigned char g_io[IO_CAP];
+#endif
 #elif defined(CD_RULES_OVERLAY)
+
 // R1: g_io is the ACTION family's I/O slot. Disjoint from g_moves/g_snaps
 // (the action call reads a move / writes an export into g_io while g_moves and
 // g_snaps hold the menu / snapshots — all three live at once, at distinct

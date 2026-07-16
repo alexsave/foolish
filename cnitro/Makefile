@@ -784,15 +784,26 @@ WASM_BOT_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/view.c sr
 # espresso_prod + gunpowder in for two offline-only rungs the server can never
 # seed — measured at +5.1 KB gzip (54.1 -> 59.2 KB) on every edge cold start.
 # The roster TABLE is unaffected: same keys, knobs, flags, tiers everywhere.
-# WASM_IO_CAP=139264 (136 KiB): g_io must hold the LOG EXPORT, which
-# wasm_api.c's export_logs writes UNCHECKED — 2 + MAX_LOGS x (4 + MAX_LOG_PAIRS
-# x 2) = 135,170 B at 1024/64. That coupling is why MAX_LOGS could not exceed
-# 558 at the old 72 KiB, and it is a _Static_assert in wasm_api.c now rather than
-# a comment, after a MAX_LOGS bump sailed past it. The 136 KiB still fits the
-# solve_ws arena g_io aliases into (wasm_overlay.h M9), so this costs no linear
-# memory — cordite_sim.c asserts that fit too.
+# WASM_IO_CAP=409600 (400 KiB). Two jobs, and the larger one sets it.
+#
+# 1. The LOG EXPORT, which wasm_api.c's export_logs writes UNCHECKED:
+#    2 + MAX_LOGS x (4 + MAX_LOG_PAIRS x 2) = 135,170 B at 1024/64. That coupling
+#    is why MAX_LOGS could not exceed 558 at the old 72 KiB — 512 was never a
+#    choice — and it is a _Static_assert in wasm_api.c now rather than a comment,
+#    after a MAX_LOGS bump sailed straight past it.
+#
+# 2. The LOG IMPORT, which is bigger: the session log arrives UNTRIMMED, and
+#    ~40% of its records are dead goods (measured: 52% at 8 players). Sizing for
+#    ~3072 raw records means the kernel can accept the whole stream and filter
+#    it ITSELF. The alternative was TS pre-filtering to fit the buffer — i.e. a
+#    rules decision ("which goods are live?") taken in TypeScript, which is the
+#    one thing this repo does not do.
+#
+# It costs 400 KiB: g_io no longer fits the solve_ws slot M9 aliased it into
+# (wasm_overlay.h), so it becomes its own static. Bots' linear memory ~1.4 -> 1.8
+# MB against a 150 MB edge budget. Paid deliberately.
 WASM_BOT_CFLAGS  := $(filter-out -Wl% $(WASM_OPT),$(WASM_FLAGS)) -DCD_WASM_OVERLAY -DCD_LEAFBOOK \
-                    -DWASM_IO_CAP=139264 \
+                    -DWASM_IO_CAP=409600 \
                     -DFOOLISH_SEEDED_BOTS_ONLY
 # bots-only 22 KiB shadow stack. Adversarial canary (e2e/rules_stack_canary.mts
 # for the cover path + e2e/stack_canary.mts for the solver path) measures the
