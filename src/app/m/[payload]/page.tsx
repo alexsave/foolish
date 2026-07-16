@@ -52,12 +52,12 @@ export default function MessagePayloadPage() {
                 // the tree. The browser fetches it as a static asset — one
                 // tracked binary, no base64 twin to drift (see wasm_asset.ts).
                 const { kernelMsgDecode, kernelMsgPublicView, ensureBotsAsync } =
-                    await import('@shared/sdk/ts/wasm/bots.ts');
+                    await import('@sdk/ts/wasm/bots.ts');
                 // The bytes arrive over the network here, so the module has to be
                 // ready before any of the synchronous kernel calls below.
                 await ensureBotsAsync();
                 const { base32Decode } = await import('@shared/common/replay/codec.ts');
-                const { viewToGame } = await import('@shared/sdk/ts/wire/view.ts');
+                const { viewToGame } = await import('@sdk/ts/wire/view.ts');
 
                 // The leading char is the TEXT-level format version, so the route
                 // dispatches before it decodes any binary (§4.3).

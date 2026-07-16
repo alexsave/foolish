@@ -12,9 +12,9 @@ import {
     AWIRE_KIND, AWIRE_MAX_CARDS, AwireKindName, AwireMove,
     ACTION_REQ_FORMAT, ACTION_REQ_FORMAT_V1,
     decodeAction, encodeAction, encodeActionRequest, decodeActionRequest,
-} from '../supabase/functions/_shared/sdk/ts/wire/awire.ts';
-import { logwireClosesRound, logwireHexClosesRound, logsFromKernelExport } from '../supabase/functions/_shared/sdk/ts/wire/logwire.ts';
-import { bytesToBareHex } from '../supabase/functions/_shared/sdk/ts/wire/bytes.ts';
+} from '../sdk/ts/wire/awire.ts';
+import { logwireClosesRound, logwireHexClosesRound, logsFromKernelExport } from '../sdk/ts/wire/logwire.ts';
+import { bytesToBareHex } from '../sdk/ts/wire/bytes.ts';
 
 // Deterministic RNG so a failure reproduces from the printed seed.
 let seed = Number(process.env.FUZZ_SEED || 0xa11ce) >>> 0;

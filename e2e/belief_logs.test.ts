@@ -21,8 +21,8 @@ import { game_done } from '../supabase/functions/_shared/common/common_utils.ts'
 import { start_game } from '../supabase/functions/_shared/common/game_lifecycle.ts';
 import { calculateLegalMoves } from '../supabase/functions/_shared/common/bot_strategy.ts';
 import { shouldBotActCore, executeBotMove } from '../supabase/functions/_shared/common/pure_bot_actions.ts';
-import { STRAT, wasmChooseMoveDirect, __setBotSeedSource } from '../supabase/functions/_shared/sdk/ts/wasm/bots.ts';
-import { __setKernelSeedSource } from '../supabase/functions/_shared/sdk/ts/wasm/engine.ts';
+import { STRAT, wasmChooseMoveDirect, __setBotSeedSource } from '../sdk/ts/wasm/bots.ts';
+import { __setKernelSeedSource } from '../sdk/ts/wasm/engine.ts';
 import {
   Game, PrivatePlayer, GameLog, PLAYER_STATUS, GAME_STATUS,
 } from '../supabase/functions/_shared/core/types.ts';

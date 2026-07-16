@@ -29,9 +29,9 @@ import {
 } from '../supabase/functions/_shared/core/types.ts';
 import { shouldBotActCore, processBotAction } from '../supabase/functions/_shared/common/pure_bot_actions.ts';
 import { calculateLegalMoves } from '../supabase/functions/_shared/common/bot_strategy.ts';
-import { __setDealSeedOverride } from '../supabase/functions/_shared/sdk/ts/wasm/engine.ts';
-import { kernelReplayEncodeV6FromGame } from '../supabase/functions/_shared/sdk/ts/wasm/bots.ts';
-import { encodeLogs } from '../supabase/functions/_shared/sdk/ts/wire/logwire.ts';
+import { __setDealSeedOverride } from '../sdk/ts/wasm/engine.ts';
+import { kernelReplayEncodeV6FromGame } from '../sdk/ts/wasm/bots.ts';
+import { encodeLogs } from '../sdk/ts/wire/logwire.ts';
 
 if (!process.env.E2E_VERBOSE) {
   console.log = () => {}; console.warn = () => {}; console.error = () => {}; console.info = () => {};

@@ -2,7 +2,7 @@
 // builds ONE buffer per move and uses it for the guards-wasm gate, the
 // optimistic apply, and the POST body; the server kernel applies the same
 // bytes verbatim. Pure TS, no wasm imports.
-import { Card } from "../../../core/types.ts";
+import { Card } from "../../../supabase/functions/_shared/core/types.ts";
 
 export const AWIRE_KIND = {
     attack: 0,

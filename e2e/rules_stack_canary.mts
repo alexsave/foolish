@@ -7,7 +7,7 @@
 //   TSX_TSCONFIG_PATH=e2e/tsconfig.json node --import tsx e2e/rules_stack_canary.mts
 // Last measured worst: 14.3 KiB (cover nb=8) — 32 KiB stack is 2.23x that.
 // Set STACK to the shipped -z stack-size before re-measuring.
-import { kernelLegalMoves } from '../supabase/functions/_shared/sdk/ts/wasm/engine.ts';
+import { kernelLegalMoves } from '../sdk/ts/wasm/engine.ts';
 import { Game, GAME_STATUS, PLAYER_STATUS, PrivatePlayer, Card, Battle } from '../supabase/functions/_shared/core/types.ts';
 
 const STACK = 32768;

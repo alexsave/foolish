@@ -2,7 +2,7 @@
 
 Retired reference implementations. Production bot play lives in the C kernel
 (`cnitro/src/*_strategy.c`, compiled into `bots.wasm` and dispatched through
-`supabase/functions/_shared/sdk/ts/wasm/bots.ts`) — these TS sources are kept
+`sdk/ts/wasm/bots.ts`) — these TS sources are kept
 verbatim as:
 
 - the **oracles** for `e2e/bot_parity.test.ts`, which proves the kernel picks

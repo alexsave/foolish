@@ -13,8 +13,8 @@ import { game_done } from '../supabase/functions/_shared/common/common_utils.ts'
 import { start_game } from '../supabase/functions/_shared/common/game_lifecycle.ts';
 import { calculateLegalMoves, LegalMove } from '../supabase/functions/_shared/common/bot_strategy.ts';
 import { shouldBotActCore, executeBotMove } from '../supabase/functions/_shared/common/pure_bot_actions.ts';
-import { STRAT, wasmChooseMove, __setBotSeedSource } from '../supabase/functions/_shared/sdk/ts/wasm/bots.ts';
-import { __setKernelSeedSource } from '../supabase/functions/_shared/sdk/ts/wasm/engine.ts';
+import { STRAT, wasmChooseMove, __setBotSeedSource } from '../sdk/ts/wasm/bots.ts';
+import { __setKernelSeedSource } from '../sdk/ts/wasm/engine.ts';
 import { PLAYER_STATUS, GAME_STATUS } from '../supabase/functions/_shared/core/types.ts';
 
 const mkLcgU32 = (seed: number) => { let s = seed >>> 0; return () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s; }; };

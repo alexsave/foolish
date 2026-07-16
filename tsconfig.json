@@ -20,6 +20,9 @@
     "paths": {
       "@shared/*": [
         "./supabase/functions/_shared/*"
+      ],
+      "@sdk/*": [
+        "./sdk/*"
       ]
     },
     "resolveJsonModule": true,

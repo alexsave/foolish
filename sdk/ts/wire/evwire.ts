@@ -10,8 +10,8 @@
 // loop, meta/lobby actions) encode at the broadcast edge so the client sees
 // exactly one format; e2e proves C and TS emissions byte-identical.
 // Pure TS, no wasm imports.
-import { AnimationEvent, ANIMATION_EVENT_TYPE, Card, Game, PersonalGame, PublicGame } from "../../../core/types.ts";
-import { SUIT_MAP, VALUE_MAP } from "../../../core/constants.ts";
+import { AnimationEvent, ANIMATION_EVENT_TYPE, Card, Game, PersonalGame, PublicGame } from "../../../supabase/functions/_shared/core/types.ts";
+import { SUIT_MAP, VALUE_MAP } from "../../../supabase/functions/_shared/core/constants.ts";
 import { WIRE_HIDDEN, wireCard } from "./awire.ts";
 import { ViewDecodeCtx, ViewRoster, viewToGame, writeMaskedState } from "./view.ts";
 import { KernelState, kernelEventsFromPacked } from "../wasm/bots.ts";

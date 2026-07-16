@@ -16,8 +16,8 @@ import { handlePass } from '../supabase/functions/_shared/common/actions/pass.ts
 import { handlePickup } from '../supabase/functions/_shared/common/actions/pickup.ts';
 import { handleGood } from '../supabase/functions/_shared/common/actions/good.ts';
 import { executePackedAction } from '../supabase/functions/_shared/adapter/packed_action.ts';
-import { encodeAction, AwireKindName } from '../supabase/functions/_shared/sdk/ts/wire/awire.ts';
-import { kernelLegalMoves, kernelShouldAct } from '../supabase/functions/_shared/sdk/ts/wasm/engine.ts';
+import { encodeAction, AwireKindName } from '../sdk/ts/wire/awire.ts';
+import { kernelLegalMoves, kernelShouldAct } from '../sdk/ts/wasm/engine.ts';
 import { GAME_STATUS } from '../supabase/functions/_shared/core/types.ts';
 import { pgPool } from './harness.ts';
 

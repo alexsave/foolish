@@ -7,7 +7,7 @@ millions of games without crossing the language boundary into the TS server.
 **The kernel here IS the production rules engine.** `game.c` + `legal.c`
 compile to WebAssembly (`make wasm`) and run every live move: the TS files in
 `supabase/functions/_shared/common/actions/` are thin bridges over this code (see
-`wasm/wasm_api.c` and `_shared/sdk/ts/wasm/engine.ts`). The old TS rule
+`wasm/wasm_api.c` and `sdk/ts/wasm/engine.ts`). The old TS rule
 implementations were deleted after a differential harness proved the two
 engines byte-identical across ~100k mirrored actions. The deck rule is
 settled and hardcoded in `card.h`: 2..5 players → 36 cards, 6+ → 52,
@@ -20,7 +20,7 @@ TS handlers captured animation snapshots — a NULL no-op for native builds.
 **The bots here are ALSO the production bots.** `make wasm-bots` compiles the
 kernel plus every `*_strategy.c` plus a choose-move bridge
 (`wasm/wasm_bots_api.c`) into `bots.wasm`
-(`_shared/sdk/ts/wasm/bots_wasm.ts`, dispatched by `_shared/sdk/ts/wasm/bots.ts`). The
+(`sdk/ts/wasm/bots_wasm.ts`, dispatched by `sdk/ts/wasm/bots.ts`). The
 production bot names map to exact C mirrors of the retired TS strategies —
 `e2e/bot_parity.test.ts` proves move-for-move equality against the frozen TS
 oracles. Two bots exist in a `_prod` variant (`espresso_prod`,

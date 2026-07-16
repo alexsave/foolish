@@ -37,8 +37,8 @@ import { decodeReplay } from '../supabase/functions/_shared/common/replay/decode
 import {
   urlToGame, base64Decode, base64Encode, base32Encode, bytesToBigint, codeToGame, gameToUrl,
 } from '../supabase/functions/_shared/common/replay/codec.ts';
-import { kernelReplayEncodeV6FromGame } from '../supabase/functions/_shared/sdk/ts/wasm/bots.ts';
-import { __setDealSeedOverride } from '../supabase/functions/_shared/sdk/ts/wasm/engine.ts';
+import { kernelReplayEncodeV6FromGame } from '../sdk/ts/wasm/bots.ts';
+import { __setDealSeedOverride } from '../sdk/ts/wasm/engine.ts';
 
 const hexToBytes = (h: string) => Uint8Array.from(h.match(/../g)!.map((b) => parseInt(b, 16)));
 import {

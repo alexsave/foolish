@@ -249,7 +249,7 @@ og_explain:
 # WebAssembly rules kernel: game.c + legal.c + the wasm bridge, compiled
 # freestanding (no libc; wasm/include has the tiny shims, wasm_api.c provides
 # memcpy/memset). This is THE production rules engine: the TS server imports
-# the resulting module via supabase/functions/_shared/sdk/ts/wasm/. `-D_Thread_local=`
+# the resulting module via sdk/ts/wasm/. `-D_Thread_local=`
 # strips TLS (single-threaded module); the bridge sets the production
 # deck-size boundary at init (see card.h).
 WASM_CC    ?= clang
@@ -593,7 +593,7 @@ build/named/rules.named.wasm: $(WASM_RULES_OBJ)
 # decode imports it), and browsers have no node:fs/node:zlib for the static-gz
 # loader. Only bots.wasm — server-only — ships as a gzip static asset (below).
 wasm: build/rules.wasm
-	node wasm/embed.mjs build/rules.wasm ../supabase/functions/_shared/sdk/ts/wasm/rules_wasm.ts --gzip
+	node wasm/embed.mjs build/rules.wasm ../sdk/ts/wasm/rules_wasm.ts --gzip
 
 # Client-guards module: game.c ONLY — no legal.c enumeration, no replay.c
 # codec. It backs the browser's UI move-gates (validate-only) and optimistic
@@ -703,7 +703,7 @@ build/named/guards.named.wasm: $(WASM_GUARDS_OBJ)
 	$(if $(strip $(WASM_GUARDS_POSTOPT)),$(WASM_OPT_BIN) $(WASM_OPT_FEATURES) $(WASM_GUARDS_POSTOPT) --debuginfo $@ -o $@,:)
 
 wasm-guards: build/guards.wasm
-	node wasm/embed.mjs build/guards.wasm ../supabase/functions/_shared/sdk/ts/wasm/guards_wasm.ts GUARDS_WASM_B64 --gzip
+	node wasm/embed.mjs build/guards.wasm ../sdk/ts/wasm/guards_wasm.ts GUARDS_WASM_B64 --gzip
 
 # Bot module: the rules kernel PLUS every algorithmic bot strategy and the
 # choose-move bridge. A superset of rules.wasm, loaded only where bots run
@@ -891,7 +891,7 @@ build/named/bots.named.wasm: $(WASM_BOT_OBJ)
 #
 # EVERY host reads this one file. The server (Deno edge / Node) with
 # fs/readFileSync; the browser by FETCHING it, because it has neither — see
-# _shared/sdk/ts/wasm/wasm_asset.ts. The browser needs the big module for two reasons
+# sdk/ts/wasm/wasm_asset.ts. The browser needs the big module for two reasons
 # that arrived together: FMSG's decode/seal live only here (sealing reads a
 # resident session log rules.wasm cannot hold, and /m/ is a web page), and A5's
 # replay_steps does too (~272 KB of decoded actions vs a 196,608 B pin). One
@@ -904,7 +904,7 @@ build/named/bots.named.wasm: $(WASM_BOT_OBJ)
 # of single-line base64, rewritten on every kernel build, into git. The price is
 # that the browser's door is async (ensureBotsAsync); that is the cheaper half.
 wasm-bots: build/bots.wasm
-	gzip -9 -n -c build/bots.wasm > ../supabase/functions/_shared/sdk/ts/wasm/bots.wasm.gz
+	gzip -9 -n -c build/bots.wasm > ../sdk/ts/wasm/bots.wasm.gz
 
 # ---------------------------------------------------------------------------
 # oracle.wasm — the client-side "infinite oracle" replay analyzer

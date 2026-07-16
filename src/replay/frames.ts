@@ -34,12 +34,12 @@ import { Card, PersonalGame, PLAYER_STATUS, PrivatePlayer, PublicGame } from '@s
 import { deckSizeFor } from '@shared/core/constants.ts';
 import {
     replayEventFrames, replayStepIndex, REPLAY_STEP, ReplayStepInfo,
-} from '@shared/sdk/ts/wasm/bots.ts';
-import { decodeEventWire, DecodedEvent } from '@shared/sdk/ts/wire/evwire.ts';
-import type { ViewRoster } from '@shared/sdk/ts/wire/view.ts';
+} from '@sdk/ts/wasm/bots.ts';
+import { decodeEventWire, DecodedEvent } from '@sdk/ts/wire/evwire.ts';
+import type { ViewRoster } from '@sdk/ts/wire/view.ts';
 import { AnimationSequenceMessage, FeedAnimationEvent } from '../state/animationFeed';
 
-export { REPLAY_STEP } from '@shared/sdk/ts/wasm/bots.ts';
+export { REPLAY_STEP } from '@sdk/ts/wasm/bots.ts';
 
 /** PersonalGame plus every seat's exact hand, for the reveal-hands overlay. */
 export interface ReplayGameState extends PersonalGame {

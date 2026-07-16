@@ -21,7 +21,7 @@ import { animationFeed, AnimationSequenceMessage } from '../state/animationFeed'
 import { bigintToBytes, codeToGame } from '@shared/common/replay/codec.ts';
 import { decodeReplay } from '@shared/common/replay/decode.ts';
 import { DecodedReplay } from '@shared/common/replay/core.ts';
-import { ensureBotsAsync } from '@shared/sdk/ts/wasm/bots.ts';
+import { ensureBotsAsync } from '@sdk/ts/wasm/bots.ts';
 import {
     buildReplayFrames,
     buildReverseFrames,

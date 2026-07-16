@@ -27,13 +27,13 @@ import { handleMetaAction } from '../supabase/functions/_shared/adapter/meta_act
 import { legalMovesFor, applyPlayerMove } from './dispatch.ts';
 import { buildPlayerViewRows, buildPlayerViewUpserts, buildSpectatorView } from '../supabase/functions/_shared/common/player_views.ts';
 import { buildPackedGameBytes, gameViewFromRow } from '../supabase/functions/_shared/common/packed_game.ts';
-import { decodePackedGame } from '../supabase/functions/_shared/sdk/ts/wire/view.ts';
-import { bytesToBareHex } from '../supabase/functions/_shared/sdk/ts/wire/bytes.ts';
+import { decodePackedGame } from '../sdk/ts/wire/view.ts';
+import { bytesToBareHex } from '../sdk/ts/wire/bytes.ts';
 import { hexToBytes } from '../supabase/functions/_shared/common/replay/codec.ts';
 import {
   Game, GAME_STATUS, PLAYER_STATUS, STRATEGY_KEY, PersonalGame,
 } from '../supabase/functions/_shared/core/types.ts';
-import { __setKernelSeedSource } from '../supabase/functions/_shared/sdk/ts/wasm/engine.ts';
+import { __setKernelSeedSource } from '../sdk/ts/wasm/engine.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 __setKernelSeedSource(() => 777);

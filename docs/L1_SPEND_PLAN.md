@@ -201,7 +201,7 @@ not by cache-counter theater.
    (multiplied budgets + the `-DCD_LEAFBOOK`/side-table flags), or a config
    struct passed via ctx; keep it a thin wrapper so octogen fixes flow in.
 3. `main_eval.c` dispatch case + `Makefile` CORE list.
-4. TS: add `hexogen: 24` to the `STRAT` map (`supabase/functions/_shared/sdk/ts/wasm/bots.ts:~48`)
+4. TS: add `hexogen: 24` to the `STRAT` map (`sdk/ts/wasm/bots.ts:~48`)
    when (and only when) it ships to production selection.
 5. Validation: hexogen has NO TS mirror, so `bot_parity` does not cover it —
    its gates are the outcome ladder (V4 vs TT22: 0 w→l/3,000) and the elo

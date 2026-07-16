@@ -24,7 +24,7 @@ import {
 } from '../supabase/functions/_shared/common/pure_bot_actions.ts';
 import {
   kernelGameDone, kernelShouldAct, kernelNextPlayer, kernelCanCover,
-} from '../supabase/functions/_shared/sdk/ts/wasm/engine.ts';
+} from '../sdk/ts/wasm/engine.ts';
 import {
   Game, PrivatePlayer, Card, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY,
 } from '../supabase/functions/_shared/core/types.ts';

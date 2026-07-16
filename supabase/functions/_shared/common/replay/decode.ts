@@ -21,7 +21,7 @@ const DEC_HDR = 20;
 const CARD_NONE = 0xff;
 
 export async function decodeReplay(x: bigint): Promise<DecodedReplay> {
-  const eng = await import("../../sdk/ts/wasm/engine.ts");
+  const eng = await import("../../../../../sdk/ts/wasm/engine.ts");
   await eng.ensureEngineAsync();
   const out = eng.kernelReplayDecode(bigintToBytes(x));
 

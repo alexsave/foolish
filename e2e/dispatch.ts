@@ -46,7 +46,7 @@ export async function checkCardConservation(gameId: string): Promise<{ ok: boole
     // see commitGame). Reconstruct from the blob; fall back to the tables for
     // never-dealt / legacy rows that predate the blob column.
     if (g.state) {
-        const { deserializeGameState } = await import('../supabase/functions/_shared/sdk/ts/wasm/engine.ts');
+        const { deserializeGameState } = await import('../sdk/ts/wasm/engine.ts');
         const { hexToBytes } = await import('../supabase/functions/_shared/common/replay/codec.ts');
         const game = deserializeGameState(hexToBytes(g.state), {
             id: gameId, name: '', version: 0, deck_length: 0,

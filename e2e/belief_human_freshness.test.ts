@@ -29,7 +29,7 @@ import { applySchema, resetDb, seedGame, uuid } from './harness.ts';
 import { executeWithGameLock } from '../supabase/functions/_shared/adapter/utils.ts';
 import { start_game } from '../supabase/functions/_shared/common/game_lifecycle.ts';
 import { lockedBotLoop } from '../supabase/functions/_shared/adapter/bot_actions.ts';
-import { wasmBeliefProbeReset, wasmBeliefProbeDump } from '../supabase/functions/_shared/sdk/ts/wasm/bots.ts';
+import { wasmBeliefProbeReset, wasmBeliefProbeDump } from '../sdk/ts/wasm/bots.ts';
 import { game_done } from '../supabase/functions/_shared/common/common_utils.ts';
 import { legalMovesFor, applyPlayerMove } from './dispatch.ts';
 import { AnimationEvent, Game, Card } from '../supabase/functions/_shared/core/types.ts';

@@ -19,7 +19,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { ensureBotsAsync, kernelUnambiguousCover } from '../supabase/functions/_shared/sdk/ts/wasm/bots.ts';
+import { ensureBotsAsync, kernelUnambiguousCover } from '../sdk/ts/wasm/bots.ts';
 import { canCover } from '../supabase/functions/_shared/common/common_utils.ts';
 import { Card, Battle } from '../supabase/functions/_shared/core/types.ts';
 

@@ -26,8 +26,8 @@ import {
 } from '../supabase/functions/_shared/core/types.ts';
 import { shouldBotActCore, processBotAction } from '../supabase/functions/_shared/common/pure_bot_actions.ts';
 import { calculateLegalMoves } from '../supabase/functions/_shared/common/bot_strategy.ts';
-import { kernelReplayEncodeV6FromGame } from '../supabase/functions/_shared/sdk/ts/wasm/bots.ts';
-import { __setDealSeedOverride } from '../supabase/functions/_shared/sdk/ts/wasm/engine.ts';
+import { kernelReplayEncodeV6FromGame } from '../sdk/ts/wasm/bots.ts';
+import { __setDealSeedOverride } from '../sdk/ts/wasm/engine.ts';
 import { deckSizeFor } from '../supabase/functions/_shared/core/constants.ts';
 import {
     buildReplayFrames, buildReverseFrames, preDealGame, stepTimes, REPLAY_STEP,

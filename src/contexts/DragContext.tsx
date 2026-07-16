@@ -7,7 +7,7 @@ import { useGame } from './GameContext';
 import { canCover } from '@shared/common/common_utils.ts';
 import { reorderHand } from '../state/clientReconcile';
 import { canAttack, canPass as canPassValidation } from '../utils/gameValidation';
-import { kernelUnambiguousCover } from '@shared/sdk/ts/wasm/bots.ts';
+import { kernelUnambiguousCover } from '@sdk/ts/wasm/bots.ts';
 
 const DragContext = createContext<DragContextType | null>(null);
 

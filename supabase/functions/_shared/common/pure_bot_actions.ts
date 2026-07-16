@@ -139,8 +139,8 @@ export const executeBotMove = (game: Game, bot: PrivatePlayer, move: LegalMove):
 // The legacy processBotAction/executeBotMove above stay for the offline
 // harnesses and e2e dispatch, which drive whole games on JS objects.
 // ---------------------------------------------------------------------------
-import { AwireKindName, encodeAction } from '../sdk/ts/wire/awire.ts';
-import { applyKernelStateToGame, PackedRunOk, runPackedGameAction } from '../sdk/ts/wasm/engine.ts';
+import { AwireKindName, encodeAction } from '../../../../sdk/ts/wire/awire.ts';
+import { applyKernelStateToGame, PackedRunOk, runPackedGameAction } from '../../../../sdk/ts/wasm/engine.ts';
 
 export interface PackedBotMove {
     // null for 'wait' — no action to apply, nothing to commit beyond the

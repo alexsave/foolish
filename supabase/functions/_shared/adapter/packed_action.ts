@@ -12,7 +12,7 @@ import {
 } from './utils.ts';
 import { GAME_STATUS } from '../core/types.ts';
 import { verify_player_in_game } from '../common/common_utils.ts';
-import { ACTION_STATUS, AwireMove, decodeAction, REJECT_STALE_ROUND } from '../sdk/ts/wire/awire.ts';
+import { ACTION_STATUS, AwireMove, decodeAction, REJECT_STALE_ROUND } from '../../../../sdk/ts/wire/awire.ts';
 import { getCachedGame, invalidateCachedGame } from './game_cache.ts';
 
 export interface PackedActionOutcome {
@@ -122,9 +122,9 @@ export async function executePackedAction(
         // win -> serialize state + logs + every recipient's masked event
         // stream. Lazy import keeps the wasm embed off lobby-only cold starts.
         const { hexToBytes, bytesToHex } = await import('../common/replay/codec.ts');
-        const { runPackedAction, materializeKernelGame } = await import('../sdk/ts/wasm/engine.ts');
-        const { logsFromKernelExport } = await import('../sdk/ts/wire/logwire.ts');
-        const { bytesToBareHex } = await import('../sdk/ts/wire/bytes.ts');
+        const { runPackedAction, materializeKernelGame } = await import('../../../../sdk/ts/wasm/engine.ts');
+        const { logsFromKernelExport } = await import('../../../../sdk/ts/wire/logwire.ts');
+        const { bytesToBareHex } = await import('../../../../sdk/ts/wire/bytes.ts');
         const run = runPackedAction(hexToBytes(row.state), seat, wire, aiMask, humanSeats);
 
         if (!run.ok) {

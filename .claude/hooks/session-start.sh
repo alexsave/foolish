@@ -3,7 +3,7 @@
 #
 # cnitro/Makefile runs `wasm-opt` on the linked bots.wasm by default
 # (WASM_BOTS_POSTOPT), so `make wasm-bots` — which regenerates the shipped
-# supabase/functions/_shared/sdk/ts/wasm/bots.wasm.gz — needs it on PATH. Everything
+# sdk/ts/wasm/bots.wasm.gz — needs it on PATH. Everything
 # else the repo builds with (clang/wasm-ld, node, postgres) is already
 # provisioned in the web environment; binaryen is the only gap.
 #

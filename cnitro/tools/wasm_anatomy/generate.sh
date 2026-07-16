@@ -4,7 +4,7 @@
 # Pipeline:
 #   1. build the three production modules (rules/guards/bots) with the real
 #      Makefile flags  (-Oz, --strip-all) — these are byte-identical to what
-#      ships in supabase/functions/_shared/sdk/ts/wasm/
+#      ships in sdk/ts/wasm/
 #   2. build name-preserving companions (same flags minus --strip-all) so the
 #      disassembler can recover function names over the identical code bytes
 #   3. build a symbol -> source-file map from the per-file object symbol tables

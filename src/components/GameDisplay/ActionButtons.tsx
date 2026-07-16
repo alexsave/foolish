@@ -9,7 +9,7 @@ import { TexturedSurface } from "../TexturedSurface";
 import { useEffect, useRef } from "react";
 import { Text } from "../Text";
 import { canCover as canCoverUtil } from "@shared/common/common_utils.ts";
-import { kernelUnambiguousCover } from "@shared/sdk/ts/wasm/bots.ts";
+import { kernelUnambiguousCover } from "@sdk/ts/wasm/bots.ts";
 import { canAttack, canPass, canCoverCards } from "../../utils/gameValidation";
 import { useStyles } from "../../contexts/StyleContext";
 import { useTutorialHint } from "../../contexts/TutorialHintContext";

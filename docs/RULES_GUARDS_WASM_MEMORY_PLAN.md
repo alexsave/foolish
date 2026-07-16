@@ -176,7 +176,7 @@ The bots overlay had to prove solver-vs-replay non-concurrency. The rules
 module's TS bridge is simpler; three facts close the argument:
 
 1. **Replay calls are hermetic.** `kernelReplayRun`
-   (`supabase/functions/_shared/sdk/ts/wasm/engine.ts:1375-1383`) is one synchronous
+   (`sdk/ts/wasm/engine.ts:1375-1383`) is one synchronous
    function: write input at `wasm_replay_io_ptr()` → call encode/decode →
    `slice()` the output. Nothing else can touch the instance mid-call
    (single-threaded wasm), and the output is **copied out** before return.
@@ -272,7 +272,7 @@ Differences for the rules build:
    that tool compares two different solvers and exits 1 by design; it is not
    a regression signal. Compare its count to main if worried: 428 today.)
 3. Rebuild + embed: `make wasm` (regenerates
-   `supabase/functions/_shared/sdk/ts/wasm/rules_wasm.ts` — commit it).
+   `sdk/ts/wasm/rules_wasm.ts` — commit it).
 4. `npm run test:e2e` core: `replay_codec`, `replay_codec_edges` (byte-exact
    vs the frozen TS oracle), `client_rules_parity`, `fuzz`, `cover`,
    `cover_combinations`, `state_codec`, `view_codec`, `awire_codec`,

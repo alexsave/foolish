@@ -14,8 +14,8 @@ import { start_game } from '../supabase/functions/_shared/common/game_lifecycle.
 import { AnimationEvent } from '../supabase/functions/_shared/core/types.ts';
 import { legalMovesFor, applyPlayerMove } from './dispatch.ts';
 import { shouldDropStaleSequence, mergeTableBattles } from '../src/state/clientReconcile';
-import { decodeEventWire } from '../supabase/functions/_shared/sdk/ts/wire/evwire.ts';
-import { base64ToBytes } from '../supabase/functions/_shared/sdk/ts/wire/bytes.ts';
+import { decodeEventWire } from '../sdk/ts/wire/evwire.ts';
+import { base64ToBytes } from '../sdk/ts/wire/bytes.ts';
 
 const pick = <T>(a: T[]): T => a[Math.floor(Math.random() * a.length)];
 const tkeys = (bs: any[]) => bs.flatMap((b: any) => (b.defense ? [`${b.attack.suit}-${b.attack.value}`, `${b.defense.suit}-${b.defense.value}`] : [`${b.attack.suit}-${b.attack.value}`])).sort();

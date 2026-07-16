@@ -1,6 +1,6 @@
 // Durable state codec parity — the packed `games.state bytea` format.
 //
-// serializeGameState/deserializeGameState (supabase/functions/_shared/sdk/ts/wasm/
+// serializeGameState/deserializeGameState (sdk/ts/wasm/
 // engine.ts) pack a Game into the kernel's VERSIONED persist blob and read it
 // back, reattaching the stable roster (ids/names/strategy) + the two
 // presentation fields the kernel doesn't model (good_players order,
@@ -23,7 +23,7 @@ import { processBotAction, shouldBotActCore } from '../supabase/functions/_share
 import { calculateLegalMoves } from '../supabase/functions/_shared/common/bot_strategy.ts';
 import {
   serializeGameState, deserializeGameState, stateFormatVersion, RosterTemplate,
-} from '../supabase/functions/_shared/sdk/ts/wasm/engine.ts';
+} from '../sdk/ts/wasm/engine.ts';
 import {
   Game, PrivatePlayer, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY,
 } from '../supabase/functions/_shared/core/types.ts';

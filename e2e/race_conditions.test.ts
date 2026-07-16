@@ -22,10 +22,10 @@ import { executeWithGameLock, loadCompleteGame } from '../supabase/functions/_sh
 import { start_game } from '../supabase/functions/_shared/common/game_lifecycle.ts';
 import { AnimationEvent, Game } from '../supabase/functions/_shared/core/types.ts';
 import { executePackedAction } from '../supabase/functions/_shared/adapter/packed_action.ts';
-import { encodeAction, ACTION_STATUS, REJECT_STALE_ROUND, AwireKindName } from '../supabase/functions/_shared/sdk/ts/wire/awire.ts';
-import { decodeLogs } from '../supabase/functions/_shared/sdk/ts/wire/logwire.ts';
+import { encodeAction, ACTION_STATUS, REJECT_STALE_ROUND, AwireKindName } from '../sdk/ts/wire/awire.ts';
+import { decodeLogs } from '../sdk/ts/wire/logwire.ts';
 import { hexToBytes } from '../supabase/functions/_shared/common/replay/codec.ts';
-import { __setKernelSeedSource } from '../supabase/functions/_shared/sdk/ts/wasm/engine.ts';
+import { __setKernelSeedSource } from '../sdk/ts/wasm/engine.ts';
 import { __clearGameCache } from '../supabase/functions/_shared/adapter/game_cache.ts';
 import { calculateLegalMoves } from '../supabase/functions/_shared/common/bot_strategy.ts';
 import { legalMovesFor, checkCardConservation, PlayerMove } from './dispatch.ts';

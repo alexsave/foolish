@@ -26,9 +26,9 @@ serve(async (req: Request) => {
     const MODS: Record<string, string> = {
         types: '../_shared/core/types.ts',
         constants: '../_shared/core/constants.ts',
-        engine: '../_shared/sdk/ts/wasm/engine.ts',
+        engine: '../sdk/ts/wasm/engine.ts',
         common_utils: '../_shared/common/common_utils.ts',
-        bots: '../_shared/sdk/ts/wasm/bots.ts',
+        bots: '../sdk/ts/wasm/bots.ts',
         bot_strategy: '../_shared/common/bot_strategy.ts',
         pure_bot_actions: '../_shared/common/pure_bot_actions.ts',
     };

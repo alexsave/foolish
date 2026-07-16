@@ -51,7 +51,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useGame } from '../../contexts/GameContext';
 import { canCover } from '@shared/common/common_utils.ts';
 import { canAttack, canPass, canCoverCards } from '../../utils/gameValidation';
-import { kernelUnambiguousCover } from '@shared/sdk/ts/wasm/bots.ts';
+import { kernelUnambiguousCover } from '@sdk/ts/wasm/bots.ts';
 
 type CoverTarget = { kind: 'cover'; attack: Card; battleIndex: number };
 type Target = CoverTarget | { kind: 'pass' };

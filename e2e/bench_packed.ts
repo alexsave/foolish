@@ -18,16 +18,16 @@ import { start_game } from '../supabase/functions/_shared/common/game_lifecycle.
 import {
   kernelLegalMoves, kernelShouldAct, serializeGameState, runPackedAction,
   __setKernelSeedSource,
-} from '../supabase/functions/_shared/sdk/ts/wasm/engine.ts';
+} from '../sdk/ts/wasm/engine.ts';
 import { handleAttack } from '../supabase/functions/_shared/common/actions/attack.ts';
 import { handleCover } from '../supabase/functions/_shared/common/actions/cover.ts';
 import { handlePass } from '../supabase/functions/_shared/common/actions/pass.ts';
 import { handlePickup } from '../supabase/functions/_shared/common/actions/pickup.ts';
 import { handleGood } from '../supabase/functions/_shared/common/actions/good.ts';
-import { encodeAction, AwireKindName } from '../supabase/functions/_shared/sdk/ts/wire/awire.ts';
-import { encodeEventWire } from '../supabase/functions/_shared/sdk/ts/wire/evwire.ts';
-import { logsFromKernelExport } from '../supabase/functions/_shared/sdk/ts/wire/logwire.ts';
-import { bytesToBareHex } from '../supabase/functions/_shared/sdk/ts/wire/bytes.ts';
+import { encodeAction, AwireKindName } from '../sdk/ts/wire/awire.ts';
+import { encodeEventWire } from '../sdk/ts/wire/evwire.ts';
+import { logsFromKernelExport } from '../sdk/ts/wire/logwire.ts';
+import { bytesToBareHex } from '../sdk/ts/wire/bytes.ts';
 import { bytesToHex } from '../supabase/functions/_shared/common/replay/codec.ts';
 
 const MOVES = Number(process.env.BENCH_MOVES || 20000);

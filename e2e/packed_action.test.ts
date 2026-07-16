@@ -21,10 +21,10 @@ import { handlePass } from '../supabase/functions/_shared/common/actions/pass.ts
 import { handlePickup } from '../supabase/functions/_shared/common/actions/pickup.ts';
 import { handleGood } from '../supabase/functions/_shared/common/actions/good.ts';
 import { executePackedAction } from '../supabase/functions/_shared/adapter/packed_action.ts';
-import { encodeAction, ACTION_STATUS, AwireKindName } from '../supabase/functions/_shared/sdk/ts/wire/awire.ts';
-import { decodeEventWire } from '../supabase/functions/_shared/sdk/ts/wire/evwire.ts';
-import { ViewRoster } from '../supabase/functions/_shared/sdk/ts/wire/view.ts';
-import { base64ToBytes } from '../supabase/functions/_shared/sdk/ts/wire/bytes.ts';
+import { encodeAction, ACTION_STATUS, AwireKindName } from '../sdk/ts/wire/awire.ts';
+import { decodeEventWire } from '../sdk/ts/wire/evwire.ts';
+import { ViewRoster } from '../sdk/ts/wire/view.ts';
+import { base64ToBytes } from '../sdk/ts/wire/bytes.ts';
 import { legalMovesFor, checkCardConservation, PlayerMove } from './dispatch.ts';
 
 // Deterministic RNG so a failure reproduces from the printed seed.

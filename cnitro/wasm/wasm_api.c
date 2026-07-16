@@ -1,6 +1,6 @@
 // WebAssembly bridge for the cnitro rules kernel (game.c + legal.c).
 //
-// The TS side (supabase/functions/_shared/sdk/ts/wasm/engine.ts) marshals the Game
+// The TS side (sdk/ts/wasm/engine.ts) marshals the Game
 // through ONE compact byte layout in a shared IO buffer — deliberately
 // independent of the C struct's padding, so TS never touches struct offsets.
 // Every state field crosses as explicit little-endian bytes.

@@ -15,7 +15,7 @@ import { readFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import { execFileSync } from 'node:child_process';
 
-const WASM = 'supabase/functions/_shared/sdk/ts/wasm';
+const WASM = 'sdk/ts/wasm';
 const tsxEnv = { ...process.env, TSX_TSCONFIG_PATH: 'e2e/tsconfig.json' };
 const runNode = (args, extraEnv = {}) =>
   execFileSync('node', ['--import', 'tsx', ...args],

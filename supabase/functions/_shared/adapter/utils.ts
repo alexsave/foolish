@@ -12,8 +12,8 @@ import type { User } from 'jsr:@supabase/supabase-js';
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { getAuthenticatedUser } from './auth.ts';
-import { encodeEventWire } from '../sdk/ts/wire/evwire.ts';
-import { bytesToBase64 } from '../sdk/ts/wire/bytes.ts';
+import { encodeEventWire } from '../../../../sdk/ts/wire/evwire.ts';
+import { bytesToBase64 } from '../../../../sdk/ts/wire/bytes.ts';
 import type { EncodedReplay } from '../common/replay/core.ts';
 // NOTE: bot_actions (→ the entire bot-strategy stack: cordite's ~127KB Monte-Carlo
 // engine, etc.) and the replay codec are imported LAZILY at their use sites
@@ -591,7 +591,7 @@ export const loadCompleteGame = async (game_id: string): Promise<Game> => {
     // seats (bricking loads on join/exit) and leaks the previous session's
     // hands. Lobbies always assemble from the JSONB membership rows below.
     if (data.state && data.status !== GAME_STATUS.WAITING) {
-        const { deserializeGameState } = await import('../sdk/ts/wasm/engine.ts');
+        const { deserializeGameState } = await import('../../../../sdk/ts/wasm/engine.ts');
         const { hexToBytes } = await import('../common/replay/codec.ts');
         const game = deserializeGameState(hexToBytes(data.state), {
             id: data.id,
@@ -715,8 +715,8 @@ export const commitGame = async (
     let p_logs_packed: string | null = precomputedLogsHex;
     let p_logs_reset = false;
     if (p_logs_packed === null && game.logs.length > 0) {
-        const { encodeLogs } = await import('../sdk/ts/wire/logwire.ts');
-        const { bytesToBareHex } = await import('../sdk/ts/wire/bytes.ts');
+        const { encodeLogs } = await import('../../../../sdk/ts/wire/logwire.ts');
+        const { bytesToBareHex } = await import('../../../../sdk/ts/wire/bytes.ts');
         const seatOf = (pid: string | null) =>
             pid === null ? -1 : game.players.findIndex(p => p.player_id === pid);
         p_logs_packed = bytesToBareHex(encodeLogs(game.logs, seatOf));
@@ -747,7 +747,7 @@ export const commitGame = async (
     // replay lazy imports at the top of this file).
     let p_state: string | null = precomputedStateHex;
     if (p_state === null && (game.status === GAME_STATUS.PLAYING || game.status === GAME_STATUS.GAME_OVER)) {
-        const { serializeGameState } = await import('../sdk/ts/wasm/engine.ts');
+        const { serializeGameState } = await import('../../../../sdk/ts/wasm/engine.ts');
         const { bytesToHex } = await import('../common/replay/codec.ts');
         p_state = bytesToHex(serializeGameState(game));
     }
@@ -798,7 +798,7 @@ export const commitGame = async (
     if (p_logs_packed && !p_logs_reset) {
         // Scan the bare-hex log string in place — no Uint8Array allocation and
         // no codec import on this per-commit path (see logwireHexClosesRound).
-        const { logwireHexClosesRound } = await import('../sdk/ts/wire/logwire.ts');
+        const { logwireHexClosesRound } = await import('../../../../sdk/ts/wire/logwire.ts');
         closedRound = logwireHexClosesRound(p_logs_packed);
     }
 
@@ -931,7 +931,7 @@ export const finalizeEndedGame = async (game: Game): Promise<void> => {
             .from('games').select('logs_packed, game_seed').eq('id', game.id).single();
         if (data?.game_seed) dealSeed = data.game_seed;
         if (data?.logs_packed) {
-            const { decodeLogs } = await import('../sdk/ts/wire/logwire.ts');
+            const { decodeLogs } = await import('../../../../sdk/ts/wire/logwire.ts');
             const { hexToBytes } = await import('../common/replay/codec.ts');
             // The bytes go to the v6 encoder as-is (the kernel reads the action
             // stream out of them); the decoded objects are still needed for the

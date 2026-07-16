@@ -16,12 +16,16 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve, dirname, relative } from 'node:path';
 
-const SHARED = resolve(import.meta.dirname, '../../supabase/functions/_shared');
+const REPO = resolve(import.meta.dirname, '../..');
+const SHARED = join(REPO, 'supabase/functions/_shared');   // core/ common/ adapter/
+const SDK = join(REPO, 'sdk');                             // the SDK lives at repo root (A10)
 const RANK: Record<string, number> = { core: 0, sdk: 1, common: 2, adapter: 3 };
 
 function layerOf(absPath: string): string | null {
+    const inSdk = relative(SDK, absPath);
+    if (!inSdk.startsWith('..')) return 'sdk';      // repo-root sdk/{ts,c,swift}
     const rel = relative(SHARED, absPath);
-    if (rel.startsWith('..')) return null;          // outside _shared
+    if (rel.startsWith('..')) return null;          // outside the layered tiers
     const top = rel.split('/')[0];
     return top in RANK ? top : null;
 }
@@ -39,7 +43,7 @@ function walk(dir: string): string[] {
 // every quoted specifier in from '...' / import('...') / new URL('...')
 const SPEC = /(?:from|import|URL)\s*\(?\s*['"]([^'"]+)['"]/g;
 
-const files = walk(SHARED);
+const files = [...walk(SHARED), ...walk(SDK)];
 
 test('the four tiers form a one-way DAG (no file imports a higher tier)', () => {
     const violations: string[] = [];

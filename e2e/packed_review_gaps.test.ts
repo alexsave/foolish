@@ -23,10 +23,10 @@ import {
 } from '../supabase/functions/_shared/core/types.ts';
 import { personalize_game } from '../supabase/functions/_shared/common/common_utils.ts';
 import { start_game } from '../supabase/functions/_shared/common/game_lifecycle.ts';
-import { kernelLegalMoves, kernelShouldAct, serializeGameState, __setKernelSeedSource } from '../supabase/functions/_shared/sdk/ts/wasm/engine.ts';
-import { encodeAction, decodeAction, encodeActionRequest, decodeActionRequest, encodeActionResponse, decodeActionResponse, ACTION_STATUS, AwireKindName } from '../supabase/functions/_shared/sdk/ts/wire/awire.ts';
+import { kernelLegalMoves, kernelShouldAct, serializeGameState, __setKernelSeedSource } from '../sdk/ts/wasm/engine.ts';
+import { encodeAction, decodeAction, encodeActionRequest, decodeActionRequest, encodeActionResponse, decodeActionResponse, ACTION_STATUS, AwireKindName } from '../sdk/ts/wire/awire.ts';
 import { buildPackedGameBytes, gameViewFromRow } from '../supabase/functions/_shared/common/packed_game.ts';
-import { decodePackedGame, encodeGamesList, decodePackedGamesList } from '../supabase/functions/_shared/sdk/ts/wire/view.ts';
+import { decodePackedGame, encodeGamesList, decodePackedGamesList } from '../sdk/ts/wire/view.ts';
 import { bytesToHex } from '../supabase/functions/_shared/common/replay/codec.ts';
 import { validateActionWire, initClientGuards } from '../src/wasm/clientGuards.ts';
 

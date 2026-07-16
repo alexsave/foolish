@@ -1,12 +1,12 @@
 // Game-start lifecycle — the one common_utils-era helper that reaches the
 // wasm kernel. Split out of common_utils.ts so the CLIENT bundle (which
 // imports common_utils for canCover / personalize_game / clone helpers)
-// never statically pulls _shared/sdk/ts/wasm/engine.ts and its embedded wasm
+// never statically pulls sdk/ts/wasm/engine.ts and its embedded wasm
 // base64; only server code and test/offline harnesses import this module.
 
 import { Card, Game, GAME_STATUS, PLAYER_STATUS, PrivatePlayer, AnimationEvent } from '../core/types.ts';
 import { MAX_PLAYERS } from '../core/constants.ts';
-import { __setDealSeedOverride, applyKernelStateToGame, getLastDealSeedHex, kernelStartGame, PackedRunOk, runPackedStart } from '../sdk/ts/wasm/engine.ts';
+import { __setDealSeedOverride, applyKernelStateToGame, getLastDealSeedHex, kernelStartGame, PackedRunOk, runPackedStart } from '../../../../sdk/ts/wasm/engine.ts';
 import { hexToBytes } from './replay/codec.ts';
 
 // Starts the game with all the animations. The deal/flip/first-attacker

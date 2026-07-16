@@ -48,7 +48,7 @@ jobs:
           # bots.wasm.gz next to it. Injected HERE, not in committed
           # config.toml: `functions deploy` would try to deploy a memtest
           # function that has no dir at deploy time and fail the deploy.
-          printf '\n[functions.memtest]\nstatic_files = [ "./functions/_shared/sdk/ts/wasm/bots.wasm.gz" ]\n' >> supabase/config.toml
+          printf '\n[functions.memtest]\nstatic_files = [ "../sdk/ts/wasm/bots.wasm.gz" ]\n' >> supabase/config.toml
 
       - name: Start local stack (db + edge runtime)
         # memtest is DB-free, but `supabase start` still applies migrations and

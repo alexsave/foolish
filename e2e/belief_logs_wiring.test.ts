@@ -32,10 +32,10 @@ import assert from 'node:assert/strict';
 import { applySchema, resetDb, seedGame, uuid, pgPool } from './harness.ts';
 import { executeWithGameLock } from '../supabase/functions/_shared/adapter/utils.ts';
 import { start_game } from '../supabase/functions/_shared/common/game_lifecycle.ts';
-import { __setBotSeedSource } from '../supabase/functions/_shared/sdk/ts/wasm/bots.ts';
-import { __setKernelSeedSource } from '../supabase/functions/_shared/sdk/ts/wasm/engine.ts';
+import { __setBotSeedSource } from '../sdk/ts/wasm/bots.ts';
+import { __setKernelSeedSource } from '../sdk/ts/wasm/engine.ts';
 import { AnimationEvent, Game } from '../supabase/functions/_shared/core/types.ts';
-import { bytesToBareHex } from '../supabase/functions/_shared/sdk/ts/wire/bytes.ts';
+import { bytesToBareHex } from '../sdk/ts/wire/bytes.ts';
 
 // The bytes the loop hands the kernel, captured per drive.
 // BARE hex (no \x) — matches how logs_packed is stored, so a prefix compare works.
@@ -47,8 +47,8 @@ const fed: string[] = [];
 // imported, since that binds wasmBotDrive at load — hence the dynamic imports
 // (tsx transforms these files to CJS, where top-level await is unavailable).
 async function wireLoop() {
-  const realBots = await import('../supabase/functions/_shared/sdk/ts/wasm/bots.ts');
-  mock.module('../supabase/functions/_shared/sdk/ts/wasm/bots.ts', {
+  const realBots = await import('../sdk/ts/wasm/bots.ts');
+  mock.module('../sdk/ts/wasm/bots.ts', {
     namedExports: {
       ...realBots,
       wasmBotDrive: (game: Game, opts: Parameters<typeof realBots.wasmBotDrive>[1]) => {
@@ -77,7 +77,7 @@ after(() => { __setKernelSeedSource(null); __setBotSeedSource(null); });
 async function persistedLogCount(gameId: string): Promise<number> {
   const row = (await pgPool.query('SELECT logs_packed FROM games WHERE id=$1', [gameId])).rows[0];
   if (!row?.logs_packed) return 0;
-  const { decodeLogs } = await import('../supabase/functions/_shared/sdk/ts/wire/logwire.ts');
+  const { decodeLogs } = await import('../sdk/ts/wire/logwire.ts');
   const { hexToBytes } = await import('../supabase/functions/_shared/common/replay/codec.ts');
   const players = (await pgPool.query('SELECT player_id FROM player_hands WHERE game_id=$1', [gameId])).rows
     .map((r: { player_id: string }) => ({ player_id: r.player_id }));

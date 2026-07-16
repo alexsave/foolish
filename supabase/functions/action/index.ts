@@ -7,7 +7,7 @@ import { handleGood } from "../_shared/common/actions/good.ts";
 import { verify_player_in_game } from "../_shared/common/common_utils.ts";
 import { corsHeaders } from "../_shared/adapter/cors.ts";
 import { GAME_STATUS } from "../_shared/core/types.ts";
-import { ACTION_STATUS, decodeActionRequest, encodeActionResponse } from "../_shared/sdk/ts/wire/awire.ts";
+import { ACTION_STATUS, decodeActionRequest, encodeActionResponse } from "../../../sdk/ts/wire/awire.ts";
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 

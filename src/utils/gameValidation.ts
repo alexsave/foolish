@@ -17,7 +17,7 @@
 // clientGuards falls back to a synchronous instantiate on first use.
 
 import { Card, PersonalGame } from '@shared/core/types.ts';
-import { kernelUnambiguousCover } from '@shared/sdk/ts/wasm/bots.ts';
+import { kernelUnambiguousCover } from '@sdk/ts/wasm/bots.ts';
 import * as guards from '../wasm/clientGuards.ts';
 import { rejectMessage } from '../wasm/rejectMessages';
 

@@ -7,10 +7,10 @@
 // --test. Set SC_SEED to vary the game; skipped in CI.
 import { test } from 'node:test';
 import { start_game_packed } from '../supabase/functions/_shared/common/game_lifecycle.ts';
-import { runPackedGameAction, applyKernelStateToGame, __setDealSeedOverride } from '../supabase/functions/_shared/sdk/ts/wasm/engine.ts';
-import { encodeAction } from '../supabase/functions/_shared/sdk/ts/wire/awire.ts';
-import { logsFromKernelExport } from '../supabase/functions/_shared/sdk/ts/wire/logwire.ts';
-import { wasmChooseMoveDirect, __ensureBots, STRAT } from '../supabase/functions/_shared/sdk/ts/wasm/bots.ts';
+import { runPackedGameAction, applyKernelStateToGame, __setDealSeedOverride } from '../sdk/ts/wasm/engine.ts';
+import { encodeAction } from '../sdk/ts/wire/awire.ts';
+import { logsFromKernelExport } from '../sdk/ts/wire/logwire.ts';
+import { wasmChooseMoveDirect, __ensureBots, STRAT } from '../sdk/ts/wasm/bots.ts';
 import { game_done } from '../supabase/functions/_shared/common/common_utils.ts';
 import { PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY } from '../supabase/functions/_shared/core/types.ts';
 

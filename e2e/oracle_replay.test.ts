@@ -26,7 +26,7 @@ import { readFileSync } from 'node:fs';
 
 import { decodeReplay } from '../supabase/functions/_shared/common/replay/decode.ts';
 import { bytesToBigint } from '../supabase/functions/_shared/common/replay/codec.ts';
-import { gunzip } from '../supabase/functions/_shared/sdk/ts/wasm/gunzip.ts';
+import { gunzip } from '../sdk/ts/wasm/gunzip.ts';
 import { buildReplayFrames } from '../src/replay/frames.ts';
 import { buildOracleJob, findDecisionIndex } from '../src/oracle/replayOracleInput.ts';
 import { OracleInstance } from '../src/oracle/oracleBridge.ts';

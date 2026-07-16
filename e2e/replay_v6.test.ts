@@ -32,9 +32,9 @@ import {
 import { shouldBotActCore, processBotAction } from '../supabase/functions/_shared/common/pure_bot_actions.ts';
 import { calculateLegalMoves } from '../supabase/functions/_shared/common/bot_strategy.ts';
 import { decodeReplay } from '../supabase/functions/_shared/common/replay/decode.ts';
-import { kernelReplayEncodeV6FromGame } from '../supabase/functions/_shared/sdk/ts/wasm/bots.ts';
+import { kernelReplayEncodeV6FromGame } from '../sdk/ts/wasm/bots.ts';
 import { bytesToBigint } from '../supabase/functions/_shared/common/replay/codec.ts';
-import { __setDealSeedOverride, __LOG_TYPE_TO_INT } from '../supabase/functions/_shared/sdk/ts/wasm/engine.ts';
+import { __setDealSeedOverride, __LOG_TYPE_TO_INT } from '../sdk/ts/wasm/engine.ts';
 import { buildReplayFrames } from '../src/replay/frames.ts';
 import { encodeLogsWire } from '../src/oracle/logsWire.ts';
 

@@ -1,6 +1,6 @@
 import { Card, Game, AnimationEvent, GAME_STATUS } from '../../core/types.ts';
 import { verify_card_array } from '../common_utils.ts';
-import { kernelAttack, kernelValidateAttack } from '../../sdk/ts/wasm/engine.ts';
+import { kernelAttack, kernelValidateAttack } from '../../../../../sdk/ts/wasm/engine.ts';
 
 // The attack rules live in the C kernel (cnitro/src/game.c handle_attack),
 // compiled to WASM. This file keeps only the payload-shape guards (malformed

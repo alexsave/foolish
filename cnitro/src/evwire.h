@@ -1,6 +1,6 @@
 // Event wire ("evwire" v1) — one recipient's animation sequence as packed
 // bytes, replacing the JSON AnimationEvent stream. This is the C port of the
-// TS buildEvents (supabase/functions/_shared/sdk/ts/wasm/engine.ts) fused with the
+// TS buildEvents (sdk/ts/wasm/engine.ts) fused with the
 // per-recipient masking that convertToPersonal/PublicAnimationEvents did:
 // the same engine hook snapshots + kernel logs drive it, and every event's
 // game_state crosses as a viewer-masked put_state payload (view.c).

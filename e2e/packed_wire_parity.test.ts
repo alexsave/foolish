@@ -22,7 +22,7 @@ import {
 import {
   serializeGameState, runPackedAction, kernelLegalMoves, kernelShouldAct,
   __setKernelSeedSource,
-} from '../supabase/functions/_shared/sdk/ts/wasm/engine.ts';
+} from '../sdk/ts/wasm/engine.ts';
 import { start_game } from '../supabase/functions/_shared/common/game_lifecycle.ts';
 import { game_done } from '../supabase/functions/_shared/common/common_utils.ts';
 import { handleAttack } from '../supabase/functions/_shared/common/actions/attack.ts';
@@ -30,10 +30,10 @@ import { handleCover } from '../supabase/functions/_shared/common/actions/cover.
 import { handlePass } from '../supabase/functions/_shared/common/actions/pass.ts';
 import { handlePickup } from '../supabase/functions/_shared/common/actions/pickup.ts';
 import { handleGood } from '../supabase/functions/_shared/common/actions/good.ts';
-import { encodeAction, AwireKindName } from '../supabase/functions/_shared/sdk/ts/wire/awire.ts';
-import { encodeEventWire, decodeEventWire } from '../supabase/functions/_shared/sdk/ts/wire/evwire.ts';
-import { kernelEventsFromPacked } from '../supabase/functions/_shared/sdk/ts/wasm/bots.ts';
-import { encodeLogs, logsFromKernelExport, decodeLogs } from '../supabase/functions/_shared/sdk/ts/wire/logwire.ts';
+import { encodeAction, AwireKindName } from '../sdk/ts/wire/awire.ts';
+import { encodeEventWire, decodeEventWire } from '../sdk/ts/wire/evwire.ts';
+import { kernelEventsFromPacked } from '../sdk/ts/wasm/bots.ts';
+import { encodeLogs, logsFromKernelExport, decodeLogs } from '../sdk/ts/wire/logwire.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 

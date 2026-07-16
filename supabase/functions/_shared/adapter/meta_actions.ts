@@ -12,10 +12,10 @@ import { cloneGame, verify_player_in_game } from '../common/common_utils.ts';
 import { start_game, start_game_packed } from '../common/game_lifecycle.ts';
 import { MAX_PLAYERS } from '../core/constants.ts';
 import { handleRearrangeHand as applyRearrangeHand } from '../common/actions/rearrange.ts';
-import { runPackedRearrange, PackedRunOk } from '../sdk/ts/wasm/engine.ts';
+import { runPackedRearrange, PackedRunOk } from '../../../../sdk/ts/wasm/engine.ts';
 import { bytesToHex } from '../common/replay/codec.ts';
-import { bytesToBareHex } from '../sdk/ts/wire/bytes.ts';
-import { logsFromKernelExport } from '../sdk/ts/wire/logwire.ts';
+import { bytesToBareHex } from '../../../../sdk/ts/wire/bytes.ts';
+import { logsFromKernelExport } from '../../../../sdk/ts/wire/logwire.ts';
 import { createClient } from 'jsr:@supabase/supabase-js';
 
 // Kernel run -> the commit/broadcast products executeWithGameLock consumes.

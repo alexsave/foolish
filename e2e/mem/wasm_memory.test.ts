@@ -35,14 +35,14 @@ if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {};
 // shared with the browser, which has no node:zlib — so it keeps the original
 // single-line-literal guard.
 test('bots.wasm ships as a small gzip static asset (not a base64 embed)', () => {
-    const buf = readFileSync(resolve('supabase/functions/_shared/sdk/ts/wasm/bots.wasm.gz'));
+    const buf = readFileSync(resolve('sdk/ts/wasm/bots.wasm.gz'));
     assert.equal(buf[0], 0x1f, 'bots.wasm.gz is not gzip');
     assert.equal(buf[1], 0x8b, 'bots.wasm.gz is not gzip');
     assert.ok(buf.length < 80 * 1024, `bots.wasm.gz is ${(buf.length / 1024) | 0}KB; unexpectedly large`);
 });
 
 test('rules embed is a single-line literal (no parse-time concat garbage)', () => {
-    const rel = 'supabase/functions/_shared/sdk/ts/wasm/rules_wasm.ts';
+    const rel = 'sdk/ts/wasm/rules_wasm.ts';
     const src = readFileSync(resolve(rel), 'utf8');
     assert.ok(!/'\s*\+/.test(src), `${rel} is chunk-concatenated; regenerate with cnitro/wasm/embed.mjs`);
     assert.ok(src.trimEnd().split('\n').length <= 12, `${rel} is not a single-line embed`);
@@ -82,7 +82,7 @@ function memLimits(wasm: Uint8Array): { min: number; max: number | null } {
 }
 
 test('rules.wasm linear memory is pinned flat at 3 pages (R0 pin + R1 overlay + R4 stack)', () => {
-    const wasm = embedWasmBytes('supabase/functions/_shared/sdk/ts/wasm/rules_wasm.ts');
+    const wasm = embedWasmBytes('sdk/ts/wasm/rules_wasm.ts');
     const { min, max } = memLimits(wasm);
     assert.equal(min, 3, `rules.wasm initial memory is ${min} pages (${min * PAGE}B); expected 3 — a static buffer grew, or the overlay/stack regressed`);
     assert.equal(max, 3, `rules.wasm max memory is ${max} pages; expected a hard 3-page pin (--initial-memory == --max-memory)`);
@@ -101,7 +101,7 @@ test('guards.wasm linear memory is pinned flat at 1 page', () => {
     // guards.wasm ships as a gzip embed like rules; assert its 1-page L1 pin is
     // intact (it shares game.c/view.c/awire.c with rules, so a shared-flag leak
     // that regrew it would show here).
-    const wasm = embedWasmBytes('supabase/functions/_shared/sdk/ts/wasm/guards_wasm.ts');
+    const wasm = embedWasmBytes('sdk/ts/wasm/guards_wasm.ts');
     const { min, max } = memLimits(wasm);
     assert.equal(min, 1, `guards.wasm initial memory is ${min} pages; expected the 1-page L1 pin`);
     assert.equal(max, 1, `guards.wasm max memory is ${max} pages; expected a hard 1-page pin`);
@@ -118,7 +118,7 @@ test("bots.wasm declared INITIAL memory is 14 pages (13 + LEAFBOOK read-only dat
     // book = 34.6 KiB, well under the 64 KiB L1 page (docs/L1_SPEND_PLAN.md §6). A
     // regression back UP from 14 (a new static buffer, or the stack creeping up)
     // trips this. Read straight from the shipped gz artifact.
-    const wasm = new Uint8Array(gunzipSync(readFileSync(resolve('supabase/functions/_shared/sdk/ts/wasm/bots.wasm.gz'))));
+    const wasm = new Uint8Array(gunzipSync(readFileSync(resolve('sdk/ts/wasm/bots.wasm.gz'))));
     const { min } = memLimits(wasm);
     assert.equal(min, 14, `bots.wasm initial memory is ${min} pages (${min * PAGE}B); expected 14 (13 + the LEAFBOOK's ~2.6 KiB static data)`);
 });
@@ -128,7 +128,7 @@ test('loading the bot kernel (read + gunzip + instantiate) fits a 64MB-old-space
     // asset is read, inflated and instantiated at runtime. Do exactly that (the
     // real load cost) in a node capped far below the edge worker budget. Pure
     // built-ins, no tsx — so it measures the wasm cost, not transpile/interop.
-    const gzPath = resolve('supabase/functions/_shared/sdk/ts/wasm/bots.wasm.gz');
+    const gzPath = resolve('sdk/ts/wasm/bots.wasm.gz');
     execFileSync(process.execPath, [
         '--max-old-space-size=64',
         '-e',

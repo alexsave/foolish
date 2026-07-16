@@ -6,7 +6,7 @@
 //
 // The families never coexist because the wasm instance is single-threaded and
 // the two top-level export groups never nest (verified against the TS bridge,
-// supabase/functions/_shared/sdk/ts/wasm/engine.ts):
+// sdk/ts/wasm/engine.ts):
 //
 //   ACTION family — live during an action / marshal / menu export:
 //     g_moves (LegalMoves)  the legal-move menu
