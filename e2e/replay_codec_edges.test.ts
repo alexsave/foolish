@@ -11,10 +11,10 @@ import assert from 'node:assert/strict';
 import {
   bytesToHex, hexToBytes, classifyPathSegment, gameToUrl, urlToGame,
   URL_PREFIX, codeToGame,
-} from '../supabase/functions/_shared/common/replay/codec.ts';
+} from '../server/api/common/replay/codec.ts';
 import {
   encodeExtras, decodeExtras, splitReplayCode, joinReplayCode,
-} from '../supabase/functions/_shared/common/replay/extras.ts';
+} from '../server/api/common/replay/extras.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 

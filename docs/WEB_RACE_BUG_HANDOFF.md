@@ -17,7 +17,7 @@ player's **attack (throw-in)** race each other, the attacker's client plays a
 ## 2. Why this is almost certainly real (mechanism, with anchors)
 
 The server serializes all mutations through an optimistic-concurrency commit
-(`commit_game`, CAS on `games.version` — see `supabase/migrations/`,
+(`commit_game`, CAS on `games.version` — see `server/impls/supabase/migrations/`,
 README "How the game runs"). But **serialization is not intent-preservation**:
 
 1. Attacker's client POSTs `attack(9♣)` to the `action` edge function
@@ -32,7 +32,7 @@ README "How the game runs"). But **serialization is not intent-preservation**:
 4. The in-flight `attack` request now executes against the **post-pickup
    state**. Validation is performed against the *current* state only —
    `validateAttack` → `kernelValidateAttack(game, …)`
-   (`supabase/functions/_shared/common/actions/attack.ts:13-19`); **nothing in the
+   (`server/api/common/actions/attack.ts:13-19`); **nothing in the
    request says which state the player composed the move against** (the
    `version` in `packed_action.ts` is the response/cache version, not a
    client-intent field).
@@ -88,9 +88,9 @@ the same guard.
 **Wire a client-intent round counter through the action path:**
 
 1. Add `intent_round` (u8/u16) to the packed action request
-   (`supabase/functions/_shared/packed_action.ts` encode + decode; bump the
+   (`server/impls/supabase/functions/_shared/packed_action.ts` encode + decode; bump the
    packed format version — there is a `fmt` byte in the response already,
-   `supabase/functions/action/index.ts:17`; mirror versioning on the request).
+   `server/impls/supabase/functions/action/index.ts:17`; mirror versioning on the request).
    The client sets it from its current authoritative state's completed-round
    count. Add the same counter to the game state the client tracks (derivable:
    count of round closures — discard/pickup events — in the animation feed;

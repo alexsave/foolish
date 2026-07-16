@@ -5,7 +5,7 @@ import { Lobby } from './Lobby';
 import { GameDisplay } from './GameDisplay';
 import { WinScreen } from './WinScreen';
 import { GameLoadingPlaceholder } from './GameLoadingPlaceholder';
-import { GAME_STATUS } from '@shared/core/types.ts';
+import { GAME_STATUS } from '@api/core/types.ts';
 import { initClientGuards, guardsReady } from '../wasm/clientGuards';
 
 export const GameView = () => {

@@ -218,7 +218,7 @@ floor/void inference) was cut for exactly that reason.
 
 ## Production TS port
 
-`supabase/functions/_shared/common/strategies/semtex_strategy.ts` +
+`server/api/common/strategies/semtex_strategy.ts` +
 `SemtexOpts` hooks in `cordite_core.ts` (null opts ⇒ the engine is
 bit-for-bit cordite; clean-tree fingerprint reproduced). Registered as
 `semtex` / `semtex_max` in `bot_strategy.ts`, seeded in `seed.sql`

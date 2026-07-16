@@ -1,4 +1,4 @@
-import { Card } from '@shared/core/types.ts';
+import { Card } from '@api/core/types.ts';
 import { getCardKey } from '../utils/animationUtils';
 
 interface AnimEvent {

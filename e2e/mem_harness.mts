@@ -1,9 +1,9 @@
 // Ad-hoc harness (not part of the suite): plays full bot-vs-bot games through
 // the production path (processBotAction -> registry -> bots.wasm) and reports
 // process RSS growth, to verify the endgame solvers' wasm heap footprint.
-import { start_game, game_done } from '../supabase/functions/_shared/common/common_utils.ts';
-import { processBotAction, shouldBotActCore } from '../supabase/functions/_shared/common/pure_bot_actions.ts';
-import { Game, PrivatePlayer, PLAYER_STATUS, GAME_STATUS } from '../supabase/functions/_shared/core/types.ts';
+import { start_game, game_done } from '../server/api/common/common_utils.ts';
+import { processBotAction, shouldBotActCore } from '../server/api/common/pure_bot_actions.ts';
+import { Game, PrivatePlayer, PLAYER_STATUS, GAME_STATUS } from '../server/api/core/types.ts';
 
 const rssMB = () => Math.round(process.memoryUsage().rss / 1048576);
 

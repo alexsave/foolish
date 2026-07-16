@@ -17,16 +17,16 @@
 
 import './harness.ts';
 import { applySchema, resetDb, seedGame, uuid, pgPool } from './harness.ts';
-import { executeWithGameLock } from '../supabase/functions/_shared/adapter/utils.ts';
-import { start_game } from '../supabase/functions/_shared/common/game_lifecycle.ts';
-import { calculateLegalMoves } from '../supabase/functions/_shared/common/bot_strategy.ts';
-import { processBotActionPacked, shouldBotActCore } from '../supabase/functions/_shared/common/pure_bot_actions.ts';
+import { executeWithGameLock } from '../server/impls/supabase/functions/_shared/adapter/utils.ts';
+import { start_game } from '../server/api/common/game_lifecycle.ts';
+import { calculateLegalMoves } from '../server/api/common/bot_strategy.ts';
+import { processBotActionPacked, shouldBotActCore } from '../server/api/common/pure_bot_actions.ts';
 import { __setBotSeedSource, __botsWasmMB, __botsWasmBytes } from '../sdk/ts/wasm/bots.ts';
 import { __setKernelSeedSource, __kernelWasmMB, __kernelWasmBytes } from '../sdk/ts/wasm/engine.ts';
-import { bytesToHex } from '../supabase/functions/_shared/common/replay/codec.ts';
+import { bytesToHex } from '../server/api/common/replay/codec.ts';
 import { bytesToBareHex } from '../sdk/ts/wire/bytes.ts';
 import { logsFromKernelExport } from '../sdk/ts/wire/logwire.ts';
-import { AnimationEvent, Game, GAME_STATUS, PLAYER_STATUS } from '../supabase/functions/_shared/core/types.ts';
+import { AnimationEvent, Game, GAME_STATUS, PLAYER_STATUS } from '../server/api/core/types.ts';
 
 const say = (l: string) => process.stdout.write(l + '\n'); // harness silences console.log
 const JSON_OUT = process.env.BENCH_JSON === '1';
@@ -105,7 +105,7 @@ async function benchStrategy(strategy: string): Promise<{ strategy: string; n: n
 
 async function main() {
   try {
-    const u = await import('../supabase/functions/_shared/adapter/utils.ts');
+    const u = await import('../server/impls/supabase/functions/_shared/adapter/utils.ts');
     if (typeof (u as Record<string, unknown>).loadSessionLogBytes === 'function') {
       loadSessionLogBytes = (u as Record<string, unknown>).loadSessionLogBytes as typeof loadSessionLogBytes;
     }

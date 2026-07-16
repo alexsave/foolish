@@ -17,13 +17,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { Game, GAME_STATUS, PLAYER_STATUS, PrivatePlayer, StrategyKey } from '../supabase/functions/_shared/core/types.ts';
-import { start_game } from '../supabase/functions/_shared/common/game_lifecycle.ts';
+import { Game, GAME_STATUS, PLAYER_STATUS, PrivatePlayer, StrategyKey } from '../server/api/core/types.ts';
+import { start_game } from '../server/api/common/game_lifecycle.ts';
 import { kernelLegalMoves, serializeGameState } from '../sdk/ts/wasm/engine.ts';
-import { ReplayInput } from '../supabase/functions/_shared/common/replay/core.ts';
-import { encodeReplay } from '../supabase/functions/_shared/common/replay/encode.ts';
-import { decodeReplay } from '../supabase/functions/_shared/common/replay/decode.ts';
-import { codeToGame } from '../supabase/functions/_shared/common/replay/codec.ts';
+import { ReplayInput } from '../server/api/common/replay/core.ts';
+import { encodeReplay } from '../server/api/common/replay/encode.ts';
+import { decodeReplay } from '../server/api/common/replay/decode.ts';
+import { codeToGame } from '../server/api/common/replay/codec.ts';
 import { TUTORIAL_MOVES_CODE } from '../src/components/tutorialGame.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; console.error = () => {}; console.info = () => {}; }

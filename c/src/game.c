@@ -1,4 +1,4 @@
-// Game engine — direct port of supabase/functions/_shared/{common_utils,
+// Game engine — direct port of server/impls/supabase/functions/_shared/{common_utils,
 // actions/*}. We keep the same semantics around defender rotation, draw
 // order, elimination order, good_players reset, etc.
 //

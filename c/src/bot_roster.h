@@ -25,7 +25,7 @@ typedef struct {
     int         strat;      // STRAT_* brain id (strategy.h)
     const char *knobs;      // "CD_BUDGET=prod,CD_RACE=1,CD_RACE_C=75", or ""
     uint8_t     uses_logs;  // belief bot: hydrate the session log before choosing
-    uint8_t     seeded;     // seeded as a live bot on the site (supabase/seed.sql)
+    uint8_t     seeded;     // seeded as a live bot on the site (server/impls/supabase/seed.sql)
     uint8_t     offline;    // shown in the offline picker (docs/IOS_BOT_NAMING.md §1)
     uint8_t     tier;       // strength order, 1 = weakest; 0 = unranked
 } BotRosterEntry;

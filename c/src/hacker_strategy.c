@@ -1,5 +1,5 @@
 // Hacker strategy — port of HackerStrategy in
-// supabase/functions/_shared/common/strategies/hacker_strategy.ts.
+// server/api/common/strategies/hacker_strategy.ts.
 //
 // Perfect-information "cheating" strategy: it inspects every player's hand
 // (defender's hand for attack scoring, all other hands for cover safety).

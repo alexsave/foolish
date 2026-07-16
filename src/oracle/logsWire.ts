@@ -8,8 +8,8 @@
  * (mirrors the live bot cap). Encode ONCE on the main thread; ship to workers.
  * ========================================================================== */
 
-import { SeatLog } from '@shared/common/replay/core.ts';
-import { LOG_TYPE } from '@shared/core/types.ts';
+import { SeatLog } from '@api/common/replay/core.ts';
+import { LOG_TYPE } from '@api/core/types.ts';
 import { __LOG_TYPE_TO_INT, __wireLogCard } from '@sdk/ts/wasm/engine.ts';
 
 const MAX_KERNEL_LOGS = 512;   // MAX_LOGS (game.h)

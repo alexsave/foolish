@@ -24,13 +24,13 @@ serve(async (req: Request) => {
     };
     const steps = (url.searchParams.get('steps') ?? 'types,constants,engine,common_utils,bots,bot_strategy,pure_bot_actions').split(',');
     const MODS: Record<string, string> = {
-        types: '../_shared/core/types.ts',
-        constants: '../_shared/core/constants.ts',
-        engine: '../sdk/ts/wasm/engine.ts',
-        common_utils: '../_shared/common/common_utils.ts',
-        bots: '../sdk/ts/wasm/bots.ts',
-        bot_strategy: '../_shared/common/bot_strategy.ts',
-        pure_bot_actions: '../_shared/common/pure_bot_actions.ts',
+        types: '../../../../api/core/types.ts',
+        constants: '../../../../api/core/constants.ts',
+        engine: '../../../../../sdk/ts/wasm/engine.ts',
+        common_utils: '../../../../api/common/common_utils.ts',
+        bots: '../../../../../sdk/ts/wasm/bots.ts',
+        bot_strategy: '../../../../api/common/bot_strategy.ts',
+        pure_bot_actions: '../../../../api/common/pure_bot_actions.ts',
     };
     console.log(`[memtest] start ${mem()}`);
     for (const s of steps) {
@@ -40,11 +40,11 @@ serve(async (req: Request) => {
         await import(path);
         console.log(`[memtest] imported ${s} in ${Date.now() - ts}ms ${mem()}`);
     }
-    const cu = await import('../_shared/common/common_utils.ts');
+    const cu = await import('../../../../api/common/common_utils.ts');
     // start_game split out of common_utils (client-bundle hygiene) — see
     // _shared/common/game_lifecycle.ts.
-    const gl = await import('../_shared/common/game_lifecycle.ts');
-    const pba = await import('../_shared/common/pure_bot_actions.ts');
+    const gl = await import('../../../../api/common/game_lifecycle.ts');
+    const pba = await import('../../../../api/common/pure_bot_actions.ts');
     console.log(`[memtest] import done in ${Date.now() - t0}ms ${mem()}`);
 
     for (let gi = 0; gi < games; gi++) {

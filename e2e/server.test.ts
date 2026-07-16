@@ -8,9 +8,9 @@ import { test, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { applySchema, resetDb, seedGame, uuid, pgPool, broadcastLog } from './harness.ts';
-import { executeWithGameLock } from '../supabase/functions/_shared/adapter/utils.ts';
-import { start_game } from '../supabase/functions/_shared/common/game_lifecycle.ts';
-import { AnimationEvent } from '../supabase/functions/_shared/core/types.ts';
+import { executeWithGameLock } from '../server/impls/supabase/functions/_shared/adapter/utils.ts';
+import { start_game } from '../server/api/common/game_lifecycle.ts';
+import { AnimationEvent } from '../server/api/core/types.ts';
 import { legalMovesFor, applyPlayerMove, checkCardConservation, PlayerMove } from './dispatch.ts';
 
 const rand = (n: number) => Math.floor(Math.random() * n);
@@ -19,7 +19,7 @@ const pick = <T>(a: T[]): T => a[rand(a.length)];
 async function loadGame(gameId: string) {
     // use the real loader by going through executeWithGameLock would mutate; for a
     // read we just enumerate moves from a fresh load via the adapter-backed path.
-    const { loadCompleteGame } = await import('../supabase/functions/_shared/adapter/utils.ts');
+    const { loadCompleteGame } = await import('../server/impls/supabase/functions/_shared/adapter/utils.ts');
     return loadCompleteGame(gameId);
 }
 

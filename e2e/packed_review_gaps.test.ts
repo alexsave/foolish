@@ -16,18 +16,18 @@ import './harness.ts';
 import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { applySchema, resetDb, seedGame, uuid, pgPool } from './harness.ts';
-import { executeWithGameLock, loadCompleteGame } from '../supabase/functions/_shared/adapter/utils.ts';
-import { handleMetaAction } from '../supabase/functions/_shared/adapter/meta_actions.ts';
+import { executeWithGameLock, loadCompleteGame } from '../server/impls/supabase/functions/_shared/adapter/utils.ts';
+import { handleMetaAction } from '../server/impls/supabase/functions/_shared/adapter/meta_actions.ts';
 import {
   Game, PersonalGame, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY, PrivatePlayer,
-} from '../supabase/functions/_shared/core/types.ts';
-import { personalize_game } from '../supabase/functions/_shared/common/common_utils.ts';
-import { start_game } from '../supabase/functions/_shared/common/game_lifecycle.ts';
+} from '../server/api/core/types.ts';
+import { personalize_game } from '../server/api/common/common_utils.ts';
+import { start_game } from '../server/api/common/game_lifecycle.ts';
 import { kernelLegalMoves, kernelShouldAct, serializeGameState, __setKernelSeedSource } from '../sdk/ts/wasm/engine.ts';
 import { encodeAction, decodeAction, encodeActionRequest, decodeActionRequest, encodeActionResponse, decodeActionResponse, ACTION_STATUS, AwireKindName } from '../sdk/ts/wire/awire.ts';
-import { buildPackedGameBytes, gameViewFromRow } from '../supabase/functions/_shared/common/packed_game.ts';
+import { buildPackedGameBytes, gameViewFromRow } from '../server/api/common/packed_game.ts';
 import { decodePackedGame, encodeGamesList, decodePackedGamesList } from '../sdk/ts/wire/view.ts';
-import { bytesToHex } from '../supabase/functions/_shared/common/replay/codec.ts';
+import { bytesToHex } from '../server/api/common/replay/codec.ts';
 import { validateActionWire, initClientGuards } from '../src/wasm/clientGuards.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
@@ -118,11 +118,11 @@ test('validateActionWire: legal enumerated moves gate 0, illegal reject, malform
       // Advance the game along a random legal move via the JS path.
       if (menu.length > 0) {
         const pick = menu[ri(menu.length)];
-        const { handleAttack } = await import('../supabase/functions/_shared/common/actions/attack.ts');
-        const { handleCover } = await import('../supabase/functions/_shared/common/actions/cover.ts');
-        const { handlePass } = await import('../supabase/functions/_shared/common/actions/pass.ts');
-        const { handlePickup } = await import('../supabase/functions/_shared/common/actions/pickup.ts');
-        const { handleGood } = await import('../supabase/functions/_shared/common/actions/good.ts');
+        const { handleAttack } = await import('../server/api/common/actions/attack.ts');
+        const { handleCover } = await import('../server/api/common/actions/cover.ts');
+        const { handlePass } = await import('../server/api/common/actions/pass.ts');
+        const { handlePickup } = await import('../server/api/common/actions/pickup.ts');
+        const { handleGood } = await import('../server/api/common/actions/good.ts');
         try {
           switch (pick.type) {
             case 'attack': handleAttack(game, actor.player_id, pick.cards!); break;

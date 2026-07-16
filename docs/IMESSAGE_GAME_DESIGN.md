@@ -51,8 +51,8 @@ everywhere (see `docs/ARCHITECTURE_AS_A_PATTERN.md`):
 | Rules kernel (deal, legality, apply, views) | `c/src/game.c`, `legal.c`, `view.c` | The complete game engine, compiled to wasm today; compiles natively for iOS tomorrow |
 | **Seeded deals** | `c/src/game.h:139-151` — `game_set_deal_seed_bytes(seed,len)`: ChaCha shuffle over the full 52!/36! space, whole game reproducible from the seed; state records `deterministic_deck` | A 16-byte seed replaces the entire hidden deal — the foundation of the payload format |
 | Durable state blob v2 | `c/wasm/wasm_api.c:316-327` — `wasm_state_serialize/deserialize` (carries the deal seed) | Not used in the payload (see §3) but useful for local caching |
-| Replay codec v5 (finished games → short URL) | `c/src/replay.{h,c}` (C is canonical; frozen wire format), TS bridge `supabase/functions/_shared/common/replay/` | The game-over artifact: a finished iMessage game becomes a normal `foolish.cards/<code>` replay, Oracle-analyzable |
-| Packed action wire format | `supabase/functions/_shared/packed_action.ts`, `c/wasm/wire.h` | The per-move byte encoding the payload reuses verbatim |
+| Replay codec v5 (finished games → short URL) | `c/src/replay.{h,c}` (C is canonical; frozen wire format), TS bridge `server/api/common/replay/` | The game-over artifact: a finished iMessage game becomes a normal `foolish.cards/<code>` replay, Oracle-analyzable |
+| Packed action wire format | `server/impls/supabase/functions/_shared/packed_action.ts`, `c/wasm/wire.h` | The per-move byte encoding the payload reuses verbatim |
 | Kernel-in-browser bridge | `src/wasm/clientGuards.ts`, `sdk/ts/wasm/engine.ts` | The web client already loads the C kernel as wasm — the `/m/` fallback route rides this |
 | Full export list of the wasm rules build | `c/Makefile:331-353` | Shows every kernel entry point already exposed (`wasm_start_game`, `wasm_apply_action`, `wasm_legal_moves`, `wasm_replay_encode`, …) |
 
@@ -201,7 +201,7 @@ protocol-layer data, not kernel actions — the kernel replay never sees it.
 > for the card-byte conventions it cites.
 
 Reuse the existing packed-action wire encoding — do **not** invent a new one.
-The canonical definitions are `supabase/functions/_shared/packed_action.ts`
+The canonical definitions are `server/impls/supabase/functions/_shared/packed_action.ts`
 (TS) and `c/wasm/wire.h` (C): action type byte + 1-byte wire cards
 (`0..51 = suit*13+(value-1)`, `0xFE` hidden, `0xFF` none — `replay.h:31-36`
 documents the same card byte). `msg_wire.c` stores each action as
@@ -214,7 +214,7 @@ implementer MUST read that file first and mirror it, not approximate it.
 ### 4.3 Text encoding & URL
 
 `bytes → base32` using the codec's existing base32 (same alphabet/util as
-`supabase/functions/_shared/common/replay/codec.ts` — QR-alphanumeric-safe, already
+`server/api/common/replay/codec.ts` — QR-alphanumeric-safe, already
 proven in URLs). URL shape:
 
 ```

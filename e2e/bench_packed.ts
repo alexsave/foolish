@@ -13,22 +13,22 @@
 //   BENCH_MOVES=20000 BENCH_PLAYERS=4 node --import tsx e2e/bench_packed.ts
 import {
   Game, PrivatePlayer, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY,
-} from '../supabase/functions/_shared/core/types.ts';
-import { start_game } from '../supabase/functions/_shared/common/game_lifecycle.ts';
+} from '../server/api/core/types.ts';
+import { start_game } from '../server/api/common/game_lifecycle.ts';
 import {
   kernelLegalMoves, kernelShouldAct, serializeGameState, runPackedAction,
   __setKernelSeedSource,
 } from '../sdk/ts/wasm/engine.ts';
-import { handleAttack } from '../supabase/functions/_shared/common/actions/attack.ts';
-import { handleCover } from '../supabase/functions/_shared/common/actions/cover.ts';
-import { handlePass } from '../supabase/functions/_shared/common/actions/pass.ts';
-import { handlePickup } from '../supabase/functions/_shared/common/actions/pickup.ts';
-import { handleGood } from '../supabase/functions/_shared/common/actions/good.ts';
+import { handleAttack } from '../server/api/common/actions/attack.ts';
+import { handleCover } from '../server/api/common/actions/cover.ts';
+import { handlePass } from '../server/api/common/actions/pass.ts';
+import { handlePickup } from '../server/api/common/actions/pickup.ts';
+import { handleGood } from '../server/api/common/actions/good.ts';
 import { encodeAction, AwireKindName } from '../sdk/ts/wire/awire.ts';
 import { encodeEventWire } from '../sdk/ts/wire/evwire.ts';
 import { logsFromKernelExport } from '../sdk/ts/wire/logwire.ts';
 import { bytesToBareHex } from '../sdk/ts/wire/bytes.ts';
-import { bytesToHex } from '../supabase/functions/_shared/common/replay/codec.ts';
+import { bytesToHex } from '../server/api/common/replay/codec.ts';
 
 const MOVES = Number(process.env.BENCH_MOVES || 20000);
 const PLAYERS = Number(process.env.BENCH_PLAYERS || 4);

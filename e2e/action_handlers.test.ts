@@ -13,12 +13,12 @@ import assert from 'node:assert/strict';
 
 import {
   Game, PrivatePlayer, Card, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY,
-} from '../supabase/functions/_shared/core/types.ts';
-import { validateAttack, executeAttack } from '../supabase/functions/_shared/common/actions/attack.ts';
-import { validateCover, executeCover } from '../supabase/functions/_shared/common/actions/cover.ts';
-import { validatePass, executePass } from '../supabase/functions/_shared/common/actions/pass.ts';
-import { validatePickup } from '../supabase/functions/_shared/common/actions/pickup.ts';
-import { executeRoundTransition } from '../supabase/functions/_shared/common/actions/good.ts';
+} from '../server/api/core/types.ts';
+import { validateAttack, executeAttack } from '../server/api/common/actions/attack.ts';
+import { validateCover, executeCover } from '../server/api/common/actions/cover.ts';
+import { validatePass, executePass } from '../server/api/common/actions/pass.ts';
+import { validatePickup } from '../server/api/common/actions/pickup.ts';
+import { executeRoundTransition } from '../server/api/common/actions/good.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 

@@ -44,12 +44,12 @@
  * ========================================================================== */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Card, PersonalGame } from '@shared/core/types.ts';
+import { Card, PersonalGame } from '@api/core/types.ts';
 import { useServer } from '../../contexts/ServerContext';
 import { useAnimation } from '../../contexts/AnimationContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { useGame } from '../../contexts/GameContext';
-import { canCover } from '@shared/common/common_utils.ts';
+import { canCover } from '@api/common/common_utils.ts';
 import { canAttack, canPass, canCoverCards } from '../../utils/gameValidation';
 import { kernelUnambiguousCover } from '@sdk/ts/wasm/bots.ts';
 

@@ -15,12 +15,12 @@ import './harness.ts';
 import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { applySchema, resetDb, seedGame, uuid, pgPool } from './harness.ts';
-import { executeWithGameLock } from '../supabase/functions/_shared/adapter/utils.ts';
-import { personalize_game } from '../supabase/functions/_shared/common/common_utils.ts';
-import { start_game } from '../supabase/functions/_shared/common/game_lifecycle.ts';
-import { Game, AnimationEvent, PersonalGame, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, STRATEGY_KEY, Card } from '../supabase/functions/_shared/core/types.ts';
-import { calculateLegalMoves } from '../supabase/functions/_shared/common/bot_strategy.ts';
-import { validatePass as serverValidatePass } from '../supabase/functions/_shared/common/actions/pass.ts';
+import { executeWithGameLock } from '../server/impls/supabase/functions/_shared/adapter/utils.ts';
+import { personalize_game } from '../server/api/common/common_utils.ts';
+import { start_game } from '../server/api/common/game_lifecycle.ts';
+import { Game, AnimationEvent, PersonalGame, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, STRATEGY_KEY, Card } from '../server/api/core/types.ts';
+import { calculateLegalMoves } from '../server/api/common/bot_strategy.ts';
+import { validatePass as serverValidatePass } from '../server/api/common/actions/pass.ts';
 import { canPass as clientCanPass } from '../src/utils/gameValidation.ts';
 import { legalMovesFor, applyPlayerMove } from './dispatch.ts';
 
@@ -149,7 +149,7 @@ if (!process.env.VALIDATION_ONLY) {
     const pick = <T>(a: T[]): T => a[ri(a.length)];
 
     const loadGame = async (gameId: string): Promise<Game> => {
-        const { loadCompleteGame } = await import('../supabase/functions/_shared/adapter/utils.ts');
+        const { loadCompleteGame } = await import('../server/impls/supabase/functions/_shared/adapter/utils.ts');
         return loadCompleteGame(gameId);
     };
     const freshGame = async (): Promise<string> => {

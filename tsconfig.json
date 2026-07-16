@@ -19,7 +19,10 @@
     "baseUrl": ".",
     "paths": {
       "@shared/*": [
-        "./supabase/functions/_shared/*"
+        "./server/impls/supabase/functions/_shared/*"
+      ],
+      "@api/*": [
+        "./server/api/*"
       ],
       "@sdk/*": [
         "./sdk/*"
@@ -47,7 +50,7 @@
     "offlinefun",
     "c",
     "tests",
-    "supabase",
+    "server/impls/supabase",
     "build"
   ]
 }

@@ -10,9 +10,9 @@ import './harness.ts';
 import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { applySchema, resetDb, seedGame, uuid, pgPool } from './harness.ts';
-import { executeWithGameLock, loadCompleteGame } from '../supabase/functions/_shared/adapter/utils.ts';
-import { start_game } from '../supabase/functions/_shared/common/game_lifecycle.ts';
-import { AnimationEvent } from '../supabase/functions/_shared/core/types.ts';
+import { executeWithGameLock, loadCompleteGame } from '../server/impls/supabase/functions/_shared/adapter/utils.ts';
+import { start_game } from '../server/api/common/game_lifecycle.ts';
+import { AnimationEvent } from '../server/api/core/types.ts';
 import { legalMovesFor, applyPlayerMove, checkCardConservation } from './dispatch.ts';
 
 const pick = <T>(a: T[]): T => a[Math.floor(Math.random() * a.length)];

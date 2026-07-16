@@ -16,7 +16,7 @@
 // instantiated once at game load (await initClientGuards()); in Node/SSR/tests
 // clientGuards falls back to a synchronous instantiate on first use.
 
-import { Card, PersonalGame } from '@shared/core/types.ts';
+import { Card, PersonalGame } from '@api/core/types.ts';
 import { kernelUnambiguousCover } from '@sdk/ts/wasm/bots.ts';
 import * as guards from '../wasm/clientGuards.ts';
 import { rejectMessage } from '../wasm/rejectMessages';

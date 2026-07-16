@@ -16,7 +16,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { PersonalGame, PublicPlayer, PrivatePlayer, Card, GAME_STATUS, PLAYER_STATUS, STRATEGY_KEY } from '../supabase/functions/_shared/core/types.ts';
+import { PersonalGame, PublicPlayer, PrivatePlayer, Card, GAME_STATUS, PLAYER_STATUS, STRATEGY_KEY } from '../server/api/core/types.ts';
 import { canPass, nextDefenderIndex } from '../src/utils/gameValidation.ts';
 
 interface Spec { status: 'in' | 'out'; hand_length: number }

@@ -1,5 +1,5 @@
 // Ultimate Champion strategy — direct port of UltimateChampionStrategy in
-// supabase/functions/_shared/common/strategies/ultimate_champion_strategy.ts.
+// server/api/common/strategies/ultimate_champion_strategy.ts.
 //
 // The TS never uses Array.sort here — every "best move" selection is a
 // `reduce` that only replaces the incumbent on a STRICT `<` of the score, so

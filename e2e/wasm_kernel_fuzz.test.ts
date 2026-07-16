@@ -18,7 +18,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { kernelLegalMoves, kernelGameDone, kernelShouldAct } from '../sdk/ts/wasm/engine.ts';
 import { wasmChooseMove, STRAT } from '../sdk/ts/wasm/bots.ts';
-import { Game, Card, PLAYER_STATUS, GAME_STATUS } from '../supabase/functions/_shared/core/types.ts';
+import { Game, Card, PLAYER_STATUS, GAME_STATUS } from '../server/api/core/types.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; console.error = () => {}; }
 

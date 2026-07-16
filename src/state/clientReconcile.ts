@@ -3,7 +3,7 @@
 // needed). The components import from here; the e2e suite imports from here. There
 // is no second copy.
 
-import { Card, PersonalGame, Battle, GAME_STATUS, PLAYER_STATUS } from '@shared/core/types.ts';
+import { Card, PersonalGame, Battle, GAME_STATUS, PLAYER_STATUS } from '@api/core/types.ts';
 
 export const cardKey = (c: Card): string => `${c.suit}-${c.value}`;
 

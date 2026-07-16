@@ -1,4 +1,4 @@
-import { Card, PersonalGame, PublicGame } from '@shared/core/types.ts';
+import { Card, PersonalGame, PublicGame } from '@api/core/types.ts';
 
 /**
  * The animation feed: a tiny pub/sub carrying "animation sequence" messages —

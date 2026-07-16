@@ -10,9 +10,9 @@ Anchors: `src/contexts/ServerContext.tsx` (create `:433`; channels `:228,355,
 692`; meta `:462,1129`; action `:1192`; bump `:649`), `src/state/
 RealtimeAnimationFeed.tsx:76`, `src/state/clientReconcile.ts:43-52`,
 `sdk/ts/wire/view.ts` (`decodePackedGame:281`,
-`encodeGameResponse:199`, `writeMaskedState`), `supabase/functions/_shared/
-meta_actions.ts`, `supabase/functions/_shared/packed_action.ts`,
-`supabase/functions/action/index.ts:17`.
+`encodeGameResponse:199`, `writeMaskedState`), `server/impls/supabase/functions/_shared/
+meta_actions.ts`, `server/impls/supabase/functions/_shared/packed_action.ts`,
+`server/impls/supabase/functions/action/index.ts:17`.
 
 ---
 

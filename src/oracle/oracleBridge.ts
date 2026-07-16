@@ -6,7 +6,7 @@
  * replay screen's rules instance). Never shared between workers.
  * ========================================================================== */
 
-import { Game } from '@shared/core/types.ts';
+import { Game } from '@api/core/types.ts';
 import { __marshalGame, __mem, __setResident } from '@sdk/ts/wasm/engine.ts';
 import { OracleGameState, OracleDumpRecord } from './types';
 

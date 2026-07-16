@@ -43,10 +43,10 @@ jobs:
           version: latest
 
       - name: Link project
-        run: supabase link --project-ref "$SUPABASE_PROJECT_REF"
+        run: supabase link --project-ref "$SUPABASE_PROJECT_REF" --workdir server/impls
 
       - name: Apply database migrations
-        run: supabase db push --linked --yes
+        run: supabase db push --linked --yes --workdir server/impls
 
       - name: Deploy edge functions
-        run: supabase functions deploy --project-ref "$SUPABASE_PROJECT_REF"
+        run: supabase functions deploy --project-ref "$SUPABASE_PROJECT_REF" --workdir server/impls

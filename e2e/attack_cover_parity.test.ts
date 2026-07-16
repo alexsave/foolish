@@ -29,8 +29,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { game_done, personalize_game } from '../supabase/functions/_shared/common/common_utils.ts';
-import { start_game } from '../supabase/functions/_shared/common/game_lifecycle.ts';
+import { game_done, personalize_game } from '../server/api/common/common_utils.ts';
+import { start_game } from '../server/api/common/game_lifecycle.ts';
 import {
   Card,
   Game,
@@ -39,11 +39,11 @@ import {
   PersonalGame,
   PrivatePlayer,
   StrategyKey,
-} from '../supabase/functions/_shared/core/types.ts';
-import { shouldBotActCore, processBotAction } from '../supabase/functions/_shared/common/pure_bot_actions.ts';
-import { calculateLegalMoves } from '../supabase/functions/_shared/common/bot_strategy.ts';
-import { validateAttack as serverValidateAttack } from '../supabase/functions/_shared/common/actions/attack.ts';
-import { validateCover as serverValidateCover } from '../supabase/functions/_shared/common/actions/cover.ts';
+} from '../server/api/core/types.ts';
+import { shouldBotActCore, processBotAction } from '../server/api/common/pure_bot_actions.ts';
+import { calculateLegalMoves } from '../server/api/common/bot_strategy.ts';
+import { validateAttack as serverValidateAttack } from '../server/api/common/actions/attack.ts';
+import { validateCover as serverValidateCover } from '../server/api/common/actions/cover.ts';
 import {
   canAttack as clientCanAttack,
   validateAttack as clientValidateAttack,

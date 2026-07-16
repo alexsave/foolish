@@ -20,14 +20,14 @@ export { broadcastLog, resetBroadcastLog } from './adapters/supabase.ts';
 export const uuid = () => randomUUID();
 
 // Stand up the Supabase platform shim, then apply the REAL production schema
-// (supabase/seed.sql — tables, types, the commit_game CAS, the bot lease, the
+// (server/impls/supabase/seed.sql — tables, types, the commit_game CAS, the bot lease, the
 // triggers) verbatim. seed.sql is the single source of truth; nothing about the
 // gameplay schema is copied here, so the harness can't drift from production.
 export async function applySchema(): Promise<void> {
     const shim = readFileSync(join(process.cwd(), 'e2e', 'schema.sql'), 'utf8');
     await pool.query(shim);
 
-    const seed = readFileSync(join(process.cwd(), 'supabase', 'seed.sql'), 'utf8');
+    const seed = readFileSync(join(process.cwd(), 'server', 'impls', 'supabase', 'seed.sql'), 'utf8');
     await pool.query(seed);
 }
 

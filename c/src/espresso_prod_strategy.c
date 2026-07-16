@@ -1,6 +1,6 @@
 // Espresso (production) strategy — exact behavioral mirror of
 // EspressoStrategy in
-// supabase/functions/_shared/common/strategies/espresso_strategy.ts.
+// server/api/common/strategies/espresso_strategy.ts.
 //
 // NOTE: this is NOT src/espresso_strategy.c. That file is the arena /
 // cordite-rollout espresso (tuned and frozen — cordite's Monte-Carlo

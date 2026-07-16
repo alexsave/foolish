@@ -16,8 +16,8 @@
  * different game — one where the bot cheats.
  * ========================================================================== */
 
-import { Card, LOG_TYPE, LogType, GAME_STATUS, PLAYER_STATUS } from '@shared/core/types.ts';
-import { DecodedReplay, SeatLog } from '@shared/common/replay/core.ts';
+import { Card, LOG_TYPE, LogType, GAME_STATUS, PLAYER_STATUS } from '@api/core/types.ts';
+import { DecodedReplay, SeatLog } from '@api/common/replay/core.ts';
 import { ReplayFrame, REPLAY_STEP } from '../replay/frames';
 import { encodeLogsWire } from './logsWire';
 import {

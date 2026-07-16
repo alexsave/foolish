@@ -1,6 +1,6 @@
 # e2e — codified checks across client + server
 
-These run the **actual deployed code** — the real `supabase/functions/_shared/*`
+These run the **actual deployed code** — the real `server/impls/supabase/functions/_shared/*`
 server modules (`executeWithGameLock`, the action handlers, `commit_game` and the
 bot-lease plpgsql, `broadcastAnimationEvents`) and the real client reconciliation
 (`src/state/clientReconcile.ts`, the exact functions `ServerContext` /

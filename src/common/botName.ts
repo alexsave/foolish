@@ -4,7 +4,7 @@
 // "bot vs human" from a stored replay code alone the name itself must carry the
 // signal. Bots are named with a reserved leading prefix that humans are forbidden
 // from using (enforced client-side here and, authoritatively, by a BEFORE
-// INSERT/UPDATE trigger on auth.users; see supabase/seed.sql). This reserves the
+// INSERT/UPDATE trigger on auth.users; see server/impls/supabase/seed.sql). This reserves the
 // whole namespace, so future/unreleased bots are covered with no per-name list.
 //
 // The prefix is a single-byte ASCII char ('%') — names are stored UTF-8 in the

@@ -5,7 +5,7 @@
 // future client (docs/C_CORE_CONSOLIDATION.md F1/A1). The other two are
 // consumers that still restate parts of it:
 //
-//   * supabase/functions/_shared/common/bot_strategy.ts — the TS registry, which still
+//   * server/api/common/bot_strategy.ts — the TS registry, which still
 //     carries the knobs as a wasm env table. Env OVERRIDES the roster
 //     (c/src/bot_knobs.h), so while both exist the server's behavior is
 //     defined by this file — and it must therefore say EXACTLY what the roster
@@ -13,7 +13,7 @@
 //     hypothetical: before the roster, iOS ran cordite at the arena budget with
 //     early-race off, and pointed `handwritten`/`espresso` at the arena variants
 //     rather than the production mirrors (§3).
-//   * supabase/seed.sql — the live bot rows, which must be exactly the roster's
+//   * server/impls/supabase/seed.sql — the live bot rows, which must be exactly the roster's
 //     `seeded` set. A seeded key the kernel does not dispatch silently plays as
 //     `random` (wasm_choose_move's default arm), i.e. a bot that plays nothing
 //     like its name and pollutes the Elo leaderboard.
@@ -98,7 +98,7 @@ function parseKnobSpec(spec: string): Record<string, string> {
 // Parse the TS registry rows:
 //   ['cordite', new WasmBotStrategy('cordite', STRAT.cordite, { env: {...}, logs: true })],
 function parseTsRegistry() {
-    const src = read('supabase/functions/_shared/common/bot_strategy.ts');
+    const src = read('server/api/common/bot_strategy.ts');
     const body = src.slice(src.indexOf('BOT_STRATEGIES: Map<string, BotStrategy>'));
     const table = body.slice(0, body.indexOf('\n]);'));
 
@@ -132,7 +132,7 @@ function parseSeededKeys(): Set<string> {
     // Strip `--` comments FIRST: the prose between the rows contains semicolons
     // and apostrophes, either of which would otherwise end the statement early
     // and silently under-report the seeded set.
-    const src = read('supabase/seed.sql').replace(/--[^\n]*/g, '');
+    const src = read('server/impls/supabase/seed.sql').replace(/--[^\n]*/g, '');
     const at = src.indexOf('INSERT INTO bots');
     assert.ok(at > 0, 'seed.sql: no INSERT INTO bots');
     const end = src.indexOf(';', at);

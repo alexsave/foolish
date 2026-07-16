@@ -9,7 +9,7 @@ improvements with file references.
 Method: `npm run test:e2e` (all 58 tests passed, but the run's *logs* surfaced
 real production glitches the assertions didn't cover), then targeted repro
 scripts against the harness to root-cause them, then a code audit of
-`supabase/functions/` and `src/`.
+`server/impls/supabase/functions/` and `src/`.
 
 ---
 
@@ -44,7 +44,7 @@ it failed. Log saves are strictly sequential (instrumented: max 1 in-flight
 insert), so insertion order is commit order.
 
 **Fix.**
-- `supabase/migrations/20260701120000_game_logs_seq.sql` + `seed.sql`: add
+- `server/impls/supabase/migrations/20260701120000_game_logs_seq.sql` + `seed.sql`: add
   `seq BIGSERIAL` to `game_logs` (assigned in insert order — `saveGameLogs`
   upserts each move's logs as one array in emit order, and moves commit
   serially through the `games.version` CAS).

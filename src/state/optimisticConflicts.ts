@@ -14,7 +14,7 @@
 // re-appears on the table" flicker players see when they play a card at almost the
 // same moment as another player, or when a defender picks the card up immediately.
 
-import { Card } from '@shared/core/types.ts';
+import { Card } from '@api/core/types.ts';
 import { getCardKey, cardsIntersection } from '../utils/animationUtils';
 
 export interface AttackCoverResolution {

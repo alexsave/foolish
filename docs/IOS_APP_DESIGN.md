@@ -43,7 +43,7 @@ architecture in one line: **all game rules live once, in C
 the web client, the Deno edge functions, and tests** — the TS around it is
 marshaling and UI (`docs/ARCHITECTURE_AS_A_PATTERN.md`).
 
-**Backend.** Supabase: Postgres + edge functions (`supabase/functions/`:
+**Backend.** Supabase: Postgres + edge functions (`server/impls/supabase/functions/`:
 `create`, `action`, `meta`, `bot-heartbeat`) + Realtime broadcasts. Moves
 commit via CAS on `games.version`. Clients receive **animation events** on
 per-player channels (you see your own hand; others see card backs).
@@ -253,9 +253,9 @@ the real roster: `random`, `handwritten`, `espresso`, `robusta`,
 `firecracker`, `gunpowder`, `blackpowder`, `octogen`/`cordite`
 (`c/src/*_strategy.c`; ladder documented in `README.md` project 1 and
 `c/CORDITE.md`). Strategy selection mirrors the seeded bot roster
-personalities (`supabase/seed.sql`). Cordite-class bots deliberate — run
+personalities (`server/impls/supabase/seed.sql`). Cordite-class bots deliberate — run
 `choose_move` off-main with a thinking indicator, and cap deliberation with
-the same env knobs the server uses (`supabase/functions/_shared/common/bot_strategy.ts`
+the same env knobs the server uses (`server/api/common/bot_strategy.ts`
 shows the pattern). Battery guard: cap bot threads at 2 and pause deliberation
 when `ProcessInfo.thermalState >= .serious` (same rule as the future Oracle,
 `ORACLE_MONETIZATION_ENGINEERING.md` §7).
@@ -284,9 +284,9 @@ scope for v1 except one dependency: the stale-round guard from
   body**: `supabase.functions.invoke('action', { body: Blob(packed) })` —
   `ServerContext.tsx:1180`; pack format: `_shared/packed_action.ts`), `meta`
   (lobby/continue/etc. — `ServerContext.tsx:1150` generic invoke), `add-bot`
-  etc. per `supabase/functions/` listing.
+  etc. per `server/impls/supabase/functions/` listing.
 - **Response wire:** `[fmt | status | reject_code | u32 version]`
-  (`supabase/functions/action/index.ts:17`).
+  (`server/impls/supabase/functions/action/index.ts:17`).
 - **Realtime channels:** `pv-<user_id>` (personal view feed,
   `ServerContext.tsx:349`), `game-<gameId>` (public/spectator,
   `:519,676`), `gu-<gameId>-<user_id>` (per-player animation feed,
@@ -617,7 +617,7 @@ renders in simulator; no signing configured anywhere.
 ### 16.B Milestone B — offline vertical slice
 
 **B1. Bot strategies in the lib.** Extend `IOS_SRC` with the strategy sources
-(same roster as `supabase/seed.sql` personalities; the C files follow
+(same roster as `server/impls/supabase/seed.sql` personalities; the C files follow
 `*_strategy.c` naming — take the exact set from the Makefile's bots build).
 `fio_bot_choose_json(strategy_id, seat, ...)` calls the same `choose_move`
 entry the server bridge uses (`_shared/common/bot_strategy.ts:37` shows the call
@@ -743,7 +743,7 @@ round-trip + cross-platform tests green; list/save/scan all work.
 `src/contexts/ServerContext.tsx` (invokes at `:423,633,1150,1180`; channels
 at `:212,349,519,676`), `src/state/RealtimeAnimationFeed.tsx:76`,
 `src/state/clientReconcile.ts` (version gate `:44-52`; sequences carry full
-resulting state `:47-49`), `supabase/functions/_shared/packed_action.ts`,
+resulting state `:47-49`), `server/impls/supabase/functions/_shared/packed_action.ts`,
 `player_views.ts`, `action/index.ts:17`. The doc must contain: every edge
 function's request/response shape, every channel name + event payload shape,
 the version gate rule, and the auth flow. Get it reviewed (PR) before writing
@@ -948,7 +948,7 @@ branch; start new work from `main`. Live milestone summary:
    so the app never reintroduces the bug. Nothing to do.
 2. **Account deletion** (`ORACLE_MONETIZATION_ENGINEERING.md` §4) — **merged to
    `main`** (`4108a5e`: migration `20260714120000_account_deletion.sql`,
-   `supabase/functions/delete-account`, web page). Deploys with `main`; still
+   `server/impls/supabase/functions/delete-account`, web page). Deploys with `main`; still
    verify once against a live DB before the F submission relies on it.
 
 ### 17.3 What is DONE and verified (Linux, no Mac)

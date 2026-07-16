@@ -7,7 +7,7 @@ whatever arrived, merging it into local state.
 
 ## Changes
 
-**Server** (`supabase/functions/_shared/utils.ts`)
+**Server** (`server/impls/supabase/functions/_shared/utils.ts`)
 - Stamp every broadcast payload (per-player and spectator) with the committed
   `games.version`.
 

@@ -30,8 +30,8 @@
  *     arithmetic decode is the cost and it is tiny.
  * ========================================================================== */
 
-import { Card, PersonalGame, PLAYER_STATUS, PrivatePlayer, PublicGame } from '@shared/core/types.ts';
-import { deckSizeFor } from '@shared/core/constants.ts';
+import { Card, PersonalGame, PLAYER_STATUS, PrivatePlayer, PublicGame } from '@api/core/types.ts';
+import { deckSizeFor } from '@api/core/constants.ts';
 import {
     replayEventFrames, replayStepIndex, REPLAY_STEP, ReplayStepInfo,
 } from '@sdk/ts/wasm/bots.ts';

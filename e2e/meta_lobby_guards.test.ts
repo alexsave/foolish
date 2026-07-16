@@ -11,12 +11,12 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { pgPool } from './harness.ts';
 
-import { handleMetaAction } from '../supabase/functions/_shared/adapter/meta_actions.ts';
-import { MAX_PLAYERS } from '../supabase/functions/_shared/core/constants.ts';
+import { handleMetaAction } from '../server/impls/supabase/functions/_shared/adapter/meta_actions.ts';
+import { MAX_PLAYERS } from '../server/api/core/constants.ts';
 import {
   Game, PrivatePlayer, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY,
-} from '../supabase/functions/_shared/core/types.ts';
-import type { ExecutionParams } from '../supabase/functions/_shared/adapter/utils.ts';
+} from '../server/api/core/types.ts';
+import type { ExecutionParams } from '../server/impls/supabase/functions/_shared/adapter/utils.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 

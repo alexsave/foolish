@@ -10,9 +10,9 @@ import './harness.ts';
 import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { applySchema, resetDb, seedGame, uuid, pgPool } from './harness.ts';
-import { executeWithGameLock, loadCompleteGame } from '../supabase/functions/_shared/adapter/utils.ts';
-import { handleMetaAction, handleContinue } from '../supabase/functions/_shared/adapter/meta_actions.ts';
-import { GAME_STATUS, PLAYER_STATUS } from '../supabase/functions/_shared/core/types.ts';
+import { executeWithGameLock, loadCompleteGame } from '../server/impls/supabase/functions/_shared/adapter/utils.ts';
+import { handleMetaAction, handleContinue } from '../server/impls/supabase/functions/_shared/adapter/meta_actions.ts';
+import { GAME_STATUS, PLAYER_STATUS } from '../server/api/core/types.ts';
 import { resetToLobby } from '../src/state/clientReconcile.ts';
 import { checkCardConservation } from './dispatch.ts';
 

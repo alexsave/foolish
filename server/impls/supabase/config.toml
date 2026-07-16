@@ -283,7 +283,7 @@ s3_secret_key = "env(S3_SECRET_KEY)"
 # vendored sdk/ts/wasm/gunzip.ts (relative import — no import_map needed).
 #
 # A10 DEPLOY-GATE: the SDK now lives at repo-root sdk/ (not under supabase/),
-# so these static_files paths and the edge functions' `../../../sdk/ts/...`
+# so these static_files paths and the edge functions' `../../../../../sdk/ts/...`
 # imports escape the supabase/ project dir. Local build/tsc/tests all pass,
 # but whether `deploy --use-api` (a) bundles the out-of-tree TS module graph
 # and (b) honors a `../`-escaping static_files entry is UNVERIFIED — it needs
@@ -291,11 +291,11 @@ s3_secret_key = "env(S3_SECRET_KEY)"
 # predeploy step that stages sdk/ts/wasm/bots.wasm.gz into a path under
 # supabase/ (gitignored, regenerated from the one canonical .gz).
 [functions.action]
-static_files = [ "../sdk/ts/wasm/bots.wasm.gz" ]
+static_files = [ "../../../sdk/ts/wasm/bots.wasm.gz" ]
 [functions.meta]
-static_files = [ "../sdk/ts/wasm/bots.wasm.gz" ]
+static_files = [ "../../../sdk/ts/wasm/bots.wasm.gz" ]
 [functions.bot-heartbeat]
-static_files = [ "../sdk/ts/wasm/bots.wasm.gz" ]
+static_files = [ "../../../sdk/ts/wasm/bots.wasm.gz" ]
 # NOTE: the CI diagnostic `memtest` also needs bots.wasm.gz, but its
 # static_files entry is injected by .github/workflows/memory.yml at run time
 # — NOT declared here. `supabase functions deploy` deploys every function in

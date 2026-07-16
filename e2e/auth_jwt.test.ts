@@ -1,4 +1,4 @@
-// Local JWT verification (supabase/functions/_shared/auth.ts) — the security
+// Local JWT verification (server/impls/supabase/functions/_shared/auth.ts) — the security
 // boundary that replaced supabase-js `auth.getClaims` to keep supabase-js out of
 // the edge-function boot graph. The cryptographic check is the platform's
 // crypto.subtle.verify; what auth.ts owns is the JWS envelope parsing + a hard
@@ -12,7 +12,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { verifyJwtLocal, __setJwksForTest, unverifiedSubFromToken } from '../supabase/functions/_shared/adapter/auth.ts';
+import { verifyJwtLocal, __setJwksForTest, unverifiedSubFromToken } from '../server/impls/supabase/functions/_shared/adapter/auth.ts';
 
 const enc = new TextEncoder();
 const b64url = (bytes: Uint8Array): string => {

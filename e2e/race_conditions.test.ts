@@ -18,16 +18,16 @@ import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { applySchema, resetDb, seedGame, uuid, pgPool } from './harness.ts';
-import { executeWithGameLock, loadCompleteGame } from '../supabase/functions/_shared/adapter/utils.ts';
-import { start_game } from '../supabase/functions/_shared/common/game_lifecycle.ts';
-import { AnimationEvent, Game } from '../supabase/functions/_shared/core/types.ts';
-import { executePackedAction } from '../supabase/functions/_shared/adapter/packed_action.ts';
+import { executeWithGameLock, loadCompleteGame } from '../server/impls/supabase/functions/_shared/adapter/utils.ts';
+import { start_game } from '../server/api/common/game_lifecycle.ts';
+import { AnimationEvent, Game } from '../server/api/core/types.ts';
+import { executePackedAction } from '../server/impls/supabase/functions/_shared/adapter/packed_action.ts';
 import { encodeAction, ACTION_STATUS, REJECT_STALE_ROUND, AwireKindName } from '../sdk/ts/wire/awire.ts';
 import { decodeLogs } from '../sdk/ts/wire/logwire.ts';
-import { hexToBytes } from '../supabase/functions/_shared/common/replay/codec.ts';
+import { hexToBytes } from '../server/api/common/replay/codec.ts';
 import { __setKernelSeedSource } from '../sdk/ts/wasm/engine.ts';
-import { __clearGameCache } from '../supabase/functions/_shared/adapter/game_cache.ts';
-import { calculateLegalMoves } from '../supabase/functions/_shared/common/bot_strategy.ts';
+import { __clearGameCache } from '../server/impls/supabase/functions/_shared/adapter/game_cache.ts';
+import { calculateLegalMoves } from '../server/api/common/bot_strategy.ts';
 import { legalMovesFor, checkCardConservation, PlayerMove } from './dispatch.ts';
 
 // Pinned, reproducible deal/RNG stream (see engine.injectDealSeed): a counter

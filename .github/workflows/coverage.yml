@@ -8,7 +8,7 @@ name: coverage
 # client move rules.
 #
 #   c-engine       game.c / legal.c / replay.c   (gcc --coverage + gcovr)
-#   server-ts      supabase/functions/_shared/*  minus strategies/durakai/wasm
+#   server-ts      server/impls/supabase/functions/_shared/*  minus strategies/durakai/wasm
 #   client-rules   src/utils/gameValidation + coverCombinations
 #
 # Floors live in c/Makefile (COV_LINE_MIN/COV_BRANCH_MIN) and package.json

@@ -389,7 +389,7 @@ cd c && make
 
 ## Production TS port (cordite + cordite_max)
 
-Shipped in `supabase/functions/_shared/common/strategies/`:
+Shipped in `server/api/common/strategies/`:
 
 - `cordite_core.ts` — transliteration of this C code: compact int-card sim
   engine, handwritten + espresso rollout policies, belief builder, CRN
@@ -399,7 +399,7 @@ Shipped in `supabase/functions/_shared/common/strategies/`:
   drawn, so flip-pinning is direct rather than inferred.
 - `cordite_strategy.ts` — `BotStrategy` adapter; registered in
   `bot_strategy.ts` as `cordite` and `cordite_max`, seeded in
-  `supabase/seed.sql` (Cordite 1-3, Cordite Max).
+  `server/impls/supabase/seed.sql` (Cordite 1-3, Cordite Max).
 - Offline harness: `offlinefun/localtest/cordite_eval.ts`
   (`npx tsx offlinefun/localtest/cordite_eval.ts cordite_max espresso 4,8 20`).
 

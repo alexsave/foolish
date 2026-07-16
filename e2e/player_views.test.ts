@@ -22,17 +22,17 @@ import './harness.ts';
 import { test, before, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { applySchema, resetDb, seedGame, uuid, pgPool } from './harness.ts';
-import { executeWithGameLock, loadCompleteGame, supabaseClient } from '../supabase/functions/_shared/adapter/utils.ts';
-import { handleMetaAction } from '../supabase/functions/_shared/adapter/meta_actions.ts';
+import { executeWithGameLock, loadCompleteGame, supabaseClient } from '../server/impls/supabase/functions/_shared/adapter/utils.ts';
+import { handleMetaAction } from '../server/impls/supabase/functions/_shared/adapter/meta_actions.ts';
 import { legalMovesFor, applyPlayerMove } from './dispatch.ts';
-import { buildPlayerViewRows, buildPlayerViewUpserts, buildSpectatorView } from '../supabase/functions/_shared/common/player_views.ts';
-import { buildPackedGameBytes, gameViewFromRow } from '../supabase/functions/_shared/common/packed_game.ts';
+import { buildPlayerViewRows, buildPlayerViewUpserts, buildSpectatorView } from '../server/api/common/player_views.ts';
+import { buildPackedGameBytes, gameViewFromRow } from '../server/api/common/packed_game.ts';
 import { decodePackedGame } from '../sdk/ts/wire/view.ts';
 import { bytesToBareHex } from '../sdk/ts/wire/bytes.ts';
-import { hexToBytes } from '../supabase/functions/_shared/common/replay/codec.ts';
+import { hexToBytes } from '../server/api/common/replay/codec.ts';
 import {
   Game, GAME_STATUS, PLAYER_STATUS, STRATEGY_KEY, PersonalGame,
-} from '../supabase/functions/_shared/core/types.ts';
+} from '../server/api/core/types.ts';
 import { __setKernelSeedSource } from '../sdk/ts/wasm/engine.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }

@@ -1,10 +1,10 @@
 // Ad-hoc: trace every decision of one pinned-RNG bot game (for cross-build
 // divergence hunting). Prints deal + each move compactly.
-import { start_game, game_done } from '../supabase/functions/_shared/common/common_utils.ts';
-import { processBotAction, shouldBotActCore } from '../supabase/functions/_shared/common/pure_bot_actions.ts';
+import { start_game, game_done } from '../server/api/common/common_utils.ts';
+import { processBotAction, shouldBotActCore } from '../server/api/common/pure_bot_actions.ts';
 import { __setBotSeedSource } from '../sdk/ts/wasm/bots.ts';
 import { __setKernelSeedSource } from '../sdk/ts/wasm/engine.ts';
-import { Game, PrivatePlayer, PLAYER_STATUS, GAME_STATUS } from '../supabase/functions/_shared/core/types.ts';
+import { Game, PrivatePlayer, PLAYER_STATUS, GAME_STATUS } from '../server/api/core/types.ts';
 
 const mkLcgU32 = (seed: number) => {
     let s = seed >>> 0;
@@ -41,7 +41,7 @@ while (game_done(g) === null && ++guard < 2000) {
         const p = g.players[i];
         if (!shouldBotActCore(g, p, i)) continue;
         if (moves === Number(process.env.TRACE_AT ?? -1)) {
-            const { calculateLegalMoves } = await import('../supabase/functions/_shared/common/bot_strategy.ts');
+            const { calculateLegalMoves } = await import('../server/api/common/bot_strategy.ts');
             const lm = calculateLegalMoves(g, p.player_id);
             out(`AT#${moves} seat=${i} strat=${p.strategy_key}`);
             out(`  state=${JSON.stringify({ b: g.table_battles, h: g.players.map(x => x.hand), d: g.deck.length, disc: g.discard_pile_length, def: g.defender, fa: g.first_attacker })}`);

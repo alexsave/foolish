@@ -1,5 +1,5 @@
 // PackedAction.swift — Milestone D scaffolding (§8.1, §16.D3). Byte-for-byte
-// port of the web's packed action wire (supabase/functions/_shared/
+// port of the web's packed action wire (server/impls/supabase/functions/_shared/
 // packed_action.ts → wire/awire.ts). Every online move POSTs this binary body:
 //   supabase.functions.invoke("action", body: <these bytes>)
 // and the response is the 7-byte envelope decoded below.

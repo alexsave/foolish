@@ -1,5 +1,5 @@
 // AccountService.swift — account deletion (§9, §16.E3). Calls the `delete-account`
-// edge function (this repo's supabase/functions/delete-account), which scrubs
+// edge function (this repo's server/impls/supabase/functions/delete-account), which scrubs
 // shared-history PII and deletes the auth user, then signs out locally. This is
 // the in-app path Apple Guideline 5.1.1(v) requires; the standalone web page
 // (src/app/delete-account) is the Play-required app-independent path.

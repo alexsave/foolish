@@ -14,18 +14,18 @@ import assert from 'node:assert/strict';
 import {
     Game, Card, AnimationEvent, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY,
     PersonalGame, PrivatePlayer,
-} from '../supabase/functions/_shared/core/types.ts';
+} from '../server/api/core/types.ts';
 import {
     serializeGameState, serializeViewBlob, kernelLegalMoves, kernelShouldAct,
     __setKernelSeedSource,
 } from '../sdk/ts/wasm/engine.ts';
-import { start_game } from '../supabase/functions/_shared/common/game_lifecycle.ts';
-import { game_done, personalize_game } from '../supabase/functions/_shared/common/common_utils.ts';
-import { handleAttack } from '../supabase/functions/_shared/common/actions/attack.ts';
-import { handleCover } from '../supabase/functions/_shared/common/actions/cover.ts';
-import { handlePass } from '../supabase/functions/_shared/common/actions/pass.ts';
-import { handlePickup } from '../supabase/functions/_shared/common/actions/pickup.ts';
-import { handleGood } from '../supabase/functions/_shared/common/actions/good.ts';
+import { start_game } from '../server/api/common/game_lifecycle.ts';
+import { game_done, personalize_game } from '../server/api/common/common_utils.ts';
+import { handleAttack } from '../server/api/common/actions/attack.ts';
+import { handleCover } from '../server/api/common/actions/cover.ts';
+import { handlePass } from '../server/api/common/actions/pass.ts';
+import { handlePickup } from '../server/api/common/actions/pickup.ts';
+import { handleGood } from '../server/api/common/actions/good.ts';
 import { AwireKindName } from '../sdk/ts/wire/awire.ts';
 import {
     decodePackedGame, encodeGameResponse, PackedGameRoster,
@@ -69,7 +69,7 @@ const dispatch = (g: Game, pid: string, kind: AwireKindName, cards?: Card[], att
 };
 
 // The get_game roster (identity + the column-authoritative fields), exactly
-// as supabase/functions/get_game/index.ts builds it.
+// as server/impls/supabase/functions/get_game/index.ts builds it.
 const rosterFor = (game: Game): PackedGameRoster => ({
     id: game.id,
     name: game.name,

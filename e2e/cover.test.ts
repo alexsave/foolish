@@ -1,4 +1,4 @@
-// E2E: the REAL cover handler (supabase/functions/_shared/common/actions/cover.ts) — the
+// E2E: the REAL cover handler (server/api/common/actions/cover.ts) — the
 // validate/execute matching-mismatch fix. Pure deployed code, no DB needed.
 //
 // Owns the cover validation scenarios; the fast runner
@@ -7,8 +7,8 @@
 import './harness.ts'; // Deno globals for any transitive server import
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Game, GAME_STATUS, PLAYER_STATUS, STRATEGY_KEY } from '../supabase/functions/_shared/core/types.ts';
-import { handleCover } from '../supabase/functions/_shared/common/actions/cover.ts';
+import { Game, GAME_STATUS, PLAYER_STATUS, STRATEGY_KEY } from '../server/api/core/types.ts';
+import { handleCover } from '../server/api/common/actions/cover.ts';
 
 const card = (suit: number, value: number) => ({ suit, value });
 const makeGame = (): Game => ({

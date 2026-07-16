@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Card } from '@shared/core/types.ts';
+import { Card } from '@api/core/types.ts';
 import { Text } from './Text';
 import { SovietIcon } from './SovietIcon';
 import { TexturedSurface } from './TexturedSurface';
@@ -18,9 +18,9 @@ import { GameBoard } from './GameBoard';
 import { Telestrator } from './Telestrator';
 import { usePreventScroll } from '../hooks/usePreventScroll';
 import { animationFeed, AnimationSequenceMessage } from '../state/animationFeed';
-import { bigintToBytes, codeToGame } from '@shared/common/replay/codec.ts';
-import { decodeReplay } from '@shared/common/replay/decode.ts';
-import { DecodedReplay } from '@shared/common/replay/core.ts';
+import { bigintToBytes, codeToGame } from '@api/common/replay/codec.ts';
+import { decodeReplay } from '@api/common/replay/decode.ts';
+import { DecodedReplay } from '@api/common/replay/core.ts';
 import { ensureBotsAsync } from '@sdk/ts/wasm/bots.ts';
 import {
     buildReplayFrames,
@@ -31,8 +31,8 @@ import {
     ReplayGameState,
     REPLAY_STEP,
 } from '../replay/frames';
-import { splitReplayCode, decodeExtras, ReplayExtras } from '@shared/common/replay/extras.ts';
-import { INFO_TYPES } from '@shared/common/replay/core.ts';
+import { splitReplayCode, decodeExtras, ReplayExtras } from '@api/common/replay/extras.ts';
+import { INFO_TYPES } from '@api/common/replay/core.ts';
 import { OracleOverlay } from './OracleOverlay';
 import { OracleController } from '../oracle/OracleController';
 import { buildOracleJob, findDecisionIndex } from '../oracle/replayOracleInput';

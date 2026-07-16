@@ -1,6 +1,6 @@
 -- Supabase platform shim for the bare-Postgres e2e harness.
 --
--- This does NOT define the app schema — supabase/seed.sql is the single source
+-- This does NOT define the app schema — server/impls/supabase/seed.sql is the single source
 -- of truth for that and is applied (verbatim, unmodified) by applySchema()
 -- right after this file. The shim only stands up the bits of the Supabase
 -- PLATFORM that seed.sql's RLS policies / triggers reference at creation time,

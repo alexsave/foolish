@@ -1,10 +1,10 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
-import { Card, PersonalGame } from '@shared/core/types.ts';
+import { Card, PersonalGame } from '@api/core/types.ts';
 import { useServer } from './ServerContext';
 import { useAnimation } from './AnimationContext';
 import { useAuth } from './AuthContext';
 import { useGame } from './GameContext';
-import { canCover } from '@shared/common/common_utils.ts';
+import { canCover } from '@api/common/common_utils.ts';
 import { reorderHand } from '../state/clientReconcile';
 import { canAttack, canPass as canPassValidation } from '../utils/gameValidation';
 import { kernelUnambiguousCover } from '@sdk/ts/wasm/bots.ts';

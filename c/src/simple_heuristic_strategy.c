@@ -1,5 +1,5 @@
 // Simple heuristic strategy — port of SimpleHeuristicStrategy in
-// supabase/functions/_shared/common/strategies/simple_heuristic_strategy.ts.
+// server/api/common/strategies/simple_heuristic_strategy.ts.
 //
 // The model: attack with the lowest-value non-trump cards (trump +20),
 // defend with the cheapest cover (trump +10) unless a strategic give-up

@@ -59,19 +59,19 @@ cd .. && npm install && npm run test:e2e         # all pass (80 on this base)
 git merge --no-ff origin/claude/e2e-test-harness-glitches-xwab9q
 ```
 
-**Conflict: `supabase/functions/_shared/common/actions/cover.ts`.** Their change
+**Conflict: `server/api/common/actions/cover.ts`.** Their change
 removes a dead `skipBroadcast` param from the OLD TypeScript cover
 implementation; our base replaced that whole file with the C-kernel bridge
 (`kernelCover`). The kernel version wins:
 
 ```bash
-git checkout --ours supabase/functions/_shared/common/actions/cover.ts
+git checkout --ours server/api/common/actions/cover.ts
 git add -A && git commit --no-edit
 ```
 
 **Verify (gate A):** `npm run test:e2e` (count grows — their branch adds
 tests) and `npm run test:validate` → 35/35. A validation failure here means
-a migration clash — inspect `supabase/migrations` ordering before continuing.
+a migration clash — inspect `server/impls/supabase/migrations` ordering before continuing.
 
 ## Step 2 — merge the UI branch (clean)
 
@@ -129,7 +129,7 @@ git merge --no-ff origin/claude/novichok-cheat-eval
    targets (each needs its own `$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)` line).
 3. **`c/src/main_eval.c`** — union: keep both dispatch case blocks (ours
    SIMPLE_HEURISTIC…DISTILLED and theirs SEMTEX…NOVICHOK).
-4. **`supabase/functions/_shared/common/bot_strategy.ts`** — take OURS
+4. **`server/api/common/bot_strategy.ts`** — take OURS
    (`git checkout --ours`). Their version imports TS strategy classes that no
    longer exist; the new bots get registered in 5c.
 5. **`c/README.md`** — take OURS (`git checkout --ours`); optionally
@@ -145,10 +145,10 @@ git merge --no-ff origin/claude/novichok-cheat-eval
 - `offlinefun/localtest/frozen/cordite_core.ts`: rename detection applied
   novichok's semtex change to the FROZEN oracle. Revert:
   `git checkout HEAD -- offlinefun/localtest/frozen/cordite_core.ts`
-- `supabase/functions/_shared/common/strategies/semtex_strategy.ts`: their new TS
+- `server/api/common/strategies/semtex_strategy.ts`: their new TS
   strategy recreates the retired pattern; the C implementation is canonical.
-  `git rm -f supabase/functions/_shared/common/strategies/semtex_strategy.ts`
-- `supabase/seed.sql`: auto-merged, KEEP — seeds `semtex/semtex_max/octogen/
+  `git rm -f server/api/common/strategies/semtex_strategy.ts`
+- `server/impls/supabase/seed.sql`: auto-merged, KEEP — seeds `semtex/semtex_max/octogen/
   octogen_max` rows; 5c must register those four keys.
 
 ### 5c. Wire the new bots through the wasm path
@@ -167,7 +167,7 @@ measured-negative value net; oracles are research budgets.
    add `src/semtex_strategy.c src/octogen_strategy.c` (NOT novichok/torpex).
 3. `sdk/ts/wasm/bots.ts`, `STRAT` map: add
    `semtex: 18,` and `octogen: 20,`.
-4. `supabase/functions/_shared/common/bot_strategy.ts` registry, after fulminate:
+4. `server/api/common/bot_strategy.ts` registry, after fulminate:
    ```ts
    ['semtex', new WasmBotStrategy('semtex', STRAT.semtex, { logs: true })],
    ['octogen', new WasmBotStrategy('octogen', STRAT.octogen, { logs: true })],
@@ -196,7 +196,7 @@ cd c
 make CC=clang build/sim_difftest && ./build/sim_difftest 4 300    # 0 real divergences
 cd .. && npm run test:e2e && npm run test:validate  # all pass
 # and confirm the cheater is NOT reachable in production:
-grep -R "novichok" sdk/ts/wasm/bots.ts supabase/functions/_shared/common/bot_strategy.ts   # expect NO hits
+grep -R "novichok" sdk/ts/wasm/bots.ts server/api/common/bot_strategy.ts   # expect NO hits
 ```
 
 ## Step 6 — optional: funny-bohr styling

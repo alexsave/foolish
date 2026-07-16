@@ -8,7 +8,7 @@
 // Last measured worst: 14.3 KiB (cover nb=8) — 32 KiB stack is 2.23x that.
 // Set STACK to the shipped -z stack-size before re-measuring.
 import { kernelLegalMoves } from '../sdk/ts/wasm/engine.ts';
-import { Game, GAME_STATUS, PLAYER_STATUS, PrivatePlayer, Card, Battle } from '../supabase/functions/_shared/core/types.ts';
+import { Game, GAME_STATUS, PLAYER_STATUS, PrivatePlayer, Card, Battle } from '../server/api/core/types.ts';
 
 const STACK = 32768;
 const seen: WebAssembly.Memory[] = [];

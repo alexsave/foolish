@@ -4,7 +4,8 @@
     "baseUrl": "..",
     "noEmit": true,
     "paths": {
-      "@shared/*": ["supabase/functions/_shared/*"],
+      "@shared/*": ["server/impls/supabase/functions/_shared/*"],
+      "@api/*": ["server/api/*"],
       "@sdk/*": ["sdk/*"],
       "jsr:@supabase/supabase-js": ["e2e/adapters/supabase.ts"],
       "jsr:@supabase/functions-js/edge-runtime.d.ts": ["e2e/adapters/empty.ts"],

@@ -23,7 +23,7 @@ too fast" hypothesis.
 
 - `schema.sql` — gameplay tables + the **verbatim** `commit_game`,
   `try_acquire_bot_lease`, `release_bot_lease`, `renew_bot_lease` functions from
-  `supabase/migrations/`. RLS/realtime/auth omitted (the harness connects as the
+  `server/impls/supabase/migrations/`. RLS/realtime/auth omitted (the harness connects as the
   service role, like the edge functions). The concurrency primitive under test is
   real plpgsql in real Postgres.
 - `db.ts` — faithful re-implementation of `loadCompleteGame` / `commitGame` over
@@ -64,7 +64,7 @@ moves.
 
 1. `executeWithGameLock` broadcasts via
    `broadcastAnimationEvents(...).catch(...)` — un-awaited, fire-and-forget, after
-   the commit (`supabase/functions/_shared/utils.ts`).
+   the commit (`server/impls/supabase/functions/_shared/utils.ts`).
 2. Each broadcast opens a **fresh ephemeral channel** `gu-<game>-<player>`,
    `send`s, then `removeChannel`s. Independent sends → Realtime gives no
    cross-broadcast ordering guarantee.
@@ -104,7 +104,7 @@ distinct version once.
 
 ## Finding 2 — `rearrange-hand` broadcasts pre-commit (minor, same root cause)
 
-`supabase/functions/rearrange-hand/index.ts` calls `broadcastToGameUser` **inside**
+`server/impls/supabase/functions/rearrange-hand/index.ts` calls `broadcastToGameUser` **inside**
 the operation closure, i.e. before (and on every retry of) the CAS commit. A
 conflicted attempt can therefore emit a hand-order broadcast that never committed,
 or emit twice. Low impact (private hand order, self-heals on the next state) but

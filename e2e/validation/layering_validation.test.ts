@@ -17,17 +17,24 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve, dirname, relative } from 'node:path';
 
 const REPO = resolve(import.meta.dirname, '../..');
-const SHARED = join(REPO, 'supabase/functions/_shared');   // core/ common/ adapter/
-const SDK = join(REPO, 'sdk');                             // the SDK lives at repo root (A10)
+// A10 homes: the kernel bindings at repo-root sdk/, the host-neutral game code
+// at server/api/{core,common}, the one Supabase adapter under its impl.
+const SDK = join(REPO, 'sdk');
+const CORE = join(REPO, 'server/api/core');
+const COMMON = join(REPO, 'server/api/common');
+const ADAPTER = join(REPO, 'server/impls/supabase/functions/_shared/adapter');
 const RANK: Record<string, number> = { core: 0, sdk: 1, common: 2, adapter: 3 };
 
+function under(root: string, p: string): boolean {
+    return !relative(root, p).startsWith('..');
+}
+
 function layerOf(absPath: string): string | null {
-    const inSdk = relative(SDK, absPath);
-    if (!inSdk.startsWith('..')) return 'sdk';      // repo-root sdk/{ts,c,swift}
-    const rel = relative(SHARED, absPath);
-    if (rel.startsWith('..')) return null;          // outside the layered tiers
-    const top = rel.split('/')[0];
-    return top in RANK ? top : null;
+    if (under(CORE, absPath)) return 'core';
+    if (under(COMMON, absPath)) return 'common';
+    if (under(ADAPTER, absPath)) return 'adapter';
+    if (under(SDK, absPath)) return 'sdk';          // sdk/{ts,swift} bindings
+    return null;                                    // host entrypoints, e2e, etc.
 }
 
 function walk(dir: string): string[] {
@@ -43,7 +50,7 @@ function walk(dir: string): string[] {
 // every quoted specifier in from '...' / import('...') / new URL('...')
 const SPEC = /(?:from|import|URL)\s*\(?\s*['"]([^'"]+)['"]/g;
 
-const files = [...walk(SHARED), ...walk(SDK)];
+const files = [...walk(CORE), ...walk(COMMON), ...walk(ADAPTER), ...walk(SDK)];
 
 test('the four tiers form a one-way DAG (no file imports a higher tier)', () => {
     const violations: string[] = [];
@@ -59,7 +66,7 @@ test('the four tiers form a one-way DAG (no file imports a higher tier)', () => 
             if (!toLayer) continue;                 // resolves outside _shared
             if (RANK[toLayer] > RANK[fromLayer]) {
                 violations.push(
-                    `${relative(SHARED, f)} (${fromLayer}) imports ${spec} (${toLayer}) — upward edge`);
+                    `${relative(REPO, f)} (${fromLayer}) imports ${spec} (${toLayer}) — upward edge`);
             }
         }
     }
@@ -78,7 +85,7 @@ test('core / sdk / common carry no vendor or host coupling', () => {
         const src = readFileSync(f, 'utf8');
         for (const pat of FORBIDDEN) {
             if (pat.test(src)) {
-                violations.push(`${relative(SHARED, f)} (${layer}) contains ${pat} — host coupling above the adapter`);
+                violations.push(`${relative(REPO, f)} (${layer}) contains ${pat} — host coupling above the adapter`);
             }
         }
     }

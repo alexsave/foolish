@@ -6,7 +6,7 @@
 
 import { Card, Game, GAME_STATUS, PLAYER_STATUS, PrivatePlayer, AnimationEvent } from '../core/types.ts';
 import { MAX_PLAYERS } from '../core/constants.ts';
-import { __setDealSeedOverride, applyKernelStateToGame, getLastDealSeedHex, kernelStartGame, PackedRunOk, runPackedStart } from '../../../../sdk/ts/wasm/engine.ts';
+import { __setDealSeedOverride, applyKernelStateToGame, getLastDealSeedHex, kernelStartGame, PackedRunOk, runPackedStart } from '../../../sdk/ts/wasm/engine.ts';
 import { hexToBytes } from './replay/codec.ts';
 
 // Starts the game with all the animations. The deal/flip/first-attacker

@@ -1,10 +1,10 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { Card, PersonalGame, PublicGame, GAME_STATUS, PLAYER_STATUS, STRATEGY_KEY } from '@shared/core/types.ts';
+import { Card, PersonalGame, PublicGame, GAME_STATUS, PLAYER_STATUS, STRATEGY_KEY } from '@api/core/types.ts';
 import supabase from '../backend/Connector';
 import { useParams } from 'next/navigation';
 import { useAuth } from './AuthContext';
-import { MAX_PLAYERS } from '@shared/core/constants.ts';
-import { get_next_player_index, card_comp } from '@shared/common/common_utils.ts';
+import { MAX_PLAYERS } from '@api/core/constants.ts';
+import { get_next_player_index, card_comp } from '@api/common/common_utils.ts';
 import { ANIMATION_TIME } from '../constants/constants';
 import { optimisticOverlay } from '../state/optimisticOverlay';
 import { animationFeed } from '../state/animationFeed';

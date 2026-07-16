@@ -1,7 +1,7 @@
 // Adversarial / illegal-input fuzzer. Fires malformed and rule-breaking action
 // requests — the kind a malicious or buggy client could POST — through the REAL
 // server validation+execution path (verify_player_in_game + the real handlers,
-// exactly as supabase/functions/action/index.ts dispatches) under the REAL CAS
+// exactly as server/impls/supabase/functions/action/index.ts dispatches) under the REAL CAS
 // commit, and asserts the hard safety invariant after EVERY attempt:
 //
 //   card conservation holds — no input ever duplicates or loses a card.
@@ -12,15 +12,15 @@ import './harness.ts';
 import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { applySchema, resetDb, seedGame, uuid, pgPool } from './harness.ts';
-import { executeWithGameLock } from '../supabase/functions/_shared/adapter/utils.ts';
-import { verify_player_in_game } from '../supabase/functions/_shared/common/common_utils.ts';
-import { start_game } from '../supabase/functions/_shared/common/game_lifecycle.ts';
-import { Game, AnimationEvent, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY, PrivatePlayer, Card } from '../supabase/functions/_shared/core/types.ts';
-import { handleAttack } from '../supabase/functions/_shared/common/actions/attack.ts';
-import { handleCover } from '../supabase/functions/_shared/common/actions/cover.ts';
-import { handlePass } from '../supabase/functions/_shared/common/actions/pass.ts';
-import { handlePickup } from '../supabase/functions/_shared/common/actions/pickup.ts';
-import { handleGood } from '../supabase/functions/_shared/common/actions/good.ts';
+import { executeWithGameLock } from '../server/impls/supabase/functions/_shared/adapter/utils.ts';
+import { verify_player_in_game } from '../server/api/common/common_utils.ts';
+import { start_game } from '../server/api/common/game_lifecycle.ts';
+import { Game, AnimationEvent, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY, PrivatePlayer, Card } from '../server/api/core/types.ts';
+import { handleAttack } from '../server/api/common/actions/attack.ts';
+import { handleCover } from '../server/api/common/actions/cover.ts';
+import { handlePass } from '../server/api/common/actions/pass.ts';
+import { handlePickup } from '../server/api/common/actions/pickup.ts';
+import { handleGood } from '../server/api/common/actions/good.ts';
 import { legalMovesFor, applyPlayerMove, checkCardConservation } from './dispatch.ts';
 
 // Deterministic RNG so a found exploit reproduces from the printed seed.
@@ -106,7 +106,7 @@ function isCrashClass(e: any): boolean {
 }
 
 async function loadGame(gameId: string): Promise<Game> {
-    const { loadCompleteGame } = await import('../supabase/functions/_shared/adapter/utils.ts');
+    const { loadCompleteGame } = await import('../server/impls/supabase/functions/_shared/adapter/utils.ts');
     return loadCompleteGame(gameId);
 }
 async function freshGame(): Promise<string> {

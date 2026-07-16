@@ -18,15 +18,15 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { game_done } from '../supabase/functions/_shared/common/common_utils.ts';
-import { start_game } from '../supabase/functions/_shared/common/game_lifecycle.ts';
-import { calculateLegalMoves, BotStrategy, LegalMove } from '../supabase/functions/_shared/common/bot_strategy.ts';
-import { shouldBotActCore, executeBotMove } from '../supabase/functions/_shared/common/pure_bot_actions.ts';
+import { game_done } from '../server/api/common/common_utils.ts';
+import { start_game } from '../server/api/common/game_lifecycle.ts';
+import { calculateLegalMoves, BotStrategy, LegalMove } from '../server/api/common/bot_strategy.ts';
+import { shouldBotActCore, executeBotMove } from '../server/api/common/pure_bot_actions.ts';
 import { STRAT, wasmChooseMove, wasmChooseMoveDirect, __setBotSeedSource } from '../sdk/ts/wasm/bots.ts';
 import { __setKernelSeedSource } from '../sdk/ts/wasm/engine.ts';
 import {
   Game, PrivatePlayer, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY,
-} from '../supabase/functions/_shared/core/types.ts';
+} from '../server/api/core/types.ts';
 import { RandomBotStrategy, setRandomSeed } from '../offlinefun/localtest/frozen/random_strategy.ts';
 import { HandwrittenBotStrategy } from '../offlinefun/localtest/frozen/handwritten_strategy.ts';
 import { SimpleHeuristicStrategy } from '../offlinefun/localtest/frozen/simple_heuristic_strategy.ts';

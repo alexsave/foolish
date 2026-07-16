@@ -19,7 +19,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { Card } from '../supabase/functions/_shared/core/types.ts';
+import { Card } from '../server/api/core/types.ts';
 import { createCardEventString, getCardKey } from '../src/utils/animationUtils';
 import { staleOptimisticKeysOnTable } from '../src/state/optimisticAnimation';
 

@@ -1,5 +1,5 @@
 // Champion strategy — direct port of ChampionStrategy.chooseMove in
-// supabase/functions/_shared/common/strategies/champion_strategy.ts.
+// server/api/common/strategies/champion_strategy.ts.
 //
 // Behavioral notes (this must match the TS move-for-move):
 // - Math.random() maps to random_strategy_random(). There are exactly two

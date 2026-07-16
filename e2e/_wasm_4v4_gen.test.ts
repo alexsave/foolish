@@ -10,16 +10,16 @@
 //     TSX_TSCONFIG_PATH=e2e/tsconfig.json node --import tsx --test e2e/_wasm_4v4_gen.test.ts
 import { test } from 'node:test';
 import { writeFileSync } from 'node:fs';
-import { start_game_packed } from '../supabase/functions/_shared/common/game_lifecycle.ts';
+import { start_game_packed } from '../server/api/common/game_lifecycle.ts';
 import { runPackedGameAction, applyKernelStateToGame, __setDealSeedOverride } from '../sdk/ts/wasm/engine.ts';
 import { encodeAction } from '../sdk/ts/wire/awire.ts';
 import { logsFromKernelExport, decodeLogs } from '../sdk/ts/wire/logwire.ts';
 import { wasmChooseMoveDirect, __ensureBots, STRAT } from '../sdk/ts/wasm/bots.ts';
-import { shouldBotActCore } from '../supabase/functions/_shared/common/pure_bot_actions.ts';
+import { shouldBotActCore } from '../server/api/common/pure_bot_actions.ts';
 import { kernelReplayEncodeV6FromGame } from '../sdk/ts/wasm/bots.ts';
-import { base32Encode, bytesToBigint, gameToUrl } from '../supabase/functions/_shared/common/replay/codec.ts';
-import { encodeExtras, joinReplayCode, moveTimesFromLogs } from '../supabase/functions/_shared/common/replay/extras.ts';
-import { PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY } from '../supabase/functions/_shared/core/types.ts';
+import { base32Encode, bytesToBigint, gameToUrl } from '../server/api/common/replay/codec.ts';
+import { encodeExtras, joinReplayCode, moveTimesFromLogs } from '../server/api/common/replay/extras.ts';
+import { PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY } from '../server/api/core/types.ts';
 
 __ensureBots();
 const NP = 8;

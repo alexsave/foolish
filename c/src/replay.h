@@ -1,5 +1,5 @@
 // Whole-game replay codec — C port of the format-v5 rules projection that
-// lived in supabase/functions/_shared/common/replay/core.ts (runReplay + menus +
+// lived in server/api/common/replay/core.ts (runReplay + menus +
 // weights) and the rANS coder from codec.ts. The wire format is FROZEN:
 // existing v5 integers in game_snapshots.moves must decode byte-identically,
 // so every menu ordering, weight, and probability model here is wire format.

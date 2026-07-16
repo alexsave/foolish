@@ -617,7 +617,7 @@ wants anyway.
    fails (§4's density budget is the contract).
 8. **Session drift:** watch and phone refresh tokens independently after
    handoff; Supabase refresh-token rotation
-   (`supabase/config.toml`: `enable_refresh_token_rotation = true`,
+   (`server/impls/supabase/config.toml`: `enable_refresh_token_rotation = true`,
    `refresh_token_reuse_interval = 10`) tolerates both refreshing — but test
    the both-devices-offline-a-month case; the §8.2 re-auth path is the net.
 9. **Do not port the phone's Boards/** — the design languages must not blend

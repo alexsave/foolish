@@ -12,14 +12,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { start_game_packed } from '../supabase/functions/_shared/common/game_lifecycle.ts';
-import { processBotActionPacked } from '../supabase/functions/_shared/common/pure_bot_actions.ts';
-import { game_done } from '../supabase/functions/_shared/common/common_utils.ts';
+import { start_game_packed } from '../server/api/common/game_lifecycle.ts';
+import { processBotActionPacked } from '../server/api/common/pure_bot_actions.ts';
+import { game_done } from '../server/api/common/common_utils.ts';
 import { __setDealSeedOverride, kernelShouldAct } from '../sdk/ts/wasm/engine.ts';
 import { __ensureBots } from '../sdk/ts/wasm/bots.ts';
 import {
   Game, PrivatePlayer, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY,
-} from '../supabase/functions/_shared/core/types.ts';
+} from '../server/api/core/types.ts';
 
 __ensureBots();
 

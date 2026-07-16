@@ -43,12 +43,12 @@ jobs:
 
       - name: Install the diagnostic function
         run: |
-          cp -r e2e/edge_memtest supabase/functions/memtest
+          cp -r e2e/edge_memtest server/impls/supabase/functions/memtest
           # memtest runs the real bot stack, so `functions serve` must bundle
           # bots.wasm.gz next to it. Injected HERE, not in committed
           # config.toml: `functions deploy` would try to deploy a memtest
           # function that has no dir at deploy time and fail the deploy.
-          printf '\n[functions.memtest]\nstatic_files = [ "../sdk/ts/wasm/bots.wasm.gz" ]\n' >> supabase/config.toml
+          printf '\n[functions.memtest]\nstatic_files = [ "../../../sdk/ts/wasm/bots.wasm.gz" ]\n' >> server/impls/supabase/config.toml
 
       - name: Start local stack (db + edge runtime)
         # memtest is DB-free, but `supabase start` still applies migrations and
@@ -59,13 +59,13 @@ jobs:
         # migrations and truncate seed.sql for this run — seeding an empty
         # file is a no-op on every CLI version, and config.toml stays intact.
         run: |
-          mv supabase/migrations /tmp/parked-migrations
-          : > supabase/seed.sql
-          supabase start -x studio,imgproxy,inbucket
+          mv server/impls/supabase/migrations /tmp/parked-migrations
+          : > server/impls/supabase/seed.sql
+          supabase --workdir server/impls start -x studio,imgproxy,inbucket
 
       - name: Serve functions
         run: |
-          supabase functions serve --no-verify-jwt > serve.log 2>&1 &
+          supabase --workdir server/impls functions serve --no-verify-jwt > serve.log 2>&1 &
           timeout 90 bash -c 'until curl -sf -o /dev/null "http://127.0.0.1:54321/functions/v1/memtest?games=0"; do sleep 2; done'
 
       - name: Bot decisions under the real edge memory budget

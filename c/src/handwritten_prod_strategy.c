@@ -1,5 +1,5 @@
 // Handwritten PRODUCTION strategy — exact port of HandwrittenBotStrategy in
-// supabase/functions/_shared/common/strategies/handwritten_strategy.ts
+// server/api/common/strategies/handwritten_strategy.ts
 // (STRAT_HANDWRITTEN_PROD). Verified move-for-move against the TS original
 // on identical positions with a pinned RNG stream.
 //

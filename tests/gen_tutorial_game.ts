@@ -36,10 +36,10 @@
  * choice and orphans the code). When that happens, this is the way back in.
  * ========================================================================== */
 
-import { PLAYER_STATUS } from '../supabase/functions/_shared/core/types.ts';
+import { PLAYER_STATUS } from '../server/api/core/types.ts';
 import { playSeededV6 } from '../e2e/helpers/seeded_game.ts';
-import { base32Encode, bytesToBigint } from '../supabase/functions/_shared/common/replay/codec.ts';
-import { decodeReplay } from '../supabase/functions/_shared/common/replay/decode.ts';
+import { base32Encode, bytesToBigint } from '../server/api/common/replay/codec.ts';
+import { decodeReplay } from '../server/api/common/replay/decode.ts';
 import { buildReplayFrames, REPLAY_STEP, ReplayFrame } from '../src/replay/frames.ts';
 import { TUTORIAL_NAMES } from '../src/components/tutorialGame.ts';
 

@@ -1,5 +1,5 @@
-import { Game } from '../../../supabase/functions/_shared/core/types.ts';
-import { BotStrategy, LegalMove } from '../../../supabase/functions/_shared/core/bot_interfaces.ts';
+import { Game } from '../../../server/api/core/types.ts';
+import { BotStrategy, LegalMove } from '../../../server/api/core/bot_interfaces.ts';
 
 /**
  * Random bot strategy - picks a random legal move

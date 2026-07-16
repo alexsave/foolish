@@ -26,13 +26,13 @@ import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { applySchema, resetDb, seedGame, uuid } from './harness.ts';
-import { executeWithGameLock } from '../supabase/functions/_shared/adapter/utils.ts';
-import { start_game } from '../supabase/functions/_shared/common/game_lifecycle.ts';
-import { lockedBotLoop } from '../supabase/functions/_shared/adapter/bot_actions.ts';
+import { executeWithGameLock } from '../server/impls/supabase/functions/_shared/adapter/utils.ts';
+import { start_game } from '../server/api/common/game_lifecycle.ts';
+import { lockedBotLoop } from '../server/impls/supabase/functions/_shared/adapter/bot_actions.ts';
 import { wasmBeliefProbeReset, wasmBeliefProbeDump } from '../sdk/ts/wasm/bots.ts';
-import { game_done } from '../supabase/functions/_shared/common/common_utils.ts';
+import { game_done } from '../server/api/common/common_utils.ts';
 import { legalMovesFor, applyPlayerMove } from './dispatch.ts';
-import { AnimationEvent, Game, Card } from '../supabase/functions/_shared/core/types.ts';
+import { AnimationEvent, Game, Card } from '../server/api/core/types.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 
@@ -44,7 +44,7 @@ beforeEach(async () => { await resetDb(); });
 after(() => {});
 
 async function loadGame(gameId: string): Promise<Game> {
-  const { loadCompleteGame } = await import('../supabase/functions/_shared/adapter/utils.ts');
+  const { loadCompleteGame } = await import('../server/impls/supabase/functions/_shared/adapter/utils.ts');
   return loadCompleteGame(gameId);
 }
 

@@ -17,16 +17,16 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { game_done } from '../supabase/functions/_shared/common/common_utils.ts';
-import { start_game } from '../supabase/functions/_shared/common/game_lifecycle.ts';
-import { processBotAction, shouldBotActCore } from '../supabase/functions/_shared/common/pure_bot_actions.ts';
-import { calculateLegalMoves } from '../supabase/functions/_shared/common/bot_strategy.ts';
+import { game_done } from '../server/api/common/common_utils.ts';
+import { start_game } from '../server/api/common/game_lifecycle.ts';
+import { processBotAction, shouldBotActCore } from '../server/api/common/pure_bot_actions.ts';
+import { calculateLegalMoves } from '../server/api/common/bot_strategy.ts';
 import {
   serializeGameState, deserializeGameState, stateFormatVersion, RosterTemplate,
 } from '../sdk/ts/wasm/engine.ts';
 import {
   Game, PrivatePlayer, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY,
-} from '../supabase/functions/_shared/core/types.ts';
+} from '../server/api/core/types.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 

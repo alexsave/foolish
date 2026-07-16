@@ -1,7 +1,7 @@
 const ROOT = '/Users/alex/Dev/foolish';
-const { urlToGame } = await import(`${ROOT}/supabase/functions/_shared/common/replay/codec.ts`);
-const { decodeReplay } = await import(`${ROOT}/supabase/functions/_shared/common/replay/decode.ts`);
-const extras = await import(`${ROOT}/supabase/functions/_shared/common/replay/extras.ts`);
+const { urlToGame } = await import(`${ROOT}/server/api/common/replay/codec.ts`);
+const { decodeReplay } = await import(`${ROOT}/server/api/common/replay/decode.ts`);
+const extras = await import(`${ROOT}/server/api/common/replay/extras.ts`);
 
 const url = process.argv[2];
 const d = decodeReplay(urlToGame(url));

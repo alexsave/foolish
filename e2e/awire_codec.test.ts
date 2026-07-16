@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { Card } from '../supabase/functions/_shared/core/types.ts';
+import { Card } from '../server/api/core/types.ts';
 import {
     AWIRE_KIND, AWIRE_MAX_CARDS, AwireKindName, AwireMove,
     ACTION_REQ_FORMAT, ACTION_REQ_FORMAT_V1,

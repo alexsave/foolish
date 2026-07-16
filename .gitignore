@@ -44,8 +44,8 @@ yarn-error.log*
 .vscode
 .cursor
 
-supabase/functions/_shared/common/durakai/move_analysis.txt
-supabase/functions/_shared/common/durakai/node_modules
+server/api/common/durakai/move_analysis.txt
+server/api/common/durakai/node_modules
 
 # c
 c/build/
@@ -61,7 +61,7 @@ c/tools/tt_divergence_viz/data/W/
 .watchrealsizevim
 serve.log
 ios/FoolishTests/__Snapshots__/
-supabase/functions/memtest/
+server/impls/supabase/functions/memtest/
 
 # local dev overrides (shadows next.config.mjs if tracked!)
 next.config.js

@@ -1,9 +1,9 @@
 // Find a seed where espresso loses 1v1 vs random, then trace the full game.
-import { calculateLegalMoves, registerBotStrategy } from '../../supabase/functions/_shared/common/bot_strategy.ts';
-import { shouldBotActCore, processBotAction } from '../../supabase/functions/_shared/common/pure_bot_actions.ts';
-import { game_done } from '../../supabase/functions/_shared/common/common_utils.ts';
-import { start_game } from '../../supabase/functions/_shared/common/game_lifecycle.ts';
-import { Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, STRATEGY_KEY, StrategyKey, Card } from '../../supabase/functions/_shared/core/types.ts';
+import { calculateLegalMoves, registerBotStrategy } from '../../server/api/common/bot_strategy.ts';
+import { shouldBotActCore, processBotAction } from '../../server/api/common/pure_bot_actions.ts';
+import { game_done } from '../../server/api/common/common_utils.ts';
+import { start_game } from '../../server/api/common/game_lifecycle.ts';
+import { Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, STRATEGY_KEY, StrategyKey, Card } from '../../server/api/core/types.ts';
 import { EspressoStrategy } from './frozen/espresso_strategy.ts';
 import { setRandomSeed } from './frozen/random_strategy.ts';
 import { runBotsToCompletion } from './harness.ts';

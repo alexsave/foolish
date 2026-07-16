@@ -1,15 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import supabase from '../backend/Connector';
-import { PersonalGame, PublicGame } from '@shared/core/types.ts';
+import { PersonalGame, PublicGame } from '@api/core/types.ts';
 import { Text } from './Text';
-import { base32Encode, hexToBytes, URL_PREFIX } from '@shared/common/replay/codec.ts';
+import { base32Encode, hexToBytes, URL_PREFIX } from '@api/common/replay/codec.ts';
 import { useStyles } from '../contexts/StyleContext';
 import { useTexture, getTextureStyle } from './TexturedSurface';
 
 /**
  * Post-game replay sharing. The server compresses the finished session at
- * game end (supabase/functions/_shared/common/replay/) into one game_snapshots row,
+ * game end (server/api/common/replay/) into one game_snapshots row,
  * stored binary: `moves` (the rANS move integer) and `extras` (player names +
  * per-move timing). The share code is derived here — base32(moves), with
  * '-' + base32(extras) appended when the checkbox is on. Uppercase base32

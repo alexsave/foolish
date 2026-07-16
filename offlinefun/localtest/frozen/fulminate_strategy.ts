@@ -20,8 +20,8 @@
 // deterministic fingerprint matches). Deno-compatible: only globalThis/Math/
 // Date, no Node imports.
 
-import { Card, Game, GameLog, PLAYER_STATUS } from '../../../supabase/functions/_shared/core/types.ts';
-import { BotStrategy, LegalMove } from '../../../supabase/functions/_shared/core/bot_interfaces.ts';
+import { Card, Game, GameLog, PLAYER_STATUS } from '../../../server/api/core/types.ts';
+import { BotStrategy, LegalMove } from '../../../server/api/core/bot_interfaces.ts';
 import {
     BeliefLog, CorditeParams, CORDITE_PARAMS,
     MOVE_ATTACK, MOVE_COVER, MOVE_GOOD, MOVE_PASS, MOVE_PICKUP,

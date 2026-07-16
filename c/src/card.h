@@ -1,5 +1,5 @@
 // Card representation and constants. Mirrors the TS layout in
-// supabase/functions/_shared/core/types.ts and constants.ts.
+// server/api/core/types.ts and constants.ts.
 #ifndef CNITRO_CARD_H
 #define CNITRO_CARD_H
 

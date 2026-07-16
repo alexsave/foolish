@@ -24,16 +24,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { game_done } from '../supabase/functions/_shared/common/common_utils.ts';
-import { start_game } from '../supabase/functions/_shared/common/game_lifecycle.ts';
+import { game_done } from '../server/api/common/common_utils.ts';
+import { start_game } from '../server/api/common/game_lifecycle.ts';
 import {
   Card, Game, GAME_STATUS, PLAYER_STATUS, PrivatePlayer, STRATEGY_KEY, LOG_TYPE,
-} from '../supabase/functions/_shared/core/types.ts';
-import { shouldBotActCore, processBotAction } from '../supabase/functions/_shared/common/pure_bot_actions.ts';
-import { calculateLegalMoves } from '../supabase/functions/_shared/common/bot_strategy.ts';
-import { decodeReplay } from '../supabase/functions/_shared/common/replay/decode.ts';
+} from '../server/api/core/types.ts';
+import { shouldBotActCore, processBotAction } from '../server/api/common/pure_bot_actions.ts';
+import { calculateLegalMoves } from '../server/api/common/bot_strategy.ts';
+import { decodeReplay } from '../server/api/common/replay/decode.ts';
 import { kernelReplayEncodeV6FromGame } from '../sdk/ts/wasm/bots.ts';
-import { bytesToBigint } from '../supabase/functions/_shared/common/replay/codec.ts';
+import { bytesToBigint } from '../server/api/common/replay/codec.ts';
 import { __setDealSeedOverride, __LOG_TYPE_TO_INT } from '../sdk/ts/wasm/engine.ts';
 import { buildReplayFrames } from '../src/replay/frames.ts';
 import { encodeLogsWire } from '../src/oracle/logsWire.ts';

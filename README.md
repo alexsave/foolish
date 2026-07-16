@@ -129,7 +129,7 @@ saturation knee (2×/4× worlds moved win rate 40.0%→40.0%→39.0% at pc4,
 strategy left is the non-algorithmic `gpt` (LLM adapter).
 
 Types, constants, the replay codec, meta/lobby actions, and the I/O layer
-(DB, broadcast, bot loop) remain TS in `supabase/functions/_shared/`, shared
+(DB, broadcast, bot loop) remain TS in `server/impls/supabase/functions/_shared/`, shared
 between client and edge functions via the `@shared/*` path alias (see
 `tsconfig.json`) with Deno-style `.ts` extensions, as before. A few thin,
 kernel-mirrored projections (`canCover`, `game_done`,
@@ -213,7 +213,7 @@ cd c && make
 
 ### 2. The replay codec — a whole game in a QR code
 
-`c/src/replay.c` (reached through `supabase/functions/_shared/common/replay/` and
+`c/src/replay.c` (reached through `server/api/common/replay/` and
 rendered by `src/replay/`) encodes a complete finished game into a single integer
 using **rANS entropy coding**, then base32s it into a URL
 (`WWW.FOOLISH.CARDS/<code>`) chosen specifically to stay inside QR alphanumeric

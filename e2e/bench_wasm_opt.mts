@@ -3,13 +3,13 @@
 // ns/decision + peak linear-memory MB. Seeds are pinned so every build variant
 // runs the byte-identical workload (same deals, same MC rollouts) — the only
 // thing that changes between runs is the swapped-in bots.wasm.
-import { game_done } from '../supabase/functions/_shared/common/common_utils.ts';
-import { start_game } from '../supabase/functions/_shared/common/game_lifecycle.ts';
-import { calculateLegalMoves } from '../supabase/functions/_shared/common/bot_strategy.ts';
-import { shouldBotActCore, executeBotMove } from '../supabase/functions/_shared/common/pure_bot_actions.ts';
+import { game_done } from '../server/api/common/common_utils.ts';
+import { start_game } from '../server/api/common/game_lifecycle.ts';
+import { calculateLegalMoves } from '../server/api/common/bot_strategy.ts';
+import { shouldBotActCore, executeBotMove } from '../server/api/common/pure_bot_actions.ts';
 import { STRAT, wasmChooseMoveDirect, __setBotSeedSource, __botsWasmMB } from '../sdk/ts/wasm/bots.ts';
 import { __setKernelSeedSource } from '../sdk/ts/wasm/engine.ts';
-import { Game, PrivatePlayer, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY } from '../supabase/functions/_shared/core/types.ts';
+import { Game, PrivatePlayer, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY } from '../server/api/core/types.ts';
 
 const __log = console.log.bind(console);
 console.log = () => {}; console.warn = () => {}; console.info = () => {};

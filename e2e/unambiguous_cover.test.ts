@@ -20,8 +20,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { ensureBotsAsync, kernelUnambiguousCover } from '../sdk/ts/wasm/bots.ts';
-import { canCover } from '../supabase/functions/_shared/common/common_utils.ts';
-import { Card, Battle } from '../supabase/functions/_shared/core/types.ts';
+import { canCover } from '../server/api/common/common_utils.ts';
+import { Card, Battle } from '../server/api/core/types.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 
