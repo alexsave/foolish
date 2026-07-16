@@ -1,10 +1,10 @@
 // Goal: deterministic seed, find which coffee-vs-2-randoms game is slow.
 // Run 100 games with seed reset each game to seed=i. Print per-game iter & ms.
-import { calculateLegalMoves, registerBotStrategy } from '../../server/api/common/bot_strategy.ts';
-import { shouldBotActCore, processBotAction } from '../../server/api/common/pure_bot_actions.ts';
-import { game_done } from '../../server/api/common/common_utils.ts';
-import { start_game } from '../../server/api/common/game_lifecycle.ts';
-import { Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, STRATEGY_KEY, StrategyKey } from '../../server/api/core/types.ts';
+import { calculateLegalMoves, registerBotStrategy } from '@api/common/bot_strategy.ts';
+import { shouldBotActCore, processBotAction } from '@api/common/pure_bot_actions.ts';
+import { game_done } from '@api/common/common_utils.ts';
+import { start_game } from '@api/common/game_lifecycle.ts';
+import { Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, STRATEGY_KEY, StrategyKey } from '@api/core/types.ts';
 import { EspressoStrategy } from './frozen/espresso_strategy.ts';
 import { setRandomSeed } from './frozen/random_strategy.ts';
 import { createGame } from './harness.ts';

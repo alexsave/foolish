@@ -152,10 +152,10 @@ test('bots.wasm memory is bounded and flat across all MC bot families', async ()
     } as unknown as typeof WebAssembly.Instance;
     (WebAssembly.Instance as unknown as { prototype: unknown }).prototype = RealInstance.prototype;
 
-    const { game_done } = await import('../../server/api/common/common_utils.ts');
-    const { start_game } = await import('../../server/api/common/game_lifecycle.ts');
-    const { processBotAction, shouldBotActCore } = await import('../../server/api/common/pure_bot_actions.ts');
-    const { PLAYER_STATUS, GAME_STATUS } = await import('../../server/api/core/types.ts');
+    const { game_done } = await import('@api/common/common_utils.ts');
+    const { start_game } = await import('@api/common/game_lifecycle.ts');
+    const { processBotAction, shouldBotActCore } = await import('@api/common/pure_bot_actions.ts');
+    const { PLAYER_STATUS, GAME_STATUS } = await import('@api/core/types.ts');
     type AnyGame = Parameters<typeof start_game>[0];
 
     const wasmTotal = () => memories.reduce((a, m) => a + m.buffer.byteLength, 0);

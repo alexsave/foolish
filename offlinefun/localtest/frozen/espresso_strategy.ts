@@ -1,6 +1,6 @@
-import { Card, Game, PrivatePlayer, LOG_TYPE, PLAYER_STATUS } from '../../../server/api/core/types.ts';
-import { BotStrategy, LegalMove } from '../../../server/api/core/bot_interfaces.ts';
-import { canCover } from '../../../server/api/common/common_utils.ts';
+import { Card, Game, PrivatePlayer, LOG_TYPE, PLAYER_STATUS } from '@api/core/types.ts';
+import { BotStrategy, LegalMove } from '@api/core/bot_interfaces.ts';
+import { canCover } from '@api/common/common_utils.ts';
 import { HandwrittenBotStrategy } from './handwritten_strategy.ts';
 
 // Espresso — perfect-info strategy.

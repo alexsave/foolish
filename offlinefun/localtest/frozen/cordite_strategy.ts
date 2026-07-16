@@ -6,8 +6,8 @@
 // sampled-world budget (measured stronger in C evals; bounded by a
 // per-decision wall-clock cap well under the bot-loop budget).
 
-import { Card, Game, GameLog, PLAYER_STATUS } from '../../../server/api/core/types.ts';
-import { BotStrategy, LegalMove } from '../../../server/api/core/bot_interfaces.ts';
+import { Card, Game, GameLog, PLAYER_STATUS } from '@api/core/types.ts';
+import { BotStrategy, LegalMove } from '@api/core/bot_interfaces.ts';
 import {
     BeliefLog, CorditeParams, CORDITE_PARAMS, CORDITE_MAX_PARAMS,
     MOVE_ATTACK, MOVE_COVER, MOVE_GOOD, MOVE_PASS, MOVE_PICKUP,

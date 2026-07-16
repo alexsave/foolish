@@ -25,12 +25,12 @@ interface Result { pc: number; n: number; wins: number; fpSum: number; dec: numb
 function runWorker(): void {
     // Lazy imports kept inside the worker branch so the master stays light.
     Promise.resolve().then(async () => {
-        const { calculateLegalMoves } = await import('../../server/api/common/bot_strategy.ts');
-        const { shouldBotActCore, executeBotMove } = await import('../../server/api/common/pure_bot_actions.ts');
-        const { game_done } = await import('../../server/api/common/common_utils.ts');
-        const { start_game } = await import('../../server/api/common/game_lifecycle.ts');
-        const { getBotStrategy } = await import('../../server/api/common/bot_strategy.ts');
-        const { GAME_STATUS, PLAYER_STATUS } = await import('../../server/api/core/types.ts');
+        const { calculateLegalMoves } = await import('@api/common/bot_strategy.ts');
+        const { shouldBotActCore, executeBotMove } = await import('@api/common/pure_bot_actions.ts');
+        const { game_done } = await import('@api/common/common_utils.ts');
+        const { start_game } = await import('@api/common/game_lifecycle.ts');
+        const { getBotStrategy } = await import('@api/common/bot_strategy.ts');
+        const { GAME_STATUS, PLAYER_STATUS } = await import('@api/core/types.ts');
 
         const hero = process.env.AR_HERO!, opp = process.env.AR_OPP!;
         const pcs = process.env.AR_PCS!.split(',').map(Number);
