@@ -1,5 +1,5 @@
-import { wrap400, ExecutionParams } from "../_shared/adapter/utils.ts";
-import { handleMetaAction } from "../_shared/adapter/meta_actions.ts";
+import { wrap400, ExecutionParams } from "@shared/adapter/utils.ts";
+import { handleMetaAction } from "@shared/adapter/meta_actions.ts";
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 

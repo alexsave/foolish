@@ -8,9 +8,9 @@
 import {
     Card, Game, GAME_STATUS, PersonalGame, PLAYER_STATUS,
     PrivatePlayer, PublicGame, PublicPlayer,
-} from "../../../server/api/core/types.ts";
+} from "@api/core/types.ts";
 import { WIRE_HIDDEN, WIRE_NONE, wireCard } from "./awire.ts";
-import { KernelCard, KernelState, kernelViewFromPacked } from "../wasm/bots.ts";
+import { KernelCard, KernelState, kernelViewFromPacked } from "@sdk/ts/wasm/bots.ts";
 
 export const VIEW_FORMAT_VERSION = 1;
 

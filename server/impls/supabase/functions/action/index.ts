@@ -1,13 +1,13 @@
-import { wrap400, ExecutionParams, scheduleBotLoop } from "../_shared/adapter/utils.ts";
-import { handleAttack } from "../../../../api/common/actions/attack.ts";
-import { handleCover } from "../../../../api/common/actions/cover.ts";
-import { handlePass } from "../../../../api/common/actions/pass.ts";
-import { handlePickup } from "../../../../api/common/actions/pickup.ts";
-import { handleGood } from "../../../../api/common/actions/good.ts";
-import { verify_player_in_game } from "../../../../api/common/common_utils.ts";
-import { corsHeaders } from "../_shared/adapter/cors.ts";
-import { GAME_STATUS } from "../../../../api/core/types.ts";
-import { ACTION_STATUS, decodeActionRequest, encodeActionResponse } from "../../../../../sdk/ts/wire/awire.ts";
+import { wrap400, ExecutionParams, scheduleBotLoop } from "@shared/adapter/utils.ts";
+import { handleAttack } from "@api/common/actions/attack.ts";
+import { handleCover } from "@api/common/actions/cover.ts";
+import { handlePass } from "@api/common/actions/pass.ts";
+import { handlePickup } from "@api/common/actions/pickup.ts";
+import { handleGood } from "@api/common/actions/good.ts";
+import { verify_player_in_game } from "@api/common/common_utils.ts";
+import { corsHeaders } from "@shared/adapter/cors.ts";
+import { GAME_STATUS } from "@api/core/types.ts";
+import { ACTION_STATUS, decodeActionRequest, encodeActionResponse } from "@sdk/ts/wire/awire.ts";
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 
@@ -23,7 +23,7 @@ const packedAction = async (req: Request, user: { id: string }, reqId: string): 
             status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
     }
-    const { executePackedAction } = await import('../_shared/adapter/packed_action.ts');
+    const { executePackedAction } = await import('@shared/adapter/packed_action.ts');
     const out = await executePackedAction(parsed.gameId, user.id, parsed.wire, reqId, parsed.intentVersion);
     // Same bot nudge as the JSON path: an APPLIED human move wakes the bots.
     // (A rejection never did on the legacy path — it threw before run_bots.)

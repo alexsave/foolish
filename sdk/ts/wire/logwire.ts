@@ -19,8 +19,8 @@
 // JS paths), so the stored stream is safe for any reader — including bot
 // belief imports, which must never see hidden draws (the no-cheating
 // contract). Pure TS, no wasm imports.
-import { GameLog, LOG_TYPE, LogType } from "../../../server/api/core/types.ts";
-import { Card } from "../../../server/api/core/types.ts";
+import { GameLog, LOG_TYPE, LogType } from "@api/core/types.ts";
+import { Card } from "@api/core/types.ts";
 import { cardFromWireByte, WIRE_HIDDEN, WIRE_NONE, wireCard } from "./awire.ts";
 
 const LOG_TYPE_FROM_INT: LogType[] = [

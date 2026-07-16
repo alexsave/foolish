@@ -10,9 +10,9 @@ import {
     broadcastPackedEventBuffers, commitGame, executeWithGameLock,
     finalizeEndedGame, supabaseClient,
 } from './utils.ts';
-import { GAME_STATUS } from '../../../../../api/core/types.ts';
-import { verify_player_in_game } from '../../../../../api/common/common_utils.ts';
-import { ACTION_STATUS, AwireMove, decodeAction, REJECT_STALE_ROUND } from '../../../../../../sdk/ts/wire/awire.ts';
+import { GAME_STATUS } from '@api/core/types.ts';
+import { verify_player_in_game } from '@api/common/common_utils.ts';
+import { ACTION_STATUS, AwireMove, decodeAction, REJECT_STALE_ROUND } from '@sdk/ts/wire/awire.ts';
 import { getCachedGame, invalidateCachedGame } from './game_cache.ts';
 
 export interface PackedActionOutcome {
@@ -121,10 +121,10 @@ export async function executePackedAction(
         // ONE synchronous kernel section: load blob -> apply wire -> finalize
         // win -> serialize state + logs + every recipient's masked event
         // stream. Lazy import keeps the wasm embed off lobby-only cold starts.
-        const { hexToBytes, bytesToHex } = await import('../../../../../api/common/replay/codec.ts');
-        const { runPackedAction, materializeKernelGame } = await import('../../../../../../sdk/ts/wasm/engine.ts');
-        const { logsFromKernelExport } = await import('../../../../../../sdk/ts/wire/logwire.ts');
-        const { bytesToBareHex } = await import('../../../../../../sdk/ts/wire/bytes.ts');
+        const { hexToBytes, bytesToHex } = await import('@api/common/replay/codec.ts');
+        const { runPackedAction, materializeKernelGame } = await import('@sdk/ts/wasm/engine.ts');
+        const { logsFromKernelExport } = await import('@sdk/ts/wire/logwire.ts');
+        const { bytesToBareHex } = await import('@sdk/ts/wire/bytes.ts');
         const run = runPackedAction(hexToBytes(row.state), seat, wire, aiMask, humanSeats);
 
         if (!run.ok) {
@@ -205,11 +205,11 @@ async function legacyFallback(
 ): Promise<PackedActionOutcome> {
     const move = decodeAction(wire);
     if (!move) throw new Error('malformed action wire');
-    const { handleAttack } = await import('../../../../../api/common/actions/attack.ts');
-    const { handleCover } = await import('../../../../../api/common/actions/cover.ts');
-    const { handlePass } = await import('../../../../../api/common/actions/pass.ts');
-    const { handlePickup } = await import('../../../../../api/common/actions/pickup.ts');
-    const { handleGood } = await import('../../../../../api/common/actions/good.ts');
+    const { handleAttack } = await import('@api/common/actions/attack.ts');
+    const { handleCover } = await import('@api/common/actions/cover.ts');
+    const { handlePass } = await import('@api/common/actions/pass.ts');
+    const { handlePickup } = await import('@api/common/actions/pickup.ts');
+    const { handleGood } = await import('@api/common/actions/good.ts');
     let rejected = false;
     const result = await executeWithGameLock(gameId, async (game) => {
         rejected = false; // reset per CAS attempt — the op re-runs on conflict

@@ -7,15 +7,15 @@
 // {game, events}; executeWithGameLock (via wrap400) does the commit.
 
 import { ExecutionParams, broadcastToGameUser, PackedOpProducts } from './utils.ts';
-import { ANIMATION_EVENT_TYPE, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY, SERVER_EVENT_TYPE, AnimationEvent, Game } from '../../../../../api/core/types.ts';
-import { cloneGame, verify_player_in_game } from '../../../../../api/common/common_utils.ts';
-import { start_game, start_game_packed } from '../../../../../api/common/game_lifecycle.ts';
-import { MAX_PLAYERS } from '../../../../../api/core/constants.ts';
-import { handleRearrangeHand as applyRearrangeHand } from '../../../../../api/common/actions/rearrange.ts';
-import { runPackedRearrange, PackedRunOk } from '../../../../../../sdk/ts/wasm/engine.ts';
-import { bytesToHex } from '../../../../../api/common/replay/codec.ts';
-import { bytesToBareHex } from '../../../../../../sdk/ts/wire/bytes.ts';
-import { logsFromKernelExport } from '../../../../../../sdk/ts/wire/logwire.ts';
+import { ANIMATION_EVENT_TYPE, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY, SERVER_EVENT_TYPE, AnimationEvent, Game } from '@api/core/types.ts';
+import { cloneGame, verify_player_in_game } from '@api/common/common_utils.ts';
+import { start_game, start_game_packed } from '@api/common/game_lifecycle.ts';
+import { MAX_PLAYERS } from '@api/core/constants.ts';
+import { handleRearrangeHand as applyRearrangeHand } from '@api/common/actions/rearrange.ts';
+import { runPackedRearrange, PackedRunOk } from '@sdk/ts/wasm/engine.ts';
+import { bytesToHex } from '@api/common/replay/codec.ts';
+import { bytesToBareHex } from '@sdk/ts/wire/bytes.ts';
+import { logsFromKernelExport } from '@sdk/ts/wire/logwire.ts';
 import { createClient } from 'jsr:@supabase/supabase-js';
 
 // Kernel run -> the commit/broadcast products executeWithGameLock consumes.
