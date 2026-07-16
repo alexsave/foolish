@@ -55,4 +55,24 @@ final class ComponentSnapshotTests: XCTestCase {
                                 width: 340, height: 80),
                        as: .image, record: record)
     }
+
+    // The iMessage expanded-bubble board (read-only public view). A mid-game 2p
+    // state: one uncovered ♠7 attack, ♦ trump, deck 20, discard 6.
+    func testMessageBoardMidGame() {
+        let players = [
+            PlayerView(seat: 0, name: "", status: 2, handCount: 6,
+                       awaitingAttack: false, strategyKey: 0, hand: nil),
+            PlayerView(seat: 1, name: "", status: 2, handCount: 5,
+                       awaitingAttack: false, strategyKey: 0, hand: nil),
+        ]
+        let view = GameView(
+            status: 1, numPlayers: 2, powerSuit: 1, deckCount: 20, discardCount: 6,
+            hasFlipped: true, firstAttacker: 1, defender: 0, viewer: -1,
+            goodMask: 0, gameOver: -1, flipped: Card(s: 1, v: 11),
+            battles: [BattleView(attack: Card(s: 0, v: 7), defense: nil)],
+            eliminationOrder: [], players: players)
+        assertSnapshot(of: host(MessageBoardView(view: view, names: [0: "Sveta", 1: "Alex"]),
+                                width: 360, height: 260),
+                       as: .image, record: record)
+    }
 }

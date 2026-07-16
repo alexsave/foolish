@@ -86,6 +86,35 @@ public actor MessageKernel {
         return try JSONDecoder().decode(MessageEnvelope.self, from: data)
     }
 
+    /// The masked board the last `decode` left resident, for `viewer` (or -1 for
+    /// the public/spectator view the bubble snapshot needs). Same packed wire the
+    /// app reads — decoded in this actor so it never races EngineC on the shared
+    /// static Game. Returns nil if no game is resident or the buffer won't fit.
+    public func residentView(viewer: Int) -> GameView? {
+        guard let data = packedCall({ fio_state_packed(Int32(viewer), $0, $1) }) else { return nil }
+        return MaskedView.decode(data, viewer: viewer)
+    }
+
+    /// The legal moves for `seat` on the resident game (kernel-computed). Empty
+    /// on no game or none legal.
+    public func residentLegal(seat: Int) -> [Move] {
+        guard let data = packedCall({ fio_legal_packed(Int32(seat), $0, $1) }) else { return [] }
+        return MoveWire.decode(data)
+    }
+
+    /// Call a packed-bytes-emitting C function into a growing buffer (mirrors
+    /// EngineC's helper; FIO_ECAP == -3 doubles and retries).
+    private func packedCall(_ call: (UnsafeMutablePointer<CChar>, Int32) -> Int32) -> Data? {
+        var cap = 8 * 1024
+        while true {
+            var buf = [CChar](repeating: 0, count: cap)
+            let n = call(&buf, Int32(cap))
+            if n >= 0 { return Data(bytes: buf, count: Int(n)) }
+            if n == -3 { cap *= 2; if cap > (1 << 20) { return nil }; continue }
+            return nil
+        }
+    }
+
     /// Seal the resident game — the send path, after the local player moved.
     /// The kernel derives turn/round from the body it writes, so a device cannot
     /// emit a payload it would itself reject.
