@@ -339,32 +339,19 @@ function checkInfoActionsMatch(input: ReplayInput, decoded: DecodedReplay): void
   }
 }
 
-/** v6 counterpart of verifyRoundTrip: encode a full game losslessly, decode it,
- *  and confirm every info action round-trips. The decoded stream additionally
- *  carries the true hidden state (checked by e2e/replay_v6.test.ts).
- *
- *  NOTE: this is now the ORACLE, not the production path — production is
- *  verifyRoundTripV6FromGame below. It stays because it is the only thing that
- *  can independently produce a v6 code from an explicitly supplied deal, which
- *  is what e2e/replay_v6_parity.test.ts byte-compares the kernel against. */
-export async function verifyRoundTripV6(input: ReplayInputV6): Promise<{
-  encoded: EncodedReplay;
-  decoded: DecodedReplay;
-}> {
-  const encoded = await encodeReplayV6(input);
-  const decoded = await decodeReplay(encoded.x);
-  checkInfoActionsMatch(input, decoded);
-  return { encoded, decoded };
-}
-
 /** v6 the way production makes it (docs/C_CORE_CONSOLIDATION.md F5/A4): ONE
  *  kernel call. The kernel re-derives the true deal from the game's deal seed
  *  and reads the actions out of the session log it is handed, so this side never
  *  assembles a reveal stream, never marshals an action, and never has to know
  *  that v6 has a header — all of which used to live here (collectV6 /
  *  marshalInputV6 / deriveTrump) and in game_lifecycle's reconstructSeededDeal.
- *  Byte-identical to verifyRoundTripV6 above; e2e/replay_v6_parity.test.ts pins
- *  that on real seeded games, which is what made this a port and not a rewrite.
+ *
+ *  The byte-equality that made this a PORT and not a rewrite is now asserted
+ *  where the codec lives: cnitro/tests/replay_v6_test.c holds
+ *  replay_encode_v6_from_game against the marshalled producer on real engine
+ *  games. The TS oracle it used to be compared against (verifyRoundTripV6 +
+ *  reconstructSeededDeal) is deleted — a second implementation kept alive to
+ *  agree with the first can only ever say "the copy agrees" (A9).
  *
  *  The round-trip gate stays exactly as it was: encode, decode, confirm every
  *  info action survived. It is what stands between an encoder bug and logs that
