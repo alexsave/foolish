@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { corsHeaders, handleCors } from "../_shared/adapter/cors.ts";
-import { getAuthenticatedUser } from "../_shared/adapter/auth.ts";
+import { corsHeaders, handleCors } from "@shared/adapter/cors.ts";
+import { getAuthenticatedUser } from "@shared/adapter/auth.ts";
 import { createClient } from 'jsr:@supabase/supabase-js';
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 

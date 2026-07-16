@@ -14,7 +14,7 @@
  * place: bump the version in replay.h AND freeze the old path.
  * ========================================================================== */
 
-import { Card, LOG_TYPE, LogType, LogCardPair } from "../../core/types.ts";
+import { Card, LOG_TYPE, LogType, LogCardPair } from "@api/core/types.ts";
 
 // Wire-format constants. The kernel (c/src/replay.h REPLAY_FORMAT_*)
 // is authoritative; these mirrors exist for TS-side pre-checks and tests.

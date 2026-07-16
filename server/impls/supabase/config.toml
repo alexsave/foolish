@@ -290,12 +290,23 @@ s3_secret_key = "env(S3_SECRET_KEY)"
 # one real deploy. If deploy rejects the `../` path, the fix-forward is a
 # predeploy step that stages sdk/ts/wasm/bots.wasm.gz into a path under
 # supabase/ (gitignored, regenerated from the one canonical .gz).
+# import_map: the Deno resolver for the @api/@sdk/@shared aliases the functions
+# now use (mirrors the tsconfig paths the Node/tsx side reads). Path is relative
+# to this config; the map's own entries are relative to functions/. Every
+# function that imports an alias needs it declared.
 [functions.action]
+import_map = "./functions/import_map.json"
 static_files = [ "../../../sdk/ts/wasm/bots.wasm.gz" ]
 [functions.meta]
+import_map = "./functions/import_map.json"
 static_files = [ "../../../sdk/ts/wasm/bots.wasm.gz" ]
 [functions.bot-heartbeat]
+import_map = "./functions/import_map.json"
 static_files = [ "../../../sdk/ts/wasm/bots.wasm.gz" ]
+[functions.create]
+import_map = "./functions/import_map.json"
+[functions.delete-account]
+import_map = "./functions/import_map.json"
 # NOTE: the CI diagnostic `memtest` also needs bots.wasm.gz, but its
 # static_files entry is injected by .github/workflows/memory.yml at run time
 # — NOT declared here. `supabase functions deploy` deploys every function in
