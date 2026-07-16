@@ -575,8 +575,6 @@ const ReplayStage = ({ decoded, frames, reverses, gameId, names, times }: StageP
         return () => ctrl.stopCurrent();
     }, [oracleOpen, stepIdx, isAnimating, playing, oracleMemory, decoded, frames, gameId, getOracle]);
     useEffect(() => () => { oracleRef.current?.dispose(); oracleRef.current = null; }, []);
-    const renderOracleCard = useCallback(
-        (card: Card, w = 18) => <InlineCard card={card} w={w} />, []);
 
     // publish one step's sequence into the feed; a fresh sequence_id (and a
     // deep copy) lets the same step replay after scrubbing back. Plain
@@ -933,7 +931,6 @@ const ReplayStage = ({ decoded, frames, reverses, gameId, names, times }: StageP
                     onClose={() => setOracleOpen(false)}
                     onToggleMemory={() => setOracleMemory((m) => !m)}
                     onRetry={() => { const j = buildOracleJob(frames, decoded, stepIdx, oracleMemory, gameId); if (j) void getOracle().start(j); }}
-                    renderCard={renderOracleCard}
                 />
             )}
 
