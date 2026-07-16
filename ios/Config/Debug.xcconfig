@@ -4,3 +4,7 @@
 // never touch prod (§16.D DoD: "do NOT point tests at prod").
 // SUPABASE_URL = https://<staging-ref>.supabase.co
 // SUPABASE_KEY = <staging-anon-key>
+
+// Optional local override: if Config/Local.xcconfig exists (untracked), it points
+// the Debug build at the local `supabase start` stack. Absent on CI → no-op.
+#include? "Local.xcconfig"

@@ -75,8 +75,18 @@ public enum PackedGame {
             return PlayerView(seat: p.seat, name: name, status: p.status, handCount: p.handCount,
                               awaitingAttack: p.awaitingAttack, strategyKey: p.strategyKey, hand: p.hand)
         }
+        // games.status (carried in the roster) is column-authoritative over the
+        // blob's copy — the same rule the web applies (view.ts decodePackedGame).
+        // Without it a WAITING lobby's blob decodes as a playing board.
+        let statusInt: Int = {
+            switch roster.status {
+            case "waiting":   return GameStatus.waiting.rawValue
+            case "game_over": return GameStatus.gameOver.rawValue
+            default:          return GameStatus.playing.rawValue
+            }
+        }()
         let view = GameView(
-            status: raw.status, numPlayers: raw.numPlayers, powerSuit: raw.powerSuit,
+            status: statusInt, numPlayers: raw.numPlayers, powerSuit: raw.powerSuit,
             deckCount: raw.deckCount, discardCount: raw.discardCount, hasFlipped: raw.hasFlipped,
             firstAttacker: raw.firstAttacker, defender: raw.defender, viewer: raw.viewer,
             goodMask: raw.goodMask, gameOver: raw.gameOver, flipped: raw.flipped,

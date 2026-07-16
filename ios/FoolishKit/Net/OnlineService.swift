@@ -48,6 +48,42 @@ public final class OnlineService {
         OnlineGame(userId: userId, gameId: Self.normalizeGameId(rawId), spectator: true)
     }
 
+    /// Start a game in the lobby (deal cards). The web's `meta type:'start'`
+    /// (ServerContext.startGame). Any seated player may start.
+    public func start(gameId: String) async throws {
+        guard let client else { throw OnlineError.notConfigured }
+        struct StartBody: Encodable { let type = "start"; let game_id: String }
+        try await client.functions.invoke(
+            "meta", options: FunctionInvokeOptions(method: .post, body: StartBody(game_id: gameId)))
+    }
+
+    /// Add a bot to fill a seat (web `meta type:'add-bot'`). `botId` nil lets the
+    /// server pick from the seeded roster.
+    public func addBot(gameId: String, botId: String? = nil) async throws {
+        guard let client else { throw OnlineError.notConfigured }
+        struct BotBody: Encodable { let type = "add-bot"; let game_id: String; let bot_id: String? }
+        try await client.functions.invoke(
+            "meta", options: FunctionInvokeOptions(method: .post, body: BotBody(game_id: gameId, bot_id: botId)))
+    }
+
+    /// Continue after a finished game — resets the same game back to its lobby for
+    /// a rematch (web `meta type:'continue'`, ServerContext.continueGame).
+    public func continueGame(gameId: String) async throws {
+        guard let client else { throw OnlineError.notConfigured }
+        struct ContinueBody: Encodable { let type = "continue"; let game_id: String }
+        try await client.functions.invoke(
+            "meta", options: FunctionInvokeOptions(method: .post, body: ContinueBody(game_id: gameId)))
+    }
+
+    /// Leave a game / lobby (web `meta type:'exit'`).
+    public func leave(gameId: String, userId: UUID) async throws {
+        guard let client else { throw OnlineError.notConfigured }
+        struct ExitBody: Encodable { let type = "exit"; let game_id: String; let player_id: String }
+        try await client.functions.invoke(
+            "meta", options: FunctionInvokeOptions(method: .post,
+                                                   body: ExitBody(game_id: gameId, player_id: userId.uuidString.lowercased())))
+    }
+
     static func normalizeGameId(_ raw: String) -> String {
         raw.trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "https://foolish.cards/", with: "")

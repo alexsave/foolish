@@ -20,7 +20,7 @@ public struct OfflineConfig: Equatable {
 
 @MainActor
 final class AppCoordinator: ObservableObject {
-    enum Screen: Equatable { case home, table, onlineTable }
+    enum Screen: Equatable { case home, dashboard, table, onlineTable }
 
     @Published var screen: Screen = .home
     @Published private(set) var offlineGame: LocalGame?
@@ -57,12 +57,25 @@ final class AppCoordinator: ObservableObject {
 
     func rematch(_ config: OfflineConfig) { startOffline(config) }
 
-    /// Quick-match online (§16.D5). Requires a signed-in user; the caller gates
-    /// on auth first. Surfaces the create/seam error rather than failing silently.
-    func startOnline(userId: UUID) {
+    /// Create a new online game and land in its lobby (§16.D5). Requires a
+    /// signed-in user; the caller gates on auth first.
+    func createOnline(userId: UUID) {
         Task {
             do {
                 let game = try await OnlineService.shared.quickMatch(userId: userId)
+                onlineGame = game
+                screen = .onlineTable   // waiting status → LobbyView
+            } catch {
+                onlineError = error.localizedDescription
+            }
+        }
+    }
+
+    /// Join an existing online game by code/id and land in its lobby.
+    func joinOnline(code: String, userId: UUID) {
+        Task {
+            do {
+                let game = try await OnlineService.shared.join(gameId: code, userId: userId)
                 onlineGame = game
                 screen = .onlineTable
             } catch {
@@ -75,6 +88,49 @@ final class AppCoordinator: ObservableObject {
         offlineGame = nil
         onlineGame = nil
         screen = .home
+    }
+
+    // MARK: - DEBUG online orchestration (two-simulator play, IOS_APP_DESIGN §17.10)
+
+    /// Host: create a game, land on the table, wait `startAfter` for a guest to
+    /// join, then start it. Optionally auto-play the human seat.
+    func debugHost(userId: UUID, startAfter: TimeInterval, autoplay: Bool) {
+        Task {
+            do {
+                let game = try await OnlineService.shared.quickMatch(userId: userId)
+                onlineGame = game
+                screen = .onlineTable
+                NSLog("FOOLISH_ONLINE_GAME_ID=\(game.gameId)")
+                try? await Task.sleep(nanoseconds: UInt64(startAfter * 1_000_000_000))
+                try await OnlineService.shared.start(gameId: game.gameId)
+                if autoplay { autoplayOnline() }
+            } catch { onlineError = error.localizedDescription }
+        }
+    }
+
+    /// Guest: join an existing game by id, land in its lobby, ready up, then
+    /// (optionally) auto-play once the host starts.
+    func debugGuest(userId: UUID, gameId: String, autoplay: Bool) {
+        Task {
+            do {
+                let game = try await OnlineService.shared.join(gameId: gameId, userId: userId)
+                onlineGame = game
+                screen = .onlineTable
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                game.ready()   // both seats must ready before the server deals
+                if autoplay { autoplayOnline() }
+            } catch { onlineError = error.localizedDescription }
+        }
+    }
+
+    private func autoplayOnline() {
+        Task { @MainActor in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 800_000_000)
+                guard let g = onlineGame, g.foolSeat == nil else { break }
+                if let mv = g.humanLegal.randomElement() { g.play(mv) }
+            }
+        }
     }
 
     /// Route a universal link. `foolish.cards/<code>` collides with live-game

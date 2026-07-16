@@ -120,6 +120,25 @@ public final class OnlineGame: ObservableObject, GameSession {
 
     // MARK: - lifecycle
 
+    // MARK: - Lobby actions (§16.D5)
+
+    /// The game is in its lobby (pre-deal) — the LobbyView renders here.
+    public var isWaiting: Bool { view?.gameStatus == .waiting }
+    /// This user occupies a seat (vs. spectating / not yet joined).
+    public var isSeated: Bool { !spectator && view?.me != nil }
+
+    /// Mark ready + start (web ties Ready to `meta start`; the server deals once
+    /// every seat is ready).
+    public func ready() { Task { try? await OnlineService.shared.start(gameId: gameId) } }
+    /// Add a bot to a lobby seat.
+    public func addBot() { Task { try? await OnlineService.shared.addBot(gameId: gameId) } }
+    /// Take a seat in a game being spectated (join by code from the lobby).
+    public func joinSelf() { Task { _ = try? await OnlineService.shared.join(gameId: gameId, userId: userId) } }
+    /// After a finished game, reset to the lobby for a rematch (Continue).
+    public func continueGame() { Task { try? await OnlineService.shared.continueGame(gameId: gameId) } }
+    /// Leave the game / lobby.
+    public func leave() { Task { try? await OnlineService.shared.leave(gameId: gameId, userId: userId) } }
+
     /// Nudge the bot loop where the web does (ServerContext.tsx:633) — a JSON
     /// `action` body, not a packed move.
     public func bumpBots() {
