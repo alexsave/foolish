@@ -14,7 +14,7 @@
 // Loaded lazily and cached: the pure rules path (actions/) never pays for
 // the larger module; the first bot decision instantiates it.
 
-import { Card, Game } from '../types.ts';
+import { Card, Battle, Game } from '../types.ts';
 import { LegalMove } from '../bot_interfaces.ts';
 import { loadWasmGz, loadWasmGzAsync } from './wasm_asset.ts';
 
@@ -26,7 +26,7 @@ import {
     EngineExports, PackedRunOk, __LOG_TYPE_TO_INT, __MOVE_TYPE, __adoptEngine,
     __marshalGame, __mem, __pooledCard, __replayError, __setResident,
     __wireLogCard, __cardFromWire, __residentLegalMoves, applyKernelStateToGame,
-    exportPackedDriveProducts, rngBaseFromSeed,
+    exportPackedDriveProducts, rngBaseFromSeed, WIRE_NONE,
 } from './engine.ts';
 
 interface BotsExports extends EngineExports {
@@ -39,6 +39,7 @@ interface BotsExports extends EngineExports {
     wasm_replay_step_index(code_len: number): number;
     wasm_view_json(len: number, viewer: number): number;
     wasm_events_json(len: number): number;
+    wasm_unambiguous_cover(n_cover: number, n_battles: number, power_suit: number): number;
     wasm_clear_logs(): void;
     wasm_import_strategy_keys(): void;
     wasm_set_game_key(key: number): void;
@@ -867,6 +868,49 @@ export function kernelMsgRebase(pendingRound: number, seat: number, wire: Uint8A
     if (r < 0) throw msgError(r);
     __setResident(null);
     return r;
+}
+
+// ---------------------------------------------------------------------------
+// One-tap cover resolution (A7/F9)
+//
+// The one-gesture cover affordance, decided in the kernel (legal.c's
+// unambiguous_cover) so the web drag, phone tap-commit, watch chooser and
+// iMessage share one resolver instead of a coverCombinations.ts copy each.
+// Reads only the handful of cards passed — no game marshal — so it is cheap
+// enough to call while a drag hovers. Runs on the browser's warm bots.wasm
+// (the A8 KernelGate guarantees it is loaded before any board renders).
+// ---------------------------------------------------------------------------
+
+/** The paired result: cover card i defends attackCards[i]. Mirrors the shape the
+ * deleted coverCombinations.ts findUnambiguousCover returned. */
+export interface CoverCombination { coverCards: Card[]; attackCards: Card[]; }
+
+/**
+ * If `coverCards` cover the table's uncovered attacks in exactly one unambiguous
+ * way (every valid full pairing covers the same set of attacks), return that
+ * pairing; otherwise null (the UI then lets the player place cards manually).
+ */
+export function kernelUnambiguousCover(
+    coverCards: Card[], tableBattles: Battle[], powerSuit: number,
+): CoverCombination | null {
+    if (coverCards.length === 0) return null;
+    const ex = bots();
+    const mem = __mem(ex);
+    const aptr = ex.wasm_cards_a_ptr();
+    for (let i = 0; i < coverCards.length; i++) mem[aptr + i] = __wireLogCard(coverCards[i]);
+    const bptr = ex.wasm_cards_b_ptr();
+    for (let i = 0; i < tableBattles.length; i++) {
+        mem[bptr + 2 * i] = __wireLogCard(tableBattles[i].attack);
+        mem[bptr + 2 * i + 1] = tableBattles[i].defense ? __wireLogCard(tableBattles[i].defense) : WIRE_NONE;
+    }
+    const n = ex.wasm_unambiguous_cover(coverCards.length, tableBattles.length, powerSuit);
+    if (n <= 0) return null;
+    // Re-fetch the memory view: a wasm call can grow (and detach) the buffer.
+    const out = __mem(ex);
+    const io = ex.wasm_io_ptr();
+    const attackCards: Card[] = [];
+    for (let i = 0; i < n; i++) attackCards.push(__cardFromWire(out[io + i]));
+    return { coverCards: [...coverCards], attackCards };
 }
 
 // The PUBLIC view of the game the last kernelMsgDecode adopted — every hand as

@@ -54,4 +54,16 @@ void legal_set_move_cap(int cap);
 // matches handwritten's pick. Attack/pass enumerations are unchanged.
 void calculate_legal_moves_lite(const Game *g, int bot_idx, LegalMoves *out);
 
+// One-tap cover resolution (F9). Given `n_cover` selected cover cards and the
+// current table, decide whether they cover the uncovered attacks in exactly ONE
+// unambiguous way — every valid full pairing of cover cards to distinct
+// uncovered attacks covers the SAME set of attacks. On success writes, for each
+// cover card, the attack it covers (index-aligned with cover_cards) into
+// out_attacks[] and returns 1. Otherwise returns 0 and the caller lets the
+// player place cards manually. The one implementation the web drag, phone
+// tap-commit, watch chooser and iMessage all call.
+int unambiguous_cover(const Card *cover_cards, int n_cover,
+                      const Battle *battles, int n_battles, int power_suit,
+                      Card *out_attacks);
+
 #endif

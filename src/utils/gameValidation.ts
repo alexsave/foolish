@@ -9,15 +9,15 @@
 //
 // What remains in TS is only the UI *affordance* layered on the rules:
 // canCoverCards decides when to OFFER a one-click cover (i.e. when the covered
-// set is unambiguous), a presentation choice, not a rule — via the shared
-// coverCombinations resolver.
+// set is unambiguous), a presentation choice, not a rule — and even that now
+// asks the kernel (kernelUnambiguousCover), so no cover logic lives in TS.
 //
 // Synchronicity: these gates are synchronous. In the browser the kernel is
 // instantiated once at game load (await initClientGuards()); in Node/SSR/tests
 // clientGuards falls back to a synchronous instantiate on first use.
 
 import { Card, PersonalGame } from '@shared/types.ts';
-import { findUnambiguousCover } from './coverCombinations';
+import { kernelUnambiguousCover } from '@shared/wasm/bots.ts';
 import * as guards from '../wasm/clientGuards.ts';
 import { rejectMessage } from '../wasm/rejectMessages';
 
@@ -37,12 +37,12 @@ export const nextDefenderIndex = (game: PersonalGame): number =>
 
 // ---- cover offer (UI affordance over the kernel's can_cover) ----------------
 // True when the selection covers uncovered attacks in exactly one unambiguous
-// way — the shared cover-mapping resolver (coverCombinations.ts), which sources
-// its can_cover primitive from common_utils. This is a display choice (whether
-// to offer the one-click cover), not a rule the kernel enforces.
+// way — resolved in the kernel now (kernelUnambiguousCover -> legal.c
+// unambiguous_cover), the one resolver every host shares (A7/F9). This is a
+// display choice (whether to offer the one-click cover), not a rule.
 export const canCoverCards = (game: PersonalGame, selectedCards: Card[]): boolean => {
     if (selectedCards.length === 0) return false;
-    return findUnambiguousCover(selectedCards, game.table_battles, game.power_suit) !== null;
+    return kernelUnambiguousCover(selectedCards, game.table_battles, game.power_suit) !== null;
 };
 
 // ---- throwing validators (optimistic-apply pre-checks) ---------------------

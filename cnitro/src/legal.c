@@ -419,3 +419,83 @@ void calculate_legal_moves_lite(const Game *g, int bot_idx, LegalMoves *out) {
     }
     legal_stat_note(out, g, bot_idx);
 }
+
+// ---------- one-tap cover resolution (F9) ----------------------------------
+//
+// Given a set of selected cover cards and the current table, decide whether they
+// cover the uncovered attacks in exactly ONE unambiguous way — every valid full
+// pairing of cover cards to distinct uncovered attacks covers the SAME set of
+// attacks — so a UI can commit the cover on one gesture instead of asking the
+// player which card goes on which attack. The web drag, the phone tap-commit,
+// the watch chooser and iMessage all want this, and it is pure set logic over
+// can_cover, so it lives here beside the legality it is built on rather than as a
+// TS copy per surface (docs/C_CORE_CONSOLIDATION.md F9; ported from
+// coverCombinations.ts findUnambiguousCover).
+//
+// Bounds are defensive, not expected: the uncovered-attack count is capped at
+// UC_MAX_UNCOVERED (= a u64 pairing bitmask) and the permutation search at
+// UC_SEARCH_CAP nodes. A real bout never has more than 6 uncovered attacks; a
+// corrupt/hostile input that would blow the search up simply reads as "not
+// unambiguous" (return 0), and the caller falls back to manual placement —
+// exactly the safe degradation, never a hang.
+#define UC_MAX_UNCOVERED 64
+#define UC_SEARCH_CAP    200000
+
+typedef struct {
+    const Card *cover;
+    int         n_cover;
+    Card        uncovered[UC_MAX_UNCOVERED];
+    int         n_uncovered;
+    int         power_suit;
+    int         first_perm[UC_MAX_UNCOVERED];  // attack index per cover card
+    uint64_t    first_set;                     // bitmask of attacks it covers
+    bool        have_first;
+    bool        ambiguous;                      // a valid pairing covered a different set
+    long        nodes;
+    bool        overflow;
+} UcCtx;
+
+static void uc_recurse(UcCtx *x, int depth, uint64_t used, int *perm) {
+    if (x->ambiguous || x->overflow) return;
+    if (++x->nodes > UC_SEARCH_CAP) { x->overflow = true; return; }
+    if (depth == x->n_cover) {
+        uint64_t set = 0;
+        for (int i = 0; i < x->n_cover; i++) set |= (uint64_t)1 << perm[i];
+        if (!x->have_first) {
+            x->have_first = true;
+            x->first_set = set;
+            for (int i = 0; i < x->n_cover; i++) x->first_perm[i] = perm[i];
+        } else if (set != x->first_set) {
+            x->ambiguous = true;   // two valid pairings cover different attacks
+        }
+        return;
+    }
+    for (int j = 0; j < x->n_uncovered; j++) {
+        if (used & ((uint64_t)1 << j)) continue;
+        if (!can_cover(x->uncovered[j], x->cover[depth], x->power_suit)) continue;
+        perm[depth] = j;
+        uc_recurse(x, depth + 1, used | ((uint64_t)1 << j), perm);
+        if (x->ambiguous || x->overflow) return;
+    }
+}
+
+int unambiguous_cover(const Card *cover_cards, int n_cover,
+                      const Battle *battles, int n_battles, int power_suit,
+                      Card *out_attacks) {
+    if (n_cover <= 0) return 0;
+    UcCtx x;
+    x.cover = cover_cards; x.n_cover = n_cover; x.power_suit = power_suit;
+    x.n_uncovered = 0; x.have_first = false; x.ambiguous = false;
+    x.nodes = 0; x.overflow = false;
+    for (int i = 0; i < n_battles && x.n_uncovered < UC_MAX_UNCOVERED; i++) {
+        if (card_is_none(battles[i].defense)) x.uncovered[x.n_uncovered++] = battles[i].attack;
+    }
+    // Mirrors findUnambiguousCover's guards: no cover cards, nothing to cover, or
+    // more cover cards than uncovered attacks all yield no valid full pairing.
+    if (x.n_uncovered == 0 || n_cover > x.n_uncovered) return 0;
+    int perm[UC_MAX_UNCOVERED];
+    uc_recurse(&x, 0, 0, perm);
+    if (x.overflow || x.ambiguous || !x.have_first) return 0;
+    for (int i = 0; i < n_cover; i++) out_attacks[i] = x.uncovered[x.first_perm[i]];
+    return 1;
+}

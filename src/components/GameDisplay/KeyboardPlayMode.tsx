@@ -51,7 +51,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useGame } from '../../contexts/GameContext';
 import { canCover } from '@shared/common_utils.ts';
 import { canAttack, canPass, canCoverCards } from '../../utils/gameValidation';
-import { findUnambiguousCover } from '../../utils/coverCombinations';
+import { kernelUnambiguousCover } from '@shared/wasm/bots.ts';
 
 type CoverTarget = { kind: 'cover'; attack: Card; battleIndex: number };
 type Target = CoverTarget | { kind: 'pass' };
@@ -269,7 +269,7 @@ export const KeyboardPlayMode = () => {
                     }
                     // defender: cover via the unambiguous mapping, else pass.
                     if (canCoverCards(g, selected)) {
-                        const mapping = findUnambiguousCover(selected, g.table_battles || [], g.power_suit);
+                        const mapping = kernelUnambiguousCover(selected, g.table_battles || [], g.power_suit);
                         if (mapping) {
                             s.fire('cover', s.cover(mapping.coverCards, mapping.attackCards), true);
                             return;
@@ -429,9 +429,10 @@ export const KeyboardPlayMode = () => {
 };
 
 /* ------------------------------- helpers ----------------------------------- */
-// Cover->attack mapping resolution lives in ONE shared helper
-// (utils/coverCombinations.findUnambiguousCover); the local copy that used
-// to sit here was one of three behaviorally-identical implementations.
+// Cover->attack mapping resolution lives in ONE place — the kernel
+// (kernelUnambiguousCover -> legal.c unambiguous_cover). The local copy that
+// used to sit here, and the TS coverCombinations.ts that replaced it, are both
+// gone (A7/F9): one resolver for web/phone/watch/iMessage.
 
 function tableFullyCovered(g: PersonalGame): boolean {
     const b = g.table_battles || [];

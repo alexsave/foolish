@@ -9,7 +9,7 @@ import { TexturedSurface } from "../TexturedSurface";
 import { useEffect, useRef } from "react";
 import { Text } from "../Text";
 import { canCover as canCoverUtil } from "@shared/common_utils.ts";
-import { findUnambiguousCover } from "../../utils/coverCombinations";
+import { kernelUnambiguousCover } from "@shared/wasm/bots.ts";
 import { canAttack, canPass, canCoverCards } from "../../utils/gameValidation";
 import { useStyles } from "../../contexts/StyleContext";
 import { useTutorialHint } from "../../contexts/TutorialHintContext";
@@ -220,7 +220,7 @@ export const ActionButtons = () => {
         } else {
             // Use the shared cover resolver (same as DragContext/KeyboardInputHandler)
             // instead of re-implementing the permutation search inline.
-            const mapping = findUnambiguousCover(selectedCards, game.table_battles, game.power_suit);
+            const mapping = kernelUnambiguousCover(selectedCards, game.table_battles, game.power_suit);
             if (mapping) {
                 setActionPressed('cover', true);
                 cover(mapping.coverCards, mapping.attackCards).then(() => {

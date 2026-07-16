@@ -7,7 +7,7 @@ import { useGame } from './GameContext';
 import { canCover } from '@shared/common_utils.ts';
 import { reorderHand } from '../state/clientReconcile';
 import { canAttack, canPass as canPassValidation } from '../utils/gameValidation';
-import { findUnambiguousCover } from '../utils/coverCombinations';
+import { kernelUnambiguousCover } from '@shared/wasm/bots.ts';
 
 const DragContext = createContext<DragContextType | null>(null);
 
@@ -46,8 +46,9 @@ export const DragProvider = ({ children }: { children: React.ReactNode }) => {
         return y >= handAreaTop;
     };
 
-    // Cover-combination resolution lives in ../utils/coverCombinations (shared
-    // with KeyboardInputHandler).
+    // Cover-combination resolution lives in the kernel now
+    // (kernelUnambiguousCover -> legal.c unambiguous_cover), shared by every
+    // input path and every host (A7/F9).
 
     // Helper function to determine what action should be taken
     const determineGameAction = (x: number, y: number, draggedCard: Card) => {
@@ -82,7 +83,7 @@ export const DragProvider = ({ children }: { children: React.ReactNode }) => {
                     return { type: 'cover' as const, targetCard: tableCardUnderCursor.attack };
                 } else {
                     // Multi-card cover - check if unambiguous
-                    const unambiguousCover = findUnambiguousCover(cardsToUse, game.table_battles, game.power_suit);
+                    const unambiguousCover = kernelUnambiguousCover(cardsToUse, game.table_battles, game.power_suit);
                     if (unambiguousCover) {
                         return { type: 'multicover' as const, coverCards: unambiguousCover.coverCards, attackCards: unambiguousCover.attackCards };
                     } else {
@@ -106,7 +107,7 @@ export const DragProvider = ({ children }: { children: React.ReactNode }) => {
                     }
                 } else {
                     // Multi-card cover - check if unambiguous
-                    const unambiguousCover = findUnambiguousCover(cardsToUse, game.table_battles, game.power_suit);
+                    const unambiguousCover = kernelUnambiguousCover(cardsToUse, game.table_battles, game.power_suit);
                     if (unambiguousCover) {
                         return { type: 'multicover' as const, coverCards: unambiguousCover.coverCards, attackCards: unambiguousCover.attackCards };
                     } else {

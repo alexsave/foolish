@@ -6,7 +6,7 @@ import { useGame } from '../contexts/GameContext';
 import { useAuth } from '../contexts/AuthContext';
 import { canCover } from '@shared/common_utils.ts';
 import { canPass } from '../utils/gameValidation';
-import { findUnambiguousCover } from '../utils/coverCombinations';
+import { kernelUnambiguousCover } from '@shared/wasm/bots.ts';
 
 export const KeyboardInputHandler = () => {
     const { user_id } = useAuth();
@@ -37,8 +37,9 @@ export const KeyboardInputHandler = () => {
         return localHandOrder[position - 1];
     };
 
-    // Cover-combination resolution lives in ../utils/coverCombinations (shared
-    // with DragContext).
+    // Cover-combination resolution lives in the kernel now
+    // (kernelUnambiguousCover -> legal.c unambiguous_cover), shared by every
+    // input path and every host (A7/F9).
     //
     // Pass legality uses the SHARED canPass (src/utils/gameValidation.ts) — the
     // same predicate the buttons/drag use — so the keyboard path can't diverge.
@@ -78,7 +79,7 @@ export const KeyboardInputHandler = () => {
             } else {
                 // Multi-card cover - check if unambiguous
                 const unambiguousCover = game
-                    ? findUnambiguousCover(selectedCards, game.table_battles, game.power_suit)
+                    ? kernelUnambiguousCover(selectedCards, game.table_battles, game.power_suit)
                     : null;
                 if (unambiguousCover) {
                     await cover(unambiguousCover.coverCards, unambiguousCover.attackCards);

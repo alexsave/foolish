@@ -50,7 +50,7 @@ import {
   canCoverCards as clientCanCoverCards,
   validateCover as clientValidateCover,
 } from '../src/utils/gameValidation.ts';
-import { findUnambiguousCover } from '../src/utils/coverCombinations.ts';
+import { kernelUnambiguousCover } from '../supabase/functions/_shared/wasm/bots.ts';
 
 // The engine logs play-by-play; keep the reporter readable.
 if (!process.env.E2E_VERBOSE) {
@@ -179,7 +179,7 @@ async function playAndCheck(np: number, strategy: StrategyKey, stats: { states: 
           if (p.hand.length >= 2) selections.push([p.hand[0], p.hand[1]]);
           for (const sel of selections) {
             if (!clientCanCoverCards(personal, sel)) continue;
-            const mapping = findUnambiguousCover(sel, game.table_battles, game.power_suit);
+            const mapping = kernelUnambiguousCover(sel, game.table_battles, game.power_suit);
             assert.ok(mapping, 'canCoverCards true but no unambiguous mapping');
             stats.covers++;
             assert.ok(

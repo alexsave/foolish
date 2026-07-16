@@ -507,3 +507,49 @@ int wasm_events_json(int len) {
     return json_events_from_packed(wasm_replay_io_ptr(), len,
                                    (char *)wasm_io_ptr(), wasm_io_cap());
 }
+
+// ---------- one-tap cover resolution (A7/F9) --------------------------------
+//
+// The one-gesture cover affordance, decided in the kernel beside legal.c so the
+// web drag, phone tap-commit, watch chooser and iMessage share one resolver
+// (docs/C_CORE_CONSOLIDATION.md F9). Self-contained — reads neither the resident
+// game nor any marshal, only the handful of cards the caller passes, so it is
+// cheap enough to call on a hover:
+//   cards_a  = the selected cover cards (n_cover wire bytes)
+//   cards_b  = the table battles, 2 wire bytes each (attack, then defense or
+//              WIRE_CARD_NONE) — the resolver picks out the uncovered ones
+//   power_suit is the argument
+// On an unambiguous cover, io_ptr receives n_cover attack wire bytes aligned to
+// the cover cards and the return is n_cover; otherwise 0 (caller places manually).
+extern unsigned char *wasm_cards_a_ptr(void);
+extern unsigned char *wasm_cards_b_ptr(void);
+// The shared card buffers (g_in_raw_a/b) are MAX_IN_CARDS=128 wide in wasm_api.c;
+// this local cap must not exceed that. cards_a holds cover cards, cards_b holds
+// 2 bytes per battle, so battles cap at half.
+#define UC_WIRE_MAX 128
+
+int wasm_unambiguous_cover(int n_cover, int n_battles, int power_suit) {
+    if (n_cover <= 0 || n_cover > UC_WIRE_MAX) return 0;
+    if (n_battles < 0 || n_battles > UC_WIRE_MAX / 2) return 0;
+
+    const unsigned char *cov = wasm_cards_a_ptr();
+    const unsigned char *bat = wasm_cards_b_ptr();
+
+    Card cover[UC_WIRE_MAX];
+    for (int i = 0; i < n_cover; i++) cover[i] = card_from_wire_state(cov[i]);
+
+    Battle battles[UC_WIRE_MAX / 2];
+    for (int i = 0; i < n_battles; i++) {
+        battles[i].attack = card_from_wire_state(bat[2 * i]);
+        unsigned char d = bat[2 * i + 1];
+        battles[i].defense = (d == WIRE_CARD_NONE) ? CARD_NONE : card_from_wire_state(d);
+    }
+
+    Card out[UC_WIRE_MAX];
+    int r = unambiguous_cover(cover, n_cover, battles, n_battles, power_suit, out);
+    if (r <= 0) return 0;
+
+    unsigned char *io = wasm_io_ptr();
+    for (int i = 0; i < n_cover; i++) io[i] = wire_from_card(out[i]);
+    return n_cover;
+}

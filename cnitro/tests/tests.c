@@ -110,6 +110,108 @@ static void test_can_cover(void) {
     CHECK(can_cover(a, higher, SUIT_DIAMONDS), "higher same suit covers");
 }
 
+// ---------- unambiguous_cover (F9, the one-tap-cover resolver) --------------
+//
+// Trump is DIAMONDS throughout, so spade/heart/club cards never cover across
+// suits by accident and the cases test exactly the pairing logic they mean to.
+static Battle uc_uncovered(Card attack) {
+    Battle b; b.attack = attack; b.defense = CARD_NONE; return b;
+}
+
+static void test_unambiguous_cover_one_card_one_attack(void) {
+    Battle t[1] = { uc_uncovered((Card){ SUIT_SPADES, 5 }) };
+    Card cover[1] = { { SUIT_SPADES, 7 } };
+    Card out[1];
+    int r = unambiguous_cover(cover, 1, t, 1, SUIT_DIAMONDS, out);
+    CHECK(r == 1, "one card covering one attack is unambiguous");
+    CHECK(card_eq(out[0], (Card){ SUIT_SPADES, 5 }), "and it names the attack it covers");
+}
+
+static void test_unambiguous_cover_rejects_when_it_cannot_cover(void) {
+    Battle t[1] = { uc_uncovered((Card){ SUIT_SPADES, 7 }) };
+    Card cover[1] = { { SUIT_SPADES, 5 } };  // lower, same suit — cannot cover
+    Card out[1];
+    CHECK(unambiguous_cover(cover, 1, t, 1, SUIT_DIAMONDS, out) == 0,
+          "a card that covers nothing is not a cover");
+}
+
+// The core ambiguity: ONE card that can cover EITHER of two attacks. Which one
+// did the player mean? Unknowable — must refuse, or the UI silently picks wrong.
+static void test_unambiguous_cover_refuses_a_genuine_ambiguity(void) {
+    Battle t[2] = {
+        uc_uncovered((Card){ SUIT_SPADES, 5 }),
+        uc_uncovered((Card){ SUIT_SPADES, 6 }),
+    };
+    Card cover[1] = { { SUIT_SPADES, 7 } };  // covers both 5s and 6s
+    Card out[1];
+    CHECK(unambiguous_cover(cover, 1, t, 2, SUIT_DIAMONDS, out) == 0,
+          "one card that could cover either attack is ambiguous, not auto-committed");
+}
+
+// Two attacks in different suits, each cover card fits exactly one — one valid
+// pairing, unambiguous, and the output pairs card i with the attack it covers.
+static void test_unambiguous_cover_pairs_by_suit(void) {
+    Battle t[2] = {
+        uc_uncovered((Card){ SUIT_SPADES, 5 }),
+        uc_uncovered((Card){ SUIT_HEARTS, 5 }),
+    };
+    Card cover[2] = { { SUIT_SPADES, 7 }, { SUIT_HEARTS, 7 } };
+    Card out[2];
+    int r = unambiguous_cover(cover, 2, t, 2, SUIT_DIAMONDS, out);
+    CHECK(r == 1, "two cards each fitting one attack is unambiguous");
+    CHECK(card_eq(out[0], (Card){ SUIT_SPADES, 5 }), "cover card 0 covers the spade");
+    CHECK(card_eq(out[1], (Card){ SUIT_HEARTS, 5 }), "cover card 1 covers the heart");
+}
+
+// The subtle one: two cards, two attacks, BOTH cards can cover BOTH attacks, so
+// there are two valid pairings — but they cover the SAME set of attacks, so the
+// cover is unambiguous even though the assignment is not unique. A resolver that
+// compared PAIRINGS instead of attack SETS would wrongly refuse this.
+static void test_unambiguous_cover_same_set_different_pairing_is_ok(void) {
+    Battle t[2] = {
+        uc_uncovered((Card){ SUIT_SPADES, 5 }),
+        uc_uncovered((Card){ SUIT_SPADES, 6 }),
+    };
+    Card cover[2] = { { SUIT_SPADES, 7 }, { SUIT_SPADES, 8 } };  // both cover both
+    Card out[2];
+    int r = unambiguous_cover(cover, 2, t, 2, SUIT_DIAMONDS, out);
+    CHECK(r == 1, "two pairings covering the same attack set is still unambiguous");
+    // Whichever valid pairing it returns, the two attacks covered must be 5s+6s.
+    bool set_ok = (card_eq(out[0], (Card){ SUIT_SPADES, 5 }) && card_eq(out[1], (Card){ SUIT_SPADES, 6 }))
+               || (card_eq(out[0], (Card){ SUIT_SPADES, 6 }) && card_eq(out[1], (Card){ SUIT_SPADES, 5 }));
+    CHECK(set_ok, "and it returns a valid full pairing of the two attacks");
+}
+
+static void test_unambiguous_cover_more_cards_than_attacks(void) {
+    Battle t[1] = { uc_uncovered((Card){ SUIT_SPADES, 5 }) };
+    Card cover[2] = { { SUIT_SPADES, 7 }, { SUIT_SPADES, 8 } };
+    Card out[2];
+    CHECK(unambiguous_cover(cover, 2, t, 1, SUIT_DIAMONDS, out) == 0,
+          "more cover cards than uncovered attacks cannot be a full cover");
+}
+
+static void test_unambiguous_cover_trump_over_plain(void) {
+    Battle t[1] = { uc_uncovered((Card){ SUIT_SPADES, 5 }) };
+    Card cover[1] = { { SUIT_DIAMONDS, 2 } };  // low trump beats a plain card
+    Card out[1];
+    int r = unambiguous_cover(cover, 1, t, 1, SUIT_DIAMONDS, out);
+    CHECK(r == 1, "a trump covers a plain attack");
+    CHECK(card_eq(out[0], (Card){ SUIT_SPADES, 5 }), "over the plain attack");
+}
+
+// Empty selection / nothing to cover are both "no cover", not a crash.
+static void test_unambiguous_cover_degenerate_inputs(void) {
+    Battle t[1] = { uc_uncovered((Card){ SUIT_SPADES, 5 }) };
+    Card cover[1] = { { SUIT_SPADES, 7 } };
+    Card out[1];
+    CHECK(unambiguous_cover(cover, 0, t, 1, SUIT_DIAMONDS, out) == 0, "no cover cards selected");
+    // A table whose only battle is already covered offers nothing to cover.
+    Battle covered[1];
+    covered[0].attack = (Card){ SUIT_SPADES, 5 };
+    covered[0].defense = (Card){ SUIT_SPADES, 9 };
+    CHECK(unambiguous_cover(cover, 1, covered, 1, SUIT_DIAMONDS, out) == 0, "nothing left uncovered");
+}
+
 // Test: a 3-player handwritten-vs-handwritten-vs-handwritten game runs to a
 // loser without crashing or looping. Validates that the game engine handles
 // 3+ players (loops are all g->num_players-bounded; previous MAX_PLAYERS=2
@@ -2308,6 +2410,14 @@ int main(void) {
     test_legal_first_attack();
     test_legal_first_attack_duplicate();
     test_can_cover();
+    test_unambiguous_cover_one_card_one_attack();
+    test_unambiguous_cover_rejects_when_it_cannot_cover();
+    test_unambiguous_cover_refuses_a_genuine_ambiguity();
+    test_unambiguous_cover_pairs_by_suit();
+    test_unambiguous_cover_same_set_different_pairing_is_ok();
+    test_unambiguous_cover_more_cards_than_attacks();
+    test_unambiguous_cover_trump_over_plain();
+    test_unambiguous_cover_degenerate_inputs();
     test_full_game_random();
     test_full_game_handwritten();
     test_full_game_3p_handwritten();
