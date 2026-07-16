@@ -131,7 +131,7 @@ typedef struct {
     int8_t  status;            // PLAYER_STATUS_*
     int8_t  hand_count;
     bool    awaiting_attack;
-    int8_t  strategy_key;      // application-defined
+    int8_t  strategy_key;      // application-defined; STRATEGY_KEY_HUMAN = a human seat
     Card    hand[MAX_HAND_SIZE];
     char    name[24];
     char    player_id[24];
@@ -300,6 +300,21 @@ extern int engine_last_reject;
 bool can_cover(Card attack, Card defense, int power_suit);
 int  get_next_player_index(const Game *g, int current);
 int  game_done(const Game *g);   // returns loser index, or -1
+
+// A seat whose strategy_key is this is a HUMAN: the auto-driver (bot_drive) must
+// not act for it. strategy_key is otherwise a bot's roster index (>= 0), so this
+// sentinel never collides. It is application-defined data the host writes and is
+// NOT serialized (identity stays with the caller, see the Player comment) — but
+// it is the one value the kernel reserves, so a host that marks its human seats
+// can ask the kernel for the drive mask (game_human_mask) instead of tracking an
+// is_ai array of its own.
+#define STRATEGY_KEY_HUMAN (-1)
+
+// The seats the auto-driver must NOT act for: those a host marked human. A host
+// passes this to bot_drive instead of hand-rolling the mask from its own roster.
+// bot_drive still takes an EXPLICIT mask, so replay/spectate can drive every
+// seat by passing 0 regardless of who is marked human.
+uint32_t game_human_mask(const Game *g);
 // Records the end of a game on its OWN status: once game_done fires, the kernel
 // (not each host) flips g->status to GAME_OVER, so g->status is the single
 // lifecycle truth every view carries and no server recomputes game_done to keep

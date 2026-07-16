@@ -39,8 +39,12 @@ loop and the phone's `Task.sleep` — same split everywhere: **kernel decides ho
 long, host decides how to wait.** `bash pacing_test.sh` shows the board
 advancing at the ~3s "human watching" cadence.
 
-Identity (names, is-ai, tokens) lives in the server beside the state blob, never
-inside it — exactly as `game.h` prescribes.
+Personal identity (usernames, tokens, `player_id`) lives in the server beside
+the state blob, never inside it — exactly as `game.h` prescribes. Seat *kind*
+(human vs bot) is not personal identity, though: it changes no rule but decides
+whom the auto-driver may act for, so it rides the kernel's own `strategy_key`
+(`STRATEGY_KEY_HUMAN` for a human), and the server asks `game_human_mask` for the
+drive mask instead of keeping an `is_ai` array of its own.
 
 ## Build & run
 

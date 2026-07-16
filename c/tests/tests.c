@@ -157,6 +157,21 @@ static void test_awire_apply_settles_game_over(void) {
     CHECK(g.status == GAME_STATUS_GAME_OVER, "settle: the kernel flipped g->status to GAME_OVER");
 }
 
+// Test: game_human_mask reads the kernel's own per-seat strategy_key — a host
+// asks the kernel which seats it must not drive (STRATEGY_KEY_HUMAN) instead of
+// keeping an is_ai array of its own (server-consolidation, STRATEGY_KEY_HUMAN).
+static void test_game_human_mask(void) {
+    Game g; memset(&g, 0, sizeof g);
+    g.num_players = 4;
+    g.players[0].strategy_key = STRATEGY_KEY_HUMAN;   // human
+    g.players[1].strategy_key = 0;                    // bot (roster index 0)
+    g.players[2].strategy_key = STRATEGY_KEY_HUMAN;   // human
+    g.players[3].strategy_key = 5;                    // bot (roster index 5)
+    uint32_t m = game_human_mask(&g);
+    CHECK(m == ((1u << 0) | (1u << 2)), "game_human_mask: exactly the two human seats");
+    CHECK(!(m & (1u << 1)) && !(m & (1u << 3)), "game_human_mask: bot seats excluded");
+}
+
 // Test: with two cards of the same value, first attack also includes a
 // 2-card combination (3 moves total: two singles + one pair).
 static void test_legal_first_attack_duplicate(void) {
@@ -2487,6 +2502,7 @@ int main(void) {
     test_start_game();
     test_awire_apply_roundtrip();
     test_awire_apply_settles_game_over();
+    test_game_human_mask();
     test_legal_first_attack();
     test_legal_first_attack_duplicate();
     test_can_cover();
