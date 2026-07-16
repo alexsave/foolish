@@ -3,11 +3,20 @@
 <plist version="1.0">
 <dict>
 	<!-- Universal links for foolish.cards (§16.C5). Inert on unsigned simulator
-	     builds; becomes live once signing + the AASA are in place (Milestone F).
-	     The App Group is added in F for the iMessage extension (§16.F1). -->
+	     builds; becomes live once signing + the AASA are in place (Milestone F). -->
 	<key>com.apple.developer.associated-domains</key>
 	<array>
 		<string>applinks:foolish.cards</string>
+	</array>
+	<!-- Shared with the iMessage extension (M1). The extension has no database
+	     and no background time, so the chain cache + pending ledger (§9.3) live
+	     in the group, and the host app reads the same games. Inert unsigned.
+	     NOTE `xcodegen generate` BLANKS this file — restore it after every run
+	     (git checkout), and commit changes here before regenerating or the
+	     restore will take them back out. -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.cards.foolish</string>
 	</array>
 </dict>
 </plist>
