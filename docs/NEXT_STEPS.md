@@ -76,7 +76,7 @@ and a test-merge against this branch conflicts in exactly six files:
   reworked the same files for UI. Resolution rule: **this branch's engine
   wiring wins, #93's UI/texture/layout work wins**; re-run goldens + Swift
   tests after.
-- `sdk/c/ios/ios_goldens.c` — both changed it; merge both (buffer fix +
+- `c/ios/ios_goldens.c` — both changed it; merge both (buffer fix +
   this branch's regeneration path), then `make ios-goldens` and commit.
 - `ios/project.yml` — additive on both sides; merge both.
 - `docs/WATCHOS_LAYOUT.md`, `docs/watchos-layout.html` — add/add; keep the
@@ -128,7 +128,7 @@ and it was deliberately structured so **M0 (5–8d) runs entirely in this
 repo's existing Linux toolchains** — it can start now, in parallel with the
 Mac work, and it is mostly Goal-1-style C work:
 
-- `sdk/c/src/msg_wire.{h,c}` (style-match `awire.c`; SHA-256 for `parent8`
+- `c/src/msg_wire.{h,c}` (style-match `awire.c`; SHA-256 for `parent8`
   + Rule P tiebreak) + `msg_wire_test.c` in `make difftests`.
 - `wasm_msg_encode/decode` exports + TS bridge (`kernelMsgEncode/Decode`).
 - `e2e/msg_wire.test.ts` + `e2e/msg_concurrency.test.ts` — Rule P/Rule R as

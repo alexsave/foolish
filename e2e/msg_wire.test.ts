@@ -1,6 +1,6 @@
 // FMSG — the iMessage envelope, through the real kernel wasm.
 //
-// The native suite (sdk/c/tests/msg_wire_test.c) is where the codec is proven;
+// The native suite (c/tests/msg_wire_test.c) is where the codec is proven;
 // this is the WASM PARITY half: the same bytes must mean the same game on the
 // web as in libfoolish.a, or an iMessage game forks between a phone and a
 // browser. Fixtures here are hex so a Swift port (M3) can be held to them too.
@@ -13,7 +13,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { kernelMsgDecode } from '../sdk/ts/wasm/bots.ts';
 
-// Sealed by the NATIVE producer (`sdk/c/build/msg_wire_test --fixture`) from
+// Sealed by the NATIVE producer (`c/build/msg_wire_test --fixture`) from
 // seeded games, cut mid-game — a turn bubble, which is what actually ships.
 // Regenerate with that command if the envelope layout ever changes; a diff here
 // is a wire break, and every shipped device would have to agree with it.

@@ -1,6 +1,6 @@
 // TypeScript bridge to the cnitro rules kernel compiled to WebAssembly.
 //
-// The C engine (sdk/c/src/game.c + legal.c) is the single source of truth
+// The C engine (c/src/game.c + legal.c) is the single source of truth
 // for game rules. This module marshals the TS `Game` object into the
 // kernel's byte layout, runs the action, and reconstructs everything the
 // production server used to compute in TS:
@@ -80,7 +80,7 @@ interface EngineExports {
     wasm_replay_encode_v6(len: number): number;
     wasm_replay_decode(len: number): number;
     wasm_replay_error_detail(): number;
-    // FMSG, the iMessage envelope (sdk/c/src/msg_wire.h). Optional here because
+    // FMSG, the iMessage envelope (c/src/msg_wire.h). Optional here because
     // ONLY the big module carries them — the bridge lives in bots.ts.
     wasm_msg_decode?(len: number): number;
     wasm_msg_seal?(len: number): number;
@@ -124,7 +124,7 @@ export function __kernelWasmBytes(): number {
     return mem ? mem.buffer.byteLength : -1;
 }
 
-// The embed is take-once (a second take throws — see sdk/c/wasm/embed.mjs),
+// The embed is take-once (a second take throws — see c/wasm/embed.mjs),
 // so the decoded bytes are held here from first take until an instantiation
 // SUCCEEDS: a failed attempt (or a sync call racing an in-flight async one)
 // stays retryable instead of hitting 'already taken'.
@@ -246,7 +246,7 @@ function pooledCard(rawSuit: number, rawValue: number): Card {
     return { suit: s, value: v };
 }
 
-// 1-byte wire cards (mirrors sdk/c/wasm/wire.h): 0..51 = suit*13+(value-1),
+// 1-byte wire cards (mirrors c/wasm/wire.h): 0..51 = suit*13+(value-1),
 // 0xFE the hidden card, 0xFF no card. Encoding reproduces the old 2-byte
 // path's semantics exactly: int8 wrap (hostile Infinity/NaN suits wrapped
 // through `& 0xff` + i8) then the kernel clamp (suit 0..3, value 1..13).
@@ -286,14 +286,14 @@ const LOG_TYPE_FROM_INT: LogType[] = [
     LOG_TYPE.PLAYER_OUT, LOG_TYPE.DRAW,
 ];
 
-// Hook tags (mirrors ENGINE_HOOK_* in sdk/c/src/game.h).
+// Hook tags (mirrors ENGINE_HOOK_* in c/src/game.h).
 const HOOK = {
     ATTACK: 1, OUT: 2, COVER: 3, DISCARD: 4, DRAW: 5, DEFENDER_MOVE: 6,
     PASS: 7, PICKUP: 8, MAGIC_TRANSITION: 9, TRASH: 10,
     START_MAGIC: 11, DEAL: 12, FLIPPED: 13, START_DEFENDER: 14,
 } as const;
 
-// Reason codes (mirrors ENGINE_REJECT_* in sdk/c/src/game.h).
+// Reason codes (mirrors ENGINE_REJECT_* in c/src/game.h).
 const REJ = {
     NOT_PLAYING: 1, EMPTY: 2, IS_DEFENDER: 3, NOT_DEFENDER: 4, NOT_IN_HAND: 5,
     DUPLICATES: 6, NOT_SAME_VALUE: 7, NOT_FIRST_ATTACKER: 8, VALUE_NOT_ON_TABLE: 9,
@@ -952,7 +952,7 @@ export function rngBaseFromSeed(hex?: string | null): number {
 
 // The 32-byte (two-128-bit-lane) seed of the most recent LIVE deal, or null if
 // the last deal used the deterministic test path. Persist this to reproduce a
-// deal exactly (see sdk/c/src/deal_rng.h). Overwritten on each live deal.
+// deal exactly (see c/src/deal_rng.h). Overwritten on each live deal.
 let lastDealSeed: Uint8Array | null = null;
 export function getLastDealSeed(): Uint8Array | null { return lastDealSeed; }
 
@@ -1431,7 +1431,7 @@ export function kernelCanCover(attack: Card, defense: Card, powerSuit: number): 
 }
 
 // ---------------------------------------------------------------------------
-// Replay codec (sdk/c/src/replay.c) — the format-v5 rules projection runs in
+// Replay codec (c/src/replay.c) — the format-v5 rules projection runs in
 // the kernel; TS only moves bytes. Formats are documented in replay.h. The
 // replay buffers are separate from the game IO, so these calls never disturb
 // a resident game state.
@@ -1492,7 +1492,7 @@ export function kernelReplayEncode(input: Uint8Array): Uint8Array {
     return kernelReplayRun(input, 'encode');
 }
 
-// Format 6 (hidden-state-lossless, partial-game — sdk/c/src/replay.h). Input
+// Format 6 (hidden-state-lossless, partial-game — c/src/replay.h). Input
 // carries the real hidden cards; decode is version-dispatched (kernelReplayDecode
 // handles v6 transparently).
 export function kernelReplayEncodeV6(input: Uint8Array): Uint8Array {

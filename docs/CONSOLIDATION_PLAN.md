@@ -48,7 +48,7 @@ sudo service postgresql start   # e2e needs it (role `stress`, db `foolish` alre
 Baseline check before touching anything (all three must hold; if not, STOP):
 
 ```bash
-cd sdk/c && make clean && make CC=clang -j4 all && make CC=clang tests   # 14 passed, 0 failed
+cd c && make clean && make CC=clang -j4 all && make CC=clang tests   # 14 passed, 0 failed
 ./build/cnitro_eval 2>/dev/null | tail -1        # exactly:  2  1.300  1.500  70.0%  140 60
 cd .. && npm install && npm run test:e2e         # all pass (80 on this base)
 ```
@@ -111,7 +111,7 @@ git merge --no-ff origin/claude/novichok-cheat-eval
 
 ### 5a. The five conflicts (identical pattern to v1, plus novichok's id)
 
-1. **`sdk/c/src/strategy.h`** — both sides claim ids 10-14/17. Take OUR
+1. **`c/src/strategy.h`** — both sides claim ids 10-14/17. Take OUR
    hunks everywhere (ids 10-17 stay simple_heuristic…distilled), then APPEND
    novichok's strategies RENUMBERED **18-23** in all three places
    (safe — all their code uses the symbolic names, verified no hardcoded ids):
@@ -122,20 +122,20 @@ git merge --no-ff origin/claude/novichok-cheat-eval
    - `parse_strategy`: append six name→id lines
      (`semtex/sx, semtex_oracle/sxo, octogen/og, octogen_oracle/ogo,
      torpex/tx, novichok/nv`) after the `distilled` line.
-2. **`sdk/c/Makefile`** — union. `CORE_SRC`: keep ours AND append their five
+2. **`c/Makefile`** — union. `CORE_SRC`: keep ours AND append their five
    files (`semtex_strategy.c octogen_strategy.c torpex_strategy.c
    torpex_value.c novichok_strategy.c`, keeping backslash continuations
    valid). Keep BOTH the `build/cnitro_distill` and their `build/cnitro_gen`
    targets (each needs its own `$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)` line).
-3. **`sdk/c/src/main_eval.c`** — union: keep both dispatch case blocks (ours
+3. **`c/src/main_eval.c`** — union: keep both dispatch case blocks (ours
    SIMPLE_HEURISTIC…DISTILLED and theirs SEMTEX…NOVICHOK).
 4. **`supabase/functions/_shared/common/bot_strategy.ts`** — take OURS
    (`git checkout --ours`). Their version imports TS strategy classes that no
    longer exist; the new bots get registered in 5c.
-5. **`sdk/c/README.md`** — take OURS (`git checkout --ours`); optionally
+5. **`c/README.md`** — take OURS (`git checkout --ours`); optionally
    hand-merge their semtex/octogen doc paragraph later.
 
-> **`sdk/c/src/cordite_sim.c` does NOT conflict** even though both the base
+> **`c/src/cordite_sim.c` does NOT conflict** even though both the base
 > (security hardening) and novichok touch it — git merges the non-overlapping
 > hunks. VERIFIED: it builds clean and the arena fingerprint stays
 > bit-identical. Don't hand-edit it.
@@ -158,11 +158,11 @@ native-arena-only** — novichok is a CHEATING bot (it reads opponents' real
 hands); it must never be reachable as a playable production bot. torpex is a
 measured-negative value net; oracles are research budgets.
 
-1. `sdk/c/wasm/wasm_bots_api.c`, in `wasm_choose_move`'s switch, after the
+1. `c/wasm/wasm_bots_api.c`, in `wasm_choose_move`'s switch, after the
    `STRAT_HANDWRITTEN_PROD` case:
    `case STRAT_SEMTEX: fn = semtex_strategy_choose; break;` and
    `case STRAT_OCTOGEN: fn = octogen_strategy_choose; break;`
-2. `sdk/c/Makefile` `WASM_BOT_SRC` (a SEPARATE list from CORE_SRC — edit BOTH
+2. `c/Makefile` `WASM_BOT_SRC` (a SEPARATE list from CORE_SRC — edit BOTH
    or the wasm link fails with `undefined symbol: semtex_strategy_choose`):
    add `src/semtex_strategy.c src/octogen_strategy.c` (NOT novichok/torpex).
 3. `sdk/ts/wasm/bots.ts`, `STRAT` map: add
@@ -179,7 +179,7 @@ measured-negative value net; oracles are research budgets.
 5. Commit the merge, then rebuild everything:
    ```bash
    git add -A && git commit --no-edit
-   cd sdk/c && make clean && make CC=clang -j4 all && make CC=clang tests
+   cd c && make clean && make CC=clang -j4 all && make CC=clang tests
    rm -f build/*.wasm && make CC=clang wasm wasm-bots   # regenerates both embeds
    git add -A && git commit -m "rebuild wasm embeds with semtex/octogen"
    cd ..
@@ -188,7 +188,7 @@ measured-negative value net; oracles are research budgets.
 ### 5d. Verify (gate C — all must pass)
 
 ```bash
-cd sdk/c
+cd c
 ./build/cnitro_eval 2>/dev/null | tail -1          # still exactly: 2  1.300  1.500  70.0%  140 60
 ./build/cnitro_eval --strategy=semtex   --opp=cordite --players=2 --games=20 2>/dev/null | tail -1
 ./build/cnitro_eval --strategy=novichok --opp=cordite --players=2 --games=20 2>/dev/null | tail -1

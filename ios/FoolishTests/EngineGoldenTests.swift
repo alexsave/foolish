@@ -1,5 +1,5 @@
 // EngineGoldenTests.swift — THE keystone (§16.A3, §16.A6). Replays the same
-// seeds the C generator used (sdk/c/ios/ios_goldens.c → Fixtures/goldens.json)
+// seeds the C generator used (c/ios/ios_goldens.c → Fixtures/goldens.json)
 // through libfoolish.a and asserts byte-equality of the deal fingerprint, the
 // legal-move menu, and a full deterministic playthrough hash. If this is green,
 // the native build IS the same engine the fixtures came from.

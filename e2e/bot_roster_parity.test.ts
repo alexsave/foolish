@@ -1,13 +1,13 @@
 // The bot roster is written down in three places. This test makes them agree.
 //
-// The canonical table is the C kernel's (sdk/c/src/bot_roster.c): key -> brain
+// The canonical table is the C kernel's (c/src/bot_roster.c): key -> brain
 // + tuning knobs + logs flag + flags, shared by the server, the phone and every
 // future client (docs/C_CORE_CONSOLIDATION.md F1/A1). The other two are
 // consumers that still restate parts of it:
 //
 //   * supabase/functions/_shared/common/bot_strategy.ts — the TS registry, which still
 //     carries the knobs as a wasm env table. Env OVERRIDES the roster
-//     (sdk/c/src/bot_knobs.h), so while both exist the server's behavior is
+//     (c/src/bot_knobs.h), so while both exist the server's behavior is
 //     defined by this file — and it must therefore say EXACTLY what the roster
 //     says, or the phone and the site run different bots. That is not a
 //     hypothetical: before the roster, iOS ran cordite at the arena budget with
@@ -46,7 +46,7 @@ type RosterEntry = {
 // Macro-valued knobs (CORDITE_KNOBS) and the adjacent-string-literal form used
 // for octogen are resolved against the #defines above the table.
 function parseCRoster(): RosterEntry[] {
-    const src = read('sdk/c/src/bot_roster.c');
+    const src = read('c/src/bot_roster.c');
 
     const defines = new Map<string, string>();
     for (const m of src.matchAll(/^#define\s+(\w+)\s+"([^"]*)"\s*$/gm)) defines.set(m[1], m[2]);
@@ -172,7 +172,7 @@ test('C roster: table is well-formed and is the strength ladder', () => {
     assert.equal(new Set(tiers).size, tiers.length, 'tiers must be unique');
 
     // Every STRAT_* the table names must exist in the kernel's strategy.h.
-    const strategyH = read('sdk/c/src/strategy.h');
+    const strategyH = read('c/src/strategy.h');
     for (const r of roster) {
         assert.ok(new RegExp(`#define\\s+${r.strat}\\s`).test(strategyH),
             `bot_roster.c names ${r.strat}, which strategy.h does not define`);

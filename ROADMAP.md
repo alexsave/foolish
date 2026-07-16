@@ -1,7 +1,7 @@
 # Roadmap — project analysis & feature report
 
 *Analysis date: July 2026. This is a feature-gap review of the whole repo —
-client (`src/`), Supabase backend (`supabase/`), the C engine (`sdk/c/`), the
+client (`src/`), Supabase backend (`supabase/`), the C engine (`c/`), the
 offline/ML layer (`offlinefun/`), and the e2e suite — with a prioritized list
 of what's worth building next. The two P0 items are implemented on this branch;
 screenshots are in [`docs/screenshots/`](docs/screenshots/).*

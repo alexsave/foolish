@@ -39,7 +39,7 @@ players): real-time multiplayer, strong bots that are "real players" in the
 DB, spectating, and shareable replays (a whole game compresses into a short
 URL/QR via an rANS codec). Repo layout and philosophy: `README.md`; the
 architecture in one line: **all game rules live once, in C
-(`sdk/c/src/game.c`, `legal.c`, `view.c`, `replay.c`), compiled to WASM for
+(`c/src/game.c`, `legal.c`, `view.c`, `replay.c`), compiled to WASM for
 the web client, the Deno edge functions, and tests** — the TS around it is
 marshaling and UI (`docs/ARCHITECTURE_AS_A_PATTERN.md`).
 
@@ -126,7 +126,7 @@ Foolish.xcodeproj  (bundle id cards.foolish.app; App Group group.cards.foolish)
 │   └─ Boards/            game-rendering SwiftUI (table, hands, animations)
 ├─ Entitlements/          §10 — protocol + free stub (own module so the future
 │                          StoreKit implementation swaps in cleanly)
-└─ vendor/libfoolish/     Foolish.xcframework built by `make ios-lib` in sdk/c/
+└─ vendor/libfoolish/     Foolish.xcframework built by `make ios-lib` in c/
                           (target spec: IMESSAGE_GAME_DESIGN.md §8.1; THIS app
                           adds bot strategies to the library — §7.2)
 ```
@@ -240,8 +240,8 @@ the native replay viewer; `foolish.cards/<game_id>` joins/spectates that game;
 `vendor/libfoolish` per `IMESSAGE_GAME_DESIGN.md` §8.1 (`fio_*` C API: new
 seeded game, legal moves, apply, per-viewer view, replay encode/decode, msg
 envelope). `Engine/` wraps it in Swift: `struct GameState` (decoded from the
-packed view bytes — same wire as `sdk/c/wasm/wire.h` / the view blob format
-`wasm_view_serialize`, `sdk/c/wasm/wasm_api.c:487-501`), `enum Move`,
+packed view bytes — same wire as `c/wasm/wire.h` / the view blob format
+`wasm_view_serialize`, `c/wasm/wasm_api.c:487-501`), `enum Move`,
 `final class LocalGame` (owns one kernel instance; serial queue; never blocks
 main). Golden-vector XCTests pin the bridge to the same fixtures the e2e
 suite generates (see `IMESSAGE_GAME_DESIGN.md` §8.2, §18).
@@ -251,8 +251,8 @@ suite generates (see `IMESSAGE_GAME_DESIGN.md` §8.2, §18).
 Extend the `ios-lib` target with the strategy sources so offline opponents are
 the real roster: `random`, `handwritten`, `espresso`, `robusta`,
 `firecracker`, `gunpowder`, `blackpowder`, `octogen`/`cordite`
-(`sdk/c/src/*_strategy.c`; ladder documented in `README.md` project 1 and
-`sdk/c/CORDITE.md`). Strategy selection mirrors the seeded bot roster
+(`c/src/*_strategy.c`; ladder documented in `README.md` project 1 and
+`c/CORDITE.md`). Strategy selection mirrors the seeded bot roster
 personalities (`supabase/seed.sql`). Cordite-class bots deliberate — run
 `choose_move` off-main with a thinking indicator, and cap deliberation with
 the same env knobs the server uses (`supabase/functions/_shared/common/bot_strategy.ts`
@@ -262,7 +262,7 @@ when `ProcessInfo.thermalState >= .serious` (same rule as the future Oracle,
 
 ### 7.3 Replays natively
 
-Decode: `fio_replay_decode` (v5 codec, `sdk/c/src/replay.{h,c}`) → step list →
+Decode: `fio_replay_decode` (v5 codec, `c/src/replay.{h,c}`) → step list →
 play through `Boards/` with the transport. Encode/share: finished games (online
 or offline) → `fio_replay_encode` → `https://foolish.cards/<code>` + QR
 (render QR natively; the web does this with `qrcode.react`, `package.json`).
@@ -478,7 +478,7 @@ never used Swift. Read §3–§13 first; this section references them constantly
   ```
 - **The JSON bridge rule.** Swift never parses the kernel's packed binary
   formats. For every piece of state Swift needs, add a C function to
-  `sdk/c/ios/ios_api.c` that emits **JSON into a caller-provided buffer**,
+  `c/ios/ios_api.c` that emits **JSON into a caller-provided buffer**,
   and decode it in Swift with `Codable`. (Precedent: the kernel already emits
   JSON for the oracle explain dump — `OG_EXPLAIN` in the wasm oracle build.)
   Binary crosses the language boundary in exactly two places: golden-vector
@@ -488,9 +488,9 @@ never used Swift. Read §3–§13 first; this section references them constantly
   Swift, stop and add a C accessor instead.
 - **Commit cadence:** one commit per numbered task below, message prefixed
   `ios(<milestone>):`. Run the relevant tests before each commit.
-- **Don't touch:** existing `sdk/c/src/*.c` game logic, `supabase/`,
+- **Don't touch:** existing `c/src/*.c` game logic, `supabase/`,
   `src/` web client — except the explicitly listed additive files
-  (`sdk/c/ios/*`, `sdk/c/Makefile` new targets, `scripts/gen_ios_goldens.mjs`,
+  (`c/ios/*`, `c/Makefile` new targets, `scripts/gen_ios_goldens.mjs`,
   `public/.well-known/` in §16.C5).
 - **When stuck on an Apple-ism** (signing, entitlements, provisioning): the
   fix is almost always in `ios/project.yml` settings or the Developer portal
@@ -503,7 +503,7 @@ never used Swift. Read §3–§13 first; this section references them constantly
 ### 16.A Milestone A — foundation
 
 **A1. `make ios-lib` (the C engine as an xcframework).**
-Add to `sdk/c/Makefile` (pattern-match the existing native targets for the
+Add to `c/Makefile` (pattern-match the existing native targets for the
 source list — do NOT hardcode a list in this doc's spirit; the authoritative
 inventory is the Makefile's own native OBJECTS):
 
@@ -529,7 +529,7 @@ ios-lib:
 if CI Macs are Intel; the flags are plain — the wasm build's freestanding
 constraints do NOT apply natively.)
 
-**A2. `sdk/c/ios/ios_api.{h,c}` — the `fio_*` shim.** One static `Game`, no
+**A2. `c/ios/ios_api.{h,c}` — the `fio_*` shim.** One static `Game`, no
 threads inside (the Swift wrapper serializes). Implement, in this order:
 
 ```c
@@ -548,7 +548,7 @@ int  fio_replay_decode_b32(const char *code, char *out, int cap); // M-C, steps 
 
 The JSON shapes mirror the shared TS types (`@shared/types.ts` `Card`,
 `PersonalGame`) — copy field names from there so Swift models and web models
-read the same. Write a tiny C unit test (`sdk/c/tests/`) exercising
+read the same. Write a tiny C unit test (`c/tests/`) exercising
 new→legal→apply→state round-trips before any Swift exists.
 
 **A3. Golden vectors.** Add `scripts/gen_ios_goldens.mjs` (Node, runs the
@@ -702,7 +702,7 @@ completes; UITest drives one full offline game by accessibility ids.
 
 **C1. Decode.** `fio_replay_decode_b32(code, out)` → JSON array of steps
 mirroring the TS `DecodedReplay` (`@shared/replay/core.ts`) — reuse
-`replay_decode` (`sdk/c/src/replay.h:100`) + a JSON emitter. Swift:
+`replay_decode` (`c/src/replay.h:100`) + a JSON emitter. Swift:
 `ReplayPlayer: ObservableObject` — an index into steps + the B4 diff engine
 for rendering; transport = play/pause/step/scrub (VHS feel per web
 `ReplayScreen.tsx`).
@@ -933,7 +933,7 @@ Swift is written-to-compile but has NOT yet been through `xcodebuild`.*
 ### 17.1 Branches — all merged; work from `main`
 
 Both branches this section used to track are on `main`: the account-deletion
-endpoint merged (`4108a5e`), and the app itself (`ios/`, `sdk/c/ios/`) is on
+endpoint merged (`4108a5e`), and the app itself (`ios/`, `c/ios/`) is on
 `main` with subsequent D-milestone commits on top (kernel packed-view decode,
 realtime feed, online session/service — see 17.5). There is no in-flight iOS
 branch; start new work from `main`. Live milestone summary:
@@ -953,7 +953,7 @@ branch; start new work from `main`. Live milestone summary:
 
 ### 17.3 What is DONE and verified (Linux, no Mac)
 
-- **C engine bridge** (`sdk/c/ios/`, `make ios-lib`/`ios-smoke`/`ios-goldens`/
+- **C engine bridge** (`c/ios/`, `make ios-lib`/`ios-smoke`/`ios-goldens`/
   `ios-view-test`): all green. `ios-smoke` drives a full game + replay round-trip
   through the `fio_*` API; `ios-view-test` proves the server packed masked-view
   decodes through the SAME kernel as offline (view + legal moves match). The
@@ -967,7 +967,7 @@ branch; start new work from `main`. Live milestone summary:
 
 All Swift under `ios/`. Two independent compile-review passes were run and their
 findings fixed, but Swift was never compiled. First Mac session:
-`cd sdk/c && make ios-lib && cd ../ios && xcodegen generate && xcodebuild ...
+`cd c && make ios-lib && cd ../ios && xcodegen generate && xcodebuild ...
 build test`, then fix any surfaced nits (most likely: supabase-swift 2.x exact
 API shapes — see 17.6). Offline play, replays, tutorial, settings, entitlements,
 localization, and the DEBUG gallery are all implemented.
@@ -1007,7 +1007,7 @@ against a staging Supabase project. `docs/PROTOCOL.md` §9 lists it.
 
 ### 17.6 First-Mac-session checklist
 
-1. `cd sdk/c && make ios-lib` (needs Xcode CLT), then `make ios-smoke`,
+1. `cd c && make ios-lib` (needs Xcode CLT), then `make ios-smoke`,
    `make ios-view-test`, `make ios-goldens` — confirm all green.
 2. `brew install xcodegen`; `cd ios && xcodegen generate`.
 3. `xcodebuild -scheme Foolish -destination 'platform=iOS Simulator,name=iPhone 16' build test` — fix compile nits (Engine/DesignSystem/Boards first, then Net/ supabase-swift shapes).

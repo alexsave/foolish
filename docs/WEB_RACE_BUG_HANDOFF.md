@@ -25,7 +25,7 @@ README "How the game runs"). But **serialization is not intent-preservation**:
    is in flight.
 2. Defender's `pickup` commits first. In this engine **pickup closes the round
    immediately** — takes the whole table, refills hands, rotates
-   `first_attacker`/`defender` (`sdk/c/src/game.c:776-808`, `handle_pickup`).
+   `first_attacker`/`defender` (`c/src/game.c:776-808`, `handle_pickup`).
 3. The attacker's client receives the pickup broadcast and correctly reverts
    the optimistic 9♣ (revert machinery: `src/state/optimisticConflicts.ts` —
    table-clear sweep and DEFENDER_CAPACITY paths at lines 60-105).
@@ -111,7 +111,7 @@ the same guard.
    "no guard" (today's behavior), then tighten once clients are deployed.
    Bots (`bot_actions.ts`) compose against fresh server state under the lease
    loop and can send the real counter trivially.
-5. Do NOT change kernel legality (`sdk/c/src/game.c` / `legal.c`) — the
+5. Do NOT change kernel legality (`c/src/game.c` / `legal.c`) — the
    kernel is shared with replay/iMessage and its semantics are correct. The
    guard is a server-edge policy on *intent*, and belongs in the action
    handler layer.

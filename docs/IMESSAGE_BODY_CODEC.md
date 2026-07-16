@@ -1,9 +1,9 @@
 # The FMSG body must be a v6 code — two findings that force it
 
 *Written 2026-07-16 from the iMessage M0 branch (`claude/imessage-m0`), which
-implements `sdk/c/src/msg_wire.{h,c}` per
+implements `c/src/msg_wire.{h,c}` per
 `IMESSAGE_IMPLEMENTATION_HANDOFF.md` §4 M0. Every number below is MEASURED by
-`sdk/c/tests/msg_wire_test.c` (`make build/msg_wire_test && ./build/msg_wire_test 60`)
+`c/tests/msg_wire_test.c` (`make build/msg_wire_test && ./build/msg_wire_test 60`)
 over 240 completed games per configuration, played by `robusta` (the bot humans
 actually face), not estimated.*
 
@@ -109,7 +109,7 @@ B at 4p). Not worth a leaner seeded variant — 95% of the win for 0% of the ris
 **This is the one that matters and the reason work is paused.**
 
 The replay codec does not model an individual `good` declaration. Evidence in
-`sdk/c/src/replay.c`:
+`c/src/replay.c`:
 
 - `:930` — an action stream atom is only emitted for `LOG_ATTACK / LOG_COVER /
   LOG_PASS / LOG_PICKUP`, plus a `round_end` marker synthesized when a
@@ -242,15 +242,15 @@ full Games. `rules.wasm` overrides to 128 and is untouched.
 `claude/imessage-m0`. `./build/msg_wire_test 20` green; `rules.wasm` links at
 36,626 B (inside its pinned 3 pages).
 
-- `sdk/c/src/sha256.{h,c}` — FIPS 180-4, freestanding. No cryptographic hash
+- `c/src/sha256.{h,c}` — FIPS 180-4, freestanding. No cryptographic hash
   existed in-tree (the FNV mixers are seeds, not commitments); `parent8` and Rule
   P's tiebreak need one identical on every device. KAT-pinned.
-- `sdk/c/src/awire.{h,c}` — `awire_frame_len` + `awire_encode`, both onto one
+- `c/src/awire.{h,c}` — `awire_frame_len` + `awire_encode`, both onto one
   shared head check. (The raw body is gone, but these stand on their own: only a
   decoder existed, because the browser was the only producer.)
-- `sdk/c/src/msg_wire.{h,c}` — the envelope. `msg_seal` is the producer,
+- `c/src/msg_wire.{h,c}` — the envelope. `msg_seal` is the producer,
   `msg_decode` is structure, `msg_replay` is semantics.
-- `sdk/c/tests/msg_wire_test.c` — in `make difftests`, ahead of
+- `c/tests/msg_wire_test.c` — in `make difftests`, ahead of
   `solver_difftest` (which fails identically on `main` and would otherwise stop
   it ever running — `NEXT_STEPS.md` §5).
 

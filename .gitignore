@@ -47,12 +47,12 @@ yarn-error.log*
 supabase/functions/_shared/common/durakai/move_analysis.txt
 supabase/functions/_shared/common/durakai/node_modules
 
-# sdk/c
-sdk/c/build/
-sdk/c/*.trace/
-sdk/c/tools/tt_divergence_viz/backup/
-sdk/c/tools/tt_divergence_viz/backup2/
-sdk/c/tools/tt_divergence_viz/data/W/
+# c
+c/build/
+c/*.trace/
+c/tools/tt_divergence_viz/backup/
+c/tools/tt_divergence_viz/backup2/
+c/tools/tt_divergence_viz/data/W/
 
 # Local scratch that has snuck into commits before. Bare-name editor spill
 # (.swc..swm, not caught by .*.sw? which guards .swift), a dev server log, the

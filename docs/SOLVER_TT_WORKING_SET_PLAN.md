@@ -17,7 +17,7 @@ function, or the search order. (Search-order changes are proven regressions; see
 
 ## 1. The mental model (read this first)
 
-The endgame solver `sim_solve_rec` (`sdk/c/src/cordite_sim.c`) is an exact,
+The endgame solver `sim_solve_rec` (`c/src/cordite_sim.c`) is an exact,
 node-budget-limited, depth-capped (ply 48, `CD_SIM_SOLVE_MAX_DEPTH`) minimax with a
 direct-mapped TT (`tt[key & CD_TT_MASK]`, 16-byte `CdTTEntry {key, value, depth, valid}`).
 
@@ -377,14 +377,14 @@ policy, keying, and layout are the safe design space.
 
 Tools (all committed):
 
-- `sdk/c/tools/tt_divergence.sh` — SIG divergence, seed-sharded (`S=`), `BASE=` override.
-- `sdk/c/tools/tt_divergence_viz/generate.sh` — W measurement (`measure BOT PC N`,
+- `c/tools/tt_divergence.sh` — SIG divergence, seed-sharded (`S=`), `BASE=` override.
+- `c/tools/tt_divergence_viz/generate.sh` — W measurement (`measure BOT PC N`,
   `REF_BITS=`), rebuilds `docs/tt-divergence.html`.
-- `sdk/c/tools/tt_divergence_viz/accrue_div.sh` — accumulating seed-keyed divergence
+- `c/tools/tt_divergence_viz/accrue_div.sh` — accumulating seed-keyed divergence
   (per-bits `.div` files, dedup by seed), rebuilds the page + markdown table.
-- `sdk/c/tools/tt_divergence_viz/outcome_pair.sh` — paired per-seed **outcome** test
+- `c/tools/tt_divergence_viz/outcome_pair.sh` — paired per-seed **outcome** test
   (candidate vs TT22, same seeds, `BOT/OPP/CAND/BASE` env) — the V4 gate.
-- `sdk/c/tools/tt_divergence_viz/lat_pass.sh` — CD_LAT decision-latency pass (V5).
+- `c/tools/tt_divergence_viz/lat_pass.sh` — CD_LAT decision-latency pass (V5).
 - Env: `GAME_SIG=1` → `SIG <seed> <movehash> fin=<pos>`; `CD_GW=1` → `GW <seed> <W>`;
   `CD_LAT=1` → `LAT <ns> <decisions>`; `--replay-seeds=<file>` replays a seed list.
 

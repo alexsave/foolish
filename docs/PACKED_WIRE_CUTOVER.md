@@ -20,9 +20,9 @@ kernel** (`view.c`), not TypeScript: other players' hands and the deck leave
 the kernel as `0xFE` hidden bytes (counts preserved). The TS server never holds
 a JS `Game` object on the human-move path.
 
-## Wire formats (all little-endian, 1-byte wire cards per sdk/c/wasm/wire.h)
+## Wire formats (all little-endian, 1-byte wire cards per c/wasm/wire.h)
 
-### Action wire (`awire` v1) — sdk/c/src/awire.h
+### Action wire (`awire` v1) — c/src/awire.h
 The bytes the client validates with guards.wasm are the exact bytes the server
 kernel applies — one decoder (`awire_decode`), compiled into both modules.
 
@@ -44,7 +44,7 @@ u8 reject_code (ENGINE_REJECT_*, 0 if n/a) | u32 committed version
 ```
 JSON bodies on `action` still work (`bump`, legacy callers, tests).
 
-### Masked view blob (`view` v1) — sdk/c/src/view.c
+### Masked view blob (`view` v1) — c/src/view.c
 `wasm_view_serialize(viewer)`: `u8 VIEW_FMT=1 | u8 viewer_seat (0xFF spectator)`
 followed by the put_state layout with masking: deck cards → `0xFE`, every hand
 except the viewer's → `0xFE` per card (counts intact), other seats'
@@ -53,7 +53,7 @@ except the viewer's → `0xFE` per card (counts intact), other seats'
 roster JSON (identity only: ids/names/is_ai + good order/timestamp + status) |
 u16 view_len | view blob` when the request body carries `packed: true`.
 
-### Event wire (`evwire` v1) — sdk/c/src/evwire.c
+### Event wire (`evwire` v1) — c/src/evwire.c
 `wasm_events_serialize(viewer, actor, ended)` emits the whole animation
 sequence for one recipient; a TS encoder (`sdk/ts/wire/evwire.ts`) produces
 the byte-identical stream from JS `AnimationEvent[]` for the paths that still

@@ -1,15 +1,15 @@
 // TypeScript bridge to the cnitro BOT module compiled to WebAssembly.
 //
 // bots.wasm is the rules kernel (same sources as rules.wasm) PLUS every
-// algorithmic bot strategy (sdk/c/src/*_strategy.c) and a choose-move
-// bridge (sdk/c/wasm/wasm_bots_api.c). The C sources are the single source
+// algorithmic bot strategy (c/src/*_strategy.c) and a choose-move
+// bridge (c/wasm/wasm_bots_api.c). The C sources are the single source
 // of truth for bot play; this module only marshals the game in and reads the
 // chosen move index out. The whole bot turn — legal-move enumeration,
 // belief building, Monte-Carlo deliberation — runs inside the module.
 //
 // The chosen INDEX maps 1:1 onto the LegalMove list the server computed via
 // kernelLegalMoves, because both come from the same C enumerator
-// (sdk/c/src/legal.c calculate_legal_moves) over the same marshaled state.
+// (c/src/legal.c calculate_legal_moves) over the same marshaled state.
 //
 // Loaded lazily and cached: the pure rules path (actions/) never pays for
 // the larger module; the first bot decision instantiates it.
@@ -58,7 +58,7 @@ interface BotsExports extends EngineExports {
     wasm_belief_probe_dump(): number;
 }
 
-// Mirrors STRAT_* in sdk/c/src/strategy.h (only the ids the server uses).
+// Mirrors STRAT_* in c/src/strategy.h (only the ids the server uses).
 // espresso/handwritten map to the *_PROD mirrors of the production TS bots;
 // the kernel's un-suffixed variants (ids 1/2) are the arena/cordite-rollout
 // versions, which drifted slightly and stay frozen for cordite's sake.
@@ -179,18 +179,18 @@ function bots(): BotsExports {
 }
 
 // Strategy RNG. Each decision seeds the kernel's dedicated strategy LCG
-// (sdk/c/src/game.c random_strategy_random) with one fresh draw, so
+// (c/src/game.c random_strategy_random) with one fresh draw, so
 // stochastic strategies stay stochastic across decisions. The parity/e2e
 // harness can pin the stream (mirrors engine.ts __setKernelSeedSource).
 let seedSource: (() => number) | null = null;
 export function __setBotSeedSource(fn: (() => number) | null): void { seedSource = fn; }
 
-// Session log marshal-in — wire layout of sdk/c/wasm/wasm_bots_api.c
+// Session log marshal-in — wire layout of c/wasm/wasm_bots_api.c
 // wasm_import_logs (u16 count; per log: i8 type, i8 player seat, i8
 // defender_index, u8 num_pairs, num_pairs x (u8 primary, u8 target) 1-byte
 // wire cards). Hidden cards travel as 0xFE ({-1,-1} in the log store) — the
 // belief-based bots (cordite, fulminate) read these.
-// The kernel STORES 1024 (MAX_LOGS in sdk/c/src/game.h) but ACCEPTS ~3072 raw
+// The kernel STORES 1024 (MAX_LOGS in c/src/game.h) but ACCEPTS ~3072 raw
 // records: a session log arrives untrimmed and the kernel filters dead goods
 // itself. TS must not do that filtering — which side is allowed to decide that a
 // good is dead is a rules question. Sized by the bots build's WASM_IO_CAP.
@@ -287,7 +287,7 @@ function importStrategyKeys(ex: BotsExports, game: Game): void {
 // strategies with different knobs (cordite's CD_* vs octogen's OG_*), and the
 // bots latch their knobs on first read.
 //
-// The knob VALUES are canonically the C roster's (sdk/c/src/bot_roster.c);
+// The knob VALUES are canonically the C roster's (c/src/bot_roster.c);
 // env overrides it, so what this writes is what the server plays
 // (docs/C_CORE_CONSOLIDATION.md F1). e2e/bot_roster_parity.test.ts holds the
 // two in lockstep until the env table is deleted.
@@ -404,7 +404,7 @@ export function wasmChooseMoveDirect(
 // class, per-decision seeding — is kernel property.
 // ---------------------------------------------------------------------------
 
-// BOT_STOP_* / BOT_PACE_* — sdk/c/src/bot_drive.h.
+// BOT_STOP_* / BOT_PACE_* — c/src/bot_drive.h.
 export const BOT_STOP = { NO_ELIGIBLE: 0, ENDED: 1, EVENTS: 2, MAX: 3 } as const;
 export const BOT_PACE = { NONE: 0, BUNDLED_PASSIVE: 1, MOVE: 2, ROUND_TRANSITION: 3 } as const;
 
@@ -680,7 +680,7 @@ export function kernelReplayEncodeV6FromGame(
     return __mem(ex).slice(base, base + n);
 }
 
-// ---------- FMSG: the iMessage envelope (sdk/c/src/msg_wire.h) -------------
+// ---------- FMSG: the iMessage envelope (c/src/msg_wire.h) -------------
 //
 // An iMessage game has no server: the whole game is (32-byte deal seed, v6
 // replay code) in an MSMessage URL, and every device rebuilds it by re-dealing
@@ -702,7 +702,7 @@ export function kernelReplayEncodeV6FromGame(
 // mid-decode. See wasm_api.c.
 
 // The unpacked header — the private ABI msg_blob_write/msg_blob_read define in
-// sdk/c/wasm/wasm_api.c. Fixed offsets, fixed-size join slots.
+// c/wasm/wasm_api.c. Fixed offsets, fixed-size join slots.
 const MSG_BLOB_HDR = 90;
 const MSG_BLOB_JOIN = 14;
 
@@ -1063,7 +1063,7 @@ export function replayStepCount(code: Uint8Array): number {
     return n;
 }
 
-/** REPLAY_ATOM_* — what a step played. Mirrors sdk/c/src/replay.h. */
+/** REPLAY_ATOM_* — what a step played. Mirrors c/src/replay.h. */
 export const REPLAY_STEP = {
     DEAL: 0,        // the opening deal; never an action
     DRAW: 1,        // never a step (draws ride the action that caused them)

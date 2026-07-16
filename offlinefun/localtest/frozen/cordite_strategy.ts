@@ -1,8 +1,8 @@
 // Cordite — belief-constrained determinized Monte Carlo. The strongest
 // non-cheating bot: sees exactly what a human sees (own hand, table, hand
 // counts, deck count, public logs) and runs entirely inside chooseMove.
-// Port of sdk/c/src/cordite_strategy.c; design + benchmarks in
-// sdk/c/CORDITE.md. `cordite_max` is the same brain with a larger
+// Port of c/src/cordite_strategy.c; design + benchmarks in
+// c/CORDITE.md. `cordite_max` is the same brain with a larger
 // sampled-world budget (measured stronger in C evals; bounded by a
 // per-decision wall-clock cap well under the bot-loop budget).
 

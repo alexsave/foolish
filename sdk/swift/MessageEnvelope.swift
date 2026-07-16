@@ -1,4 +1,4 @@
-// MessageEnvelope — the Swift face of FMSG (sdk/c/src/msg_wire.h).
+// MessageEnvelope — the Swift face of FMSG (c/src/msg_wire.h).
 //
 // PURE MARSHALLING. Every question this type looks like it answers — which chain
 // wins, whether a pending move survives, what is legal now — is answered in C

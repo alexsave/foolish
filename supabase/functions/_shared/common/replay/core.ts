@@ -3,7 +3,7 @@
  * =============================================================================
  * The replay RULES ENGINE — the deterministic public-state replayer that
  * both encode and decode drive — lives in the C kernel
- * (sdk/c/src/replay.c), the same codebase as the production game rules it
+ * (c/src/replay.c), the same codebase as the production game rules it
  * mirrors (game.c / card.h). TS holds only marshaling (encode.ts /
  * decode.ts via sdk/ts/wasm/engine.ts) and these shared types.
  *
@@ -16,10 +16,10 @@
 
 import { Card, LOG_TYPE, LogType, LogCardPair } from "../../core/types.ts";
 
-// Wire-format constants. The kernel (sdk/c/src/replay.h REPLAY_FORMAT_*)
+// Wire-format constants. The kernel (c/src/replay.h REPLAY_FORMAT_*)
 // is authoritative; these mirrors exist for TS-side pre-checks and tests.
 export const FORMAT_VERSION = 5;
-// Format 6: hidden-state-lossless, partial-game (sdk/c/src/replay.h
+// Format 6: hidden-state-lossless, partial-game (c/src/replay.h
 // REPLAY_FORMAT_VERSION_V6, docs/REPLAY_FORMAT6_HIDDEN_STATE.md).
 export const FORMAT_VERSION_V6 = 6;
 export const VERSION_ALPHABET = 16; // room for 15 future versions before a re-think
@@ -27,7 +27,7 @@ export const VERSION_ALPHABET = 16; // room for 15 future versions before a re-t
 /* ------------------------------- card ids -------------------------------- */
 // id = suit*13 + (value-1), ascending = (suit, value) order. Values are 1..13
 // (2..A) on the 52-card deck (6+ players) and 5..13 (6..A) on the 36-card
-// deck. Identical to the kernel's 1-byte wire card (sdk/c/wasm/wire.h).
+// deck. Identical to the kernel's 1-byte wire card (c/wasm/wire.h).
 
 export function cardId(c: Card): number {
   return c.suit * 13 + (c.value - 1);

@@ -5,7 +5,7 @@
 -- The full schema/seed lives in supabase/seed.sql, which only stands a fresh DB
 -- up from scratch; this migration applies the same incremental change to a DB
 -- that already has the schema + data (we do NOT re-run seed.sql). Both C
--- strategies (sdk/c/src/firecracker_strategy.c, blackpowder_strategy.c) and the
+-- strategies (c/src/firecracker_strategy.c, blackpowder_strategy.c) and the
 -- bots.wasm dispatch (wasm_choose_move) already ship these; this row insert is
 -- what makes them selectable in the lobby / dealt into games.
 --

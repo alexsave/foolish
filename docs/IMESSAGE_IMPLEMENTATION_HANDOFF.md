@@ -31,7 +31,7 @@ or TS. Whose move, legality, capacity — always the kernel. Any hand-rolled
 Durak card game, 2–8 players, multi-actor (several seats may legally act at
 the same moment — there is NO turn alternation; internalize
 `IMESSAGE_GAME_DESIGN.md` §5.1 before anything else). One C rules kernel
-(`sdk/c/src/game.c`, `legal.c`, `view.c`, `replay.c`) runs the website, the
+(`c/src/game.c`, `legal.c`, `view.c`, `replay.c`) runs the website, the
 Supabase edge functions, and the native iOS app. An iMessage game has no
 server: each turn is an `MSMessage` whose URL carries the ENTIRE game —
 `(32-byte deal seed, ordered action list)` — and every device reconstructs
@@ -47,10 +47,10 @@ page (`/m/<payload>`) rendering the game read-only.
 
 ### 2.1 The C engine and its iOS bridge — done and tested
 
-- **Kernel**: `sdk/c/src/game.c`, `legal.c`, `view.c`, `replay.c`. Seeded
+- **Kernel**: `c/src/game.c`, `legal.c`, `view.c`, `replay.c`. Seeded
   deals: `game_set_deal_seed_bytes(seed, len)` (`game.h:145`) — **len must be
   ≥ 32**; the whole game is then reproducible from the seed on any platform.
-- **iOS static lib + shim**: `sdk/c/ios/ios_api.{h,c}`, built by
+- **iOS static lib + shim**: `c/ios/ios_api.{h,c}`, built by
   `make ios-lib` (also `ios-smoke`, `ios-goldens`, `ios-view-test` — all
   green, provable on Linux). The `fio_*` API already covers most of what the
   extension needs:
@@ -58,16 +58,16 @@ page (`/m/<payload>`) rendering the game read-only.
   move_json)` (per-action actor seat — exactly what chain replay needs) ·
   `fio_legal_moves_json(seat,…)` · `fio_actor_mask()` · `fio_state_json` /
   `fio_public_state_json` · `fio_game_over()` · `fio_replay_encode_b32`
-  (v5 share code) · `fio_last_reject()`. Read `sdk/c/ios/include/ios_api.h`
+  (v5 share code) · `fio_last_reject()`. Read `c/ios/include/ios_api.h`
   top-to-bottom — it is short and it is the contract.
-- **Action wire**: `sdk/c/src/awire.{h,c}` — the packed move format the
+- **Action wire**: `c/src/awire.{h,c}` — the packed move format the
   whole product uses (browser→server bytes). `u8 kind, u8 n, n×card,
   [n×attack-target for cover]`. Self-delimiting, variable length,
   multi-card moves are ONE action. This replaces the older docs' "3 bytes
   per action" sketch — see §3.2.
 - **Replay codec**: v5 frozen; **v6 shipped** (`replay_encode_v6`,
-  `sdk/c/src/replay.h:136`; wasm export `wasm_replay_encode_v6`,
-  `sdk/c/Makefile:432`; TS `encodeReplayV6` in
+  `c/src/replay.h:136`; wasm export `wasm_replay_encode_v6`,
+  `c/Makefile:432`; TS `encodeReplayV6` in
   `supabase/functions/_shared/common/replay/encode.ts`; `e2e/replay_v6.test.ts`).
   v6 supports a **mid-game cut** (explicit atom count, no
   `REPLAY_EINCOMPLETE`) — see §3.3 for what that means here.
@@ -97,7 +97,7 @@ the `APPLICATION_EXTENSION_API_ONLY` step for this milestone).
 
 ### 2.4 What does NOT exist yet (your work, §4)
 
-`sdk/c/src/msg_wire.{h,c}` · `wasm_msg_encode/decode` exports · TS bridge
+`c/src/msg_wire.{h,c}` · `wasm_msg_encode/decode` exports · TS bridge
 functions · `e2e/msg_wire.test.ts` / `e2e/msg_concurrency.test.ts` ·
 `src/app/m/[payload]/page.tsx` · `FoolishMessages` target + extension UI ·
 App Group storage · the Swift chain-cache/pending-ledger/rebase layer ·
@@ -151,7 +151,7 @@ one round), so each action needs its actor. Store each action as:
 u8 seat  |  awire frame (u8 kind, u8 n, n×u8 cards, [n×u8 attacks — cover only])
 ```
 
-awire (`sdk/c/src/awire.h`) is self-delimiting given `kind` and `n`, so no
+awire (`c/src/awire.h`) is self-delimiting given `kind` and `n`, so no
 per-action length prefix is needed. Decode = `awire_decode` (already
 hardened against hostile bytes: clamped card ids, exact-length check);
 apply = the same switch the shim uses. Size math: attack/cover of one card
@@ -236,7 +236,7 @@ Mac and de-risks the entire design in CI — start there.
 
 ### M0 — the wire + the model, all in this repo's existing toolchains (5–8 d)
 
-1. **`sdk/c/src/msg_wire.{h,c}`** — encode/decode of the §3.1 envelope.
+1. **`c/src/msg_wire.{h,c}`** — encode/decode of the §3.1 envelope.
    Style-match `awire.c` (bounds-checked, no allocation, hostile-input
    safe). Decode NEVER constructs a `Game` by memcpy: it returns the parsed
    fields + action list; validation happens by replaying through public
@@ -244,12 +244,12 @@ Mac and de-risks the entire design in CI — start there.
    apply), exactly like the shim does. Include SHA-256 (a small local
    implementation or reuse if one exists in-tree — grep first) for
    `parent8` and the Rule P digest tiebreak.
-2. **Native test** `sdk/c/tests/msg_wire_test.c` (add to `make difftests`):
+2. **Native test** `c/tests/msg_wire_test.c` (add to `make difftests`):
    round-trip encode→decode→re-encode byte-identical at 2/3/4/8 players and
    every phase; tamper matrix (flip each byte class → clean failure);
    replay-validation rejects illegal chains.
 3. **Wasm exports** `wasm_msg_encode` / `wasm_msg_decode` added to the
-   rules build's export list (`sdk/c/Makefile` — pattern-match
+   rules build's export list (`c/Makefile` — pattern-match
    `wasm_replay_encode_v6` at `:432`); rebuild the committed modules the
    same way existing codec changes did (see the v6 commit for the recipe).
 4. **TS bridge** in `sdk/ts/wasm/engine.ts`
@@ -272,7 +272,7 @@ Mac and de-risks the entire design in CI — start there.
 
 ### M1 — Xcode target + shim additions (2–4 d, first Mac work)
 
-1. `sdk/c/ios/ios_api.c`: add `fio_msg_decode_json` (payload bytes → JSON:
+1. `c/ios/ios_api.c`: add `fio_msg_decode_json` (payload bytes → JSON:
    envelope fields + per-seat view after replay + my legal moves),
    `fio_msg_encode` (current game + envelope fields → payload bytes), and
    `fio_replay_encode_v6_b32` (optional, M4 can absorb). Extend
@@ -364,11 +364,11 @@ device-pair pass, submit riding the app's record.
 | This work order | `docs/IMESSAGE_IMPLEMENTATION_HANDOFF.md` |
 | UI mockups + snapshot spec | `docs/imessage-layout.html` |
 | Phone-app layout study (board grammar) | `docs/ios-phone-layout.html` (+ `docs/IOS_PHONE_LAYOUT.md`) |
-| Kernel | `sdk/c/src/{game,legal,view,replay}.c` |
-| Seeded deal API | `sdk/c/src/game.h` (§ RNG, `game_set_deal_seed_bytes`) |
-| Action wire | `sdk/c/src/awire.{h,c}` |
-| iOS shim + build | `sdk/c/ios/`, `sdk/c/Makefile` (`ios-lib`, `ios-smoke`) |
-| v6 codec + doc | `sdk/c/src/replay.{h,c}`, `docs/REPLAY_FORMAT6_HIDDEN_STATE.md` |
+| Kernel | `c/src/{game,legal,view,replay}.c` |
+| Seeded deal API | `c/src/game.h` (§ RNG, `game_set_deal_seed_bytes`) |
+| Action wire | `c/src/awire.{h,c}` |
+| iOS shim + build | `c/ios/`, `c/Makefile` (`ios-lib`, `ios-smoke`) |
+| v6 codec + doc | `c/src/replay.{h,c}`, `docs/REPLAY_FORMAT6_HIDDEN_STATE.md` |
 | wasm bridge (TS) | `sdk/ts/wasm/engine.ts` |
 | base32 | `supabase/functions/_shared/common/replay/codec.ts` |
 | e2e harness | `e2e/` (`npm run test:e2e`) |

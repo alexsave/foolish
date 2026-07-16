@@ -24,7 +24,7 @@ The whole thing hangs off a single principle applied without compromise:
 > **The domain logic has exactly one implementation, in a portable compiled
 > language, and it runs unchanged in every environment.**
 
-In Foolish the game rules live once in C (`sdk/c/src/game.c` + `legal.c` +
+In Foolish the game rules live once in C (`c/src/game.c` + `legal.c` +
 `view.c` + `replay.c`). That C compiles to WebAssembly and executes on the
 server (Deno edge functions), in the browser, and in Node (tests, offline
 sims). There is no TypeScript copy of the rules "for the client" and no separate

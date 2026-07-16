@@ -77,7 +77,7 @@ supabase/
   migrations/             schema, incl. CAS concurrency + bot-lease heartbeat
   seed.sql                seeds the bot roster (Cordite, Espresso, Handwritten, …)
 
-sdk/c/                   pure-C Durak engine + bot arena  ← project 1
+c/                   pure-C Durak engine + bot arena  ← project 1
 offlinefun/               offline/PWA layer  ← project 3
 e2e/                      full-stack test suite (real server code, real Postgres)
 docs/                     design / refactor notes; ARCHITECTURE_REVIEW.md is the
@@ -88,9 +88,9 @@ docs/                     design / refactor notes; ARCHITECTURE_REVIEW.md is the
 ### Shared code (`@shared`) and the C rules kernel
 
 **The game rules have one implementation: C.** The kernel in
-`sdk/c/src/game.c` + `legal.c` (state transitions, legality, legal-move
+`c/src/game.c` + `legal.c` (state transitions, legality, legal-move
 enumeration, dealing/refill, the log stream) is compiled to WebAssembly
-(`cd sdk/c && make wasm`) and embedded as base64 in
+(`cd c && make wasm`) and embedded as base64 in
 `sdk/ts/wasm/rules_wasm.ts`, so the same 29 KB module
 loads with zero asset plumbing in Deno edge functions, Node (tests, offline
 sims) and browsers. The TS files in `_shared/common/actions/` and parts of
@@ -107,7 +107,7 @@ keeps policing the seams.
 **The bot brains are C too.** Every algorithmic strategy (`random`,
 `espresso`, `handwritten`, `simple_heuristic`, `champion`,
 `ultimate_champion`, `hacker`, `cordite`, `octogen`, `fulminate`) lives
-in `sdk/c/src/*_strategy.c` and ships as a second module, `bots.wasm`
+in `c/src/*_strategy.c` and ships as a second module, `bots.wasm`
 (`make wasm-bots` → `sdk/ts/wasm/bots_wasm.ts`, ~150 KB): the rules kernel
 plus all bots plus a choose-move bridge. A bot turn marshals the game in
 once and the kernel enumerates legal moves and picks one — only the chosen
@@ -147,7 +147,7 @@ function. The server maps the caller to a seat and hands the bytes to the
 kernel: **one synchronous WASM section** loads the persisted state blob,
 validates + applies the move, finalizes a win, and emits the new blob plus a
 **per-recipient masked animation stream** — the "you only see your own hand"
-personalization is computed by the C kernel (`sdk/c/src/view.c`), not
+personalization is computed by the C kernel (`c/src/view.c`), not
 TypeScript. The blob commits under an optimistic-concurrency CAS
 (`commit_game`, a compare-and-swap on a version counter), then the packed
 streams broadcast over Supabase Realtime (base64 in a tiny JSON envelope) on
@@ -183,7 +183,7 @@ games flow between them: a match simulated in native C can be replayed in the
 browser, shared as a QR code, and re-fought by a Monte-Carlo bot that provably
 never cheats.
 
-### 1. `sdk/c/` — the C Durak engine (now THE engine) and bot arena
+### 1. `c/` — the C Durak engine (now THE engine) and bot arena
 
 A self-contained C engine whose job began as simulating **millions of games**
 to evaluate bots without the TS language-boundary cost — and which is now the
@@ -200,12 +200,12 @@ that derives hidden information by deduction rather than peeking, under a strict
 **no-LLM / no-cheating** contract. It runs live as the `cordite` bot (and is
 the base of `octogen`, the top rung) — the C implementation itself, compiled
 into `bots.wasm`. Which key maps to which brain, at which tuning, is the C bot
-roster (`sdk/c/src/bot_roster.c`) — one table shared by the server, the phone
-and every future client. See `sdk/c/README.md`, `sdk/c/CORDITE.md`,
-`sdk/c/BLACKPOWDER.md`, and `sdk/c/CORDITE_RESEARCH.md`.
+roster (`c/src/bot_roster.c`) — one table shared by the server, the phone
+and every future client. See `c/README.md`, `c/CORDITE.md`,
+`c/BLACKPOWDER.md`, and `c/CORDITE_RESEARCH.md`.
 
 ```bash
-cd sdk/c && make
+cd c && make
 ./build/cnitro_eval --strategy=cordite --opp=espresso --players=4 --games=500
 ./build/cnitro_elo  --games=3000 --pcs=2,3,4,5,6,7,8 \
     --pool=random,handwritten,espresso,robusta,firecracker,gunpowder,blackpowder,cordite
@@ -213,7 +213,7 @@ cd sdk/c && make
 
 ### 2. The replay codec — a whole game in a QR code
 
-`sdk/c/src/replay.c` (reached through `supabase/functions/_shared/common/replay/` and
+`c/src/replay.c` (reached through `supabase/functions/_shared/common/replay/` and
 rendered by `src/replay/`) encodes a complete finished game into a single integer
 using **rANS entropy coding**, then base32s it into a URL
 (`WWW.FOOLISH.CARDS/<code>`) chosen specifically to stay inside QR alphanumeric

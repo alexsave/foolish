@@ -16,7 +16,7 @@
 --     stronger tier was the weaker one in the bigger games. The roster keeps the
 --     prod budget under the single `cordite` key.
 --
--- The canonical roster is now the C table (sdk/c/src/bot_roster.c); these keys
+-- The canonical roster is now the C table (c/src/bot_roster.c); these keys
 -- are absent from it, so a bot still carrying one would fall through to `random`
 -- and play nothing like its name — the same failure mode 20260711130000 fixed.
 --

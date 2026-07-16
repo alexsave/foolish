@@ -1,9 +1,9 @@
-// The C rules kernel (sdk/c/src/game.c + legal.c, compiled to WASM) is the
+// The C rules kernel (c/src/game.c + legal.c, compiled to WASM) is the
 // single source of truth for gameplay; the TS modules in _shared delegate to
 // it. This file guards the seams of that arrangement:
 //
 //   1. the kernel obeys THE deck-size rule (2..5 players -> 36 cards,
-//      6+ -> 52), settled once for every deployment (see sdk/c/src/card.h);
+//      6+ -> 52), settled once for every deployment (see c/src/card.h);
 //   2. full random games through the kernel conserve cards and end with a
 //      single fool at every player count;
 //   3. the few thin TS projections kept for the client's synchronous use

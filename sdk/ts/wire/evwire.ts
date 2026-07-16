@@ -1,4 +1,4 @@
-// Event wire ("evwire" v1) — TS mirror of sdk/c/src/evwire.h.
+// Event wire ("evwire" v1) — TS mirror of c/src/evwire.h.
 //
 // decodeEventWire: packed bytes -> the AnimationSequenceMessage the client
 // animation pipeline already consumes (events with per-step game_state

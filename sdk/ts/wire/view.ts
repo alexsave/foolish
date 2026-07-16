@@ -1,4 +1,4 @@
-// Masked view state ("view" v1) — TS mirror of sdk/c/src/view.c. The
+// Masked view state ("view" v1) — TS mirror of c/src/view.c. The
 // kernel's per-viewer masked put_state payload is THE representation of a
 // personalized game on the wire; this module is the single place JS objects
 // are materialized from it (the React render boundary / test assertions),

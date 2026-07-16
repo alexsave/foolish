@@ -29,7 +29,7 @@ const supabaseClient = createClient(
 );
 
 // Bot timing is NOT a constant here any more: what a move is worth pausing for
-// is one table in the kernel (bot_pacing_ms, sdk/c/src/bot_drive.c), reached
+// is one table in the kernel (bot_pacing_ms, c/src/bot_drive.c), reached
 // through wasmBotPacingMs and shared with every other client
 // (docs/C_CORE_CONSOLIDATION.md F3). Its values are the ones this file used to
 // hold — 3000ms with a human watching, 300ms bots-only — so the feel is

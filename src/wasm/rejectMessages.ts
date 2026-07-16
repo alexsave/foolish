@@ -1,5 +1,5 @@
 // Short English strings for the packed action path's reject codes — a
-// client-side mirror of ENGINE_REJECT_* in sdk/c/src/game.h (the kernel that
+// client-side mirror of ENGINE_REJECT_* in c/src/game.h (the kernel that
 // produced the code). These are diagnostic only: the client console.errors
 // them and reverts optimistic state; nothing renders them.
 

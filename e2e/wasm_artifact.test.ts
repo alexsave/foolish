@@ -30,6 +30,6 @@ test('the shipped bots.wasm exports what the web calls', () => {
         'wasm_replay_events', 'wasm_replay_events_n', 'wasm_replay_events_next',
         'wasm_replay_step_count', 'wasm_replay_encode_v6_from_game',
     ]) {
-        assert.ok(names.has(want), `bots.wasm is missing ${want} — rebuild: cd sdk/c && make wasm-bots WASM_CC=/opt/homebrew/opt/llvm/bin/clang`);
+        assert.ok(names.has(want), `bots.wasm is missing ${want} — rebuild: cd c && make wasm-bots WASM_CC=/opt/homebrew/opt/llvm/bin/clang`);
     }
 });

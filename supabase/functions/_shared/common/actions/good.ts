@@ -1,7 +1,7 @@
 import { Game, AnimationEvent, GAME_STATUS } from '../../core/types.ts';
 import { kernelGood, kernelRoundTransition } from '../../../../../sdk/ts/wasm/engine.ts';
 
-// The good rules live in the C kernel (sdk/c/src/game.c handle_good),
+// The good rules live in the C kernel (c/src/game.c handle_good),
 // compiled to WASM — including the all-attackers-good + all-covered round
 // transition (discard, refill, rotation). This file keeps only the exported
 // API surface. The old 60-second auto-discard timeout stays disabled, same

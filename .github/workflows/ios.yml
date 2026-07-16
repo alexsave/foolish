@@ -19,11 +19,11 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Bridge smoke test (drives a full game through fio_*)
-        run: cd sdk/c && make ios-smoke
+        run: cd c && make ios-smoke
 
       - name: Goldens are up to date
         run: |
-          cd sdk/c && make ios-goldens
+          cd c && make ios-goldens
           if ! git diff --quiet -- ../ios/Fixtures/goldens.json; then
             echo "::error::ios/Fixtures/goldens.json is stale — run 'make ios-goldens' and commit."
             git --no-pager diff -- ../ios/Fixtures/goldens.json
@@ -41,7 +41,7 @@ jobs:
   #     - name: Install XcodeGen
   #       run: brew install xcodegen
   #     - name: Build the C engine xcframework
-  #       run: cd sdk/c && make ios-lib
+  #       run: cd c && make ios-lib
   #     - name: Generate the project
   #       run: cd ios && xcodegen generate
   #     - name: Build & test

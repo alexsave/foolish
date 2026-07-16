@@ -30,7 +30,7 @@ export const VALUE_MAP = [
 export const ACE_VALUE = 13;
 export const MAX_PLAYERS = 8;
 
-// THE deck rule, settled (mirror of sdk/c/src/card.h min_value_for — the
+// THE deck rule, settled (mirror of c/src/card.h min_value_for — the
 // kernel is authoritative): 2..5 players play the 36-card deck (values
 // 5..A), 6..8 players the full 52-card deck (2..A). Derive deck size and
 // the lowest value from these helpers — never inline `n >= 6 ? 52 : 36`.

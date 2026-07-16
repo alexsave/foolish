@@ -7,7 +7,7 @@
  * choreography (reconstructSeededDeal + collectV6 + marshalInputV6) alive with
  * no production caller, purely to assert the kernel's one call was byte-equal
  * to it. That job is finished, and it is now the KERNEL's to keep:
- * sdk/c/tests/replay_v6_test.c asserts replay_encode_v6_from_game is
+ * c/tests/replay_v6_test.c asserts replay_encode_v6_from_game is
  * byte-equal to the marshalled producer, on real engine games — the same claim,
  * without a second implementation to maintain. Keeping the TS copy could only
  * ever prove "the copy agrees"; it could never prove the answer is right, and

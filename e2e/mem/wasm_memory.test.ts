@@ -44,7 +44,7 @@ test('bots.wasm ships as a small gzip static asset (not a base64 embed)', () => 
 test('rules embed is a single-line literal (no parse-time concat garbage)', () => {
     const rel = 'sdk/ts/wasm/rules_wasm.ts';
     const src = readFileSync(resolve(rel), 'utf8');
-    assert.ok(!/'\s*\+/.test(src), `${rel} is chunk-concatenated; regenerate with sdk/c/wasm/embed.mjs`);
+    assert.ok(!/'\s*\+/.test(src), `${rel} is chunk-concatenated; regenerate with c/wasm/embed.mjs`);
     assert.ok(src.trimEnd().split('\n').length <= 12, `${rel} is not a single-line embed`);
 });
 
@@ -111,7 +111,7 @@ test("bots.wasm declared INITIAL memory is 14 pages (13 + LEAFBOOK read-only dat
     // bots.wasm can't be pinned — it bump-allocates a per-family transposition
     // table at runtime (see the flat-across-families test below). So we assert
     // the INITIAL declared memory only. Was 13 pages after the 22 KiB shadow-stack
-    // shrink; the octogen/cordite LEAFBOOK endgame oracle (sdk/c/LEAFBOOK.md)
+    // shrink; the octogen/cordite LEAFBOOK endgame oracle (c/LEAFBOOK.md)
     // adds ~2.6 KiB of static read-only book data, which crosses into a 14th page.
     // That is the book's genuine footprint, deliberately accepted — the SOLVER's
     // hot working set is what must stay in L1, and it does: the 32 KiB TT + 2.6 KiB

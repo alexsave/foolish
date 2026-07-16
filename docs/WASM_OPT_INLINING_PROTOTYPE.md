@@ -10,7 +10,7 @@ dropped 6 research bots); an earlier pre-cull pass measured a smaller −1.9%.
 ## Why this is the only stage that *can* cross-inline here
 
 `cnitro`'s wasm modules compile each `.c` in isolation and link with `wasm-ld`.
-LTO is banned (`sdk/c/Makefile`, `WASM_FLAGS`): `-flto` corrupts the
+LTO is banned (`c/Makefile`, `WASM_FLAGS`): `-flto` corrupts the
 indirect-function table for the address-taken `StrategyFn`/hook pointers —
 `call_indirect` traps with "table index out of bounds", caught by the fuzz
 suite. Verified during this work: `-flto` *links* fine and even shrinks the
@@ -21,7 +21,7 @@ that can.
 
 ## What ships
 
-`sdk/c/Makefile` runs `wasm-opt` on the linked `bots.wasm` by default
+`c/Makefile` runs `wasm-opt` on the linked `bots.wasm` by default
 (`WASM_BOTS_POSTOPT ?= -O2 --inlining-optimizing`); `rules`/`guards` stay off
 (they're at clang `-Oz`'s floor — see below). `WASM_POSTOPT=<flags>` is a manual
 override for any module. **Requires binaryen (`wasm-opt`) on PATH to rebuild

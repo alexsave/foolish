@@ -1,6 +1,6 @@
 // Cordite core — belief-constrained determinized Monte Carlo (TS port of
-// sdk/c/src/cordite_strategy.c and the slice of the cnitro C engine it
-// needs for internal simulation). See sdk/c/CORDITE.md for the design and
+// c/src/cordite_strategy.c and the slice of the cnitro C engine it
+// needs for internal simulation). See c/CORDITE.md for the design and
 // benchmark results.
 //
 // Legitimacy contract: reads ONLY public information from the real game —

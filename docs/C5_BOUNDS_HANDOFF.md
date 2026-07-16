@@ -6,7 +6,7 @@ This doc is the execution handoff for that fix. Read §3 (root cause) until it
 clicks — every design decision in §4 follows from it, and the naive fixes all
 fail for the same reason the first attempt did.
 
-Code state on branch (commit `09fa2ed`, file `sdk/c/src/cordite_sim.c`):
+Code state on branch (commit `09fa2ed`, file `c/src/cordite_sim.c`):
 
 | flag | state | meaning |
 |---|---|---|
@@ -34,7 +34,7 @@ rate directly. That is a *strength* lever, not a memory lever.
 
 ## 2. What was measured (all deterministic, `CD_RACE=0` reproduces exactly)
 
-Build pattern (from `sdk/c/`, `CORE=$(make -s print-core)`):
+Build pattern (from `c/`, `CORE=$(make -s print-core)`):
 
 ```sh
 cc -O2 -ffast-math -Isrc -Wno-deprecated-declarations \

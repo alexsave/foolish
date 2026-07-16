@@ -20,7 +20,7 @@
  *   - WHAT a step is. On the wire an attack and a pass are one event type,
  *     separated only by a reconstructed English sentence. Pattern-matching that
  *     prose would be a projection by the back door, so the kernel reports it
- *     (replayStepIndex -> sdk/c/src/replay_steps.c).
+ *     (replayStepIndex -> c/src/replay_steps.c).
  *
  *   - WHAT EACH SEAT HELD, for the reveal-hands eye. A frame is masked for one
  *     viewer, so a spectator's frames show backs. Rather than deduce identities,

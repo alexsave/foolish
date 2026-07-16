@@ -1,7 +1,7 @@
 # Rules-duplication & marshal-hazard findings (post replay-kernel port)
 
 Adversarially-verified sweep run after porting the replay codec's rules
-projection into the C kernel (`sdk/c/src/replay.c`). Every finding below was
+projection into the C kernel (`c/src/replay.c`). Every finding below was
 independently confirmed against the code by a second reviewer instructed to
 refute it; refuted claims are listed at the end. Items marked **fixed** were
 addressed on the same branch as the port.

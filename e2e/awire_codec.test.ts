@@ -1,4 +1,4 @@
-// Action-wire ("awire" v1) codec fuzz — the TS mirror of sdk/c/src/awire.h.
+// Action-wire ("awire" v1) codec fuzz — the TS mirror of c/src/awire.h.
 // encodeAction/decodeAction are the client's move->bytes builder and the
 // server's legacy-fallback decoder; the decoder must mirror awire_decode's
 // strictness exactly: null (never a throw, never a partial parse) on any

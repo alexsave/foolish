@@ -6,7 +6,7 @@
  * base64 string is stored in game_snapshots and the game's packed session log
  * (games.logs_packed) is cleared — the snapshot replaces it.
  *
- * The rules projection runs in the C kernel (sdk/c/src/replay.c); this file
+ * The rules projection runs in the C kernel (c/src/replay.c); this file
  * keeps the log-stream plumbing that is genuinely TS-shaped: slicing the
  * last session, mapping player_ids to seats, deriving the trump from the
  * logs, and synthesizing the round_end markers (a DISCARD directly preceded
@@ -44,7 +44,7 @@ import {
 } from "./core.ts";
 import { decodeReplay } from "./decode.ts";
 
-// Encode-input byte format — see sdk/c/src/replay.h.
+// Encode-input byte format — see c/src/replay.h.
 const ROUND_END = 0xff;
 const CARD_NONE = 0xff;
 const CARD_HIDDEN = 0xfe;
@@ -113,7 +113,7 @@ function marshalInput(
   if (actions.length > 0xffff)
     throw new Error(`replay: too many actions to encode (${actions.length})`);
   for (const a of actions) {
-    // REPLAY_MAX_PAIRS in sdk/c/src/replay.h: a real log's pairs are all
+    // REPLAY_MAX_PAIRS in c/src/replay.h: a real log's pairs are all
     // distinct cards, so 52 covers every stream the engine can produce.
     if (a.kind === "log" && a.log.card_pairs.length > 52)
       throw new Error(`replay: log with ${a.log.card_pairs.length} card pairs`);
@@ -222,7 +222,7 @@ function checkInfoActionsMatch(input: ReplayInput, decoded: DecodedReplay): void
  *  marshalInputV6 / deriveTrump) and in game_lifecycle's reconstructSeededDeal.
  *
  *  The byte-equality that made this a PORT and not a rewrite is now asserted
- *  where the codec lives: sdk/c/tests/replay_v6_test.c holds
+ *  where the codec lives: c/tests/replay_v6_test.c holds
  *  replay_encode_v6_from_game against the marshalled producer on real engine
  *  games. The TS oracle it used to be compared against (verifyRoundTripV6 +
  *  reconstructSeededDeal) is deleted — a second implementation kept alive to

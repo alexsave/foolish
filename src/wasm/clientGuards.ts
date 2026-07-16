@@ -1,4 +1,4 @@
-// CLIENT-SIDE rules kernel (guards.wasm — sdk/c/src/game.c only, ~23KB).
+// CLIENT-SIDE rules kernel (guards.wasm — c/src/game.c only, ~23KB).
 //
 // The interactive client used to reimplement the move rules in TypeScript
 // (src/utils/gameValidation.ts canAttack/canPass/canCoverCards, plus the
@@ -25,7 +25,7 @@ import { takeGUARDS_WASM_B64 } from '@sdk/ts/wasm/guards_wasm.ts';
 // gunzip inflates it in the browser and keeps the sync instantiate path.
 import { gunzip } from '@sdk/ts/wasm/gunzip.ts';
 
-// ENGINE_REJECT_* — must match sdk/c/src/game.h. 0 == legal.
+// ENGINE_REJECT_* — must match c/src/game.h. 0 == legal.
 const REJECT_NONE = 0;
 
 interface GuardsExports {
@@ -65,7 +65,7 @@ const P_STATUS: Record<string, number> = {
 };
 
 const i8 = (x: number) => (x << 24) >> 24;
-// 1-byte wire card, mirrors sdk/c/wasm/wire.h + engine.ts wireStateCard.
+// 1-byte wire card, mirrors c/wasm/wire.h + engine.ts wireStateCard.
 function wireCard(c: Card): number {
   let s = i8(c.suit & 0xff), v = i8(c.value & 0xff);
   if (s === -1 && v === -1) return 0xfe;

@@ -1,5 +1,5 @@
 // Models.swift — Codable Swift mirrors of the JSON the C bridge emits
-// (sdk/c/ios/ios_api.c). These are the ONLY representation of game state in
+// (c/ios/ios_api.c). These are the ONLY representation of game state in
 // the app; there is no second, Swift-computed copy of the rules (§3). Field
 // names match the bridge's JSON exactly — change one, change the other.
 //
@@ -161,7 +161,7 @@ public struct Move: Codable, Equatable, Sendable {
 }
 
 /// What a move is worth pausing for — the kernel's classification
-/// (BOT_PACE_* in sdk/c/src/bot_drive.h). The app never turns these into
+/// (BOT_PACE_* in c/src/bot_drive.h). The app never turns these into
 /// milliseconds itself: `BotDrive.delayMs` already carries the kernel's answer.
 public enum PacingClass: Int, Codable, Sendable {
     case none = 0
@@ -197,13 +197,13 @@ public struct BotAction: Codable, Equatable, Sendable {
     public var move: Move { Move(type: type, cards: cards, attackCards: attackCards, seat: seat) }
 }
 
-/// Where a card came from / went to (EVW_LOC_* in sdk/c/src/evwire.h).
+/// Where a card came from / went to (EVW_LOC_* in c/src/evwire.h).
 public enum EventLoc: Int, Codable, Sendable {
     case deck = 0, hand = 1, table = 2, discard = 3, flipped = 4
     case none = 0xFF
 }
 
-/// What happened (EVW_T_* in sdk/c/src/evwire.h).
+/// What happened (EVW_T_* in c/src/evwire.h).
 public enum EventType: Int, Codable, Sendable {
     case magicTransition = 0
     case deal = 1

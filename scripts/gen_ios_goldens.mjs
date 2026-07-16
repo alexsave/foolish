@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // gen_ios_goldens.mjs — regenerates ios/Fixtures/goldens.json (§16.A3).
 //
-// The golden vectors are produced by the C bridge itself (sdk/c/ios/
+// The golden vectors are produced by the C bridge itself (c/ios/
 // ios_goldens.c), which links the SAME game.c/legal.c/view.c as the production
 // wasm kernel — so native == wasm by construction, and these fixtures pin the
 // bridge's JSON surface. The Swift EngineGoldenTests replay the same seeds
@@ -17,11 +17,11 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const cnitro = resolve(here, "..", "sdk", "c");
+const cnitro = resolve(here, "..", "c");
 
 try {
   execFileSync("make", ["ios-goldens"], { cwd: cnitro, stdio: "inherit" });
-  console.log("goldens.json regenerated (sdk/c/ios/ios_goldens.c → ios/Fixtures/goldens.json).");
+  console.log("goldens.json regenerated (c/ios/ios_goldens.c → ios/Fixtures/goldens.json).");
 } catch (e) {
   console.error("failed to generate goldens:", e.message);
   process.exit(1);

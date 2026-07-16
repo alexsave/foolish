@@ -85,7 +85,7 @@ Understand this section before touching knobs; it dictates the build flags.
 
 **Monte-Carlo sampling is fixed-memory, time-only.** Sampled worlds are
 written into three static BSS `Game` slots that are reused for every sample
-(`sdk/c/src/cordite_sim.c:2350-2360`; `cordite_sim.h:209-213`). World #10⁶
+(`c/src/cordite_sim.c:2350-2360`; `cordite_sim.h:209-213`). World #10⁶
 costs the same memory as world #1. More time → more samples → the standard
 error of each candidate's mean-finish estimate shrinks as 1/√N. That is the
 "come into focus" effect, and it needs **zero** extra memory.
@@ -96,9 +96,9 @@ worlds" — an excellent proxy with finite bias, not ground truth. Ground truth
 comes from the **exact endgame solver**, and there the binding resource is
 **memory**: solves are node-budget-limited and the transposition table is
 explicitly a strength knob ("the solver is node-budget-limited, so table size
-is a bot-STRENGTH knob", `sdk/c/Makefile:296-304`; collision knee ~TT10-11,
+is a bot-STRENGTH knob", `c/Makefile:296-304`; collision knee ~TT10-11,
 `docs/WASM_L1_BUDGET.md:177-197`). The server ships TT12+2WAY+PACK8 = 32 KiB
-(one L1 page, `sdk/c/Makefile:292`); native research default is TT16 = 1 MiB
+(one L1 page, `c/Makefile:292`); native research default is TT16 = 1 MiB
 (`cordite_sim.c:803-806`). The oracle build raises this to **TT20 (+2WAY
 +PACK8) = 8 MiB per instance**: module size is unchanged (the table is a
 runtime bump allocation via `__builtin_wasm_memory_grow`,
@@ -107,7 +107,7 @@ runtime bump allocation via `__builtin_wasm_memory_grow`,
 **Parallelism buys wall-clock, one memory-copy per thread.** MC batches are
 embarrassingly parallel and the C is already proven safe under
 independent-deliberation parallelism (the native OMP model: every RNG and
-all cordite scratch state are `_Thread_local`, `sdk/c/Makefile:15-19`).
+all cordite scratch state are `_Thread_local`, `c/Makefile:15-19`).
 One browser fact shapes both parallel designs: **wasm cannot spawn threads
 by itself** — every wasm "thread" is a Web Worker created by JS. The choice
 is therefore not "workers vs threads" but *where the coordination lives*:
@@ -142,9 +142,9 @@ trust-but-spot-check the anchors.
 
 ### 4.1 Octogen's deliberation and the per-candidate score
 
-- Entry: `octogen_strategy_choose` (`sdk/c/src/octogen_strategy.c:1758-1764`),
+- Entry: `octogen_strategy_choose` (`c/src/octogen_strategy.c:1758-1764`),
   dispatched by `wasm_choose_move(strat=20, seat)`
-  (`sdk/c/wasm/wasm_bots_api.c:224-233`; `STRAT.octogen = 20` in
+  (`c/wasm/wasm_bots_api.c:224-233`; `STRAT.octogen = 20` in
   `sdk/ts/wasm/bots.ts:55`).
 - Per-candidate score = **mean finish position**: `score[i]/nsim[i]`, finish
   1 = escaped first (best) … N = durak (worst); accumulated in
@@ -166,7 +166,7 @@ trust-but-spot-check the anchors.
   card in an attack while the deck is alive) is applied at selection only;
   dumped scores are **untaxed** (`:1607-1625`). The client must re-apply it
   for display ranking (§9.4), exactly as the X-ray pages do
-  (`sdk/c/tools/og_explain/build_data.py:29,199-207`).
+  (`c/tools/og_explain/build_data.py:29,199-207`).
 - **Determinism of a call**: octogen derives all world seeds from the
   strategy LCG *without advancing it* (`:1600`; `game.c:171`) and
   saves/restores the game LCG (`:1509,1744`). Two identical calls with the
@@ -203,7 +203,7 @@ trust-but-spot-check the anchors.
 ### 4.2 The OG_EXPLAIN dump — the score readout surface
 
 Compiled only under `-DOG_EXPLAIN_BUILD` (`octogen_strategy.c:863-877`;
-targets `og_explain` and `bots-wasm-explain`, `sdk/c/Makefile:146-155,
+targets `og_explain` and `bots-wasm-explain`, `c/Makefile:146-155,
 668-688`). Proven move-choice-neutral (probe saves/restores RNG + resets TT;
 0-differ over 123- and 222-decision reconstructions, commit `424d1e8`).
 
@@ -280,7 +280,7 @@ From `wasmChooseMove` (`bots.ts:244-289`) and the C side:
 - **Committed test codes**: 3-player `TUTORIAL_MOVES_CODE`
   `ENSCBI2LBAVUBJJ3J7NODALIBDGEQYLLLICQ` (`src/components/tutorialGame.ts:17`);
   two 8-player codes with extras in
-  `sdk/c/tools/og_explain/samples/octogen-4v4.json` and `octogen-8way.json`
+  `c/tools/og_explain/samples/octogen-4v4.json` and `octogen-8way.json`
   (`url` fields).
 - `steps[i]` is the state AFTER `d.logs[i]`; `steps.length = logs.length+1`
   (`src/replay/view.ts:147-244`); the paused index is `stepIdx` in
@@ -456,9 +456,9 @@ research variant, `octogen_strategy.c:1244,1766-1772`.)
 
 | # | File | Change |
 |---|------|--------|
-| C1 | `sdk/c/src/octogen_strategy.c` | `og_reload_flags()` — un-latch the env cache |
-| C2 | `sdk/c/wasm/wasm_bots_api.c` | `wasm_og_reload_flags()` export wrapper |
-| C3 | `sdk/c/src/octogen_strategy.c` (`og_ex_emit`) | emit verdict-only entries for solver-classified moves outside the candidate set |
+| C1 | `c/src/octogen_strategy.c` | `og_reload_flags()` — un-latch the env cache |
+| C2 | `c/wasm/wasm_bots_api.c` | `wasm_og_reload_flags()` export wrapper |
+| C3 | `c/src/octogen_strategy.c` (`og_ex_emit`) | emit verdict-only entries for solver-classified moves outside the candidate set |
 
 ### 6.2 C1+C2 — the env reload hook
 
@@ -549,7 +549,7 @@ label/cards formatting helpers (`og_ex_move_label`, `:1306-1328`).
 
 ### 7.1 Makefile target `wasm-oracle`
 
-Add to `sdk/c/Makefile`, modeled directly on `bots-wasm-explain`
+Add to `c/Makefile`, modeled directly on `bots-wasm-explain`
 (`:668-688`). Same sources (`WASM_BOT_SRC`), same per-file opt split
 (`WASM_BOT_O3_SRC` at -O3, rest -Oz), same wasm-opt pass:
 
@@ -599,7 +599,7 @@ Notes for the builder:
 - Omitting the `-Wl,-z,stack-size=22528` override means the shared flags'
   262144 wins — recon confirmed bigger TT / more worlds do not raise stack
   high-water (TT is heap; worlds are BSS iteration,
-  `sdk/c/Makefile:631-644`, `cordite_sim.c:1286-1302`), so this is pure
+  `c/Makefile:631-644`, `cordite_sim.c:1286-1302`), so this is pure
   belt-and-suspenders headroom.
 - Requires `wasm-opt` (binaryen) on PATH like every bots-flavored build —
   build-time dep only; CI never rebuilds wasm.
@@ -977,7 +977,7 @@ it only does atomic stores (setup/stop) and non-blocking snapshot reads.
 ### 8b.5 The C additions (MT1–MT8, all under `FOOLISH_ORACLE_MT`)
 
 This is the honest "large lift" — roughly 250–350 lines of new C, all in
-one new file `sdk/c/wasm/wasm_oracle_mt.c` plus small `#ifdef` seams:
+one new file `c/wasm/wasm_oracle_mt.c` plus small `#ifdef` seams:
 
 - **MT1 — atomic bump allocator.** `g_brk` in `wasm_bots_api.c:29-54` is a
   plain static; two threads' first TT `calloc` would race. Wrap alloc in a
@@ -1110,7 +1110,7 @@ Mode A inherits `--stack-first` (overflow = loud trap). Mode B's threads
 run on heap-region stacks where overflow would silently smash adjacent
 memory. Mitigations, all required: 512 KiB per thread (≈ 36× the measured
 14.3 KiB worst case, ≈ 23× the shipped 22 KiB stack,
-`sdk/c/Makefile:631-644`); a canary word at each
+`c/Makefile:631-644`); a canary word at each
 stack's low end checked after every batch (`stack_canary_trips` in the
 snapshot; UI kills the run if it ever ticks); thread stacks placed at the
 LOW end of the reserved region so thread k's overflow walks into thread

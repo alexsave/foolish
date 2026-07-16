@@ -3,13 +3,13 @@
 // The SAME fixtures live in three places and must mean the same game in all of
 // them, or an iMessage game forks between the players in it:
 //
-//   sdk/c/tests/msg_wire_test.c   the native kernel SEALS them (--fixture)
+//   c/tests/msg_wire_test.c   the native kernel SEALS them (--fixture)
 //   e2e/msg_wire.test.ts           the wasm kernel decodes them  (the web)
 //   this file                      libfoolish.a decodes them     (the phone)
 //
 // A diff here is a release blocker, not a test failure: it means a phone and a
 // browser would replay one payload into two different games. Regenerate with
-// `sdk/c/build/msg_wire_test --fixture` only when the WIRE deliberately
+// `c/build/msg_wire_test --fixture` only when the WIRE deliberately
 // changes — and then every shipped device has to agree with the new bytes.
 import XCTest
 @testable import FoolishKit

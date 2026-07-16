@@ -1,5 +1,5 @@
 {
-  "generator": "sdk/c/ios/ios_goldens.c",
+  "generator": "c/ios/ios_goldens.c",
   "nPlayers": 4,
   "games": [
     {

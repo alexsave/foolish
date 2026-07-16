@@ -5,7 +5,7 @@
 # change is reviewable here in text.
 #
 # BOOTSTRAP ORDER (from a clean checkout):
-#   1. cd ../sdk/c && make ios-lib      # builds ios/vendor/Foolish.xcframework
+#   1. cd ../c && make ios-lib      # builds ios/vendor/Foolish.xcframework
 #   2. cd ../ios && xcodegen generate    # writes Foolish.xcodeproj
 #   3. open Foolish.xcodeproj            # or xcodebuild ... (see README)
 # Step 1 must run first: FoolishKit links vendor/Foolish.xcframework, which does
@@ -107,13 +107,13 @@ targets:
       - path: FoolishKit
       # The Swift kernel binding lives in the unified SDK home (A10):
       # repo-root sdk/swift/ (EngineC.swift + models), sibling to sdk/ts and
-      # sdk/c. It is still compiled INTO the FoolishKit module — a source
+      # c. It is still compiled INTO the FoolishKit module — a source
       # location change, not a module split — so app/extension access is
       # unchanged.
       - path: ../sdk/swift
       - path: Entitlements
     dependencies:
-      # The C engine, built by `make ios-lib` in ../sdk/c. Static (embed:false).
+      # The C engine, built by `make ios-lib` in ../c. Static (embed:false).
       - framework: vendor/Foolish.xcframework
         embed: false
       # Online play (§16.D): auth, edge functions, realtime.

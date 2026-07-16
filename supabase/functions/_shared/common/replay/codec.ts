@@ -13,7 +13,7 @@
  *   - URL routing (legacy short code vs. self-contained replay)
  *   - CNS subset ranking (reserved for the v2 "set-coded reveal" optimization)
  *
- * The game-rules projection lives in the C kernel (sdk/c/src/replay.c),
+ * The game-rules projection lives in the C kernel (c/src/replay.c),
  * reached through encode.ts/decode.ts + sdk/ts/wasm/engine.ts. The Coder
  * class below remains the TS-side arithmetic-coding primitive for the
  * frozen oracle (e2e/replay_ts_oracle.ts) and any rules-free side channels.

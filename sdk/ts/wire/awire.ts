@@ -1,4 +1,4 @@
-// Action wire ("awire" v1) — TS mirror of sdk/c/src/awire.h. The client
+// Action wire ("awire" v1) — TS mirror of c/src/awire.h. The client
 // builds ONE buffer per move and uses it for the guards-wasm gate, the
 // optimistic apply, and the POST body; the server kernel applies the same
 // bytes verbatim. Pure TS, no wasm imports.
@@ -102,7 +102,7 @@ export const ACTION_RESP_FORMAT = 1;
 export const ACTION_STATUS = { APPLIED: 0, REJECTED: 1, MOOT: 2 } as const;
 
 // Server-edge reject codes live ABOVE the kernel's ENGINE_REJECT_* space
-// (0..21 in sdk/c/src/game.h) so a client can tell a rules rejection from an
+// (0..21 in c/src/game.h) so a client can tell a rules rejection from an
 // edge-policy one by the code alone. REJECT_STALE_ROUND is not a kernel
 // verdict — the move is kernel-legal against the CURRENT state; it is refused
 // because a round closed after the client composed it (round-boundary rule,
