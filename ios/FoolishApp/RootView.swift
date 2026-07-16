@@ -47,6 +47,33 @@ struct RootView: View {
             NavigationStack { ReplayPlayerView(replay: pending.replay) }
                 .preferredColorScheme(.dark)
         }
+        #if DEBUG
+        // Screenshot/UI-verification hook: FOOLISH_DEBUG_TABLE=<opponents> drops
+        // straight into a live offline table so `simctl launch` can capture the
+        // board without driving the menu. Not compiled into release builds.
+        .task {
+            let env = ProcessInfo.processInfo.environment
+            guard let raw = env["FOOLISH_DEBUG_TABLE"], coordinator.screen == .home else { return }
+            let opponents = max(1, min(7, Int(raw) ?? 3))
+            let stratName = env["FOOLISH_DEBUG_BOT"] ?? "random"
+            let roster = EngineC.roster()
+            let pick = roster.first(where: { $0.name == stratName }) ?? roster.first ?? (0, "random")
+            let config = OfflineConfig(opponentStrategyId: pick.id, opponentName: pick.name, opponents: opponents)
+            lastConfig = config
+            coordinator.startOffline(config)
+
+            // Optional: drive the human seat with random legal moves so a full
+            // game plays itself to the win screen — a screenshot-friendly smoke
+            // test of the whole offline loop.
+            if env["FOOLISH_DEBUG_AUTOPLAY"] != nil {
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 650_000_000)
+                    guard let g = coordinator.offlineGame, g.foolSeat == nil else { break }
+                    if let mv = g.humanLegal.randomElement() { g.play(mv) }
+                }
+            }
+        }
+        #endif
     }
 
     @ViewBuilder

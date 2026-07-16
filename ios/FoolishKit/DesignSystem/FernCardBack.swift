@@ -49,10 +49,20 @@ public enum FernCardBack {
         let renderer = UIGraphicsImageRenderer(size: size, format: format)
         return renderer.image { ctx in
             let cg = ctx.cgContext
-            // Color.cgColor is optional and Color has no withAlphaComponent —
-            // bridge through UIColor for the CGColor values CoreGraphics needs.
-            cg.setFillColor(UIColor(FColor.ink).cgColor)
+            // The website's card back is a red field with a gold border (Soviet
+            // card, SovietCardBack.tsx: #B32929 field, #E79743 gold). We keep the
+            // ported fern as the motif but in that palette, so the deck and the
+            // seat fans read red-and-gold exactly like the web.
+            let red = UIColor(Color(hex: 0xB32929))
+            let gold = UIColor(Color(hex: 0xE79743))
+            cg.setFillColor(red.cgColor)
             cg.fill(CGRect(origin: .zero, size: size))
+
+            // Gold inset border (scaled to the card).
+            let borderInset = max(1.5, size.width * 0.05)
+            cg.setStrokeColor(gold.cgColor)
+            cg.setLineWidth(max(1.5, size.width * 0.05))
+            cg.stroke(CGRect(origin: .zero, size: size).insetBy(dx: borderInset, dy: borderInset))
 
             var rng = XorShift(seed: seed == 0 ? 0x9E3779B97F4A7C15 : seed)
             let cum = cumulative(weights)
@@ -64,8 +74,7 @@ public enum FernCardBack {
             let originX = size.width / 2
             let originY = size.height - inset
 
-            let bone = UIColor(FColor.card).withAlphaComponent(0.72).cgColor
-            cg.setFillColor(bone)
+            cg.setFillColor(gold.withAlphaComponent(0.92).cgColor)
 
             var x = 0.0, y = 0.0
             let iterations = 42_000

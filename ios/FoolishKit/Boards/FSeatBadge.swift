@@ -1,6 +1,10 @@
-// FSeatBadge.swift — an opponent seat (§5.4): avatar-less by design — nickname,
-// card count (condensed numeral), a thinking indicator, and role marks
-// (attacker/defender/"good"). No photos, no color-only state.
+// FSeatBadge.swift — an opponent seat, matching the web's PlayerRing seat
+// (src/components/GameDisplay/PlayerRing.tsx `CardsVisual`): the name on top, a
+// mini fan of red card backs with the hand count centred on it, and the role
+// marks (defender shield / attacker flame / "good" / thinking). No avatars.
+//
+// Per the 2026-07-16 owner decision (IOS_APP_DESIGN §17.10) the app copies the
+// web layout rather than the earlier count-chip design.
 
 import SwiftUI
 import Foundation   // sin(_:) for the thinking-dots pulse
@@ -26,25 +30,35 @@ public struct FSeatBadge: View {
         self.isOut = isOut
     }
 
+    // Mini back geometry (web CardsVisual: 25pt wide, spread 10pt/card, count
+    // centred). Capped so a big hand doesn't fan into the neighbouring seat.
+    private let cardW: CGFloat = 24
+    private let cardH: CGFloat = 34
+    private let spread: CGFloat = 7
+    private var visibleBacks: Int { min(max(handCount, 0), 7) }
+
     public var body: some View {
         VStack(spacing: FSpace.xs) {
-            ZStack {
-                // A fanned stack silhouette + the count numeral.
-                RoundedRectangle(cornerRadius: FRadius.card)
-                    .fill(FColor.surface)
-                    .frame(width: 44, height: 30)
-                    .overlay(RoundedRectangle(cornerRadius: FRadius.card)
-                        .strokeBorder(role.borderColor, lineWidth: role == .none ? 0 : 1.5))
-                Text("\(handCount)")
-                    .font(FType.numeral(20))
-                    .foregroundColor(FColor.textPrimary)
-            }
             Text(name)
-                .font(FType.body(13))
+                .font(FType.body(12))
                 .foregroundColor(isOut ? FColor.textDim : FColor.textPrimary)
                 .lineLimit(1)
                 .truncationMode(.tail)
-                .frame(maxWidth: 84)
+                .frame(maxWidth: 96)
+                .minimumScaleFactor(0.7)
+
+            ZStack {
+                miniFan
+                if handCount > 0 {
+                    Text("\(handCount)")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundColor(.white)
+                        .shadow(color: .black.opacity(0.8), radius: 1, x: 1, y: 1)
+                }
+            }
+            .frame(width: cardW + spread * CGFloat(max(visibleBacks - 1, 0)) + 6, height: cardH + 4)
+            .overlay(roleRing)
+
             roleRow
         }
         .opacity(isOut ? 0.45 : 1)
@@ -52,12 +66,31 @@ public struct FSeatBadge: View {
         .accessibilityLabel(a11y)
     }
 
-    private enum Role { case none, attacker, defender
-        var borderColor: Color {
-            switch self { case .none: return .clear; case .attacker: return FColor.accent; case .defender: return FColor.win }
+    /// The overlapping mini card backs, centred (web spreads by index - mid).
+    private var miniFan: some View {
+        let n = visibleBacks
+        let mid = Double(max(n - 1, 0)) / 2
+        return ZStack {
+            if n == 0 {
+                // An out / empty seat shows nothing but its name (web parity).
+                Color.clear.frame(width: cardW, height: cardH)
+            } else {
+                ForEach(0..<n, id: \.self) { i in
+                    FCard(card: nil, backSeed: UInt64(7 + i), size: CGSize(width: cardW, height: cardH))
+                        .offset(x: CGFloat(Double(i) - mid) * spread)
+                }
+            }
         }
     }
-    private var role: Role { isDefender ? .defender : (isAttacker ? .attacker : .none) }
+
+    // Defender = gold ring, attacker = red ring (mirrors the web's role marks).
+    @ViewBuilder private var roleRing: some View {
+        if isDefender {
+            RoundedRectangle(cornerRadius: 5).strokeBorder(FColor.win, lineWidth: 2)
+        } else if isAttacker {
+            RoundedRectangle(cornerRadius: 5).strokeBorder(FColor.accent, lineWidth: 2)
+        }
+    }
 
     private var roleRow: some View {
         HStack(spacing: FSpace.xs) {

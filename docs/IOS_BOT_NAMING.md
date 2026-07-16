@@ -1,5 +1,19 @@
 # iOS bot names — the Russia map (explosives → cities), with localization
 
+> **UPDATED (2026-07-16, owner): the shipped offline ladder is 7 WORLD cities,
+> not the 10 Russia cities below.** The picker shows exactly 7 difficulty tiers,
+> weakest → strongest: **Miami (random) · New York (handwritten) · Seoul
+> (robusta) · Madrid (firecracker) · Vienna (blackpowder) · St. Petersburg
+> (cordite) · Moscow (octogen)** — an international "road to Moscow" instead of
+> the all-Russia list. The 3 intermediate strategies (simple_heuristic,
+> espresso, gunpowder) are dropped from the picker. Implementation:
+> `BotNames.ladder` (order + strategy keys), `ios.bot.*` strings (7 cities in
+> en/ru/ko), km flavor line kept. The mechanism, `%`-nickname parser, age-rating
+> rationale, and localization rules below are UNCHANGED and still govern — only
+> the specific city list shrank and went international. The full Russia table
+> stays here as reference / for any future re-expansion.
+
+
 *Design doc + implementation spec (NOT yet implemented — this is the work
 order). Merged 2026-07-15 from two independent design passes; where they
 clashed, the better idea won (clash log in §8). The iOS app renames the bot

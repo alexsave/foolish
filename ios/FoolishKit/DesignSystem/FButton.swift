@@ -4,7 +4,7 @@
 import SwiftUI
 
 public struct FButton: View {
-    public enum Kind { case primary, secondary, destructive }
+    public enum Kind { case primary, secondary, destructive, wood }
 
     private let title: String
     private let kind: Kind
@@ -24,10 +24,10 @@ public struct FButton: View {
                 .font(FType.title(17))
                 .frame(maxWidth: .infinity, minHeight: 52)     // 44pt+ hit target (a11y floor)
                 .foregroundColor(foreground)
-                .background(background)
+                .background(backgroundView)
                 .overlay(
                     RoundedRectangle(cornerRadius: FRadius.card)
-                        .strokeBorder(border, lineWidth: kind == .secondary ? 1.5 : 0)
+                        .strokeBorder(border, lineWidth: kind == .secondary ? 1.5 : (kind == .wood ? 1 : 0))
                 )
                 .clipShape(RoundedRectangle(cornerRadius: FRadius.card))
         }
@@ -35,19 +35,25 @@ public struct FButton: View {
         .opacity(enabled ? 1 : 0.4)
     }
 
-    private var foreground: Color {
+    @ViewBuilder private var backgroundView: some View {
         switch kind {
-        case .primary, .destructive: return FColor.textPrimary
-        case .secondary: return FColor.textPrimary
+        case .wood: WoodFill()
+        case .primary, .destructive: FColor.accent
+        case .secondary: Color.clear
         }
     }
-    private var background: Color {
+
+    private var foreground: Color {
         switch kind {
-        case .primary, .destructive: return FColor.accent
-        case .secondary: return .clear
+        // Bone text on the accent red, the wood grain, or the felt (secondary).
+        case .primary, .destructive, .secondary, .wood: return FColor.textPrimary
         }
     }
     private var border: Color {
-        kind == .secondary ? FColor.textDim.opacity(0.6) : .clear
+        switch kind {
+        case .secondary: return FColor.textDim.opacity(0.6)
+        case .wood: return .black.opacity(0.35)
+        default: return .clear
+        }
     }
 }

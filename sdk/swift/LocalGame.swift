@@ -43,6 +43,10 @@ public final class LocalGame: ObservableObject, GameSession {
     public let humanSeat: Int
     public let players: Int
 
+    /// Seat → localized bot name, built by the caller (AppCoordinator) since the
+    /// offline kernel view carries no names (docs/IOS_BOT_NAMING.md §3 wiring 2).
+    public let seatNames: [Int: String]
+
     private let engine = EngineC()
     /// Seat → roster strategy id, as requested by the caller. The thermal guard
     /// may temporarily run a heavier seat as `espresso`; this is the seat's
@@ -55,10 +59,12 @@ public final class LocalGame: ObservableObject, GameSession {
     ///   - players: 2...8.
     ///   - humanSeat: which seat the local player controls.
     ///   - strategies: seat → roster strategy id for every OTHER seat.
-    public init(seed: Data, players: Int, humanSeat: Int = 0, strategies: [Int: Int]) {
+    public init(seed: Data, players: Int, humanSeat: Int = 0, strategies: [Int: Int],
+                seatNames: [Int: String] = [:]) {
         self.players = players
         self.humanSeat = humanSeat
         self.requestedStrategies = strategies
+        self.seatNames = seatNames
         Task { await self.boot(seed: seed) }
     }
 

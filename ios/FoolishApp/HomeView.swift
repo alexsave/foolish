@@ -14,7 +14,12 @@ struct HomeView: View {
 
     @EnvironmentObject private var auth: AuthService
     @State private var showAuth = false
-    @State private var roster = EngineC.roster()
+    // The offline difficulty ladder: the 7 cities (Miami → Moscow), resolved to
+    // their strategy ids from the kernel roster (BotNames.ladder, §17.10).
+    @State private var roster: [(id: Int, name: String)] = {
+        let full = EngineC.roster()
+        return BotNames.ladder.compactMap { key in full.first(where: { $0.name == key }) }
+    }()
     @State private var opponentIndex = 0
     @State private var opponentCount = 1
     @State private var toast: String?
@@ -29,7 +34,7 @@ struct HomeView: View {
 
     var body: some View {
         ZStack {
-            FColor.table.ignoresSafeArea()
+            WoolBackground()
             VStack(spacing: FSpace.xl) {
                 header
                 onlineButton
@@ -97,12 +102,19 @@ struct HomeView: View {
                 }
                 Spacer()
                 VStack(spacing: FSpace.xs) {
-                    Text(currentBot.name.capitalized)
+                    Text(BotNames.display(strategy: currentBot.name))
                         .font(FType.title(24))
                         .foregroundColor(FColor.textPrimary)
-                    Text("\(opponentCount) \(FStrings.t("players"))")
-                        .font(FType.body(13))
-                        .foregroundColor(FColor.textDim)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                    // The strength ladder as a place: "1,420 km from Moscow".
+                    if let flavor = BotNames.flavorLine(strategy: currentBot.name) {
+                        Text(flavor)
+                            .font(FType.body(12))
+                            .foregroundColor(FColor.win)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.6)
+                    }
                 }
                 Spacer()
                 cycleButton("chevron.right") {

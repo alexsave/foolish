@@ -68,6 +68,12 @@ public enum FStrings {
             "ios.tut_3": "To defend, tap one of your cards, then tap the attack it beats. A higher card of the same suit, or any trump, covers it.",
             "ios.tut_4": "Can’t or won’t defend? Tap Take to pick up the cards. Finished attacking? Tap Done.",
             "ios.tut_5": "Empty your hand before everyone else. The last player holding cards is the fool. Good luck!",
+            "ios.bot.random": "Miami", "ios.bot.handwritten": "New York",
+            "ios.bot.robusta": "Seoul", "ios.bot.firecracker": "Madrid",
+            "ios.bot.blackpowder": "Vienna", "ios.bot.cordite": "St. Petersburg",
+            "ios.bot.octogen": "Moscow",
+            "ios.bot.max": "Max", "ios.bot.km": "{km} km from Moscow",
+            "ios.bot.km0": "The Kremlin itself",
         ],
         "ru": [
             "play": "Играть", "offline": "Оффлайн", "join_by_code": "Войти по коду",
@@ -90,6 +96,12 @@ public enum FStrings {
             "ios.tut_3": "Чтобы защищаться, коснитесь своей карты, затем атаки, которую она бьёт. Побить можно старшей картой той же масти или козырем.",
             "ios.tut_4": "Не можете или не хотите защищаться? Нажмите «Взять». Закончили атаку? Нажмите «Бито».",
             "ios.tut_5": "Избавьтесь от карт раньше всех. Последний с картами — дурак. Удачи!",
+            "ios.bot.random": "Майами", "ios.bot.handwritten": "Нью-Йорк",
+            "ios.bot.robusta": "Сеул", "ios.bot.firecracker": "Мадрид",
+            "ios.bot.blackpowder": "Вена", "ios.bot.cordite": "Петербург",
+            "ios.bot.octogen": "Москва",
+            "ios.bot.max": "Макс", "ios.bot.km": "{km} км от Москвы",
+            "ios.bot.km0": "Сам Кремль",
         ],
         "ko": [
             "play": "플레이", "offline": "오프라인", "join_by_code": "코드로 참가",
@@ -112,6 +124,12 @@ public enum FStrings {
             "ios.tut_3": "방어하려면 자신의 카드를 탭한 뒤, 이길 공격 카드를 탭하세요. 같은 무늬의 더 높은 카드나 으뜸패로 막습니다.",
             "ios.tut_4": "막을 수 없거나 막지 않으려면 ‘가져오기’를 탭하세요. 공격을 마쳤으면 ‘완료’를 탭하세요.",
             "ios.tut_5": "누구보다 먼저 손패를 비우세요. 마지막까지 카드를 든 사람이 바보입니다. 행운을 빕니다!",
+            "ios.bot.random": "마이애미", "ios.bot.handwritten": "뉴욕",
+            "ios.bot.robusta": "서울", "ios.bot.firecracker": "마드리드",
+            "ios.bot.blackpowder": "빈", "ios.bot.cordite": "상트페테르부르크",
+            "ios.bot.octogen": "모스크바",
+            "ios.bot.max": "맥스", "ios.bot.km": "모스크바에서 {km} km",
+            "ios.bot.km0": "크렘린 그 자체",
         ],
     ]
 }

@@ -26,14 +26,16 @@ public struct FActionBar: View {
 
     public var body: some View {
         HStack(spacing: FSpace.m) {
+            // Wooden controls, matching the website's physical buttons (§5.4,
+            // IOS_PHONE_LAYOUT §3 "Wooden 72×40 buttons").
             if canTransfer {
-                FButton(FStrings.t("pass"), kind: .secondary, action: onTransfer)
+                FButton(FStrings.t("pass"), kind: .wood, action: onTransfer)
             }
             if canPickup {
-                FButton(FStrings.t("pickup"), kind: .secondary, action: onPickup)
+                FButton(FStrings.t("pickup"), kind: .wood, action: onPickup)
             }
             if canDone {
-                FButton(FStrings.t("good"), kind: .primary, action: onDone)
+                FButton(FStrings.t("good"), kind: .wood, action: onDone)
             }
         }
         .frame(maxWidth: .infinity)
