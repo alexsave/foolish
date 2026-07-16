@@ -159,9 +159,9 @@ public actor EngineC {
     public func legalFromPacked(_ bytes: Data, seat: Int) throws -> [Move] {
         let data = try bytes.withUnsafeBytes { raw -> Data in
             let base = raw.bindMemory(to: UInt8.self).baseAddress
-            return try json { fio_legal_from_packed_json(base, Int32(bytes.count), Int32(seat), $0, $1) }
+            return try json { fio_legal_from_packed(base, Int32(bytes.count), Int32(seat), $0, $1) }
         }
-        return try JSONDecoder().decode([Move].self, from: data)
+        return MoveWire.decode(data)
     }
 
     // MARK: replays (§7.3)
@@ -191,13 +191,18 @@ public actor EngineC {
     // MARK: typed decoders (convenience)
 
     public func state(viewer: Int) throws -> GameView {
-        try JSONDecoder().decode(GameView.self, from: try stateData(viewer: viewer))
+        let data = try json { fio_state_packed(Int32(viewer), $0, $1) }
+        guard let v = MaskedView.decode(data, viewer: viewer) else { throw EngineError.unknown(-1) }
+        return v
     }
     public func publicState() throws -> GameView {
-        try JSONDecoder().decode(GameView.self, from: try publicStateData())
+        // Spectator view: VIEW_SPECTATOR sentinel (-1) unmasks nothing.
+        let data = try json { fio_state_packed(Int32(-1), $0, $1) }
+        guard let v = MaskedView.decode(data, viewer: -1) else { throw EngineError.unknown(-1) }
+        return v
     }
     public func legalMoves(seat: Int) throws -> [Move] {
-        try JSONDecoder().decode([Move].self, from: try legalMovesData(seat: seat))
+        MoveWire.decode(try json { fio_legal_packed(Int32(seat), $0, $1) })
     }
 
     // MARK: - plumbing

@@ -118,6 +118,60 @@ int fio_legal_moves_json(int seat, char *out, int cap) {
     return emit_legal_of(&g_game, seat, out, cap);
 }
 
+// ---------- packed emitters (no JSON — the packed kernel wire) --------------
+//
+// Client and server are kernel-to-kernel, so these hand out the SAME bytes the
+// wasm build does and Swift decodes them directly (MaskedView / MoveWire). The
+// _json twins above are being retired (owner: wipe the JSON).
+
+// The seat's legal moves as the packed move wire — identical layout to
+// wasm_export_moves: u32 count, then per move {type, n_cards, cards[n_cards],
+// attacks[n_cards]}. Cards use card_to_id (== wire_from_card for real cards);
+// the reader ignores the attack bytes except on COVER.
+static int emit_legal_packed(const Game *g, int seat, char *out, int cap) {
+    static LegalMoves lm;
+    calculate_legal_moves(g, seat, &lm);
+    if (cap < 4) return FIO_ECAP;
+    unsigned char *q = (unsigned char *)out;
+    unsigned int n = (unsigned int)lm.n;
+    *q++ = n & 0xff; *q++ = (n >> 8) & 0xff; *q++ = (n >> 16) & 0xff; *q++ = (n >> 24) & 0xff;
+    for (int i = 0; i < lm.n; i++) {
+        const LegalMove *m = &lm.moves[i];
+        if ((int)((char *)q - out) + 2 + 2 * m->n_cards > cap) return FIO_ECAP;
+        *q++ = (unsigned char)m->type;
+        *q++ = (unsigned char)m->n_cards;
+        for (int j = 0; j < m->n_cards; j++) *q++ = (unsigned char)card_to_id(m->cards[j]);
+        for (int j = 0; j < m->n_cards; j++) *q++ = (unsigned char)card_to_id(m->attack_cards[j]);
+    }
+    return (int)((char *)q - out);
+}
+
+// The resident game's masked view for `viewer`, as the packed state wire
+// (view.c state_put). Swift's MaskedView decoder reads it.
+int fio_state_packed(int viewer, char *out, int cap) {
+    if (!g_has_game) return FIO_ENOGAME;
+    if (cap < 1024) return FIO_ECAP;   // state_put is unbounded; guard the buffer
+    return state_put(&g_game, viewer, (unsigned char *)out);
+}
+
+// The resident game's legal moves for `seat`, packed.
+int fio_legal_packed(int seat, char *out, int cap) {
+    if (!g_has_game) return FIO_ENOGAME;
+    if (seat < 0 || seat >= g_game.num_players) return FIO_EBADARG;
+    return emit_legal_packed(&g_game, seat, out, cap);
+}
+
+// Legal moves for `seat` computed from a SERVER packed masked view, packed out.
+int fio_legal_from_packed(const uint8_t *buf, int len, int seat, char *out, int cap) {
+    if (!buf || len <= 0) return FIO_EBADARG;
+    static Game tmp;
+    memset(&tmp, 0, sizeof tmp);
+    state_get(&tmp, buf, /*masked=*/1);
+    if (tmp.num_players < 2 || tmp.num_players > MAX_PLAYERS) return FIO_EPARSE;
+    if (seat < 0 || seat >= tmp.num_players) return FIO_EBADARG;
+    return emit_legal_packed(&tmp, seat, out, cap);
+}
+
 // ---------- animation events (§4.4 / A3) -----------------------------------
 //
 // The animation plan — which card flies where, in what order — is derived by

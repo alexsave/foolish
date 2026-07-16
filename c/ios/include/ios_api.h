@@ -89,6 +89,14 @@ int fio_legal_from_packed_json(const uint8_t *buf, int len, int seat, char *out,
 // when the seat has no pending action.
 int fio_legal_moves_json(int seat, char *out, int cap);
 
+// PACKED (no-JSON) twins — the kernel wire Swift decodes directly (MaskedView /
+// MoveWire). fio_state_packed: the resident masked view (view.c state_put).
+// fio_legal_packed / fio_legal_from_packed: legal moves (wasm_export_moves
+// layout) from the resident game or a server packed view. Owner: wipe the JSON.
+int fio_state_packed(int viewer, char *out, int cap);
+int fio_legal_packed(int seat, char *out, int cap);
+int fio_legal_from_packed(const uint8_t *buf, int len, int seat, char *out, int cap);
+
 // Bitmask over seats (bit i => seat i has a pending legal action right now).
 // Mirrors should_bot_act across all seats — the single source of "whose turn".
 int fio_actor_mask(void);
