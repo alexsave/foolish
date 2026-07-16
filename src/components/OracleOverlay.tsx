@@ -101,6 +101,11 @@ const LedChip = ({ color, text, width }: { color: string; text: string; width?: 
     </span>
 );
 
+// Fixed footprint for the "EF 12.40 ±0.08" readout — sized for the widest
+// realistic case (3-digit mean, 2 decimals, ± error) so the number column
+// (and the bar beside it) don't jitter row to row.
+const EF_COL_W = 96;
+
 // Fixed footprint for the classification chip (best/excellent/.../blunder)
 // — sized to the longest label, "INACCURACY".
 const CLASS_CHIP_W = 80;
@@ -243,7 +248,10 @@ function McRow({ c, best, worst, bestAdj, t }: {
                     : <div style={{ flex: '1 1 auto', height: 7 }} />}
                 <span
                     title={t('oracle_ef_tip')}
-                    style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4, minWidth: 66 }}
+                    style={{
+                        display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4,
+                        width: EF_COL_W, flex: '0 0 auto', boxSizing: 'border-box',
+                    }}
                 >
                     {scored ? (
                         <>
