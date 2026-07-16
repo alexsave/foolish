@@ -148,20 +148,6 @@ function SuitIcon({ suit, color, size = 9 }: { suit: number; color: string; size
     return <svg width={size} height={size} viewBox="0 0 12 12" style={{ flex: 'none' }}>{inner}</svg>;
 }
 
-// "Covers" arrow — a card is placed down onto the target, so the arrow
-// drops (\) then falls straight (|) before running out to the target (_)
-// with a small arrowhead, rather than a flat "→".
-function CoverArrow({ color, size = 13 }: { color: string; size?: number }) {
-    const glow = { filter: `drop-shadow(0 0 2px ${color}99)` };
-    const stroke = { stroke: color, strokeWidth: 1.4, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, fill: 'none' };
-    return (
-        <svg width={size} height={size * 0.75} viewBox="0 0 16 12" style={{ flex: 'none' }}>
-            <path d="M2 1 L6 5 L6 9 L11.5 9" {...stroke} style={glow} />
-            <path d="M8.5 6.3 L12.5 9 L8.5 11.7" {...stroke} style={glow} />
-        </svg>
-    );
-}
-
 // A card as a tiny LED-panel readout: rank via the 15-segment font, suit via
 // SuitIcon. Falls back to the raw token (already segment-rendered) if it
 // doesn't parse as a card.
@@ -247,7 +233,7 @@ function McRow({ c, best, worst, bestAdj, t }: {
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <div style={{ flex: '1 1 auto', display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
                     {c.target?.length ? (
-                        <>{cards}<span style={{ opacity: 0.55, display: 'inline-flex' }}><CoverArrow color={CARD_COLOR} /></span>
+                        <>{cards}<span style={{ opacity: 0.55, display: 'inline-flex' }}><SegmentText text="→" color={CARD_COLOR} height={11} /></span>
                             <CardTokens tokens={c.target} /></>
                     ) : cards}
                 </div>
@@ -291,7 +277,7 @@ function VerdictRow({ c, t }: {
     const depth = c.verdictVal != null ? 1000 - Math.abs(c.verdictVal) : null;
     const cards = c.cards.length
         ? (c.target?.length
-            ? <><CardTokens tokens={c.cards} /><span style={{ opacity: 0.55, display: 'inline-flex' }}><CoverArrow color={CARD_COLOR} /></span><CardTokens tokens={c.target} /></>
+            ? <><CardTokens tokens={c.cards} /><span style={{ opacity: 0.55, display: 'inline-flex' }}><SegmentText text="→" color={CARD_COLOR} height={11} /></span><CardTokens tokens={c.target} /></>
             : <CardTokens tokens={c.cards} />)
         : <SegmentText text={c.type === 'pass' ? 'PASS' : c.type} color={CARD_COLOR} height={10} gap={1.5} />;
     const badge = c.verdict === 'win' ? `WIN${depth != null ? ` in ${depth}` : ''}`

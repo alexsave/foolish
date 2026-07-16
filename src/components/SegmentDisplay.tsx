@@ -76,6 +76,9 @@ const FONT: Record<string, Seg[]> = {
     '+': ['ML', 'MR', 'VT', 'VB'],
     '±': ['VT', 'ML', 'MR', 'VB', 'B'],
     '/': ['DTR', 'DBL'],
+    // "covers" arrow: drops in (\), falls (|), runs out along the base (_) —
+    // built from the same 14 segments as everything else, not a bespoke icon.
+    '→': ['DTL', 'VB', 'B'],
 };
 
 function inset(a: Pt, b: Pt, m: number): [Pt, Pt] {
