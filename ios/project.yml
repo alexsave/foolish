@@ -105,6 +105,12 @@ targets:
     platform: iOS
     sources:
       - path: FoolishKit
+      # The Swift kernel binding lives in the unified SDK home (A10):
+      # repo-root sdk/swift/ (EngineC.swift + models), sibling to sdk/ts and
+      # sdk/c. It is still compiled INTO the FoolishKit module — a source
+      # location change, not a module split — so app/extension access is
+      # unchanged.
+      - path: ../sdk/swift
       - path: Entitlements
     dependencies:
       # The C engine, built by `make ios-lib` in ../sdk/c. Static (embed:false).

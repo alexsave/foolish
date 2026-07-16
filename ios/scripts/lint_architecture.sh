@@ -33,11 +33,16 @@ if [ -d FoolishMessages ]; then
   fi
 fi
 
-echo "[lint] only EngineC touches the C bridge (§7.1)…"
-# CFoolish is imported in exactly one file — the bridge boundary.
-importers=$(grep -rl --include='*.swift' 'import CFoolish' . || true)
-if [ -n "$importers" ] && [ "$importers" != "./FoolishKit/Engine/EngineC.swift" ]; then
-  note "import CFoolish must appear only in FoolishKit/Engine/EngineC.swift; found:\n$importers"
+echo "[lint] the C bridge stays inside the Swift SDK (sdk/swift/, §7.1)…"
+# CFoolish (the fio_* kernel API) may be imported ONLY inside the Swift SDK —
+# sdk/swift/ (A10). Never in the app layers: FoolishKit/{DesignSystem,Net,
+# Boards}, FoolishApp, or FoolishMessages. This supersedes the older
+# "only EngineC" wording, which the tree already outgrew (MessageEnvelope,
+# the URL/message codec, legitimately calls the C base32/seal path too).
+strays=$(grep -rlE '^[[:space:]]*import[[:space:]]+CFoolish' --include='*.swift' ../ios ../sdk/swift 2>/dev/null \
+  | grep -v '/build/' | grep -vE '\.\./sdk/swift/' || true)
+if [ -n "$strays" ]; then
+  note "import CFoolish must stay inside sdk/swift/; found in the app layer:\n$strays"
 fi
 
 if [ "$fail" -eq 0 ]; then

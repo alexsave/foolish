@@ -587,7 +587,7 @@ targets:
 App Group + Associated Domains are added in §16.C5/§16.F (they require the
 Developer portal; not needed for simulator work).
 
-**A5. Engine bridge (`FoolishKit/Engine/`).** Three files:
+**A5. Engine bridge (`sdk/swift/`).** Three files:
 
 ```swift
 // EngineC.swift — the ONLY file that touches the C API

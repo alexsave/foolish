@@ -388,7 +388,7 @@ the one move safe to commit straight from a notification (no selection needed);
   renders two half-width pills; no selection while defending shows `Pickup`,
   attacker with covered table shows `Done`.
 - Commit path: pill tap → `game.play(move)` (same `GameSession` protocol the
-  phone uses — `ios/FoolishKit/Engine/GameSession.swift`) → in-flight lock on
+  phone uses — `ios/sdk/swift/GameSession.swift`) → in-flight lock on
   the played tokens → confirm/animate on the feed echo; reject → rigid haptic
   + the tokens unlock (server-confirmed model, identical to the phone's
   Stage C1; `IOS_APP_DESIGN.md` §8.2).

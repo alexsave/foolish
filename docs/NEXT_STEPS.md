@@ -71,7 +71,7 @@ wool/wood/fern textures in Swift, drag-to-play, the 8-seat arc layout, the
 app icon, and an `ios_goldens.c` buffer fix. It is based on an older `main`
 and a test-merge against this branch conflicts in exactly six files:
 
-- `ios/FoolishKit/Engine/LocalGame.swift`, `Models.swift` — the real ones:
+- `ios/sdk/swift/LocalGame.swift`, `Models.swift` — the real ones:
   this branch rewired both onto `fio_bot_drive_json` + kernel events; #93
   reworked the same files for UI. Resolution rule: **this branch's engine
   wiring wins, #93's UI/texture/layout work wins**; re-run goldens + Swift

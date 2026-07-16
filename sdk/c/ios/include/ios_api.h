@@ -1,4 +1,4 @@
-// ios_api.h — the Swift-visible C API for the native iOS app (FoolishKit/Engine).
+// ios_api.h — the Swift-visible C API for the native iOS app (sdk/swift).
 //
 // This header IS the bridge contract. Per docs/IOS_APP_DESIGN.md §16.0 ("the
 // JSON bridge rule"): Swift never parses the kernel's packed binary formats.
@@ -64,7 +64,7 @@ int fio_set_seat_strategy(int seat, int strategy_id);
 // True once fio_new_game has succeeded.
 int fio_has_game(void);
 
-// ---------- observation (all emit JSON; see FoolishKit/Engine/Models.swift) --
+// ---------- observation (all emit JSON; see sdk/swift/Models.swift) --
 
 // Per-viewer masked state: viewer_seat's own hand is real cards, every other
 // hand is redacted to a count only, the deck is hidden. This is the "you only
