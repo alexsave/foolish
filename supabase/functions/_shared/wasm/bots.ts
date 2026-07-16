@@ -16,7 +16,7 @@
 
 import { Game } from '../types.ts';
 import { LegalMove } from '../bot_interfaces.ts';
-import { loadWasmGz } from './wasm_asset.ts';
+import { loadWasmGz, loadWasmGzAsync } from './wasm_asset.ts';
 import {
     EngineExports, PackedRunOk, __LOG_TYPE_TO_INT, __MOVE_TYPE, __adoptEngine,
     __marshalGame, __mem, __pooledCard, __replayError, __setResident,
@@ -125,6 +125,24 @@ export function __seedDrawRngFromState(): void { bots().wasm_seed_rng_determinis
 export function __strategySeedProbe(): number {
     const ex = bots() as unknown as { wasm_strategy_seed_probe?: () => number };
     return ex.wasm_strategy_seed_probe ? (ex.wasm_strategy_seed_probe() >>> 0) : -1;
+}
+
+/**
+ * Prepare bots.wasm where it cannot be read synchronously — i.e. the browser,
+ * which has no filesystem and must fetch the .gz. Await this once before any
+ * bots() call; on the server it is a no-op fast path (fs is synchronous).
+ *
+ * The browser needs the FULL kernel now, not the rules subset: replaying a
+ * shared code rebuilds the game and plays it through the real engine (A5), and
+ * replay_steps.c cannot live in rules.wasm — its decoded-action buffer alone is
+ * ~272 KB against rules.wasm's linear memory, pinned at 196,608 B. bots.wasm is
+ * a superset and adopts the engine slot below, so this is the one-big-module
+ * step, not a second module (docs/C_CORE_CONSOLIDATION.md A10).
+ */
+export async function ensureBotsAsync(): Promise<void> {
+    if (exportsCache) return;
+    await loadWasmGzAsync('bots');   // caches the inflated bytes for bots()
+    bots();
 }
 
 function bots(): BotsExports {
