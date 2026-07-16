@@ -2,7 +2,7 @@
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Card, PLAYER_STATUS } from '@shared/types.ts';
+import { Card, PLAYER_STATUS } from '@shared/core/types.ts';
 import { TexturedSurface } from './TexturedSurface';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
 import { AuthContext } from '../contexts/AuthContext';
@@ -16,9 +16,9 @@ import { TutorialHintProvider, TutorialHint } from '../contexts/TutorialHintCont
 import { GameBoard } from './GameBoard';
 import { usePreventScroll } from '../hooks/usePreventScroll';
 import { animationFeed, AnimationSequenceMessage } from '../state/animationFeed';
-import { bigintToBytes, codeToGame } from '@shared/replay/codec.ts';
-import { decodeReplay } from '@shared/replay/decode.ts';
-import { DecodedReplay } from '@shared/replay/core.ts';
+import { bigintToBytes, codeToGame } from '@shared/common/replay/codec.ts';
+import { decodeReplay } from '@shared/common/replay/decode.ts';
+import { DecodedReplay } from '@shared/common/replay/core.ts';
 import { ensureBotsAsync } from '@shared/sdk/ts/wasm/bots.ts';
 import {
     buildReplayFrames, preDealGame, ReplayFrame, ReplayGameState, REPLAY_STEP,

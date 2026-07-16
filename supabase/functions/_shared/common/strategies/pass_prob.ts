@@ -7,7 +7,7 @@
  * Constraint: a + d <= 4 (attack size + distance must not exceed 4 copies per rank)
  */
 
-import { Game, Card } from '../types.ts';
+import { Game, Card } from '../../core/types.ts';
 import { CardTracker } from '../durakai/cardTracker.ts';
 
 // ============================================================================

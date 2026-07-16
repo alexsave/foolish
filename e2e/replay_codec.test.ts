@@ -10,7 +10,7 @@
  * and asserts the decoded stream reproduces the ENTIRE original log stream —
  * not just the coded actions but every derived DISCARD / DRAW /
  * DEFENDER_CHANGE / PLAYER_OUT, byte for byte. Any rules drift between the
- * server engine and _shared/replay/core.ts shows up here as a hard failure.
+ * server engine and _shared/common/replay/core.ts shows up here as a hard failure.
  *
  * This is a pure codec/engine test — no Postgres, no harness.
  * Games-per-player-count is REPLAY_GAMES_PER_PC (default 20).
@@ -19,8 +19,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { game_done } from '../supabase/functions/_shared/common_utils.ts';
-import { start_game } from '../supabase/functions/_shared/game_lifecycle.ts';
+import { game_done } from '../supabase/functions/_shared/common/common_utils.ts';
+import { start_game } from '../supabase/functions/_shared/common/game_lifecycle.ts';
 import {
   Game,
   GameLog,
@@ -29,14 +29,14 @@ import {
   PrivatePlayer,
   StrategyKey,
   LOG_TYPE,
-} from '../supabase/functions/_shared/types.ts';
-import { shouldBotActCore, processBotAction } from '../supabase/functions/_shared/pure_bot_actions.ts';
-import { calculateLegalMoves } from '../supabase/functions/_shared/bot_strategy.ts';
-import { ReplayInput, SeatLog, DecodedReplay, INFO_TYPES } from '../supabase/functions/_shared/replay/core.ts';
-import { decodeReplay } from '../supabase/functions/_shared/replay/decode.ts';
+} from '../supabase/functions/_shared/core/types.ts';
+import { shouldBotActCore, processBotAction } from '../supabase/functions/_shared/common/pure_bot_actions.ts';
+import { calculateLegalMoves } from '../supabase/functions/_shared/common/bot_strategy.ts';
+import { ReplayInput, SeatLog, DecodedReplay, INFO_TYPES } from '../supabase/functions/_shared/common/replay/core.ts';
+import { decodeReplay } from '../supabase/functions/_shared/common/replay/decode.ts';
 import {
   urlToGame, base64Decode, base64Encode, base32Encode, bytesToBigint, codeToGame, gameToUrl,
-} from '../supabase/functions/_shared/replay/codec.ts';
+} from '../supabase/functions/_shared/common/replay/codec.ts';
 import { kernelReplayEncodeV6FromGame } from '../supabase/functions/_shared/sdk/ts/wasm/bots.ts';
 import { __setDealSeedOverride } from '../supabase/functions/_shared/sdk/ts/wasm/engine.ts';
 
@@ -48,7 +48,7 @@ import {
   splitReplayCode,
   joinReplayCode,
   moveTimesFromLogs,
-} from '../supabase/functions/_shared/replay/extras.ts';
+} from '../supabase/functions/_shared/common/replay/extras.ts';
 import { buildReplayFrames, REPLAY_STEP } from '../src/replay/frames';
 
 // The engine logs play-by-play; silence it so the test reporter stays readable.

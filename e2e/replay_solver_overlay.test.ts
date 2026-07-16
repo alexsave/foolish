@@ -14,14 +14,14 @@
 // bots.wasm; this file adds only the interleave dimension.)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { game_done } from '../supabase/functions/_shared/common_utils.ts';
-import { start_game } from '../supabase/functions/_shared/game_lifecycle.ts';
-import { Game, GAME_STATUS, PLAYER_STATUS, PrivatePlayer, StrategyKey } from '../supabase/functions/_shared/types.ts';
-import { shouldBotActCore, processBotAction } from '../supabase/functions/_shared/pure_bot_actions.ts';
-import { calculateLegalMoves } from '../supabase/functions/_shared/bot_strategy.ts';
-import { ReplayInput } from '../supabase/functions/_shared/replay/core.ts';
-import { encodeReplay } from '../supabase/functions/_shared/replay/encode.ts';
-import { decodeReplay } from '../supabase/functions/_shared/replay/decode.ts';
+import { game_done } from '../supabase/functions/_shared/common/common_utils.ts';
+import { start_game } from '../supabase/functions/_shared/common/game_lifecycle.ts';
+import { Game, GAME_STATUS, PLAYER_STATUS, PrivatePlayer, StrategyKey } from '../supabase/functions/_shared/core/types.ts';
+import { shouldBotActCore, processBotAction } from '../supabase/functions/_shared/common/pure_bot_actions.ts';
+import { calculateLegalMoves } from '../supabase/functions/_shared/common/bot_strategy.ts';
+import { ReplayInput } from '../supabase/functions/_shared/common/replay/core.ts';
+import { encodeReplay } from '../supabase/functions/_shared/common/replay/encode.ts';
+import { decodeReplay } from '../supabase/functions/_shared/common/replay/decode.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; console.error = () => {}; }
 

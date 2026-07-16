@@ -1,4 +1,4 @@
-import { PersonalGame } from "@shared/types.ts";
+import { PersonalGame } from "@shared/core/types.ts";
 import { useAuth } from "../../contexts/AuthContext";
 import { useServer } from "../../contexts/ServerContext";
 import { SovietIcon } from "../SovietIcon";

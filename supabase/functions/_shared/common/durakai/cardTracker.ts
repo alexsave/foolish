@@ -1,6 +1,6 @@
-import { Game, GameLog, LOG_TYPE, Card } from '../types.ts';
+import { Game, GameLog, LOG_TYPE, Card } from '../../core/types.ts';
 import { canCover } from '../common_utils.ts';
-import { minValueFor } from '../constants.ts';
+import { minValueFor } from '../../core/constants.ts';
 
 /**
  * Tracks card locations and probabilities based on game logs

@@ -32,7 +32,7 @@
 
 #define EVWIRE_FORMAT_VERSION 1
 
-// Event types — mirrors ANIMATION_EVENT_TYPE in _shared/types.ts.
+// Event types — mirrors ANIMATION_EVENT_TYPE in _shared/core/types.ts.
 #define EVW_T_MAGIC_TRANSITION 0
 #define EVW_T_DEAL             1
 #define EVW_T_FLIPPED          2

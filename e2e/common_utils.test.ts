@@ -13,11 +13,11 @@ import {
   validate_defender_status, verify_card_array, verify_cards_in_players_hand,
   game_done, verify_player_in_game, other_player, personalize_game,
   calculateEloChange, calculateGameRankings, addLog,
-} from '../supabase/functions/_shared/common_utils.ts';
+} from '../supabase/functions/_shared/common/common_utils.ts';
 import {
   Game, PrivatePlayer, Card, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY, LOG_TYPE,
   PersonalGame,
-} from '../supabase/functions/_shared/types.ts';
+} from '../supabase/functions/_shared/core/types.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 

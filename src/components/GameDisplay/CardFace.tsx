@@ -1,8 +1,8 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { Card } from '@shared/types.ts';
+import { Card } from '@shared/core/types.ts';
 import { CardBack } from './CardBack';
 import { VALUE_MAP } from '../../utils/cards';
-import { HEARTS, DIAMONDS } from '@shared/constants.ts';
+import { HEARTS, DIAMONDS } from '@shared/core/constants.ts';
 import { useAnimation } from '../../contexts/AnimationContext';
 import { useStyles } from '../../contexts/StyleContext';
 import { SuitIcon } from '../SovietIcon';

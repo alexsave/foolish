@@ -162,7 +162,7 @@ CREATE TABLE bot_hands (
 -- anymore.)
 
 -- Game snapshots - one row per finished session: the complete game compressed
--- by functions/_shared/replay/, stored as raw binary. `moves` is the rANS
+-- by functions/_shared/common/replay/, stored as raw binary. `moves` is the rANS
 -- move integer (decodes to the full game); `extras` is the optional names +
 -- timing blob. The share code is derived: base32(moves) + '-' + base32(extras)
 -- — the moves-only code is just the first part. Replaces the session's

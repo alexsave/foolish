@@ -6,7 +6,7 @@ millions of games without crossing the language boundary into the TS server.
 
 **The kernel here IS the production rules engine.** `game.c` + `legal.c`
 compile to WebAssembly (`make wasm`) and run every live move: the TS files in
-`supabase/functions/_shared/actions/` are thin bridges over this code (see
+`supabase/functions/_shared/common/actions/` are thin bridges over this code (see
 `wasm/wasm_api.c` and `_shared/sdk/ts/wasm/engine.ts`). The old TS rule
 implementations were deleted after a differential harness proved the two
 engines byte-identical across ~100k mirrored actions. The deck rule is

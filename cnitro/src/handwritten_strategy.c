@@ -1,5 +1,5 @@
 // Handwritten 1v1 strategy — port of HandwrittenBotStrategy in
-// supabase/functions/_shared/strategies/handwritten_strategy.ts.
+// supabase/functions/_shared/common/strategies/handwritten_strategy.ts.
 //
 // The model: never done attacking, attack with as many cards as possible,
 // avoid trump attacks while the deck (or flipped trump) still has cards,

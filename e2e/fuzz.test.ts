@@ -13,14 +13,14 @@ import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { applySchema, resetDb, seedGame, uuid, pgPool } from './harness.ts';
 import { executeWithGameLock } from '../supabase/functions/_shared/adapter/utils.ts';
-import { verify_player_in_game } from '../supabase/functions/_shared/common_utils.ts';
-import { start_game } from '../supabase/functions/_shared/game_lifecycle.ts';
-import { Game, AnimationEvent, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY, PrivatePlayer, Card } from '../supabase/functions/_shared/types.ts';
-import { handleAttack } from '../supabase/functions/_shared/actions/attack.ts';
-import { handleCover } from '../supabase/functions/_shared/actions/cover.ts';
-import { handlePass } from '../supabase/functions/_shared/actions/pass.ts';
-import { handlePickup } from '../supabase/functions/_shared/actions/pickup.ts';
-import { handleGood } from '../supabase/functions/_shared/actions/good.ts';
+import { verify_player_in_game } from '../supabase/functions/_shared/common/common_utils.ts';
+import { start_game } from '../supabase/functions/_shared/common/game_lifecycle.ts';
+import { Game, AnimationEvent, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY, PrivatePlayer, Card } from '../supabase/functions/_shared/core/types.ts';
+import { handleAttack } from '../supabase/functions/_shared/common/actions/attack.ts';
+import { handleCover } from '../supabase/functions/_shared/common/actions/cover.ts';
+import { handlePass } from '../supabase/functions/_shared/common/actions/pass.ts';
+import { handlePickup } from '../supabase/functions/_shared/common/actions/pickup.ts';
+import { handleGood } from '../supabase/functions/_shared/common/actions/good.ts';
 import { legalMovesFor, applyPlayerMove, checkCardConservation } from './dispatch.ts';
 
 // Deterministic RNG so a found exploit reproduces from the printed seed.

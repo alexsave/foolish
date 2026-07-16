@@ -9,10 +9,10 @@ import { Text } from './Text';
 import { SovietIcon, RankIcon } from './SovietIcon';
 import { useTexture, getTextureStyle, seedFromString, flipFromString } from './TexturedSurface';
 import { botDisplayName, isBotName } from '../common/botName';
-import { decodeReplay } from '@shared/replay/decode.ts';
-import { decodeExtras, joinReplayCode } from '@shared/replay/extras.ts';
-import { INFO_TYPES } from '@shared/replay/core.ts';
-import { base32Encode, bytesToBigint, hexToBytes } from '@shared/replay/codec.ts';
+import { decodeReplay } from '@shared/common/replay/decode.ts';
+import { decodeExtras, joinReplayCode } from '@shared/common/replay/extras.ts';
+import { INFO_TYPES } from '@shared/common/replay/core.ts';
+import { base32Encode, bytesToBigint, hexToBytes } from '@shared/common/replay/codec.ts';
 
 /**
  * Match history: every finished game the signed-in user played, straight from

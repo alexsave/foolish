@@ -2,9 +2,9 @@
 // (canCover, personalize_game, clone helpers), and a static engine import
 // would drag the embedded wasm base64 into every page bundle. The kernel-
 // delegating start_game lives in ./game_lifecycle.ts (server/tests only).
-import { Card, Game, GAME_STATUS, PersonalGame, PLAYER_STATUS, PrivatePlayer, PublicPlayer, PublicGame, Battle, LogCardPair } from "./types.ts";
-import { GameLog, UnsavedGameLog } from './types.ts';
-import { VALUE_MAP, SUIT_MAP } from './constants.ts';
+import { Card, Game, GAME_STATUS, PersonalGame, PLAYER_STATUS, PrivatePlayer, PublicPlayer, PublicGame, Battle, LogCardPair } from "../core/types.ts";
+import { GameLog, UnsavedGameLog } from '../core/types.ts';
+import { VALUE_MAP, SUIT_MAP } from '../core/constants.ts';
 
 // Fast deep clone for Game objects - avoids expensive JSON.parse(JSON.stringify())
 const cloneCard = (card: Card): Card => ({ suit: card.suit, value: card.value });

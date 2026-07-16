@@ -9,8 +9,8 @@
 // Reports games/sec, actions/sec (an "action" = one accepted bot move), and
 // legal-move evaluations/sec — the three costs every server move and every
 // bot turn pays.
-import { game_done } from '../supabase/functions/_shared/common_utils.ts';
-import { start_game } from '../supabase/functions/_shared/game_lifecycle.ts';
+import { game_done } from '../supabase/functions/_shared/common/common_utils.ts';
+import { start_game } from '../supabase/functions/_shared/common/game_lifecycle.ts';
 import {
   Game,
   PrivatePlayer,
@@ -18,12 +18,12 @@ import {
   GAME_STATUS,
   STRATEGY_KEY,
   StrategyKey,
-} from '../supabase/functions/_shared/types.ts';
+} from '../supabase/functions/_shared/core/types.ts';
 import {
   shouldBotActCore,
   processBotAction,
-} from '../supabase/functions/_shared/pure_bot_actions.ts';
-import { calculateLegalMoves } from '../supabase/functions/_shared/bot_strategy.ts';
+} from '../supabase/functions/_shared/common/pure_bot_actions.ts';
+import { calculateLegalMoves } from '../supabase/functions/_shared/common/bot_strategy.ts';
 
 if (!process.env.E2E_VERBOSE) {
   console.log = () => {};

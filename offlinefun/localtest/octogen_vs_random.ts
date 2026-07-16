@@ -3,13 +3,13 @@
 // game octogen WINS.
 //
 //   npx tsx offlinefun/localtest/octogen_vs_random.ts [pc] [maxGames] [seed0]
-import { calculateLegalMoves, getBotStrategy } from '../../supabase/functions/_shared/bot_strategy.ts';
-import { shouldBotActCore, executeBotMove } from '../../supabase/functions/_shared/pure_bot_actions.ts';
-import { game_done } from '../../supabase/functions/_shared/common_utils.ts';
-import { start_game } from '../../supabase/functions/_shared/game_lifecycle.ts';
-import { Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS } from '../../supabase/functions/_shared/types.ts';
-import { verifyRoundTrip } from '../../supabase/functions/_shared/replay/encode.ts';
-import { encodeExtras, joinReplayCode, moveTimesFromLogs } from '../../supabase/functions/_shared/replay/extras.ts';
+import { calculateLegalMoves, getBotStrategy } from '../../supabase/functions/_shared/common/bot_strategy.ts';
+import { shouldBotActCore, executeBotMove } from '../../supabase/functions/_shared/common/pure_bot_actions.ts';
+import { game_done } from '../../supabase/functions/_shared/common/common_utils.ts';
+import { start_game } from '../../supabase/functions/_shared/common/game_lifecycle.ts';
+import { Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS } from '../../supabase/functions/_shared/core/types.ts';
+import { verifyRoundTrip } from '../../supabase/functions/_shared/common/replay/encode.ts';
+import { encodeExtras, joinReplayCode, moveTimesFromLogs } from '../../supabase/functions/_shared/common/replay/extras.ts';
 
 let _seed = 424242;
 Math.random = () => { _seed = (_seed * 1664525 + 1013904223) % 4294967296; return _seed / 4294967296; };

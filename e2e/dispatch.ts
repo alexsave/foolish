@@ -3,10 +3,10 @@
 // handler dispatch). The only test glue is iterating players and a card-counting
 // assertion that reads the durable DB state directly.
 
-import { Game, AnimationEvent, PLAYER_STATUS } from '../supabase/functions/_shared/types.ts';
-import { LegalMove } from '../supabase/functions/_shared/bot_interfaces.ts';
-import { calculateLegalMoves } from '../supabase/functions/_shared/bot_strategy.ts';
-import { executeBotMove } from '../supabase/functions/_shared/pure_bot_actions.ts';
+import { Game, AnimationEvent, PLAYER_STATUS } from '../supabase/functions/_shared/core/types.ts';
+import { LegalMove } from '../supabase/functions/_shared/core/bot_interfaces.ts';
+import { calculateLegalMoves } from '../supabase/functions/_shared/common/bot_strategy.ts';
+import { executeBotMove } from '../supabase/functions/_shared/common/pure_bot_actions.ts';
 import { pgPool } from './harness.ts';
 
 export interface PlayerMove { playerId: string; move: LegalMove }
@@ -47,7 +47,7 @@ export async function checkCardConservation(gameId: string): Promise<{ ok: boole
     // never-dealt / legacy rows that predate the blob column.
     if (g.state) {
         const { deserializeGameState } = await import('../supabase/functions/_shared/sdk/ts/wasm/engine.ts');
-        const { hexToBytes } = await import('../supabase/functions/_shared/replay/codec.ts');
+        const { hexToBytes } = await import('../supabase/functions/_shared/common/replay/codec.ts');
         const game = deserializeGameState(hexToBytes(g.state), {
             id: gameId, name: '', version: 0, deck_length: 0,
             players: (g.players ?? []).map((p: any) => ({ player_id: p.player_id, name: p.name, is_ai: p.is_ai, strategy_key: 'human' })),

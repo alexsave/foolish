@@ -33,7 +33,7 @@ export async function generateMetadata(
             // require — and Next's server bundle is ESM, where it may not. The
             // async path is correct in both runtimes and is a no-op once loaded.
             await ensureBotsAsync();
-            const { base32Decode } = await import('@shared/replay/codec.ts');
+            const { base32Decode } = await import('@shared/common/replay/codec.ts');
             const env = kernelMsgDecode(base32Decode(text.slice(1)));
 
             // Nicknames are the only identity a payload carries, and they are

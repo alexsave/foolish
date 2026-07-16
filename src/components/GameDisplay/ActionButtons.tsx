@@ -1,4 +1,4 @@
-import { Card, PersonalGame, PLAYER_STATUS } from "@shared/types.ts";
+import { Card, PersonalGame, PLAYER_STATUS } from "@shared/core/types.ts";
 import { useAuth } from "../../contexts/AuthContext";
 import { useServer } from "../../contexts/ServerContext";
 import { useAnimation } from "../../contexts/AnimationContext";
@@ -8,7 +8,7 @@ import { CardFace } from "./CardFace";
 import { TexturedSurface } from "../TexturedSurface";
 import { useEffect, useRef } from "react";
 import { Text } from "../Text";
-import { canCover as canCoverUtil } from "@shared/common_utils.ts";
+import { canCover as canCoverUtil } from "@shared/common/common_utils.ts";
 import { kernelUnambiguousCover } from "@shared/sdk/ts/wasm/bots.ts";
 import { canAttack, canPass, canCoverCards } from "../../utils/gameValidation";
 import { useStyles } from "../../contexts/StyleContext";

@@ -23,7 +23,7 @@ import {
     ensureBotsAsync, kernelEventsFromPacked, replayEventFrames,
 } from '../supabase/functions/_shared/sdk/ts/wasm/bots.ts';
 import { decodeEventWire } from '../supabase/functions/_shared/sdk/ts/wire/evwire.ts';
-import { PLAYER_STATUS } from '../supabase/functions/_shared/types.ts';
+import { PLAYER_STATUS } from '../supabase/functions/_shared/core/types.ts';
 import { playSeededV6 } from './helpers/seeded_game.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }

@@ -1,12 +1,12 @@
 import { wrap400, ExecutionParams, scheduleBotLoop } from "../_shared/adapter/utils.ts";
-import { handleAttack } from "../_shared/actions/attack.ts";
-import { handleCover } from "../_shared/actions/cover.ts";
-import { handlePass } from "../_shared/actions/pass.ts";
-import { handlePickup } from "../_shared/actions/pickup.ts";
-import { handleGood } from "../_shared/actions/good.ts";
-import { verify_player_in_game } from "../_shared/common_utils.ts";
+import { handleAttack } from "../_shared/common/actions/attack.ts";
+import { handleCover } from "../_shared/common/actions/cover.ts";
+import { handlePass } from "../_shared/common/actions/pass.ts";
+import { handlePickup } from "../_shared/common/actions/pickup.ts";
+import { handleGood } from "../_shared/common/actions/good.ts";
+import { verify_player_in_game } from "../_shared/common/common_utils.ts";
 import { corsHeaders } from "../_shared/adapter/cors.ts";
-import { GAME_STATUS } from "../_shared/types.ts";
+import { GAME_STATUS } from "../_shared/core/types.ts";
 import { ACTION_STATUS, decodeActionRequest, encodeActionResponse } from "../_shared/sdk/ts/wire/awire.ts";
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"

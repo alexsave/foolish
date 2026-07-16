@@ -32,7 +32,7 @@ README "How the game runs"). But **serialization is not intent-preservation**:
 4. The in-flight `attack` request now executes against the **post-pickup
    state**. Validation is performed against the *current* state only —
    `validateAttack` → `kernelValidateAttack(game, …)`
-   (`supabase/functions/_shared/actions/attack.ts:13-19`); **nothing in the
+   (`supabase/functions/_shared/common/actions/attack.ts:13-19`); **nothing in the
    request says which state the player composed the move against** (the
    `version` in `packed_action.ts` is the response/cache version, not a
    client-intent field).
@@ -131,7 +131,7 @@ run BOTH delivery orders.
 | 3 | defender covers battle 1 ∥ attacker adds battle 2 | both accepted in either order; no reverts, no rejects |
 | 4 | two attackers send `good` ∥ each other (3p) | first accepted; second is a same-round no-op/duplicate (kernel `good_players_mask`) — assert no error surfaced to user and no double round-transition |
 | 5 | two players join the last open seat ∥ each other (lobby) | one seat granted; loser gets clean reject + lobby refresh (this is `create`/`meta` path, not `action`) |
-| 6 | action ∥ game-ending move | delayed action rejected (game over guard already exists — `executeAttack` GAME_OVER check, `_shared/actions/attack.ts:24-26`, plus stale-round); assert no post-terminal mutation and broadcasts stop cleanly |
+| 6 | action ∥ game-ending move | delayed action rejected (game over guard already exists — `executeAttack` GAME_OVER check, `_shared/common/actions/attack.ts:24-26`, plus stale-round); assert no post-terminal mutation and broadcasts stop cleanly |
 | 7 | same player, two tabs, both act on the same state | second tab's cross-round action rejected `REJECT_STALE_ROUND`; same-round duplicate follows kernel legality (e.g., attacking the same card twice → normal reject); both tabs converge via the version gate (`shouldDropStaleSequence`, `src/state/clientReconcile.ts:44-52`) |
 
 Suite invariants (assert in every case): final state is kernel-legal and

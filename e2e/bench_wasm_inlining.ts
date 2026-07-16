@@ -9,13 +9,13 @@
 //
 //   GAMES=3 TSX_TSCONFIG_PATH=e2e/tsconfig.json \
 //     node --import tsx e2e/bench_wasm_inlining.ts 2>/dev/null | grep '^{'
-import { game_done } from '../supabase/functions/_shared/common_utils.ts';
-import { start_game } from '../supabase/functions/_shared/game_lifecycle.ts';
-import { calculateLegalMoves, LegalMove } from '../supabase/functions/_shared/bot_strategy.ts';
-import { shouldBotActCore, executeBotMove } from '../supabase/functions/_shared/pure_bot_actions.ts';
+import { game_done } from '../supabase/functions/_shared/common/common_utils.ts';
+import { start_game } from '../supabase/functions/_shared/common/game_lifecycle.ts';
+import { calculateLegalMoves, LegalMove } from '../supabase/functions/_shared/common/bot_strategy.ts';
+import { shouldBotActCore, executeBotMove } from '../supabase/functions/_shared/common/pure_bot_actions.ts';
 import { STRAT, wasmChooseMove, __setBotSeedSource } from '../supabase/functions/_shared/sdk/ts/wasm/bots.ts';
 import { __setKernelSeedSource } from '../supabase/functions/_shared/sdk/ts/wasm/engine.ts';
-import { PLAYER_STATUS, GAME_STATUS } from '../supabase/functions/_shared/types.ts';
+import { PLAYER_STATUS, GAME_STATUS } from '../supabase/functions/_shared/core/types.ts';
 
 const mkLcgU32 = (seed: number) => { let s = seed >>> 0; return () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s; }; };
 const mkPlayer = (i: number) => ({ player_id: `p${i}`, name: `P${i}`, status: PLAYER_STATUS.READY, is_ai: true, hand: [], awaiting_attack: false, hand_length: 0, strategy_key: 'octogen' } as any);

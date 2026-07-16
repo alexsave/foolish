@@ -1,14 +1,14 @@
 // version of bot_actions that doesn't use util.ts
 // that has a whole lot of baggage in it
 // Import shared action handlers with validation
-import { Game, PrivatePlayer, Bot, GAME_STATUS, PLAYER_STATUS } from './types.ts';
+import { Game, PrivatePlayer, Bot, GAME_STATUS, PLAYER_STATUS } from '../core/types.ts';
 import { calculateLegalMoves, getBotStrategy, LegalMove, WasmBotStrategy } from './bot_strategy.ts';
 import { handleAttack } from './actions/attack.ts';
 import { handleCover } from './actions/cover.ts';
 import { handlePass } from './actions/pass.ts';
 import { handlePickup } from './actions/pickup.ts';
 import { handleGood } from './actions/good.ts';
-import { AnimationEvent } from './types.ts';
+import { AnimationEvent } from '../core/types.ts';
 import { cardDisplay } from './common_utils.ts';
 
 // Process a single bot's action. Returns the chosen move too, so the caller
@@ -139,8 +139,8 @@ export const executeBotMove = (game: Game, bot: PrivatePlayer, move: LegalMove):
 // The legacy processBotAction/executeBotMove above stay for the offline
 // harnesses and e2e dispatch, which drive whole games on JS objects.
 // ---------------------------------------------------------------------------
-import { AwireKindName, encodeAction } from './sdk/ts/wire/awire.ts';
-import { applyKernelStateToGame, PackedRunOk, runPackedGameAction } from './sdk/ts/wasm/engine.ts';
+import { AwireKindName, encodeAction } from '../sdk/ts/wire/awire.ts';
+import { applyKernelStateToGame, PackedRunOk, runPackedGameAction } from '../sdk/ts/wasm/engine.ts';
 
 export interface PackedBotMove {
     // null for 'wait' — no action to apply, nothing to commit beyond the

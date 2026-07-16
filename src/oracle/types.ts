@@ -4,7 +4,7 @@
  * the overlay, and the headless test — one source of truth for every shape.
  * ========================================================================== */
 
-import { Card } from '@shared/types.ts';
+import { Card } from '@shared/core/types.ts';
 
 /* --------------------------- the analysis job ---------------------------- */
 

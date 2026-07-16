@@ -6,12 +6,12 @@
 //   CD_NO_SOLVE=1 npx tsx offlinefun/localtest/cordite_profile.ts 2 30
 //   CD_WORLDMUL=4 npx tsx offlinefun/localtest/cordite_profile.ts 4 12
 
-import { calculateLegalMoves } from '../../supabase/functions/_shared/bot_strategy.ts';
-import { shouldBotActCore, executeBotMove } from '../../supabase/functions/_shared/pure_bot_actions.ts';
-import { game_done } from '../../supabase/functions/_shared/common_utils.ts';
-import { start_game } from '../../supabase/functions/_shared/game_lifecycle.ts';
-import { getBotStrategy } from '../../supabase/functions/_shared/bot_strategy.ts';
-import { Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS } from '../../supabase/functions/_shared/types.ts';
+import { calculateLegalMoves } from '../../supabase/functions/_shared/common/bot_strategy.ts';
+import { shouldBotActCore, executeBotMove } from '../../supabase/functions/_shared/common/pure_bot_actions.ts';
+import { game_done } from '../../supabase/functions/_shared/common/common_utils.ts';
+import { start_game } from '../../supabase/functions/_shared/common/game_lifecycle.ts';
+import { getBotStrategy } from '../../supabase/functions/_shared/common/bot_strategy.ts';
+import { Game, PrivatePlayer, GAME_STATUS, PLAYER_STATUS } from '../../supabase/functions/_shared/core/types.ts';
 import { CDPROF, cdProfReset } from './frozen/cordite_core.ts';
 
 let _seed = 424242;

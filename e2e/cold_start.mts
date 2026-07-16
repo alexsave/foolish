@@ -5,13 +5,13 @@
 // first-decision ms via the REAL bridge (b64 decode + compile + instantiate +
 // marshal + decide). This is the metric that decides O3-vs-Oz for edge.
 import { readFileSync } from 'node:fs';
-import { game_done } from '../supabase/functions/_shared/common_utils.ts';
-import { start_game } from '../supabase/functions/_shared/game_lifecycle.ts';
-import { calculateLegalMoves } from '../supabase/functions/_shared/bot_strategy.ts';
-import { shouldBotActCore } from '../supabase/functions/_shared/pure_bot_actions.ts';
+import { game_done } from '../supabase/functions/_shared/common/common_utils.ts';
+import { start_game } from '../supabase/functions/_shared/common/game_lifecycle.ts';
+import { calculateLegalMoves } from '../supabase/functions/_shared/common/bot_strategy.ts';
+import { shouldBotActCore } from '../supabase/functions/_shared/common/pure_bot_actions.ts';
 import { STRAT, wasmChooseMoveDirect, __setBotSeedSource, __botsWasmMB } from '../supabase/functions/_shared/sdk/ts/wasm/bots.ts';
 import { __setKernelSeedSource } from '../supabase/functions/_shared/sdk/ts/wasm/engine.ts';
-import { Game, PrivatePlayer, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY } from '../supabase/functions/_shared/types.ts';
+import { Game, PrivatePlayer, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY } from '../supabase/functions/_shared/core/types.ts';
 const __log = console.log.bind(console); console.log = () => {}; console.warn = () => {};
 
 const mkLcgU32 = (s0: number) => { let s = (s0 >>> 0) || 1; return () => (s = (Math.imul(s, 1664525) + 1013904223) >>> 0); };
@@ -48,7 +48,7 @@ for (let d = 0; d < 10; d++) {
     const mv = wasmChooseMoveDirect(g, q.player_id, STRAT.cordite);
     warmNs += Number(process.hrtime.bigint() - s); wc++;
     __setBotSeedSource(null);
-    const { executeBotMove } = await import('../supabase/functions/_shared/pure_bot_actions.ts');
+    const { executeBotMove } = await import('../supabase/functions/_shared/common/pure_bot_actions.ts');
     if (mv && executeBotMove(g, q, mv) !== false) { did = true; break; }
   }
   if (!did || game_done(g) !== null) break;

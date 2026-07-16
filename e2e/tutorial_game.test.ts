@@ -22,11 +22,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { codeToGame, bigintToBytes } from '../supabase/functions/_shared/replay/codec.ts';
-import { decodeReplay } from '../supabase/functions/_shared/replay/decode.ts';
+import { codeToGame, bigintToBytes } from '../supabase/functions/_shared/common/replay/codec.ts';
+import { decodeReplay } from '../supabase/functions/_shared/common/replay/decode.ts';
 import { buildReplayFrames, REPLAY_STEP, ReplayFrame } from '../src/replay/frames.ts';
 import { TUTORIAL_MOVES_CODE, TUTORIAL_NAMES } from '../src/components/tutorialGame.ts';
-import { PLAYER_STATUS } from '../supabase/functions/_shared/types.ts';
+import { PLAYER_STATUS } from '../supabase/functions/_shared/core/types.ts';
 
 if (!process.env.E2E_VERBOSE) {
     console.log = () => {};

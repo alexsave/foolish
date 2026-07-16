@@ -1,5 +1,5 @@
 // Legal-move enumeration. Mirrors calculateLegalMoves in
-// supabase/functions/_shared/bot_strategy.ts.
+// supabase/functions/_shared/common/bot_strategy.ts.
 #ifndef CNITRO_LEGAL_H
 #define CNITRO_LEGAL_H
 

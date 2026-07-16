@@ -71,7 +71,7 @@ restrictive affordance reads as intended UX, not drift.
 
 - **Client bundle pulled the wasm embed**: `common_utils.ts` statically
   imported `wasm/engine.ts` for `start_game`/`refillPlayerHandsWithEvents`.
-  `start_game` moved to `_shared/game_lifecycle.ts` (server/tests only);
+  `start_game` moved to `_shared/common/game_lifecycle.ts` (server/tests only);
   `refillPlayerHandsWithEvents` (zero callers) and its `kernelRefill` wrapper
   deleted. The client no longer ships the ~77KB base64.
 - **`ensureEngineAsync`** could clobber a bots.wasm `__adoptEngine` landing

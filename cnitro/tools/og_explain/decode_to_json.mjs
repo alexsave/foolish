@@ -14,8 +14,8 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '../../..');
-const { urlToGame } = await import(`${ROOT}/supabase/functions/_shared/replay/codec.ts`);
-const { decodeReplay } = await import(`${ROOT}/supabase/functions/_shared/replay/decode.ts`);
+const { urlToGame } = await import(`${ROOT}/supabase/functions/_shared/common/replay/codec.ts`);
+const { decodeReplay } = await import(`${ROOT}/supabase/functions/_shared/common/replay/decode.ts`);
 
 const url = process.argv[2];
 const outPath = process.argv[3];

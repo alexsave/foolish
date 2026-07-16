@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState } from 'react';
-import { Card, PersonalGame } from '@shared/types.ts';
+import { Card, PersonalGame } from '@shared/core/types.ts';
 import { useServer } from './ServerContext';
 
 const GameContext = createContext<GameContextType | null>(null);

@@ -1,5 +1,5 @@
 // Espresso 1v1 strategy — direct port of EspressoStrategy.choose1v1Logic in
-// supabase/functions/_shared/strategies/espresso_strategy.ts.
+// supabase/functions/_shared/common/strategies/espresso_strategy.ts.
 //
 // We don't need the multi-player code paths (chooseNP, tryPositionBias,
 // tryRandomTweaks): for 2-player IN counts, espresso always falls into

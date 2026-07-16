@@ -1,4 +1,4 @@
-import { PersonalGame } from "@shared/types.ts";
+import { PersonalGame } from "@shared/core/types.ts";
 import { CardBack } from "./CardBack";
 import { CardFace } from "./CardFace";
 import { useServer } from "../../contexts/ServerContext";

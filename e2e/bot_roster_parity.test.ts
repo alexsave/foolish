@@ -5,7 +5,7 @@
 // future client (docs/C_CORE_CONSOLIDATION.md F1/A1). The other two are
 // consumers that still restate parts of it:
 //
-//   * supabase/functions/_shared/bot_strategy.ts — the TS registry, which still
+//   * supabase/functions/_shared/common/bot_strategy.ts — the TS registry, which still
 //     carries the knobs as a wasm env table. Env OVERRIDES the roster
 //     (cnitro/src/bot_knobs.h), so while both exist the server's behavior is
 //     defined by this file — and it must therefore say EXACTLY what the roster
@@ -98,7 +98,7 @@ function parseKnobSpec(spec: string): Record<string, string> {
 // Parse the TS registry rows:
 //   ['cordite', new WasmBotStrategy('cordite', STRAT.cordite, { env: {...}, logs: true })],
 function parseTsRegistry() {
-    const src = read('supabase/functions/_shared/bot_strategy.ts');
+    const src = read('supabase/functions/_shared/common/bot_strategy.ts');
     const body = src.slice(src.indexOf('BOT_STRATEGIES: Map<string, BotStrategy>'));
     const table = body.slice(0, body.indexOf('\n]);'));
 

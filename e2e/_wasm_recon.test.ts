@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import { readFileSync, writeFileSync } from 'node:fs';
-import { start_game_packed } from '../supabase/functions/_shared/game_lifecycle.ts';
+import { start_game_packed } from '../supabase/functions/_shared/common/game_lifecycle.ts';
 import { runPackedGameAction, applyKernelStateToGame, appendLogs, __setDealSeedOverride } from '../supabase/functions/_shared/sdk/ts/wasm/engine.ts';
 import { encodeAction } from '../supabase/functions/_shared/sdk/ts/wire/awire.ts';
 import { wasmChooseMoveDirect, __ensureBots, __ogExplainDump, STRAT } from '../supabase/functions/_shared/sdk/ts/wasm/bots.ts';
-import { PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY } from '../supabase/functions/_shared/types.ts';
+import { PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY } from '../supabase/functions/_shared/core/types.ts';
 
 __ensureBots();
 

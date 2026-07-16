@@ -1,5 +1,5 @@
 import React from 'react';
-import { PersonalGame } from '@shared/types.ts';
+import { PersonalGame } from '@shared/core/types.ts';
 import { useServer } from '../contexts/ServerContext';
 import { TableBattles } from './GameDisplay/TableBattles';
 import { PlayerRing } from './GameDisplay/PlayerRing';

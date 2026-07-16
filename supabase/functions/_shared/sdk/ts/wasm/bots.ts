@@ -14,8 +14,8 @@
 // Loaded lazily and cached: the pure rules path (actions/) never pays for
 // the larger module; the first bot decision instantiates it.
 
-import { Card, Battle, Game } from '../../../types.ts';
-import { LegalMove } from '../../../bot_interfaces.ts';
+import { Card, Battle, Game } from '../../../core/types.ts';
+import { LegalMove } from '../../../core/bot_interfaces.ts';
 import { loadWasmGz, loadWasmGzAsync } from './wasm_asset.ts';
 
 // view.h: mask every hand and the deck.

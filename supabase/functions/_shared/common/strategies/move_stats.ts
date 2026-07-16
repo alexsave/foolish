@@ -1,9 +1,9 @@
-import { Game, Card } from '../types.ts';
-import { LegalMove } from '../bot_interfaces.ts';
+import { Game, Card } from '../../core/types.ts';
+import { LegalMove } from '../../core/bot_interfaces.ts';
 import { CardTracker } from '../durakai/cardTracker.ts';
 import { cardDisplay, getCardValue, get_next_player_index, canCover } from '../common_utils.ts';
-import { PLAYER_STATUS } from '../types.ts';
-import { SUITS } from '../constants.ts';
+import { PLAYER_STATUS } from '../../core/types.ts';
+import { SUITS } from '../../core/constants.ts';
 import { 
     preCheckPassWithTracker, 
     calculatePassProbability as calcPassProbFormula,

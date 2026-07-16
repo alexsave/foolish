@@ -23,8 +23,8 @@
 import {
     Card, Game, PrivatePlayer, Battle, GameLog, AnimationEvent,
     ANIMATION_EVENT_TYPE, LOG_TYPE, LogType, GAME_STATUS, PLAYER_STATUS,
-} from '../../../types.ts';
-import { VALUE_MAP, SUIT_MAP } from '../../../constants.ts';
+} from '../../../core/types.ts';
+import { VALUE_MAP, SUIT_MAP } from '../../../core/constants.ts';
 import { takeRULES_WASM_B64 } from './rules_wasm.ts';
 // The rules embed is gzip+base64 (embed.mjs --gzip). gunzip is a vendored
 // pure-JS + SYNCHRONOUS inflate (relative import), so it works in the browser

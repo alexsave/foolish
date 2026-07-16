@@ -14,18 +14,18 @@ import assert from 'node:assert/strict';
 import {
     Game, Card, AnimationEvent, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY,
     PersonalGame, PrivatePlayer,
-} from '../supabase/functions/_shared/types.ts';
+} from '../supabase/functions/_shared/core/types.ts';
 import {
     serializeGameState, serializeViewBlob, kernelLegalMoves, kernelShouldAct,
     __setKernelSeedSource,
 } from '../supabase/functions/_shared/sdk/ts/wasm/engine.ts';
-import { start_game } from '../supabase/functions/_shared/game_lifecycle.ts';
-import { game_done, personalize_game } from '../supabase/functions/_shared/common_utils.ts';
-import { handleAttack } from '../supabase/functions/_shared/actions/attack.ts';
-import { handleCover } from '../supabase/functions/_shared/actions/cover.ts';
-import { handlePass } from '../supabase/functions/_shared/actions/pass.ts';
-import { handlePickup } from '../supabase/functions/_shared/actions/pickup.ts';
-import { handleGood } from '../supabase/functions/_shared/actions/good.ts';
+import { start_game } from '../supabase/functions/_shared/common/game_lifecycle.ts';
+import { game_done, personalize_game } from '../supabase/functions/_shared/common/common_utils.ts';
+import { handleAttack } from '../supabase/functions/_shared/common/actions/attack.ts';
+import { handleCover } from '../supabase/functions/_shared/common/actions/cover.ts';
+import { handlePass } from '../supabase/functions/_shared/common/actions/pass.ts';
+import { handlePickup } from '../supabase/functions/_shared/common/actions/pickup.ts';
+import { handleGood } from '../supabase/functions/_shared/common/actions/good.ts';
 import { AwireKindName } from '../supabase/functions/_shared/sdk/ts/wire/awire.ts';
 import {
     decodePackedGame, encodeGameResponse, PackedGameRoster,

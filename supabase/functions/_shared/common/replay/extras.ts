@@ -37,10 +37,10 @@
  * game at ~50 ms — same wire size either way.
  * ========================================================================== */
 
-import { LogType } from "../types.ts";
+import { LogType } from "../../core/types.ts";
 import { base32Encode, base32Decode } from "./codec.ts";
 import { INFO_TYPES } from "./core.ts";
-import { LOG_TYPE } from "../types.ts";
+import { LOG_TYPE } from "../../core/types.ts";
 
 const EXTRAS_VERSION = 2;
 const FLAG_NAMES = 1;

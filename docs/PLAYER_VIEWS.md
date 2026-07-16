@@ -93,7 +93,7 @@ the caches can never be torn from the authoritative state.
   creator's lobby row and the shared spectator lobby row so a new game is
   immediately readable from both direct `SELECT`s.
 
-The rows are built in TS by `_shared/player_views.ts`
+The rows are built in TS by `_shared/common/player_views.ts`
 (`buildPlayerViewRows` / `buildSpectatorView`):
 
 - **Dealt game** (blob present): masking stays **in the C kernel** —

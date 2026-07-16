@@ -1,4 +1,4 @@
-import { Game, PrivatePlayer } from '../types.ts';
+import { Game, PrivatePlayer } from '../../core/types.ts';
 
 // Reorder the player's own hand to the given index order. Mutates player.hand.
 //

@@ -21,4 +21,4 @@ same seat-profiling math), not move-for-move.
 
 Do not edit these files — a drifted oracle makes the parity test meaningless.
 The still-live TS strategies (`gpt`, console) remain in
-`supabase/functions/_shared/strategies/`.
+`supabase/functions/_shared/common/strategies/`.

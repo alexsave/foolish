@@ -22,13 +22,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { game_done } from '../supabase/functions/_shared/common_utils.ts';
-import { start_game } from '../supabase/functions/_shared/game_lifecycle.ts';
+import { game_done } from '../supabase/functions/_shared/common/common_utils.ts';
+import { start_game } from '../supabase/functions/_shared/common/game_lifecycle.ts';
 import {
   Game, GAME_STATUS, PLAYER_STATUS, PrivatePlayer, STRATEGY_KEY,
-} from '../supabase/functions/_shared/types.ts';
-import { shouldBotActCore, processBotAction } from '../supabase/functions/_shared/pure_bot_actions.ts';
-import { calculateLegalMoves } from '../supabase/functions/_shared/bot_strategy.ts';
+} from '../supabase/functions/_shared/core/types.ts';
+import { shouldBotActCore, processBotAction } from '../supabase/functions/_shared/common/pure_bot_actions.ts';
+import { calculateLegalMoves } from '../supabase/functions/_shared/common/bot_strategy.ts';
 import { __setDealSeedOverride } from '../supabase/functions/_shared/sdk/ts/wasm/engine.ts';
 import { kernelReplayEncodeV6FromGame } from '../supabase/functions/_shared/sdk/ts/wasm/bots.ts';
 import { encodeLogs } from '../supabase/functions/_shared/sdk/ts/wire/logwire.ts';

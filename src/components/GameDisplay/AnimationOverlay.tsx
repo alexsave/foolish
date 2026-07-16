@@ -1,10 +1,10 @@
 import { useEffect, useState, useRef } from 'react';
-import { Card } from '@shared/types.ts';
+import { Card } from '@shared/core/types.ts';
 import { ANIMATION_TIME, useAnimation } from '../../contexts/AnimationContext';
 import { CardFace } from './CardFace';
 import { CardBack } from './CardBack';
 import { useServer } from '../../contexts/ServerContext';
-import { canCover } from '@shared/common_utils.ts';
+import { canCover } from '@shared/common/common_utils.ts';
 
 // Table-slot geometry cache (Stage 9). The on-table battle layout is a function of
 // only (how many battle slots there are, the viewport size) — the 4th slot in a

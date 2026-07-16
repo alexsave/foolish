@@ -8,15 +8,15 @@
 // take the rng used for the eligible-bot shuffle as a parameter (default
 // Math.random) so each caller keeps its exact behaviour.
 
-import { calculateLegalMoves } from '../../supabase/functions/_shared/bot_strategy.ts';
-import { shouldBotActCore, processBotAction } from '../../supabase/functions/_shared/pure_bot_actions.ts';
+import { calculateLegalMoves } from '../../supabase/functions/_shared/common/bot_strategy.ts';
+import { shouldBotActCore, processBotAction } from '../../supabase/functions/_shared/common/pure_bot_actions.ts';
 import {
     Game,
     PrivatePlayer,
     GAME_STATUS,
     PLAYER_STATUS,
     StrategyKey,
-} from '../../supabase/functions/_shared/types.ts';
+} from '../../supabase/functions/_shared/core/types.ts';
 
 export const createPlayer = (strategy: StrategyKey, index: number): PrivatePlayer => ({
     player_id: `bot_${index}_${strategy}`,
@@ -81,7 +81,7 @@ export async function stepBots(game: Game, rng: () => number = Math.random): Pro
     return false;
 }
 
-import { game_done } from '../../supabase/functions/_shared/common_utils.ts';
+import { game_done } from '../../supabase/functions/_shared/common/common_utils.ts';
 
 // Drive a started game until someone is the fool, no bot can act, or capIters is
 // hit. Returns the number of iterations run.

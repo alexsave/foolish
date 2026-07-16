@@ -19,7 +19,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { Card } from '../supabase/functions/_shared/types.ts';
+import { Card } from '../supabase/functions/_shared/core/types.ts';
 import { createCardEventString, getCardKey } from '../src/utils/animationUtils';
 import { staleOptimisticKeysOnTable } from '../src/state/optimisticAnimation';
 
@@ -29,7 +29,7 @@ const card: Card = { suit: 1, value: 9 };
 // How AnimationContext keys an optimistic attack: ('attack_pass', card, hand->table, self)
 const optimisticAttackKey = createCardEventString('attack_pass', card, 'hand', 'table', SELF);
 
-// The server's confirming attack broadcast (supabase/_shared/actions/attack.ts).
+// The server's confirming attack broadcast (supabase/_shared/common/actions/attack.ts).
 const serverAttackEvent = {
     type: 'attack_pass',
     player_id: SELF,

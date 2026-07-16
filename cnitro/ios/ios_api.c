@@ -708,7 +708,7 @@ static int build_encode_input(const Game *g, unsigned char *out, int cap) {
     // encode died with REPLAY_ENOTINMENU on step 0 — ~50% of 2p and ~75% of 4p
     // finished games. Derive it from the log, as the other three encoders
     // already do (tests/replay_difftest.c, tests/replay_v6_test.c,
-    // _shared/replay/encode.ts). NOTE: fio_state_json's read of
+    // _shared/common/replay/encode.ts). NOTE: fio_state_json's read of
     // g->first_attacker is correct and must stay — a live view wants the
     // CURRENT round's attacker.
     int first_attacker = -1;

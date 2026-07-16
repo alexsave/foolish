@@ -1,13 +1,13 @@
-import { GAME_STATUS, PLAYER_STATUS } from '../types.ts';
+import { GAME_STATUS, PLAYER_STATUS } from '../core/types.ts';
 import { executeWithGameLock, loadSessionLogBytes, PackedOpProducts } from './utils.ts';
-import { strategyUsesLogs, LegalMove } from '../bot_strategy.ts';
+import { strategyUsesLogs, LegalMove } from '../common/bot_strategy.ts';
 import { createClient } from 'jsr:@supabase/supabase-js';
 import {
     __botsWasmMB, __ensureBots, wasmBotDrive, wasmBotEligibleMask, wasmBotPacingMs,
     BOT_PACE, BotDrivePref,
 } from '../sdk/ts/wasm/bots.ts';
 import { __kernelWasmMB } from '../sdk/ts/wasm/engine.ts';
-import { bytesToHex, hexToBytes } from '../replay/codec.ts';
+import { bytesToHex, hexToBytes } from '../common/replay/codec.ts';
 import { bytesToBareHex } from '../sdk/ts/wire/bytes.ts';
 import { logsFromKernelExport } from '../sdk/ts/wire/logwire.ts';
 

@@ -10,8 +10,8 @@
 import './harness.ts';
 import { applySchema, resetDb, seedGame, uuid, pgPool, broadcastLog, resetBroadcastLog } from './harness.ts';
 import { executeWithGameLock, broadcastAnimationEvents, loadCompleteGame } from '../supabase/functions/_shared/adapter/utils.ts';
-import { start_game } from '../supabase/functions/_shared/game_lifecycle.ts';
-import { AnimationEvent } from '../supabase/functions/_shared/types.ts';
+import { start_game } from '../supabase/functions/_shared/common/game_lifecycle.ts';
+import { AnimationEvent } from '../supabase/functions/_shared/core/types.ts';
 
 const HUMANS = Number(process.env.BENCH_HUMANS || 6);
 const BOTS = Number(process.env.BENCH_BOTS || 0);

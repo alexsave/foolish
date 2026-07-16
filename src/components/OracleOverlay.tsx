@@ -8,7 +8,7 @@
  * ========================================================================== */
 
 import React, { useMemo } from 'react';
-import { Card } from '@shared/types.ts';
+import { Card } from '@shared/core/types.ts';
 import { useLocalization } from '../contexts/LocalizationContext';
 import {
     OracleSnapshot, OracleCandidate, oracleClassify, OracleClass,

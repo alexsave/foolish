@@ -16,19 +16,19 @@ import {
   initClientGuards, guardsReady, guardsMemBytes, canAttack, canPass, canCover, canPickup,
   canCoverPair, nextPlayerIndex, gameDone,
 } from '../src/wasm/clientGuards.ts';
-import { start_game } from '../supabase/functions/_shared/game_lifecycle.ts';
-import { calculateLegalMoves } from '../supabase/functions/_shared/bot_strategy.ts';
-import { shouldBotActCore, processBotAction } from '../supabase/functions/_shared/pure_bot_actions.ts';
+import { start_game } from '../supabase/functions/_shared/common/game_lifecycle.ts';
+import { calculateLegalMoves } from '../supabase/functions/_shared/common/bot_strategy.ts';
+import { shouldBotActCore, processBotAction } from '../supabase/functions/_shared/common/pure_bot_actions.ts';
 import {
   personalize_game, game_done, canCover as tsCanCover, get_next_player_index,
-} from '../supabase/functions/_shared/common_utils.ts';
+} from '../supabase/functions/_shared/common/common_utils.ts';
 import {
   kernelValidateAttack, kernelValidatePass, kernelValidateCover, kernelValidatePickup,
   kernelNextPlayer, kernelCanCover,
 } from '../supabase/functions/_shared/sdk/ts/wasm/engine.ts';
 import {
   Game, PersonalGame, PrivatePlayer, Card, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY,
-} from '../supabase/functions/_shared/types.ts';
+} from '../supabase/functions/_shared/core/types.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 

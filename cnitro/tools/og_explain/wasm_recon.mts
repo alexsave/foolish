@@ -14,12 +14,12 @@
 // engine's REPLAY-decode path (which reproduces the game correctly) instead of
 // re-dealing from the seed; until then this only demonstrates the query wiring.
 import { readFileSync } from 'node:fs';
-import { start_game_packed } from '/home/user/foolish/supabase/functions/_shared/game_lifecycle.ts';
+import { start_game_packed } from '../../../supabase/functions/_shared/common/game_lifecycle.ts';
 import { runPackedGameAction, applyKernelStateToGame, __setDealSeedOverride } from '/home/user/foolish/supabase/functions/_shared/sdk/ts/wasm/engine.ts';
 import { encodeAction } from '/home/user/foolish/supabase/functions/_shared/sdk/ts/wire/awire.ts';
 import { wasmChooseMoveDirect, __ensureBots, STRAT } from '/home/user/foolish/supabase/functions/_shared/sdk/ts/wasm/bots.ts';
-import { game_done } from '/home/user/foolish/supabase/functions/_shared/common_utils.ts';
-import { PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY } from '/home/user/foolish/supabase/functions/_shared/types.ts';
+import { game_done } from '../../../supabase/functions/_shared/common/common_utils.ts';
+import { PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY } from '../../../supabase/functions/_shared/core/types.ts';
 
 __ensureBots();
 const rd = JSON.parse(readFileSync(process.argv[2], 'utf8'));

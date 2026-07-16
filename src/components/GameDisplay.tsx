@@ -1,4 +1,4 @@
-import { PersonalGame } from '@shared/types.ts';
+import { PersonalGame } from '@shared/core/types.ts';
 import { useServer } from '../contexts/ServerContext';
 import { usePreventScroll } from '../hooks/usePreventScroll';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';

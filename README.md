@@ -93,7 +93,7 @@ enumeration, dealing/refill, the log stream) is compiled to WebAssembly
 (`cd cnitro && make wasm`) and embedded as base64 in
 `supabase/functions/_shared/sdk/ts/wasm/rules_wasm.ts`, so the same 29 KB module
 loads with zero asset plumbing in Deno edge functions, Node (tests, offline
-sims) and browsers. The TS files in `_shared/actions/` and parts of
+sims) and browsers. The TS files in `_shared/common/actions/` and parts of
 `common_utils.ts` are now thin bridges: they marshal the `Game` object into
 the kernel, run the action, and reconstruct the exact TS API surface —
 mutated state, `game_logs`, error messages, and the AnimationEvent stream
@@ -213,7 +213,7 @@ cd cnitro && make
 
 ### 2. The replay codec — a whole game in a QR code
 
-`cnitro/src/replay.c` (reached through `supabase/functions/_shared/replay/` and
+`cnitro/src/replay.c` (reached through `supabase/functions/_shared/common/replay/` and
 rendered by `src/replay/`) encodes a complete finished game into a single integer
 using **rANS entropy coding**, then base32s it into a URL
 (`WWW.FOOLISH.CARDS/<code>`) chosen specifically to stay inside QR alphanumeric

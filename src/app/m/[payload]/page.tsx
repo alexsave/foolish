@@ -27,7 +27,7 @@ import { AnimationProvider } from '../../../contexts/AnimationContext';
 import { GameProvider } from '../../../contexts/GameContext';
 import { DragProvider } from '../../../contexts/DragContext';
 import { FernFractalProvider } from '../../../utils/fernFractal';
-import type { PersonalGame } from '@shared/types.ts';
+import type { PersonalGame } from '@shared/core/types.ts';
 
 const GAME_ID = 'imessage';
 
@@ -56,7 +56,7 @@ export default function MessagePayloadPage() {
                 // The bytes arrive over the network here, so the module has to be
                 // ready before any of the synchronous kernel calls below.
                 await ensureBotsAsync();
-                const { base32Decode } = await import('@shared/replay/codec.ts');
+                const { base32Decode } = await import('@shared/common/replay/codec.ts');
                 const { viewToGame } = await import('@shared/sdk/ts/wire/view.ts');
 
                 // The leading char is the TEXT-level format version, so the route

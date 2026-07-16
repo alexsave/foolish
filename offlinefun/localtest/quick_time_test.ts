@@ -1,7 +1,7 @@
-import { registerBotStrategy } from '../../supabase/functions/_shared/bot_strategy.ts';
-import { game_done, seededRandom } from '../../supabase/functions/_shared/common_utils.ts';
-import { start_game } from '../../supabase/functions/_shared/game_lifecycle.ts';
-import { STRATEGY_KEY, StrategyKey } from '../../supabase/functions/_shared/types.ts';
+import { registerBotStrategy } from '../../supabase/functions/_shared/common/bot_strategy.ts';
+import { game_done, seededRandom } from '../../supabase/functions/_shared/common/common_utils.ts';
+import { start_game } from '../../supabase/functions/_shared/common/game_lifecycle.ts';
+import { STRATEGY_KEY, StrategyKey } from '../../supabase/functions/_shared/core/types.ts';
 import { EspressoStrategy } from './frozen/espresso_strategy.ts';
 import { createGame, runBotsToCompletion } from './harness.ts';
 

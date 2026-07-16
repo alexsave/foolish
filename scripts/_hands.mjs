@@ -1,6 +1,6 @@
 const ROOT='/Users/alex/Dev/foolish';
-const { urlToGame } = await import(`${ROOT}/supabase/functions/_shared/replay/codec.ts`);
-const { decodeReplay } = await import(`${ROOT}/supabase/functions/_shared/replay/decode.ts`);
+const { urlToGame } = await import(`${ROOT}/supabase/functions/_shared/common/replay/codec.ts`);
+const { decodeReplay } = await import(`${ROOT}/supabase/functions/_shared/common/replay/decode.ts`);
 const d = decodeReplay(urlToGame(process.argv[2]));
 const N=d.playerCount; const h=Array(N).fill(0);
 const names=['ALEX','CorditeMax1','Cordite2','Random2','Cordite3','Random5','CorditeMax2'];

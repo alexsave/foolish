@@ -1,4 +1,4 @@
-import { PersonalGame, PublicPlayer } from "@shared/types.ts";
+import { PersonalGame, PublicPlayer } from "@shared/core/types.ts";
 import { useAuth } from "../../contexts/AuthContext";
 import { useServer } from "../../contexts/ServerContext";
 import { useFernFractal } from "../../utils/fernFractal";

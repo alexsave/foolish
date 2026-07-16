@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
-import { Card, Game, PublicGame } from '@shared/types.ts';
-import { shouldBotActCore } from '@shared/common_utils.ts';
+import { Card, Game, PublicGame } from '@shared/core/types.ts';
+import { shouldBotActCore } from '@shared/common/common_utils.ts';
 import { useServer, useServerActions } from './ServerContext';
 import { useAuth } from './AuthContext';
 import { useParams } from 'next/navigation';

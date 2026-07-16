@@ -6,10 +6,10 @@
 // --stack-first puts the stack at [0, stackSize) growing DOWN from stackSize;
 // between exported calls no wasm frames are live, so any byte below the
 // high-water is left non-0xA5.  high-water = stackSize - lowest_untouched.
-import { game_done, shouldBotActCore } from '../supabase/functions/_shared/common_utils.ts';
-import { start_game } from '../supabase/functions/_shared/game_lifecycle.ts';
-import { processBotAction } from '../supabase/functions/_shared/pure_bot_actions.ts';
-import { Game, PrivatePlayer, PLAYER_STATUS, GAME_STATUS } from '../supabase/functions/_shared/types.ts';
+import { game_done, shouldBotActCore } from '../supabase/functions/_shared/common/common_utils.ts';
+import { start_game } from '../supabase/functions/_shared/common/game_lifecycle.ts';
+import { processBotAction } from '../supabase/functions/_shared/common/pure_bot_actions.ts';
+import { Game, PrivatePlayer, PLAYER_STATUS, GAME_STATUS } from '../supabase/functions/_shared/core/types.ts';
 
 const STACK_SIZE = Number(process.env.STACK_SIZE ?? 22528);  // current bots -z stack-size (Makefile WASM_BOT_LDFLAGS)
 

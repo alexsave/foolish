@@ -255,7 +255,7 @@ the real roster: `random`, `handwritten`, `espresso`, `robusta`,
 `cnitro/CORDITE.md`). Strategy selection mirrors the seeded bot roster
 personalities (`supabase/seed.sql`). Cordite-class bots deliberate — run
 `choose_move` off-main with a thinking indicator, and cap deliberation with
-the same env knobs the server uses (`supabase/functions/_shared/bot_strategy.ts`
+the same env knobs the server uses (`supabase/functions/_shared/common/bot_strategy.ts`
 shows the pattern). Battery guard: cap bot threads at 2 and pause deliberation
 when `ProcessInfo.thermalState >= .serious` (same rule as the future Oracle,
 `ORACLE_MONETIZATION_ENGINEERING.md` §7).
@@ -295,7 +295,7 @@ scope for v1 except one dependency: the stale-round guard from
   committed `games.version`; drop stale via the version gate
   (`shouldDropStaleSequence`, `src/state/clientReconcile.ts:44-52`).
 - **Views:** clients receive per-viewer masked state (`PersonalGame`,
-  `_shared/player_views.ts`) — your hand is cards, others are counts.
+  `_shared/common/player_views.ts`) — your hand is cards, others are counts.
 
 ### 8.2 Port strategy: two stages, deliberately
 
@@ -620,7 +620,7 @@ renders in simulator; no signing configured anywhere.
 (same roster as `supabase/seed.sql` personalities; the C files follow
 `*_strategy.c` naming — take the exact set from the Makefile's bots build).
 `fio_bot_choose_json(strategy_id, seat, ...)` calls the same `choose_move`
-entry the server bridge uses (`_shared/bot_strategy.ts:37` shows the call
+entry the server bridge uses (`_shared/common/bot_strategy.ts:37` shows the call
 shape). Map `strategy_id` ↔ roster names in one C table; expose
 `fio_strategy_count/name`.
 

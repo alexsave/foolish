@@ -16,11 +16,11 @@ import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { applySchema, resetDb, seedGame, uuid, pgPool } from './harness.ts';
 import { executeWithGameLock } from '../supabase/functions/_shared/adapter/utils.ts';
-import { personalize_game } from '../supabase/functions/_shared/common_utils.ts';
-import { start_game } from '../supabase/functions/_shared/game_lifecycle.ts';
-import { Game, AnimationEvent, PersonalGame, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, STRATEGY_KEY, Card } from '../supabase/functions/_shared/types.ts';
-import { calculateLegalMoves } from '../supabase/functions/_shared/bot_strategy.ts';
-import { validatePass as serverValidatePass } from '../supabase/functions/_shared/actions/pass.ts';
+import { personalize_game } from '../supabase/functions/_shared/common/common_utils.ts';
+import { start_game } from '../supabase/functions/_shared/common/game_lifecycle.ts';
+import { Game, AnimationEvent, PersonalGame, PrivatePlayer, GAME_STATUS, PLAYER_STATUS, STRATEGY_KEY, Card } from '../supabase/functions/_shared/core/types.ts';
+import { calculateLegalMoves } from '../supabase/functions/_shared/common/bot_strategy.ts';
+import { validatePass as serverValidatePass } from '../supabase/functions/_shared/common/actions/pass.ts';
 import { canPass as clientCanPass } from '../src/utils/gameValidation.ts';
 import { legalMovesFor, applyPlayerMove } from './dispatch.ts';
 

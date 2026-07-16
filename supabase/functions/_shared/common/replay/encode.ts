@@ -26,8 +26,8 @@
  * against (e2e/replay_v6_parity.test.ts). Keep them working, don't extend them.
  * ========================================================================== */
 
-import { Card, Game, GameLog, LOG_TYPE } from "../types.ts";
-import { ACE_VALUE } from "../constants.ts";
+import { Card, Game, GameLog, LOG_TYPE } from "../../core/types.ts";
+import { ACE_VALUE } from "../../core/constants.ts";
 import {
   bytesToBigint,
   base32Encode,
@@ -165,7 +165,7 @@ export async function encodeReplay(input: ReplayInput): Promise<EncodedReplay> {
   if (trump.value === ACE_VALUE) throw new Error("trump card cannot be an ace");
   const { actions, firstAttacker } = collectActions(input);
 
-  const eng = await import("../sdk/ts/wasm/engine.ts");
+  const eng = await import("../../sdk/ts/wasm/engine.ts");
   await eng.ensureEngineAsync();
 
   const bytes = eng.kernelReplayEncode(
@@ -245,7 +245,7 @@ export async function verifyRoundTripV6FromGame(
   logs: GameLog[],
   packedLogs?: Uint8Array,
 ): Promise<{ encoded: EncodedReplay; decoded: DecodedReplay }> {
-  const { kernelReplayEncodeV6FromGame } = await import("../sdk/ts/wasm/bots.ts");
+  const { kernelReplayEncodeV6FromGame } = await import("../../sdk/ts/wasm/bots.ts");
   const bytes = kernelReplayEncodeV6FromGame(game, seed, packedLogs);
   const x = bytesToBigint(bytes);
   const encoded: EncodedReplay = {

@@ -1,9 +1,9 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { corsHeaders, handleCors } from "../_shared/adapter/cors.ts";
 import { getAuthenticatedUser } from "../_shared/adapter/auth.ts";
-import { Game, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY } from "../_shared/types.ts";
-import { createId, personalize_game } from "../_shared/common_utils.ts";
-import { buildPlayerViewRows, buildSpectatorView } from "../_shared/player_views.ts";
+import { Game, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY } from "../_shared/core/types.ts";
+import { createId, personalize_game } from "../_shared/common/common_utils.ts";
+import { buildPlayerViewRows, buildSpectatorView } from "../_shared/common/player_views.ts";
 import { createClient } from 'jsr:@supabase/supabase-js';
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 

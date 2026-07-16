@@ -37,11 +37,11 @@ interface Result {
 function runWorker(): void {
     Promise.resolve().then(async () => {
         const { calculateLegalMoves, getBotStrategy } =
-            await import('../../supabase/functions/_shared/bot_strategy.ts');
-        const { shouldBotActCore, executeBotMove } = await import('../../supabase/functions/_shared/pure_bot_actions.ts');
-        const { game_done } = await import('../../supabase/functions/_shared/common_utils.ts');
-        const { start_game } = await import('../../supabase/functions/_shared/game_lifecycle.ts');
-        const { GAME_STATUS, PLAYER_STATUS } = await import('../../supabase/functions/_shared/types.ts');
+            await import('../../supabase/functions/_shared/common/bot_strategy.ts');
+        const { shouldBotActCore, executeBotMove } = await import('../../supabase/functions/_shared/common/pure_bot_actions.ts');
+        const { game_done } = await import('../../supabase/functions/_shared/common/common_utils.ts');
+        const { start_game } = await import('../../supabase/functions/_shared/common/game_lifecycle.ts');
+        const { GAME_STATUS, PLAYER_STATUS } = await import('../../supabase/functions/_shared/core/types.ts');
 
         const mode = process.env.AR_MODE!;
         const pcs = process.env.AR_PCS!.split(',').map(Number);

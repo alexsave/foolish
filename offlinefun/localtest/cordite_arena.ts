@@ -25,12 +25,12 @@ interface Result { pc: number; n: number; wins: number; fpSum: number; dec: numb
 function runWorker(): void {
     // Lazy imports kept inside the worker branch so the master stays light.
     Promise.resolve().then(async () => {
-        const { calculateLegalMoves } = await import('../../supabase/functions/_shared/bot_strategy.ts');
-        const { shouldBotActCore, executeBotMove } = await import('../../supabase/functions/_shared/pure_bot_actions.ts');
-        const { game_done } = await import('../../supabase/functions/_shared/common_utils.ts');
-        const { start_game } = await import('../../supabase/functions/_shared/game_lifecycle.ts');
-        const { getBotStrategy } = await import('../../supabase/functions/_shared/bot_strategy.ts');
-        const { GAME_STATUS, PLAYER_STATUS } = await import('../../supabase/functions/_shared/types.ts');
+        const { calculateLegalMoves } = await import('../../supabase/functions/_shared/common/bot_strategy.ts');
+        const { shouldBotActCore, executeBotMove } = await import('../../supabase/functions/_shared/common/pure_bot_actions.ts');
+        const { game_done } = await import('../../supabase/functions/_shared/common/common_utils.ts');
+        const { start_game } = await import('../../supabase/functions/_shared/common/game_lifecycle.ts');
+        const { getBotStrategy } = await import('../../supabase/functions/_shared/common/bot_strategy.ts');
+        const { GAME_STATUS, PLAYER_STATUS } = await import('../../supabase/functions/_shared/core/types.ts');
 
         const hero = process.env.AR_HERO!, opp = process.env.AR_OPP!;
         const pcs = process.env.AR_PCS!.split(',').map(Number);

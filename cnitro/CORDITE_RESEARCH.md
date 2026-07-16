@@ -22,7 +22,7 @@ real opponent** instead of one hardcoded policy — pursued as a separate bot,
   rollout policy), `CD_LEAF`/`CD_NO_SOLVE` (leaf/endgame solver), and a
   `cordite_old` strategy = cordite at the pre-study budget, for head-to-head.
   OpenMP fans games across cores (`make OMP=1`).
-- **TS** (the deployment target, `supabase/functions/_shared/strategies/`):
+- **TS** (the deployment target, `supabase/functions/_shared/common/strategies/`):
   parallel arenas under `offlinefun/localtest/` — `cordite_arena.ts` (hero vs a
   filler field) and `cordite_h2h.ts` (NEW seat-0 vs the **frozen origin/main
   cordite** in the other seats; "fair" win share is 1/n). The final word is

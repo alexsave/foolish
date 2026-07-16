@@ -24,8 +24,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-import { decodeReplay } from '../supabase/functions/_shared/replay/decode.ts';
-import { bytesToBigint } from '../supabase/functions/_shared/replay/codec.ts';
+import { decodeReplay } from '../supabase/functions/_shared/common/replay/decode.ts';
+import { bytesToBigint } from '../supabase/functions/_shared/common/replay/codec.ts';
 import { gunzip } from '../supabase/functions/_shared/sdk/ts/wasm/gunzip.ts';
 import { buildReplayFrames } from '../src/replay/frames.ts';
 import { buildOracleJob, findDecisionIndex } from '../src/oracle/replayOracleInput.ts';

@@ -5,13 +5,13 @@
 // staying a pure function of the move log, so it replays.
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { start_game_packed } from '../supabase/functions/_shared/game_lifecycle.ts';
+import { start_game_packed } from '../supabase/functions/_shared/common/game_lifecycle.ts';
 import { runPackedGameAction, applyKernelStateToGame, __setDealSeedOverride } from '../supabase/functions/_shared/sdk/ts/wasm/engine.ts';
 import { encodeAction } from '../supabase/functions/_shared/sdk/ts/wire/awire.ts';
 import { logsFromKernelExport } from '../supabase/functions/_shared/sdk/ts/wire/logwire.ts';
 import { wasmChooseMoveDirect, __ensureBots, __strategySeedProbe, STRAT } from '../supabase/functions/_shared/sdk/ts/wasm/bots.ts';
-import { game_done } from '../supabase/functions/_shared/common_utils.ts';
-import { PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY } from '../supabase/functions/_shared/types.ts';
+import { game_done } from '../supabase/functions/_shared/common/common_utils.ts';
+import { PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY } from '../supabase/functions/_shared/core/types.ts';
 
 __ensureBots();
 const SEED = process.env.SC_SEED || 'a57de70a4b96a19c661dedab5cd448bb5eca2379642badb14043cebf15912478';

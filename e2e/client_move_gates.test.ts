@@ -19,7 +19,7 @@ import {
 } from '../src/utils/gameValidation.ts';
 import {
   PersonalGame, PublicPlayer, Card, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY,
-} from '../supabase/functions/_shared/types.ts';
+} from '../supabase/functions/_shared/core/types.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 

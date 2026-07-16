@@ -7,13 +7,13 @@
 // {game, events}; executeWithGameLock (via wrap400) does the commit.
 
 import { ExecutionParams, broadcastToGameUser, PackedOpProducts } from './utils.ts';
-import { ANIMATION_EVENT_TYPE, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY, SERVER_EVENT_TYPE, AnimationEvent, Game } from '../types.ts';
-import { cloneGame, verify_player_in_game } from '../common_utils.ts';
-import { start_game, start_game_packed } from '../game_lifecycle.ts';
-import { MAX_PLAYERS } from '../constants.ts';
-import { handleRearrangeHand as applyRearrangeHand } from '../actions/rearrange.ts';
+import { ANIMATION_EVENT_TYPE, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY, SERVER_EVENT_TYPE, AnimationEvent, Game } from '../core/types.ts';
+import { cloneGame, verify_player_in_game } from '../common/common_utils.ts';
+import { start_game, start_game_packed } from '../common/game_lifecycle.ts';
+import { MAX_PLAYERS } from '../core/constants.ts';
+import { handleRearrangeHand as applyRearrangeHand } from '../common/actions/rearrange.ts';
 import { runPackedRearrange, PackedRunOk } from '../sdk/ts/wasm/engine.ts';
-import { bytesToHex } from '../replay/codec.ts';
+import { bytesToHex } from '../common/replay/codec.ts';
 import { bytesToBareHex } from '../sdk/ts/wire/bytes.ts';
 import { logsFromKernelExport } from '../sdk/ts/wire/logwire.ts';
 import { createClient } from 'jsr:@supabase/supabase-js';

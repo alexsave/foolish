@@ -10,8 +10,8 @@ import {
     broadcastPackedEventBuffers, commitGame, executeWithGameLock,
     finalizeEndedGame, supabaseClient,
 } from './utils.ts';
-import { GAME_STATUS } from '../types.ts';
-import { verify_player_in_game } from '../common_utils.ts';
+import { GAME_STATUS } from '../core/types.ts';
+import { verify_player_in_game } from '../common/common_utils.ts';
 import { ACTION_STATUS, AwireMove, decodeAction, REJECT_STALE_ROUND } from '../sdk/ts/wire/awire.ts';
 import { getCachedGame, invalidateCachedGame } from './game_cache.ts';
 
@@ -121,7 +121,7 @@ export async function executePackedAction(
         // ONE synchronous kernel section: load blob -> apply wire -> finalize
         // win -> serialize state + logs + every recipient's masked event
         // stream. Lazy import keeps the wasm embed off lobby-only cold starts.
-        const { hexToBytes, bytesToHex } = await import('../replay/codec.ts');
+        const { hexToBytes, bytesToHex } = await import('../common/replay/codec.ts');
         const { runPackedAction, materializeKernelGame } = await import('../sdk/ts/wasm/engine.ts');
         const { logsFromKernelExport } = await import('../sdk/ts/wire/logwire.ts');
         const { bytesToBareHex } = await import('../sdk/ts/wire/bytes.ts');
@@ -205,11 +205,11 @@ async function legacyFallback(
 ): Promise<PackedActionOutcome> {
     const move = decodeAction(wire);
     if (!move) throw new Error('malformed action wire');
-    const { handleAttack } = await import('../actions/attack.ts');
-    const { handleCover } = await import('../actions/cover.ts');
-    const { handlePass } = await import('../actions/pass.ts');
-    const { handlePickup } = await import('../actions/pickup.ts');
-    const { handleGood } = await import('../actions/good.ts');
+    const { handleAttack } = await import('../common/actions/attack.ts');
+    const { handleCover } = await import('../common/actions/cover.ts');
+    const { handlePass } = await import('../common/actions/pass.ts');
+    const { handlePickup } = await import('../common/actions/pickup.ts');
+    const { handleGood } = await import('../common/actions/good.ts');
     let rejected = false;
     const result = await executeWithGameLock(gameId, async (game) => {
         rejected = false; // reset per CAS attempt — the op re-runs on conflict

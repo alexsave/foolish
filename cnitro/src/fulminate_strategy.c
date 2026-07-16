@@ -1,5 +1,5 @@
 // Fulminate — cordite + in-game opponent modeling. Port of
-// supabase/functions/_shared/strategies/fulminate_strategy.ts and the
+// supabase/functions/_shared/common/strategies/fulminate_strategy.ts and the
 // fulminate-only profiling half of cordite_core.ts (profileSeats 1667-1897,
 // seatWeightsFromProfiles 1983-2057) back into the C engine the TS was itself
 // ported from.

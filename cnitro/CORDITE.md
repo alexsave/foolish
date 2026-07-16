@@ -389,7 +389,7 @@ cd cnitro && make
 
 ## Production TS port (cordite + cordite_max)
 
-Shipped in `supabase/functions/_shared/strategies/`:
+Shipped in `supabase/functions/_shared/common/strategies/`:
 
 - `cordite_core.ts` — transliteration of this C code: compact int-card sim
   engine, handwritten + espresso rollout policies, belief builder, CRN

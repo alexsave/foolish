@@ -5,8 +5,8 @@
 // head-to-head against the OLD one in TS. Not wired into the production
 // strategy registry; registered on demand by the h2h harness.
 
-import { Card, Game, GameLog, PLAYER_STATUS } from '../../../supabase/functions/_shared/types.ts';
-import { BotStrategy, LegalMove } from '../../../supabase/functions/_shared/bot_interfaces.ts';
+import { Card, Game, GameLog, PLAYER_STATUS } from '../../../supabase/functions/_shared/core/types.ts';
+import { BotStrategy, LegalMove } from '../../../supabase/functions/_shared/core/bot_interfaces.ts';
 import {
     BeliefLog, CorditeParams, CORDITE_PARAMS,
     MOVE_ATTACK, MOVE_COVER, MOVE_GOOD, MOVE_PASS, MOVE_PICKUP,

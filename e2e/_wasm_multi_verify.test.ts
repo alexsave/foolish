@@ -7,12 +7,12 @@
 //     TSX_TSCONFIG_PATH=e2e/tsconfig.json node --import tsx --test e2e/_wasm_multi_verify.test.ts
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
-import { start_game_packed } from '../supabase/functions/_shared/game_lifecycle.ts';
+import { start_game_packed } from '../supabase/functions/_shared/common/game_lifecycle.ts';
 import { runPackedGameAction, applyKernelStateToGame, __setDealSeedOverride } from '../supabase/functions/_shared/sdk/ts/wasm/engine.ts';
 import { encodeAction } from '../supabase/functions/_shared/sdk/ts/wire/awire.ts';
 import { logsFromKernelExport } from '../supabase/functions/_shared/sdk/ts/wire/logwire.ts';
 import { wasmChooseMoveDirect, __ensureBots, STRAT } from '../supabase/functions/_shared/sdk/ts/wasm/bots.ts';
-import { PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY } from '../supabase/functions/_shared/types.ts';
+import { PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY } from '../supabase/functions/_shared/core/types.ts';
 
 __ensureBots();
 const VAL: Record<number, string> = { 1: '2', 2: '3', 3: '4', 4: '5', 5: '6', 6: '7', 7: '8', 8: '9', 9: '10', 10: 'J', 11: 'Q', 12: 'K', 13: 'A' };

@@ -20,14 +20,14 @@ import { executeWithGameLock, loadCompleteGame } from '../supabase/functions/_sh
 import { handleMetaAction } from '../supabase/functions/_shared/adapter/meta_actions.ts';
 import {
   Game, PersonalGame, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY, PrivatePlayer,
-} from '../supabase/functions/_shared/types.ts';
-import { personalize_game } from '../supabase/functions/_shared/common_utils.ts';
-import { start_game } from '../supabase/functions/_shared/game_lifecycle.ts';
+} from '../supabase/functions/_shared/core/types.ts';
+import { personalize_game } from '../supabase/functions/_shared/common/common_utils.ts';
+import { start_game } from '../supabase/functions/_shared/common/game_lifecycle.ts';
 import { kernelLegalMoves, kernelShouldAct, serializeGameState, __setKernelSeedSource } from '../supabase/functions/_shared/sdk/ts/wasm/engine.ts';
 import { encodeAction, decodeAction, encodeActionRequest, decodeActionRequest, encodeActionResponse, decodeActionResponse, ACTION_STATUS, AwireKindName } from '../supabase/functions/_shared/sdk/ts/wire/awire.ts';
-import { buildPackedGameBytes, gameViewFromRow } from '../supabase/functions/_shared/sdk/ts/packed_game.ts';
+import { buildPackedGameBytes, gameViewFromRow } from '../supabase/functions/_shared/common/packed_game.ts';
 import { decodePackedGame, encodeGamesList, decodePackedGamesList } from '../supabase/functions/_shared/sdk/ts/wire/view.ts';
-import { bytesToHex } from '../supabase/functions/_shared/replay/codec.ts';
+import { bytesToHex } from '../supabase/functions/_shared/common/replay/codec.ts';
 import { validateActionWire, initClientGuards } from '../src/wasm/clientGuards.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
@@ -118,11 +118,11 @@ test('validateActionWire: legal enumerated moves gate 0, illegal reject, malform
       // Advance the game along a random legal move via the JS path.
       if (menu.length > 0) {
         const pick = menu[ri(menu.length)];
-        const { handleAttack } = await import('../supabase/functions/_shared/actions/attack.ts');
-        const { handleCover } = await import('../supabase/functions/_shared/actions/cover.ts');
-        const { handlePass } = await import('../supabase/functions/_shared/actions/pass.ts');
-        const { handlePickup } = await import('../supabase/functions/_shared/actions/pickup.ts');
-        const { handleGood } = await import('../supabase/functions/_shared/actions/good.ts');
+        const { handleAttack } = await import('../supabase/functions/_shared/common/actions/attack.ts');
+        const { handleCover } = await import('../supabase/functions/_shared/common/actions/cover.ts');
+        const { handlePass } = await import('../supabase/functions/_shared/common/actions/pass.ts');
+        const { handlePickup } = await import('../supabase/functions/_shared/common/actions/pickup.ts');
+        const { handleGood } = await import('../supabase/functions/_shared/common/actions/good.ts');
         try {
           switch (pick.type) {
             case 'attack': handleAttack(game, actor.player_id, pick.cards!); break;

@@ -12,12 +12,12 @@ const R = process.env.FOOLISH_ROOT ||
   resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 process.env.TSX_TSCONFIG_PATH ||= `${R}/e2e/tsconfig.json`;
 
-const { start_game_packed, reconstructSeededDeal } = await import(`${R}/supabase/functions/_shared/game_lifecycle.ts`);
+const { start_game_packed, reconstructSeededDeal } = await import(`${R}/supabase/functions/_shared/common/game_lifecycle.ts`);
 const { runPackedGameAction, applyKernelStateToGame, __setDealSeedOverride } = await import(`${R}/supabase/functions/_shared/sdk/ts/wasm/engine.ts`);
 const { encodeAction } = await import(`${R}/supabase/functions/_shared/sdk/ts/wire/awire.ts`);
 const { logsFromKernelExport, decodeLogs } = await import(`${R}/supabase/functions/_shared/sdk/ts/wire/logwire.ts`);
-const { verifyRoundTripV6 } = await import(`${R}/supabase/functions/_shared/replay/encode.ts`);
-const { PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY } = await import(`${R}/supabase/functions/_shared/types.ts`);
+const { verifyRoundTripV6 } = await import(`${R}/supabase/functions/_shared/common/replay/encode.ts`);
+const { PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY } = await import(`${R}/supabase/functions/_shared/core/types.ts`);
 
 const spec = JSON.parse(readFileSync(process.argv[2], 'utf8'));
 const SEED = spec.seed;
