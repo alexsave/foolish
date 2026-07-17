@@ -1,12 +1,30 @@
 // LOCAL edge-runtime memory/CPU diagnostic. To use: cp this file to
-// supabase/functions/memtest/index.ts, run `supabase functions serve`, then
+// server/impls/supabase/functions/memtest/index.ts (memory.yml does this), run
+// `supabase --workdir server/impls functions serve`, then
 // curl "http://127.0.0.1:54321/functions/v1/memtest?keys=semtex,octogen&maxmoves=8".
-// Lives OUTSIDE supabase/functions so deploys can never ship it.
+// Lives OUTSIDE the functions tree so deploys can never ship it.
 // LOCAL-ONLY diagnostic (never deploy): imports the full bot stack and plays
 // bot-vs-bot games in-memory — no DB — to reproduce the production
 // "Memory limit exceeded" kills under the real edge runtime via
 // `supabase functions serve`. Query: ?keys=semtex,octogen&games=1
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
+
+// Static side-effect imports of the whole bot stack. REQUIRED: post-A10 the
+// stack lives in server/api + repo-root sdk, OUTSIDE the served functions/ tree.
+// `functions serve` only stages modules reachable by STATIC import into its
+// compile sandbox — it does NOT follow the literal `await import()` strings
+// below — so without these the dynamic imports 404 with "Module not found"
+// (production `functions deploy` bundles the dynamic graph, so it is unaffected).
+// These pull server/api + sdk into the sandbox; the dynamic import()s then
+// resolve against the bundled files. Keep this list in sync with MODS below.
+import '../../../../api/core/types.ts';
+import '../../../../api/core/constants.ts';
+import '../../../../../sdk/ts/wasm/engine.ts';
+import '../../../../api/common/common_utils.ts';
+import '../../../../../sdk/ts/wasm/bots.ts';
+import '../../../../api/common/bot_strategy.ts';
+import '../../../../api/common/pure_bot_actions.ts';
+import '../../../../api/common/game_lifecycle.ts';
 
 serve(async (req: Request) => {
     const url = new URL(req.url);
