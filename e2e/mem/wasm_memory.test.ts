@@ -107,20 +107,29 @@ test('guards.wasm linear memory is pinned flat at 1 page', () => {
     assert.equal(max, 1, `guards.wasm max memory is ${max} pages; expected a hard 1-page pin`);
 });
 
-test("bots.wasm declared INITIAL memory is 14 pages (13 + LEAFBOOK read-only data)", () => {
+test("bots.wasm declared INITIAL memory is 36 pages (static buffers, not the runtime TT)", () => {
     // bots.wasm can't be pinned — it bump-allocates a per-family transposition
     // table at runtime (see the flat-across-families test below). So we assert
-    // the INITIAL declared memory only. Was 13 pages after the 22 KiB shadow-stack
-    // shrink; the octogen/cordite LEAFBOOK endgame oracle (c/LEAFBOOK.md)
-    // adds ~2.6 KiB of static read-only book data, which crosses into a 14th page.
-    // That is the book's genuine footprint, deliberately accepted — the SOLVER's
-    // hot working set is what must stay in L1, and it does: the 32 KiB TT + 2.6 KiB
-    // book = 34.6 KiB, well under the 64 KiB L1 page (docs/L1_SPEND_PLAN.md §6). A
-    // regression back UP from 14 (a new static buffer, or the stack creeping up)
-    // trips this. Read straight from the shipped gz artifact.
+    // the INITIAL declared memory only: the static (data + bss) footprint the
+    // linker places below __heap_base. It is dominated by a handful of large,
+    // deliberate static buffers (llvm-nm on the objects):
+    //   - g_io               400 KiB  the WASM_IO_CAP=409600 log-import buffer
+    //   - solve_ws / rs_play  272 KiB  each, the cordite solver working set (the
+    //                                  CD_WASM_OVERLAY aliases them, so the pair
+    //                                  is one region, not two)
+    //   - g_scratch/g_moves   232 KiB  each, move enumeration at MAX_LEGAL_MOVES
+    //   - g_game / g_rs_game  136 KiB  each, the resident + replay Game structs
+    //   - msg_seal.scratch /  136 KiB  each, the FMSG seal + rebase scratch games
+    //     msg_rebase.probe              (iMessage is deliberately linked here for
+    //                                    the browser's base64 twin)
+    // Sum ~= 36 pages (2.36 MiB). The SOLVER's hot working set still stays in L1
+    // at runtime (32 KiB TT + book, docs/L1_SPEND_PLAN.md §6); this is the cold
+    // static image, and the edge runtime maps it lazily. A regression UP from 36
+    // (a new static buffer, or the stack creeping up) trips this. Read straight
+    // from the shipped gz artifact.
     const wasm = new Uint8Array(gunzipSync(readFileSync(resolve('sdk/ts/wasm/bots.wasm.gz'))));
     const { min } = memLimits(wasm);
-    assert.equal(min, 14, `bots.wasm initial memory is ${min} pages (${min * PAGE}B); expected 14 (13 + the LEAFBOOK's ~2.6 KiB static data)`);
+    assert.equal(min, 36, `bots.wasm initial memory is ${min} pages (${min * PAGE}B); expected 36 (the deliberate static buffers — IO cap, solver working set, FMSG scratch games)`);
 });
 
 test('loading the bot kernel (read + gunzip + instantiate) fits a 64MB-old-space node', () => {
