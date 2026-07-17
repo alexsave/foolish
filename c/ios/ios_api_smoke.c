@@ -61,7 +61,7 @@ static int replay_sweep(void) {
 
             int steps = 0;
             while (fio_game_over() < 0 && steps++ < 5000)
-                if (fio_bot_step_json(-1, buf, sizeof(buf)) <= 0) break;
+                if (fio_bot_drive_packed(0, buf, sizeof(buf)) < 0) break;  // human_mask 0 → all bots
 
             int fool = fio_game_over();
             if (fool < 0) { printf("FAIL sweep p=%d seed=%d did not finish\n", players, s); return 1; }
@@ -341,9 +341,8 @@ int main(void) {
                 }
             } else break; // seat 0 flagged eligible but no concrete move — shouldn't happen
         } else {
-            // not the human's turn: drive exactly one bot action
-            int acted = fio_bot_step_json(0, buf, sizeof(buf));
-            if (acted == 0) break; // genuine deadlock (no one can move) — bail
+            // not the human's turn: drive the bots one cycle (all seats but 0).
+            if (fio_bot_drive_packed(1, buf, sizeof(buf)) < 0) break;
         }
     }
 
