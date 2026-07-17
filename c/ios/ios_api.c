@@ -935,6 +935,58 @@ int fio_msg_decode_json(const uint8_t *payload, int len, int viewer, char *out, 
     return j_finish(&j);
 }
 
+// The same decode+adopt as fio_msg_decode_json, but the envelope metadata is
+// handed back as a PACKED fixed-layout blob (Swift parses it with
+// MessageEnvelope.decode) — no JSON, and no embedded state/moves (the phone
+// reads those through fio_state_packed / fio_legal_packed in the same actor).
+// Layout: phase(1) n_players(1) last_actor_seat(1) round(1) turn(u16 LE)
+//   game_id(u64 LE) parent8(8) digest(32) n_joins(1)
+//   then n_joins * { seat(1) name_len(1) name[name_len] }.
+int fio_msg_decode_packed(const uint8_t *payload, int len, unsigned char *out, int cap) {
+    if (!payload || !out || cap <= 0) return FIO_EBADARG;
+    g_last_msg_error = 0;
+
+    MsgEnvelope e;
+    int rc = msg_decode(payload, len, &e);
+    if (rc != MSG_EOK) { g_last_msg_error = rc; return FIO_EMSG; }
+
+    // Digest BEFORE anything reuses the bytes — it is the child's parent8 and
+    // Rule P's tiebreak.
+    uint8_t digest[SHA256_DIGEST_LEN];
+    msg_digest(payload, len, digest);
+
+    rc = msg_replay(&e, &g_game);   // validation IS replay
+    if (rc != MSG_EOK) { g_last_msg_error = rc; return FIO_EMSG; }
+
+    g_has_game = 1;
+    g_msg_round = e.round;
+    memcpy(g_deal_seed, e.seed, FOOLISH_SEED_LEN);
+    g_has_deal_seed = 1;
+    for (int i = 0; i < e.n_players; i++) g_seat_roster[i] = (int8_t)bot_roster_find("random");
+
+    int need = 4 + 2 + 8 + MSG_PARENT_LEN + SHA256_DIGEST_LEN + 1;
+    for (int i = 0; i < e.n_joins; i++) need += 2 + e.joins[i].name_len;
+    if (cap < need) return FIO_ECAP;
+
+    unsigned char *q = out;
+    *q++ = e.phase;
+    *q++ = e.n_players;
+    *q++ = e.last_actor_seat;
+    *q++ = e.round;
+    *q++ = (unsigned char)(e.turn & 0xff);
+    *q++ = (unsigned char)((e.turn >> 8) & 0xff);
+    for (int i = 0; i < 8; i++) *q++ = (unsigned char)((e.game_id >> (8 * i)) & 0xff);
+    memcpy(q, e.parent8, MSG_PARENT_LEN); q += MSG_PARENT_LEN;
+    memcpy(q, digest, SHA256_DIGEST_LEN); q += SHA256_DIGEST_LEN;
+    *q++ = (unsigned char)e.n_joins;
+    for (int i = 0; i < e.n_joins; i++) {
+        *q++ = e.joins[i].seat;
+        *q++ = e.joins[i].name_len;
+        memcpy(q, e.joins[i].name, e.joins[i].name_len); q += e.joins[i].name_len;
+    }
+    return (int)(q - out);
+}
+
 int fio_msg_encode(int phase, int last_actor_seat, uint64_t game_id,
                    const uint8_t parent8[8], const char *joins_json,
                    uint8_t *out, int cap) {

@@ -59,6 +59,18 @@ final class MessageEnvelopeTests: XCTestCase {
         }
     }
 
+    /// The PACKED envelope decode (#17) is byte-for-byte the same MessageEnvelope
+    /// the JSON bridge produced — verified before the bridge comes out.
+    func testPackedEnvelopeDecodeMatchesJSON() async throws {
+        let k = MessageKernel.shared
+        for f in fixtures {
+            let payload = bytes(f.hex)
+            let viaJSON = try await k.decodeJSON(payload: payload, viewer: 0)
+            let viaPacked = try await k.decode(payload: payload, viewer: 0)
+            XCTAssertEqual(viaPacked, viaJSON, "\(f.players)p envelope diverged packed vs JSON")
+        }
+    }
+
     /// Decoding ADOPTS: afterwards the resident game IS the payload's game, and
     /// the ordinary engine calls read it. That is what makes a turn continue
     /// from what it decoded, with no second copy of the state anywhere.
