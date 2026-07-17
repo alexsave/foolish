@@ -127,6 +127,15 @@ public final class MessageTurnController: ObservableObject {
         await refresh()
     }
 
+    /// The joins to seal: the parent's, plus MY seat if it wasn't named yet — a
+    /// joiner appends their own nickname the first time they act (§5.2), so a 2p
+    /// opponent stops showing as "Seat 2" once they reply. Seat order preserved.
+    var sealJoins: [MessageJoin] {
+        if joins.contains(where: { $0.seat == mySeat }) { return joins }
+        let mine = MessageJoin(seat: mySeat, name: MessageGameStore.shared.nickname)
+        return (joins + [mine]).sorted { $0.seat < $1.seat }
+    }
+
     /// Seal the staged chain into the next bubble's payload. The kernel derives
     /// turn/round from the body it writes, so a device cannot emit a chain it
     /// would itself reject. Phase is FINISHED if my move ended the game, else LIVE.
@@ -136,7 +145,7 @@ public final class MessageTurnController: ObservableObject {
                               lastActorSeat: mySeat,
                               gameId: gameId,
                               parent8: parent8,
-                              joins: joins)
+                              joins: sealJoins)
     }
 
     /// First 8 bytes of a hex digest, zero-padded — the parent-pointer tag (§7.4).
