@@ -105,6 +105,11 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: cards.foolish.app.MessagesExtension
         INFOPLIST_FILE: FoolishMessages/Info.plist
+        # The Messages drawer shows a WIDE (4:3) icon, a different asset from the
+        # host app's square AppIcon — a Messages extension without it is rejected
+        # at upload. The set is the jester-Д cropped to 4:3 (FoolishMessages/
+        # Assets.xcassets/iMessage App Icon).
+        ASSETCATALOG_COMPILER_APPICON_NAME: "iMessage App Icon"
         # The extension's memory ceiling is the reason this target stays thin:
         # SwiftUI + libfoolish only — no wasm, no WKWebView, no bots, no Oracle
         # (§17.5).
