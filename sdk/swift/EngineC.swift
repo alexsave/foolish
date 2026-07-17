@@ -52,15 +52,6 @@ public actor EngineC {
 
     // MARK: observation
 
-    public func stateData(viewer: Int) throws -> Data {
-        try json { fio_state_json(Int32(viewer), $0, $1) }
-    }
-    public func publicStateData() throws -> Data {
-        try json { fio_public_state_json($0, $1) }
-    }
-    public func legalMovesData(seat: Int) throws -> Data {
-        try json { fio_legal_moves_json(Int32(seat), $0, $1) }
-    }
     /// Raw PACKED masked-state bytes for `viewer` (view.c state_put) — the wire
     /// itself, undecoded. Used where the exact bytes matter (golden hashing),
     /// so nothing rides the JSON surface (§16.0 packed-wire rule).
@@ -102,14 +93,6 @@ public actor EngineC {
     ///
     /// Deprecated for the app's bot loop: it drives the FIRST eligible seat and
     /// cannot bundle silent actions. `botDrive` is the cycle the website runs.
-    public func botStep(humanSeat: Int) throws -> Move? {
-        var data: Data?
-        let rc = try jsonAllowingEmpty({ fio_bot_step_json(Int32(humanSeat), $0, $1) }, into: &data)
-        if rc == 0 { return nil }          // no bot acted
-        guard let d = data, !d.isEmpty else { return nil }
-        return try JSONDecoder().decode(Move.self, from: d)
-    }
-
     /// Run one bot cycle (docs/C_CORE_CONSOLIDATION.md F2/F3): the kernel picks
     /// fairly among simultaneously-eligible bots, applies 0..n actions, bundles
     /// the silent ones, and hands back how long to wait. `humanSeats` are the
@@ -231,26 +214,6 @@ public actor EngineC {
             if n == Self.eCap {
                 cap *= 2
                 if cap > (1 << 23) { throw EngineError.capacity }   // 8MB ceiling
-                continue
-            }
-            try Self.check(n)
-        }
-    }
-
-    /// Like `json`, but a return of 0 (no output) is a valid "nothing happened"
-    /// result rather than an error. Writes the bytes into `out` and returns the
-    /// raw code (0 = empty, >0 = wrote bytes).
-    private func jsonAllowingEmpty(_ call: (UnsafeMutablePointer<CChar>, Int32) -> Int32,
-                                   into out: inout Data?) throws -> Int32 {
-        var cap = 16 * 1024
-        while true {
-            var buf = [CChar](repeating: 0, count: cap)
-            let n = call(&buf, Int32(cap))
-            if n == 0 { out = nil; return 0 }
-            if n > 0 { out = Data(bytes: buf, count: Int(n)); return n }
-            if n == Self.eCap {
-                cap *= 2
-                if cap > (1 << 23) { throw EngineError.capacity }
                 continue
             }
             try Self.check(n)
