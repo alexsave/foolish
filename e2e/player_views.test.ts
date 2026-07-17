@@ -161,6 +161,54 @@ test('a move refreshes each human\'s cached view (version bumped, still masked &
   }
 });
 
+// #24 / #15 desync: the end-of-game row reaches a client only over a
+// fire-and-forget realtime push; lose it and the client is stranded on the table
+// (WinView never shown). The client fix is a plain refetch on feed-silence
+// (OnlineGame's resync watchdog) — and a refetch is exactly `viewsFor`. So the
+// fix is sound iff, once a game ends, EVERY human already has a TERMINAL
+// player_views row a refetch retrieves. This drives a real 2-human game to
+// game-over through the live move-commit path and proves that.
+test('#24: at game-over every human has a terminal player_views row a refetch retrieves', async () => {
+  const gameId = `e${uuid().slice(0, 5)}`;
+  const h1 = uuid(), h2 = uuid();
+  await seedGame(gameId, [
+    { id: h1, name: 'H1', is_ai: false, strategy_key: 'human' },
+    { id: h2, name: 'H2', is_ai: false, strategy_key: 'human' },
+  ]);
+  await executeWithGameLock(gameId, async (game) =>
+    handleMetaAction({ user: { id: h1 } as any, user_name: 'H1', body: { type: 'start', game_id: gameId }, game, reqId: 'r' }),
+    'r', false);
+
+  // Lowest-first legal move each commit (the same enumeration the bot loop uses),
+  // through executeWithGameLock → commitGame, which rewrites player_views every
+  // move — including the terminal one.
+  let status: string = GAME_STATUS.PLAYING;
+  for (let i = 0; i < 2000 && status !== GAME_STATUS.GAME_OVER; i++) {
+    const { game } = await executeWithGameLock(gameId, async (game) => {
+      const pms = legalMovesFor(game);
+      const events = pms.length ? applyPlayerMove(game, pms[0]) : [];
+      return { game, events };
+    }, 'r', true);
+    status = game.status;
+    if (status !== GAME_STATUS.GAME_OVER && legalMovesFor(game).length === 0) break; // guard a stall
+  }
+  assert.equal(status, GAME_STATUS.GAME_OVER, 'the driven game reached game-over');
+
+  // The refetch a stranded client's watchdog performs — a plain SELECT.
+  const views = await viewsFor(gameId);
+  assert.equal(views.size, 2, 'a terminal row for EACH human (server writes all seats)');
+  for (const pid of [h1, h2]) {
+    const row = views.get(pid)!;
+    assert.equal(row.status, GAME_STATUS.GAME_OVER, `${pid} row denormalized game_over`);
+    const decoded = decodePackedGame(hexToBytes(row.view))!.game as any;
+    assert.equal(decoded.status, GAME_STATUS.GAME_OVER, `${pid} refetch decodes as GAME_OVER → WinView`);
+    // The fool is settled in the terminal view (viewer-independent), so both
+    // clients — not just the one who made the last move — can render the result.
+    assert.ok(Array.isArray(decoded.elimination_order) && decoded.elimination_order.length >= 1,
+      `${pid} terminal view carries the elimination order`);
+  }
+});
+
 test('backfill (buildPlayerViewUpserts) rebuilds ALL participants byte-identically, fill-if-absent never overwrites', async () => {
   const gameId = `b${uuid().slice(0, 5)}`;
   const h1 = uuid(), h2 = uuid(), b1 = uuid();
