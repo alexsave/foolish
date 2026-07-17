@@ -40,13 +40,22 @@ const mkGame = (np: number): Game => ({
 });
 
 // A real replay stream from the shipped tutorial game, rebuilt as an
-// encode-input so BOTH replay directions run against rules.wasm. encodeReplay
-// must round-trip the decoded stream back to the same integer (this is the
-// verifyRoundTrip contract), which also gives us a strong codec-correctness
-// check for free.
+// encode-input so BOTH replay directions run against rules.wasm.
+//
+// The round-trip target is NOT the tutorial constant itself. There is one C
+// coder (c/src/replay.c), reached two ways: the tutorial code was cut from the
+// game + its deal SEED (kernelReplayEncodeV6FromGame), so it carries the
+// canonical deck tail — a self-contained v6 replay that rebuilds the deal.
+// encodeReplay here is handed only the decoded LOG stream; the seed is not
+// recoverable from public logs, so the kernel emits the shorter from-logs form
+// (no deck tail). The two forms are the same coder on different inputs, so
+// encode(decode(v6)) != v6 by construction — comparing them is the mistake that
+// broke this once (A10 gave the tutorial its deck tail). What IS a true
+// round-trip, and what this test wants, is the from-logs form's own fixpoint:
+// encode is deterministic and decode∘encode is idempotent, so re-encoding the
+// same stream across an interleaved replay call must land on the same integer.
 async function tutorialReplay(): Promise<{ x: bigint; input: ReplayInput }> {
-  const x = codeToGame(TUTORIAL_MOVES_CODE);
-  const dec = await decodeReplay(x);            // decode direction — replay family
+  const dec = await decodeReplay(codeToGame(TUTORIAL_MOVES_CODE)); // real stream — replay family
   const n = dec.playerCount;
   const playerIds = Array.from({ length: n }, (_, i) => `p${i}`);
   const input: ReplayInput = {
@@ -60,6 +69,7 @@ async function tutorialReplay(): Promise<{ x: bigint; input: ReplayInput }> {
     })) as ReplayInput['logs'],
     flipped: dec.trumpCard,
   };
+  const x = (await encodeReplay(input)).x;      // the from-logs code THIS stream encodes to
   return { x, input };
 }
 
@@ -68,7 +78,7 @@ async function tutorialReplay(): Promise<{ x: bigint; input: ReplayInput }> {
 // bytes, between the menu/state reads around it.
 async function hammerReplay(x: bigint, input: ReplayInput): Promise<void> {
   const enc = await encodeReplay(input);
-  assert.equal(enc.x, x, 'encode(decode(tutorial)) diverged — replay codec / overlay corruption');
+  assert.equal(enc.x, x, 'from-logs re-encode diverged across the interleave — overlay corruption');
   const dec = await decodeReplay(x);
   assert.ok(dec.logs.length > 0, 'decode produced an empty stream — overlay corruption');
 }
