@@ -100,7 +100,11 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # 24, not 20: e2e/wasm_asset_doors spawns a real ESM child with
+          # --experimental-strip-types (Node 22+), and Node 20's older ESM loader
+          # hooks don't resolve tsx's dynamic-import() @sdk/@api aliases (they work
+          # on 24 — verified locally). Both are test-runtime limits, not code bugs.
+          node-version: 24
 
       - name: Install dependencies
         run: npm install

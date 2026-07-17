@@ -50,11 +50,14 @@ function readAssetSync(name: WasmModuleName): Uint8Array | null {
 }
 
 async function readAssetAsync(name: WasmModuleName): Promise<Uint8Array | null> {
-    const sync = readAssetSync(name);
-    if (sync) return sync;
     // deno-lint-ignore no-explicit-any
     const g = globalThis as any;
+    // Deno FIRST, and async: routing through readAssetSync here would run
+    // Deno.readFileSync inside an async callback, which Deno warns against and
+    // will disallow. Node's CJS/require path stays sync below (Deno is handled).
     if (g.Deno?.readFile) return await g.Deno.readFile(wasmAssetUrl(name));
+    const sync = readAssetSync(name);
+    if (sync) return sync;
     if (typeof process !== 'undefined' && process.versions?.node) {
         // Computed specifier + webpackIgnore: the bundler must not resolve this
         // for the client build, where node:fs does not exist.
