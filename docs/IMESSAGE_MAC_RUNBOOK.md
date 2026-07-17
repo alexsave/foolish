@@ -81,8 +81,9 @@ insert → send → receive plumbing is what you're about to exercise.
 **As player A (conversation 1):**
 
 1. Compact drawer shows "Foolish" + **New game** → tap it. The view expands
-   into the table (a fresh 2p game is dealt; you are seat 0, named "Me" —
-   the missing nickname editor is B3, expected).
+   into the **New game setup** (B3/B2): a name field and a 2-4 player picker.
+   Type a name, leave the picker on **2**, tap **Start game** → a fresh 2p
+   game is dealt and you are seat 0, named what you typed.
 2. Play your opening move(s) with the tap grammar (tap card → action bar).
    Try **Undo** once — the board should rebuild to before the last staged
    action.
@@ -114,6 +115,23 @@ insert → send → receive plumbing is what you're about to exercise.
    not `/m/` (the §12 funnel; the kernel emits v6 when re-derivable, else v5).
    Paste the code into the web replay page to double-check it decodes.
 
+### 3.3b The N≥3 WAITING lobby (B2/B3)
+
+The two-participant sim harness can't host 3 real people, but you can still
+verify the lobby state machine end to end across the two conversations:
+
+1. As player A, **New game → pick 3 players → Start**. Instead of a board you
+   get the **lobby**: seat 1 = your name, seats 2-3 "Open seat", and a **Send
+   invite** button. Tap it, send the bubble (its summary reads "tap to join").
+2. As player B (conversation 2), tap the bubble → the **lobby** opens with a
+   name field and **Join as …**. Type a name, tap Join → you claim seat 2, a
+   reseal WAITING bubble stages; send it.
+3. Back as A, tap the newest bubble: the lobby now shows two names + one open
+   seat. Claim the last seat yourself (or bounce back to B) → the claim that
+   **fills the last seat** seals a LIVE handoff ("game on"), sends, and the
+   next open drops into the board with the kernel's first attacker up.
+4. From there it plays exactly like the 2p game above.
+
 ### 3.4 The cancel/cache matrix (10 minutes, worth it)
 
 These are the lifecycle edges the unit tests explicitly can't reach:
@@ -121,10 +139,13 @@ These are the lifecycle edges the unit tests explicitly can't reach:
 - **Cancel a staged send:** stage a move, then delete the bubble from the
   input field instead of sending (`didCancelSending`). Re-open the extension:
   it must show the *parent* state, not your abandoned move.
-- **Backgrounding mid-stage:** stage a move, switch apps, come back. Staged
-  actions live only in memory today — losing them is *known* behavior (B1's
-  pending ledger is unbuilt); confirm nothing worse happens (crash, corrupt
-  cache).
+- **Backgrounding mid-stage (B1 durable ledger):** stage a move, switch apps,
+  come back. The move is mirrored into the App Group pending ledger, so it
+  should survive; at minimum nothing worse happens (crash, corrupt cache).
+- **Rule P stale bubble (B1):** after several turns, scroll up and tap an
+  OLDER collapsed bubble for the same game. You must get the "This game has
+  moved on" banner (Open the latest / View this anyway), NOT a silent revert
+  to the old state.
 - **One bubble per game:** after a few turns, confirm the thread shows the
   latest interactive bubble plus collapsed summary-text lines for older
   turns (MSSession + non-nil summaryText). If old turns vanish entirely,
@@ -145,11 +166,14 @@ From the blockers doc (`IMESSAGE_SHIP_BLOCKERS.md` §4):
 
 | You'll see | Why | Tracked as |
 | --- | --- | --- |
-| Everyone is named "Me" | No nickname editor; store default | B3 |
-| No way to start a 3+ player game | Genesis hard-codes 2p LIVE; WAITING lobby unbuilt | B2 |
-| Concurrent/racing turns don't converge; staged moves lost on incoming bubble | Rule P/rebase primitives exist but aren't wired into the flow | B1 |
 | Blank drawer tile | No iMessage icon asset | B5.1 |
 | "no battle" / game-over line in English under ru/ko | `MessageBoardView` literals | B6 |
+
+**B1-B3 are now built** (branch `claude/chain-b-imessage`) - they are things to
+TEST on this Mac session, not known gaps: the New game setup + nickname field
+(B3), the 3-4 player WAITING lobby with join flow (B2), and Rule P adoption /
+Rule R rebase / the durable pending ledger (B1). Drive them per §3.3-3.4. Note
+they build against a fresh `make ios-lib` (new C symbols): run Part 2 first.
 
 ## Part 4 — with credentials: a real device pair (two Apple IDs)
 
