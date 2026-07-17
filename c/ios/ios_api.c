@@ -629,21 +629,6 @@ int fio_strategy_name(int id, char *out, int cap) {
     return j_finish(&j);
 }
 
-int fio_bot_choose_json(int strategy_id, int seat, char *out, int cap) {
-    if (!g_has_game) return FIO_ENOGAME;
-    if (seat < 0 || seat >= g_game.num_players) return FIO_EBADARG;
-    int ridx = fio_roster_idx(strategy_id);
-    if (!bot_roster_at(ridx)) return FIO_ENOSTRAT;
-    LegalMoves moves;
-    calculate_legal_moves(&g_game, seat, &moves);
-    if (moves.n == 0) { J j; j_init(&j, out, cap); j_puts(&j, "null"); return j_finish(&j); }
-    int idx = bot_roster_choose(ridx, &g_game, seat, &moves);
-    if (idx < 0 || idx >= moves.n) idx = 0;
-    J j; j_init(&j, out, cap);
-    emit_move_obj(&j, &moves.moves[idx]);
-    return j_finish(&j);
-}
-
 // ---------- replays (§16.C) ------------------------------------------------
 //
 // DECODE is implemented: base32 (RFC 4648 uppercase, no padding — the web's

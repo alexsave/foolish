@@ -129,7 +129,7 @@ public enum MoveType: String, Codable, Sendable {
 }
 
 /// One move — a legal-move menu entry, an intent to apply, or (with `seat`) the
-/// move a bot just made (fio_bot_drive_json result).
+/// move a bot just made (fio_bot_drive_packed result).
 public struct Move: Codable, Equatable, Sendable {
     public let type: MoveType
     public let cards: [Card]
@@ -256,7 +256,7 @@ public struct GameEvent: Codable, Equatable, Sendable {
     public var actorSeat: Int? { seat >= 0 ? seat : nil }
 }
 
-/// One turn of the kernel's bot cycle (fio_bot_drive_json).
+/// One turn of the kernel's bot cycle (fio_bot_drive_packed).
 ///
 /// The cycle applies 0..n actions and stops on the same conditions as the
 /// website's loop; silent actions bundle rather than costing a delay each.

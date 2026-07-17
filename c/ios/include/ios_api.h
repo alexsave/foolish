@@ -152,9 +152,6 @@ int fio_bot_drive_json(int human_mask, char *out, int cap);
 int fio_strategy_count(void);
 // Name of strategy `id` (e.g. "espresso"), written to `out`. Bytes written or negative.
 int fio_strategy_name(int id, char *out, int cap);
-// Choose (but do NOT apply) a move for `seat` using `strategy_id`, emitted as
-// a JSON move object. Used by tests and by any caller wanting to preview.
-int fio_bot_choose_json(int strategy_id, int seat, char *out, int cap);
 
 // ---------- replays (§7.3) -------------------------------------------------
 
