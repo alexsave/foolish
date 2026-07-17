@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!--
+  App-level privacy manifest (A5). The host app binary calls no required-reason
+  API directly — all such use is in FoolishKit (see FoolishKit/PrivacyInfo.xcprivacy),
+  which this app embeds. We do NOT use IDFA / any cross-app tracking anywhere in
+  the tree, so tracking is false and the tracking-domain list is empty.
+
+  NSPrivacyCollectedDataTypes is intentionally EMPTY pending the v1 online-scope
+  decision (blockers doc A2/A5): an offline+replays v1 collects nothing here;
+  once online auth ships it will collect an account identifier (email / user id,
+  linked, for App Functionality, not tracking) — add that entry together with
+  the matching App Store Connect privacy labels when the scope is locked.
+-->
+<dict>
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array/>
+</dict>
+</plist>

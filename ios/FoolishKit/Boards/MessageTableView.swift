@@ -97,7 +97,9 @@ public struct MessageTableView: View {
     @ViewBuilder
     private func statusLine(_ view: GameView) -> some View {
         if controller.isOver {
-            Text(view.gameOver >= 0 ? "\(name(view.gameOver)) is the fool 🃏" : "game over")
+            Text(view.gameOver >= 0
+                ? FStrings.t("ios.msg.isfool", ["name": name(view.gameOver)])
+                : FStrings.t("game_over"))
                 .font(.subheadline.weight(.semibold))
         } else if !controller.iCanAct {
             // No legal move for me on this staged state — I'm watching (§5.1).

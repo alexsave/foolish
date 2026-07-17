@@ -44,7 +44,7 @@ public struct MessageBoardView: View {
                           hasFlipped: view.hasFlipped, trumpSuit: view.trumpSuit)
 
                 if view.battles.isEmpty {
-                    Text("no battle").font(.caption).foregroundStyle(.secondary)
+                    Text(FStrings.t("ios.nobattle")).font(.caption).foregroundStyle(.secondary)
                 } else {
                     FBattleGrid(battles: view.battles, trumpSuit: view.trumpSuit)
                 }
@@ -53,7 +53,9 @@ public struct MessageBoardView: View {
             }
 
             if view.isOver {
-                Text(view.gameOver >= 0 ? "\(name(view.gameOver)) is the fool" : "game over")
+                Text(view.gameOver >= 0
+                    ? FStrings.t("ios.msg.isfool", ["name": name(view.gameOver)])
+                    : FStrings.t("game_over"))
                     .font(.subheadline.weight(.semibold))
             }
         }

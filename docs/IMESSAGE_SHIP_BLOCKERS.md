@@ -157,10 +157,11 @@ validation rejects icon-less binaries at upload.
   script; age-rating questionnaire (card game, no gambling → 4+/9+; confirm
   what chat, if any, ships — `Compliance.md:36`); privacy labels (no tracking,
   identifiers + user content linked).
-- **`PrivacyInfo.xcprivacy` does not exist anywhere in `ios/`** — required for
-  App Store submissions since the 2024 privacy-manifest mandate (UserDefaults
-  access via the App Group cache is a "required-reason" API). One small file,
-  but submission-fatal if missing.
+- ✅ **`PrivacyInfo.xcprivacy` added** (was submission-fatal by its absence).
+  See B5.3 — three manifests, the FoolishKit one declaring the required-reason
+  UserDefaults APIs. What remains here is the *product* half: the
+  `NSPrivacyCollectedDataTypes` entries + the matching App Store Connect privacy
+  labels, which depend on the undecided v1 online scope (A2). Mac-unverified.
 
 ### A6. Store assets + TestFlight soak
 
@@ -252,16 +253,18 @@ remaining B4 work is the interactive pass — `IMESSAGE_MAC_RUNBOOK.md` Part 3
 (two-participant simulator harness: 2p game, lobby flow §3.3b, cancel/cache
 matrix §3.4), then Part 4 (device pair; §17.12 warns timing differs).
 
-### B5. Extension packaging will fail review as-is ⛔
+### B5. Extension packaging — two Linux-fixable items landed; two Mac items remain
 
-Three concrete items, all invisible to the Linux-only CI:
+Four concrete items, all invisible to the Linux-only CI. Items 3 and 4 are
+**now closed** on `main` (Linux-authorable, Mac-unverified); 1 and 2 still need
+a Mac.
 
-1. **No iMessage app icon.** `FoolishMessages/` has no `.xcassets` at all and
+1. ⛔ **No iMessage app icon.** `FoolishMessages/` has no `.xcassets` at all and
    the target sets no `ASSETCATALOG_COMPILER_APPICON_NAME`
    (`ios/project.yml:84-109`). Messages extensions need the dedicated
    MessagesAppIcon set (27×20-ish wide-format slots) — upload validation
-   rejects without it. Extend `IconGen` to render the wide format.
-2. **`APPLICATION_EXTENSION_API_ONLY` is off** for FoolishKit, deferred to
+   rejects without it. Extend `IconGen` to render the wide format. **Mac-only.**
+2. ⛔ **`APPLICATION_EXTENSION_API_ONLY` is off** for FoolishKit, deferred to
    "Milestone G" by a comment written before the extension existed
    (`ios/project.yml:139-142`) — but the extension links FoolishKit **today**,
    and FoolishKit links the Supabase SDK (`project.yml:124-129`). That means
@@ -269,21 +272,32 @@ Three concrete items, all invisible to the Linux-only CI:
    compiler, and the extension drags a network stack it must never use
    (§17.5's memory-ceiling rule: SwiftUI + libfoolish only) into its process.
    Either flip the flag and fix fallout, or split an extension-safe
-   FoolishKitCore (Engine/DesignSystem/Boards) out from Net/.
-3. **No `PrivacyInfo.xcprivacy`** (shared with A5 — the extension's App-Group
-   UserDefaults use is a required-reason API).
-4. **The extension's `Info.plist` lacks `ITSAppUsesNonExemptEncryption`** —
-   the app target declares it (`ios/FoolishApp/Info.plist:31-32`) but
-   `ios/FoolishMessages/Info.plist` ends at the `NSExtension` dict. The
-   extension is a separate binary; add the key before it ships.
+   FoolishKitCore (Engine/DesignSystem/Boards) out from Net/. **Needs a Mac
+   build to see the fallout — do not flip blind.**
+3. ✅ **`PrivacyInfo.xcprivacy` added** (shared with A5). Three manifests:
+   `ios/FoolishKit/PrivacyInfo.xcprivacy` is load-bearing — it declares the
+   required-reason UserDefaults APIs (`CA92.1` app-own + `1C8F.1` App-Group),
+   because every such call is in the FoolishKit binary (`MessageGameStore`,
+   `FStrings`), not the app/appex. `ios/FoolishApp/` and `ios/FoolishMessages/`
+   carry lean top-level manifests (tracking false, no first-party collection
+   yet — pending the A2/A5 online-scope call). XcodeGen picks up any
+   `.xcprivacy` in a target's source folder as a bundle resource, so no
+   `project.yml` change was needed. *Mac-unverified (no Swift/Xcode on Linux).*
+4. ✅ **Extension `ITSAppUsesNonExemptEncryption` added**
+   (`ios/FoolishMessages/Info.plist`), `<false/>` like the host
+   (`ios/FoolishApp/Info.plist:31`). The `.appex` is a separate binary and does
+   not inherit the app's declaration. *Mac-unverified.*
 
-### B6. Localization stragglers 🔶 (polish)
+### B6. Localization stragglers — ✅ board twins closed
 
-The `ios.msg.*` strings are trilingual (en/ru/ko) in `FStrings.swift` — M4 is
-substantively done — but the read-only board twin was missed:
-`MessageBoardView.swift:47,56` hard-code "no battle" / "… is the fool" /
-"game over", and `MessageTableView.swift:100` hard-codes its game-over line.
-The `Localizable.xcstrings` catalog itself remains deferred (E4).
+The board game-over/no-battle strings that were hard-coded in
+`MessageBoardView.swift` and `MessageTableView.swift` now route through
+`FStrings.t`: `ios.nobattle` (already trilingual) and a new trilingual
+`ios.msg.isfool` key; the "game over" fallback reuses the existing `game_over`
+key. All three languages carry the new key (parity holds). The
+`Localizable.xcstrings` catalog itself remains deferred (E4) — that generator
+swap (`scripts/gen_ios_strings.mjs`) is the only l10n remainder, and it is not
+a ship gate.
 
 ### B7. No Mac CI = packaging regressions stay invisible 🔶
 

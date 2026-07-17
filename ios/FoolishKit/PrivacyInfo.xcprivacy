@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!--
+  Privacy manifest for the FoolishKit framework (A5 / B5.3).
+
+  This is the LOAD-BEARING manifest for required-reason API validation: every
+  first-party required-reason call in the whole app lives in THIS binary, so its
+  reasons must be declared here (Apple analyzes the binary that owns the symbol).
+
+    * UserDefaults.standard          — FStrings.swift (language override)     -> CA92.1
+    * UserDefaults(suiteName: group) — MessageGameStore.swift (App Group cache) -> 1C8F.1
+
+  CA92.1 = user defaults used to read/write data accessible only to the app itself.
+  1C8F.1 = user defaults used to read/write data shared across the App Group.
+
+  The app- and extension-level manifests (FoolishApp/, FoolishMessages/) stay
+  lean: those binaries call no required-reason API directly — they go through
+  this framework, which carries the reasons.
+-->
+<dict>
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>CA92.1</string>
+				<string>1C8F.1</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>

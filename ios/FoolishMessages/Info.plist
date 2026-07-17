@@ -23,6 +23,12 @@
 	<string>1.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
+	<!-- The .appex is a separate binary from the host app, so it needs its own
+	     export-compliance declaration; Xcode does not inherit the app's. The
+	     extension uses only Apple's standard TLS/crypto (App Group cache, no
+	     bespoke encryption), so it is exempt like the host (Info.plist:31). -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>NSExtension</key>
 	<dict>
 		<!-- A Messages extension is declared by its point identifier alone; the

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!--
+  iMessage-extension privacy manifest (B5.3). The .appex is a separate binary
+  from the host app and needs its own manifest at its bundle root. It calls no
+  required-reason API directly — the App Group cache it drives lives in
+  FoolishKit (MessageGameStore, reason 1C8F.1 declared there), which the
+  extension links. No tracking, no network stack (§17.5: SwiftUI + libfoolish
+  only), so nothing is collected here.
+-->
+<dict>
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array/>
+</dict>
+</plist>
