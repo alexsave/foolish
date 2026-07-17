@@ -136,20 +136,6 @@ public actor MessageKernel {
         return env
     }
 
-    /// The legacy JSON decode, kept only so the parity test can prove the packed
-    /// path produces the identical MessageEnvelope. Slated for deletion with the
-    /// bridge (#17).
-    func decodeJSON(payload: Data, viewer: Int) throws -> MessageEnvelope {
-        var out = [CChar](repeating: 0, count: 64 * 1024)
-        let n: Int32 = payload.withUnsafeBytes { raw in
-            fio_msg_decode_json(raw.bindMemory(to: UInt8.self).baseAddress,
-                                Int32(payload.count), Int32(viewer),
-                                &out, Int32(out.count))
-        }
-        guard n > 0 else { throw MessageEnvelope.Failure.damaged(code: Int(fio_last_msg_error())) }
-        let data = Data(bytes: out, count: Int(n))
-        return try JSONDecoder().decode(MessageEnvelope.self, from: data)
-    }
 
     /// The masked board the last `decode` left resident, for `viewer` (or -1 for
     /// the public/spectator view the bubble snapshot needs). Same packed wire the

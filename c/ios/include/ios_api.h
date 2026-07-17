@@ -64,12 +64,7 @@ int fio_set_seat_strategy(int seat, int strategy_id);
 // True once fio_new_game has succeeded.
 int fio_has_game(void);
 
-// ---------- observation (all emit JSON; see sdk/swift/Models.swift) --
-
-// Per-viewer masked state: viewer_seat's own hand is real cards, every other
-// hand is redacted to a count only, the deck is hidden. This is the "you only
-// see your own hand" rule, computed in the kernel (view.c semantics).
-int fio_state_json(int viewer_seat, char *out, int cap);
+// ---------- observation ----------------------------------------------------
 
 // (Server packed-view blobs decode to a GameView in pure Swift via MaskedView,
 // and their legal moves come through the PACKED fio_legal_from_packed — so the
@@ -87,8 +82,9 @@ int fio_legal_moves_json(int seat, char *out, int cap);
 int fio_state_packed(int viewer, char *out, int cap);
 int fio_legal_packed(int seat, char *out, int cap);
 int fio_legal_from_packed(const uint8_t *buf, int len, int seat, char *out, int cap);
-// Apply an awire action frame ([kind, n, cards, attacks]) — the packed twin of
-// fio_apply_json. Returns FIO_EREJECT on an illegal move (see fio_last_reject).
+// Apply an awire action frame ([kind, n, cards, attacks]) — THE apply entry
+// (a plain move never crosses as JSON). Returns FIO_EREJECT on an illegal move
+// (see fio_last_reject).
 int fio_apply_awire(int actor_seat, const uint8_t *buf, int len);
 
 // Drive one bot cycle, result packed (no JSON, no events): u32 n_actions, per
@@ -105,18 +101,15 @@ int fio_game_over(void);
 
 // ---------- intents --------------------------------------------------------
 
-// Apply one move, given as a JSON object (the shape a single legal-move entry
-// has: {"type":"attack","cards":[{"s":0,"v":6}]}; cover adds "attackCards").
-// `actor_seat` is the seat performing it. Returns FIO_EOK on success,
-// FIO_EPARSE if the JSON is malformed, or FIO_EREJECT if the kernel rejected
-// the move (fio_last_reject() then carries the ENGINE_REJECT_* code).
-int fio_apply_json(int actor_seat, const char *move_json);
+// (A move applies through fio_apply_awire, above — the JSON apply entry is gone.
+// The FMSG rebase path still parses a move from JSON, internally, via
+// fio_move_to_awire; see fio_msg_rebase.)
 
-// Kernel rejection reason from the last fio_apply_json that returned
+// Kernel rejection reason from the last fio_apply_awire that returned
 // FIO_EREJECT (an ENGINE_REJECT_* value from game.h), else 0.
 int fio_last_reject(void);
 
-// The animation events of the LAST fio_apply_json / fio_bot_drive_json, as seen
+// The animation events of the LAST fio_apply_awire / fio_bot_drive_json, as seen
 // by `viewer` (a seat, or -1 for a spectator), e.g.
 //   [{"type":5,"seat":3,"msg":4,"from":1,"to":2,"cards":[...],
 //     "target":{...},"battle":0}]
@@ -220,21 +213,9 @@ int fio_last_replay_error(void);
 // the game the payload describes. A corrupt or hand-edited payload fails here,
 // loudly — validation IS replay, and there is no partial recovery (§7.3).
 //
-// Emits, for `viewer` (a seat, or -1 for the public/spectator view):
-//   {"phase":..,"turn":..,"round":..,"n_players":..,"last_actor_seat":..,
-//    "game_id":"<u64 as decimal string>","parent8":"<hex>","digest":"<hex>",
-//    "joins":[{"seat":..,"name":".."}],
-//    "state":{...},                 // the per-viewer masked view (§16)
-//    "moves":[...]}                 // viewer's legal moves, empty for -1
-//
-// `digest` is SHA-256 of the whole payload: it is what a CHILD envelope carries
-// as parent8, and what Rule P breaks ties on. game_id is a string because it is
-// a u64 and JSON numbers are doubles — 2^53 would silently round.
-int fio_msg_decode_json(const uint8_t *payload, int len, int viewer, char *out, int cap);
-
-// Same decode+adopt, envelope metadata handed back as a PACKED fixed-layout blob
-// (Swift parses it with MessageEnvelope.decode) — no JSON, no embedded state /
-// moves (read those via fio_state_packed / fio_legal_packed). Layout:
+// The envelope metadata is handed back as a PACKED fixed-layout blob (Swift
+// parses it with MessageEnvelope.decode) — no JSON, no embedded state / moves
+// (read those via fio_state_packed / fio_legal_packed). Layout:
 //   phase(1) n_players(1) last_actor_seat(1) round(1) turn(u16 LE) game_id(u64 LE)
 //   parent8(8) digest(32) n_joins(1) then n_joins*{seat(1) name_len(1) name[]}.
 // Bytes written or negative (FIO_EMSG → fio_last_msg_error).
@@ -262,7 +243,7 @@ int fio_msg_encode(int phase, int last_actor_seat, uint64_t game_id,
 // Returns FIO_EMSG if either is not an envelope.
 int fio_msg_rule_p(const uint8_t *a, int a_len, const uint8_t *b, int b_len);
 
-// Rule R (§7.4): rebase ONE pending move onto the chain fio_msg_decode_json
+// Rule R (§7.4): rebase ONE pending move onto the chain fio_msg_decode_packed
 // last adopted — the ledger's moves, in order. Returns:
 //   0  re-applied, and APPLIED to the resident game (that IS the rebase)
 //   1  discarded by the round-boundary guard

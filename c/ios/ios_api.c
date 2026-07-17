@@ -358,59 +358,9 @@ static int fio_move_to_awire(const char *move_json, AwireAction *out) {
     return FIO_EOK;
 }
 
-int fio_apply_json(int actor_seat, const char *move_json) {
-    if (!g_has_game) return FIO_ENOGAME;
-    if (!move_json) return FIO_EBADARG;
-    if (actor_seat < 0 || actor_seat >= g_game.num_players) return FIO_EBADARG;
-
-    const char *tp = find_key(move_json, "type");
-    if (!tp || *tp != '"') return FIO_EPARSE;
-    tp++;
-    char type[16] = {0};
-    int ti = 0;
-    while (*tp && *tp != '"' && ti < (int)sizeof(type) - 1) type[ti++] = *tp++;
-
-    Card cards[MAX_MOVE_CARDS];
-    Card acards[MAX_MOVE_CARDS];
-    int nc = 0, nac = 0;
-
-    const char *cp = find_key(move_json, "cards");
-    if (cp) { nc = parse_card_array(cp, cards, MAX_MOVE_CARDS); if (nc < 0) return FIO_EPARSE; }
-    const char *ap = find_key(move_json, "attackCards");
-    if (ap) { nac = parse_card_array(ap, acards, MAX_MOVE_CARDS); if (nac < 0) return FIO_EPARSE; }
-
-    // Capture this move's animation events too — a human's card flies exactly
-    // like a bot's, and both plans come from the kernel (§4.4).
-    fio_snaps_reset();
-    g_last_event_log_start = g_game.num_logs;
-    engine_snap_hook = fio_snap_cb;
-
-    engine_last_reject = ENGINE_REJECT_NONE;
-    bool ok = false;
-    if      (!strcmp(type, "attack")) ok = handle_attack(&g_game, actor_seat, cards, nc);
-    else if (!strcmp(type, "pass"))   ok = handle_pass(&g_game, actor_seat, cards, nc);
-    else if (!strcmp(type, "pickup")) ok = handle_pickup(&g_game, actor_seat);
-    else if (!strcmp(type, "good"))   ok = handle_good(&g_game, actor_seat);
-    else if (!strcmp(type, "cover")) {
-        engine_snap_hook = 0;
-        if (nac != nc) return FIO_EPARSE;
-        engine_snap_hook = fio_snap_cb;
-        ok = handle_cover(&g_game, actor_seat, cards, acards, nc);
-    } else { engine_snap_hook = 0; return FIO_EPARSE; }
-
-    engine_snap_hook = 0;
-    if (!ok) { fio_snaps_reset(); g_last_reject = engine_last_reject; return FIO_EREJECT; }
-    // Settle GAME_OVER exactly as awire_apply does — the two apply entry points
-    // MUST leave identical state, or a game-ending move reads as still PLAYING
-    // through this path while the packed path (the shipping app) already ended it.
-    game_settle_status(&g_game);
-    g_last_reject = 0;
-    return FIO_EOK;
-}
-
-// PACKED apply — the client sends the awire action bytes (no JSON move). Same
-// handle_* dispatch and animation-snapshot bookkeeping as fio_apply_json, so
-// fio_last_events still captures the move. Owner: wipe the JSON.
+// The client sends the awire action bytes (no JSON move) — fio_apply_awire is the
+// one apply entry now. The FMSG rebase path still parses a move from JSON via
+// fio_move_to_awire (above); a plain apply never does.
 int fio_apply_awire(int actor_seat, const uint8_t *buf, int len) {
     if (!g_has_game) return FIO_ENOGAME;
     if (!buf || len <= 0) return FIO_EBADARG;
@@ -490,11 +440,6 @@ int fio_set_seat_strategy(int seat, int strategy_id) {
 
 int fio_has_game(void) { return g_has_game; }
 
-int fio_state_json(int viewer_seat, char *out, int cap) {
-    if (!g_has_game) return FIO_ENOGAME;
-    if (viewer_seat < 0 || viewer_seat >= g_game.num_players) return FIO_EBADARG;
-    return json_state_of(&g_game, viewer_seat, out, cap);
-}
 // A server packed-view blob decodes to a GameView in pure Swift (MaskedView),
 // and legal moves from that blob come through the PACKED fio_legal_from_packed
 // (view.ts / MoveWire) — so the JSON packed-view bridges that lived here
@@ -863,81 +808,9 @@ static int g_msg_round = -1;      // the adopted chain's round — Rule R's guar
 
 int fio_last_msg_error(void) { return g_last_msg_error; }
 
-static void j_hex(J *j, const unsigned char *b, int n) {
-    static const char *H = "0123456789abcdef";
-    j_putc(j, '"');
-    for (int i = 0; i < n; i++) { j_putc(j, H[b[i] >> 4]); j_putc(j, H[b[i] & 15]); }
-    j_putc(j, '"');
-}
-
-int fio_msg_decode_json(const uint8_t *payload, int len, int viewer, char *out, int cap) {
-    if (!payload || !out || cap <= 0) return FIO_EBADARG;
-    g_last_msg_error = 0;
-
-    MsgEnvelope e;
-    int rc = msg_decode(payload, len, &e);
-    if (rc != MSG_EOK) { g_last_msg_error = rc; return FIO_EMSG; }
-
-    // Digest the payload BEFORE anything reuses the bytes: it is what a child
-    // carries as parent8 and what Rule P breaks ties on.
-    uint8_t digest[SHA256_DIGEST_LEN];
-    msg_digest(payload, len, digest);
-
-    rc = msg_replay(&e, &g_game);   // validation IS replay
-    if (rc != MSG_EOK) { g_last_msg_error = rc; return FIO_EMSG; }
-
-    // Adopted: the resident game IS this payload's game now.
-    g_has_game = 1;
-    g_msg_round = e.round;
-    memcpy(g_deal_seed, e.seed, FOOLISH_SEED_LEN);
-    g_has_deal_seed = 1;
-    for (int i = 0; i < e.n_players; i++) g_seat_roster[i] = (int8_t)bot_roster_find("random");
-
-    J j; j_init(&j, out, cap);
-    j_puts(&j, "{\"phase\":");           j_puti(&j, e.phase);
-    j_puts(&j, ",\"turn\":");            j_puti(&j, e.turn);
-    j_puts(&j, ",\"round\":");           j_puti(&j, e.round);
-    j_puts(&j, ",\"n_players\":");       j_puti(&j, e.n_players);
-    j_puts(&j, ",\"last_actor_seat\":"); j_puti(&j, e.last_actor_seat);
-    // A u64 as a STRING: JSON numbers are doubles and 2^53 would round it.
-    j_puts(&j, ",\"game_id\":\"");
-    { char t[24]; snprintf(t, sizeof(t), "%llu", (unsigned long long)e.game_id); j_puts(&j, t); }
-    j_puts(&j, "\",\"parent8\":");      j_hex(&j, e.parent8, MSG_PARENT_LEN);
-    j_puts(&j, ",\"digest\":");          j_hex(&j, digest, SHA256_DIGEST_LEN);
-    j_puts(&j, ",\"joins\":[");
-    for (int i = 0; i < e.n_joins; i++) {
-        if (i) j_putc(&j, ',');
-        char name[MSG_MAX_NAME + 1];
-        memcpy(name, e.joins[i].name, e.joins[i].name_len);
-        name[e.joins[i].name_len] = 0;
-        j_puts(&j, "{\"seat\":"); j_puti(&j, e.joins[i].seat);
-        j_puts(&j, ",\"name\":");  j_putstr(&j, name);
-        j_putc(&j, '}');
-    }
-    j_puts(&j, "],\"state\":");
-    if (!j.ok) return FIO_ECAP;
-    {
-        const int n = json_state_of(&g_game, viewer < 0 ? VIEW_SPECTATOR : viewer,
-                                    out + j.w, cap - j.w);
-        if (n < 0) return n;
-        j.w += n;
-    }
-    j_puts(&j, ",\"moves\":");
-    if (!j.ok) return FIO_ECAP;
-    if (viewer >= 0 && viewer < g_game.num_players) {
-        const int n = emit_legal_of(&g_game, viewer, out + j.w, cap - j.w);
-        if (n < 0) return n;
-        j.w += n;
-    } else {
-        j_puts(&j, "[]");   // a spectator has no moves, by construction
-    }
-    j_putc(&j, '}');
-    return j_finish(&j);
-}
-
-// The same decode+adopt as fio_msg_decode_json, but the envelope metadata is
-// handed back as a PACKED fixed-layout blob (Swift parses it with
-// MessageEnvelope.decode) — no JSON, and no embedded state/moves (the phone
+// The FMSG envelope decode+adopt hands the metadata back as a PACKED
+// fixed-layout blob (Swift parses it with MessageEnvelope.decode) — no JSON, and
+// no embedded state/moves (the phone
 // reads those through fio_state_packed / fio_legal_packed in the same actor).
 // Layout: phase(1) n_players(1) last_actor_seat(1) round(1) turn(u16 LE)
 //   game_id(u64 LE) parent8(8) digest(32) n_joins(1)
