@@ -662,13 +662,6 @@ static int b32_decode(const char *s, unsigned char *out, int cap) {
 }
 
 // Decode one wire card byte into JSON: null / hidden {-1,-1} / real {s,v}.
-static void j_wire_card(J *j, unsigned char b) {
-    if (b == REPLAY_CARD_NONE) { j_puts(j, "null"); return; }
-    if (b == REPLAY_CARD_HIDDEN) { j_puts(j, "{\"s\":-1,\"v\":-1}"); return; }
-    int v = b > 51 ? 51 : b;
-    Card c; c.suit = (int8_t)(v / 13); c.value = (int8_t)((v % 13) + 1);
-    j_card(j, c);
-}
 
 // card → wire byte (suit*13 + value-1).
 static unsigned char wire_of(Card c) {
@@ -817,8 +810,8 @@ int fio_replay_share_code_b32(char *out, int cap) {
 // write, and nothing to keep in step with live play, because it IS live play.
 //
 // v6 only: a v5 code returns FIO_EREPLAY with REPLAY_EVERSION (v5 hides the
-// deal, so there is no game to rebuild). Callers wanting v5's flat log listing
-// still have fio_replay_decode_json.
+// deal, so there is no game to rebuild). Callers wanting the flat log listing
+// have fio_replay_decode_packed.
 int fio_replay_events_json(const char *code, int viewer, char *out, int cap) {
     if (!code) return FIO_EBADARG;
     g_last_replay_error = 0;
@@ -837,66 +830,21 @@ int fio_replay_events_json(const char *code, int viewer, char *out, int cap) {
     return j_finish(&j);
 }
 
-int fio_replay_decode_json(const char *code, char *out, int cap) {
+// The replay decode as its RAW binary (replay.h DECODE layout: a 20-byte header
+// then n_logs records of [type,seat,defIdx,n_pairs] + n_pairs*[primary,target]
+// wire-card bytes). Swift parses this directly (DecodedReplay.decode) — the same
+// bytes fio_replay_decode_json used to walk into JSON, now handed over whole so
+// no JSON crosses the boundary. Card bytes: 0xFF none, 0xFE hidden, else id.
+int fio_replay_decode_packed(const char *code, unsigned char *out, int cap) {
     if (!code) return FIO_EBADARG;
     g_last_replay_error = 0;
-
-    static unsigned char intbuf[16384];   // the replay integer bytes
-    static unsigned char dec[262144];      // replay_decode output (header + logs)
-
+    static unsigned char intbuf[16384];
     int ilen = b32_decode(code, intbuf, sizeof(intbuf));
     if (ilen < 0) return FIO_ECAP;
-
-    int dlen = replay_decode(intbuf, ilen, dec, sizeof(dec));
+    int dlen = replay_decode(intbuf, ilen, out, cap);
     if (dlen < 0) { g_last_replay_error = -dlen; return FIO_EREPLAY; }
     if (dlen < REPLAY_DEC_HDR) { g_last_replay_error = REPLAY_EINPUT; return FIO_EREPLAY; }
-
-    // Parse the decoded binary (layout: replay.h DECODE output) into JSON.
-    const unsigned char *p = dec;
-    int version = p[0], n = p[1], trump = p[2], firstAtt = p[3], fool = p[4];
-    int discard = p[5] | (p[6] << 8);
-    int n_elim = p[7];
-    const unsigned char *elim = &p[8];
-    uint32_t n_logs = (uint32_t)p[16] | ((uint32_t)p[17] << 8)
-                    | ((uint32_t)p[18] << 16) | ((uint32_t)p[19] << 24);
-
-    J j; j_init(&j, out, cap);
-    j_puts(&j, "{\"version\":");       j_puti(&j, version);
-    j_puts(&j, ",\"nPlayers\":");      j_puti(&j, n);
-    j_puts(&j, ",\"trump\":");         j_wire_card(&j, (unsigned char)trump);
-    j_puts(&j, ",\"firstAttacker\":"); j_puti(&j, firstAtt);
-    j_puts(&j, ",\"fool\":");          j_puti(&j, fool == 0xFF ? -1 : fool);
-    j_puts(&j, ",\"discardCount\":");  j_puti(&j, discard);
-    j_puts(&j, ",\"eliminationOrder\":[");
-    for (int i = 0, first = 1; i < n_elim && i < 8; i++) {
-        if (elim[i] == 0xFF) continue;
-        if (!first) j_putc(&j, ','); first = 0;
-        j_puti(&j, elim[i]);
-    }
-    j_putc(&j, ']');
-
-    j_puts(&j, ",\"logs\":[");
-    const unsigned char *q = &dec[REPLAY_DEC_HDR];
-    const unsigned char *end = &dec[dlen];
-    for (uint32_t li = 0; li < n_logs && q + 4 <= end; li++) {
-        if (li) j_putc(&j, ',');
-        int log_type = q[0], seat = q[1], defIdx = q[2], n_pairs = q[3];
-        q += 4;
-        j_puts(&j, "{\"type\":");         j_puti(&j, log_type);
-        j_puts(&j, ",\"seat\":");         j_puti(&j, seat == 0xFF ? -1 : seat);
-        j_puts(&j, ",\"defenderIndex\":");j_puti(&j, defIdx == 0xFF ? -1 : defIdx);
-        j_puts(&j, ",\"pairs\":[");
-        for (int pr = 0; pr < n_pairs && q + 2 <= end; pr++) {
-            if (pr) j_putc(&j, ',');
-            j_puts(&j, "{\"primary\":"); j_wire_card(&j, q[0]);
-            j_puts(&j, ",\"target\":");  j_wire_card(&j, q[1]);
-            j_putc(&j, '}');
-            q += 2;
-        }
-        j_puts(&j, "]}");
-    }
-    j_puts(&j, "]}");
-    return j_finish(&j);
+    return dlen;
 }
 
 int fio_last_replay_error(void) { return g_last_replay_error; }

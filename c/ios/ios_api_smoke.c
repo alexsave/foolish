@@ -77,12 +77,12 @@ static int replay_sweep(void) {
                        players, s, clen, fio_last_replay_error(), steps);
                 return 1;
             }
-            if (fio_replay_decode_json(code, buf, sizeof(buf)) < 0) {
+            if (fio_replay_decode_packed(code, (unsigned char *)buf, sizeof(buf)) < 0) {
                 printf("FAIL sweep decode p=%d seed=%d err=%d\n", players, s, fio_last_replay_error());
                 return 1;
             }
-            const char *fp = strstr(buf, "\"fool\":");
-            int decoded_fool = fp ? atoi(fp + 7) : -999;
+            // replay.h DECODE binary: fool is byte[4] (0xFF → -1).
+            int decoded_fool = (unsigned char)buf[4] == 0xFF ? -1 : (unsigned char)buf[4];
             if (decoded_fool != fool) {
                 printf("FAIL sweep fool mismatch p=%d seed=%d decoded=%d game=%d\n",
                        players, s, decoded_fool, fool);
@@ -101,18 +101,16 @@ static int replay_sweep(void) {
                        players, s, c6, fio_last_replay_error());
                 return 1;
             }
-            if (fio_replay_decode_json(code6, buf, sizeof(buf)) < 0) {
+            if (fio_replay_decode_packed(code6, (unsigned char *)buf, sizeof(buf)) < 0) {
                 printf("FAIL sweep v6 decode p=%d seed=%d err=%d\n", players, s,
                        fio_last_replay_error());
                 return 1;
             }
-            const char *vp = strstr(buf, "\"version\":");
-            if (!vp || atoi(vp + 10) != 6) {
+            if ((unsigned char)buf[0] != 6) {   // version is byte[0]
                 printf("FAIL sweep v6 version p=%d seed=%d\n", players, s);
                 return 1;
             }
-            fp = strstr(buf, "\"fool\":");
-            if ((fp ? atoi(fp + 7) : -999) != fool) {
+            if (((unsigned char)buf[4] == 0xFF ? -1 : (unsigned char)buf[4]) != fool) {
                 printf("FAIL sweep v6 fool mismatch p=%d seed=%d\n", players, s);
                 return 1;
             }
@@ -362,12 +360,11 @@ int main(void) {
     int clen = fio_replay_encode_b32(code, sizeof(code));
     if (clen < 0) { printf("FAIL replay encode err=%d detail=%d\n", clen, fio_last_replay_error()); return 1; }
     printf("replay code (%d chars): %.60s%s\n", clen, code, clen > 60 ? "..." : "");
-    int dlen = fio_replay_decode_json(code, buf, sizeof(buf));
+    int dlen = fio_replay_decode_packed(code, (unsigned char *)buf, sizeof(buf));
     if (dlen < 0) { printf("FAIL replay decode err=%d detail=%d\n", dlen, fio_last_replay_error()); return 1; }
-    printf("decoded head=%.140s\n", buf);
-    // find "fool": in the decoded JSON and compare to the game's fool.
-    const char *fp = strstr(buf, "\"fool\":");
-    int decoded_fool = fp ? atoi(fp + 7) : -999;
+    // replay.h DECODE binary: version byte[0], fool byte[4] (0xFF → -1).
+    int decoded_fool = (unsigned char)buf[4] == 0xFF ? -1 : (unsigned char)buf[4];
+    printf("decoded %d bytes (v%d, fool=%d)\n", dlen, (unsigned char)buf[0], decoded_fool);
     if (decoded_fool != fool) { printf("FAIL replay fool mismatch: decoded=%d game=%d\n", decoded_fool, fool); return 1; }
     printf("replay round-trip OK (fool=%d)\n", decoded_fool);
 

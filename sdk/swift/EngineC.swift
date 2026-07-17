@@ -169,11 +169,20 @@ public actor EngineC {
 
     /// Decode a shareable code to the decoded step list (does not touch the
     /// current game). Byte-parity with the server (shared replay.c).
+    /// Decode a shareable code to the step list, through the PACKED wire: the
+    /// kernel hands back the raw replay DECODE binary and Swift parses it
+    /// (DecodedReplay.decode) — no JSON crosses the boundary. Does not touch the
+    /// current game. Byte-parity with the server (shared replay.c).
     public func replayDecode(code: String) throws -> DecodedReplay {
         let data = try code.withCString { cstr -> Data in
-            try json { fio_replay_decode_json(cstr, $0, $1) }
+            try json { buf, cap in
+                buf.withMemoryRebound(to: UInt8.self, capacity: Int(cap)) {
+                    fio_replay_decode_packed(cstr, $0, cap)
+                }
+            }
         }
-        return try JSONDecoder().decode(DecodedReplay.self, from: data)
+        guard let r = DecodedReplay.decode(packed: data) else { throw EngineError.unknown(-1) }
+        return r
     }
 
     // MARK: typed decoders (convenience)
