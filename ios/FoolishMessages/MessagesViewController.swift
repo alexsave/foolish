@@ -82,7 +82,7 @@ final class MessagesViewController: MSMessagesAppViewController {
 
         let root = MessagesRootView(
             payloadURL: startingNewGame ? nil : selected?.url,
-            style: style,
+            style: style == .compact ? .compact : .expanded,   // map onto FoolishKit's enum
             senderIsLocal: senderIsLocal,
             startNewGame: startingNewGame,
             chatIsDM: isDM,

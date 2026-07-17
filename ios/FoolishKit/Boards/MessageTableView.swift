@@ -18,7 +18,6 @@ public struct MessageTableView: View {
 
     @State private var selection: Set<String> = []
     @State private var toast: String?
-    @State private var sending = false
 
     public init(controller: MessageTurnController, onSend: @escaping (Data) async -> Void) {
         self.controller = controller
@@ -47,7 +46,17 @@ public struct MessageTableView: View {
         .onChange(of: controller.rejectTick) { _ in
             Haptics.fire(.reject); toast = FStrings.t("ios.reject")
         }
-        .task { if !controller.ready { await controller.begin() } }
+        .task {
+            if !controller.ready { await controller.begin() }
+            #if DEBUG
+            // FoolishHarness screenshotting only: auto-play the first legal move so
+            // the auto-stage flow (move -> staged bubble) is visible without a tap.
+            if ProcessInfo.processInfo.environment["HARNESS_AUTOMOVE"] != nil,
+               let m = controller.legal.first(where: { $0.type != .wait }) {
+                play(m)
+            }
+            #endif
+        }
     }
 
     // MARK: zones
@@ -138,20 +147,13 @@ public struct MessageTableView: View {
             .padding(.horizontal, FSpace.s)
     }
 
+    // A staged move auto-composes the bubble (see `stageNow`), so the only send
+    // control left is Undo — the human's next tap is the Messages send arrow.
     @ViewBuilder
     private var sendBar: some View {
         if controller.canSend {
-            HStack(spacing: FSpace.m) {
-                FButton(FStrings.t("ios.msg.undo"), kind: .wood) { Task { await controller.undo() } }
-                FButton(sending ? FStrings.t("ios.msg.sending") : FStrings.t("ios.msg.send"),
-                        kind: .wood) {
-                    guard !sending else { return }
-                    sending = true
-                    Task {
-                        if let payload = try? await controller.stagedPayload() { await onSend(payload) }
-                        sending = false
-                    }
-                }
+            FButton(FStrings.t("ios.msg.undo"), kind: .wood) {
+                Task { await controller.undo(); await stageNow() }
             }
             .padding(.top, 2)
         }
@@ -159,7 +161,21 @@ public struct MessageTableView: View {
 
     // MARK: interaction (mirrors TableView — every branch reads the kernel menu)
 
-    private func play(_ move: Move) { selection.removeAll(); Task { await controller.apply(move) } }
+    private func play(_ move: Move) {
+        selection.removeAll()
+        Task { await controller.apply(move); await stageNow() }
+    }
+
+    /// Compose + stage the bubble the instant a move is applied (§11.4 flow, B4
+    /// feedback: "too many buttons before you can send"). Playing an attack /
+    /// cover / pickup / pass / good drops you straight to the staged message, so
+    /// the only remaining action is the send arrow. Re-staging replaces the input
+    /// bubble, so throwing in more cards just updates it. No-op until something is
+    /// staged (a 0-action genesis body is unsealable).
+    private func stageNow() async {
+        guard controller.canSend else { return }
+        if let payload = try? await controller.stagedPayload() { await onSend(payload) }
+    }
 
     private func has(_ type: MoveType) -> Bool { controller.legal.contains { $0.type == type } }
 

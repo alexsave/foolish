@@ -200,6 +200,28 @@ targets:
         # (FoolishKit does the same) — without it `xcodebuild test` fails to sign.
         GENERATE_INFOPLIST_FILE: "YES"
 
+  # ---- FoolishHarness (DEV TEST HOST — NEVER SHIPPED) --------------------
+  # A normal iOS app that renders the SAME MessagesRootView the iMessage
+  # extension renders, driven by a fake 2-8 "participant" transcript. It exists
+  # ONLY to test N-way group logic + UI on one simulator: Apple's Messages host
+  # cannot be extended past its two seeded participants, and two simulators
+  # cannot iMessage each other, so the shipping path can't exercise a 3-8 player
+  # game locally. This target is NOT embedded in Foolish, is NOT an app-extension,
+  # and must never ship. See ios/HarnessUI/ and docs/IMESSAGE_MAC_RUNBOOK.md.
+  FoolishHarness:
+    type: application
+    platform: iOS
+    sources:
+      - path: HarnessUI
+    dependencies:
+      - target: FoolishKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: cards.foolish.harness
+        GENERATE_INFOPLIST_FILE: "YES"
+        INFOPLIST_KEY_UILaunchScreen_Generation: "YES"
+        TARGETED_DEVICE_FAMILY: "1"
+
 schemes:
   Foolish:
     build:

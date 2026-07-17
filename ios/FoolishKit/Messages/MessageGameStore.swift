@@ -56,8 +56,13 @@ public struct PendingAction: Codable, Equatable, Sendable {
 }
 
 public final class MessageGameStore {
-    /// The shared group both the app (drawer) and the extension read/write.
-    public static let shared = MessageGameStore(suiteName: "group.cards.foolish")
+    /// The shared group both the app (drawer) and the extension read/write. A
+    /// `var`, not a `let`, for one reason only: the FoolishHarness test app
+    /// rebinds it to a per-fake-participant suite when you switch players, so each
+    /// of the 2-8 pretend people gets its OWN seat cache (which is what a real
+    /// device has). The shipping app and extension never touch this — they run on
+    /// the real App Group.
+    public static var shared = MessageGameStore(suiteName: "group.cards.foolish")
 
     private let defaults: UserDefaults?
     private let key = "fmsg.games.v1"
