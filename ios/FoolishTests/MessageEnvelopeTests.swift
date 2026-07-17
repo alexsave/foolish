@@ -174,4 +174,13 @@ final class MessageEnvelopeTests: XCTestCase {
         // And it fits MSMessage.url's documented 5,000-char cap with room.
         XCTAssertLessThan(link.absoluteString.count, 1000)
     }
+
+    /// `link` is the composer's URL builder and the exact inverse of
+    /// `payloadBytes` — what the extension stages must decode back to the bytes.
+    func testLinkIsTheInverseOfPayloadBytes() throws {
+        let raw = bytes(fixtures[1].hex)
+        let url = MessageEnvelope.link(payload: raw)
+        XCTAssertTrue(url.absoluteString.hasPrefix("https://foolish.cards/m/1"))
+        XCTAssertEqual(try MessageEnvelope.payloadBytes(url: url), raw)
+    }
 }
