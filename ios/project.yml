@@ -163,10 +163,17 @@ targets:
         # target points at a checked-in plist; the framework has none, so Xcode
         # has to synthesize one.
         GENERATE_INFOPLIST_FILE: "YES"
-        # APPLICATION_EXTENSION_API_ONLY is turned on in Milestone G, when the
-        # iMessage extension actually links FoolishKit and an extension-safe
-        # subset (Engine/DesignSystem/Boards, no app-only APIs) is split out.
-        # Enabling it now would forbid app-only APIs the app legitimately uses.
+        # APPLICATION_EXTENSION_API_ONLY: FoolishKit is linked by the iMessage
+        # extension (FoolishMessages), which is extension-only, so the framework
+        # must be too. An audit found FoolishKit + sdk/swift use NO app-only API
+        # (the only app-only call, ShareLink, is in the app target where it
+        # belongs), so this is now ON and the compiler keeps it that way — an
+        # app-only API creeping into FoolishKit becomes a build error, not a
+        # runtime surprise in the extension. (Separate, heavier concern tracked
+        # apart: FoolishKit still links the Supabase SDK, so the extension binary
+        # carries a network stack it never uses — §17.5's memory ceiling wants a
+        # FoolishKitCore/Net split; that is a refactor, not this flag.)
+        APPLICATION_EXTENSION_API_ONLY: "YES"
 
   # ---- Unit + snapshot + golden tests ------------------------------------
   FoolishTests:
