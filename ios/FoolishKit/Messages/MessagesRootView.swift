@@ -11,12 +11,17 @@
 // and MessageComposer only stages. Seat identity is the one non-kernel decision,
 // and it is SeatIdentity's pure §6 logic, fed the conversation's `senderIsLocal`.
 import SwiftUI
-import Messages
-import FoolishKit
 
-struct MessagesRootView: View {
+/// The extension's two presentation states, decoupled from the Messages
+/// framework so this view compiles into FoolishKit and is drivable by both the
+/// real `MessagesViewController` (which maps `MSMessagesAppPresentationStyle`
+/// onto it) AND the FoolishHarness test app (§ harness). Nothing here imports
+/// `Messages`.
+public enum MsgPresentation { case compact, expanded }
+
+public struct MessagesRootView: View {
     let payloadURL: URL?
-    let style: MSMessagesAppPresentationStyle
+    let style: MsgPresentation
     let senderIsLocal: Bool
     let startNewGame: Bool
     let chatIsDM: Bool
@@ -25,7 +30,16 @@ struct MessagesRootView: View {
     let onNewGame: () -> Void
     let onSend: (Data, Int) async -> Void
 
-    var body: some View {
+    public init(payloadURL: URL?, style: MsgPresentation, senderIsLocal: Bool,
+                startNewGame: Bool, chatIsDM: Bool, chatPlayers: Int,
+                requestExpand: @escaping () -> Void, onNewGame: @escaping () -> Void,
+                onSend: @escaping (Data, Int) async -> Void) {
+        self.payloadURL = payloadURL; self.style = style; self.senderIsLocal = senderIsLocal
+        self.startNewGame = startNewGame; self.chatIsDM = chatIsDM; self.chatPlayers = chatPlayers
+        self.requestExpand = requestExpand; self.onNewGame = onNewGame; self.onSend = onSend
+    }
+
+    public var body: some View {
         content
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(WoolBackground())          // the table surface, not system white
@@ -35,7 +49,7 @@ struct MessagesRootView: View {
         switch style {
         case .compact:
             CompactView(hasGame: payloadURL != nil, requestExpand: requestExpand, onNewGame: onNewGame)
-        default:
+        case .expanded:
             ExpandedView(payloadURL: payloadURL, senderIsLocal: senderIsLocal,
                          startNewGame: startNewGame, chatIsDM: chatIsDM, chatPlayers: chatPlayers,
                          onSend: onSend)
@@ -480,10 +494,13 @@ private struct SeatPicker: View {
 
 #if DEBUG
 /// DEBUG-only knobs for single-simulator testing (never compiled into Release).
-enum MessageDebugFlags {
+public enum MessageDebugFlags {
     /// Force the seat picker on every adopted bubble so both seats are playable
     /// on ONE simulator (which cannot otherwise distinguish sender from receiver).
-    static let pickSeatOnAdopt = true
+    /// The FoolishHarness turns this OFF: it gives each fake participant a
+    /// distinct identity + its own seat cache, so seat inference resolves
+    /// automatically and the picker would be wrong to show.
+    public static var pickSeatOnAdopt = true
 }
 #endif
 
