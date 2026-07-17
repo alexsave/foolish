@@ -923,45 +923,6 @@ int fio_msg_encode(int phase, int last_actor_seat, uint64_t game_id,
     return n;
 }
 
-// Seal a 0-action bubble: seed + joins, EMPTY body. Two phases need it and
-// neither can go through msg_seal, whose v6 producer refuses a 0-action game
-// (MSG_EBODY): a WAITING lobby (§5.2) has no move by definition, and the
-// last-joiner handoff stages phase=LIVE having "applied nothing" (§5.2 — the
-// kernel picks the first attacker, who then plays on the next bubble). Both write
-// an empty body straight into msg_encode, the shape test_waiting_phase pins.
-// n_players + seed come from the resident game (newGame at creation, or the
-// adopted WAITING chain at a join). `phase` must be WAITING or LIVE.
-int fio_msg_encode_empty(int phase, int last_actor_seat, uint64_t game_id,
-                         const uint8_t parent8[8], const char *joins_json,
-                         uint8_t *out, int cap) {
-    if (!g_has_game) return FIO_ENOGAME;
-    if (!out || cap <= 0 || !joins_json) return FIO_EBADARG;
-    if (!g_has_deal_seed) return FIO_ENOSEED;
-    if (phase != MSG_PHASE_WAITING && phase != MSG_PHASE_LIVE) return FIO_EBADARG;
-    g_last_msg_error = 0;
-
-    MsgEnvelope e;
-    memset(&e, 0, sizeof(e));
-    e.format = MSG_FORMAT_V6;
-    e.flags = 0;
-    e.phase = (uint8_t)phase;
-    e.game_id = game_id;
-    e.last_actor_seat = (uint8_t)last_actor_seat;
-    e.n_players = (uint8_t)g_game.num_players;
-    e.variant = 0;
-    if (parent8) memcpy(e.parent8, parent8, MSG_PARENT_LEN);
-    memcpy(e.seed, g_deal_seed, FOOLISH_SEED_LEN);
-
-    const int jrc = fio_parse_joins(joins_json, &e);
-    if (jrc != FIO_EOK) return jrc;
-
-    e.turn = 0; e.round = 0;
-    e.n_actions = 0; e.actions = 0; e.actions_len = 0;
-
-    const int n = msg_encode(&e, out, cap);
-    if (n < 0) { g_last_msg_error = n; return n == MSG_ECAP ? FIO_ECAP : FIO_EMSG; }
-    return n;
-}
 
 int fio_msg_rule_p(const uint8_t *a, int a_len, const uint8_t *b, int b_len) {
     if (!a || !b) return FIO_EBADARG;

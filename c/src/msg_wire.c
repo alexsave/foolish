@@ -373,6 +373,23 @@ int msg_replay(const MsgEnvelope *e, Game *g) {
 
 int msg_seal(MsgEnvelope *e, const Game *g, unsigned char *body, int body_cap,
              Game *scratch) {
+    // A 0-action game seals to an EMPTY body: a WAITING lobby, or the last-joiner
+    // LIVE handoff that "applies nothing" (§5.2). The v6 producer is an action-run
+    // codec keyed on the logged opening attack — it has nothing to encode and no
+    // first attacker to key on, so it (correctly) refuses. The deal alone is the
+    // state; emit no body and let msg_replay's 0-action path rebuild from the seed.
+    // "No opening attack logged" is the same fact the encoder keys on.
+    if (replay_first_attacker_from_logs(g->logs, g->num_logs) < 0) {
+        (void)scratch; (void)body_cap;
+        e->format      = MSG_FORMAT_V6;
+        e->actions     = body;   // unused (len 0), but a valid non-null buffer
+        e->actions_len = 0;
+        e->n_actions   = 0;
+        e->turn        = 0;
+        e->round       = 0;
+        return MSG_EOK;
+    }
+
     // 1 << 30 = every atom: a cut is what the CALLER already played to, not
     // something this decides.
     const int n = replay_encode_v6_from_game(g, e->seed, MSG_SEED_LEN,

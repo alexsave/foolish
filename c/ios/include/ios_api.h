@@ -235,17 +235,10 @@ int fio_msg_decode_packed(const uint8_t *payload, int len, unsigned char *out, i
 int fio_msg_encode(int phase, int last_actor_seat, uint64_t game_id,
                    const uint8_t parent8[8], const char *joins_json,
                    uint8_t *out, int cap);
-
-// Seal a 0-action bubble (§5.2): seed + `joins_json`, empty body. `phase` is
-// WAITING (a lobby with seats still open) or LIVE (the last-joiner handoff that
-// starts the game with no move yet). Distinct from fio_msg_encode because the v6
-// body producer refuses a 0-action game — there is no move to carry. n_players +
-// seed come from the resident game (newGame at creation, or the adopted WAITING
-// chain at a join). `last_actor_seat` is who just claimed a seat. Returns bytes
-// written to `out`, or negative (FIO_EBADARG if `phase` is not WAITING/LIVE).
-int fio_msg_encode_empty(int phase, int last_actor_seat, uint64_t game_id,
-                         const uint8_t parent8[8], const char *joins_json,
-                         uint8_t *out, int cap);
+// This one entry seals every phase. A 0-action game — a WAITING lobby (§5.2) or
+// the last-joiner LIVE handoff that "applies nothing" — seals to an empty body:
+// msg_seal detects "no opening attack logged" and emits no v6 body, since the v6
+// producer is an action-run codec and the deal alone is the state.
 
 // Rule P (§7.2): which of two payloads does EVERY device prefer?
 // <0 `a`, >0 `b`, 0 the same chain. Structure only — no replay, and no clocks:

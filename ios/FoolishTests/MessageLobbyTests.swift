@@ -19,7 +19,7 @@ final class MessageLobbyTests: XCTestCase {
     func testCreatorSealsAWaitingBubble() async throws {
         let k = MessageKernel.shared
         try await k.newGame(seed: freshSeed(3), players: 4)   // fixes n_players + seed resident
-        let payload = try await k.sealEmpty(phase: 0, lastActorSeat: 0, gameId: 900,
+        let payload = try await k.seal(phase: 0, lastActorSeat: 0, gameId: 900,
                                               parent8: Data(repeating: 0, count: 8),
                                               joins: [MessageJoin(seat: 0, name: "Alex")])
         XCTAssertFalse(payload.isEmpty)
@@ -37,7 +37,7 @@ final class MessageLobbyTests: XCTestCase {
     func testJoinerAppendsLowestFreeSeatAndStaysWaiting() async throws {
         let k = MessageKernel.shared
         try await k.newGame(seed: freshSeed(5), players: 4)
-        let created = try await k.sealEmpty(phase: 0, lastActorSeat: 0, gameId: 901,
+        let created = try await k.seal(phase: 0, lastActorSeat: 0, gameId: 901,
                                               parent8: Data(repeating: 0, count: 8),
                                               joins: [MessageJoin(seat: 0, name: "Alex")])
 
@@ -46,7 +46,7 @@ final class MessageLobbyTests: XCTestCase {
         let free = (0..<env.nPlayers).first { s in !env.joins.contains { $0.seat == s } }
         XCTAssertEqual(free, 1, "seat 0 is taken; the next free seat is 1")
         let joins2 = (env.joins + [MessageJoin(seat: free!, name: "Sveta")]).sorted { $0.seat < $1.seat }
-        let payload2 = try await k.sealEmpty(phase: 0, lastActorSeat: free!, gameId: 901,
+        let payload2 = try await k.seal(phase: 0, lastActorSeat: free!, gameId: 901,
                                                parent8: MessageTurnController.firstEight(hex: env.digest),
                                                joins: joins2)
 
@@ -65,7 +65,7 @@ final class MessageLobbyTests: XCTestCase {
         let gid: UInt64 = 902
         try await k.newGame(seed: freshSeed(9), players: 3)
         var joins = [MessageJoin(seat: 0, name: "Alex")]
-        var payload = try await k.sealEmpty(phase: 0, lastActorSeat: 0, gameId: gid,
+        var payload = try await k.seal(phase: 0, lastActorSeat: 0, gameId: gid,
                                               parent8: Data(repeating: 0, count: 8), joins: joins)
 
         // Two joiners fill seats 1 and 2; the second flips the game LIVE.
@@ -74,9 +74,9 @@ final class MessageLobbyTests: XCTestCase {
             joins = (env.joins + [MessageJoin(seat: seat, name: name)]).sorted { $0.seat < $1.seat }
             let parent = MessageTurnController.firstEight(hex: env.digest)
             if joins.count == env.nPlayers {
-                payload = try await k.sealEmpty(phase: 2, lastActorSeat: seat, gameId: gid, parent8: parent, joins: joins)
+                payload = try await k.seal(phase: 2, lastActorSeat: seat, gameId: gid, parent8: parent, joins: joins)
             } else {
-                payload = try await k.sealEmpty(phase: 0, lastActorSeat: seat, gameId: gid,
+                payload = try await k.seal(phase: 0, lastActorSeat: seat, gameId: gid,
                                                   parent8: parent, joins: joins)
             }
         }

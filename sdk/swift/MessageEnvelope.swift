@@ -194,7 +194,10 @@ public actor MessageKernel {
 
     /// Seal the resident game — the send path, after the local player moved.
     /// The kernel derives turn/round from the body it writes, so a device cannot
-    /// emit a payload it would itself reject.
+    /// emit a payload it would itself reject. Seals every phase: a 0-action game (a
+    /// WAITING lobby, or the last-joiner LIVE handoff, §5.2) seals to an empty body
+    /// - the deal alone is the state - which msg_seal handles, so lobby creation
+    /// and joins use this same entry.
     public func seal(phase: Int, lastActorSeat: Int, gameId: UInt64,
                     parent8: Data, joins: [MessageJoin]) throws -> Data {
         let joinsJSON = String(data: try JSONEncoder().encode(joins), encoding: .utf8) ?? "[]"
@@ -204,25 +207,6 @@ public actor MessageKernel {
         let n = joinsJSON.withCString { jp in
             fio_msg_encode(Int32(phase), Int32(lastActorSeat), gameId, parent, jp,
                            &out, Int32(out.count))
-        }
-        guard n > 0 else { throw MessageEnvelope.Failure.damaged(code: Int(fio_last_msg_error())) }
-        return Data(bytes: out, count: Int(n))
-    }
-
-    /// Seal a 0-action bubble (§5.2): the resident game's seed + `joins`, no
-    /// actions. `phase` is 0 WAITING (a lobby with seats open — creation, or a
-    /// join that leaves seats free) or 2 LIVE (the last-joiner handoff that starts
-    /// the game with no move yet). A LIVE bubble that carries a move goes through
-    /// `seal` instead. `lastActorSeat` is who just claimed. Throws on a bad
-    /// seat/seed or a phase that is neither WAITING nor LIVE.
-    public func sealEmpty(phase: Int, lastActorSeat: Int, gameId: UInt64,
-                          parent8: Data, joins: [MessageJoin]) throws -> Data {
-        let joinsJSON = String(data: try JSONEncoder().encode(joins), encoding: .utf8) ?? "[]"
-        var parent = [UInt8](repeating: 0, count: 8)
-        parent.replaceSubrange(0..<min(8, parent8.count), with: parent8.prefix(8))
-        var out = [UInt8](repeating: 0, count: 8 * 1024)
-        let n = joinsJSON.withCString { jp in
-            fio_msg_encode_empty(Int32(phase), Int32(lastActorSeat), gameId, parent, jp, &out, Int32(out.count))
         }
         guard n > 0 else { throw MessageEnvelope.Failure.damaged(code: Int(fio_last_msg_error())) }
         return Data(bytes: out, count: Int(n))

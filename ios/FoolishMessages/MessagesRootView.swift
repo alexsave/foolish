@@ -156,7 +156,7 @@ private struct ExpandedView: View {
         do {
             try await MessageKernel.shared.newGame(seed: seed, players: players)
             let joins = [MessageJoin(seat: 0, name: nickname)]
-            let payload = try await MessageKernel.shared.sealEmpty(
+            let payload = try await MessageKernel.shared.seal(
                 phase: 0, lastActorSeat: 0, gameId: gameId,
                 parent8: Data(repeating: 0, count: 8), joins: joins)
             let env = try await MessageEnvelope.decode(payload: payload, viewer: -1)
@@ -195,7 +195,7 @@ private struct ExpandedView: View {
             // Re-adopt the lobby so the seed + player count are resident for the seal.
             _ = try await MessageKernel.shared.decode(payload: lob.payload, viewer: -1)
             let parent = MessageTurnController.firstEight(hex: env.digest)
-            let payload = try await MessageKernel.shared.sealEmpty(
+            let payload = try await MessageKernel.shared.seal(
                 phase: full ? 2 : 0, lastActorSeat: free, gameId: gid, parent8: parent, joins: joins)
             let newEnv = try await MessageEnvelope.decode(payload: payload, viewer: -1)
             cache(seat: free, env: newEnv, payload: payload)
