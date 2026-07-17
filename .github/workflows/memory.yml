@@ -48,7 +48,11 @@ jobs:
           # bots.wasm.gz next to it. Injected HERE, not in committed
           # config.toml: `functions deploy` would try to deploy a memtest
           # function that has no dir at deploy time and fail the deploy.
-          printf '\n[functions.memtest]\nstatic_files = [ "../../../sdk/ts/wasm/bots.wasm.gz" ]\n' >> server/impls/supabase/config.toml
+          # import_map is REQUIRED too: the bot stack (engine.ts et al.) imports
+          # the @api/@sdk aliases, and without the map serve fails to bootstrap
+          # ("Relative import path @api/... not prefixed with ./"). Every real
+          # function sets the same import_map in config.toml.
+          printf '\n[functions.memtest]\nstatic_files = [ "../../../sdk/ts/wasm/bots.wasm.gz" ]\nimport_map = "./functions/import_map.json"\n' >> server/impls/supabase/config.toml
 
       - name: Start local stack (db + edge runtime)
         # memtest is DB-free, but `supabase start` still applies migrations and
