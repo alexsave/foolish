@@ -75,6 +75,45 @@ final class MessageTurnControllerTests: XCTestCase {
         XCTAssertEqual(c.view?.me?.handCount, beforeHand, "undo restored my hand")
     }
 
+    /// §12 funnel: a genesis game played to the end yields a REPLAY code that
+    /// decodes to a finished game, and the FINISHED bubble links to it (not /m/).
+    /// Drives to completion through MessageKernel.apply — the same path a turn uses.
+    func testFinishedGameProducesAReplayFunnelLink() async throws {
+        let k = MessageKernel.shared
+        let seed = Data((0..<32).map { UInt8(($0 &* 5 &+ 1) | 1) })
+        try await k.newGame(seed: seed, players: 2)
+
+        // Lowest-eligible-seat, first legal move, until the game is over.
+        for _ in 0..<2000 {
+            if let v = await k.residentView(viewer: -1), v.isOver { break }
+            var applied = false
+            for seat in 0..<2 {
+                let legal = await k.residentLegal(seat: seat)
+                if let m = legal.first(where: { $0.type != .wait }) {
+                    try await k.apply(seat: seat, move: m)
+                    applied = true
+                    break
+                }
+            }
+            if !applied { break }
+        }
+        let over = await k.residentView(viewer: -1)
+        XCTAssertEqual(over?.isOver, true, "the driven game reached game-over")
+
+        guard let code = await k.residentReplayCode() else {
+            return XCTFail("a finished game must produce a replay code")
+        }
+        XCTAssertFalse(code.isEmpty)
+        XCTAssertEqual(MessageEnvelope.replayLink(code: code).absoluteString,
+                       "https://foolish.cards/" + code, "the funnel link is /<code>, not /m/")
+
+        // The code decodes to a FINISHED game (fool known) — decode doesn't touch
+        // the resident game, so this is a clean read.
+        let decoded = try await EngineC().replayDecode(code: code)
+        XCTAssertEqual(decoded.nPlayers, 2)
+        XCTAssertTrue(decoded.isComplete, "the replay knows its fool")
+    }
+
     /// parent8 is the first 8 bytes of the parent digest, zero-padded — the exact
     /// tag the next chain points back with (§7.4).
     func testParent8IsFirstEightDigestBytes() {
