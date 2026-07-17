@@ -19,17 +19,26 @@ struct MessagesRootView: View {
     let style: MSMessagesAppPresentationStyle
     let senderIsLocal: Bool
     let startNewGame: Bool
+    let chatIsDM: Bool
+    let chatPlayers: Int
     let requestExpand: () -> Void
     let onNewGame: () -> Void
     let onSend: (Data, Int) async -> Void
 
     var body: some View {
+        content
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(WoolBackground())          // the table surface, not system white
+    }
+
+    @ViewBuilder private var content: some View {
         switch style {
         case .compact:
             CompactView(hasGame: payloadURL != nil, requestExpand: requestExpand, onNewGame: onNewGame)
         default:
             ExpandedView(payloadURL: payloadURL, senderIsLocal: senderIsLocal,
-                         startNewGame: startNewGame, onSend: onSend)
+                         startNewGame: startNewGame, chatIsDM: chatIsDM, chatPlayers: chatPlayers,
+                         onSend: onSend)
         }
     }
 }
@@ -40,15 +49,17 @@ private struct CompactView: View {
     let onNewGame: () -> Void
 
     var body: some View {
-        VStack(spacing: 10) {
-            Text(hasGame ? FStrings.t("ios.msg.thread") : "Foolish").font(.headline)
+        VStack(spacing: 12) {
+            Text(hasGame ? FStrings.t("ios.msg.thread") : "Foolish")
+                .font(.headline).foregroundStyle(FColor.textPrimary)
             if hasGame {
-                Button(FStrings.t("ios.msg.open"), action: requestExpand).buttonStyle(.borderedProminent)
-                Button(FStrings.t("ios.msg.newgame"), action: onNewGame).buttonStyle(.bordered)
+                FButton(FStrings.t("ios.msg.open"), kind: .wood, action: requestExpand)
+                FButton(FStrings.t("ios.msg.newgame"), kind: .secondary, action: onNewGame)
             } else {
-                Button(FStrings.t("ios.msg.newgame"), action: onNewGame).buttonStyle(.borderedProminent)
+                FButton(FStrings.t("ios.msg.newgame"), kind: .wood, action: onNewGame)
             }
         }
+        .padding(.horizontal, 32)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
@@ -57,6 +68,8 @@ private struct ExpandedView: View {
     let payloadURL: URL?
     let senderIsLocal: Bool
     let startNewGame: Bool
+    let chatIsDM: Bool
+    let chatPlayers: Int
     let onSend: (Data, Int) async -> Void
 
     /// A tapped bubble that LOST Rule P to the chain we already trust (§7.6): the
@@ -84,14 +97,17 @@ private struct ExpandedView: View {
                           onSend: { Task { await onSend(lob.payload, lobbySeat(lob.env) ?? 0) } },
                           onJoin: { name in Task { await joinLobby(lob, nickname: name) } })
             } else if showSetup {
-                NewGameSetup(nickname: MessageGameStore.shared.nickname) { name, players in
+                NewGameSetup(nickname: MessageGameStore.shared.nickname,
+                             isDM: chatIsDM, chatPlayers: chatPlayers) { name, players in
                     Task { await start(nickname: name, players: players) }
                 }
             } else if let s = stale {
                 StaleBanner(onNewest: { Task { await openNewest(s) } },
                             onAnyway: { Task { await openAnyway(s) } })
             } else if let a = ambiguous {
-                SeatPicker(joins: a.env.joins) { seat in Task { await choose(seat: seat, from: a) } }
+                SeatPicker(nPlayers: a.env.nPlayers, joins: a.env.joins) { seat in
+                    Task { await choose(seat: seat, from: a) }
+                }
             } else if damaged {
                 DamagedView()
             } else {
@@ -217,6 +233,15 @@ private struct ExpandedView: View {
         // Make the resident game the winner and set Rule R's round guard, then
         // rebase the pending ledger onto it.
         _ = try? await MessageKernel.shared.decode(payload: winner, viewer: -1)
+        #if DEBUG
+        // Single-simulator harness: both conversations share ONE App Group cache
+        // and participant identity, so a received bubble always resolves to the
+        // SENDER's seat and you can never view the receiver ("Waiting for Seat 2"
+        // while you ARE seat 2). In DEBUG, ask who you are so both seats are
+        // playable on one sim. Release resolves automatically (real devices have
+        // separate caches + distinct participant UUIDs) and never shows this.
+        if MessageDebugFlags.pickSeatOnAdopt { ambiguous = (env, winner); return }
+        #endif
         let (survivors, discarded) = await rebasePending(gameId: env.gameId, adoptedRound: env.round)
 
         switch SeatIdentity.resolve(cachedSeat: MessageGameStore.shared.seat(gameId: env.gameId),
@@ -319,34 +344,45 @@ private struct ExpandedView: View {
 /// New game setup (§5.2): the creator names themselves (B3 — the one place a
 /// nickname is entered; compact is the keyboard area and cannot host a field,
 /// §3.5) and picks a player count. Two players start a DM game at once; three or
-/// four open a lobby others join. The wire allows up to 8; v1's UI caps at 4.
+/// more open a lobby others join. The wire allows 2-8.
+///
+/// Chat-aware (B4 feedback): a 1:1 DM can only be 2 players, so the picker is
+/// hidden and locked to 2. A group chat defaults to its own participant count
+/// but still lets the creator pick anything 2-8 (bots or a subset can fill it).
 private struct NewGameSetup: View {
     @State private var nickname: String
-    @State private var players = 2
+    @State private var players: Int
+    let isDM: Bool
     let onStart: (String, Int) -> Void
 
-    init(nickname: String, onStart: @escaping (String, Int) -> Void) {
+    init(nickname: String, isDM: Bool, chatPlayers: Int, onStart: @escaping (String, Int) -> Void) {
         _nickname = State(initialValue: nickname == "Me" ? "" : nickname)
+        _players = State(initialValue: isDM ? 2 : min(max(chatPlayers, 2), 8))
+        self.isDM = isDM
         self.onStart = onStart
     }
 
     var body: some View {
         VStack(spacing: 16) {
-            Text(FStrings.t("ios.msg.newgame")).font(.headline)
+            Text(FStrings.t("ios.msg.newgame")).font(.headline).foregroundStyle(FColor.textPrimary)
             VStack(alignment: .leading, spacing: 4) {
-                Text(FStrings.t("ios.msg.yourname")).font(.footnote).foregroundStyle(.secondary)
+                Text(FStrings.t("ios.msg.yourname")).font(.footnote).foregroundStyle(FColor.textDim)
                 TextField(FStrings.t("ios.you"), text: $nickname).textFieldStyle(.roundedBorder)
             }
-            VStack(alignment: .leading, spacing: 4) {
-                Text(FStrings.t("players")).font(.footnote).foregroundStyle(.secondary)
-                Picker(FStrings.t("players"), selection: $players) {
-                    ForEach(2...4, id: \.self) { Text("\($0)").tag($0) }
-                }.pickerStyle(.segmented)
+            if isDM {
+                Text(FStrings.t("players") + ": 2").font(.footnote).foregroundStyle(FColor.textDim)
+            } else {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(FStrings.t("players")).font(.footnote).foregroundStyle(FColor.textDim)
+                    Picker(FStrings.t("players"), selection: $players) {
+                        ForEach(2...8, id: \.self) { Text("\($0)").tag($0) }
+                    }.pickerStyle(.segmented)
+                }
             }
-            Button(FStrings.t("start_game")) {
+            FButton(FStrings.t("start_game"), kind: .wood) {
                 let n = nickname.trimmingCharacters(in: .whitespaces)
-                onStart(n.isEmpty ? FStrings.t("ios.you") : n, players)
-            }.buttonStyle(.borderedProminent)
+                onStart(n.isEmpty ? FStrings.t("ios.you") : n, isDM ? 2 : players)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding()
@@ -378,15 +414,16 @@ private struct LobbyView: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            Text(FStrings.t("ios.lobby")).font(.headline)
+            Text(FStrings.t("ios.lobby")).font(.headline).foregroundStyle(FColor.textPrimary)
             VStack(spacing: 6) {
                 ForEach(0..<env.nPlayers, id: \.self) { s in
                     HStack {
-                        Text("\(s + 1).").foregroundStyle(.secondary).monospacedDigit()
+                        Text("\(s + 1).").foregroundStyle(FColor.textDim).monospacedDigit()
                         if let nm = name(s) {
                             Text(nm + (s == mySeat ? " (\(FStrings.t("ios.you")))" : ""))
+                                .foregroundStyle(FColor.textPrimary)
                         } else {
-                            Text(FStrings.t("ios.msg.seatopen")).foregroundStyle(.secondary).italic()
+                            Text(FStrings.t("ios.msg.seatopen")).foregroundStyle(FColor.textDim).italic()
                         }
                         Spacer()
                     }
@@ -397,15 +434,14 @@ private struct LobbyView: View {
             if mySeat != nil {
                 Text(freeSeats > 0 ? FStrings.t("ios.msg.waitingjoin", ["n": "\(freeSeats)"])
                                    : FStrings.t("ios.msg.lobbyfull"))
-                    .font(.footnote).foregroundStyle(.secondary)
-                Button(FStrings.t("ios.msg.sendinvite"), action: onSend).buttonStyle(.borderedProminent)
+                    .font(.footnote).foregroundStyle(FColor.textDim)
+                FButton(FStrings.t("ios.msg.sendinvite"), kind: .wood, action: onSend)
             } else if freeSeats > 0 {
                 TextField(FStrings.t("ios.you"), text: $nickname).textFieldStyle(.roundedBorder)
                     .padding(.horizontal)
-                Button(FStrings.t("ios.msg.joinas", ["name": displayName])) { onJoin(nickname) }
-                    .buttonStyle(.borderedProminent)
+                FButton(FStrings.t("ios.msg.joinas", ["name": displayName]), kind: .wood) { onJoin(nickname) }
             } else {
-                Text(FStrings.t("ios.msg.lobbyfull")).font(.footnote).foregroundStyle(.secondary)
+                Text(FStrings.t("ios.msg.lobbyfull")).font(.footnote).foregroundStyle(FColor.textDim)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -419,21 +455,37 @@ private struct LobbyView: View {
 }
 
 /// §6.3 tertiary identity: N≥3, cache lost, not the last actor - ask the human.
+/// Offers every seat (named where a join is known, else "Seat N") so it also
+/// covers the DEBUG single-sim case, where a 2-player game has only one join.
 private struct SeatPicker: View {
+    let nPlayers: Int
     let joins: [MessageJoin]
     let onPick: (Int) -> Void
 
+    private func label(_ seat: Int) -> String {
+        joins.first { $0.seat == seat }?.name ?? "Seat \(seat + 1)"
+    }
+
     var body: some View {
         VStack(spacing: 12) {
-            Text(FStrings.t("ios.msg.pickseat")).font(.headline)
-            ForEach(joins, id: \.seat) { j in
-                Button(j.name) { onPick(j.seat) }.buttonStyle(.bordered)
+            Text(FStrings.t("ios.msg.pickseat")).font(.headline).foregroundStyle(FColor.textPrimary)
+            ForEach(0..<nPlayers, id: \.self) { seat in
+                FButton(label(seat), kind: .secondary) { onPick(seat) }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding()
     }
 }
+
+#if DEBUG
+/// DEBUG-only knobs for single-simulator testing (never compiled into Release).
+enum MessageDebugFlags {
+    /// Force the seat picker on every adopted bubble so both seats are playable
+    /// on ONE simulator (which cannot otherwise distinguish sender from receiver).
+    static let pickSeatOnAdopt = true
+}
+#endif
 
 /// §7.6: the human tapped an older, collapsed bubble. The game has moved on; we
 /// offer the newest state we know, and — since a tap should never be a dead end —
@@ -446,8 +498,9 @@ private struct StaleBanner: View {
     var body: some View {
         VStack(spacing: 12) {
             Text(FStrings.t("ios.msg.moved")).font(.headline).multilineTextAlignment(.center)
-            Button(FStrings.t("ios.msg.opennewest"), action: onNewest).buttonStyle(.borderedProminent)
-            Button(FStrings.t("ios.msg.viewanyway"), action: onAnyway).buttonStyle(.bordered)
+                .foregroundStyle(FColor.textPrimary)
+            FButton(FStrings.t("ios.msg.opennewest"), kind: .wood, action: onNewest)
+            FButton(FStrings.t("ios.msg.viewanyway"), kind: .secondary, action: onAnyway)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding()
@@ -457,8 +510,8 @@ private struct StaleBanner: View {
 private struct DamagedView: View {
     var body: some View {
         VStack(spacing: 8) {
-            Text("Foolish").font(.headline)
-            Text(FStrings.t("ios.msg.damaged")).font(.footnote)
+            Text("Foolish").font(.headline).foregroundStyle(FColor.textPrimary)
+            Text(FStrings.t("ios.msg.damaged")).font(.footnote).foregroundStyle(FColor.textDim)
                 .multilineTextAlignment(.center).padding(.horizontal)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

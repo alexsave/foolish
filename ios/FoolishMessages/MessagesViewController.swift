@@ -30,7 +30,7 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     override func willBecomeActive(with conversation: MSConversation) {
         super.willBecomeActive(with: conversation)
-        present(conversation)
+        present(conversation, style: presentationStyle)
     }
 
     /// A message arrived while we are on screen — an opponent may be live-playing.
@@ -38,7 +38,7 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// order (§7.2). A fresh receive cancels any half-started New game.
     override func didReceive(_ message: MSMessage, conversation: MSConversation) {
         startingNewGame = false
-        present(conversation)
+        present(conversation, style: presentationStyle)
     }
 
     /// The user tapped Send on our staged bubble: our chain is now the thread's,
@@ -58,27 +58,47 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     override func willTransition(to presentationStyle: MSMessagesAppPresentationStyle) {
         super.willTransition(to: presentationStyle)
-        if let c = activeConversation { present(c) }
+        // Present with the INCOMING style, not `self.presentationStyle`: during a
+        // transition the property still reports the OLD style, so reading it here
+        // renders the compact drawer at full expanded height (and then New game,
+        // which only requests expansion, no-ops because we are already expanded).
+        if let c = activeConversation { present(c, style: presentationStyle) }
     }
 
     // MARK: - Presentation
 
-    private func present(_ conversation: MSConversation) {
+    private func present(_ conversation: MSConversation, style: MSMessagesAppPresentationStyle) {
         let selected = conversation.selectedMessage
         // §6.2 S1's exact half: did THIS device send the tapped bubble? Only the
         // extension can answer — the participant UUIDs never travel in the payload.
         let senderIsLocal = selected?.senderParticipantIdentifier != nil
             && selected?.senderParticipantIdentifier == conversation.localParticipantIdentifier
 
+        // Chat shape (B4 feedback): a 1:1 DM can only ever be a 2-player game; a
+        // group chat defaults to its participant count but still allows 2-8. Total
+        // participants = remote + me, clamped to the wire's 2-8.
+        let participants = min(max(conversation.remoteParticipantIdentifiers.count + 1, 2), 8)
+        let isDM = conversation.remoteParticipantIdentifiers.count <= 1
+
         let root = MessagesRootView(
             payloadURL: startingNewGame ? nil : selected?.url,
-            style: presentationStyle,
+            style: style,
             senderIsLocal: senderIsLocal,
             startNewGame: startingNewGame,
+            chatIsDM: isDM,
+            chatPlayers: participants,
             requestExpand: { [weak self] in self?.requestPresentationStyle(.expanded) },
             onNewGame: { [weak self] in
-                self?.startingNewGame = true
-                self?.requestPresentationStyle(.expanded)
+                guard let self else { return }
+                self.startingNewGame = true
+                // If already expanded, requesting .expanded fires no transition, so
+                // present now; otherwise expand and let willTransition present with
+                // startNewGame set.
+                if self.presentationStyle == .expanded {
+                    if let c = self.activeConversation { self.present(c, style: .expanded) }
+                } else {
+                    self.requestPresentationStyle(.expanded)
+                }
             },
             onSend: { [weak self] payload, mySeat in
                 await self?.stage(payload: payload, mySeat: mySeat)
