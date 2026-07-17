@@ -42,6 +42,24 @@ static int first_move(const char *arr, char *out, int cap) {
     return 0;
 }
 
+// First packed legal move -> its awire action frame, so the golden is DRIVEN
+// through the same packed path the app ships (EngineC.apply -> fio_apply_awire),
+// not the JSON one. Mirrors Swift MoveWire.encodeAction exactly.
+// packed layout (fio_legal_packed): u32 count, then per move
+//   type(1) n(1) cards[n] attacks[n]; kinds align with AWIRE_* (attack0..good4).
+static int first_move_awire(const unsigned char *packed, int len, unsigned char *out) {
+    if (len < 6) return 0;
+    int t = packed[4], n = packed[5];
+    if (6 + 2 * n > len) return 0;
+    const unsigned char *cards = packed + 6, *attacks = packed + 6 + n;
+    int o = 0;
+    if (t == 3 || t == 4) { out[o++] = (unsigned char)t; out[o++] = 0; return o; } // pickup/good
+    out[o++] = (unsigned char)t; out[o++] = (unsigned char)n;
+    for (int i = 0; i < n; i++) out[o++] = cards[i];
+    if (t == 1) for (int i = 0; i < n; i++) out[o++] = attacks[i];   // cover carries attacks
+    return o;
+}
+
 int main(void) {
     const int N_PLAYERS = 4;
     const int N_SEEDS = 20;
@@ -80,18 +98,21 @@ int main(void) {
         // same walk from Swift with a growing buffer, so it played on and
         // disagreed with the fixture on every count — the keystone Swift-vs-C
         // test could not have passed. Static: too big for the stack.
-        static char move[4096], legal[1 << 20];
+        static char legal[1 << 20];
+        unsigned char awire[64];
         while (fio_game_over() < 0 && steps < 5000) {
             int mask = fio_actor_mask();
             if (mask <= 0) break;
             int seat = -1;
             for (int s = 0; s < N_PLAYERS; s++) if (mask & (1 << s)) { seat = s; break; }
             if (seat < 0) break;
-            // Bail loudly rather than silently freezing a half-played golden.
-            int lrc = fio_legal_moves_json(seat, legal, sizeof(legal));
+            // Drive through the PACKED path the app ships (no JSON apply). Bail
+            // loudly rather than silently freezing a half-played golden.
+            int lrc = fio_legal_packed(seat, legal, sizeof(legal));
             if (lrc < 0) { fprintf(stderr, "goldens: legal menu did not fit (rc=%d)\n", lrc); return 1; }
-            if (!first_move(legal, move, sizeof(move))) break;
-            if (fio_apply_json(seat, move) != FIO_EOK) break;
+            int al = first_move_awire((const unsigned char *)legal, lrc, awire);
+            if (al == 0) break;
+            if (fio_apply_awire(seat, awire, al) != FIO_EOK) break;
             int sl = fio_state_json(0, buf, sizeof(buf));
             playHash = fnv1a(playHash, buf, sl);
             steps++;
