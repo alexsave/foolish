@@ -85,6 +85,18 @@ final class HarnessModel: ObservableObject {
     func stage(_ payload: Data, seat: Int) {
         staged = payload
         startNewGame = false
+        // HARNESS_AUTOGAME: auto-deliver + hand to the next player, so a whole
+        // game plays itself through the real UI (validates turn handoff + seat
+        // inference across many turns). Halts naturally at game over (a finished
+        // board auto-plays no move → nothing to deliver).
+        if ProcessInfo.processInfo.environment["HARNESS_AUTOGAME"] != nil {
+            Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 900_000_000)
+                guard let self, self.staged != nil else { return }
+                self.deliver()
+                self.become((self.localIndex + 1) % self.participants.count)
+            }
+        }
     }
 
     /// The blue send arrow: deliver the staged bubble into the shared transcript
