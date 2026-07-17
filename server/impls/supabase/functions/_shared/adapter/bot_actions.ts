@@ -3,7 +3,7 @@ import { executeWithGameLock, loadSessionLogBytes, PackedOpProducts } from './ut
 import { strategyUsesLogs, LegalMove } from '@api/common/bot_strategy.ts';
 import { createClient } from 'jsr:@supabase/supabase-js';
 import {
-    __botsWasmMB, __ensureBots, wasmBotDrive, wasmBotEligibleMask, wasmBotPacingMs,
+    __botsWasmMB, ensureBotsAsync, wasmBotDrive, wasmBotEligibleMask, wasmBotPacingMs,
     BOT_PACE, BotDrivePref,
 } from '@sdk/ts/wasm/bots.ts';
 import { __kernelWasmMB } from '@sdk/ts/wasm/engine.ts';
@@ -112,8 +112,11 @@ export const lockedBotLoop = async (game_id: string): Promise<void> => {
     // self-continue in-isolate, since chained segments would share one 2s CPU budget.
     // Instantiate bots.wasm up front: it adopts the engine slot, so this worker
     // never builds the rules.wasm instance it would otherwise abandon on the
-    // first bot decision (see __ensureBots).
-    __ensureBots();
+    // first bot decision. Use the ASYNC loader: on Deno it seeds the byte cache
+    // via Deno.readFile so the sync bots() below hits the cache — calling the
+    // sync loadWasmGz here would run Deno.readFileSync inside this async handler,
+    // which Deno warns against and will disallow.
+    await ensureBotsAsync();
     console.log(`[MEM] lockedBotLoop start: ${memLine()}`);
     const leaseToken = await acquireBotLease(game_id);
     if (!leaseToken) {
