@@ -20,30 +20,54 @@ everything this document does not explicitly correct in §3.*
 >   / `fio_msg_rule_p` / `fio_msg_rebase` exist; `sdk/swift/MessageEnvelope.swift`
 >   wraps them (`decode`/`seal`/`preferred`/`rebase`, all reachable). The
 >   `FoolishMessages` target EXISTS (§2.2's "no target yet" is stale).
-> - **M2 partial (2026-07-17): the expanded bubble renders the REAL board.**
+> - **M2 DONE (2026-07-17): the expanded bubble renders the REAL board.**
 >   `FoolishKit/Boards/MessageBoardView.swift` lays out a decoded `GameView` in the
 >   app's grammar (seats/deck/trump/battles/discard), read-only + PUBLIC-safe.
 >   `MessageKernel` gained `residentView(viewer:)` / `residentLegal(seat:)` (the
 >   decode adopts the game; these read it back through `fio_state_packed` /
->   `fio_legal_packed` in the same actor). Verified: app+extension build on the
->   iPhone-17 sim; `ComponentSnapshotTests.testMessageBoardMidGame` renders a
->   faithful board and passes.
+>   `fio_legal_packed` in the same actor).
+> - **M3 DONE (2026-07-17): the bubble is PLAYABLE and the send path is wired**
+>   (branch `claude/ios-online-imessage`, unmerged, iPhone-17-sim verified).
+>   - Seat identity: `FoolishKit/Messages/SeatIdentity.swift` (pure §6: cache →
+>     sender-inference S1 → ambiguous) + `MessageGameStore.swift` (App Group cache;
+>     the extension's App Group is declared via `ios/project.yml`
+>     `entitlements.properties`, so xcodegen REGENERATES it — no git-checkout dance
+>     like the app's file). The expanded view unmasks MY seat.
+>   - Turn UI: `MessageTurnController` (the local half of a turn — adopt/genesis,
+>     apply legal moves, undo=rebuild+replay, seal) + `MessageTableView` (the app's
+>     tap grammar; spectator when I have no legal move). `MessageKernel.apply` keeps
+>     the whole turn in one actor.
+>   - Send: `BubbleSnapshot` (300×195 PUBLIC image) + `MessageComposer` +
+>     `MessagesViewController` (insert = STAGE only; cache committed on
+>     `didStartSending`). `MessageEnvelope.link` is the tested inverse of
+>     `payloadBytes`.
+>   - Oracle (no Messages harness): `MessageTurnControllerTests` proves a played
+>     move seals a chain **Rule P ranks above its parent** and undo rebuilds the
+>     parent; `SeatIdentityTests` (10) cover §6. All green.
 >
 > **NEXT, in order (all still open):**
-> 1. **Seat identity (§6)** — cache → sender inference → nickname picker — so the
->    expanded view can unmask MY hand (today it renders viewer -1, public).
-> 2. **The turn UI (M2)** — tap-to-attack / arm-then-cover / kernel-driven action
->    bar, over the same `GameView` + `residentLegal`. Reuse `TableView`'s gestures.
-> 3. **The send/accept loop (M3)** — `MessageKernel.seal` is ready and UNUSED:
->    New-game → `fio_new_game` + seal initial envelope; take-a-turn → `rebase` the
->    local move + re-seal; compose the `MSMessage` (URL `foolish.cards/m/1<base32>`
->    + 300×195 PUBLIC snapshot from `MessageBoardView` + `summaryText`) and
->    `insert` it; wire `didStartSending`/`didCancelSending` (the App-Group cache +
->    pending ledger). Get the phase/identity semantics from
->    `IMESSAGE_GAME_DESIGN.md` §6 + §11 BEFORE writing seal callers — a wrong phase
->    ships a broken invite. A seal→URL→decode round-trip is unit-testable in Swift
->    without the Messages harness; write that as the oracle before the UI.
-> 4. **M4/M5** as below (game-end bubble, review prep).
+> 1. **Live send/accept test** — the only unverified leg: run the extension in the
+>    Messages simulator (two conversations), tap New game → play → Send, confirm
+>    the recipient adopts and can reply. Everything up to `insert` is unit-proven.
+> 2. **Nickname entry** — genesis seats me as `MessageGameStore.nickname` (default
+>    "Me"); add a one-field editor (expanded only — no keyboard in compact).
+> 3. **Lobby / WAITING join (§5.2)** for N≥3 — the join-phase bubble (seed + joins,
+>    zero actions); today New game deals a 2p LIVE game directly.
+> 4. **§12 FINISHED bubble carries the replay-v5 URL** (not `/m/`) — the ecosystem
+>    funnel. `EngineC.replayEncodeCode` exists; wire it when the game ends.
+> 5. **M4/M5** as below (localization sweep, review prep).
+>
+> **⚠️ PRE-EXISTING RED (not M3 — a real finding to triage):**
+> `FoolishTests/EngineGoldenTests` fails `playHash` on games 8-19 (deal, step
+> count, and fool all still MATCH). Root cause: the golden GENERATOR
+> (`c/ios/ios_goldens.c`) applies moves via `fio_apply_json`, but the TEST (updated
+> during the server-consolidation) applies via `fio_apply_awire`. Same trajectory,
+> but a multi-card/cover move leaves a logically-equal state that `fio_state_json`
+> serializes DIFFERENTLY between the two apply paths → the per-step hash diverges in
+> longer games. `make ios-goldens` regen is byte-identical to committed (goldens are
+> NOT stale). Fix is an owner call: point the generator at awire too, or canonicalize
+> state so both apply paths serialize identically. (Also 4 DesignSystem snapshot refs
+> drift on this sim OS — untouched components, environmental.)
 
 ---
 
