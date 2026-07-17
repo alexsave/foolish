@@ -174,10 +174,11 @@ int fio_replay_encode_v6_b32(char *out, int cap);
 // code. The two calls above are for tests that must pin a format.
 int fio_replay_share_code_b32(char *out, int cap);
 
-// Decode a shareable `code` into the step list as JSON (the DecodedReplay
-// shape: header + logs). Does NOT touch the current game. Bytes written or
+// Decode a shareable `code` into the step list as the RAW replay.h DECODE binary
+// (20-byte header + n_logs records; Swift parses it with DecodedReplay.decode) —
+// no JSON crosses the boundary. Does NOT touch the current game. Bytes written or
 // negative; on FIO_EREPLAY see fio_last_replay_error().
-int fio_replay_decode_json(const char *code, char *out, int cap);
+int fio_replay_decode_packed(const char *code, unsigned char *out, int cap);
 
 // Play a v6 `code` back and return the animation events, masked for `viewer`
 // (a seat, or -1 to spectate) — the SAME GameEvent stream live play emits
@@ -188,7 +189,7 @@ int fio_replay_decode_json(const char *code, char *out, int cap);
 //
 // Does NOT touch the current game. Bytes written or negative; v5 codes fail
 // with FIO_EREPLAY / REPLAY_EVERSION — they hide the deal, so there is no game
-// to rebuild (use fio_replay_decode_json for those).
+// to rebuild (use fio_replay_decode_packed for those).
 int fio_replay_events_json(const char *code, int viewer, char *out, int cap);
 
 // Detail of the last replay error (a REPLAY_E* code from replay.h), else 0.
