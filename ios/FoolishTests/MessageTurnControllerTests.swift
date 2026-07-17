@@ -114,6 +114,41 @@ final class MessageTurnControllerTests: XCTestCase {
         XCTAssertTrue(decoded.isComplete, "the replay knows its fool")
     }
 
+    /// A joiner names themselves the first time they act (§5.2): seat 0 creates a
+    /// 2p game (joins=[0:Alice]); seat 1 replies and their nickname is appended, so
+    /// the opponent stops rendering as "Seat 2".
+    func testAJoinerAppendsTheirNicknameOnFirstReply() async throws {
+        let k = MessageKernel.shared
+
+        // Seat 0's device creates the game.
+        MessageGameStore.shared.nickname = "Alice"
+        let seed = Data((0..<32).map { UInt8(truncatingIfNeeded: $0 &* 11 &+ 3) | 1 })
+        let creator = MessageTurnController(genesisSeed: seed, players: 2, gameId: 42, myNickname: "Alice")
+        await creator.begin()
+        guard let firstAttack = creator.legal.first(where: { $0.type != .wait }) else {
+            return XCTFail("the creator (first attacker) has no legal move")
+        }
+        await creator.apply(firstAttack)
+        let p0 = try await creator.stagedPayload()
+        let e0 = try await MessageEnvelope.decode(payload: p0, viewer: -1)
+        XCTAssertEqual(e0.joins, [MessageJoin(seat: 0, name: "Alice")], "creator seats only themselves")
+
+        // Seat 1's device (same singleton store, different nickname) adopts + replies.
+        MessageGameStore.shared.nickname = "Bob"
+        let joiner = MessageTurnController(parentPayload: p0, parent: e0, mySeat: 1)
+        await joiner.begin()
+        guard let reply = joiner.legal.first(where: { $0.type != .wait }) else {
+            return XCTFail("the joiner (defender) has no legal move")
+        }
+        await joiner.apply(reply)
+        let p1 = try await joiner.stagedPayload()
+        let e1 = try await MessageEnvelope.decode(payload: p1, viewer: -1)
+
+        XCTAssertEqual(e1.joins.count, 2, "both seats are now named")
+        XCTAssertEqual(e1.joins.first { $0.seat == 0 }?.name, "Alice", "the creator's name survived")
+        XCTAssertEqual(e1.joins.first { $0.seat == 1 }?.name, "Bob", "the joiner named themselves")
+    }
+
     /// parent8 is the first 8 bytes of the parent digest, zero-padded — the exact
     /// tag the next chain points back with (§7.4).
     func testParent8IsFirstEightDigestBytes() {
