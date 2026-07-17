@@ -51,13 +51,14 @@ final class EngineGoldenTests: XCTestCase {
             for j in 0..<32 { seed[j] = UInt8(((i + 1) * 131 + j * 17) & 0xFF) }
             try await engine.newGame(seed: Data(seed), players: goldens.nPlayers)
 
-            // Deal fingerprint.
-            let dealData = try await engine.stateData(viewer: 0)
+            // Deal fingerprint — the PACKED masked state (state_put), the wire
+            // the app ships (§16.0 packed-wire rule), not the JSON surface.
+            let dealData = try await engine.statePackedData(viewer: 0)
             XCTAssertEqual(String(format: "%016llx", fnv1a(fnvOffset, dealData)), g.dealHash,
                            "deal fingerprint mismatch, game \(i)")
 
-            // Seat-0 legal menu.
-            let legal0 = try await engine.legalMovesData(seat: 0)
+            // Seat-0 legal menu as the PACKED move wire.
+            let legal0 = try await engine.legalPackedData(seat: 0)
             XCTAssertEqual(String(format: "%016llx", fnv1a(fnvOffset, legal0)), g.seat0LegalHash,
                            "seat-0 legal menu mismatch, game \(i)")
 
@@ -73,7 +74,7 @@ final class EngineGoldenTests: XCTestCase {
                 let moves = try await engine.legalMoves(seat: seat)
                 guard let first = moves.first else { break }
                 do { try await engine.apply(seat: seat, move: first) } catch { break }
-                let sd = try await engine.stateData(viewer: 0)
+                let sd = try await engine.statePackedData(viewer: 0)
                 playHash = fnv1a(playHash, sd)
                 steps += 1
             }

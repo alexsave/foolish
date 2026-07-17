@@ -7,7 +7,8 @@
 //
 // The bridge compiles the SAME game.c/legal.c/view.c as the production wasm
 // kernel, so native == wasm by construction (the existing difftests police the
-// bitboard/replay mirrors); these goldens pin the bridge's JSON surface.
+// bitboard/replay mirrors); these goldens pin the bridge's PACKED wire surface
+// (state_put + the packed legal move wire) — the bytes the app actually ships.
 //
 // Build/run via `make ios-goldens` (writes the file) or run directly to stdout.
 
@@ -23,23 +24,6 @@ static char buf[1 << 16];
 static uint64_t fnv1a(uint64_t h, const char *s, int n) {
     for (int i = 0; i < n; i++) { h ^= (unsigned char)s[i]; h *= 1099511628211ULL; }
     return h;
-}
-
-// Extract the first move object from a legal-moves array via balanced braces
-// (moves nest card objects). Returns 1 and fills `out` (NUL-terminated), or 0.
-static int first_move(const char *arr, char *out, int cap) {
-    const char *start = strchr(arr, '{');
-    if (!start) return 0;
-    int depth = 0;
-    for (const char *p = start; *p; p++) {
-        if (*p == '{') depth++;
-        else if (*p == '}' && --depth == 0) {
-            int n = (int)(p - start + 1);
-            if (n >= cap) return 0;
-            memcpy(out, start, n); out[n] = 0; return 1;
-        }
-    }
-    return 0;
 }
 
 // First packed legal move -> its awire action frame, so the golden is DRIVEN
@@ -74,14 +58,13 @@ int main(void) {
 
         if (fio_new_game(seed, 32, N_PLAYERS) != FIO_EOK) { fprintf(stderr, "new_game failed\n"); return 1; }
 
-        // Deal fingerprint: the initial masked state for viewer 0.
-        int dealLen = fio_state_json(0, buf, sizeof(buf));
+        // Deal fingerprint: the initial masked PACKED state for viewer 0
+        // (view.c state_put — the wire the app ships, no JSON surface).
+        int dealLen = fio_state_packed(0, buf, sizeof(buf));
         uint64_t dealHash = fnv1a(1469598103934665603ULL, buf, dealLen);
 
-        // First-attacker legal menu (pins the legal enumeration/ordering).
-        // Parse defender/firstAttacker out of the state we just printed is
-        // awkward in C; instead capture seat 0's menu and a full-play hash.
-        int legalLen = fio_legal_moves_json(0, buf, sizeof(buf));
+        // Seat-0 legal menu as the PACKED move wire (pins the enumeration/order).
+        int legalLen = fio_legal_packed(0, buf, sizeof(buf));
         uint64_t seat0LegalHash = fnv1a(1469598103934665603ULL, buf, legalLen);
 
         // Deterministic playthrough: lowest eligible seat plays its first legal
@@ -90,14 +73,11 @@ int main(void) {
         uint64_t playHash = 1469598103934665603ULL;
         int steps = 0;
         // A mid-game menu is combinatorial (every legal cover assignment), so it
-        // runs to a few hundred KB — comfortably past the 64KB this used to
-        // give it. fio_legal_moves_json then returned FIO_ECAP, the loop broke,
-        // and the golden recorded a TRUNCATED game: every "fool": -1 in the
-        // fixture is a game that never actually finished, frozen at the step
-        // where the menu first outgrew the buffer. EngineGoldenTests drives the
-        // same walk from Swift with a growing buffer, so it played on and
-        // disagreed with the fixture on every count — the keystone Swift-vs-C
-        // test could not have passed. Static: too big for the stack.
+        // runs to a few hundred KB — the packed legal wire needs room. This is a
+        // 1 MB buffer: FIO_ECAP here means the loop breaks and the golden records
+        // a TRUNCATED game, which the Swift walk (growing buffer) would then
+        // disagree with — so we bail loudly (below) instead. Static: too big for
+        // the stack.
         static char legal[1 << 20];
         unsigned char awire[64];
         while (fio_game_over() < 0 && steps < 5000) {
@@ -113,7 +93,7 @@ int main(void) {
             int al = first_move_awire((const unsigned char *)legal, lrc, awire);
             if (al == 0) break;
             if (fio_apply_awire(seat, awire, al) != FIO_EOK) break;
-            int sl = fio_state_json(0, buf, sizeof(buf));
+            int sl = fio_state_packed(0, buf, sizeof(buf));
             playHash = fnv1a(playHash, buf, sl);
             steps++;
         }

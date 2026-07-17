@@ -61,6 +61,17 @@ public actor EngineC {
     public func legalMovesData(seat: Int) throws -> Data {
         try json { fio_legal_moves_json(Int32(seat), $0, $1) }
     }
+    /// Raw PACKED masked-state bytes for `viewer` (view.c state_put) — the wire
+    /// itself, undecoded. Used where the exact bytes matter (golden hashing),
+    /// so nothing rides the JSON surface (§16.0 packed-wire rule).
+    public func statePackedData(viewer: Int) throws -> Data {
+        try json { fio_state_packed(Int32(viewer), $0, $1) }
+    }
+    /// Raw PACKED legal-move wire for `seat` (u32 count, then per move
+    /// type/n/cards/attacks). Undecoded — for golden hashing.
+    public func legalPackedData(seat: Int) throws -> Data {
+        try json { fio_legal_packed(Int32(seat), $0, $1) }
+    }
     /// Bitmask of seats with a pending legal action, or a thrown error.
     public func actorMask() throws -> Int {
         let m = fio_actor_mask()
