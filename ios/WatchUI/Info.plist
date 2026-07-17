@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Modern single-target watchOS app (no separate WatchKit extension). -->
+	<key>WKApplication</key>
+	<true/>
+	<!-- Bundled inside the cards.foolish.app record: the companion is the phone
+	     app (docs/WATCHOS_APP_PLAN.md §1). Inert until the host app embeds this
+	     target; harmless while it builds standalone. -->
+	<key>WKCompanionAppBundleIdentifier</key>
+	<string>cards.foolish.app</string>
+	<!-- Independent-capable: runs without the iPhone (§1). Once shipped this
+	     cannot be reverted - intentional. -->
+	<key>WKRunsIndependentlyOfCompanionApp</key>
+	<true/>
+</dict>
+</plist>

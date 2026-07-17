@@ -110,6 +110,31 @@ targets:
         # (§17.5).
         TARGETED_DEVICE_FAMILY: "1"
 
+  # ---- watchOS companion (docs/WATCHOS_APP_PLAN.md) ----------------------
+  # W1 SCAFFOLD ONLY. Reserves the target + its registered bundle id
+  # (cards.foolish.app.watchkitapp), buildable on the watch simulator, so the
+  # app record and signing have a home. Deliberately standalone:
+  #   - does NOT depend on FoolishKit yet: FoolishKit has no watchOS destination
+  #     and vendor/Foolish.xcframework has no watchOS slice (that is the next
+  #     watch step). Adding a broken cross-platform link here would fail the
+  #     build, so the dependency is omitted until the engine is ported.
+  #   - is NOT embedded in the host Foolish app yet, so the iOS app + iMessage
+  #     extension builds are entirely unaffected. To BUNDLE it later, add
+  #     `- target: WatchFoolish` (embed: true) to Foolish's dependencies.
+  # Independent-capable via WKRunsIndependentlyOfCompanionApp (WatchUI/Info.plist).
+  WatchFoolish:
+    type: application
+    platform: watchOS
+    sources:
+      - path: WatchUI
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: cards.foolish.app.watchkitapp
+        INFOPLIST_FILE: WatchUI/Info.plist
+        WATCHOS_DEPLOYMENT_TARGET: "10.0"
+        TARGETED_DEVICE_FAMILY: "4"     # watchOS
+        GENERATE_INFOPLIST_FILE: "NO"
+
   # ---- Shared framework: Engine + Net + DesignSystem + Boards + Entitlements
   FoolishKit:
     type: framework
