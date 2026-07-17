@@ -183,6 +183,10 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: cards.foolish.tests
+        # With signing enabled at the project base (Milestone F), even the test
+        # bundle gets signed and therefore needs an Info.plist. Generate one
+        # (FoolishKit does the same) — without it `xcodebuild test` fails to sign.
+        GENERATE_INFOPLIST_FILE: "YES"
 
 schemes:
   Foolish:
