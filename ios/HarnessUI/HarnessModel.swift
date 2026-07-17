@@ -32,8 +32,9 @@ final class HarnessModel: ObservableObject {
 
     private static let names = ["You", "Vera", "Boris", "Dima", "Katya", "Lev", "Mila", "Oleg"]
 
-    init(count: Int = 2) {
-        participants = Self.make(count)
+    init(count: Int? = nil) {
+        let env = Int(ProcessInfo.processInfo.environment["HARNESS_PLAYERS"] ?? "")
+        participants = Self.make(count ?? env ?? 2)
         rebindStore()
     }
 
@@ -119,31 +120,41 @@ final class HarnessModel: ObservableObject {
     /// renders without any taps. Gated by the HARNESS_SEED launch env; never runs
     /// in normal use.
     func seedDemoGame() async {
-        guard participants.count >= 2 else { return }
+        let n = participants.count
+        guard n >= 2 else { return }
         let seed = Data(repeating: 42, count: 32)   // fixed → reproducible screenshots
         let gid: UInt64 = 0xF001
         do {
-            try await MessageKernel.shared.newGame(seed: seed, players: 2)
-            let legal = await MessageKernel.shared.residentLegal(seat: 0)
-            if let atk = legal.first(where: { $0.type == .attack }) {
-                try await MessageKernel.shared.apply(seat: 0, move: atk)
-            }
+            try await MessageKernel.shared.newGame(seed: seed, players: n)
+            // A fresh LIVE handoff: everyone seated, no move yet. Whoever holds
+            // the lowest trump is the first attacker.
+            let joins = (0..<n).map { MessageJoin(seat: $0, name: participants[$0].name) }
             let payload = try await MessageKernel.shared.seal(
                 phase: 2, lastActorSeat: 0, gameId: gid,
-                parent8: Data(repeating: 0, count: 8),
-                joins: [MessageJoin(seat: 0, name: participants[0].name)])
-            // Diagnostic: after decoding the sealed chain, what can each seat do?
-            _ = try? await MessageKernel.shared.decode(payload: payload, viewer: 1)
-            let l0 = await MessageKernel.shared.residentLegal(seat: 0)
-            let l1 = await MessageKernel.shared.residentLegal(seat: 1)
-            let v = await MessageKernel.shared.residentView(viewer: 1)
-            debugInfo = "def=\(v?.defender ?? -9) s0=[\(l0.map { "\($0.type)" }.joined(separator: ","))] s1=[\(l1.map { "\($0.type)" }.joined(separator: ","))]"
+                parent8: Data(repeating: 0, count: 8), joins: joins)
+            _ = try? await MessageKernel.shared.decode(payload: payload, viewer: -1)
+            var actor = 0
+            for s in 0..<n where (await MessageKernel.shared.residentLegal(seat: s)).contains(where: { $0.type != .wait }) {
+                actor = s; break
+            }
+            let la = await MessageKernel.shared.residentLegal(seat: actor)
+            let v = await MessageKernel.shared.residentView(viewer: actor)
+            debugInfo = "n=\(n) def=\(v?.defender ?? -9) firstActor=\(actor) legal=[\(la.map { "\($0.type)" }.joined(separator: ","))]"
 
             transcript = [Msg(url: MessageEnvelope.link(payload: payload),
                               senderId: participants[0].id, senderName: participants[0].name)]
-            localIndex = 1           // become the receiver → the board shows
+            localIndex = actor           // view as the actionable seat → the board shows
             startNewGame = false
             rebindStore()
+            // N>=3: a non-sender with no cache is §6.3 ambiguous (would show the
+            // seat picker). Pre-cache the viewer's seat so the board shows directly.
+            if let env = try? await MessageEnvelope.decode(payload: payload, viewer: actor) {
+                let names = Dictionary(env.joins.map { ($0.seat, $0.name) }, uniquingKeysWith: { a, _ in a })
+                MessageGameStore.shared.put(MessageGameRecord(
+                    gameId: env.gameId, mySeat: actor, nPlayers: env.nPlayers, round: env.round,
+                    turn: env.turn, phase: env.phase, finished: false, names: names,
+                    payloadBase32: Base32.encode(payload), updatedAt: 1))
+            }
         } catch {
             // leave the harness on the New-game screen if seeding fails
         }
