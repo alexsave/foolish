@@ -495,38 +495,12 @@ int fio_state_json(int viewer_seat, char *out, int cap) {
     if (viewer_seat < 0 || viewer_seat >= g_game.num_players) return FIO_EBADARG;
     return json_state_of(&g_game, viewer_seat, out, cap);
 }
-int fio_public_state_json(char *out, int cap) {
-    if (!g_has_game) return FIO_ENOGAME;
-    return json_state_of(&g_game, VIEW_SPECTATOR, out, cap);
-}
-
-// Decode a SERVER packed-view blob (the player_views / spectator_views wire, the
-// same state_put/state_get layout view.h single-sources) into the app's GameView
-// JSON — so online play renders through the SAME kernel decode as offline, never
-// a reimplemented wire in Swift (§8, §16.D4). `viewer` is the seat whose hand is
-// real in this blob (the local player's seat), or VIEW_SPECTATOR for the public
-// feed. Does not touch the current game.
-//
-// The web reaches the identical function through wasm (A8/F7) — this call and
-// that one are the same decode of the same bytes, which is the property the
-// whole exercise is for.
-int fio_view_from_packed_json(const uint8_t *buf, int len, int viewer, char *out, int cap) {
-    return json_view_from_packed(buf, len, viewer, out, cap);
-}
-
-// Legal moves for `seat` computed from a SERVER packed masked-view blob, so
-// online enable-states are kernel-driven like offline (§3). My own hand and the
-// table are real in my masked view — all that MY legal moves depend on — so the
-// kernel enumerates them correctly even though other seats are counts-only.
-int fio_legal_from_packed_json(const uint8_t *buf, int len, int seat, char *out, int cap) {
-    if (!buf || len <= 0) return FIO_EBADARG;
-    static Game tmp;
-    memset(&tmp, 0, sizeof(tmp));
-    state_get(&tmp, buf, /*masked=*/1);
-    if (tmp.num_players < 2 || tmp.num_players > MAX_PLAYERS) return FIO_EPARSE;
-    if (seat < 0 || seat >= tmp.num_players) return FIO_EBADARG;
-    return emit_legal_of(&tmp, seat, out, cap);
-}
+// A server packed-view blob decodes to a GameView in pure Swift (MaskedView),
+// and legal moves from that blob come through the PACKED fio_legal_from_packed
+// (view.ts / MoveWire) — so the JSON packed-view bridges that lived here
+// (fio_view_from_packed_json / fio_legal_from_packed_json) are gone with the
+// JSON surface, along with fio_public_state_json (unused: publicState() reads
+// fio_state_packed).
 
 int fio_actor_mask(void) {
     if (!g_has_game) return FIO_ENOGAME;

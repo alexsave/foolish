@@ -71,19 +71,10 @@ int fio_has_game(void);
 // see your own hand" rule, computed in the kernel (view.c semantics).
 int fio_state_json(int viewer_seat, char *out, int cap);
 
-// Spectator view: every hand redacted to counts, deck hidden.
-int fio_public_state_json(char *out, int cap);
-
-// Decode a SERVER packed-view blob (the player_views / spectator_views wire —
-// the same state_put/state_get layout the kernel single-sources) into the app's
-// GameView JSON, so online play (§8) renders through the SAME kernel decode as
-// offline. `viewer` is the local player's seat (whose hand is real in the blob),
-// or -1 (VIEW_SPECTATOR) for the public feed. Does not touch the current game.
-int fio_view_from_packed_json(const uint8_t *buf, int len, int viewer, char *out, int cap);
-
-// Legal moves for `seat` from a server packed masked-view blob — online
-// enable-states, kernel-computed (§3). `seat` must be the local player's seat.
-int fio_legal_from_packed_json(const uint8_t *buf, int len, int seat, char *out, int cap);
+// (Server packed-view blobs decode to a GameView in pure Swift via MaskedView,
+// and their legal moves come through the PACKED fio_legal_from_packed — so the
+// JSON packed-view bridges and the unused spectator-JSON reader are gone with
+// the JSON surface.)
 
 // Legal moves available to `seat` right now, as a JSON array. Empty array []
 // when the seat has no pending action.

@@ -4,8 +4,8 @@
 // of the web's decodePackedGame (sdk/ts/wire/view.ts).
 //
 // The envelope wraps the masked-state blob with a small header; we parse that
-// header in Swift (trivial) and hand the INNER masked state to the kernel
-// (EngineC.viewFromPacked → view.c state_get, tested by `make ios-view-test`),
+// header in Swift (trivial) and decode the INNER masked state with
+// MaskedView.decode (the same packed state_put wire the offline view reads),
 // then merge the roster's real player names in. No wire is reimplemented in
 // Swift beyond this fixed-layout header (§3).
 //
