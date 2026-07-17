@@ -1,0 +1,8 @@
+{
+  "//": "Per-function import map for the memtest diagnostic. `functions serve` applies THIS to the whole module graph (incl. engine.ts in sdk/, which imports @api/@sdk) — unlike config.toml import_map or the --import-map CLI flag, which serve does not apply to out-of-functions-dir modules. Paths are relative to this file's RUNTIME location: server/impls/supabase/functions/memtest/ (where memory.yml cp's it). Mirrors functions/import_map.json.",
+  "imports": {
+    "@shared/": "../_shared/",
+    "@api/": "../../../../api/",
+    "@sdk/": "../../../../../sdk/"
+  }
+}

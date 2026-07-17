@@ -65,13 +65,13 @@ jobs:
 
       - name: Serve functions
         run: |
-          # --import-map is required: the bot stack (engine.ts et al.) imports the
-          # @api/@sdk aliases, and `functions serve` resolves them ONLY from this
-          # flag — the per-function import_map in config.toml is a deploy-time
-          # setting serve ignores. Without it the worker fails to bootstrap
-          # ("Relative import path @api/core/constants.ts not prefixed with ./").
-          supabase --workdir server/impls functions serve --no-verify-jwt \
-            --import-map supabase/functions/import_map.json > serve.log 2>&1 &
+          # The bot stack (engine.ts et al.) imports the @api/@sdk aliases; serve
+          # resolves them from the per-function deno.json that ships in
+          # e2e/edge_memtest (copied in above). Neither config.toml import_map nor
+          # the --import-map CLI flag reaches out-of-functions-dir modules like
+          # sdk/…/engine.ts — only the function's own deno.json does. Verified
+          # against a real local edge runtime.
+          supabase --workdir server/impls functions serve --no-verify-jwt > serve.log 2>&1 &
           timeout 90 bash -c 'until curl -sf -o /dev/null "http://127.0.0.1:54321/functions/v1/memtest?games=0"; do sleep 2; done'
 
       - name: Bot decisions under the real edge memory budget
