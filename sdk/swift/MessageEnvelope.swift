@@ -18,6 +18,7 @@ import CFoolish
 public struct MessageJoin: Codable, Sendable, Equatable {
     public let seat: Int
     public let name: String
+    public init(seat: Int, name: String) { self.seat = seat; self.name = name }
 }
 
 /// A decoded, VALIDATED payload. Holding one means the chain replayed cleanly
@@ -208,6 +209,25 @@ public actor MessageKernel {
         return Data(bytes: out, count: Int(n))
     }
 
+    /// Seal a 0-action bubble (§5.2): the resident game's seed + `joins`, no
+    /// actions. `phase` is 0 WAITING (a lobby with seats open — creation, or a
+    /// join that leaves seats free) or 2 LIVE (the last-joiner handoff that starts
+    /// the game with no move yet). A LIVE bubble that carries a move goes through
+    /// `seal` instead. `lastActorSeat` is who just claimed. Throws on a bad
+    /// seat/seed or a phase that is neither WAITING nor LIVE.
+    public func sealEmpty(phase: Int, lastActorSeat: Int, gameId: UInt64,
+                          parent8: Data, joins: [MessageJoin]) throws -> Data {
+        let joinsJSON = String(data: try JSONEncoder().encode(joins), encoding: .utf8) ?? "[]"
+        var parent = [UInt8](repeating: 0, count: 8)
+        parent.replaceSubrange(0..<min(8, parent8.count), with: parent8.prefix(8))
+        var out = [UInt8](repeating: 0, count: 8 * 1024)
+        let n = joinsJSON.withCString { jp in
+            fio_msg_encode_empty(Int32(phase), Int32(lastActorSeat), gameId, parent, jp, &out, Int32(out.count))
+        }
+        guard n > 0 else { throw MessageEnvelope.Failure.damaged(code: Int(fio_last_msg_error())) }
+        return Data(bytes: out, count: Int(n))
+    }
+
     /// The best shareable REPLAY code for the resident (finished) game — the §12
     /// funnel code behind `replayLink`. v6 when the deal is re-derivable, else v5;
     /// the kernel chooses, not app code. nil if no game or it cannot encode.
@@ -236,9 +256,15 @@ public actor MessageKernel {
         case discardedIllegal = 2
     }
 
-    /// Rule R (§7.4), one pending move, in ledger order.
-    public func rebase(pendingRound: Int, seat: Int, moveJSON: String) throws -> Rebase {
-        let r = moveJSON.withCString { fio_msg_rebase(Int32(pendingRound), Int32(seat), $0) }
+    /// Rule R (§7.4), one pending move, in ledger order. `awire` is the packed
+    /// action frame (MoveWire.encodeAction) — the same bytes the pending ledger
+    /// stores and `apply` sends, so nothing crosses this boundary as JSON. A
+    /// REAPPLY leaves the move applied to the resident (adopted) game; a DISCARD
+    /// leaves it untouched. Rebases against the round the last `decode` adopted.
+    public func rebase(pendingRound: Int, seat: Int, awire: [UInt8]) throws -> Rebase {
+        let r = awire.withUnsafeBufferPointer { bp in
+            fio_msg_rebase_awire(Int32(pendingRound), Int32(seat), bp.baseAddress, Int32(bp.count))
+        }
         guard r >= 0, let v = Rebase(rawValue: Int(r)) else {
             throw MessageEnvelope.Failure.damaged(code: Int(r))
         }

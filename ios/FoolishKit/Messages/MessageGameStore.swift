@@ -41,12 +41,27 @@ public struct MessageGameRecord: Codable, Equatable, Sendable {
     public func name(_ seat: Int) -> String { names[seat] ?? "Seat \(seat + 1)" }
 }
 
+/// One staged-but-unsent action in a game's pending ledger (§7.4 / §17.15). It is
+/// what Rule R replays when a preferred chain is adopted that does not contain it:
+/// `round` is the bout it was composed against (the round-boundary guard's key),
+/// `seat` who staged it, `move` the action itself. Kept small and durable so a
+/// killed extension or a bubble that arrives mid-staging never strands the move.
+public struct PendingAction: Codable, Equatable, Sendable {
+    public var seat: Int
+    public var round: Int
+    public var move: Move
+    public init(seat: Int, round: Int, move: Move) {
+        self.seat = seat; self.round = round; self.move = move
+    }
+}
+
 public final class MessageGameStore {
     /// The shared group both the app (drawer) and the extension read/write.
     public static let shared = MessageGameStore(suiteName: "group.cards.foolish")
 
     private let defaults: UserDefaults?
     private let key = "fmsg.games.v1"
+    private let pendingKey = "fmsg.pending.v1"
     // The suite is nil on an unsigned/misconfigured build (no App Group). That is
     // not fatal — the cache simply reports empty and every §6/§7 rule still holds
     // off the payload — so this class NEVER force-unwraps it.
@@ -95,6 +110,40 @@ public final class MessageGameStore {
         var map = all()
         guard map.removeValue(forKey: gameId) != nil else { return }
         persist(map)
+    }
+
+    // MARK: pending ledger (§7.4 Rule R / §17.15) — durable, small, current-round
+
+    /// This game's staged-but-unsent actions, in ledger order — what Rule R
+    /// replays onto a newly-adopted chain so no local move is silently lost.
+    public func pending(gameId: String) -> [PendingAction] { allPending()[gameId] ?? [] }
+
+    /// Replace a game's pending ledger. The controller writes its whole staged
+    /// list here on every apply/undo so a mid-staging interruption (a bubble that
+    /// arrives, or a killed extension) survives; the adopt path reads it back and
+    /// rebases. An empty list clears the row.
+    public func setPending(_ list: [PendingAction], gameId: String) {
+        var map = allPending()
+        if list.isEmpty { guard map.removeValue(forKey: gameId) != nil else { return } }
+        else { map[gameId] = list }
+        persistPending(map)
+    }
+
+    /// Drop this game's pending ledger — called once a chain containing these
+    /// moves is committed to the thread (§7.6 didStartSending), so they are no
+    /// longer unacked and must never be replayed on top of themselves.
+    public func clearPending(gameId: String) { setPending([], gameId: gameId) }
+
+    private func allPending() -> [String: [PendingAction]] {
+        guard let data = defaults?.data(forKey: pendingKey),
+              let map = try? JSONDecoder().decode([String: [PendingAction]].self, from: data)
+        else { return [:] }
+        return map
+    }
+
+    private func persistPending(_ map: [String: [PendingAction]]) {
+        guard let data = try? JSONEncoder().encode(map) else { return }
+        defaults?.set(data, forKey: pendingKey)
     }
 
     // MARK: storage (a corrupt blob is treated as empty, never thrown)

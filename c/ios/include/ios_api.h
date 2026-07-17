@@ -236,6 +236,17 @@ int fio_msg_encode(int phase, int last_actor_seat, uint64_t game_id,
                    const uint8_t parent8[8], const char *joins_json,
                    uint8_t *out, int cap);
 
+// Seal a 0-action bubble (§5.2): seed + `joins_json`, empty body. `phase` is
+// WAITING (a lobby with seats still open) or LIVE (the last-joiner handoff that
+// starts the game with no move yet). Distinct from fio_msg_encode because the v6
+// body producer refuses a 0-action game — there is no move to carry. n_players +
+// seed come from the resident game (newGame at creation, or the adopted WAITING
+// chain at a join). `last_actor_seat` is who just claimed a seat. Returns bytes
+// written to `out`, or negative (FIO_EBADARG if `phase` is not WAITING/LIVE).
+int fio_msg_encode_empty(int phase, int last_actor_seat, uint64_t game_id,
+                         const uint8_t parent8[8], const char *joins_json,
+                         uint8_t *out, int cap);
+
 // Rule P (§7.2): which of two payloads does EVERY device prefer?
 // <0 `a`, >0 `b`, 0 the same chain. Structure only — no replay, and no clocks:
 // delivery order is never an input, because two devices can transiently
@@ -257,6 +268,12 @@ int fio_msg_rule_p(const uint8_t *a, int a_len, const uint8_t *b, int b_len);
 #define FIO_REBASE_DISCARD_ROUND   1
 #define FIO_REBASE_DISCARD_ILLEGAL 2
 int fio_msg_rebase(int pending_round, int seat, const char *move_json);
+
+// Rule R over the AWIRE frame (kind,n,cards[,attacks]) — the JSON-free entry the
+// Swift extension uses (its pending ledger holds moves as awire, never JSON).
+// Identical verdicts to fio_msg_rebase; `buf`/`len` is the same action frame
+// fio_apply_awire takes.
+int fio_msg_rebase_awire(int pending_round, int seat, const uint8_t *buf, int len);
 
 // The MSG_E* (src/msg_wire.h) behind the last FIO_EMSG, else 0.
 int fio_last_msg_error(void);

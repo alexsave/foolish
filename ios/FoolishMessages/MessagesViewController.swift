@@ -111,6 +111,14 @@ final class MessagesViewController: MSMessagesAppViewController {
             summary = fool >= 0
                 ? FStrings.t("ios.msg.fool", ["name": names[fool] ?? "Seat \(fool + 1)"])
                 : FStrings.t("ios.msg.tap")
+        } else if env?.phase == 0 {
+            // A WAITING lobby (§5.2): the summary invites the thread to join.
+            url = MessageEnvelope.link(payload: payload)
+            summary = FStrings.t("ios.msg.joininvite")
+        } else if env?.phase == 2, env?.turn == 0 {
+            // The last-joiner LIVE handoff carries no move yet - "game on".
+            url = MessageEnvelope.link(payload: payload)
+            summary = FStrings.t("ios.msg.gameon")
         } else {
             url = MessageEnvelope.link(payload: payload)
             summary = FStrings.t("ios.msg.tap")
@@ -142,6 +150,10 @@ final class MessagesViewController: MSMessagesAppViewController {
                 turn: env.turn, phase: env.phase, finished: env.phase == 3, names: names,
                 payloadBase32: Base32.encode(payload),
                 updatedAt: Date().timeIntervalSince1970))
+            // The staged moves are now in the sent chain (this device's preferred
+            // chain). They are no longer unacked, so drop them from the pending
+            // ledger — Rule R must never replay a move on top of itself (§7.6).
+            MessageGameStore.shared.clearPending(gameId: env.gameId)
         }
     }
 

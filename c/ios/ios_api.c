@@ -860,6 +860,37 @@ int fio_msg_decode_packed(const uint8_t *payload, int len, unsigned char *out, i
     return (int)(q - out);
 }
 
+// joins: [{"seat":0,"name":"Sveta"},...] → e->joins / e->n_joins. Shared by the
+// action seal (fio_msg_encode) and the empty-body lobby seal
+// (fio_msg_encode_waiting). Returns FIO_EOK or FIO_EPARSE.
+static int fio_parse_joins(const char *joins_json, MsgEnvelope *e) {
+    const char *p = joins_json;
+    while (*p && *p != '[') p++;
+    if (*p != '[') return FIO_EPARSE;
+    p++;
+    while (*p) {
+        while (*p == ' ' || *p == ',') p++;
+        if (*p == ']' || !*p) break;
+        if (*p != '{') return FIO_EPARSE;
+        if (e->n_joins >= MSG_MAX_JOINS) return FIO_EPARSE;
+        const char *sp = find_key(p, "seat");
+        const char *np = find_key(p, "name");
+        if (!sp || !np || *np != '"') return FIO_EPARSE;
+        MsgJoin *jn = &e->joins[e->n_joins];
+        jn->seat = (uint8_t)atoi(sp);
+        np++;
+        int n = 0;
+        while (*np && *np != '"' && n < MSG_MAX_NAME) jn->name[n++] = *np++;
+        if (*np != '"') return FIO_EPARSE;   // >12 bytes, or unterminated
+        jn->name_len = (uint8_t)n;
+        e->n_joins++;
+        const char *close = strchr(p, '}');
+        if (!close) return FIO_EPARSE;
+        p = close + 1;
+    }
+    return FIO_EOK;
+}
+
 int fio_msg_encode(int phase, int last_actor_seat, uint64_t game_id,
                    const uint8_t parent8[8], const char *joins_json,
                    uint8_t *out, int cap) {
@@ -880,36 +911,53 @@ int fio_msg_encode(int phase, int last_actor_seat, uint64_t game_id,
     if (parent8) memcpy(e.parent8, parent8, MSG_PARENT_LEN);
     memcpy(e.seed, g_deal_seed, FOOLISH_SEED_LEN);
 
-    // joins: [{"seat":0,"name":"Sveta"},...]
-    const char *p = joins_json;
-    while (*p && *p != '[') p++;
-    if (*p != '[') return FIO_EPARSE;
-    p++;
-    while (*p) {
-        while (*p == ' ' || *p == ',') p++;
-        if (*p == ']' || !*p) break;
-        if (*p != '{') return FIO_EPARSE;
-        if (e.n_joins >= MSG_MAX_JOINS) return FIO_EPARSE;
-        const char *sp = find_key(p, "seat");
-        const char *np = find_key(p, "name");
-        if (!sp || !np || *np != '"') return FIO_EPARSE;
-        MsgJoin *jn = &e.joins[e.n_joins];
-        jn->seat = (uint8_t)atoi(sp);
-        np++;
-        int n = 0;
-        while (*np && *np != '"' && n < MSG_MAX_NAME) jn->name[n++] = *np++;
-        if (*np != '"') return FIO_EPARSE;   // >12 bytes, or unterminated
-        jn->name_len = (uint8_t)n;
-        e.n_joins++;
-        const char *close = strchr(p, '}');
-        if (!close) return FIO_EPARSE;
-        p = close + 1;
-    }
+    const int jrc = fio_parse_joins(joins_json, &e);
+    if (jrc != FIO_EOK) return jrc;
 
     static unsigned char body[1024];   // a v6 body measures ~68 B at 8 players
     static Game scratch;
     const int rc = msg_seal(&e, &g_game, body, (int)sizeof body, &scratch);
     if (rc != MSG_EOK) { g_last_msg_error = rc; return FIO_EMSG; }
+    const int n = msg_encode(&e, out, cap);
+    if (n < 0) { g_last_msg_error = n; return n == MSG_ECAP ? FIO_ECAP : FIO_EMSG; }
+    return n;
+}
+
+// Seal a 0-action bubble: seed + joins, EMPTY body. Two phases need it and
+// neither can go through msg_seal, whose v6 producer refuses a 0-action game
+// (MSG_EBODY): a WAITING lobby (§5.2) has no move by definition, and the
+// last-joiner handoff stages phase=LIVE having "applied nothing" (§5.2 — the
+// kernel picks the first attacker, who then plays on the next bubble). Both write
+// an empty body straight into msg_encode, the shape test_waiting_phase pins.
+// n_players + seed come from the resident game (newGame at creation, or the
+// adopted WAITING chain at a join). `phase` must be WAITING or LIVE.
+int fio_msg_encode_empty(int phase, int last_actor_seat, uint64_t game_id,
+                         const uint8_t parent8[8], const char *joins_json,
+                         uint8_t *out, int cap) {
+    if (!g_has_game) return FIO_ENOGAME;
+    if (!out || cap <= 0 || !joins_json) return FIO_EBADARG;
+    if (!g_has_deal_seed) return FIO_ENOSEED;
+    if (phase != MSG_PHASE_WAITING && phase != MSG_PHASE_LIVE) return FIO_EBADARG;
+    g_last_msg_error = 0;
+
+    MsgEnvelope e;
+    memset(&e, 0, sizeof(e));
+    e.format = MSG_FORMAT_V6;
+    e.flags = 0;
+    e.phase = (uint8_t)phase;
+    e.game_id = game_id;
+    e.last_actor_seat = (uint8_t)last_actor_seat;
+    e.n_players = (uint8_t)g_game.num_players;
+    e.variant = 0;
+    if (parent8) memcpy(e.parent8, parent8, MSG_PARENT_LEN);
+    memcpy(e.seed, g_deal_seed, FOOLISH_SEED_LEN);
+
+    const int jrc = fio_parse_joins(joins_json, &e);
+    if (jrc != FIO_EOK) return jrc;
+
+    e.turn = 0; e.round = 0;
+    e.n_actions = 0; e.actions = 0; e.actions_len = 0;
+
     const int n = msg_encode(&e, out, cap);
     if (n < 0) { g_last_msg_error = n; return n == MSG_ECAP ? FIO_ECAP : FIO_EMSG; }
     return n;
@@ -935,5 +983,23 @@ int fio_msg_rebase(int pending_round, int seat, const char *move_json) {
     AwireAction a;
     const int rc = fio_move_to_awire(move_json, &a);
     if (rc != FIO_EOK) return rc;
+    return msg_rebase_one(&g_game, g_msg_round, pending_round, seat, &a);
+}
+
+// Rule R over the AWIRE frame — the JSON-free twin of fio_msg_rebase, and the one
+// Swift actually calls (the phone stages moves as awire, never JSON; the pending
+// ledger holds them the same way). Same contract as wasm_msg_rebase: decode the
+// action, then msg_rebase_one against the adopted chain's round (g_msg_round, set
+// by the last fio_msg_decode_packed). Returns MSG_REBASE_* (0 re-applied and
+// APPLIED to the resident game, 1 discarded by the round guard, 2 discarded as
+// illegal), or a negative MSG_E*.
+int fio_msg_rebase_awire(int pending_round, int seat, const uint8_t *buf, int len) {
+    if (!g_has_game) return FIO_ENOGAME;
+    if (!buf || len <= 0) return FIO_EBADARG;
+    if (g_msg_round < 0) return FIO_ENOGAME;   // nothing adopted to rebase onto
+    if (seat < 0 || seat >= g_game.num_players) return FIO_EBADARG;
+
+    AwireAction a;
+    if (!awire_decode(buf, len, &a)) return FIO_EPARSE;
     return msg_rebase_one(&g_game, g_msg_round, pending_round, seat, &a);
 }

@@ -33,6 +33,7 @@ public final class MessageTurnController: ObservableObject {
     public let names: [Int: String]
 
     private let kernel = MessageKernel.shared
+    private let store: MessageGameStore
 
     /// The re-establishable base — the bytes the whole game derives from.
     private enum Base {
@@ -43,15 +44,29 @@ public final class MessageTurnController: ObservableObject {
     private let gameId: UInt64
     private let parent8: Data
     private let joins: [MessageJoin]
+    /// The bout the base chain sits at — the round every staged move here is
+    /// composed against, and the tag the pending ledger carries for Rule R.
+    private let baseRound: Int
+    /// Rule R survivors to re-stage on top of the base at `begin()`, in order —
+    /// the moves a rebase re-applied onto a freshly-adopted chain (§7.4). Empty on
+    /// a plain open or a genesis.
+    private let preStaged: [Move]
+
+    public var gameIdString: String { String(gameId) }
 
     /// Continue a chain I just opened. The resident game may already be this
     /// payload (the view decoded it to resolve my seat); `begin()` re-adopts it
-    /// anyway so the controller owns the base unambiguously.
-    public init(parentPayload: Data, parent: MessageEnvelope, mySeat: Int) {
+    /// anyway so the controller owns the base unambiguously. `preStaged` are Rule
+    /// R survivors (§7.4) to replay on top; `store` is the pending-ledger home.
+    public init(parentPayload: Data, parent: MessageEnvelope, mySeat: Int,
+                preStaged: [Move] = [], store: MessageGameStore = .shared) {
         self.base = .continuation(payload: parentPayload)
         self.gameId = UInt64(parent.gameId) ?? 0
         self.parent8 = Self.firstEight(hex: parent.digest)
         self.joins = parent.joins
+        self.baseRound = parent.round
+        self.preStaged = preStaged
+        self.store = store
         self.mySeat = mySeat
         self.names = Dictionary(parent.joins.map { ($0.seat, $0.name) },
                                 uniquingKeysWith: { a, _ in a })
@@ -60,11 +75,15 @@ public final class MessageTurnController: ObservableObject {
     /// Start a brand-new game as seat 0 (§5.2 creation). `seed` MUST be 32 bytes
     /// (the wide ChaCha deal both devices reproduce). `gameId` is this game's
     /// random identity; `myNickname` seats me in the joins list.
-    public init(genesisSeed seed: Data, players: Int, gameId: UInt64, myNickname: String) {
+    public init(genesisSeed seed: Data, players: Int, gameId: UInt64, myNickname: String,
+                store: MessageGameStore = .shared) {
         self.base = .genesis(seed: seed, players: players)
         self.gameId = gameId
         self.parent8 = Data(repeating: 0, count: 8)   // the root has no parent
         self.joins = [MessageJoin(seat: 0, name: myNickname)]
+        self.baseRound = 0
+        self.preStaged = []
+        self.store = store
         self.mySeat = 0
         self.names = [0: myNickname]
     }
@@ -78,11 +97,17 @@ public final class MessageTurnController: ObservableObject {
 
     // MARK: lifecycle
 
-    /// Establish the base game (adopt the parent, or deal the genesis) then read
-    /// the board. Call once from the view's `.task`.
+    /// Establish the base game (adopt the parent, or deal the genesis), replay any
+    /// Rule R survivors on top, then read the board. Call once from the view's
+    /// `.task`.
     public func begin() async {
         await rebuildBase()
         pending = []
+        for m in preStaged {              // §7.4 survivors, already validated by the rebase
+            try? await kernel.apply(seat: mySeat, move: m)
+            pending.append(m)
+        }
+        persistLedger()
         await refresh()
         ready = true
     }
@@ -107,6 +132,7 @@ public final class MessageTurnController: ObservableObject {
         do {
             try await kernel.apply(seat: mySeat, move: move)
             pending.append(move)
+            persistLedger()
             await refresh()
         } catch {
             rejectTick += 1
@@ -124,7 +150,18 @@ public final class MessageTurnController: ObservableObject {
             try? await kernel.apply(seat: mySeat, move: m)
             pending.append(m)
         }
+        persistLedger()
         await refresh()
+    }
+
+    /// Mirror the in-memory staged list into the durable pending ledger (§17.15)
+    /// so a bubble that arrives mid-staging — or a killed extension — can rebase
+    /// these moves onto whatever chain wins, rather than dropping them. Tagged
+    /// with the bout they were composed against (`baseRound`), the round guard's
+    /// key. Sent moves are cleared from the ledger at commit (§7.6).
+    private func persistLedger() {
+        store.setPending(pending.map { PendingAction(seat: mySeat, round: baseRound, move: $0) },
+                         gameId: gameIdString)
     }
 
     /// The joins to seal: the parent's, plus MY seat if it wasn't named yet — a
@@ -148,8 +185,8 @@ public final class MessageTurnController: ObservableObject {
                               joins: sealJoins)
     }
 
-    /// First 8 bytes of a hex digest, zero-padded — the parent-pointer tag (§7.4).
-    static func firstEight(hex: String) -> Data {
+    /// First 8 bytes of a hex digest, zero-padded - the parent-pointer tag (§7.4).
+    public static func firstEight(hex: String) -> Data {
         var out = Data(); var i = hex.startIndex
         while out.count < 8, i < hex.endIndex {
             let j = hex.index(i, offsetBy: 2, limitedBy: hex.endIndex) ?? hex.endIndex

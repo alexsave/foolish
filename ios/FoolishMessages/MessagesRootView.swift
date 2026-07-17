@@ -59,8 +59,18 @@ private struct ExpandedView: View {
     let startNewGame: Bool
     let onSend: (Data, Int) async -> Void
 
+    /// A tapped bubble that LOST Rule P to the chain we already trust (§7.6): the
+    /// human opened an older, collapsed bubble. We do not silently adopt it.
+    private struct Stale { let incoming: Data; let env: MessageEnvelope; let preferred: Data }
+    /// A phase-0/handoff lobby the extension shows instead of the board (§5.2).
+    private struct Lobby { let env: MessageEnvelope; let payload: Data }
+
     @State private var controller: MessageTurnController?
     @State private var ambiguous: (env: MessageEnvelope, payload: Data)?
+    @State private var stale: Stale?
+    @State private var lobby: Lobby?
+    @State private var showSetup = false
+    @State private var toast: String?
     @State private var damaged = false
 
     var body: some View {
@@ -68,8 +78,20 @@ private struct ExpandedView: View {
             if let controller {
                 MessageTableView(controller: controller,
                                  onSend: { payload in await onSend(payload, controller.mySeat) })
+            } else if let lob = lobby {
+                LobbyView(env: lob.env, mySeat: lobbySeat(lob.env),
+                          nickname: MessageGameStore.shared.nickname,
+                          onSend: { Task { await onSend(lob.payload, lobbySeat(lob.env) ?? 0) } },
+                          onJoin: { name in Task { await joinLobby(lob, nickname: name) } })
+            } else if showSetup {
+                NewGameSetup(nickname: MessageGameStore.shared.nickname) { name, players in
+                    Task { await start(nickname: name, players: players) }
+                }
+            } else if let s = stale {
+                StaleBanner(onNewest: { Task { await openNewest(s) } },
+                            onAnyway: { Task { await openAnyway(s) } })
             } else if let a = ambiguous {
-                SeatPicker(joins: a.env.joins) { seat in choose(seat: seat, from: a) }
+                SeatPicker(joins: a.env.joins) { seat in Task { await choose(seat: seat, from: a) } }
             } else if damaged {
                 DamagedView()
             } else {
@@ -77,41 +99,212 @@ private struct ExpandedView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .fToast($toast)
     }
 
     private func load() async {
-        if startNewGame { await startGenesis(); return }
+        if startNewGame { showSetup = true; return }
         guard let url = payloadURL else { damaged = true; return }
         do {
-            let bytes = try MessageEnvelope.payloadBytes(url: url)
+            let incoming = try MessageEnvelope.payloadBytes(url: url)
             // Decode ADOPTS and VALIDATES — a damaged link throws here (§7.3).
-            let env = try await MessageEnvelope.decode(payload: bytes, viewer: -1)
-            let cached = MessageGameStore.shared.seat(gameId: env.gameId)
-            switch SeatIdentity.resolve(cachedSeat: cached, senderIsLocal: senderIsLocal,
-                                        nPlayers: env.nPlayers, lastActorSeat: env.lastActorSeat) {
-            case .known(let seat):
-                controller = MessageTurnController(parentPayload: bytes, parent: env, mySeat: seat)
-            case .ambiguous:
-                ambiguous = (env, bytes)
+            let env = try await MessageEnvelope.decode(payload: incoming, viewer: -1)
+
+            // A WAITING bubble is a lobby, not a board — and Rule P's play-time
+            // staleness does not apply (every lobby bubble is round 0/turn 0). Show
+            // the seats and the join button (§5.2).
+            if env.phase == 0 {
+                lobby = Lobby(env: env, payload: incoming)
+                return
+            }
+
+            // Rule P (§7.2): compare the tapped chain to the preferred one we have
+            // cached. If ours strictly wins, this bubble is stale - banner, don't
+            // adopt. Delivery order is never trusted; only the bytes decide.
+            if let row = MessageGameStore.shared.record(gameId: env.gameId),
+               let preferred = Base32.decode(row.payloadBase32), preferred != incoming,
+               ((try? await MessageKernel.shared.preferred(preferred, incoming)) ?? 0) < 0 {
+                stale = Stale(incoming: incoming, env: env, preferred: preferred)
+                return
+            }
+
+            // The tapped chain wins, ties, or is the first we've seen: adopt it.
+            await adopt(winner: incoming, env: env)
+        } catch {
+            damaged = true
+        }
+    }
+
+    // MARK: creation + lobby (§5.2)
+
+    /// Finish the New game setup: persist the nickname (B3), then either deal a
+    /// 2-player LIVE game straight to the board, or open an N>=3 WAITING lobby.
+    private func start(nickname: String, players: Int) async {
+        MessageGameStore.shared.nickname = nickname
+        showSetup = false
+        if players == 2 { await startGenesis(nickname: nickname) }
+        else { await createWaiting(players: players, nickname: nickname) }
+    }
+
+    /// Create an N>=3 game as seat 0 and open its lobby: fix the seed + player
+    /// count in the kernel, seal a WAITING bubble seating only me, and cache my
+    /// seat so a later open resolves it (§6.1).
+    private func createWaiting(players: Int, nickname: String) async {
+        var seed = Data(count: 32)
+        for i in 0..<32 { seed[i] = UInt8.random(in: 0...UInt8.max) }
+        let gameId = UInt64.random(in: 1...UInt64.max)
+        do {
+            try await MessageKernel.shared.newGame(seed: seed, players: players)
+            let joins = [MessageJoin(seat: 0, name: nickname)]
+            let payload = try await MessageKernel.shared.sealEmpty(
+                phase: 0, lastActorSeat: 0, gameId: gameId,
+                parent8: Data(repeating: 0, count: 8), joins: joins)
+            let env = try await MessageEnvelope.decode(payload: payload, viewer: -1)
+            cache(seat: 0, env: env, payload: payload)
+            lobby = Lobby(env: env, payload: payload)
+        } catch {
+            damaged = true
+        }
+    }
+
+    /// My seat in a lobby, or nil if I have not claimed one yet (§6). The creator
+    /// and any joiner who already sent a claim resolve to a seat; a fresh joiner is
+    /// nil, which is what shows the Join button.
+    private func lobbySeat(_ env: MessageEnvelope) -> Int? {
+        switch SeatIdentity.resolve(cachedSeat: MessageGameStore.shared.seat(gameId: env.gameId),
+                                    senderIsLocal: senderIsLocal,
+                                    nPlayers: env.nPlayers, lastActorSeat: env.lastActorSeat) {
+        case .known(let s): return s
+        case .ambiguous:    return nil
+        }
+    }
+
+    /// Claim the lowest free seat (§5.2). While seats remain, reseal WAITING and
+    /// stay in the lobby; the claim that fills the LAST seat seals a LIVE handoff
+    /// ("game on") and drops into the board. Either way the human presses Send.
+    private func joinLobby(_ lob: Lobby, nickname: String) async {
+        let env = lob.env
+        guard let free = (0..<env.nPlayers).first(where: { s in !env.joins.contains { $0.seat == s } }),
+              let gid = UInt64(env.gameId) else { return }
+        let trimmed = nickname.trimmingCharacters(in: .whitespaces)
+        let nick = trimmed.isEmpty ? FStrings.t("ios.you") : trimmed
+        MessageGameStore.shared.nickname = nick   // remember it for the next game (B3)
+        let joins = (env.joins + [MessageJoin(seat: free, name: nick)]).sorted { $0.seat < $1.seat }
+        let full = joins.count == env.nPlayers
+        do {
+            // Re-adopt the lobby so the seed + player count are resident for the seal.
+            _ = try await MessageKernel.shared.decode(payload: lob.payload, viewer: -1)
+            let parent = MessageTurnController.firstEight(hex: env.digest)
+            let payload = try await MessageKernel.shared.sealEmpty(
+                phase: full ? 2 : 0, lastActorSeat: free, gameId: gid, parent8: parent, joins: joins)
+            let newEnv = try await MessageEnvelope.decode(payload: payload, viewer: -1)
+            cache(seat: free, env: newEnv, payload: payload)
+            await onSend(payload, free)
+            if full {
+                controller = MessageTurnController(parentPayload: payload, parent: newEnv, mySeat: free)
+                lobby = nil
+            } else {
+                lobby = Lobby(env: newEnv, payload: payload)
             }
         } catch {
             damaged = true
         }
     }
 
-    /// §6.3 pick resolved: remember the seat for next time, then play.
-    private func choose(seat: Int, from a: (env: MessageEnvelope, payload: Data)) {
+    /// Adopt `winner` as the game, rebase my staged-but-unsent moves onto it
+    /// (Rule R, §7.4), refresh the preferred-chain cache, and open the board.
+    private func adopt(winner: Data, env: MessageEnvelope) async {
+        // Make the resident game the winner and set Rule R's round guard, then
+        // rebase the pending ledger onto it.
+        _ = try? await MessageKernel.shared.decode(payload: winner, viewer: -1)
+        let (survivors, discarded) = await rebasePending(gameId: env.gameId, adoptedRound: env.round)
+
+        switch SeatIdentity.resolve(cachedSeat: MessageGameStore.shared.seat(gameId: env.gameId),
+                                    senderIsLocal: senderIsLocal,
+                                    nPlayers: env.nPlayers, lastActorSeat: env.lastActorSeat) {
+        case .known(let seat):
+            cache(seat: seat, env: env, payload: winner)
+            toast = rebaseToast(survivors: survivors, discarded: discarded)
+            controller = MessageTurnController(parentPayload: winner, parent: env, mySeat: seat,
+                                               preStaged: survivors)
+        case .ambiguous:
+            ambiguous = (env, winner)
+        }
+    }
+
+    /// Rule R (§7.4): replay each pending action onto the just-adopted chain. A
+    /// re-applied move survives as a staged move to re-send; a discarded one is
+    /// gone (round closed, or the new state refuses it). The ledger is rewritten
+    /// to exactly the survivors, re-tagged to the adopted round.
+    private func rebasePending(gameId: String, adoptedRound: Int) async -> (survivors: [Move], discarded: Int) {
+        var survivors: [Move] = []
+        var kept: [PendingAction] = []
+        var discarded = 0
+        for p in MessageGameStore.shared.pending(gameId: gameId) {
+            let awire = MoveWire.encodeAction(p.move)
+            let verdict = awire.isEmpty ? MessageKernel.Rebase.discardedIllegal
+                : ((try? await MessageKernel.shared.rebase(pendingRound: p.round, seat: p.seat, awire: awire))
+                   ?? .discardedIllegal)
+            if verdict == .reapplied {
+                survivors.append(p.move)
+                // Re-tagged to the adopted round: it is now composed against THIS
+                // chain, so a later round closure guards it correctly.
+                kept.append(PendingAction(seat: p.seat, round: adoptedRound, move: p.move))
+            } else {
+                discarded += 1
+            }
+        }
+        MessageGameStore.shared.setPending(kept, gameId: gameId)
+        return (survivors, discarded)
+    }
+
+    private func rebaseToast(survivors: [Move], discarded: Int) -> String? {
+        if !survivors.isEmpty { return FStrings.t("ios.msg.rebased") }
+        if discarded > 0 { return FStrings.t("ios.msg.superseded") }
+        return nil
+    }
+
+    /// §7.6 "open the newest": adopt the chain we prefer instead of the stale one.
+    private func openNewest(_ s: Stale) async {
+        guard let env = try? await MessageEnvelope.decode(payload: s.preferred, viewer: -1) else {
+            damaged = true; return
+        }
+        stale = nil
+        await adopt(winner: s.preferred, env: env)
+    }
+
+    /// §7.6 "show that state anyway": read-only-ish view of the stale chain. We do
+    /// NOT rebase onto it or let it clobber the preferred cache — it lost Rule P.
+    private func openAnyway(_ s: Stale) async {
+        _ = try? await MessageKernel.shared.decode(payload: s.incoming, viewer: -1)
+        let seat = SeatIdentity.resolve(cachedSeat: MessageGameStore.shared.seat(gameId: s.env.gameId),
+                                        senderIsLocal: senderIsLocal,
+                                        nPlayers: s.env.nPlayers, lastActorSeat: s.env.lastActorSeat)
+        stale = nil
+        if case .known(let seat) = seat {
+            controller = MessageTurnController(parentPayload: s.incoming, parent: s.env, mySeat: seat)
+        } else {
+            ambiguous = (s.env, s.incoming)
+        }
+    }
+
+    /// §6.3 pick resolved: remember the seat, rebase, then play.
+    private func choose(seat: Int, from a: (env: MessageEnvelope, payload: Data)) async {
         cache(seat: seat, env: a.env, payload: a.payload)
-        controller = MessageTurnController(parentPayload: a.payload, parent: a.env, mySeat: seat)
+        let (survivors, _) = await rebasePending(gameId: a.env.gameId, adoptedRound: a.env.round)
+        controller = MessageTurnController(parentPayload: a.payload, parent: a.env, mySeat: seat,
+                                           preStaged: survivors)
         ambiguous = nil
     }
 
-    private func startGenesis() async {
+    /// A 2-player DM game deals LIVE immediately (§5.2): no lobby, the creator is
+    /// seat 0 and may play their first move before staging.
+    private func startGenesis(nickname: String) async {
         var seed = Data(count: 32)
         for i in 0..<32 { seed[i] = UInt8.random(in: 0...UInt8.max) }
         let gameId = UInt64.random(in: 1...UInt64.max)
         controller = MessageTurnController(genesisSeed: seed, players: 2, gameId: gameId,
-                                           myNickname: MessageGameStore.shared.nickname)
+                                           myNickname: nickname)
     }
 
     private func cache(seat: Int, env: MessageEnvelope, payload: Data) {
@@ -123,7 +316,109 @@ private struct ExpandedView: View {
     }
 }
 
-/// §6.3 tertiary identity: N≥3, cache lost, not the last actor — ask the human.
+/// New game setup (§5.2): the creator names themselves (B3 — the one place a
+/// nickname is entered; compact is the keyboard area and cannot host a field,
+/// §3.5) and picks a player count. Two players start a DM game at once; three or
+/// four open a lobby others join. The wire allows up to 8; v1's UI caps at 4.
+private struct NewGameSetup: View {
+    @State private var nickname: String
+    @State private var players = 2
+    let onStart: (String, Int) -> Void
+
+    init(nickname: String, onStart: @escaping (String, Int) -> Void) {
+        _nickname = State(initialValue: nickname == "Me" ? "" : nickname)
+        self.onStart = onStart
+    }
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Text(FStrings.t("ios.msg.newgame")).font(.headline)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(FStrings.t("ios.msg.yourname")).font(.footnote).foregroundStyle(.secondary)
+                TextField(FStrings.t("ios.you"), text: $nickname).textFieldStyle(.roundedBorder)
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text(FStrings.t("players")).font(.footnote).foregroundStyle(.secondary)
+                Picker(FStrings.t("players"), selection: $players) {
+                    ForEach(2...4, id: \.self) { Text("\($0)").tag($0) }
+                }.pickerStyle(.segmented)
+            }
+            Button(FStrings.t("start_game")) {
+                let n = nickname.trimmingCharacters(in: .whitespaces)
+                onStart(n.isEmpty ? FStrings.t("ios.you") : n, players)
+            }.buttonStyle(.borderedProminent)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding()
+    }
+}
+
+/// The WAITING lobby (§5.2/§5.3): claimed seats by nickname, open seats, and the
+/// one action that matters right now - Join if I have not claimed a seat and one
+/// is free, else Send to stage the invite/handoff for the human to send.
+private struct LobbyView: View {
+    let env: MessageEnvelope
+    let mySeat: Int?
+    let onSend: () -> Void
+    let onJoin: (String) -> Void
+
+    /// The joiner's editable name (B3): compact can't host a field, so this is the
+    /// place a joiner names themselves before claiming a seat. Seeded from the
+    /// stored nickname, blank if it's the neutral default.
+    @State private var nickname: String
+
+    init(env: MessageEnvelope, mySeat: Int?, nickname: String,
+         onSend: @escaping () -> Void, onJoin: @escaping (String) -> Void) {
+        self.env = env; self.mySeat = mySeat; self.onSend = onSend; self.onJoin = onJoin
+        _nickname = State(initialValue: nickname == "Me" ? "" : nickname)
+    }
+
+    private var freeSeats: Int { env.nPlayers - env.joins.count }
+    private func name(_ s: Int) -> String? { env.joins.first { $0.seat == s }?.name }
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Text(FStrings.t("ios.lobby")).font(.headline)
+            VStack(spacing: 6) {
+                ForEach(0..<env.nPlayers, id: \.self) { s in
+                    HStack {
+                        Text("\(s + 1).").foregroundStyle(.secondary).monospacedDigit()
+                        if let nm = name(s) {
+                            Text(nm + (s == mySeat ? " (\(FStrings.t("ios.you")))" : ""))
+                        } else {
+                            Text(FStrings.t("ios.msg.seatopen")).foregroundStyle(.secondary).italic()
+                        }
+                        Spacer()
+                    }
+                }
+            }
+            .padding(.horizontal)
+
+            if mySeat != nil {
+                Text(freeSeats > 0 ? FStrings.t("ios.msg.waitingjoin", ["n": "\(freeSeats)"])
+                                   : FStrings.t("ios.msg.lobbyfull"))
+                    .font(.footnote).foregroundStyle(.secondary)
+                Button(FStrings.t("ios.msg.sendinvite"), action: onSend).buttonStyle(.borderedProminent)
+            } else if freeSeats > 0 {
+                TextField(FStrings.t("ios.you"), text: $nickname).textFieldStyle(.roundedBorder)
+                    .padding(.horizontal)
+                Button(FStrings.t("ios.msg.joinas", ["name": displayName])) { onJoin(nickname) }
+                    .buttonStyle(.borderedProminent)
+            } else {
+                Text(FStrings.t("ios.msg.lobbyfull")).font(.footnote).foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding()
+    }
+
+    private var displayName: String {
+        let t = nickname.trimmingCharacters(in: .whitespaces)
+        return t.isEmpty ? FStrings.t("ios.you") : t
+    }
+}
+
+/// §6.3 tertiary identity: N≥3, cache lost, not the last actor - ask the human.
 private struct SeatPicker: View {
     let joins: [MessageJoin]
     let onPick: (Int) -> Void
@@ -134,6 +429,25 @@ private struct SeatPicker: View {
             ForEach(joins, id: \.seat) { j in
                 Button(j.name) { onPick(j.seat) }.buttonStyle(.bordered)
             }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding()
+    }
+}
+
+/// §7.6: the human tapped an older, collapsed bubble. The game has moved on; we
+/// offer the newest state we know, and — since a tap should never be a dead end —
+/// a way to look at the tapped state anyway (read-only in spirit; a move made on
+/// it would just lose Rule P).
+private struct StaleBanner: View {
+    let onNewest: () -> Void
+    let onAnyway: () -> Void
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Text(FStrings.t("ios.msg.moved")).font(.headline).multilineTextAlignment(.center)
+            Button(FStrings.t("ios.msg.opennewest"), action: onNewest).buttonStyle(.borderedProminent)
+            Button(FStrings.t("ios.msg.viewanyway"), action: onAnyway).buttonStyle(.bordered)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding()

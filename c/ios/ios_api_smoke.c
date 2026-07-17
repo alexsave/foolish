@@ -289,6 +289,16 @@ static int fmsg_check(void) {
             printf("FAIL fmsg round guard: got %d, want %d\n", stale, FIO_REBASE_DISCARD_ROUND);
             return 1;
         }
+        // The awire twin (what Swift calls) must reach the SAME guard verdict on
+        // the SAME action — "good" is awire {kind=4, n=0}. Re-adopt first (the
+        // JSON rebase above cloned onto the resident game).
+        if (fio_msg_decode_packed(pay, n, mb, sizeof(buf)) <= 0) { printf("FAIL fmsg re-adopt (awire)\n"); return 1; }
+        const unsigned char good_awire[2] = { 4, 0 };
+        const int stale_w = fio_msg_rebase_awire(adopted_round - 1, 0, good_awire, 2);
+        if (stale_w != FIO_REBASE_DISCARD_ROUND) {
+            printf("FAIL fmsg awire round guard: got %d, want %d\n", stale_w, FIO_REBASE_DISCARD_ROUND);
+            return 1;
+        }
     }
 
     printf("fmsg OK (envelope %d B = %d base32 chars, decode+ruleP+rebase)\n", n, chars);

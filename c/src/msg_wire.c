@@ -340,12 +340,19 @@ int msg_replay(const MsgEnvelope *e, Game *g) {
     m.g = g; m.n_players = e->n_players;
     m.rounds = 0; m.applied = 0; m.err = MSG_EOK;
 
-    ReplayHeader hdr;
-    const int d = replay_decode_atoms_v6(e->actions, e->actions_len, &hdr, msg_atom, &m);
-    if (d < 0) return MSG_EBODY;
-    if (m.err != MSG_EOK) return m.err;
-    // The code's own header must describe the table the envelope claims.
-    if (hdr.n != e->n_players) return MSG_EBODY;
+    // A 0-action bubble carries no v6 body — the deal alone IS the state. Two
+    // phases produce one: a WAITING lobby (§5.2, seats still filling) and the
+    // last-joiner LIVE handoff that "applies nothing" to start the game. The atom
+    // decoder needs a header these bodies don't have, so skip it; applied/rounds
+    // stay 0 and the turn/round/phase checks below still gate the claim.
+    if (e->actions_len != 0 || e->n_actions != 0) {
+        ReplayHeader hdr;
+        const int d = replay_decode_atoms_v6(e->actions, e->actions_len, &hdr, msg_atom, &m);
+        if (d < 0) return MSG_EBODY;
+        if (m.err != MSG_EOK) return m.err;
+        // The code's own header must describe the table the envelope claims.
+        if (hdr.n != e->n_players) return MSG_EBODY;
+    }
 
     const int rounds = m.rounds, applied = m.applied;
 
