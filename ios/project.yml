@@ -28,11 +28,13 @@ settings:
     MARKETING_VERSION: "1.0"
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.9"
-    # v1 develops against the simulator only — no signing anywhere (§16.0).
-    # Milestone F flips CODE_SIGN_STYLE to Automatic and sets DEVELOPMENT_TEAM.
-    CODE_SIGN_STYLE: Manual
-    CODE_SIGNING_REQUIRED: "NO"
-    CODE_SIGNING_ALLOWED: "NO"
+    # Milestone F: signing enabled. Xcode manages the certificate + provisioning
+    # profiles automatically against the registered App IDs (cards.foolish.app,
+    # cards.foolish.app.MessagesExtension) and App Group (group.cards.foolish).
+    # DEVELOPMENT_TEAM is the 10-char Team ID from the portal's Membership page.
+    # Simulator builds still need no signing; Xcode skips it for the sim SDK.
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: 8N2Z544SB4
     # Standard HTTPS only — no non-exempt encryption (§11).
     ITSAppUsesNonExemptEncryption: "NO"
 
