@@ -57,17 +57,17 @@ everything this document does not explicitly correct in §3.*
 >    funnel. `EngineC.replayEncodeCode` exists; wire it when the game ends.
 > 5. **M4/M5** as below (localization sweep, review prep).
 >
-> **⚠️ PRE-EXISTING RED (not M3 — a real finding to triage):**
-> `FoolishTests/EngineGoldenTests` fails `playHash` on games 8-19 (deal, step
-> count, and fool all still MATCH). Root cause: the golden GENERATOR
-> (`c/ios/ios_goldens.c`) applies moves via `fio_apply_json`, but the TEST (updated
-> during the server-consolidation) applies via `fio_apply_awire`. Same trajectory,
-> but a multi-card/cover move leaves a logically-equal state that `fio_state_json`
-> serializes DIFFERENTLY between the two apply paths → the per-step hash diverges in
-> longer games. `make ios-goldens` regen is byte-identical to committed (goldens are
-> NOT stale). Fix is an owner call: point the generator at awire too, or canonicalize
-> state so both apply paths serialize identically. (Also 4 DesignSystem snapshot refs
-> drift on this sim OS — untouched components, environmental.)
+> **Keystone golden test — was RED, now FIXED (1839a82).** `EngineGoldenTests`
+> failed `playHash` because the two apply entry points disagreed on the FINAL
+> step: `fio_apply_awire → awire_apply` settles GAME_OVER, but `fio_apply_json`
+> called `handle_*` directly and left `status=PLAYING`. A pure-C differential
+> (json-drive vs awire-drive, same deal) showed all 20 games identical except that
+> terminal status field. Fix: `fio_apply_json` now calls `game_settle_status` like
+> awire_apply (the two entry points leave identical state), and the GENERATOR now
+> drives through `fio_legal_packed + fio_apply_awire` (the packed path the app
+> ships — no JSON apply). Regenerated goldens moved only `playHash`. Green now;
+> ios-smoke + difftests still pass. (4 DesignSystem snapshot refs still drift on
+> this sim OS — untouched components, environmental — the only remaining reds.)
 
 ---
 
