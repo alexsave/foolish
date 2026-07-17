@@ -44,7 +44,7 @@ public struct MessageBoardView: View {
                           hasFlipped: view.hasFlipped, trumpSuit: view.trumpSuit)
 
                 if view.battles.isEmpty {
-                    Text(FStrings.t("ios.nobattle")).font(.caption).foregroundStyle(.secondary)
+                    Text(FStrings.t("ios.nobattle")).font(.caption).foregroundStyle(FColor.textPrimary.opacity(0.7))
                 } else {
                     FBattleGrid(battles: view.battles, trumpSuit: view.trumpSuit)
                 }
@@ -56,7 +56,7 @@ public struct MessageBoardView: View {
                 Text(view.gameOver >= 0
                     ? FStrings.t("ios.msg.isfool", ["name": name(view.gameOver)])
                     : FStrings.t("game_over"))
-                    .font(.subheadline.weight(.semibold))
+                    .font(.subheadline.weight(.semibold)).foregroundStyle(FColor.textPrimary)
             }
         }
         .padding(16)
@@ -65,8 +65,8 @@ public struct MessageBoardView: View {
 
     private var discardPile: some View {
         VStack(spacing: 3) {
-            Image(systemName: "rectangle.stack.fill").font(.title3).foregroundStyle(.secondary)
-            Text("\(view.discardCount)").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+            Image(systemName: "rectangle.stack.fill").font(.title3).foregroundStyle(FColor.textPrimary.opacity(0.7))
+            Text("\(view.discardCount)").font(.caption.monospacedDigit()).foregroundStyle(FColor.textPrimary.opacity(0.7))
         }
     }
 }

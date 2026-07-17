@@ -77,7 +77,7 @@ public struct MessageTableView: View {
             FDeckWell(deckCount: view.deckCount, flipped: view.flipped,
                       hasFlipped: view.hasFlipped, trumpSuit: view.trumpSuit)
             if view.battles.isEmpty {
-                Text(FStrings.t("ios.nobattle")).font(.caption).foregroundStyle(.secondary)
+                Text(FStrings.t("ios.nobattle")).font(.caption).foregroundStyle(FColor.textDim)
             } else {
                 FBattleGrid(battles: view.battles, trumpSuit: view.trumpSuit,
                             coverable: coverableBattles(view),
@@ -89,8 +89,8 @@ public struct MessageTableView: View {
 
     private func discard(_ view: GameView) -> some View {
         VStack(spacing: 3) {
-            Image(systemName: "rectangle.stack.fill").font(.title3).foregroundStyle(.secondary)
-            Text("\(view.discardCount)").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+            Image(systemName: "rectangle.stack.fill").font(.title3).foregroundStyle(FColor.textDim)
+            Text("\(view.discardCount)").font(.caption.monospacedDigit()).foregroundStyle(FColor.textDim)
         }
     }
 
@@ -100,14 +100,15 @@ public struct MessageTableView: View {
             Text(view.gameOver >= 0
                 ? FStrings.t("ios.msg.isfool", ["name": name(view.gameOver)])
                 : FStrings.t("game_over"))
-                .font(.subheadline.weight(.semibold))
+                .font(.subheadline.weight(.semibold)).foregroundStyle(FColor.textPrimary)
         } else if !controller.iCanAct {
             // No legal move for me on this staged state — I'm watching (§5.1).
-            Text(waitingLine(view)).font(.footnote).foregroundStyle(.secondary)
+            Text(waitingLine(view)).font(.footnote).foregroundStyle(FColor.textDim)
         } else if controller.canSend {
             Text(FStrings.t("ios.msg.staged")).font(.footnote.weight(.medium))
+                .foregroundStyle(FColor.textPrimary)
         } else {
-            Text(FStrings.t("ios.msg.yourmove")).font(.footnote).foregroundStyle(.secondary)
+            Text(FStrings.t("ios.msg.yourmove")).font(.footnote).foregroundStyle(FColor.textDim)
         }
     }
 
