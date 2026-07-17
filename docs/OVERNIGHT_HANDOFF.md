@@ -83,6 +83,17 @@ app icon and the iMessage slots.
   These refs are **not git-tracked** and don't run in Linux CI, so it's
   cosmetic/local — re-record on a real Mac GUI session if you want it green.
 
+## What I validated with the harness (screenshots)
+- **Full 2p game to game-over** via `HARNESS_AUTOGAME` (~10 turns): turn handoff,
+  seat inference, and auto-stage correct every turn; ended on "… is the fool".
+- **4-player board** (`HARNESS_PLAYERS=4 HARNESS_SEED=1`): 4 seat badges with
+  correct attacker/defender roles, viewer holds the opening move.
+- New-game setup (chat-aware: 2p locks to "Players: 2"), wool table + wood
+  buttons, the red-bubble path, and auto-stage lighting the send control.
+- One on-device thing to eyeball: the 🃏 in the "… is the fool" line rendered as
+  a tofu box in the *headless* sim (same rendering gremlin as the snapshots) —
+  almost certainly fine on a real device, but worth a glance.
+
 ## Suggested next steps for you
 1. Pick an outpainted icon (I'll surface candidates).
 2. Run FoolishHarness, play a 3–4 player game across participants, sanity-check
