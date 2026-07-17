@@ -17,7 +17,13 @@ on:
   push:
     branches: [main]
     paths:
-      - 'supabase/**'
+      # The backend moved to server/impls/supabase (A10). The old 'supabase/**'
+      # is anchored at the repo root, so after the move it matched NOTHING and
+      # pushes silently stopped triggering deploys — the server went stale.
+      - 'server/impls/supabase/**'
+      # bots.wasm.gz is bundled as a static asset (config.toml static_files), so
+      # a kernel rebuild must redeploy even though it lives outside the backend.
+      - 'sdk/ts/wasm/bots.wasm.gz'
   workflow_dispatch: {}
 
 # Never let two deploys race; queue instead of cancelling a push mid-flight.
