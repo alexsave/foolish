@@ -129,19 +129,6 @@ int fio_last_reject(void);
 // includes its cycle's events inline; this is the apply-path companion.
 int fio_last_events_json(int viewer, char *out, int cap);
 
-// Drive ONE eligible bot seat (any seat with a pending action other than
-// human_seat): choose its move with that seat's assigned strategy, apply it,
-// and emit the applied move as JSON: {"seat":i,"type":...,"cards":[...]}.
-// Returns bytes written (> 0) when a bot acted, 0 when no bot seat is eligible
-// (it is the human's turn, or the game is over), or a negative error.
-// Pass human_seat = -1 to let every seat be driven (used by replays/spectate).
-//
-// DEPRECATED for the app's bot loop — it walks seats and drives the FIRST
-// eligible one, which hands low seats a tempo advantage the website does not
-// have, and it cannot bundle silent actions. Use fio_bot_drive_json.
-// Kept for tests and single-step tooling.
-int fio_bot_step_json(int human_seat, char *out, int cap);
-
 // Drive the bot cycle (docs/C_CORE_CONSOLIDATION.md F2/F3): apply 0..n bot
 // actions and stop on the same conditions as the website's loop — game over, a
 // visible action landed, or no bot can act. Silent actions (a `good` that does

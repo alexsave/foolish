@@ -514,56 +514,9 @@ int fio_game_over(void) {
     return game_done(&g_game);
 }
 
-// Drive one eligible seat other than `human_seat`. Choosing + applying happen
-// here so the Swift bot loop is a simple "call until it returns 0". The seat's
-// own strategy_key selects the chooser (dispatch_choose). human_seat == -1
-// drives any seat (replays/spectate playthroughs).
-int fio_bot_step_json(int human_seat, char *out, int cap) {
-    if (!g_has_game) return FIO_ENOGAME;
-    if (game_done(&g_game) >= 0) return 0;
-
-    for (int seat = 0; seat < g_game.num_players; seat++) {
-        if (seat == human_seat) continue;
-        if (!should_bot_act(&g_game, seat)) continue;
-
-        LegalMoves moves;
-        calculate_legal_moves(&g_game, seat, &moves);
-        if (moves.n == 0) continue;
-
-        int idx = bot_roster_choose(g_seat_roster[seat], &g_game, seat, &moves);
-        if (idx < 0 || idx >= moves.n) idx = 0; // never freeze: fall back to first legal move
-        const LegalMove *m = &moves.moves[idx];
-
-        engine_last_reject = ENGINE_REJECT_NONE;
-        bool ok = false;
-        switch (m->type) {
-            case MOVE_ATTACK: ok = handle_attack(&g_game, seat, m->cards, m->n_cards); break;
-            case MOVE_COVER:  ok = handle_cover (&g_game, seat, m->cards, m->attack_cards, m->n_cards); break;
-            case MOVE_PASS:   ok = handle_pass  (&g_game, seat, m->cards, m->n_cards); break;
-            case MOVE_PICKUP: ok = handle_pickup(&g_game, seat); break;
-            case MOVE_GOOD:   ok = handle_good  (&g_game, seat); break;
-            default: break;
-        }
-        if (!ok) continue;
-
-        J j; j_init(&j, out, cap);
-        j_puts(&j, "{\"seat\":"); j_puti(&j, seat); j_putc(&j, ',');
-        // splice the move object's fields in after "seat"
-        // (emit_move_obj writes a full {..}; we re-open it inline instead)
-        j_puts(&j, "\"type\":"); j_putstr(&j, move_type_name(m->type));
-        j_puts(&j, ",\"cards\":[");
-        for (int c = 0; c < m->n_cards; c++) { if (c) j_putc(&j, ','); j_card(&j, m->cards[c]); }
-        j_putc(&j, ']');
-        if (m->type == MOVE_COVER) {
-            j_puts(&j, ",\"attackCards\":[");
-            for (int c = 0; c < m->n_cards; c++) { if (c) j_putc(&j, ','); j_card(&j, m->attack_cards[c]); }
-            j_putc(&j, ']');
-        }
-        j_putc(&j, '}');
-        return j_finish(&j);
-    }
-    return 0; // no eligible bot seat
-}
+// (The legacy fio_bot_step_json is gone: it re-implemented the handle_* dispatch
+// and drifted from the canonical cycle. Everything drives through the packed
+// fio_bot_drive_packed now — the same cycle the app and website run.)
 
 // Emit one applied action: the move's fields, plus its seat and pacing class.
 static void j_drive_action(J *j, const BotDriveAction *a) {
