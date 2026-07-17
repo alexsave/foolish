@@ -56,6 +56,14 @@ public final class MessageGameStore {
     /// For tests: an explicit UserDefaults (a throwaway suite), no App Group.
     public init(defaults: UserDefaults) { self.defaults = defaults }
 
+    /// This device's display name, seated into `joins` when I create/join a game
+    /// (§5.2). Defaults to a neutral label; the human can change it. Lives in the
+    /// group so the app and extension agree.
+    public var nickname: String {
+        get { defaults?.string(forKey: "fmsg.nickname") ?? "Me" }
+        set { defaults?.set(newValue, forKey: "fmsg.nickname") }
+    }
+
     // MARK: read
 
     /// This device's seat in `gameId`, or nil if unknown — the §6.1 primary

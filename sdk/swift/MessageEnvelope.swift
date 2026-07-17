@@ -57,6 +57,13 @@ public struct MessageEnvelope: Codable, Sendable {
         return bytes
     }
 
+    /// The bubble's link for a payload: https://foolish.cards/m/1<base32>. The
+    /// inverse of `payloadBytes` — the '1' is the §4.3 text-format version. Kept
+    /// pure (no MSMessage) so the URL layer is testable without Apple's framework.
+    public static func link(payload: Data) -> URL {
+        URL(string: "https://foolish.cards/m/1" + Base32.encode(payload))!
+    }
+
     /// Decode + validate + ADOPT: the chain is replayed through the kernel, so
     /// afterwards the engine's resident game IS this payload's game.
     public static func decode(url: URL, viewer: Int) async throws -> MessageEnvelope {
@@ -122,6 +129,20 @@ public actor MessageKernel {
     public func newGame(seed: Data, players: Int) throws {
         let rc = seed.withUnsafeBytes { raw -> Int32 in
             fio_new_game(raw.bindMemory(to: UInt8.self).baseAddress, Int32(seed.count), Int32(players))
+        }
+        guard rc == 0 else { throw MessageEnvelope.Failure.damaged(code: Int(rc)) }
+    }
+
+    /// Apply one action by `seat` to the resident (adopted) game — the LOCAL half
+    /// of a turn, before `seal`. Same packed awire frame the app and server apply
+    /// through, and the kernel is the only judge of legality: an illegal move
+    /// throws and the resident game is untouched. Kept in THIS actor so a message
+    /// turn never races EngineC on the shared static Game.
+    public func apply(seat: Int, move: Move) throws {
+        let awire = MoveWire.encodeAction(move)
+        guard !awire.isEmpty else { throw MessageEnvelope.Failure.damaged(code: -1) }
+        let rc = awire.withUnsafeBytes { raw in
+            fio_apply_awire(Int32(seat), raw.bindMemory(to: UInt8.self).baseAddress, Int32(awire.count))
         }
         guard rc == 0 else { throw MessageEnvelope.Failure.damaged(code: Int(rc)) }
     }

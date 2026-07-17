@@ -75,4 +75,28 @@ final class ComponentSnapshotTests: XCTestCase {
                                 width: 360, height: 260),
                        as: .image, record: record)
     }
+
+    /// The bubble image (§10/§11.3) actually renders headless — ImageRenderer over
+    /// MessageBoardView — at Apple's 300×195pt template size, and it is a public
+    /// board (viewer -1 fixture ⇒ no hand can appear). Not a reference snapshot;
+    /// it proves the compose path produces a usable UIImage.
+    @MainActor
+    func testBubbleSnapshotRendersPublicBoard() {
+        let players = [
+            PlayerView(seat: 0, name: "", status: 2, handCount: 6,
+                       awaitingAttack: false, strategyKey: 0, hand: nil),
+            PlayerView(seat: 1, name: "", status: 2, handCount: 5,
+                       awaitingAttack: false, strategyKey: 0, hand: nil),
+        ]
+        let view = GameView(
+            status: 1, numPlayers: 2, powerSuit: 1, deckCount: 20, discardCount: 6,
+            hasFlipped: true, firstAttacker: 1, defender: 0, viewer: -1,
+            goodMask: 0, gameOver: -1, flipped: Card(s: 1, v: 11),
+            battles: [BattleView(attack: Card(s: 0, v: 7), defense: nil)],
+            eliminationOrder: [], players: players)
+        let img = BubbleSnapshot.render(publicView: view, names: [0: "Sveta", 1: "Alex"])
+        XCTAssertNotNil(img, "the bubble image renders")
+        XCTAssertEqual(img?.size, BubbleSnapshot.size, "at the §11.3 template size")
+        XCTAssertTrue(view.players.allSatisfy { $0.hand == nil }, "the source is a no-hand public view")
+    }
 }
