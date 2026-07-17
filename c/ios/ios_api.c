@@ -400,6 +400,10 @@ int fio_apply_json(int actor_seat, const char *move_json) {
 
     engine_snap_hook = 0;
     if (!ok) { fio_snaps_reset(); g_last_reject = engine_last_reject; return FIO_EREJECT; }
+    // Settle GAME_OVER exactly as awire_apply does — the two apply entry points
+    // MUST leave identical state, or a game-ending move reads as still PLAYING
+    // through this path while the packed path (the shipping app) already ended it.
+    game_settle_status(&g_game);
     g_last_reject = 0;
     return FIO_EOK;
 }
