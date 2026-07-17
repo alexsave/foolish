@@ -175,13 +175,8 @@ ios-smoke:
 	$(CC) $(IOS_CFLAGS) ios/ios_api_smoke.c ios/ios_api.c $(CORE_SRC) -lm -o build/ios_smoke
 	./build/ios_smoke
 
-# Proves the online packed-view decode (fio_view_from_packed_json) matches the
-# offline decode on the same seeded game (§16.D4). Runs on Linux/CI.
-.PHONY: ios-view-test
-ios-view-test:
-	@mkdir -p build
-	$(CC) $(IOS_CFLAGS) ios/ios_view_test.c ios/ios_api.c $(CORE_SRC) -lm -o build/ios_view_test
-	./build/ios_view_test
+# The online packed-view decode is now pure Swift (MaskedView) — see
+# ios/FoolishTests/PackedViewTests.swift, which replaces the retired C harness.
 
 # Golden fixtures for the Swift EngineGoldenTests (§16.A3). Emits
 # ../ios/Fixtures/goldens.json from the SAME bridge the app links. Regenerate

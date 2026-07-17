@@ -138,17 +138,9 @@ public actor EngineC {
 
     // MARK: online packed-view decode (§16.D4)
 
-    /// Decode a server packed masked-view blob (player_views / spectator_views
-    /// wire) into a GameView through the shared kernel — the same decode offline
-    /// play uses, never a reimplemented wire. `viewer` is the local seat, or
-    /// -1 for the spectator feed.
-    public func viewFromPacked(_ bytes: Data, viewer: Int) throws -> GameView {
-        let data = try bytes.withUnsafeBytes { raw -> Data in
-            let base = raw.bindMemory(to: UInt8.self).baseAddress
-            return try json { fio_view_from_packed_json(base, Int32(bytes.count), Int32(viewer), $0, $1) }
-        }
-        return try JSONDecoder().decode(GameView.self, from: data)
-    }
+    // A server masked-view blob decodes to a GameView in pure Swift via
+    // MaskedView.decode (see PackedGame) — the packed→JSON bridge that used to
+    // live here (fio_view_from_packed_json) is gone with the JSON surface.
 
     /// Legal moves for `seat` computed from a server packed masked-view blob —
     /// online enable-states, kernel-computed (§3).
