@@ -1,51 +1,59 @@
 # iMessage app — ship blockers & the dependency chain to the App Store (2026-07-17)
 
-*A from-the-tree audit of `main` (`8aec52e`) answering one question: **what still
-stands between this repo and (a) the app being live on the App Store and (b)
-iMessage games working properly?** Every claim below was verified against the
-code on `main`, not summarized from older docs — several of the tracking docs
+*A from-the-tree audit of `main` answering one question: **what still stands
+between this repo and (a) the app being live on the App Store and (b) iMessage
+games working properly?** Every claim below was verified against the code on
+`main`, not summarized from older docs — several of the tracking docs
 (`NEXT_STEPS.md`, `IOS_APP_DESIGN.md` §17.4, `ios/README.md`) lag the tree, and
 §6 lists exactly where. Where a doc and the tree disagree, the tree wins and is
 cited by `file:line`.*
+
+> **Revision 2 — same day, later (main `6719a81`).** The first revision of this
+> doc (audited at `8aec52e`) listed Chain B items B1–B3 as the open code gaps.
+> **They have since landed** (`e52955f` + `bb602f2`), B4 gained a protocol-level
+> full-game proof (`8d7ebb5`), and Milestone-F signing is configured with a real
+> team (`8aafbbf`, `19a5d16`). Chain B is now a *verification* chain, not a
+> build chain. Sections §4–§7 are rewritten to match; struck-through history is
+> not kept — see git for the prior revision.
 
 ---
 
 ## 0. TL;DR
 
-The hard engineering is done and proven: the FMSG codec, the git-style
-concurrency model (Rule P / Rule R), the playable bubble, the send path, the
-`/m/` web fallback, and the FINISHED→replay funnel are all on `main` with C,
-wasm-parity, and Swift tests green. The app builds and runs on a Mac
-(2026-07-16 bring-up; the iMessage turn loop is iPhone-17-sim verified).
+The engineering for "iMessage games working properly" is now **built end to
+end**: the FMSG codec, the git-style concurrency model (Rule P / Rule R) —
+now wired into the extension flow with a durable pending ledger — the N≥3
+WAITING lobby, nickname entry, the playable bubble, the send path, the `/m/`
+web fallback, and the FINISHED→replay funnel are all on `main` with C,
+wasm-parity, and Swift tests green (30 message-suite tests), plus a
+protocol-level proof that drives a complete 2-player game through the
+send/accept leg (`e2e/msg_full_game.test.ts`: 59 turns, 0 hand leaks,
+bubbles ≤108 B). Milestone-F signing is configured with a real team ID.
 
-What remains is **not one blocker but two chains** that can run largely in
-parallel:
+What remains splits into **verification** and **submission mechanics**:
 
 - **Chain A — the App Store record.** The extension ships inside the host app
-  (one app record, `cards.foolish.app`), so nothing reaches the store until the
-  host app clears Milestone F: an **Apple Developer account** (the root
-  dependency for signing, TestFlight, and the store record), a **staging
-  Supabase project** for the first end-to-end online run
-  (`ios/Config/*.xcconfig` is still blank), the **app icon actually rendered**
-  (the asset slot is empty), screenshots, privacy labels, review notes, and a
-  live verification of the already-merged `delete-account` function.
-- **Chain B — iMessage games working properly.** Four real gaps, in dependency
-  order: **(B1) the on-device concurrency layer is not wired** — `fio_msg_rule_p`
-  / `fio_msg_rebase` exist and are tested but nothing in the extension calls
-  them, so concurrent turns don't converge on device yet; **(B2) no N≥3
-  lobby** — "New game" hard-codes a 2-player LIVE deal and the seal path cannot
-  emit a WAITING bubble; **(B3) no nickname editor** — every creator ships as
-  literally "Me"; **(B4) the live send/accept leg has never been run** in the
-  Messages simulator harness. Plus packaging items that will fail review if
-  untouched: **no iMessage app-icon asset**, `APPLICATION_EXTENSION_API_ONLY`
+  (one app record, `cards.foolish.app`). Signing is configured
+  (`DEVELOPMENT_TEAM` set, Automatic); still open: a **staging Supabase
+  project** for the first end-to-end online run (`ios/Config/*.xcconfig` is
+  still blank), the **app icon actually rendered** (the asset slot is empty),
+  `PrivacyInfo.xcprivacy`, screenshots, privacy labels, the App Store Connect
+  record + metadata, TestFlight, and a live verification of the merged
+  `delete-account` function.
+- **Chain B — iMessage verification + packaging.** The B1–B3 code gaps are
+  closed; what's left is **(B4) the live Messages-harness run** — the
+  simulator's two-participant GUI pass and then a device pair, per
+  `IMESSAGE_MAC_RUNBOOK.md` (the protocol underneath is now covered by
+  automated tests; Apple's transport + the SwiftUI render are the untested
+  remainder) — and the **packaging items that will fail review if
+  untouched**: no iMessage app-icon asset, `APPLICATION_EXTENSION_API_ONLY`
   still off while the extension links FoolishKit (which links supabase-swift),
-  and no `PrivacyInfo.xcprivacy`.
+  no `PrivacyInfo.xcprivacy`, no encryption key in the extension's Info.plist.
 
-The single most load-bearing external dependency is the **Apple Developer
-account** — signing, TestFlight, the app record, macOS CI minutes, and the
-store submission all queue behind it. The single most load-bearing *code* gap
-is **B1**: without Rule P/R wired into the extension flow, the design's core
-guarantee (deterministic convergence of concurrent moves) exists only in tests.
+The critical path has inverted since revision 1: the load-bearing items are no
+longer code but **provisioning and store mechanics** — staging credentials,
+the two icons, the privacy manifest, the app record — plus one honest
+verification pass on the Messages harness before calling B4 done.
 
 ---
 
@@ -60,6 +68,8 @@ Verified state per layer:
 | **wasm + e2e parity** | ✅ Done. `wasm_msg_encode/decode` exports, TS bridge, Rule P/R property tests + the §14 worked races, size guardrail. Runs on Linux CI on every push. | `e2e/msg_wire.test.ts`, `e2e/msg_concurrency.test.ts`, `.github/workflows/ios.yml` (bridge-linux job) |
 | **`/m/` web fallback** | ✅ Done. Read-only spectator render of a live-game URL + install/play CTAs + OG unfurl metadata. | `src/app/m/[payload]/page.tsx`, `layout.tsx`, `e2e/msg_route.test.ts`, `e2e/msg_og.test.ts` |
 | **iMessage extension — 2p happy path** | ✅ Done and sim-verified. Compact drawer, expanded real-board render, tap-to-play staged turns, undo, seal→`MSMessage` insert, `didStartSending` cache commit, seat identity (§6 cache → sender-inference → picker). | `ios/FoolishMessages/*`, `ios/FoolishKit/Messages/*`, `ios/FoolishTests/MessageTurnControllerTests.swift`, `SeatIdentityTests.swift` |
+| **iMessage extension — concurrency, lobby, nicknames (B1–B3)** | ✅ Landed (`e52955f`, `bb602f2`). Rule P runs on every bubble open against the cached preferred chain — a stale bubble shows a "moved on" banner instead of silently adopting; a durable round-tagged pending ledger in the App Group mirrors every stage/undo and is rebased (Rule R via `fio_msg_rebase_awire`) onto an adopted winner, survivors auto-staged, discards toasted. New-game setup has a name field + 2–4 player picker; N≥3 seals a phase-0 WAITING lobby, joiners claim the lowest free seat, the last claim seals the LIVE handoff. Nickname persisted to the App Group. | `ios/FoolishMessages/MessagesRootView.swift:121-127` (Rule P), `:214-296` (adopt/rebase), `:138-183` (lobby), `ios/FoolishKit/Messages/MessageGameStore.swift` (ledger), `c/src/msg_wire.c` (0-action seal in `msg_seal`); tests `MessageConcurrencyTests.swift`, `MessageLobbyTests.swift` (30 message-suite tests green) |
+| **B4 — send/accept leg, protocol level** | ✅ Proven headlessly: a complete 2p game driven seat-by-seat through the envelope wire — decode(=replay-validate) → assert the PUBLIC bubble hides every hand → play → rebase(REAPPLY) → reseal → FINISHED terminal enforced by the kernel. 59 turns, 0 hand leaks, bubble ≤108 B. Covers everything the GUI harness would **except Apple's transport + the SwiftUI render**. | `e2e/msg_full_game.test.ts` (`8d7ebb5`) |
 | **FINISHED → replay funnel** | ✅ Done. Terminal bubble carries `foolish.cards/<code>` (kernel picks v6 when re-derivable, else v5); joiners self-name on first reply. | `ios/FoolishMessages/MessagesViewController.swift:104-117`, `sdk/swift/MessageEnvelope.swift:70-72,211-218`, test `testFinishedGameProducesAReplayFunnelLink` |
 | **Host iOS app** | ✅ Builds & runs on Mac (2026-07-16 bring-up, `IOS_APP_DESIGN.md` §17.10); offline play, replays (decode + transport), tutorial, settings, auth, online layer written with wire resolved. Online **runtime** never exercised against a real backend. | `docs/IOS_APP_DESIGN.md` §17.5, §17.10; `ios/Config/Base.xcconfig` (blank `SUPABASE_URL/KEY`) |
 | **Backend prerequisites** | ✅ Both former blockers landed. Stale-round guard: `games.round_epoch` version fence + `REJECT_STALE_ROUND` in the TS edge layer (deliberately NOT the kernel, per the handoff spec), with iOS already sending `intent_version`. Account deletion: edge function + PII-scrub RPC + web page, wired to the Settings seam. | Guard: `server/impls/supabase/migrations/20260713120000_round_epoch_stale_guard.sql`, `functions/_shared/adapter/packed_action.ts:96-100`, `ios/FoolishKit/Net/PackedAction.swift:80-88`. Deletion: `functions/delete-account/index.ts`, `migrations/20260714120000_account_deletion.sql`, `AccountService.swift:25-29` |
@@ -88,12 +98,14 @@ app** — `FoolishMessages` is embedded in `Foolish` (`cards.foolish.app` +
 
 In dependency order. Items A1–A2 are external/procurement; A3–A7 are work.
 
-### A1. Apple Developer account — the root dependency ⛔
+### A1. Apple Developer account — ✅ resolved (signing configured)
 
-Nothing downstream moves without it: `DEVELOPMENT_TEAM` for signing
-(`ios/project.yml:31-35` ships `CODE_SIGNING_ALLOWED: NO`), device builds,
-TestFlight, the App Store Connect record, and enabling the macOS CI job.
-Everything in `IOS_APP_DESIGN.md` §16.F assumes it exists.
+The account exists and signing is wired: `CODE_SIGN_STYLE: Automatic` +
+`DEVELOPMENT_TEAM` set in `ios/project.yml:36-37` (`8aafbbf`), and
+`FoolishTests` gained a generated Info.plist so the test bundle signs too
+(`19a5d16`). Remaining uses of the account are downstream items, not this
+one: the App Store Connect record (A5), TestFlight (A6), and macOS CI
+minutes (B7).
 
 ### A2. Staging Supabase project + credentials ⛔ (for online in v1)
 
@@ -111,13 +123,15 @@ disables, so a v1 that ships offline+replays only is a config choice, not a
 code change (and the §16 "4.2 substance" review story explicitly works without
 an account). That would turn A2 into a 1.x follow-up — a product call.
 
-### A3. First signed build + snapshot/test pass on a Mac
+### A3. Full signed build + snapshot/test pass on a Mac
 
-The app builds and runs in the simulator (§17.10), but: snapshot reference
-images are still unrecorded (4 DesignSystem snapshot refs drift on the current
-sim OS per the handoff STATUS), the full `xcodebuild test` matrix isn't in CI,
-and signing has never been exercised. First Mac session with the account:
-§17.6 steps 1–7.
+The app builds and runs in the simulator (§17.10), signing is configured
+(A1), and the message suites have run green (30 tests per `e52955f`; the
+`FoolishTests` Info.plist fix in `19a5d16` is evidence a signed test pass was
+exercised). Still open: snapshot reference images unrecorded (4 DesignSystem
+refs drift on the current sim OS per the handoff STATUS), no archive/TestFlight
+build yet, and none of it is reproducible in CI (B7). Note for the next Mac
+session: `e52955f` added new C symbols — run `make ios-lib` before building.
 
 ### A4. App icon — the asset slot is empty ⛔ (submission-fatal, trivial to fix)
 
@@ -177,86 +191,66 @@ paths predate the `sdk/swift/` move).
 
 ---
 
-## 4. Chain B — what blocks "iMessage games working properly"
+## 4. Chain B — iMessage games working properly
 
-Ranked by how much they block. B1–B4 are gameplay-correctness; B5–B7 are
-packaging/review.
+Revision-2 status: **B1–B3 landed** (`e52955f` + the `bb602f2` kernel
+refactor); they move from "build" to "verify on the Messages harness". B4 is
+half-closed (protocol proven, GUI leg open). B5–B7 are unchanged and are now
+the substantive remainder.
 
-### B1. The concurrency layer is not wired on-device ⛔ (the core guarantee)
+### B1. Concurrency wiring — ✅ landed, verify in the harness
 
-The design's whole point (§7 of `IMESSAGE_GAME_DESIGN.md`) is deterministic
-convergence of concurrent turns: on opening a bubble, compare it against the
-cached preferred chain with **Rule P**; if my staged/pending actions sit on a
-losing chain, **Rule R** rebases the survivors. The C entry points exist, are
-exposed to Swift, and are fixture-tested:
+What revision 1 flagged is now implemented exactly along the recommended seam:
 
-- `fio_msg_rule_p` / `fio_msg_rebase` wrapped by
-  `MessageEnvelope.preferred(_:_:)` / `.rebase(...)` —
-  `sdk/swift/MessageEnvelope.swift:222,240`.
-- Property-tested in `e2e/msg_concurrency.test.ts` (Rule P total order,
-  delivery-order independence, the §14 worked races) and in
-  `c/tests/msg_wire_test.c`.
+- **Rule P on every open**: `MessagesRootView.load()` compares the tapped
+  chain against the cached preferred chain via
+  `MessageKernel.shared.preferred` — a losing bubble shows the "moved on"
+  banner (Open latest / View anyway) instead of silently adopting
+  (`MessagesRootView.swift:121-127`, stale view at `:438+`).
+- **Durable pending ledger**: staged moves mirror into the App Group
+  per-game, round-tagged, on every stage/undo; cleared on send-commit
+  (`MessageGameStore.swift`). A bubble arriving mid-staging can now rebase
+  instead of losing your moves.
+- **Rule R rebase**: adopting a winner replays the ledger through
+  `fio_msg_rebase_awire` (a new JSON-free entry — the phone stages awire, so
+  the ledger holds awire); survivors auto-stage, discards surface as a toast
+  (`MessagesRootView.swift:214-296`).
+- **Tests**: `MessageConcurrencyTests.swift` is the Swift twin of
+  `e2e/msg_concurrency.test.ts` (Rule P/R + ledger).
 
-**But nothing in the extension calls either one.** The live flow adopts
-whatever bubble was tapped, unconditionally
-(`ios/FoolishMessages/MessagesRootView.swift:82-99`); `didReceive` merely
-re-presents (`MessagesViewController.swift:39-42`); and the App-Group cache
-field documented as "the preferred chain (URL body), for Rule P"
-(`MessageGameStore.swift:29`) is **write-only** — grep shows it is stored at
-both commit sites and read back nowhere. Concretely, today:
+Remaining: the §7.5 pickup∥throw-in race and the stale-bubble banner should be
+*seen once* in the two-participant harness (`IMESSAGE_MAC_RUNBOOK.md` §3.4) —
+the logic is now product code, but no human has watched it fire in Messages.
 
-- Opening a **stale** bubble (an older chain in the same game) silently adopts
-  it — no "this game has moved on" redirect to the preferred chain.
-- A bubble arriving **while I'm mid-staging** rebuilds the UI and my staged
-  moves are lost in memory rather than rebased (`pendingStage` lives only in
-  the view controller; the §9.3 pending ledger was never built).
-- The §7.5 pickup∥throw-in race resolves correctly in the *test suite* and not
-  yet in the *product*.
+### B2. N≥3 WAITING lobby — ✅ landed, verify in the harness
 
-Sequential turn-taking (the 2p happy path) works because every payload carries
-the full chain. Anything concurrent — the actual multi-actor design point —
-needs this wiring. It is bounded work: the primitives, the cache, and the
-oracle fixtures all exist; what's missing is the Swift glue in
-`MessagesRootView.load()` / `MessagesViewController.didReceive` plus a durable
-pending ledger.
+New-game setup has a 2–4 player picker; N≥3 seals a **phase-0 WAITING**
+bubble seating only the creator (`msg_seal` now accepts a 0-action body —
+`bb602f2` folded the empty seal into the kernel and taught `msg_replay` that
+a 0-action deal is the whole state); joiners claim the lowest free seat and
+reseal WAITING; the claim that fills the last seat seals the LIVE handoff and
+drops into the board (`MessagesRootView.swift:138-183`, `LobbyView`;
+`MessageLobbyTests.swift` covers seal→join→LIVE). Verify per runbook §3.3b.
 
-### B2. No N≥3 game creation — the WAITING lobby doesn't exist in the app ⛔
+### B3. Nickname entry — ✅ landed
 
-The wire, kernel, and tests fully support phase-0 lobbies
-(`c/src/msg_wire.c:98`, `test_waiting_phase`), and 3p/4p chains decode fine in
-Swift (`MessageEnvelopeTests.swift:25-29`). But the extension:
+Name fields in `NewGameSetup` and the lobby join, persisted to the App Group
+(`MessagesRootView.swift:87-88,142-147`; `MessageGameStore.nickname` now has
+a setter). iMessage-only by design — the live app's unique username is a
+separate system.
 
-- hard-codes `players: 2` at genesis with no player-count picker
-  (`MessagesRootView.swift:109-115`);
-- can only seal phase LIVE(2) or FINISHED(3) — `phase: isOver ? 3 : 2`
-  (`MessageTurnController.swift:144`); there is no path that emits a 0-action
-  WAITING bubble (and `seal` would reject an empty body, `MSG_EBODY`);
-- has no join-an-empty-seat flow — `SeatPicker` only offers already-named
-  joins (`MessagesRootView.swift:134`), and the WAITING→LIVE "last joiner
-  deals" transition (§5.2) has no implementation.
+### B4. The send/accept leg — 🔶 protocol proven; the live GUI leg remains
 
-Until this lands, iMessage Durak is a 2-player DM game only. (A legitimate v1
-scope call — but then group threads see a game they can't join, so the compact
-drawer should say so.)
-
-### B3. No nickname entry — everyone is "Me" ⛔ (small, but user-visible immediately)
-
-`MessageGameStore.nickname` defaults to `"Me"` and nothing ever writes it
-(`MessageGameStore.swift:62-65`; `SettingsView.swift` has no nickname field;
-grep shows only reads + test setters). The self-naming *mechanism* works
-(`sealJoins` appends your name on first act, tested), so the fix is one small
-editor — expanded-presentation only, since compact is the keyboard area and
-cannot show a text field (`IMESSAGE_IMPLEMENTATION_HANDOFF.md` §3.5).
-
-### B4. The live send/accept leg has never been run 🔶 (verification, not code)
-
-Everything up to `conversation.insert` is unit-proven, and the M3 turn loop is
-sim-verified — but no one has yet driven the **Messages app harness** (two
-simulator conversations): New game → play → Send → recipient taps → adopts →
-replies. The Swift tests explicitly stop at Apple's plumbing
-(`MessageTurnControllerTests.swift:4-5`). This is the acceptance test for M3
-(`IMESSAGE_GAME_DESIGN.md` §19) and the first thing a Mac session should do;
-follow with a physical device pair (§17.12 warns sim/device timing differs).
+`e2e/msg_full_game.test.ts` (`8d7ebb5`) now drives a **complete 2p game**
+through the envelope wire exactly as the extension does — decode(=replay) →
+assert the PUBLIC bubble hides every hand → play a legal move →
+rebase(REAPPLY) → reseal — to a kernel-enforced FINISHED terminal (59 turns,
+0 hand leaks, bubbles ≤108 B; it caught a real finished-sealed-as-LIVE bug on
+first run). What that deliberately does **not** cover: Apple's
+`MSMessage`/`MSConversation` transport and the SwiftUI board render. The
+remaining B4 work is the interactive pass — `IMESSAGE_MAC_RUNBOOK.md` Part 3
+(two-participant simulator harness: 2p game, lobby flow §3.3b, cancel/cache
+matrix §3.4), then Part 4 (device pair; §17.12 warns timing differs).
 
 ### B5. Extension packaging will fail review as-is ⛔
 
@@ -303,38 +297,36 @@ same week as A1.
 
 ## 5. The dependency graph
 
+Done since revision 1 (removed from the graph): Apple Developer account +
+signing config (A1), and the whole Chain-B build wave (B1 concurrency wiring,
+B2 WAITING lobby, B3 nickname entry) plus the protocol half of B4.
+
 ```mermaid
 graph TD
-    subgraph external["External / procurement"]
-        DEV["A1 Apple Developer account"]
-        STG["A2 Staging Supabase project"]
+    subgraph external["Procurement still open"]
+        STG["A2 Staging Supabase project + creds"]
     end
 
     subgraph appstore["Chain A — host app on the App Store"]
-        MAC["A3 Signed build + tests + snapshots on Mac"]
+        MAC["A3 First signed build + full test pass<br/>+ snapshot refs on Mac"]
         ICON["A4 Render + commit app icon (IconGen)"]
         ONLINE["A2b First online e2e run vs staging"]
-        COMP["A5 Compliance close-out:<br/>delete-account live check, demo account,<br/>PrivacyInfo.xcprivacy, labels, age rating"]
+        COMP["A5 Record + compliance close-out:<br/>ASC app record, delete-account live check,<br/>demo account, PrivacyInfo.xcprivacy,<br/>labels, age rating"]
         ASSETS["A6 Screenshots + review notes"]
         TF["TestFlight soak ≥1 wk"]
         SUBMIT["Submit v1 (expect 1 bounce)"]
         LIVE["🏁 App live on the App Store"]
     end
 
-    subgraph imsg["Chain B — iMessage games working properly"]
-        B1["B1 Wire Rule P adoption + Rule R rebase<br/>+ durable pending ledger"]
-        B2["B2 WAITING lobby: player-count picker,<br/>phase-0 seal, join flow, last-joiner deals"]
-        B3["B3 Nickname editor"]
-        B4["B4 Live send/accept run:<br/>Messages harness + device pair"]
-        B5["B5 Packaging: iMessage icon,<br/>APPLICATION_EXTENSION_API_ONLY / Kit split"]
+    subgraph imsg["Chain B — iMessage verification + packaging"]
+        B4["B4 Live GUI leg: Messages harness<br/>(2p + lobby + cancel/stale matrix),<br/>then device pair"]
+        B5["B5 Packaging: iMessage icon,<br/>APPLICATION_EXTENSION_API_ONLY / Kit split,<br/>privacy manifest, ext. encryption key"]
         B6["B6 l10n stragglers"]
         MCI["B7 Enable macOS CI job"]
         MSUB["Extension rides an app submission<br/>(v1 or any later update)"]
         MLIVE["🏁 iMessage games live + correct"]
     end
 
-    DEV --> MAC
-    DEV --> MCI
     STG --> ONLINE
     MAC --> ONLINE
     MAC --> ICON
@@ -344,10 +336,7 @@ graph TD
     COMP --> ASSETS
     ASSETS --> TF --> SUBMIT --> LIVE
 
-    B1 --> B4
-    B2 --> B4
-    B3 --> B4
-    DEV --> B4
+    MAC --> B4
     B4 --> MSUB
     B5 --> MSUB
     B6 --> MSUB
@@ -358,17 +347,16 @@ graph TD
 
 Readings of the graph worth making explicit:
 
-- **B1–B3 need no Mac and no account.** They are Swift work against
-  already-proven C primitives, testable with the existing XCTest oracles
-  (extend `MessageTurnControllerTests` with Rule-P/rebase fixtures ported from
-  `e2e/msg_concurrency.test.ts`, per the M3 plan). They can start today, in
-  parallel with procurement.
-- **A1 unlocks four things at once** (signing, TestFlight, store record, macOS
-  CI) — procure it first; everything else on Chain A is days, not weeks, once
-  it exists.
+- **Everything left on Chain B routes through one Mac session** — B4's GUI
+  leg, the two icons, the snapshot refs, the extension-API-only flip, and
+  enabling macOS CI are all `IMESSAGE_MAC_RUNBOOK.md` work. There is no
+  Linux-side blocker left on Chain B.
+- **A2 (staging Supabase) is the only procurement item still open**, and only
+  if online ships in v1 — the offline escape hatch in A2 still stands.
 - **The two chains join only at submission.** If the owner wants the store
   presence sooner, ship v1 app-only and land the extension in 1.x — the
-  platform explicitly supports adding an extension in an update.
+  platform explicitly supports adding an extension in an update. Given B1–B3
+  landed, the gap between the two options is now days, not weeks.
 
 ## 6. Things that look like blockers but aren't (stale docs & issues)
 
@@ -378,29 +366,29 @@ Readings of the graph worth making explicit:
 | `ios/README.md` / `IOS_APP_DESIGN.md` §17.4: "Swift never compiled / needs first xcodebuild" | The app was brought up on a Mac 2026-07-16 (§17.10), build/run green in the simulator; M3 verified on an iPhone-17 sim. |
 | `ios/README.md` external deps: stale-round guard + account deletion "must land" | Both merged: `20260713120000_round_epoch_stale_guard.sql` + `intent_version`; `delete-account` function + `20260714120000_account_deletion.sql` (§17.2). Only the live-DB verification remains. |
 | Issue #10: five deleted edge functions still invoked → 404 | The client now routes `update-name` / `rearrange-*` / `join` through `meta` (`src/contexts/ServerContext.tsx:986-1065`), and `create` exists as a function again (`server/impls/supabase/functions/create/`). The issue can be closed after a prod-deploy check. |
-| `IMESSAGE_IMPLEMENTATION_HANDOFF.md` NEXT items 3 & 4 both open | Item 4 (FINISHED replay link) landed (`5568dd3`); item 3's *naming* half landed (`0ac7df7`) — the lobby half (B2) is what remains. |
+| `IMESSAGE_IMPLEMENTATION_HANDOFF.md` NEXT items 2–4 open | ALL landed now: item 4 (FINISHED replay link, `5568dd3`), item 2 (nickname entry, `e52955f`), item 3 (N≥3 WAITING lobby, `e52955f`). Only NEXT item 1 (the live Messages-harness run) remains — this doc's B4. |
+| This doc's own revision 1: "B1–B3 are the open code gaps" | Closed by `e52955f`/`bb602f2` the same day (see the revision-2 banner). |
 | PR #99 (bot localization) listed as open in `NEXT_STEPS.md` | Merged/contained; only #93 is still open. |
 | `solver_difftest` failing `make difftests` (#56) & `pass_parity` (#57) | Real but pre-existing and unrelated to either chain — housekeeping, not gating. |
 
 ## 7. Suggested order of work
 
-1. **Start procurement now (A1 + A2)** — Apple Developer account and a staging
-   Supabase project. Both are wall-clock waits that gate everything else on
-   Chain A.
-2. **In parallel, do B1 (concurrency wiring) first among the code work** — it
-   is the correctness core, it needs no Mac, and its oracle fixtures already
-   exist. Then **B2 (WAITING lobby)**, then **B3 (nickname editor)** — B3 is
-   trivial but touches the same seal path, so ride it on B2's PR.
-3. **First Mac-with-account session:** §17.6 steps 1–7 + render both icons
-   (A4, B5.1) + record snapshots + run **B4** (Messages-harness send/accept,
-   then a device pair) + flip/resolve `APPLICATION_EXTENSION_API_ONLY` (B5.2)
-   + add `PrivacyInfo.xcprivacy` (A5/B5.3) + enable the macOS CI job (B7).
-4. **Online runtime verification vs staging (A2b)** and the account-deletion
+1. **Provision the staging Supabase project (A2)** — the one procurement item
+   still open, and only needed if online ships in v1.
+2. **One Mac session clears nearly everything else** (follow
+   `IMESSAGE_MAC_RUNBOOK.md`, which was updated for the B1–B3 landing):
+   `make ios-lib` (the new C symbols require a fresh xcframework) →
+   full build+test → run **B4's GUI leg** (2p game, §3.3b lobby flow, §3.4
+   cancel/stale/rebase matrix, then a device pair) → render both icons (A4,
+   B5.1) → record snapshot refs → flip/resolve
+   `APPLICATION_EXTENSION_API_ONLY` (B5.2) → add `PrivacyInfo.xcprivacy` +
+   the extension's encryption key (B5.3/B5.4) → enable the macOS CI job (B7).
+3. **Online runtime verification vs staging (A2b)** and the account-deletion
    live check; decide the v1 scope call (online in v1 vs offline-first).
-5. **Store assets, TestFlight soak, submit (A6)** — with the extension if
-   Chain B finished in time, without it otherwise (it ships in any later
-   update).
-6. Close out the stale trackers along the way: close #10 after a deploy check,
+4. **App Store Connect record + metadata (A5), screenshots (A6), TestFlight
+   soak, submit** — with the extension if B4/B5 cleared in time, without it
+   otherwise (it ships in any later update).
+5. Close out the stale trackers along the way: close #10 after a deploy check,
    close-or-cherry-pick #93 (drag-to-play + icon are its surviving value),
    quarantine `solver_difftest` (#56) so `make difftests` is trustworthy again.
 
@@ -413,3 +401,9 @@ event-stream playback into full board playback (`ReplaysView.swift:7-10`
 documents the gap) — worth doing for app-quality before submission, but the
 store does not depend on it. Same for card-flight animation (Milestone B
 remainder) and camera QR scan: quality, not gates.
+
+Likewise new-but-not-gating: the **WatchFoolish watchOS scaffold** landed
+(`67c15e0`, W1 — target + placeholder app in `ios/WatchUI/`, not yet embedded
+in the phone app per its project.yml comment). The watch plan explicitly ships
+after Milestone F (`IOS_APP_DESIGN.md` §17.9); it shares FoolishKit but blocks
+neither chain.
