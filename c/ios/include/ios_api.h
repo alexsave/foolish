@@ -232,6 +232,14 @@ int fio_last_replay_error(void);
 // a u64 and JSON numbers are doubles — 2^53 would silently round.
 int fio_msg_decode_json(const uint8_t *payload, int len, int viewer, char *out, int cap);
 
+// Same decode+adopt, envelope metadata handed back as a PACKED fixed-layout blob
+// (Swift parses it with MessageEnvelope.decode) — no JSON, no embedded state /
+// moves (read those via fio_state_packed / fio_legal_packed). Layout:
+//   phase(1) n_players(1) last_actor_seat(1) round(1) turn(u16 LE) game_id(u64 LE)
+//   parent8(8) digest(32) n_joins(1) then n_joins*{seat(1) name_len(1) name[]}.
+// Bytes written or negative (FIO_EMSG → fio_last_msg_error).
+int fio_msg_decode_packed(const uint8_t *payload, int len, unsigned char *out, int cap);
+
 // Seal the RESIDENT game into a payload — the send path, after the local player
 // has applied a move. The caller supplies what the PROTOCOL owns; the kernel
 // fills in what the BODY owns (turn, round) by decoding the code it just wrote,

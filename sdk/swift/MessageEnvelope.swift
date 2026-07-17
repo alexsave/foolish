@@ -22,7 +22,7 @@ public struct MessageJoin: Codable, Sendable, Equatable {
 
 /// A decoded, VALIDATED payload. Holding one means the chain replayed cleanly
 /// through the kernel and the game it describes is now the resident one.
-public struct MessageEnvelope: Codable, Sendable {
+public struct MessageEnvelope: Codable, Sendable, Equatable {
     public let phase: Int              // 0 WAITING · 1 ACCEPT · 2 LIVE · 3 FINISHED
     public let turn: Int               // atoms applied — Rule P's second key
     public let round: Int              // completed bouts — Rule P's first key
@@ -80,6 +80,36 @@ public struct MessageEnvelope: Codable, Sendable {
     public static func decode(payload: Data, viewer: Int) async throws -> MessageEnvelope {
         try await MessageKernel.shared.decode(payload: payload, viewer: viewer)
     }
+
+    /// Parse the kernel's packed envelope-metadata blob (fio_msg_decode_packed).
+    /// Fixed layout: phase(1) n_players(1) last_actor_seat(1) round(1) turn(u16
+    /// LE) game_id(u64 LE) parent8(8) digest(32) n_joins(1) then joins of
+    /// {seat(1) name_len(1) name[]}. Returns nil if a field runs past the end.
+    static func decode(packed d: Data) -> MessageEnvelope? {
+        let b = [UInt8](d)
+        let HDR = 55
+        guard b.count >= HDR else { return nil }
+        let phase = Int(b[0]); let nPlayers = Int(b[1]); let last = Int(b[2]); let round = Int(b[3])
+        let turn = Int(b[4]) | (Int(b[5]) << 8)
+        var gid: UInt64 = 0
+        for i in 0..<8 { gid |= UInt64(b[6 + i]) << (8 * i) }
+        let hex = { (r: Range<Int>) in b[r].map { String(format: "%02x", $0) }.joined() }
+        let parent8 = hex(14..<22)
+        let digest = hex(22..<54)
+        let nJoins = Int(b[54])
+        var joins: [MessageJoin] = []
+        var q = HDR
+        for _ in 0..<nJoins {
+            guard q + 2 <= b.count else { return nil }
+            let seat = Int(b[q]); let nl = Int(b[q + 1]); q += 2
+            guard q + nl <= b.count else { return nil }
+            let name = String(decoding: b[q..<q + nl], as: UTF8.self); q += nl
+            joins.append(MessageJoin(seat: seat, name: name))
+        }
+        return MessageEnvelope(phase: phase, turn: turn, round: round, nPlayers: nPlayers,
+                               lastActorSeat: last, gameId: String(gid),
+                               parent8: parent8, digest: digest, joins: joins)
+    }
 }
 
 /// Serialized access to the kernel's single static Game, same discipline as
@@ -88,7 +118,28 @@ public actor MessageKernel {
     public static let shared = MessageKernel()
     private init() {}
 
+    /// Decode + validate + ADOPT through the PACKED envelope wire — the metadata
+    /// crosses as a fixed-layout blob, no JSON. The view is read separately
+    /// (residentView) in this same actor. `viewer` no longer rides the decode
+    /// (metadata is viewer-independent); it stays in the signature for the
+    /// call sites that pass a seat, and is applied on the residentView read.
     public func decode(payload: Data, viewer: Int) throws -> MessageEnvelope {
+        var out = [UInt8](repeating: 0, count: 4 * 1024)
+        let n: Int32 = payload.withUnsafeBytes { raw in
+            fio_msg_decode_packed(raw.bindMemory(to: UInt8.self).baseAddress,
+                                  Int32(payload.count), &out, Int32(out.count))
+        }
+        guard n > 0 else { throw MessageEnvelope.Failure.damaged(code: Int(fio_last_msg_error())) }
+        guard let env = MessageEnvelope.decode(packed: Data(out.prefix(Int(n)))) else {
+            throw MessageEnvelope.Failure.damaged(code: -1)
+        }
+        return env
+    }
+
+    /// The legacy JSON decode, kept only so the parity test can prove the packed
+    /// path produces the identical MessageEnvelope. Slated for deletion with the
+    /// bridge (#17).
+    func decodeJSON(payload: Data, viewer: Int) throws -> MessageEnvelope {
         var out = [CChar](repeating: 0, count: 64 * 1024)
         let n: Int32 = payload.withUnsafeBytes { raw in
             fio_msg_decode_json(raw.bindMemory(to: UInt8.self).baseAddress,
