@@ -64,6 +64,13 @@ public struct MessageEnvelope: Codable, Sendable {
         URL(string: "https://foolish.cards/m/1" + Base32.encode(payload))!
     }
 
+    /// The FINISHED bubble's link (§12): the shareable REPLAY code, not `/m/`, so
+    /// a tap lands on the web replay page (Infinite Oracle) on any platform — the
+    /// ecosystem funnel. `code` is `fio_replay_share_code_b32`'s output.
+    public static func replayLink(code: String) -> URL {
+        URL(string: "https://foolish.cards/" + code)!
+    }
+
     /// Decode + validate + ADOPT: the chain is replayed through the kernel, so
     /// afterwards the engine's resident game IS this payload's game.
     public static func decode(url: URL, viewer: Int) async throws -> MessageEnvelope {
@@ -162,6 +169,15 @@ public actor MessageKernel {
         }
         guard n > 0 else { throw MessageEnvelope.Failure.damaged(code: Int(fio_last_msg_error())) }
         return Data(bytes: out, count: Int(n))
+    }
+
+    /// The best shareable REPLAY code for the resident (finished) game — the §12
+    /// funnel code behind `replayLink`. v6 when the deal is re-derivable, else v5;
+    /// the kernel chooses, not app code. nil if no game or it cannot encode.
+    public func residentReplayCode() -> String? {
+        guard let data = packedCall({ fio_replay_share_code_b32($0, $1) }), !data.isEmpty
+        else { return nil }
+        return String(decoding: data, as: UTF8.self)
     }
 
     /// Rule P (§7.2). <0 `a` wins, >0 `b`, 0 the same chain. Delivery order is

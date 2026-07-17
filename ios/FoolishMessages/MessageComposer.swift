@@ -10,16 +10,18 @@ import UIKit
 import FoolishKit
 
 enum MessageComposer {
-    /// Build the staged message. `session` = the opened bubble's session to reuse
-    /// its balloon, or nil for a brand-new game. `snapshot` is the §10 public
-    /// table image (both hands as backs). `caption`/`summary` are localized.
-    static func message(payload: Data,
+    /// Build the staged message. `url` is the tap target — a `/m/` game link for a
+    /// live turn, or the §12 replay link for a finished game (the caller decides).
+    /// `session` = the opened bubble's session to reuse its balloon, or nil for a
+    /// brand-new game. `snapshot` is the §10 public table image (both hands as
+    /// backs). `caption`/`summary` are localized.
+    static func message(url: URL,
                         snapshot: UIImage?,
                         caption: String,
                         summary: String,
                         session: MSSession?) -> MSMessage {
         let msg = MSMessage(session: session ?? MSSession())
-        msg.url = MessageEnvelope.link(payload: payload)
+        msg.url = url
 
         let layout = MSMessageTemplateLayout()
         layout.image = snapshot

@@ -100,11 +100,27 @@ final class MessagesViewController: MSMessagesAppViewController {
                                uniquingKeysWith: { a, _ in a })
         let image = publicView.flatMap { BubbleSnapshot.render(publicView: $0, names: names) }
 
+        // §12: a FINISHED game hands off to the web replay page (the funnel) — the
+        // tap target is the replay code, not a /m/ game link. Everything else is a
+        // live turn, carrying the whole chain in /m/.
+        let url: URL
+        let summary: String
+        if env?.phase == 3, let code = await MessageKernel.shared.residentReplayCode() {
+            url = MessageEnvelope.replayLink(code: code)
+            let fool = publicView?.gameOver ?? -1
+            summary = fool >= 0
+                ? FStrings.t("ios.msg.fool", ["name": names[fool] ?? "Seat \(fool + 1)"])
+                : FStrings.t("ios.msg.tap")
+        } else {
+            url = MessageEnvelope.link(payload: payload)
+            summary = FStrings.t("ios.msg.tap")
+        }
+
         let msg = MessageComposer.message(
-            payload: payload,
+            url: url,
             snapshot: image,
             caption: "Foolish",
-            summary: FStrings.t("ios.msg.tap"),
+            summary: summary,
             session: conversation.selectedMessage?.session)   // reuse ⇒ collapse old bubble
 
         pendingStage = (payload, mySeat)
