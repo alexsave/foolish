@@ -126,20 +126,26 @@ an account). That would turn A2 into a 1.x follow-up — a product call.
 ### A3. Full signed build + snapshot/test pass on a Mac
 
 The app builds and runs in the simulator (§17.10), signing is configured
-(A1), and the message suites have run green (30 tests per `e52955f`; the
-`FoolishTests` Info.plist fix in `19a5d16` is evidence a signed test pass was
-exercised). Still open: snapshot reference images unrecorded (4 DesignSystem
-refs drift on the current sim OS per the handoff STATUS), no archive/TestFlight
-build yet, and none of it is reproducible in CI (B7). Note for the next Mac
-session: `e52955f` added new C symbols — run `make ios-lib` before building.
+(A1), and the **full FoolishTests suite runs green on a Mac** (57 tests, 0
+failures, Xcode 26.2 / iOS 26 sim, 2026-07-18). The "4 DesignSystem snapshot
+refs drift on the current sim OS" the handoff STATUS warned about turned out to
+be a **first-run rendering warm-up flake, not a real drift**: re-recording
+produced byte-identical images and a re-run passes against the committed refs —
+the references are correct, nothing to re-record. (Worth watching once B7's
+macOS CI is on: the first snapshot render after a clean build can still flake;
+a warm-up pass or per-test retry may be wanted there.) Still open: no
+archive/TestFlight build yet, and none of it is reproducible in CI (B7). Note
+for the next Mac session: run `make ios-lib` before building (the xcframework
+is generated, not in git).
 
-### A4. App icon — the asset slot is empty ⛔ (submission-fatal, trivial to fix)
+### A4. App icon — ✅ done (jester-Д)
 
-`ios/FoolishApp/Assets.xcassets/AppIcon.appiconset/Contents.json` declares the
-1024×1024 slot with **no image file**. The procedural generator exists
-(`ios/Tools/IconGen`, §17.6 step 7: `swift run --package-path ios/Tools/IconGen
-icongen …`) — it just has to be run on a Mac and the PNG committed. App Store
-validation rejects icon-less binaries at upload.
+The 1024 slot is filled: the jester-Д on Khokhloma from PR #93 (owner's call
+over main's procedural fern — the fern's IconGen rendered sideways/off-center).
+It ships as a committed opaque-RGB static PNG (no alpha, per App Store rules);
+`actool` derives every size and the build emits `CFBundleIcons`. #93's IconGen
+is the same fern generator, so there is no generator for the jester — it is a
+designed asset. Mac-build-verified (`351820e`).
 
 ### A5. Compliance close-out (`ios/Compliance.md` TODO(F) items)
 
@@ -194,10 +200,12 @@ paths predate the `sdk/swift/` move).
 
 ## 4. Chain B — iMessage games working properly
 
-Revision-2 status: **B1–B3 landed** (`e52955f` + the `bb602f2` kernel
-refactor); they move from "build" to "verify on the Messages harness". B4 is
-half-closed (protocol proven, GUI leg open). B5–B7 are unchanged and are now
-the substantive remainder.
+Revision-3 status (2026-07-18): **B1–B3 landed** earlier; **B5 (all four
+packaging items) and B6 (l10n board twins) are now closed and Mac-build-verified**
+(`d9039b9`, `351820e`, `51688c5`); the app icon (A4) and its iMessage twin ship.
+What actually remains on Chain B is **B4's live GUI leg** (a human driving two
+participants in the Messages harness — the protocol underneath is proven) and
+**B7** (enable macOS CI). Everything else here is done.
 
 ### B1. Concurrency wiring — ✅ landed, verify in the harness
 
@@ -253,27 +261,26 @@ remaining B4 work is the interactive pass — `IMESSAGE_MAC_RUNBOOK.md` Part 3
 (two-participant simulator harness: 2p game, lobby flow §3.3b, cancel/cache
 matrix §3.4), then Part 4 (device pair; §17.12 warns timing differs).
 
-### B5. Extension packaging — two Linux-fixable items landed; two Mac items remain
+### B5. Extension packaging — ✅ all four closed (Mac-verified)
 
-Four concrete items, all invisible to the Linux-only CI. Items 3 and 4 are
-**now closed** on `main` (Linux-authorable, Mac-unverified); 1 and 2 still need
-a Mac.
+Four concrete items, all invisible to the Linux-only CI. **All now closed** on
+`main` and Mac-build-verified.
 
-1. ⛔ **No iMessage app icon.** `FoolishMessages/` has no `.xcassets` at all and
-   the target sets no `ASSETCATALOG_COMPILER_APPICON_NAME`
-   (`ios/project.yml:84-109`). Messages extensions need the dedicated
-   MessagesAppIcon set (27×20-ish wide-format slots) — upload validation
-   rejects without it. Extend `IconGen` to render the wide format. **Mac-only.**
-2. ⛔ **`APPLICATION_EXTENSION_API_ONLY` is off** for FoolishKit, deferred to
-   "Milestone G" by a comment written before the extension existed
-   (`ios/project.yml:139-142`) — but the extension links FoolishKit **today**,
-   and FoolishKit links the Supabase SDK (`project.yml:124-129`). That means
-   app-only API use inside the framework is currently un-policed by the
-   compiler, and the extension drags a network stack it must never use
-   (§17.5's memory-ceiling rule: SwiftUI + libfoolish only) into its process.
-   Either flip the flag and fix fallout, or split an extension-safe
-   FoolishKitCore (Engine/DesignSystem/Boards) out from Net/. **Needs a Mac
-   build to see the fallout — do not flip blind.**
+1. ✅ **iMessage app icon added** (`51688c5`). The jester-Д center-cropped to
+   the 4:3 Messages format, in `ios/FoolishMessages/Assets.xcassets`, wired via
+   `ASSETCATALOG_COMPILER_APPICON_NAME`. Key gotcha: an iMessage app icon is a
+   **`.stickersiconset`**, not an `.appiconset` — `actool` compiles it with
+   `--stickers-icon-role extension`, so an `.appiconset` fails with "did not
+   have any applicable content". Slots follow Xcode's own iMessage App Icon
+   template. Build ships `Assets.car` in the `.appex` with every slot assigned.
+2. ✅ **`APPLICATION_EXTENSION_API_ONLY` flipped ON** for FoolishKit
+   (`351820e`). An audit found FoolishKit + `sdk/swift` use no app-only API (the
+   only one, `ShareLink`, is in the app target), so the flip builds clean with
+   no extension-safety warnings — app-only creep is now a compile error.
+   *Separate, still-open concern:* FoolishKit still links the Supabase SDK, so
+   the extension binary carries a network stack it never uses (§17.5 memory
+   ceiling). That wants a FoolishKitCore/Net split — a refactor, not this flag —
+   tracked as a follow-up in `project.yml`.
 3. ✅ **`PrivacyInfo.xcprivacy` added** (shared with A5). Three manifests:
    `ios/FoolishKit/PrivacyInfo.xcprivacy` is load-bearing — it declares the
    required-reason UserDefaults APIs (`CA92.1` app-own + `1C8F.1` App-Group),
