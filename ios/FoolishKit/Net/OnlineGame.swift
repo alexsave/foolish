@@ -73,13 +73,18 @@ public final class OnlineGame: ObservableObject, GameSession {
         seat = decoded.seat
         intentVersion = UInt32(max(0, decoded.version))
         // The fool is the kernel's call (game_done, emitted as gameOver) — no
-        // rule derivation in Swift (§3). FOLLOW-UP: the end-of-game view isn't
-        // reliably reaching both clients (WinView sometimes missed) — under
-        // investigation; the fix belongs in the kernel/server, not here.
+        // rule derivation in Swift (§3).
         foolSeat = decoded.view.gameOver >= 0 ? decoded.view.gameOver : nil
         actorMask = Self.actorMask(from: decoded.view)
         inFlight.removeAll()   // authoritative state supersedes any in-flight
         thinking = !spectator && !decoded.view.isOver && (actorMask & (1 << max(seat, 0))) == 0
+        // #24: player_views rows reach us over a fire-and-forget realtime push,
+        // and the terminal (game-over) row is the worst to lose — the game ends
+        // but this client is stranded on the table, WinView never shown. Every
+        // authoritative update re-arms a watchdog; if the feed then goes silent
+        // while the game is still live, we refetch once so a dropped push
+        // self-heals (§16.D6). Game resolved → stop watching.
+        if foolSeat == nil { armResyncWatchdog() } else { resyncWatchdog?.cancel() }
     }
 
     /// Display hint only — enable-states come from `humanLegal` (kernel-computed).
@@ -166,6 +171,29 @@ public final class OnlineGame: ObservableObject, GameSession {
         if let hex = rows.first?.view { ingest(hex: hex) }
     }
 
+    /// How long the feed may go silent before we refetch (#24). Long enough that
+    /// it never competes with a live realtime push (which re-arms it), short
+    /// enough that a dropped terminal row surfaces WinView within a breath.
+    private static let resyncTimeout: UInt64 = 9_000_000_000   // 9s
+
+    private var resyncWatchdog: Task<Void, Never>?
+
+    /// Arm/re-arm the silence watchdog. Every authoritative update calls this, so
+    /// while rows keep arriving the timer keeps resetting and never fires; only a
+    /// genuine silence (a lost push) trips it. On trip we refetch once and keep
+    /// watching until the game resolves. No-op for spectators (resync refetches
+    /// only a player's own row).
+    private func armResyncWatchdog() {
+        resyncWatchdog?.cancel()
+        guard !spectator else { return }
+        resyncWatchdog = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: OnlineGame.resyncTimeout)
+            guard let self, !Task.isCancelled, self.foolSeat == nil else { return }
+            await self.resync()          // a dropped row (esp. the terminal one) self-heals
+            self.armResyncWatchdog()     // keep watching until the game is over
+        }
+    }
+
     public func makeShareURL() async -> URL? {
         // Online replay codes are minted server-side at game end (finalizeEndedGame,
         // stored in game_snapshots). Surfacing that code is a follow-up (§17.7).
@@ -173,6 +201,7 @@ public final class OnlineGame: ObservableObject, GameSession {
     }
 
     deinit {
+        resyncWatchdog?.cancel()
         let feed = self.feed
         Task { await feed?.unsubscribe() }
     }
