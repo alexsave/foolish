@@ -66,7 +66,7 @@ final class MessageEnvelopeTests: XCTestCase {
         let env = try await MessageEnvelope.decode(payload: bytes(fixtures[2].hex), viewer: 0)
         XCTAssertEqual(env.nPlayers, 4)
         let engine = EngineC()
-        let state = try await engine.stateData(viewer: 0)
+        let state = try await engine.statePackedData(viewer: 0)
         XCTAssertGreaterThan(state.count, 0, "the adopted game is readable through the normal bridge")
     }
 
