@@ -199,7 +199,16 @@ public struct MessageTableView: View {
     /// side), so you SEE what the last move was — the web's open-a-message replay.
     /// Reads the last LOG_ATTACK/LOG_COVER from the packed replay stream (no JSON).
     private func replayLastMoveOnOpen(_ view: GameView) {
-        guard !reduceMotion, !view.battles.isEmpty, !controller.isOver else { return }
+        guard !reduceMotion, !controller.isOver else { return }
+        // Fresh genesis deal (no moves yet): fly the opening hand from the deck —
+        // the web's deal. Reuses the draw pipeline (deck→hand slots).
+        if view.battles.isEmpty {
+            if controller.isGenesis, let hand = view.me?.hand, !hand.isEmpty {
+                pendingDraws = hand
+                tryDrawFlight()
+            }
+            return
+        }
         Task {
             // Let the battle slots render + publish their rects first.
             try? await Task.sleep(nanoseconds: 120_000_000)
