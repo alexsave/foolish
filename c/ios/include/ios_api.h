@@ -120,6 +120,11 @@ int fio_last_reject(void);
 // kernel redacted them (a card dealt/drawn into someone else's hand).
 // Returns bytes written, or a negative error. fio_bot_drive_json already
 // includes its cycle's events inline; this is the apply-path companion.
+//
+// TODO(delete): JSON. We don't want JSON crossing this boundary — clients drive
+// animations off the PACKED replay/event stream (fio_replay_decode_packed ->
+// DecodedReplay.logs, the LOG_* steps). Delete this once the last JSON consumer
+// is off it.
 int fio_last_events_json(int viewer, char *out, int cap);
 
 // Drive the bot cycle (docs/C_CORE_CONSOLIDATION.md F2/F3): apply 0..n bot
@@ -183,6 +188,10 @@ int fio_replay_decode_packed(const char *code, unsigned char *out, int cap);
 // Does NOT touch the current game. Bytes written or negative; v5 codes fail
 // with FIO_EREPLAY / REPLAY_EVERSION — they hide the deal, so there is no game
 // to rebuild (use fio_replay_decode_packed for those).
+//
+// TODO(delete): JSON. Clients drive animations off the PACKED replay stream
+// (fio_replay_decode_packed -> DecodedReplay.logs, the LOG_* steps), never JSON.
+// Delete once the last JSON consumer is off it.
 int fio_replay_events_json(const char *code, int viewer, char *out, int cap);
 
 // Detail of the last replay error (a REPLAY_E* code from replay.h), else 0.

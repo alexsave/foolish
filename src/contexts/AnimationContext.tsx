@@ -1209,6 +1209,10 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     };
 
 
+    // TODO(redo properly): this serial setTimeout-driven event queue is a React
+    // workaround for the lack of a shared-element transition. It should be replaced
+    // with a proper animation model (the way the iOS client does it — GPU-driven
+    // matchedGeometry-style flights + structured sequencing, no setTimeout chain).
     // Process the animation queue
     const processAnimationQueue = useCallback(() => {
         if (animationQueueRef.current.length === 0) {
