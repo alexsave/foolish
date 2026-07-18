@@ -37,6 +37,9 @@ public struct MessageTableView: View {
     @State private var handCardFrames: [String: CGRect] = [:]
     /// Cards drawn this bout end, awaiting their new hand-slot rects to fly in.
     @State private var pendingDraws: [Card] = []
+    /// Cards I took off the table (pickup), with their table-slot source rects,
+    /// awaiting my new hand slots.
+    @State private var pendingPickup: [(card: Card, from: CGRect)] = []
 
     public init(controller: MessageTurnController, onSend: @escaping (Data) async -> Void) {
         self.controller = controller
@@ -86,9 +89,9 @@ public struct MessageTableView: View {
         .onPreferenceChange(HandFrameKey.self) { handFrame = $0 }
         .onPreferenceChange(DiscardFrameKey.self) { discardFrame = $0 }
         .onPreferenceChange(DeckFrameKey.self) { deckFrame = $0 }
-        .onPreferenceChange(HandCardFramesKey.self) { handCardFrames = $0; tryDrawFlight() }
+        .onPreferenceChange(HandCardFramesKey.self) { handCardFrames = $0; tryDrawFlight(); tryPickupFlight() }
         .onChange(of: controller.view) { flyBoutEndToDiscard(to: $0) }
-        .onChange(of: animator.isAnimating) { _ in tryDrawFlight() }
+        .onChange(of: animator.isAnimating) { _ in tryDrawFlight(); tryPickupFlight() }
         .fToast($toast, accent: true)
         .onChange(of: controller.rejectTick) { _ in
             Haptics.fire(.reject); toast = FStrings.t("ios.reject")
@@ -172,25 +175,47 @@ public struct MessageTableView: View {
         // First time the board appears with a delivered game: replay the last move
         // that produced this bubble (the web "open the message, watch what happened").
         if prior == nil { replayLastMoveOnOpen(new); return }
-        guard let old = prior,
-              !old.battles.isEmpty, new.battles.isEmpty,
-              new.discardCount > old.discardCount, discardFrame != .zero else { return }
-        var flights: [Flight] = []
-        for (i, b) in old.battles.enumerated() {
-            guard let rect = lastBattleFrames[i], rect != .zero else { continue }
-            flights.append(Flight(id: "trash-\(b.attack.identity)", card: b.attack, from: rect, to: discardFrame))
-            if let d = b.defense {
-                flights.append(Flight(id: "trash-\(d.identity)", card: d,
-                                      from: rect.offsetBy(dx: 8, dy: 6), to: discardFrame))
-            }
-        }
-        // Draws: the cards this seat gained on the bout close fly deck→hand AFTER
-        // the discard (web sequence: cards_to_trash then refill). Held until their
-        // new hand slots render (tryDrawFlight fires when the rects + discard land).
-        let oldHand = Set((old.me?.hand ?? []).map(\.identity))
-        pendingDraws = (new.me?.hand ?? []).filter { !oldHand.contains($0.identity) }
+        // The table only clears two ways: BEATEN (cards → discard, then draws) or
+        // PICKED UP (cards → the taker's hand). Tell them apart by the discard count.
+        guard let old = prior, !old.battles.isEmpty, new.battles.isEmpty else { return }
 
-        guard !flights.isEmpty else { return }
+        if new.discardCount > old.discardCount, discardFrame != .zero {
+            var flights: [Flight] = []
+            for (i, b) in old.battles.enumerated() {
+                guard let rect = lastBattleFrames[i], rect != .zero else { continue }
+                flights.append(Flight(id: "trash-\(b.attack.identity)", card: b.attack, from: rect, to: discardFrame))
+                if let d = b.defense {
+                    flights.append(Flight(id: "trash-\(d.identity)", card: d,
+                                          from: rect.offsetBy(dx: 8, dy: 6), to: discardFrame))
+                }
+            }
+            // Draws: cards gained on the bout close fly deck→hand AFTER the discard
+            // (web cards_to_trash then refill), held until their new slots render.
+            let oldHand = Set((old.me?.hand ?? []).map(\.identity))
+            pendingDraws = (new.me?.hand ?? []).filter { !oldHand.contains($0.identity) }
+            if !flights.isEmpty { Task { await animator.play([flights]) } }
+        } else if (new.me?.handCount ?? 0) > (old.me?.handCount ?? 0) {
+            // I took the table: the cards fly from their slots into my hand.
+            var srcs: [(card: Card, from: CGRect)] = []
+            for (i, b) in old.battles.enumerated() {
+                guard let rect = lastBattleFrames[i], rect != .zero else { continue }
+                srcs.append((b.attack, rect))
+                if let d = b.defense { srcs.append((d, rect.offsetBy(dx: 8, dy: 6))) }
+            }
+            pendingPickup = srcs
+            tryPickupFlight()
+        }
+    }
+
+    /// Fly the picked-up table cards into my hand slots once they've rendered.
+    private func tryPickupFlight() {
+        guard !pendingPickup.isEmpty, !animator.isAnimating,
+              pendingPickup.allSatisfy({ handCardFrames[$0.card.identity] != nil }) else { return }
+        let flights = pendingPickup.compactMap { item -> Flight? in
+            guard let to = handCardFrames[item.card.identity] else { return nil }
+            return Flight(id: "pick-\(item.card.identity)", card: item.card, from: item.from, to: to)
+        }
+        pendingPickup = []
         Task { await animator.play([flights]) }
     }
 
