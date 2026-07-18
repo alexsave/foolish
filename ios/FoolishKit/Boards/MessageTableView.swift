@@ -31,15 +31,16 @@ public struct MessageTableView: View {
                 center(view)
                 Spacer(minLength: 0)
                 statusLine(view)
-                if controller.iCanAct {
-                    // Once a move is staged, drop the action bar (Done/Take/Transfer):
-                    // the move is made. The only follow-ups are adding another card
-                    // (hand) or Undo — and the extension has already dropped the user
-                    // at Messages' Send. Keeping Done here was a third redundant
-                    // "send" affordance next to the staged text and the send arrow.
-                    if !controller.canSend { actionBar(view) }
-                    hand(view)
-                }
+                // The action bar (Attack/Cover/Take/Done) only when I can act and
+                // have NOT already staged — a staged move drops the bar (the move is
+                // made; the only follow-ups are another card or Undo, and the
+                // extension has dropped the user at Messages' Send).
+                if controller.iCanAct && !controller.canSend { actionBar(view) }
+                // Always show my own hand — even while "waiting for the others"
+                // (web parity: the hand is visible whether or not I have a legal
+                // move; legality is expressed by which buttons appear, not by
+                // hiding the cards).
+                hand(view)
                 sendBar
             } else {
                 ProgressView()
