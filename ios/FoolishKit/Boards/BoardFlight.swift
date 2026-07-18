@@ -42,6 +42,15 @@ public struct HandCardFramesKey: PreferenceKey {
     }
 }
 
+/// Opponent seat rects in `boardSpace`, keyed by seat — the target for opponent
+/// draws/pickup (masked card backs fly to their badge).
+public struct SeatFramesKey: PreferenceKey {
+    public static let defaultValue: [Int: CGRect] = [:]
+    public static func reduce(value: inout [Int: CGRect], nextValue: () -> [Int: CGRect]) {
+        value.merge(nextValue()) { _, new in new }
+    }
+}
+
 /// One card in flight: a face (or masked back when `card` is nil/hidden) moving
 /// from `from` to `to` in `boardSpace`.
 public struct Flight: Identifiable, Equatable {

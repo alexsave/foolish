@@ -35,6 +35,7 @@ public struct MessageTableView: View {
     @State private var lastBattleFrames: [Int: CGRect] = [:]
     @State private var deckFrame: CGRect = .zero
     @State private var handCardFrames: [String: CGRect] = [:]
+    @State private var seatFrames: [Int: CGRect] = [:]
     /// Cards drawn this bout end, awaiting their new hand-slot rects to fly in.
     @State private var pendingDraws: [Card] = []
     /// Cards I took off the table (pickup), with their table-slot source rects,
@@ -89,6 +90,7 @@ public struct MessageTableView: View {
         .onPreferenceChange(HandFrameKey.self) { handFrame = $0 }
         .onPreferenceChange(DiscardFrameKey.self) { discardFrame = $0 }
         .onPreferenceChange(DeckFrameKey.self) { deckFrame = $0 }
+        .onPreferenceChange(SeatFramesKey.self) { seatFrames = $0 }
         .onPreferenceChange(HandCardFramesKey.self) { handCardFrames = $0; tryDrawFlight(); tryPickupFlight() }
         .onChange(of: controller.view) { flyBoutEndToDiscard(to: $0) }
         .onChange(of: animator.isAnimating) { _ in tryDrawFlight(); tryPickupFlight() }
@@ -133,6 +135,10 @@ public struct MessageTableView: View {
                            isAttacker: p.seat != view.defender && !p.isOut && attackersActive,
                            saidGood: view.hasSaidGood(p.seat),
                            isOut: p.isOut)
+                    .background(GeometryReader { g in
+                        Color.clear.preference(key: SeatFramesKey.self,
+                                               value: [p.seat: g.frame(in: .named(boardSpace))])
+                    })
             }
         }
     }
@@ -193,7 +199,24 @@ public struct MessageTableView: View {
             // (web cards_to_trash then refill), held until their new slots render.
             let oldHand = Set((old.me?.hand ?? []).map(\.identity))
             pendingDraws = (new.me?.hand ?? []).filter { !oldHand.contains($0.identity) }
-            if !flights.isEmpty { Task { await animator.play([flights]) } }
+            // Opponents draw too — masked backs fly deck→their badge (measured now).
+            var oppDraws: [Flight] = []
+            for p in new.players where p.seat != controller.mySeat {
+                let was = old.players.first { $0.seat == p.seat }?.handCount ?? 0
+                let delta = p.handCount - was
+                guard delta > 0, let seat = seatFrames[p.seat], seat != .zero, deckFrame != .zero else { continue }
+                for k in 0..<delta {
+                    oppDraws.append(Flight(id: "odraw-\(p.seat)-\(k)", card: nil,
+                                           from: deckFrame, to: seat.offsetBy(dx: CGFloat(k) * 3, dy: 0)))
+                }
+            }
+            if !flights.isEmpty || !oppDraws.isEmpty {
+                Task {
+                    if !flights.isEmpty { await animator.play([flights]) }   // discard first
+                    if !oppDraws.isEmpty { await animator.play([oppDraws]) } // then opponents draw
+                    // my own draws fire via tryDrawFlight once !isAnimating + slots ready
+                }
+            }
         } else if (new.me?.handCount ?? 0) > (old.me?.handCount ?? 0) {
             // I took the table: the cards fly from their slots into my hand.
             var srcs: [(card: Card, from: CGRect)] = []
@@ -204,6 +227,21 @@ public struct MessageTableView: View {
             }
             pendingPickup = srcs
             tryPickupFlight()
+        } else if let taker = new.players.first(where: { p in
+            p.seat != controller.mySeat &&
+            p.handCount > (old.players.first { $0.seat == p.seat }?.handCount ?? 0)
+        }), let seat = seatFrames[taker.seat], seat != .zero {
+            // An opponent took the table: the (face-up) cards fly to their badge.
+            var flights: [Flight] = []
+            for (i, b) in old.battles.enumerated() {
+                guard let rect = lastBattleFrames[i], rect != .zero else { continue }
+                flights.append(Flight(id: "opick-\(b.attack.identity)", card: b.attack, from: rect, to: seat))
+                if let d = b.defense {
+                    flights.append(Flight(id: "opick-\(d.identity)", card: d,
+                                          from: rect.offsetBy(dx: 8, dy: 6), to: seat))
+                }
+            }
+            if !flights.isEmpty { Task { await animator.play([flights]) } }
         }
     }
 
