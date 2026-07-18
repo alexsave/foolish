@@ -31,17 +31,19 @@ public struct FActionBar: View {
     }
 
     public var body: some View {
-        HStack(spacing: FSpace.m) {
-            // Wooden controls (IOS_PHONE_LAYOUT §3). Selection-driven plays first
-            // (Attack/Cover/Pass), then the zero-card controls (Take/Done).
-            if canAttack { FButton(FStrings.t("attack"), kind: .wood, action: onAttack) }
-            if canCover  { FButton(FStrings.t("cover"),  kind: .wood, action: onCover) }
-            if canPass   { FButton(FStrings.t("pass"),   kind: .wood, action: onPass) }
-            if canPickup { FButton(FStrings.t("pickup"), kind: .wood, action: onPickup) }
-            if canDone   { FButton(FStrings.t("good"),   kind: .wood, action: onDone) }
+        // Small wooden pills, right-aligned (web parity — the action buttons sit on
+        // the right, sized to their labels, not full-width). Selection-driven plays
+        // first (Attack/Cover/Pass), then the zero-card controls (Take/Good).
+        HStack(spacing: FSpace.s) {
+            Spacer(minLength: 0)
+            if canAttack { FButton(FStrings.t("attack"), kind: .wood, compact: true, action: onAttack) }
+            if canCover  { FButton(FStrings.t("cover"),  kind: .wood, compact: true, action: onCover) }
+            if canPass   { FButton(FStrings.t("pass"),   kind: .wood, compact: true, action: onPass) }
+            if canPickup { FButton(FStrings.t("pickup"), kind: .wood, compact: true, action: onPickup) }
+            if canDone   { FButton(FStrings.t("good"),   kind: .wood, compact: true, action: onDone) }
         }
         .frame(maxWidth: .infinity)
-        .padding(.horizontal, FSpace.l)
+        .padding(.horizontal, FSpace.m)
         .animation(FMotion.chrome, value: canAttack)
         .animation(FMotion.chrome, value: canCover)
         .animation(FMotion.chrome, value: canPass)

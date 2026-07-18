@@ -192,7 +192,7 @@ public struct TableView<Session: GameSession>: View {
             canCover: defending && CardPlay.canCover(cards, battles: view.battles, legal: game.humanLegal),
             canPass: defending && CardPlay.canPass(cards, legal: game.humanLegal),
             canPickup: CardPlay.has(.pickup, in: game.humanLegal),
-            canDone: CardPlay.has(.good, in: game.humanLegal),
+            canDone: CardPlay.canSayGood(battles: view.battles, legal: game.humanLegal),
             onAttack: { playAt(.table, cards, view) },
             onCover: { playCover(cards, view) },
             onPass: { playAt(.table, cards, view) },

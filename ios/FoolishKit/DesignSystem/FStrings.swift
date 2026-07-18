@@ -51,7 +51,7 @@ public enum FStrings {
             "play": "Play", "offline": "Offline", "join_by_code": "Join by code",
             "resume": "Resume game", "replays": "Replays", "tutorial": "Tutorial",
             "settings": "Settings", "about": "About",
-            "pass": "Pass", "pickup": "Take", "good": "Done", "attack": "Attack", "cover": "Cover",
+            "pass": "Pass", "pickup": "Take", "good": "Good", "attack": "Attack", "cover": "Cover",
             "game_over": "Game over", "you_win": "You win", "you_lose": "You are the fool",
             "rematch": "Rematch", "share_replay": "Share replay", "home": "Home",
             "choose_opponent": "Choose opponent", "start_game": "Start game",

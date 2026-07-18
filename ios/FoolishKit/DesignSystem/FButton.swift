@@ -10,19 +10,25 @@ public struct FButton: View {
     private let kind: Kind
     private let action: () -> Void
     private var enabled: Bool
+    /// Compact: a small pill sized to its label (the in-game action buttons, web
+    /// parity), not the full-width 52pt primary button.
+    private var compact: Bool
 
-    public init(_ title: String, kind: Kind = .primary, enabled: Bool = true, action: @escaping () -> Void) {
+    public init(_ title: String, kind: Kind = .primary, enabled: Bool = true,
+                compact: Bool = false, action: @escaping () -> Void) {
         self.title = title
         self.kind = kind
         self.enabled = enabled
+        self.compact = compact
         self.action = action
     }
 
     public var body: some View {
         Button(action: { Haptics.fire(.drop); action() }) {
             Text(title)
-                .font(FType.title(17))
-                .frame(maxWidth: .infinity, minHeight: 52)     // 44pt+ hit target (a11y floor)
+                .font(compact ? FType.title(15) : FType.title(17))
+                .padding(.horizontal, compact ? 16 : 0)
+                .frame(maxWidth: compact ? nil : .infinity, minHeight: compact ? 40 : 52)
                 .foregroundColor(foreground)
                 .background(backgroundView)
                 .overlay(

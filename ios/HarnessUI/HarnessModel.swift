@@ -181,10 +181,44 @@ final class HarnessModel: ObservableObject {
             // A fresh LIVE handoff: everyone seated, no move yet. Whoever holds
             // the lowest trump is the first attacker.
             let joins = (0..<n).map { MessageJoin(seat: $0, name: participants[$0].name) }
-            let payload = try await MessageKernel.shared.seal(
+            var payload = try await MessageKernel.shared.seal(
                 phase: 2, lastActorSeat: 0, gameId: gid,
                 parent8: Data(repeating: 0, count: 8), joins: joins)
             _ = try? await MessageKernel.shared.decode(payload: payload, viewer: -1)
+
+            // DEV: HARNESS_SEED_PLAY=N applies N attack/cover steps (cover an
+            // uncovered attack when possible, else attack) so the board renders a
+            // populated, wrapping table for layout screenshots — then re-seals it.
+            if let raw = ProcessInfo.processInfo.environment["HARNESS_SEED_PLAY"] {
+                let steps = Int(raw) ?? 6
+                var lastSeat = 0
+                for _ in 0..<steps {
+                    var acted = false
+                    for s in 0..<n {
+                        let legal = await MessageKernel.shared.residentLegal(seat: s)
+                        if let cover = legal.first(where: { $0.type == .cover }) {
+                            try? await MessageKernel.shared.apply(seat: s, move: cover)
+                            lastSeat = s; acted = true; break
+                        }
+                    }
+                    if !acted {
+                        for s in 0..<n {
+                            let legal = await MessageKernel.shared.residentLegal(seat: s)
+                            if let atk = legal.first(where: { $0.type == .attack }) {
+                                try? await MessageKernel.shared.apply(seat: s, move: atk)
+                                lastSeat = s; acted = true; break
+                            }
+                        }
+                    }
+                    if !acted { break }
+                }
+                if let p = try? await MessageKernel.shared.seal(
+                    phase: 2, lastActorSeat: lastSeat, gameId: gid,
+                    parent8: Data(repeating: 0, count: 8), joins: joins) {
+                    payload = p
+                    _ = try? await MessageKernel.shared.decode(payload: payload, viewer: -1)
+                }
+            }
             var actor = 0
             for s in 0..<n where (await MessageKernel.shared.residentLegal(seat: s)).contains(where: { $0.type != .wait }) {
                 actor = s; break

@@ -25,13 +25,24 @@ public struct MessageTableView: View {
     }
 
     public var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 8) {
             if let view = controller.view {
-                seats(view)
-                center(view)
+                // Top row (web corners): deck + flipped trump on the LEFT, the
+                // opponents between, the discard pile on the RIGHT. Keeping deck and
+                // discard out of the centre leaves the battles the full width.
+                HStack(alignment: .top, spacing: 8) {
+                    FDeckWell(deckCount: view.deckCount, flipped: view.flipped,
+                              hasFlipped: view.hasFlipped, trumpSuit: view.trumpSuit)
+                    Spacer(minLength: 0)
+                    opponents(view)
+                    Spacer(minLength: 0)
+                    FDiscardPile(count: view.discardCount)
+                }
+                Spacer(minLength: 0)
+                battlesArea(view)          // full-width wrapping attack/cover pairs
                 Spacer(minLength: 0)
                 statusLine(view)
-                // The action bar (Attack/Cover/Take/Done) only when I can act and
+                // The action bar (Attack/Cover/Take/Good) only when I can act and
                 // have NOT already staged — a staged move drops the bar (the move is
                 // made; the only follow-ups are another card or Undo, and the
                 // extension has dropped the user at Messages' Send).
@@ -46,7 +57,7 @@ public struct MessageTableView: View {
                 ProgressView()
             }
         }
-        .padding(14)
+        .padding(12)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .fToast($toast, accent: true)
         .onChange(of: controller.rejectTick) { _ in
@@ -78,9 +89,11 @@ public struct MessageTableView: View {
         return v.battles.contains { $0.defense == nil } || v.battles.isEmpty
     }
 
-    private func seats(_ view: GameView) -> some View {
+    /// Opponent badges only — self is the hand at the bottom (web PlayerRing seats
+    /// everyone but self, who owns the bottom edge).
+    private func opponents(_ view: GameView) -> some View {
         HStack(spacing: 10) {
-            ForEach(view.players) { p in
+            ForEach(view.players.filter { $0.seat != controller.mySeat }) { p in
                 FSeatBadge(name: name(p.seat),
                            handCount: p.handCount,
                            isDefender: p.seat == view.defender,
@@ -91,10 +104,8 @@ public struct MessageTableView: View {
         }
     }
 
-    private func center(_ view: GameView) -> some View {
-        HStack(alignment: .center, spacing: 16) {
-            FDeckWell(deckCount: view.deckCount, flipped: view.flipped,
-                      hasFlipped: view.hasFlipped, trumpSuit: view.trumpSuit)
+    private func battlesArea(_ view: GameView) -> some View {
+        Group {
             if view.battles.isEmpty {
                 Text(FStrings.t("ios.nobattle")).font(.caption).foregroundStyle(FColor.textDim)
             } else {
@@ -102,15 +113,8 @@ public struct MessageTableView: View {
                             coverable: coverableBattles(view),
                             onTapBattle: { idx in tapBattle(idx, view) })
             }
-            discard(view)
         }
-    }
-
-    private func discard(_ view: GameView) -> some View {
-        VStack(spacing: 3) {
-            Image(systemName: "rectangle.stack.fill").font(.title3).foregroundStyle(FColor.textDim)
-            Text("\(view.discardCount)").font(.caption.monospacedDigit()).foregroundStyle(FColor.textDim)
-        }
+        .frame(maxWidth: .infinity)
     }
 
     @ViewBuilder
@@ -159,7 +163,7 @@ public struct MessageTableView: View {
             canCover: defending && CardPlay.canCover(cards, battles: view.battles, legal: controller.legal),
             canPass: defending && CardPlay.canPass(cards, legal: controller.legal),
             canPickup: has(.pickup),
-            canDone: has(.good),
+            canDone: CardPlay.canSayGood(battles: view.battles, legal: controller.legal),
             onAttack: { playAt(.table, cards, view) },
             onCover: { playCover(cards, view) },
             onPass: { playAt(.table, cards, view) },

@@ -90,6 +90,15 @@ public enum CardPlay {
         legal.contains { $0.type == type }
     }
 
+    /// Whether to surface the "Good" (finish attacking / бито) button. The kernel
+    /// legality allows an attacker to say good whenever (bots do), but the web only
+    /// SHOWS the button once every attack on the table is covered — cleaner, and you
+    /// can still throw in more instead. This is a UI gate over C's own battle state,
+    /// not a re-implemented rule (`.good` legality still comes from the menu).
+    public static func canSayGood(battles: [BattleView], legal: [Move]) -> Bool {
+        has(.good, in: legal) && !battles.isEmpty && battles.allSatisfy { $0.defense != nil }
+    }
+
     /// Whether the selection can be attacked / passed / covered right now — the
     /// selection-driven buttons' enable state (Attack / Pass / Cover).
     public static func canAttack(_ cards: [Card], legal: [Move]) -> Bool {
