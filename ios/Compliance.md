@@ -1,8 +1,15 @@
 # App Store compliance (committed mirror)
 
 *Milestone F (§11, §16.F3). The authoritative record is App Store Connect; this
-file mirrors it so the answers are reviewable in git and don't drift. Fill the
-`TODO(F)` items when the app record is created.*
+file mirrors it so the answers are reviewable in git and don't drift.*
+
+**2026-07-18: the full, copy-paste-ready submission package (App Privacy
+questionnaire in full, age-rating question-by-question answers, description/
+keywords/promotional text, App Review notes, a verified demo replay code,
+and the reasoning behind every answer) now lives in
+[`docs/IMESSAGE_APP_STORE_SUBMISSION.md`](../docs/IMESSAGE_APP_STORE_SUBMISSION.md).
+This file is kept as the short-form mirror; the items below are updated to
+match but the other doc is authoritative for exact wording.**
 
 ## Encryption
 
@@ -23,32 +30,50 @@ ad-attribution SDK (§11).
 ## Account deletion (Guideline 5.1.1(v)) — mandatory
 
 - In-app path: **Settings → Delete Account** (§16.E3), which calls the deletion
-  edge function. `TODO(F)`: confirm the endpoint exists (Oracle doc §4 item 4) —
-  **it BLOCKS submission** if not. Do not fake it with a mailto.
-- Account deletion URL (for the App Store metadata field): `TODO(F)`.
+  edge function. **Confirmed on `main`**: `server/impls/supabase/functions/delete-account/`
+  exists and is wired to `AccountService.swift`. Still worth one live-DB check
+  before relying on it in review (`IOS_APP_DESIGN.md` §17.6 step 6).
+- Account deletion URL (App Store metadata field): **`https://foolish.cards/delete-account`**
+  (already existed as `src/app/delete-account`) — also linked from the new
+  `/privacy` and `/support` pages (see the submission doc §8).
 
-## Age rating (July-2025 system)
+## Age rating (current simplified system)
 
-- Card game, **no wagering / no gambling** → answer the gambling-themes
-  questionnaire **"no"**. Expected band 4+/9+.
-- User-generated content: chat, if shipped, should be **fixed-emoji only** in v1
-  to keep the questionnaire clean (free-text chat changes the moderation
-  answers). `TODO(F)`: confirm what chat, if any, ships in v1.
+- Card game, **no wagering / no gambling / no simulated-gambling mechanic**
+  (Durak has no betting/chips/stakes at all) → answer every violence/mature/
+  gambling/UGC question **"None"/"No"**. Full question-by-question answer key:
+  submission doc §3. Expected band: **4+**.
+- No chat feature exists anywhere in the iOS app (verified by grep across
+  `ios/FoolishApp`, `ios/FoolishKit`, `ios/FoolishMessages` — no chat UI) — the
+  UGC/communication questions are a clean "No", no v1 chat-scope decision
+  needed.
 
-## App Review notes (reviewer script, §16.F5)
+## App Review notes (reviewer script)
 
-> 1. Play → **Offline** → beat **Espresso**.
-> 2. **Replays** → paste code `<committed demo code, TODO(F)>`.
-> 3. **Settings** → **Delete account** works.
-> The app is fully usable **without an account**.
+Full text (iMessage-first, matching the "iMessage only" positioning):
+submission doc §5a. Summary: no demo account needed anywhere (mark
+"No" for sign-in required); the primary path sends the reviewer straight into
+Messages → New game; the container app's offline mode is the secondary/
+optional path. Verified demo replay link:
+`https://foolish.cards/BOLQXHD5XTJTD7UJOMDTR3ZC53XNYKUQMBCS4PISGG63NKUZHTVE3GKUFQEEY4SA3QLLU4THDGCQ`
+(generated and round-trip decoded through the production replay codec —
+recipe in the submission doc §7 if you want a fresh one).
 
-- Demo account credentials: `TODO(F)`.
-- Note for the reviewer: offline bots and replays are fully functional without a
-  network or account (the 4.2 substance argument, §11).
+- Demo account credentials: **N/A by design** — no account is required to
+  review any part of the app (iMessage or offline).
 
 ## Bundle / identifiers (§16.F1)
 
 - Bundle id: `cards.foolish.app` (extension: `cards.foolish.app.MessagesExtension`, Milestone G).
 - App Group: `group.cards.foolish`.
-- App name: "Foolish — Durak" (`TODO(F)`: confirm availability; fallbacks in review notes).
-- Category: Games / Card. Primary language: en.
+- App name: "Foolish — Durak" — **availability risk is now low**: Apple dropped
+  global app-name uniqueness enforcement in 2021 (names only need to be
+  unique within your own developer account), and a search turned up no
+  colliding "Foolish" app among the ~10 existing Durak apps. Fallback names
+  if still flagged: submission doc §1.
+- Category: Games / Card. Primary language: en (submission doc §9 has the
+  localization-scope call for the store *listing* — the app itself is already
+  en/ru/ko).
+- Privacy Policy URL: `https://foolish.cards/privacy` (new page, added
+  2026-07-18 — was missing entirely before, a hard submission blocker).
+- Support URL: `https://foolish.cards/support` (new page, added 2026-07-18).
