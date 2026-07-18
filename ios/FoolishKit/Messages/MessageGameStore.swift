@@ -149,6 +149,11 @@ public final class MessageGameStore {
     /// longer unacked and must never be replayed on top of themselves.
     public func clearPending(gameId: String) { setPending([], gameId: gameId) }
 
+    /// Drop EVERY game's pending ledger. The harness uses this on deliver (its
+    /// stand-in for didStartSending) to commit staged moves without threading a
+    /// gameId through; a real device clears the one game via clearPending(gameId:).
+    public func clearAllPending() { persistPending([:]) }
+
     private func allPending() -> [String: [PendingAction]] {
         guard let data = defaults?.data(forKey: pendingKey),
               let map = try? JSONDecoder().decode([String: [PendingAction]].self, from: data)

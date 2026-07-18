@@ -139,6 +139,12 @@ final class HarnessModel: ObservableObject {
         // this delivery triggers (transcript.count changed) must read the bubble,
         // not route back to setup. (Was done in stage(); see the note there.)
         startNewGame = false
+        // Commit the sent move (the harness's didStartSending): drop it from the
+        // pending ledger. Otherwise the reload re-adopts our OWN just-sent chain,
+        // Rule R replays the move the chain already contains, the kernel rejects
+        // the already-applied action, and adopt() falsely toasts "your move was
+        // superseded". Cleared synchronously so it's gone before the reload adopts.
+        MessageGameStore.shared.clearAllPending()
     }
 
     // Each participant → its own throwaway cache suite (fresh per app launch via

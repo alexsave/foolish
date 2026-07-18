@@ -21,17 +21,16 @@ import FoolishKit
 @MainActor
 final class HarnessFlowTests: XCTestCase {
 
-    // Mirror of GameSurface.load()'s first fork (FoolishKit/Messages/MessagesRootView.swift):
-    //   startNewGame          -> New game setup
-    //   else no payloadURL    -> "This game link is damaged"
-    //   else                  -> load + board
-    // GameSurface only re-runs this fork when `viewKey` changes — the harness keys
-    // MessagesRootView with `.id(model.viewKey)`. So staging must NOT move viewKey,
-    // or a live board is destroyed and reloaded straight into this fork.
+    // Mirror of GameSurface.load()'s routing (FoolishKit/Messages/MessagesRootView.swift):
+    //   no payloadURL  -> New game setup (no game in the thread yet)
+    //   decodable URL  -> load + board
+    // (`damaged` is reserved for a link that fails to decode, not reachable from
+    // these inputs.) GameSurface only re-runs this when `viewKey` changes — the
+    // harness keys MessagesRootView with `.id(model.viewKey)` — so staging must NOT
+    // move viewKey, or a live board is destroyed and reloaded straight into it.
     enum Screen: Equatable { case setup, damaged, board }
     func screen(startNewGame: Bool, payloadURL: URL?) -> Screen {
-        if startNewGame { return .setup }
-        return payloadURL == nil ? .damaged : .board
+        payloadURL == nil ? .setup : .board
     }
     func screen(_ m: HarnessModel) -> Screen { screen(startNewGame: m.startNewGame, payloadURL: m.payloadURL) }
 
@@ -94,13 +93,10 @@ final class HarnessFlowTests: XCTestCase {
 
     // MARK: tests
 
-    /// Reproduce the "This game link is damaged" board, then prove the fix.
+    /// Staging a move must not tear the board down (the old "damaged"/setup flicker).
     func test_stagingDoesNotDamageTheBoard() async throws {
-        // The damaged screen IS the (startNewGame=false, payloadURL=nil) pair. The
-        // B4 bug reached it because stage() flipped startNewGame to false while the
-        // transcript was still empty (nothing delivered -> payloadURL nil), and the
-        // viewKey change forced a reload into exactly this fork.
-        XCTAssertEqual(screen(startNewGame: false, payloadURL: nil), .damaged)
+        // No bubble in the thread reads as the New-game setup, never a broken link.
+        XCTAssertEqual(screen(startNewGame: false, payloadURL: nil), .setup)
 
         let m = HarnessModel(count: 2)
         XCTAssertEqual(screen(m), .setup, "a fresh launch shows New game")
@@ -197,6 +193,27 @@ final class HarnessFlowTests: XCTestCase {
             }
         }
         XCTAssertTrue(veraSealed, "seat 1 should get a turn to seal her name")
+    }
+
+    /// A delivered move is committed, so re-adopting our OWN just-sent chain must not
+    /// falsely toast "your move was superseded" — Rule R would replay a move the
+    /// chain already contains. deliver() clears the pending ledger, exactly as the
+    /// extension does on didStartSending.
+    func test_deliveredMoveIsCommitted_notSuperseded() async throws {
+        let m = HarnessModel(count: 2)
+        let gid: UInt64 = 0xD00D
+        let g = MessageTurnController(genesisSeed: Data(repeating: 4, count: 32),
+                                      players: 2, gameId: gid, myNickname: "You")
+        await g.begin()
+        if g.iCanAct, let mv = g.legal.first(where: { $0.type != .wait }) {
+            await g.apply(mv)
+            XCTAssertFalse(MessageGameStore.shared.pending(gameId: String(gid)).isEmpty,
+                           "applying a move writes the pending ledger (what Rule R would replay)")
+        }
+        m.stage(try await g.stagedPayload(), seat: 0)
+        m.deliver()
+        XCTAssertTrue(MessageGameStore.shared.pending(gameId: String(gid)).isEmpty,
+                      "delivering commits the move -> ledger cleared -> re-adopting our own chain can't supersede it")
     }
 
     /// Play a whole 2-player game by switching between the two players every turn,

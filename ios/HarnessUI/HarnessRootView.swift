@@ -53,6 +53,13 @@ struct HarnessRootView: View {
                 Text("FoolishHarness — NOT the shipping extension")
                     .font(.system(size: 10, weight: .bold)).foregroundStyle(.orange)
                 Spacer()
+                // The compact "New game" menu is gone (one game per chat), so the
+                // harness offers its own reset button.
+                Button { model.newGame() } label: {
+                    Text("New").font(.system(size: 11, weight: .semibold))
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .background(Color.white.opacity(0.14)).foregroundStyle(.white).clipShape(Capsule())
+                }
                 Picker("", selection: Binding(get: { model.playerCount },
                                               set: { model.setCount($0) })) {
                     ForEach(2...8, id: \.self) { Text("\($0)p").tag($0) }

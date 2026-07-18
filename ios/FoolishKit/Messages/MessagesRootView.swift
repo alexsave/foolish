@@ -44,39 +44,18 @@ public struct MessagesRootView: View {
     }
 
     public var body: some View {
-        // ONE surface for both presentation styles — NOT a compact/expanded
-        // switch. The switch made SwiftUI destroy the expanded @State (the whole
-        // in-progress game) whenever you dragged to the compact drawer, so the
-        // two sizes looked like two separate games (B4 bug). GameSurface is always
-        // the root's child, so its game state survives a style change; it just
-        // renders the drawer in compact and the board in expanded.
+        // ONE surface for both presentation styles — NOT a compact/expanded switch.
+        // The switch made SwiftUI destroy the expanded @State (the whole in-progress
+        // game) whenever you dragged to the compact drawer, so the two sizes looked
+        // like two separate games (B4 bug). GameSurface is always the root's child,
+        // so its game state survives a style change; it renders the SAME table in
+        // both, just sized to the strip (compact) or full-screen (expanded).
         GameSurface(payloadURL: payloadURL, style: style, senderIsLocal: senderIsLocal,
                     startNewGame: startNewGame, newGameToken: newGameToken,
                     chatIsDM: chatIsDM, chatPlayers: chatPlayers,
                     requestExpand: requestExpand, onNewGame: onNewGame, onSend: onSend)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(WoolBackground())          // the table surface, not system white
-    }
-}
-
-private struct CompactDrawer: View {
-    let hasGame: Bool
-    let requestExpand: () -> Void
-    let onNewGame: () -> Void
-
-    var body: some View {
-        VStack(spacing: 12) {
-            Text(hasGame ? FStrings.t("ios.msg.thread") : "Foolish")
-                .font(.headline).foregroundStyle(FColor.textPrimary)
-            if hasGame {
-                FButton(FStrings.t("ios.msg.open"), kind: .wood, action: requestExpand)
-                FButton(FStrings.t("ios.msg.newgame"), kind: .secondary, action: onNewGame)
-            } else {
-                FButton(FStrings.t("ios.msg.newgame"), kind: .wood, action: onNewGame)
-            }
-        }
-        .padding(.horizontal, 32)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -118,39 +97,17 @@ private struct GameSurface: View {
     /// (newGameToken) changes it, which resets and reloads.
     private var loadKey: String { "\(newGameToken)|\(startNewGame)|\(payloadURL?.absoluteString ?? "")" }
 
-    /// True whenever there is a live session — a dealt board, a lobby, the name
-    /// gate, or the setup screen — even before anything has been sent. Drives the
-    /// compact drawer's "Open" (vs "New game").
-    private var inProgress: Bool { controller != nil || lobby != nil || nameGate != nil || showSetup }
-
-    /// Show the full surface (board / setup) rather than the compact "Open the
-    /// game" drawer when:
-    ///   • expanded, or
-    ///   • a move is staged — a ready-to-send move must show THE GAME even collapsed
-    ///     (Send is in the compose area above; a "New game" here would discard it), or
-    ///   • there is no game yet (`startNewGame`) — collapsed with nothing in the
-    ///     thread should just BE the New-game setup, not a menu that lies "A game in
-    ///     this thread / Open the game" when there is none.
-    /// The compact drawer is left for exactly one case: a real, in-progress game with
-    /// nothing staged, where "Open the game" actually resumes something. One
-    /// `expandedContent` branch keeps the board's @State + .task alive across the
-    /// expanded<->compact toggle.
-    private var showsBoard: Bool {
-        style == .expanded || startNewGame || (controller?.canStage ?? false)
-    }
-
     var body: some View {
-        Group {
-            if showsBoard {
-                expandedContent
-            } else {
-                CompactDrawer(hasGame: payloadURL != nil || inProgress,
-                              requestExpand: requestExpand, onNewGame: onNewGame)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .fToast($toast)
-        .task(id: loadKey) { await reloadForInput() }
+        // One game per chat, one surface for both presentation styles: always the
+        // table (or the New-game setup when the thread has no game yet). There is no
+        // "A game in this thread / Open the game" menu — collapsing to compact just
+        // shows the same table in the short strip, with Messages' Send in the
+        // compose area above. Keeping a single `expandedContent` root also means the
+        // board's @State + .task survive the expanded<->compact toggle.
+        expandedContent
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .fToast($toast)
+            .task(id: loadKey) { await reloadForInput() }
     }
 
     @ViewBuilder private var expandedContent: some View {
@@ -194,8 +151,10 @@ private struct GameSurface: View {
     }
 
     private func load() async {
-        if startNewGame { showSetup = true; return }
-        guard let url = payloadURL else { damaged = true; return }
+        // No game in this thread yet (fresh open, or an explicit New game): the
+        // setup IS the screen, not a menu and not "damaged". `damaged` is reserved
+        // for a link that genuinely fails to decode (the catch below).
+        guard let url = payloadURL else { showSetup = true; return }
         do {
             let incoming = try MessageEnvelope.payloadBytes(url: url)
             // Decode ADOPTS and VALIDATES — a damaged link throws here (§7.3).
