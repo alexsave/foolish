@@ -27,6 +27,11 @@ final class HarnessModel: ObservableObject {
     /// delivered. Stands in for the Messages input field: the harness Send button
     /// is the blue send arrow. nil = nothing staged.
     @Published private(set) var staged: Data?
+    /// Simulated Messages presentation style. The real extension collapses to the
+    /// compact drawer (and Messages' Send) once a move is staged; the harness has no
+    /// Messages host, so it fakes the same expanded<->compact transition here so the
+    /// collapse flow is testable. `.expanded` = full board; `.compact` = drawer.
+    @Published private(set) var presentation: MsgPresentation = .expanded
     /// DEV diagnostic surfaced in the chrome (seat/turn/legal after a seed).
     @Published private(set) var debugInfo = ""
 
@@ -64,8 +69,14 @@ final class HarnessModel: ObservableObject {
         transcript = []
         localIndex = 0
         startNewGame = true
+        presentation = .expanded
         rebindStore()
     }
+
+    /// The compact drawer's "Open the game" (the extension's requestPresentationStyle).
+    func expand() { presentation = .expanded }
+    /// Manual expand/collapse for poking at the compact drawer in the harness.
+    func togglePresentation() { presentation = presentation == .expanded ? .compact : .expanded }
 
     /// "Become" participant `idx` — the crux of the harness. Rebinds the seat
     /// cache to that participant's own suite and reads the latest transcript
@@ -79,11 +90,12 @@ final class HarnessModel: ObservableObject {
         // screen, which is wrong here — there is simply nothing sent to them.
         startNewGame = (latest == nil)
         staged = nil                 // a half-staged move doesn't cross to another player
+        presentation = .expanded     // opening the game as this player
         rebindStore()
     }
 
-    /// The current player tapped New game.
-    func newGame() { startNewGame = true; staged = nil }
+    /// The current player tapped New game. New game always opens full-screen.
+    func newGame() { startNewGame = true; staged = nil; presentation = .expanded }
 
     /// The board auto-staged a chain (the extension's `insert`). Hold it; the
     /// human still has to press Send — that is `deliver()`.
@@ -94,6 +106,14 @@ final class HarnessModel: ObservableObject {
     /// The new-game intent only clears when the bubble is actually delivered.
     func stage(_ payload: Data, seat: Int) {
         staged = payload
+        // Mirror the real extension: after a beat (long enough to see the card land)
+        // collapse to the compact drawer, which — because a move is staged — shows
+        // the game, with the harness Send standing in for Messages' send arrow.
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            guard let self, self.staged != nil else { return }
+            self.presentation = .compact
+        }
         // HARNESS_AUTOGAME: auto-deliver + hand to the next player, so a whole
         // game plays itself through the real UI (validates turn handoff + seat
         // inference across many turns). Halts naturally at game over (a finished
@@ -165,6 +185,10 @@ final class HarnessModel: ObservableObject {
             localIndex = actor           // view as the actionable seat → the board shows
             startNewGame = false
             rebindStore()
+            // The seed demo knows every name, so give the viewer theirs — otherwise
+            // the one-time name gate intercepts before the board (this is a
+            // screenshot helper, not the join flow).
+            MessageGameStore.shared.nickname = participants[actor].name
             // N>=3: a non-sender with no cache is §6.3 ambiguous (would show the
             // seat picker). Pre-cache the viewer's seat so the board shows directly.
             if let env = try? await MessageEnvelope.decode(payload: payload, viewer: actor) {

@@ -159,6 +159,15 @@ final class MessagesViewController: MSMessagesAppViewController {
 
         pendingStage = (payload, mySeat)
         conversation.insert(msg) { _ in }
+
+        // Drop the user straight at Messages' Send (§11.4): the expanded board has
+        // no send control of its own — Send lives in the compose area — so once a
+        // move is staged, collapse to compact instead of making them drag down. To
+        // add more cards (throw-ins, a second cover) they just re-open the game;
+        // the staged chain survives the style change (GameSurface @State). Hold a
+        // beat first so the played card lands on the table visibly, not a flicker.
+        try? await Task.sleep(nanoseconds: 500_000_000)
+        requestPresentationStyle(.compact)
     }
 
     /// Commit a sent chain to the App Group cache (§6.1/§7.6): our seat becomes

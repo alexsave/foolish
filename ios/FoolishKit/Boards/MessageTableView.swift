@@ -32,7 +32,12 @@ public struct MessageTableView: View {
                 Spacer(minLength: 0)
                 statusLine(view)
                 if controller.iCanAct {
-                    actionBar(view)
+                    // Once a move is staged, drop the action bar (Done/Take/Transfer):
+                    // the move is made. The only follow-ups are adding another card
+                    // (hand) or Undo — and the extension has already dropped the user
+                    // at Messages' Send. Keeping Done here was a third redundant
+                    // "send" affordance next to the staged text and the send arrow.
+                    if !controller.canSend { actionBar(view) }
                     hand(view)
                 }
                 sendBar
@@ -115,7 +120,9 @@ public struct MessageTableView: View {
                 : FStrings.t("game_over"), strong: true)
         } else if controller.canStage {
             // Something is sendable (a staged move, or a genesis deal to hand on).
-            statusChip(FStrings.t("ios.msg.staged"), strong: true)
+            // Say nothing: the extension collapses to Messages' Send on stage, so a
+            // "Move staged - hit Send" line is redundant with the send arrow itself.
+            EmptyView()
         } else if !controller.iCanAct {
             // No legal move for me on this staged state — I'm watching (§5.1).
             statusChip(waitingLine(view))

@@ -123,13 +123,29 @@ private struct GameSurface: View {
     /// compact drawer's "Open" (vs "New game").
     private var inProgress: Bool { controller != nil || lobby != nil || nameGate != nil || showSetup }
 
+    /// Show the full surface (board / setup) rather than the compact "Open the
+    /// game" drawer when:
+    ///   • expanded, or
+    ///   • a move is staged — a ready-to-send move must show THE GAME even collapsed
+    ///     (Send is in the compose area above; a "New game" here would discard it), or
+    ///   • there is no game yet (`startNewGame`) — collapsed with nothing in the
+    ///     thread should just BE the New-game setup, not a menu that lies "A game in
+    ///     this thread / Open the game" when there is none.
+    /// The compact drawer is left for exactly one case: a real, in-progress game with
+    /// nothing staged, where "Open the game" actually resumes something. One
+    /// `expandedContent` branch keeps the board's @State + .task alive across the
+    /// expanded<->compact toggle.
+    private var showsBoard: Bool {
+        style == .expanded || startNewGame || (controller?.canStage ?? false)
+    }
+
     var body: some View {
         Group {
-            if style == .compact {
+            if showsBoard {
+                expandedContent
+            } else {
                 CompactDrawer(hasGame: payloadURL != nil || inProgress,
                               requestExpand: requestExpand, onNewGame: onNewGame)
-            } else {
-                expandedContent
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

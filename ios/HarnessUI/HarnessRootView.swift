@@ -19,12 +19,12 @@ struct HarnessRootView: View {
         // underneath without stealing the controls' touches.
         MessagesRootView(
             payloadURL: model.payloadURL,
-            style: .expanded,
+            style: model.presentation,
             senderIsLocal: model.senderIsLocal,
             startNewGame: model.startNewGame,
             chatIsDM: model.chatIsDM,
             chatPlayers: model.playerCount,
-            requestExpand: {},
+            requestExpand: { model.expand() },
             onNewGame: { model.newGame() },
             onSend: { payload, seat in await MainActor.run { model.stage(payload, seat: seat) } }
         )
@@ -93,6 +93,16 @@ struct HarnessRootView: View {
                 Text("you are \(model.localName) · \(model.senderIsLocal ? "you sent the latest" : "incoming from someone else")")
                     .font(.system(size: 9)).foregroundStyle(.white.opacity(0.5))
                 Spacer()
+                // Simulated Messages presentation — tap to toggle (mirrors the
+                // extension's collapse-on-stage / "Open the game" expand).
+                let collapsed = model.presentation == .compact
+                Button { model.togglePresentation() } label: {
+                    Text(collapsed ? "▾ collapsed" : "▸ expanded")
+                        .font(.system(size: 10, weight: .semibold))
+                        .padding(.horizontal, 9).padding(.vertical, 5)
+                        .background(collapsed ? Color.orange.opacity(0.85) : Color.white.opacity(0.14))
+                        .foregroundStyle(collapsed ? .black : .white).clipShape(Capsule())
+                }
                 // The blue send arrow: only lit when the board has staged a move.
                 Button { model.deliver() } label: {
                     Text("Send ➤").font(.system(size: 12, weight: .bold))
