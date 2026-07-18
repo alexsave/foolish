@@ -46,15 +46,31 @@ public enum Suit: Int, CaseIterable, Sendable {
 }
 
 public enum CardRank {
-    /// Face-value label for a card (6..10, J, Q, K, A). Ace = 13.
+    /// Face-value label for a card. The kernel `value` is a rank INDEX, not the
+    /// face number: value 1='2' … 9='10', 10='J', 11='Q', 12='K', 13='A' — the
+    /// exact web VALUE_MAP (src/utils/cards.ts / server/api/core/constants.ts). The
+    /// 36-card deck (min_value_for 2p = 5) therefore runs value 5..13 = 6..A, so a
+    /// value 5 is a SIX, not a five (that off-by-mapping was the "5♦" bug).
     public static func label(_ value: Int) -> String {
         switch value {
         case 13: return "A"
         case 12: return "K"
         case 11: return "Q"
-        case 10: return "10"
-        case 1: return "A" // never in a 36-card deck; large deck uses 1 = Ace-low unused
-        default: return String(value)
+        case 10: return "J"
+        case 9:  return "10"
+        default: return String(value + 1)   // 1='2' … 8='9'
+        }
+    }
+
+    /// Spoken rank for VoiceOver (ace/king/…/ten/nine).
+    public static func spoken(_ value: Int) -> String {
+        switch value {
+        case 13: return "ace"
+        case 12: return "king"
+        case 11: return "queen"
+        case 10: return "jack"
+        case 9:  return "ten"
+        default: return String(value + 1)
         }
     }
 }

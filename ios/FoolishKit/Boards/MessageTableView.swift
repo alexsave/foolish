@@ -151,19 +151,25 @@ public struct MessageTableView: View {
     }
 
     private func actionBar(_ view: GameView) -> some View {
-        FActionBar(
+        let cards = selectedCards(view)
+        let defending = view.defender == controller.mySeat
+        return FActionBar(
+            canAttack: !defending && CardPlay.canAttack(cards, legal: controller.legal),
+            canCover: defending && CardPlay.canCover(cards, battles: view.battles, legal: controller.legal),
+            canPass: defending && CardPlay.canPass(cards, legal: controller.legal),
             canPickup: has(.pickup),
             canDone: has(.good),
-            canTransfer: transferMove() != nil,
+            onAttack: { playAt(.table, cards, view) },
+            onCover: { playCover(cards, view) },
+            onPass: { playAt(.table, cards, view) },
             onPickup: { play(.pickup) },
-            onDone: { play(.good) },
-            onTransfer: { if let m = transferMove() { play(m) } }
+            onDone: { play(.good) }
         )
     }
 
     private func hand(_ view: GameView) -> some View {
         FHandFan(cards: view.me?.hand ?? [], trumpSuit: view.trumpSuit,
-                 selection: $selection, onTap: { tapCard($0, view) })
+                 selection: $selection, onTap: { toggle($0) })
             .padding(.horizontal, FSpace.s)
     }
 
@@ -199,45 +205,43 @@ public struct MessageTableView: View {
 
     private func has(_ type: MoveType) -> Bool { controller.legal.contains { $0.type == type } }
 
-    private func tapCard(_ card: Card, _ view: GameView) {
-        if let atk = controller.legal.first(where: { $0.type == .attack && $0.cards == [card] }) {
-            play(atk); return
-        }
-        let canCover = controller.legal.contains { $0.type == .cover && $0.cards == [card] }
-        let canTransfer = controller.legal.contains { $0.type == .pass && $0.cards.contains(card) }
-        if canCover || canTransfer {
-            selection = [card.identity]
-        } else {
-            Haptics.fire(.reject); toast = FStrings.t("ios.reject")
-        }
+    // Dumb selection; CardPlay resolves (selection, target) into one legal move,
+    // exactly like the app's TableView (both read the kernel menu, never a rule).
+
+    private func toggle(_ card: Card) {
+        if selection.contains(card.identity) { selection.remove(card.identity) }
+        else { selection.insert(card.identity) }
     }
 
+    private func selectedCards(_ view: GameView) -> [Card] {
+        (view.me?.hand ?? []).filter { selection.contains($0.identity) }
+    }
+
+    /// Tap an uncovered attack while cards are selected → cover it (two-tap cover).
     private func tapBattle(_ index: Int, _ view: GameView) {
-        guard index < view.battles.count,
-              let selId = selection.first,
-              let card = view.me?.hand?.first(where: { $0.identity == selId }) else { return }
-        let attack = view.battles[index].attack
-        if let cover = controller.legal.first(where: {
-            $0.type == .cover && $0.cards == [card] && ($0.attackCards ?? []) == [attack]
-        }) {
-            play(cover)
-        } else {
-            Haptics.fire(.reject)
-        }
+        playAt(.battle(index), selectedCards(view), view)
     }
 
-    private func transferMove() -> Move? {
-        guard let selId = selection.first else { return nil }
-        return controller.legal.first { $0.type == .pass && $0.cards.contains { $0.identity == selId } }
+    private func playAt(_ target: PlayTarget, _ cards: [Card], _ view: GameView) {
+        guard let move = CardPlay.resolve(cards: cards, target: target,
+                                          isDefender: view.defender == controller.mySeat,
+                                          battles: view.battles, legal: controller.legal) else {
+            Haptics.fire(.reject); toast = FStrings.t("ios.reject"); return
+        }
+        play(move)
+    }
+
+    /// Cover button: cover the first uncovered attack the selection can beat.
+    private func playCover(_ cards: [Card], _ view: GameView) {
+        guard let i = CardPlay.coverableBattles(cards: cards, battles: view.battles,
+                                                legal: controller.legal).sorted().first else {
+            Haptics.fire(.reject); return
+        }
+        playAt(.battle(i), cards, view)
     }
 
     private func coverableBattles(_ view: GameView) -> Set<Int> {
-        guard let selId = selection.first,
-              let card = view.me?.hand?.first(where: { $0.identity == selId }) else { return [] }
-        var out: Set<Int> = []
-        for (i, b) in view.battles.enumerated() where controller.legal.contains(where: {
-            $0.type == .cover && $0.cards == [card] && ($0.attackCards ?? []) == [b.attack]
-        }) { out.insert(i) }
+        let out = CardPlay.coverableBattles(cards: selectedCards(view), battles: view.battles, legal: controller.legal)
         return out
     }
 }

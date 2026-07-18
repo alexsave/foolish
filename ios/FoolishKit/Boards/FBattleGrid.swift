@@ -66,9 +66,7 @@ public struct FBattleGrid: View {
     }
     private func name(_ c: Card) -> String {
         guard let suit = c.suit else { return "hidden card" }
-        let rank: String
-        switch c.v { case 13: rank = "ace"; case 12: rank = "king"; case 11: rank = "queen"; case 10: rank = "ten"; default: rank = "\(c.v)" }
-        return "\(rank) of \(["spades","hearts","clubs","diamonds"][suit.rawValue])"
+        return "\(CardRank.spoken(c.v)) of \(["spades","hearts","clubs","diamonds"][suit.rawValue])"
     }
 
     @Namespace private var ns

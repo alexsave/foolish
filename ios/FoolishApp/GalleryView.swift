@@ -55,8 +55,9 @@ struct GalleryView: View {
                     }
                 }
                 section("FActionBar") {
-                    FActionBar(canPickup: true, canDone: true, canTransfer: true,
-                               onPickup: {}, onDone: {}, onTransfer: {})
+                    FActionBar(canAttack: true, canCover: true, canPass: true,
+                               canPickup: true, canDone: true,
+                               onAttack: {}, onCover: {}, onPass: {}, onPickup: {}, onDone: {})
                 }
                 section("FToast") {
                     FToast("Nine of spades covered")

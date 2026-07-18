@@ -1,28 +1,44 @@
-// FCard.swift — a single card: face or back, selectable, disabled, trump-badged
-// (§5.4). Face is a bone rectangle with condensed-free type (cards use plain SF
-// pips, not the numeral face) plus corner rank/suit; back is the procedural fern
-// (FernCardBack). VoiceOver reads "seven of spades" etc. (§5.4 a11y floor).
+// FCard.swift — a single card, matching the WEB client's CardFace
+// (src/components/GameDisplay/CardFace.tsx): a stylized minimalist card — a white
+// rectangle with a 2px black border, two corner indices (rank over suit) and one
+// large centre suit glyph in Georgia serif. Red suits are red, black suits black.
+// Selection recolors the border RED and does not lift or scale (web parity). The
+// dragged source card fades to 0.3. Trump is NOT marked per-card (the web shows
+// trump only at the deck well); the `trump` flag is kept for API compatibility.
+// Back is the procedural fern; VoiceOver reads "seven of spades" etc.
 
 import SwiftUI
 
 public struct FCard: View {
     public let card: Card?          // nil ⇒ face-down (use `backSeed`)
     public var selected: Bool
-    public var disabled: Bool       // dimmed + locked (the C1 in-flight affordance)
-    public var trump: Bool          // draw the trump badge
+    public var disabled: Bool       // dimmed + locked (C1 in-flight affordance)
+    public var dragging: Bool       // the source card while a drag is in flight (web: opacity 0.3)
+    public var trump: Bool          // kept for API; web marks trump at the deck, not per card
     public var backSeed: UInt64
     public var size: CGSize
 
     public init(card: Card?, selected: Bool = false, disabled: Bool = false,
-                trump: Bool = false, backSeed: UInt64 = 1,
-                size: CGSize = CGSize(width: 62, height: 88)) {
+                dragging: Bool = false, trump: Bool = false, backSeed: UInt64 = 1,
+                size: CGSize = CGSize(width: 50, height: 70)) {
         self.card = card
         self.selected = selected
         self.disabled = disabled
+        self.dragging = dragging
         self.trump = trump
         self.backSeed = backSeed
         self.size = size
     }
+
+    // Web tokens (variables.css): white face, red #dc2626 / black suits, black
+    // border, selected border pure red, 5px radius (relative here so small cards
+    // stay proportional).
+    private static let faceWhite = Color.white
+    private static let redSuit = Color(hex: 0xDC2626)
+    private static let blackSuit = Color(hex: 0x0A0A0A)
+    private static let selRed = Color(hex: 0xE0201C)
+    private var radius: CGFloat { min(5, size.width * 0.1) }
+    private var thin: Bool { size.width < 40 }   // web thin-card fallback (<40px wide)
 
     public var body: some View {
         Group {
@@ -33,12 +49,7 @@ public struct FCard: View {
             }
         }
         .frame(width: size.width, height: size.height)
-        .overlay(selectionRing)
-        // A defining edge + lift so cards read against the busy wool (web parity:
-        // CardFace carries a border + box-shadow).
-        .shadow(color: .black.opacity(0.28), radius: 2.5, x: 0, y: 1.5)
-        .opacity(disabled ? 0.55 : 1)
-        .offset(y: selected ? -14 : 0)          // lift on select — the ONE spring animates this
+        .opacity(disabled ? 0.5 : (dragging ? 0.3 : 1))
         .accessibilityElement()
         .accessibilityLabel(a11yLabel)
         .accessibilityAddTraits(selected ? .isSelected : [])
@@ -46,70 +57,70 @@ public struct FCard: View {
 
     // MARK: face
 
-    private func face(_ card: Card) -> some View {
+    @ViewBuilder private func face(_ card: Card) -> some View {
         let suit = card.suit ?? .spades
-        let color = FColor.suitColor(suit)
-        return RoundedRectangle(cornerRadius: FRadius.card)
-            .fill(FColor.card)
-            .overlay(alignment: .topLeading) { corner(card, suit: suit, color: color) }
+        let color = suit.isRed ? Self.redSuit : Self.blackSuit
+        RoundedRectangle(cornerRadius: radius)
+            .fill(Self.faceWhite)
+            .overlay { if thin { thinCenter(card, color: color) } else { centerGlyph(suit, color: color) } }
+            .overlay(alignment: .topLeading) { if !thin { corner(card, suit: suit, color: color) } }
             .overlay(alignment: .bottomTrailing) {
-                corner(card, suit: suit, color: color).rotationEffect(.degrees(180))
+                if !thin { corner(card, suit: suit, color: color).rotationEffect(.degrees(180)) }
             }
-            .overlay {
-                Text(suit.glyph)
-                    .font(.system(size: size.width * 0.42))
-                    .foregroundColor(color)
-            }
-            .overlay(alignment: .topTrailing) { if trump { trumpBadge } }
-            .overlay(
-                RoundedRectangle(cornerRadius: FRadius.card)
-                    .strokeBorder(FColor.ink.opacity(0.45), lineWidth: 1)
-            )
+            .overlay(border)
     }
 
+    // Big centre suit glyph — 32/50 of the width in the web.
+    private func centerGlyph(_ suit: Suit, color: Color) -> some View {
+        Text(suit.glyph)
+            .font(.custom("Georgia", size: size.width * 0.62).weight(.bold))
+            .foregroundColor(color)
+    }
+
+    // Corner index: rank (20/50 w) over suit (14/50 w), Georgia bold.
     private func corner(_ card: Card, suit: Suit, color: Color) -> some View {
-        VStack(spacing: 0) {
+        VStack(spacing: -size.width * 0.04) {
             Text(CardRank.label(card.v))
-                .font(.system(size: size.width * 0.24, weight: .semibold))
+                .font(.custom("Georgia", size: size.width * 0.40).weight(.bold))
             Text(suit.glyph)
-                .font(.system(size: size.width * 0.18))
+                .font(.custom("Georgia", size: size.width * 0.28).weight(.bold))
         }
         .foregroundColor(color)
-        .padding(size.width * 0.08)
+        .padding(.leading, size.width * 0.08)
+        .padding(.top, size.width * 0.04)
+        .fixedSize()
     }
 
-    /// Trump is marked by badge SHAPE + color, never color alone (§16.E5).
-    private var trumpBadge: some View {
-        Image(systemName: "seal.fill")
-            .font(.system(size: size.width * 0.2))
-            .foregroundColor(FColor.accent)
-            .padding(3)
+    // Thin fallback (<40px): drop the corners, show just a centred rank+suit stack.
+    private func thinCenter(_ card: Card, color: Color) -> some View {
+        VStack(spacing: 0) {
+            Text(CardRank.label(card.v)).font(.custom("Georgia", size: size.width * 0.44).weight(.bold))
+            Text((card.suit ?? .spades).glyph).font(.custom("Georgia", size: size.width * 0.44).weight(.bold))
+        }
+        .foregroundColor(color)
     }
 
-    // MARK: back
+    private var border: some View {
+        RoundedRectangle(cornerRadius: radius)
+            .strokeBorder(selected ? Self.selRed : Self.blackSuit,
+                          lineWidth: selected ? 2.5 : 2)
+    }
 
+    // MARK: back — deep-red fern (kept from the iOS back; the web uses a khokhloma
+    // pattern PNG, this is the closest procedural equivalent already shipped).
     private var back: some View {
         Image(uiImage: FernCardBack.image(seed: backSeed, size: size))
             .resizable()
-            .clipShape(RoundedRectangle(cornerRadius: FRadius.card))
+            .clipShape(RoundedRectangle(cornerRadius: radius))
             .overlay(
-                RoundedRectangle(cornerRadius: FRadius.card)
-                    .strokeBorder(FColor.textDim.opacity(0.25), lineWidth: 1)
+                RoundedRectangle(cornerRadius: radius)
+                    .strokeBorder(selected ? Self.selRed : Color(hex: 0x8B0000), lineWidth: selected ? 2.5 : 1)
             )
-    }
-
-    private var selectionRing: some View {
-        RoundedRectangle(cornerRadius: FRadius.card)
-            .strokeBorder(selected ? FColor.win : Color.clear, lineWidth: 2.5)
     }
 
     private var a11yLabel: String {
         guard let card, !card.isHidden, let suit = card.suit else { return "face down card" }
-        let rank: String
-        switch card.v {
-        case 13: rank = "ace"; case 12: rank = "king"; case 11: rank = "queen"
-        case 10: rank = "ten"; default: rank = "\(card.v)"
-        }
+        let rank = CardRank.spoken(card.v)
         let suitName = ["spades", "hearts", "clubs", "diamonds"][suit.rawValue]
         return "\(rank) of \(suitName)" + (trump ? ", trump" : "")
     }

@@ -1,8 +1,9 @@
-// FHandFan.swift — the local player's hand, fanned along the bottom and
-// reachable one-handed (§5.4). Tap-to-select then play, with expanded hit slop
-// (≥44pt). Overlapping cards fan with a slight arc; the selected card lifts.
-// Drag-to-play is a post-v1 refinement (§5.4 "drag or tap-to-play"); v1 ships
-// tap-to-play, which is the one-handed-reachable default.
+// FHandFan.swift — the local player's hand, matching the WEB client's self-hand
+// (ActionButtons.tsx CardDiv): a FLAT ROW, not a fan. Cards share the width,
+// clamped 20–50pt wide at a fixed 70pt tall, with a small gap and NO overlap — so
+// every card is directly tappable (the old overlapping fan let only the top-most
+// rightmost card take a tap). Tapping toggles multi-selection; the board turns a
+// selection into a move (drag / buttons / tap-a-battle), never this view.
 
 import SwiftUI
 
@@ -12,6 +13,7 @@ public struct FHandFan: View {
     /// Cards currently locked (in-flight / illegal in this context) — dimmed.
     public let disabled: Set<String>
     @Binding public var selection: Set<String>
+    /// Tap a card — the board toggles it in the selection.
     public let onTap: (Card) -> Void
 
     public init(cards: [Card], trumpSuit: Suit?, disabled: Set<String> = [],
@@ -23,32 +25,25 @@ public struct FHandFan: View {
         self.onTap = onTap
     }
 
+    private let cardH: CGFloat = 70          // web: fixed 70pt tall
+    private let gap: CGFloat = 4
+
     public var body: some View {
         GeometryReader { geo in
             let count = max(cards.count, 1)
-            let cardW: CGFloat = 62
-            let cardH: CGFloat = 88
-            // Overlap so a big post-pickup hand still fits; clamp spread to width.
-            let maxSpread = geo.size.width - cardW
-            let step = min(cardW * 0.72, maxSpread / CGFloat(max(count - 1, 1)))
-            let totalW = step * CGFloat(count - 1)
-            let startX = (geo.size.width - totalW) / 2
-
-            ZStack {
-                ForEach(Array(cards.enumerated()), id: \.element.identity) { idx, card in
-                    let mid = CGFloat(count - 1) / 2
-                    let offset = CGFloat(idx) - mid
+            // Flex-share the width, clamped 20–50pt (web: flex 1, minWidth 20,
+            // maxWidth 50). Many cards squish toward 20pt and hit FCard's thin
+            // layout; a few sit at 50pt, centered.
+            let avail = geo.size.width - gap * CGFloat(count + 1)
+            let cardW = min(50, max(20, avail / CGFloat(count)))
+            HStack(spacing: gap) {
+                ForEach(cards, id: \.identity) { card in
                     FCard(card: card,
                           selected: selection.contains(card.identity),
                           disabled: disabled.contains(card.identity),
                           trump: trumpSuit != nil && card.suit == trumpSuit,
                           size: CGSize(width: cardW, height: cardH))
-                        .rotationEffect(.degrees(Double(offset) * 3), anchor: .bottom)
-                        .position(x: startX + step * CGFloat(idx), y: geo.size.height - cardH / 2)
-                        // Expanded hit slop for one-handed reach (a11y 44pt floor).
-                        .contentShape(Rectangle().inset(by: -8))
-                        .matchedGeometryEffect(id: card.identity, in: fanNamespace, isSource: true)
-                        .zIndex(selection.contains(card.identity) ? 100 : Double(idx))
+                        .contentShape(Rectangle())
                         .onTapGesture {
                             guard !disabled.contains(card.identity) else { Haptics.fire(.reject); return }
                             Haptics.fire(.pickUp)
@@ -56,9 +51,8 @@ public struct FHandFan: View {
                         }
                 }
             }
+            .frame(width: geo.size.width, height: geo.size.height, alignment: .center)
         }
-        .frame(height: 120)
+        .frame(height: cardH + 8)
     }
-
-    @Namespace private var fanNamespace
 }
