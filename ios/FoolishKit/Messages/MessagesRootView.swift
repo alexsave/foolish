@@ -97,11 +97,18 @@ private struct GameSurface: View {
     private struct Stale { let incoming: Data; let env: MessageEnvelope; let preferred: Data }
     /// A phase-0/handoff lobby the extension shows instead of the board (§5.2).
     private struct Lobby { let env: MessageEnvelope; let payload: Data }
+    /// A resolved seat waiting on the human's name (§B3). The 2-player receiver
+    /// reaches a board with no name set — the creator named themselves in setup and
+    /// 3-8p joiners in the lobby, but the DM opponent has neither. Ask once, store
+    /// it, then seat them; every later game reuses the stored name.
+    private struct NameGate { let env: MessageEnvelope; let payload: Data; let seat: Int
+                              let survivors: [Move]; let discarded: Int }
 
     @State private var controller: MessageTurnController?
     @State private var ambiguous: (env: MessageEnvelope, payload: Data)?
     @State private var stale: Stale?
     @State private var lobby: Lobby?
+    @State private var nameGate: NameGate?
     @State private var showSetup = false
     @State private var toast: String?
     @State private var damaged = false
@@ -111,10 +118,10 @@ private struct GameSurface: View {
     /// (newGameToken) changes it, which resets and reloads.
     private var loadKey: String { "\(newGameToken)|\(startNewGame)|\(payloadURL?.absoluteString ?? "")" }
 
-    /// True whenever there is a live session — a dealt board, a lobby, or the
-    /// setup screen — even before anything has been sent. Drives the compact
-    /// drawer's "Open" (vs "New game").
-    private var inProgress: Bool { controller != nil || lobby != nil || showSetup }
+    /// True whenever there is a live session — a dealt board, a lobby, the name
+    /// gate, or the setup screen — even before anything has been sent. Drives the
+    /// compact drawer's "Open" (vs "New game").
+    private var inProgress: Bool { controller != nil || lobby != nil || nameGate != nil || showSetup }
 
     var body: some View {
         Group {
@@ -139,6 +146,10 @@ private struct GameSurface: View {
                       nickname: MessageGameStore.shared.nickname,
                       onSend: { Task { await onSend(lob.payload, lobbySeat(lob.env) ?? 0) } },
                       onJoin: { name in Task { await joinLobby(lob, nickname: name) } })
+        } else if let g = nameGate {
+            NameGateView(prefill: MessageGameStore.shared.nickname) { name in
+                Task { await nameThenSeat(name, gate: g) }
+            }
         } else if showSetup {
             NewGameSetup(nickname: MessageGameStore.shared.nickname,
                          isDM: chatIsDM, chatPlayers: chatPlayers) { name, players in
@@ -161,7 +172,7 @@ private struct GameSurface: View {
     /// Reset + (re)load for a NEW input. A compact<->expanded toggle leaves
     /// loadKey unchanged, so `.task(id:)` does not fire and the game persists.
     private func reloadForInput() async {
-        controller = nil; lobby = nil; showSetup = false
+        controller = nil; lobby = nil; nameGate = nil; showSetup = false
         stale = nil; ambiguous = nil; damaged = false
         await load()
     }
@@ -296,13 +307,42 @@ private struct GameSurface: View {
                                     senderIsLocal: senderIsLocal,
                                     nPlayers: env.nPlayers, lastActorSeat: env.lastActorSeat) {
         case .known(let seat):
-            cache(seat: seat, env: env, payload: winner)
-            toast = rebaseToast(survivors: survivors, discarded: discarded)
-            controller = MessageTurnController(parentPayload: winner, parent: env, mySeat: seat,
-                                               preStaged: survivors)
+            // §B3: a player about to be seated who has never chosen a name is asked
+            // once (the 2-player receiver has no setup/lobby screen). Creator +
+            // lobby joiners already set theirs, so this only fires for the DM
+            // opponent's first game; it never re-asks once stored.
+            if !MessageGameStore.shared.hasSetNickname {
+                nameGate = NameGate(env: env, payload: winner, seat: seat,
+                                    survivors: survivors, discarded: discarded)
+            } else {
+                seatOnBoard(seat: seat, env: env, winner: winner,
+                            survivors: survivors, discarded: discarded)
+            }
         case .ambiguous:
             ambiguous = (env, winner)
         }
+    }
+
+    /// Open the board for a resolved seat: cache it, surface any Rule R rebase
+    /// toast, and hand the winner chain to a fresh controller with the survivors
+    /// pre-staged. The tail of `adopt`'s `.known` branch, shared with the name gate.
+    private func seatOnBoard(seat: Int, env: MessageEnvelope, winner: Data,
+                             survivors: [Move], discarded: Int) {
+        cache(seat: seat, env: env, payload: winner)
+        toast = rebaseToast(survivors: survivors, discarded: discarded)
+        controller = MessageTurnController(parentPayload: winner, parent: env, mySeat: seat,
+                                           preStaged: survivors)
+    }
+
+    /// The human answered the name gate: persist the name (blank falls back to the
+    /// neutral default, which still counts as "set" so we never re-ask), then seat
+    /// them. The name is baked into `joins` when they first play (sealJoins).
+    private func nameThenSeat(_ raw: String, gate g: NameGate) async {
+        let trimmed = raw.trimmingCharacters(in: .whitespaces)
+        MessageGameStore.shared.nickname = trimmed.isEmpty ? FStrings.t("ios.you") : trimmed
+        nameGate = nil
+        seatOnBoard(seat: g.seat, env: g.env, winner: g.payload,
+                    survivors: g.survivors, discarded: g.discarded)
     }
 
     /// Rule R (§7.4): replay each pending action onto the just-adopted chain. A
@@ -499,6 +539,34 @@ private struct LobbyView: View {
     private var displayName: String {
         let t = nickname.trimmingCharacters(in: .whitespaces)
         return t.isEmpty ? FStrings.t("ios.you") : t
+    }
+}
+
+/// §B3 one-time name entry for a player being seated without a stored name — the
+/// 2-player receiver, who has neither the creator's setup screen nor the 3-8p
+/// lobby's join field. Shown once (until a name is stored), prefilled with the
+/// current nickname if it is not the neutral default. Continue is always enabled:
+/// an empty field just means "call me the default", which still counts as chosen.
+private struct NameGateView: View {
+    @State private var name: String
+    let onContinue: (String) -> Void
+
+    init(prefill: String, onContinue: @escaping (String) -> Void) {
+        _name = State(initialValue: prefill == "Me" ? "" : prefill)
+        self.onContinue = onContinue
+    }
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Text(FStrings.t("ios.msg.nameprompt")).font(.headline)
+                .foregroundStyle(FColor.textPrimary).multilineTextAlignment(.center)
+            TextField(FStrings.t("ios.you"), text: $name).textFieldStyle(.roundedBorder)
+                .submitLabel(.done).onSubmit { onContinue(name) }
+                .padding(.horizontal)
+            FButton(FStrings.t("ios.msg.continue"), kind: .wood) { onContinue(name) }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding()
     }
 }
 

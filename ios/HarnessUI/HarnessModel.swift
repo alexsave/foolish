@@ -73,7 +73,11 @@ final class HarnessModel: ObservableObject {
     func become(_ idx: Int) {
         guard idx >= 0, idx < participants.count else { return }
         localIndex = idx
-        startNewGame = false
+        // Route to New game when this player has no bubble to open yet (switching
+        // before anyone has delivered). Only a real, delivered bubble reads as a
+        // game; (startNewGame=false, no bubble) is the "game link is damaged"
+        // screen, which is wrong here — there is simply nothing sent to them.
+        startNewGame = (latest == nil)
         staged = nil                 // a half-staged move doesn't cross to another player
         rebindStore()
     }
@@ -83,9 +87,13 @@ final class HarnessModel: ObservableObject {
 
     /// The board auto-staged a chain (the extension's `insert`). Hold it; the
     /// human still has to press Send — that is `deliver()`.
+    ///
+    /// Staging must NOT touch `startNewGame`: `viewKey` keys the live
+    /// MessagesRootView on it, so flipping it here would tear down the very board
+    /// that just staged the move (it reloads with payloadURL=nil → "damaged").
+    /// The new-game intent only clears when the bubble is actually delivered.
     func stage(_ payload: Data, seat: Int) {
         staged = payload
-        startNewGame = false
         // HARNESS_AUTOGAME: auto-deliver + hand to the next player, so a whole
         // game plays itself through the real UI (validates turn handoff + seat
         // inference across many turns). Halts naturally at game over (a finished
@@ -107,6 +115,10 @@ final class HarnessModel: ObservableObject {
         transcript.append(Msg(url: MessageEnvelope.link(payload: payload),
                               senderId: localId, senderName: localName))
         staged = nil
+        // Now that a real bubble exists, leave the new-game screen: the reload
+        // this delivery triggers (transcript.count changed) must read the bubble,
+        // not route back to setup. (Was done in stage(); see the note there.)
+        startNewGame = false
     }
 
     // Each participant → its own throwaway cache suite (fresh per app launch via

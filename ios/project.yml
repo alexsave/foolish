@@ -147,6 +147,25 @@ targets:
         # The circular watch icon (WatchUI/Assets.xcassets/AppIcon).
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
 
+  # ---- Headless harness tests (drive HarnessModel with NO UI) ------------
+  # Hosted by FoolishHarness so `@testable import FoolishHarness` can reach the
+  # internal HarnessModel state machine (the part that carried the B4 "damaged"
+  # bug). xcodegen auto-wires TEST_HOST/BUNDLE_LOADER from the app dependency.
+  # These never ship — they exist to run a whole iMessage game through the
+  # harness model without a simulator tap. See HarnessTests/.
+  HarnessTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: HarnessTests
+    dependencies:
+      - target: FoolishHarness
+      - target: FoolishKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: cards.foolish.harnesstests
+        GENERATE_INFOPLIST_FILE: "YES"
+
   # ---- Shared framework: Engine + Net + DesignSystem + Boards + Entitlements
   FoolishKit:
     type: framework
@@ -241,3 +260,15 @@ schemes:
       config: Debug
       targets:
         - FoolishTests
+  # Runs the headless harness game-loop tests (no simulator UI needed).
+  FoolishHarness:
+    build:
+      targets:
+        FoolishHarness: all
+        HarnessTests: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - HarnessTests

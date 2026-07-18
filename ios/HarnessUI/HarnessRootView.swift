@@ -10,24 +10,32 @@ struct HarnessRootView: View {
     @StateObject private var model = HarnessModel()
 
     var body: some View {
-        VStack(spacing: 0) {
-            controls
-            Divider().overlay(Color.orange.opacity(0.4))
-            // The thing under test — driven exactly as the extension drives it.
-            MessagesRootView(
-                payloadURL: model.payloadURL,
-                style: .expanded,
-                senderIsLocal: model.senderIsLocal,
-                startNewGame: model.startNewGame,
-                chatIsDM: model.chatIsDM,
-                chatPlayers: model.playerCount,
-                requestExpand: {},
-                onNewGame: { model.newGame() },
-                onSend: { payload, seat in await MainActor.run { model.stage(payload, seat: seat) } }
-            )
-            .id(model.viewKey)   // reset @State when player/transcript/intent changes
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .clipped()           // keep the board's ignoresSafeArea wool from bleeding over the controls
+        // The thing under test — driven exactly as the extension drives it. The
+        // fake-host controls hang off it as a TOP SAFE-AREA INSET rather than a
+        // VStack sibling: MessagesRootView's WoolBackground is `.ignoresSafeArea()`,
+        // so as a sibling its hit region bled up over the control strip and the
+        // player/2p buttons went dead to taps. An inset reserves the bar's space
+        // AND keeps it topmost for hit-testing, so the board can ignore safe area
+        // underneath without stealing the controls' touches.
+        MessagesRootView(
+            payloadURL: model.payloadURL,
+            style: .expanded,
+            senderIsLocal: model.senderIsLocal,
+            startNewGame: model.startNewGame,
+            chatIsDM: model.chatIsDM,
+            chatPlayers: model.playerCount,
+            requestExpand: {},
+            onNewGame: { model.newGame() },
+            onSend: { payload, seat in await MainActor.run { model.stage(payload, seat: seat) } }
+        )
+        .id(model.viewKey)   // reset @State when player/transcript/intent changes
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            VStack(spacing: 0) {
+                controls
+                Divider().overlay(Color.orange.opacity(0.4))
+            }
+            .background(Color(white: 0.09))   // opaque: the board's wool can't show through
         }
         .background(Color.black.ignoresSafeArea())
         .task {

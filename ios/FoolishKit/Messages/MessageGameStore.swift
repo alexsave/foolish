@@ -84,6 +84,16 @@ public final class MessageGameStore {
         set { defaults?.set(newValue, forKey: "fmsg.nickname") }
     }
 
+    /// Whether the human has ever chosen a name on this device (§B3). False means
+    /// `nickname` is still the neutral default, so a player about to be seated must
+    /// be asked once (the 2-player receiver has no setup/lobby screen to enter it,
+    /// unlike the creator and the 3-8p lobby joiners). Once set, every later game
+    /// reuses it and never re-asks.
+    public var hasSetNickname: Bool {
+        guard let n = defaults?.string(forKey: "fmsg.nickname") else { return false }
+        return !n.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
     // MARK: read
 
     /// This device's seat in `gameId`, or nil if unknown — the §6.1 primary
