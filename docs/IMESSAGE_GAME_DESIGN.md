@@ -517,6 +517,15 @@ pattern the repo already uses for replay v5 (`e2e/replay_ts_oracle.ts`).
 
 ### 9.1 The decision Apple forces (read this before creating the app record)
 
+> **Reversed 2026-07-18 (`e9b9120`).** The "choose the bundled form" decision
+> below was superseded: the iMessage game now ships as its own standalone App
+> Store record (`cards.foolish.msg`, `ios/project.yml`'s `FoolishMessagesApp`
+> target) rather than embedded in the host app. The tradeoff/reasoning
+> section immediately below is kept for the historical record of why bundled
+> was chosen first; `ios/project.yml`'s own comments and
+> `docs/IMESSAGE_APP_STORE_SUBMISSION.md` are ground truth for the current
+> (standalone) submission model.
+
 Apple: an iMessage app is either **standalone** (no visible iOS app) or an
 **extension bundled in an iOS app** — and converting between the two later
 means creating a **new app record**
