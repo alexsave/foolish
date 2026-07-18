@@ -22,12 +22,15 @@ public struct FHandFan: View {
     /// Shared card-flight namespace: a card keeps its identity when it moves from
     /// the hand to the table, so matchedGeometry animates the flight.
     public let namespace: Namespace.ID?
+    /// Cards currently in overlay flight (a draw landing) — rendered invisible so
+    /// only the flying ghost shows.
+    public let hidden: Set<String>
 
     public init(cards: [Card], trumpSuit: Suit?, disabled: Set<String> = [],
                 selection: Binding<Set<String>>, onTap: @escaping (Card) -> Void,
                 onDragChanged: @escaping (Card, CGPoint) -> Void = { _, _ in },
                 onDragEnded: @escaping (Card, CGPoint) -> Void = { _, _ in },
-                namespace: Namespace.ID? = nil) {
+                namespace: Namespace.ID? = nil, hidden: Set<String> = []) {
         self.cards = cards
         self.trumpSuit = trumpSuit
         self.disabled = disabled
@@ -36,6 +39,7 @@ public struct FHandFan: View {
         self.onDragChanged = onDragChanged
         self.onDragEnded = onDragEnded
         self.namespace = namespace
+        self.hidden = hidden
     }
 
     @State private var dragId: String?
@@ -56,6 +60,7 @@ public struct FHandFan: View {
                           disabled: disabled.contains(card.identity),
                           trump: trumpSuit != nil && card.suit == trumpSuit,
                           size: CGSize(width: cardW, height: cardH))
+                        .opacity(hidden.contains(card.identity) ? 0 : 1)
                         .modifier(FlightID(id: card.identity, namespace: namespace))
                         .background(GeometryReader { g in
                             Color.clear.preference(key: HandCardFramesKey.self,

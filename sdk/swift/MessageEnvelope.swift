@@ -221,6 +221,23 @@ public actor MessageKernel {
         return String(decoding: data, as: UTF8.self)
     }
 
+    /// The resident message game decoded as a replay — the PACKED LOG_* step
+    /// stream (fio_replay_decode_packed via the game's own v6 share code), for
+    /// driving animations (e.g. replaying the last move when a bubble is opened).
+    /// No JSON crosses the boundary. nil if there is no game or it cannot encode.
+    public func residentReplay() -> DecodedReplay? {
+        guard let code = residentReplayCode() else { return nil }
+        let packed = code.withCString { (cstr: UnsafePointer<CChar>) -> Data? in
+            packedCall { out, cap in
+                out.withMemoryRebound(to: UInt8.self, capacity: Int(cap)) { u8 in
+                    fio_replay_decode_packed(cstr, u8, cap)
+                }
+            }
+        }
+        guard let packed else { return nil }
+        return DecodedReplay.decode(packed: packed)
+    }
+
     /// Rule P (§7.2). <0 `a` wins, >0 `b`, 0 the same chain. Delivery order is
     /// never an input — two devices can transiently disagree about "newest".
     public func preferred(_ a: Data, _ b: Data) throws -> Int {

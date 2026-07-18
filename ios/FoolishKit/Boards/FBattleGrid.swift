@@ -16,14 +16,19 @@ public struct FBattleGrid: View {
     public let onTapBattle: (Int) -> Void
     /// Shared card-flight namespace (a card matches its hand slot as it lands).
     public let namespace: Namespace.ID?
+    /// Card identities currently in overlay flight — rendered invisible here so the
+    /// flying ghost is the only copy (web CardFace opacity:0 while animating).
+    public let hidden: Set<String>
 
     public init(battles: [BattleView], trumpSuit: Suit?, coverable: Set<Int> = [],
-                onTapBattle: @escaping (Int) -> Void = { _ in }, namespace: Namespace.ID? = nil) {
+                onTapBattle: @escaping (Int) -> Void = { _ in }, namespace: Namespace.ID? = nil,
+                hidden: Set<String> = []) {
         self.battles = battles
         self.trumpSuit = trumpSuit
         self.coverable = coverable
         self.onTapBattle = onTapBattle
         self.namespace = namespace
+        self.hidden = hidden
     }
 
     private let cardSize = CGSize(width: 50, height: 70)   // web card 50x70
@@ -50,6 +55,7 @@ public struct FBattleGrid: View {
             FCard(card: battle.attack,
                   trump: trumpSuit != nil && battle.attack.suit == trumpSuit,
                   size: cardSize)
+                .opacity(hidden.contains(battle.attack.identity) ? 0 : 1)
                 .rotationEffect(.degrees(covered ? -coverAngle : 0), anchor: .bottom)
                 .zIndex(covered ? 1 : 2)
                 .modifier(FlightID(id: battle.attack.identity, namespace: namespace))
@@ -58,6 +64,7 @@ public struct FBattleGrid: View {
                 FCard(card: defense,
                       trump: trumpSuit != nil && defense.suit == trumpSuit,
                       size: cardSize)
+                    .opacity(hidden.contains(defense.identity) ? 0 : 1)
                     .rotationEffect(.degrees(coverAngle), anchor: .bottom)   // laid across (§5.4)
                     .zIndex(2)
                     .modifier(FlightID(id: defense.identity, namespace: namespace))

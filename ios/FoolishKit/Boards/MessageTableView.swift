@@ -142,7 +142,7 @@ public struct MessageTableView: View {
                 FBattleGrid(battles: view.battles, trumpSuit: view.trumpSuit,
                             coverable: highlightBattles(view),
                             onTapBattle: { idx in tapBattle(idx, view) },
-                            namespace: cardNS)
+                            namespace: cardNS, hidden: animator.hidden)
             }
         }
         .frame(maxWidth: .infinity)
@@ -166,8 +166,13 @@ public struct MessageTableView: View {
     /// as a small overlay (matchedGeometry has no discard-side view to match). Reads
     /// the battle rects still held from before the view cleared.
     private func flyBoutEndToDiscard(to newView: GameView?) {
-        defer { lastView = newView }
-        guard !reduceMotion, let old = lastView, let new = newView,
+        let prior = lastView
+        lastView = newView
+        guard !reduceMotion, let new = newView else { return }
+        // First time the board appears with a delivered game: replay the last move
+        // that produced this bubble (the web "open the message, watch what happened").
+        if prior == nil { replayLastMoveOnOpen(new); return }
+        guard let old = prior,
               !old.battles.isEmpty, new.battles.isEmpty,
               new.discardCount > old.discardCount, discardFrame != .zero else { return }
         var flights: [Flight] = []
@@ -187,6 +192,31 @@ public struct MessageTableView: View {
 
         guard !flights.isEmpty else { return }
         Task { await animator.play([flights]) }
+    }
+
+    /// On opening a delivered bubble, replay the last card-placing move: fly the
+    /// card(s) it put on the table into their battle slots, from above (the sender's
+    /// side), so you SEE what the last move was — the web's open-a-message replay.
+    /// Reads the last LOG_ATTACK/LOG_COVER from the packed replay stream (no JSON).
+    private func replayLastMoveOnOpen(_ view: GameView) {
+        guard !reduceMotion, !view.battles.isEmpty, !controller.isOver else { return }
+        Task {
+            // Let the battle slots render + publish their rects first.
+            try? await Task.sleep(nanoseconds: 120_000_000)
+            guard let replay = await MessageKernel.shared.residentReplay() else { return }
+            let LOG_ATTACK = 1, LOG_COVER = 2   // game.h LOG_* (packed step types)
+            guard let last = replay.logs.last(where: { $0.type == LOG_ATTACK || $0.type == LOG_COVER })
+            else { return }
+            var flights: [Flight] = []
+            for card in last.pairs.map(\.primary) where !card.isHidden {
+                guard let idx = view.battles.firstIndex(where: { $0.attack == card || $0.defense == card }),
+                      let rect = battleFrames[idx] else { continue }
+                let from = rect.offsetBy(dx: 0, dy: -220)   // fly down from the sender's side
+                flights.append(Flight(id: "open-\(card.identity)", card: card, from: from, to: rect))
+            }
+            guard !flights.isEmpty else { return }
+            await animator.play([flights])
+        }
     }
 
     /// Fly this bout's drawn cards from the deck to their new hand slots — once the
@@ -276,7 +306,7 @@ public struct MessageTableView: View {
                  selection: $selection, onTap: { toggle($0) },
                  onDragChanged: { card, _ in onDragChanged(card) },
                  onDragEnded: { card, point in onDragEnded(card, at: point, view) },
-                 namespace: cardNS)
+                 namespace: cardNS, hidden: animator.hidden)
             .padding(.horizontal, FSpace.s)
     }
 
