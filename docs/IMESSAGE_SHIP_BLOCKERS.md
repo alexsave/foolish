@@ -15,6 +15,26 @@ cited by `file:line`.*
 > team (`8aafbbf`, `19a5d16`). Chain B is now a *verification* chain, not a
 > build chain. Sections §4–§7 are rewritten to match; struck-through history is
 > not kept — see git for the prior revision.
+>
+> **This doc is now STALE on its single most load-bearing fact, as of
+> `e9b9120`/`db252b6` (2026-07-18, after revision 3/`98ffd08` below was
+> written).** §2's "one app record" premise no longer holds: `e9b9120` split
+> `FoolishNet` out of `FoolishKit` and reversed `IMESSAGE_GAME_DESIGN.md` §9.1's
+> bundled-extension decision. **There are now TWO separate App Store products**:
+> `Foolish` (`cards.foolish.app`, the full host app — links `FoolishNet`,
+> Supabase, accounts) and `FoolishMessagesApp` (`cards.foolish.msg`, a codeless,
+> `LSApplicationLaunchProhibited` container whose only job is carrying
+> `FoolishMessages.appex` as **its own independent, standalone App Store
+> record** — links `FoolishKit` only, zero accounts, zero network stack, zero
+> Chain-A blockers). This means Chain A and Chain B are no longer one
+> dependency graph gated on "the host app" — **the iMessage app can now reach
+> the store entirely independently of the host app's online/account/staging
+> work.** The full corrected submission package for the standalone record is
+> `docs/IMESSAGE_APP_STORE_SUBMISSION.md`. §2–§5 below (written for the
+> one-app-record model) are being superseded; treat `project.yml`'s own
+> comments (extensively documented at the `Foolish`/`FoolishMessagesApp`/
+> `FoolishMessages`/`FoolishNet` target definitions) as ground truth over this
+> doc's prose until it gets a full revision-4 pass.
 
 ---
 
