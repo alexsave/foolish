@@ -122,6 +122,13 @@ final class HarnessModel: ObservableObject {
     func seedDemoGame() async {
         let n = participants.count
         guard n >= 2 else { return }
+        // bug-2 crux: can a 0-move GENESIS (1 join, parent=zeros) be sealed? If so
+        // the creator-not-first-attacker can send the deal (MessageTableView.stageNow).
+        try? await MessageKernel.shared.newGame(seed: Data(repeating: 3, count: 32), players: 2)
+        let g0seal = ((try? await MessageKernel.shared.seal(
+            phase: 2, lastActorSeat: 0, gameId: 0xBEEF,
+            parent8: Data(repeating: 0, count: 8),
+            joins: [MessageJoin(seat: 0, name: "You")])) != nil)
         let seed = Data(repeating: 42, count: 32)   // fixed → reproducible screenshots
         let gid: UInt64 = 0xF001
         do {
@@ -139,7 +146,7 @@ final class HarnessModel: ObservableObject {
             }
             let la = await MessageKernel.shared.residentLegal(seat: actor)
             let v = await MessageKernel.shared.residentView(viewer: actor)
-            debugInfo = "n=\(n) def=\(v?.defender ?? -9) firstActor=\(actor) legal=[\(la.map { "\($0.type)" }.joined(separator: ","))]"
+            debugInfo = "g0seal=\(g0seal) n=\(n) def=\(v?.defender ?? -9) firstActor=\(actor) legal=[\(la.map { "\($0.type)" }.joined(separator: ","))]"
 
             transcript = [Msg(url: MessageEnvelope.link(payload: payload),
                               senderId: participants[0].id, senderName: participants[0].name)]

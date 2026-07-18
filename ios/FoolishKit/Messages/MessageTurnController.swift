@@ -89,6 +89,13 @@ public final class MessageTurnController: ObservableObject {
     }
 
     public var canSend: Bool { !pending.isEmpty }
+    /// Is there a sendable bubble right now? Either I've staged a move
+    /// (`canSend`), OR it's a fresh genesis where I have no legal move — i.e. I
+    /// dealt the game but I'm not the first attacker, so the ONLY way the game
+    /// progresses is to send the deal to whoever IS the first attacker. Without
+    /// this, a creator who doesn't hold the lowest trump is stuck on a board with
+    /// no move and no send (B4 bug: "Start game" left you unable to send).
+    public var canStage: Bool { canSend || (isGenesis && !iCanAct) }
     public var iCanAct: Bool { !legal.contains { $0.type == .wait } && !legal.isEmpty }
     public var isOver: Bool { view?.isOver ?? false }
     /// A genesis game with no move yet is not sealable (a 0-action opening is not

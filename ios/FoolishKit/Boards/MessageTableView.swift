@@ -48,6 +48,10 @@ public struct MessageTableView: View {
         }
         .task {
             if !controller.ready { await controller.begin() }
+            // Genesis where I can't act (I dealt but I'm not the first attacker):
+            // stage the deal immediately so I can send it on. When I CAN act,
+            // canStage is false until I play, so this is a no-op then.
+            await stageNow()
             #if DEBUG
             // FoolishHarness screenshotting only: auto-play the first legal move so
             // the auto-stage flow (move -> staged bubble) is visible without a tap.
@@ -106,19 +110,28 @@ public struct MessageTableView: View {
     @ViewBuilder
     private func statusLine(_ view: GameView) -> some View {
         if controller.isOver {
-            Text(view.gameOver >= 0
+            statusChip(view.gameOver >= 0
                 ? FStrings.t("ios.msg.isfool", ["name": name(view.gameOver)])
-                : FStrings.t("game_over"))
-                .font(.subheadline.weight(.semibold)).foregroundStyle(FColor.textPrimary)
+                : FStrings.t("game_over"), strong: true)
+        } else if controller.canStage {
+            // Something is sendable (a staged move, or a genesis deal to hand on).
+            statusChip(FStrings.t("ios.msg.staged"), strong: true)
         } else if !controller.iCanAct {
             // No legal move for me on this staged state — I'm watching (§5.1).
-            Text(waitingLine(view)).font(.footnote).foregroundStyle(FColor.textDim)
-        } else if controller.canSend {
-            Text(FStrings.t("ios.msg.staged")).font(.footnote.weight(.medium))
-                .foregroundStyle(FColor.textPrimary)
+            statusChip(waitingLine(view))
         } else {
-            Text(FStrings.t("ios.msg.yourmove")).font(.footnote).foregroundStyle(FColor.textDim)
+            statusChip(FStrings.t("ios.msg.yourmove"))
         }
+    }
+
+    /// The status text on a dark pill so it stays readable over the busy wool
+    /// table (B4 bug: "Waiting for the others" was near-invisible).
+    private func statusChip(_ text: String, strong: Bool = false) -> some View {
+        Text(text)
+            .font(strong ? .subheadline.weight(.semibold) : .footnote.weight(.medium))
+            .foregroundStyle(FColor.textPrimary)
+            .padding(.horizontal, 12).padding(.vertical, 5)
+            .background(Capsule().fill(.black.opacity(0.45)))
     }
 
     private func waitingLine(_ view: GameView) -> String {
@@ -173,7 +186,7 @@ public struct MessageTableView: View {
     /// bubble, so throwing in more cards just updates it. No-op until something is
     /// staged (a 0-action genesis body is unsealable).
     private func stageNow() async {
-        guard controller.canSend else { return }
+        guard controller.canStage else { return }
         if let payload = try? await controller.stagedPayload() { await onSend(payload) }
     }
 
