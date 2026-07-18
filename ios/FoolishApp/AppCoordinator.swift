@@ -5,6 +5,7 @@
 import SwiftUI
 import Foundation
 import FoolishKit
+import FoolishNet
 
 /// A chosen offline setup: which bot fills the opponent seats, and how many.
 public struct OfflineConfig: Equatable {

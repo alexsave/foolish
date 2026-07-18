@@ -4,6 +4,7 @@
 
 import SwiftUI
 import FoolishKit
+import FoolishNet
 
 @main
 struct FoolishApp: App {

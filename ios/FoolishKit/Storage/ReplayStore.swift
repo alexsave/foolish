@@ -1,7 +1,14 @@
 // ReplayStore.swift — the local saved-replays list (§16.C3). One JSON file in
 // Application Support; newest first. No database framework (do NOT add
-// SwiftData/CoreData — §16.C3). Lives in Net/ as it deals with shareable codes,
-// but it touches no network.
+// SwiftData/CoreData — §16.C3).
+//
+// The JSON here is a BOOKMARK INDEX, not game state, so it is deliberately
+// outside the packed-wire cutover (task #17): `code` is the packed v6 string
+// and the rest is list-UI metadata. Nothing here knows a byte layout, so there
+// is no second implementation to drift from the kernel.
+//
+// Storage/, not Net/: it deals in shareable codes but touches no network, and
+// the offline app + iMessage extension both need it.
 
 import Foundation
 

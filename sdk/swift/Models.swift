@@ -93,6 +93,19 @@ public struct PlayerView: Codable, Equatable, Identifiable, Sendable {
     public var id: Int { seat }
     public var seatStatus: SeatStatus { SeatStatus(rawValue: status) ?? .idle }
     public var isOut: Bool { seatStatus == .out }
+
+    // Explicit, because the implicit memberwise init is internal and FoolishNet
+    // is a separate module since the FoolishKit/FoolishNet split.
+    public init(seat: Int, name: String, status: Int, handCount: Int,
+                awaitingAttack: Bool, strategyKey: Int, hand: [Card]?) {
+        self.seat = seat
+        self.name = name
+        self.status = status
+        self.handCount = handCount
+        self.awaitingAttack = awaitingAttack
+        self.strategyKey = strategyKey
+        self.hand = hand
+    }
 }
 
 public struct GameView: Codable, Equatable, Sendable {
@@ -112,6 +125,29 @@ public struct GameView: Codable, Equatable, Sendable {
     public let battles: [BattleView]
     public let eliminationOrder: [Int]
     public let players: [PlayerView]
+
+    // Explicit, because the implicit memberwise init is internal and FoolishNet
+    // is a separate module since the FoolishKit/FoolishNet split.
+    public init(status: Int, numPlayers: Int, powerSuit: Int, deckCount: Int,
+                discardCount: Int, hasFlipped: Bool, firstAttacker: Int, defender: Int,
+                viewer: Int, goodMask: Int, gameOver: Int, flipped: Card?,
+                battles: [BattleView], eliminationOrder: [Int], players: [PlayerView]) {
+        self.status = status
+        self.numPlayers = numPlayers
+        self.powerSuit = powerSuit
+        self.deckCount = deckCount
+        self.discardCount = discardCount
+        self.hasFlipped = hasFlipped
+        self.firstAttacker = firstAttacker
+        self.defender = defender
+        self.viewer = viewer
+        self.goodMask = goodMask
+        self.gameOver = gameOver
+        self.flipped = flipped
+        self.battles = battles
+        self.eliminationOrder = eliminationOrder
+        self.players = players
+    }
 
     public var gameStatus: GameStatus { GameStatus(rawValue: status) ?? .waiting }
     public var isOver: Bool { gameOver >= 0 }

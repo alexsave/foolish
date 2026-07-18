@@ -22,6 +22,7 @@
 //   [q+4..]  masked state (view.c state_put layout) — handed to the kernel
 
 import Foundation
+import FoolishKit
 
 public struct DecodedGame: Sendable {
     public let view: GameView

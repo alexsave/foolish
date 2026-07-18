@@ -7,6 +7,7 @@
 // for online enable-states) — and asserts both agree with the live offline game.
 import XCTest
 @testable import FoolishKit
+import FoolishNet
 
 final class PackedViewTests: XCTestCase {
 

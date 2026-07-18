@@ -8,7 +8,7 @@
 	     unsigned simulator build; MessageGameStore degrades to "no games". -->
 	<key>com.apple.security.application-groups</key>
 	<array>
-		<string>group.cards.foolish</string>
+		<string>group.cards.foolish.msg</string>
 	</array>
 </dict>
 </plist>

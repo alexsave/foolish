@@ -2,6 +2,7 @@
 
 import XCTest
 @testable import FoolishKit
+import FoolishNet
 
 final class NetTests: XCTestCase {
 

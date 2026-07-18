@@ -5,6 +5,7 @@
 
 import SwiftUI
 import FoolishKit
+import FoolishNet
 
 struct AuthView: View {
     @EnvironmentObject private var auth: AuthService

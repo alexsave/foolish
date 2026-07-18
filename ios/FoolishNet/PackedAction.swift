@@ -11,6 +11,7 @@
 // the app; it is complete and unit-tested in isolation so D is a leaf addition.
 
 import Foundation
+import FoolishKit
 
 public enum PackedAction {
 

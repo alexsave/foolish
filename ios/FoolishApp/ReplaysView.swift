@@ -11,6 +11,7 @@
 
 import SwiftUI
 import FoolishKit
+import FoolishNet
 
 struct ReplaysView: View {
     @Environment(\.dismiss) private var dismiss

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Shared with FoolishMessages.appex. App Groups are TEAM-scoped, so this
+	     standalone record and the host app can share one group. The extension
+	     has no database and no background time, so the chain cache + pending
+	     ledger (§9.3) live here — MessageGameStore has no other durable store.
+
+	     Declared as `properties` in project.yml so `xcodegen generate`
+	     REGENERATES this file rather than blanking it, the way it blanks
+	     FoolishApp/Foolish.entitlements on every run. -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.cards.foolish.msg</string>
+	</array>
+</dict>
+</plist>

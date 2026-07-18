@@ -6,6 +6,7 @@
 
 import SwiftUI
 import FoolishKit
+import FoolishNet
 
 struct HomeView: View {
     let onStartOffline: (OfflineConfig) -> Void

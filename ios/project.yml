@@ -67,11 +67,18 @@ targets:
       - path: FoolishApp
     dependencies:
       - target: FoolishKit
-      # The iMessage extension ships INSIDE this app — one app record, never a
-      # standalone iMessage app (§9.1). Discoverability in the Messages drawer is
-      # poor (buried under "+" since iOS 17), so the HOST APP drives installs.
-      - target: FoolishMessages
-        embed: true
+      - target: FoolishNet
+      # NOTE: the iMessage extension is deliberately NOT embedded here anymore.
+      # It ships in its own app record (FoolishMessagesApp) so the offline
+      # iMessage game can reach the store without waiting on this app's Chain-A
+      # blockers (staging backend, auth rebuild, account deletion, online
+      # privacy labels) — none of which a no-account offline extension has.
+      #
+      # Re-embedding later is a normal app update, not a re-architecture
+      # (docs/IMESSAGE_SHIP_BLOCKERS.md §2; IMESSAGE_IMPLEMENTATION_HANDOFF.md
+      # §3.5), and cards.foolish.app.MessagesExtension stays registered for it.
+      # If it is re-added, DROP the standalone first or a user with both
+      # installed gets two Foolish entries in the Messages drawer.
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: cards.foolish.app
@@ -79,6 +86,51 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ENABLE_PREVIEWS: "YES"
         TARGETED_DEVICE_FAMILY: "1"     # iPhone only in v1 (§2 non-goals)
+
+  # ---- The STANDALONE iMessage app (its own App Store record) -------------
+  # A codeless container for FoolishMessages.appex — an extension cannot be
+  # distributed alone, so shipping the iMessage game without the host app needs
+  # this. No sources: a messages application never runs its own UI.
+  #
+  # The whole point is what it does NOT link: FoolishKit only, so no Supabase,
+  # no accounts, no backend. That is what keeps it clear of 5.1.1(v) account
+  # deletion, the auth rebuild, online privacy labels, and a staging backend.
+  FoolishMessagesApp:
+    type: application.messages
+    platform: iOS
+    entitlements:
+      # Its OWN group, deliberately NOT the host app's group.cards.foolish.
+      # These are two independently-versioned App Store records and nothing in
+      # the host app reads this store today (FoolishApp references
+      # MessageGameStore zero times), so sharing would buy nothing and couple
+      # two release cycles. If the host app ever needs to read Messages games,
+      # it can declare BOTH groups — the entitlement is an array — so this is
+      # reversible without a data migration.
+      path: FoolishMessagesApp/FoolishMessagesApp.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.cards.foolish.msg
+    sources:
+      - path: FoolishMessagesApp
+    dependencies:
+      - target: FoolishMessages
+        embed: true
+      # MUST be embedded here even though this container has no code: the .appex
+      # links @rpath/FoolishKit.framework, and @rpath for an extension resolves
+      # into its CONTAINING app's Frameworks/. Without this the bundle builds
+      # clean and then fails to load the extension at runtime.
+      # link:false because this container has no code to link AGAINST it — it
+      # only needs to CARRY the binary. (With link:true xcodegen generates no
+      # phase at all for a codeless target, and the framework silently goes
+      # missing from the bundle.)
+      - target: FoolishKit
+        embed: true
+        link: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: cards.foolish.msg
+        INFOPLIST_FILE: FoolishMessagesApp/Info.plist
+        TARGETED_DEVICE_FAMILY: "1"
 
   # ---- The iMessage extension (M1) ---------------------------------------
   # An iMessage game has no server: the whole game is the MSMessage URL, so this
@@ -90,20 +142,25 @@ targets:
       # Declared here as `properties` so `xcodegen generate` REGENERATES the
       # App Group into the file instead of blanking it (the host app's
       # entitlements need a git-checkout after every run; this one does not).
-      # The shared group is where the seat cache + preferred chain live (§9.3):
-      # the extension has no database and no background time, so its only durable
-      # store is this group, and the host app reads the same games.
+      # The group is where the seat cache + preferred chain live (§9.3): the
+      # extension has no database and no background time, so its only durable
+      # store is this group. It must match FoolishAppGroup in this target's
+      # Info.plist, which is what MessageGameStore reads at runtime.
       path: FoolishMessages/FoolishMessages.entitlements
       properties:
         com.apple.security.application-groups:
-          - group.cards.foolish
+          - group.cards.foolish.msg
     sources:
       - path: FoolishMessages
     dependencies:
       - target: FoolishKit
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: cards.foolish.app.MessagesExtension
+        # Prefixed by its CONTAINER (FoolishMessagesApp), not the host app — an
+        # extension's bundle id must extend the app that embeds it. The old
+        # cards.foolish.app.MessagesExtension id stays registered in the portal
+        # for the day the host app embeds a copy again.
+        PRODUCT_BUNDLE_IDENTIFIER: cards.foolish.msg.MessagesExtension
         INFOPLIST_FILE: FoolishMessages/Info.plist
         # The Messages drawer shows a WIDE (4:3) icon, a different asset from the
         # host app's square AppIcon — a Messages extension without it is rejected
@@ -166,7 +223,10 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: cards.foolish.harnesstests
         GENERATE_INFOPLIST_FILE: "YES"
 
-  # ---- Shared framework: Engine + Net + DesignSystem + Boards + Entitlements
+  # ---- Shared framework: Engine + DesignSystem + Boards + Messages + Entitlements
+  # Extension-safe by construction: no network stack, no Supabase, no app-only
+  # API. Both shipping products link this — it is the shared UI + engine layer.
+  # Anything that talks to a server belongs in FoolishNet, not here.
   FoolishKit:
     type: framework
     platform: iOS
@@ -183,8 +243,8 @@ targets:
       # The C engine, built by `make ios-lib` in ../c. Static (embed:false).
       - framework: vendor/Foolish.xcframework
         embed: false
-      # Online play (§16.D): auth, edge functions, realtime.
-      - package: Supabase
+      # NOTE: no Supabase here. The network stack lives in FoolishNet, which the
+      # iMessage extension never links — see that target's comment.
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: cards.foolish.kit
@@ -206,6 +266,34 @@ targets:
         # FoolishKitCore/Net split; that is a refactor, not this flag.)
         APPLICATION_EXTENSION_API_ONLY: "YES"
 
+  # ---- Online-only framework: Supabase, auth, edge functions, realtime ----
+  # Split out of FoolishKit so the iMessage extension stops linking a network
+  # stack it never uses (§17.5's memory ceiling). The extension's memory limit
+  # is undocumented by Apple and determined experimentally, so the cheapest
+  # insurance is not carrying the SDK at all.
+  #
+  # This is also what lets the iMessage app ship as its own product: the
+  # standalone target links FoolishKit only, so it inherits no account system,
+  # no backend dependency, and none of the host app's compliance surface.
+  #
+  # APPLICATION_EXTENSION_API_ONLY is deliberately OFF here (the default): this
+  # framework is app-only, and leaving the flag off is what keeps app-only API
+  # from creeping back into FoolishKit, where it WOULD break the extension.
+  FoolishNet:
+    type: framework
+    platform: iOS
+    sources:
+      - path: FoolishNet
+    dependencies:
+      - target: FoolishKit
+      # Online play (§16.D): auth, edge functions, realtime.
+      - package: Supabase
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: cards.foolish.net
+        DEFINES_MODULE: "YES"
+        GENERATE_INFOPLIST_FILE: "YES"
+
   # ---- Unit + snapshot + golden tests ------------------------------------
   FoolishTests:
     type: bundle.unit-test
@@ -217,6 +305,7 @@ targets:
     dependencies:
       - target: Foolish
       - target: FoolishKit
+      - target: FoolishNet
       - package: SnapshotTesting
     settings:
       base:
@@ -260,6 +349,17 @@ schemes:
       config: Debug
       targets:
         - FoolishTests
+  # The standalone iMessage app. Run this scheme to launch Messages in the
+  # simulator with the extension installed (docs/IMESSAGE_MAC_RUNBOOK.md Part 3).
+  FoolishMessagesApp:
+    build:
+      targets:
+        FoolishMessagesApp: all
+        FoolishMessages: all
+        FoolishKit: all
+    run:
+      config: Debug
+
   # Runs the headless harness game-loop tests (no simulator UI needed).
   FoolishHarness:
     build:

@@ -11,6 +11,7 @@
 
 import Foundation
 import Supabase
+import FoolishKit
 
 public final class Backend {
     public static let shared = Backend()

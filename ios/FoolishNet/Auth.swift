@@ -10,6 +10,7 @@
 
 import Foundation
 import CryptoKit
+import FoolishKit
 
 public enum Auth {
     /// The account email domain (web `WEBSITE_DOMAIN`).

@@ -29,6 +29,12 @@
 	     bespoke encryption), so it is exempt like the host (Info.plist:31). -->
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<!-- The App Group this extension's MessageGameStore uses. Read at runtime by
+	     FoolishKit rather than hardcoded there, because FoolishKit is shared with
+	     the host app, which owns a DIFFERENT group (group.cards.foolish). Must
+	     match FoolishMessages.entitlements and the portal's App Group. -->
+	<key>FoolishAppGroup</key>
+	<string>group.cards.foolish.msg</string>
 	<key>NSExtension</key>
 	<dict>
 		<!-- A Messages extension is declared by its point identifier alone; the

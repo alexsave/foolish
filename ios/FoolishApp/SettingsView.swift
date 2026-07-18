@@ -6,6 +6,7 @@
 
 import SwiftUI
 import FoolishKit
+import FoolishNet
 
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss

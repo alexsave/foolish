@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The STANDALONE iMessage app: a codeless container whose only job is to
+	     carry FoolishMessages.appex into the Messages app. It has no Home Screen
+	     presence and no source files (a messages application never runs its own
+	     UI) — everything the user sees comes from the extension.
+
+	     Why this exists at all: an app extension cannot be distributed on its
+	     own, so shipping the iMessage game without the host app requires a
+	     container. This one links FoolishKit only, so it inherits no accounts,
+	     no backend, and none of the host app's compliance surface. -->
+	<key>CFBundleDisplayName</key>
+	<string>Foolish</string>
+	<key>CFBundleName</key>
+	<string>Foolish</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<!-- Its own binary, so its own export-compliance declaration (the extension
+	     carries a matching one). Standard TLS/crypto only. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<!-- Marks the bundle as a Messages-only application: no Home Screen icon,
+	     discoverable in the Messages app drawer. -->
+	<key>LSApplicationLaunchProhibited</key>
+	<true/>
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>armv7</string>
+	</array>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+	</array>
+</dict>
+</plist>

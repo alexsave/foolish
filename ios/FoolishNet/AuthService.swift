@@ -11,6 +11,7 @@
 import Foundation
 import Combine   // ObservableObject / @Published
 import Supabase
+import FoolishKit
 
 @MainActor
 public final class AuthService: ObservableObject {

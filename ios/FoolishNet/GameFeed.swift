@@ -16,6 +16,7 @@
 
 import Foundation
 import Supabase
+import FoolishKit
 
 @MainActor
 public final class GameFeed {

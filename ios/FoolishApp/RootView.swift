@@ -4,6 +4,7 @@
 
 import SwiftUI
 import FoolishKit
+import FoolishNet
 
 struct RootView: View {
     @StateObject private var coordinator = AppCoordinator()

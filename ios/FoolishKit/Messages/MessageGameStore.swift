@@ -56,13 +56,25 @@ public struct PendingAction: Codable, Equatable, Sendable {
 }
 
 public final class MessageGameStore {
-    /// The shared group both the app (drawer) and the extension read/write. A
-    /// `var`, not a `let`, for one reason only: the FoolishHarness test app
-    /// rebinds it to a per-fake-participant suite when you switch players, so each
-    /// of the 2-8 pretend people gets its OWN seat cache (which is what a real
-    /// device has). The shipping app and extension never touch this — they run on
-    /// the real App Group.
-    public static var shared = MessageGameStore(suiteName: "group.cards.foolish")
+    /// The App Group this target owns. A `var`, not a `let`, for one reason only:
+    /// the FoolishHarness test app rebinds it to a per-fake-participant suite when
+    /// you switch players, so each of the 2-8 pretend people gets its OWN seat
+    /// cache (which is what a real device has). The shipping extension never
+    /// touches this — it runs on the group named in its own Info.plist.
+    public static var shared = MessageGameStore(suiteName: defaultSuiteName)
+
+    /// Read from the RUNNING target's Info.plist rather than hardcoded, because
+    /// FoolishKit is linked by more than one product and they do not share a
+    /// group: the standalone iMessage app owns `group.cards.foolish.msg`, while
+    /// the host app's group is `group.cards.foolish`. A literal here would bake
+    /// one product's group into a framework the other product also loads.
+    ///
+    /// `Bundle.main` inside an app extension is the .appex, so this resolves to
+    /// FoolishMessages/Info.plist when the extension runs.
+    public static var defaultSuiteName: String {
+        (Bundle.main.object(forInfoDictionaryKey: "FoolishAppGroup") as? String)
+            ?? "group.cards.foolish.msg"
+    }
 
     private let defaults: UserDefaults?
     private let key = "fmsg.games.v1"
