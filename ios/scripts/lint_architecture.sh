@@ -33,6 +33,39 @@ if [ -d FoolishMessages ]; then
   fi
 fi
 
+echo "[lint] the extension's frameworks carry no network stack…"
+# Source greps above catch `import FoolishNet`; this catches the LINK, which is
+# what actually decides whether the appex binary carries the Supabase SDK. The
+# whole standalone-iMessage story depends on it (§17.5 memory ceiling, and a
+# no-account extension staying clear of the host app's compliance surface), and
+# a stray dependency line in project.yml would undo it silently — nothing on
+# Linux CI compiles Swift, so this spec check is the only guard.
+if [ -f project.yml ]; then
+  python3 - <<'PY' || fail=1
+import re, sys
+spec = open('project.yml').read()
+body = spec.split('\ntargets:', 1)[1] if '\ntargets:' in spec else ''
+# Top-level target blocks are indented exactly two spaces.
+blocks = dict(re.findall(r'\n  ([A-Za-z]\w*):\n(.*?)(?=\n  [A-Za-z]\w*:\n|\Z)', body, re.S))
+bad = []
+for name in ('FoolishKit', 'FoolishMessages', 'FoolishMessagesApp'):
+    b = blocks.get(name)
+    if b is None:
+        bad.append(f'{name}: target missing from project.yml')
+        continue
+    if 'package: Supabase' in b:
+        bad.append(f'{name}: links the Supabase package')
+    if 'target: FoolishNet' in b:
+        bad.append(f'{name}: depends on FoolishNet')
+for line in bad:
+    print(f'  {line}')
+sys.exit(1 if bad else 0)
+PY
+  if [ "${fail:-0}" -ne 0 ]; then
+    note "the iMessage extension must not link a network stack (see above)"
+  fi
+fi
+
 echo "[lint] the C bridge stays inside the Swift SDK (sdk/swift/, §7.1)…"
 # CFoolish (the fio_* kernel API) may be imported ONLY inside the Swift SDK —
 # sdk/swift/ (A10). Never in the app layers: FoolishKit/{DesignSystem,Net,
