@@ -24,6 +24,9 @@ public struct MessagesRootView: View {
     let style: MsgPresentation
     let senderIsLocal: Bool
     let startNewGame: Bool
+    /// Bumped by the host each time the human taps New game, so an explicit New
+    /// game resets the session while a mere compact<->expanded toggle does not.
+    let newGameToken: Int
     let chatIsDM: Bool
     let chatPlayers: Int
     let requestExpand: () -> Void
@@ -31,33 +34,32 @@ public struct MessagesRootView: View {
     let onSend: (Data, Int) async -> Void
 
     public init(payloadURL: URL?, style: MsgPresentation, senderIsLocal: Bool,
-                startNewGame: Bool, chatIsDM: Bool, chatPlayers: Int,
+                startNewGame: Bool, newGameToken: Int = 0, chatIsDM: Bool, chatPlayers: Int,
                 requestExpand: @escaping () -> Void, onNewGame: @escaping () -> Void,
                 onSend: @escaping (Data, Int) async -> Void) {
         self.payloadURL = payloadURL; self.style = style; self.senderIsLocal = senderIsLocal
-        self.startNewGame = startNewGame; self.chatIsDM = chatIsDM; self.chatPlayers = chatPlayers
+        self.startNewGame = startNewGame; self.newGameToken = newGameToken
+        self.chatIsDM = chatIsDM; self.chatPlayers = chatPlayers
         self.requestExpand = requestExpand; self.onNewGame = onNewGame; self.onSend = onSend
     }
 
     public var body: some View {
-        content
+        // ONE surface for both presentation styles — NOT a compact/expanded
+        // switch. The switch made SwiftUI destroy the expanded @State (the whole
+        // in-progress game) whenever you dragged to the compact drawer, so the
+        // two sizes looked like two separate games (B4 bug). GameSurface is always
+        // the root's child, so its game state survives a style change; it just
+        // renders the drawer in compact and the board in expanded.
+        GameSurface(payloadURL: payloadURL, style: style, senderIsLocal: senderIsLocal,
+                    startNewGame: startNewGame, newGameToken: newGameToken,
+                    chatIsDM: chatIsDM, chatPlayers: chatPlayers,
+                    requestExpand: requestExpand, onNewGame: onNewGame, onSend: onSend)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(WoolBackground())          // the table surface, not system white
     }
-
-    @ViewBuilder private var content: some View {
-        switch style {
-        case .compact:
-            CompactView(hasGame: payloadURL != nil, requestExpand: requestExpand, onNewGame: onNewGame)
-        case .expanded:
-            ExpandedView(payloadURL: payloadURL, senderIsLocal: senderIsLocal,
-                         startNewGame: startNewGame, chatIsDM: chatIsDM, chatPlayers: chatPlayers,
-                         onSend: onSend)
-        }
-    }
 }
 
-private struct CompactView: View {
+private struct CompactDrawer: View {
     let hasGame: Bool
     let requestExpand: () -> Void
     let onNewGame: () -> Void
@@ -78,12 +80,16 @@ private struct CompactView: View {
     }
 }
 
-private struct ExpandedView: View {
+private struct GameSurface: View {
     let payloadURL: URL?
+    let style: MsgPresentation
     let senderIsLocal: Bool
     let startNewGame: Bool
+    let newGameToken: Int
     let chatIsDM: Bool
     let chatPlayers: Int
+    let requestExpand: () -> Void
+    let onNewGame: () -> Void
     let onSend: (Data, Int) async -> Void
 
     /// A tapped bubble that LOST Rule P to the chain we already trust (§7.6): the
@@ -100,36 +106,64 @@ private struct ExpandedView: View {
     @State private var toast: String?
     @State private var damaged = false
 
+    /// A style toggle keeps this key stable, so the session is NOT reloaded and
+    /// the in-progress game survives. A new bubble (payloadURL) or a New game tap
+    /// (newGameToken) changes it, which resets and reloads.
+    private var loadKey: String { "\(newGameToken)|\(startNewGame)|\(payloadURL?.absoluteString ?? "")" }
+
+    /// True whenever there is a live session — a dealt board, a lobby, or the
+    /// setup screen — even before anything has been sent. Drives the compact
+    /// drawer's "Open" (vs "New game").
+    private var inProgress: Bool { controller != nil || lobby != nil || showSetup }
+
     var body: some View {
         Group {
-            if let controller {
-                MessageTableView(controller: controller,
-                                 onSend: { payload in await onSend(payload, controller.mySeat) })
-            } else if let lob = lobby {
-                LobbyView(env: lob.env, mySeat: lobbySeat(lob.env),
-                          nickname: MessageGameStore.shared.nickname,
-                          onSend: { Task { await onSend(lob.payload, lobbySeat(lob.env) ?? 0) } },
-                          onJoin: { name in Task { await joinLobby(lob, nickname: name) } })
-            } else if showSetup {
-                NewGameSetup(nickname: MessageGameStore.shared.nickname,
-                             isDM: chatIsDM, chatPlayers: chatPlayers) { name, players in
-                    Task { await start(nickname: name, players: players) }
-                }
-            } else if let s = stale {
-                StaleBanner(onNewest: { Task { await openNewest(s) } },
-                            onAnyway: { Task { await openAnyway(s) } })
-            } else if let a = ambiguous {
-                SeatPicker(nPlayers: a.env.nPlayers, joins: a.env.joins) { seat in
-                    Task { await choose(seat: seat, from: a) }
-                }
-            } else if damaged {
-                DamagedView()
+            if style == .compact {
+                CompactDrawer(hasGame: payloadURL != nil || inProgress,
+                              requestExpand: requestExpand, onNewGame: onNewGame)
             } else {
-                ProgressView().task { await load() }
+                expandedContent
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .fToast($toast)
+        .task(id: loadKey) { await reloadForInput() }
+    }
+
+    @ViewBuilder private var expandedContent: some View {
+        if let controller {
+            MessageTableView(controller: controller,
+                             onSend: { payload in await onSend(payload, controller.mySeat) })
+        } else if let lob = lobby {
+            LobbyView(env: lob.env, mySeat: lobbySeat(lob.env),
+                      nickname: MessageGameStore.shared.nickname,
+                      onSend: { Task { await onSend(lob.payload, lobbySeat(lob.env) ?? 0) } },
+                      onJoin: { name in Task { await joinLobby(lob, nickname: name) } })
+        } else if showSetup {
+            NewGameSetup(nickname: MessageGameStore.shared.nickname,
+                         isDM: chatIsDM, chatPlayers: chatPlayers) { name, players in
+                Task { await start(nickname: name, players: players) }
+            }
+        } else if let s = stale {
+            StaleBanner(onNewest: { Task { await openNewest(s) } },
+                        onAnyway: { Task { await openAnyway(s) } })
+        } else if let a = ambiguous {
+            SeatPicker(nPlayers: a.env.nPlayers, joins: a.env.joins) { seat in
+                Task { await choose(seat: seat, from: a) }
+            }
+        } else if damaged {
+            DamagedView()
+        } else {
+            ProgressView()
+        }
+    }
+
+    /// Reset + (re)load for a NEW input. A compact<->expanded toggle leaves
+    /// loadKey unchanged, so `.task(id:)` does not fire and the game persists.
+    private func reloadForInput() async {
+        controller = nil; lobby = nil; showSetup = false
+        stale = nil; ambiguous = nil; damaged = false
+        await load()
     }
 
     private func load() async {

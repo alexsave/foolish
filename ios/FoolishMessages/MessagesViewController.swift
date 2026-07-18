@@ -22,6 +22,10 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// Set when the user taps New game so the next expanded present deals a
     /// genesis game rather than routing a selected bubble.
     private var startingNewGame = false
+    /// Incremented on each New game tap. Threaded into MessagesRootView so an
+    /// explicit New game resets the session, while a compact<->expanded style
+    /// toggle (same token) preserves the in-progress game.
+    private var newGameToken = 0
     /// The payload we last staged (via `insert`), awaiting the human's send/cancel
     /// (§7.6). Committed to the cache on didStartSending, dropped on cancel.
     private var pendingStage: (payload: Data, mySeat: Int)?
@@ -85,12 +89,14 @@ final class MessagesViewController: MSMessagesAppViewController {
             style: style == .compact ? .compact : .expanded,   // map onto FoolishKit's enum
             senderIsLocal: senderIsLocal,
             startNewGame: startingNewGame,
+            newGameToken: newGameToken,
             chatIsDM: isDM,
             chatPlayers: participants,
             requestExpand: { [weak self] in self?.requestPresentationStyle(.expanded) },
             onNewGame: { [weak self] in
                 guard let self else { return }
                 self.startingNewGame = true
+                self.newGameToken += 1
                 // If already expanded, requesting .expanded fires no transition, so
                 // present now; otherwise expand and let willTransition present with
                 // startNewGame set.
