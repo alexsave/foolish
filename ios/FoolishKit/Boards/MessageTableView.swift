@@ -33,6 +33,10 @@ public struct MessageTableView: View {
     /// The most recent NON-empty battle rects, so a bout-end flight still has the
     /// source positions after the table cleared (preference vs onChange can race).
     @State private var lastBattleFrames: [Int: CGRect] = [:]
+    @State private var deckFrame: CGRect = .zero
+    @State private var handCardFrames: [String: CGRect] = [:]
+    /// Cards drawn this bout end, awaiting their new hand-slot rects to fly in.
+    @State private var pendingDraws: [Card] = []
 
     public init(controller: MessageTurnController, onSend: @escaping (Data) async -> Void) {
         self.controller = controller
@@ -81,7 +85,10 @@ public struct MessageTableView: View {
         }
         .onPreferenceChange(HandFrameKey.self) { handFrame = $0 }
         .onPreferenceChange(DiscardFrameKey.self) { discardFrame = $0 }
+        .onPreferenceChange(DeckFrameKey.self) { deckFrame = $0 }
+        .onPreferenceChange(HandCardFramesKey.self) { handCardFrames = $0; tryDrawFlight() }
         .onChange(of: controller.view) { flyBoutEndToDiscard(to: $0) }
+        .onChange(of: animator.isAnimating) { _ in tryDrawFlight() }
         .fToast($toast, accent: true)
         .onChange(of: controller.rejectTick) { _ in
             Haptics.fire(.reject); toast = FStrings.t("ios.reject")
@@ -172,7 +179,26 @@ public struct MessageTableView: View {
                                       from: rect.offsetBy(dx: 8, dy: 6), to: discardFrame))
             }
         }
+        // Draws: the cards this seat gained on the bout close fly deck→hand AFTER
+        // the discard (web sequence: cards_to_trash then refill). Held until their
+        // new hand slots render (tryDrawFlight fires when the rects + discard land).
+        let oldHand = Set((old.me?.hand ?? []).map(\.identity))
+        pendingDraws = (new.me?.hand ?? []).filter { !oldHand.contains($0.identity) }
+
         guard !flights.isEmpty else { return }
+        Task { await animator.play([flights]) }
+    }
+
+    /// Fly this bout's drawn cards from the deck to their new hand slots — once the
+    /// discard flight is done and the new slots have measured rects.
+    private func tryDrawFlight() {
+        guard !pendingDraws.isEmpty, !animator.isAnimating, deckFrame != .zero,
+              pendingDraws.allSatisfy({ handCardFrames[$0.identity] != nil }) else { return }
+        let flights = pendingDraws.compactMap { c -> Flight? in
+            guard let to = handCardFrames[c.identity] else { return nil }
+            return Flight(id: "draw-\(c.identity)", card: c, from: deckFrame, to: to)
+        }
+        pendingDraws = []
         Task { await animator.play([flights]) }
     }
 

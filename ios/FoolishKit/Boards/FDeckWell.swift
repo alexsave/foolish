@@ -46,6 +46,10 @@ public struct FDeckWell: View {
             }
         }
         .frame(width: 92, height: 108)
+        // Publish the deck's rect so draw flights (deck→hand) have a source.
+        .background(GeometryReader { g in
+            Color.clear.preference(key: DeckFrameKey.self, value: g.frame(in: .named(boardSpace)))
+        })
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(deckCount) cards left in the deck" +
             (trumpSuit != nil ? ", trump \(["spades","hearts","clubs","diamonds"][trumpSuit!.rawValue])" : ""))

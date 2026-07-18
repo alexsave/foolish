@@ -57,6 +57,10 @@ public struct FHandFan: View {
                           trump: trumpSuit != nil && card.suit == trumpSuit,
                           size: CGSize(width: cardW, height: cardH))
                         .modifier(FlightID(id: card.identity, namespace: namespace))
+                        .background(GeometryReader { g in
+                            Color.clear.preference(key: HandCardFramesKey.self,
+                                                   value: [card.identity: g.frame(in: .named(boardSpace))])
+                        })
                         .contentShape(Rectangle())
                         .offset(dragId == card.identity ? dragOffset : .zero)
                         .zIndex(dragId == card.identity ? 1000 : 0)
