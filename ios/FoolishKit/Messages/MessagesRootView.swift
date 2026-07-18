@@ -71,9 +71,6 @@ private struct GameSurface: View {
     let onNewGame: () -> Void
     let onSend: (Data, Int) async -> Void
 
-    /// A tapped bubble that LOST Rule P to the chain we already trust (§7.6): the
-    /// human opened an older, collapsed bubble. We do not silently adopt it.
-    private struct Stale { let incoming: Data; let env: MessageEnvelope; let preferred: Data }
     /// A phase-0/handoff lobby the extension shows instead of the board (§5.2).
     private struct Lobby { let env: MessageEnvelope; let payload: Data }
     /// A resolved seat waiting on the human's name (§B3). The 2-player receiver
@@ -85,7 +82,6 @@ private struct GameSurface: View {
 
     @State private var controller: MessageTurnController?
     @State private var ambiguous: (env: MessageEnvelope, payload: Data)?
-    @State private var stale: Stale?
     @State private var lobby: Lobby?
     @State private var nameGate: NameGate?
     @State private var showSetup = false
@@ -128,9 +124,6 @@ private struct GameSurface: View {
                          isDM: chatIsDM, chatPlayers: chatPlayers) { name, players in
                 Task { await start(nickname: name, players: players) }
             }
-        } else if let s = stale {
-            StaleBanner(onNewest: { Task { await openNewest(s) } },
-                        onAnyway: { Task { await openAnyway(s) } })
         } else if let a = ambiguous {
             SeatPicker(nPlayers: a.env.nPlayers, joins: a.env.joins) { seat in
                 Task { await choose(seat: seat, from: a) }
@@ -146,7 +139,7 @@ private struct GameSurface: View {
     /// loadKey unchanged, so `.task(id:)` does not fire and the game persists.
     private func reloadForInput() async {
         controller = nil; lobby = nil; nameGate = nil; showSetup = false
-        stale = nil; ambiguous = nil; damaged = false
+        ambiguous = nil; damaged = false
         await load()
     }
 
@@ -168,13 +161,17 @@ private struct GameSurface: View {
                 return
             }
 
-            // Rule P (§7.2): compare the tapped chain to the preferred one we have
-            // cached. If ours strictly wins, this bubble is stale - banner, don't
-            // adopt. Delivery order is never trusted; only the bytes decide.
+            // Rule P (§7.2): if the chain we already hold strictly out-ranks the
+            // tapped bubble (a later state that arrived out of order, or a newer
+            // chain we committed), just open OURS — the canonically-latest state.
+            // One game per chat, so there is no "this game has moved on / open the
+            // latest / view anyway" prompt: we silently adopt whichever chain wins
+            // Rule P. Delivery order is never trusted; only the bytes decide.
             if let row = MessageGameStore.shared.record(gameId: env.gameId),
                let preferred = Base32.decode(row.payloadBase32), preferred != incoming,
-               ((try? await MessageKernel.shared.preferred(preferred, incoming)) ?? 0) < 0 {
-                stale = Stale(incoming: incoming, env: env, preferred: preferred)
+               ((try? await MessageKernel.shared.preferred(preferred, incoming)) ?? 0) < 0,
+               let penv = try? await MessageEnvelope.decode(payload: preferred, viewer: -1) {
+                await adopt(winner: preferred, env: penv)
                 return
             }
 
@@ -352,29 +349,6 @@ private struct GameSurface: View {
         return nil
     }
 
-    /// §7.6 "open the newest": adopt the chain we prefer instead of the stale one.
-    private func openNewest(_ s: Stale) async {
-        guard let env = try? await MessageEnvelope.decode(payload: s.preferred, viewer: -1) else {
-            damaged = true; return
-        }
-        stale = nil
-        await adopt(winner: s.preferred, env: env)
-    }
-
-    /// §7.6 "show that state anyway": read-only-ish view of the stale chain. We do
-    /// NOT rebase onto it or let it clobber the preferred cache — it lost Rule P.
-    private func openAnyway(_ s: Stale) async {
-        _ = try? await MessageKernel.shared.decode(payload: s.incoming, viewer: -1)
-        let seat = SeatIdentity.resolve(cachedSeat: MessageGameStore.shared.seat(gameId: s.env.gameId),
-                                        senderIsLocal: senderIsLocal,
-                                        nPlayers: s.env.nPlayers, lastActorSeat: s.env.lastActorSeat)
-        stale = nil
-        if case .known(let seat) = seat {
-            controller = MessageTurnController(parentPayload: s.incoming, parent: s.env, mySeat: seat)
-        } else {
-            ambiguous = (s.env, s.incoming)
-        }
-    }
 
     /// §6.3 pick resolved: remember the seat, rebase, then play.
     private func choose(seat: Int, from a: (env: MessageEnvelope, payload: Data)) async {
@@ -581,25 +555,6 @@ public enum MessageDebugFlags {
 }
 #endif
 
-/// §7.6: the human tapped an older, collapsed bubble. The game has moved on; we
-/// offer the newest state we know, and — since a tap should never be a dead end —
-/// a way to look at the tapped state anyway (read-only in spirit; a move made on
-/// it would just lose Rule P).
-private struct StaleBanner: View {
-    let onNewest: () -> Void
-    let onAnyway: () -> Void
-
-    var body: some View {
-        VStack(spacing: 12) {
-            Text(FStrings.t("ios.msg.moved")).font(.headline).multilineTextAlignment(.center)
-                .foregroundStyle(FColor.textPrimary)
-            FButton(FStrings.t("ios.msg.opennewest"), kind: .wood, action: onNewest)
-            FButton(FStrings.t("ios.msg.viewanyway"), kind: .secondary, action: onAnyway)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding()
-    }
-}
 
 private struct DamagedView: View {
     var body: some View {

@@ -83,6 +83,13 @@ final class HarnessModel: ObservableObject {
     /// bubble as them (senderIsLocal recomputes, so they are the receiver).
     func become(_ idx: Int) {
         guard idx >= 0, idx < participants.count else { return }
+        // Discard the current player's half-staged move — both the payload AND the
+        // pending ledger. Clearing only `staged` left the ledger behind, so a later
+        // switch back replayed the stale move (Rule R) onto whatever had been
+        // delivered meanwhile, forking the chain a round ahead → a bogus "this game
+        // has moved on". A real device never switches identity, so this only bites
+        // the harness; clear it before rebinding to the next player's suite.
+        MessageGameStore.shared.clearAllPending()
         localIndex = idx
         // Route to New game when this player has no bubble to open yet (switching
         // before anyone has delivered). Only a real, delivered bubble reads as a
