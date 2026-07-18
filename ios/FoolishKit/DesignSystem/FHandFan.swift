@@ -19,11 +19,15 @@ public struct FHandFan: View {
     /// live drop-target highlight). Ended: resolve + play the drop.
     public let onDragChanged: (Card, CGPoint) -> Void
     public let onDragEnded: (Card, CGPoint) -> Void
+    /// Shared card-flight namespace: a card keeps its identity when it moves from
+    /// the hand to the table, so matchedGeometry animates the flight.
+    public let namespace: Namespace.ID?
 
     public init(cards: [Card], trumpSuit: Suit?, disabled: Set<String> = [],
                 selection: Binding<Set<String>>, onTap: @escaping (Card) -> Void,
                 onDragChanged: @escaping (Card, CGPoint) -> Void = { _, _ in },
-                onDragEnded: @escaping (Card, CGPoint) -> Void = { _, _ in }) {
+                onDragEnded: @escaping (Card, CGPoint) -> Void = { _, _ in },
+                namespace: Namespace.ID? = nil) {
         self.cards = cards
         self.trumpSuit = trumpSuit
         self.disabled = disabled
@@ -31,6 +35,7 @@ public struct FHandFan: View {
         self.onTap = onTap
         self.onDragChanged = onDragChanged
         self.onDragEnded = onDragEnded
+        self.namespace = namespace
     }
 
     @State private var dragId: String?
@@ -51,6 +56,7 @@ public struct FHandFan: View {
                           disabled: disabled.contains(card.identity),
                           trump: trumpSuit != nil && card.suit == trumpSuit,
                           size: CGSize(width: cardW, height: cardH))
+                        .modifier(FlightID(id: card.identity, namespace: namespace))
                         .contentShape(Rectangle())
                         .offset(dragId == card.identity ? dragOffset : .zero)
                         .zIndex(dragId == card.identity ? 1000 : 0)

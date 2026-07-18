@@ -164,9 +164,10 @@ final class MessagesViewController: MSMessagesAppViewController {
         // no send control of its own — Send lives in the compose area — so once a
         // move is staged, collapse to compact instead of making them drag down. To
         // add more cards (throw-ins, a second cover) they just re-open the game;
-        // the staged chain survives the style change (GameSurface @State). Hold a
-        // beat first so the played card lands on the table visibly, not a flicker.
-        try? await Task.sleep(nanoseconds: 500_000_000)
+        // the staged chain survives the style change (GameSurface @State). Hold so
+        // the move's animation plays out (card flight; a bout-ending good adds a
+        // discard + draws), then a ~500ms rest so the result reads — not a flicker.
+        try? await Task.sleep(nanoseconds: 900_000_000)
         requestPresentationStyle(.compact)
     }
 

@@ -22,6 +22,9 @@ public struct MessageTableView: View {
     @State private var battleFrames: [Int: CGRect] = [:]
     @State private var handFrame: CGRect = .zero
     @State private var dragCard: Card?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Shared card-flight namespace: a card keeps its identity moving hand→table.
+    @Namespace private var cardNS
 
     public init(controller: MessageTurnController, onSend: @escaping (Data) async -> Void) {
         self.controller = controller
@@ -61,6 +64,7 @@ public struct MessageTableView: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .animation(FMotion.cardMotion(reduceMotion: reduceMotion), value: controller.view)
         .coordinateSpace(name: boardSpace)
         .onPreferenceChange(BattleFramesKey.self) { battleFrames = $0 }
         .onPreferenceChange(HandFrameKey.self) { handFrame = $0 }
@@ -116,7 +120,8 @@ public struct MessageTableView: View {
             } else {
                 FBattleGrid(battles: view.battles, trumpSuit: view.trumpSuit,
                             coverable: highlightBattles(view),
-                            onTapBattle: { idx in tapBattle(idx, view) })
+                            onTapBattle: { idx in tapBattle(idx, view) },
+                            namespace: cardNS)
             }
         }
         .frame(maxWidth: .infinity)
@@ -208,7 +213,8 @@ public struct MessageTableView: View {
         FHandFan(cards: view.me?.hand ?? [], trumpSuit: view.trumpSuit,
                  selection: $selection, onTap: { toggle($0) },
                  onDragChanged: { card, _ in onDragChanged(card) },
-                 onDragEnded: { card, point in onDragEnded(card, at: point, view) })
+                 onDragEnded: { card, point in onDragEnded(card, at: point, view) },
+                 namespace: cardNS)
             .padding(.horizontal, FSpace.s)
     }
 

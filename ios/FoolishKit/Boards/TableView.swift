@@ -19,6 +19,8 @@ public struct TableView<Session: GameSession>: View {
     @State private var battleFrames: [Int: CGRect] = [:]
     @State private var handFrame: CGRect = .zero
     @State private var dragCard: Card?
+    /// Shared card-flight namespace: a card keeps its identity moving hand→table.
+    @Namespace private var cardNS
 
     /// Called when the local player asks to leave a live game (confirmed upstream).
     public let onLeave: () -> Void
@@ -65,11 +67,14 @@ public struct TableView<Session: GameSession>: View {
                             .padding(.bottom, FSpace.l)
                     }
                     .frame(maxHeight: .infinity, alignment: .bottom)
-                    .animation(FMotion.cardMotion(reduceMotion: reduceMotion), value: view)
                 } else {
                     ProgressView().tint(FColor.textPrimary)
                 }
             }
+            // Animate the whole board on a state change so a card flies between the
+            // hand and the battle hub (matchedGeometry across zones), not just the
+            // fan reflowing.
+            .animation(FMotion.cardMotion(reduceMotion: reduceMotion), value: game.view)
         }
         .coordinateSpace(name: boardSpace)
         .onPreferenceChange(BattleFramesKey.self) { battleFrames = $0 }
@@ -150,7 +155,8 @@ public struct TableView<Session: GameSession>: View {
             battles: view.battles,
             trumpSuit: view.trumpSuit,
             coverable: coverableBattles(view),
-            onTapBattle: { idx in tapBattle(idx, view) }
+            onTapBattle: { idx in tapBattle(idx, view) },
+            namespace: cardNS
         )
     }
 
@@ -217,7 +223,8 @@ public struct TableView<Session: GameSession>: View {
             selection: $selection,
             onTap: { card in toggle(card) },
             onDragChanged: { card, _ in dragCard = card },
-            onDragEnded: { card, point in onDragEnded(card, at: point, view) }
+            onDragEnded: { card, point in onDragEnded(card, at: point, view) },
+            namespace: cardNS
         )
         .padding(.horizontal, FSpace.s)
     }

@@ -14,13 +14,16 @@ public struct FBattleGrid: View {
     /// Battle indices the local defender may currently cover (highlight them).
     public let coverable: Set<Int>
     public let onTapBattle: (Int) -> Void
+    /// Shared card-flight namespace (a card matches its hand slot as it lands).
+    public let namespace: Namespace.ID?
 
     public init(battles: [BattleView], trumpSuit: Suit?, coverable: Set<Int> = [],
-                onTapBattle: @escaping (Int) -> Void = { _ in }) {
+                onTapBattle: @escaping (Int) -> Void = { _ in }, namespace: Namespace.ID? = nil) {
         self.battles = battles
         self.trumpSuit = trumpSuit
         self.coverable = coverable
         self.onTapBattle = onTapBattle
+        self.namespace = namespace
     }
 
     private let cardSize = CGSize(width: 50, height: 70)   // web card 50x70
@@ -49,7 +52,7 @@ public struct FBattleGrid: View {
                   size: cardSize)
                 .rotationEffect(.degrees(covered ? -coverAngle : 0), anchor: .bottom)
                 .zIndex(covered ? 1 : 2)
-                .matchedGeometryEffect(id: battle.attack.identity, in: ns, isSource: true)
+                .modifier(FlightID(id: battle.attack.identity, namespace: namespace))
 
             if let defense = battle.defense {
                 FCard(card: defense,
@@ -57,7 +60,7 @@ public struct FBattleGrid: View {
                       size: cardSize)
                     .rotationEffect(.degrees(coverAngle), anchor: .bottom)   // laid across (§5.4)
                     .zIndex(2)
-                    .matchedGeometryEffect(id: defense.identity, in: ns, isSource: true)
+                    .modifier(FlightID(id: defense.identity, namespace: namespace))
             }
         }
         .frame(width: slot.width, height: slot.height, alignment: .bottom)
@@ -84,6 +87,4 @@ public struct FBattleGrid: View {
         guard let suit = c.suit else { return "hidden card" }
         return "\(CardRank.spoken(c.v)) of \(["spades","hearts","clubs","diamonds"][suit.rawValue])"
     }
-
-    @Namespace private var ns
 }

@@ -113,11 +113,11 @@ final class HarnessModel: ObservableObject {
     /// The new-game intent only clears when the bubble is actually delivered.
     func stage(_ payload: Data, seat: Int) {
         staged = payload
-        // Mirror the real extension: after a beat (long enough to see the card land)
-        // collapse to the compact drawer, which — because a move is staged — shows
-        // the game, with the harness Send standing in for Messages' send arrow.
+        // Mirror the real extension: let the move's animation play out (card flight,
+        // and for a bout-ending good the discard + draws), rest ~500ms so the result
+        // reads, THEN collapse to the compact drawer (which shows the staged game).
         Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 500_000_000)
+            try? await Task.sleep(nanoseconds: 900_000_000)
             guard let self, self.staged != nil else { return }
             self.presentation = .compact
         }

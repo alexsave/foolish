@@ -31,6 +31,23 @@ public struct HandFrameKey: PreferenceKey {
     }
 }
 
+/// Applies a card-flight matchedGeometryEffect only when a shared namespace is
+/// given — so a card animates as it moves between the hand and the table (same
+/// card.identity in both places). No namespace ⇒ no effect (previews/tests).
+public struct FlightID: ViewModifier {
+    public let id: String
+    public let namespace: Namespace.ID?
+    public init(id: String, namespace: Namespace.ID?) { self.id = id; self.namespace = namespace }
+
+    @ViewBuilder public func body(content: Content) -> some View {
+        if let namespace {
+            content.matchedGeometryEffect(id: id, in: namespace, isSource: true)
+        } else {
+            content
+        }
+    }
+}
+
 public enum BoardDrop {
     /// Resolve a release point to a play target: a specific uncovered attack if the
     /// point lands on its slot, the hand (cancel) if it fell back into the fan, else
