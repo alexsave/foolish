@@ -34,19 +34,26 @@ public struct FBattleGrid: View {
     private let cardSize = CGSize(width: 50, height: 70)   // web card 50x70
     private let slot = CGSize(width: 62, height: 84)       // web 60x80 (+room to rotate)
     private let coverAngle: Double = 11.25                 // web PI/16
-    // Adaptive columns wrap the pairs into as many per row as fit — the web's
-    // flex-wrap, capped so a wide screen keeps them grouped in the middle.
-    private var columns: [GridItem] { [GridItem(.adaptive(minimum: 66), spacing: 10)] }
+    private let gap: CGFloat = 10
+    private let perRow = 4                                 // web ~4 across (max-width 300)
 
     public var body: some View {
-        LazyVGrid(columns: columns, spacing: 12) {
-            ForEach(Array(battles.enumerated()), id: \.offset) { idx, battle in
-                pair(battle, index: idx)
-                    .contentShape(Rectangle())
-                    .onTapGesture { onTapBattle(idx) }
+        // CENTERED wrapped rows (web flex-wrap + justify-center). A LazyVGrid left-
+        // aligns its columns, so a single battle sat at the left; chunking into
+        // centered HStacks keeps the cluster centered at any count, and the VStack
+        // self-sizes (no GeometryReader).
+        let rows = stride(from: 0, to: battles.count, by: perRow).map { Array($0..<min($0 + perRow, battles.count)) }
+        VStack(spacing: 12) {
+            ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                HStack(spacing: gap) {
+                    ForEach(row, id: \.self) { idx in
+                        pair(battles[idx], index: idx)
+                            .contentShape(Rectangle())
+                            .onTapGesture { onTapBattle(idx) }
+                    }
+                }
             }
         }
-        .frame(maxWidth: 320)   // web max-width 300px — keep the cluster centred
     }
 
     private func pair(_ battle: BattleView, index: Int) -> some View {
