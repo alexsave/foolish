@@ -25,6 +25,14 @@ public struct MessageTableView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Shared card-flight namespace: a card keeps its identity moving hand→table.
     @Namespace private var cardNS
+    // Overlay flights to the discard pile (bout end), where matchedGeometry has no
+    // target view to match against.
+    @StateObject private var animator = BoardAnimator()
+    @State private var lastView: GameView?
+    @State private var discardFrame: CGRect = .zero
+    /// The most recent NON-empty battle rects, so a bout-end flight still has the
+    /// source positions after the table cleared (preference vs onChange can race).
+    @State private var lastBattleFrames: [Int: CGRect] = [:]
 
     public init(controller: MessageTurnController, onSend: @escaping (Data) async -> Void) {
         self.controller = controller
@@ -65,9 +73,15 @@ public struct MessageTableView: View {
         .padding(12)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(FMotion.cardMotion(reduceMotion: reduceMotion), value: controller.view)
+        .overlay { FlyingCardsLayer(animator: animator) }
         .coordinateSpace(name: boardSpace)
-        .onPreferenceChange(BattleFramesKey.self) { battleFrames = $0 }
+        .onPreferenceChange(BattleFramesKey.self) { fr in
+            battleFrames = fr
+            if !fr.isEmpty { lastBattleFrames = fr }
+        }
         .onPreferenceChange(HandFrameKey.self) { handFrame = $0 }
+        .onPreferenceChange(DiscardFrameKey.self) { discardFrame = $0 }
+        .onChange(of: controller.view) { flyBoutEndToDiscard(to: $0) }
         .fToast($toast, accent: true)
         .onChange(of: controller.rejectTick) { _ in
             Haptics.fire(.reject); toast = FStrings.t("ios.reject")
@@ -138,6 +152,28 @@ public struct MessageTableView: View {
     private func highlightBattles(_ view: GameView) -> Set<Int> {
         let cards = dragCard.map { playCards(for: $0, view) } ?? selectedCards(view)
         return CardPlay.coverableBattles(cards: cards, battles: view.battles, legal: controller.legal)
+    }
+
+    /// When a bout closes (the table clears into the discard), fly the cards that
+    /// were on the table to the discard pile — the web's cards_to_trash flight,
+    /// as a small overlay (matchedGeometry has no discard-side view to match). Reads
+    /// the battle rects still held from before the view cleared.
+    private func flyBoutEndToDiscard(to newView: GameView?) {
+        defer { lastView = newView }
+        guard !reduceMotion, let old = lastView, let new = newView,
+              !old.battles.isEmpty, new.battles.isEmpty,
+              new.discardCount > old.discardCount, discardFrame != .zero else { return }
+        var flights: [Flight] = []
+        for (i, b) in old.battles.enumerated() {
+            guard let rect = lastBattleFrames[i], rect != .zero else { continue }
+            flights.append(Flight(id: "trash-\(b.attack.identity)", card: b.attack, from: rect, to: discardFrame))
+            if let d = b.defense {
+                flights.append(Flight(id: "trash-\(d.identity)", card: d,
+                                      from: rect.offsetBy(dx: 8, dy: 6), to: discardFrame))
+            }
+        }
+        guard !flights.isEmpty else { return }
+        Task { await animator.play([flights]) }
     }
 
     private func onDragChanged(_ card: Card) { dragCard = card }

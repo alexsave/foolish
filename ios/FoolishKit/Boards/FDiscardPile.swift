@@ -22,9 +22,14 @@ public struct FDiscardPile: View {
                 .shadow(color: .black.opacity(0.8), radius: 1, x: 1, y: 1)
         }
         .frame(width: 68, height: 78)
-        .opacity(count > 0 ? 1 : 0)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(count) cards discarded")
+        // Publish the pile's rect so a bout-end discard flight has a target — even
+        // when the pile is empty (count 0), so the FIRST discard can fly to it.
+        .background(GeometryReader { g in
+            Color.clear.preference(key: DiscardFrameKey.self, value: g.frame(in: .named(boardSpace)))
+        })
+        .opacity(count > 0 ? 1 : 0.001)
     }
 
     // Deterministic per-layer tilt (mirrors the web enableRandomRotation).
