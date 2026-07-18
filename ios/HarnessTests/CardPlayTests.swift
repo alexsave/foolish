@@ -70,4 +70,27 @@ final class CardPlayTests: XCTestCase {
         XCTAssertTrue(CardPlay.has(.good, in: legal))
         XCTAssertFalse(CardPlay.has(.attack, in: legal))
     }
+
+    func test_canSayGood_onlyWhenAllCovered() {
+        let a = c(0, 9), d = c(0, 13)
+        let legal = [Move(type: .good)]
+        // an uncovered attack on the table -> Good hidden
+        XCTAssertFalse(CardPlay.canSayGood(battles: [BattleView(attack: a, defense: nil)], legal: legal))
+        // all covered -> Good shows
+        XCTAssertTrue(CardPlay.canSayGood(battles: [BattleView(attack: a, defense: d)], legal: legal))
+        // empty table -> nothing to finish
+        XCTAssertFalse(CardPlay.canSayGood(battles: [], legal: legal))
+    }
+
+    func test_boardDrop_target() {
+        let battles = [0: CGRect(x: 100, y: 100, width: 60, height: 80),
+                       1: CGRect(x: 200, y: 100, width: 60, height: 80)]
+        let hand = CGRect(x: 0, y: 400, width: 375, height: 78)
+        // over an attack slot -> cover that battle
+        XCTAssertEqual(BoardDrop.target(at: CGPoint(x: 225, y: 130), battles: battles, handFrame: hand), .battle(1))
+        // back in the hand -> cancel
+        XCTAssertEqual(BoardDrop.target(at: CGPoint(x: 100, y: 420), battles: battles, handFrame: hand), .hand)
+        // empty table -> attack/pass
+        XCTAssertEqual(BoardDrop.target(at: CGPoint(x: 300, y: 300), battles: battles, handFrame: hand), .table)
+    }
 }

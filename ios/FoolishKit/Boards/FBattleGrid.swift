@@ -66,6 +66,11 @@ public struct FBattleGrid: View {
                 .strokeBorder(coverable.contains(index) ? FColor.win : .clear, lineWidth: 2.5)
                 .padding(-2)
         )
+        // Publish this slot's frame so a drag can hit-test the drop against it.
+        .background(GeometryReader { g in
+            Color.clear.preference(key: BattleFramesKey.self,
+                                   value: [index: g.frame(in: .named(boardSpace))])
+        })
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(a11y(battle))
     }

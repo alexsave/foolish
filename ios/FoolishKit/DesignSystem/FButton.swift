@@ -32,14 +32,18 @@ public struct FButton: View {
                 .foregroundColor(foreground)
                 .background(backgroundView)
                 .overlay(
-                    RoundedRectangle(cornerRadius: FRadius.card)
+                    RoundedRectangle(cornerRadius: cornerRadius)
                         .strokeBorder(border, lineWidth: kind == .secondary ? 1.5 : (kind == .wood ? 1 : 0))
                 )
-                .clipShape(RoundedRectangle(cornerRadius: FRadius.card))
+                .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
         }
         .disabled(!enabled)
         .opacity(enabled ? 1 : 0.4)
     }
+
+    // Wooden buttons are RECTANGLES in the web (sharp corners); the red/outline
+    // buttons stay rounded.
+    private var cornerRadius: CGFloat { kind == .wood ? 0 : FRadius.card }
 
     @ViewBuilder private var backgroundView: some View {
         switch kind {

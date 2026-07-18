@@ -15,6 +15,10 @@ public struct TableView<Session: GameSession>: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var selection: Set<String> = []
     @State private var toast: String?
+    // Drag-to-play state (frames published by FBattleGrid/FHandFan in `boardSpace`).
+    @State private var battleFrames: [Int: CGRect] = [:]
+    @State private var handFrame: CGRect = .zero
+    @State private var dragCard: Card?
 
     /// Called when the local player asks to leave a live game (confirmed upstream).
     public let onLeave: () -> Void
@@ -67,6 +71,9 @@ public struct TableView<Session: GameSession>: View {
                 }
             }
         }
+        .coordinateSpace(name: boardSpace)
+        .onPreferenceChange(BattleFramesKey.self) { battleFrames = $0 }
+        .onPreferenceChange(HandFrameKey.self) { handFrame = $0 }
         .fToast($toast, accent: true)
         .onChange(of: game.lastReject) { reject in
             guard reject != nil else { return }
@@ -208,9 +215,24 @@ public struct TableView<Session: GameSession>: View {
             trumpSuit: view.trumpSuit,
             disabled: game.inFlight,          // Stage C1 in-flight lock (§8.2)
             selection: $selection,
-            onTap: { card in toggle(card) }
+            onTap: { card in toggle(card) },
+            onDragChanged: { card, _ in dragCard = card },
+            onDragEnded: { card, point in onDragEnded(card, at: point, view) }
         )
         .padding(.horizontal, FSpace.s)
+    }
+
+    /// The cards a play uses: the whole selection if the card is part of it, else
+    /// just that card (web selected-or-single).
+    private func playCards(for card: Card, _ view: GameView) -> [Card] {
+        selection.contains(card.identity) ? selectedCards(view) : [card]
+    }
+
+    private func onDragEnded(_ card: Card, at point: CGPoint, _ view: GameView) {
+        dragCard = nil
+        let target = BoardDrop.target(at: point, battles: battleFrames, handFrame: handFrame)
+        if target == .hand { return }   // dropped back in the fan — cancel
+        playAt(target, playCards(for: card, view), view)
     }
 
     // MARK: interaction — dumb selection; CardPlay resolves (selection, target)
@@ -251,6 +273,7 @@ public struct TableView<Session: GameSession>: View {
     }
 
     private func coverableBattles(_ view: GameView) -> Set<Int> {
-        CardPlay.coverableBattles(cards: selectedCards(view), battles: view.battles, legal: game.humanLegal)
+        let cards = dragCard.map { playCards(for: $0, view) } ?? selectedCards(view)
+        return CardPlay.coverableBattles(cards: cards, battles: view.battles, legal: game.humanLegal)
     }
 }

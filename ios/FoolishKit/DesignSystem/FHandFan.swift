@@ -1,9 +1,9 @@
-// FHandFan.swift — the local player's hand, matching the WEB client's self-hand
-// (ActionButtons.tsx CardDiv): a FLAT ROW, not a fan. Cards share the width,
-// clamped 20–50pt wide at a fixed 70pt tall, with a small gap and NO overlap — so
-// every card is directly tappable (the old overlapping fan let only the top-most
-// rightmost card take a tap). Tapping toggles multi-selection; the board turns a
-// selection into a move (drag / buttons / tap-a-battle), never this view.
+// FHandFan.swift — the local player's hand, matching the WEB self-hand: a FLAT
+// ROW (not a fan). Cards share the width, clamped 20-50pt wide at a fixed 70pt
+// tall, no overlap, so every card is directly tappable. Tapping toggles
+// multi-selection; DRAGGING a card lifts it out to play (the board resolves the
+// drop against the table/battles). The board turns selection+gesture into a move,
+// never this view.
 
 import SwiftUI
 
@@ -15,15 +15,26 @@ public struct FHandFan: View {
     @Binding public var selection: Set<String>
     /// Tap a card — the board toggles it in the selection.
     public let onTap: (Card) -> Void
+    /// Drag updates: the dragged card + the current point in `boardSpace` (for the
+    /// live drop-target highlight). Ended: resolve + play the drop.
+    public let onDragChanged: (Card, CGPoint) -> Void
+    public let onDragEnded: (Card, CGPoint) -> Void
 
     public init(cards: [Card], trumpSuit: Suit?, disabled: Set<String> = [],
-                selection: Binding<Set<String>>, onTap: @escaping (Card) -> Void) {
+                selection: Binding<Set<String>>, onTap: @escaping (Card) -> Void,
+                onDragChanged: @escaping (Card, CGPoint) -> Void = { _, _ in },
+                onDragEnded: @escaping (Card, CGPoint) -> Void = { _, _ in }) {
         self.cards = cards
         self.trumpSuit = trumpSuit
         self.disabled = disabled
         self._selection = selection
         self.onTap = onTap
+        self.onDragChanged = onDragChanged
+        self.onDragEnded = onDragEnded
     }
+
+    @State private var dragId: String?
+    @State private var dragOffset: CGSize = .zero
 
     private let cardH: CGFloat = 70          // web: fixed 70pt tall
     private let gap: CGFloat = 4
@@ -31,9 +42,6 @@ public struct FHandFan: View {
     public var body: some View {
         GeometryReader { geo in
             let count = max(cards.count, 1)
-            // Flex-share the width, clamped 20–50pt (web: flex 1, minWidth 20,
-            // maxWidth 50). Many cards squish toward 20pt and hit FCard's thin
-            // layout; a few sit at 50pt, centered.
             let avail = geo.size.width - gap * CGFloat(count + 1)
             let cardW = min(50, max(20, avail / CGFloat(count)))
             HStack(spacing: gap) {
@@ -44,15 +52,36 @@ public struct FHandFan: View {
                           trump: trumpSuit != nil && card.suit == trumpSuit,
                           size: CGSize(width: cardW, height: cardH))
                         .contentShape(Rectangle())
+                        .offset(dragId == card.identity ? dragOffset : .zero)
+                        .zIndex(dragId == card.identity ? 1000 : 0)
                         .onTapGesture {
                             guard !disabled.contains(card.identity) else { Haptics.fire(.reject); return }
                             Haptics.fire(.pickUp)
                             onTap(card)
                         }
+                        .gesture(
+                            DragGesture(minimumDistance: 12, coordinateSpace: .named(boardSpace))
+                                .onChanged { g in
+                                    guard !disabled.contains(card.identity) else { return }
+                                    dragId = card.identity
+                                    dragOffset = g.translation
+                                    onDragChanged(card, g.location)
+                                }
+                                .onEnded { g in
+                                    let c = card
+                                    let wasDragging = dragId == c.identity
+                                    dragId = nil; dragOffset = .zero
+                                    if wasDragging { onDragEnded(c, g.location) }
+                                }
+                        )
                 }
             }
             .frame(width: geo.size.width, height: geo.size.height, alignment: .center)
         }
         .frame(height: cardH + 8)
+        // Publish the hand's frame so a drop back inside it cancels the play.
+        .background(GeometryReader { g in
+            Color.clear.preference(key: HandFrameKey.self, value: g.frame(in: .named(boardSpace)))
+        })
     }
 }

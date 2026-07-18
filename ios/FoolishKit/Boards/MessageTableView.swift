@@ -18,6 +18,10 @@ public struct MessageTableView: View {
 
     @State private var selection: Set<String> = []
     @State private var toast: String?
+    // Drag-to-play state (frames published by FBattleGrid/FHandFan in `boardSpace`).
+    @State private var battleFrames: [Int: CGRect] = [:]
+    @State private var handFrame: CGRect = .zero
+    @State private var dragCard: Card?
 
     public init(controller: MessageTurnController, onSend: @escaping (Data) async -> Void) {
         self.controller = controller
@@ -42,23 +46,24 @@ public struct MessageTableView: View {
                 battlesArea(view)          // full-width wrapping attack/cover pairs
                 Spacer(minLength: 0)
                 statusLine(view)
-                // The action bar (Attack/Cover/Take/Good) only when I can act and
-                // have NOT already staged — a staged move drops the bar (the move is
-                // made; the only follow-ups are another card or Undo, and the
-                // extension has dropped the user at Messages' Send).
-                if controller.iCanAct && !controller.canSend { actionBar(view) }
+                // The vertical button column: the play buttons when I can act, or
+                // Undo once a move is staged (FActionBar shows whichever the flags
+                // enable — nothing while waiting).
+                actionBar(view)
                 // Always show my own hand — even while "waiting for the others"
                 // (web parity: the hand is visible whether or not I have a legal
                 // move; legality is expressed by which buttons appear, not by
                 // hiding the cards).
                 hand(view)
-                sendBar
             } else {
                 ProgressView()
             }
         }
         .padding(12)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .coordinateSpace(name: boardSpace)
+        .onPreferenceChange(BattleFramesKey.self) { battleFrames = $0 }
+        .onPreferenceChange(HandFrameKey.self) { handFrame = $0 }
         .fToast($toast, accent: true)
         .onChange(of: controller.rejectTick) { _ in
             Haptics.fire(.reject); toast = FStrings.t("ios.reject")
@@ -110,11 +115,33 @@ public struct MessageTableView: View {
                 Text(FStrings.t("ios.nobattle")).font(.caption).foregroundStyle(FColor.textDim)
             } else {
                 FBattleGrid(battles: view.battles, trumpSuit: view.trumpSuit,
-                            coverable: coverableBattles(view),
+                            coverable: highlightBattles(view),
                             onTapBattle: { idx in tapBattle(idx, view) })
             }
         }
         .frame(maxWidth: .infinity)
+    }
+
+    /// The cards a play would use right now: the whole selection if the dragged (or
+    /// tapped) card is part of it, else just that one card (web selected-or-single).
+    private func playCards(for card: Card, _ view: GameView) -> [Card] {
+        selection.contains(card.identity) ? selectedCards(view) : [card]
+    }
+
+    /// Battles to highlight — what the in-flight drag (or the current selection)
+    /// could cover.
+    private func highlightBattles(_ view: GameView) -> Set<Int> {
+        let cards = dragCard.map { playCards(for: $0, view) } ?? selectedCards(view)
+        return CardPlay.coverableBattles(cards: cards, battles: view.battles, legal: controller.legal)
+    }
+
+    private func onDragChanged(_ card: Card) { dragCard = card }
+
+    private func onDragEnded(_ card: Card, at point: CGPoint, _ view: GameView) {
+        dragCard = nil
+        let target = BoardDrop.target(at: point, battles: battleFrames, handFrame: handFrame)
+        if target == .hand { return }   // dropped back in the fan — cancel
+        playAt(target, playCards(for: card, view), view)
     }
 
     @ViewBuilder
@@ -158,36 +185,31 @@ public struct MessageTableView: View {
     private func actionBar(_ view: GameView) -> some View {
         let cards = selectedCards(view)
         let defending = view.defender == controller.mySeat
+        // Play buttons only while I can act and have NOT staged; once staged, the
+        // only control is Undo (the extension has dropped the user at Messages' Send).
+        let acting = controller.iCanAct && !controller.canSend
         return FActionBar(
-            canAttack: !defending && CardPlay.canAttack(cards, legal: controller.legal),
-            canCover: defending && CardPlay.canCover(cards, battles: view.battles, legal: controller.legal),
-            canPass: defending && CardPlay.canPass(cards, legal: controller.legal),
-            canPickup: has(.pickup),
-            canDone: CardPlay.canSayGood(battles: view.battles, legal: controller.legal),
+            canAttack: acting && !defending && CardPlay.canAttack(cards, legal: controller.legal),
+            canCover: acting && defending && CardPlay.canCover(cards, battles: view.battles, legal: controller.legal),
+            canPass: acting && defending && CardPlay.canPass(cards, legal: controller.legal),
+            canPickup: acting && has(.pickup),
+            canDone: acting && CardPlay.canSayGood(battles: view.battles, legal: controller.legal),
+            canUndo: controller.canSend,
             onAttack: { playAt(.table, cards, view) },
             onCover: { playCover(cards, view) },
             onPass: { playAt(.table, cards, view) },
             onPickup: { play(.pickup) },
-            onDone: { play(.good) }
+            onDone: { play(.good) },
+            onUndo: { Task { await controller.undo(); await stageNow() } }
         )
     }
 
     private func hand(_ view: GameView) -> some View {
         FHandFan(cards: view.me?.hand ?? [], trumpSuit: view.trumpSuit,
-                 selection: $selection, onTap: { toggle($0) })
+                 selection: $selection, onTap: { toggle($0) },
+                 onDragChanged: { card, _ in onDragChanged(card) },
+                 onDragEnded: { card, point in onDragEnded(card, at: point, view) })
             .padding(.horizontal, FSpace.s)
-    }
-
-    // A staged move auto-composes the bubble (see `stageNow`), so the only send
-    // control left is Undo — the human's next tap is the Messages send arrow.
-    @ViewBuilder
-    private var sendBar: some View {
-        if controller.canSend {
-            FButton(FStrings.t("ios.msg.undo"), kind: .wood) {
-                Task { await controller.undo(); await stageNow() }
-            }
-            .padding(.top, 2)
-        }
     }
 
     // MARK: interaction (mirrors TableView — every branch reads the kernel menu)
