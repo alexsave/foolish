@@ -158,6 +158,11 @@ final class HarnessModel: ObservableObject {
     // the per-run UUIDs), so no seat leaks between "devices".
     private func rebindStore() {
         MessageGameStore.shared = MessageGameStore(suiteName: "fmsg.harness.\(localId.uuidString)")
+        // DEV: during an auto-played game, pre-name each pretend player so the
+        // one-time name gate never blocks the unattended run.
+        if ProcessInfo.processInfo.environment["HARNESS_AUTOGAME"] != nil {
+            MessageGameStore.shared.nickname = localName
+        }
     }
 
     /// DEV screenshotting: deal a real 2-player game, play seat 0's opening

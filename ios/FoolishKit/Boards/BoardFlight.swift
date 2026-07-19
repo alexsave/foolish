@@ -14,7 +14,16 @@
 
 import SwiftUI
 
-public let flightTime: Double = 0.5        // web ANIMATION_TIME = 500ms
+// web ANIMATION_TIME = 500ms; HARNESS_SLOWMO=N (dev) scales it up so flights are
+// catchable in screenshots / easy to eyeball.
+public var flightTime: Double {
+    #if DEBUG
+    if let s = ProcessInfo.processInfo.environment["HARNESS_SLOWMO"], let n = Double(s), n > 0 {
+        return 0.5 * n
+    }
+    #endif
+    return 0.5
+}
 public let flightGap: Double = 0.025       // web inter-event queue gap = 25ms
 
 /// The deck pile's rect in `boardSpace` (draw source / flip source).
