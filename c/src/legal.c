@@ -359,6 +359,12 @@ void calculate_legal_moves(const Game *g, int bot_idx, LegalMoves *out) {
     out->n = 0;
     if (g->status != GAME_STATUS_PLAYING) return;
     const Player *p = &g->players[bot_idx];
+    // An out (hand empty, already safe) or otherwise not-in seat is a spectator:
+    // no legal move. Without this, the non-defender branch below would still hand
+    // an out player MOVE_GOOD, which handle_good rejects (status != IN) — the
+    // legal menu and the apply-validator disagreeing, which surfaces as a phantom
+    // "invalid move" the instant an out seat is queried (iMessage §out-player).
+    if (p->status != PLAYER_STATUS_IN) return;
     bool is_def = (bot_idx == g->defender);
     bool is_first_attacker = (bot_idx == g->first_attacker);
     bool first_attack = (g->num_battles == 0);
@@ -378,6 +384,11 @@ void calculate_legal_moves(const Game *g, int bot_idx, LegalMoves *out) {
         bool said_good = (g->good_players_mask & (1u << bot_idx)) != 0;
         if (!said_good) {
             calc_regular_attack_moves(g, p, out);
+            // Bots must still say GOOD to signal "done attacking" (a bout beats
+            // only at all_good && all_covered in handle_good), so GOOD stays in
+            // the shared menu even while the table is uncovered. The human menu
+            // hides it until all-covered - that filter lives at the packed entry
+            // point (emit_legal_packed), not here, so bot play is unchanged.
             LegalMove *m = push_move(out);
             if (m) m->type = MOVE_GOOD;
         }
@@ -394,6 +405,12 @@ void calculate_legal_moves_lite(const Game *g, int bot_idx, LegalMoves *out) {
     out->n = 0;
     if (g->status != GAME_STATUS_PLAYING) return;
     const Player *p = &g->players[bot_idx];
+    // An out (hand empty, already safe) or otherwise not-in seat is a spectator:
+    // no legal move. Without this, the non-defender branch below would still hand
+    // an out player MOVE_GOOD, which handle_good rejects (status != IN) — the
+    // legal menu and the apply-validator disagreeing, which surfaces as a phantom
+    // "invalid move" the instant an out seat is queried (iMessage §out-player).
+    if (p->status != PLAYER_STATUS_IN) return;
     bool is_def = (bot_idx == g->defender);
     bool is_first_attacker = (bot_idx == g->first_attacker);
     bool first_attack = (g->num_battles == 0);
@@ -413,6 +430,11 @@ void calculate_legal_moves_lite(const Game *g, int bot_idx, LegalMoves *out) {
         bool said_good = (g->good_players_mask & (1u << bot_idx)) != 0;
         if (!said_good) {
             calc_regular_attack_moves(g, p, out);
+            // Bots must still say GOOD to signal "done attacking" (a bout beats
+            // only at all_good && all_covered in handle_good), so GOOD stays in
+            // the shared menu even while the table is uncovered. The human menu
+            // hides it until all-covered - that filter lives at the packed entry
+            // point (emit_legal_packed), not here, so bot play is unchanged.
             LegalMove *m = push_move(out);
             if (m) m->type = MOVE_GOOD;
         }

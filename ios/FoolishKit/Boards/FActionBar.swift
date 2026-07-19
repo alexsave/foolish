@@ -8,6 +8,8 @@
 import SwiftUI
 
 public struct FActionBar: View {
+    /// Shared fixed width for every wooden action button (equal-width column).
+    private static let w: CGFloat = 96
     public let canAttack: Bool     // attacker: the selection is a legal attack
     public let canCover: Bool      // defender: the selection can cover some uncovered attack
     public let canPass: Bool       // defender: the selection is a legal pass/transfer
@@ -36,13 +38,15 @@ public struct FActionBar: View {
         // Small wooden pills, stacked vertically, pinned right (web parity).
         HStack {
             Spacer(minLength: 0)
+            // All buttons share ONE fixed width so the wooden column is a clean
+            // rectangle stack (web parity), not ragged to each word's length.
             VStack(alignment: .trailing, spacing: FSpace.s) {
-                if canAttack { FButton(FStrings.t("attack"), kind: .wood, compact: true, action: onAttack) }
-                if canCover  { FButton(FStrings.t("cover"),  kind: .wood, compact: true, action: onCover) }
-                if canPass   { FButton(FStrings.t("pass"),   kind: .wood, compact: true, action: onPass) }
-                if canPickup { FButton(FStrings.t("pickup"), kind: .wood, compact: true, action: onPickup) }
-                if canDone   { FButton(FStrings.t("good"),   kind: .wood, compact: true, action: onDone) }
-                if canUndo   { FButton(FStrings.t("ios.msg.undo"), kind: .wood, compact: true, action: onUndo) }
+                if canAttack { FButton(FStrings.t("attack"), kind: .wood, compact: true, fixedWidth: Self.w, action: onAttack) }
+                if canCover  { FButton(FStrings.t("cover"),  kind: .wood, compact: true, fixedWidth: Self.w, action: onCover) }
+                if canPass   { FButton(FStrings.t("pass"),   kind: .wood, compact: true, fixedWidth: Self.w, action: onPass) }
+                if canPickup { FButton(FStrings.t("pickup"), kind: .wood, compact: true, fixedWidth: Self.w, action: onPickup) }
+                if canDone   { FButton(FStrings.t("good"),   kind: .wood, compact: true, fixedWidth: Self.w, action: onDone) }
+                if canUndo   { FButton(FStrings.t("ios.msg.undo"), kind: .wood, compact: true, fixedWidth: Self.w, action: onUndo) }
             }
         }
         .padding(.horizontal, FSpace.m)

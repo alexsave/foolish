@@ -131,6 +131,13 @@ int fio_legal_moves_json(int seat, char *out, int cap) {
 static int emit_legal_packed(const Game *g, int seat, char *out, int cap) {
     static LegalMoves lm;
     calculate_legal_moves(g, seat, &lm);
+    // NOTE: GOOD is intentionally NOT filtered here. The kernel menu stays the
+    // full legal set (so fio_actor_mask and this packed menu agree, and bots see
+    // GOOD as always). The owner's "a human only gets Good once the table is
+    // fully covered, and it disappears when someone throws in" rule is enforced
+    // in the UI (CardPlay.canSayGood = has(.good) && all covered), and the
+    // "your move with no live button" status case is handled in the board's
+    // status logic, not by rewriting the kernel's legal set.
     if (cap < 4) return FIO_ECAP;
     unsigned char *q = (unsigned char *)out;
     unsigned int n = (unsigned int)lm.n;

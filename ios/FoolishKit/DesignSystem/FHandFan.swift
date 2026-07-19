@@ -45,14 +45,19 @@ public struct FHandFan: View {
     @State private var dragId: String?
     @State private var dragOffset: CGSize = .zero
 
-    private let cardH: CGFloat = 70          // web: fixed 70pt tall
+    private let cardH: CGFloat = 72          // CONSTANT height — a skinny (many-card) hand stays this tall
+    private let maxCardW: CGFloat = 52       // never wider than ~proper aspect, so cards never go "superwide"
     private let gap: CGFloat = 4
+    private var rowH: CGFloat { cardH + 8 }
 
     public var body: some View {
         GeometryReader { geo in
             let count = max(cards.count, 1)
             let avail = geo.size.width - gap * CGFloat(count + 1)
-            let cardW = min(50, max(20, avail / CGFloat(count)))
+            // Width shrinks to fit a big hand (skinny cards), grows only up to
+            // maxCardW for a small hand. Height is CONSTANT either way - a skinny
+            // card is narrow but full-height, never squished, never superwide.
+            let cardW = min(maxCardW, max(22, avail / CGFloat(count)))
             HStack(spacing: gap) {
                 ForEach(cards, id: \.identity) { card in
                     FCard(card: card,
@@ -93,7 +98,7 @@ public struct FHandFan: View {
             }
             .frame(width: geo.size.width, height: geo.size.height, alignment: .center)
         }
-        .frame(height: cardH + 8)
+        .frame(height: rowH)
         // Publish the hand's frame so a drop back inside it cancels the play.
         .background(GeometryReader { g in
             Color.clear.preference(key: HandFrameKey.self, value: g.frame(in: .named(boardSpace)))

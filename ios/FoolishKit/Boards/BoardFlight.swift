@@ -82,6 +82,12 @@ public typealias FlightStep = [Flight]
 /// long-lived event loop).
 @MainActor
 public final class BoardAnimator: ObservableObject {
+    /// DEV (harness auto-game): non-zero while a board is mid multi-step bout-end
+    /// sequence (discard/pickup + each player's draw), so the harness waits for the
+    /// whole sequence to finish before switching players. Not used in the real ext.
+    public static var sequenceDepth = 0
+    public static var isSequencing: Bool { sequenceDepth > 0 }
+
     /// Cards currently in flight (rendered by FlyingCardsLayer). `progress` 0→1
     /// drives the position/scale tween.
     @Published public private(set) var flights: [Flight] = []

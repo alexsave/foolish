@@ -13,13 +13,18 @@ public struct FButton: View {
     /// Compact: a small pill sized to its label (the in-game action buttons, web
     /// parity), not the full-width 52pt primary button.
     private var compact: Bool
+    /// An explicit fixed width - the wood background fills exactly this, so a
+    /// column of compact buttons is a clean equal-width stack (not ragged to each
+    /// word). `nil` keeps the label-sized compact / full-width primary behaviour.
+    private var fixedWidth: CGFloat?
 
     public init(_ title: String, kind: Kind = .primary, enabled: Bool = true,
-                compact: Bool = false, action: @escaping () -> Void) {
+                compact: Bool = false, fixedWidth: CGFloat? = nil, action: @escaping () -> Void) {
         self.title = title
         self.kind = kind
         self.enabled = enabled
         self.compact = compact
+        self.fixedWidth = fixedWidth
         self.action = action
     }
 
@@ -28,7 +33,9 @@ public struct FButton: View {
             Text(title)
                 .font(compact ? FType.title(15) : FType.title(17))
                 .padding(.horizontal, compact ? 16 : 0)
-                .frame(maxWidth: compact ? nil : .infinity, minHeight: compact ? 40 : 52)
+                .frame(minWidth: fixedWidth,
+                       maxWidth: fixedWidth ?? (compact ? nil : .infinity),
+                       minHeight: compact ? 40 : 52)
                 .foregroundColor(foreground)
                 .background(backgroundView)
                 .overlay(

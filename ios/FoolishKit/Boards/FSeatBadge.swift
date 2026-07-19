@@ -17,10 +17,13 @@ public struct FSeatBadge: View {
     public let saidGood: Bool
     public let thinking: Bool
     public let isOut: Bool
+    /// Dark name text (no shadow) for a LIGHT background — the beige message
+    /// bubble. The wool board keeps bone text + a shadow (onLight = false).
+    public let onLight: Bool
 
     public init(name: String, handCount: Int, isDefender: Bool = false,
                 isAttacker: Bool = false, saidGood: Bool = false,
-                thinking: Bool = false, isOut: Bool = false) {
+                thinking: Bool = false, isOut: Bool = false, onLight: Bool = false) {
         self.name = name
         self.handCount = handCount
         self.isDefender = isDefender
@@ -28,6 +31,7 @@ public struct FSeatBadge: View {
         self.saidGood = saidGood
         self.thinking = thinking
         self.isOut = isOut
+        self.onLight = onLight
     }
 
     // Mini back geometry (web CardsVisual: 25pt wide, spread 10pt/card, count
@@ -41,7 +45,9 @@ public struct FSeatBadge: View {
         VStack(spacing: FSpace.xs) {
             Text(name)
                 .font(FType.body(12))
-                .foregroundColor(isOut ? FColor.textDim : FColor.textPrimary)
+                .foregroundColor(isOut ? (onLight ? .black.opacity(0.4) : FColor.textDim)
+                                       : (onLight ? .black.opacity(0.85) : FColor.textPrimary))
+                .shadow(color: onLight ? .clear : .black.opacity(0.7), radius: onLight ? 0 : 1.5, y: onLight ? 0 : 0.5)
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .frame(maxWidth: 96)
@@ -57,7 +63,8 @@ public struct FSeatBadge: View {
                 }
             }
             .frame(width: cardW + spread * CGFloat(max(visibleBacks - 1, 0)) + 6, height: cardH + 4)
-            .overlay(roleRing)
+            // (no role ring around the mini-fan - the role is shown by the row of
+            // icons below; the gold/red border read as clutter)
 
             roleRow
         }
@@ -83,15 +90,6 @@ public struct FSeatBadge: View {
         }
     }
 
-    // Defender = gold ring, attacker = red ring (mirrors the web's role marks).
-    @ViewBuilder private var roleRing: some View {
-        if isDefender {
-            RoundedRectangle(cornerRadius: 5).strokeBorder(FColor.win, lineWidth: 2)
-        } else if isAttacker {
-            RoundedRectangle(cornerRadius: 5).strokeBorder(FColor.accent, lineWidth: 2)
-        }
-    }
-
     private var roleRow: some View {
         HStack(spacing: FSpace.xs) {
             if thinking { ThinkingDots() }
@@ -100,12 +98,12 @@ public struct FSeatBadge: View {
                     .font(.system(size: 11)).foregroundColor(FColor.win)
             }
             if isDefender {
-                Image(systemName: "shield.fill").font(.system(size: 11)).foregroundColor(FColor.win)
+                FShield(size: 19)   // hand-built light-gray shield (larger)
             } else if isAttacker {
-                Image(systemName: "flame.fill").font(.system(size: 11)).foregroundColor(FColor.accent)
+                FSword(size: 16)    // hand-built sword
             }
         }
-        .frame(height: 14)
+        .frame(height: 19)
     }
 
     private var a11y: String {

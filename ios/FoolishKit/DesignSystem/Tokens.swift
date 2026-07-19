@@ -14,6 +14,10 @@ public enum FColor {
     // for snapshot coverage and future opt-in.
     public static let table   = Color(hex: 0x14231C)   // deep green-black felt
     public static let tableLo = Color(hex: 0x1B2E24)   // light-mode felt (+lift)
+    /// The web's fallback beige (--color-concrete / --color-wood-base, #F5E6C8) —
+    /// the solid colour to show BEHIND a texture before it renders (the wool base,
+    /// the message bubble), so a bare moment reads beige, never green or red.
+    public static let fallback = Color(hex: 0xF5E6C8)
     public static let surface = Color(hex: 0x1E2A24)
     public static let card    = Color(hex: 0xF4EFE6)   // bone white
     public static let ink     = Color(hex: 0x17140F)   // pips / type on a card

@@ -119,7 +119,12 @@ final class HarnessModel: ObservableObject {
         Task { [weak self] in
             try? await Task.sleep(nanoseconds: 900_000_000)
             guard let self, self.staged != nil else { return }
-            self.presentation = .compact
+            // Skip the collapse during an auto-played game so our move's animation
+            // finishes on the full board (it's the point of the slow run); real
+            // interactive staging still collapses to Messages' Send.
+            if ProcessInfo.processInfo.environment["HARNESS_AUTOGAME"] == nil {
+                self.presentation = .compact
+            }
         }
         // HARNESS_AUTOGAME: auto-deliver + hand to the next player, so a whole
         // game plays itself through the real UI (validates turn handoff + seat
@@ -127,7 +132,14 @@ final class HarnessModel: ObservableObject {
         // board auto-plays no move → nothing to deliver).
         if ProcessInfo.processInfo.environment["HARNESS_AUTOGAME"] != nil {
             Task { [weak self] in
-                try? await Task.sleep(nanoseconds: 900_000_000)
+                // Let the move animate and any bout-end sequence START…
+                try? await Task.sleep(nanoseconds: 1_400_000_000)
+                // …then wait for the WHOLE bout-end sequence (discard/pickup + each
+                // player's draw, one at a time) to finish before switching users, so
+                // the beat reads: open → their move replays → we act → our move +
+                // the full discard/draw cascade animate → switch.
+                while BoardAnimator.isSequencing { try? await Task.sleep(nanoseconds: 150_000_000) }
+                try? await Task.sleep(nanoseconds: 600_000_000)   // rest so the settled board reads
                 guard let self, self.staged != nil else { return }
                 self.deliver()
                 self.become((self.localIndex + 1) % self.participants.count)
@@ -219,6 +231,30 @@ final class HarnessModel: ObservableObject {
                 }
                 if let p = try? await MessageKernel.shared.seal(
                     phase: 2, lastActorSeat: lastSeat, gameId: gid,
+                    parent8: Data(repeating: 0, count: 8), joins: joins) {
+                    payload = p
+                    _ = try? await MessageKernel.shared.decode(payload: payload, viewer: -1)
+                }
+            }
+            // DEV: HARNESS_ENDSCREEN plays the whole game out (first legal move for
+            // any actionable seat) until it is over, then seals FINISHED so the
+            // board lands on the ranked end screen — a deterministic screenshot.
+            if ProcessInfo.processInfo.environment["HARNESS_ENDSCREEN"] != nil {
+                var guardN = 0
+                while (await MessageKernel.shared.residentView(viewer: -1))?.isOver != true, guardN < 6000 {
+                    guardN += 1
+                    var acted = false
+                    for s in 0..<n {
+                        let legal = await MessageKernel.shared.residentLegal(seat: s)
+                        if let m = legal.first(where: { $0.type != .wait }) {
+                            try? await MessageKernel.shared.apply(seat: s, move: m)
+                            acted = true; break
+                        }
+                    }
+                    if !acted { break }
+                }
+                if let p = try? await MessageKernel.shared.seal(
+                    phase: 3, lastActorSeat: 0, gameId: gid,
                     parent8: Data(repeating: 0, count: 8), joins: joins) {
                     payload = p
                     _ = try? await MessageKernel.shared.decode(payload: payload, viewer: -1)

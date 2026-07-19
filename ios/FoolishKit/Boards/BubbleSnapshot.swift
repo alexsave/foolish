@@ -19,13 +19,21 @@ public enum BubbleSnapshot {
     /// ImageRenderer walks a live SwiftUI view.
     @MainActor
     public static func render(publicView: GameView, names: [Int: String] = [:]) -> UIImage? {
-        let content = MessageBoardView(view: publicView, names: names)
-            .frame(width: size.width, height: size.height)
-            // The bubble rides the icon's rich Khokhloma red (not system gray), so
-            // the balloon reads as Foolish at a glance in the thread. The felt/wool
-            // table lives in the extension board; the bubble is the branded card.
-            .background(Color(hex: 0x98200A))
-            .environment(\.colorScheme, .light)   // the balloon image is theme-independent
+        // The REAL wool texture as a ZStack BASE layer (an explicit-frame Image,
+        // not a .background — that renders unreliably inside ImageRenderer).
+        // WoolTexture.image is synchronous (WoolBackground's async .task never runs
+        // in ImageRenderer), so the bubble gets the same wool as the board.
+        let content = ZStack {
+            FColor.fallback
+            Image(uiImage: WoolTexture.image(w: 900, h: 585))
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .frame(width: size.width, height: size.height)
+                .clipped()
+            MessageBoardView(view: publicView, names: names)
+        }
+        .frame(width: size.width, height: size.height)
+        .environment(\.colorScheme, .light)   // the balloon image is theme-independent
         let renderer = ImageRenderer(content: content)
         renderer.scale = UIScreen.main.scale
         renderer.isOpaque = true

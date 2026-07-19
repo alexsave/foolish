@@ -109,7 +109,8 @@ private struct GameSurface: View {
     @ViewBuilder private var expandedContent: some View {
         if let controller {
             MessageTableView(controller: controller,
-                             onSend: { payload in await onSend(payload, controller.mySeat) })
+                             onSend: { payload in await onSend(payload, controller.mySeat) },
+                             onNewGame: onNewGame)
         } else if let lob = lobby {
             LobbyView(env: lob.env, mySeat: lobbySeat(lob.env),
                       nickname: MessageGameStore.shared.nickname,
@@ -144,10 +145,24 @@ private struct GameSurface: View {
     }
 
     private func load() async {
-        // No game in this thread yet (fresh open, or an explicit New game): the
-        // setup IS the screen, not a menu and not "damaged". `damaged` is reserved
-        // for a link that genuinely fails to decode (the catch below).
-        guard let url = payloadURL else { showSetup = true; return }
+        guard let url = payloadURL else {
+            // No bubble is selected. If the human explicitly tapped New game
+            // (startNewGame), the setup IS the screen. Otherwise this is a plain
+            // re-open of the extension - and if we already committed a game (we
+            // sent one, or adopted one), reopen THAT rather than offering New game
+            // again (one game per chat: "I already sent a game, why New game?").
+            if !startNewGame,
+               let latest = MessageGameStore.shared.games().first,
+               let payload = Base32.decode(latest.payloadBase32),
+               let env = try? await MessageEnvelope.decode(payload: payload, viewer: -1) {
+                if env.phase == 0 { lobby = Lobby(env: env, payload: payload) }
+                else { await adopt(winner: payload, env: env) }
+                return
+            }
+            // Nothing to reopen (first-ever open, or an explicit New game).
+            showSetup = true
+            return
+        }
         do {
             let incoming = try MessageEnvelope.payloadBytes(url: url)
             // Decode ADOPTS and VALIDATES — a damaged link throws here (§7.3).
