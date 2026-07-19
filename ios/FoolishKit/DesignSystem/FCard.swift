@@ -109,15 +109,15 @@ public struct FCard: View {
                           lineWidth: selected ? 2.5 : 2)
     }
 
-    // MARK: back — deep-red fern (kept from the iOS back; the web uses a khokhloma
-    // pattern PNG, this is the closest procedural equivalent already shipped).
+    // MARK: back — solid black with a deep-red border (the fern fractal kept
+    // rendering wrong; this is the simple placeholder the owner asked for).
+    private static let deepRed = Color(hex: 0x8B0000)
     private var back: some View {
-        Image(uiImage: FernCardBack.image(seed: backSeed, size: size))
-            .resizable()
-            .clipShape(RoundedRectangle(cornerRadius: radius))
+        RoundedRectangle(cornerRadius: radius)
+            .fill(Color.black)
             .overlay(
                 RoundedRectangle(cornerRadius: radius)
-                    .strokeBorder(selected ? Self.selRed : Color(hex: 0x8B0000), lineWidth: selected ? 2.5 : 1)
+                    .strokeBorder(selected ? Self.selRed : Self.deepRed, lineWidth: selected ? 2.5 : 1.5)
             )
     }
 
