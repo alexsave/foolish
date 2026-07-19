@@ -97,6 +97,11 @@ export const CardFace = ({ card, onClick, style = {}, playerId, isAnimationOverl
         color: suitColor,
         display: 'flex',
         flexDirection: 'column',
+        // KNOWN BUG (noted from the iOS port): the rank/suit fontSize is a FIXED
+        // 20px and does not scale with the card width, so on a compressed card
+        // (narrow hand, many cards) the index is proportionally tiny/cramped and
+        // hard to read. It should be a function of `size` (e.g. ~0.42 * width for
+        // the rank, ~0.30 for the suit), the way FCard.swift now does it.
         fontSize: '20px',
         lineHeight: '15px',
     } as React.CSSProperties

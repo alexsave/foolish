@@ -22,7 +22,7 @@ public struct WoolBackground: View {
 
     public var body: some View {
         ZStack {
-            FColor.table
+            FColor.fallback   // web's beige base behind the wool (was dark-green felt)
             if let img {
                 Image(uiImage: img)
                     .interpolation(.high)          // smooth the downscale (see below)

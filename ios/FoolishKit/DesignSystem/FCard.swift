@@ -70,14 +70,14 @@ public struct FCard: View {
             .overlay(border)
     }
 
-    // Big centre suit glyph — 32/50 of the width in the web.
+    // Big centre suit glyph — 32/50 of the width (web parity).
     private func centerGlyph(_ suit: Suit, color: Color) -> some View {
         Text(suit.glyph)
             .font(.custom("Georgia", size: size.width * 0.62).weight(.bold))
             .foregroundColor(color)
     }
 
-    // Corner index: rank (20/50 w) over suit (14/50 w), Georgia bold.
+    // Corner index: rank (20/50 w) over suit (14/50 w), Georgia bold (web parity).
     private func corner(_ card: Card, suit: Suit, color: Color) -> some View {
         VStack(spacing: -size.width * 0.04) {
             Text(CardRank.label(card.v))
@@ -91,11 +91,14 @@ public struct FCard: View {
         .fixedSize()
     }
 
-    // Thin fallback (<40px): drop the corners, show just a centred rank+suit stack.
+    // Thin fallback (<40px): drop the corners, show a centred rank+suit stack.
+    // ONLY here is the glyph enlarged over the web - the compressed rank/suit is a
+    // known legibility miss on the web too (note left in src/.../CardFace.tsx), so
+    // a narrow card reads bigger while normal cards stay pixel-for-pixel web-parity.
     private func thinCenter(_ card: Card, color: Color) -> some View {
         VStack(spacing: 0) {
-            Text(CardRank.label(card.v)).font(.custom("Georgia", size: size.width * 0.44).weight(.bold))
-            Text((card.suit ?? .spades).glyph).font(.custom("Georgia", size: size.width * 0.44).weight(.bold))
+            Text(CardRank.label(card.v)).font(.custom("Georgia", size: size.width * 0.56).weight(.bold))
+            Text((card.suit ?? .spades).glyph).font(.custom("Georgia", size: size.width * 0.56).weight(.bold))
         }
         .foregroundColor(color)
     }

@@ -58,12 +58,28 @@ public struct FBattleGrid: View {
 
     private func pair(_ battle: BattleView, index: Int) -> some View {
         let covered = battle.defense != nil
+        // The attacked card tilts only once the cover has LANDED — i.e. the cover's
+        // flight has cleared the in-flight (`hidden`) set — NOT the instant the model
+        // says covered. So while the cover is still flying in, the attacked card
+        // stays upright, then both lay across together (web behavior).
+        let coverLanded = battle.defense.map { !hidden.contains($0.identity) } ?? false
         return ZStack(alignment: .bottom) {
             FCard(card: battle.attack,
                   trump: trumpSuit != nil && battle.attack.suit == trumpSuit,
                   size: cardSize)
+                // Cover-target highlight, drawn ON the card so it stays centred on
+                // it (an uncovered attack is upright, so a plain inset ring lines
+                // up exactly - the old slot-level ring floated above the card).
+                .overlay {
+                    if coverable.contains(index) && !covered {
+                        RoundedRectangle(cornerRadius: 7)
+                            .strokeBorder(FColor.win, lineWidth: 2.5)
+                            .padding(-3)
+                    }
+                }
                 .opacity(hidden.contains(battle.attack.identity) ? 0 : 1)
-                .rotationEffect(.degrees(covered ? -coverAngle : 0), anchor: .bottom)
+                .rotationEffect(.degrees(coverLanded ? -coverAngle : 0), anchor: .bottom)
+                .animation(.easeOut(duration: 0.22), value: coverLanded)
                 .zIndex(covered ? 1 : 2)
                 .modifier(FlightID(id: battle.attack.identity, namespace: namespace))
 
@@ -78,11 +94,6 @@ public struct FBattleGrid: View {
             }
         }
         .frame(width: slot.width, height: slot.height, alignment: .bottom)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(coverable.contains(index) ? FColor.win : .clear, lineWidth: 2.5)
-                .padding(-2)
-        )
         // Publish this slot's frame so a drag can hit-test the drop against it.
         .background(GeometryReader { g in
             Color.clear.preference(key: BattleFramesKey.self,

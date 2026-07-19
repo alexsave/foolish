@@ -42,6 +42,7 @@ public struct FSeatBadge: View {
             Text(name)
                 .font(FType.body(12))
                 .foregroundColor(isOut ? FColor.textDim : FColor.textPrimary)
+                .shadow(color: .black.opacity(0.7), radius: 1.5, y: 0.5)   // legible on wool OR the beige bubble
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .frame(maxWidth: 96)
@@ -102,7 +103,7 @@ public struct FSeatBadge: View {
             if isDefender {
                 Image(systemName: "shield.fill").font(.system(size: 11)).foregroundColor(FColor.win)
             } else if isAttacker {
-                Image(systemName: "flame.fill").font(.system(size: 11)).foregroundColor(FColor.accent)
+                FSword(size: 15)   // web PlayerRing sword (was a flame)
             }
         }
         .frame(height: 14)

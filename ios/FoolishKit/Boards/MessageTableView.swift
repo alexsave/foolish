@@ -9,12 +9,17 @@
 // spectator on someone else's staged bubble — read-only, with a hint who is up.
 
 import SwiftUI
+import Foundation   // sin/cos for the ring placement
 
 public struct MessageTableView: View {
     @ObservedObject private var controller: MessageTurnController
     /// Seal the staged chain and hand it to the extension to compose + insert.
     /// The view never touches MSMessage; it only produces the payload.
     private let onSend: (Data) async -> Void
+    /// Start a fresh game in this thread. Offered on the board only once the game
+    /// is over (the fool is decided) — any player, out or not, can deal the next
+    /// one. Routes through the host's New game (§5.2), same as the chrome button.
+    private let onNewGame: () -> Void
 
     @State private var selection: Set<String> = []
     @State private var toast: String?
@@ -36,49 +41,36 @@ public struct MessageTableView: View {
     @State private var deckFrame: CGRect = .zero
     @State private var handCardFrames: [String: CGRect] = [:]
     @State private var seatFrames: [Int: CGRect] = [:]
-    /// Cards drawn this bout end, awaiting their new hand-slot rects to fly in.
-    @State private var pendingDraws: [Card] = []
-    /// Cards I took off the table (pickup), with their table-slot source rects,
-    /// awaiting my new hand slots.
-    @State private var pendingPickup: [(card: Card, from: CGRect)] = []
+    // Displayed counts LAG the game state during a bout-end sequence: a badge/deck/
+    // discard count holds its old value until that card's flight lands, then bumps
+    // (so a hand count never jumps before the deck→player draw animation plays).
+    @State private var seatCountOverride: [Int: Int] = [:]
+    @State private var deckCountOverride: Int?
+    @State private var discardCountOverride: Int?
 
-    public init(controller: MessageTurnController, onSend: @escaping (Data) async -> Void) {
+    public init(controller: MessageTurnController, onSend: @escaping (Data) async -> Void,
+                onNewGame: @escaping () -> Void = {}) {
         self.controller = controller
         self.onSend = onSend
+        self.onNewGame = onNewGame
     }
 
     public var body: some View {
         VStack(spacing: 8) {
             if let view = controller.view {
-                // Top row (web corners): deck + flipped trump on the LEFT, the
-                // opponents between, the discard pile on the RIGHT. Keeping deck and
-                // discard out of the centre leaves the battles the full width.
-                HStack(alignment: .top, spacing: 8) {
-                    FDeckWell(deckCount: view.deckCount, flipped: view.flipped,
-                              hasFlipped: view.hasFlipped, trumpSuit: view.trumpSuit)
-                    Spacer(minLength: 0)
-                    opponents(view)
-                    Spacer(minLength: 0)
-                    FDiscardPile(count: view.discardCount)
+                // Game over: the board gives way to the ranked results screen (web
+                // WinScreen parity) - finish order first-out down to the fool, with
+                // New game there.
+                if controller.isOver {
+                    FGameOverList(rows: finishRows(view), onNewGame: onNewGame)
+                } else {
+                    boardContent(view)
                 }
-                Spacer(minLength: 0)
-                battlesArea(view)          // full-width wrapping attack/cover pairs
-                Spacer(minLength: 0)
-                statusLine(view)
-                // The vertical button column: the play buttons when I can act, or
-                // Undo once a move is staged (FActionBar shows whichever the flags
-                // enable — nothing while waiting).
-                actionBar(view)
-                // Always show my own hand — even while "waiting for the others"
-                // (web parity: the hand is visible whether or not I have a legal
-                // move; legality is expressed by which buttons appear, not by
-                // hiding the cards).
-                hand(view)
             } else {
                 ProgressView()
             }
         }
-        .padding(12)
+        .padding(.horizontal, 8).padding(.top, 14).padding(.bottom, 4)   // top margin so the ring isn't clipped in the compact drawer
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(FMotion.cardMotion(reduceMotion: reduceMotion), value: controller.view)
         .overlay { FlyingCardsLayer(animator: animator) }
@@ -91,9 +83,8 @@ public struct MessageTableView: View {
         .onPreferenceChange(DiscardFrameKey.self) { discardFrame = $0 }
         .onPreferenceChange(DeckFrameKey.self) { deckFrame = $0 }
         .onPreferenceChange(SeatFramesKey.self) { seatFrames = $0 }
-        .onPreferenceChange(HandCardFramesKey.self) { handCardFrames = $0; tryDrawFlight(); tryPickupFlight() }
+        .onPreferenceChange(HandCardFramesKey.self) { handCardFrames = $0 }
         .onChange(of: controller.view) { flyBoutEndToDiscard(to: $0) }
-        .onChange(of: animator.isAnimating) { _ in tryDrawFlight(); tryPickupFlight() }
         .fToast($toast, accent: true)
         .onChange(of: controller.rejectTick) { _ in
             Haptics.fire(.reject); toast = FStrings.t("ios.reject")
@@ -109,10 +100,85 @@ public struct MessageTableView: View {
             // the auto-stage flow (move -> staged bubble) is visible without a tap.
             if ProcessInfo.processInfo.environment["HARNESS_AUTOMOVE"] != nil,
                let m = controller.legal.first(where: { $0.type != .wait }) {
+                // Let the incoming replay (the OTHER player's last move flying
+                // deck/seat→table on open) finish and rest so it's watchable,
+                // THEN auto-play our move. Dev pacing only.
+                try? await Task.sleep(nanoseconds: 2_400_000_000)
                 play(m)
             }
             #endif
         }
+    }
+
+    /// The live board, laid out like the web GameBoard: every piece is placed
+    /// ABSOLUTELY against the board rect, so the centred pieces never shift when a
+    /// corner changes (the bug where the deck pushed the opponent off-centre and
+    /// clipped it). Deck pins top-left, discard top-right; opponents ring a 35%
+    /// ellipse (the local player is the hand, so it is omitted); the battles sit
+    /// dead-centre; my hand hugs the bottom. The first-attacker SWORD (not a "your
+    /// move" label that ate layout) marks that I must open the bout.
+    private func boardContent(_ view: GameView) -> some View {
+        GeometryReader { geo in
+            ZStack {
+                // Battles — dead centre of the board (web: absolute, both axes).
+                battlesArea(view)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                // Opponent ring — each seat placed by trig on a 35% ellipse. The
+                // local player is visual-index 0 (bottom edge) and is drawn as the
+                // hand, so it is skipped here.
+                ForEach(view.players.filter { $0.seat != controller.mySeat }) { p in
+                    opponentSeat(p, view)
+                        .position(ringPoint(seat: p.seat, n: view.players.count, in: geo.size))
+                }
+
+                // Deck top-left, discard top-right — pinned to the corners and OUT
+                // of the centred flow, so they never push the ring or battles.
+                FDeckWell(deckCount: deckCountOverride ?? view.deckCount, flipped: view.flipped,
+                          hasFlipped: view.hasFlipped, trumpSuit: view.trumpSuit)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                FDiscardPile(count: discardCountOverride ?? view.discardCount)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+
+                // First-attacker sword: it's my open (empty table, I'm first
+                // attacker). Sits just above my hand - the web PlayerRing sword,
+                // replacing the old centred "your move" pill.
+                if firstAttackerMustOpen(view) {
+                    FSword(size: 30)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                        .padding(.bottom, 86)
+                }
+
+                // Action buttons float bottom-right, above the hand (web absolute
+                // bottom:90/right:20). They only appear when a flag enables them.
+                actionBar(view)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                    .padding(.trailing, 4).padding(.bottom, 84)
+
+                // My hand hugs the bottom (web: bottom max(10, safe-area)); the
+                // outer .padding(12) is the safe-area inset that keeps it unclipped.
+                hand(view)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+            }
+        }
+    }
+
+    /// The finish order for the end screen: rank 1 = first player out (best),
+    /// counting up to the fool last. `eliminationOrder` is first-out first and
+    /// holds everyone except the fool; the fool is `view.gameOver` (the one seat
+    /// still holding cards), given the last place. Mirrors web WinScreen.
+    private func finishRows(_ view: GameView) -> [FinishRow] {
+        let total = view.players.count
+        var rows: [FinishRow] = []
+        for (i, seat) in view.eliminationOrder.enumerated() {
+            rows.append(FinishRow(place: i + 1, total: total, name: name(seat),
+                                  isYou: seat == controller.mySeat))
+        }
+        if view.gameOver >= 0 {
+            rows.append(FinishRow(place: total, total: total, name: name(view.gameOver),
+                                  isYou: view.gameOver == controller.mySeat))
+        }
+        return rows
     }
 
     // MARK: zones
@@ -124,29 +190,49 @@ public struct MessageTableView: View {
         return v.battles.contains { $0.defense == nil } || v.battles.isEmpty
     }
 
-    /// Opponent badges only — self is the hand at the bottom (web PlayerRing seats
-    /// everyone but self, who owns the bottom edge).
-    private func opponents(_ view: GameView) -> some View {
-        HStack(spacing: 10) {
-            ForEach(view.players.filter { $0.seat != controller.mySeat }) { p in
-                FSeatBadge(name: name(p.seat),
-                           handCount: p.handCount,
-                           isDefender: p.seat == view.defender,
-                           isAttacker: p.seat != view.defender && !p.isOut && attackersActive,
-                           saidGood: view.hasSaidGood(p.seat),
-                           isOut: p.isOut)
-                    .background(GeometryReader { g in
-                        Color.clear.preference(key: SeatFramesKey.self,
-                                               value: [p.seat: g.frame(in: .named(boardSpace))])
-                    })
-            }
-        }
+    /// One opponent seat badge, publishing its frame in `boardSpace` so bout-end
+    /// flights can target it. Placed on the ring by `ringPoint`.
+    private func opponentSeat(_ p: PlayerView, _ view: GameView) -> some View {
+        FSeatBadge(name: name(p.seat),
+                   handCount: seatCountOverride[p.seat] ?? p.handCount,
+                   isDefender: p.seat == view.defender,
+                   isAttacker: p.seat != view.defender && !p.isOut && attackersActive,
+                   saidGood: view.hasSaidGood(p.seat),
+                   isOut: p.isOut)
+            .background(GeometryReader { g in
+                Color.clear.preference(key: SeatFramesKey.self,
+                                       value: [p.seat: g.frame(in: .named(boardSpace))])
+            })
+    }
+
+    /// A seat's centre on the web's 35% ellipse (PlayerRing): the local player is
+    /// visual-index 0 → bottom centre (drawn as the hand); opponents fan clockwise.
+    /// Percentages resolve against width vs height, which reads as an oval on a
+    /// non-square board - exactly the web's trick.
+    private func ringPoint(seat: Int, n: Int, in size: CGSize) -> CGPoint {
+        let visual = (seat - controller.mySeat + n) % n
+        let rad = 2 * Double.pi * Double(visual) / Double(max(n, 1))
+        // A compressed board (the compact drawer) pushes the ring a little higher
+        // so it and the hand don't crowd the middle - but only a little, or the
+        // top badge clips against the drawer's rounded top edge.
+        let ry = size.height < 340 ? 0.38 : 0.35
+        let x = (-sin(rad) * 0.35 + 0.5) * size.width
+        let y = ( cos(rad) * ry + 0.5) * size.height
+        return CGPoint(x: x, y: y)
+    }
+
+    /// I must open this bout: the table is empty, I'm the first attacker, and I
+    /// have a legal move. Drives the first-attacker sword (web PlayerRing).
+    private func firstAttackerMustOpen(_ view: GameView) -> Bool {
+        view.battles.isEmpty && view.firstAttacker == controller.mySeat && controller.iCanAct
     }
 
     private func battlesArea(_ view: GameView) -> some View {
         Group {
             if view.battles.isEmpty {
-                Text(FStrings.t("ios.nobattle")).font(.caption).foregroundStyle(FColor.textDim)
+                // Empty table: render nothing (web parity). A "no battle" label just
+                // tells the player what they can already see (owner's call).
+                Color.clear
             } else {
                 FBattleGrid(battles: view.battles, trumpSuit: view.trumpSuit,
                             coverable: highlightBattles(view),
@@ -170,138 +256,193 @@ public struct MessageTableView: View {
         return CardPlay.coverableBattles(cards: cards, battles: view.battles, legal: controller.legal)
     }
 
-    /// When a bout closes (the table clears into the discard), fly the cards that
-    /// were on the table to the discard pile — the web's cards_to_trash flight,
-    /// as a small overlay (matchedGeometry has no discard-side view to match). Reads
-    /// the battle rects still held from before the view cleared.
+    /// When a bout closes (the table clears), run the web's ORDERED bout-end
+    /// sequence: first the table clears (cards → discard when beaten, or → the taker
+    /// on a pickup), THEN each drawing player refills from the deck as its OWN step,
+    /// in the kernel's exact order (the LOG_DRAW stream: defender-if-empty, then from
+    /// the first attacker around). Every step waits for its frames to render, plays,
+    /// and is awaited - so nothing "just jumps" and draws never overlap. (This
+    /// mirrors evwire's cards_to_trash → one refill per player → defender_move.)
     private func flyBoutEndToDiscard(to newView: GameView?) {
         let prior = lastView
         lastView = newView
         guard !reduceMotion, let new = newView else { return }
-        // First time the board appears with a delivered game: replay the last move
-        // that produced this bubble (the web "open the message, watch what happened").
+        // First time the board appears with a delivered game: replay the last move.
         if prior == nil { replayLastMoveOnOpen(new); return }
-        // The table only clears two ways: BEATEN (cards → discard, then draws) or
-        // PICKED UP (cards → the taker's hand). Tell them apart by the discard count.
         guard let old = prior, !old.battles.isEmpty, new.battles.isEmpty else { return }
 
-        if new.discardCount > old.discardCount, discardFrame != .zero {
-            var flights: [Flight] = []
-            for (i, b) in old.battles.enumerated() {
-                guard let rect = lastBattleFrames[i], rect != .zero else { continue }
-                flights.append(Flight(id: "trash-\(b.attack.identity)", card: b.attack, from: rect, to: discardFrame))
-                if let d = b.defense {
-                    flights.append(Flight(id: "trash-\(d.identity)", card: d,
-                                          from: rect.offsetBy(dx: 8, dy: 6), to: discardFrame))
+        let beaten = new.discardCount > old.discardCount
+        let oldBattles = old.battles
+        let boutFrames = lastBattleFrames
+        let oldHandIds = Set((old.me?.hand ?? []).map(\.identity))
+        let myNewCards = (new.me?.hand ?? []).filter { !oldHandIds.contains($0.identity) }
+        // The pickup taker (nil when beaten): the seat whose hand grew by the table.
+        let takerSeat: Int? = beaten ? nil
+            : new.players.first { p in p.handCount > (old.players.first { $0.seat == p.seat }?.handCount ?? 0) }?.seat
+
+        // Freeze every displayed count to its PRE-refill value (set now, before the
+        // async steps) so a badge/deck/discard never jumps ahead of its flight.
+        for p in old.players where p.seat != controller.mySeat { seatCountOverride[p.seat] = p.handCount }
+        deckCountOverride = old.deckCount
+        discardCountOverride = old.discardCount
+
+        Task {
+            BoardAnimator.sequenceDepth += 1
+            defer {
+                BoardAnimator.sequenceDepth -= 1
+                seatCountOverride = [:]; deckCountOverride = nil; discardCountOverride = nil
+            }
+
+            // STEP 1 — the table clears; its count bumps only AFTER the flight lands.
+            if beaten {
+                await playStep { self.discardFlights(oldBattles, boutFrames) }
+                discardCountOverride = new.discardCount
+            } else if let taker = takerSeat {
+                if taker == controller.mySeat {
+                    await playStep { self.pickupToHandFlights(oldBattles, boutFrames) }
+                } else {
+                    await playStep { self.pickupToBadgeFlights(oldBattles, boutFrames, seat: taker) }
+                    seatCountOverride[taker] = new.players.first { $0.seat == taker }?.handCount
                 }
             }
-            // Draws: cards gained on the bout close fly deck→hand AFTER the discard
-            // (web cards_to_trash then refill), held until their new slots render.
-            let oldHand = Set((old.me?.hand ?? []).map(\.identity))
-            pendingDraws = (new.me?.hand ?? []).filter { !oldHand.contains($0.identity) }
-            // Opponents draw too — masked backs fly deck→their badge (measured now).
-            var oppDraws: [Flight] = []
-            for p in new.players where p.seat != controller.mySeat {
-                let was = old.players.first { $0.seat == p.seat }?.handCount ?? 0
-                let delta = p.handCount - was
-                guard delta > 0, let seat = seatFrames[p.seat], seat != .zero, deckFrame != .zero else { continue }
-                for k in 0..<delta {
-                    oppDraws.append(Flight(id: "odraw-\(p.seat)-\(k)", card: nil,
-                                           from: deckFrame, to: seat.offsetBy(dx: CGFloat(k) * 3, dy: 0)))
+
+            // STEPS 2..N — each drawing player refills, in kernel order, one at a
+            // time. The player's count (and the deck) bump only after THAT draw lands.
+            guard let replay = await MessageKernel.shared.residentReplay() else { return }
+            for ev in Self.lastBoutDraws(replay) where ev.seat != (takerSeat ?? -1) {
+                if ev.seat == controller.mySeat {
+                    await playStep { self.myDrawFlights(myNewCards) }
+                } else {
+                    await playStep { self.oppDrawFlights(seat: ev.seat, count: ev.count) }
+                    seatCountOverride[ev.seat] = new.players.first { $0.seat == ev.seat }?.handCount
                 }
+                deckCountOverride = (deckCountOverride ?? old.deckCount) - ev.count
             }
-            if !flights.isEmpty || !oppDraws.isEmpty {
-                Task {
-                    if !flights.isEmpty { await animator.play([flights]) }   // discard first
-                    if !oppDraws.isEmpty { await animator.play([oppDraws]) } // then opponents draw
-                    // my own draws fire via tryDrawFlight once !isAnimating + slots ready
-                }
-            }
-        } else if (new.me?.handCount ?? 0) > (old.me?.handCount ?? 0) {
-            // I took the table: the cards fly from their slots into my hand.
-            var srcs: [(card: Card, from: CGRect)] = []
-            for (i, b) in old.battles.enumerated() {
-                guard let rect = lastBattleFrames[i], rect != .zero else { continue }
-                srcs.append((b.attack, rect))
-                if let d = b.defense { srcs.append((d, rect.offsetBy(dx: 8, dy: 6))) }
-            }
-            pendingPickup = srcs
-            tryPickupFlight()
-        } else if let taker = new.players.first(where: { p in
-            p.seat != controller.mySeat &&
-            p.handCount > (old.players.first { $0.seat == p.seat }?.handCount ?? 0)
-        }), let seat = seatFrames[taker.seat], seat != .zero {
-            // An opponent took the table: the (face-up) cards fly to their badge.
-            var flights: [Flight] = []
-            for (i, b) in old.battles.enumerated() {
-                guard let rect = lastBattleFrames[i], rect != .zero else { continue }
-                flights.append(Flight(id: "opick-\(b.attack.identity)", card: b.attack, from: rect, to: seat))
-                if let d = b.defense {
-                    flights.append(Flight(id: "opick-\(d.identity)", card: d,
-                                          from: rect.offsetBy(dx: 8, dy: 6), to: seat))
-                }
-            }
-            if !flights.isEmpty { Task { await animator.play([flights]) } }
         }
     }
 
-    /// Fly the picked-up table cards into my hand slots once they've rendered.
-    private func tryPickupFlight() {
-        guard !pendingPickup.isEmpty, !animator.isAnimating,
-              pendingPickup.allSatisfy({ handCardFrames[$0.card.identity] != nil }) else { return }
-        let flights = pendingPickup.compactMap { item -> Flight? in
-            guard let to = handCardFrames[item.card.identity] else { return nil }
-            return Flight(id: "pick-\(item.card.identity)", card: item.card, from: item.from, to: to)
+    /// Poll (up to ~1.2s) for a step's frames to be ready, then play it and await
+    /// the animation. `build` returns nil (frames not ready — retry), [] (nothing to
+    /// animate), or the flights.
+    private func playStep(_ build: () -> [Flight]?) async {
+        for _ in 0..<26 {
+            if let f = build() {
+                if !f.isEmpty { await animator.play([f]) }
+                return
+            }
+            try? await Task.sleep(nanoseconds: 45_000_000)
         }
-        pendingPickup = []
-        Task { await animator.play([flights]) }
+    }
+
+    // MARK: bout-end flight builders (each returns nil until its frames are ready)
+
+    private func discardFlights(_ battles: [BattleView], _ frames: [Int: CGRect]) -> [Flight]? {
+        guard discardFrame != .zero else { return nil }
+        var f: [Flight] = []
+        for (i, b) in battles.enumerated() {
+            guard let rect = frames[i], rect != .zero else { continue }
+            f.append(Flight(id: "trash-\(b.attack.identity)", card: b.attack, from: rect, to: discardFrame))
+            if let d = b.defense {
+                f.append(Flight(id: "trash-\(d.identity)", card: d, from: rect.offsetBy(dx: 8, dy: 6), to: discardFrame))
+            }
+        }
+        return f
+    }
+
+    private func pickupToHandFlights(_ battles: [BattleView], _ frames: [Int: CGRect]) -> [Flight]? {
+        var pairs: [(card: Card, from: CGRect)] = []
+        for (i, b) in battles.enumerated() {
+            guard let rect = frames[i], rect != .zero else { continue }
+            pairs.append((b.attack, rect))
+            if let d = b.defense { pairs.append((d, rect.offsetBy(dx: 8, dy: 6))) }
+        }
+        guard pairs.allSatisfy({ handCardFrames[$0.card.identity] != nil }) else { return pairs.isEmpty ? [] : nil }
+        return pairs.compactMap { p in handCardFrames[p.card.identity].map { Flight(id: "pick-\(p.card.identity)", card: p.card, from: p.from, to: $0) } }
+    }
+
+    private func pickupToBadgeFlights(_ battles: [BattleView], _ frames: [Int: CGRect], seat: Int) -> [Flight]? {
+        guard let badge = seatFrames[seat], badge != .zero else { return nil }
+        var f: [Flight] = []
+        for (i, b) in battles.enumerated() {
+            guard let rect = frames[i], rect != .zero else { continue }
+            f.append(Flight(id: "opick-\(b.attack.identity)", card: b.attack, from: rect, to: badge))
+            if let d = b.defense {
+                f.append(Flight(id: "opick-\(d.identity)", card: d, from: rect.offsetBy(dx: 8, dy: 6), to: badge))
+            }
+        }
+        return f
+    }
+
+    private func myDrawFlights(_ cards: [Card]) -> [Flight]? {
+        if cards.isEmpty { return [] }
+        guard deckFrame != .zero, cards.allSatisfy({ handCardFrames[$0.identity] != nil }) else { return nil }
+        return cards.compactMap { c in handCardFrames[c.identity].map { Flight(id: "draw-\(c.identity)", card: c, from: deckFrame, to: $0) } }
+    }
+
+    private func oppDrawFlights(seat: Int, count: Int) -> [Flight]? {
+        guard let badge = seatFrames[seat], badge != .zero, deckFrame != .zero else { return nil }
+        return (0..<max(count, 1)).map { k in
+            Flight(id: "draw-\(seat)-\(k)", card: nil, from: deckFrame, to: badge.offsetBy(dx: CGFloat(k) * 3, dy: 0))
+        }
+    }
+
+    /// The last bout's refill draws in kernel order: LOG_DRAW (type 9) records after
+    /// the most recent discard/pickup, each one player's draw (seat + card count).
+    private static func lastBoutDraws(_ replay: DecodedReplay) -> [(seat: Int, count: Int)] {
+        let LOG_PICKUP = 4, LOG_DISCARD = 6, LOG_DRAW = 9
+        var start = 0
+        for i in stride(from: replay.logs.count - 1, through: 0, by: -1)
+        where replay.logs[i].type == LOG_DISCARD || replay.logs[i].type == LOG_PICKUP {
+            start = i + 1; break
+        }
+        return replay.logs[start...]
+            .filter { $0.type == LOG_DRAW }
+            .map { (seat: $0.seat, count: max($0.pairs.count, 1)) }
     }
 
     /// On opening a delivered bubble, replay the last card-placing move: fly the
-    /// card(s) it put on the table into their battle slots, from above (the sender's
-    /// side), so you SEE what the last move was — the web's open-a-message replay.
-    /// Reads the last LOG_ATTACK/LOG_COVER from the packed replay stream (no JSON).
+    /// card(s) it put on the table into their battle slots FROM THE PLAYER WHO
+    /// PLAYED THEM - the actor's seat badge (an opponent) or my hand (my own move)
+    /// - so the direction reflects who attacked, not a generic "from the top"
+    /// (which, in a 2p game, made every attack look like the opponent's). Reads the
+    /// last LOG_ATTACK/LOG_COVER (and its actor seat) from the packed replay stream.
     private func replayLastMoveOnOpen(_ view: GameView) {
         guard !reduceMotion, !controller.isOver else { return }
         // Fresh genesis deal (no moves yet): fly the opening hand from the deck —
-        // the web's deal. Reuses the draw pipeline (deck→hand slots).
+        // the web's deal, one step through the same sequencer.
         if view.battles.isEmpty {
             if controller.isGenesis, let hand = view.me?.hand, !hand.isEmpty {
-                pendingDraws = hand
-                tryDrawFlight()
+                Task {
+                    BoardAnimator.sequenceDepth += 1
+                    defer { BoardAnimator.sequenceDepth -= 1 }
+                    await playStep { self.myDrawFlights(hand) }
+                }
             }
             return
         }
         Task {
+            BoardAnimator.sequenceDepth += 1
+            defer { BoardAnimator.sequenceDepth -= 1 }
             // Let the battle slots render + publish their rects first.
             try? await Task.sleep(nanoseconds: 120_000_000)
             guard let replay = await MessageKernel.shared.residentReplay() else { return }
             let LOG_ATTACK = 1, LOG_COVER = 2   // game.h LOG_* (packed step types)
             guard let last = replay.logs.last(where: { $0.type == LOG_ATTACK || $0.type == LOG_COVER })
             else { return }
+            // Where the card comes FROM: the actor's seat badge if it's someone
+            // else, my hand if it was me. Fall back to a downward slide only if
+            // that rect hasn't been measured yet.
+            let actorSource = last.seat == controller.mySeat ? handFrame : (seatFrames[last.seat] ?? .zero)
             var flights: [Flight] = []
             for card in last.pairs.map(\.primary) where !card.isHidden {
                 guard let idx = view.battles.firstIndex(where: { $0.attack == card || $0.defense == card }),
                       let rect = battleFrames[idx] else { continue }
-                let from = rect.offsetBy(dx: 0, dy: -220)   // fly down from the sender's side
+                let from = actorSource != .zero ? actorSource : rect.offsetBy(dx: 0, dy: -220)
                 flights.append(Flight(id: "open-\(card.identity)", card: card, from: from, to: rect))
             }
             guard !flights.isEmpty else { return }
             await animator.play([flights])
         }
-    }
-
-    /// Fly this bout's drawn cards from the deck to their new hand slots — once the
-    /// discard flight is done and the new slots have measured rects.
-    private func tryDrawFlight() {
-        guard !pendingDraws.isEmpty, !animator.isAnimating, deckFrame != .zero,
-              pendingDraws.allSatisfy({ handCardFrames[$0.identity] != nil }) else { return }
-        let flights = pendingDraws.compactMap { c -> Flight? in
-            guard let to = handCardFrames[c.identity] else { return nil }
-            return Flight(id: "draw-\(c.identity)", card: c, from: deckFrame, to: to)
-        }
-        pendingDraws = []
-        Task { await animator.play([flights]) }
     }
 
     private func onDragChanged(_ card: Card) { dragCard = card }
@@ -311,44 +452,6 @@ public struct MessageTableView: View {
         let target = BoardDrop.target(at: point, battles: battleFrames, handFrame: handFrame)
         if target == .hand { return }   // dropped back in the fan — cancel
         playAt(target, playCards(for: card, view), view)
-    }
-
-    @ViewBuilder
-    private func statusLine(_ view: GameView) -> some View {
-        if controller.isOver {
-            statusChip(view.gameOver >= 0
-                ? FStrings.t("ios.msg.isfool", ["name": name(view.gameOver)])
-                : FStrings.t("game_over"), strong: true)
-        } else if controller.canStage {
-            // Something is sendable (a staged move, or a genesis deal to hand on).
-            // Say nothing: the extension collapses to Messages' Send on stage, so a
-            // "Move staged - hit Send" line is redundant with the send arrow itself.
-            EmptyView()
-        } else if !controller.iCanAct {
-            // No legal move for me on this staged state — I'm watching (§5.1).
-            statusChip(waitingLine(view))
-        } else {
-            statusChip(FStrings.t("ios.msg.yourmove"))
-        }
-    }
-
-    /// The status text on a dark pill so it stays readable over the busy wool
-    /// table (B4 bug: "Waiting for the others" was near-invisible).
-    private func statusChip(_ text: String, strong: Bool = false) -> some View {
-        Text(text)
-            .font(strong ? .subheadline.weight(.semibold) : .footnote.weight(.medium))
-            .foregroundStyle(FColor.textPrimary)
-            .padding(.horizontal, 12).padding(.vertical, 5)
-            .background(Capsule().fill(.black.opacity(0.45)))
-    }
-
-    private func waitingLine(_ view: GameView) -> String {
-        // Name the defender if the table is uncovered, else "the others".
-        let uncovered = view.battles.contains { $0.defense == nil }
-        if uncovered, view.defender >= 0, view.defender != controller.mySeat {
-            return FStrings.t("ios.msg.waitingfor", ["name": name(view.defender)])
-        }
-        return FStrings.t("ios.msg.waiting")
     }
 
     private func actionBar(_ view: GameView) -> some View {
@@ -440,5 +543,123 @@ public struct MessageTableView: View {
     private func coverableBattles(_ view: GameView) -> Set<Int> {
         let out = CardPlay.coverableBattles(cards: selectedCards(view), battles: view.battles, legal: controller.legal)
         return out
+    }
+}
+
+/// A first-attacker sword (the web SovietIcon 'sword', reworked to read clearly as
+/// a sword rather than an arrow): a red blade pointing up-right, a dark crossguard
+/// perpendicular to it, a short grip, and a round pommel. Marks "you open this
+/// bout" - no emoji (the ⚔️ fallback is out).
+struct FSword: View {
+    var size: CGFloat = 24
+    var body: some View {
+        Canvas { ctx, sz in
+            let s = sz.width / 24
+            func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: x * s, y: y * s) }
+            let steel = Color(hex: 0xD9DEE3), edge = Color(hex: 0x8A9098)
+            let dark = Color(hex: 0x0A0A0A), gold = Color(hex: 0xB88A2A)
+
+            // Blade: a tapered quad from the point (top-right) down to the guard,
+            // filled steel with a darker spine so it reads as a blade, not a line.
+            var blade = Path()
+            blade.move(to: p(20, 3.5))            // point
+            blade.addLine(to: p(18.6, 5.6))
+            blade.addLine(to: p(9.4, 14.8))       // shoulder at the guard
+            blade.addLine(to: p(8, 13.4))
+            blade.closeSubpath()
+            ctx.fill(blade, with: .color(steel))
+            ctx.stroke(blade, with: .color(edge), style: StrokeStyle(lineWidth: 0.7 * s, lineJoin: .round))
+
+            // Crossguard: a short dark bar perpendicular to the blade at the hilt.
+            var guardBar = Path()
+            guardBar.move(to: p(6.5, 13.5)); guardBar.addLine(to: p(12.5, 17.5))
+            ctx.stroke(guardBar, with: .color(gold), style: StrokeStyle(lineWidth: 2.6 * s, lineCap: .round))
+
+            // Grip: the short handle below the guard, down to the pommel.
+            var grip = Path(); grip.move(to: p(9, 15)); grip.addLine(to: p(6, 19))
+            ctx.stroke(grip, with: .color(dark), style: StrokeStyle(lineWidth: 2.6 * s, lineCap: .round))
+
+            // Pommel: a round knob at the base of the grip.
+            let r = 1.9 * s
+            ctx.fill(Path(ellipseIn: CGRect(x: 5.4 * s - r, y: 19.4 * s - r, width: 2 * r, height: 2 * r)),
+                     with: .color(gold))
+        }
+        .frame(width: size, height: size)
+        .shadow(color: .black.opacity(0.45), radius: 1.5, y: 1)
+        .accessibilityLabel(Text("You attack first"))
+    }
+}
+
+/// One row of the ranked end screen (web WinScreen parity, minus ELO). `place` is
+/// 1-based: rank 1 is the first player out (best); the fool is `place == total`.
+struct FinishRow: Identifiable {
+    let place: Int
+    let total: Int
+    let name: String
+    let isYou: Bool
+    var id: Int { place }
+    var isFool: Bool { place == total }
+}
+
+/// The game-over results, replacing the board when the fool is decided (design:
+/// mirror the web WinScreen). Players are listed in finishing order - first out
+/// (rank 1) down to the fool - with New game at the bottom so any player, out or
+/// not, can deal the next one. No ELO in the iMessage game, and no emoji: the rank
+/// is a colored number (brass for 1st, red for the fool) with a "Fool" tag.
+struct FGameOverList: View {
+    private static let rowH: CGFloat = 34   // fixed per-row height (plank scales with player count)
+    let rows: [FinishRow]
+    let onNewGame: () -> Void
+
+    private var plankHeight: CGFloat { CGFloat(rows.count) * Self.rowH + CGFloat(max(rows.count - 1, 0)) }
+
+    var body: some View {
+        VStack(spacing: 18) {
+            Spacer(minLength: 0)
+            Text(FStrings.t("game_over"))
+                .font(.title2.weight(.bold))
+                .foregroundStyle(FColor.textPrimary)
+                .shadow(color: .black.opacity(0.6), radius: 3, y: 1)
+            // ONE wooden plank behind the whole ranking (web WinScreen), rows
+            // separated by hairlines - not a stack of dark chips. Text is dark on
+            // the bright wood so it (and the "Fool" chip) stays legible.
+            // ONE wood plank: WoodFill is a ZStack LAYER (not a .background, which
+            // over-drew past its frame and made the plank ~2x too tall), sized +
+            // hard-clipped to exactly rows × rowH so it scales with the player count.
+            ZStack {
+                WoodFill()
+                VStack(spacing: 0) {
+                    ForEach(Array(rows.enumerated()), id: \.element.id) { i, row in
+                        HStack(spacing: 12) {
+                            // The last place reads "Fool" in the rank column itself
+                            // (no separate pill); everyone else is "#N".
+                            Text(row.isFool ? FStrings.t("ios.fool") : "#\(row.place)")
+                                .font(.headline.weight(.heavy)).monospacedDigit()
+                                .foregroundStyle(row.isFool ? Color(hex: 0x8A1810)
+                                                 : (row.place == 1 ? Color(hex: 0x5A3B00) : .black.opacity(0.55)))
+                                .frame(width: 56, alignment: .leading)
+                            Text(row.name + (row.isYou ? " (\(FStrings.t("ios.you")))" : ""))
+                                .font(.body.weight(.semibold))
+                                .foregroundStyle(.black.opacity(0.88))
+                                .lineLimit(1)
+                            Spacer(minLength: 0)
+                        }
+                        .frame(height: Self.rowH)
+                        .padding(.horizontal, 12)
+                        if i < rows.count - 1 {
+                            Rectangle().fill(.black.opacity(0.28)).frame(height: 1)   // web divider
+                        }
+                    }
+                }
+            }
+            .frame(height: plankHeight)
+            .clipShape(Rectangle())
+            .overlay(Rectangle().strokeBorder(.black.opacity(0.4), lineWidth: 1.5))
+            .padding(.horizontal, 4)
+            Spacer(minLength: 0)
+            FButton(FStrings.t("ios.msg.newgame"), kind: .wood, action: onNewGame)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding()
     }
 }
