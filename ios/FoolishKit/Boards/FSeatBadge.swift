@@ -63,7 +63,8 @@ public struct FSeatBadge: View {
                 }
             }
             .frame(width: cardW + spread * CGFloat(max(visibleBacks - 1, 0)) + 6, height: cardH + 4)
-            .overlay(roleRing)
+            // (no role ring around the mini-fan - the role is shown by the row of
+            // icons below; the gold/red border read as clutter)
 
             roleRow
         }
@@ -86,15 +87,6 @@ public struct FSeatBadge: View {
                         .offset(x: CGFloat(Double(i) - mid) * spread)
                 }
             }
-        }
-    }
-
-    // Defender = gold ring, attacker = red ring (mirrors the web's role marks).
-    @ViewBuilder private var roleRing: some View {
-        if isDefender {
-            RoundedRectangle(cornerRadius: 5).strokeBorder(FColor.win, lineWidth: 2)
-        } else if isAttacker {
-            RoundedRectangle(cornerRadius: 5).strokeBorder(FColor.accent, lineWidth: 2)
         }
     }
 

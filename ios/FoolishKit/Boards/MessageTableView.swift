@@ -136,8 +136,10 @@ public struct MessageTableView: View {
                 // of the centred flow, so they never push the ring or battles.
                 FDeckWell(deckCount: deckCountOverride ?? view.deckCount, flipped: view.flipped,
                           hasFlipped: view.hasFlipped, trumpSuit: view.trumpSuit)
+                    .offset(y: -30)   // snug into the top-left corner (the well has empty space above the stack)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 FDiscardPile(count: discardCountOverride ?? view.discardCount)
+                    .offset(y: -16)   // snug into the top-right corner
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
 
                 // First-attacker sword: it's my open (empty table, I'm first
