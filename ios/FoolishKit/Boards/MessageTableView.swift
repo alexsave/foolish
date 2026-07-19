@@ -611,25 +611,23 @@ struct FGameOverList: View {
     let rows: [FinishRow]
     let onNewGame: () -> Void
 
-    private var plankHeight: CGFloat { CGFloat(rows.count) * Self.rowH + CGFloat(max(rows.count - 1, 0)) }
+    private var plankHeight: CGFloat { CGFloat(rows.count) * Self.rowH }
 
     var body: some View {
-        VStack(spacing: 18) {
-            Spacer(minLength: 0)
+        // Title + ranking sit at the TOP; New game is pinned to the bottom.
+        VStack(spacing: 14) {
             Text(FStrings.t("game_over"))
                 .font(.title2.weight(.bold))
                 .foregroundStyle(FColor.textPrimary)
                 .shadow(color: .black.opacity(0.6), radius: 3, y: 1)
-            // ONE wooden plank behind the whole ranking (web WinScreen), rows
-            // separated by hairlines - not a stack of dark chips. Text is dark on
-            // the bright wood so it (and the "Fool" chip) stays legible.
-            // ONE wood plank: WoodFill is a ZStack LAYER (not a .background, which
-            // over-drew past its frame and made the plank ~2x too tall), sized +
-            // hard-clipped to exactly rows × rowH so it scales with the player count.
+            // ONE continuous wood plank behind the whole ranking (no dividers):
+            // WoodFill is a ZStack LAYER (not a .background, which over-drew and
+            // made the plank too tall), hard-clipped to exactly rows × rowH so it
+            // is a single block that scales with the player count.
             ZStack {
                 WoodFill()
                 VStack(spacing: 0) {
-                    ForEach(Array(rows.enumerated()), id: \.element.id) { i, row in
+                    ForEach(rows) { row in
                         HStack(spacing: 12) {
                             // The last place reads "Fool" in the rank column itself
                             // (no separate pill); everyone else is "#N".
@@ -646,9 +644,6 @@ struct FGameOverList: View {
                         }
                         .frame(height: Self.rowH)
                         .padding(.horizontal, 12)
-                        if i < rows.count - 1 {
-                            Rectangle().fill(.black.opacity(0.28)).frame(height: 1)   // web divider
-                        }
                     }
                 }
             }
