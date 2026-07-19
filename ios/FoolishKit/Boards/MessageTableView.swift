@@ -548,46 +548,27 @@ public struct MessageTableView: View {
     }
 }
 
-/// A first-attacker sword (the web SovietIcon 'sword', reworked to read clearly as
-/// a sword rather than an arrow): a red blade pointing up-right, a dark crossguard
-/// perpendicular to it, a short grip, and a round pommel. Marks "you open this
-/// bout" - no emoji (the ⚔️ fallback is out).
+/// The first-attacker sword — the EXACT web SovietIcon 'sword' SVG (the same shape
+/// the watch app uses) on a 24x24 grid: the blade M19,3→5,17, the hilt corner
+/// M15,3→19,3→19,7, the handle M3,19→7,15, and a 4x4 pommel at (2,18). Rendered
+/// FLAT dark gray (all one colour, no shadow). Marks "you open this bout".
 struct FSword: View {
     var size: CGFloat = 24
     var body: some View {
         Canvas { ctx, sz in
             let s = sz.width / 24
             func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: x * s, y: y * s) }
-            let steel = Color(hex: 0xD9DEE3), edge = Color(hex: 0x8A9098)
-            let dark = Color(hex: 0x0A0A0A), gold = Color(hex: 0xB88A2A)
-
-            // Blade: a tapered quad from the point (top-right) down to the guard,
-            // filled steel with a darker spine so it reads as a blade, not a line.
-            var blade = Path()
-            blade.move(to: p(20, 3.5))            // point
-            blade.addLine(to: p(18.6, 5.6))
-            blade.addLine(to: p(9.4, 14.8))       // shoulder at the guard
-            blade.addLine(to: p(8, 13.4))
-            blade.closeSubpath()
-            ctx.fill(blade, with: .color(steel))
-            ctx.stroke(blade, with: .color(edge), style: StrokeStyle(lineWidth: 0.7 * s, lineJoin: .round))
-
-            // Crossguard: a short dark bar perpendicular to the blade at the hilt.
-            var guardBar = Path()
-            guardBar.move(to: p(6.5, 13.5)); guardBar.addLine(to: p(12.5, 17.5))
-            ctx.stroke(guardBar, with: .color(gold), style: StrokeStyle(lineWidth: 2.6 * s, lineCap: .round))
-
-            // Grip: the short handle below the guard, down to the pommel.
-            var grip = Path(); grip.move(to: p(9, 15)); grip.addLine(to: p(6, 19))
-            ctx.stroke(grip, with: .color(dark), style: StrokeStyle(lineWidth: 2.6 * s, lineCap: .round))
-
-            // Pommel: a round knob at the base of the grip.
-            let r = 1.9 * s
-            ctx.fill(Path(ellipseIn: CGRect(x: 5.4 * s - r, y: 19.4 * s - r, width: 2 * r, height: 2 * r)),
-                     with: .color(gold))
+            let gray = Color(hex: 0x3A3A3A)
+            let stroke = StrokeStyle(lineWidth: 3 * s, lineCap: .square)
+            var blade = Path();  blade.move(to: p(19, 3));  blade.addLine(to: p(5, 17))
+            var hilt = Path();   hilt.move(to: p(15, 3));   hilt.addLine(to: p(19, 3)); hilt.addLine(to: p(19, 7))
+            var handle = Path(); handle.move(to: p(3, 19)); handle.addLine(to: p(7, 15))
+            ctx.stroke(blade, with: .color(gray), style: stroke)
+            ctx.stroke(hilt, with: .color(gray), style: stroke)
+            ctx.stroke(handle, with: .color(gray), style: stroke)
+            ctx.fill(Path(CGRect(x: 2 * s, y: 18 * s, width: 4 * s, height: 4 * s)), with: .color(gray))
         }
         .frame(width: size, height: size)
-        .shadow(color: .black.opacity(0.45), radius: 1.5, y: 1)
         .accessibilityLabel(Text("You attack first"))
     }
 }
