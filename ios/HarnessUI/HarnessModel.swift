@@ -236,6 +236,30 @@ final class HarnessModel: ObservableObject {
                     _ = try? await MessageKernel.shared.decode(payload: payload, viewer: -1)
                 }
             }
+            // DEV: HARNESS_ENDSCREEN plays the whole game out (first legal move for
+            // any actionable seat) until it is over, then seals FINISHED so the
+            // board lands on the ranked end screen — a deterministic screenshot.
+            if ProcessInfo.processInfo.environment["HARNESS_ENDSCREEN"] != nil {
+                var guardN = 0
+                while (await MessageKernel.shared.residentView(viewer: -1))?.isOver != true, guardN < 6000 {
+                    guardN += 1
+                    var acted = false
+                    for s in 0..<n {
+                        let legal = await MessageKernel.shared.residentLegal(seat: s)
+                        if let m = legal.first(where: { $0.type != .wait }) {
+                            try? await MessageKernel.shared.apply(seat: s, move: m)
+                            acted = true; break
+                        }
+                    }
+                    if !acted { break }
+                }
+                if let p = try? await MessageKernel.shared.seal(
+                    phase: 3, lastActorSeat: 0, gameId: gid,
+                    parent8: Data(repeating: 0, count: 8), joins: joins) {
+                    payload = p
+                    _ = try? await MessageKernel.shared.decode(payload: payload, viewer: -1)
+                }
+            }
             var actor = 0
             for s in 0..<n where (await MessageKernel.shared.residentLegal(seat: s)).contains(where: { $0.type != .wait }) {
                 actor = s; break
