@@ -582,6 +582,7 @@ struct FSword: View {
                      with: .color(gray))
         }
         .frame(width: size, height: size)
+        .rotationEffect(.degrees(45))   // point it up-and-to-the-right
         .accessibilityLabel(Text("You attack first"))
     }
 }

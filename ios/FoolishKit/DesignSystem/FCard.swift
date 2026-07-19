@@ -109,15 +109,16 @@ public struct FCard: View {
                           lineWidth: selected ? 2.5 : 2)
     }
 
-    // MARK: back — solid black with a deep-red border (the fern fractal kept
-    // rendering wrong; this is the simple placeholder the owner asked for).
-    private static let deepRed = Color(hex: 0x8B0000)
+    // MARK: back — dark-red fill with a lighter-red border (fern dropped for now;
+    // it kept rendering wrong). A clean placeholder per the owner.
+    private static let backFill = Color(hex: 0x8B0000)     // dark red
+    private static let backEdge = Color(hex: 0xDC2626)     // lighter red
     private var back: some View {
         RoundedRectangle(cornerRadius: radius)
-            .fill(Color.black)
+            .fill(Self.backFill)
             .overlay(
                 RoundedRectangle(cornerRadius: radius)
-                    .strokeBorder(selected ? Self.selRed : Self.deepRed, lineWidth: selected ? 2.5 : 1.5)
+                    .strokeBorder(selected ? Self.selRed : Self.backEdge, lineWidth: selected ? 2.5 : 1.5)
             )
     }
 
