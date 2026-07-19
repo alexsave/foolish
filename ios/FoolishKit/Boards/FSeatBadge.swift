@@ -98,12 +98,12 @@ public struct FSeatBadge: View {
                     .font(.system(size: 11)).foregroundColor(FColor.win)
             }
             if isDefender {
-                Image(systemName: "shield.fill").font(.system(size: 11)).foregroundColor(FColor.win)
+                FShield(size: 19)   // hand-built light-gray shield (larger)
             } else if isAttacker {
-                FSword(size: 15)   // web PlayerRing sword (was a flame)
+                FSword(size: 16)    // hand-built sword
             }
         }
-        .frame(height: 14)
+        .frame(height: 19)
     }
 
     private var a11y: String {

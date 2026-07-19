@@ -45,8 +45,7 @@ public struct MessageBoardView: View {
                                isDefender: p.seat == view.defender,
                                isAttacker: p.seat != view.defender && !p.isOut && attackersActive,
                                saidGood: view.hasSaidGood(p.seat),
-                               isOut: p.isOut,
-                               onLight: true)   // beige bubble → dark name text
+                               isOut: p.isOut)   // wool bubble → bone text + shadow (like the board)
                         .position(ringPoint(seat: p.seat, n: view.players.count, in: geo.size))
                 }
 

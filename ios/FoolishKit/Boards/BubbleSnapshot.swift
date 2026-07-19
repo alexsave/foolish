@@ -21,9 +21,17 @@ public enum BubbleSnapshot {
     public static func render(publicView: GameView, names: [Int: String] = [:]) -> UIImage? {
         let content = MessageBoardView(view: publicView, names: names)
             .frame(width: size.width, height: size.height)
-            // The web's fallback beige, not the Khokhloma red (owner's call): the
-            // bubble reads as the table, not a red card.
-            .background(FColor.fallback)
+            // The REAL wool texture (same as the board), rendered synchronously —
+            // WoolBackground's async .task never runs inside ImageRenderer, so we
+            // draw WoolTexture.image directly at the bubble's wide aspect. Falls
+            // back to the flat beige underneath while/if the image is empty.
+            .background(
+                Image(uiImage: WoolTexture.image(w: 900, h: 585))
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .clipped()
+                    .background(FColor.fallback)
+            )
             .environment(\.colorScheme, .light)   // the balloon image is theme-independent
         let renderer = ImageRenderer(content: content)
         renderer.scale = UIScreen.main.scale

@@ -587,6 +587,31 @@ struct FSword: View {
     }
 }
 
+/// The defender shield — a hand-built heraldic shield (flat top, straight upper
+/// sides curving to a point at the bottom), filled flat LIGHT gray with a darker
+/// edge for definition on the wool. Marks the current defender.
+struct FShield: View {
+    var size: CGFloat = 24
+    var body: some View {
+        Canvas { ctx, sz in
+            let s = sz.width / 24
+            func P(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: x * s, y: y * s) }
+            let gray = Color(hex: 0xCACFD4), edge = Color(hex: 0x5E6368)
+            var shield = Path()
+            shield.move(to: P(4, 3.5))
+            shield.addLine(to: P(20, 3.5))
+            shield.addLine(to: P(20, 11))
+            shield.addQuadCurve(to: P(12, 21.5), control: P(20, 18))
+            shield.addQuadCurve(to: P(4, 11), control: P(4, 18))
+            shield.closeSubpath()
+            ctx.fill(shield, with: .color(gray))
+            ctx.stroke(shield, with: .color(edge), style: StrokeStyle(lineWidth: 1.1 * s, lineJoin: .round))
+        }
+        .frame(width: size, height: size)
+        .accessibilityLabel(Text("Defending"))
+    }
+}
+
 /// One row of the ranked end screen (web WinScreen parity, minus ELO). `place` is
 /// 1-based: rank 1 is the first player out (best); the fool is `place == total`.
 struct FinishRow: Identifiable {
