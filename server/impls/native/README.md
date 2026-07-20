@@ -69,6 +69,7 @@ POST /action?game_id=..  <awire bytes>  (Bearer)   applies, then runs the bots
 GET  /state?game_id=..&seat=..          -> the kernel's masked view (packed)
 GET  /status?game_id=..                 -> 0 waiting / 1 playing / 2 over
 GET  /health
+GET  /ws?game_id=..&seat=.. (Bearer, Upgrade: websocket) -> RFC 6455 WebSocket
 ```
 
 `start` deals once every seated human is ready (bots are always ready, 2+
@@ -78,6 +79,25 @@ request body. The server enumerates no move types: it decodes with the kernel
 (`awire_decode`) and applies through the kernel's one apply-entry
 (`awire_apply`), so the move parser + dispatch switch a server used to carry
 are gone.
+
+### `/ws` — the persistent hot loop
+
+`/ws` replaces the `/action` + `/state` round trip with ONE long-lived
+connection per (authenticated, seated) client — see `ws.h`/`ws.c` for the
+handshake (SHA-1 + base64, no external deps) and frame I/O, and
+`PROFILE_HOTPATH.md`'s "T1b" section for why: thread-per-HTTP-request meant
+a fresh `pthread_create` (a zeroed 8 MiB stack) on every single move; a
+persistent connection pays that once per client SESSION instead. After the
+upgrade the server immediately pushes the current masked state, then loops:
+a client's binary frame is either a real **awire** move (applied through the
+same `awire_decode`/`awire_apply` `/action` uses) or empty (just "send me
+the current state" — a seat with no move yet still needs to notice when
+another seat's move changes its own eligibility). Every reply is one binary
+frame, `[ok:u8][state_put(seat) bytes]`. `foolish_hammer --mode=ws` is the
+reference client: it decodes the pushed state, calls the kernel's own
+`calculate_legal_moves` for its seat, and submits a randomly chosen LEGAL
+move — so, unlike the HTTP load modes' mostly-illegal random frames, every
+submitted move actually lands.
 
 ## Smoke test
 
@@ -94,7 +114,11 @@ defender's view with the bot's response — all decided by the kernel.
 ## Status / scope
 
 Proof-of-concept. Present: auth, lobby, deal, human + bot moves, masked views,
-continue-to-lobby, basic concurrency. Not present (deliberately): durability
-(WAL/snapshot — state is RAM-only), realtime push (clients poll `/state`), the
-packed binary envelope the iOS client expects (this speaks plain JSON), TLS,
-rate limits. The point is the architecture, not production readiness.
+continue-to-lobby, basic concurrency, a persistent-connection `/ws` push path
+for the action+state hot loop (see above). Not present (deliberately):
+durability (WAL/snapshot — state is RAM-only), broadcasting a game's state to
+every seat's connection when ANY seat moves (`/ws` clients each poll their
+own seat instead — see `foolish_hammer.c`'s ws worker), the packed binary
+envelope the iOS client expects (this speaks plain JSON over HTTP; `/ws`
+speaks the kernel's own packed wire), TLS, rate limits. The point is the
+architecture, not production readiness.

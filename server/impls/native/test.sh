@@ -21,7 +21,28 @@ curl -s -XPOST "$H/meta" -H "Authorization: Bearer $BT" -d "{\"type\":\"start\",
 # them with its own reader (Swift MaskedView), not curl. We just show the bytes
 # to prove they arrive masked per seat.
 echo "── seat 0 (alice) packed view (hex head):"
-curl -s "$H/state?game_id=$GID&seat=0" | xxd | head -3
+curl -s "$H/state?game_id=$GID&seat=0" | od -A x -t x1z | head -3
 echo "── seat 1 (bob) packed view (hex head):"
-curl -s "$H/state?game_id=$GID&seat=1" | xxd | head -3
+curl -s "$H/state?game_id=$GID&seat=1" | od -A x -t x1z | head -3
 echo "── status: $(curl -s "$H/status?game_id=$GID")   (0 waiting / 1 playing / 2 over)"
+
+# ── WebSocket smoke test ────────────────────────────────────────────────
+# Exercises the ws.h/ws.c handshake (Sec-WebSocket-Accept) + frame I/O +
+# the /ws action protocol end-to-end, via a tiny, tightly-scoped run of
+# foolish_hammer's own --mode=ws (own signup/create/join/start, never
+# touches the game above): persistent connections, real legal moves,
+# server-side apply. See foolish_hammer.c's header comment for the protocol.
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HOST="${H#*://}"; HOST="${HOST%%/*}"
+WPORT="${HOST##*:}"
+echo "── ws smoke test (mode=ws, tiny scale, port $WPORT)"
+if [ ! -x "$DIR/foolish_hammer" ]; then (cd "$DIR" && make foolish_hammer >/dev/null); fi
+WS_OUT=$("$DIR/foolish_hammer" --host=127.0.0.1 --port="$WPORT" --games=1 --seats=2 --secs=2 --mode=ws)
+echo "$WS_OUT" | tail -12
+APPLIED=$(echo "$WS_OUT" | grep 'applied(ok=true):' | grep -o 'applied(ok=true):[[:space:]]*[0-9]*' | grep -o '[0-9]*$' || true)
+if [ -n "${APPLIED:-}" ] && [ "$APPLIED" -gt 0 ]; then
+    echo "── ws smoke test: PASS (${APPLIED} legal moves applied over persistent WS connections)"
+else
+    echo "── ws smoke test: FAIL (no applied moves)"
+    exit 1
+fi
