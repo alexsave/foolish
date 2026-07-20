@@ -84,3 +84,33 @@ kept conservative and mirrored on existing idioms; C/wasm/e2e suites run on
 Linux and MUST stay green for any batch touching `c/` or the TS side. The
 first Mac session should run `xcodebuild build test` + the HarnessTests suite
 before shipping.
+
+## Batch status (2026-07-20)
+
+Seven commits landed on this branch so far — the triage doc itself plus
+batches 1–6 (`git log --oneline`, newest first):
+
+| Commit | What |
+| --- | --- |
+| `3e296f2` | batch 6 — session-per-game bubbles, decodable FINISHED bubble + web replay funnel, open-count lobby with explicit start |
+| `ca1e6d8` | batch 5 — simulate iPhone SE extension viewport (real collapse, centered stage, rounded corners + grabber) |
+| `2b24965` | batch 4 — hand reordering, drag verb hint, pass ghost-slot preview |
+| `a4ec82c` | batch 3 — delta replay on open, undo/animation isolation, pre-hide, cover-then-discard, final animation before results |
+| `5d308e0` | batch 2 — discard rotation, deck-corner spacing, badge sizes, wool contrast, corner indices, end-screen zoom+contrast, self role icon |
+| `77647b2` | batch 1 — release spectate, sword/button gating, Pickup wording, green check, undo retracts stage |
+| `5eccd20` | docs: triage the on-device harness notes into batched, root-caused work (this doc, pre-batch-1) |
+
+**Batch 7 = `docs/IMESSAGE_DEFERRED_V2.md`** (this commit): design sketches for
+the deferred/answered notes (15, 16, 22–24, 26, 27) — fair-tempo enforcement,
+the octogen rollout-policy research idea, the same-value auto-discard variant,
+the privacy-policy answer, and the post-launch app-store funnel. Docs only, no
+code.
+
+**Before shipping any of batches 1–6:** all of it is Swift UI/animation work
+verified only by inspection and the existing Linux-side C/wasm/e2e suites — no
+Mac has compiled or run this tree yet. The first Mac session must run a full
+`xcodebuild build test` pass and **re-record snapshot references**, since
+batch 2 changed `FCard`/`FSeatBadge`/`FDeckWell` visuals (discard rotation,
+badge sizes, deck-well spacing, corner indices) that the committed snapshot
+refs predate. Treat every batch-1–6 commit as unverified on-device until that
+session happens.
