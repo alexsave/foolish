@@ -484,17 +484,16 @@ just not live.
 install CTA becomes a real, working link the instant the placeholder URL is
 swapped for the real App Store ID — a one-line change, no new engineering,
 since the CTA slot and copy already exist. Second, the FINISHED **in-extension**
-state could grow a "Get the app" row — but this is worth a correction to how
-the note is usually framed: there is currently **no rank/leaderboard screen
-inside the iMessage extension at all**. `FGameOverList` (the rank screen
-`docs/HARNESS_NOTES_TRIAGE.md` notes 18/40/41 are about) lives only in the
-main host app; the extension's own FINISHED state today is a minimal fool
-announcement string (`ios.msg.fool`/`ios.msg.tap`,
-`ios/FoolishMessages/MessagesViewController.swift:150–157`) plus the bubble's
-link out to `/m/`. So "add a Get the app row to the FINISHED rank screen"
-would mean building a small new in-extension view, not modifying an existing
-one — cheap (the extension already has the fool/winner info resident right
-there), but it's new surface, not a tweak. Third, Messages' own app drawer
+state could grow a "Get the app" row — and this IS a tweak to an existing
+screen: `FGameOverList` (the ranked results screen notes 18/40/41 polished,
+`ios/FoolishKit/Boards/MessageTableView.swift`) is rendered by the extension's
+own interactive board when a game the viewer opens is over (`MessageTableView`
+is what `MessagesRootView` shows in the extension; since batch 3 it appears
+after the final animation settles). The FINISHED *bubble* in the transcript
+is separate — a fool-announcement summary string
+(`ios/FoolishMessages/MessagesViewController.swift`) whose tap opens that
+board. So the row is one more `FButton` under the existing New-game button in
+`FGameOverList`, plus the same App Store URL the `/m/` page uses. Third, Messages' own app drawer
 listing (the "+" tray other iMessage apps show up in) is entirely handled by
 Apple once the app has a live App Store record with the Messages extension
 target attached (`IMESSAGE_GAME_DESIGN.md` §9.1's bundled-app decision) — no
