@@ -48,8 +48,12 @@ public struct TableView<Session: GameSession>: View {
                         .fixedSize()
                         .position(x: geo.size.width / 2, y: geo.size.height * ringCenterYFraction)
 
+                    // FDeckWell now anchors its content top-leading inside its
+                    // 92x108 frame (batch-2 equal-inset change); this .position
+                    // centers that frame, so nudge it down to keep the stack's
+                    // visual spot (content center moved ~16pt up within the frame).
                     deckWell(view)
-                        .position(x: geo.size.width * 0.14, y: geo.size.height * 0.14)
+                        .position(x: geo.size.width * 0.14, y: geo.size.height * 0.14 + 16)
 
                     if view.discardCount > 0 {
                         discardPile(view)
