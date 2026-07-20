@@ -17,7 +17,11 @@ endif
 # Every kernel source except the standalone tools (their own main()).
 KERNEL_SRC := $(filter-out $(wildcard $(KDIR)/src/main_*.c), $(wildcard $(KDIR)/src/*.c))
 
-foolish_server: foolish_server.c $(KERNEL_SRC)
+# Native (non-kernel) helpers shared by the server and the load client: the
+# RFC 6455 WebSocket handshake (SHA-1 + base64) and frame I/O. See ws.h.
+NATIVE_SRC := ws.c
+
+foolish_server: foolish_server.c $(NATIVE_SRC) $(KERNEL_SRC)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 run: foolish_server
@@ -28,7 +32,7 @@ run: foolish_server
 # it needs awire_encode + view.h/state_get to build/decode real wire frames —
 # but never includes foolish_server.c itself: it is a separate process that
 # hits the server over the loopback socket, exactly like a real client.
-foolish_hammer: foolish_hammer.c $(KERNEL_SRC)
+foolish_hammer: foolish_hammer.c $(NATIVE_SRC) $(KERNEL_SRC)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 # Profiling build of the server: same sources, but -g -fno-omit-frame-pointer
@@ -38,7 +42,7 @@ foolish_hammer: foolish_hammer.c $(KERNEL_SRC)
 PROF_CFLAGS := -g -fno-omit-frame-pointer -O2 -ffast-math -Wall -Wextra \
                -Wno-unused-parameter -Wno-deprecated-declarations \
                -I$(KDIR)/src -DACCELERATE_NEW_LAPACK -DCD_LEAFBOOK
-foolish_server_prof: foolish_server.c $(KERNEL_SRC)
+foolish_server_prof: foolish_server.c $(NATIVE_SRC) $(KERNEL_SRC)
 	$(CC) $(PROF_CFLAGS) $^ -o $@ $(LDFLAGS)
 
 clean:
