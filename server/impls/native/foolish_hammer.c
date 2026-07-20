@@ -10,19 +10,25 @@
 // target T1).
 //
 // Links the SAME kernel sources as foolish_server (see Makefile's
-// KERNEL_SRC) so it can build real awire move frames and, in --mode=mixed,
-// decode a real masked /state view and compute real legal moves — but it is
-// a wholly separate process that only ever talks to the server over the
-// loopback socket, exactly like a browser or phone client would.
+// KERNEL_SRC) so it can build real awire move frames and, in --mode=mixed
+// or --mode=ws, decode a real masked /state view and compute real legal
+// moves — but it is a wholly separate process that only ever talks to the
+// server over the loopback socket, exactly like a browser or phone client
+// would.
 //
 // CLI (all optional, sensible defaults):
 //   --host=127.0.0.1 --port=8099 --games=20 --seats=4 --conns=32 --secs=15
-//   --mode=action|mixed
+//   --mode=action|mixed|ws
 //
-// Setup phase: signs up games*seats distinct users, POSTs /create for each
-// game (creator = seat 0), joins the rest via /meta join, then /meta start
-// for every seated human so each game deals (status -> PLAYING). Load
-// phase: `conns` threads hammer the server for `secs` seconds with a mix of
+// Setup phase (all three modes): signs up games*seats distinct users, POSTs
+// /create for each game (creator = seat 0), joins the rest via /meta join,
+// then /meta start for every seated human so each game deals (status ->
+// PLAYING). NEVER calls /meta add-bot — every seat is a human this program
+// drives, in every mode.
+//
+// --mode=action (the default) / --mode=mixed: `conns` threads hammer the
+// server for `secs` seconds, one fresh HTTP connection per request (the
+// server always sends "Connection: close"), with a mix of
 //   - POST /action?game_id=..   random-but-well-FRAMED awire bytes (most are
 //     rejected as illegal moves — that still drives the full decode +
 //     validate + apply hit path);
@@ -34,10 +40,26 @@
 // genuinely LEGAL move so games actually progress, instead of just cycling
 // through illegal-move rejections forever.
 //
-// Robustness: every request opens a fresh connection (the server always
-// sends "Connection: close"), every parse step is bounds-checked against
-// the bytes actually read, and no response — malformed, truncated, or a
-// flat connection failure — can crash this program; it is just counted.
+// --mode=ws: one persistent WebSocket connection PER SEAT (games*seats
+// connections total — `--conns` is ignored in this mode; see ws_run_load
+// below for why "one connection per client" doesn't map onto a `conns`
+// concurrency knob the way stateless HTTP requests do). Each connection's
+// worker thread loops: receive the server's pushed [ok][masked state] ->
+// state_get -> calculate_legal_moves for its own seat -> if it has a legal
+// move, awire_encode a RANDOMLY CHOSEN one and send it; if not (this seat
+// isn't currently eligible — Durak often has several eligible seats at
+// once, e.g. multiple attackers + one defender, and just as often seats
+// that aren't), send an empty poll frame instead so it still notices when
+// another seat's move makes it eligible. On game-over, POST /meta continue
+// + /meta start (a rematch, reusing the SAME game_id/seat/connection) so
+// load keeps flowing instead of idling out. Every submitted move is
+// genuinely legal, so the server's awire_apply actually applies it — no
+// cheap-reject easy-out (PROFILE_HOTPATH.md T1's random-frame mode measured
+// ~0.15% of submitted actions as legal; this mode is ~100%).
+//
+// Robustness: every parse step is bounds-checked against the bytes actually
+// read/received, and no response — malformed, truncated, or a flat
+// connection failure — can crash this program; it is just counted.
 
 #define _GNU_SOURCE
 #include <arpa/inet.h>
@@ -45,6 +67,7 @@
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -60,6 +83,7 @@
 #include "view.h"
 #include "awire.h"
 #include "cli_util.h"   // get_arg / parse_int — shared with the cnitro_* tools
+#include "ws.h"
 
 // ---------------------------------------------------------------------------
 // Config
@@ -73,10 +97,22 @@ typedef struct {
     int  conns;
     int  secs;
     bool mixed;
+    bool ws;   // --mode=ws: persistent WebSocket connections + legal moves only
 } Config;
 
 static Config g_cfg;
 static atomic_bool g_stop = false;
+
+// How long a seat with no legal move waits before sending its next empty
+// "poll" frame (the only way it learns another seat's move made it
+// eligible — see ws_worker). Measured on this 4-core box: at 1ms, idle
+// polling from ~120 of 160 seats (only ~1-2 seats per game are ever
+// eligible at once in Durak) saturated all 4 cores in syscall/
+// context-switch overhead (69% sys, load 4.0) and *reduced* real
+// applied-moves/sec despite TCP_NODELAY making each individual round trip
+// cheap. Widening the idle interval trades poll responsiveness for giving
+// the CPU back to the round trips that actually apply a move.
+#define WS_IDLE_POLL_US 1000
 
 // ---------------------------------------------------------------------------
 // User / game pools. Append-only (initial fill during setup, occasional
@@ -519,6 +555,260 @@ static void *loader_thread(void *arg) {
 }
 
 // ---------------------------------------------------------------------------
+// --mode=ws: persistent WebSocket connections + genuinely legal moves.
+//
+// Unlike --mode=action/mixed (stateless HTTP, `conns` generic worker threads
+// each firing at a random game+seat every iteration), a WebSocket client IS
+// a specific (game, seat) for the life of its connection — that's the whole
+// point (one persistent connection replaces one HTTP request per action).
+// So here there is no pool of interchangeable workers to round-robin: we
+// spawn exactly one thread per (game, seat) pair from the setup() pool
+// (games*seats threads total) and each owns ONE long-lived WS connection for
+// the whole run. `--conns` doesn't map onto that model, so it's ignored in
+// this mode (logged once, not silently dropped).
+// ---------------------------------------------------------------------------
+
+typedef struct {
+    long msgs_recv;          // [ok][state] pushes received
+    long actions_sent;       // non-empty (real move) frames sent
+    long actions_applied;    // of those, how many the server's awire_apply accepted
+    long polls_sent;         // empty frames sent (seat not eligible / game not playing)
+    long rematches;          // /meta continue+start pairs issued on game-over
+    long connects;           // successful WS handshakes (incl. reconnects)
+    long connect_failures;   // failed connects/handshakes (counted, never fatal)
+} WsThreadStats;
+
+typedef struct {
+    Config      *cfg;
+    char         gid[16];
+    char         token[40];
+    int          seat;
+    WsThreadStats *st;
+} WsClientArg;
+
+// Minimal WS *client* handshake: send the GET /ws upgrade over an already-
+// connected `fd`, read the 101 response, verify Sec-WebSocket-Accept against
+// what ws_accept_from_key computes for the key we sent (belt-and-suspenders
+// correctness check — not required to proceed, but cheap and it means a
+// broken handshake fails loudly instead of silently). Any leftover bytes
+// read past the header block (the server may have already written its
+// first WS frame into the same TCP segment) are primed into the returned
+// WsConn so nothing is lost — see ws_conn_prime's doc in ws.h.
+static bool ws_client_handshake(int fd, const char *host, const char *path,
+                                 const char *token, WsConn *out) {
+    unsigned char keyraw[16];
+    for (int i = 0; i < 16; i++) keyraw[i] = (unsigned char)(rand() & 0xFF);
+    char key_b64[32];
+    if (!ws_base64_encode(keyraw, 16, key_b64, sizeof key_b64)) return false;
+
+    char req[512];
+    int n = snprintf(req, sizeof req,
+        "GET %s HTTP/1.1\r\nHost: %s\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+        "Sec-WebSocket-Key: %s\r\nSec-WebSocket-Version: 13\r\n"
+        "Authorization: Bearer %s\r\n\r\n", path, host, key_b64, token);
+    if (n <= 0 || n >= (int)sizeof req) return false;
+    if (ws_write_full(fd, req, n) != n) return false;
+
+    char resp[1024]; int total = 0;
+    char *hdr_end = NULL;
+    while (total < (int)sizeof resp - 1) {
+        ssize_t r = read(fd, resp + total, sizeof resp - 1 - (size_t)total);
+        if (r < 0) { if (errno == EINTR) continue; return false; }
+        if (r == 0) return false;
+        total += (int)r; resp[total] = 0;
+        for (int i = 0; i + 3 < total; i++)
+            if (resp[i] == '\r' && resp[i+1] == '\n' && resp[i+2] == '\r' && resp[i+3] == '\n') { hdr_end = resp + i + 4; break; }
+        if (hdr_end) break;
+    }
+    if (!hdr_end) return false;
+    if (strncmp(resp, "HTTP/1.1 101", 12) != 0) return false;
+
+    char expect[64];
+    ws_accept_from_key(key_b64, expect, sizeof expect);
+    // Search for the accept value ONLY inside the header block: any bytes
+    // past hdr_end may already be the server's first WS frame (coalesced
+    // into the same read), and those must reach ws_conn_prime byte-for-byte
+    // untouched — copy the headers into a scratch buffer rather than
+    // temporarily truncating `resp` in place.
+    char hdrs_only[1024];
+    int hdrs_len = (int)(hdr_end - resp); if (hdrs_len > (int)sizeof hdrs_only - 1) hdrs_len = (int)sizeof hdrs_only - 1;
+    memcpy(hdrs_only, resp, (size_t)hdrs_len); hdrs_only[hdrs_len] = 0;
+    if (!strstr(hdrs_only, expect)) return false;
+
+    ws_conn_init(out, fd, /*mask_outgoing=*/1);   // we are the client: our frames must be masked
+    int leftover = total - (int)(hdr_end - resp);
+    if (leftover > 0) ws_conn_prime(out, (const unsigned char *)hdr_end, leftover);
+    return true;
+}
+
+// One (game, seat)'s whole session: connect, upgrade, then loop receiving
+// pushed state and submitting a randomly-chosen LEGAL move whenever this
+// seat has one (else an empty poll frame, so it still notices when another
+// seat's move makes it eligible). On disconnect/error, reconnect with a
+// short backoff so the run keeps producing load instead of one seat quietly
+// going idle for good.
+static void *ws_worker(void *argp) {
+    WsClientArg *a = argp;
+    WsThreadStats *st = a->st;
+    unsigned int seed = (unsigned int)((uintptr_t)pthread_self() ^ (uintptr_t)time(NULL) ^ (uintptr_t)a);
+    static __thread Game g;
+    static __thread LegalMoves moves;
+    unsigned char *msgbuf = malloc(1 + 65536);
+    if (!msgbuf) return NULL;
+
+    char path[64];
+    snprintf(path, sizeof path, "/ws?game_id=%s&seat=%d", a->gid, a->seat);
+
+    while (!atomic_load_explicit(&g_stop, memory_order_relaxed)) {
+        int fd = connect_to(a->cfg->host, a->cfg->port);
+        WsConn wc;
+        if (fd < 0 || !ws_client_handshake(fd, a->cfg->host, path, a->token, &wc)) {
+            if (fd >= 0) close(fd);
+            st->connect_failures++;
+            usleep(20 * 1000);
+            continue;
+        }
+        st->connects++;
+
+        while (!atomic_load_explicit(&g_stop, memory_order_relaxed)) {
+            int opcode;
+            int mlen = ws_recv_message(&wc, msgbuf, 1 + 65536, &opcode);
+            if (mlen < 1) break;   // error/close/undersized — reconnect
+            st->msgs_recv++;
+            unsigned char ok = msgbuf[0];
+            if (ok) st->actions_applied++;
+
+            memset(&g, 0, sizeof g);
+            state_get(&g, msgbuf + 1, /*masked=*/1);
+
+            if (g.status == GAME_STATUS_GAME_OVER) {
+                do_meta(a->cfg, a->token, "continue", a->gid);
+                do_meta(a->cfg, a->token, "start", a->gid);
+                st->rematches++;
+                usleep(2000);
+                if (ws_send_frame(&wc, WS_OP_BIN, NULL, 0) < 0) break;
+                st->polls_sent++;
+                continue;
+            }
+            if (g.status != GAME_STATUS_PLAYING || a->seat < 0 || a->seat >= g.num_players) {
+                usleep(WS_IDLE_POLL_US);
+                if (ws_send_frame(&wc, WS_OP_BIN, NULL, 0) < 0) break;
+                st->polls_sent++;
+                continue;
+            }
+
+            calculate_legal_moves(&g, a->seat, &moves);
+            if (moves.n <= 0) {
+                usleep(WS_IDLE_POLL_US);   // not this seat's turn — poll gently instead of busy-spinning
+                if (ws_send_frame(&wc, WS_OP_BIN, NULL, 0) < 0) break;
+                st->polls_sent++;
+                continue;
+            }
+
+            const LegalMove *m = &moves.moves[rand_r(&seed) % (unsigned)moves.n];
+            AwireAction act; memset(&act, 0, sizeof act);
+            switch (m->type) {
+                case MOVE_ATTACK: act.kind = AWIRE_ATTACK; break;
+                case MOVE_COVER:  act.kind = AWIRE_COVER;  break;
+                case MOVE_PASS:   act.kind = AWIRE_PASS;   break;
+                case MOVE_PICKUP: act.kind = AWIRE_PICKUP; break;
+                case MOVE_GOOD:   act.kind = AWIRE_GOOD;   break;
+                default:
+                    if (ws_send_frame(&wc, WS_OP_BIN, NULL, 0) < 0) goto reconnect;
+                    st->polls_sent++;
+                    continue;   // MOVE_WAIT or unrecognized — poll instead
+            }
+            act.n = (act.kind == AWIRE_PICKUP || act.kind == AWIRE_GOOD) ? 0 : m->n_cards;
+            if (act.n < 0) act.n = 0;
+            if (act.n > AWIRE_MAX_CARDS) act.n = AWIRE_MAX_CARDS;
+            for (int i = 0; i < act.n; i++) {
+                act.cards[i] = m->cards[i];
+                if (act.kind == AWIRE_COVER) act.attacks[i] = m->attack_cards[i];
+            }
+            unsigned char frame[128];
+            int flen = awire_encode(&act, frame, sizeof frame);
+            if (flen <= 0) {
+                if (ws_send_frame(&wc, WS_OP_BIN, NULL, 0) < 0) break;
+                st->polls_sent++;
+                continue;
+            }
+            if (ws_send_frame(&wc, WS_OP_BIN, frame, flen) < 0) break;
+            st->actions_sent++;
+        }
+    reconnect:
+        close(fd);
+        if (!atomic_load_explicit(&g_stop, memory_order_relaxed)) usleep(20 * 1000);
+    }
+    free(msgbuf);
+    return NULL;
+}
+
+static void run_ws_load(Config *cfg) {
+    int total_seats = 0;
+    for (int gi = 0; gi < g_n_games; gi++) total_seats += g_games[gi].n_seats;
+    if (total_seats == 0) { fprintf(stderr, "no seats to drive — aborting ws load phase\n"); return; }
+
+    WsClientArg *args = calloc((size_t)total_seats, sizeof(WsClientArg));
+    WsThreadStats *stats = calloc((size_t)total_seats, sizeof(WsThreadStats));
+    pthread_t *tids = calloc((size_t)total_seats, sizeof(pthread_t));
+    if (!args || !stats || !tids) { fprintf(stderr, "out of memory\n"); return; }
+
+    int idx = 0;
+    for (int gi = 0; gi < g_n_games; gi++) {
+        HGame *hg = &g_games[gi];
+        for (int s = 0; s < hg->n_seats; s++) {
+            WsClientArg *a = &args[idx];
+            a->cfg = cfg;
+            snprintf(a->gid, sizeof a->gid, "%s", hg->id);
+            snprintf(a->token, sizeof a->token, "%s", g_users[hg->user_idx[s]].token);
+            a->seat = s;
+            a->st = &stats[idx];
+            idx++;
+        }
+    }
+
+    printf("== ws load phase: %d persistent connections (one per seat; --conns ignored) for %ds ==\n",
+           total_seats, cfg->secs);
+    double t0 = now_secs();
+    int nthreads = 0;
+    for (int i = 0; i < total_seats; i++) {
+        if (pthread_create(&tids[i], NULL, ws_worker, &args[i]) != 0) {
+            fprintf(stderr, "pthread_create failed at ws worker %d, continuing with fewer\n", i);
+            break;
+        }
+        nthreads++;
+    }
+    while (now_secs() - t0 < cfg->secs) usleep(50 * 1000);
+    atomic_store(&g_stop, true);
+    for (int i = 0; i < nthreads; i++) pthread_join(tids[i], NULL);
+    double elapsed = now_secs() - t0;
+
+    WsThreadStats tot; memset(&tot, 0, sizeof tot);
+    for (int i = 0; i < nthreads; i++) {
+        tot.msgs_recv        += stats[i].msgs_recv;
+        tot.actions_sent     += stats[i].actions_sent;
+        tot.actions_applied  += stats[i].actions_applied;
+        tot.polls_sent       += stats[i].polls_sent;
+        tot.rematches        += stats[i].rematches;
+        tot.connects         += stats[i].connects;
+        tot.connect_failures += stats[i].connect_failures;
+    }
+
+    printf("\n============= foolish_hammer summary (mode=ws) =============\n");
+    printf("wall clock (load phase):     %.2fs\n", elapsed);
+    printf("persistent WS connections:   %d (one per seat)\n", nthreads);
+    printf("messages received (pushes):  %ld  (%.1f msgs/s)\n", tot.msgs_recv, tot.msgs_recv / elapsed);
+    printf("actions submitted:           %ld  applied(ok=true): %ld  (%.1f applied/s)\n",
+           tot.actions_sent, tot.actions_applied, tot.actions_applied / elapsed);
+    printf("poll frames sent:            %ld\n", tot.polls_sent);
+    printf("rematches (continue+start):  %ld\n", tot.rematches);
+    printf("connects: %ld  connect failures: %ld\n", tot.connects, tot.connect_failures);
+    printf("===============================================================\n");
+
+    free(args); free(stats); free(tids);
+}
+
+// ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
 
@@ -532,6 +822,9 @@ int main(int argc, char **argv) {
     cfg.secs  = parse_int(get_arg(argc, argv, "secs", NULL), 15);
     const char *mode = get_arg(argc, argv, "mode", "action");
     cfg.mixed = (strcmp(mode, "mixed") == 0);
+    cfg.ws    = (strcmp(mode, "ws") == 0);
+    srand((unsigned)(time(NULL) ^ getpid()));   // seeds the WS masking-key / handshake-key rand() calls
+    signal(SIGPIPE, SIG_IGN);   // persistent WS sockets: a dead peer must not kill this whole process
 
     if (cfg.seats < 2) cfg.seats = 2;
     if (cfg.seats > MAX_PLAYERS) cfg.seats = MAX_PLAYERS;
@@ -548,7 +841,8 @@ int main(int argc, char **argv) {
     g_cfg = cfg;
 
     printf("foolish_hammer: host=%s:%d games=%d seats=%d conns=%d secs=%d mode=%s\n",
-           cfg.host, cfg.port, cfg.games, cfg.seats, cfg.conns, cfg.secs, cfg.mixed ? "mixed" : "action");
+           cfg.host, cfg.port, cfg.games, cfg.seats, cfg.conns, cfg.secs,
+           cfg.ws ? "ws" : (cfg.mixed ? "mixed" : "action"));
 
     {
         unsigned char resp[RESP_CAP]; HttpResp r;
@@ -563,6 +857,11 @@ int main(int argc, char **argv) {
     double t_setup1 = now_secs();
     if (g_n_games == 0) { fprintf(stderr, "no games dealt — aborting load phase\n"); return 1; }
     printf("== setup done in %.2fs: %d users, %d games ==\n", t_setup1 - t_setup0, g_n_users, g_n_games);
+
+    if (cfg.ws) {
+        run_ws_load(&cfg);
+        return 0;
+    }
 
     int nthreads = cfg.conns;
     pthread_t *tids = calloc((size_t)nthreads, sizeof(pthread_t));
