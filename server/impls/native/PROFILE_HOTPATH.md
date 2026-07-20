@@ -198,6 +198,264 @@ hammered concurrently from another terminal).
 
 ---
 
+## T1b — WebSocket server + legal-move clients (after items 1-3)
+
+T1's own "where to speed up" list (items 1-3 above) is now implemented and
+re-measured. Summary of the changes, all under `server/impls/native/`
+(`c/src/*` untouched):
+
+1. **RFC 6455 WebSockets, new files `ws.h`/`ws.c`.** A self-contained SHA-1
+   (textbook, KAT-checked against `sha1("")` and the RFC 6455 handshake
+   example — see the check below) + base64 encoder compute
+   `Sec-WebSocket-Accept`; `WsConn` does frame I/O (masked/unmasked per
+   role, 7/16/64-bit length forms, PING/PONG/CLOSE, minimal fragment
+   assembly). `GET /ws?game_id=..&seat=..` (Bearer token) validates the
+   caller owns that seat exactly like `/action` did, upgrades, then loops:
+   client sends a binary frame (an awire move, or empty = "just poll") ->
+   server applies it through the SAME `awire_decode`/`awire_apply` `/action`
+   used -> answers with one binary frame, `[ok:u8][state_put(seat) bytes]`.
+   One handshake per client SESSION, not per move.
+2. **Thread-per-connection already amortizes now that connections are
+   long-lived.** No change to the `accept()`/`pthread_create` loop was
+   needed — `conn_thread` already ran once per accepted socket; the only
+   change is that a `/ws` connection no longer closes after one request, so
+   the SAME thread now serves a client's entire session. Two bugs this
+   surfaced once connections stopped being one-shot: (a) missing
+   `TCP_NODELAY` on accepted sockets (only the load client's outbound
+   `connect_to()` had it) — invisible on one-shot HTTP, but Nagle batching
+   against the peer's delayed ACKs turned every persistent-connection round
+   trip into tens of milliseconds; fixed by setting it right after
+   `accept()`. (b) an unhandled `SIGPIPE` — a peer that vanishes between a
+   read and the next write now kills a THREAD's connection instead of (with
+   the default disposition) the whole process; both `foolish_server.c` and
+   `foolish_hammer.c` now `signal(SIGPIPE, SIG_IGN)` in `main()`.
+3. **`user_by_token`/`game_by_id` are now fixed-size open-addressing hash
+   maps** (`token -> User*`, 1024 slots; `game_id -> GameSlot*`, 512 slots;
+   FNV-1a, insert-only — see foolish_server.c's comment for why no
+   tombstone/growth logic is needed). Same behavior, O(1) instead of
+   O(MAX_USERS)/O(MAX_GAMES).
+4. **The HTTP request-line/header parser is hand-rolled**
+   (`parse_request_line_and_headers`): one pass over the header block with
+   `strncasecmp` on already-located header names, replacing
+   `sscanf(buf, "%7s %255s", ...)` and the `strcasestr` header scan. Every
+   existing endpoint (`/auth/signup`, `/create`, `/meta`, `/action`,
+   `/state`, `/status`, `/health`) is unchanged behaviorally — `test.sh`
+   still passes (its one `xxd` call was swapped for `od -A x -t x1z`; this
+   box has no `xxd`, a pre-existing environment gap unrelated to this
+   change) — plus a new WS smoke test at the bottom of `test.sh` that runs
+   `foolish_hammer --mode=ws` at a tiny scale end-to-end.
+5. **`foolish_hammer --mode=ws`**: setup is identical to `action`/`mixed`
+   (signup, `/create`, `/meta join` for every seat, `/meta start` — never
+   `add-bot`), then spawns ONE THREAD PER (game, seat) pair — `--conns` is
+   ignored in this mode, since a persistent-connection client isn't an
+   interchangeable pool worker the way a stateless HTTP requester is. Each
+   thread: connect + WS handshake once, then loop receiving the pushed
+   `[ok][state]`, `state_get`-ing it, `calculate_legal_moves` for its OWN
+   seat, and either `awire_encode`-ing a RANDOMLY CHOSEN legal move (a real
+   attack/cover/pass/pickup/good, never a synthesized illegal one) or, if
+   this seat currently has none (Durak often has several eligible seats at
+   once — attacker(s) + defender — and just as often none for a given
+   seat), sending an empty "poll" frame so it still notices when another
+   seat's move changes its own eligibility. On game-over it posts
+   `/meta continue` + `/meta start` (a rematch, reusing the same
+   game_id/seat/connection) so load keeps flowing instead of idling out.
+
+SHA-1 + base64 + handshake KAT check (`ws_sha1("")` and the RFC 6455 doc
+example key, run once during development, not part of the build):
+
+```
+sha1('')= da39a3ee5e6b4b0d3255bfef95601890afd80709 (expect da39a3ee5e6b4b0d3255bfef95601890afd80709)
+accept  = s3pPLMBiTxaQ9kYGzzhZRbK+xOo= (expect s3pPLMBiTxaQ9kYGzzhZRbK+xOo=)
+```
+
+### Headline throughput (full-speed, NOT under callgrind)
+
+Same scale as T1's headline (`--games=40 --seats=4 --conns=32 --secs=10`,
+`--conns` unused in `--mode=ws` — the actual connection count is
+`games*seats` = 160, one per seat):
+
+```sh
+./foolish_server 8097 &
+./foolish_hammer --host=127.0.0.1 --port=8097 --games=40 --seats=4 --conns=32 --secs=10 --mode=ws
+```
+
+Six runs on this shared 4-core box (run-to-run variance is real here — this
+is a shared machine, and see the mutex/CPU-contention discussion below):
+
+| run | messages/s | actions submitted | applied (ok=true) | applied/s |
+|---|---|---|---|---|
+| 1 | 124,675.3 | — | — | 3,287.4 |
+| 2 | 126,424.9 | — | — | 1,545.0 |
+| 3 | 123,869.9 | — | — | 1,499.4 |
+| 4 | 123,074.7 | 18,274 | 17,543 | 1,739.6 |
+| 5 | 119,271.3 | 16,337 | 15,607 | 1,549.0 |
+| 6 | 120,080.8 | 24,772 | 23,726 | 2,362.4 |
+
+Mean **1,997 applied/s** (range 1,499–3,287/s), messages/s consistently
+~120,000–126,000/s. Every submitted action decodes and is genuinely legal
+(`calculate_legal_moves` picked it), so `applied/s` is essentially
+`actions submitted/s` (~90-95% land — the rest lose a race: the table
+changed between this seat computing its legal moves and the move landing,
+e.g. another seat covered the same attack first).
+
+**Compare to T1's HTTP baseline: ~13,400 req/s pure-hit-path / ~1,442
+applied/s in `--mode=mixed`** (only ~17% of `--mode=mixed`'s submitted
+actions were even attempted-legal, `mixed` picks a real legal move only
+1-in-5 tries and otherwise sends a random frame). T1b's mean applied/s
+(1,997) is **~1.4x T1's mixed-mode number, up to ~2.3x on the best run** —
+and, unlike T1's, essentially every submitted move is real, kernel-applied
+game progress, not a 400 reject. A `--games=100` run (400 persistent
+connections, more independent critical paths for the 4 cores to interleave)
+measured **3,040.9 applied/s**, so the ceiling above is the polling
+client's tuning + this box's core count, not a hard architectural limit —
+see the `WS_IDLE_POLL_US` note in `foolish_hammer.c`: at 40 games the idle
+seats (only ~1-2 of a game's seats are ever eligible at once) polling every
+1ms is *itself* competing for the same 4 cores as the productive round
+trips, and unlike T1's, this new bottleneck is a **tuning knob in the load
+client**, not a server design flaw — the server has no artificial pacing
+anywhere in the `/ws` hot path.
+
+One fix mattered more than any tuning: accepted sockets never had
+`TCP_NODELAY` set before this work (only the outbound client side did).
+Before that fix, the SAME 40-games/10s config measured **755-815
+applied/s** — Nagle-vs-delayed-ACK stalls on the server's accept side were
+silently capping every persistent connection's round-trip rate. `TCP_NODELAY`
+alone was worth ~2x here, on top of removing the thread-spawn tax.
+
+### Profiling (callgrind)
+
+Same technique as T1 (`profile.sh`'s own callgrind path): launch
+`valgrind --tool=callgrind` on `foolish_server_prof` directly, drive it with
+`foolish_hammer`, then `SIGTERM` the valgrind process so it flushes
+`callgrind.out` (wrapping in `timeout` would trace only `timeout`'s own
+startup, per T1's note above). Scale is deliberately SMALL, like T1's own
+callgrind run (`--games=3 --seats=2`, 6 persistent connections instead of
+40 games/160) — under 30-50x instrumentation slowdown, spinning up 160 real
+WS handshakes would dominate the whole capture:
+
+```sh
+valgrind --tool=callgrind \
+  --callgrind-out-file=bench_results/T1b_ws/raw/callgrind.out \
+  -- ./foolish_server_prof 8096 &
+
+./foolish_hammer --host=127.0.0.1 --port=8096 --games=3 --seats=2 --secs=20 --mode=ws
+kill -TERM <valgrind pid>
+
+callgrind_annotate --auto=yes --inclusive=no bench_results/T1b_ws/raw/callgrind.out \
+  > bench_results/T1b_ws/annotated.txt
+```
+
+**81,096,990** instructions collected over the 20s window: 340 real applied
+moves, 97,557 total `[ok][state]` round trips (the rest are empty polls).
+Unlike T1's callgrind run — where the un-instrumented server was clearly
+request-RATE-bound and callgrind measured an 11.5x slowdown against it —
+this small a WS scale (6 connections) is *client poll-interval*-bound, not
+server-CPU-bound: the SAME `--games=3 --seats=2 --secs=20` config run
+NATIVELY (no callgrind) measured 5,036.1 msgs/s, statistically the same as
+the 4,867.9 msgs/s measured UNDER callgrind. Six idle-capable connections
+polling at most once per `WS_IDLE_POLL_US` (1ms) top out around
+6,000 msgs/s regardless of how fast the server can technically answer, so
+this capture's instruction counts are a clean per-message attribution, not
+a throughput measurement — that's what the headline numbers above are for.
+
+### Top self-cost functions (Ir, `bench_results/T1b_ws/annotated.txt`)
+
+| Ir | % | function |
+|---|---|---|
+| 16,922,819 | 20.87% | `view.c:state_put` |
+| 14,074,102 | 17.35% | `ws.c:ws_recv_message` |
+| 8,390,422 | 10.35% | `ws.c:ws_send_frame` |
+| 6,256,736 | 7.72% | libc `nptl/cancellation.c:__pthread_enable_asynccancel` |
+| 5,865,675 | 7.23% | libc `nptl/cancellation.c:__pthread_disable_asynccancel` |
+| 4,895,635 | 6.04% | `wasm/wire.h:state_put` (a state_put callee, non-LTO — see the T2/T3 `-flto` caveat at the top of this doc) |
+| 4,691,664 | 5.79% | libc `read` |
+| 4,684,454 | 5.78% | libc `write` |
+| 3,940,504 | 4.86% | `foolish_server.c:conn_thread` |
+| 3,515,324 | 4.33% | libc `pthread_mutex_lock` |
+| 3,190,317 | 3.93% | `ld-linux-x86-64.so.2` `memset` (thread-stack/TLS zeroing — see below) |
+| 2,539,499 | 3.13% | libc `pthread_mutex_unlock` |
+| 782,092 | 0.96% | libc `nptl/descr.h:__pthread_enable_asynccancel` (inlined variant) |
+| 360,984 | 0.45% | `card.h:state_put` (another state_put callee) |
+| 118,191 | 0.15% | libc `__memset_avx2_unaligned_erms` |
+
+### The pthread_create / thread-stack-zeroing cost, before vs after
+
+This is the number the whole exercise was about. `pthread_create` is called
+**35 times** in this 20s, 97,557-message run (32x for `conn_thread` — HTTP
+setup/rematch calls plus the 6 WS upgrades; 3x for the per-game bot-pacing
+`bot_thread`, one per game regardless of whether it has a legal move to
+make) — **not once per message**. Its total cost, `pthread_create` itself
+plus the loader's thread-stack `memset` it triggers, is
+**3,145,099 Ir (271,236 + 2,873,863) = 3.88% of the whole run**, down from
+**85.84% of 2.5 BILLION instructions** in T1 (2,144,628,187 Ir). The
+remaining `ld-linux` `memset` line above (3.93%, 3,190,317 Ir) IS that same
+per-thread stack-zeroing cost, at almost exactly T1's own measured
+per-connection rate (3,190,317 / 35 ≈ 91,152 Ir/call vs T1's reported
+"~91,800 instructions... per connection") — same fixed cost, paid 35 times
+in a 20s run that pushed 97,557 messages instead of once per message. **Item
+1 is fixed**: `pthread_create` cost now scales with connection count, not
+message count.
+
+### Where the cost went instead
+
+Per-line attribution inside `h_ws`'s hot loop (the same
+`bench_results/T1b_ws/annotated.txt`, lines ~679-706) shows exactly what
+each of the 97,557 round trips actually pays for, INCLUSIVE of callees:
+
+```c
+while ((mlen = ws_recv_message(&wc, in, sizeof in, &opcode)) >= 0) {  // 31.09% (ws_recv_message)
+    ...
+    pthread_mutex_lock(&g_lock);                                      //  4.33% (mutex)
+    if (s->used) {
+        if (mlen > 0 && s->game.status == GAME_STATUS_PLAYING) {
+            if (awire_decode(in, mlen, &a) && awire_apply(&s->game, seat, &a)) {  // 0.15% + 0.02%
+                ...
+            }
+        }
+        slen = state_put(&s->game, seat, msg + 1);                    // 27.35% (state_put, EVERY round trip)
+    }
+    pthread_mutex_unlock(&g_lock);                                    //  3.13% (mutex)
+    msg[0] = applied ? 1 : 0;
+    if (ws_send_frame(&wc, WS_OP_BIN, msg, slen + 1) < 0) break;       // 24.06% (ws_send_frame)
+}
+```
+
+`awire_decode`/`awire_apply` — the actual KERNEL work — cost 0.15%+0.02%
+combined, and only run on the 340 real moves (not the 97,217 polls), exactly
+as light as T1 found them (T1: all kernel calls individually under 1%). The
+new cost is almost entirely **WS protocol overhead** (`ws_recv_message` +
+`ws_send_frame`, 41.4% combined — frame header parse/build, the read()/
+write() syscalls themselves at 5.79%+5.78%, and masking/unmasking) and
+**`state_put` running on every single round trip, including pure polls**
+(27.35% + the 6.04% + 0.45% callee slivers ≈ 33.8% of the whole program).
+That last point is the real, actionable finding here: a poll that finds
+nothing to do STILL pays a full masked-view serialization, because the
+protocol always answers with fresh state. A cheaper "nothing changed"
+signal (e.g. a monotonic per-game version counter the client can compare
+before asking for a full re-serialize) would cut a large fraction of this
+without changing the wire's meaning — left as a follow-up, not implemented
+here (scope: items 1-3 of T1's list, not a new protocol optimization).
+
+**global mutex**: `pthread_mutex_lock`+`unlock` together are 7.46%
+(4.33%+3.13%) — real, measurable, and exactly where T1 predicted the next
+bottleneck would surface once the thread-spawn tax was gone — but it is
+NOT yet the dominant cost; `state_put` and the WS frame I/O are both
+several times larger. Consistent with the full-speed finding above (more
+games scales better than shrinking the per-poll interval): the lock is a
+single serialization point across ALL games, so at higher game counts (see
+the `--games=100` measurement, 3,040.9 applied/s) it would be the first
+thing to profile next.
+
+### Files (T1b additions)
+
+- `ws.h`/`ws.c` — the WebSocket handshake (SHA-1 + base64) and frame I/O,
+  shared by `foolish_server.c` (server role: unmasked outgoing frames) and
+  `foolish_hammer.c` (client role: masked outgoing frames).
+- `bench_results/T1b_ws/` — this section's profile (`annotated.txt`,
+  `meta.txt`). Raw `callgrind.out` gitignored, same pattern as `T1_server/`.
+
+---
+
 ## T2 — the infinite oracle, hammered directly (no server), TT20
 
 ### Build
