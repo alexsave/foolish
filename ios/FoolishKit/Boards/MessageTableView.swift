@@ -20,6 +20,12 @@ public struct MessageTableView: View {
     /// is over (the fool is decided) — any player, out or not, can deal the next
     /// one. Routes through the host's New game (§5.2), same as the chrome button.
     private let onNewGame: () -> Void
+    /// Retract a bubble already staged with the host (§10 undo). Undo alone can't
+    /// do this: rebuilding the base + replaying `pending` minus the last action is
+    /// a LOCAL replay, but the host (harness `staged`, or the real extension's
+    /// already-inserted input-field bubble) is a separate piece of state that only
+    /// the host can clear. Called when an undo empties `pending` entirely.
+    private let onUnstage: () -> Void
 
     @State private var selection: Set<String> = []
     @State private var toast: String?
@@ -49,10 +55,11 @@ public struct MessageTableView: View {
     @State private var discardCountOverride: Int?
 
     public init(controller: MessageTurnController, onSend: @escaping (Data) async -> Void,
-                onNewGame: @escaping () -> Void = {}) {
+                onNewGame: @escaping () -> Void = {}, onUnstage: @escaping () -> Void = {}) {
         self.controller = controller
         self.onSend = onSend
         self.onNewGame = onNewGame
+        self.onUnstage = onUnstage
     }
 
     public var body: some View {
@@ -187,18 +194,16 @@ public struct MessageTableView: View {
 
     private func name(_ seat: Int) -> String { controller.names[seat] ?? "Seat \(seat + 1)" }
 
-    private var attackersActive: Bool {
-        guard let v = controller.view else { return false }
-        return v.battles.contains { $0.defense == nil } || v.battles.isEmpty
-    }
-
     /// One opponent seat badge, publishing its frame in `boardSpace` so bout-end
     /// flights can target it. Placed on the ring by `ringPoint`.
     private func opponentSeat(_ p: PlayerView, _ view: GameView) -> some View {
+        // Sword consistency: an attacker keeps the sword until THEY say good, even
+        // once every attack on the table is covered — not "any uncovered battle
+        // exists" (which erased every sword the instant the table was fully covered).
         FSeatBadge(name: name(p.seat),
                    handCount: seatCountOverride[p.seat] ?? p.handCount,
                    isDefender: p.seat == view.defender,
-                   isAttacker: p.seat != view.defender && !p.isOut && attackersActive,
+                   isAttacker: p.seat != view.defender && !p.isOut && !view.hasSaidGood(p.seat),
                    saidGood: view.hasSaidGood(p.seat),
                    isOut: p.isOut)
             .background(GeometryReader { g in
@@ -466,15 +471,24 @@ public struct MessageTableView: View {
             canAttack: acting && !defending && CardPlay.canAttack(cards, legal: controller.legal),
             canCover: acting && defending && CardPlay.canCover(cards, battles: view.battles, legal: controller.legal),
             canPass: acting && defending && CardPlay.canPass(cards, legal: controller.legal),
-            canPickup: acting && has(.pickup),
-            canDone: acting && CardPlay.canSayGood(battles: view.battles, legal: controller.legal),
+            // Selection-aware: with cards selected, the defender's Take and the
+            // attacker's Good must disappear — a stray tap on either while mid-
+            // selection would abandon the cards you'd picked (web parity TODO).
+            canPickup: acting && has(.pickup) && cards.isEmpty,
+            canDone: acting && CardPlay.canSayGood(battles: view.battles, legal: controller.legal) && cards.isEmpty,
             canUndo: controller.canSend,
             onAttack: { playAt(.table, cards, view) },
             onCover: { playCover(cards, view) },
             onPass: { playAt(.table, cards, view) },
             onPickup: { play(.pickup) },
             onDone: { play(.good) },
-            onUndo: { Task { await controller.undo(); await stageNow() } }
+            onUndo: { Task {
+                await controller.undo()
+                // Undo that empties `pending` leaves `stageNow()` a no-op (canStage
+                // goes false) — but the host still holds the PREVIOUSLY staged
+                // bubble/payload. Retract it explicitly instead of leaving it lit.
+                if controller.canStage { await stageNow() } else { onUnstage() }
+            } }
         )
     }
 
@@ -609,6 +623,28 @@ struct FShield: View {
         }
         .frame(width: size, height: size)
         .accessibilityLabel(Text("Defending"))
+    }
+}
+
+/// The "said good" mark — a hand-built green check stroke on the same 24x24 grid
+/// as FSword/FShield. Hand-built for the same reason: SF Symbols (previously
+/// `checkmark.seal.fill`) are unreliable under ImageRenderer bubble snapshots.
+struct FCheck: View {
+    var size: CGFloat = 24
+    var body: some View {
+        Canvas { ctx, sz in
+            let s = sz.width / 24
+            func P(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: x * s, y: y * s) }
+            let green = Color(hex: 0x2E9E4F)
+            var check = Path()
+            check.move(to: P(4.5, 12.5))
+            check.addLine(to: P(9.5, 18))
+            check.addLine(to: P(20, 5.5))
+            ctx.stroke(check, with: .color(green),
+                       style: StrokeStyle(lineWidth: 3 * s, lineCap: .round, lineJoin: .round))
+        }
+        .frame(width: size, height: size)
+        .accessibilityLabel(Text("Good"))
     }
 }
 

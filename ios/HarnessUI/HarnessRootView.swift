@@ -26,7 +26,8 @@ struct HarnessRootView: View {
             chatPlayers: model.playerCount,
             requestExpand: { model.expand() },
             onNewGame: { model.newGame() },
-            onSend: { payload, seat in await MainActor.run { model.stage(payload, seat: seat) } }
+            onSend: { payload, seat in await MainActor.run { model.stage(payload, seat: seat) } },
+            onUnstage: { model.unstage() }
         )
         .id(model.viewKey)   // reset @State when player/transcript/intent changes
         .frame(maxWidth: .infinity, maxHeight: .infinity)

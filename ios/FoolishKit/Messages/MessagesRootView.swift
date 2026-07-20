@@ -32,15 +32,21 @@ public struct MessagesRootView: View {
     let requestExpand: () -> Void
     let onNewGame: () -> Void
     let onSend: (Data, Int) async -> Void
+    /// Retract a previously-staged bubble (§10 undo). No-op by default so every
+    /// existing caller keeps compiling; the real extension has no API to remove an
+    /// inserted input-field bubble, so it can only drop its own pending-stage record.
+    let onUnstage: () -> Void
 
     public init(payloadURL: URL?, style: MsgPresentation, senderIsLocal: Bool,
                 startNewGame: Bool, newGameToken: Int = 0, chatIsDM: Bool, chatPlayers: Int,
                 requestExpand: @escaping () -> Void, onNewGame: @escaping () -> Void,
-                onSend: @escaping (Data, Int) async -> Void) {
+                onSend: @escaping (Data, Int) async -> Void,
+                onUnstage: @escaping () -> Void = {}) {
         self.payloadURL = payloadURL; self.style = style; self.senderIsLocal = senderIsLocal
         self.startNewGame = startNewGame; self.newGameToken = newGameToken
         self.chatIsDM = chatIsDM; self.chatPlayers = chatPlayers
         self.requestExpand = requestExpand; self.onNewGame = onNewGame; self.onSend = onSend
+        self.onUnstage = onUnstage
     }
 
     public var body: some View {
@@ -53,7 +59,8 @@ public struct MessagesRootView: View {
         GameSurface(payloadURL: payloadURL, style: style, senderIsLocal: senderIsLocal,
                     startNewGame: startNewGame, newGameToken: newGameToken,
                     chatIsDM: chatIsDM, chatPlayers: chatPlayers,
-                    requestExpand: requestExpand, onNewGame: onNewGame, onSend: onSend)
+                    requestExpand: requestExpand, onNewGame: onNewGame, onSend: onSend,
+                    onUnstage: onUnstage)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(WoolBackground())          // the table surface, not system white
     }
@@ -70,6 +77,7 @@ private struct GameSurface: View {
     let requestExpand: () -> Void
     let onNewGame: () -> Void
     let onSend: (Data, Int) async -> Void
+    let onUnstage: () -> Void
 
     /// A phase-0/handoff lobby the extension shows instead of the board (§5.2).
     private struct Lobby { let env: MessageEnvelope; let payload: Data }
@@ -82,6 +90,11 @@ private struct GameSurface: View {
 
     @State private var controller: MessageTurnController?
     @State private var ambiguous: (env: MessageEnvelope, payload: Data)?
+    /// RELEASE-ONLY substitute for `ambiguous` (§6.3): an unresolved identity in
+    /// Release must never offer a seat picker (anyone could claim any hand), so we
+    /// show the same PUBLIC spectator board a delivered bubble's snapshot uses,
+    /// instead. DEBUG keeps the real picker (single-simulator testing needs it).
+    @State private var spectator: (view: GameView, names: [Int: String])?
     @State private var lobby: Lobby?
     @State private var nameGate: NameGate?
     @State private var showSetup = false
@@ -110,7 +123,8 @@ private struct GameSurface: View {
         if let controller {
             MessageTableView(controller: controller,
                              onSend: { payload in await onSend(payload, controller.mySeat) },
-                             onNewGame: onNewGame)
+                             onNewGame: onNewGame,
+                             onUnstage: onUnstage)
         } else if let lob = lobby {
             LobbyView(env: lob.env, mySeat: lobbySeat(lob.env),
                       nickname: MessageGameStore.shared.nickname,
@@ -129,6 +143,15 @@ private struct GameSurface: View {
             SeatPicker(nPlayers: a.env.nPlayers, joins: a.env.joins) { seat in
                 Task { await choose(seat: seat, from: a) }
             }
+        } else if let s = spectator {
+            // Release-only §6.3 fallback: read-only, public (no hand), with a
+            // caption explaining why there is nothing to tap (§ release security).
+            VStack(spacing: 4) {
+                MessageBoardView(view: s.view, names: s.names)
+                Text(FStrings.t("ios.msg.spectating"))
+                    .font(.footnote).foregroundStyle(FColor.textDim)
+                    .multilineTextAlignment(.center).padding(.horizontal).padding(.bottom, 8)
+            }
         } else if damaged {
             DamagedView()
         } else {
@@ -140,7 +163,7 @@ private struct GameSurface: View {
     /// loadKey unchanged, so `.task(id:)` does not fire and the game persists.
     private func reloadForInput() async {
         controller = nil; lobby = nil; nameGate = nil; showSetup = false
-        ambiguous = nil; damaged = false
+        ambiguous = nil; spectator = nil; damaged = false
         await load()
     }
 
@@ -306,7 +329,25 @@ private struct GameSurface: View {
                             survivors: survivors, discarded: discarded)
             }
         case .ambiguous:
+            #if DEBUG
+            // Single-simulator testing keeps the real picker (see the DEBUG note
+            // above in this function) — this branch is unreachable in DEBUG anyway
+            // because `pickSeatOnAdopt` already returned above, but stays correct
+            // if that flag is ever turned off.
             ambiguous = (env, winner)
+            #else
+            // RELEASE SECURITY: an ambiguous identity must never offer a seat
+            // picker — anyone could claim any hand and see it. Show the same
+            // PUBLIC spectator board a delivered bubble's snapshot uses instead
+            // (§10, MessageBoardView is public-safe by construction). `winner` was
+            // already decoded/adopted above, so the resident game IS this chain.
+            let names = Dictionary(env.joins.map { ($0.seat, $0.name) }, uniquingKeysWith: { a, _ in a })
+            if let view = await MessageKernel.shared.residentView(viewer: -1) {
+                spectator = (view, names)
+            } else {
+                damaged = true
+            }
+            #endif
         }
     }
 

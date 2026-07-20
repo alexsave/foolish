@@ -104,6 +104,12 @@ final class HarnessModel: ObservableObject {
     /// The current player tapped New game. New game always opens full-screen.
     func newGame() { startNewGame = true; staged = nil; presentation = .expanded }
 
+    /// Retract the staged bubble (§10 undo, batch-1 note 32): an undo that empties
+    /// the pending ledger must drop the Send-lit payload too, not just no-op and
+    /// leave a stale move ready to send. Stands in for the real extension's
+    /// `pendingStage = nil` — the harness has no inserted-bubble UI to remove.
+    func unstage() { staged = nil }
+
     /// The board auto-staged a chain (the extension's `insert`). Hold it; the
     /// human still has to press Send — that is `deliver()`.
     ///

@@ -108,6 +108,13 @@ final class MessagesViewController: MSMessagesAppViewController {
             },
             onSend: { [weak self] payload, mySeat in
                 await self?.stage(payload: payload, mySeat: mySeat)
+            },
+            onUnstage: { [weak self] in
+                // Messages provides no API to remove an already-inserted input-field
+                // bubble — the human deletes it manually, or the next stage() call
+                // replaces it. All we can retract is our own bookkeeping, so a
+                // resumed undo-to-empty doesn't later commit a stale chain on send.
+                self?.pendingStage = nil
             })
         setRoot(root)
     }

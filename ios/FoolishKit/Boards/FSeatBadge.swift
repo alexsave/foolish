@@ -94,8 +94,9 @@ public struct FSeatBadge: View {
         HStack(spacing: FSpace.xs) {
             if thinking { ThinkingDots() }
             if saidGood {
-                Image(systemName: "checkmark.seal.fill")
-                    .font(.system(size: 11)).foregroundColor(FColor.win)
+                // Hand-built (not SF Symbols — unreliable under ImageRenderer bubble
+                // snapshots, same reason FShield/FSword are hand-built).
+                FCheck(size: 14)
             }
             if isDefender {
                 FShield(size: 19)   // hand-built light-gray shield (larger)

@@ -24,8 +24,6 @@ public struct MessageBoardView: View {
 
     private func name(_ seat: Int) -> String { names[seat] ?? "Seat \(seat + 1)" }
 
-    private var attackersActive: Bool { view.battles.contains { $0.defense == nil } || view.battles.isEmpty }
-
     public var body: some View {
         // Same grammar as the live board (MessageTableView): deck pinned top-left,
         // discard top-right, seats ringed on a 35% ellipse, battles dead-centre -
@@ -43,7 +41,10 @@ public struct MessageBoardView: View {
                     FSeatBadge(name: name(p.seat),
                                handCount: p.handCount,
                                isDefender: p.seat == view.defender,
-                               isAttacker: p.seat != view.defender && !p.isOut && attackersActive,
+                               // Sword consistency (§ batch 1): an attacker keeps the
+                               // sword until THEY say good, not merely "some battle is
+                               // still uncovered".
+                               isAttacker: p.seat != view.defender && !p.isOut && !view.hasSaidGood(p.seat),
                                saidGood: view.hasSaidGood(p.seat),
                                isOut: p.isOut)   // wool bubble → bone text + shadow (like the board)
                         .position(ringPoint(seat: p.seat, n: view.players.count, in: geo.size))
